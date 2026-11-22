@@ -1618,10 +1618,11 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                         // Both the gaming and normal remote controllers benefit: a tiny ACK avoids
                         // artwork decoding, media metadata and queue enumeration on every touch.
                         val playback = if (realtime)
-                            CompanionFrame(type = "state", gamepadInfo = CompanionGamepadSession.info())
+                            CompanionFrame(type = "state")
                         else playbackState(queueOffset).let { if (returned == null) it else it.copy(artwork = "", options = emptyList(), queue = emptyList()) }
                         val result = backupResults[nonce]
                         playback.copy(nonce = nonce, sequence = request.sequence, syncReturn = returned,
+                            gamepadInfo = CompanionGamepadSession.info(nonce, includeDescriptions = !realtime),
                             monogramLogin = monogramLogin?.receiverLink.orEmpty(),
                             controller = mutable.value.controller, inputGranted = synchronized(inputLease) { inputLease.owns(nonce, SystemClock.elapsedRealtime()) },
                             gamepadPort = CompanionGamepadSession.port(nonce),
@@ -1870,11 +1871,12 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                                 else -> R.string.companion_play_failed }, error = true)
                         // Preserve playback/queue fields when the receiver returns a small gamepad ACK.
                         mutable.update { old ->
+                            val gamepadInfo = companionGamepadInfoWithMetadata(old.remote?.gamepadInfo, state.gamepadInfo)
                             val remote = if (command.type in setOf("gamepad_input", "input") && old.remote != null)
-                                old.remote.copy(gamepadInfo = state.gamepadInfo,
+                                old.remote.copy(gamepadInfo = gamepadInfo,
                                     gamepadPort = state.gamepadPort,
                                     inputGranted = state.inputGranted, controller = state.controller)
-                            else state.copy(receiverId = trusted.fingerprint)
+                            else state.copy(receiverId = trusted.fingerprint, gamepadInfo = gamepadInfo)
                             if (remote == old.remote) old else old.copy(remote = remote)
                         }
                         if (command.type == "start" && command.startRequestId.isNotEmpty()) {

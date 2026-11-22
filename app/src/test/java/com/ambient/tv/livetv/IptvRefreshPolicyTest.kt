@@ -4,6 +4,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class IptvRefreshPolicyTest {
+    @Test fun guideIdentityIgnoresCosmeticNamesButIncludesEveryProviderInput() {
+        val source = com.ambient.tv.data.iptv.IptvSource(id = "provider", name = "One", playlistUrl = "https://example/list", epgUrl = "https://example/guide")
+        assertTrue(sameIptvGuideSource(source, source.copy(name = "Renamed")))
+        listOf(source.copy(id = "another"), source.copy(playlistUrl = "https://other/list"),
+            source.copy(epgUrl = "https://other/guide"), source.copy(userAgent = "another"), source.copy(enabled = false))
+            .forEach { assertFalse(sameIptvGuideSource(source, it)) }
+    }
+
     @Test fun ordinaryReadsAllowTheDiskTtlButManualRefreshBypassesIt() {
         val policy = IptvRefreshPolicy()
         assertFalse(policy.downloadGuide(force = false))

@@ -54,7 +54,7 @@ enum class NetplayFailure { NETWORK, OTHER_GAME, OTHER_CORE, CLOSED, STATE, REJE
  * Two-player netplay between two Ambient TV devices in the same network, as lockstep: both run the
  * same core build from the host's state, every frame with both players' buttons, each device's own
  * input [DELAY_FRAMES] frames ahead so the network round trip stays hidden. The host is player 1,
- * the guest player 2. Buttons and both analog sticks are shared.
+ * the guest player 2. Buttons, both analog sticks and trigger pressures are shared.
  *
  * Found by NSD (mDNS) in the local network; only hosts of the same game file and core build appear.
  */
@@ -102,6 +102,10 @@ class GameNetplay(
     /** Hosts [game]: announces it and waits for one player. */
     fun host(view: GLRetroView, identity: NetplayIdentity) {
         stop()
+        if (!GameSerializationPolicy(LibretroDroid.getSerializationQuirks()).frameExact) {
+            state = NetplayState.Failed(NetplayFailure.STATE)
+            return
+        }
         this.view = view
         state = NetplayState.Hosting(deviceName)
         job = scope.launch(Dispatchers.IO) {
@@ -205,6 +209,10 @@ class GameNetplay(
     /** Joins [peer] as player 2; the game continues from the host's state. */
     fun join(view: GLRetroView, peer: NetplayPeer, identity: NetplayIdentity) {
         stop()
+        if (!GameSerializationPolicy(LibretroDroid.getSerializationQuirks()).frameExact) {
+            state = NetplayState.Failed(NetplayFailure.STATE)
+            return
+        }
         this.view = view
         state = NetplayState.Joining
         job = scope.launch(Dispatchers.IO) {
@@ -403,7 +411,7 @@ class GameNetplay(
         const val SERVICE_TYPE = "_ambienttv-np._tcp."
         const val DELAY_FRAMES = 3
         private const val MAGIC = 0x41544e50 // "ATNP"
-        private const val VERSION = 4
+        private const val VERSION = 5
         private const val PACKET_INPUT = 1
         private const val PACKET_BYE = 2
         private const val MAX_STATE = 64 * 1024 * 1024
@@ -462,7 +470,7 @@ class GameNetplay(
                 ))
                 digest.update(bytes)
             }
-            add("ambient-netplay-v4")
+            add("ambient-netplay-v5")
             add(coreStamp)
             add(if (vulkan) "vulkan" else "gles")
             options.toSortedMap().forEach { (key, value) -> add(key); add(value) }
@@ -477,30 +485,45 @@ class GameNetplay(
 
 data class NetplayIdentity(val rom: String, val core: String, val title: String)
 
-/** One frame of one player: buttons and both sticks (each axis -0x7fff…0x7fff, as RetroPadInput reports). */
-data class NetplayInput(val buttons: Int, val leftX: Int, val leftY: Int, val rightX: Int, val rightY: Int) {
+/** One frame: buttons, signed stick axes and unsigned L2/R2 pressure (0…0x7fff). */
+data class NetplayInput(
+    val buttons: Int, val leftX: Int, val leftY: Int, val rightX: Int, val rightY: Int,
+    val leftTrigger: Int = if (buttons and (1 shl 12) != 0) 0x7fff else 0,
+    val rightTrigger: Int = if (buttons and (1 shl 13) != 0) 0x7fff else 0,
+) {
     fun write(out: DataOutputStream) {
         out.writeInt(buttons)
         out.writeShort(leftX)
         out.writeShort(leftY)
         out.writeShort(rightX)
         out.writeShort(rightY)
+        out.writeShort(leftTrigger.coerceIn(0, MAX))
+        out.writeShort(rightTrigger.coerceIn(0, MAX))
     }
 
     /** Hands this frame to the core as player [port]. */
     fun apply(port: Int) {
-        LibretroDroid.setInputPortState(port, buttons)
-        LibretroDroid.setInputPortAnalog(port, axis(leftX), axis(leftY), axis(rightX), axis(rightY))
+        LibretroDroid.setInputPortSnapshot(port, buttons, axis(leftX), axis(leftY), axis(rightX), axis(rightY),
+            pressure(leftTrigger), pressure(rightTrigger))
     }
 
     companion object {
         val NONE = NetplayInput(0, 0, 0, 0, 0)
         private const val MAX = 0x7fff
 
-        fun read(input: DataInputStream) = NetplayInput(
-            input.readInt(), input.readShort().toInt(), input.readShort().toInt(), input.readShort().toInt(), input.readShort().toInt(),
-        )
+        fun read(input: DataInputStream): NetplayInput {
+            val buttons = input.readInt()
+            val leftX = input.readShort().toInt()
+            val leftY = input.readShort().toInt()
+            val rightX = input.readShort().toInt()
+            val rightY = input.readShort().toInt()
+            val leftTrigger = input.readUnsignedShort()
+            val rightTrigger = input.readUnsignedShort()
+            if (buttons !in 0..0xffff || leftTrigger > MAX || rightTrigger > MAX) throw IOException("Invalid netplay input")
+            return NetplayInput(buttons, leftX, leftY, rightX, rightY, leftTrigger, rightTrigger)
+        }
 
         fun axis(value: Int): Float = (value.coerceIn(-MAX, MAX) / MAX.toFloat())
+        private fun pressure(value: Int): Float = value.coerceIn(0, MAX) / MAX.toFloat()
     }
 }

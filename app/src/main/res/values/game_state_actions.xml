@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="game_state_actions">Load or manage</string>
+    <string name="game_state_load">Load state</string>
+    <string name="game_state_rename">Rename state</string>
+    <string name="game_state_name">Name</string>
+    <string name="game_state_delete_title">Delete “%1$s”?</string>
+    <string name="game_state_working">Updating save state…</string>
+</resources>

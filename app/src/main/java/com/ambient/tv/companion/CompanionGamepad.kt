@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import com.ambient.tv.ui.gamepad.retro.RetroPadInput
 import com.ambient.tv.ui.gamepad.retro.RetroPorts
+import com.ambient.tv.games.GameInputDescriptions
 import kotlinx.serialization.Serializable
 import java.util.UUID
 
@@ -16,7 +17,15 @@ data class CompanionGamepadInfo(
     val title: String = "",
     val pointerInput: Boolean = false,
     val ready: Boolean = false,
+    /** Optional per-port core action labels; older peers ignore this field. */
+    val inputDescriptions: Map<String, String>? = null,
 )
+
+/** Small realtime ACKs omit descriptions. They may only inherit metadata from this same game. */
+internal fun companionGamepadInfoWithMetadata(previous: CompanionGamepadInfo?, incoming: CompanionGamepadInfo?): CompanionGamepadInfo? {
+    if (incoming == null || incoming.inputDescriptions != null || previous == null || previous.sessionId != incoming.sessionId) return incoming
+    return incoming.copy(inputDescriptions = previous.inputDescriptions)
+}
 
 /** Libretro base device IDs. Core-specific extensions retain their high-byte subtype. */
 internal fun companionCoreDeviceType(kind: String?): Int = when (kind) {
@@ -80,10 +89,15 @@ data class CompanionGamepadState(
     val rightY: Float = 0f,
     val pointer: CompanionPointerState? = null,
     val motion: CompanionMotionState? = null,
+    /** Null means an older peer: derive full pressure from its L2/R2 button bits. */
+    val leftTrigger: Float? = null,
+    val rightTrigger: Float? = null,
 ) {
     fun validate() {
         require(buttons in 0..0xffff)
         require(listOf(leftX, leftY, rightX, rightY).all { it.isFinite() && it in -1f..1f })
+        require(leftTrigger == null || leftTrigger.isFinite() && leftTrigger in 0f..1f)
+        require(rightTrigger == null || rightTrigger.isFinite() && rightTrigger in 0f..1f)
         pointer?.validate()
         motion?.validate()
     }
@@ -97,11 +111,14 @@ data class CompanionGamepadState(
 internal fun companionGamepadCriticalEdge(
     previous: CompanionGamepadState?, next: CompanionGamepadState,
 ): Boolean {
-    if (previous == null) return next.buttons != 0 || next.pointer?.contacts?.any { it.pressed } == true ||
-        next.pointer?.buttons != 0 || (next.motion?.mask ?: 0) != 0
+    if (previous == null) return next.buttons != 0 || (next.leftTrigger ?: 0f) > 0f ||
+        (next.rightTrigger ?: 0f) > 0f || next.pointer?.contacts?.any { it.pressed } == true ||
+        (next.pointer?.buttons ?: 0) != 0 || (next.motion?.mask ?: 0) != 0
     val a = previous.pointer
     val b = next.pointer
-    return previous.buttons != next.buttons || a?.kind != b?.kind ||
+    return previous.buttons != next.buttons ||
+        ((previous.leftTrigger ?: 0f) > 0f) != ((next.leftTrigger ?: 0f) > 0f) ||
+        ((previous.rightTrigger ?: 0f) > 0f) != ((next.rightTrigger ?: 0f) > 0f) || a?.kind != b?.kind ||
         a?.buttons != b?.buttons || a?.offscreen != b?.offscreen ||
         a?.contacts?.filter { it.pressed }?.map { it.index } !=
             b?.contacts?.filter { it.pressed }?.map { it.index } ||
@@ -116,7 +133,7 @@ internal fun companionGamepadCriticalEdge(
 object CompanionGamepadSession {
     private class Active(
         val input: RetroPadInput,
-        val info: CompanionGamepadInfo,
+        var info: CompanionGamepadInfo,
         val onMenu: () -> Unit,
         val onPointer: (Int, CompanionPointerState?) -> Unit,
         val onMotion: (Int, CompanionMotionState?) -> Unit,
@@ -134,12 +151,14 @@ object CompanionGamepadSession {
     private val previousPointer = mutableMapOf<Int, CompanionPointerState>()
     private val previousMotion = mutableMapOf<Int, CompanionMotionState>()
     private val buttonGates = mutableMapOf<String, CompanionButtonEdgeGate>()
+    private val triggerEdges = mutableMapOf<String, CompanionTriggerEdges>()
     private val lastState = mutableMapOf<String, CompanionGamepadState>()
     private val delayedRelease = mutableMapOf<String, Runnable>()
 
     private fun clearButtons(port: Int) {
         ports.filterValues { it == port }.keys.forEach { session ->
             buttonGates.remove(session)?.clear()
+            triggerEdges.remove(session)
             lastState.remove(session)
             delayedRelease.remove(session)?.let(handler::removeCallbacks)
         }
@@ -156,8 +175,11 @@ object CompanionGamepadSession {
                 val current = lastState[session]
                 if (current != null) {
                     val mask = gate.settle(android.os.SystemClock.uptimeMillis())
+                    val triggers = triggerEdges.getOrPut(session) { CompanionTriggerEdges() }
                     game.input.remoteState(port, mask, current.leftX, current.leftY,
-                        current.rightX, current.rightY)
+                        current.rightX, current.rightY,
+                        triggers.pressure(0, current.buttons, mask, current.leftTrigger),
+                        triggers.pressure(1, current.buttons, mask, current.rightTrigger))
                     scheduleButtonRelease(session, game, port)
                 }
             }
@@ -166,9 +188,9 @@ object CompanionGamepadSession {
         handler.postDelayed(task, delay)
     }
 
-    private fun releaseInputs(game: Active, port: Int) {
+    private fun releaseInputs(game: Active, port: Int, suppressHeld: Boolean = false) {
         clearButtons(port)
-        game.input.clearRemotePort(port)
+        game.input.clearRemotePort(port, suppressHeld = suppressHeld)
         game.onPointer(port, null)
         game.onMotion(port, null)
         previousPointer.remove(port)
@@ -186,6 +208,7 @@ object CompanionGamepadSession {
     private fun resetDeadman(session: String, packet: CompanionGamepadState) {
         if (packet.buttons == 0 && packet.leftX == 0f && packet.leftY == 0f &&
             packet.rightX == 0f && packet.rightY == 0f &&
+            (packet.leftTrigger ?: 0f) == 0f && (packet.rightTrigger ?: 0f) == 0f &&
             packet.pointer?.let { it.contacts.any { point -> point.pressed } || it.buttons != 0 } != true &&
             packet.motion == null) {
             cancelDeadman(session)
@@ -234,11 +257,24 @@ object CompanionGamepadSession {
         game.ready = ready
         if (!ready) {
             deadman.keys.toList().forEach(::cancelDeadman)
-            ports.values.forEach { releaseInputs(game, it) }
+            ports.values.forEach { releaseInputs(game, it, suppressHeld = true) }
         }
     }
 
-    fun info(): CompanionGamepadInfo? = active?.let { it.info.copy(ready = it.ready) }
+    fun setInputDescriptions(input: RetroPadInput, descriptions: Map<String, String>) {
+        val game = active?.takeIf { it.input === input } ?: return
+        val bounded = GameInputDescriptions.normalized(descriptions)
+        if (game.info.inputDescriptions != bounded) game.info = game.info.copy(inputDescriptions = bounded)
+    }
+
+    fun info(session: String? = null, includeDescriptions: Boolean = true): CompanionGamepadInfo? = active?.let { game ->
+        val descriptions = when {
+            !includeDescriptions -> null
+            session == null -> game.info.inputDescriptions
+            else -> game.input.remoteInputDescriptions(ports[session] ?: -1, game.info.inputDescriptions.orEmpty())
+        }
+        game.info.copy(ready = game.ready, inputDescriptions = descriptions)
+    }
     fun port(session: String): Int = ports[session] ?: -1
 
     /**
@@ -294,7 +330,7 @@ object CompanionGamepadSession {
         }
         val port = ports[session] ?: return false
         if (!game.ready) {
-            releaseInputs(game, port)
+            releaseInputs(game, port, suppressHeld = true)
             return false
         }
         val gate = buttonGates.getOrPut(session) { CompanionButtonEdgeGate() }
@@ -307,7 +343,10 @@ object CompanionGamepadSession {
             releaseInputs(game, port)
             return false
         }
-        game.input.remoteState(port, visibleButtons, packet.leftX, packet.leftY, packet.rightX, packet.rightY)
+        val triggers = triggerEdges.getOrPut(session) { CompanionTriggerEdges() }
+        game.input.remoteState(port, visibleButtons, packet.leftX, packet.leftY, packet.rightX, packet.rightY,
+            triggers.pressure(0, packet.buttons, visibleButtons, packet.leftTrigger),
+            triggers.pressure(1, packet.buttons, visibleButtons, packet.rightTrigger))
         scheduleButtonRelease(session, game, port)
         // Relative mouse movement is an event, not an absolute position: identical consecutive
         // deltas are still distinct movement and must not disappear in deduplication.

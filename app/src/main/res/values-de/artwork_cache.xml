@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="notice_artwork_cache_retry">Bilder werden neu geladen. Bitte später erneut aktualisieren, damit sie auch nach einem Neustart aktuell bleiben.</string>
+</resources>

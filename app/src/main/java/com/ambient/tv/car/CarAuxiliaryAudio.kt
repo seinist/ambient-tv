@@ -203,6 +203,7 @@ internal class CarAuxiliaryAudio @Inject constructor(
 
     suspend fun children(parent: String, offset: Int, limit: Int): CarAudioPage? {
         if (!handles(parent)) return null
+        if (parent == CarAudioIds.FILE_FAVORITES || parent == CarAudioIds.FILE_RECENT) fileStore.awaitReady()
         fun slice(all: List<CarAudioEntry>) =
             CarAudioPage(all.drop(offset).take(limit), all.size > offset + limit)
         return when (parent) {
@@ -381,6 +382,7 @@ internal class CarAuxiliaryAudio @Inject constructor(
 
     suspend fun searchStoredAudio(query: String, limit: Int = 25): List<CarAudioEntry> {
         if (!preferences.filesEnabled) return emptyList()
+        fileStore.awaitReady()
         return (fileStore.favorites() + fileStore.history().map { it.entry })
             .filter { carAudioFileEligible(it) && it.name.contains(query, ignoreCase = true) }
             .distinctBy { it.id }.take(limit).map(::fileEntry)

@@ -16,30 +16,44 @@ data class AudioTags(
     val isEmpty: Boolean get() = title == null && artist == null && album == null && track == null
 }
 
+/** Display metadata must not retain an arbitrarily large ID3/Vorbis text frame. */
+internal fun AudioTags.displayBounded() = copy(
+    title = title?.take(512), artist = artist?.take(512), album = album?.take(512), albumArtist = albumArtist?.take(512),
+)
+
 /**
  * Reads tags from the start of MP3 (ID3v2.2–2.4), FLAC (Vorbis comment) and MP4/M4A (iTunes
  * `ilst`, also when `moov` sits at the end). Only the needed bytes are read, so it works over SMB,
  * NFS, WebDAV and SFTP. Ogg, WMA and APE are not read (the file name is shown instead).
  */
 object AudioTagReader {
+    /** Increment when parsing changes; old successful and negative cache entries then miss. */
+    internal const val CACHE_VERSION = 1
     private const val MAX_HEADER = 512 * 1024
     private const val MAX_MOOV = 4 * 1024 * 1024
 
-    fun read(media: SeekableMedia, name: String): AudioTags? = runCatching {
+    private val supportedFormats = setOf("mp3", "aac", "flac", "m4a", "mp4", "alac", "m4b")
+    internal fun supports(name: String): Boolean = FilePaths.extension(name) in supportedFormats
+
+    fun read(media: SeekableMedia, name: String): AudioTags? = runCatching { readForCache(media, name) }.getOrNull()
+
+    /** Unlike the playback convenience method, IO failures must not become cached negatives. */
+    internal fun readForCache(media: SeekableMedia, name: String): AudioTags? =
         when (FilePaths.extension(name)) {
             "mp3", "aac" -> readId3(media)
             "flac" -> readFlac(media)
             "m4a", "mp4", "alac", "m4b" -> readMp4(media)
             else -> null
-        }
-    }.getOrNull()?.takeUnless { it.isEmpty }
+        }?.takeUnless { it.isEmpty }?.displayBounded()
 
     private fun bytes(media: SeekableMedia, position: Long, count: Int): ByteArray {
-        val out = ByteArray(count); var done = 0
-        val part = ByteArray(minOf(count, 256 * 1024))
-        while (done < count) {
-            val n = media.read(position + done, part, minOf(part.size, count - done))
-            if (n <= 0) return out.copyOf(done)
+        val available = (media.size - position).coerceAtLeast(0).coerceAtMost(count.toLong()).toInt()
+        val out = ByteArray(available); var done = 0
+        val part = ByteArray(minOf(available, 256 * 1024))
+        while (done < available) {
+            if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException()
+            val n = media.read(position + done, part, minOf(part.size, available - done))
+            if (n <= 0) throw java.io.EOFException("Audio metadata read truncated")
             System.arraycopy(part, 0, out, done, n); done += n
         }
         return out
@@ -210,16 +224,18 @@ object AudioTagReader {
 object MusicFolder {
     private val coverNames = listOf("cover", "folder", "front", "albumart", "album")
 
-    fun cover(entries: List<FileEntry>): FileEntry? = entries.filter { it.image }
-        .sortedBy { entry -> coverNames.indexOfFirst { entry.name.lowercase().startsWith(it) }.let { if (it < 0) Int.MAX_VALUE else it } }
-        .firstOrNull { entry -> coverNames.any { entry.name.lowercase().startsWith(it) } }
+    fun cover(entries: List<FileEntry>): FileEntry? = entries.asSequence().filter { it.image }
+        .map { entry -> entry to coverNames.indexOfFirst { entry.name.lowercase(java.util.Locale.ROOT).startsWith(it) } }
+        .filter { it.second >= 0 }.minByOrNull { it.second }?.first
 
     fun sort(entries: List<FileEntry>, tags: Map<String, AudioTags>): List<FileEntry> {
         val audio = entries.filter { it.audio && !it.directory }
-        val numbered = audio.count { tags[it.id]?.track != null }
+        // FileEntry.id encodes the path. Resolve it once per track, not for every comparator call.
+        val tagged = audio.map { it to tags[it.id] }
+        val numbered = tagged.count { it.second?.track != null }
         if (audio.size < 2 || numbered * 2 < audio.size) return entries
-        val sortedAudio = audio.sortedWith(compareBy<FileEntry>({ tags[it.id]?.disc ?: 1 }, { tags[it.id]?.track ?: Int.MAX_VALUE })
-            .thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+        val sortedAudio = tagged.sortedWith(compareBy<Pair<FileEntry, AudioTags?>>({ it.second?.disc ?: 1 }, { it.second?.track ?: Int.MAX_VALUE })
+            .thenBy(String.CASE_INSENSITIVE_ORDER) { it.first.name }).map { it.first }
         val iterator = sortedAudio.iterator()
         // Folders and other files keep their places; audio slots are refilled in track order.
         return entries.map { if (it.audio && !it.directory) iterator.next() else it }

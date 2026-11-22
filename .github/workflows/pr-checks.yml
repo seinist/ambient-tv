@@ -110,6 +110,10 @@ jobs:
         # The games frontend (pinned Argosy fork plus scripts/patches/libretrodroid).
         run: ./scripts/fetch_libretrodroid.sh
 
+      - name: Native input contracts
+        # Real patched input code; fast host tests complement the existing Android ABI build.
+        run: python3 scripts/test_libretro_input.py --sanitize
+
       - name: Compile and run unit tests
         # One ABI keeps the Vulkan probe and LibretroDroid native builds short; unit tests do not depend on them.
         # :libretrodroid:assembleDebug builds its native library, so the core options patch compiles with the NDK.

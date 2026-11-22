@@ -53,4 +53,22 @@ class AudioTagsTest {
         assertEquals("Folder.jpg", MusicFolder.cover(entries)?.name)
         assertSame(entries, MusicFolder.sort(entries, mapOf(entries[1].id to AudioTags(track = 1))))
     }
+
+    @Test fun cacheReaderPreservesIoFailureAndTruncationInsteadOfReturningATaglessHit() {
+        fun media(failure: Boolean) = object : SeekableMedia {
+            override val size = 100L
+            override fun read(position: Long, buffer: ByteArray, count: Int): Int {
+                if (failure) throw java.io.IOException("Connection lost")
+                return -1
+            }
+            override fun close() = Unit
+        }
+        assertNull(AudioTagReader.read(media(true), "track.mp3"))
+        for (failed in listOf(true, false)) {
+            try { AudioTagReader.readForCache(media(failed), "track.mp3"); fail("IO failure must escape the cache reader") }
+            catch (_: java.io.IOException) { /* expected */ }
+        }
+        assertFalse(AudioTagReader.supports("track.ogg"))
+        assertTrue(AudioTagReader.supports("TRACK.FLAC"))
+    }
 }

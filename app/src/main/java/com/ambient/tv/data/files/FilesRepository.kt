@@ -6,13 +6,17 @@ import com.ambient.tv.util.suspendResult
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 
 @Singleton
-class FilesRepository @Inject constructor(val store: FileStore, private val access: FileAccess, private val server: MediaFileServer) : MediaRepository {
-    private data class Cached(val item: MediaItem, val source: FileSource)
+class FilesRepository @Inject constructor(
+    val store: FileStore, private val access: FileAccess, private val server: MediaFileServer,
+    private val audioTagCache: AudioTagCache,
+) : MediaRepository {
+    private data class Cached(val item: MediaItem, val source: FileSource, val scope: String)
     private val cache = LinkedHashMap<String, Cached>()
-    private data class PlaybackBinding(val source: FileSource, val entryId: String)
+    private data class PlaybackBinding(val source: FileSource, val entryId: String, val scope: String)
     // Keep active URL identities across ordinary UI cache refreshes. A delayed old-session
     // report must never borrow a newer source configuration for the same file key.
     private val playbackBindings = LinkedHashMap<String, PlaybackBinding>()
@@ -21,7 +25,9 @@ class FilesRepository @Inject constructor(val store: FileStore, private val acce
     override fun cachedLibrarySections(): List<LibrarySection>? = null
     override fun cachedOnDeck(): List<MediaItem>? = null
     override fun cachedSectionItems(sectionKey: String): List<MediaItem>? = null
-    override fun cachedMediaItem(ratingKey: String): MediaItem? = synchronized(cache) { cache[ratingKey] }?.takeIf { saved -> store.sources().any { it == saved.source } }?.item
+    override fun cachedMediaItem(ratingKey: String): MediaItem? = synchronized(cache) { cache[ratingKey] }?.takeIf { saved ->
+        store.sources().any { it == saved.source } && store.playbackScope(saved.source) == saved.scope
+    }?.item
     override fun invalidateCaches() { synchronized(cache) { cache.clear() } }
     override fun invalidateSectionCache(sectionKey: String) = Unit
     override suspend fun getIdentity(): Result<PlexServerIdentity> = Result.failure(UnsupportedOperationException())
@@ -31,17 +37,29 @@ class FilesRepository @Inject constructor(val store: FileStore, private val acce
     override suspend fun getMetadata(ratingKey: String): Result<MediaItem?> = suspendResult {
         val (sourceId, path) = FileKeys.parse(ratingKey)
         val source = store.sources().firstOrNull { it.id == sourceId } ?: throw java.io.FileNotFoundException("Source removed")
+        val scope = store.playbackScope(source) ?: throw java.io.FileNotFoundException("Source removed")
         val entry = access.stat(source, path)
         require(entry.playable)
         // Network listing happens before the source lock; a failure only means no sidecar tracks.
         val sidecars = if (entry.audio) emptyList() else findSidecarSubtitles(source, path, entry.name)
         // Music: tags for title/artist/album and the folder cover for the player and mini player.
-        val tags = if (entry.audio) withContext(Dispatchers.IO) { runCatching { access.open(source, path).use { AudioTagReader.read(it, entry.name) } }.getOrNull() } else null
+        val tags = if (entry.audio) readAudioTag(audioTagCache, source, entry,
+            valid = { store.sources().any { it == source } },
+            read = {
+                if (!AudioTagReader.supports(entry.name)) null
+                else audioTagCache.withReadPermit {
+                    runInterruptible(Dispatchers.IO) {
+                        access.open(source, path).use { AudioTagReader.readForCache(it, entry.name) }
+                    }
+                }
+            }) else null
         val cover = if (entry.audio) runCatching {
             MusicFolder.cover(access.list(source, parentFolder(source, path) { access.root(source) }, limit = 500, accept = { it.image }).entries)
         }.getOrNull() else null
+        store.awaitReady()
         withContext(Dispatchers.IO) { store.withCurrentSource(source) {
-            val old = store.history().firstOrNull { it.entry.id == ratingKey }
+            check(store.playbackScope(source) == scope) { "Source configuration changed" }
+            val old = store.historyFor(ratingKey)
             val offset = if (old?.completed == true) 0 else old?.positionMs ?: 0
             val url = server.register(source.id, entry.mime.ifBlank { FilePaths.mime(entry.name) }) { access.open(source, path) }
             val coverUrl = cover?.let { c -> server.register(source.id, c.mime.ifBlank { FilePaths.mime(c.name) }) { access.open(source, c.path) } }
@@ -61,9 +79,9 @@ class FilesRepository @Inject constructor(val store: FileStore, private val acce
                 rating = null, studio = null, viewCount = if (old?.completed == true) 1 else 0,
                 mediaVersions = listOf(MediaVersion(url, null, null, null, FilePaths.extension(entry.name), tracks = subtitleTracks, sourceRatingKey = ratingKey, fileName = entry.name)))
             synchronized(cache) {
-                cache[ratingKey] = Cached(item, source)
+                cache[ratingKey] = Cached(item, source, scope)
                 while (cache.size > 24) cache.remove(cache.keys.first())
-                playbackBindings[url] = PlaybackBinding(source, ratingKey)
+                playbackBindings[url] = PlaybackBinding(source, ratingKey, scope)
                 while (playbackBindings.size > 32) playbackBindings.remove(playbackBindings.keys.first())
             }
             store.record(entry, position = offset, completed = false)
@@ -103,26 +121,40 @@ class FilesRepository @Inject constructor(val store: FileStore, private val acce
     override suspend fun search(sectionKeys: List<String>, query: String) = Result.success(emptyList<MediaItem>())
     override suspend fun getItemsByActor(actorId: String) = Result.success(emptyList<MediaItem>())
     override suspend fun getItemsByCollection(collectionId: String) = Result.success(emptyList<MediaItem>())
-    suspend fun updateProgress(id: String, position: Long, duration: Long, ended: Boolean = false, streamUrl: String? = null): Result<Unit> = suspendResult {
+    suspend fun updateProgress(id: String, position: Long, duration: Long, ended: Boolean = false,
+                               streamUrl: String? = null, flush: Boolean = false): Result<Unit> = suspendResult {
         withContext(Dispatchers.IO) {
-            val source = synchronized(cache) {
-                if (streamUrl == null) cache[id]?.source
-                else playbackBindings[streamUrl]?.takeIf { it.entryId == id }?.source
+            store.awaitReady()
+            val binding = synchronized(cache) {
+                if (streamUrl == null) cache[id]?.let { PlaybackBinding(it.source, id, it.scope) }
+                else playbackBindings[streamUrl]?.takeIf { it.entryId == id }
             } ?: return@withContext
-            val old = store.history().firstOrNull { it.entry.id == id } ?: return@withContext
+            val old = store.historyFor(id) ?: return@withContext
             val finished = ended || (duration > 0 && position >= duration * .94)
-            store.record(old.entry, position, duration, if (finished) true else null, expectedSource = source)
+            store.record(old.entry, position, duration, if (finished) true else null,
+                expectedSource = binding.source, expectedScope = binding.scope)
+            if (flush || ended) flushProgress()
+            Unit
         }
     }
-    override suspend fun reportProgress(ratingKey: String, positionMs: Long, state: String) = updateProgress(ratingKey, positionMs, 0)
-    override suspend fun markWatched(ratingKey: String): Result<Unit> = suspendResult { withContext(Dispatchers.IO) { store.clearProgress(ratingKey) } }
+    override suspend fun reportProgress(ratingKey: String, positionMs: Long, state: String) =
+        updateProgress(ratingKey, positionMs, 0, flush = state != "playing")
+    override suspend fun markWatched(ratingKey: String): Result<Unit> = suspendResult {
+        store.awaitReady(); store.clearProgress(ratingKey); flushProgress()
+    }
     override suspend fun markUnwatched(ratingKey: String): Result<Unit> = suspendResult {
         withContext(Dispatchers.IO) {
-            val item = store.history().firstOrNull { it.entry.id == ratingKey }
+            store.awaitReady()
+            val item = store.historyFor(ratingKey)
             if (item != null) store.record(item.entry, 0, completed = false)
+            flushProgress()
+            Unit
         }
     }
     override suspend fun removeFromContinueWatching(ratingKey: String) = markWatched(ratingKey)
+    private suspend fun flushProgress() {
+        if (!store.flush()) throw java.io.IOException("Local file progress could not be committed")
+    }
     override suspend fun getAudioCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioCodec: String, audioStreamId: Long?, audioChannels: Int) = Result.failure<String>(UnsupportedOperationException("Local files have no server transcoder"))
     override suspend fun getVideoCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioChannels: Int) = Result.failure<String>(UnsupportedOperationException("Local files have no server transcoder"))
 

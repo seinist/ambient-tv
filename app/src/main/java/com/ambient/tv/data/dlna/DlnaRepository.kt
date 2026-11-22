@@ -44,6 +44,7 @@ class DlnaRepository @Inject constructor(
             require(start >= 0)
             require(count in 1..PAGE_SIZE)
             val server = store.server(serverId) ?: error("DLNA server was removed")
+            val scope = requireNotNull(store.playbackScope(server))
             wake.ensureAwake(server)
             val page = browseDlnaPageWithFallback(count) { requestedCount ->
                 currentCoroutineContext().ensureActive()
@@ -62,8 +63,11 @@ class DlnaRepository @Inject constructor(
                 currentCoroutineContext().ensureActive()
                 parseDlnaBrowseResponse(result, server, serverId, memoizedDlnaUrlGate(preferences))
             }
-            synchronized(cache) {
-                page.nodes.forEach { node -> cache[node.key] = node.toMediaItem(store.progressFor(node.key)) }
+            store.awaitReady()
+            store.withPlaybackScope(server, scope) {
+                synchronized(cache) {
+                    page.nodes.forEach { node -> cache[node.key] = node.toMediaItem(store.progressFor(node.key)).copy(localProgressScope = scope) }
+                }
             }
             page
         }.onFailure { if (it is CancellationException) throw it }
@@ -72,7 +76,12 @@ class DlnaRepository @Inject constructor(
     override fun cachedLibrarySections(): List<LibrarySection>? = null
     override fun cachedOnDeck(): List<MediaItem>? = null
     override fun cachedSectionItems(sectionKey: String): List<MediaItem>? = null
-    override fun cachedMediaItem(ratingKey: String): MediaItem? = synchronized(cache) { cache[ratingKey] }
+    override fun cachedMediaItem(ratingKey: String): MediaItem? {
+        val item = synchronized(cache) { cache[ratingKey] } ?: return null
+        val sourceId = runCatching { DlnaKeys.parse(ratingKey).first }.getOrNull() ?: return null
+        val server = store.server(sourceId) ?: return null
+        return item.takeIf { it.localProgressScope != null && it.localProgressScope == store.playbackScope(server) }
+    }
     override fun invalidateCaches() = synchronized(cache) { cache.clear() }
     override fun invalidateSectionCache(sectionKey: String) = Unit
     override suspend fun getIdentity(): Result<PlexServerIdentity> = Result.failure(UnsupportedOperationException("DLNA has no Plex identity"))
@@ -83,6 +92,7 @@ class DlnaRepository @Inject constructor(
         runCatching {
             val (serverId, objectId) = DlnaKeys.parse(ratingKey)
             val server = store.server(serverId) ?: error("DLNA server was removed")
+            val scope = requireNotNull(store.playbackScope(server))
             wake.ensureAwake(server)
             val xml = soap(
                 server,
@@ -96,12 +106,14 @@ class DlnaRepository @Inject constructor(
                     "SortCriteria" to "",
                 ),
             )
-            parseDlnaBrowseResponse(xml, server, serverId, memoizedDlnaUrlGate(preferences))
-                .nodes
-                .firstOrNull()
-                ?.toMediaItem(store.progressFor(ratingKey))
-                ?.also { synchronized(cache) { cache[ratingKey] = it } }
-                .also { if (it == null) synchronized(cache) { cache.remove(ratingKey) } }
+            store.awaitReady()
+            val node = parseDlnaBrowseResponse(xml, server, serverId, memoizedDlnaUrlGate(preferences)).nodes.firstOrNull()
+            store.withPlaybackScope(server, scope) {
+                node?.toMediaItem(store.progressFor(ratingKey))
+                    ?.copy(localProgressScope = scope)
+                    ?.also { synchronized(cache) { cache[ratingKey] = it } }
+                    .also { if (it == null) synchronized(cache) { cache.remove(ratingKey) } }
+            }
         }
     }
 
@@ -119,9 +131,10 @@ class DlnaRepository @Inject constructor(
     override suspend fun getRecommendation(sectionKey: String, recommendation: LibraryRecommendation, limit: Int) = Result.success(emptyList<MediaItem>())
 
     override suspend fun getChildren(ratingKey: String): Result<List<MediaItem>> = runCatching {
+        store.awaitReady()
         val (serverId, objectId) = DlnaKeys.parse(ratingKey)
         browse(serverId, objectId).getOrThrow().nodes.map { node ->
-            node.toMediaItem(store.progressFor(node.key)).also { item -> synchronized(cache) { cache[item.ratingKey] = item } }
+            cachedMediaItem(node.key) ?: error("DLNA server configuration changed")
         }
     }
 
@@ -134,12 +147,33 @@ class DlnaRepository @Inject constructor(
     override suspend fun getItemsByCollection(collectionId: String) = Result.success(emptyList<MediaItem>())
 
     override suspend fun reportProgress(ratingKey: String, positionMs: Long, state: String): Result<Unit> = runCatching {
+        store.awaitReady()
         store.recordProgress(ratingKey, positionMs)
+        if (state != "playing") flushProgress()
+        Unit
     }
 
-    override suspend fun markWatched(ratingKey: String): Result<Unit> = runCatching { store.recordProgress(ratingKey, 0, completed = true) }
-    override suspend fun markUnwatched(ratingKey: String): Result<Unit> = runCatching { store.recordProgress(ratingKey, 0, completed = false) }
-    override suspend fun removeFromContinueWatching(ratingKey: String): Result<Unit> = runCatching { store.removeProgress(ratingKey) }
+    /** Player reports must use the incarnation captured when resolving their metadata. */
+    suspend fun reportPlaybackProgress(ratingKey: String, positionMs: Long, scope: String?, completed: Boolean,
+                                       terminal: Boolean): Result<Unit> = runCatching {
+        store.awaitReady()
+        if (scope != null) store.recordProgress(ratingKey, positionMs, completed.takeIf { it }, expectedScope = scope)
+        if (terminal || completed) flushProgress()
+        Unit
+    }
+
+    override suspend fun markWatched(ratingKey: String): Result<Unit> = runCatching {
+        store.awaitReady(); store.recordProgress(ratingKey, 0, completed = true); flushProgress()
+    }
+    override suspend fun markUnwatched(ratingKey: String): Result<Unit> = runCatching {
+        store.awaitReady(); store.recordProgress(ratingKey, 0, completed = false); flushProgress()
+    }
+    override suspend fun removeFromContinueWatching(ratingKey: String): Result<Unit> = runCatching {
+        store.awaitReady(); store.removeProgress(ratingKey); flushProgress()
+    }
+    private suspend fun flushProgress() {
+        if (!store.flush()) throw java.io.IOException("Local DLNA progress could not be committed")
+    }
     override suspend fun getAudioCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioCodec: String, audioStreamId: Long?, audioChannels: Int) = Result.failure<String>(UnsupportedOperationException("DLNA has no common transcoder API"))
     override suspend fun getVideoCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioChannels: Int) = Result.failure<String>(UnsupportedOperationException("DLNA has no common transcoder API"))
 

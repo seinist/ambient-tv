@@ -24,7 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.async
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -65,6 +65,7 @@ class FilesViewModel @Inject constructor(
     private val textFiles: com.ambient.tv.data.files.TextFileImporter,
     private val gameBios: com.ambient.tv.games.GameBiosManager,
     private val gameData: com.ambient.tv.games.GameDataImporter,
+    private val audioTagCache: AudioTagCache,
 ) : ViewModel() {
     val feedback = OperationFeedbackReporter()
     private fun fileError(message: Int) = OperationFeedback("files:browse", "browse", message,
@@ -79,37 +80,50 @@ class FilesViewModel @Inject constructor(
     private val _state = MutableStateFlow(FilesUiState())
     val state = _state.asStateFlow()
     private var job: Job? = null
-    private var refreshGeneration = 0L
+    @Volatile private var refreshGeneration = 0L
+    private var musicJob: Job? = null
+    @Volatile private var musicGeneration = 0L
     private var editorJob: Job? = null
     private var sourceMutationBusy = false
     private var pendingReconnectRefresh = false
     private var limit = folders.lastOrNull()?.visibleLimit?.coerceAtLeast(300) ?: 300
     init {
         val initialRevision = store.revision.value
+        val initialSources = store.sources()
+        val initialGameFolders = preferences.gameLibraryFolders
         updateStored()
         if (folders.isEmpty()) restorePinnedSourceIfNeeded()
         if (folders.isEmpty()) showLanding()
         else _state.update { it.copy(folders = folders, loading = true, focusId = saved["focus"]) }
         viewModelScope.launch {
             var observedRevision = initialRevision
+            var observedSources = initialSources
+            var observedGameFolders = initialGameFolders
             store.revision.collect { revision ->
                 if (revision == observedRevision) return@collect
                 observedRevision = revision
+                val sources = store.sources()
+                val gameFolders = preferences.gameLibraryFolders
+                val configurationChanged = sources != observedSources || gameFolders != observedGameFolders
+                observedSources = sources
+                observedGameFolders = gameFolders
                 val sourceId = folders.lastOrNull()?.sourceId
                 val previous = _state.value.sources.firstOrNull { it.id == sourceId }
                 updateStored()
                 // Games-only assignments may change while Files is open. Remove hidden
                 // entries immediately, including stale entries from an existing snapshot.
-                _state.update { old -> old.copy(entries = old.entries.filter(store::visibleInFiles)) }
+                if (configurationChanged) _state.update { old -> old.copy(entries = old.entries.filter(store::visibleInFiles)) }
                 val current = _state.value.sources.firstOrNull { it.id == sourceId }
-                if (sourceId != null && (current == null || previous?.sameLocation(current) == false)) {
+                if (sourceId != null && (current == null || (previous != null && audioTagScope(previous) != audioTagScope(current)))) {
                     folders = emptyList(); saved["focus"] = null; rememberFolders(); refresh()
                 } else if (folders.isEmpty()) {
-                    if (pinnedSourceId != null) refresh() else showLanding(resetLoading = false)
-                } else if (sourceId != null) {
+                    if (pinnedSourceId != null && configurationChanged) refresh() else showLanding(resetLoading = false)
+                } else if (sourceId != null && configurationChanged) {
                     // Re-enabling an assignment in Files must make it appear again.
                     refresh(silent = true)
                 }
+                // Progress and favorite changes update local state above. They must not list
+                // the NAS again on every playback report or cancel an in-flight tag pass.
             }
         }
     }
@@ -131,6 +145,7 @@ class FilesViewModel @Inject constructor(
     ) } }
     private fun rememberFolders() { saved["folders"] = json.encodeToString(folders) }
     private fun showLanding(resetLoading: Boolean = true) {
+        cancelMusicLoading()
         val entries = when (tab) {
             "favorites" -> store.favorites()
             "recent" -> store.history().map { it.entry }
@@ -138,7 +153,7 @@ class FilesViewModel @Inject constructor(
             else -> emptyList()
         }
         _state.update { it.copy(entries = entries.filter(store::visibleInFiles), folders = emptyList(), loading = if (resetLoading) false else it.loading,
-            error = if (resetLoading) null else it.error, more = false) }
+            error = if (resetLoading) null else it.error, more = false, tags = emptyMap(), folderCover = null) }
     }
     fun scroll(key: String): Pair<Int, Int> = (saved.get<Int>("scroll-index:$key") ?: 0) to (saved.get<Int>("scroll-offset:$key") ?: 0)
     fun saveScroll(key: String, index: Int, offset: Int) { saved["scroll-index:$key"] = index; saved["scroll-offset:$key"] = offset }
@@ -167,6 +182,7 @@ class FilesViewModel @Inject constructor(
     private fun refresh(silent: Boolean) {
         val generation = ++refreshGeneration
         job?.cancel()
+        cancelMusicLoading()
         _state.update { it.copy(refreshing = false) }
         updateStored()
         if (folders.isEmpty() && !restorePinnedSourceIfNeeded()) {
@@ -188,15 +204,18 @@ class FilesViewModel @Inject constructor(
             val namespace = snapshots.namespace(owner, json.encodeToString(source))
             val cacheKey = "folder:${location.path}:$limit"
             if (!silent || _state.value.entries.isEmpty()) snapshots.read<com.ambient.tv.data.files.FileListing>(namespace, cacheKey)?.let { cached ->
-                if (store.sources().any { it.id == source.id && it.sameLocation(source) }) {
-                    _state.update { it.copy(entries = cached.entries.filter(store::visibleInFiles),
+                if (store.sources().any { it == source }) {
+                    val visible = cached.entries.filter(store::visibleInFiles)
+                    _state.update { it.copy(entries = visible,
                         loading = false, more = cached.more) }
+                    // An offline listing can display local tags without starting any NAS reads.
+                    loadMusicFolder(source, visible, readMissing = false)
                 }
             }
             try {
                 val result = access.list(source, location.path, limit) { it.playable || it.image || it.game || it.bios || it.core }
                 currentCoroutineContext().ensureActive()
-                if (store.sources().none { it.id == source.id && it.sameLocation(source) }) return@launch
+                if (store.sources().none { it == source }) return@launch
                 val visible = result.copy(entries = result.entries.filter(store::visibleInFiles))
                 snapshots.write(owner, namespace, cacheKey, visible)
                 val old = _state.value.entries
@@ -218,47 +237,48 @@ class FilesViewModel @Inject constructor(
             }
         }
     }
-    private var musicJob: Job? = null
-    /** Tags survive folder changes and refreshes: key = entry id + size + modification time. */
-    private val tagCache = object : java.util.LinkedHashMap<String, AudioTags>(256, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, AudioTags>?) = size > 5000
+    private fun cancelMusicLoading() {
+        musicGeneration++
+        musicJob?.cancel()
+        musicJob = null
     }
 
     /**
-     * Music folders: reads the tags of the audio files (four at a time) and the folder cover, then
-     * shows titles/artists and puts albums into track order — also the order playback follows.
+     * Cached tags first, followed by small batches from at most four missing-file readers.
+     * Titles update in place; track ordering is applied once when the complete pass is ready.
+     * Every refresh/navigation invalidates the owner, including an identical-looking listing.
      */
-    private fun loadMusicFolder(source: FileSource, entries: List<FileEntry>) {
-        musicJob?.cancel()
+    private fun loadMusicFolder(source: FileSource, entries: List<FileEntry>, readMissing: Boolean = true) {
+        cancelMusicLoading()
+        val generation = musicGeneration
         val audio = entries.filter { it.audio && !it.directory }.take(MAX_TAGGED_FILES)
         if (audio.isEmpty()) { _state.update { it.copy(tags = emptyMap(), folderCover = null) }; return }
-        val ids = entries.map { it.id }
+        val sourceScope = audioTagScope(source)
+        fun current(): Boolean = generation == musicGeneration &&
+            store.sources().any { it.id == source.id && (it == source || audioTagScope(it) == sourceScope) }
         musicJob = viewModelScope.launch {
-            MusicFolder.cover(entries)?.let { cover ->
+            // Registration is lazy: it does not open the cover or wake the source.
+            val cover = if (readMissing) MusicFolder.cover(entries) else null
+            if (readMissing && cover == null && current()) _state.update { it.copy(folderCover = null) }
+            cover?.let {
                 val url = withContext(Dispatchers.IO) {
                     runCatching { server.register(source.id, cover.mime.ifBlank { FilePaths.mime(cover.name) }) { access.open(source, cover.path) } }.getOrNull()
                 }
-                _state.update { if (it.entries.map(FileEntry::id) == ids) it.copy(folderCover = url) else it }
+                if (current()) _state.update { it.copy(folderCover = url) }
             }
-            val found = java.util.concurrent.ConcurrentHashMap<String, AudioTags>()
-            val gate = kotlinx.coroutines.sync.Semaphore(4)
-            kotlinx.coroutines.coroutineScope {
-                audio.map { entry ->
-                    async(Dispatchers.IO) {
-                        gate.acquire()
-                        try {
-                            val key = "${entry.id}:${entry.size}:${entry.modified}"
-                            val cached = synchronized(tagCache) { tagCache[key] }
-                            val tags = cached ?: runCatching { access.open(source, entry.path).use { AudioTagReader.read(it, entry.name) } }.getOrNull()
-                            if (tags != null) { found[entry.id] = tags; if (cached == null) synchronized(tagCache) { tagCache[key] = tags } }
-                        } finally { gate.release() }
+            loadAudioTags(audioTagCache, source, audio, readMissing, valid = ::current,
+                read = { entry ->
+                    if (!AudioTagReader.supports(entry.name)) null
+                    else audioTagCache.withReadPermit {
+                        runInterruptible(Dispatchers.IO) {
+                            access.open(source, entry.path).use { AudioTagReader.readForCache(it, entry.name) }
+                        }
                     }
-                }.forEach { it.await() }
-            }
-            _state.update { state ->
-                if (state.entries.map(FileEntry::id).toSet() != ids.toSet()) state
-                else state.copy(tags = found.toMap(), entries = MusicFolder.sort(state.entries, found))
-            }
+                },
+                publish = { batch ->
+                    if (current()) _state.update { state -> state.copy(tags = batch.tags,
+                        entries = if (batch.complete) MusicFolder.sort(state.entries, batch.tags) else state.entries) }
+                })
         }
     }
 
@@ -441,7 +461,18 @@ class FilesViewModel @Inject constructor(
         if (folders.isNotEmpty()) { folders = folders.dropLast(1) + folders.last().copy(visibleLimit = limit); rememberFolders() }
         refresh()
     }
-    fun favorite(entry: FileEntry) { viewModelScope.launch(Dispatchers.IO) { store.favorite(entry) } }
+    fun favorite(entry: FileEntry) {
+        viewModelScope.launch {
+            val result = com.ambient.tv.util.suspendResult {
+                withContext(Dispatchers.IO) {
+                    store.awaitReady()
+                    store.favorite(entry)
+                    if (!store.flush()) throw java.io.IOException("Local favorite could not be committed")
+                }
+            }
+            if (result.isFailure) _state.update { it.copy(error = fileError(R.string.notice_failed)) }
+        }
+    }
     fun remove(source: FileSource) {
         if (sourceMutationBusy) return
         sourceMutationBusy = true
@@ -452,6 +483,7 @@ class FilesViewModel @Inject constructor(
             val result = com.ambient.tv.util.suspendResult {
             withContext(Dispatchers.IO) {
                 server.revoke(source.id); store.removeSource(source.id)
+                audioTagCache.removeSource(source.id)
                 if (source.kind == "local" && store.sources().none { it.treeUri == source.treeUri }) runCatching {
                     context.contentResolver.releasePersistableUriPermission(Uri.parse(source.treeUri), Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
@@ -639,7 +671,7 @@ class FilesViewModel @Inject constructor(
             }
         }
     }
-    fun cancelLoading() { job?.cancel(); _state.update { it.copy(loading = false, refreshing = false, error = null, revision = it.revision + 1) } }
+    fun cancelLoading() { job?.cancel(); cancelMusicLoading(); _state.update { it.copy(loading = false, refreshing = false, error = null, revision = it.revision + 1) } }
     companion object {
         /** Larger folders are not album folders; their files keep their names. */
         private const val MAX_TAGGED_FILES = 300

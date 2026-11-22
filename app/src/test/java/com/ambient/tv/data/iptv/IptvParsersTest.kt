@@ -77,4 +77,45 @@ class IptvParsersTest {
         assertThrows(IllegalArgumentException::class.java) { IptvSource(id = "a", name = "P", playlistUrl = "file:///sdcard/x.m3u").validated() }
         assertThrows(IllegalArgumentException::class.java) { IptvSource(id = "a", name = "P", playlistUrl = "http://p/x", userAgent = "a\nb").validated() }
     }
+
+    @Test fun streamingGuideDoesNotNeedAnAggregateProgrammeList() {
+        val programme = "<programme channel=\"c\" start=\"19700101010000 +0000\" stop=\"19700101020000 +0000\"><title>Title</title></programme>"
+        var received = 0
+        val count = XmltvParser.stream(StringReader("\uFEFF\n<tv>" + programme.repeat(1000) + "</tv>"), 0, 10_000,
+            onProgramme = { received++; assertEquals("Title", it.title) })
+        assertEquals(1000, count)
+        assertEquals(1000, received)
+    }
+
+    @Test fun incompleteOrNonGuideDocumentsCannotBePublishedAsAnEmptyOrPartialGuide() {
+        val bad = listOf("", "<html>Provider unavailable</html>", "<tv>", "<tv><channel id=\"x\">", "<tv><programme></tv>",
+            "<tv><!-- unfinished", "<tv><![CDATA[unfinished", "<tv></tv><tv></tv>", "<tv></tv>garbage")
+        bad.forEach { xml ->
+            assertThrows(xml, java.io.IOException::class.java) {
+                XmltvParser.stream(StringReader(xml), 0, 10_000, onProgramme = {})
+            }
+        }
+        assertEquals(0, XmltvParser.stream(StringReader("<tv/>"), 0, 10_000, onProgramme = {}))
+    }
+
+    @Test fun streamingLimitFailsAtomicallyWhileTheConvenienceParserKeepsItsBoundedContract() {
+        val programme = "<programme channel=\"c\" start=\"19700101010000 +0000\" stop=\"19700101020000 +0000\"><title>Title</title></programme>"
+        val xml = "<tv>" + programme.repeat(3) + "</tv>"
+        assertThrows(java.io.IOException::class.java) {
+            XmltvParser.stream(StringReader(xml), 0, 10_000, maxProgrammes = 2, onProgramme = {})
+        }
+        assertEquals(2, XmltvParser.parse(StringReader(xml), 0, 10_000, maxProgrammes = 2).programmes.size)
+    }
+
+    @Test fun longTextIsBoundedAndCancellationCheckStopsTheStream() {
+        val xml = "<tv><programme channel=\"c\" start=\"19700101010000 +0000\" stop=\"19700101020000 +0000\"><title>" +
+            "x".repeat(20_000) + "</title></programme></tv>"
+        assertEquals(4000, XmltvParser.parse(StringReader(xml), 0, 10_000).programmes.single().title.length)
+        var checks = 0
+        assertThrows(kotlinx.coroutines.CancellationException::class.java) {
+            XmltvParser.stream(StringReader(xml), 0, 10_000, checkActive = {
+                if (++checks == 3) throw kotlinx.coroutines.CancellationException("Obsolete guide")
+            }, onProgramme = {})
+        }
+    }
 }

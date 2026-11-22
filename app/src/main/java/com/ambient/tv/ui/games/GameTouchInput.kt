@@ -4,15 +4,15 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.unit.IntSize
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
+import com.ambient.tv.ui.gamepad.retro.TouchControlStyle
 import kotlin.math.abs
 import kotlin.math.hypot
-
-private val FACE_BUTTONS = setOf(RetroPadButton.A, RetroPadButton.B, RetroPadButton.X, RetroPadButton.Y)
 
 /** One continuous face-button area lets a thumb roll between buttons without being lifted. */
 internal val GameTouchLayout.faceButtonsBounds: Rect?
     get() {
-        val faces = FACE_BUTTONS.map { buttons[it] ?: return null }
+        val faces = faces.mapNotNull { buttons[it] }
+        if (faces.isEmpty()) return null
         return Rect(
             faces.minOf { it.left }, faces.minOf { it.top },
             faces.maxOf { it.right }, faces.maxOf { it.bottom },
@@ -36,12 +36,21 @@ internal data class GameTouchInputState(
  * A face-button gesture can roll into an adjacent button (or their two-button sector). D-pad
  * and analog gestures stay with their original control, even if the thumb slips off its edge.
  */
-internal class GameTouchInput(private val layout: GameTouchLayout) {
+internal class GameTouchInput(private val layout: GameTouchLayout,
+    style: TouchControlStyle = TouchControlStyle(),
+) {
+    private val deadzone = style.normalized().stickDeadzonePercent / 100f
+    private val diagonalBoundary = when (style.diagonalSensitivity) {
+        0 -> .65f
+        2 -> .25f
+        else -> .41421356f
+    }
     private enum class Target { DPAD, LEFT_STICK, RIGHT_STICK, BUTTONS, IGNORED_STICK }
     private data class Contact(val target: Target, var position: Offset)
 
     private val contacts = linkedMapOf<Long, Contact>()
     private val faces = layout.faceButtonsBounds
+    private val faceButtons = layout.faces.toSet()
 
     var state: GameTouchInputState = GameTouchInputState()
         private set
@@ -98,14 +107,14 @@ internal class GameTouchInput(private val layout: GameTouchLayout) {
             contacts.values.forEach { contact ->
                 when (contact.target) {
                     Target.DPAD -> layout.dpad?.let { bounds ->
-                        addAll(dpadDirections(contact.position, bounds))
+                        addAll(dpadDirections(contact.position, bounds, diagonalBoundary))
                     }
                     Target.LEFT_STICK -> layout.leftStick?.let { bounds ->
-                        leftStick = stickAxes(contact.position, bounds)
+                        leftStick = stickAxes(contact.position, bounds, deadzone)
                         leftStickHeld = true
                     }
                     Target.RIGHT_STICK -> layout.rightStick?.let { bounds ->
-                        rightStick = stickAxes(contact.position, bounds)
+                        rightStick = stickAxes(contact.position, bounds, deadzone)
                         rightStickHeld = true
                     }
                     Target.BUTTONS -> addAll(buttonsAt(contact.position))
@@ -118,14 +127,39 @@ internal class GameTouchInput(private val layout: GameTouchLayout) {
 
     private fun buttonsAt(position: Offset): Set<RetroPadButton> {
         if (faces != null && faces.contains(position)) {
+            if (layout.faceShape != GameTouchFaceShape.DIAMOND) return rolledFaceButtons(position)
             return eightWayButtons(
                 position, faces, deadzone = .16f,
                 up = RetroPadButton.X, down = RetroPadButton.B,
                 left = RetroPadButton.Y, right = RetroPadButton.A,
-            )
+            ).intersect(faceButtons)
         }
         return layout.buttons.entries.firstOrNull { (_, bounds) -> bounds.contains(position) }
             ?.let { setOf(it.key) }.orEmpty()
+    }
+
+    /** Two-/three-/six-button pads keep rolling chords without exposing phantom ABXY inputs. */
+    private fun rolledFaceButtons(position: Offset): Set<RetroPadButton> {
+        var nearest: RetroPadButton? = null
+        var next: RetroPadButton? = null
+        var distance = Float.POSITIVE_INFINITY
+        var nextDistance = Float.POSITIVE_INFINITY
+        layout.faces.forEach { button ->
+            val bounds = layout.buttons[button] ?: return@forEach
+            val x = (position.x - bounds.center.x) / bounds.width
+            val y = (position.y - bounds.center.y) / bounds.height
+            val squared = x * x + y * y
+            if (squared < distance) {
+                next = nearest; nextDistance = distance
+                nearest = button; distance = squared
+            } else if (squared < nextDistance) {
+                next = button; nextDistance = squared
+            }
+        }
+        return buildSet {
+            nearest?.takeIf { distance <= .64f }?.let(::add)
+            next?.takeIf { nextDistance <= .64f && nextDistance <= distance + .15f }?.let(::add)
+        }
     }
 }
 
@@ -133,8 +167,8 @@ internal class GameTouchInput(private val layout: GameTouchLayout) {
 internal fun touchDpadDirections(position: Offset, size: IntSize): Set<RetroPadButton> =
     dpadDirections(position, Rect(0f, 0f, size.width.toFloat(), size.height.toFloat()))
 
-private fun dpadDirections(position: Offset, bounds: Rect): Set<RetroPadButton> = eightWayButtons(
-    position, bounds, deadzone = .22f,
+private fun dpadDirections(position: Offset, bounds: Rect, diagonalBoundary: Float = .41421356f): Set<RetroPadButton> = eightWayButtons(
+    position, bounds, deadzone = .22f, diagonalBoundary = diagonalBoundary,
     up = RetroPadButton.UP, down = RetroPadButton.DOWN,
     left = RetroPadButton.LEFT, right = RetroPadButton.RIGHT,
 )
@@ -147,13 +181,13 @@ private fun eightWayButtons(
     down: RetroPadButton,
     left: RetroPadButton,
     right: RetroPadButton,
+    diagonalBoundary: Float = .41421356f,
 ): Set<RetroPadButton> {
     if (bounds.width <= 0f || bounds.height <= 0f) return emptySet()
     val x = (position.x - bounds.center.x) / (bounds.width / 2f)
     val y = (position.y - bounds.center.y) / (bounds.height / 2f)
     if (hypot(x, y) <= deadzone) return emptySet()
     // tan(22.5 degrees): four cardinal and four diagonal sectors, each 45 degrees wide.
-    val diagonalBoundary = .41421356f
     return buildSet {
         if (abs(x) >= abs(y) * diagonalBoundary) add(if (x < 0f) left else right)
         if (abs(y) >= abs(x) * diagonalBoundary) add(if (y < 0f) up else down)
@@ -164,12 +198,11 @@ private fun eightWayButtons(
 internal fun touchStickAxes(position: Offset, size: IntSize): Offset =
     stickAxes(position, Rect(0f, 0f, size.width.toFloat(), size.height.toFloat()))
 
-private fun stickAxes(position: Offset, bounds: Rect): Offset {
+private fun stickAxes(position: Offset, bounds: Rect, deadzone: Float = .12f): Offset {
     if (bounds.width <= 0f || bounds.height <= 0f) return Offset.Zero
     val x = (position.x - bounds.center.x) / (bounds.width * .42f)
     val y = (position.y - bounds.center.y) / (bounds.height * .42f)
     val distance = hypot(x, y)
-    val deadzone = .12f
     if (distance <= deadzone) return Offset.Zero
     val strength = (distance.coerceAtMost(1f) - deadzone) / (1f - deadzone)
     return Offset(x / distance * strength, y / distance * strength)

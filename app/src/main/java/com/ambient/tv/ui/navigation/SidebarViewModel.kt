@@ -28,6 +28,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -113,7 +115,7 @@ class SidebarViewModel @Inject constructor(
             systemOrder = appPreferences.sidebarSystemOrder,
             filesEnabled = appPreferences.filesEnabled,
             gamesAvailable = gameLibrary.hasConfiguredFolders(),
-            gameSystemIds = librarySystemIds(),
+            gameSystemIds = configuredGameSystemIds(),
             networkFileSources = networkFileSourcesFromStore(),
             dlnaServers = dlnaStore.servers(),
             plexEnabled = appPreferences.isConfigured,
@@ -195,6 +197,7 @@ class SidebarViewModel @Inject constructor(
     private var menuJob: Job? = null
     private var menuLoadingSystem: String? = null
     private var spotifyAuthJob: Job? = null
+    private var gameSystemsJob: Job? = null
 
     val reconnectSources: Set<String>
         get() = buildSet {
@@ -232,21 +235,10 @@ class SidebarViewModel @Inject constructor(
             onlineServices.state.collect { _uiState.update { state -> state.copy(offlineSystems = currentOfflineSources()) } }
         }
         viewModelScope.launch {
-            gameLibrary.revisions.collect {
-                _uiState.update { state -> state.copy(
-                    gamesAvailable = gameLibrary.hasConfiguredFolders(),
-                    gameSystemIds = librarySystemIds(),
-                ) }
-            }
-        }
-        viewModelScope.launch {
-            fileStore.revision.collect {
-                _uiState.update { state -> state.copy(
-                    networkFileSources = networkFileSourcesFromStore(),
-                    gamesAvailable = gameLibrary.hasConfiguredFolders(),
-                    gameSystemIds = librarySystemIds(),
-                ) }
-            }
+            combine(gameLibrary.revisions, fileStore.revision) { _, _ -> gameLibrary.revisionSnapshot(includeOverrides = false) }
+                .distinctUntilChanged().collect {
+                    refreshGameSystems()
+                }
         }
         viewModelScope.launch { dlnaStore.serverRevision.collect { _uiState.update { it.copy(dlnaServers = dlnaStore.servers()) } } }
         // Include the current snapshot: login may finish before these collectors start.
@@ -296,11 +288,28 @@ class SidebarViewModel @Inject constructor(
         appPreferences.embyHiddenSectionKeys,
     )
 
-    private fun librarySystemIds(): List<String> =
+    /** Explicit assignments are available immediately; SQLite opens/migrations run on IO. */
+    private fun configuredGameSystemIds(): List<String> =
         com.ambient.tv.games.GameSystems.sortIdsByName(gameLibrary.folders().filter { folder ->
             fileStore.sources().any { it.id == folder.sourceId }
-        }.map { it.systemId }.filter { it != "auto" } +
-            gameLibrary.systemIds())
+        }.map { it.systemId }.filter { it != "auto" })
+
+    private fun refreshGameSystems() {
+        gameSystemsJob?.cancel()
+        gameSystemsJob = viewModelScope.launch {
+            val systems = try {
+                kotlinx.coroutines.runInterruptible(kotlinx.coroutines.Dispatchers.IO) {
+                    com.ambient.tv.games.GameSystems.sortIdsByName(configuredGameSystemIds() + gameLibrary.systemIds())
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { configuredGameSystemIds() }
+            _uiState.update { state -> state.copy(
+                networkFileSources = networkFileSourcesFromStore(),
+                gamesAvailable = gameLibrary.hasConfiguredFolders(),
+                gameSystemIds = systems,
+            ) }
+        }
+    }
 
     private fun networkFileSourcesFromStore(): List<FileSource> =
         fileStore.fileBrowserSources().filter { it.network }
@@ -429,11 +438,11 @@ class SidebarViewModel @Inject constructor(
 
     fun refresh(deferExpensiveWorkMs: Long = 0L, forceLiveTv: Boolean = false) {
         observeSpotifyAuthorization()
+        refreshGameSystems()
         _uiState.update {
             it.copy(
                 filesEnabled = appPreferences.filesEnabled,
                 gamesAvailable = gameLibrary.hasConfiguredFolders(),
-                gameSystemIds = librarySystemIds(),
                 networkFileSources = networkFileSourcesFromStore(),
                 dlnaServers = dlnaStore.servers(),
                 systemOrder = appPreferences.sidebarSystemOrder,

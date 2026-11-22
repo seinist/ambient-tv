@@ -37,7 +37,10 @@ import javax.inject.Singleton
 class SmartTubeEngine @Inject constructor(
     @ApplicationContext private val context: Context,
     private val appPreferences: AppPreferences,
+    private val localPlaybackDatabase: com.ambient.tv.data.local.LocalPlaybackDatabase,
 ) {
+    constructor(context: Context, appPreferences: AppPreferences) :
+        this(context, appPreferences, com.ambient.tv.data.local.LocalPlaybackDatabase.memory())
     @Volatile private var signInDisposable: Any? = null
     /** One diagnostic notice per incident, shared by Home and SmartTube views. */
     private val accountAttentionReported = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -102,7 +105,7 @@ class SmartTubeEngine @Inject constructor(
     val subscriptionChanges: kotlinx.coroutines.flow.StateFlow<Map<String, Boolean>> = subscriptionOverrides
 
     init {
-        YouTubeLocalProgress.init(context)
+        YouTubeLocalProgress.init(context, localPlaybackDatabase)
         // Lets VLC/MPV keep playing after googlevideo expires a link (hours of pause): the relay
         // asks for a fresh URL of the same stream and resumes at the same byte.
         YouTubeStreamRelay.renewer = { videoId, expiredUrl ->
@@ -507,6 +510,7 @@ class SmartTubeEngine @Inject constructor(
     }
 
     suspend fun metadata(videoId: String, forceRefresh: Boolean = false): YouTubeMetadata {
+        YouTubeLocalProgress.awaitReady()
         if (forceRefresh) {
             io { service("getMediaItemService").call("invalidateCache") }
             playbackMetadata.invalidate(videoId)
@@ -547,6 +551,7 @@ class SmartTubeEngine @Inject constructor(
     }
 
     suspend fun playback(videoId: String): YouTubePlayback {
+        YouTubeLocalProgress.awaitReady()
         val started = System.nanoTime()
         val cached = playbackMetadata.get(videoId)
         return prepareYouTubePlayback(cached,
@@ -829,13 +834,14 @@ class SmartTubeEngine @Inject constructor(
         com.ambient.tv.domain.model.TimelinePreview.Sprite(width, height, columns, rows, interval, Long.MAX_VALUE, urlTemplate = template)
     }.getOrNull()
 
-    suspend fun updateHistory(videoId: String, positionMs: Long, durationMs: Long = 0L, completed: Boolean = false) = io {
+    suspend fun updateHistory(videoId: String, positionMs: Long, durationMs: Long = 0L, completed: Boolean = false, flush: Boolean = false) = io {
         val duration = durationMs.takeIf { it > 0L } ?: playbackMetadata.durationMs(videoId)
             ?: YouTubeLocalProgress.durationMs(videoId) ?: 0L
         val position = if (completed && duration > 0L) duration else positionMs.coerceAtLeast(0L)
         // Cards and playback share this exact position. The watch-next metadata cache must
         // not become a second, rounded resume source after a local progress report.
         YouTubeLocalProgress.record(videoId, position, duration, completed)
+        if ((flush || completed) && !YouTubeLocalProgress.flush()) throw java.io.IOException("Local YouTube progress could not be committed")
         // History paused: the position stays local, YouTube's history is not touched.
         if (appPreferences.youtubeHistoryPaused) return@io
         val media = service("getMediaItemService")
@@ -1468,7 +1474,10 @@ class SmartTubeEngine @Inject constructor(
 
     private fun blockingObservable(value: Any?): Any? = unwrapReactive(value)
 
-    private suspend fun <T> io(block: suspend () -> T): T = withContext(Dispatchers.IO) { block() }
+    private suspend fun <T> io(block: suspend () -> T): T = withContext(Dispatchers.IO) {
+        YouTubeLocalProgress.awaitReady()
+        block()
+    }
 }
 
 private fun Any.call(name: String, vararg args: Any?): Any? {

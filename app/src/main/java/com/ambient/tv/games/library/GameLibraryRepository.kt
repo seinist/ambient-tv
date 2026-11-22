@@ -102,7 +102,8 @@ internal fun cachedGameMatchesFolder(
         else GameSystems.acceptsFile(system, filename)
 }
 
-private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_library.db", null, 4) {
+private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_library.db", null, 5) {
+    init { setWriteAheadLoggingEnabled(true) }
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE game_entries (
             folder_id TEXT NOT NULL, file_id TEXT NOT NULL, source_id TEXT NOT NULL,
@@ -121,6 +122,7 @@ private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_li
             PRIMARY KEY(system_id, crc32))""")
         db.execSQL("""CREATE TABLE game_dat_versions (
             system_id TEXT NOT NULL PRIMARY KEY, revision INTEGER NOT NULL)""")
+        GameLibraryQueryIndex.create(db)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) {
@@ -143,6 +145,7 @@ private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_li
             db.execSQL("""INSERT OR IGNORE INTO game_dat_versions(system_id,revision)
                 SELECT DISTINCT system_id,1 FROM game_dat_entries""")
         }
+        if (oldVersion < 5) GameLibraryQueryIndex.create(db)
     }
 }
 
@@ -157,9 +160,25 @@ class GameLibraryRepository @Inject constructor(
 ) {
     private val db = GameIndexDb(context)
     private val changeSignal = MutableStateFlow(0L)
+    private val catalogRevision = java.util.concurrent.atomic.AtomicLong()
     val revisions = changeSignal.asStateFlow()
     private val scanLock = kotlinx.coroutines.sync.Mutex()
-    private fun changed() = changeSignal.update { it + 1 }
+    private val queryLock = Any()
+    private val queryExecutions = java.util.concurrent.atomic.AtomicLong()
+    private var queryConfiguration: QueryConfiguration? = null
+    /** Diagnostic counter for invalidation audits; counting does not perform database writes. */
+    internal val readQueryCount: Long get() = queryExecutions.get()
+    private fun changed(catalog: Boolean = true) {
+        if (catalog) catalogRevision.incrementAndGet()
+        changeSignal.update { it + 1 }
+    }
+
+    internal fun revisionSnapshot(includeOverrides: Boolean = true): GameLibraryRevision = GameLibraryRevision(
+        catalog = catalogRevision.get(),
+        folders = prefs.getString("game_library_folders", "[]").orEmpty(),
+        overrides = if (includeOverrides) prefs.getString("game_library_overrides", "[]").orEmpty() else "",
+        sources = prefs.getString("file_sources", "[]").orEmpty(),
+    )
 
     fun folders(): List<GameLibraryFolder> = preferences.gameLibraryFolders.filter {
         it.sourceId.isNotBlank() && (it.systemId == "auto" || GameSystems.byId(it.systemId) != null)
@@ -197,9 +216,12 @@ class GameLibraryRepository @Inject constructor(
         changed()
     }
 
-    fun removeFolder(id: String) {
+    fun removeFolder(id: String) = synchronized(queryLock) {
         preferences.gameLibraryFolders = folders().filterNot { it.id == id }
         db.writableDatabase.delete("game_entries", "folder_id=?", arrayOf(id))
+        // Removing an assignment can expose an overlapping parent folder. Rebuild once from
+        // the new configuration instead of deleting an otherwise still playable game.
+        ensureQueryIndex()
         changed()
     }
 
@@ -223,25 +245,25 @@ class GameLibraryRepository @Inject constructor(
     fun listRows(): Int = prefs.getInt("game_library_list_rows", 7).coerceIn(4, 10)
     fun setGridColumns(value: Int) {
         prefs.edit().putInt("game_library_grid_columns", value.coerceIn(4, 12)).apply()
-        changed()
+        changed(catalog = false)
     }
     fun setListRows(value: Int) {
         prefs.edit().putInt("game_library_list_rows", value.coerceIn(4, 10)).apply()
-        changed()
+        changed(catalog = false)
     }
 
     fun titleStyle(): String = prefs.getString("game_library_title_style", "auto").orEmpty()
     fun setTitleStyle(style: String) {
         require(style in setOf("auto", "internal", "filename"))
         prefs.edit().putString("game_library_title_style", style).apply()
-        changed()
+        changed(catalog = false)
     }
 
     fun viewStyle(): String = prefs.getString("game_library_view_style", "grid").orEmpty()
     fun setViewStyle(style: String) {
         require(style in setOf("grid", "list", "rows"))
         prefs.edit().putString("game_library_view_style", style).apply()
-        changed()
+        changed(catalog = false)
     }
 
     /**
@@ -251,39 +273,45 @@ class GameLibraryRepository @Inject constructor(
     suspend fun importDat(systemId: String, input: InputStream): Int = scanLock.withLock {
         require(GameSystems.byId(systemId) != null)
         withContext(Dispatchers.IO) {
-            val writable = db.writableDatabase
-            writable.beginTransaction()
-            try {
-                writable.delete("game_dat_entries", "system_id=?", arrayOf(systemId))
-                val imported = input.use { stream ->
-                    GameRomDatReader.parse(stream) { record ->
-                        val values = android.content.ContentValues().apply {
-                            put("system_id", systemId)
-                            put("crc32", record.crc32)
-                            put("title", record.title)
+            synchronized(queryLock) {
+                val configuration = ensureQueryIndex()
+                val writable = db.writableDatabase
+                writable.beginTransaction()
+                try {
+                    writable.delete("game_dat_entries", "system_id=?", arrayOf(systemId))
+                    val imported = input.use { stream ->
+                        GameRomDatReader.parse(stream) { record ->
+                            val values = android.content.ContentValues().apply {
+                                put("system_id", systemId)
+                                put("crc32", record.crc32)
+                                put("title", record.title)
+                            }
+                            writable.insertWithOnConflict("game_dat_entries", null, values,
+                                SQLiteDatabase.CONFLICT_REPLACE)
                         }
-                        writable.insertWithOnConflict("game_dat_entries", null, values,
-                            SQLiteDatabase.CONFLICT_REPLACE)
                     }
+                    require(imported > 0) { "DAT contains no ROM CRC32 entries" }
+                    val previous = writable.rawQuery(
+                        "SELECT revision FROM game_dat_versions WHERE system_id=?", arrayOf(systemId)
+                    ).use { if (it.moveToFirst()) it.getLong(0) else 0L }
+                    writable.execSQL(
+                        "INSERT OR REPLACE INTO game_dat_versions(system_id,revision) VALUES(?,?)",
+                        arrayOf<Any>(systemId, previous + 1)
+                    )
+                    // The imported DAT supersedes old verified names, including prior negatives.
+                    writable.execSQL(
+                        "UPDATE game_entries SET verified_title=NULL,dat_checked=0 WHERE system_id=?",
+                        arrayOf<Any>(systemId)
+                    )
+                    val affected = writable.rawQuery("SELECT file_id FROM game_entries WHERE system_id=?",
+                        arrayOf(systemId)).use { rows -> buildSet { while (rows.moveToNext()) add(rows.getString(0)) } }
+                    refreshQueryFiles(affected, configuration)
+                    writable.setTransactionSuccessful()
+                    changed()
+                    imported
+                } finally {
+                    writable.endTransaction()
                 }
-                require(imported > 0) { "DAT contains no ROM CRC32 entries" }
-                val previous = writable.rawQuery(
-                    "SELECT revision FROM game_dat_versions WHERE system_id=?", arrayOf(systemId)
-                ).use { if (it.moveToFirst()) it.getLong(0) else 0L }
-                writable.execSQL(
-                    "INSERT OR REPLACE INTO game_dat_versions(system_id,revision) VALUES(?,?)",
-                    arrayOf<Any>(systemId, previous + 1)
-                )
-                // The imported DAT supersedes old verified names, including prior negatives.
-                writable.execSQL(
-                    "UPDATE game_entries SET verified_title=NULL,dat_checked=0 WHERE system_id=?",
-                    arrayOf<Any>(systemId)
-                )
-                writable.setTransactionSuccessful()
-                changed()
-                imported
-            } finally {
-                writable.endTransaction()
             }
         }
     }
@@ -330,85 +358,202 @@ class GameLibraryRepository @Inject constructor(
     fun setSortKey(key: String) {
         require(key in setOf("name", "recent", "system"))
         prefs.edit().putString("game_library_sort", key).apply()
-        changed()
+        changed(catalog = false)
     }
     fun setSortDescending(value: Boolean) {
         prefs.edit().putBoolean("game_library_descending", value).apply()
-        changed()
+        changed(catalog = false)
     }
 
     /** A manual edit always wins over ROM headers and imported DAT titles. */
     fun setCustomTitle(fileId: String, value: String) {
         require(value.length <= 160 && value.none { it.isISOControl() })
         val normalized = value.trim().takeIf { it.isNotBlank() }
-        db.writableDatabase.execSQL("UPDATE game_entries SET manual_title=? WHERE file_id=?",
-            arrayOf<Any?>(normalized, fileId))
-        savePortableChoice(fileId)
-        changed()
+        editGame(fileId) { writable ->
+            writable.execSQL("UPDATE game_entries SET manual_title=? WHERE file_id=?",
+                arrayOf<Any?>(normalized, fileId))
+        }
     }
 
-    /** Disk cache is loaded even if the NAS is sleeping; opening the library never wakes it. */
-    fun games(deduplicate: Boolean = true): List<LibraryGame> {
-        val current = files.sources().map { it.id }.toSet()
-        val allowed = folders().filter { it.sourceId in current }.associateBy { it.id }
-        val style = titleStyle()
-        val overrides = preferences.gameLibraryOverrides.associateBy { it.sourceId to it.path }
-        val result = mutableListOf<LibraryGame>()
-        db.readableDatabase.rawQuery(
-            "SELECT folder_id,file_id,source_id,path,filename,system_id,internal_title,file_size,modified,favorite,last_played,manual_title,verified_title,probe_version,dat_version,archive_crc,dat_checked FROM game_entries",
-            null,
-        ).use { cursor ->
-            while (cursor.moveToNext()) {
-                val folder = allowed[cursor.getString(0)] ?: continue
-                val filename = cursor.getString(4)
-                if (!cachedGameMatchesFolder(folder, cursor.getString(2), filename, cursor.getString(5))) continue
-                val portable = overrides[cursor.getString(2) to cursor.getString(3)]
-                val custom = portable?.title?.takeIf { it.isNotBlank() }
-                    ?: cursor.getString(11)?.takeIf { it.isNotBlank() }
-                val verified = cursor.getString(12)?.takeIf { it.isNotBlank() }
-                val internal = cursor.getString(6)?.takeIf { it.isNotBlank() }
-                val title = custom ?: when (style) {
-                    "filename" -> null
-                    "internal" -> internal
-                    else -> verified ?: internal
+    /** Query the offline display index; no file open, listing or Wake-on-LAN is involved. */
+    fun games(query: GameLibraryQuery = GameLibraryQuery()): List<LibraryGame> = synchronized(queryLock) {
+        ensureQueryIndex()
+        val sql = gameLibrarySql(query, titleStyle())
+        queryExecutions.incrementAndGet()
+        db.readableDatabase.rawQuery(sql.sql, sql.args).use { rows ->
+            buildList {
+                while (rows.moveToNext()) {
+                    if (Thread.currentThread().isInterrupted) throw InterruptedException()
+                    add(LibraryGame(
+                        folderId = rows.getString(0), fileId = rows.getString(1),
+                        sourceId = rows.getString(2), path = rows.getString(3), filename = rows.getString(4),
+                        systemId = rows.getString(5), title = rows.getString(6), internalTitle = rows.getString(7),
+                        size = rows.getLong(8), modified = rows.getLong(9), favorite = rows.getInt(10) == 1,
+                        lastPlayed = rows.getLong(11), customTitle = rows.getString(12), verifiedTitle = rows.getString(13),
+                    ))
                 }
-                result += LibraryGame(
-                    fileId = cursor.getString(1), folderId = cursor.getString(0),
-                    sourceId = cursor.getString(2), path = cursor.getString(3),
-                    filename = filename, systemId = cursor.getString(5),
-                    title = title ?: displayFileName(filename),
-                    internalTitle = cursor.getString(6),
-                    size = cursor.getLong(7), modified = cursor.getLong(8),
-                    favorite = portable?.favorite ?: (cursor.getInt(9) == 1),
-                    lastPlayed = maxOf(cursor.getLong(10), portable?.lastPlayed ?: 0L),
-                    customTitle = custom, verifiedTitle = verified,
-                    probeVersion = cursor.getInt(13), datVersion = cursor.getLong(14),
-                    archiveCrc = cursor.getString(15), datChecked = cursor.getInt(16) == 1,
-                )
             }
         }
-        // Overlapping assignments are legal. Prefer the deepest matching folder
-        // (e.g. NAS/Games/SNES) to a generic NAS/Games auto-detect root.
-        return if (!deduplicate) result else result.sortedWith(compareByDescending<LibraryGame> {
-            allowed[it.folderId]?.path?.length ?: 0
-        }.thenBy { it.fileId }).distinctBy { it.fileId }
     }
 
-    private fun displayFileName(filename: String): String =
-        filename.substringBeforeLast('.', filename)
-            .replace('_', ' ').replace(Regex("\\s+"), " ").trim()
+    fun game(fileId: String): LibraryGame? = games(GameLibraryQuery(fileId = fileId, limit = 1)).firstOrNull()
 
-    fun setFavorite(fileId: String, value: Boolean) {
-        db.writableDatabase.execSQL("UPDATE game_entries SET favorite=? WHERE file_id=?",
+    /** Read configuration only once per actual preference change, not per search keystroke. */
+    private data class QueryConfiguration(
+        val folderJson: String,
+        val overrideJson: String,
+        val sourceIds: Set<String>,
+        val folders: Map<String, GameLibraryFolder>,
+        val overrides: Map<Pair<String, String>, GamePortableState>,
+        val signature: String,
+    )
+
+    private fun currentQueryConfiguration(): QueryConfiguration {
+        val folderJson = prefs.getString("game_library_folders", "[]").orEmpty()
+        val overrideJson = prefs.getString("game_library_overrides", "[]").orEmpty()
+        val sourceIds = files.sources().mapTo(hashSetOf()) { it.id }
+        queryConfiguration?.takeIf {
+            it.folderJson == folderJson && it.overrideJson == overrideJson && it.sourceIds == sourceIds
+        }?.let { return it }
+        val signature = gameQueryDigest(listOf(GameLibraryQueryIndex.POLICY_VERSION.toString(),
+            folderJson, overrideJson) + sourceIds.sorted())
+        return QueryConfiguration(folderJson, overrideJson, sourceIds,
+            folders().filter { it.sourceId in sourceIds }.associateBy { it.id },
+            preferences.gameLibraryOverrides.associateBy { it.sourceId to it.path }, signature)
+    }
+
+    /** A backup/import rebuilds local display data once; scans and single-ROM edits update only affected files. */
+    private fun ensureQueryIndex(): QueryConfiguration {
+        val configuration = currentQueryConfiguration()
+        val previous = queryConfiguration
+        if (configuration === previous) return configuration
+        val writable = db.writableDatabase
+        if (GameLibraryQueryIndex.signature(writable) != configuration.signature) {
+            writable.beginTransaction()
+            try {
+                if (previous != null && previous.folderJson == configuration.folderJson &&
+                    previous.sourceIds == configuration.sourceIds) {
+                    val changedPaths = (previous.overrides.keys + configuration.overrides.keys).filter {
+                        previous.overrides[it] != configuration.overrides[it]
+                    }
+                    val ids = linkedSetOf<String>()
+                    changedPaths.forEach { (source, path) ->
+                        writable.rawQuery("SELECT file_id FROM game_entries WHERE source_id=? AND path=?",
+                            arrayOf(source, path)).use { rows -> while (rows.moveToNext()) ids += rows.getString(0) }
+                    }
+                    refreshQueryFiles(ids, configuration)
+                } else {
+                    writable.delete("game_query", null, null)
+                    forEachIndexedGame(configuration) { game -> putQueryGame(writable, game, configuration, checkExisting = false) }
+                }
+                GameLibraryQueryIndex.signature(writable, configuration.signature)
+                writable.setTransactionSuccessful()
+            } finally { writable.endTransaction() }
+        }
+        queryConfiguration = configuration
+        return configuration
+    }
+
+    private fun refreshQueryFiles(fileIds: Collection<String>, configuration: QueryConfiguration) {
+        val writable = db.writableDatabase
+        fileIds.chunked(400).forEach { ids ->
+            val clause = "file_id IN (${ids.joinToString(",") { "?" }})"
+            val removed = ids.toMutableSet()
+            forEachIndexedGame(configuration, clause, ids.toTypedArray()) { game ->
+                putQueryGame(writable, game, configuration)
+                removed.remove(game.fileId)
+            }
+            if (removed.isNotEmpty()) writable.delete("game_query",
+                "file_id IN (${removed.joinToString(",") { "?" }})", removed.toTypedArray())
+        }
+    }
+
+    private fun putQueryGame(writable: SQLiteDatabase, game: LibraryGame, configuration: QueryConfiguration,
+                             checkExisting: Boolean = true) =
+        GameLibraryQueryIndex.put(writable, game, GameSystems.byId(game.systemId)?.shortName ?: game.systemId,
+            checkExisting, configuration.folders[game.folderId]?.path?.length ?: 0)
+
+    /** Streaming grouping keeps only one overlap candidate in memory, even on initial migration. */
+    private fun forEachIndexedGame(
+        configuration: QueryConfiguration,
+        where: String? = null,
+        args: Array<String>? = null,
+        deduplicate: Boolean = true,
+        consume: (LibraryGame) -> Unit,
+    ) {
+        val clause = where?.let { " WHERE $it" }.orEmpty()
+        db.readableDatabase.rawQuery("""SELECT folder_id,file_id,source_id,path,filename,system_id,
+            internal_title,file_size,modified,favorite,last_played,manual_title,verified_title,
+            probe_version,dat_version,archive_crc,dat_checked FROM game_entries$clause ORDER BY file_id,rowid""", args).use { cursor ->
+            var selected: LibraryGame? = null
+            var depth = -1
+            while (cursor.moveToNext()) {
+                if (Thread.currentThread().isInterrupted) throw InterruptedException()
+                val folder = configuration.folders[cursor.getString(0)] ?: continue
+                val filename = cursor.getString(4)
+                if (!cachedGameMatchesFolder(folder, cursor.getString(2), filename, cursor.getString(5))) continue
+                val portable = configuration.overrides[cursor.getString(2) to cursor.getString(3)]
+                val custom = portable?.title?.takeIf(String::isNotBlank)
+                    ?: cursor.getString(11)?.takeIf(String::isNotBlank)
+                val verified = cursor.getString(12)?.takeIf(String::isNotBlank)
+                val internal = cursor.getString(6)?.takeIf(String::isNotBlank)
+                val game = LibraryGame(
+                    fileId = cursor.getString(1), folderId = cursor.getString(0),
+                    sourceId = cursor.getString(2), path = cursor.getString(3), filename = filename,
+                    systemId = cursor.getString(5), title = custom ?: verified ?: internal ?: gameDisplayFileName(filename),
+                    internalTitle = cursor.getString(6), size = cursor.getLong(7), modified = cursor.getLong(8),
+                    favorite = portable?.favorite ?: (cursor.getInt(9) == 1),
+                    lastPlayed = maxOf(cursor.getLong(10), portable?.lastPlayed ?: 0L),
+                    customTitle = custom, verifiedTitle = verified, probeVersion = cursor.getInt(13),
+                    datVersion = cursor.getLong(14), archiveCrc = cursor.getString(15), datChecked = cursor.getInt(16) == 1,
+                )
+                if (!deduplicate) { consume(game); continue }
+                if (selected?.fileId != game.fileId) {
+                    selected?.let(consume)
+                    selected = game
+                    depth = folder.path.length
+                } else if (folder.path.length > depth) {
+                    selected = game
+                    depth = folder.path.length
+                }
+            }
+            selected?.let(consume)
+        }
+    }
+
+    fun setFavorite(fileId: String, value: Boolean) = editGame(fileId) { writable ->
+        writable.execSQL("UPDATE game_entries SET favorite=? WHERE file_id=?",
             arrayOf<Any>(if (value) 1 else 0, fileId))
-        savePortableChoice(fileId)
-        changed()
     }
 
-    fun recordPlayed(fileId: String) {
-        db.writableDatabase.execSQL("UPDATE game_entries SET last_played=? WHERE file_id=?",
+    fun recordPlayed(fileId: String) = editGame(fileId) { writable ->
+        writable.execSQL("UPDATE game_entries SET last_played=? WHERE file_id=?",
             arrayOf<Any>(System.currentTimeMillis(), fileId))
-        savePortableChoice(fileId)
+    }
+
+    private fun editGame(fileId: String, edit: (SQLiteDatabase) -> Unit) = synchronized(queryLock) {
+        ensureQueryIndex()
+        val effective = game(fileId) ?: return@synchronized
+        val writable = db.writableDatabase
+        var committed = false
+        writable.beginTransaction()
+        try {
+            // Imported choices are authoritative. Editing one field must not replace an
+            // imported name/newer play time with an older raw scanner row's other fields.
+            val favorite = if (effective.favorite) 1 else 0
+            writable.execSQL("""UPDATE game_entries SET manual_title=?,favorite=?,last_played=?
+                WHERE file_id=? AND (manual_title IS NOT ? OR favorite!=? OR last_played!=?)""",
+                arrayOf<Any?>(effective.customTitle, favorite, effective.lastPlayed, fileId,
+                    effective.customTitle, favorite, effective.lastPlayed))
+            edit(writable)
+            savePortableChoice(fileId)
+            refreshQueryFiles(listOf(fileId), ensureQueryIndex())
+            writable.setTransactionSuccessful()
+            committed = true
+        } finally {
+            writable.endTransaction()
+            if (!committed) queryConfiguration = null
+        }
         changed()
     }
 
@@ -612,32 +757,40 @@ class GameLibraryRepository @Inject constructor(
                 selected.mapTo(hashSetOf()) { it.entry.path }, references)
             selected.removeAll { it.entry.path !in visible }
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
-            val writable = db.writableDatabase
-            writable.beginTransaction()
-            try {
-                val generation = System.nanoTime()
-                for (game in selected) {
-                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                    val e = game.entry
-                    val values = android.content.ContentValues().apply {
-                        put("folder_id", folder.id); put("file_id", e.id); put("source_id", e.sourceId)
-                        put("path", e.path); put("filename", e.name); put("system_id", game.systemId)
-                        put("internal_title", game.internalTitle); put("file_size", e.size)
-                        put("modified", e.modified); put("favorite", if (game.favorite) 1 else 0)
-                        put("last_played", game.lastPlayed); put("seen", generation)
-                        put("manual_title", game.customTitle); put("verified_title", game.verifiedTitle)
-                        put("probe_version", game.probeVersion); put("dat_version", game.datVersion)
-                        put("archive_crc", game.archiveCrc)
-                        put("dat_checked", if (game.datVersion > 0L) 1 else 0)
+            val scanContext = kotlinx.coroutines.currentCoroutineContext()
+            synchronized(queryLock) {
+                val configuration = ensureQueryIndex()
+                val writable = db.writableDatabase
+                writable.beginTransaction()
+                try {
+                    val affected = writable.rawQuery("SELECT file_id FROM game_entries WHERE folder_id=?",
+                        arrayOf(folder.id)).use { rows -> buildSet { while (rows.moveToNext()) add(rows.getString(0)) } } +
+                        selected.map { it.entry.id }
+                    val generation = System.nanoTime()
+                    for (game in selected) {
+                        scanContext.ensureActive()
+                        val e = game.entry
+                        val values = android.content.ContentValues().apply {
+                            put("folder_id", folder.id); put("file_id", e.id); put("source_id", e.sourceId)
+                            put("path", e.path); put("filename", e.name); put("system_id", game.systemId)
+                            put("internal_title", game.internalTitle); put("file_size", e.size)
+                            put("modified", e.modified); put("favorite", if (game.favorite) 1 else 0)
+                            put("last_played", game.lastPlayed); put("seen", generation)
+                            put("manual_title", game.customTitle); put("verified_title", game.verifiedTitle)
+                            put("probe_version", game.probeVersion); put("dat_version", game.datVersion)
+                            put("archive_crc", game.archiveCrc)
+                            put("dat_checked", if (game.datVersion > 0L) 1 else 0)
+                        }
+                        writable.insertWithOnConflict("game_entries", null, values,
+                            SQLiteDatabase.CONFLICT_REPLACE)
                     }
-                    writable.insertWithOnConflict("game_entries", null, values,
-                        SQLiteDatabase.CONFLICT_REPLACE)
+                    writable.delete("game_entries", "folder_id=? AND seen!=?",
+                        arrayOf(folder.id, generation.toString()))
+                    refreshQueryFiles(affected, configuration)
+                    writable.setTransactionSuccessful()
+                } finally {
+                    writable.endTransaction()
                 }
-                writable.delete("game_entries", "folder_id=? AND seen!=?",
-                    arrayOf(folder.id, generation.toString()))
-                writable.setTransactionSuccessful()
-            } finally {
-                writable.endTransaction()
             }
             onProgress(processed.get(), discovered.get())
             changed()
@@ -650,8 +803,14 @@ class GameLibraryRepository @Inject constructor(
         val customTitle: String?, val verifiedTitle: String?,
         val probeVersion: Int, val datVersion: Long, val archiveCrc: String?)
 
-    private fun existing(folderId: String): Map<String, LibraryGame> =
-        games(deduplicate = false).filter { it.folderId == folderId }.associateBy { it.fileId }
+    private fun existing(folderId: String): Map<String, LibraryGame> = synchronized(queryLock) {
+        val configuration = currentQueryConfiguration()
+        buildMap {
+            forEachIndexedGame(configuration, "folder_id=?", arrayOf(folderId), deduplicate = false) {
+                put(it.fileId, it)
+            }
+        }
+    }
 
     private fun classify(entry: FileEntry, session: GameScanFileSession, systemId: String): com.ambient.tv.games.GameSystem? {
         val head = if (GameSystems.extension(entry.name) == "iso") {

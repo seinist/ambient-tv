@@ -56,7 +56,6 @@ import kotlinx.coroutines.launch
 import java.io.File
 import android.os.Handler
 import android.os.Looper
-import android.view.KeyEvent
 import android.view.View
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -130,7 +129,8 @@ import com.ambient.tv.ui.gamepad.retro.RetroInputSettings
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
 import com.ambient.tv.ui.gamepad.retro.RetroPadInput
 import com.ambient.tv.ui.gamepad.retro.RetroPorts
-import com.ambient.tv.ui.gamepad.retro.playableInputDevices
+import com.ambient.tv.ui.gamepad.retro.rememberPlayableDevices
+import com.ambient.tv.ui.gamepad.retro.isPhysicalGamepadActivity
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.player.LocalPlayerChromeState
@@ -254,26 +254,6 @@ internal fun GameShader.config(intensity: Float = 1f): ShaderConfig = when (this
     else -> GameRetroShaders.config(this, intensity)
 }
 
-/** The Android key LibretroDroid reads as each RetroPad button (it maps by letter, not position). */
-internal fun RetroPadButton.libretroDroidKey(): Int = when (this) {
-    RetroPadButton.A -> KeyEvent.KEYCODE_BUTTON_A
-    RetroPadButton.B -> KeyEvent.KEYCODE_BUTTON_B
-    RetroPadButton.X -> KeyEvent.KEYCODE_BUTTON_X
-    RetroPadButton.Y -> KeyEvent.KEYCODE_BUTTON_Y
-    RetroPadButton.L -> KeyEvent.KEYCODE_BUTTON_L1
-    RetroPadButton.R -> KeyEvent.KEYCODE_BUTTON_R1
-    RetroPadButton.L2 -> KeyEvent.KEYCODE_BUTTON_L2
-    RetroPadButton.R2 -> KeyEvent.KEYCODE_BUTTON_R2
-    RetroPadButton.L3 -> KeyEvent.KEYCODE_BUTTON_THUMBL
-    RetroPadButton.R3 -> KeyEvent.KEYCODE_BUTTON_THUMBR
-    RetroPadButton.START -> KeyEvent.KEYCODE_BUTTON_START
-    RetroPadButton.SELECT -> KeyEvent.KEYCODE_BUTTON_SELECT
-    RetroPadButton.UP -> KeyEvent.KEYCODE_DPAD_UP
-    RetroPadButton.DOWN -> KeyEvent.KEYCODE_DPAD_DOWN
-    RetroPadButton.LEFT -> KeyEvent.KEYCODE_DPAD_LEFT
-    RetroPadButton.RIGHT -> KeyEvent.KEYCODE_DPAD_RIGHT
-}
-
 /** LibretroDroid follows a lifecycle; it mirrors the activity (the menu pauses the emulation itself). */
 private class GameLifecycleOwner : LifecycleOwner {
     val registry = LifecycleRegistry(this)
@@ -351,6 +331,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val integerScaling = settings.integerScaling(system)
     val touchControls = settings.touchControls(system)
     val touchMode = settings.touchMode(system)
+    val touchStyle = RetroInputSettings.config.touchStyle
+    val touchVariant = RetroInputSettings.config.touchVariants[system.id].orEmpty()
+    val touchPresentation = remember(system.id, touchVariant) { gameTouchPresentation(system.id, touchVariant) }
+    var hidingGamepadId by remember(game.saveKey) { mutableStateOf<Int?>(null) }
+    val hideTouchForGamepad by rememberUpdatedState(touchStyle.hideOnGamepadInput)
     // A trusted small Slang preset may opt into the experimental native WSI.
     // Existing GLES filters remain available for all other choices and for HDR.
     val nativeSlangPath = remember(context, shader, shaderIntensity, selectedPack, nativeTransfer, session.vulkan) {
@@ -431,6 +416,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     var nativeSdrFullscreenRequested by remember { mutableStateOf(false) }
     /** Core-reported serialized size must be nonzero and safe for this device's heap. */
     var stateAvailable by remember { mutableStateOf(false) }
+    var stateBusy by remember { mutableStateOf(false) }
+    var serializationPolicy by remember { mutableStateOf(GameSerializationPolicy()) }
     var message by remember { mutableStateOf<String?>(null) }
     var optionsVersion by remember { mutableIntStateOf(0) }
     var fastForward by remember { mutableStateOf(false) }
@@ -440,13 +427,13 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     /** The picture when the menu opened: preview for every state saved from this menu. */
     var snapshot by remember { mutableStateOf<Bitmap?>(null) }
     val achievements = remember { GameAchievements(model.retroAchievements, scope) }
-    /** The input layer (created below); netplay reads the local player's buttons from it. */
-    val inputRef = remember { java.util.concurrent.atomic.AtomicReference<RetroPadInput?>(null) }
     val netplay = remember {
+        // Native captures masks/axes/pressures atomically and retains taps until this tick.
+        // One reusable array avoids a JNI array allocation on every lockstep frame.
+        val captured = IntArray(7)
         GameNetplay(context.applicationContext, scope) {
-            inputRef.get()?.let { pad ->
-                NetplayInput(pad.buttons(0), pad.analog(0, 0, 0), pad.analog(0, 0, 1), pad.analog(0, 1, 0), pad.analog(0, 1, 1))
-            } ?: NetplayInput.NONE
+            LibretroDroid.getInputPortSnapshot(0, captured)
+            NetplayInput(captured[0], captured[1], captured[2], captured[3], captured[4], captured[5], captured[6])
         }
     }
     var cheats by remember { mutableStateOf(model.cheats(game)) }
@@ -625,7 +612,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     nativeOwner.cleanup = { destroy() }
 
-    fun stateTitle(entry: GameStateEntry): String = when (entry.kind) {
+    fun stateTitle(entry: GameStateEntry): String = entry.label?.takeIf { it.isNotBlank() } ?: when (entry.kind) {
         GameStateKind.AUTO -> context.getString(R.string.game_state_auto)
         GameStateKind.UNDO -> context.getString(R.string.game_state_undo)
         GameStateKind.MANUAL -> context.getString(R.string.game_state_number, entry.number)
@@ -664,32 +651,76 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         }
     }
     /** Loads [entry]; the moment before is kept as "Before loading" so the step can be undone. */
-    val loadState: (GameStateEntry) -> Unit = { entry ->
-        val compatible = GameStateStore.compatible(
-            entry, core.id, session.coreStamp, GameStateStore.legacyCoreStamp(session.coreFile),
-        )
-        val bytes = if (compatible) model.readState(game, entry) else null
+    val loadState: (GameStateEntry) -> Unit = loadState@ { entry ->
+        if (stateBusy || destroyed || exiting) return@loadState
         if (!stateAvailable || achievements.hardcore || netplay.active) {
             message = context.getString(
-                if (achievements.hardcore) R.string.game_message_hardcore_blocked else R.string.game_message_netplay_blocked,
+                when {
+                    achievements.hardcore -> R.string.game_message_hardcore_blocked
+                    netplay.active -> R.string.game_message_netplay_blocked
+                    else -> R.string.game_message_load_failed
+                },
             )
-        } else if (!compatible) {
-            message = context.getString(R.string.game_message_load_other_core)
-        } else if (bytes == null) {
-            message = context.getString(R.string.game_message_load_failed)
         } else {
-            runCatching { model.saveState(session, GameStateKind.UNDO, retroView.serializeState(), snapshot) }
-            val restored = runCatching { retroView.unserializeState(bytes) }.getOrDefault(false)
-            if (restored) {
-                runCatching { retroView.clearRewindBuffer() }
-                resume()
-            } else message = context.getString(
-                if (entry.coreStamp != session.coreStamp) R.string.game_message_load_other_core else R.string.game_message_load_failed,
-            )
+            stateBusy = true
+            message = context.getString(R.string.game_state_working)
+            val preview = snapshot
+            scope.launch {
+                try {
+                    val compatible = withContext(Dispatchers.IO) {
+                        GameStateStore.compatible(entry, core.id, session.coreStamp,
+                            GameStateStore.legacyCoreStamp(session.coreFile))
+                    }
+                    if (!compatible) {
+                        message = context.getString(R.string.game_message_load_other_core)
+                        return@launch
+                    }
+                    // Read first: loading UNDO must not overwrite the bytes being restored.
+                    val bytes = model.readState(game, entry)
+                    if (bytes == null || destroyed || exiting) {
+                        message = context.getString(R.string.game_message_load_failed)
+                        return@launch
+                    }
+                    val previous = withContext(Dispatchers.Default) { runCatching { retroView.serializeState() }.getOrNull() }
+                    if (previous != null) model.saveState(session, GameStateKind.UNDO, previous, preview)
+                    if (destroyed || exiting || achievements.hardcore || netplay.active) return@launch
+                    val restored = withContext(Dispatchers.Default) {
+                        runCatching {
+                            retroView.unserializePersistedState(bytes).also { if (it) retroView.clearRewindBuffer() }
+                        }.getOrDefault(false)
+                    }
+                    if (restored) { message = null; resume() }
+                    else message = context.getString(R.string.game_message_load_failed)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    message = context.getString(R.string.game_message_load_failed)
+                } finally { stateBusy = false }
+            }
         }
     }
 
-    val running = coreReady && activityResumed && !menuOpen && panel == null && !exiting && !destroyed
+    val saveManualState: () -> Unit = {
+        if (!stateBusy && !destroyed && !exiting) {
+            osd.interact()
+            stateBusy = true
+            message = context.getString(R.string.game_state_working)
+            val preview = snapshot
+            scope.launch {
+                try {
+                    val bytes = withContext(Dispatchers.Default) { retroView.serializeState() }
+                    val saved = model.saveState(session, GameStateKind.MANUAL, bytes, preview)
+                    message = context.getString(R.string.game_message_saved, stateTitle(saved))
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    message = context.getString(R.string.game_message_save_failed)
+                } finally { stateBusy = false }
+            }
+        }
+    }
+
+    val running = coreReady && activityResumed && !menuOpen && panel == null && !exiting && !destroyed && !stateBusy
     LaunchedEffect(running) {
         retroView.suppressAutoResume = !running
         if (running) retroView.resumeEmulation() else retroView.pauseEmulation()
@@ -711,7 +742,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     LaunchedEffect(fastForward) { retroView.frameSpeed = if (fastForward) 2 else 1 }
     LaunchedEffect(rewinding, running) {
-        retroView.isRewinding = core.rewind && rewinding && running && !achievements.hardcore && !netplay.active
+        retroView.isRewinding = core.rewind && serializationPolicy.frameExact && rewinding && running && !achievements.hardcore && !netplay.active
     }
 
     DisposableEffect(activityLifecycle) {
@@ -758,6 +789,35 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     // First frame: the game is loaded; continue where the player left off, then keep rewind ready.
     LaunchedEffect(retroView) {
         var renderedFrames = 0
+        var initializationFrames = 0
+        var pendingAuto = session.autoState.takeUnless { hardcoreRequested }
+        suspend fun refreshStateSupport() {
+            serializationPolicy = GameSerializationPolicy(runCatching { LibretroDroid.getSerializationQuirks() }.getOrDefault(0L))
+            stateAvailable = core.saveStates && serializationPolicy.persistentStates && withContext(Dispatchers.Default) {
+                runCatching {
+                    retroView.getSerializeSize() in 1L..GameStateStore.MAX_STATE_BYTES &&
+                        (!serializationPolicy.mustInitialize || retroView.serializeState().isNotEmpty())
+                }.getOrDefault(false)
+            }
+            if (!serializationPolicy.persistentStates) pendingAuto = null
+            if (!stateAvailable) return
+            pendingAuto?.let { bytes ->
+                pendingAuto = null
+                val restored = withContext(Dispatchers.Default) {
+                    runCatching { retroView.unserializePersistedState(bytes) }.getOrDefault(false)
+                }
+                if (restored) message = context.getString(R.string.game_message_continued)
+            }
+            if (core.rewind && serializationPolicy.frameExact && GameSettings.state.rewind && !hardcoreRequested) {
+                withContext(Dispatchers.Default) {
+                    runCatching {
+                        val fps = LibretroDroid.getContentFps().takeIf { it in 1.0..240.0 } ?: 60.0
+                        retroView.initRewindBuffer((REWIND_SECONDS * fps).roundToInt(), REWIND_BUDGET_BYTES)
+                        retroView.rewindEnabled = true
+                    }
+                }
+            }
+        }
         retroView.getGLRetroEvents().collect { event ->
             val statusInterval = if (nativeSdrFullscreenRequested) 30 else 120
             if (event == GLRetroView.GLRetroEvents.FrameRendered &&
@@ -787,29 +847,20 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             if (event == GLRetroView.GLRetroEvents.FrameRendered && !loaded) {
                 loaded = true
                 model.firstFrameRendered(session)
-                stateAvailable = core.saveStates && runCatching {
-                    retroView.getSerializeSize() in 1L..com.ambient.tv.games.GameStateStore.MAX_STATE_BYTES
-                }.getOrDefault(false)
-                runCatching { retroView.getVariables().mapNotNull { v -> v.key?.let { it to v.description } } }
+                refreshStateSupport()
+                withContext(Dispatchers.Default) { runCatching { retroView.getVariables().mapNotNull { v -> v.key?.let { it to v.description } } } }
                     .onSuccess { model.saveDeclaredOptions(core, it) }
-                // Hardcore starts the game fresh: a continued state would not count.
-                if (!hardcoreRequested) session.autoState?.let { bytes ->
-                    val restored = withContext(Dispatchers.Default) { runCatching { retroView.unserializeState(bytes) }.getOrDefault(false) }
-                    if (restored) message = context.getString(R.string.game_message_continued)
-                }
                 (0 until RetroPorts.COUNT).forEach { port ->
                     GameSettings.state.controllerType(core, port)?.let { type -> runCatching { retroView.setControllerType(port, type) } }
                 }
                 applyCheats(cheats)
                 achievements.start(retroView, game, !game.direct && core.achievements && GameSettings.state.achievements, hardcoreRequested)
-                if (core.rewind && stateAvailable && GameSettings.state.rewind && !hardcoreRequested) withContext(Dispatchers.Default) {
-                    runCatching {
-                        if (retroView.getSerializeSize() <= 0) return@runCatching
-                        val fps = LibretroDroid.getContentFps().takeIf { it in 1.0..240.0 } ?: 60.0
-                        retroView.initRewindBuffer((REWIND_SECONDS * fps).roundToInt(), REWIND_BUDGET_BYTES)
-                        retroView.rewindEnabled = true
-                    }
-                }
+            } else if (event == GLRetroView.GLRetroEvents.FrameRendered && loaded &&
+                !stateAvailable && core.saveStates && serializationPolicy.persistentStates &&
+                serializationPolicy.mustInitialize && ++initializationFrames % 60 == 0) {
+                // Some cores cannot serialize on frame one. Probe at most once per 60 rendered
+                // frames, off main, rather than permanently disabling saves after the first miss.
+                refreshStateSupport()
             }
         }
     }
@@ -845,9 +896,29 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 ({ handler.removeCallbacks(runnable) })
             },
             onMenu = { latestOpenMenu() },
-            onRewind = { held -> rewinding = held && core.rewind && stateAvailable },
+            onRewind = { held -> rewinding = held && core.rewind && stateAvailable && serializationPolicy.frameExact },
             onFastForward = { if (!netplay.active) fastForward = !fastForward },
-        ).also(inputRef::set)
+        )
+    }
+    var coreInputDescriptions by remember(retroView) { mutableStateOf<Map<String, String>>(emptyMap()) }
+    val coreInputActions = remember(coreInputDescriptions) {
+        List(RetroPorts.COUNT) { com.ambient.tv.games.GameInputDescriptions.forPort(coreInputDescriptions, it) }
+    }
+    // A single atomic revision check per second; descriptors are copied/parsed only when
+    // they change. This also catches core-option/controller changes while the OSD is open.
+    LaunchedEffect(retroView, loaded, activityResumed, destroyed, optionsVersion, panel) {
+        if (!loaded || !activityResumed || destroyed) return@LaunchedEffect
+        var revision = -1L
+        while (true) {
+            val next = LibretroDroid.getInputDescriptorRevision()
+            if (next != revision) {
+                coreInputDescriptions = withContext(Dispatchers.Default) {
+                    com.ambient.tv.games.GameInputDescriptions.fromNative(LibretroDroid.getInputDescriptors())
+                }
+                revision = next
+            }
+            kotlinx.coroutines.delay(1_000L)
+        }
     }
     // Only changed pointer contacts go through JNI; the other device types do not receive
     // redundant six-call resets on each 60Hz phone position update.
@@ -910,6 +981,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     LaunchedEffect(input, handheld, running) {
         if (!handheld) com.ambient.tv.companion.CompanionGamepadSession.setReady(input, running)
     }
+    LaunchedEffect(input, handheld, coreInputDescriptions) {
+        if (!handheld) com.ambient.tv.companion.CompanionGamepadSession.setInputDescriptions(input, coreInputDescriptions)
+    }
     // Vibration goes to the controllers of the player the core addresses.
     val runningNow by rememberUpdatedState(running)
     LaunchedEffect(Unit) {
@@ -943,7 +1017,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             applyCheats(cheats)
             runCatching {
                 retroView.rewindEnabled =
-                    core.rewind && stateAvailable && settings.rewind && !achievements.hardcore
+                    core.rewind && stateAvailable && serializationPolicy.frameExact && settings.rewind && !achievements.hardcore
             }
             // Host negotiation pauses the core before exchanging its state. A failed
             // handshake must not leave an otherwise running single-player game frozen.
@@ -951,37 +1025,33 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         }
     }
     DisposableEffect(input, retroView) {
-        val sentButtons = IntArray(RetroPorts.COUNT)
-        val sentAnalog = IntArray(RetroPorts.COUNT * 4)
-        input.onChanged = {
+        val sent = IntArray(RetroPorts.COUNT * 7)
+        input.onChanged = changed@{
+            if (destroyed) return@changed
             for (port in 0 until RetroPorts.COUNT) {
                 val buttons = input.buttons(port)
-                val changed = buttons xor sentButtons[port]
-                if (changed != 0) {
-                    RetroPadButton.entries.forEach { button ->
-                        if (changed and button.mask != 0) {
-                            val action = if (buttons and button.mask != 0) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP
-                            retroView.sendKeyEvent(action, button.libretroDroidKey(), port)
-                        }
-                    }
-                    sentButtons[port] = buttons
-                }
-                for (index in 0..1) {
-                    val x = input.analog(port, index, 0)
-                    val y = input.analog(port, index, 1)
-                    val at = port * 4 + index * 2
-                    if (x != sentAnalog[at] || y != sentAnalog[at + 1]) {
-                        sentAnalog[at] = x
-                        sentAnalog[at + 1] = y
-                        retroView.sendMotionEvent(
-                            if (index == 0) GLRetroView.MOTION_SOURCE_ANALOG_LEFT else GLRetroView.MOTION_SOURCE_ANALOG_RIGHT,
-                            x / RetroPadInput.ANALOG_MAX.toFloat(), y / RetroPadInput.ANALOG_MAX.toFloat(), port,
-                        )
-                    }
-                }
+                val leftX = input.analog(port, 0, 0)
+                val leftY = input.analog(port, 0, 1)
+                val rightX = input.analog(port, 1, 0)
+                val rightY = input.analog(port, 1, 1)
+                val leftTrigger = input.trigger(port, 0)
+                val rightTrigger = input.trigger(port, 1)
+                val at = port * 7
+                if (sent[at] == buttons && sent[at + 1] == leftX && sent[at + 2] == leftY &&
+                    sent[at + 3] == rightX && sent[at + 4] == rightY &&
+                    sent[at + 5] == leftTrigger && sent[at + 6] == rightTrigger) continue
+                sent[at] = buttons; sent[at + 1] = leftX; sent[at + 2] = leftY
+                sent[at + 3] = rightX; sent[at + 4] = rightY
+                sent[at + 5] = leftTrigger; sent[at + 6] = rightTrigger
+                val range = RetroPadInput.ANALOG_MAX.toFloat()
+                LibretroDroid.onInputSnapshot(port, buttons, leftX / range, leftY / range,
+                    rightX / range, rightY / range, leftTrigger / range, rightTrigger / range)
             }
         }
-        val onRemoved: (Int) -> Unit = { id -> input.deviceRemoved(id) }
+        val onRemoved: (Int) -> Unit = { id ->
+            input.deviceRemoved(id)
+            if (hidingGamepadId == id) hidingGamepadId = null
+        }
         GamepadInput.deviceRemovedSink = onRemoved
         onDispose {
             input.onChanged = null
@@ -990,7 +1060,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         }
     }
     DisposableEffect(running, input) {
-        val sink: (android.view.InputEvent) -> Boolean = { event -> input.onEvent(event) }
+        val sink: (android.view.InputEvent) -> Boolean = { event ->
+            val handled = input.onEvent(event)
+            if (handled && hideTouchForGamepad && isPhysicalGamepadActivity(event, input)) hidingGamepadId = event.deviceId
+            handled
+        }
         if (running) GamepadInput.rawSink = sink else input.releaseAll()
         onDispose {
             if (GamepadInput.rawSink === sink) GamepadInput.rawSink = null
@@ -1052,6 +1126,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 directPointer = system.pointerInput,
                 touchEnabled = touchControls,
                 touchMode = touchMode,
+                touchStyle = touchStyle,
+                presentation = touchPresentation,
+                coreActions = coreInputActions[0],
+                hiddenForGamepad = touchStyle.hideOnGamepadInput && hidingGamepadId != null,
+                onShowTouch = { hidingGamepadId = null },
                 playing = running,
                 menuVisible = menuOpen,
                 onMenu = openMenu,
@@ -1118,6 +1197,14 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         screenshot = { model.screenshot(game, it) },
                         onLoad = loadState,
                         onDelete = { model.deleteState(game, it) },
+                        onRename = { entry, label ->
+                            scope.launch {
+                                try { model.renameState(game, entry, label) }
+                                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                                catch (_: Exception) { message = context.getString(R.string.game_message_save_failed) }
+                            }
+                        },
+                        enabled = !stateBusy,
                         onClose = {
                             statesOpen = false
                             runCatching { statesRequester.requestFocus() }
@@ -1128,15 +1215,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         leftContent = {
                             PlayerIconButton(Icons.Filled.PlayArrow, stringResource(R.string.game_continue), resume,
                                 modifier = Modifier.focusRequester(playRequester), primary = true)
-                            PlayerIconButton(Icons.Filled.Save, stringResource(R.string.game_save_state), {
-                                osd.interact()
-                                runCatching { model.saveState(session, GameStateKind.MANUAL, retroView.serializeState(), snapshot) }
-                                    .onSuccess { message = context.getString(R.string.game_message_saved, stateTitle(it)) }
-                                    .onFailure { message = context.getString(R.string.game_message_save_failed) }
-                            }, enabled = loaded && stateAvailable, osd = OsdButton.GAME_SAVE)
+                            PlayerIconButton(Icons.Filled.Save, stringResource(R.string.game_save_state), saveManualState,
+                                enabled = loaded && stateAvailable && !stateBusy, osd = OsdButton.GAME_SAVE)
                             PlayerIconButton(Icons.Filled.SettingsBackupRestore, stringResource(R.string.game_quick_load), {
                                 model.latestManualState(game)?.let(loadState)
-                            }, enabled = loaded && stateAvailable && !achievements.hardcore && !netplay.active && saveStates.any { it.kind == GameStateKind.MANUAL },
+                            }, enabled = loaded && stateAvailable && !stateBusy && !achievements.hardcore && !netplay.active && saveStates.any { it.kind == GameStateKind.MANUAL },
                                 osd = OsdButton.GAME_LOAD)
                             PlayerIconButton(Icons.Filled.Bookmarks, stringResource(R.string.game_states), {
                                 osd.interact()
@@ -1149,7 +1232,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 runCatching { retroView.clearRewindBuffer() }
                                 model.clearAutoState(game)
                                 resume()
-                            }, enabled = loaded && !netplay.active, osd = OsdButton.GAME_RESET)
+                            }, enabled = loaded && !netplay.active && !stateBusy, osd = OsdButton.GAME_RESET)
                             PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.game_fast_forward), {
                                 fastForward = !fastForward
                             }, selected = fastForward, enabled = loaded && !netplay.active,
@@ -1179,7 +1262,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 osd = OsdButton.GAME_CHEATS)
                             PlayerIconButton(Icons.Filled.Groups, stringResource(R.string.game_panel_netplay), {
                                 panel = GamePanel.NETPLAY
-                            }, selected = panel == GamePanel.NETPLAY, enabled = loaded && stateAvailable && core.netplay && !game.direct,
+                            }, selected = panel == GamePanel.NETPLAY, enabled = loaded && stateAvailable && serializationPolicy.frameExact && core.netplay && !game.direct && !stateBusy,
                                 osd = OsdButton.GAME_NETPLAY)
                             if (discCount > 1) PlayerIconButton(Icons.Filled.Album, stringResource(R.string.game_panel_disc), {
                                 panel = GamePanel.DISC
@@ -1300,7 +1383,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 icon = Icons.Filled.Code, enabled = loaded && core.cheats && !achievements.hardcore,
                                 onClick = { openSettingsPanel(GamePanel.CHEATS) })
                             RightPanelChoice(stringResource(R.string.game_panel_netplay), selected = false,
-                                icon = Icons.Filled.Groups, enabled = loaded && stateAvailable && core.netplay && !game.direct,
+                                icon = Icons.Filled.Groups, enabled = loaded && stateAvailable && serializationPolicy.frameExact && core.netplay && !game.direct && !stateBusy,
                                 onClick = { openSettingsPanel(GamePanel.NETPLAY) })
                             if (discCount > 1) RightPanelChoice(stringResource(R.string.game_panel_disc), selected = false,
                                 icon = Icons.Filled.Album, enabled = !netplay.active,
@@ -1588,7 +1671,12 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     onClick = { GameSettings.update { it.withTouchMode(system, choice) } },
                                 )
                             }
+                            GameTouchOptions(system.id)
                             GameControlsPanel()
+                            coreInputActions.forEachIndexed { port, actions ->
+                                GameCoreInputActions(actions, touchPresentation,
+                                    stringResource(R.string.game_core_input_actions_player, port + 1))
+                            }
                             GameDeviceTypesPanel(
                                 controllers = remember(open) { runCatching { retroView.getControllers() }.getOrDefault(emptyArray()) },
                                 current = { port -> settings.controllerType(core, port) },
@@ -1780,90 +1868,6 @@ internal fun GameBiosState.titleRes(): Int = when (this) {
     GameBiosState.MISSING -> R.string.game_bios_missing
 }
 
-/**
- * Save states as cards, styled like the video players' chapter row: the preview, the name and
- * when it was saved. OK loads; holding OK (or Menu/Info) twice deletes.
- */
-@Composable
-private fun GameStateStrip(
-    open: Boolean,
-    states: List<GameStateEntry>,
-    coreStamp: String,
-    title: (GameStateEntry) -> String,
-    screenshot: (GameStateEntry) -> File?,
-    onLoad: (GameStateEntry) -> Unit,
-    onDelete: (GameStateEntry) -> Unit,
-    onClose: () -> Unit,
-) {
-    val firstFocus = remember { FocusRequester() }
-    var pendingDelete by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(open, states.isEmpty()) {
-        pendingDelete = null
-        if (open && states.isNotEmpty()) {
-            withFrameNanos { }
-            runCatching { firstFocus.requestFocus() }
-        }
-    }
-    AnimatedVisibility(
-        visible = open && states.isNotEmpty(),
-        enter = expandVertically(tween(300, easing = FastOutSlowInEasing)) + fadeIn(tween(220)),
-        exit = shrinkVertically(tween(350, easing = FastOutSlowInEasing)) + fadeOut(tween(200)),
-    ) {
-        val formatter = LocalContext.current.let { remember(it) { android.text.format.DateFormat.getMediumDateFormat(it) to android.text.format.DateFormat.getTimeFormat(it) } }
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterHorizontally),
-            contentPadding = PaddingValues(vertical = 12.dp, horizontal = 4.dp),
-            modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
-                when (event.key) {
-                    Key.Back, Key.Escape -> { if (event.type == KeyEventType.KeyUp) onClose(); true }
-                    Key.DirectionUp -> { if (event.type == KeyEventType.KeyDown) onClose(); true }
-                    Key.DirectionDown -> true
-                    else -> false
-                }
-            },
-        ) {
-            itemsIndexed(states, key = { _, entry -> entry.id + entry.createdAt }) { index, entry ->
-                var focused by remember { mutableStateOf(false) }
-                val scale by animateFloatAsState(if (focused) 1.05f else 1f, tween(150), label = "stateScale")
-                val shape = RoundedCornerShape(10.dp)
-                val image = remember(entry.id, entry.createdAt) {
-                    screenshot(entry)?.let { file -> runCatching { BitmapFactory.decodeFile(file.path)?.asImageBitmap() }.getOrNull() }
-                }
-                val deleting = pendingDelete == entry.id
-                Column(
-                    Modifier.width(200.dp)
-                        .then(if (index == 0) Modifier.focusRequester(firstFocus) else Modifier)
-                        .graphicsLayer { scaleX = scale; scaleY = scale }
-                        .onFocusChanged { focused = it.isFocused; if (!it.isFocused && deleting) pendingDelete = null }
-                        .clip(shape).background(Color.Black.copy(alpha = if (focused) 0.72f else 0.5f))
-                        .border(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color.White.copy(alpha = 0.12f), shape)
-                        .activateOnTvKey(onClick = { onLoad(entry) }, onLongClick = {
-                            if (deleting) { pendingDelete = null; onDelete(entry) } else pendingDelete = entry.id
-                        })
-                        .clickable(role = Role.Button) { onLoad(entry) },
-                ) {
-                    Box(Modifier.fillMaxWidth().aspectRatio(4f / 3f).background(Color.Black)) {
-                        if (image != null) Image(image, contentDescription = null, modifier = Modifier.fillMaxSize())
-                    }
-                    Column(Modifier.padding(horizontal = 10.dp, vertical = 7.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(title(entry), color = Color.White, maxLines = 1, style = MaterialTheme.typography.bodyMedium)
-                        val date = java.util.Date(entry.createdAt)
-                        Text(
-                            when {
-                                deleting -> stringResource(R.string.game_state_delete_confirm)
-                                entry.coreStamp != coreStamp -> stringResource(R.string.game_state_other_core)
-                                else -> formatter.first.format(date) + " " + formatter.second.format(date)
-                            },
-                            color = Color.White.copy(alpha = 0.72f), maxLines = 1,
-                            style = MaterialTheme.typography.labelSmall,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
 @Composable
 internal fun GamePanelText(text: String) {
     Text(text, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium,
@@ -1873,10 +1877,10 @@ internal fun GamePanelText(text: String) {
 /** Who plays as which player; choosing a device steps through automatic, players 1–4 and off. */
 @Composable
 private fun GameControlsPanel() {
-    val devices = remember { playableInputDevices() }
+    val devices = rememberPlayableDevices()
     val config = RetroInputSettings.config
     GamePanelText(stringResource(R.string.game_controls_panel_hint))
-    devices.forEach { device ->
+    devices.forEach { device -> key(device.descriptor) {
         val current = config.ports[device.descriptor] ?: RetroPorts.AUTO
         val sequence = listOf(RetroPorts.AUTO) + (0 until RetroPorts.COUNT) + RetroPorts.OFF
         RightPanelChoice(
@@ -1892,5 +1896,5 @@ private fun GameControlsPanel() {
                 RetroInputSettings.update { it.withPort(device.descriptor, next) }
             },
         )
-    }
+    } }
 }

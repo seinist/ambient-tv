@@ -14,6 +14,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
@@ -47,6 +48,7 @@ class LiveTvRegistry @Inject constructor(
     @SharedOkHttp pool: ConnectionPool,
     @SharedOkHttp dispatcher: Dispatcher,
     private val browseDisk: com.ambient.tv.data.browse.BrowseDiskStore,
+    private val guideIndex: ProgrammeGuideIndex,
     hosts: HostConnectivity,
 ) {
     private val client = OkHttpClient.Builder().connectionPool(pool).dispatcher(dispatcher)
@@ -66,6 +68,8 @@ class LiveTvRegistry @Inject constructor(
     private val knownSerializer = kotlinx.serialization.builtins.ListSerializer(KnownLiveTvSource.serializer())
     @Volatile private var knownRestored = false
     private val restoreMutex = kotlinx.coroutines.sync.Mutex()
+    private val guideMaintenance = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+    private var retainedGuideOwners: Set<String>? = null
 
     /** Restored once per process: sources stay in the sidebar after a restart while servers sleep. */
     private suspend fun restoreKnown() {
@@ -136,7 +140,8 @@ class LiveTvRegistry @Inject constructor(
             val source = LiveTvSource("iptv:${config.id}", "iptv", config.name)
             val fingerprint = listOf(config)
             val repository = instances[source.id]?.takeIf { it.first == fingerprint }?.second
-                ?: IptvLiveTvRepository(source, config, iptvClient, java.io.File(context.cacheDir, "iptv"))
+                ?: IptvLiveTvRepository(source, config, iptvClient, java.io.File(context.cacheDir, "iptv"), guideIndex,
+                    isCurrent = { iptv.sources().any { it.enabled && sameIptvGuideSource(it, config) } })
             instances[source.id] = fingerprint to repository
             add(repository)
         }
@@ -145,6 +150,15 @@ class LiveTvRegistry @Inject constructor(
         instances.keys.retainAll(ids)
         known.retain(ids)
         browseStates.entries.removeAll { (id, state) -> repos.none { it.source.id == id && it === state.first } }
+        val guideOwners = repos.filter { it.source.system == "iptv" }.mapTo(hashSetOf()) { it.source.id }
+        if (guideOwners != retainedGuideOwners) {
+            retainedGuideOwners = guideOwners
+            guideMaintenance.launch {
+                fun currentOwners() = iptv.sources().filter { it.enabled }.mapTo(hashSetOf()) { "iptv:${it.id}" }
+                val active = currentOwners()
+                guideIndex.retainOwners("iptv:", active) { active == currentOwners() }
+            }
+        }
     }
 
     fun repository(id: String?): LiveTvRepository = configured().firstOrNull {
@@ -154,7 +168,7 @@ class LiveTvRegistry @Inject constructor(
     /** Settings "Test": loads the playlist with this exact configuration; channel count and whether a guide is known. */
     suspend fun testIptv(config: com.ambient.tv.data.iptv.IptvSource): Pair<Int, Boolean> {
         val repository = IptvLiveTvRepository(LiveTvSource("iptv:test", "iptv", config.name), config, iptvClient,
-            java.io.File(context.cacheDir, "iptv-test"))
+            java.io.File(context.cacheDir, "iptv-test"), guideIndex)
         val capabilities = repository.capabilities(force = true)
         return repository.channels().size to capabilities.guide
     }

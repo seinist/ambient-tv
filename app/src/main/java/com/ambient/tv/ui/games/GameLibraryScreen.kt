@@ -92,6 +92,7 @@ fun GameLibraryScreen(
     var searchText by rememberSaveable { mutableStateOf("") }
 
     LaunchedEffect(initialSection) { model.section(initialSection) }
+    LaunchedEffect(searchText) { model.query(searchText) }
     ReportSidebarContentReady(state.ready)
 
     BackHandler {
@@ -106,30 +107,8 @@ fun GameLibraryScreen(
         }
     }
     val sourcesById = remember(state.sources) { state.sources.associateBy { it.id } }
-    val games = remember(state.games, state.section, state.sortKey, state.sortDescending, searchText) {
-        val filtered = state.games.filter { game ->
-            (state.section == "all" ||
-                state.section == "favorites" && game.favorite ||
-                state.section == "recent" && game.lastPlayed != 0L ||
-                state.section == game.systemId) &&
-            (searchText.isBlank() || game.title.contains(searchText, ignoreCase = true) ||
-                game.filename.contains(searchText, ignoreCase = true))
-        }
-        if (state.section == "recent") filtered.sortedByDescending { it.lastPlayed }
-        else {
-            val sorted = when (state.sortKey) {
-                "system" -> filtered.sortedWith(compareBy<LibraryGame> {
-                    (GameSystems.byId(it.systemId)?.shortName ?: it.systemId).lowercase(Locale.ROOT)
-                }
-                    .thenBy { it.title.lowercase(Locale.ROOT) }.thenBy { it.fileId })
-                "recent" -> filtered.sortedWith(compareByDescending<LibraryGame> { it.lastPlayed }
-                    .thenBy { it.title.lowercase(Locale.ROOT) })
-                else -> filtered.sortedWith(compareBy<LibraryGame> { it.title.lowercase(Locale.ROOT) }
-                    .thenBy { it.fileId })
-            }
-            if (state.sortDescending) sorted.reversed() else sorted
-        }
-    }
+    // The repository returns just this section/search in final order, off the UI thread.
+    val games = state.games
     val alphabet = remember(games, state.section, state.view, state.sortKey) {
         if (state.section == "recent" || state.view == "rows" || state.sortKey != "name") emptyList()
         else games.mapNotNull { game ->
@@ -205,7 +184,7 @@ fun GameLibraryScreen(
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val sections = listOf("all", "favorites", "recent") +
                     GameSystems.sortIdsByName(state.folders.map { it.systemId }.filter { it != "auto" } +
-                        state.games.map { it.systemId })
+                        state.systems)
                 items(sections, key = { it }) { key ->
                     val label = when (key) {
                         "all" -> stringResource(R.string.game_library_all)

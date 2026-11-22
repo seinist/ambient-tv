@@ -48,6 +48,8 @@ data class MediaItem(
     val parentBackdropUrl: String? = null,
     /** Providers with an explicit watch state need not use the library's 90% heuristic. */
     val watchedOverride: Boolean? = null,
+    /** Device-local source incarnation, captured by playback metadata and excluded from disk/portable JSON. */
+    @kotlinx.serialization.Transient val localProgressScope: String? = null,
 ) {
     val allRatingKeys: List<String>
         get() = (linkedRatingKeys + ratingKey).distinct()

@@ -1,0 +1,21 @@
+<resources>
+    <string name="game_touch_customize">Touch layout</string>
+    <string name="game_touch_customization_hint">Shared by local games and the phone controller. Sizes and positions adapt to the available space; touch targets remain easy to reach.</string>
+    <string name="game_touch_size">Control size</string>
+    <string name="game_touch_opacity">Control opacity</string>
+    <string name="game_touch_portrait_position">Portrait position</string>
+    <string name="game_touch_landscape_position">Landscape position</string>
+    <string name="game_touch_position_upper">Higher</string>
+    <string name="game_touch_position_middle">Middle</string>
+    <string name="game_touch_position_lower">Lower</string>
+    <string name="game_touch_deadzone">Stick deadzone</string>
+    <string name="game_touch_diagonals">D-pad diagonals</string>
+    <string name="game_touch_diagonals_narrow">Narrow</string>
+    <string name="game_touch_diagonals_equal">Balanced</string>
+    <string name="game_touch_diagonals_wide">Wide</string>
+    <string name="game_touch_hide_gamepad">Hide when a controller is used</string>
+    <string name="game_touch_hide_gamepad_hint">After input from a gamepad connected to this phone. The gamepad button brings touch controls back.</string>
+    <string name="game_touch_show">Show touch controls</string>
+    <string name="game_touch_system_layout">Console layout</string>
+    <string name="game_touch_full_retropad">Full RetroPad</string>
+</resources>

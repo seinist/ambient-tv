@@ -1,0 +1,583 @@
+diff --git a/src/main/cpp/environment.cpp b/src/main/cpp/environment.cpp
+--- a/src/main/cpp/environment.cpp
++++ b/src/main/cpp/environment.cpp
+@@ -43,6 +43,7 @@
+     systemDirectory = requiredSystemDirectory;
+     savesDirectory = requiredSavesDirectory;
+     serializationQuirks.store(0u, std::memory_order_release);
++    inputDescriptors.replace(nullptr);
+ }
+ 
+ void Environment::setConfiguredHdrOutput(unsigned mode) {
+@@ -64,6 +65,7 @@
+     // Ambient TV: options belong to one core; another core must not inherit them.
+     variables.clear();
+     serializationQuirks.store(0u, std::memory_order_release);
++    inputDescriptors.replace(nullptr);
+     optionMeta.clear();
+     updateDisplayCallback = nullptr;
+     dirtyVariables = false;
+@@ -610,8 +612,7 @@
+         }
+ 
+         case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
+-            LOGD("Called SET_INPUT_DESCRIPTORS");
+-            return false;
++            return inputDescriptors.replace(static_cast<const retro_input_descriptor*>(data));
+ 
+         case RETRO_ENVIRONMENT_GET_VARIABLE:
+             LOGD("Called RETRO_ENVIRONMENT_GET_VARIABLE");
+diff --git a/src/main/cpp/environment.h b/src/main/cpp/environment.h
+--- a/src/main/cpp/environment.h
++++ b/src/main/cpp/environment.h
+@@ -32,6 +32,7 @@
+ #include "../../libretro-common/include/libretro.h"
+ #include "log.h"
+ #include "rumblestate.h"
++#include "inputdescriptors.h"
+ 
+ struct Variable {
+ public:
+@@ -81,6 +82,8 @@
+     /** Atomic handshake: bit 0 requested HDR10, bit 1 accepted HDR10, bit 2 requested scRGB. */
+     unsigned getHdrSourceStatus() const { return hdrSourceStatus.load(std::memory_order_acquire); }
+     uint64_t getSerializationQuirks() const { return serializationQuirks.load(std::memory_order_acquire); }
++    unsigned getInputDescriptorRevision() const { return inputDescriptors.generation(); }
++    std::vector<std::string> getInputDescriptors() const { return inputDescriptors.snapshot(); }
+ 
+ private:
+     Environment() {}
+@@ -191,6 +194,7 @@
+     unsigned configuredHdrOutput = 0; // 0 SDR/unknown, 1 configured PQ; reset at game exit
+     std::atomic<unsigned> hdrSourceStatus { 0u };
+     std::atomic<uint64_t> serializationQuirks { 0u };
++    InputDescriptorStore inputDescriptors;
+ 
+     int pixelFormat = RETRO_PIXEL_FORMAT_RGB565;
+     bool useHWAcceleration = false;
+diff --git a/src/main/cpp/input.cpp b/src/main/cpp/input.cpp
+--- a/src/main/cpp/input.cpp
++++ b/src/main/cpp/input.cpp
+@@ -72,6 +72,13 @@
+                         default:
+                             return 0;
+                     }
++                case RETRO_DEVICE_INDEX_ANALOG_BUTTON:
++                    if (id > RETRO_DEVICE_ID_JOYPAD_R3) return 0;
++                    if (id == RETRO_DEVICE_ID_JOYPAD_L2 && pads[port].leftTrigger >= 0.f)
++                        return static_cast<int16_t>(std::lround(pads[port].leftTrigger * MAX_RANGE_MOTION));
++                    if (id == RETRO_DEVICE_ID_JOYPAD_R2 && pads[port].rightTrigger >= 0.f)
++                        return static_cast<int16_t>(std::lround(pads[port].rightTrigger * MAX_RANGE_MOTION));
++                    return getButtonState(port, id) ? MAX_RANGE_MOTION : 0;
+                 default:
+                     return 0;
+             }
+@@ -180,6 +187,7 @@
+ }
+ 
+ void Input::onKeyEvent(unsigned int port, int action, int keyCode) {
++    if (port >= 4) return;
+     int retroKeyCode = convertAndroidToLibretroKey(keyCode);
+     if (retroKeyCode == UNKNOWN_KEY) {
+         return;
+@@ -187,48 +195,125 @@
+ 
+     std::lock_guard<std::mutex> lock(inputMutex);
+     auto& target = netplayActive ? captured[port] : pads[port];
++    if (retroKeyCode == RETRO_DEVICE_ID_JOYPAD_L2) {
++        target.leftTrigger = -1.f;
++        target.leftTriggerReleasePending = false;
++    }
++    if (retroKeyCode == RETRO_DEVICE_ID_JOYPAD_R2) {
++        target.rightTrigger = -1.f;
++        target.rightTriggerReleasePending = false;
++    }
+     if (action == AKEY_EVENT_ACTION_DOWN) {
+-        target.pressedKeys.insert(retroKeyCode);
+-        target.pendingReleases.erase(retroKeyCode);
++        target.pressedKeys |= (uint64_t{1} << retroKeyCode);
++        target.pendingReleases &= ~(uint64_t{1} << retroKeyCode);
+     } else if (action == AKEY_EVENT_ACTION_UP) {
+-        target.pendingReleases.insert(retroKeyCode);
++        target.pendingReleases |= (uint64_t{1} << retroKeyCode);
+     }
+ }
+ 
+ void Input::setNetplayActive(bool active) {
+     std::lock_guard<std::mutex> lock(inputMutex);
++    if (netplayActive == active) return;
+     netplayActive = active;
+-    if (active) {
+-        for (unsigned p = 0; p < 4; p++) {
+-            captured[p].pressedKeys = pads[p].pressedKeys;
+-            captured[p].pendingReleases.clear();
+-        }
+-    }
++    for (unsigned p = 0; p < 4; p++) {
++        if (active) captured[p] = pads[p];
++        else {
++            // Do not retain the last remote lockstep frame after a peer disconnects.
++            pads[p] = captured[p];
++            flushPendingReleases(pads[p]);
++        }
++    }
++}
++
++static float finiteAxis(float value) {
++    return std::isfinite(value) ? std::clamp(value, -1.f, 1.f) : 0.f;
++}
++
++static float finitePressure(float value) {
++    return std::isfinite(value) ? std::clamp(value, 0.f, 1.f) : 0.f;
++}
++
++void Input::onInputSnapshot(unsigned port, uint32_t buttons, float leftX, float leftY,
++                            float rightX, float rightY, float leftTrigger, float rightTrigger) {
++    if (port >= 4) return;
++    std::lock_guard<std::mutex> lock(inputMutex);
++    auto& target = netplayActive ? captured[port] : pads[port];
++    target.dpadXAxis = 0;
++    target.dpadYAxis = 0;
++    target.dpadReleasePending = false;
++    const uint64_t requested = buttons & 0xffffu;
++    // A down/up within one render interval still reaches the core for a frame.
++    target.pendingReleases = target.pressedKeys & ~requested;
++    target.pressedKeys |= requested;
++    target.joypadLeftXAxis = finiteAxis(leftX);
++    target.joypadLeftYAxis = finiteAxis(leftY);
++    target.joypadRightXAxis = finiteAxis(rightX);
++    target.joypadRightYAxis = finiteAxis(rightY);
++    const float left = finitePressure(leftTrigger);
++    const float right = finitePressure(rightTrigger);
++    target.leftTriggerReleasePending = left == 0.f && target.leftTrigger > 0.f;
++    target.rightTriggerReleasePending = right == 0.f && target.rightTrigger > 0.f;
++    if (!target.leftTriggerReleasePending) target.leftTrigger = left;
++    if (!target.rightTriggerReleasePending) target.rightTrigger = right;
++}
++
++void Input::setInputPortSnapshot(unsigned port, uint32_t buttons, float leftX, float leftY,
++                                float rightX, float rightY, float leftTrigger, float rightTrigger) {
++    if (port >= 4) return;
++    std::lock_guard<std::mutex> lock(inputMutex);
++    auto& target = pads[port];
++    target.pressedKeys = buttons & 0xffffu;
++    target.pendingReleases = 0;
++    target.dpadXAxis = 0;
++    target.dpadYAxis = 0;
++    target.dpadReleasePending = false;
++    target.joypadLeftXAxis = finiteAxis(leftX);
++    target.joypadLeftYAxis = finiteAxis(leftY);
++    target.joypadRightXAxis = finiteAxis(rightX);
++    target.joypadRightYAxis = finiteAxis(rightY);
++    target.leftTrigger = finitePressure(leftTrigger);
++    target.rightTrigger = finitePressure(rightTrigger);
++    target.leftTriggerReleasePending = false;
++    target.rightTriggerReleasePending = false;
++}
++
++void Input::getInputPortSnapshot(unsigned port, int* output) {
++    std::fill(output, output + 7, 0);
++    if (port >= 4) return;
++    std::lock_guard<std::mutex> lock(inputMutex);
++    auto& source = netplayActive ? captured[port] : pads[port];
++    const uint32_t mask = buttonMask(source);
++    output[0] = static_cast<int>(mask);
++    output[1] = static_cast<int>(std::lround(finiteAxis(source.joypadLeftXAxis) * MAX_RANGE_MOTION));
++    output[2] = static_cast<int>(std::lround(finiteAxis(source.joypadLeftYAxis) * MAX_RANGE_MOTION));
++    output[3] = static_cast<int>(std::lround(finiteAxis(source.joypadRightXAxis) * MAX_RANGE_MOTION));
++    output[4] = static_cast<int>(std::lround(finiteAxis(source.joypadRightYAxis) * MAX_RANGE_MOTION));
++    output[5] = source.leftTrigger >= 0.f ? static_cast<int>(std::lround(source.leftTrigger * MAX_RANGE_MOTION)) :
++        ((mask & (1u << RETRO_DEVICE_ID_JOYPAD_L2)) ? MAX_RANGE_MOTION : 0);
++    output[6] = source.rightTrigger >= 0.f ? static_cast<int>(std::lround(source.rightTrigger * MAX_RANGE_MOTION)) :
++        ((mask & (1u << RETRO_DEVICE_ID_JOYPAD_R2)) ? MAX_RANGE_MOTION : 0);
++    // Consume AFTER sampling; a press followed by a release between two ticks is one frame.
++    flushPendingReleases(source);
+ }
+ 
+ void Input::setInputPortAnalog(unsigned int port, float leftX, float leftY, float rightX, float rightY) {
+     if (port >= 4) return;
+     std::lock_guard<std::mutex> lock(inputMutex);
+-    pads[port].joypadLeftXAxis = leftX;
+-    pads[port].joypadLeftYAxis = leftY;
+-    pads[port].joypadRightXAxis = rightX;
+-    pads[port].joypadRightYAxis = rightY;
++    pads[port].joypadLeftXAxis = finiteAxis(leftX);
++    pads[port].joypadLeftYAxis = finiteAxis(leftY);
++    pads[port].joypadRightXAxis = finiteAxis(rightX);
++    pads[port].joypadRightYAxis = finiteAxis(rightY);
+ }
+ 
+ void Input::setInputPortState(unsigned int port, uint32_t bitmask) {
+     if (port >= 4) return;
+ 
+     std::lock_guard<std::mutex> lock(inputMutex);
+-    pads[port].pressedKeys.clear();
+-    pads[port].pendingReleases.clear();
++    pads[port].pressedKeys = bitmask & 0xffffu;
++    pads[port].pendingReleases = 0;
+     pads[port].dpadXAxis = 0;
+     pads[port].dpadYAxis = 0;
+     pads[port].dpadReleasePending = false;
+-    for (unsigned i = 0; i <= RETRO_DEVICE_ID_JOYPAD_R3; i++) {
+-        if ((bitmask & (1u << i)) != 0u) {
+-            pads[port].pressedKeys.insert(static_cast<int>(i));
+-        }
+-    }
+     // Reconstruct D-pad axis from bitmask so getInputState sees consistent state
+     if (bitmask & (1u << RETRO_DEVICE_ID_JOYPAD_LEFT))  pads[port].dpadXAxis = -1;
+     if (bitmask & (1u << RETRO_DEVICE_ID_JOYPAD_RIGHT)) pads[port].dpadXAxis = 1;
+@@ -237,48 +322,43 @@
+ }
+ 
+ uint32_t Input::getInputPortBitmask(unsigned port) {
+-    if (port >= 4) return 0;
+-    std::lock_guard<std::mutex> lock(inputMutex);
+-    auto& source = netplayActive ? captured[port] : pads[port];
+-    // Flush pending releases so held-then-released keys don't stick.
+-    for (int key : source.pendingReleases) {
+-        source.pressedKeys.erase(key);
+-    }
+-    source.pendingReleases.clear();
+-    // Flush pending dpad release
+-    if (source.dpadReleasePending) {
+-        source.dpadXAxis = source.pendingDpadX;
+-        source.dpadYAxis = source.pendingDpadY;
+-        source.dpadReleasePending = false;
+-    }
+-    uint32_t bitmask = 0;
+-    for (unsigned i = 0; i <= RETRO_DEVICE_ID_JOYPAD_R3; i++) {
+-        if (source.pressedKeys.count(i) > 0) {
+-            bitmask |= (1u << i);
+-        }
+-    }
+-    // Include D-pad axis state in the bitmask
++    int values[7];
++    getInputPortSnapshot(port, values);
++    return static_cast<uint32_t>(values[0]);
++}
++
++uint32_t Input::buttonMask(const GamePadState& source) {
++    uint32_t bitmask = static_cast<uint32_t>(source.pressedKeys & 0xffffu);
+     if (source.dpadXAxis == -1) bitmask |= (1u << RETRO_DEVICE_ID_JOYPAD_LEFT);
+     if (source.dpadXAxis == 1)  bitmask |= (1u << RETRO_DEVICE_ID_JOYPAD_RIGHT);
+     if (source.dpadYAxis == -1) bitmask |= (1u << RETRO_DEVICE_ID_JOYPAD_UP);
+     if (source.dpadYAxis == 1)  bitmask |= (1u << RETRO_DEVICE_ID_JOYPAD_DOWN);
++    if ((source.pressedKeys & (uint64_t{1} << RETRO_DEVICE_ID_JOYPAD_UP_LEFT)) != 0)
++        bitmask |= (1u << RETRO_DEVICE_ID_JOYPAD_UP) | (1u << RETRO_DEVICE_ID_JOYPAD_LEFT);
++    if ((source.pressedKeys & (uint64_t{1} << RETRO_DEVICE_ID_JOYPAD_UP_RIGHT)) != 0)
++        bitmask |= (1u << RETRO_DEVICE_ID_JOYPAD_UP) | (1u << RETRO_DEVICE_ID_JOYPAD_RIGHT);
++    if ((source.pressedKeys & (uint64_t{1} << RETRO_DEVICE_ID_JOYPAD_DOWN_LEFT)) != 0)
++        bitmask |= (1u << RETRO_DEVICE_ID_JOYPAD_DOWN) | (1u << RETRO_DEVICE_ID_JOYPAD_LEFT);
++    if ((source.pressedKeys & (uint64_t{1} << RETRO_DEVICE_ID_JOYPAD_DOWN_RIGHT)) != 0)
++        bitmask |= (1u << RETRO_DEVICE_ID_JOYPAD_DOWN) | (1u << RETRO_DEVICE_ID_JOYPAD_RIGHT);
+     return bitmask;
+ }
+ 
++void Input::flushPendingReleases(GamePadState& state) {
++    state.pressedKeys &= ~state.pendingReleases;
++    state.pendingReleases = 0;
++    if (state.dpadReleasePending) {
++        state.dpadXAxis = state.pendingDpadX;
++        state.dpadYAxis = state.pendingDpadY;
++        state.dpadReleasePending = false;
++    }
++    if (state.leftTriggerReleasePending) { state.leftTrigger = 0.f; state.leftTriggerReleasePending = false; }
++    if (state.rightTriggerReleasePending) { state.rightTrigger = 0.f; state.rightTriggerReleasePending = false; }
++}
++
+ void Input::flushPendingReleases() {
+     std::lock_guard<std::mutex> lock(inputMutex);
+-    for (unsigned p = 0; p < 4; p++) {
+-        for (int key : pads[p].pendingReleases) {
+-            pads[p].pressedKeys.erase(key);
+-        }
+-        pads[p].pendingReleases.clear();
+-
+-        if (pads[p].dpadReleasePending) {
+-            pads[p].dpadXAxis = pads[p].pendingDpadX;
+-            pads[p].dpadYAxis = pads[p].pendingDpadY;
+-            pads[p].dpadReleasePending = false;
+-        }
+-    }
++    for (auto& pad : pads) flushPendingReleases(pad);
+ }
+ 
+ bool Input::getButtonState(unsigned port, unsigned id) const {
+@@ -313,6 +393,7 @@
+ }
+ 
+ void Input::onMotionEvent(int port, int motionSource, float xAxis, float yAxis) {
++    if (port < 0 || port >= 4) return;
+     std::lock_guard<std::mutex> lock(inputMutex);
+     auto& target = netplayActive ? captured[port] : pads[port];
+     switch (motionSource) {
+@@ -389,7 +470,7 @@
+ }
+ 
+ bool Input::anyPressed(unsigned int port, unsigned int id) const {
+-    return pads[port].pressedKeys.count(id) > 0;
++    return id < 64 && (pads[port].pressedKeys & (uint64_t{1} << id)) != 0;
+ }
+ 
+ } //namespace libretrodroid
+diff --git a/src/main/cpp/input.h b/src/main/cpp/input.h
+--- a/src/main/cpp/input.h
++++ b/src/main/cpp/input.h
+@@ -20,7 +20,6 @@
+ 
+ #include <cstdint>
+ #include <mutex>
+-#include <unordered_set>
+ #include <array>
+ 
+ namespace libretrodroid {
+@@ -31,8 +30,9 @@
+     mutable std::mutex inputMutex;
+     struct PointerContact { float x = 0.5f; float y = 0.5f; bool pressed = false; };
+     struct GamePadState {
+-        std::unordered_set<int> pressedKeys;
+-        std::unordered_set<int> pendingReleases;
++        // Libretro IDs 0..15 and legacy Android diagonals 50..53 fit without heap nodes.
++        uint64_t pressedKeys = 0;
++        uint64_t pendingReleases = 0;
+ 
+         int dpadXAxis = 0;
+         int dpadYAxis = 0;
+@@ -43,6 +43,12 @@
+         float joypadLeftYAxis = 0;
+         float joypadRightXAxis = 0;
+         float joypadRightYAxis = 0;
++        // -1 preserves digital fallback for callers using the older key-only API.
++        float leftTrigger = -1.f;
++        float rightTrigger = -1.f;
++        // A short pressure tap survives until one core/netplay sampling interval.
++        bool leftTriggerReleasePending = false;
++        bool rightTriggerReleasePending = false;
+         float pointerScreenXAxis = 0.5f;
+         float pointerScreenYAxis = 0.5f;
+         bool pointerPressed = false;
+@@ -78,6 +84,12 @@
+     void onKeyEvent(unsigned int port, int action, int keyCode);
+     void onMotionEvent(int port, int motionSource, float xAxis, float yAxis);
+ 
++    void onInputSnapshot(unsigned port, uint32_t buttons, float leftX, float leftY,
++                         float rightX, float rightY, float leftTrigger, float rightTrigger);
++    void setInputPortSnapshot(unsigned port, uint32_t buttons, float leftX, float leftY,
++                              float rightX, float rightY, float leftTrigger, float rightTrigger);
++    /** mask, four signed stick axes, two unsigned pressures; consumes captured edges. */
++    void getInputPortSnapshot(unsigned port, int* output);
+     void setInputPortState(unsigned int port, uint32_t bitmask);
+     // Ambient TV: both sticks of a port for netplay (-1…1 each), next to the button bitmask.
+     void setInputPortAnalog(unsigned int port, float leftX, float leftY, float rightX, float rightY);
+@@ -92,6 +104,8 @@
+     bool anyPressed(unsigned int port, unsigned int id, T&... args) const;
+     bool anyPressed(unsigned int port, unsigned int id) const;
+     int convertAndroidToLibretroKey(int keyCode) const;
++    static void flushPendingReleases(GamePadState& state);
++    static uint32_t buttonMask(const GamePadState& state);
+ 
+     GamePadState pads[4];
+     GamePadState captured[4];
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -472,6 +472,21 @@
+     }
+ }
+ 
++void LibretroDroid::onInputSnapshot(unsigned port, uint32_t buttons, float leftX, float leftY,
++                                   float rightX, float rightY, float leftTrigger, float rightTrigger) {
++    if (input) input->onInputSnapshot(port, buttons, leftX, leftY, rightX, rightY, leftTrigger, rightTrigger);
++}
++
++void LibretroDroid::setInputPortSnapshot(unsigned port, uint32_t buttons, float leftX, float leftY,
++                                        float rightX, float rightY, float leftTrigger, float rightTrigger) {
++    if (input) input->setInputPortSnapshot(port, buttons, leftX, leftY, rightX, rightY, leftTrigger, rightTrigger);
++}
++
++void LibretroDroid::getInputPortSnapshot(unsigned port, int* output) {
++    if (input) input->getInputPortSnapshot(port, output);
++    else std::fill(output, output + 7, 0);
++}
++
+ void LibretroDroid::setInputPortState(unsigned int port, uint32_t bitmask) {
+     if (input) {
+         input->setInputPortState(port, bitmask);
+diff --git a/src/main/cpp/libretrodroid.h b/src/main/cpp/libretrodroid.h
+--- a/src/main/cpp/libretrodroid.h
++++ b/src/main/cpp/libretrodroid.h
+@@ -123,6 +123,11 @@
+     void onKeyEvent(unsigned int port, int action, int keyCode);
+     void onMotionEvent(unsigned int port, unsigned int source, float xAxis, float yAxis);
+     void onTouchEvent(float xAxis, float yAxis);
++    void onInputSnapshot(unsigned port, uint32_t buttons, float leftX, float leftY,
++                         float rightX, float rightY, float leftTrigger, float rightTrigger);
++    void setInputPortSnapshot(unsigned port, uint32_t buttons, float leftX, float leftY,
++                              float rightX, float rightY, float leftTrigger, float rightTrigger);
++    void getInputPortSnapshot(unsigned port, int* output);
+     void setInputPortState(unsigned int port, uint32_t bitmask);
+     void setInputPortAnalog(unsigned int port, float leftX, float leftY, float rightX, float rightY);
+     uint32_t getInputPortBitmask(unsigned int port);
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -258,6 +258,68 @@
+     return static_cast<jlong>(Environment::getInstance().getSerializationQuirks());
+ }
+ 
++JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getInputDescriptorRevision(JNIEnv*, jclass) {
++    return static_cast<jlong>(Environment::getInstance().getInputDescriptorRevision());
++}
++
++JNIEXPORT jobjectArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getInputDescriptors(JNIEnv* env, jclass) {
++    const auto rows = Environment::getInstance().getInputDescriptors();
++    jclass stringClass = env->FindClass("java/lang/String");
++    if (!stringClass) return nullptr;
++    const jmethodID constructor = env->GetMethodID(stringClass, "<init>", "([BLjava/lang/String;)V");
++    if (!constructor) { env->DeleteLocalRef(stringClass); return nullptr; }
++    jstring charset = env->NewStringUTF("UTF-8");
++    if (!charset) { env->DeleteLocalRef(stringClass); return nullptr; }
++    jobjectArray result = env->NewObjectArray(static_cast<jsize>(rows.size()), stringClass, nullptr);
++    if (result) {
++        for (size_t i = 0; i < rows.size(); ++i) {
++            const auto& value = rows[i];
++            jbyteArray bytes = env->NewByteArray(static_cast<jsize>(value.size()));
++            if (!bytes) break;
++            env->SetByteArrayRegion(bytes, 0, static_cast<jsize>(value.size()),
++                                    reinterpret_cast<const jbyte*>(value.data()));
++            if (env->ExceptionCheck()) { env->DeleteLocalRef(bytes); break; }
++            // Core descriptions are UTF-8, not JNI modified UTF-8. This also replaces a
++            // truncated final sequence safely instead of passing malformed bytes to ART.
++            jobject string = env->NewObject(stringClass, constructor, bytes, charset);
++            env->DeleteLocalRef(bytes);
++            if (!string) break;
++            env->SetObjectArrayElement(result, static_cast<jsize>(i), string);
++            env->DeleteLocalRef(string);
++            if (env->ExceptionCheck()) break;
++        }
++    }
++    env->DeleteLocalRef(charset);
++    env->DeleteLocalRef(stringClass);
++    return result;
++}
++
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_onInputSnapshot(
++    JNIEnv*, jclass, jint port, jint buttons, jfloat leftX, jfloat leftY,
++    jfloat rightX, jfloat rightY, jfloat leftTrigger, jfloat rightTrigger
++) {
++    LibretroDroid::getInstance().onInputSnapshot(static_cast<unsigned>(port), static_cast<uint32_t>(buttons),
++        leftX, leftY, rightX, rightY, leftTrigger, rightTrigger);
++}
++
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setInputPortSnapshot(
++    JNIEnv*, jclass, jint port, jint buttons, jfloat leftX, jfloat leftY,
++    jfloat rightX, jfloat rightY, jfloat leftTrigger, jfloat rightTrigger
++) {
++    LibretroDroid::getInstance().setInputPortSnapshot(static_cast<unsigned>(port), static_cast<uint32_t>(buttons),
++        leftX, leftY, rightX, rightY, leftTrigger, rightTrigger);
++}
++
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getInputPortSnapshot(
++    JNIEnv* env, jclass, jint port, jintArray output
++) {
++    if (!output || env->GetArrayLength(output) < 7) return;
++    int values[7];
++    LibretroDroid::getInstance().getInputPortSnapshot(static_cast<unsigned>(port), values);
++    const jint result[7] = {values[0], values[1], values[2], values[3], values[4], values[5], values[6]};
++    env->SetIntArrayRegion(output, 0, 7, result);
++}
++
+ JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getSerializeSize(
+     JNIEnv* env,
+     jclass obj
+diff --git a/src/main/cpp/libretrodroidjni.h b/src/main/cpp/libretrodroidjni.h
+--- a/src/main/cpp/libretrodroidjni.h
++++ b/src/main/cpp/libretrodroidjni.h
+@@ -28,6 +28,11 @@
+ JNIEXPORT jboolean JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_unserializePersistedState(JNIEnv* env, jclass obj, jbyteArray data);
+ JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getSerializeSize(JNIEnv* env, jclass obj);
+ JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getSerializationQuirks(JNIEnv* env, jclass obj);
++JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getInputDescriptorRevision(JNIEnv* env, jclass obj);
++JNIEXPORT jobjectArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getInputDescriptors(JNIEnv* env, jclass obj);
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_onInputSnapshot(JNIEnv* env, jclass obj, jint port, jint buttons, jfloat leftX, jfloat leftY, jfloat rightX, jfloat rightY, jfloat leftTrigger, jfloat rightTrigger);
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setInputPortSnapshot(JNIEnv* env, jclass obj, jint port, jint buttons, jfloat leftX, jfloat leftY, jfloat rightX, jfloat rightY, jfloat leftTrigger, jfloat rightTrigger);
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getInputPortSnapshot(JNIEnv* env, jclass obj, jint port, jintArray output);
+ JNIEXPORT jbyteArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_serializeSRAM(JNIEnv* env, jclass obj);
+ JNIEXPORT jboolean JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_unserializeSRAM(JNIEnv* env, jclass obj, jbyteArray data);
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_onSurfaceCreated(JNIEnv* env, jclass obj);
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -116,6 +116,17 @@
+     public static native void setInputPortState(int port, int bitmask);
+     // Ambient TV: both sticks of a port while netplay is active (-1…1).
+     public static native void setInputPortAnalog(int port, float leftX, float leftY, float rightX, float rightY);
++    /** Atomic local input delivery. Releases are retained through one core sampling interval. */
++    public static native void onInputSnapshot(int port, int buttons, float leftX, float leftY,
++        float rightX, float rightY, float leftTrigger, float rightTrigger);
++    /** Authoritative netplay frame; does not stage releases or overwrite locally captured input. */
++    public static native void setInputPortSnapshot(int port, int buttons, float leftX, float leftY,
++        float rightX, float rightY, float leftTrigger, float rightTrigger);
++    /** Fills a reusable 7-int buffer: buttons, four stick axes, L2/R2 pressures (0..32767). */
++    public static native void getInputPortSnapshot(int port, int[] output);
++    public static native long getInputDescriptorRevision();
++    /** Owned bounded UTF-8 descriptions, encoded port:device:index:id:description. */
++    public static native String[] getInputDescriptors();
+     public static native int getInputPortBitmask(int port);
+     public static native void setNetplayActive(boolean active);
+     public static native void renderFrameOnly();
+diff --git a/src/main/cpp/inputdescriptors.h b/src/main/cpp/inputdescriptors.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/inputdescriptors.h
+@@ -0,0 +1,50 @@
++// Ambient TV: owned, bounded input descriptions. Core pointers never escape the callback.
++#pragma once
++
++#include <atomic>
++#include <cstring>
++#include <mutex>
++#include <string>
++#include <utility>
++#include <vector>
++#include "../../libretro-common/include/libretro.h"
++
++class InputDescriptorStore {
++public:
++    static constexpr size_t MAX_DESCRIPTORS = 256;
++    static constexpr size_t MAX_DESCRIPTION_BYTES = 256;
++
++    bool replace(const retro_input_descriptor* source) {
++        std::vector<std::string> next;
++        if (source) {
++            for (size_t i = 0; i < MAX_DESCRIPTORS && source[i].description; ++i) {
++                const auto& item = source[i];
++                if (item.port >= 4 || (item.device & RETRO_DEVICE_MASK) > RETRO_DEVICE_POINTER ||
++                    item.index > 255 || item.id > 65535) continue;
++                const size_t length = strnlen(item.description, MAX_DESCRIPTION_BYTES);
++                if (length == 0) continue;
++                next.emplace_back(std::to_string(item.port) + ":" + std::to_string(item.device) + ":" +
++                    std::to_string(item.index) + ":" + std::to_string(item.id) + ":" +
++                    std::string(item.description, length));
++            }
++        }
++        std::lock_guard<std::mutex> lock(mutex);
++        if (rows != next) {
++            rows = std::move(next);
++            revision.fetch_add(1, std::memory_order_release);
++        }
++        return true;
++    }
++
++    std::vector<std::string> snapshot() const {
++        std::lock_guard<std::mutex> lock(mutex);
++        return rows;
++    }
++
++    unsigned generation() const { return revision.load(std::memory_order_acquire); }
++
++private:
++    mutable std::mutex mutex;
++    std::vector<std::string> rows;
++    std::atomic<unsigned> revision { 0 };
++};

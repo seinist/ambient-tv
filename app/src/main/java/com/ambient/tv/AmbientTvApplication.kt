@@ -51,6 +51,7 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
     @Inject lateinit var youTubeTvLink: com.ambient.tv.youtube.YouTubeTvLink
     @Inject lateinit var mediaImageAuthInterceptor: MediaImageAuthInterceptor
     @Inject lateinit var mediaArtworkDiskCacheInterceptor: MediaArtworkDiskCacheInterceptor
+    @Inject lateinit var mediaArtworkRefresh: com.ambient.tv.network.MediaArtworkRefresh
     @Inject lateinit var performanceProfileResolver: PerformanceProfileResolver
     @Inject @SharedOkHttp lateinit var sharedConnectionPool: ConnectionPool
     @Inject @SharedOkHttp lateinit var sharedDispatcher: Dispatcher

@@ -73,6 +73,42 @@ class GameLocalDataTest {
         assertEquals(GameStateStore.MAX_MANUAL, manual.size)
         assertEquals(GameStateStore.MAX_MANUAL + 3, manual.first().number)
     }
+
+    @Test fun savesInTheSameMillisecondRemainDistinctAndNewestUsesItsSequence() {
+        val first = states.save(game, GameStateKind.MANUAL, byteArrayOf(1), null, "c", now = 100)
+        val second = states.save(game, GameStateKind.MANUAL, byteArrayOf(2), null, "c", now = 100)
+        assertFalse(first.id == second.id)
+        assertEquals(2, states.list(game).size)
+        assertEquals(second, states.latestManual(game))
+        assertEquals(1, states.read(game, first)!!.single().toInt())
+        assertEquals(2, states.read(game, second)!!.single().toInt())
+    }
+
+    @Test fun labelsSurviveReopenWithoutChangingStateCompatibilityOrBytes() {
+        val original = states.save(game, GameStateKind.MANUAL, byteArrayOf(3, 4, 5), null, "build", now = 50)
+        val renamed = states.rename(game, original, "  Before the boss  ")
+        assertEquals("Before the boss", renamed.label)
+        assertEquals(original.copy(label = "Before the boss"), renamed)
+        val reopened = GameStateStore(storage)
+        assertEquals(renamed, reopened.latestManual(game))
+        assertTrue(reopened.read(game, renamed)!!.contentEquals(byteArrayOf(3, 4, 5)))
+        assertTrue(GameStateStore.compatible(renamed, game.system.core.id, "build", "legacy"))
+        assertNull(reopened.rename(game, renamed, "  ").label)
+    }
+
+    @Test fun staleRenameCannotResurrectADeletedSave() {
+        val entry = states.save(game, GameStateKind.MANUAL, byteArrayOf(1), null, "c", now = 100)
+        states.delete(game, entry)
+        org.junit.Assert.assertThrows(java.io.FileNotFoundException::class.java) { states.rename(game, entry, "Lost") }
+        assertTrue(states.list(game).isEmpty())
+    }
+
+    @Test fun invalidLabelsAreRejectedWithoutChangingMetadata() {
+        val entry = states.save(game, GameStateKind.MANUAL, byteArrayOf(1), null, "c", now = 100)
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { states.rename(game, entry, "x".repeat(GameStateStore.MAX_LABEL + 1)) }
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { states.rename(game, entry, "line\nbreak") }
+        assertEquals(entry, states.latestManual(game))
+    }
     @Test fun coreFingerprintIgnoresMtimeAndRejectsOtherCores() {
         val file = File.createTempFile("retro-core-", ".so")
         try {

@@ -1,6 +1,7 @@
 package com.ambient.tv.ui.common
 
 import com.ambient.tv.ui.theme.SelectionIndicator
+import com.ambient.tv.network.artworkRefreshRevision
 import coil3.request.crossfade
 import coil3.request.bitmapConfig
 import androidx.activity.compose.BackHandler
@@ -55,6 +56,7 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -446,6 +448,25 @@ private class ArtworkRequestContinuity {
 private val CardArtworkKeys = ArtworkMemoryKeyIndex()
 private val BackdropArtworkKeys = ArtworkMemoryKeyIndex(maxModels = 64)
 
+/** Only the edited URLs restart their requests; ordinary frames/progress never emit here. */
+@Composable
+private fun rememberArtworkRefresh(
+    model: Any?, refresh: com.ambient.tv.network.MediaArtworkRefresh?, address: com.ambient.tv.network.MediaArtworkAddress?,
+): Long {
+    val url = remember(model) { (model as? String)?.let { com.ambient.tv.network.mediaArtworkResourceUrl(it) } }
+    val revision by androidx.compose.runtime.produceState(0L, url, address?.imageKey) {
+        value = 0L
+        var previous = address?.let { refresh?.cachedIdentity(it)?.revision }
+        if (url != null) com.ambient.tv.network.MediaArtworkRefreshEvents.changes.collect { event ->
+            val current = address?.let { refresh?.cachedIdentity(it)?.revision }
+            // StateFlow may conflate two edits; compare this image's retained revision as well.
+            if (com.ambient.tv.network.mediaArtworkRefreshChanged(previous, current, url in event.urls)) value = event.sequence
+            if (current != null) previous = current
+        }
+    }
+    return revision
+}
+
 @Composable
 fun ArtworkImage(
     model: Any?,
@@ -490,10 +511,19 @@ fun ArtworkImage(
     }
     var candidateIndex by remember(candidates) { mutableStateOf(0) }
     val currentModel = candidates.getOrNull(candidateIndex)
+    val effectiveHeaders = remember(currentModel, headers) { artworkHeadersForModel(currentModel, headers) }
+    val headerKey = remember(effectiveHeaders) { com.ambient.tv.network.mediaArtworkHeadersKey(effectiveHeaders) }
+    val refresh = (context.applicationContext as? com.ambient.tv.AmbientTvApplication)?.mediaArtworkRefresh
+    val sourceVersion = refresh?.sources?.collectAsState()?.value
+    val address = remember(currentModel, effectiveHeaders, sourceVersion, refresh) {
+        (currentModel as? String)?.let { refresh?.address(it, effectiveHeaders) }
+    }
+    val cacheIdentity = address?.let { refresh?.cachedIdentity(it) }
+    val refreshRevision = rememberArtworkRefresh(currentModel, refresh, address)
     val hasModel = currentModel != null
     val continuity = remember { ArtworkRequestContinuity() }
-    val requestIdentity = remember(currentModel) {
-        com.ambient.tv.data.browse.artworkRequestIdentity(currentModel)
+    val requestIdentity = remember(currentModel, refreshRevision, address?.imageKey, headerKey) {
+        listOf(com.ambient.tv.data.browse.artworkRequestIdentity(currentModel), address?.imageKey, headerKey, refreshRevision)
     }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     val constrainDecode = LocalPerformanceProfile.current.constrainImageDecodeSize
@@ -501,22 +531,27 @@ fun ArtworkImage(
     // freshly composed tile empty for a frame (e.g. every poster on Back to Home). The key of
     // the last successful load is served as placeholder before the size is resolved.
     val imageLoader = if (backdrop) com.ambient.tv.backdropImageLoader(context) else coil3.SingletonImageLoader.get(context)
+    fun currentMemoryKey(key: coil3.memory.MemoryCache.Key): Boolean =
+        (if (address != null) com.ambient.tv.network.mediaArtworkMemoryKeyMatches(key.extras, cacheIdentity)
+         else key.extras[com.ambient.tv.network.MEDIA_ARTWORK_IDENTITY_EXTRA] == null &&
+             key.extras[com.ambient.tv.network.MEDIA_ARTWORK_HEADERS_EXTRA] == headerKey) &&
+            imageLoader.memoryCache?.get(key) != null
     // A cold-start snapshot and the live response can describe the same provider image with
     // different credential query strings. If this exact visible card already succeeded, link
     // the live request to that memory entry so Coil returns it without fetch/decode or a blank frame.
     val continuityKey = continuity.memoryKey?.takeIf { key ->
         continuity.model != currentModel &&
             continuity.identity == requestIdentity &&
-            imageLoader.memoryCache?.get(key) != null
+            currentMemoryKey(key)
     }
     val keyIndex = if (backdrop) BackdropArtworkKeys else CardArtworkKeys
-    val cachedKey = remember(currentModel, continuityKey, backdrop) {
-        currentModel?.let { model -> keyIndex.cachedKey(model) { imageLoader.memoryCache?.get(it) != null } }
+    val cachedKey = remember(currentModel, continuityKey, backdrop, refreshRevision, cacheIdentity, headerKey) {
+        currentModel?.let { model -> keyIndex.cachedKey(model, ::currentMemoryKey) }
             ?: continuityKey
     }
     // The key can outlive the bitmap. A miss must still show the pulse; Coil's placeholder
     // only draws when the bitmap is actually still in memory.
-    val shownFromMemory = remember(currentModel, cachedKey, context) {
+    val shownFromMemory = remember(currentModel, cachedKey, context, refreshRevision) {
         val key = cachedKey ?: return@remember false
         imageLoader.memoryCache?.get(key) != null
     }
@@ -546,7 +581,7 @@ fun ArtworkImage(
     val cap1080 = !backdrop && density > CARD_IMAGE_1080_DENSITY &&
         remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context).cardImages1080 }
     val cardSize = remember(cap1080, density) { if (cap1080) CardImage1080SizeResolver(density) else null }
-    val request = remember(currentModel, context, headers, constrainDecode, cardSize, crossfadeOnLoad) {
+    val request = remember(currentModel, context, headers, constrainDecode, cardSize, crossfadeOnLoad, refreshRevision, address?.imageKey, headerKey) {
         ImageRequest.Builder(context).data(currentModel).crossfade(crossfadeOnLoad)
             .placeholderMemoryCacheKey(cachedKey)
             .apply {
@@ -554,7 +589,10 @@ fun ArtworkImage(
                 // identical layout constraints; global URL aliases could incorrectly reuse a
                 // small tile bitmap for a large detail/backdrop request.
                 if (continuityKey != null) memoryCacheKey(continuityKey)
-                requestHeaders(artworkHeadersForModel(currentModel, headers))
+                artworkRefreshRevision(refreshRevision)
+                memoryCacheKeyExtra(com.ambient.tv.network.MEDIA_ARTWORK_IDENTITY_EXTRA, address?.imageKey)
+                memoryCacheKeyExtra(com.ambient.tv.network.MEDIA_ARTWORK_HEADERS_EXTRA, headerKey)
+                requestHeaders(effectiveHeaders)
                 // AsyncImage's constraints resolver decodes at the measured view size.
                 // Do not wait for onSizeChanged/recomposition before creating the painter.
                 if (constrainDecode) {
@@ -567,9 +605,10 @@ fun ArtworkImage(
     }
     var loading by remember(currentModel) { mutableStateOf(hasModel && !shownFromMemory) }
     var failed by remember(candidates) { mutableStateOf(false) }
-    var visibleFraction by remember(currentModel) { mutableStateOf<Float?>(null) }
+    var visibleFraction by remember(currentModel, headers, refreshRevision, address?.imageKey) { mutableStateOf<Float?>(null) }
+    var focusRevision by remember(currentModel, headers, refreshRevision, address?.imageKey) { mutableStateOf<String?>(null) }
     val focusModel = (currentModel as? String)?.takeIf { focusCrop && contentScale == ContentScale.Crop }
-    val focus = if (focusModel != null) rememberArtworkFocusCrop(focusModel, artworkHeadersForModel(focusModel, headers), visibleFraction) else null
+    val focus = if (focusModel != null) rememberArtworkFocusCrop(focusModel, artworkHeadersForModel(focusModel, headers), visibleFraction, focusRevision) else null
     val hdrFilter = com.ambient.tv.ui.display.rememberUiHdrBitmapColorFilter()
     Box(modifier = if (focusCrop) modifier.onSizeChanged { containerSize = it } else modifier) {
         if (hasModel) {
@@ -613,7 +652,10 @@ fun ArtworkImage(
                         continuity.identity = requestIdentity
                         continuity.memoryKey = key
                     }
-                    if (focusCrop) visibleFraction = cropVisibleFraction(it.painter.intrinsicSize, containerSize) ?: 1f
+                    if (focusCrop) {
+                        focusRevision = artworkFocusRevision(it.result.diskCacheKey, it.result.memoryCacheKey?.key, it.result.memoryCacheKey?.extras.orEmpty())
+                        visibleFraction = cropVisibleFraction(it.painter.intrinsicSize, containerSize) ?: 1f
+                    }
                 },
                 onError = {
                     loading = false
@@ -642,7 +684,7 @@ fun ArtworkImage(
     }
 }
 
-private class BackdropLayer(val id: Long, val model: Any) {
+private class BackdropLayer(val id: Long, val model: Any, val refreshRevision: Long, val scope: String?) {
     val alpha = androidx.compose.animation.core.Animatable(0f)
 }
 
@@ -672,21 +714,32 @@ fun CrossfadeBackdropImage(
     val layers = remember { androidx.compose.runtime.mutableStateListOf<BackdropLayer>() }
     var nextId by remember { mutableStateOf(0L) }
     val normalized = model?.takeIf { it !is String || it.isNotBlank() }
-    LaunchedEffect(normalized) {
+    val effectiveHeaders = remember(normalized, headers) { artworkHeadersForModel(normalized, headers) }
+    val headerKey = remember(effectiveHeaders) { com.ambient.tv.network.mediaArtworkHeadersKey(effectiveHeaders) }
+    val refresh = (context.applicationContext as? com.ambient.tv.AmbientTvApplication)?.mediaArtworkRefresh
+    val sourceVersion = refresh?.sources?.collectAsState()?.value
+    val address = remember(normalized, effectiveHeaders, sourceVersion, refresh) {
+        (normalized as? String)?.let { refresh?.address(it, effectiveHeaders) }
+    }
+    val scope = address?.scope ?: headerKey
+    val refreshRevision = rememberArtworkRefresh(normalized, refresh, address)
+    LaunchedEffect(normalized, refreshRevision, scope) {
+        if (layers.lastOrNull()?.scope != scope) layers.clear()
         if (normalized == null) {
             layers.clear()
-        } else if (layers.lastOrNull()?.model != normalized) {
+        } else if (layers.lastOrNull()?.model != normalized || layers.lastOrNull()?.refreshRevision != refreshRevision) {
             layers.removeAll { it.alpha.value == 0f && !it.alpha.isRunning }
-            layers.add(BackdropLayer(nextId++, normalized))
+            layers.add(BackdropLayer(nextId++, normalized, refreshRevision, scope))
         }
     }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     val constrainDecode = LocalPerformanceProfile.current.constrainImageDecodeSize
     Box(if (focusCrop) modifier.onSizeChanged { containerSize = it } else modifier) {
-        layers.forEach { layer ->
+        layers.filter { it.scope == scope }.forEach { layer ->
             androidx.compose.runtime.key(layer.id) {
                 val request = remember(layer.model, context, headers, constrainDecode, decodeSize) {
                     ImageRequest.Builder(context).data(layer.model).crossfade(false)
+                        .artworkRefreshRevision(layer.refreshRevision)
                         .apply {
                             requestHeaders(artworkHeadersForModel(layer.model, headers))
                             if (decodeSize != null) {
@@ -699,9 +752,10 @@ fun CrossfadeBackdropImage(
                         }
                         .build()
                 }
-                var visibleFraction by remember { mutableStateOf<Float?>(null) }
+                var visibleFraction by remember(headers) { mutableStateOf<Float?>(null) }
+                var focusRevision by remember(headers) { mutableStateOf<String?>(null) }
                 val focusModel = (layer.model as? String)?.takeIf { focusCrop && contentScale == ContentScale.Crop }
-                val focus = if (focusModel != null) rememberArtworkFocusCrop(focusModel, artworkHeadersForModel(focusModel, headers), visibleFraction) else null
+                val focus = if (focusModel != null) rememberArtworkFocusCrop(focusModel, artworkHeadersForModel(focusModel, headers), visibleFraction, focusRevision) else null
                 var loaded by remember { mutableStateOf(false) }
                 LaunchedEffect(loaded, focus?.ready) {
                     // With focusCrop, fade in only once the crop is final so it never shifts on screen.
@@ -727,7 +781,10 @@ fun CrossfadeBackdropImage(
                         alpha = layer.alpha.value
                     },
                     onSuccess = {
-                        if (focusCrop) visibleFraction = cropVisibleFraction(it.painter.intrinsicSize, containerSize) ?: 1f
+                        if (focusCrop) {
+                            focusRevision = artworkFocusRevision(it.result.diskCacheKey, it.result.memoryCacheKey?.key, it.result.memoryCacheKey?.extras.orEmpty())
+                            visibleFraction = cropVisibleFraction(it.painter.intrinsicSize, containerSize) ?: 1f
+                        }
                         loaded = true
                     },
                     onError = {

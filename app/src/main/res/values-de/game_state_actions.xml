@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="game_state_actions">Laden oder verwalten</string>
+    <string name="game_state_load">Spielstand laden</string>
+    <string name="game_state_rename">Spielstand benennen</string>
+    <string name="game_state_name">Name</string>
+    <string name="game_state_delete_title">„%1$s“ löschen?</string>
+    <string name="game_state_working">Spielstand wird verarbeitet…</string>
+</resources>

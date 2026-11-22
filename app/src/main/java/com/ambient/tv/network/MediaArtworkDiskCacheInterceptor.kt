@@ -2,12 +2,10 @@ package com.ambient.tv.network
 
 import coil3.intercept.Interceptor
 import coil3.request.ImageResult
-import com.ambient.tv.data.browse.BrowseScopes
+import coil3.network.httpHeaders
 import com.ambient.tv.data.browse.displayArtworkUrl
-import com.ambient.tv.data.local.AppPreferences
 import javax.inject.Inject
 import javax.inject.Singleton
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * Persist the same artwork under the same key whether its URL came directly from a
@@ -19,27 +17,31 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  */
 @Singleton
 class MediaArtworkDiskCacheInterceptor @Inject constructor(
-    private val preferences: AppPreferences,
-    private val scopes: BrowseScopes,
+    private val refresh: MediaArtworkRefresh,
 ) : Interceptor {
     override suspend fun intercept(chain: Interceptor.Chain): ImageResult {
         val request = chain.request
         val url = request.data as? String ?: return chain.proceed()
         if (request.diskCacheKey != null) return chain.proceed()
-        val endpoint = url.toHttpUrlOrNull() ?: return chain.proceed()
-        val provider = when {
-            matches(endpoint.host, endpoint.port, preferences.host, preferences.port) -> "plex"
-            matches(endpoint.host, endpoint.port, preferences.jellyfinHost, preferences.jellyfinPort) -> "jellyfin"
-            matches(endpoint.host, endpoint.port, preferences.embyHost, preferences.embyPort) -> "emby"
-            else -> return chain.proceed()
+        val headers = request.httpHeaders.asMap().mapValues { it.value.joinToString("\u0000") }
+        val identity = try { refresh.identity(url, headers) }
+        catch (_: android.database.sqlite.SQLiteException) {
+            // A broken metadata cache must not hide artwork or reuse an uncertain revision.
+            return chain.withRequest(request.newBuilder()
+                .diskCachePolicy(coil3.request.CachePolicy.DISABLED)
+                .memoryCachePolicy(coil3.request.CachePolicy.DISABLED).build()).proceed()
         }
-        val key = normalizedMediaArtworkDiskKey(url, scopes.forProvider(provider)) ?: return chain.proceed()
-        return chain.withRequest(request.newBuilder().diskCacheKey(key).build()).proceed()
-    }
-
-    private fun matches(host: String, port: Int, configuredHost: String, configuredPort: Int): Boolean {
-        val normalized = NetworkEndpoint.normalizeHost(configuredHost)
-        return normalized.isNotBlank() && NetworkEndpoint.sameEndpoint(host, port, normalized, configuredPort)
+        if (identity == null) return chain.proceed()
+        return chain.withRequest(request.newBuilder().diskCacheKey(identity.diskKey)
+            .memoryCacheKeyExtra(MEDIA_ARTWORK_IDENTITY_EXTRA, identity.imageKey)
+            .memoryCacheKeyExtra(MEDIA_ARTWORK_REVISION_EXTRA, identity.revision)
+            .memoryCacheKeyExtra(MEDIA_ARTWORK_HEADERS_EXTRA, mediaArtworkHeadersKey(headers))
+            .apply {
+                if (!identity.persistent) diskCachePolicy(coil3.request.CachePolicy.DISABLED)
+                identity.providerScope?.let { scope ->
+                    httpHeaders(request.httpHeaders.newBuilder().set(MEDIA_ARTWORK_SCOPE_HEADER, scope).build())
+                }
+            }.build()).proceed()
     }
 }
 

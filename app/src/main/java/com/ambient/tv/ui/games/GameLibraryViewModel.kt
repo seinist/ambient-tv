@@ -11,6 +11,7 @@ import com.ambient.tv.data.files.FileEntry
 import com.ambient.tv.data.files.FileSource
 import com.ambient.tv.data.files.FileStore
 import com.ambient.tv.games.library.GameLibraryFolder
+import com.ambient.tv.games.library.GameLibraryQuery
 import com.ambient.tv.games.library.GameLibraryRepository
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.games.library.LibraryGame
@@ -23,12 +24,17 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 data class GameLibraryUiState(
     val games: List<LibraryGame> = emptyList(),
+    val systems: List<String> = emptyList(),
     val folders: List<GameLibraryFolder> = emptyList(),
     val sources: List<FileSource> = emptyList(),
     val section: String = "all",
@@ -70,29 +76,65 @@ class GameLibraryViewModel @Inject constructor(
     val state: StateFlow<GameLibraryUiState> = mutable.asStateFlow()
     private var scan: Job? = null
     private var browse: Job? = null
+    private val selection = MutableStateFlow<GameLibraryQuery?>(null)
+
+    private data class ReadRequest(
+        val revision: com.ambient.tv.games.library.GameLibraryRevision,
+        val query: GameLibraryQuery,
+        val titleStyle: String,
+    )
+    private data class LibraryRequest(
+        val read: ReadRequest,
+        val view: String,
+        val gridColumns: Int,
+        val listRows: Int,
+    )
+    private var loadedGames: Pair<ReadRequest, List<LibraryGame>>? = null
+    private var loadedSystems: Pair<com.ambient.tv.games.library.GameLibraryRevision, List<String>>? = null
 
     init {
         viewModelScope.launch {
-            combine(library.revisions, files.revision, preferences.changes()) { _, _, _ -> Unit }.collect {
-                reload()
+            combine(library.revisions, files.revision, preferences.changes().onStart { emit(Unit) }, selection) { _, _, _, query ->
+                query?.let { LibraryRequest(
+                    ReadRequest(library.revisionSnapshot(),
+                        it.copy(sort = library.sortKey(), descending = library.sortDescending()), library.titleStyle()),
+                    library.viewStyle(), library.gridColumns(), library.listRows(),
+                ) }
+            }.filterNotNull().distinctUntilChanged().collectLatest { request ->
+                try { reload(request) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) {
+                    mutable.update { it.copy(games = emptyList(), ready = true,
+                        error = error.message ?: "Game library unavailable") }
+                }
             }
         }
     }
 
-    private suspend fun reload() {
-        val games = withContext(Dispatchers.IO) { library.games() }
+    private suspend fun reload(request: LibraryRequest) {
+        val games = loadedGames?.takeIf { it.first == request.read }?.second
+            ?: kotlinx.coroutines.runInterruptible(Dispatchers.IO) { library.games(request.read.query) }
+        val systemsRevision = request.read.revision.copy(overrides = "")
+        val systems = loadedSystems?.takeIf { it.first == systemsRevision }?.second
+            ?: kotlinx.coroutines.runInterruptible(Dispatchers.IO) { library.systemIds() }
+        loadedGames = request.read to games
+        loadedSystems = systemsRevision to systems
         mutable.update { it.copy(
-            games = games, folders = library.folders(), sources = files.sources(),
-            view = library.viewStyle(), gridColumns = library.gridColumns(),
-            listRows = library.listRows(), titleStyle = library.titleStyle(),
-            sortKey = library.sortKey(), sortDescending = library.sortDescending(), ready = true,
+            games = games, systems = systems, folders = library.folders(), sources = files.sources(),
+            view = request.view, gridColumns = request.gridColumns, listRows = request.listRows,
+            titleStyle = request.read.titleStyle, sortKey = request.read.query.sort,
+            sortDescending = request.read.query.descending, ready = true, error = null,
         ) }
     }
 
     fun section(value: String) {
         mutable.update { it.copy(section = value) }
+        selection.update { (it ?: GameLibraryQuery(search = mutable.value.query)).copy(section = value) }
     }
-    fun query(value: String) = mutable.update { it.copy(query = value) }
+    fun query(value: String) {
+        mutable.update { it.copy(query = value) }
+        selection.update { it?.copy(search = value) }
+    }
     fun wireGuardConfigured(): Boolean = preferences.wireGuardProfile() != null
     fun view(value: String) = library.setViewStyle(value)
     fun gridColumns(value: Int) = library.setGridColumns(value)
@@ -100,7 +142,14 @@ class GameLibraryViewModel @Inject constructor(
     fun titleStyle(value: String) = library.setTitleStyle(value)
     fun sort(value: String) = library.setSortKey(value)
     fun sortDescending(value: Boolean) = library.setSortDescending(value)
-    fun rename(game: LibraryGame, value: String) = library.setCustomTitle(game.fileId, value)
+    private fun editCatalog(edit: () -> Unit) {
+        viewModelScope.launch {
+            try { withContext(Dispatchers.IO) { edit() } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { mutable.update { it.copy(error = error.message ?: "Game library unavailable") } }
+        }
+    }
+    fun rename(game: LibraryGame, value: String) = editCatalog { library.setCustomTitle(game.fileId, value) }
     /** Optional, offline, user-supplied DAT files. Never download a catalog implicitly. */
     fun importDat(systemId: String, uri: Uri) {
         viewModelScope.launch {
@@ -116,7 +165,7 @@ class GameLibraryViewModel @Inject constructor(
             finally { mutable.update { it.copy(busy = false) } }
         }
     }
-    fun favorite(game: LibraryGame) = library.setFavorite(game.fileId, !game.favorite)
+    fun favorite(game: LibraryGame) = editCatalog { library.setFavorite(game.fileId, !game.favorite) }
 
     /** Only when selecting a game: probe a manually-wakeable NAS before opening Libretro. */
     fun requestPlay(game: LibraryGame, start: () -> Unit) {
@@ -148,7 +197,7 @@ class GameLibraryViewModel @Inject constructor(
         }
     }
 
-    fun remove(folder: GameLibraryFolder) = library.removeFolder(folder.id)
+    fun remove(folder: GameLibraryFolder) = editCatalog { library.removeFolder(folder.id) }
     fun setAlsoShowInFiles(folder: GameLibraryFolder, show: Boolean) =
         library.setAlsoShowInFiles(folder.id, show)
 
@@ -246,12 +295,12 @@ class GameLibraryViewModel @Inject constructor(
                     }
                     done = mutable.value.scanProcessed
                     discovered = mutable.value.scanDiscovered
-                    // Display each completed folder immediately, without waiting for a second NAS.
-                    reload()
+                    // Each committed scan emits a catalog revision. The single query collector
+                    // publishes this folder immediately using the current section/search.
                 }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) { mutable.update { it.copy(error = error.message ?: "Scan failed") } }
-            finally { mutable.update { it.copy(busy = false, scanning = false) }; reload() }
+            finally { mutable.update { it.copy(busy = false, scanning = false) } }
         }
     }
     fun scanFolder(folder: GameLibraryFolder) {
@@ -265,7 +314,7 @@ class GameLibraryViewModel @Inject constructor(
                 }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) { mutable.update { it.copy(error = error.message ?: "Scan failed") } }
-            finally { mutable.update { it.copy(busy = false, scanning = false) }; reload() }
+            finally { mutable.update { it.copy(busy = false, scanning = false) } }
         }
     }
     /** Persist the exact SAF tree grant and register it with Files, just like video folders. */

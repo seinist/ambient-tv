@@ -11,6 +11,25 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class TvheadendCacheConcurrencyTest {
+    @Test fun restoringOneKeyDoesNotReadTheWholeServerSnapshot() = runBlocking {
+        val reads = mutableListOf<String>()
+        val store = object : TvheadendCacheStore {
+            override fun put(scope: String, key: String, valid: () -> Boolean, encode: () -> String) = Unit
+            override suspend fun read(scope: String): Map<String, String> = error("Whole-scope hydration")
+            override suspend fun readKey(scope: String, key: String): String? {
+                reads += key
+                return if (key == "channels") "\"channels only\"" else null
+            }
+            override fun remove(scope: String) = Unit
+        }
+        val cache = TvheadendDiskCache(store)
+        assertEquals("channels only", cache.read("A", "channels", String.serializer()))
+        assertEquals("channels only", cache.read("A", "channels", String.serializer()))
+        assertNull(cache.read("A", "missing", String.serializer()))
+        assertNull(cache.read("A", "missing", String.serializer()))
+        assertEquals(listOf("channels", "missing"), reads)
+    }
+
     @Test fun serverSwitchDuringDecodeCannotPublishOldData() = interruptedDecode { cache ->
         assertNull(cache.read("B", "channels", String.serializer()))
         "B"

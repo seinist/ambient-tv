@@ -94,6 +94,10 @@ data class PlaybackMetadata(
     val videoScope: PlaybackVideoScope? = null,
     /** Source restriction stays known even when a decoder reports only the HDR10 base layer. */
     val dolbyVisionSource: Boolean = false,
+    /** Original local relay URL binds a Files report to its source incarnation, also in Auto. */
+    val fileProgressStreamUrl: String? = null,
+    /** Local source incarnation for playback owners without a PlayerUiState.Ready, e.g. Auto. */
+    val localProgressScope: String? = null,
 )
 
 /** Library context of a title: where "remember changes for" can store besides the title itself. */

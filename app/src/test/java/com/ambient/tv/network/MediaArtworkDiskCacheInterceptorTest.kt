@@ -4,9 +4,19 @@ import com.ambient.tv.data.browse.displayArtworkUrl
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MediaArtworkDiskCacheInterceptorTest {
+    @Test fun conflatedEditsRefreshAnUnknownColdRevisionButUnrelatedEmptyRevisionsDoNot() {
+        assertTrue(mediaArtworkRefreshChanged(null, "edited-a", explicitlyAffected = false))
+        assertTrue(mediaArtworkRefreshChanged("before", "after", explicitlyAffected = false))
+        assertFalse(mediaArtworkRefreshChanged(null, "", explicitlyAffected = false))
+        assertFalse(mediaArtworkRefreshChanged("", "", explicitlyAffected = false))
+        assertFalse(mediaArtworkRefreshChanged("same", "same", explicitlyAffected = false))
+        assertTrue(mediaArtworkRefreshChanged(null, null, explicitlyAffected = true))
+    }
+
     @Test fun plexTokenFreeSnapshotReusesOriginalArtworkDiskKey() {
         val original = "http://192.168.1.5:32400/photo/:/transcode?width=360&height=540&url=%2Flibrary%2Fmetadata%2F42%2Fthumb&X-Plex-Token=secret"
         val restored = requireNotNull(displayArtworkUrl(original))

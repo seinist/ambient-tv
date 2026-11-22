@@ -90,9 +90,10 @@ class GameArchivesTest {
     }
 
     @Test fun netplayInputSurvivesTheWire() {
-        val input = NetplayInput(0x0F0F, 0x7fff, -0x7fff, 123, -456)
+        val input = NetplayInput(0x0F0F, 0x7fff, -0x7fff, 123, -456, 8192, 24575)
         val bytes = ByteArrayOutputStream().also { input.write(DataOutputStream(it)) }.toByteArray()
         assertEquals(input, NetplayInput.read(DataInputStream(ByteArrayInputStream(bytes))))
+        assertEquals(16, bytes.size)
         assertEquals(1f, NetplayInput.axis(0x7fff))
         assertEquals(-1f, NetplayInput.axis(-0x8000))
         assertEquals(0f, NetplayInput.axis(0))

@@ -224,9 +224,8 @@ class GamePlayerViewModel @Inject constructor(
                 savesDirectory = storage.savesDirectory,
                 sram = storage.read(storage.sramFile(game)),
                 autoState = auto?.let { states.read(game, it) },
-            )
+            ).also { refreshStates(game) }
         }
-        refreshStates(game)
         mutable.value = GameUiState.Ready(session)
     }
 
@@ -247,7 +246,7 @@ class GamePlayerViewModel @Inject constructor(
             recordedSession === session) return
         recordedSession = session
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching { files.record(session.game.entry) }
+            runCatching { files.awaitReady(); files.record(session.game.entry) }
             runCatching { gameLibrary.recordPlayed(session.game.fileId) }
         }
     }
@@ -292,17 +291,25 @@ class GamePlayerViewModel @Inject constructor(
             refreshStates(session.game)
         }
 
-    fun saveState(session: GameSession, kind: GameStateKind, bytes: ByteArray, screenshot: Bitmap?): GameStateEntry {
+    suspend fun saveState(session: GameSession, kind: GameStateKind, bytes: ByteArray, screenshot: Bitmap?): GameStateEntry = withContext(Dispatchers.IO) {
         val entry = states.save(session.game, kind, bytes, screenshot, session.coreStamp, coreId = session.core.id)
         refreshStates(session.game)
-        return entry
+        entry
     }
 
-    fun readState(game: PreparedGame, entry: GameStateEntry): ByteArray? = states.read(game, entry)
+    suspend fun readState(game: PreparedGame, entry: GameStateEntry): ByteArray? =
+        withContext(Dispatchers.IO) { states.read(game, entry) }
 
     fun screenshot(game: PreparedGame, entry: GameStateEntry): File? = states.screenshot(game, entry)
 
-    fun latestManualState(game: PreparedGame): GameStateEntry? = states.latestManual(game)
+    fun latestManualState(game: PreparedGame): GameStateEntry? =
+        stateList.value.filter { it.kind == GameStateKind.MANUAL }
+            .maxWithOrNull(compareBy<GameStateEntry> { it.createdAt }.thenBy { it.number })
+
+    suspend fun renameState(game: PreparedGame, entry: GameStateEntry, label: String) = withContext(Dispatchers.IO) {
+        states.rename(game, entry, label)
+        refreshStates(game)
+    }
 
     fun deleteState(game: PreparedGame, entry: GameStateEntry) {
         val remove = {
@@ -311,7 +318,8 @@ class GamePlayerViewModel @Inject constructor(
         }
         // Only AUTO shares files with asynchronous checkpoints. Fence its deletion like
         // "Start over", including captures that complete late after the IO wait timed out.
-        if (entry.kind == GameStateKind.AUTO) GameCheckpointIo.execute(remove) else remove()
+        if (entry.kind == GameStateKind.AUTO) GameCheckpointIo.execute(remove)
+        else viewModelScope.launch(Dispatchers.IO) { remove() }
     }
 
     /** "Start over": the next start does not continue from the automatic state. */
