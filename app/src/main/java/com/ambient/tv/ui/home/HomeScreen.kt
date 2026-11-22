@@ -363,7 +363,7 @@ fun HomeScreen(
             } == true) OfflineSourceStatus(systems = overviewProvider?.let(::setOf)
                 ?: viewModel.reconnectSources(plexOnly, jellyfinOnly, embyOnly),
                 modifier = Modifier.padding(horizontal = screenGutter(), vertical = 8.dp),
-                additionalSources = (uiState as? HomeUiState.Loaded)?.savedLiveSources?.values.orEmpty().toList(),
+                additionalSources = uiState.savedLiveSources.values.toList(),
                 onRetryAdditional = viewModel::retrySavedLiveSources)
         val handheldHeader = LocalHandheldUi.current
         // Phones have no tall hero corner: reserve a real row so the configured clock

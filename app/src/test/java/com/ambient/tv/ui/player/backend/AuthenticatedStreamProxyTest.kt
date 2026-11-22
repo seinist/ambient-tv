@@ -56,7 +56,7 @@ class AuthenticatedStreamProxyTest {
             assertEquals(200, it.code)
             assertEquals("5000", it.header("Content-Length"))
             assertEquals("bytes", it.header("Accept-Ranges"))
-            assertEquals(0, it.body!!.bytes().size)
+            assertEquals(0, it.body.bytes().size)
         }
         for (range in listOf("bytes=4000-4999", "bytes=0-199", "bytes=2000-")) {
             get(range).use {
@@ -64,7 +64,7 @@ class AuthenticatedStreamProxyTest {
                 val to = range.substringAfter('-').toIntOrNull() ?: payload.lastIndex
                 assertEquals(206, it.code)
                 assertEquals("bytes $from-$to/5000", it.header("Content-Range"))
-                assertArrayEquals(payload.copyOfRange(from, to + 1), it.body!!.bytes())
+                assertArrayEquals(payload.copyOfRange(from, to + 1), it.body.bytes())
             }
         }
     }

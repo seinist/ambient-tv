@@ -20,6 +20,7 @@ import androidx.tv.material3.Text
 import coil3.SingletonImageLoader
 import coil3.asImage
 import coil3.ImageLoader
+import coil3.annotation.DelicateCoilApi
 import coil3.decode.DataSource
 import coil3.fetch.ImageFetchResult
 import coil3.fetch.Fetcher
@@ -41,6 +42,7 @@ class ProgressiveLoadingAudit(private val instrumentation: Instrumentation, priv
         val requests = AtomicInteger()
     }
 
+    @OptIn(DelicateCoilApi::class)
     fun run() {
         check(instrumentation.targetContext.packageName.endsWith(".loadingaudit")) { "Use the isolated .loadingaudit app" }
         val context = instrumentation.targetContext

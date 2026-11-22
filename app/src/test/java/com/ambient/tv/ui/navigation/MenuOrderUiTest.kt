@@ -12,7 +12,6 @@ import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import com.ambient.tv.R
@@ -24,6 +23,7 @@ import com.ambient.tv.livetv.AvailableLiveTvSource
 import com.ambient.tv.livetv.LiveTvCapabilities
 import com.ambient.tv.livetv.LiveTvSource
 import com.ambient.tv.ui.common.MediaSystem
+import com.ambient.tv.util.createAndroidComposeRule
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

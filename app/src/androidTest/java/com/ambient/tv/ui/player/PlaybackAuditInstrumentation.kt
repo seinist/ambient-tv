@@ -924,7 +924,7 @@ class PlaybackAuditInstrumentation : Instrumentation() {
                     await("$backend resumes after paused SVP switch") { BackgroundPlaybackSession.snapshot.value.playing }
                     log("PASS $backend live SVP overrides / position / paused switch / reset")
                     if (arguments.getString("svpPanel") == "true") {
-                        main { activity?.showScalingPanel = true }
+                        main { activity.showScalingPanel = true }
                         waitForIdleSync()
                         fun openTarget() {
                             val label = targetContext.getString(com.ambient.tv.R.string.svp_target)
@@ -965,7 +965,7 @@ class PlaybackAuditInstrumentation : Instrumentation() {
                             }
                             bitmap.recycle()
                         }
-                        main { activity?.showScalingPanel = false }
+                        main { activity.showScalingPanel = false }
                         log("CAPTURE $backend production SVP panel")
                     }
                 }
@@ -1002,7 +1002,7 @@ class PlaybackAuditInstrumentation : Instrumentation() {
                 }
                 assertVideo("$backend SVP after seek")
                 log("PASS $backend Maximum reactivation / seek / picture and audio pipeline")
-                main { BackgroundPlaybackSession.stop(); activity?.finish() }
+                main { BackgroundPlaybackSession.stop(); activity.finish() }
                 Thread.sleep(600)
             }
         } finally {

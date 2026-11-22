@@ -133,7 +133,7 @@ class CarLiveNowPlayingTest {
         val filtered = carLiveNowPlayingMetadata(unrelated, emptyList(), 160, null)
         assertEquals("101", filtered.subtitle)
         assertNull((filtered.resumeState as TvheadendPlayerState.Ready).nowEvent)
-        assertNull((filtered.resumeState as TvheadendPlayerState.Ready).nextEvent)
+        assertNull(filtered.resumeState.nextEvent)
     }
 
     @Test fun generationAndSourceIdentityRejectLateUpdatesAfterAnyStationSwitch() {

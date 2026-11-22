@@ -28,7 +28,6 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -42,6 +41,7 @@ import com.ambient.tv.ui.common.PlayerDropUpSelector
 import com.ambient.tv.ui.common.UnifiedPlayerPanel
 import com.ambient.tv.ui.common.rememberPlayerPanelNavigation
 import com.ambient.tv.ui.mobile.LocalHandheldUi
+import com.ambient.tv.util.createAndroidComposeRule
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test

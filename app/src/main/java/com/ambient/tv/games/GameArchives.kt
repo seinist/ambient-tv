@@ -169,7 +169,7 @@ object GameArchives {
             if (length == 0) return 0
             if (position >= media.size) return -1
             if (position >= cap) throw GameArchiveException("GZIP metadata probe exceeded compressed limit")
-            val allowed = minOf(length.toLong(), (cap - position).toLong(), media.size - position).toInt()
+            val allowed = minOf(length.toLong(), cap - position, media.size - position).toInt()
             val scratch = ByteArray(allowed)
             val got = media.read(position, scratch, allowed)
             if (got > 0) {

@@ -131,7 +131,7 @@ class FilteredBrowseViewModel internal constructor(
             try {
                 if (_uiState.value !is FilteredBrowseUiState.Loaded) {
                     com.ambient.tv.util.suspendResult { savedItems?.read() }.getOrNull()?.let { cached ->
-                        if (revision != loadRevision || (requestScope != null && savedItems?.isCurrent(requestScope) != true)) return@launch
+                        if (revision != loadRevision || (requestScope != null && !savedItems.isCurrent(requestScope))) return@launch
                         sourceItems = cached
                         _uiState.value = buildLoaded()
                     }
@@ -141,7 +141,7 @@ class FilteredBrowseViewModel internal constructor(
                     readItems(kind, id).getOrThrow()
                 }
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                if (revision != loadRevision || (requestScope != null && savedItems?.isCurrent(requestScope) != true)) return@launch
+                if (revision != loadRevision || (requestScope != null && !savedItems.isCurrent(requestScope))) return@launch
                 result.fold(
                     onSuccess = { sourceItems = it; savedItems?.write(it); _uiState.value = buildLoaded() },
                     onFailure = {

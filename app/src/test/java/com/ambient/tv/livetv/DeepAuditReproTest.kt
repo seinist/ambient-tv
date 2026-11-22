@@ -28,7 +28,7 @@ class DeepAuditReproTest {
                 server.accept().use { socket ->
                     peer.set(socket)
                     val input = socket.getInputStream().bufferedReader()
-                    while (input.readLine()?.isNotEmpty() == true) Unit
+                    while (input.readLine()?.isNotEmpty() == true) { /* Drain request headers. */ }
                     socket.getOutputStream().apply {
                         write("HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\nConnection: close\r\n\r\n".toByteArray())
                         write(packets()); flush()
@@ -58,7 +58,7 @@ class DeepAuditReproTest {
                 server.accept().use { socket ->
                     peer.set(socket)
                     val input = socket.getInputStream().bufferedReader()
-                    while (input.readLine()?.isNotEmpty() == true) Unit
+                    while (input.readLine()?.isNotEmpty() == true) { /* Drain request headers. */ }
                     socket.getOutputStream().apply {
                         write("HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\nConnection: close\r\n\r\n".toByteArray())
                         flush() // Deliberately never finish the MPEG-TS probe.

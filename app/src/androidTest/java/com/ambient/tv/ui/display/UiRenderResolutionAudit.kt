@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.PopupProperties
+import androidx.core.view.WindowCompat
 import androidx.tv.material3.Text
 import com.ambient.tv.companion.CompanionInput
 import com.ambient.tv.companion.CompanionRemoteInput
@@ -212,7 +213,7 @@ internal class UiRenderResolutionAudit(
                 activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
                 activity.setShowWhenLocked(true)
                 activity.setTurnScreenOn(true)
-                activity.window.setDecorFitsSystemWindows(false)
+                WindowCompat.setDecorFitsSystemWindows(activity.window, false)
                 activity.window.insetsController?.hide(WindowInsets.Type.systemBars())
                 outer = FrameLayout(activity)
                 compose = ComposeView(activity).apply {

@@ -12,7 +12,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import com.ambient.tv.ui.common.RightPanelChoice
@@ -20,6 +19,7 @@ import com.ambient.tv.ui.common.RightSidePanel
 import com.ambient.tv.ui.player.PANEL_ENTRANCE_SETTLE_FRAMES
 import com.ambient.tv.ui.player.PLAYER_PANEL_ENTER_MS
 import com.ambient.tv.ui.player.PLAYER_PANEL_EXIT_MS
+import com.ambient.tv.util.createAndroidComposeRule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Rule

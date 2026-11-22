@@ -18,7 +18,7 @@ class TimeshiftBufferTest {
                     Thread {
                         runCatching {
                             val input = socket.getInputStream().bufferedReader()
-                            while (input.readLine()?.isNotEmpty() == true) Unit
+                            while (input.readLine()?.isNotEmpty() == true) { /* Drain request headers. */ }
                             val out = socket.getOutputStream()
                             out.write("HTTP/1.1 200 OK\r\nContent-Type: $contentType\r\nConnection: close\r\n\r\n".toByteArray())
                             out.write(body); out.flush()
@@ -62,7 +62,7 @@ class TimeshiftBufferTest {
             // A deterministic recording index: the edge has advanced since the original open.
             val indexField = TimeshiftBuffer::class.java.getDeclaredField("index").apply { isAccessible = true }
             val lockField = TimeshiftBuffer::class.java.getDeclaredField("lock").apply { isAccessible = true }
-            synchronized(lockField.get(buffer)) {
+            synchronized(requireNotNull(lockField.get(buffer))) {
                 @Suppress("UNCHECKED_CAST")
                 val index = indexField.get(buffer) as ArrayDeque<Pair<Long, Long>>
                 index.clear()
@@ -95,7 +95,7 @@ class TimeshiftBufferTest {
                     Thread {
                         runCatching {
                             val input = socket.getInputStream().bufferedReader()
-                            while (input.readLine()?.isNotEmpty() == true) Unit
+                            while (input.readLine()?.isNotEmpty() == true) { /* Drain request headers. */ }
                             val out = socket.getOutputStream()
                             out.write("HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\nConnection: close\r\n\r\n".toByteArray())
                             out.write(body); out.write(body.copyOf(100)); out.flush()

@@ -152,7 +152,6 @@ class DlnaRepository @Inject constructor(
         store.awaitReady()
         store.recordProgress(ratingKey, positionMs)
         if (state != "playing") flushProgress()
-        Unit
     }
 
     /** Player reports must use the incarnation captured when resolving their metadata. */
@@ -161,7 +160,6 @@ class DlnaRepository @Inject constructor(
         store.awaitReady()
         if (scope != null) store.recordProgress(ratingKey, positionMs, completed.takeIf { it }, expectedScope = scope)
         if (terminal || completed) flushProgress()
-        Unit
     }
 
     override suspend fun markWatched(ratingKey: String): Result<Unit> = runCatching {

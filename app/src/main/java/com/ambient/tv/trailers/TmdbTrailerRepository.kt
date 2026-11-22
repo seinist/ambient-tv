@@ -144,7 +144,7 @@ class TmdbTrailerRepository internal constructor(private val tokens: TokenStore,
                             refreshGeneration == requestRefreshGeneration)
                             cache[key] = Cached(nanoTime(), result)
                     }
-                    serviceRequest?.let { onlineServices?.succeeded(it) }
+                    serviceRequest?.let { onlineServices.succeeded(it) }
                     result
                 }
                 }
@@ -152,8 +152,8 @@ class TmdbTrailerRepository internal constructor(private val tokens: TokenStore,
                 throw cancelled
             } catch (error: Exception) {
                 serviceRequest?.let {
-                    if (error is TrailerServiceUnavailable) onlineServices?.unavailable(it)
-                    else onlineServices?.failed(it, error)
+                    if (error is TrailerServiceUnavailable) onlineServices.unavailable(it)
+                    else onlineServices.failed(it, error)
                 }
                 throw error
             }

@@ -11,7 +11,7 @@ class CompanionInputCoalesceTest {
     fun `consecutive moves are summed`() {
         val merged = coalesceCompanionInput(move(0.1f, 0.2f), move(0.3f, -0.1f))!!
         assertEquals(0.4f, merged.input!!.x, 1e-6f)
-        assertEquals(0.1f, merged.input!!.y, 1e-6f)
+        assertEquals(0.1f, merged.input.y, 1e-6f)
     }
 
     @Test
@@ -48,9 +48,9 @@ class CompanionInputCoalesceTest {
             pointer = CompanionPointerState(kind = "mouse", dx = 0.25f, dy = -0.15f)))
         val merged = coalesceCompanionInput(first, second)!!
         assertEquals(0.4f, merged.gamepadState!!.pointer!!.dx, 1e-6f)
-        assertEquals(-0.05f, merged.gamepadState!!.pointer!!.dy, 1e-6f)
+        assertEquals(-0.05f, merged.gamepadState.pointer.dy, 1e-6f)
         val click = second.copy(gamepadState = second.gamepadState!!.copy(
-            pointer = second.gamepadState!!.pointer!!.copy(buttons = 1)))
+            pointer = second.gamepadState.pointer!!.copy(buttons = 1)))
         assertNull(coalesceCompanionInput(first, click))
     }
 

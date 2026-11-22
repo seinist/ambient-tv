@@ -233,7 +233,7 @@ private suspend fun captureFrame(surface: SurfaceView, handler: Handler): Bitmap
                     bitmap.recycle()
                     if (cont.isActive) cont.resume(null)
                 } else {
-                    cont.resume(bitmap, onCancellation = { _, abandoned, _ -> abandoned?.recycle() })
+                    cont.resume(bitmap, onCancellation = { _, abandoned, _ -> abandoned.recycle() })
                 }
             }, handler)
         } catch (_: RuntimeException) {

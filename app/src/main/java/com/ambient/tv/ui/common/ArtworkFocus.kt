@@ -77,12 +77,11 @@ fun rememberArtworkFocusCrop(model: String?, headers: Map<String, String>, visib
     val worthDetecting = model != null && visibleFraction != null && visibleFraction < 0.85f
     LaunchedEffect(identity, worthDetecting) {
         if (!worthDetecting || focus != null) return@LaunchedEffect
-        val imageModel = model ?: return@LaunchedEffect
         val imageKey = identity ?: return@LaunchedEffect
         // Database open/read and selective pruning must not block TV focus.
         focus = withContext(Dispatchers.IO) { ArtworkFocusStore.cached(context, imageKey) }
         // A slow device shows the default crop rather than holding the image back.
-        if (focus == null) focus = withTimeoutOrNull(1_500) { ArtworkFocusStore.detect(context, imageModel, headers, imageKey) }
+        if (focus == null) focus = withTimeoutOrNull(1_500) { ArtworkFocusStore.detect(context, model, headers, imageKey) }
         detectionDone = true
     }
     val target = focus?.takeIf { it.isSpecified } ?: DefaultArtworkFocus

@@ -190,7 +190,7 @@ class WeatherRepository @Inject constructor(
             val serviceRequest = onlineServices?.begin("weather")
             try {
                 val snapshot = parseWeatherForecast(get(forecastUrl(place, selected), token), place, selected, System.currentTimeMillis())
-                serviceRequest?.let { onlineServices?.succeeded(it) }
+                serviceRequest?.let { onlineServices.succeeded(it) }
                 synchronized(gate) {
                     cache = (cache + (key to snapshot)).entries.sortedByDescending { it.value.fetchedAtMillis }
                         .take(MAX_CACHE_ENTRIES).associate { it.key to it.value }
@@ -214,7 +214,7 @@ class WeatherRepository @Inject constructor(
                 val failure = requestError(error)
                 if (synchronized(gate) { generation == token } &&
                     failure.reason in setOf(WeatherError.OFFLINE, WeatherError.UNAVAILABLE)) {
-                    serviceRequest?.let { onlineServices?.unavailable(it) }
+                    serviceRequest?.let { onlineServices.unavailable(it) }
                 }
                 publish(token, WeatherState(saved, error = failure.reason, retryAfterMillis = failure.retryAfterMillis))
             }

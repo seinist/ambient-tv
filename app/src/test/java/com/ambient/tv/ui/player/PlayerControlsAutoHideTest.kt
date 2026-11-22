@@ -8,12 +8,12 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import com.ambient.tv.ui.common.LocalPlayerPanelNavigation
 import com.ambient.tv.ui.common.PlayerOsdTimeout
 import com.ambient.tv.ui.common.PlayerPanelNavigation
 import com.ambient.tv.ui.common.UnifiedPlayerPanel
+import com.ambient.tv.util.createAndroidComposeRule
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull

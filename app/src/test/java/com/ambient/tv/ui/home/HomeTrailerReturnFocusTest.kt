@@ -12,7 +12,6 @@ import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isFocused
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
@@ -29,6 +28,7 @@ import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import com.ambient.tv.ui.performance.PerformanceMode
 import com.ambient.tv.ui.performance.PerformanceProfile
 import com.ambient.tv.ui.theme.AmbientTvTheme
+import com.ambient.tv.util.createAndroidComposeRule
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

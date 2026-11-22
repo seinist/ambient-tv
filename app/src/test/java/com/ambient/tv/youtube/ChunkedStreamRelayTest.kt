@@ -122,7 +122,7 @@ class ChunkedStreamRelayTest {
         val url = relay.register("http://127.0.0.1:${upstream.address.port}$path", emptyMap())
         val pending = executor.submit(Callable {
             val response = get(url, "bytes=0-3999").also(opened::set)
-            response to if (prefix) response.body!!.byteStream().read() else -1
+            response to if (prefix) response.body.byteStream().read() else -1
         })
         try {
             // A liveness assertion, not a throughput benchmark: upstream cannot finish yet.
@@ -131,7 +131,7 @@ class ChunkedStreamRelayTest {
                 assertEquals(status, response.code)
                 if (prefix) assertEquals(bytes[0].toInt() and 255, first)
                 release.countDown()
-                val remaining = response.body!!.byteStream().readBytes()
+                val remaining = response.body.byteStream().readBytes()
                 assertArrayEquals(if (prefix) bytes.copyOfRange(1, bytes.size) else bytes, remaining)
             }
         } finally {
@@ -157,7 +157,7 @@ class ChunkedStreamRelayTest {
         })
         val url = watched.register(source, emptyMap())
         get(url, "bytes=500-899").use { response ->
-            assertArrayEquals(payload.copyOfRange(500, 900), response.body!!.bytes())
+            assertArrayEquals(payload.copyOfRange(500, 900), response.body.bytes())
         }
         assertTrue(firstPacket.await(3, TimeUnit.SECONDS))
         assertTrue(observed.any { it.stage == "headers" && it.rangeStart == 500L && it.headersMs != null })
@@ -169,7 +169,7 @@ class ChunkedStreamRelayTest {
         get(url).use { response ->
             assertEquals(200, response.code)
             assertEquals("25000", response.header("Content-Length"))
-            assertArrayEquals(payload, response.body!!.bytes())
+            assertArrayEquals(payload, response.body.bytes())
         }
         assertEquals(7, seenRanges.size)
         assertTrue(seenRanges.all { it != null && !it.endsWith("-") })
@@ -181,12 +181,12 @@ class ChunkedStreamRelayTest {
         get(url, "bytes=10000-").use { response ->
             assertEquals(206, response.code)
             assertEquals("bytes 10000-24999/25000", response.header("Content-Range"))
-            assertArrayEquals(payload.copyOfRange(10_000, 25_000), response.body!!.bytes())
+            assertArrayEquals(payload.copyOfRange(10_000, 25_000), response.body.bytes())
         }
         get(url, "bytes=100-199").use { response ->
             assertEquals(206, response.code)
             assertEquals("bytes 100-199/25000", response.header("Content-Range"))
-            assertArrayEquals(payload.copyOfRange(100, 200), response.body!!.bytes())
+            assertArrayEquals(payload.copyOfRange(100, 200), response.body.bytes())
         }
     }
 
@@ -203,7 +203,7 @@ class ChunkedStreamRelayTest {
         get(url, "bytes=10000-14999").use {
             assertEquals(206, it.code)
             assertEquals("bytes 10000-14999/25000", it.header("Content-Range"))
-            assertArrayEquals(payload.copyOfRange(10_000, 15_000), it.body!!.bytes())
+            assertArrayEquals(payload.copyOfRange(10_000, 15_000), it.body.bytes())
         }
     }
 
@@ -218,7 +218,7 @@ class ChunkedStreamRelayTest {
     @Test fun `a drop mid-chunk is resumed at the exact byte`() {
         dropOnceAt = 9_000
         val url = relay.register(source, emptyMap())
-        get(url).use { response -> assertArrayEquals(payload, response.body!!.bytes()) }
+        get(url).use { response -> assertArrayEquals(payload, response.body.bytes()) }
         // The failed range was requested again from where the bytes stopped.
         assertTrue(seenRanges.any { it == "bytes=9000-11999" || it?.startsWith("bytes=9000-") == true })
     }
@@ -230,19 +230,19 @@ class ChunkedStreamRelayTest {
 
     @Test fun `transient forbidden midstream retries identical bytes without a new url`() {
         val url = relay.register(source.replace("/videoplayback", "/transient-forbidden"), emptyMap()) { null }
-        get(url).use { assertArrayEquals(payload, it.body!!.bytes()) }
+        get(url).use { assertArrayEquals(payload, it.body.bytes()) }
     }
 
     @Test fun `an expired link is renewed before the first byte`() {
         var renewals = 0
         val url = relay.register(source.replace("/videoplayback", "/expired"), emptyMap()) { renewals++; source }
-        get(url).use { response -> assertArrayEquals(payload, response.body!!.bytes()) }
+        get(url).use { response -> assertArrayEquals(payload, response.body.bytes()) }
         assertEquals(1, renewals)
     }
 
     @Test fun `a link expiring mid-stream is renewed and resumed at the same byte`() {
         val url = relay.register(source.replace("/videoplayback", "/expiring"), emptyMap()) { source }
-        get(url).use { response -> assertArrayEquals(payload, response.body!!.bytes()) }
+        get(url).use { response -> assertArrayEquals(payload, response.body.bytes()) }
     }
 
     @Test fun `a replacement rejected by upstream renews the current url`() {
@@ -253,7 +253,7 @@ class ChunkedStreamRelayTest {
             rejected += failed
             if (failed == first) second else source
         }
-        get(url).use { assertArrayEquals(payload, it.body!!.bytes()) }
+        get(url).use { assertArrayEquals(payload, it.body.bytes()) }
         assertEquals(listOf(first, second), rejected)
     }
 
@@ -275,7 +275,7 @@ class ChunkedStreamRelayTest {
             onTerminalHttpStatus = { terminal += it },
             refresh = { null },
         )
-        get(url).use { response -> assertArrayEquals(payload, response.body!!.bytes()) }
+        get(url).use { response -> assertArrayEquals(payload, response.body.bytes()) }
         assertTrue(terminal.isEmpty())
     }
 

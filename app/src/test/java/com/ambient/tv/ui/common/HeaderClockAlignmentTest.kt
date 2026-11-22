@@ -11,7 +11,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Text
@@ -20,6 +19,7 @@ import com.ambient.tv.ui.settings.SettingsHeaderRow
 import com.ambient.tv.ui.theme.AmbientTvTheme
 import com.ambient.tv.ui.weather.LocalWeatherPresentation
 import com.ambient.tv.ui.weather.WeatherPresentation
+import com.ambient.tv.util.createAndroidComposeRule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule

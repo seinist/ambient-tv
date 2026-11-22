@@ -1971,7 +1971,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                         require(if (route.vpn) connectionTransport?.alive(route) == true else sessionLan()?.address == link?.address)
                         if (inflight.size >= 4 ||
                             (carried != null && inflight.isNotEmpty() &&
-                             carried?.type !in setOf("gamepad_input", "gamepad_command", "gamepad_status", "input"))) {
+                             carried.type !in setOf("gamepad_input", "gamepad_command", "gamepad_status", "input"))) {
                             receiveOne()
                             continue
                         }

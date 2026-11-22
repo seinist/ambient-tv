@@ -84,8 +84,8 @@ def patch_doh(path: Path, check: bool) -> bool:
 
 
 
-def patch_kotlin_text(path: Path, replacements: list[tuple[str, str]], check: bool) -> bool:
-    """Apply narrowly-scoped Kotlin compatibility replacements if the file exists.
+def patch_source_text(path: Path, replacements: list[tuple[str, str]], check: bool) -> bool:
+    """Apply narrowly-scoped compatibility replacements if the file exists.
 
     Missing files are accepted because SmartTube upstream may have moved or removed
     the code in a newer revision. In check mode we only reject legacy spellings that
@@ -93,11 +93,14 @@ def patch_kotlin_text(path: Path, replacements: list[tuple[str, str]], check: bo
     """
     if not path.is_file():
         return False
-    text = path.read_text()
+    with path.open(newline="") as source:
+        original = source.read()
+    newline = "\r\n" if "\r\n" in original else "\n"
+    text = original.replace("\r\n", "\n")
     if check:
         legacy = [old for old, _new in replacements if old in text]
         if legacy:
-            die(f"legacy OkHttp Kotlin accessor remains in {path}: {legacy[0]}")
+            die(f"legacy source fragment remains in {path}: {legacy[0]}")
         return False
 
     changed = False
@@ -106,7 +109,93 @@ def patch_kotlin_text(path: Path, replacements: list[tuple[str, str]], check: bo
             text = text.replace(old, new)
             changed = True
     if changed:
-        path.write_text(text)
+        path.write_text(text, newline=newline)
+    return changed
+
+
+def patch_sharedutils_java(shared: Path, check: bool) -> list[Path]:
+    """Use current APIs where equivalent and retain deliberate legacy Android behavior."""
+    base = shared / "sharedutils/src/main/java/com/liskovsoft/sharedutils"
+    replacements = {
+        "helpers/Helpers.java": [
+            ("import android.bluetooth.BluetoothAdapter;\nimport android.content.ActivityNotFoundException;",
+             "import android.bluetooth.BluetoothAdapter;\nimport android.bluetooth.BluetoothManager;\n"
+             "import android.content.ActivityNotFoundException;"),
+            ("bluetoothName = getBluetoothAdapterName();", "bluetoothName = getBluetoothAdapterName(context);"),
+            ("    private static String getBluetoothAdapterName() {\n"
+             "        BluetoothAdapter myDevice = BluetoothAdapter.getDefaultAdapter();",
+             "    private static String getBluetoothAdapterName(Context context) {\n"
+             "        BluetoothManager manager = context.getSystemService(BluetoothManager.class);\n"
+             "        BluetoothAdapter myDevice = manager == null ? null : manager.getAdapter();"),
+            ("ctx.getResources().getConfiguration().locale", "ctx.getResources().getConfiguration().getLocales().get(0)"),
+            ("audioManager.setStreamMute(AudioManager.STREAM_SYSTEM, !enable);",
+             "audioManager.adjustStreamVolume(AudioManager.STREAM_SYSTEM,\n"
+             "                enable ? AudioManager.ADJUST_UNMUTE : AudioManager.ADJUST_MUTE, 0);"),
+            ("packageInfo != null ? packageInfo.versionCode : -1", "packageInfo != null ? (int) packageInfo.getLongVersionCode() : -1"),
+        ],
+        "locale/LocaleUtility.java": [
+            ("        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N){\n"
+             "            return context.getResources().getConfiguration().getLocales().get(0);\n"
+             "        } else{\n"
+             "            //noinspection deprecation\n"
+             "            return context.getResources().getConfiguration().locale;\n"
+             "        }",
+             "        return context.getResources().getConfiguration().getLocales().get(0);"),
+        ],
+        "mylogger/FileLogger.java": [
+            ("import android.os.Handler;\nimport android.util.DisplayMetrics;",
+             "import android.os.Handler;\nimport android.os.Looper;\nimport android.util.DisplayMetrics;"),
+            ("mHandler = new Handler();", "mHandler = new Handler(Looper.myLooper());"),
+        ],
+        "okhttp/interceptors/UnzippingInterceptor.java": [
+            ('ResponseBody.create(MediaType.get("text/plain; charset=UTF-8"), "")',
+             'ResponseBody.create("", MediaType.get("text/plain; charset=UTF-8"))'),
+        ],
+    }
+    legacy_methods = {
+        "helpers/FileHelpers.java": {
+            "public static File getExternalMediaDirectory(": "Keep resolving the app's existing Android/media directory.",
+        },
+        "helpers/Helpers.java": {
+            "public static int getScale(": "Use the legacy app-available display size for WebView scaling.",
+            "public static void adjustFontScale(": "Update the existing activity resources in place.",
+            "public static boolean isAndroidTV(": "Recognize older TVs that advertise only FEATURE_TELEVISION.",
+            "public static void makeActivityFullscreen(": "Retain the legacy system UI flags for the caller's window.",
+            "public static void makeActivityFullscreen2(": "Retain the Android 10 fallback and legacy translucent bars.",
+            "public static void addFullscreenListener(": "Observe visibility changes from the legacy fullscreen flags.",
+            "public static void removePackage(": "Keep the interactive platform uninstaller contract.",
+            "public static void removePackageAndGetResult(": "Deliver the interactive uninstall result to the caller's activity.",
+            "public static void showKeyboard(": "This legacy entry point accepts a context without a focused view.",
+        },
+        "helpers/MessageHelpers.java": {
+            "private static @Nullable TextView extractMessageView(": "Inspect the legacy toast view when the platform provides one.",
+        },
+        "locale/LocaleContextWrapper.java": {
+            "public static Context wrap(Context context, Locale newLocale, DisplayMetrics customMetrics)": "Retain the pre-API 17 fallback in the upstream helper.",
+            "public static void applySavedLocale(": "Update the caller's existing resources in place.",
+        },
+        "locale/LocaleUpdaterHelper.java": {
+            "public static void forceLocale(": "Update the caller's existing resources in place.",
+            "public static Locale parseLangCode(": "Keep permissive locale parsing on Android versions without Locale.of.",
+        },
+        "okhttp/OkHttpCommons.java": {
+            "private static OkHttpClient.Builder enableTls12OnPreLollipop(": "Preserve the old Android TLS compatibility path.",
+        },
+    }
+    changed: list[Path] = []
+    for relative_path in sorted(replacements.keys() | legacy_methods.keys()):
+        path = base / relative_path
+        if not path.is_file():
+            continue
+        text = path.read_text()
+        edits = replacements.get(relative_path, []).copy()
+        for signature, reason in legacy_methods.get(relative_path, {}).items():
+            declaration = f"    {signature}"
+            annotated = f'    @SuppressWarnings("deprecation")\n{declaration}'
+            if annotated not in text:
+                edits.append((declaration, f"    // {reason}\n{annotated}"))
+        if patch_source_text(path, edits, check):
+            changed.append(path)
     return changed
 
 
@@ -443,6 +532,16 @@ def patch_youtubeapi_okhttp_kotlin(msc: Path, check: bool) -> list[Path]:
         "com/liskovsoft/youtubeapi/innertube/initialresponse/InitialResponseService.kt": [
             (".body()", ".body"),
         ],
+        "com/liskovsoft/youtubeapi/innertube/core/HTTPClient.kt": [
+            (
+                'CLIENTS.ANDROID.USER_AGENT?.let { requestHeaders["User-Agent"] = it }',
+                'requestHeaders["User-Agent"] = CLIENTS.ANDROID.USER_AGENT',
+            ),
+            (
+                'CLIENTS.IOS.USER_AGENT?.let { requestHeaders["User-Agent"] = it }',
+                'requestHeaders["User-Agent"] = CLIENTS.IOS.USER_AGENT',
+            ),
+        ],
     }
     for rel, replacements in patches.items():
         if (".body()", ".body") in replacements:
@@ -456,7 +555,7 @@ def patch_youtubeapi_okhttp_kotlin(msc: Path, check: bool) -> list[Path]:
                 "",
             ))
         path = base / rel
-        if patch_kotlin_text(path, replacements, check):
+        if patch_source_text(path, replacements, check):
             changed.append(path)
     return changed
 
@@ -773,9 +872,6 @@ def patch_potoken_v8_set_interval_return(path: Path, check: bool) -> bool:
 
 def patch_request_body_create_media_first(path: Path, check: bool) -> bool:
     """Swap RequestBody.create(mediaType, payload) to the non-deprecated (payload, mediaType) overload."""
-    if not path.is_file():
-        return False
-    text = path.read_text()
     replacements = [
         (
             "RequestBody.create(MEDIA_TYPE, value.toString())",
@@ -790,18 +886,7 @@ def patch_request_body_create_media_first(path: Path, check: bool) -> bool:
             "RequestBody.create(buffer.readByteString(), MEDIA_TYPE)",
         ),
     ]
-    if check:
-        if any(old in text for old, _new in replacements):
-            die(f"legacy RequestBody.create(mediaType, payload) remains in {path}")
-        return False
-    changed = False
-    for old, new in replacements:
-        if old in text:
-            text = text.replace(old, new)
-            changed = True
-    if changed:
-        path.write_text(text)
-    return True
+    return patch_source_text(path, replacements, check)
 
 
 def patch_auth_v1_request_body(path: Path, check: bool) -> bool:
@@ -1005,7 +1090,32 @@ def main() -> int:
     if patch_logger_quiet(logger, args.check):
         changed.append(logger)
 
+    changed.extend(patch_sharedutils_java(shared, args.check))
     changed.extend(patch_youtubeapi_okhttp_kotlin(msc, args.check))
+
+    json_path_adapter = msc / (
+        "youtubeapi/src/main/java/com/liskovsoft/googlecommon/common/converters/"
+        "jsonpath/typeadapter/JsonPathSkipTypeAdapter.java"
+    )
+    if patch_source_text(json_path_adapter, [
+        (
+            "import java.io.InputStreamReader;\nimport java.lang.reflect.Type;",
+            "import java.io.InputStreamReader;\nimport java.io.UncheckedIOException;\nimport java.lang.reflect.Type;\n"
+            "import java.nio.charset.StandardCharsets;",
+        ),
+        (
+            '        return new ReaderInputStream(reader, "UTF-8");',
+            "        try {\n"
+            "            return ReaderInputStream.builder()\n"
+            "                    .setReader(reader)\n"
+            "                    .setCharset(StandardCharsets.UTF_8)\n"
+            "                    .get();\n"
+            "        } catch (IOException e) {\n"
+            "            throw new UncheckedIOException(e);\n"
+            "        }",
+        ),
+    ], args.check):
+        changed.append(json_path_adapter)
 
     v8_wrapper = msc / "youtubeapi/src/main/java/com/liskovsoft/youtubeapi/app/potokennp2/misc/V8Wrapper.kt"
     if patch_v8_wrapper_java_callback(v8_wrapper, args.check):

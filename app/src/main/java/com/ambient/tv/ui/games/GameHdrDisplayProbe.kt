@@ -3,7 +3,7 @@ package com.ambient.tv.ui.games
 import android.content.Context
 import android.os.Build
 import android.view.Display
-import android.view.WindowManager
+import androidx.core.content.ContextCompat
 
 /**
  * Reads the HDR formats advertised by the physical Android display associated with
@@ -14,14 +14,8 @@ internal object GameHdrDisplayProbe {
     fun capture(context: Context): GameHdrDisplayCapabilities {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return GameHdrDisplayCapabilities()
         return runCatching {
-            val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
-            @Suppress("DEPRECATION")
-            val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                context.display ?: windowManager?.defaultDisplay
-            } else {
-                windowManager?.defaultDisplay
-            }
-            val hdr = display?.hdrCapabilities ?: return GameHdrDisplayCapabilities()
+            val display = ContextCompat.getDisplayOrDefault(context)
+            val hdr = display.hdrCapabilities ?: return GameHdrDisplayCapabilities()
             // Since Android 14, the *current display mode* can advertise a narrower
             // set than the panel as a whole (e.g. 4K/120 Hz with HDR disabled).
             @Suppress("DEPRECATION")

@@ -8,7 +8,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -18,6 +17,7 @@ import com.ambient.tv.ui.player.PlayerPanelVisibility
 import com.ambient.tv.ui.player.PlaybackSeekStopTest
 import com.ambient.tv.ui.player.SleepTimerConfig
 import com.ambient.tv.ui.theme.AmbientTvTheme
+import com.ambient.tv.util.createAndroidComposeRule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Rule

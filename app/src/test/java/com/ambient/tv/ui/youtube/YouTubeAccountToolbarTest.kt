@@ -10,7 +10,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -24,6 +23,7 @@ import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.ViewOptionsChip
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.theme.AmbientTvTheme
+import com.ambient.tv.util.createAndroidComposeRule
 import com.ambient.tv.youtube.YouTubeAccountProfile
 import org.junit.Assert.assertTrue
 import org.junit.Rule

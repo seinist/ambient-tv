@@ -18,7 +18,7 @@ class DlnaWakeTest {
 
     @Test fun oldSavedServersWithoutWakeFieldsStillDecode() {
         val json = """[{"id":"server-1","udn":"uuid:server-1","name":"NAS","descriptionUrl":"http://192.168.1.2:8200/rootDesc.xml","contentDirectoryUrl":"http://192.168.1.2:8200/ctl/ContentDir"}]"""
-        val decoded = Json { ignoreUnknownKeys = true }.decodeFromString<List<DlnaServer>>(json).single().validated()
+        val decoded = Json.decodeFromString<List<DlnaServer>>(json).single().validated()
         assertEquals("", decoded.wolMac)
         assertFalse(decoded.wolAuto)
     }

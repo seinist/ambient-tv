@@ -1107,7 +1107,7 @@ class GameLibraryRepository @Inject constructor(
                                 val last = previous[entry.id]
                                 val unchanged = last != null && last.size == entry.size &&
                                     last.modified == entry.modified && entry.modified != 0L
-                                val cachedProbe = unchanged && last!!.probeVersion == PROBE_VERSION &&
+                                val cachedProbe = unchanged && last.probeVersion == PROBE_VERSION &&
                                     (folder.systemId == "auto" || folder.systemId == last.systemId)
                                 val archive = if (ext in GameSystems.archiveExtensions && !cachedProbe) {
                                     if (ext == "rar") {
@@ -1132,7 +1132,7 @@ class GameLibraryRepository @Inject constructor(
                                     }
                                 } else null
                                 val system = when {
-                                    cachedProbe -> GameSystems.byId(last!!.systemId)
+                                    cachedProbe -> GameSystems.byId(last.systemId)
                                     ext in GameSystems.archiveExtensions -> archive?.innerName?.let { inner ->
                                         val detected = archive.system ?: GameSystems.forSourceFile(inner, entry.path)
                                         GameSystems.forAssignedFile(inner, folder.systemId, detected,
@@ -1141,14 +1141,14 @@ class GameLibraryRepository @Inject constructor(
                                     else -> classify(entry, reader(), folder.systemId)
                                 }
                                 if (system != null) {
-                                    val internal = if (cachedProbe) last!!.internalTitle
+                                    val internal = if (cachedProbe) last.internalTitle
                                         else archive?.internalTitle ?: if (ext in GameSystems.archiveExtensions)
                                             null else extractTitle(entry, reader(), system.id)
-                                    val crc = if (cachedProbe) last!!.archiveCrc else archive?.crc32
+                                    val crc = if (cachedProbe) last.archiveCrc else archive?.crc32
                                     val version = datVersions[system.id] ?: 0L
                                     val verified = when {
                                         version == 0L -> null
-                                        unchanged && last!!.datVersion == version -> last.verifiedTitle
+                                        unchanged && last.datVersion == version -> last.verifiedTitle
                                         crc != null -> datNameFromCrc(system.id, crc)
                                         else -> datTitle(reader(), entry, system.id)
                                     }

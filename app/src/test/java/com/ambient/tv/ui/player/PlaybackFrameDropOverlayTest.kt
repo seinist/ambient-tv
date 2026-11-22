@@ -10,7 +10,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -26,6 +25,7 @@ import com.ambient.tv.ui.common.UnifiedPlayerPanel
 import com.ambient.tv.ui.common.UnifiedPlayerSidePanel
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import java.lang.reflect.Proxy
+import com.ambient.tv.util.createAndroidComposeRule
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -67,7 +67,7 @@ class PlaybackFrameDropOverlayTest {
             "isCurrentMediaItemLive" -> false
             "getPlaybackParameters" -> PlaybackParameters.DEFAULT
             "getMediaItemCount" -> 0
-            "getTrackSelectionParameters" -> TrackSelectionParameters.DEFAULT_WITHOUT_CONTEXT
+            "getTrackSelectionParameters" -> TrackSelectionParameters.DEFAULT
             "addListener", "removeListener", "setTrackSelectionParameters", "clearVideoSurface",
             "clearMediaItems", "setPlayWhenReady", "release" -> null
             else -> error("Unexpected player call: ${method.name}")

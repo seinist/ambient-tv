@@ -11,13 +11,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.click
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import com.ambient.tv.R
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.local.TitleVideoSettings
+import com.ambient.tv.util.createAndroidComposeRule
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before

@@ -95,7 +95,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
     val info = state.remote?.gamepadInfo
     val port = state.remote?.gamepadPort ?: -1
     val claimed = state.online && info != null && port in 0..3
-    val playing = claimed && info?.acceptsGameplay == true
+    val playing = claimed && info.acceptsGameplay
     val lifecycleOwner = LocalLifecycleOwner.current
     var resumed by remember(lifecycleOwner) {
         mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
@@ -112,7 +112,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val transmitting = playing && resumed
-    val navigating = claimed && resumed && info?.acceptsNavigation == true
+    val navigating = claimed && resumed && info.acceptsNavigation
     val renderedInfo by rememberUpdatedState(info)
     val confirmHold = remember(manager) { CompanionGamepadHold(rewind = false, manager::sendGamepadCommand) }
     val rewindHold = remember(manager) { CompanionGamepadHold(rewind = true, manager::sendGamepadCommand) }
@@ -139,7 +139,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
     }
     LaunchedEffect(navigating, transmitting, info?.rewindAvailable) {
         if (!navigating) confirmHold.clear()
-        if (!transmitting || info?.rewindAvailable != true) rewindHold.clear()
+        if (!transmitting || !info.rewindAvailable) rewindHold.clear()
     }
     var touchOptionsOpen by remember { mutableStateOf(false) }
     val touchStyle = RetroInputSettings.config.touchStyle
@@ -224,7 +224,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
     val physicalMode = when {
         !claimed || !resumed || touchOptionsOpen -> GameInputMode.BLOCKED
         transmitting -> GameInputMode.RUNNING
-        navigating && info?.interactionMode == CompanionGamepadInteraction.DIALOG -> GameInputMode.DIALOG
+        navigating && info.interactionMode == CompanionGamepadInteraction.DIALOG -> GameInputMode.DIALOG
         navigating -> GameInputMode.MENU
         else -> GameInputMode.BLOCKED
     }
@@ -483,13 +483,13 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                         modifier = Modifier.width(320.dp),
                     ) { options() }
                 }
-                if (compactHeader && transmitting && info?.rewindAvailable == true && !touchOptionsOpen) {
+                if (compactHeader && transmitting && info.rewindAvailable && !touchOptionsOpen) {
                     key(info.sessionId, info.contextRevision) {
                         CompanionGamepadRewindControl(info.rewindSeconds,
                             onPressed = { rewindHold.set(touchRewindOwner, it, info) }, compact = true)
                     }
                 }
-                if (claimed && resumed && (transmitting || info?.interaction == null))
+                if (claimed && resumed && (transmitting || info.interaction == null))
                     TextButton(onClick = { manager.gamepadMenu(info) }) {
                     Text(stringResource(R.string.companion_gamepad_menu))
                 }
@@ -497,7 +497,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
 
             if (!compactHeader && transmitting) options()
 
-            if (!compactHeader && transmitting && info?.rewindAvailable == true && !touchOptionsOpen) {
+            if (!compactHeader && transmitting && info.rewindAvailable && !touchOptionsOpen) {
                 key(info.sessionId, info.contextRevision) {
                     CompanionGamepadRewindControl(info.rewindSeconds,
                         onPressed = { rewindHold.set(touchRewindOwner, it, info) },
@@ -507,11 +507,11 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
 
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 if (navigating) {
-                    key(info?.sessionId, info?.contextRevision) {
+                    key(info.sessionId, info.contextRevision) {
                         CompanionGameMenuControls(onNavigate = { manager.gamepadNavigate(it, info) },
                             onResume = { manager.gamepadMenu(info) },
                             onConfirm = { held, cancelled -> confirmHold.set(touchConfirmOwner, held, info, cancelled) },
-                            canResume = info?.acceptsResume == true)
+                            canResume = info.acceptsResume)
                     }
                 } else if (transmitting && !touchOptionsOpen) {
                     if (inputKind == "pad" && touchStyle.hideOnGamepadInput && hidingGamepadId != null) {
@@ -571,9 +571,9 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                             !state.online -> R.string.remote_disconnected
                             info == null -> R.string.companion_gamepad_no_game
                             !claimed -> R.string.companion_gamepad_not_claimed
-                            info?.interactionMode == CompanionGamepadInteraction.LOADING -> R.string.game_preparing
-                            info?.interactionMode == CompanionGamepadInteraction.BUSY -> R.string.companion_gamepad_busy
-                            info?.interactionMode == CompanionGamepadInteraction.BACKGROUND -> R.string.companion_gamepad_background
+                            info.interactionMode == CompanionGamepadInteraction.LOADING -> R.string.game_preparing
+                            info.interactionMode == CompanionGamepadInteraction.BUSY -> R.string.companion_gamepad_busy
+                            info.interactionMode == CompanionGamepadInteraction.BACKGROUND -> R.string.companion_gamepad_background
                             else -> R.string.companion_gamepad_paused
                         }), style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)

@@ -29,7 +29,7 @@ class StreamUrlRenewalInterceptorTest {
             }).build()
             repeat(2) {
                 client.newCall(Request.Builder().url("$root/old").header("Range", "bytes=3-5").header("X-Test", "retained").build())
-                    .execute().use { r -> assertEquals(206, r.code); assertArrayEquals(byteArrayOf(4, 5, 6), r.body!!.bytes()) }
+                    .execute().use { r -> assertEquals(206, r.code); assertArrayEquals(byteArrayOf(4, 5, 6), r.body.bytes()) }
             }
             assertEquals(1, expiredRequests)
             assertEquals(listOf("$root/old"), renewed)

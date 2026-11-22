@@ -29,7 +29,7 @@ internal class PlaybackAccentSettingsAudit(private val instrumentation: Instrume
                 vm.onCustomAccentHexChanged("#123456")
                 vm.onCustomPlaybackAccentHexChanged("#FF77A8")
                 check(vm.hasPendingChanges())
-                check(vm.savedAppearance.customPlaybackAccentHex == original!!.customPlaybackAccentHex)
+                check(vm.savedAppearance.customPlaybackAccentHex == original.customPlaybackAccentHex)
                 check(vm.commitPending() != null)
                 check(!vm.hasPendingChanges())
                 check(vm.savedAppearance.customAccentHex == "#123456")

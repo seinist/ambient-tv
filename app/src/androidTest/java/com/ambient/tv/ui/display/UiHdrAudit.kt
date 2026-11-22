@@ -120,7 +120,7 @@ class UiHdrAudit(private val instrumentation: Instrumentation, private val log: 
                 return
             }
             main {
-                check(state != null && state!!.headroom == 1f && !state!!.failed)
+                check(state != null && state.headroom == 1f && !state.failed)
                 check(activity.window.colorMode == ActivityInfo.COLOR_MODE_DEFAULT)
                 val facts = uiHdrEligibility(activity.window, activity.window.decorView.display, "auto", HdrStandard.HDR10)
                 check(!facts.allowed) { "This audit expects an SDR emulator" }

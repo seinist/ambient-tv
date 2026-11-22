@@ -134,7 +134,6 @@ class FilesRepository @Inject constructor(
             store.record(old.entry, position, duration, if (finished) true else null,
                 expectedSource = binding.source, expectedScope = binding.scope)
             if (flush || ended) flushProgress()
-            Unit
         }
     }
     override suspend fun reportProgress(ratingKey: String, positionMs: Long, state: String) =
@@ -148,7 +147,6 @@ class FilesRepository @Inject constructor(
             val item = store.historyFor(ratingKey)
             if (item != null) store.record(item.entry, 0, completed = false)
             flushProgress()
-            Unit
         }
     }
     override suspend fun removeFromContinueWatching(ratingKey: String) = markWatched(ratingKey)

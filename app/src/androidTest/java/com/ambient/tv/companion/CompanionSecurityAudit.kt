@@ -550,6 +550,8 @@ class CompanionSecurityAudit(private val instrumentation: Instrumentation, priva
             com.ambient.tv.data.local.TokenStore(isolated("wake_tokens").getSharedPreferences("unused", 0), preferences), CompanionConnectionStore(context))
         val manager = com.ambient.tv.wol.WolManager(context, preferences, controller)
         val connectivity = base.getSystemService(android.net.ConnectivityManager::class.java)
+        // The one-off audit needs a snapshot of non-default networks, including a LAN behind a VPN.
+        @Suppress("DEPRECATION")
         val network = connectivity.allNetworks.first { candidate ->
             connectivity.getNetworkCapabilities(candidate)?.let {
                 !it.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) &&

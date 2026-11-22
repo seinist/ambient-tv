@@ -24,6 +24,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import coil3.annotation.DelicateCoilApi
 import com.ambient.tv.R
 import com.ambient.tv.data.local.HomeHeroStyle
 import com.ambient.tv.domain.model.MediaItem
@@ -215,6 +216,7 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
     }
 
     /** Paired on-device workload: production scheduler/cache/UI, controlled metadata responses. */
+    @OptIn(DelicateCoilApi::class)
     private fun auditBrowse(activity: UiCatalogActivity, mode: String) {
         val context = instrumentation.targetContext
         val deps = dagger.hilt.android.EntryPointAccessors.fromApplication(context.applicationContext,
@@ -481,6 +483,7 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
         main { activity.setContent { Box(Modifier.fillMaxSize()) } }
     }
 
+    @OptIn(DelicateCoilApi::class)
     private fun auditArtworkConstraints(activity: UiCatalogActivity) {
         val context = instrumentation.targetContext
         val file = java.io.File(context.cacheDir, "ui-audit-large-artwork.png")

@@ -17,13 +17,13 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsFocused
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.unit.dp
 import com.ambient.tv.ui.sound.LocalUiSoundPlayer
 import com.ambient.tv.ui.sound.UiSound
 import com.ambient.tv.ui.sound.UiSoundFeedback
 import com.ambient.tv.ui.sound.uiSoundOnFocus
+import com.ambient.tv.util.createAndroidComposeRule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule

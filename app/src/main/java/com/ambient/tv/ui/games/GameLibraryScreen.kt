@@ -16,6 +16,8 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -492,7 +494,7 @@ private fun GameFolderManager(
             }
             item {
                 TvActionButton(stringResource(R.string.game_library_import_dat),
-                    onClick = onImportDat, icon = Icons.Filled.LibraryBooks, fillWidth = true)
+                    onClick = onImportDat, icon = Icons.AutoMirrored.Filled.LibraryBooks, fillWidth = true)
             }
             state.message?.let { feedback -> item {
                 Text(feedback, style = MaterialTheme.typography.bodySmall,
@@ -572,7 +574,7 @@ private fun GameFolderManager(
         TvActionButton(stringResource(R.string.game_library_use_folder),
             onClick = { onChooseSystem(true) }, icon = Icons.Filled.Check)
         TvActionButton(stringResource(R.string.game_library_back),
-            onClick = onCloseSource, icon = Icons.Filled.ArrowBack)
+            onClick = onCloseSource, icon = Icons.AutoMirrored.Filled.ArrowBack)
         if (source.wolMac.isNotBlank()) {
             TvActionButton(stringResource(R.string.game_library_wake),
                 onClick = onWake, icon = Icons.Filled.PowerSettingsNew)

@@ -35,7 +35,8 @@ internal class ScreensaverHdrAudit(private val instrumentation: Instrumentation,
                 Thread.sleep(1100)
                 instrumentation.waitForIdleSync()
                 main {
-                    check(state?.ambientOwner != null && state?.headroom == 1f && state?.failed == false)
+                    val hdr = checkNotNull(state)
+                    check(hdr.ambientOwner != null && hdr.headroom == 1f && !hdr.failed)
                     check(activity.window.colorMode == ActivityInfo.COLOR_MODE_DEFAULT)
                 }
                 val bitmap = checkNotNull(instrumentation.uiAutomation.takeScreenshot())

@@ -79,8 +79,9 @@ class TrailerPlaybackAudit(private val instrumentation: Instrumentation, private
             var start = 0L
             main {
                 val snapshot = BackgroundPlaybackSession.snapshot.value
-                check(snapshot.metadata?.isTrailer == true)
-                check(snapshot.metadata?.nextUp == null && snapshot.metadata?.nextUpConfig?.enabled == false)
+                val metadata = checkNotNull(snapshot.metadata)
+                check(metadata.isTrailer)
+                check(metadata.nextUp == null && !metadata.nextUpConfig.enabled)
                 check(model.uiState.value.playback?.resumeMs == 0L)
                 start = snapshot.status.positionMs
             }

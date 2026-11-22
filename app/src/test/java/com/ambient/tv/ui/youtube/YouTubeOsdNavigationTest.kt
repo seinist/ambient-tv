@@ -9,7 +9,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -34,6 +33,7 @@ import com.ambient.tv.ui.player.offeredButtons
 import com.ambient.tv.ui.player.setOsdButtonVisible
 import com.ambient.tv.ui.player.videoImagePreferences
 import com.ambient.tv.ui.theme.AmbientTvTheme
+import com.ambient.tv.util.createAndroidComposeRule
 import com.ambient.tv.youtube.YouTubePlayback
 import com.ambient.tv.youtube.YouTubeMetadata
 import kotlinx.coroutines.flow.MutableStateFlow

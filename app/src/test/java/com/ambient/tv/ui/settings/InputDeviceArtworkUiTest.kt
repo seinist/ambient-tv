@@ -20,11 +20,11 @@ import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.dp
 import com.ambient.tv.ui.gamepad.ControllerModel
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.theme.AmbientTvTheme
+import com.ambient.tv.util.createAndroidComposeRule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -119,7 +119,7 @@ class InputDeviceArtworkUiTest {
     private fun savePreview(name: String) {
         val bitmap = rule.onNodeWithTag("input-artwork-preview").captureToImage().asAndroidBitmap()
         val file = File("build/reports/input-artwork/$name.png")
-        file.parentFile.mkdirs()
+        requireNotNull(file.parentFile).mkdirs()
         file.outputStream().use { assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
     }
 }

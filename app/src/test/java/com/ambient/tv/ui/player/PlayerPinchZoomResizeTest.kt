@@ -11,7 +11,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.pinch
@@ -20,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import com.ambient.tv.ui.common.PlayerPinchZoom
 import com.ambient.tv.ui.common.PlayerTouchLayer
 import com.ambient.tv.ui.mobile.LocalHandheldUi
+import com.ambient.tv.util.createAndroidComposeRule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule

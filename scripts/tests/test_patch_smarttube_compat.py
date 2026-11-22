@@ -171,34 +171,16 @@ class SmartTubeDeprecationPatchesTest(unittest.TestCase):
         patcher.patch_v8_object_utils_double(path, check=True)
 
     def test_retrofit_drops_unnecessary_safe_call(self) -> None:
-        path = self.write(
-            "RetrofitOkHttpHelper.kt",
-            "                newUrlBuilder?.addQueryParameter(entry.key, entry.value)\n",
-        )
-        self.assertTrue(
-            patcher.patch_kotlin_text(
-                path,
-                [
-                    (
-                        "newUrlBuilder?.addQueryParameter(entry.key, entry.value)",
-                        "newUrlBuilder.addQueryParameter(entry.key, entry.value)",
-                    )
-                ],
-                check=False,
-            )
-        )
-        self.assertIn("newUrlBuilder.addQueryParameter(entry.key, entry.value)", path.read_text())
-        self.assertNotIn("newUrlBuilder?.addQueryParameter", path.read_text())
-        patcher.patch_kotlin_text(
-            path,
-            [
-                (
-                    "newUrlBuilder?.addQueryParameter(entry.key, entry.value)",
-                    "newUrlBuilder.addQueryParameter(entry.key, entry.value)",
-                )
-            ],
-            check=True,
-        )
+        legacy = "newUrlBuilder?.addQueryParameter(entry.key, entry.value)"
+        replacement = "newUrlBuilder.addQueryParameter(entry.key, entry.value)"
+        path = self.write("RetrofitOkHttpHelper.kt", "")
+        path.write_bytes(f"                {legacy}\r\n".encode())
+        replacements = [(legacy, replacement)]
+
+        self.assertTrue(patcher.patch_source_text(path, replacements, check=False))
+        self.assertEqual(f"                {replacement}\r\n".encode(), path.read_bytes())
+        self.assertFalse(patcher.patch_source_text(path, replacements, check=False))
+        patcher.patch_source_text(path, replacements, check=True)
 
     def test_v8_wrapper_registers_java_callback(self) -> None:
         path = self.write(

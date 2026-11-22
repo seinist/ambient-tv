@@ -244,7 +244,7 @@ internal class NetworkSettingsAudit(private val instrumentation: Instrumentation
             check(focusLabels().any { it.contains(activity.getString(R.string.files_cancel)) }) { "NAS footer unreachable: ${focusLabels()}" }
             key(KeyEvent.KEYCODE_DPAD_LEFT)
             key(KeyEvent.KEYCODE_DPAD_CENTER)
-            main { check(savedSource?.rootPath == source.rootPath && savedSource?.host == source.host) { "Network-only save altered the source location" } }
+            main { check(savedSource?.rootPath == source.rootPath && savedSource.host == source.host) { "Network-only save altered the source location" } }
             log("PASS NAS dialog opens without keyboard; footer Cancel/Save reachable; network save preserves source location")
         } catch (failure: Throwable) {
             screenshot("network-failure")

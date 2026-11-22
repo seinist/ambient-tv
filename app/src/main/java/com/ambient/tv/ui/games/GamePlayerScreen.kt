@@ -1500,7 +1500,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         open == GamePanel.OSD_BUTTONS -> stringResource(R.string.osd_buttons)
                         open == GamePanel.CORE && category != null -> categoryTitle.orEmpty()
                         open == GamePanel.PICTURE && shaderPacksOpen -> stringResource(R.string.games_shader_packs_title)
-                        open == GamePanel.PICTURE && shaderGroup != null -> stringResource(shaderGroup!!.titleRes)
+                        open == GamePanel.PICTURE && shaderGroup != null -> stringResource(shaderGroup.titleRes)
                         open == GamePanel.PICTURE -> stringResource(R.string.game_panel_picture)
                         open == GamePanel.CORE -> stringResource(R.string.game_panel_core)
                         open == GamePanel.DISC -> stringResource(R.string.game_panel_disc)

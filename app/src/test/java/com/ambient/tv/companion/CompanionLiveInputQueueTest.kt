@@ -46,8 +46,8 @@ class CompanionLiveInputQueueTest {
         assertTrue(q.offerRemote(click))
         val motion = q.poll(normal)!!
         assertEquals("move", motion.input!!.action)
-        assertEquals(0.4f, motion.input!!.x, 0.0001f)
-        assertEquals(-0.2f, motion.input!!.y, 0.0001f)
+        assertEquals(0.4f, motion.input.x, 0.0001f)
+        assertEquals(-0.2f, motion.input.y, 0.0001f)
         assertEquals(click, q.poll(normal))
         assertNull(q.poll(normal))
         q.close()

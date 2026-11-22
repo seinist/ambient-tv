@@ -24,7 +24,7 @@ internal data class PlaybackRecoveryOwner(
 /** A retry can replace only the request/session it began with, even if a numeric title id is reused. */
 internal class PlaybackRecoveryRequests {
     data class Target(val route: String, val sourceIdentity: String)
-    data class Ticket internal constructor(val version: Long, val target: Target, internal var owner: PlaybackRecoveryOwner)
+    class Ticket internal constructor(val version: Long, val target: Target, internal var owner: PlaybackRecoveryOwner)
     private var version = 0L
     private var pending: Ticket? = null
 

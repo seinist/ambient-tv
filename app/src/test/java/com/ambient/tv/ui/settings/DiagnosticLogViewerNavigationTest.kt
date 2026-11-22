@@ -3,7 +3,6 @@ package com.ambient.tv.ui.settings
 import android.app.Application
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsFocused
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -17,6 +16,7 @@ import com.ambient.tv.diagnostics.DiagnosticLevel
 import com.ambient.tv.diagnostics.DiagnosticViewerEntry
 import com.ambient.tv.diagnostics.DiagnosticViewerSnapshot
 import com.ambient.tv.ui.theme.AmbientTvTheme
+import com.ambient.tv.util.createAndroidComposeRule
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith

@@ -127,7 +127,7 @@ class ReactiveContentTest {
     @Test fun `packaged RxJava emits immediately and is disposed on cancellation`() = runBlocking {
         withTimeout(2_000) {
             val type = Class.forName("io.reactivex.subjects.PublishSubject")
-            val subject = type.getMethod("create").invoke(null)
+            val subject = requireNotNull(type.getMethod("create").invoke(null))
             fun observing() = type.getMethod("hasObservers").invoke(subject) as Boolean
             val first = CompletableDeferred<Any>()
             val job = launch { reactiveContent(subject)!!.collect { first.complete(it) } }

@@ -4,7 +4,7 @@ import android.app.Application
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import com.ambient.tv.util.createAndroidComposeRule
 import com.ambient.tv.youtube.YouTubePlayback
 import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.assertEquals

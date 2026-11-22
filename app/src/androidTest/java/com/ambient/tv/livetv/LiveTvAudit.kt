@@ -93,9 +93,9 @@ class LiveTvAudit(private val instrumentation: Instrumentation, private val log:
             for (repo in listOf(jf, second, registry.repository("emby:audit-emby:user"))) {
                 val stream = repo.liveStream(repo.channels().first())
                 check(stream.isLive && stream.session != null)
-                stream.session!!.report(1000, true, false)
-                stream.session!!.report(2000, false, true)
-                stream.session!!.report(2000, false, true)
+                stream.session.report(1000, true, false)
+                stream.session.report(2000, false, true)
+                stream.session.report(2000, false, true)
                 check(fixture.active.isEmpty())
             }
             fixture.busy = true
@@ -107,7 +107,9 @@ class LiveTvAudit(private val instrumentation: Instrumentation, private val log:
             val programme = plex.epgEvents().single()
             plex.scheduleRecording(programme.eventId).getOrThrow()
             val stream = plex.liveStream(plex.channels().first())
-            stream.session!!.report(2000, true, false); stream.session!!.report(2000, false, true)
+            val session = checkNotNull(stream.session)
+            session.report(2000, true, false)
+            session.report(2000, false, true)
             check(fixture.requests.any { it == "POST /livetv/dvrs/12/channels/6.1/tune" })
             check(fixture.requests.any { it == "GET /video/:/transcode/universal/stop" })
             log("PASS Plex discovered EPG prefix, guide, tune, subscription and transcode stop")

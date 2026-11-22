@@ -525,10 +525,10 @@ dependencies {
     implementation(libs.junrar)
     // libretro frontend for games (Argosy's LibretroDroid fork, GPL-3.0 like the APK), fetched and
     // patched by scripts/fetch_libretrodroid.sh. Cores are loaded on demand, never bundled.
-    implementation(
-        rootProject.findProject(":libretrodroid")
-            ?: error("LibretroDroid is missing: run scripts/fetch_libretrodroid.sh (./build.sh does it).")
-    )
+    check(rootProject.findProject(":libretrodroid") != null) {
+        "LibretroDroid is missing: run scripts/fetch_libretrodroid.sh (./build.sh does it)."
+    }
+    implementation(project(":libretrodroid"))
     implementation(libs.smbj)
     implementation(libs.jcifs.ng)
     // QR decoding for the phone's pairing scanner (pure Java, no transitive dependencies).
