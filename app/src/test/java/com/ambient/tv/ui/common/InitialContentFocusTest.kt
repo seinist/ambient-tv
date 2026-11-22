@@ -13,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -46,8 +47,6 @@ class InitialContentFocusTest {
         var entryId by mutableStateOf("youtube-entry-1")
         var contentPending by mutableStateOf(true)
         var selected by mutableIntStateOf(0)
-        var focusedChip: Int? = null
-        var outsideFocused = false
         var requests = 0
         val focusVisits = mutableListOf<Int>()
         val firstChip = FocusRequester()
@@ -55,6 +54,11 @@ class InitialContentFocusTest {
         lateinit var owner: BrowseFocusReturnState
         lateinit var pending: MutableState<Boolean>
         lateinit var clearFocus: () -> Unit
+    }
+
+    private class EntryFocusObservation {
+        var focusedChip: Int? = null
+        var outsideFocused = false
     }
 
     @Before fun clearPendingPageReselect() {
@@ -67,12 +71,15 @@ class InitialContentFocusTest {
             AmbientTvTheme {
                 // The shell's effect outlives individual NavHost destinations.
                 val manager = LocalFocusManager.current
+                // Removed focus nodes need not emit a final blur callback. Each entry's
+                // observations must outlive only its own tree, including delayed callbacks.
+                val focus = remember(fixture.entryId) { EntryFocusObservation() }
                 val pending = rememberInitialContentFocus(
                     entryId = fixture.entryId,
                     waitsForContent = true,
                     contentPending = fixture.contentPending,
                     enabled = true,
-                    hasUsableFocus = { fixture.focusedChip != null || fixture.outsideFocused },
+                    hasUsableFocus = { focus.focusedChip != null || focus.outsideFocused },
                     requestFocus = {
                         fixture.requests++
                         fixture.owner.requestFocus()
@@ -100,10 +107,10 @@ class InitialContentFocusTest {
                                         modifier = Modifier.testTag("initial-category-$index")
                                             .onFocusChanged {
                                                 if (it.isFocused) {
-                                                    fixture.focusedChip = index
+                                                    focus.focusedChip = index
                                                     fixture.focusVisits += index
-                                                } else if (fixture.focusedChip == index) {
-                                                    fixture.focusedChip = null
+                                                } else if (focus.focusedChip == index) {
+                                                    focus.focusedChip = null
                                                 }
                                             }
                                             .then(if (index == 0) Modifier.focusRequester(fixture.firstChip)
@@ -119,7 +126,7 @@ class InitialContentFocusTest {
                             }
                             Box(Modifier.size(64.dp).focusRequester(fixture.outside)
                                 .testTag("outside-chips")
-                                .onFocusChanged { fixture.outsideFocused = it.isFocused }
+                                .onFocusChanged { focus.outsideFocused = it.isFocused }
                                 .focusable())
                         }
                     }
@@ -204,7 +211,7 @@ class InitialContentFocusTest {
         }
     }
 
-    @Test fun aNewBackStackEntryReceivesItsOwnInitialHandoff() {
+    @Test fun aNewBackStackEntryPreservesFocusAcquiredBeforeItsInitialHandoff() {
         val fixture = mount()
         completeStartupWithoutLeafFocus(fixture)
         rule.runOnIdle {
@@ -212,11 +219,73 @@ class InitialContentFocusTest {
             fixture.entryId = "youtube-entry-2"
         }
         rule.waitForIdle()
-        rule.runOnIdle { assertTrue(fixture.pending.value) }
-        completeStartupWithoutLeafFocus(fixture)
+        rememberStartThenFocusNextCategory(fixture)
         rule.runOnIdle {
-            assertEquals(2, fixture.requests)
+            assertTrue("A new entry must rearm its initial handoff", fixture.pending.value)
+            fixture.contentPending = false
+        }
+        rule.waitForIdle()
+        rule.onNodeWithTag("initial-category-1").assertIsFocused()
+        rule.runOnIdle {
+            assertEquals("The new entry already has a usable focused category", 1, fixture.requests)
             assertFalse(fixture.pending.value)
+            assertTrue("New-entry readiness briefly restored Start: ${fixture.focusVisits}",
+                fixture.focusVisits.all { it == 1 })
+        }
+    }
+
+    @Test fun initialHandoffRunsOncePerEntryAcrossCategoryReloads() {
+        var entryId by mutableStateOf("entry-1")
+        var contentPending by mutableStateOf(true)
+        lateinit var pending: MutableState<Boolean>
+        val requests = mutableListOf<String>()
+        rule.setContent {
+            // Keep this effect mounted while entryId changes, just like the activity.
+            // No focusable subtree can acquire Android fallback focus before the frame.
+            val currentEntry = entryId
+            val initial = rememberInitialContentFocus(
+                entryId = currentEntry,
+                waitsForContent = true,
+                contentPending = contentPending,
+                enabled = true,
+                hasUsableFocus = { false },
+                requestFocus = { requests += currentEntry },
+            )
+            SideEffect { pending = initial }
+        }
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertTrue(pending.value)
+            assertTrue(requests.isEmpty())
+            contentPending = false
+        }
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertEquals(listOf("entry-1"), requests)
+            assertFalse(pending.value)
+            contentPending = true
+        }
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertFalse("Category loading must not rearm the same entry", pending.value)
+            contentPending = false
+        }
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertEquals(listOf("entry-1"), requests)
+            contentPending = true
+            entryId = "entry-2"
+        }
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertTrue("A different back-stack entry must rearm the handoff", pending.value)
+            assertEquals(listOf("entry-1"), requests)
+            contentPending = false
+        }
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertEquals(listOf("entry-1", "entry-2"), requests)
+            assertFalse(pending.value)
         }
     }
 }
