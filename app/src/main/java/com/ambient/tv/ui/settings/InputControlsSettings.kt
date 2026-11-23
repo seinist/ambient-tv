@@ -17,6 +17,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -80,7 +81,9 @@ private fun InputControlsPage(scope: KeyBindingScope) {
     Column(Modifier.fillMaxWidth().onFocusChanged { pageFocused = it.hasFocus }.focusGroup(),
         verticalArrangement = Arrangement.spacedBy(tokens.compactGap)) {
         SettingsHint(stringResource(R.string.input_mapping_select_key))
-        SettingsActionRow {
+        // The kind tab is remembered; entering the row (also when the page is reopened)
+        // lands on that tab instead of the first one (Controller).
+        SettingsActionRow(Modifier.focusRestorer(availableTabFocus).focusGroup()) {
             listOf(
                 "controller" to R.string.input_mapping_controller,
                 "remote" to R.string.input_mapping_remote,
