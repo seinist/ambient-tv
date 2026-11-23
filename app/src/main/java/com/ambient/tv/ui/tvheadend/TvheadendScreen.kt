@@ -307,10 +307,9 @@ fun TvheadendScreen(
                 .padding(start = tokens.screenPadding, end = tokens.screenPadding, bottom = tokens.screenPadding, top = com.ambient.tv.ui.common.pageHeaderTop(tokens.screenPadding)),
             verticalArrangement = Arrangement.spacedBy(tokens.itemGap * 1.5f),
         ) {
-        // Saved programme data: the status sits beside the header actions, Reload reconnects.
+        // Saved programme data: "TVHeadend · Offline" beside the header actions, Reload reconnects.
         val liveOfflineStatus = com.ambient.tv.ui.home.offlineSourcesStatus(
             if (state.connectionRequired && state.dashboard != null) listOf(state.source.name) else emptyList(),
-            savedAt = state.lastUpdatedEpochMillis?.let { formatDateTime(it / 1_000L) },
         )
         androidx.compose.runtime.CompositionLocalProvider(com.ambient.tv.ui.common.LocalPageOfflineStatus provides liveOfflineStatus) {
             TvheadendHeader(

@@ -84,14 +84,13 @@ fun rememberOfflineMarkers(failedLiveSources: Set<String> = emptySet()): com.amb
 
 /** Page-header text for [com.ambient.tv.ui.common.LocalPageOfflineStatus]; null when nothing is offline. */
 @Composable
-fun offlineSourcesStatus(sources: List<String>, savedAt: String? = null): String? {
+fun offlineSourcesStatus(sources: List<String>): String? {
     if (sources.isEmpty()) return null
     // map is inline, so the composable systemName() may run in it (joinToString's transform may not).
     val names = sources.distinct().map { source ->
         MediaSystem.fromKey(source)?.let { systemName(it) } ?: source
     }.joinToString(", ")
-    val status = com.ambient.tv.ui.common.offlineTitle(names)
-    return savedAt?.let { "$status · ${stringResource(R.string.offline_browse_saved_at, it)}" } ?: status
+    return com.ambient.tv.ui.common.offlineTitle(names)
 }
 
 @Composable
