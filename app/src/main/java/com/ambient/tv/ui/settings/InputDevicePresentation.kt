@@ -15,13 +15,23 @@ internal data class InputArtworkKey(
     val heightFraction: Float = .06f,
     /** Buttons outside the front view (e.g. rear triggers) get separate accessible controls. */
     val auxiliary: Boolean = false,
+    /** Fixed key color (remote color keys, ARGB); the selection still uses the accent. */
+    val color: Long? = null,
+    /** Drawn as a glyph on its well only (remote ring arrows) until focused or selected. */
+    val plain: Boolean = false,
 )
+
+/** Recessed area of the housing (stick wells, d-pad ring); center in viewport fractions, radius in widths. */
+internal data class ArtworkWell(val x: Float, val y: Float, val radius: Float)
 internal data class InputArtwork(
     val title: String,
     val shape: InputArtworkShape,
     val keys: List<InputArtworkKey>,
     val aspectRatio: Float = defaultArtworkAspectRatio(shape),
     val vectorId: String? = null,
+    val wells: List<ArtworkWell> = emptyList(),
+    /** Flat plus-shaped d-pad drawn on the housing; its arrow keys are [InputArtworkKey.plain]. */
+    val dpad: ArtworkWell? = null,
 )
 
 private fun key(id: String, label: String, x: Float, y: Float, target: RetroPadButton? = null, wide: Boolean = false) =
