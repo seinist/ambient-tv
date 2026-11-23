@@ -352,8 +352,7 @@ fun HomeScreen(
 
     LaunchedEffect(viewModel, lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            // Automatic re-checks replace the former banner's retry button.
-            while (true) { delay(15_000); viewModel.retryOffline(); viewModel.retrySavedLiveSources() }
+            while (true) { delay(15_000); viewModel.retryOffline() }
         }
     }
 
