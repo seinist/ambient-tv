@@ -18,6 +18,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -36,6 +37,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.MaterialTheme
@@ -78,6 +80,9 @@ private fun artworkKeyLabel(entry: InputArtworkKey): String = when (entry.id) {
  * One fitted viewport owns the image, labels and hit testing. Small screens never distort
  * the silhouette or grow individual marks independently of it. A separate key strip gives
  * dense diagrams accessible, full-size touch targets without overlapping invisible buttons.
+ *
+ * [assignments] shows every key's current mapping at a glance (key id → short label), like a
+ * legend printed next to the button; [changedKeys] marks those differing from the defaults.
  */
 @Composable
 internal fun InputDeviceArtwork(
@@ -85,6 +90,8 @@ internal fun InputDeviceArtwork(
     selectedKey: String?,
     onSelectKey: (InputArtworkKey) -> Unit,
     modifier: Modifier = Modifier,
+    assignments: Map<String, String> = emptyMap(),
+    changedKeys: Set<String> = emptySet(),
 ) {
     val colors = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -95,13 +102,15 @@ internal fun InputDeviceArtwork(
     val frontKeys = remember(artwork) { artwork.keys.filterNot { it.auxiliary } }
     val extraKeys = remember(artwork) { artwork.keys.filter { it.auxiliary } }
     BoxWithConstraints(modifier.fillMaxWidth()) {
-        val fitted = fitInputArtwork(artwork, (maxWidth.value - 24f).coerceIn(0f, 580f),
+        // Legends may sit just outside the silhouette; a slightly wider frame keeps them inside.
+        val inset = if (assignments.isEmpty()) 12f else 20f
+        val fitted = fitInputArtwork(artwork, (maxWidth.value - inset * 2).coerceIn(0f, 580f),
             if (handheld) 300f else 340f)
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (extraKeys.isNotEmpty()) SettingsActionRow {
                 extraKeys.forEach { entry ->
-                    val label = artworkKeyLabel(entry)
+                    val label = assignedButtonLabel(artworkKeyLabel(entry), assignments[entry.id])
                     TvActionButton(label, onClick = { onSelect(entry) }, selected = entry.id == selectedKey,
                         modifier = Modifier.testTag("input-artwork-extra-${entry.id}")
                             .semantics {
@@ -110,7 +119,7 @@ internal fun InputDeviceArtwork(
                             })
                 }
             }
-            if (fitted.width > 0f && fitted.height > 0f) Box(Modifier.padding(12.dp)) {
+            if (fitted.width > 0f && fitted.height > 0f) Box(Modifier.padding(inset.dp)) {
                 val pixelSize = with(density) { Size(fitted.width.dp.toPx(), fitted.height.dp.toPx()) }
                 Box(Modifier.size(fitted.width.dp, fitted.height.dp).testTag("input-artwork-image")
                     .then(if (useKeyStrip) Modifier.pointerInput(artwork, pixelSize) {
@@ -146,7 +155,14 @@ internal fun InputDeviceArtwork(
                             modifier = Modifier.offset(bounds.left.dp, bounds.top.dp)
                                 .size(bounds.width.dp, bounds.height.dp),
                             width = bounds.width, height = bounds.height,
+                            assignment = assignments[entry.id],
                             onClick = { onSelect(entry) })
+                    }
+                    // Drawn after all marks, so a legend is never hidden below a neighbouring key.
+                    frontKeys.forEach { entry ->
+                        val text = assignments[entry.id] ?: return@forEach
+                        ArtworkAssignmentBadge(entry, text, entry.id in changedKeys,
+                            inputArtworkKeyBounds(entry, fitted))
                     }
                 }
             }
@@ -162,7 +178,7 @@ internal fun InputDeviceArtwork(
                     contentPadding = PaddingValues(horizontal = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(frontKeys, key = { it.id }) { entry ->
-                        val label = artworkKeyLabel(entry)
+                        val label = assignedButtonLabel(artworkKeyLabel(entry), assignments[entry.id])
                         TvActionButton(label, onClick = { onSelect(entry) }, selected = entry.id == selectedKey,
                             modifier = Modifier.testTag("input-artwork-select-${entry.id}")
                                 .semantics {
@@ -180,7 +196,7 @@ internal fun InputDeviceArtwork(
 private fun ArtworkKeyMark(
     entry: InputArtworkKey, title: String, artworkShape: InputArtworkShape,
     isSelected: Boolean, interactive: Boolean, modifier: Modifier,
-    width: Float, height: Float, onClick: () -> Unit,
+    width: Float, height: Float, assignment: String? = null, onClick: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     val palette = inputArtworkPalette()
@@ -191,7 +207,7 @@ private fun ArtworkKeyMark(
         else -> CircleShape
     }
     val active = isSelected || focused
-    val label = artworkKeyLabel(entry)
+    val label = assignedButtonLabel(artworkKeyLabel(entry), assignment)
     val display = when {
         entry.color != null && !active -> ""
         entry.id == "start" && entry.label.length > 3 -> "≡"
@@ -239,6 +255,57 @@ private fun ArtworkKeyMark(
         } else Text(display, textAlign = TextAlign.Center, color = foreground,
                 style = MaterialTheme.typography.labelSmall.copy(fontSize = textSize, lineHeight = textSize),
                 maxLines = 1, softWrap = false)
+    }
+}
+
+/** "B → A" in buttons and spoken labels; the plain key name when nothing is assigned. */
+internal fun assignedButtonLabel(label: String, assignment: String?): String =
+    if (assignment.isNullOrBlank()) label else "$label → $assignment"
+
+/** Where a legend sits relative to its key: d-pad legends point outwards, all others below. */
+internal enum class AssignmentBadgeSide { ABOVE, BELOW, START, END }
+
+internal fun assignmentBadgeSide(keyId: String): AssignmentBadgeSide = when (keyId) {
+    "up" -> AssignmentBadgeSide.ABOVE
+    "left" -> AssignmentBadgeSide.START
+    "right" -> AssignmentBadgeSide.END
+    else -> AssignmentBadgeSide.BELOW
+}
+
+/**
+ * The small legend next to a key: a flat pill in the artwork's own key tone, so it reads as part
+ * of the diagram. A changed mapping takes a light accent fill, never an outline or line marker.
+ */
+@Composable
+private fun ArtworkAssignmentBadge(entry: InputArtworkKey, text: String, changed: Boolean, bounds: Rect) {
+    val colors = MaterialTheme.colorScheme
+    val palette = inputArtworkPalette()
+    val fontScale = LocalDensity.current.fontScale
+    val textSize = (bounds.height * .42f).coerceIn(7f, 11f) / fontScale
+    val badgeHeight = textSize * fontScale + 5f
+    val boxWidth = maxOf(bounds.width * 2.4f, 34f)
+    val gap = 2f
+    val side = assignmentBadgeSide(entry.id)
+    val (x, y, alignment) = when (side) {
+        AssignmentBadgeSide.BELOW -> Triple(bounds.left + bounds.width / 2 - boxWidth / 2,
+            bounds.top + bounds.height + gap, Alignment.TopCenter)
+        AssignmentBadgeSide.ABOVE -> Triple(bounds.left + bounds.width / 2 - boxWidth / 2,
+            bounds.top - gap - badgeHeight, Alignment.BottomCenter)
+        AssignmentBadgeSide.START -> Triple(bounds.left - gap - boxWidth,
+            bounds.top + bounds.height / 2 - badgeHeight / 2, Alignment.CenterEnd)
+        AssignmentBadgeSide.END -> Triple(bounds.left + bounds.width + gap,
+            bounds.top + bounds.height / 2 - badgeHeight / 2, Alignment.CenterStart)
+    }
+    Box(Modifier.offset(x.dp, y.dp).size(boxWidth.dp, badgeHeight.dp)
+        .testTag("input-artwork-assignment-${entry.id}").clearAndSetSemantics { },
+        contentAlignment = alignment) {
+        Text(text,
+            modifier = Modifier.clip(RoundedCornerShape(50))
+                .background(if (changed) colors.primary.copy(alpha = .24f) else palette.key)
+                .padding(horizontal = 5.dp, vertical = 1.dp),
+            color = if (changed) colors.primary else palette.label,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = textSize.sp, lineHeight = textSize.sp),
+            maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
     }
 }
 

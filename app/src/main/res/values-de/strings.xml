@@ -2437,6 +2437,11 @@
     <string name="input_mapping_retropad_target">Spieltaste</string>
     <string name="input_mapping_all_controllers">Alle Controller (Standardbelegung)</string>
     <string name="input_mapping_scope_device">Dieses Gerät</string>
+    <string name="input_mapping_assign_all">Alle nacheinander zuweisen</string>
+    <string name="input_mapping_assign_all_stop">Zuweisen beenden</string>
+    <string name="input_mapping_assign_all_step">Taste drücken · %1$d von %2$d</string>
+    <string name="input_mapping_assign_all_hint">Für jede hervorgehobene Konsolentaste eine Taste an diesem Gerät drücken. Warten überspringt eine Taste, zweimal hintereinander warten beendet den Ablauf.</string>
+    <string name="input_mapping_legend_changed_hint">Hervorgehobene Beschriftungen weichen von der Standardbelegung ab.</string>
 
     <string name="game_library_title">Spiele</string>
     <string name="game_library_settings_entry">Spieleordner und Quellen verwalten</string>

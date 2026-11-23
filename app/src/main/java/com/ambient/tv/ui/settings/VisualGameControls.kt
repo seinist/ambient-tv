@@ -54,6 +54,9 @@ internal fun VisualGameControls() {
     var listening by remember { mutableStateOf(false) }
     var captureDescriptor by remember { mutableStateOf<String?>(null) }
     var captureDeviceId by remember { mutableIntStateOf(-1) }
+    // "Assign all": the console buttons still to record, walked through one after another.
+    var assignAll by remember { mutableStateOf<List<RetroPadButton>?>(null) }
+    var assignAllMisses by remember { mutableIntStateOf(0) }
 
     val availability = rememberPlayableDeviceAvailability()
     val devices = availability.devices
@@ -85,6 +88,26 @@ internal fun VisualGameControls() {
     val variants = consoleArtworkVariants(system.id)
     val effectiveVariant = variants.firstOrNull { it.first == consoleVariant }?.first ?: variants.firstOrNull()?.first.orEmpty()
     val consoleArt = consoleArtwork(system.id, effectiveVariant)
+    val defaults = remember(kind) { defaultRetroProfile(kind) }
+    fun keyName(code: Int): String =
+        if (kind == RetroInputKind.COMPANION)
+            companionControllerButton(code)?.let { host.getString(it.titleRes) } ?: keyLabel(host, code)
+        else GamepadButton.fromKeyCode(code)?.let(controllerModel::label) ?: keyLabel(host, code)
+    val consoleMap = consoleLegend(consoleArt, profile, defaults) { code ->
+        if (kind != RetroInputKind.COMPANION) compactKeyName(code, ::keyName)
+        else companionControllerButton(code)?.let { button ->
+            when (button) {
+                RetroPadButton.UP -> "▲"
+                RetroPadButton.DOWN -> "▼"
+                RetroPadButton.LEFT -> "◀"
+                RetroPadButton.RIGHT -> "▶"
+                else -> button.key.uppercase()
+            }
+        } ?: keyName(code)
+    }
+    val deviceMap = deviceLegend(physicalArt, profile, defaults, { visualKeyCode(kind.key, it) }) { button ->
+        consoleArt.keys.firstOrNull { it.target == button }?.label ?: host.getString(button.titleRes)
+    }
     val handheld = LocalHandheldUi.current
     val companion: CompanionViewModel = hiltViewModel()
     val fallbackFocus = remember { FocusRequester() }
@@ -125,6 +148,30 @@ internal fun VisualGameControls() {
         }
     }
 
+    /** Moves "assign all" on; false when there is no sequence or it just ended. */
+    fun advanceAssignAll(timedOut: Boolean): Boolean {
+        val order = assignAll ?: return false
+        val current = RetroPadButton.fromKey(targetKey)
+        val step = current?.let { nextAssignAllStep(order, it, assignAllMisses, timedOut) }
+        if (step == null) {
+            assignAll = null
+            assignAllMisses = 0
+            return false
+        }
+        assignAllMisses = step.misses
+        targetKey = step.button.key
+        physicalKey = null
+        return true
+    }
+
+    LaunchedEffect(listening) {
+        // Any other way listening stops (a click, a device change) also ends the sequence.
+        if (!listening) {
+            assignAll = null
+            assignAllMisses = 0
+        }
+    }
+
     if (listening && kind != RetroInputKind.COMPANION && device != null &&
         captureDescriptor == device.descriptor && captureDeviceId == device.id) {
         DisposableEffect(kind, ctx, level, device.descriptor, device.id, deviceScope, target) {
@@ -137,7 +184,8 @@ internal fun VisualGameControls() {
                     downCode = event.keyCode
                     assign(downCode)
                 }
-                if (event.action == KeyEvent.ACTION_UP && event.keyCode == downCode) listening = false
+                if (event.action == KeyEvent.ACTION_UP && event.keyCode == downCode &&
+                    !advanceAssignAll(timedOut = false)) listening = false
                 true
             }
             GamepadInput.capture = listener
@@ -145,7 +193,7 @@ internal fun VisualGameControls() {
         }
         LaunchedEffect(target, kindKey) {
             delay(6_000)
-            listening = false
+            if (!advanceAssignAll(timedOut = true)) listening = false
         }
     }
 
@@ -232,7 +280,8 @@ internal fun VisualGameControls() {
                     SettingsSubheader(stringResource(R.string.input_mapping_console_preview, consoleArt.title))
                     InputDeviceArtwork(consoleArt, targetKey, { entry ->
                         entry.target?.let { targetKey = it.key; menuTarget = null; listening = false }
-                    }, modifier = Modifier.focusRequester(fallbackFocus))
+                    }, modifier = Modifier.focusRequester(fallbackFocus),
+                        assignments = consoleMap.labels, changedKeys = consoleMap.changed)
                 }
             } else if (maxWidth >= 650.dp) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(LocalUiTokens.current.itemGap)) {
@@ -241,13 +290,13 @@ internal fun VisualGameControls() {
                         InputDeviceArtwork(physicalArt, physicalKey, { entry ->
                             physicalKey = entry.id
                             visualKeyCode(kind.key, entry.id)?.let(::assign)
-                        })
+                        }, assignments = deviceMap.labels, changedKeys = deviceMap.changed)
                     }
                     Column(Modifier.weight(1f)) {
                         SettingsSubheader(stringResource(R.string.input_mapping_console_preview, consoleArt.title))
                         InputDeviceArtwork(consoleArt, targetKey, { entry ->
                             entry.target?.let { targetKey = it.key; menuTarget = null; listening = false }
-                        })
+                        }, assignments = consoleMap.labels, changedKeys = consoleMap.changed)
                     }
                 }
             } else {
@@ -255,14 +304,17 @@ internal fun VisualGameControls() {
                     SettingsSubheader(stringResource(R.string.input_mapping_console_preview, consoleArt.title))
                     InputDeviceArtwork(consoleArt, targetKey, { entry ->
                         entry.target?.let { targetKey = it.key; menuTarget = null; listening = false }
-                    })
+                    }, assignments = consoleMap.labels, changedKeys = consoleMap.changed)
                     SettingsSubheader(stringResource(R.string.input_mapping_attached_preview, device.name))
                     InputDeviceArtwork(physicalArt, physicalKey, { entry ->
                         physicalKey = entry.id
                         visualKeyCode(kind.key, entry.id)?.let(::assign)
-                    })
+                    }, assignments = deviceMap.labels, changedKeys = deviceMap.changed)
                 }
             }
+        }
+        if (consoleMap.changed.isNotEmpty() || deviceMap.changed.isNotEmpty()) {
+            SettingsHint(stringResource(R.string.input_mapping_legend_changed_hint))
         }
         if (device != null) {
             SettingsSelect(
@@ -289,14 +341,18 @@ internal fun VisualGameControls() {
                 is RetroInputTarget.Button -> stringResource(t.button.titleRes)
                 is RetroInputTarget.Menu -> stringResource(t.trigger.titleRes)
             }
-            val keys = profile.keys(target).joinToString(" · ") { code ->
-                if (kind == RetroInputKind.COMPANION)
-                    companionControllerButton(code)?.let { host.getString(it.titleRes) } ?: keyLabel(host, code)
-                else GamepadButton.fromKeyCode(code)?.let(controllerModel::label) ?: keyLabel(host, code)
-            }.ifBlank { stringResource(R.string.key_binding_none) }
+            val keys = profile.keys(target).joinToString(" · ", transform = ::keyName)
+                .ifBlank { stringResource(R.string.key_binding_none) }
+            val sequence = assignAll
+            val step = sequence?.indexOfFirst { it.key == targetKey }?.takeIf { it >= 0 }
             SettingsNavigationRow(
                 title = name,
-                summary = if (listening) stringResource(R.string.game_controls_listening) else keys,
+                summary = when {
+                    listening && sequence != null && step != null ->
+                        stringResource(R.string.input_mapping_assign_all_step, step + 1, sequence.size)
+                    listening -> stringResource(R.string.game_controls_listening)
+                    else -> keys
+                },
                 // The virtual phone sends no Android KeyEvent to capture: choose the desired target
                 // above and tap the source key in the interactive device illustration instead.
                 onClick = {
@@ -307,8 +363,36 @@ internal fun VisualGameControls() {
                     }
                 },
             )
-            SettingsHint(stringResource(if (kind == RetroInputKind.COMPANION)
-                R.string.game_controls_companion_mapping_hint else R.string.input_mapping_capture_hint))
+            SettingsHint(stringResource(when {
+                kind == RetroInputKind.COMPANION -> R.string.game_controls_companion_mapping_hint
+                assignAll != null -> R.string.input_mapping_assign_all_hint
+                else -> R.string.input_mapping_capture_hint
+            }))
+            // Records every console button in turn, highlighted in the console illustration,
+            // like the bind-all walkthroughs of RetroArch and Kodi. The phone has no key events.
+            if (kind != RetroInputKind.COMPANION) SettingsActionRow {
+                val running = assignAll != null
+                TvActionButton(
+                    stringResource(if (running) R.string.input_mapping_assign_all_stop
+                        else R.string.input_mapping_assign_all),
+                    selected = running,
+                    onClick = {
+                        if (running) {
+                            listening = false
+                        } else {
+                            val order = assignAllOrder(consoleArt)
+                            menuTarget = null
+                            physicalKey = null
+                            targetKey = order.first().key
+                            assignAllMisses = 0
+                            assignAll = order
+                            captureDescriptor = device.descriptor
+                            captureDeviceId = device.id
+                            listening = true
+                        }
+                    },
+                )
+            }
             val hasOverride = when {
                 deviceScope -> config.deviceProfiles.containsKey(
                     "${kind.key}." + java.util.Base64.getUrlEncoder().withoutPadding()
