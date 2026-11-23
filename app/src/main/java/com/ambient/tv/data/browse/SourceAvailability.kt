@@ -60,6 +60,10 @@ class SourceAvailability @Inject constructor(@ApplicationContext context: Contex
      * What the UI marks as offline: an actual failure of this source or its server. A network
      * or VPN switch only schedules a fresh read ([browseUnconfirmed]); it is not shown.
      */
+    /** The provider's server (machine) is known to be down; reads would only fail. */
+    fun serverOffline(provider: String): Boolean =
+        hosts.health(provider) == com.ambient.tv.connectivity.HostHealth.OFFLINE
+
     @Synchronized fun browseShowsOffline(provider: String): Boolean {
         val scope = scopes.forProvider(provider)
         return browseSourceUnconfirmed(hasNetwork(), hosts.health(provider),

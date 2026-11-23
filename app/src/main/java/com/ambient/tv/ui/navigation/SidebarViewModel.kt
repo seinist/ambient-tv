@@ -327,6 +327,7 @@ class SidebarViewModel @Inject constructor(
             if (appPreferences.weatherSettings.enabled && appPreferences.weatherSettings.showInSidebar) add("weather")
             if (appPreferences.telegramEnabled && telegramRepository.authorized.value) add("telegram")
             if (appPreferences.trailersEnabled && !tokens.tmdbApiKey.isNullOrBlank()) add("trailers")
+            if (appPreferences.spotifyEnabled) add("spotify")
         }
         return sidebarOfflineSources(configured, hosts::health) +
             onlineServices.state.value.unavailableServices(remote)

@@ -899,12 +899,15 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    fun retryOffline() {
-        if (!hasEntered || loadJob?.isActive == true || !availability.hasNetwork()) return
-        if (browseProviders.any { availability.browseUnconfirmed(it) &&
+    /** Re-reads Home when a source failed although its server is reachable; true when it did. */
+    fun retryOffline(): Boolean {
+        if (!hasEntered || loadJob?.isActive == true || !availability.hasNetwork()) return false
+        if (browseProviders.any { availability.browseUnconfirmed(it) && !availability.serverOffline(it) &&
                 availability.reportedState(it) != com.ambient.tv.data.browse.SourceHealth.AUTH_REQUIRED }) {
             start(plexOnly, jellyfinOnly, embyOnly, homeFocusStateKey, refreshing = false)
+            return true
         }
+        return false
     }
 
     /**

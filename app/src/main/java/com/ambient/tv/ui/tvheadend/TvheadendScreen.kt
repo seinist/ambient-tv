@@ -193,7 +193,7 @@ fun TvheadendScreen(
         if (state.tab != TvheadendTab.LIVE) channelControls.leavePage()
         if (state.tab != TvheadendTab.GUIDE) guideControls.leavePage()
     }
-    com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
+    com.ambient.tv.ui.common.RetryOfflineBrowse(setOf(state.source.id), viewModel::retryOffline)
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf(state.source.id), viewModel::refreshAfterReconnect)
     ReportSidebarContentReady(
         !state.awaitingInitialContent() &&
