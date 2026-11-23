@@ -162,7 +162,8 @@ class ConnectionNotifications @Inject constructor(
                     if (previous[key] != notice) {
                         if (notice.phase == NoticePhase.ERROR) unhealthy.add(key)
                         val recovered = notice.phase == NoticePhase.SUCCESS && unhealthy.remove(key)
-                        AppNotifications.post(if (recovered) notice.copy(quietSuccess = false, interruptPlayback = true) else notice)
+                        // A recovery is confirmed once, outside the player; it never covers running playback.
+                        AppNotifications.post(if (recovered) notice.copy(quietSuccess = false, interruptPlayback = false) else notice)
                     }
                 }
                 previous = notices
@@ -213,7 +214,8 @@ class ConnectionNotifications @Inject constructor(
                     AppNotifications.post(AppNotice("network", R.string.notice_network_lost, phase = NoticePhase.ERROR))
                     offline = true
                 } else if (offline && (state == ResumeConnectivityStatus.Checking || state is ResumeConnectivityStatus.Progress)) {
-                    AppNotifications.post(AppNotice("network", R.string.notice_network_restored, phase = NoticePhase.SUCCESS))
+                    AppNotifications.post(AppNotice("network", R.string.notice_network_restored, phase = NoticePhase.SUCCESS,
+                        interruptPlayback = false))
                     offline = false
                 }
             }

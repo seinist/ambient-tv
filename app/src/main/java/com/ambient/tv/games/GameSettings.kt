@@ -64,6 +64,20 @@ enum class GameHdrToneMap(val key: String, @StringRes val titleRes: Int) {
 }
 
 /** Picture shape. [ratio] null keeps the shape the core reports. */
+/** Whole-number scaling: off, always, or only where it leaves a small border (large screens). */
+enum class GameIntegerScaling(val key: String, @StringRes val titleRes: Int) {
+    OFF("0", R.string.game_picture_integer_off),
+    ON("1", R.string.game_picture_integer_on),
+    AUTO("auto", R.string.game_picture_integer_auto),
+    ;
+
+    val enabled: Boolean get() = this != OFF
+
+    companion object {
+        fun fromKey(key: String?) = entries.firstOrNull { it.key == key }
+    }
+}
+
 enum class GameAspect(val key: String, val ratio: Float?, @StringRes val titleRes: Int) {
     CORE("core", null, R.string.game_aspect_core),
     FOUR_THREE("4:3", 4f / 3f, R.string.game_aspect_4_3),
@@ -95,6 +109,61 @@ enum class GameTouchMode(val key: String, @StringRes val titleRes: Int) {
 enum class GameOptionOrigin { DEFAULT, CORE, GAME }
 
 /**
+ * The picture a system starts with until someone chooses: LCD-type filters and whole-number
+ * scaling for handheld screens, crisp pixels for 2D consoles, smoothed edges for 3D consoles.
+ */
+/** Stored for a game whose own picture has no effect although its system has one. */
+private const val NO_EFFECT = "none"
+
+object GamePictureDefaults {
+    private val handhelds = setOf("gb", "gba", "ngp", "wswan", "lynx")
+    private val polygonal = setOf("n64", "gamecube", "wii", "wiiu", "ps2", "psp", "dreamcast")
+
+    fun shader(system: GameSystem): GameShader = when (system.id) {
+        "gba" -> GameShader.GBA_COLOR
+        "nds", "n3ds" -> GameShader.DS_LCD
+        in handhelds -> GameShader.LCD
+        in polygonal -> GameShader.SMOOTH
+        else -> GameShader.SHARP
+    }
+
+    fun integerScaling(system: GameSystem): GameIntegerScaling =
+        if (system.id in handhelds) GameIntegerScaling.ON else GameIntegerScaling.OFF
+
+    /**
+     * Effects that can run in front of any filter: they work on the original picture, so they
+     * stay correct before scaling, CRT and LCD filters alike.
+     */
+    val effects: List<GameShader> = listOf(
+        GameShader.NTSC_COMPOSITE, GameShader.VHS_SOFT, GameShader.COLOR_BOOST, GameShader.FILM_GRAIN,
+    )
+
+    /** Systems with a handheld screen; the Mega Drive entry also runs Game Gear games. */
+    private val handheldScreens = handhelds + setOf("nds", "n3ds", "psp", "vb", "megadrive")
+
+    /**
+     * Whether the picture panel offers [shader] for [system]: handheld screen filters only on
+     * handhelds, and the console-specific ones only on their console.
+     */
+    fun offers(system: GameSystem, shader: GameShader): Boolean = when (shader) {
+        GameShader.GAMEBOY_DMG, GameShader.GBC_GRID -> system.id == "gb"
+        GameShader.GBA_COLOR -> system.id == "gba"
+        GameShader.DS_LCD -> system.id in setOf("nds", "n3ds")
+        else -> shader.group != GameShaderGroup.HANDHELD || system.id in handheldScreens
+    }
+
+    /** Filters that suit the system's screen, shown first and marked in the picture panel. */
+    fun recommended(system: GameSystem): Set<GameShader> = when (system.id) {
+        "gb" -> setOf(GameShader.LCD, GameShader.GAMEBOY_DMG, GameShader.GBC_GRID)
+        "gba" -> setOf(GameShader.GBA_COLOR, GameShader.LCD)
+        "nds", "n3ds" -> setOf(GameShader.DS_LCD, GameShader.LCD)
+        in handhelds -> setOf(GameShader.LCD)
+        in polygonal -> setOf(GameShader.SMOOTH, GameShader.BICUBIC, GameShader.ADAPTIVE)
+        else -> setOf(GameShader.SHARP, GameShader.PIXEL, GameShader.SHARP_BILINEAR, GameShader.CRT, GameShader.NTSC_COMPOSITE)
+    }
+}
+
+/**
  * Game settings: picture (filter, shape, whole-number scaling; per system with the filter falling
  * back to all games), rewind, the graphics interface of GPU cores, and core options. Core options
  * apply to every game of a core ("core.<core>.<key>") unless a game has its own value
@@ -104,7 +173,7 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
     fun shader(system: GameSystem, gameKey: String? = null): GameShader =
         gameKey?.let { ownGameShader(it) }
             ?: GameShader.fromKey(values["shader.${system.id}"])
-            ?: GameShader.fromKey(values["shader"]) ?: GameShader.SHARP
+            ?: GameShader.fromKey(values["shader"]) ?: GamePictureDefaults.shader(system)
 
     /** An optional game override takes precedence over the system and global defaults. */
     fun ownShader(system: GameSystem): GameShader? = GameShader.fromKey(values["shader.${system.id}"])
@@ -144,14 +213,63 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
         return set(key, bounded.toString().takeUnless { bounded == 1f })
     }
 
-    fun aspect(system: GameSystem): GameAspect = GameAspect.fromKey(values["aspect.${system.id}"]) ?: GameAspect.CORE
+    fun aspect(system: GameSystem, gameKey: String? = null): GameAspect =
+        gameKey?.let { GameAspect.fromKey(values["aspect.game.$it"]) }
+            ?: GameAspect.fromKey(values["aspect.${system.id}"]) ?: GameAspect.CORE
+
+    fun withGameAspect(gameKey: String, aspect: GameAspect?): GameSettingsState = set("aspect.game.$gameKey", aspect?.key)
 
     fun withAspect(system: GameSystem, aspect: GameAspect): GameSettingsState = set("aspect.${system.id}", aspect.key.takeIf { aspect != GameAspect.CORE })
 
     /** Scales by whole numbers only: every source pixel the same size, black borders around. */
-    fun integerScaling(system: GameSystem): Boolean = values["integer.${system.id}"] == "1"
+    fun integerScaling(system: GameSystem, gameKey: String? = null): GameIntegerScaling =
+        gameKey?.let { GameIntegerScaling.fromKey(values["integer.game.$it"]) }
+            ?: GameIntegerScaling.fromKey(values["integer.${system.id}"])
+            ?: GamePictureDefaults.integerScaling(system)
 
-    fun withIntegerScaling(system: GameSystem, on: Boolean): GameSettingsState = set("integer.${system.id}", "1".takeIf { on })
+    fun withIntegerScaling(system: GameSystem, mode: GameIntegerScaling): GameSettingsState =
+        set("integer.${system.id}", mode.key.takeIf { mode != GamePictureDefaults.integerScaling(system) })
+
+    fun withGameIntegerScaling(gameKey: String, mode: GameIntegerScaling?): GameSettingsState =
+        set("integer.game.$gameKey", mode?.key)
+
+    /** The extra effect in front of the filter, or null. A game can switch the system's effect off. */
+    fun effect(system: GameSystem, gameKey: String? = null): GameShader? {
+        val own = gameKey?.let { values["effect.game.$it"] }
+        if (own == NO_EFFECT) return null
+        return (own ?: values["effect.${system.id}"])?.let(GameShader::fromKey)
+            ?.takeIf { it in GamePictureDefaults.effects }
+    }
+
+    fun withEffect(system: GameSystem, effect: GameShader?): GameSettingsState =
+        set("effect.${system.id}", effect?.takeIf { it in GamePictureDefaults.effects }?.key)
+
+    fun withGameEffect(gameKey: String, effect: GameShader?): GameSettingsState =
+        set("effect.game.$gameKey", effect?.takeIf { it in GamePictureDefaults.effects }?.key ?: NO_EFFECT)
+
+    /** Filter, strength, effect, shape and scaling can belong to one game; then all of them do. */
+    fun gamePictureScope(gameKey: String): Boolean =
+        gamePictureKeys(gameKey).any { it in values }
+
+    /** Pins the picture the game shows now to the game, so later system changes leave it alone. */
+    fun withGamePicture(system: GameSystem, gameKey: String): GameSettingsState {
+        val pack = packShader(system, gameKey)
+        val current = this
+        return current.withoutGamePicture(gameKey)
+            .set("shader.game.$gameKey", pack?.let { "pack:$it" } ?: current.shader(system, gameKey).key)
+            .withShaderStrength(system, gameKey, current.shaderStrength(system, gameKey))
+            .withGameAspect(gameKey, current.aspect(system, gameKey))
+            .withGameIntegerScaling(gameKey, current.integerScaling(system, gameKey))
+            .withGameEffect(gameKey, current.effect(system, gameKey))
+    }
+
+    fun withoutGamePicture(gameKey: String): GameSettingsState =
+        copy(values = values - gamePictureKeys(gameKey).toSet())
+
+    private fun gamePictureKeys(gameKey: String) = listOf(
+        "shader.game.$gameKey", "shader.intensity.game.$gameKey", "aspect.game.$gameKey", "integer.game.$gameKey",
+        "effect.game.$gameKey",
+    )
 
     /** DS/3DS pointer games default to an unobstructed screen; others show buttons on phones. */
     fun touchControls(system: GameSystem): Boolean =
@@ -187,6 +305,16 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
     fun withHdrToneMap(core: GameCore, mode: GameHdrToneMap): GameSettingsState =
         if (!core.hardware || !core.supportsVulkan) this
         else set("hdr.${core.id}", mode.key.takeIf { mode != GameHdrToneMap.OFF })
+
+    /** SDR games as HDR10 on HDR displays (GLES output, all games); off unless switched on. */
+    val sdrToHdr: Boolean get() = values["hdr.sdr"] == "1"
+
+    fun withSdrToHdr(on: Boolean): GameSettingsState = set("hdr.sdr", "1".takeIf { on })
+
+    /** SDR white inside the HDR signal in nits, like the video setting; 0 = Auto (203). */
+    val sdrReferenceWhite: Int get() = values["hdr.sdr.white"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0
+
+    fun withSdrReferenceWhite(nits: Int): GameSettingsState = set("hdr.sdr.white", nits.takeIf { it > 0 }?.toString())
 
     /** RetroAchievements while playing (needs an account); on unless switched off. */
     val achievements: Boolean get() = values["achievements"] != "0"

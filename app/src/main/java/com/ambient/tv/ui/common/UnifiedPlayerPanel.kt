@@ -427,6 +427,12 @@ private val LocalPlayerBarInteractive = compositionLocalOf { true }
 fun PlayerControlBar(
     modifier: Modifier = Modifier,
     player: com.ambient.tv.ui.player.OsdPlayer? = null,
+    /**
+     * A strip below the action row, as chapters use it (games: save states). [onDown] opens it
+     * with the same second Down that opens chapters; true means the key was used.
+     */
+    belowContent: (@Composable ColumnScope.() -> Unit)? = null,
+    onDown: (() -> Boolean)? = null,
     leftContent: @Composable RowScope.() -> Unit,
     rightContent: @Composable RowScope.() -> Unit,
 ) {
@@ -444,7 +450,7 @@ fun PlayerControlBar(
         com.ambient.tv.ui.player.LocalOsdPlayer provides player,
         com.ambient.tv.ui.player.LocalOsdPresence provides presence.takeIf { player != null },
     ) {
-        PlayerControlBarContent(modifier, leftContent, rightContent)
+        PlayerControlBarContent(modifier, leftContent, rightContent, belowContent, onDown)
     }
 }
 
@@ -453,6 +459,8 @@ private fun PlayerControlBarContent(
     modifier: Modifier,
     leftContent: @Composable RowScope.() -> Unit,
     rightContent: @Composable RowScope.() -> Unit,
+    belowContent: (@Composable ColumnScope.() -> Unit)? = null,
+    onDown: (() -> Boolean)? = null,
 ) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     val handheldFullscreen = com.ambient.tv.ui.mobile.LocalHandheldFullscreen.current?.enabled == true
@@ -502,6 +510,7 @@ private fun PlayerControlBarContent(
                         rightContent()
                     }
                 }
+                belowContent?.invoke(this)
             }
         }
         return
@@ -549,7 +558,7 @@ private fun PlayerControlBarContent(
                     Key.DirectionDown -> {
                         if (navigation != null && navigation.timeline.chapters.isNotEmpty()) {
                             navigation.interact(); navigation.enterChapters(); true
-                        } else false
+                        } else onDown?.invoke() ?: false
                     }
                     Key.DirectionLeft -> wrapBarFocus(focusManager, FocusDirection.Left, FocusDirection.Right)
                     Key.DirectionRight -> wrapBarFocus(focusManager, FocusDirection.Right, FocusDirection.Left)
@@ -565,6 +574,7 @@ private fun PlayerControlBarContent(
         rightContent()
     }
     com.ambient.tv.ui.player.ChapterStrip()
+    belowContent?.invoke(this)
     }
     }
 }

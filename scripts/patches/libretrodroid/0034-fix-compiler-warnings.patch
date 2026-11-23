@@ -10,7 +10,7 @@ diff --git a/src/main/cpp/CMakeLists.txt b/src/main/cpp/CMakeLists.txt
 diff --git a/src/main/cpp/libadrenotools/lib/linkernsbypass/android_linker_ns.cpp b/src/main/cpp/libadrenotools/lib/linkernsbypass/android_linker_ns.cpp
 --- a/src/main/cpp/libadrenotools/lib/linkernsbypass/android_linker_ns.cpp
 +++ b/src/main/cpp/libadrenotools/lib/linkernsbypass/android_linker_ns.cpp
-@@ -62,10 +62,9 @@
+@@ -62,10 +62,9 @@ bool linkernsbypass_link_namespace_to_default_all_libs(android_namespace_t *to)
  }
  
  void *linkernsbypass_namespace_dlopen(const char *filename, int flags, android_namespace_t *ns) {
@@ -24,7 +24,7 @@ diff --git a/src/main/cpp/libadrenotools/lib/linkernsbypass/android_linker_ns.cp
  
      return android_dlopen_ext(filename, flags, &extInfo);
  }
-@@ -101,19 +100,18 @@
+@@ -101,19 +100,18 @@ void *linkernsbypass_namespace_dlopen_unique(const char *libPath, const char *li
      if (libTargetFd == -1)
          return nullptr;
  
@@ -54,7 +54,7 @@ diff --git a/src/main/cpp/libadrenotools/lib/linkernsbypass/android_linker_ns.cp
 diff --git a/src/main/cpp/libadrenotools/src/driver.cpp b/src/main/cpp/libadrenotools/src/driver.cpp
 --- a/src/main/cpp/libadrenotools/src/driver.cpp
 +++ b/src/main/cpp/libadrenotools/src/driver.cpp
-@@ -100,13 +100,11 @@
+@@ -100,13 +100,11 @@ bool adrenotools_import_user_mem(void *handle, void *hostPtr, uint64_t size) {
          .virtaddr = reinterpret_cast<uint64_t>(hostPtr),
      };
  
@@ -73,7 +73,7 @@ diff --git a/src/main/cpp/libadrenotools/src/driver.cpp b/src/main/cpp/libadreno
  
      kgsl_gpuobj_info info{};
  
-@@ -139,10 +137,9 @@
+@@ -139,10 +137,9 @@ err:
  bool adrenotools_mem_gpu_allocate(void *handle, uint64_t *size) {
      auto mapping{reinterpret_cast<adrenotools_gpu_mapping *>(handle)};
  
@@ -90,7 +90,7 @@ diff --git a/src/main/cpp/libadrenotools/src/driver.cpp b/src/main/cpp/libadreno
 diff --git a/src/main/cpp/libadrenotools/src/hook/hook_impl.cpp b/src/main/cpp/libadrenotools/src/hook/hook_impl.cpp
 --- a/src/main/cpp/libadrenotools/src/hook/hook_impl.cpp
 +++ b/src/main/cpp/libadrenotools/src/hook/hook_impl.cpp
-@@ -145,10 +145,9 @@
+@@ -145,10 +145,9 @@ __attribute__((visibility("default"))) void *hook_android_load_sphal_library(con
      // https://android.googlesource.com/platform/system/core/+/master/libvndksupport/linker.cpp
      for (const char *name : {"sphal", "vendor", "default"}) {
          if (auto vendorNs{android_get_exported_namespace(name)}) {
@@ -104,7 +104,7 @@ diff --git a/src/main/cpp/libadrenotools/src/hook/hook_impl.cpp b/src/main/cpp/l
  
              return hook_android_dlopen_ext(filename, flags, &dlextinfo);
          }
-@@ -206,18 +205,16 @@
+@@ -206,18 +205,16 @@ __attribute__((visibility("default"))) int hook_gsl_memory_free_pure(void *memDe
          if (!kgsl_fd)
              kgsl_fd = open("/dev/kgsl-3d0", O_RDWR);
  
@@ -130,7 +130,7 @@ diff --git a/src/main/cpp/libadrenotools/src/hook/hook_impl.cpp b/src/main/cpp/l
 diff --git a/src/main/cpp/log.h b/src/main/cpp/log.h
 --- a/src/main/cpp/log.h
 +++ b/src/main/cpp/log.h
-@@ -69,7 +69,7 @@
+@@ -69,7 +69,7 @@ static void MessageCallback(
      }
  }
  
@@ -139,7 +139,7 @@ diff --git a/src/main/cpp/log.h b/src/main/cpp/log.h
      auto debugCallback = (void (*)(void *, void *)) eglGetProcAddress("glDebugMessageCallback");
      if (debugCallback) {
          glEnable(GL_DEBUG_OUTPUT);
-@@ -80,7 +80,7 @@
+@@ -80,7 +80,7 @@ static bool initializeGLESLogCallbackIfNeeded() {
  
  #else
  
@@ -170,7 +170,7 @@ diff --git a/src/main/cpp/soundtouch/source/cpu_detect_x86.cpp b/src/main/cpp/so
 diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
 --- a/src/main/cpp/vulkan/vulkanbackend.cpp
 +++ b/src/main/cpp/vulkan/vulkanbackend.cpp
-@@ -744,8 +744,8 @@
+@@ -745,8 +745,8 @@ bool VulkanBackend::createDeviceWithoutNegotiation() {
      std::vector<VkQueueFamilyProperties> families(familyCount);
      vk.getPhysicalDeviceQueueFamilyProperties(gpu, &familyCount, families.data());
  
@@ -184,7 +184,7 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
 diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
 --- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
 +++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
-@@ -22,12 +22,13 @@
+@@ -22,12 +22,13 @@ import android.content.Context
  import android.graphics.Bitmap
  import android.graphics.PointF
  import android.graphics.RectF
@@ -199,7 +199,7 @@ diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main
  import androidx.lifecycle.DefaultLifecycleObserver
  import androidx.lifecycle.Lifecycle
  import androidx.lifecycle.LifecycleOwner
-@@ -39,7 +40,6 @@
+@@ -39,7 +40,6 @@ import java.util.concurrent.CountDownLatch
  import javax.microedition.khronos.egl.EGLConfig
  import javax.microedition.khronos.opengles.GL10
  import kotlin.properties.Delegates
@@ -207,16 +207,16 @@ diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main
  import kotlinx.coroutines.flow.Flow
  import kotlinx.coroutines.flow.MutableSharedFlow
  import kotlinx.coroutines.launch
-@@ -299,7 +299,7 @@
+@@ -306,7 +306,7 @@ class GLRetroView(
  
      private val rumbleEventsSubject = MutableSharedFlow<RumbleEvent>()
  
 -    private var lifecycle: Lifecycle? = null
 +    @Volatile private var lifecycle: Lifecycle? = null
  
-     init {
-         openGLESVersion = getGLESVersion(context)
-@@ -392,7 +392,9 @@
+     /** Present only when the view was created for SDR as HDR10; decides the EGL config and surface. */
+     private val sdrToHdrSurface: SdrToHdrSurface?
+@@ -418,7 +418,9 @@ class GLRetroView(
      private fun getDeviceLanguage() = Locale.getDefault().language
  
      private fun getDefaultRefreshRate(): Float {
@@ -227,7 +227,7 @@ diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main
      }
  
      fun sendKeyEvent(action: Int, keyCode: Int, port: Int = 0) {
-@@ -482,7 +484,7 @@
+@@ -508,7 +510,7 @@ class GLRetroView(
  
      fun getMemorySize(memoryType: Int): Int = runOnGLThread {
          LibretroDroid.getMemorySize(memoryType)
@@ -236,7 +236,7 @@ diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main
  
      fun getSystemRam(): ByteArray? = getMemoryData(LibretroDroid.MEMORY_SYSTEM_RAM)
  
-@@ -863,13 +865,13 @@
+@@ -891,13 +893,13 @@ class GLRetroView(
              if (isAborted || isDestroyed) return
              block()
          } catch (e: RetroException) {

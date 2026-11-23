@@ -83,6 +83,21 @@ class NotificationStoreTest {
         assertEquals(setOf("error", "action"), store.state.value.visible.map { it.notice.key }.toSet())
     }
 
+    @Test fun playbackShowsOnlyConnectionIssuesOfThePlayingServer() {
+        val previous = PlaybackNoticeScope.playingSystems
+        try {
+            PlaybackNoticeScope.playingSystems = { setOf("plex", "tvheadend") }
+            store.post(notice("jellyfin", NoticePhase.ERROR).copy(kind = NoticeKind.CONNECTION, systems = listOf("jellyfin")))
+            store.post(notice("nas", NoticePhase.ERROR).copy(kind = NoticeKind.CONNECTION, systems = listOf("tvheadend")))
+            now = 700; store.tick(playback = true)
+            assertEquals(setOf("nas"), store.state.value.visible.map { it.notice.key }.toSet())
+            assertFalse(AppNotice("x", 1, listOf("plex"), phase = NoticePhase.SUCCESS, kind = NoticeKind.CONNECTION,
+                interruptPlayback = false).concernsPlayback(setOf("plex")))
+            assertTrue(AppNotice("net", 1, phase = NoticePhase.ERROR, kind = NoticeKind.CONNECTION)
+                .concernsPlayback(setOf("youtube")))
+        } finally { PlaybackNoticeScope.playingSystems = previous }
+    }
+
     @Test fun hiddenCardsDoNotConsumeReadingTimeButStaleResultsAreDiscarded() {
         store.post(notice(phase = NoticePhase.SUCCESS))
         store.tick(presenting = false)

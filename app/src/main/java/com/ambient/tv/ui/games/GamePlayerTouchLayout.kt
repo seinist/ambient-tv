@@ -16,8 +16,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.SportsEsports
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
+import androidx.tv.material3.Icon
+import androidx.tv.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -115,7 +115,7 @@ internal fun GamePlayerTouchLayout(
                         tint = Color.White, modifier = Modifier.size(24.dp))
                 }
                 Text(stringResource(R.string.game_rewind_buffer_seconds, rewindSeconds),
-                    color = Color.White, style = androidx.compose.material3.MaterialTheme.typography.labelSmall)
+                    color = Color.White, style = androidx.tv.material3.MaterialTheme.typography.labelSmall)
             }
         }
     }

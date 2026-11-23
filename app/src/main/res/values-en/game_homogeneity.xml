@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="game_badge_fast_forward">2×</string>
+    <string name="game_badge_hdr_to_sdr">HDR → SDR</string>
+    <string name="game_badge_native_hlg_test">Vulkan HLG · test</string>
+    <string name="game_badge_native_pq_test">Vulkan PQ · test</string>
+    <string name="game_badge_native_sdr_test">Vulkan SDR · test</string>
+    <string name="game_badge_sdr_to_hdr">SDR → HDR10</string>
+    <string name="game_core_options_heading">Options</string>
+    <string name="game_info_diagnostics">Renderer and HDR details</string>
+    <string name="game_info_diagnostics_hint">Vulkan surface, HDR handshake and native output tests</string>
+    <string name="game_picture_effect">Extra effect</string>
+    <string name="game_picture_effect_hint">Runs on the original picture before the filter, for example a colour signal with Sharp Bilinear or an LCD grid</string>
+    <string name="game_picture_effect_none">None</string>
+    <string name="game_picture_hdr_steps">With HDR10 input the core\'s own HDR output is switched on as well. For a real HDR signal on the TV, then test the native output under Info → Renderer and HDR details; without it the picture is mapped to SDR.</string>
+    <string name="game_picture_integer_auto">Automatic</string>
+    <string name="game_picture_integer_auto_hint">Whole numbers only where the border stays small, such as on 4K screens; otherwise the picture fills the screen</string>
+    <string name="game_picture_integer_off">Off</string>
+    <string name="game_picture_integer_on">Always</string>
+    <string name="game_picture_scope_game_hint">Filter, strength, shape and scaling apply to this game only</string>
+    <string name="game_picture_sdr_to_hdr">SDR as HDR</string>
+    <string name="game_picture_sdr_to_hdr_hint">For all games on HDR TVs; the game restarts. SDR white sits at the chosen brightness, like SDR video in HDR.</string>
+    <string name="game_picture_sdr_to_hdr_switch">Output games as HDR10</string>
+    <string name="game_picture_sdr_to_hdr_unavailable">This device offers no HDR10 surface for OpenGL ES; the picture stays SDR.</string>
+    <string name="game_reset_confirm_hint">Progress since your last save state is set aside as the undo state.</string>
+    <string name="game_reset_confirm_title">Start this game over?</string>
+    <string name="game_shader_recommended">Suits this system</string>
+    <string name="game_touch_companion">Phone controller</string>
+    <string name="games_bios_import">Add firmware</string>
+    <string name="games_bios_import_hint">Opens the file browser: open the folder with the BIOS files and choose “Take over game data”. Each file is checked by MD5.</string>
+    <string name="games_bios_remove">Select to remove</string>
+    <string name="games_remove_confirm">Remove %1$s?</string>
+</resources>

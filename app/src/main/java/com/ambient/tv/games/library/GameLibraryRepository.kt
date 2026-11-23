@@ -92,6 +92,12 @@ data class LibraryGame(
     val metadataYear: Int? = null,
     val coverPath: String? = null,
     val backdropPath: String? = null,
+    /** Validated local image bounds; null for a missing/legacy image awaiting IO maintenance. */
+    val coverWidth: Int? = null,
+    val coverHeight: Int? = null,
+    val metadataRegion: String? = null,
+    /** Matched provider platform namespace, used only to disambiguate grouped systems. */
+    val metadataPlatform: String? = null,
 )
 
 /** Preserve the previous fast-negative-match contract for existing library users/tests. */
@@ -114,7 +120,7 @@ internal fun cachedGameMatchesFolder(
         else GameSystems.acceptsFile(system, filename)
 }
 
-private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_library.db", null, 6) {
+private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_library.db", null, 7) {
     init { setWriteAheadLoggingEnabled(true) }
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE game_entries (
@@ -164,6 +170,12 @@ private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_li
             // A migration from v4 creates the current projection directly.
             if (oldVersion >= 5) GameLibraryQueryIndex.addMetadataColumns(db)
         }
+        if (oldVersion < 7) {
+            // Older upgrades create the current tables directly; only pre-existing tables
+            // need ALTERs. No cover bitmap is decoded while the schema lock is held.
+            if (oldVersion >= 6) GameMetadataStorage.addCoverGeometryColumns(db)
+            if (oldVersion >= 5) GameLibraryQueryIndex.addCoverGeometryColumns(db)
+        }
     }
 }
 
@@ -182,6 +194,7 @@ class GameLibraryRepository @Inject constructor(
     private val catalogRevision = java.util.concurrent.atomic.AtomicLong()
     val revisions = changeSignal.asStateFlow()
     private val scanLock = kotlinx.coroutines.sync.Mutex()
+    private val coverGeometryLock = kotlinx.coroutines.sync.Mutex()
     private val queryLock = Any()
     private val queryExecutions = java.util.concurrent.atomic.AtomicLong()
     private var queryConfiguration: QueryConfiguration? = null
@@ -459,6 +472,9 @@ class GameLibraryRepository @Inject constructor(
                         lastPlayed = rows.getLong(11), customTitle = rows.getString(12), verifiedTitle = rows.getString(13),
                         metadataTitle = rows.getString(14), metadataYear = if (rows.isNull(15)) null else rows.getInt(15),
                         coverPath = rows.getString(16), backdropPath = rows.getString(17),
+                        coverWidth = if (rows.isNull(18)) null else rows.getInt(18),
+                        coverHeight = if (rows.isNull(19)) null else rows.getInt(19),
+                        metadataRegion = rows.getString(20), metadataPlatform = rows.getString(21),
                     ))
                 }
             }
@@ -469,6 +485,130 @@ class GameLibraryRepository @Inject constructor(
 
     /** IO-only hook for Settings/Companion source changes while the library screen is closed. */
     fun reconcile() = synchronized(queryLock) { ensureQueryIndex(); Unit }
+
+    /**
+     * One-time migration of cached cover headers and metadata projections. The caller may be
+     * any thread: all file/SQLite work moves to IO. Each row is marked once, including missing
+     * or invalid files; new artwork records arrive with validated dimensions already present.
+     */
+    suspend fun backfillCoverGeometry(): Int = backfillCoverGeometry { artworkFiles.dimensions(it) }
+
+    /** Reader and clock seams keep migration races and refresh throttling deterministic in tests. */
+    internal suspend fun backfillCoverGeometry(
+        monotonicNanos: () -> Long = System::nanoTime,
+        readBounds: suspend (String) -> Pair<Int, Int>?,
+    ): Int =
+        withContext(Dispatchers.IO) {
+            coverGeometryLock.withLock {
+                val task = kotlinx.coroutines.currentCoroutineContext()
+                var updated = 0
+                var dirty = false
+                var lastPublishedNanos = monotonicNanos()
+                // Keep this local: an unrelated favorite/artwork edit must still publish at once.
+                fun publishPending(force: Boolean = false) {
+                    if (!dirty) return
+                    val now = monotonicNanos()
+                    if (force || now - lastPublishedNanos >= 500_000_000L) {
+                        metadataChanged()
+                        dirty = false
+                        lastPublishedNanos = now
+                    }
+                }
+                try {
+                    // Old metadata payloads already contain region/provider identity. Project them
+                    // once in small batches instead of deserializing full descriptions in browse.
+                    while (true) {
+                        task.ensureActive()
+                        val batch = synchronized(queryLock) {
+                            ensureQueryIndex()
+                            db.readableDatabase.rawQuery(
+                                "SELECT file_id,payload FROM game_metadata WHERE region IS NULL LIMIT 32", null,
+                            ).use { rows -> buildList {
+                                while (rows.moveToNext()) add(rows.getString(0) to rows.getString(1))
+                            } }
+                        }
+                        if (batch.isEmpty()) break
+                        val projected = batch.map { (id, payload) -> Triple(id, payload, GameMetadataStorage.decode(payload)) }
+                        task.ensureActive()
+                        synchronized(queryLock) {
+                            val configuration = ensureQueryIndex()
+                            val writable = db.writableDatabase
+                            val changedIds = linkedSetOf<String>()
+                            writable.beginTransaction()
+                            try {
+                                for ((id, payload, metadata) in projected) {
+                                    task.ensureActive()
+                                    val values = android.content.ContentValues().apply {
+                                        put("region", metadata?.region.orEmpty())
+                                        put("platform", metadata?.let(GameMetadataStorage::platform).orEmpty())
+                                    }
+                                    if (writable.update("game_metadata", values,
+                                            "file_id=? AND payload=? AND region IS NULL", arrayOf(id, payload)) > 0)
+                                        changedIds += id
+                                }
+                                refreshQueryFiles(changedIds, configuration)
+                                writable.setTransactionSuccessful()
+                            } finally { writable.endTransaction() }
+                            if (changedIds.isNotEmpty()) {
+                                dirty = true
+                                publishPending()
+                            }
+                        }
+                        kotlinx.coroutines.yield()
+                    }
+                    while (true) {
+                        task.ensureActive()
+                        val batch = synchronized(queryLock) {
+                            ensureQueryIndex()
+                            db.readableDatabase.rawQuery("""SELECT file_id,path FROM game_artwork
+                                WHERE kind='cover' AND geometry_checked=0 LIMIT 32""", null).use { rows -> buildList {
+                                while (rows.moveToNext()) add(rows.getString(0) to rows.getString(1))
+                            } }
+                        }
+                        if (batch.isEmpty()) break
+                        val measured = batch.map { (id, path) ->
+                            task.ensureActive()
+                            val bounds = try { readBounds(path) } catch (_: IOException) { null }
+                            Triple(id, path, bounds?.takeIf { GameArtworkFiles.validDimensions(it.first, it.second) })
+                        }
+                        task.ensureActive()
+                        synchronized(queryLock) {
+                            val configuration = ensureQueryIndex()
+                            val writable = db.writableDatabase
+                            val changedIds = linkedSetOf<String>()
+                            writable.beginTransaction()
+                            try {
+                                for ((id, path, bounds) in measured) {
+                                    task.ensureActive()
+                                    val values = android.content.ContentValues().apply {
+                                        if (bounds == null) { putNull("image_width"); putNull("image_height") }
+                                        else { put("image_width", bounds.first); put("image_height", bounds.second) }
+                                        put("geometry_checked", 1)
+                                    }
+                                    // A manual replacement owns a new UUID path. A removed folder
+                                    // has no eligible record. Neither can be overwritten by late IO.
+                                    if (writable.update("game_artwork", values,
+                                            "file_id=? AND kind='cover' AND path=? AND geometry_checked=0",
+                                            arrayOf(id, path)) > 0) changedIds += id
+                                }
+                                refreshQueryFiles(changedIds, configuration)
+                                writable.setTransactionSuccessful()
+                            } finally { writable.endTransaction() }
+                            updated += changedIds.size
+                            if (changedIds.isNotEmpty()) {
+                                dirty = true
+                                publishPending()
+                            }
+                        }
+                        kotlinx.coroutines.yield()
+                    }
+                    updated
+                } finally {
+                    // No suspension: committed batches remain visible after cancellation or failure.
+                    synchronized(queryLock) { publishPending(force = true) }
+                }
+            }
+        }
 
     /** Stable pages for enrichment; a 100,000-ROM folder does not become one in-memory job. */
     fun folderGames(folderId: String, afterFileId: String? = null, limit: Int = 128): List<LibraryGame> =
@@ -623,9 +763,10 @@ class GameLibraryRepository @Inject constructor(
             writable.beginTransaction()
             try {
                 if (nextPath == null) writable.delete("game_artwork", "file_id=? AND kind=?", arrayOf(ticket.fileId, kind.key))
-                else writable.execSQL("""INSERT OR REPLACE INTO game_artwork(file_id,kind,path,bytes,pinned,updated_at)
-                    VALUES(?,?,?,?,?,?)""", arrayOf<Any>(ticket.fileId, kind.key, nextPath, staged!!.bytes,
-                    if (pinned) 1 else 0, System.currentTimeMillis()))
+                else writable.execSQL("""INSERT OR REPLACE INTO game_artwork(file_id,kind,path,bytes,pinned,updated_at,
+                    image_width,image_height,geometry_checked) VALUES(?,?,?,?,?,?,?,?,1)""",
+                    arrayOf<Any>(ticket.fileId, kind.key, nextPath, staged!!.bytes,
+                        if (pinned) 1 else 0, System.currentTimeMillis(), staged.width, staged.height))
                 refreshQueryFiles(listOf(ticket.fileId), ensureQueryIndex())
                 writable.setTransactionSuccessful()
                 committed = true
@@ -894,7 +1035,8 @@ class GameLibraryRepository @Inject constructor(
         val clause = where?.let { " WHERE " + it.replace(Regex("\\b(file_id|folder_id)\\b"), "g.$1") }.orEmpty()
         db.readableDatabase.rawQuery("""SELECT g.folder_id,g.file_id,g.source_id,g.path,g.filename,g.system_id,
             g.internal_title,g.file_size,g.modified,g.favorite,g.last_played,g.manual_title,g.verified_title,
-            g.probe_version,g.dat_version,g.archive_crc,g.dat_checked,m.title,m.year,c.path,b.path
+            g.probe_version,g.dat_version,g.archive_crc,g.dat_checked,m.title,m.year,c.path,b.path,
+            c.image_width,c.image_height,m.region,m.platform
             FROM game_entries g LEFT JOIN game_metadata m ON m.file_id=g.file_id
             LEFT JOIN game_artwork c ON c.file_id=g.file_id AND c.kind='cover'
             LEFT JOIN game_artwork b ON b.file_id=g.file_id AND b.kind='backdrop'
@@ -923,6 +1065,9 @@ class GameLibraryRepository @Inject constructor(
                     datVersion = cursor.getLong(14), archiveCrc = cursor.getString(15), datChecked = cursor.getInt(16) == 1,
                     metadataTitle = cursor.getString(17), metadataYear = if (cursor.isNull(18)) null else cursor.getInt(18),
                     coverPath = cursor.getString(19), backdropPath = cursor.getString(20),
+                    coverWidth = if (cursor.isNull(21)) null else cursor.getInt(21),
+                    coverHeight = if (cursor.isNull(22)) null else cursor.getInt(22),
+                    metadataRegion = cursor.getString(23), metadataPlatform = cursor.getString(24),
                 )
                 if (!deduplicate) { consume(game); continue }
                 if (selected?.fileId != game.fileId) {

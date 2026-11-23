@@ -136,7 +136,7 @@ fun FilteredBrowseScreen(
     val connection by recovery.state.collectAsState()
     val source = viewModel.reconnectSources.single()
     val sourceRevision by recovery.availability.changes.collectAsState()
-    val sourceUnconfirmed = remember(source, sourceRevision) { recovery.availability.browseUnconfirmed(source) }
+    val sourceUnconfirmed = remember(source, sourceRevision) { recovery.availability.browseShowsOffline(source) }
     val contentUnconfirmed = source in connection.offline || sourceUnconfirmed || refreshError != null
     val retrySource: () -> Unit = { recovery.retrySystem(source) }
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(viewModel.reconnectSources) { viewModel.enter(playbackReturn) }
@@ -193,7 +193,10 @@ fun FilteredBrowseScreen(
     }
     CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
         Box(Modifier.fillMaxSize().claimBrowseStartupFocusOnInput(startupFocus)) {
+    val filteredOfflineStatus = com.ambient.tv.ui.home.offlineSourcesStatus(
+        if (loaded != null && contentUnconfirmed) listOf(source) else emptyList())
             Column(Modifier.fillMaxSize()) {
+                androidx.compose.runtime.CompositionLocalProvider(com.ambient.tv.ui.common.LocalPageOfflineStatus provides filteredOfflineStatus) {
                 PageHeader(
                     focusChain = focusChain,
                     modifier = Modifier.padding(start = screenGutter(), end = screenGutter(), top = pageHeaderTop(24.dp), bottom = 10.dp),
@@ -218,7 +221,7 @@ fun FilteredBrowseScreen(
                             iconOnly = true,
                             loading = refreshing || state is FilteredBrowseUiState.Loading,
                             loadingOnlyAfterClick = true,
-                            onClick = { filterFocusState.keepControls(); viewModel.refresh() },
+                            onClick = { filterFocusState.keepControls(); if (contentUnconfirmed) retrySource(); viewModel.refresh() },
                         )
                         if (loaded != null) ViewOptionsChip(
                             activeCount = 0,
@@ -236,10 +239,6 @@ fun FilteredBrowseScreen(
                     if (loaded != null) Text(stringResource(R.string.library_item_count, loaded.items.size),
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                if (loaded != null && contentUnconfirmed) com.ambient.tv.ui.home.SavedBrowseStatus(
-                    sources = listOf(source), retrying = connection.retrying || refreshing,
-                    onRetry = retrySource, modifier = Modifier.padding(horizontal = screenGutter(), vertical = 4.dp),
-                )
                 if (loaded != null && filterBarShown) FilterBar(
                     groups = emptyList(),
                     onSelect = { _, _ -> },
@@ -323,6 +322,7 @@ fun FilteredBrowseScreen(
                             }
                         }
                     }
+                }
                 }
             }
             if (showOptions && loaded != null) {

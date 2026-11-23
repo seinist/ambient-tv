@@ -183,7 +183,7 @@ fun DetailScreen(
     onBrowseCollection: (String, String) -> Unit,
     viewModel: DetailViewModel = hiltViewModel(),
 ) {
-    com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
+    com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel.reconnectSources, viewModel::retryOffline)
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(viewModel.reconnectSources, viewModel::load)
     val uiState = viewModel.uiState.collectAsCurrentState()
     ThemeMusicEffect(viewModel.themeMusicPlayer, (uiState as? DetailUiState.Loaded)?.themeMusic)
@@ -368,8 +368,8 @@ internal fun LockedDetailPreview(
                                 style = MaterialTheme.typography.titleMedium,
                             )
                         }
-                        Text(stringResource(R.string.offline_detail_connection_description), style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (!removed) Text(stringResource(R.string.offline_detail_connection_description),
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             TvActionButton(
                                 text = stringResource(if (checking) R.string.offline_detail_checking else R.string.offline_detail_retry),

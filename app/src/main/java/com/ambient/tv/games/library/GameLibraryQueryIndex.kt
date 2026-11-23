@@ -10,7 +10,7 @@ import android.database.sqlite.SQLiteDatabase
  */
 internal object GameLibraryQueryIndex {
     // Bump when title/search/system-label/eligibility rules change, so old projections rebuild without a NAS scan.
-    const val POLICY_VERSION = 2
+    const val POLICY_VERSION = 3
 
     fun create(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE game_query (
@@ -21,7 +21,8 @@ internal object GameLibraryQueryIndex {
             sort_system BLOB NOT NULL,
             search_auto TEXT NOT NULL,search_internal TEXT NOT NULL,search_filename TEXT NOT NULL,
             search_filename_raw TEXT NOT NULL,projection_stamp TEXT NOT NULL,
-            metadata_title TEXT,metadata_year INTEGER,cover_path TEXT,backdrop_path TEXT)""")
+            metadata_title TEXT,metadata_year INTEGER,cover_path TEXT,backdrop_path TEXT,
+            cover_width INTEGER,cover_height INTEGER,metadata_region TEXT,metadata_platform TEXT)""")
         // Most browsing uses automatic titles. Avoid nine copies of every title/file id in
         // secondary indexes; uncommon internal/filename sorting stays in SQLite.
         db.execSQL("CREATE INDEX game_query_title_auto ON game_query(sort_auto,file_id)")
@@ -38,6 +39,13 @@ internal object GameLibraryQueryIndex {
         db.execSQL("ALTER TABLE game_query ADD COLUMN metadata_year INTEGER")
         db.execSQL("ALTER TABLE game_query ADD COLUMN cover_path TEXT")
         db.execSQL("ALTER TABLE game_query ADD COLUMN backdrop_path TEXT")
+    }
+
+    fun addCoverGeometryColumns(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE game_query ADD COLUMN cover_width INTEGER")
+        db.execSQL("ALTER TABLE game_query ADD COLUMN cover_height INTEGER")
+        db.execSQL("ALTER TABLE game_query ADD COLUMN metadata_region TEXT")
+        db.execSQL("ALTER TABLE game_query ADD COLUMN metadata_platform TEXT")
     }
 
     fun signature(db: SQLiteDatabase): String? = db.rawQuery(
@@ -62,10 +70,11 @@ internal object GameLibraryQueryIndex {
         val stamp = gameQueryDigest(listOf(game.folderId, game.systemId, game.favorite.toString(),
             game.lastPlayed.toString(), game.customTitle.orEmpty(), folderDepth.toString(), systemName, game.filename,
             game.metadataTitle.orEmpty(), game.metadataYear?.toString().orEmpty(), game.coverPath.orEmpty(),
-            game.backdropPath.orEmpty()) + titles.values)
+            game.backdropPath.orEmpty(), game.coverWidth?.toString().orEmpty(), game.coverHeight?.toString().orEmpty(),
+            game.metadataRegion.orEmpty(), game.metadataPlatform.orEmpty()) + titles.values)
         if (checkExisting && db.rawQuery("SELECT projection_stamp FROM game_query WHERE file_id=?",
                 arrayOf(game.fileId)).use { it.moveToFirst() && it.getString(0) == stamp }) return
-        val values = ContentValues(23).apply {
+        val values = ContentValues(27).apply {
             put("file_id", game.fileId)
             put("folder_id", game.folderId)
             put("system_id", game.systemId)
@@ -85,6 +94,10 @@ internal object GameLibraryQueryIndex {
             if (game.metadataYear == null) putNull("metadata_year") else put("metadata_year", game.metadataYear)
             put("cover_path", game.coverPath)
             put("backdrop_path", game.backdropPath)
+            if (game.coverWidth == null) putNull("cover_width") else put("cover_width", game.coverWidth)
+            if (game.coverHeight == null) putNull("cover_height") else put("cover_height", game.coverHeight)
+            put("metadata_region", game.metadataRegion)
+            put("metadata_platform", game.metadataPlatform)
         }
         db.replaceOrThrow("game_query", null, values)
     }

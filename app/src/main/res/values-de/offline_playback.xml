@@ -1,8 +1,8 @@
 <resources>
     <string name="offline_playback_checking">Verbindung wird geprüft</string>
-    <string name="offline_playback_checking_message">Die Wiedergabe startet, sobald der Zugriff auf diese Quelle bestätigt ist.</string>
+    <string name="offline_playback_checking_message">Wiedergabe wird vorbereitet…</string>
     <string name="offline_playback_locked">Quelle nicht verfügbar</string>
-    <string name="offline_playback_auth">Bitte in den Einstellungen erneut bei %1$s anmelden und danach erneut versuchen.</string>
-    <string name="offline_playback_login">Anmeldung öffnen</string>
-    <string name="offline_playback_unavailable">%1$s hat den Zugriff noch nicht bestätigt. Erneut versuchen prüft zuerst die Verbindung und weckt den Server nur bei Bedarf.</string>
+    <string name="offline_playback_auth">Bitte erneut bei %1$s anmelden.</string>
+    <string name="offline_playback_login">Anmelden</string>
+    <string name="offline_playback_unavailable">%1$s ist derzeit nicht verfügbar.</string>
 </resources>

@@ -82,6 +82,9 @@ class GamePlayerViewModel @Inject constructor(
 ) : ViewModel() {
     private val fileId: String = checkNotNull(saved.get<String>("fileId")) { "fileId" }
     private val assignedSystem: String? = saved.get<String>("system")?.takeIf(String::isNotBlank)
+    private val savedArguments = saved
+    /** "Start over" from the detail page: applies to the first start only, not to later restarts. */
+    private var startFresh: Boolean = saved.get<Boolean>("fresh") == true
     private val mutable = MutableStateFlow<GameUiState>(GameUiState.Preparing(null))
     val state: StateFlow<GameUiState> = mutable.asStateFlow()
     private val stateList = MutableStateFlow<List<GameStateEntry>>(emptyList())
@@ -211,8 +214,22 @@ class GamePlayerViewModel @Inject constructor(
         val session = withContext(Dispatchers.IO) {
             val stamp = GameStateStore.coreStamp(core)
             val legacyStamp = GameStateStore.legacyCoreStamp(core)
-            val auto = states.entry(game, GameStateKind.AUTO)?.takeIf {
-                chosen.saveStates && GameStateStore.compatible(it, chosen.id, stamp, legacyStamp)
+            val existing = states.entry(game, GameStateKind.AUTO)
+            if (startFresh && existing != null) {
+                // Like a reset in the game: the last progress stays recoverable as the undo state.
+                runCatching {
+                    states.read(game, existing)?.let { bytes ->
+                        states.save(game, GameStateKind.UNDO, bytes, null, existing.coreStamp, coreId = existing.coreId)
+                    }
+                }
+                states.delete(game, existing)
+            }
+            val auto = existing?.takeIf {
+                !startFresh && chosen.saveStates && GameStateStore.compatible(it, chosen.id, stamp, legacyStamp)
+            }
+            if (startFresh) {
+                startFresh = false
+                savedArguments["fresh"] = false
             }
             GameSession(
                 game = game,
@@ -236,6 +253,12 @@ class GamePlayerViewModel @Inject constructor(
     }
 
     fun biosStatus(game: PreparedGame): List<GameBiosStatus> = bios.status(game.system)
+
+    /** The library cover for the OSD header, like the artwork other players show; null outside the library. */
+    suspend fun coverUrl(): String? = withContext(Dispatchers.IO) {
+        runCatching { gameLibrary.game(fileId)?.coverPath }.getOrNull()
+            ?.let { android.net.Uri.fromFile(java.io.File(it)).toString() }
+    }
 
     /**
      * Record history only after Libretro actually renders its first game frame.

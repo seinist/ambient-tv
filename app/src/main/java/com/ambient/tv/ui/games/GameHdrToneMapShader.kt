@@ -17,12 +17,19 @@ internal object GameHdrToneMapShader {
     fun prefersFp16Bridge(input: GameHdrToneMap, vulkan: Boolean): Boolean =
         vulkan && input != GameHdrToneMap.OFF
 
-    fun forGame(filter: GameShader, input: GameHdrToneMap, vulkan: Boolean, intensity: Float = 1f): ShaderConfig =
-        forConfig(filter.config(intensity), input, vulkan, pixel = filter == GameShader.PIXEL)
+    fun forGame(
+        filter: GameShader, input: GameHdrToneMap, vulkan: Boolean, intensity: Float = 1f, effect: GameShader? = null,
+    ): ShaderConfig = forConfig(filter.config(intensity), input, vulkan, pixel = filter == GameShader.PIXEL, effect = effect)
 
-    /** Same mandatory HDR-to-SDR conversion for built-ins and authenticated external GLSL. */
-    fun forConfig(filter: ShaderConfig, input: GameHdrToneMap, vulkan: Boolean, pixel: Boolean = false): ShaderConfig {
-        if (!vulkan || input == GameHdrToneMap.OFF) return filter
+    /**
+     * Same mandatory HDR-to-SDR conversion for built-ins and authenticated external GLSL.
+     * The optional [effect] runs in front of the filter; the native chain keeps a single
+     * prefix, so while the HDR conversion occupies it the effect is left out.
+     */
+    fun forConfig(
+        filter: ShaderConfig, input: GameHdrToneMap, vulkan: Boolean, pixel: Boolean = false, effect: GameShader? = null,
+    ): ShaderConfig {
+        if (!vulkan || input == GameHdrToneMap.OFF) return GamePictureEffect.apply(filter, effect, pixel)
         // Convert PQ/HLG to SDR in a prefix, then execute the exact original
         // native CRT/LCD/CUT3/Sharp/Pixel picture shader chain unchanged.
         return ShaderConfig.PrependPass(

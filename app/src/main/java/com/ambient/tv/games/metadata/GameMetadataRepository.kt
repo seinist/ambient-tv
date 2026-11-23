@@ -64,6 +64,7 @@ class GameMetadataRepository @Inject constructor(
             reconcileRequests.receiveAsFlow().collect {
                 try {
                     library.reconcile()
+                    library.backfillCoverGeometry()
                     reconcilePreviews()
                 }
                 catch (error: java.util.concurrent.CancellationException) { throw error }

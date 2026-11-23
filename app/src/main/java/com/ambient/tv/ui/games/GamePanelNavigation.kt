@@ -38,6 +38,8 @@ internal data class GamePanelPage(
     val optionKey: String? = null,
     val shaderGroup: GameShaderGroup? = null,
     val shaderPacksOpen: Boolean = false,
+    /** Info → Vulkan/HDR diagnostics, the game's counterpart of the video "Stats for nerds". */
+    val diagnostics: Boolean = false,
 )
 
 /** Game pages own their content; the common video navigation owns origin/focus restoration. */
@@ -52,6 +54,7 @@ internal class GamePanelNavigation(
     val optionKey: String? get() = page?.optionKey
     val shaderGroup: GameShaderGroup? get() = page?.shaderGroup
     val shaderPacksOpen: Boolean get() = page?.shaderPacksOpen == true
+    val diagnosticsOpen: Boolean get() = page?.diagnostics == true
     val fromSettings: Boolean get() = navigation.hasExternalParent(GamePanelPage(GamePanel.SETTINGS))
     var statesOpen by mutableStateOf(false)
         private set
@@ -87,6 +90,11 @@ internal class GamePanelNavigation(
     fun openShaderPacks() {
         val current = page?.takeIf { it.panel == GamePanel.PICTURE } ?: return
         navigation.openExternal(current.copy(shaderGroup = null, shaderPacksOpen = true))
+    }
+
+    fun openDiagnostics() {
+        val current = page?.takeIf { it.panel == GamePanel.INFO } ?: return
+        navigation.openExternal(current.copy(diagnostics = true))
     }
 
     /** A late animation callback from a former page must not pop the page now being used. */

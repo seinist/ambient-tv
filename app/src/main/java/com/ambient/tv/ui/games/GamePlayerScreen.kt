@@ -117,6 +117,14 @@ import com.ambient.tv.games.GameCheat
 import com.ambient.tv.games.GameCoreOption
 import com.ambient.tv.games.GameOptionOrigin
 import com.ambient.tv.games.GameSettings
+import com.ambient.tv.games.GameSettingsState
+import com.ambient.tv.games.GamePictureDefaults
+import com.ambient.tv.games.GameIntegerScaling
+import com.ambient.tv.ui.display.effectiveSdrReferenceWhiteNits
+import com.ambient.tv.ui.player.SdrReferenceWhiteCustomSlider
+import com.ambient.tv.ui.player.sdrReferenceWhiteChoiceKey
+import com.ambient.tv.ui.player.sdrReferenceWhiteChoices
+import com.ambient.tv.ui.player.sdrReferenceWhiteForChoice
 import com.ambient.tv.games.GameShader
 import com.ambient.tv.games.GameShaderGroup
 import com.ambient.tv.games.GameHdrToneMap
@@ -267,6 +275,10 @@ internal fun GameShader.config(intensity: Float = 1f): ShaderConfig = when (this
     else -> GameRetroShaders.config(this, intensity)
 }
 
+/** SDR white in the PQ signal: the chosen value (Auto 203), never above a plausible reported peak. */
+internal fun gameSdrWhiteNits(requested: Int, display: GameHdrDisplayCapabilities): Int =
+    effectiveSdrReferenceWhiteNits(requested, display.peakNits?.takeIf { it.isFinite() && it >= 300f }?.toInt() ?: 0)
+
 /** LibretroDroid follows a lifecycle; it mirrors the activity (the menu pauses the emulation itself). */
 private class GameLifecycleOwner : LifecycleOwner {
     val registry = LifecycleRegistry(this)
@@ -333,13 +345,15 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val shader = settings.shader(system, game.saveKey)
     val shaderIntensity = settings.shaderStrength(system, game.saveKey)
     val selectedPack = settings.packShader(system, game.saveKey)
-    val gameShaderScope = settings.values.containsKey("shader.game." + game.saveKey)
+    // The extra effect needs the GLES chain and its single prefix; packs and HDR conversion keep theirs.
+    val effect = settings.effect(system, game.saveKey)
+    val gamePictureScope = settings.gamePictureScope(game.saveKey)
     val installedShaders = remember(model) { model.shaderPacks.installed() }
     val selectedPackConfig = remember(selectedPack, model) { model.shaderPacks.config(selectedPack) }
     val toneMap = settings.hdrToneMap(core)
     val nativeTransfer = GameVulkanTransferMode.forInput(toneMap)
-    val aspect = settings.aspect(system)
-    val integerScaling = settings.integerScaling(system)
+    val aspect = settings.aspect(system, game.saveKey)
+    val integerScaling = settings.integerScaling(system, game.saveKey)
     val touchControls = settings.touchControls(system)
     val touchMode = settings.touchMode(system)
     val touchStyle = RetroInputSettings.config.touchStyle
@@ -349,19 +363,24 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val hideTouchForGamepad by rememberUpdatedState(touchStyle.hideOnGamepadInput)
     // A trusted small Slang preset may opt into the experimental native WSI.
     // Existing GLES filters remain available for all other choices and for HDR.
-    val nativeSlangPath = remember(context, shader, shaderIntensity, selectedPack, nativeTransfer, session.vulkan) {
+    val nativeSlangPath = remember(context, shader, shaderIntensity, selectedPack, nativeTransfer, session.vulkan, effect) {
         // Bundled native presets currently use their author's default parameter values.
         // A user-adjusted intensity must keep using GLES until native per-parameter
         // parity is implemented; never silently display the wrong chosen appearance.
-        if (BuildConfig.LIBRASHADER_NATIVE && session.vulkan &&
+        if (BuildConfig.LIBRASHADER_NATIVE && session.vulkan && effect == null &&
             nativeTransfer == GameVulkanTransferMode.SDR &&
             kotlin.math.abs(shaderIntensity - 1f) < 0.0001f)
             GameVulkanSlangPresets.prepare(context, shader, selectedPack)
         else null
     }
-    val nativePictureSupported = selectedPack == null &&
+    // SDR as HDR10 is fixed when the view is created (EGL config and PQ surface); a change restarts.
+    val sdrToHdrSession = remember(session) {
+        settings.sdrToHdr && toneMap == GameHdrToneMap.OFF && GameHdrDisplayProbe.capture(context).hdr10
+    }
+    val nativePictureSupported = selectedPack == null && effect == null && !sdrToHdrSession &&
         (GameVulkanPictureCompatibility.rawFullscreenEligible(shader) || nativeSlangPath != null)
     val saveStates by model.saveStates.collectAsState()
+    val coverUrl by produceState<String?>(null, game.fileId) { value = model.coverUrl() }
 
     val chrome = remember { PlayerChromeState() }
     val osd = chrome.osd
@@ -440,6 +459,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     var rewindHistory by remember { mutableStateOf(GameRewindHistory()) }
     var rewindFps by remember { mutableStateOf(60.0) }
     var stateDialogOpen by remember { mutableStateOf(false) }
+    var resetConfirmOpen by remember { mutableStateOf(false) }
+    var removeCoreConfirmOpen by remember { mutableStateOf(false) }
     var discCount by remember { mutableIntStateOf(0) }
     var currentDisc by remember { mutableIntStateOf(0) }
     /** The picture when the menu opened: preview for every state saved from this menu. */
@@ -478,8 +499,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         busy = stateBusy, stateAvailable = stateAvailable, frameExact = serializationPolicy.frameExact,
         hardcore = hardcoreRules, netplay = netplay.busy,
         supportsCheats = core.cheats, supportsNetplay = core.netplay, directContent = game.direct,
-        supportsCoreOptions = coreOptionsSnapshot.isNotEmpty() || settings.coreOptions(core).isNotEmpty() ||
-            settings.gameCoreOptions(core, game.saveKey).isNotEmpty(),
+        // The core panel also chooses and removes the core, so it is always there.
+        supportsCoreOptions = true,
         achievements = achievements.state != GameAchievementState.Off, discCount = discCount,
         states = saveStates, coreId = core.id, coreStamp = session.coreStamp, legacyCoreStamp = legacyCoreStamp,
         rewindAvailable = rewindPermitted && rewindHistory.available,
@@ -502,9 +523,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             variables = (settings.effectiveCoreOptions(core, game.saveKey) + if (session.vulkan) core.vulkanOptions else core.glOptions)
                 .map { (key, value) -> Variable(key, value) }.toTypedArray()
             saveRAMState = session.sram
+            sdrToHdrReferenceWhiteNits = if (sdrToHdrSession) gameSdrWhiteNits(settings.sdrReferenceWhite, displayHdr) else 0
             this.shader = GameHdrToneMapShader.forConfig(
                 selectedPackConfig ?: shader.config(shaderIntensity),
                 toneMap, session.vulkan, pixel = selectedPack == null && shader == GameShader.PIXEL,
+                effect = effect.takeIf { selectedPackConfig == null },
             )
             rumbleEventsEnabled = true
             preferLowLatencyAudio = true
@@ -522,7 +545,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             // Starts paused: the first composition decides whether it runs.
             suppressAutoResume = true
             aspectRatioOverride = aspect.ratio ?: -1f
-            this.integerScaling = integerScaling
+            this.integerScalingAuto = integerScaling == GameIntegerScaling.AUTO
+            this.integerScaling = integerScaling.enabled
         }.also { view ->
             // Install before native creation, so even an abandoned first composition has
             // a cleanup path. The complete player cleanup replaces this once constructed.
@@ -772,6 +796,34 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     message = context.getString(R.string.game_message_save_failed)
                 } finally { stateBusy = false }
             }
+        }
+    }
+
+    /** Starts the game over; the moment before is kept as the undo state, like a load. */
+    val resetGame: () -> Unit = resetGame@ {
+        if (stateBusy || destroyed || exiting || !latestAvailability.reset) return@resetGame
+        stateBusy = true
+        GameInputRouting.update(session, GameInputMode.BLOCKED)
+        val preview = snapshot
+        scope.launch {
+            var reset = false
+            try {
+                val previous = withContext(Dispatchers.Default) { runCatching { retroView.serializeState() }.getOrNull() }
+                if (previous != null && !destroyed && !exiting) model.saveState(session, GameStateKind.UNDO, previous, preview)
+                if (destroyed || exiting) return@launch
+                withContext(Dispatchers.Default) {
+                    retroView.reset()
+                    retroView.clearRewindBuffer()
+                }
+                rewindHistory = GameRewindHistory()
+                model.clearAutoState(game)
+                reset = true
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                message = context.getString(R.string.game_reset_failed)
+            } finally { stateBusy = false }
+            if (reset) resume()
         }
     }
 
@@ -1106,9 +1158,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             }
         }
     }
-    val gameDialogOpen = stateDialogOpen || gamePanels.navigation.dialogFocusOwner != null
+    val gameDialogOpen = stateDialogOpen || resetConfirmOpen || removeCoreConfirmOpen ||
+        gamePanels.navigation.dialogFocusOwner != null
     val gameInputPage = Triple(gamePanels.page, statesOpen,
-        (gamePanels.navigation.dialogFocusOwner ?: stateDialogOpen) to netplay.synchronizing)
+        (gamePanels.navigation.dialogFocusOwner ?: (stateDialogOpen || resetConfirmOpen || removeCoreConfirmOpen)) to
+            netplay.synchronizing)
     val companionInteraction = when {
         !activityResumed || exiting || destroyed -> CompanionGamepadInteraction.BACKGROUND
         stateBusy -> CompanionGamepadInteraction.BUSY
@@ -1305,6 +1359,32 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     AndroidView(factory = { vulkanSurfaceHost ?: retroView }, modifier = surfaceModifier)
                 },
             )
+            if (resetConfirmOpen) com.ambient.tv.ui.common.AppDialog(
+                onDismiss = { resetConfirmOpen = false },
+                title = stringResource(R.string.game_reset_confirm_title),
+                hint = stringResource(R.string.game_reset_confirm_hint),
+                footer = {
+                    com.ambient.tv.ui.common.TvActionButton(stringResource(R.string.files_cancel), onClick = { resetConfirmOpen = false })
+                    com.ambient.tv.ui.common.TvActionButton(stringResource(R.string.game_reset), onClick = {
+                        resetConfirmOpen = false
+                        resetGame()
+                    })
+                }, content = null,
+            )
+            if (removeCoreConfirmOpen) com.ambient.tv.ui.common.AppDialog(
+                onDismiss = { removeCoreConfirmOpen = false },
+                title = stringResource(R.string.games_remove_confirm, core.name),
+                hint = stringResource(R.string.game_core_remove_hint),
+                footer = {
+                    com.ambient.tv.ui.common.TvActionButton(stringResource(R.string.files_cancel), onClick = { removeCoreConfirmOpen = false })
+                    com.ambient.tv.ui.common.TvActionButton(stringResource(R.string.saved_profiles_delete), onClick = {
+                        removeCoreConfirmOpen = false
+                        model.removeCore(core)
+                        message = context.getString(R.string.game_message_core_removed)
+                        closePanel()
+                    })
+                }, content = null,
+            )
             GameAchievementBanner(achievements.banner, Modifier.align(Alignment.TopCenter).padding(top = 32.dp))
             if (netplay.waiting && !menuOpen) GameOverlayNote(
                 stringResource(R.string.game_netplay_waiting),
@@ -1317,7 +1397,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 ReferencePlayerBottomContent(onTogglePlayback = resume) {
                     ReferencePlayerHeader(
                         title = game.title,
-                        artworkUrl = null,
+                        artworkUrl = coverUrl,
                         contextLine = system.name,
                         subtitle = message ?: stringResource(if (running) R.string.game_running else R.string.game_paused),
                         showPaused = !running,
@@ -1327,23 +1407,24 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         MetaBadge(core.name)
                         if (game.direct) MetaBadge(stringResource(R.string.game_direct_source))
                         if (core.hardware) MetaBadge(vulkanFrameStatus.badge(session.vulkan))
+                        if (sdrToHdrSession && retroView.sdrToHdrActive) MetaBadge(stringResource(R.string.game_badge_sdr_to_hdr))
                         if (nativeSdrFullscreenRequested &&
                             GameVulkanTransferGate.frameConfirmed(nativeTransfer, nativeSdrStatus)) {
-                            MetaBadge(when (nativeTransfer) {
-                                GameVulkanTransferMode.SDR -> "Vulkan SDR · Test"
-                                GameVulkanTransferMode.PQ_BT2020 -> "Vulkan PQ WSI · Test"
-                                GameVulkanTransferMode.HLG_BT2020 -> "Vulkan HLG WSI · Test"
-                            })
+                            MetaBadge(stringResource(when (nativeTransfer) {
+                                GameVulkanTransferMode.SDR -> R.string.game_badge_native_sdr_test
+                                GameVulkanTransferMode.PQ_BT2020 -> R.string.game_badge_native_pq_test
+                                GameVulkanTransferMode.HLG_BT2020 -> R.string.game_badge_native_hlg_test
+                            }))
                         }
                         if (session.vulkan && vulkanFrameStatus.active && toneMap != GameHdrToneMap.OFF &&
                             !(nativeSdrFullscreenRequested &&
                                 GameVulkanTransferGate.frameConfirmed(nativeTransfer, nativeSdrStatus))) {
-                            MetaBadge("HDR → SDR")
+                            MetaBadge(stringResource(R.string.game_badge_hdr_to_sdr))
                         } else {
                             MetaBadge(stringResource(shader.titleRes))
                         }
                         if (aspect != GameAspect.CORE) MetaBadge(aspect.key)
-                        if (fastForward) MetaBadge("2×")
+                        if (fastForward) MetaBadge(stringResource(R.string.game_badge_fast_forward))
                         if (availability.rewind) MetaBadge(stringResource(R.string.game_rewind) + " · " +
                             stringResource(R.string.game_rewind_buffer_seconds, rewindHistory.seconds))
                         (achievements.state as? GameAchievementState.Active)?.let { active ->
@@ -1356,29 +1437,39 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         if (discCount > 1) MetaBadge(stringResource(R.string.game_disc_number, currentDisc + 1, discCount))
                         MetaBadge(game.sourceName)
                     }
-                    GameStateStrip(
-                        open = statesOpen,
-                        canLoad = availability::canLoad,
-                        compatible = availability::compatible,
-                        onDialogVisibilityChanged = { stateDialogOpen = it },
-                        states = saveStates,
-                        coreStamp = session.coreStamp,
-                        title = ::stateTitle,
-                        screenshot = { model.screenshot(game, it) },
-                        onLoad = loadState,
-                        onDelete = { model.deleteState(game, it) },
-                        onRename = { entry, label ->
-                            scope.launch {
-                                try { model.renameState(game, entry, label) }
-                                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                                catch (_: Exception) { message = context.getString(R.string.game_message_save_failed) }
-                            }
-                        },
-                        enabled = !stateBusy,
-                        onClose = { gamePanels.closeStates() },
-                    )
                     PlayerControlBar(
                         player = OsdPlayer.GAMES,
+                        // Save states sit below the actions like chapters, and the same Down opens them.
+                        belowContent = {
+                        GameStateStrip(
+                            open = statesOpen,
+                            canLoad = availability::canLoad,
+                            compatible = availability::compatible,
+                            onDialogVisibilityChanged = { stateDialogOpen = it },
+                            states = saveStates,
+                            coreStamp = session.coreStamp,
+                            title = ::stateTitle,
+                            screenshot = { model.screenshot(game, it) },
+                            onLoad = loadState,
+                            onDelete = { model.deleteState(game, it) },
+                            onRename = { entry, label ->
+                                scope.launch {
+                                    try { model.renameState(game, entry, label) }
+                                    catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                                    catch (_: Exception) { message = context.getString(R.string.game_message_save_failed) }
+                                }
+                            },
+                            enabled = !stateBusy,
+                            onClose = { gamePanels.closeStates() },
+                        )
+                        },
+                        onDown = {
+                            if (availability.manageStates && !statesOpen) {
+                                osd.interact()
+                                gamePanels.toggleStates()
+                                true
+                            } else false
+                        },
                         leftContent = {
                             if (!stateBusy && !netplay.synchronizing) PlayerIconButton(Icons.Filled.PlayArrow, stringResource(R.string.game_continue), resume,
                                 modifier = Modifier.focusRequester(playRequester), primary = true)
@@ -1396,25 +1487,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 osd = OsdButton.GAME_STATES)
                             if (availability.reset) PlayerIconButton(Icons.Filled.RestartAlt, stringResource(R.string.game_reset), {
                                 if (!stateBusy && !destroyed && !exiting && latestAvailability.reset) {
-                                    stateBusy = true
-                                    GameInputRouting.update(session, GameInputMode.BLOCKED)
-                                    scope.launch {
-                                        var reset = false
-                                        try {
-                                            withContext(Dispatchers.Default) {
-                                                retroView.reset()
-                                                retroView.clearRewindBuffer()
-                                            }
-                                            rewindHistory = GameRewindHistory()
-                                            model.clearAutoState(game)
-                                            reset = true
-                                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                                            throw cancelled
-                                        } catch (_: Exception) {
-                                            message = context.getString(R.string.game_reset_failed)
-                                        } finally { stateBusy = false }
-                                        if (reset) resume()
-                                    }
+                                    osd.interact()
+                                    resetConfirmOpen = true
                                 }
                             }, osd = OsdButton.GAME_RESET)
                             if (availability.fastForward) PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.game_fast_forward), {
@@ -1468,7 +1542,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 gamePanels.page,
                 onOutsideTap = closePanel,
             ) {
-                val options = if (open == GamePanel.CORE) coreOptionsSnapshot else emptyList()
+                // Renderer keys follow the graphics choice at every start; offering them would be overridden.
+                val rendererKeys = core.vulkanOptions.keys + core.glOptions.keys
+                val options = if (open == GamePanel.CORE) coreOptionsSnapshot.filterNot { it.key in rendererKeys } else emptyList()
                 val categorized = options.any { it.category != null }
                 fun categoryOf(item: GameCoreOption) = item.category?.key ?: OTHER_CATEGORY
                 val option = options.firstOrNull { it.key == optionKey }
@@ -1508,9 +1584,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         open == GamePanel.ACHIEVEMENTS -> stringResource(R.string.game_panel_achievements)
                         open == GamePanel.CHEATS -> stringResource(R.string.game_panel_cheats)
                         open == GamePanel.NETPLAY -> stringResource(R.string.game_panel_netplay)
+                        gamePanels.diagnosticsOpen -> stringResource(R.string.game_info_diagnostics)
                         else -> stringResource(R.string.game_panel_info)
                     },
                     subtitle = when {
+                        open == GamePanel.PICTURE && gamePictureScope -> stringResource(R.string.game_core_scope_game)
                         open == GamePanel.PICTURE -> stringResource(R.string.game_picture_scope, system.name)
                         open == GamePanel.CORE && option == null -> if (gameScope) {
                             stringResource(R.string.game_core_scope_game)
@@ -1572,9 +1650,13 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     selected = choice.value == option.value,
                                     onClick = {
                                         runCatching { retroView.updateVariables(Variable(option.key, choice.value)) }
+                                        // The value a row would otherwise inherit is stored as "no own value".
+                                        val inherited = if (gameScope) settings.coreOptions(core)[option.key] ?: option.default
+                                            else option.default
+                                        val stored = choice.value.takeIf { it != inherited }
                                         GameSettings.update {
-                                            if (gameScope) it.withGameCoreOption(core, game.saveKey, option.key, choice.value)
-                                            else it.withCoreOption(core, option.key, choice.value, gameKey = game.saveKey)
+                                            if (gameScope) it.withGameCoreOption(core, game.saveKey, option.key, stored)
+                                            else it.withCoreOption(core, option.key, stored, gameKey = game.saveKey)
                                         }
                                         optionsVersion++
                                         gamePanels.back()
@@ -1596,25 +1678,34 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                                 verified, toneMap, session.vulkan,
                                             )
                                             GameSettings.update {
-                                                it.withPackShader(system, game.saveKey.takeIf { gameShaderScope }, preset.selection)
+                                                it.withPackShader(system, game.saveKey.takeIf { gamePictureScope }, preset.selection)
                                             }
+                                            // A single choice on a sub-page returns, like core option values.
+                                            gamePanels.back()
                                         }
                                     },
                                 )
                             }
                         }
                         open == GamePanel.PICTURE && shaderGroup != null -> {
-                            GameShader.entries.filter { it.group == shaderGroup }.forEach { choice ->
+                            val recommended = GamePictureDefaults.recommended(system)
+                            GameShader.entries.filter { it.group == shaderGroup && (it == shader || GamePictureDefaults.offers(system, it)) }
+                                .sortedBy { it !in recommended }
+                                .forEach { choice ->
                                 GamePanelChoice(
                                     text = stringResource(choice.titleRes),
-                                    subtitle = stringResource(choice.hintRes),
+                                    subtitle = listOfNotNull(
+                                        stringResource(R.string.game_shader_recommended).takeIf { choice in recommended },
+                                        stringResource(choice.hintRes),
+                                    ).joinToString(" · "),
                                     selected = selectedPack == null && choice == shader,
                                     onClick = {
-                                        retroView.shader = GameHdrToneMapShader.forGame(choice, toneMap, session.vulkan, shaderIntensity)
+                                        retroView.shader = GameHdrToneMapShader.forGame(choice, toneMap, session.vulkan, shaderIntensity, effect)
                                         GameSettings.update {
-                                            if (gameShaderScope) it.withGameShader(game.saveKey, choice)
+                                            if (gamePictureScope) it.withGameShader(game.saveKey, choice)
                                             else it.withShader(system, choice)
                                         }
+                                        gamePanels.back()
                                     },
                                 )
                             }
@@ -1629,84 +1720,142 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             if (selectedPack != null && selectedPackConfig == null) {
                                 GamePanelText(stringResource(R.string.games_shader_packs_missing))
                             }
-                            GamePanelText(stringResource(R.string.game_picture_filter))
+                            /** Shows what [state] chooses for this game, after the scope changed. */
+                            fun applyPicture(state: GameSettingsState) {
+                                val pack = state.packShader(system, game.saveKey)
+                                val chosen = state.shader(system, game.saveKey)
+                                val packConfig = model.shaderPacks.config(pack)
+                                retroView.shader = GameHdrToneMapShader.forConfig(
+                                    packConfig ?: chosen.config(state.shaderStrength(system, game.saveKey)),
+                                    toneMap, session.vulkan, pixel = pack == null && chosen == GameShader.PIXEL,
+                                    effect = state.effect(system, game.saveKey).takeIf { packConfig == null },
+                                )
+                                retroView.aspectRatioOverride = state.aspect(system, game.saveKey).ratio ?: -1f
+                                val scaling = state.integerScaling(system, game.saveKey)
+                                retroView.integerScalingAuto = scaling == GameIntegerScaling.AUTO
+                                retroView.integerScaling = scaling.enabled
+                            }
+                            // One scope for filter, strength, shape and scaling, like the core options.
                             GamePanelChoice(
                                 text = stringResource(R.string.game_shader_scope_game),
-                                subtitle = stringResource(R.string.game_shader_scope_system),
-                                selected = gameShaderScope,
+                                subtitle = if (gamePictureScope) stringResource(R.string.game_picture_scope_game_hint)
+                                    else stringResource(R.string.game_picture_scope, system.name),
+                                selected = gamePictureScope,
                                 onClick = {
-                                    if (gameShaderScope) {
-                                        val systemShader = settings.shader(system)
-                                        val systemStrength = settings.shaderStrength(system)
-                                        val systemPack = settings.packShader(system)
-                                        GameSettings.update {
-                                            it.withGameShader(game.saveKey, null)
-                                                .withShaderStrength(system, game.saveKey, 1f)
-                                        }
-                                        retroView.shader = GameHdrToneMapShader.forConfig(
-                                            model.shaderPacks.config(systemPack) ?: systemShader.config(systemStrength),
-                                            toneMap, session.vulkan, pixel = systemPack == null && systemShader == GameShader.PIXEL,
-                                        )
+                                    if (gamePictureScope) {
+                                        GameSettings.update { it.withoutGamePicture(game.saveKey) }
+                                        applyPicture(GameSettings.state)
                                     } else {
-                                        GameSettings.update {
-                                            if (selectedPack != null) it.withPackShader(system, game.saveKey, selectedPack)
-                                            else it.withGameShader(game.saveKey, shader)
-                                        }
+                                        GameSettings.update { it.withGamePicture(system, game.saveKey) }
                                     }
                                 },
                             )
+                            GamePanelHeading(stringResource(R.string.game_picture_filter))
                             if (installedShaders.isNotEmpty()) GamePanelChoice(
                                 text = stringResource(R.string.games_shader_packs_title),
                                 subtitle = installedShaders.firstOrNull { it.selection == selectedPack }?.title,
                                 selected = selectedPack != null,
+                                trailingIcon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                 onClick = gamePanels::openShaderPacks,
                             )
-                            GameShaderGroup.entries.forEach { group ->
+                            val recommended = GamePictureDefaults.recommended(system)
+                            // Groups without a filter for this screen (handheld filters on a console) stay hidden.
+                            GameShaderGroup.entries.filter { group ->
+                                shader.group == group || GameShader.entries.any { it.group == group && GamePictureDefaults.offers(system, it) }
+                            }.sortedBy { group -> recommended.none { it.group == group } }.forEach { group ->
                                 GamePanelChoice(
                                     text = stringResource(group.titleRes),
                                     subtitle = GameShader.entries.firstOrNull { it == shader && it.group == group }
                                         ?.let { stringResource(it.titleRes) },
                                     selected = selectedPack == null && shader.group == group,
+                                    trailingIcon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                     onClick = { gamePanels.openShaderGroup(group) },
                                 )
                             }
-                            if (selectedPack == null && GameRetroShaders.isCustom(shader)) GamePanelChoice(
-                                text = stringResource(R.string.game_shader_strength),
-                                subtitle = stringResource(R.string.game_shader_strength_value, (shaderIntensity * 100).toInt()),
-                                selected = false,
-                                onClick = {
-                                    val levels = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f)
-                                    val index = levels.indexOfFirst { kotlin.math.abs(it - shaderIntensity) < 0.01f }
-                                    val next = levels[(index + 1).coerceAtLeast(0) % levels.size]
-                                    retroView.shader = GameHdrToneMapShader.forGame(shader, toneMap, session.vulkan, next)
-                                    GameSettings.update {
-                                        it.withShaderStrength(system, game.saveKey.takeIf { gameShaderScope }, next)
-                                    }
-                                },
-                            )
-                            GamePanelText(stringResource(R.string.game_picture_shape))
+                            if (selectedPack == null && GameRetroShaders.isCustom(shader)) {
+                                val percent = (shaderIntensity * 100).roundToInt()
+                                com.ambient.tv.ui.common.PlayerValueSlider(
+                                    label = stringResource(R.string.game_shader_strength),
+                                    value = percent,
+                                    valueRange = 50..150,
+                                    step = 25,
+                                    valueLabel = stringResource(R.string.game_shader_strength_value, percent),
+                                    onValueChange = { value ->
+                                        val next = value / 100f
+                                        retroView.shader = GameHdrToneMapShader.forGame(shader, toneMap, session.vulkan, next, effect)
+                                        GameSettings.update {
+                                            it.withShaderStrength(system, game.saveKey.takeIf { gamePictureScope }, next)
+                                        }
+                                    },
+                                )
+                            }
+                            // Second stage: an effect on the original frame in front of the filter.
+                            if (selectedPack == null && !(session.vulkan && toneMap != GameHdrToneMap.OFF)) {
+                                val noEffect = stringResource(R.string.game_picture_effect_none)
+                                val effectOptions = listOf("" to noEffect) +
+                                    GamePictureDefaults.effects.map { it.key to stringResource(it.titleRes) }
+                                com.ambient.tv.ui.common.PlayerDropUpSelector(
+                                    label = stringResource(R.string.game_picture_effect),
+                                    value = effect?.let { stringResource(it.titleRes) } ?: noEffect,
+                                    options = effectOptions,
+                                    selectedKey = effect?.key.orEmpty(),
+                                    // The same look twice adds nothing.
+                                    disabledKeys = setOfNotNull(shader.key.takeIf { shader in GamePictureDefaults.effects }),
+                                    dropUp = false,
+                                    onSelected = { key ->
+                                        val chosen = GameShader.fromKey(key)?.takeIf { it in GamePictureDefaults.effects }
+                                        retroView.shader = GameHdrToneMapShader.forGame(shader, toneMap, session.vulkan, shaderIntensity, chosen)
+                                        GameSettings.update {
+                                            if (gamePictureScope) it.withGameEffect(game.saveKey, chosen)
+                                            else it.withEffect(system, chosen)
+                                        }
+                                    },
+                                )
+                                GamePanelText(stringResource(R.string.game_picture_effect_hint))
+                            }
+                            GamePanelHeading(stringResource(R.string.game_picture_shape))
                             GameAspect.entries.forEach { choice ->
                                 GamePanelChoice(
                                     text = stringResource(choice.titleRes),
                                     selected = choice == aspect,
                                     onClick = {
                                         retroView.aspectRatioOverride = choice.ratio ?: -1f
-                                        GameSettings.update { it.withAspect(system, choice) }
+                                        GameSettings.update {
+                                            if (gamePictureScope) it.withGameAspect(game.saveKey, choice)
+                                            else it.withAspect(system, choice)
+                                        }
                                     },
                                 )
                             }
-                            GamePanelChoice(
-                                text = stringResource(R.string.game_picture_integer),
-                                subtitle = stringResource(R.string.game_picture_integer_hint),
-                                selected = integerScaling,
-                                onClick = {
-                                    retroView.integerScaling = !integerScaling
-                                    GameSettings.update { it.withIntegerScaling(system, !integerScaling) }
+                            // Off / On / Auto: a value choice like the other picture values, not a toggle row.
+                            val scalingOptions = GameIntegerScaling.entries.map { it.key to stringResource(it.titleRes) }
+                            com.ambient.tv.ui.common.PlayerDropUpSelector(
+                                label = stringResource(R.string.game_picture_integer),
+                                value = stringResource(integerScaling.titleRes),
+                                options = scalingOptions,
+                                selectedKey = integerScaling.key,
+                                dropUp = false,
+                                onSelected = { key ->
+                                    val chosen = GameIntegerScaling.fromKey(key) ?: return@PlayerDropUpSelector
+                                    retroView.integerScalingAuto = chosen == GameIntegerScaling.AUTO
+                                    retroView.integerScaling = chosen.enabled
+                                    GameSettings.update {
+                                        if (gamePictureScope) it.withGameIntegerScaling(game.saveKey, chosen)
+                                        else it.withIntegerScaling(system, chosen)
+                                    }
                                 },
                             )
-                            if (session.vulkan && core.hardware && core.supportsVulkan && !netplay.busy && !exiting) {
-                                GamePanelText(stringResource(R.string.game_picture_hdr))
-                                GameHdrToneMap.entries.forEach { choice ->
+                            GamePanelText(stringResource(when (integerScaling) {
+                                GameIntegerScaling.AUTO -> R.string.game_picture_integer_auto_hint
+                                else -> R.string.game_picture_integer_hint
+                            }))
+                            // HDR is offered only where a core is known to output it (or to switch it off again).
+                            val hdrOption = GameVulkanHdrSourceEvidence.hdrOption(core.id)
+                            if (session.vulkan && core.hardware && core.supportsVulkan && !netplay.busy && !exiting &&
+                                (hdrOption != null || toneMap != GameHdrToneMap.OFF)) {
+                                GamePanelHeading(stringResource(R.string.game_picture_hdr))
+                                if (hdrOption != null) GamePanelText(stringResource(R.string.game_picture_hdr_steps))
+                                GameHdrToneMap.entries.filter { it != GameHdrToneMap.HLG || toneMap == GameHdrToneMap.HLG }.forEach { choice ->
                                     GamePanelChoice(
                                         text = stringResource(choice.titleRes),
                                         subtitle = if (choice == GameHdrToneMap.OFF) null
@@ -1715,7 +1864,17 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                         enabled = !netplay.busy && !exiting,
                                         onClick = {
                                             if (choice != toneMap && !exiting && !netplay.busy) {
-                                                GameSettings.update { it.withHdrToneMap(core, choice) }
+                                                GameSettings.update { state ->
+                                                    val mode = state.withHdrToneMap(core, choice)
+                                                    when {
+                                                        hdrOption == null -> mode
+                                                        // The core's own HDR output follows the picture choice.
+                                                        choice == GameHdrToneMap.PQ -> mode.withCoreOption(core, hdrOption.first, hdrOption.second)
+                                                        state.coreOptions(core)[hdrOption.first] == hdrOption.second ->
+                                                            mode.withCoreOption(core, hdrOption.first, null)
+                                                        else -> mode
+                                                    }
+                                                }
                                                 // EGL/AHB precision is negotiated at core start, not on a
                                                 // live shader toggle; restart to choose FP16 or release it.
                                                 exiting = true
@@ -1726,8 +1885,47 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     )
                                 }
                             }
+                            // SDR as HDR10: for every game on an HDR TV, while no HDR source is being converted.
+                            if ((displayHdr.hdr10 || settings.sdrToHdr) && toneMap == GameHdrToneMap.OFF) {
+                                GamePanelHeading(stringResource(R.string.game_picture_sdr_to_hdr))
+                                GamePanelChoice(
+                                    text = stringResource(R.string.game_picture_sdr_to_hdr_switch),
+                                    subtitle = stringResource(R.string.game_picture_sdr_to_hdr_hint),
+                                    selected = settings.sdrToHdr,
+                                    enabled = !netplay.busy && !exiting,
+                                    onClick = {
+                                        GameSettings.update { it.withSdrToHdr(!settings.sdrToHdr) }
+                                        // The EGL config and window surface are chosen at start.
+                                        exiting = true
+                                        destroy()
+                                        model.restart()
+                                    },
+                                )
+                                if (settings.sdrToHdr) {
+                                    val white = settings.sdrReferenceWhite
+                                    com.ambient.tv.ui.common.PlayerDropUpSelector(
+                                        label = stringResource(R.string.sdr_reference_white),
+                                        value = sdrReferenceWhiteChoices().firstOrNull { it.first == sdrReferenceWhiteChoiceKey(white) }?.second.orEmpty(),
+                                        options = sdrReferenceWhiteChoices(),
+                                        selectedKey = sdrReferenceWhiteChoiceKey(white),
+                                        dropUp = false,
+                                        onSelected = { key ->
+                                            val next = sdrReferenceWhiteForChoice(key, white)
+                                            GameSettings.update { it.withSdrReferenceWhite(next) }
+                                            retroView.sdrToHdrReferenceWhiteNits = gameSdrWhiteNits(next, displayHdr)
+                                        },
+                                    )
+                                    SdrReferenceWhiteCustomSlider(white) { next ->
+                                        GameSettings.update { it.withSdrReferenceWhite(next) }
+                                        retroView.sdrToHdrReferenceWhiteNits = gameSdrWhiteNits(next, displayHdr)
+                                    }
+                                    if (sdrToHdrSession && !retroView.sdrToHdrActive) {
+                                        GamePanelText(stringResource(R.string.game_picture_sdr_to_hdr_unavailable))
+                                    }
+                                }
+                            }
                             if (core.hardware && core.supportsVulkan && !core.requiresVulkan && !netplay.busy && !exiting) {
-                                GamePanelText(stringResource(R.string.game_picture_graphics))
+                                GamePanelHeading(stringResource(R.string.game_picture_graphics))
                                 listOf(false, true).forEach { vulkan ->
                                     GamePanelChoice(
                                         text = stringResource(if (vulkan) R.string.game_picture_graphics_vulkan else R.string.game_picture_graphics_gles),
@@ -1747,13 +1945,47 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             }
                         }
                         open == GamePanel.CORE -> {
+                            if (category == null && system.alternatives.isNotEmpty()) {
+                                // Which core plays this game; switching saves and starts it again.
+                                GamePanelHeading(stringResource(R.string.game_info_core_choice))
+                                val own = settings.ownGameCore(system, game.saveKey)
+                                system.cores.forEach { choice ->
+                                    GamePanelChoice(
+                                        text = choice.name,
+                                        subtitle = listOfNotNull(
+                                            choice.license,
+                                            stringResource(R.string.game_info_core_system_default).takeIf {
+                                                choice.id == settings.systemCore(system).id
+                                            },
+                                            stringResource(R.string.game_info_core_needs_bios).takeIf { choice.needsBios },
+                                        ).joinToString(" · "),
+                                        selected = choice.id == core.id,
+                                        enabled = !netplay.busy,
+                                        focusKey = "game-core-choice:${choice.id}",
+                                        onClick = {
+                                            if (choice.id != core.id || own != null) {
+                                                GameSettings.update {
+                                                    it.withGameCore(system, game.saveKey, choice.takeIf { c -> c.id != it.systemCore(system).id })
+                                                }
+                                                if (choice.id != core.id && !exiting) {
+                                                    // Saves, ends this core and starts the game with the other one.
+                                                    exiting = true
+                                                    destroy()
+                                                    model.restart()
+                                                }
+                                            }
+                                        },
+                                    )
+                                }
+                                GamePanelHeading(stringResource(R.string.game_core_options_heading))
+                            }
                             if (options.isEmpty()) GamePanelText(stringResource(R.string.game_core_no_options))
                             if (category == null) {
                                 if (options.isNotEmpty()) GamePanelChoice(
-                                    text = stringResource(R.string.game_core_scope),
+                                    text = stringResource(R.string.game_shader_scope_game),
                                     subtitle = if (gameScope) stringResource(R.string.game_core_scope_game)
                                     else stringResource(R.string.game_core_scope_core, core.name),
-                                    selected = false,
+                                    selected = gameScope,
                                     onClick = { gameScope = !gameScope },
                                 )
                                 if (categorized) {
@@ -1809,6 +2041,12 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                         applyOptions((forAll.keys - gameOwn.keys).associateWith { null })
                                     },
                                 )
+                                GamePanelChoice(
+                                    text = stringResource(R.string.game_core_remove),
+                                    subtitle = stringResource(R.string.game_core_remove_hint),
+                                    selected = false,
+                                    onClick = { removeCoreConfirmOpen = true },
+                                )
                             }
                         }
                         open == GamePanel.DISC -> (0 until discCount).forEach { index ->
@@ -1816,36 +2054,37 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 text = stringResource(R.string.game_disc, index + 1),
                                 selected = index == currentDisc,
                                 onClick = {
+                                    // A list on a panel's own page stays open, like picture shapes.
                                     if (runCatching { retroView.changeDisk(index) }.isSuccess) {
                                         currentDisc = index
                                         message = context.getString(R.string.game_disc, index + 1)
                                     }
-                                    closePanel()
                                 },
                             )
                         }
                         open == GamePanel.CONTROLS -> {
-                            GamePanelText(stringResource(R.string.game_touch_layout))
-                            GamePanelChoice(
-                                text = stringResource(R.string.game_touch_controls),
-                                subtitle = stringResource(R.string.game_touch_controls_hint),
-                                selected = touchControls,
-                                onClick = { GameSettings.update { it.withTouchControls(system, !touchControls) } },
-                            )
-                            GameTouchMode.entries.forEach { choice ->
+                            // Direct touch controls only exist on a phone or tablet; a TV starts with players.
+                            if (handheld) {
+                                GamePanelHeading(stringResource(R.string.game_touch_layout))
                                 GamePanelChoice(
-                                    text = stringResource(choice.titleRes),
-                                    selected = choice == touchMode,
-                                    enabled = touchControls,
-                                    onClick = { GameSettings.update { it.withTouchMode(system, choice) } },
+                                    text = stringResource(R.string.game_touch_controls),
+                                    subtitle = stringResource(R.string.game_touch_controls_hint),
+                                    selected = touchControls,
+                                    onClick = { GameSettings.update { it.withTouchControls(system, !touchControls) } },
                                 )
+                                GameTouchMode.entries.forEach { choice ->
+                                    GamePanelChoice(
+                                        text = stringResource(choice.titleRes),
+                                        selected = choice == touchMode,
+                                        enabled = touchControls,
+                                        onClick = { GameSettings.update { it.withTouchMode(system, choice) } },
+                                    )
+                                }
+                                GameTouchOptions(system.id)
                             }
-                            GameTouchOptions(system.id)
+                            // The panel is already called "Players"; the heading only separates it from touch.
+                            if (handheld) GamePanelHeading(stringResource(R.string.game_panel_controls))
                             GameControlsPanel()
-                            coreInputActions.forEachIndexed { port, actions ->
-                                GameCoreInputActions(actions, touchPresentation,
-                                    stringResource(R.string.game_core_input_actions_player, port + 1))
-                            }
                             GameDeviceTypesPanel(
                                 controllers = remember(open) { runCatching { retroView.getControllers() }.getOrDefault(emptyArray()) },
                                 current = { port -> settings.controllerType(core, port) },
@@ -1855,6 +2094,15 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     GameSettings.update { it.withControllerType(core, port, type) }
                                 },
                             )
+                            coreInputActions.forEachIndexed { port, actions ->
+                                GameCoreInputActions(actions, touchPresentation,
+                                    stringResource(R.string.game_core_input_actions_player, port + 1))
+                            }
+                            if (!handheld) {
+                                // On a TV these shape the touch pad of the companion phone.
+                                GamePanelHeading(stringResource(R.string.game_touch_companion))
+                                GameTouchOptions(system.id)
+                            }
                         }
                         open == GamePanel.ACHIEVEMENTS -> GameAchievementsPanel(achievements)
                         open == GamePanel.CHEATS -> GameCheatsPanel(
@@ -1893,135 +2141,102 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 (if (session.vulkan) core.vulkanOptions else core.glOptions),
                             session.systemDirectory,
                         )
-                        else -> {
-                            GamePanelText(stringResource(R.string.game_info_system, system.name))
-                            GamePanelText(stringResource(R.string.game_info_core, core.name, core.license))
-                            if (core.hardware && core.supportsVulkan) {
-                                GamePanelText(stringResource(R.string.game_info_hdr_display_capabilities, displayHdr.supportedTypesLabel()))
-                                if (session.vulkan) {
-                                    GamePanelText(stringResource(R.string.game_info_vulkan_surface_pairs, vulkanSurfaceFormats.candidateTypesLabel()))
-                                    GamePanelText(stringResource(R.string.game_info_vulkan_core_source_format, vulkanCoreSourceFormat.label))
-                                    GamePanelText(stringResource(when {
-                                        coreHdrHandshake.hdr10Accepted -> R.string.game_info_hdr_core_accepts_pq
-                                        coreHdrHandshake.hdr10Requested -> R.string.game_info_hdr_core_rejects_pq
-                                        coreHdrHandshake.scrgbRequested -> R.string.game_info_hdr_core_rejects_scrgb
-                                        else -> R.string.game_info_hdr_core_not_negotiated
-                                    }))
-                                    if (nativeTransfer != GameVulkanTransferMode.SDR) {
-                                        GamePanelText(stringResource(if (nativeSourceContract.supports(nativeTransfer))
-                                            R.string.game_info_vulkan_hdr_core_declared
-                                        else R.string.game_info_vulkan_hdr_source_unverified))
-                                        GamePanelText(stringResource(R.string.game_info_vulkan_hdr_mastering_unknown))
-                                    } else {
-                                        GamePanelText(stringResource(R.string.game_info_vulkan_source_transfer_unknown))
-                                    }
-                                    val transferSupported = nativeSourceContract.supports(nativeTransfer) &&
-                                        GameVulkanTransferGate.supported(
-                                            nativeTransfer, displayHdr, vulkanSurfaceFormats,
-                                        )
-                                    if (transferSupported) {
-                                        val nativePhase = when (nativeSdrStatus.phase) {
-                                            GameVulkanSdrStatus.Phase.OFF -> R.string.game_info_native_sdr_off
-                                            GameVulkanSdrStatus.Phase.REQUESTED -> R.string.game_info_native_sdr_requested
-                                            GameVulkanSdrStatus.Phase.SWAPCHAIN -> R.string.game_info_native_sdr_swapchain
-                                            GameVulkanSdrStatus.Phase.PRESENTING -> R.string.game_info_native_sdr_presenting
-                                            GameVulkanSdrStatus.Phase.GLES_FALLBACK -> R.string.game_info_native_sdr_fallback
-                                        }
-                                        GamePanelText(stringResource(nativePhase))
-                                        GamePanelChoice(
-                                            text = stringResource(if (nativeTransfer == GameVulkanTransferMode.SDR)
-                                                R.string.game_info_native_sdr_test else R.string.game_info_native_hdr_test),
-                                            subtitle = stringResource(if (nativeTransfer == GameVulkanTransferMode.SDR)
-                                                R.string.game_info_native_sdr_test_hint else R.string.game_info_native_hdr_test_hint),
-                                            selected = nativeSdrDiagnostic,
-                                            enabled = !netplay.busy && !exiting,
-                                            onClick = {
-                                                nativeSdrDiagnostic = !nativeSdrDiagnostic
-                                                if (!nativeSdrDiagnostic) nativeSdrFullscreenRequested = false
-                                            },
-                                        )
-                                        val fullscreenAvailable = nativePictureSupported &&
-                                            (nativeSlangPath == null || nativeSdrStatus.shaderPresenting) &&
-                                            GameVulkanFullscreenPolicy.canEnable(
-                                                session.vulkan, toneMap, nativeSdrDiagnostic,
-                                                nativeSdrStatus, netplay.busy, displayHdr, vulkanSurfaceFormats,
-                                            )
-                                        if (nativeSlangPath != null) {
-                                            GamePanelText(stringResource(if (nativeSdrStatus.shaderPresenting)
-                                                R.string.games_vulkan_shader_presenting else R.string.games_vulkan_shader_pending))
-                                        }
-                                        if (!nativePictureSupported) {
-                                            GamePanelText(stringResource(R.string.game_info_native_picture_requires_gles))
-                                        }
-                                        GamePanelChoice(
-                                            text = stringResource(if (nativeTransfer == GameVulkanTransferMode.SDR)
-                                                R.string.game_info_native_sdr_fullscreen else R.string.game_info_native_hdr_fullscreen),
-                                            subtitle = stringResource(if (nativeTransfer == GameVulkanTransferMode.SDR)
-                                                R.string.game_info_native_sdr_fullscreen_hint else R.string.game_info_native_hdr_fullscreen_hint),
-                                            selected = nativeSdrFullscreenRequested,
-                                            enabled = !exiting && (nativeSdrFullscreenRequested || fullscreenAvailable),
-                                            onClick = {
-                                                nativeSdrFullscreenRequested = !nativeSdrFullscreenRequested
-                                            },
-                                        )
-                                    } else if (nativeTransfer != GameVulkanTransferMode.SDR) {
-                                        GamePanelText(stringResource(R.string.game_info_native_hdr_unavailable))
-                                    }
-                                }
-                                if (nativeSdrFullscreenRequested &&
-                                    nativeTransfer != GameVulkanTransferMode.SDR &&
-                                    GameVulkanTransferGate.frameConfirmed(nativeTransfer, nativeSdrStatus)) {
-                                    GamePanelText(stringResource(R.string.game_info_hdr_wsi_unverified))
+                        gamePanels.diagnosticsOpen -> {
+                            GamePanelInfo(stringResource(R.string.game_info_hdr_display_capabilities, displayHdr.supportedTypesLabel()))
+                            if (session.vulkan) {
+                                GamePanelInfo(stringResource(R.string.game_info_vulkan_surface_pairs, vulkanSurfaceFormats.candidateTypesLabel()))
+                                GamePanelInfo(stringResource(R.string.game_info_vulkan_core_source_format, vulkanCoreSourceFormat.label))
+                                GamePanelInfo(stringResource(when {
+                                    coreHdrHandshake.hdr10Accepted -> R.string.game_info_hdr_core_accepts_pq
+                                    coreHdrHandshake.hdr10Requested -> R.string.game_info_hdr_core_rejects_pq
+                                    coreHdrHandshake.scrgbRequested -> R.string.game_info_hdr_core_rejects_scrgb
+                                    else -> R.string.game_info_hdr_core_not_negotiated
+                                }))
+                                if (nativeTransfer != GameVulkanTransferMode.SDR) {
+                                    GamePanelInfo(stringResource(if (nativeSourceContract.supports(nativeTransfer))
+                                        R.string.game_info_vulkan_hdr_core_declared
+                                    else R.string.game_info_vulkan_hdr_source_unverified))
+                                    GamePanelInfo(stringResource(R.string.game_info_vulkan_hdr_mastering_unknown))
                                 } else {
-                                    GamePanelText(stringResource(R.string.game_info_hdr_output_inactive))
+                                    GamePanelInfo(stringResource(R.string.game_info_vulkan_source_transfer_unknown))
                                 }
-                            }
-                            if (system.alternatives.isNotEmpty()) {
-                                GamePanelText(stringResource(R.string.game_info_core_choice))
-                                val own = settings.ownGameCore(system, game.saveKey)
-                                system.cores.forEach { choice ->
+                                val transferSupported = nativeSourceContract.supports(nativeTransfer) &&
+                                    GameVulkanTransferGate.supported(
+                                        nativeTransfer, displayHdr, vulkanSurfaceFormats,
+                                    )
+                                if (transferSupported) {
+                                    val nativePhase = when (nativeSdrStatus.phase) {
+                                        GameVulkanSdrStatus.Phase.OFF -> R.string.game_info_native_sdr_off
+                                        GameVulkanSdrStatus.Phase.REQUESTED -> R.string.game_info_native_sdr_requested
+                                        GameVulkanSdrStatus.Phase.SWAPCHAIN -> R.string.game_info_native_sdr_swapchain
+                                        GameVulkanSdrStatus.Phase.PRESENTING -> R.string.game_info_native_sdr_presenting
+                                        GameVulkanSdrStatus.Phase.GLES_FALLBACK -> R.string.game_info_native_sdr_fallback
+                                    }
+                                    GamePanelInfo(stringResource(nativePhase))
                                     GamePanelChoice(
-                                        text = choice.name,
-                                        subtitle = listOfNotNull(
-                                            choice.license,
-                                            stringResource(R.string.game_info_core_system_default).takeIf {
-                                                choice.id == settings.systemCore(system).id
-                                            },
-                                            stringResource(R.string.game_info_core_needs_bios).takeIf { choice.needsBios },
-                                        ).joinToString(" · "),
-                                        selected = choice.id == core.id,
-                                        enabled = !netplay.busy,
+                                        text = stringResource(if (nativeTransfer == GameVulkanTransferMode.SDR)
+                                            R.string.game_info_native_sdr_test else R.string.game_info_native_hdr_test),
+                                        subtitle = stringResource(if (nativeTransfer == GameVulkanTransferMode.SDR)
+                                            R.string.game_info_native_sdr_test_hint else R.string.game_info_native_hdr_test_hint),
+                                        selected = nativeSdrDiagnostic,
+                                        enabled = !netplay.busy && !exiting,
                                         onClick = {
-                                            if (choice.id != core.id || own != null) {
-                                                GameSettings.update {
-                                                    it.withGameCore(system, game.saveKey, choice.takeIf { c -> c.id != it.systemCore(system).id })
-                                                }
-                                                if (choice.id != core.id && !exiting) {
-                                                    // Saves, ends this core and starts the game with the other one.
-                                                    exiting = true
-                                                    destroy()
-                                                    model.restart()
-                                                }
-                                            }
+                                            nativeSdrDiagnostic = !nativeSdrDiagnostic
+                                            if (!nativeSdrDiagnostic) nativeSdrFullscreenRequested = false
                                         },
                                     )
+                                    val fullscreenAvailable = nativePictureSupported &&
+                                        (nativeSlangPath == null || nativeSdrStatus.shaderPresenting) &&
+                                        GameVulkanFullscreenPolicy.canEnable(
+                                            session.vulkan, toneMap, nativeSdrDiagnostic,
+                                            nativeSdrStatus, netplay.busy, displayHdr, vulkanSurfaceFormats,
+                                        )
+                                    if (nativeSlangPath != null) {
+                                        GamePanelInfo(stringResource(if (nativeSdrStatus.shaderPresenting)
+                                            R.string.games_vulkan_shader_presenting else R.string.games_vulkan_shader_pending))
+                                    }
+                                    if (!nativePictureSupported) {
+                                        GamePanelInfo(stringResource(R.string.game_info_native_picture_requires_gles))
+                                    }
+                                    GamePanelChoice(
+                                        text = stringResource(if (nativeTransfer == GameVulkanTransferMode.SDR)
+                                            R.string.game_info_native_sdr_fullscreen else R.string.game_info_native_hdr_fullscreen),
+                                        subtitle = stringResource(if (nativeTransfer == GameVulkanTransferMode.SDR)
+                                            R.string.game_info_native_sdr_fullscreen_hint else R.string.game_info_native_hdr_fullscreen_hint),
+                                        selected = nativeSdrFullscreenRequested,
+                                        enabled = !exiting && (nativeSdrFullscreenRequested || fullscreenAvailable),
+                                        onClick = {
+                                            nativeSdrFullscreenRequested = !nativeSdrFullscreenRequested
+                                        },
+                                    )
+                                } else if (nativeTransfer != GameVulkanTransferMode.SDR) {
+                                    GamePanelInfo(stringResource(R.string.game_info_native_hdr_unavailable))
                                 }
                             }
-                            GamePanelText(stringResource(R.string.game_info_file, game.file.name, game.sourceName))
+                            if (nativeSdrFullscreenRequested &&
+                                nativeTransfer != GameVulkanTransferMode.SDR &&
+                                GameVulkanTransferGate.frameConfirmed(nativeTransfer, nativeSdrStatus)) {
+                                GamePanelInfo(stringResource(R.string.game_info_hdr_wsi_unverified))
+                            } else {
+                                GamePanelInfo(stringResource(R.string.game_info_hdr_output_inactive))
+                            }
+                        }
+                        else -> {
+                            GamePanelInfo(stringResource(R.string.game_info_system, system.name))
+                            GamePanelInfo(stringResource(R.string.game_info_core, core.name, core.license))
+                            GamePanelInfo(stringResource(R.string.game_info_file, game.file.name, game.sourceName))
                             val bios = remember { model.biosStatus(game) }
                             bios.forEach { status ->
-                                GamePanelText(stringResource(R.string.game_info_bios, status.bios.file, stringResource(status.state.titleRes())))
+                                GamePanelInfo(stringResource(R.string.game_info_bios, status.bios.file, stringResource(status.state.titleRes())))
                             }
-                            GamePanelText(stringResource(R.string.game_info_core_source))
-                            GamePanelChoice(
-                                text = stringResource(R.string.game_core_remove),
-                                subtitle = stringResource(R.string.game_core_remove_hint),
+                            GamePanelInfo(stringResource(R.string.game_info_core_source))
+                            // Renderer and HDR details are opt-in, like the video "Stats for nerds".
+                            if (core.hardware && core.supportsVulkan) GamePanelChoice(
+                                text = stringResource(R.string.game_info_diagnostics),
+                                subtitle = stringResource(R.string.game_info_diagnostics_hint),
                                 selected = false,
-                                onClick = {
-                                    model.removeCore(core)
-                                    message = context.getString(R.string.game_message_core_removed)
-                                    closePanel()
-                                },
+                                trailingIcon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                onClick = gamePanels::openDiagnostics,
                             )
                         }
                     }
@@ -2037,32 +2252,47 @@ internal fun GameBiosState.titleRes(): Int = when (this) {
     GameBiosState.MISSING -> R.string.game_bios_missing
 }
 
+/** Supporting text in a game panel: the shared hint, without a D-pad stop of its own. */
 @Composable
 internal fun GamePanelText(text: String) {
-    Text(text, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium,
-        modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
+    com.ambient.tv.ui.common.SettingsHint(text)
 }
 
-/** Who plays as which player; choosing a device steps through automatic, players 1–4 and off. */
+/** A section heading, as the video panels use it. */
+@Composable
+internal fun GamePanelHeading(text: String) {
+    com.ambient.tv.ui.common.RightPanelSectionTitle(text)
+}
+
+/** A read-only line the D-pad can land on, so long information panels scroll. */
+@Composable
+internal fun GamePanelInfo(text: String) {
+    com.ambient.tv.ui.common.RightPanelInfoRow(text)
+}
+
+/** Who plays as which player: each device opens the shared select (automatic, players 1–4, off). */
 @Composable
 private fun GameControlsPanel() {
     val devices = rememberPlayableDevices()
     val config = RetroInputSettings.config
     GamePanelText(stringResource(R.string.game_controls_panel_hint))
+    val choices = (listOf(RetroPorts.AUTO) + (0 until RetroPorts.COUNT) + RetroPorts.OFF).map { port ->
+        port.toString() to when (port) {
+            RetroPorts.AUTO -> stringResource(R.string.game_controls_port_auto)
+            RetroPorts.OFF -> stringResource(R.string.game_controls_port_off)
+            else -> stringResource(R.string.game_controls_port_player, port + 1)
+        }
+    }
     devices.forEach { device -> key(device.descriptor) {
         val current = config.ports[device.descriptor] ?: RetroPorts.AUTO
-        val sequence = listOf(RetroPorts.AUTO) + (0 until RetroPorts.COUNT) + RetroPorts.OFF
-        GamePanelChoice(
-            text = device.name.ifBlank { stringResource(device.kind.titleRes) },
-            subtitle = when (current) {
-                RetroPorts.AUTO -> stringResource(R.string.game_controls_port_auto)
-                RetroPorts.OFF -> stringResource(R.string.game_controls_port_off)
-                else -> stringResource(R.string.game_controls_port_player, current + 1)
-            },
-            selected = false,
-            onClick = {
-                val next = sequence[(sequence.indexOf(current) + 1) % sequence.size]
-                RetroInputSettings.update { it.withPort(device.descriptor, next) }
+        com.ambient.tv.ui.common.PlayerDropUpSelector(
+            label = device.name.ifBlank { stringResource(device.kind.titleRes) },
+            value = choices.firstOrNull { it.first == current.toString() }?.second.orEmpty(),
+            options = choices,
+            selectedKey = current.toString(),
+            dropUp = false,
+            onSelected = { chosen ->
+                chosen.toIntOrNull()?.let { port -> RetroInputSettings.update { it.withPort(device.descriptor, port) } }
             },
         )
     } }

@@ -14,6 +14,14 @@ interface LiveTvRepository {
     val source: LiveTvSource
     /** A recent read needed stored fallback data; this alone is not evidence of an offline host. */
     val servingCachedData: Boolean get() = false
+    /** Marker taken before a load; [servedCacheSince] answers for that load only. */
+    val cacheFallbackMarker: Long get() = 0L
+    /**
+     * Whether a read since [marker] fell back to stored data. Sources without per-load tracking
+     * use [servingCachedData]; TVHeadend counts its own fallbacks, so a flag left over from
+     * another screen's read (or one success racing another fallback) cannot decide this load.
+     */
+    fun servedCacheSince(marker: Long): Boolean = servingCachedData
     fun authHeaders(): Map<String, String> = emptyMap()
     suspend fun capabilities(force: Boolean = false): LiveTvCapabilities
     suspend fun channels(force: Boolean = false): List<LiveTvChannel>

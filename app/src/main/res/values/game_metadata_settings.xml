@@ -1,33 +1,35 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="game_metadata_settings_title">Game metadata providers</string>
+    <string name="game_metadata_settings_title">Game information and artwork</string>
     <string name="game_metadata_settings_hint">Choose where game information and artwork come from.</string>
     <string name="game_metadata_settings_provider">Provider</string>
     <string name="game_metadata_settings_off">Off</string>
     <string name="game_metadata_settings_libretro">Libretro</string>
     <string name="game_metadata_settings_screenscraper">ScreenScraper</string>
     <string name="game_metadata_settings_thegamesdb">TheGamesDB</string>
-    <string name="game_metadata_settings_off_hint">Folder scans do not fetch online metadata. You can still edit games and choose matches in the details.</string>
-    <string name="game_metadata_settings_libretro_hint">Free cover art, screenshots and title screens matched by system and game name. No API key is required.</string>
-    <string name="game_metadata_settings_ss_hint">Descriptions, release dates and regional artwork. Register your application at screenscraper.fr to obtain a developer ID and password.</string>
-    <string name="game_metadata_settings_tgdb_hint">Descriptions, release dates and artwork in English. An application API key from thegamesdb.net is required.</string>
+    <string name="game_metadata_settings_off_hint">Folder scans do not add information or artwork from the internet.</string>
+    <string name="game_metadata_settings_libretro_hint">Covers, screenshots and title screens. No account needed.</string>
+    <string name="game_metadata_settings_ss_hint">Descriptions, release dates and regional artwork.</string>
+    <string name="game_metadata_settings_tgdb_hint">Descriptions, release dates and artwork in English.</string>
     <string name="game_metadata_settings_automatic">Automatically match scanned games</string>
-    <string name="game_metadata_settings_automatic_hint">Exact matches can be applied during a scan. Ambiguous matches remain available for you to choose in the game details.</string>
+    <string name="game_metadata_settings_automatic_hint">If several matches are found, choose the game in its details.</string>
     <string name="game_metadata_settings_region">Preferred artwork region</string>
     <string name="game_metadata_region_eu">Europe</string>
     <string name="game_metadata_region_de">Germany</string>
     <string name="game_metadata_region_us">USA</string>
     <string name="game_metadata_region_jp">Japan</string>
     <string name="game_metadata_region_world">World</string>
-    <string name="game_metadata_settings_language">Metadata language</string>
-    <string name="game_metadata_language_auto">App metadata language</string>
-    <string name="game_metadata_settings_builtin">Application credentials are included in this build.</string>
+    <string name="game_metadata_settings_language">Game information language</string>
+    <string name="game_metadata_language_auto">Same as other media</string>
+    <string name="game_metadata_settings_builtin">Access is already set up.</string>
     <string name="game_metadata_settings_ss_dev_id">ScreenScraper developer ID</string>
     <string name="game_metadata_settings_ss_dev_password">ScreenScraper developer password</string>
-    <string name="game_metadata_settings_ss_account_hint">Optional ScreenScraper account. Requests use your account limits when signed in; guest availability depends on the service.</string>
+    <string name="game_metadata_settings_ss_account_hint">Signing in uses your ScreenScraper account limits. Access without an account may be limited.</string>
     <string name="game_metadata_settings_ss_user">ScreenScraper username (optional)</string>
     <string name="game_metadata_settings_ss_password">ScreenScraper password (optional)</string>
     <string name="game_metadata_settings_tgdb_key">TheGamesDB API key</string>
-    <string name="game_metadata_settings_invalid">Enter both values of each ScreenScraper credential pair, or clear both. Check the length and remove control characters.</string>
-    <string name="game_metadata_settings_credentials_hint">Keys are stored with your account credentials. Backups and TV transfers include them only when you explicitly select credentials.</string>
+    <string name="game_metadata_settings_invalid">Check the credentials. For ScreenScraper, enter both name/ID and password or clear both fields.</string>
+    <string name="game_metadata_settings_credentials_hint">Credentials are only included in backups or TV transfers when you choose to share them.</string>
+    <string name="game_metadata_settings_ss_setup_hint">Get a developer ID and password at screenscraper.fr.</string>
+    <string name="game_metadata_settings_tgdb_setup_hint">Get an API key at thegamesdb.net.</string>
 </resources>

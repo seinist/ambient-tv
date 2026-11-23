@@ -1,16 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="offline_browse_saved_title">Gespeicherter Stand · %1$s</string>
-    <string name="offline_browse_saved_body">Gespeicherte Titel bleiben sichtbar. Zum Abspielen muss die Verbindung erfolgreich geprüft sein.</string>
-    <string name="offline_browse_saved_at">Zuletzt aktualisiert: %1$s. Zum Abspielen oder Ändern von Aufnahmen erneut verbinden.</string>
-    <string name="offline_browse_no_cache_title">Noch keine gespeicherten Inhalte</string>
-    <string name="offline_browse_no_cache_body">Diese Quelle ist eingerichtet. Zum Laden der Inhalte verbinden. „Neu versuchen“ prüft zuerst die Verbindung und weckt den Server nur bei Bedarf.</string>
-    <string name="offline_browse_section_unavailable">Dieser Bereich ist im gespeicherten Stand nicht verfügbar</string>
-    <string name="offline_browse_section_unavailable_body">Die Quelle konnte diese Liste noch nicht bestätigen. Erneut versuchen, um aktuelle Inhalte zu laden.</string>
+    <string name="offline_browse_saved_body">Für Wiedergabe und Aufnahmen erneut verbinden.</string>
+    <string name="offline_browse_no_cache_title">Noch keine Inhalte geladen</string>
+    <string name="offline_browse_no_cache_body">Zum Laden der Inhalte erneut verbinden.</string>
+    <string name="offline_browse_section_unavailable">Inhalte derzeit nicht verfügbar</string>
+    <string name="offline_browse_section_unavailable_body">Erneut verbinden, um diesen Bereich zu laden.</string>
     <string name="offline_browse_guide_saved">Gespeichertes Programm</string>
-    <string name="offline_browse_programme_unavailable">Für aktuelle Programminformationen verbinden</string>
+    <string name="offline_browse_programme_unavailable">Programminformationen nicht verfügbar</string>
     <string name="offline_browse_search_unavailable">Einige Quellen konnten nicht durchsucht werden</string>
-    <string name="offline_browse_search_unavailable_body">Gespeicherte Treffer bleiben sichtbar. Erneut versuchen, um nicht erreichbare Quellen einzubeziehen.</string>
-    <string name="offline_browse_actions_unavailable">Die Verbindung ist nicht bestätigt. Vor Änderungen mit „Erneut versuchen“ den aktuellen Serverstand laden. Die bisherigen Angaben bleiben erhalten.</string>
-    <string name="offline_browse_action_unconfirmed">Die Änderung konnte nicht bestätigt werden. Vor einem weiteren Versuch den Serverstand neu laden; die Änderung wird nicht automatisch wiederholt.</string>
+    <string name="offline_browse_search_unavailable_body">Erneut verbinden, um alle Quellen zu durchsuchen.</string>
+    <string name="offline_browse_actions_unavailable">Zum Bearbeiten erneut verbinden.</string>
+    <string name="offline_browse_action_unconfirmed">Änderung nicht bestätigt. Vor einem weiteren Versuch bitte aktualisieren.</string>
 </resources>

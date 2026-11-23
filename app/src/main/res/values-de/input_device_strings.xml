@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="input_device_model">Controller-Darstellung</string>
-    <string name="input_device_model_hint">Bild und Tastenbeschriftung für %1$s. Wähle ein Modell, wenn die automatische Erkennung unvollständig ist.</string>
+    <string name="input_device_model_hint">Bild und Tastenbeschriftung für %1$s anpassen.</string>
     <string name="input_device_model_auto">Automatisch: %1$s</string>
     <string name="input_device_model_generic">Neutraler Controller</string>
     <string name="input_device_model_xbox">Xbox-Familie</string>
     <string name="input_device_model_playstation">PlayStation-Familie</string>
     <string name="input_device_model_nintendo">Nintendo-Familie</string>
-    <string name="input_device_phone_offline">Gekoppelt · offline · konfigurierbar</string>
-    <string name="input_device_phone_connected">Verbunden · konfigurierbar</string>
+    <string name="input_device_phone_offline">Gekoppelt · offline</string>
+    <string name="input_device_phone_connected">Verbunden</string>
     <string name="input_device_phone_active">Aktiv · Spieler %1$d</string>
     <string name="input_device_connect_phone">Handy verbinden</string>
-    <string name="input_device_no_controller">Verbinde ein Eingabegerät oder kopple ein Handy, um dessen Tasten zu konfigurieren.</string>
-    <string name="input_device_touch_available">Kein externes Eingabegerät verbunden. Touch-Steuerung und Konsolenlayout bleiben verfügbar.</string>
+    <string name="input_device_no_controller">Gerät verbinden oder Handy koppeln, um Tasten zu belegen.</string>
+    <string name="input_device_touch_available">Kein externes Gerät verbunden.</string>
 </resources>

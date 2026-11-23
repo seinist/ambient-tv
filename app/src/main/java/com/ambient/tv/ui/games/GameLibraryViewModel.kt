@@ -6,6 +6,7 @@ import android.net.Uri
 import dagger.hilt.android.qualifiers.ApplicationContext
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ambient.tv.R
 import com.ambient.tv.data.files.FileAccess
 import com.ambient.tv.data.files.FileEntry
 import com.ambient.tv.data.files.FileSource
@@ -16,6 +17,7 @@ import com.ambient.tv.games.library.GameLibraryRepository
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.games.library.LibraryGame
 import com.ambient.tv.games.metadata.GameMetadataRepository
+import com.ambient.tv.ui.files.FilesViewModel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -110,8 +112,9 @@ class GameLibraryViewModel @Inject constructor(
                 try { reload(request) }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (error: Exception) {
+                    val message = gameOperationError(context, error, R.string.game_error_library)
                     mutable.update { it.copy(games = emptyList(), ready = true,
-                        error = error.message ?: "Game library unavailable") }
+                        error = message) }
                 }
             }
         }
@@ -152,7 +155,7 @@ class GameLibraryViewModel @Inject constructor(
         viewModelScope.launch {
             try { withContext(Dispatchers.IO) { edit() } }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { mutable.update { it.copy(error = error.message ?: "Game library unavailable") } }
+            catch (error: Exception) { showError(error) }
         }
     }
     fun rename(game: LibraryGame, value: String) = editCatalog { library.setCustomTitle(game.fileId, value) }
@@ -165,9 +168,9 @@ class GameLibraryViewModel @Inject constructor(
                     context.contentResolver.openInputStream(uri)?.let { library.importDat(systemId, it) }
                         ?: throw java.io.FileNotFoundException("DAT file is unavailable")
                 }
-                mutable.update { it.copy(message = "$count names imported · rescan ROM folders to match") }
+                mutable.update { it.copy(message = context.getString(R.string.game_catalog_imported, count)) }
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { mutable.update { it.copy(error = error.message ?: "DAT import failed") } }
+            catch (error: Exception) { showError(error, R.string.game_error_import) }
             finally { mutable.update { it.copy(busy = false) } }
         }
     }
@@ -184,7 +187,7 @@ class GameLibraryViewModel @Inject constructor(
                     start()
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
+            catch (error: Exception) { showError(error, R.string.game_error_play) }
         }
     }
     fun dismissWakeOffer() = mutable.update { it.copy(pendingWakeGame = null) }
@@ -198,7 +201,7 @@ class GameLibraryViewModel @Inject constructor(
                     start(game)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
+            catch (error: Exception) { showError(error, R.string.files_wake_timeout) }
             finally { mutable.update { it.copy(busy = false) } }
         }
     }
@@ -212,7 +215,7 @@ class GameLibraryViewModel @Inject constructor(
                 metadata.cancelFolder(folder.id)
                 withContext(Dispatchers.IO) { library.removeFolder(folder.id) }
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
+            catch (error: Exception) { showError(error, R.string.game_error_remove) }
             finally { mutable.update { it.copy(removingFolders = it.removingFolders - folder.id) } }
         }
     }
@@ -233,7 +236,7 @@ class GameLibraryViewModel @Inject constructor(
                     }
                 }
                 closePicker()
-            } catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
+            } catch (error: Exception) { showError(error, R.string.game_error_remove) }
         }
     }
 
@@ -269,7 +272,7 @@ class GameLibraryViewModel @Inject constructor(
                     "sftp" -> access.testSftp(valid, secret, sshKey ?: original?.let(files::sshKey).orEmpty())
                 }
             } catch (cancel: CancellationException) { throw cancel }
-            catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
+            catch (error: Exception) { showError(error, FilesViewModel.errorMessage(error)) }
             finally { mutable.update { it.copy(testingNetworkSource = false) } }
         }
     }
@@ -282,14 +285,14 @@ class GameLibraryViewModel @Inject constructor(
                 val match = files.sources().firstOrNull { it.id != valid.id &&
                     it.sameLocation(valid) && it.username == valid.username && it.domain == valid.domain }
                 if (match != null) {
-                    mutable.update { it.copy(error = "This network share is already configured; select the existing source.") }
+                    mutable.update { it.copy(error = context.getString(R.string.game_source_duplicate)) }
                     return@launch
                 }
                 withContext(Dispatchers.IO) { files.saveSource(valid, if (keepPassword) null else password, sshKey) }
                 selectSource(valid)
                 mutable.update { it.copy(networkSaveRevision = it.networkSaveRevision + 1) }
             } catch (cancel: CancellationException) { throw cancel }
-            catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
+            catch (error: Exception) { showError(error, FilesViewModel.errorMessage(error)) }
             finally { mutable.update { it.copy(savingNetworkSource = false) } }
         }
     }
@@ -309,7 +312,7 @@ class GameLibraryViewModel @Inject constructor(
                     // publishes this folder immediately using the current section/search.
                 }
             } catch (error: CancellationException) { throw error }
-            catch (error: Exception) { mutable.update { it.copy(error = error.message ?: "Scan failed") } }
+            catch (error: Exception) { showError(error, R.string.game_error_scan) }
             finally { mutable.update { it.copy(busy = false, scanning = false,
                 activeScanFolderId = null, enriching = false) } }
         }
@@ -332,7 +335,9 @@ class GameLibraryViewModel @Inject constructor(
             try {
                 scanAndEnrich(folder, scanFiles)
             } catch (error: CancellationException) { throw error }
-            catch (error: Exception) { mutable.update { it.copy(error = error.message ?: "Scan failed") } }
+            catch (error: Exception) {
+                showError(error, if (scanFiles) R.string.game_error_scan else R.string.game_error_search)
+            }
             finally { mutable.update { it.copy(busy = false, scanning = false,
                 activeScanFolderId = null, enriching = false) } }
         }
@@ -340,7 +345,10 @@ class GameLibraryViewModel @Inject constructor(
 
     private suspend fun scanAndEnrich(folder: GameLibraryFolder, scanFiles: Boolean) {
         mutable.update { it.copy(activeScanFolderId = folder.id,
-            scanFolderName = folder.path.ifBlank { folder.sourceId },
+            scanFolderName = folder.path.ifBlank {
+                files.sources().firstOrNull { it.id == folder.sourceId }?.name
+                    ?: context.getString(R.string.game_folder_fallback)
+            },
             scanProcessed = 0, scanDiscovered = 0, enriching = !scanFiles) }
         if (scanFiles) library.scan(folder.id) { processed, known ->
             mutable.update { it.copy(scanProcessed = processed, scanDiscovered = known) }
@@ -360,11 +368,12 @@ class GameLibraryViewModel @Inject constructor(
                 return
             }
             context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            val name = uri.lastPathSegment?.substringAfterLast(':')?.takeIf { it.isNotBlank() } ?: "Retro ROMs"
+            val name = uri.lastPathSegment?.substringAfterLast(':')?.takeIf { it.isNotBlank() }
+                ?: context.getString(R.string.game_library_title)
             val source = FileSource(name = name.take(160), kind = "local", treeUri = uri.toString(), showInFiles = false)
             files.saveSource(source, null)
             selectSource(source)
-        } catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
+        } catch (error: Exception) { showError(error, FilesViewModel.errorMessage(error)) }
     }
 
     fun selectSource(source: FileSource) {
@@ -402,10 +411,12 @@ class GameLibraryViewModel @Inject constructor(
                     access.list(source, path, 300) { false }
                 }
                 mutable.update { it.copy(directoryEntries = items.entries.filter(FileEntry::directory),
-                    error = if (items.more) "More folders exist. Select a narrower folder." else null) }
+                    error = if (items.more) context.getString(R.string.game_folder_more) else null) }
             } catch (error: CancellationException) { throw error }
-            catch (error: Exception) { mutable.update { it.copy(error = error.message ?: "Source unavailable",
-                directoryEntries = emptyList()) } }
+            catch (error: Exception) {
+                val message = gameOperationError(context, error, FilesViewModel.errorMessage(error))
+                mutable.update { it.copy(error = message, directoryEntries = emptyList()) }
+            }
             finally { mutable.update { it.copy(browsing = false) } }
         }
     }
@@ -418,7 +429,7 @@ class GameLibraryViewModel @Inject constructor(
             try {
                 if (library.wakeSource(source.id)) browseAt(source, mutable.value.browsedPaths.last().first)
             } catch (error: CancellationException) { throw error }
-            catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
+            catch (error: Exception) { showError(error, R.string.files_wake_timeout) }
             finally { mutable.update { it.copy(browsing = false) } }
         }
     }
@@ -432,8 +443,13 @@ class GameLibraryViewModel @Inject constructor(
             scanFolder(folder) // explicit user action; permitted to wake the configured NAS
             true
         } catch (error: Exception) {
-            mutable.update { it.copy(error = error.message) }
+            showError(error, R.string.game_error_update)
             false
         }
+    }
+
+    private fun showError(error: Throwable, fallback: Int = R.string.game_error_update) {
+        val message = gameOperationError(context, error, fallback)
+        mutable.update { it.copy(error = message) }
     }
 }

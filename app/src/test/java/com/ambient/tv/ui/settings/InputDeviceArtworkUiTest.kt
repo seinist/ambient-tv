@@ -22,6 +22,10 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.unit.dp
 import com.ambient.tv.ui.gamepad.ControllerModel
+import com.ambient.tv.ui.gamepad.retro.RetroInputKind
+import com.ambient.tv.ui.gamepad.retro.RetroInputTarget
+import com.ambient.tv.ui.gamepad.retro.RetroPadButton
+import com.ambient.tv.ui.gamepad.retro.defaultRetroProfile
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.theme.AmbientTvTheme
 import com.ambient.tv.util.createAndroidComposeRule
@@ -45,14 +49,15 @@ class InputDeviceArtworkUiTest {
     private var selected: String? by mutableStateOf(null)
     private lateinit var inputModeManager: InputModeManager
 
-    private fun render(artwork: InputArtwork, handheld: Boolean) {
+    private fun render(artwork: InputArtwork, handheld: Boolean, legend: ArtworkLegend = ArtworkLegend()) {
         rule.setContent {
             inputModeManager = LocalInputModeManager.current
             CompositionLocalProvider(LocalHandheldUi provides handheld) {
                 AmbientTvTheme {
                     Box(Modifier.width(320.dp).background(androidx.tv.material3.MaterialTheme.colorScheme.background)
                         .testTag("input-artwork-preview")) {
-                        InputDeviceArtwork(artwork, selected, { selected = it.id })
+                        InputDeviceArtwork(artwork, selected, { selected = it.id },
+                            assignments = legend.labels, changedKeys = legend.changed)
                     }
                 }
             }
@@ -114,6 +119,38 @@ class InputDeviceArtworkUiTest {
         image.performTouchInput { click(Offset(green.x * width, green.y * height)) }
         rule.runOnIdle { assertEquals("green", selected) }
         savePreview("phone-remote")
+    }
+
+    @Test fun tvLegendLabelsEveryConsoleButtonAndKeepsKeysSelectable() {
+        val defaults = defaultRetroProfile(RetroInputKind.GAMEPAD)
+        val swapped = defaults.assign(RetroInputTarget.Button(RetroPadButton.Y), android.view.KeyEvent.KEYCODE_BUTTON_A)
+        val art = consoleArtwork("snes")
+        val labels = mapOf(
+            android.view.KeyEvent.KEYCODE_BUTTON_A to "A", android.view.KeyEvent.KEYCODE_BUTTON_B to "B",
+            android.view.KeyEvent.KEYCODE_BUTTON_X to "X", android.view.KeyEvent.KEYCODE_BUTTON_Y to "Y",
+            android.view.KeyEvent.KEYCODE_BUTTON_L1 to "LB", android.view.KeyEvent.KEYCODE_BUTTON_R1 to "RB",
+            android.view.KeyEvent.KEYCODE_BUTTON_START to "≡", android.view.KeyEvent.KEYCODE_BUTTON_SELECT to "⧉",
+        )
+        val legend = consoleLegend(art, swapped, defaults) { code -> compactKeyName(code) { labels[it] ?: "?" } }
+        render(art, handheld = false, legend = legend)
+        val y = art.keys.first { it.target == RetroPadButton.Y }
+        rule.onNodeWithTag("input-artwork-assignment-${y.id}").assertExists()
+        rule.onNodeWithTag("input-artwork-key-${y.id}").assertContentDescriptionContains("→ A", substring = true)
+        rule.onNodeWithTag("input-artwork-key-${y.id}").performClick()
+        rule.runOnIdle { assertEquals(y.id, selected) }
+        savePreview("tv-snes-legend")
+    }
+
+    @Test fun deviceLegendRendersOnTheConnectedController() {
+        val defaults = defaultRetroProfile(RetroInputKind.GAMEPAD)
+        val art = attachedArtwork("controller", controllerModel = ControllerModel.XBOX_ONE)
+        val snes = consoleArtwork("snes")
+        val legend = deviceLegend(art, defaults, defaults, { visualKeyCode("controller", it) }) { button ->
+            snes.keys.firstOrNull { it.target == button }?.label ?: button.key
+        }
+        render(art, handheld = false, legend = legend)
+        rule.onNodeWithTag("input-artwork-assignment-a").assertExists()
+        savePreview("tv-xbox-one-legend")
     }
 
     private fun savePreview(name: String) {

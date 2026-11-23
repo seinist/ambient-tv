@@ -20,9 +20,9 @@ import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.tv.material3.Icon
+import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -98,19 +98,17 @@ internal fun GameDeviceTypesPanel(
     if (!enabled) return
     val ports = controllers.withIndex().filter { (_, types) -> types.count { it.id >= 0 } > 1 }
     if (ports.isEmpty()) return
-    GamePanelText(stringResource(R.string.game_device_types))
+    GamePanelHeading(stringResource(R.string.game_device_types))
     ports.take(4).forEach { (port, types) ->
         val choices = types.filter { it.id >= 0 }
         val selected = current(port)?.let { id -> choices.firstOrNull { it.id == id } } ?: choices.first()
-        GamePanelChoice(
-            text = stringResource(R.string.game_controls_port_player, port + 1),
-            subtitle = selected.description ?: selected.id.toString(),
-            selected = false,
-            focusKey = "game-device-port:$port",
-            onClick = {
-                val next = choices[(choices.indexOf(selected) + 1) % choices.size]
-                onChoose(port, next.id)
-            },
+        com.ambient.tv.ui.common.PlayerDropUpSelector(
+            label = stringResource(R.string.game_controls_port_player, port + 1),
+            value = selected.description ?: selected.id.toString(),
+            options = choices.map { it.id.toString() to (it.description ?: it.id.toString()) },
+            selectedKey = selected.id.toString(),
+            dropUp = false,
+            onSelected = { chosen -> chosen.toIntOrNull()?.let { onChoose(port, it) } },
         )
     }
 }

@@ -80,7 +80,7 @@ fun SpotifyDetailScreen(
 ) {
     val state = viewModel.state.collectAsCurrentState()
     val navigationReturn = rememberNavigationPlaybackReturn()
-    com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
+    com.ambient.tv.ui.common.RetryOfflineBrowse(retry = viewModel::retryOffline)
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("spotify"), viewModel::load)
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     val current = playbackIndicator(CompanionMedia("spotify:${viewModel.type}", viewModel.id))

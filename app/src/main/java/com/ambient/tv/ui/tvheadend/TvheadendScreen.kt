@@ -193,7 +193,7 @@ fun TvheadendScreen(
         if (state.tab != TvheadendTab.LIVE) channelControls.leavePage()
         if (state.tab != TvheadendTab.GUIDE) guideControls.leavePage()
     }
-    com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
+    com.ambient.tv.ui.common.RetryOfflineBrowse(setOf(state.source.id), viewModel::retryOffline)
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf(state.source.id), viewModel::refreshAfterReconnect)
     ReportSidebarContentReady(
         !state.awaitingInitialContent() &&
@@ -307,16 +307,22 @@ fun TvheadendScreen(
                 .padding(start = tokens.screenPadding, end = tokens.screenPadding, bottom = tokens.screenPadding, top = com.ambient.tv.ui.common.pageHeaderTop(tokens.screenPadding)),
             verticalArrangement = Arrangement.spacedBy(tokens.itemGap * 1.5f),
         ) {
-        TvheadendHeader(
-            state = state,
-            tabFocusRequesters = tabFocusRequesters,
-            onTab = selectTab,
-            onRefresh = viewModel::refresh,
-            focusChain = pageFocusChain,
-            browseControls = browseControls.takeIf { channelBrowser && state.configured },
-            activeFilterCount = filterModel.activeCount,
-            visibleChannelCount = channelListing.visibleChannels.size.takeIf { channelBrowser && !channelListing.building },
+        // Saved programme data: "TVHeadend · Offline" beside the header actions, Reload reconnects.
+        val liveOfflineStatus = com.ambient.tv.ui.home.offlineSourcesStatus(
+            if (state.connectionRequired && state.dashboard != null) listOf(state.source.name) else emptyList(),
         )
+        androidx.compose.runtime.CompositionLocalProvider(com.ambient.tv.ui.common.LocalPageOfflineStatus provides liveOfflineStatus) {
+            TvheadendHeader(
+                state = state,
+                tabFocusRequesters = tabFocusRequesters,
+                onTab = selectTab,
+                onRefresh = { if (state.connectionRequired) viewModel.retryConnection() else viewModel.refresh() },
+                focusChain = pageFocusChain,
+                browseControls = browseControls.takeIf { channelBrowser && state.configured },
+                activeFilterCount = filterModel.activeCount,
+                visibleChannelCount = channelListing.visibleChannels.size.takeIf { channelBrowser && !channelListing.building },
+            )
+        }
 
         OperationFeedbackScope(viewModel.feedback, "dashboard", state.selectedEvent == null && state.selectedRecording == null)
         OperationFeedbackScope(viewModel.feedback, "timers", state.tab == TvheadendTab.TIMERS && state.selectedEvent == null && state.selectedRecording == null)
@@ -324,11 +330,6 @@ fun TvheadendScreen(
             OperationFeedbackContent(state.error, Modifier.fillMaxWidth(),
                 actionLabel = stringResource(R.string.home_retry), onAction = viewModel::refresh)
         }
-        if (state.connectionRequired && state.dashboard != null) com.ambient.tv.ui.home.SavedBrowseStatus(
-            sources = listOf(state.source.name), retrying = state.waking || state.refreshing,
-            onRetry = viewModel::retryConnection,
-            savedAt = state.lastUpdatedEpochMillis?.let { formatDateTime(it / 1_000L) },
-        )
         if (state.tab == TvheadendTab.TIMERS) state.actionFeedback?.takeIf { it.scope == "timers" }?.let {
             OperationFeedbackContent(it, Modifier.fillMaxWidth())
         }

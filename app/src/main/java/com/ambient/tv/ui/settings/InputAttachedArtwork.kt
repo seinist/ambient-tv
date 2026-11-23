@@ -40,15 +40,27 @@ private fun physicalControllerArtwork(model: ControllerModel): InputArtwork {
         else -> null
     }
     if (assetId == null) {
+        // Flat original pad: sticks and d-pad sit in recessed wells, face buttons on the body.
+        // Sizes are in viewport widths (see InputArtworkKey), centers in viewport fractions.
         val anchors = mapOf(
-            "x" to (.69f to .43f), "y" to (.78f to .30f),
-            "a" to (.78f to .56f), "b" to (.87f to .43f),
-            "l3" to (.39f to .66f), "r3" to (.61f to .66f),
-            "start" to (.58f to .35f), "select" to (.42f to .35f), "mode" to (.50f to .49f),
+            "x" to Triple(.70f, .37f, .072f), "y" to Triple(.78f, .24f, .072f),
+            "a" to Triple(.78f, .50f, .072f), "b" to Triple(.86f, .37f, .072f),
+            "l3" to Triple(.20f, .36f, .115f), "r3" to Triple(.64f, .58f, .115f),
+            "select" to Triple(.44f, .38f, .042f), "start" to Triple(.56f, .38f, .042f),
+            "mode" to Triple(.50f, .27f, .052f),
+            "up" to Triple(.33f, .49f, .048f), "down" to Triple(.33f, .67f, .048f),
+            "left" to Triple(.27f, .58f, .048f), "right" to Triple(.39f, .58f, .048f),
         )
-        return original.copy(keys = keys.map { entry ->
-            anchors[entry.id]?.let { entry.copy(x = it.first, y = it.second, auxiliary = false) } ?: entry
-        })
+        return original.copy(
+            keys = keys.map { entry ->
+                anchors[entry.id]?.let { (x, y, size) ->
+                    entry.copy(x = x, y = y, widthFraction = size, heightFraction = size, auxiliary = false,
+                        plain = entry.id in setOf("up", "down", "left", "right"))
+                } ?: entry
+            },
+            wells = listOf(ArtworkWell(.20f, .36f, .085f), ArtworkWell(.64f, .58f, .085f), ArtworkWell(.33f, .58f, .095f)),
+            dpad = ArtworkWell(.33f, .58f, .084f),
+        )
     }
     return original.withControllerVector(assetId, physicalControllerAnchors(assetId))
 }
@@ -148,18 +160,22 @@ private fun physicalControllerAnchors(id: String): Map<String, ControllerKeyAnch
 }
 
 private fun remoteArtwork(): InputArtwork {
-    fun k(id: String, text: String, x: Float, y: Float, size: Float = .18f) =
-        InputArtworkKey(id, text, x, y, widthFraction = size, heightFraction = size)
+    // Viewport is 0.4 wide : 1 high, so a width-unit size s spans s / 2.5 of the height.
+    fun k(id: String, text: String, x: Float, y: Float, size: Float = .2f, plain: Boolean = false) =
+        InputArtworkKey(id, text, x, y, widthFraction = size, heightFraction = size, plain = plain)
+    fun color(id: String, text: String, x: Float, argb: Long) =
+        InputArtworkKey(id, text, x, .72f, widthFraction = .15f, heightFraction = .07f, color = argb)
+    val ringY = .27f
     return InputArtwork("Fernbedienung", InputArtworkShape.REMOTE, listOf(
-        k("power", "⏻", .30f, .095f), k("menu", "☰", .70f, .095f),
-        k("up", "▲", .50f, .24f, .16f), k("down", "▼", .50f, .44f, .16f),
-        k("left", "◀", .25f, .34f, .16f), k("right", "▶", .75f, .34f, .16f),
-        k("ok", "OK", .50f, .34f, .23f),
-        k("back", "↩", .28f, .57f), k("home", "⌂", .72f, .57f),
-        k("play", "▶Ⅱ", .50f, .70f, .22f),
-        k("red", "R", .20f, .855f, .15f), k("green", "G", .40f, .855f, .15f),
-        k("yellow", "Y", .60f, .855f, .15f), k("blue", "B", .80f, .855f, .15f),
-    ))
+        k("power", "⏻", .50f, .055f, .15f),
+        k("up", "▲", .50f, ringY - .096f, .14f, plain = true), k("down", "▼", .50f, ringY + .096f, .14f, plain = true),
+        k("left", "◀", .26f, ringY, .14f, plain = true), k("right", "▶", .74f, ringY, .14f, plain = true),
+        k("ok", "OK", .50f, ringY, .30f),
+        k("back", "↩", .30f, .50f), k("home", "⌂", .70f, .50f),
+        k("play", "▶Ⅱ", .30f, .60f), k("menu", "☰", .70f, .60f),
+        color("red", "R", .20f, 0xFFE04848), color("green", "G", .40f, 0xFF3FB75E),
+        color("yellow", "Y", .60f, 0xFFE4C23A), color("blue", "B", .80f, 0xFF3B7FE0),
+    ), wells = listOf(ArtworkWell(.50f, ringY, .38f)))
 }
 
 /** A compact physical keyboard with real rows; its keys never overflow the housing. */

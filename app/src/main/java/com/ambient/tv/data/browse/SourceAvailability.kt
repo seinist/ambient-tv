@@ -31,6 +31,8 @@ class SourceAvailability @Inject constructor(@ApplicationContext context: Contex
     private val accessFailures = mutableMapOf<String, Long>()
     /** A reachable sibling port does not confirm this service's last failed data read. */
     private val unconfirmedReads = mutableSetOf<String>()
+    /** Read again after a network change, but nothing failed: not shown as offline. */
+    private val networkStaleReads = mutableSetOf<String>()
 
     /** Successful HTTP/port checks never restore an old authenticated playback permission. */
     @Synchronized fun accessGeneration(provider: String, hostSystem: String = provider): String {
@@ -49,6 +51,20 @@ class SourceAvailability @Inject constructor(@ApplicationContext context: Contex
 
     /** Display/action state, deliberately stricter than shared physical-host reachability. */
     @Synchronized fun browseUnconfirmed(provider: String): Boolean {
+        val scope = scopes.forProvider(provider)
+        return browseSourceUnconfirmed(hasNetwork(), hosts.health(provider),
+            health.getOrPut(scope) { SourceHealth.UNKNOWN }, scope in unconfirmedReads || scope in networkStaleReads)
+    }
+
+    /**
+     * What the UI marks as offline: an actual failure of this source or its server. A network
+     * or VPN switch only schedules a fresh read ([browseUnconfirmed]); it is not shown.
+     */
+    /** The provider's server (machine) is known to be down; reads would only fail. */
+    fun serverOffline(provider: String): Boolean =
+        hosts.health(provider) == com.ambient.tv.connectivity.HostHealth.OFFLINE
+
+    @Synchronized fun browseShowsOffline(provider: String): Boolean {
         val scope = scopes.forProvider(provider)
         return browseSourceUnconfirmed(hasNetwork(), hosts.health(provider),
             health.getOrPut(scope) { SourceHealth.UNKNOWN }, scope in unconfirmedReads)
@@ -85,7 +101,7 @@ class SourceAvailability @Inject constructor(@ApplicationContext context: Contex
         accessNetwork = current
         networkGeneration++
         // Previously loaded live dashboards also need a new read after a network change.
-        unconfirmedReads += health.keys
+        networkStaleReads += health.keys
         if (!hasNetwork()) listOf("plex", "jellyfin", "emby", "youtube", "spotify").forEach { health[scopes.forProvider(it)] = SourceHealth.OFFLINE }
         else health.replaceAll { _, value -> if (value == SourceHealth.ONLINE) SourceHealth.UNKNOWN else value }
         mutable.value++
@@ -116,12 +132,13 @@ class SourceAvailability @Inject constructor(@ApplicationContext context: Contex
     @Synchronized private fun report(scope: String, state: SourceHealth, started: Long, confirmsRead: Boolean = true) {
         if (!order.accept(scope, started, state)) return
         val invalidatesAccess = state == SourceHealth.OFFLINE || state == SourceHealth.AUTH_REQUIRED || state == SourceHealth.UNKNOWN
-        val wasUnconfirmed = scope in unconfirmedReads
+        fun pendingRead() = scope in unconfirmedReads || scope in networkStaleReads
+        val wasUnconfirmed = pendingRead()
         if (invalidatesAccess) {
             accessFailures[scope] = (accessFailures[scope] ?: 0L) + 1L
             unconfirmedReads += scope
-        } else if (state == SourceHealth.ONLINE && confirmsRead) unconfirmedReads -= scope
-        if (health.put(scope, state) != state || invalidatesAccess || wasUnconfirmed != (scope in unconfirmedReads)) mutable.value++
+        } else if (state == SourceHealth.ONLINE && confirmsRead) { unconfirmedReads -= scope; networkStaleReads -= scope }
+        if (health.put(scope, state) != state || invalidatesAccess || wasUnconfirmed != pendingRead()) mutable.value++
     }
 
     fun interceptor(provider: String) = Interceptor { chain ->

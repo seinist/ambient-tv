@@ -2,6 +2,7 @@ package com.ambient.tv.games.metadata
 
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.media.ExifInterface
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -13,7 +14,19 @@ class GameArtworkFile internal constructor(
     internal val file: File,
     val bytes: Long,
     internal val extension: String,
+    /** Bounds-only decode performed once while staging, never while drawing a cover. */
+    val width: Int,
+    val height: Int,
 )
+
+internal enum class GameArtworkFailure { FORMAT, BYTES, DIMENSIONS }
+
+/** Distinguishes a rejected image from storage/network errors without parsing diagnostics. */
+internal class GameArtworkValidationException(val kind: GameArtworkFailure) : IOException(when (kind) {
+    GameArtworkFailure.FORMAT -> "Artwork must be PNG, JPEG or WebP"
+    GameArtworkFailure.BYTES -> "Artwork exceeds 8 MiB"
+    GameArtworkFailure.DIMENSIONS -> "Artwork dimensions exceed the supported limit"
+})
 
 /**
  * Images are owned by a ROM identity. Two overlapping folders share that identity; different
@@ -37,7 +50,7 @@ class GameArtworkFiles(context: Context) {
                     if (read < 0) break
                     if (read == 0) continue
                     count += read
-                    if (count > MAX_IMAGE_BYTES) throw IOException("Artwork exceeds 8 MiB")
+                    if (count > MAX_IMAGE_BYTES) throw GameArtworkValidationException(GameArtworkFailure.BYTES)
                     output.write(buffer, 0, read)
                 }
             }
@@ -47,13 +60,13 @@ class GameArtworkFiles(context: Context) {
                 "image/png" -> "png"
                 "image/jpeg" -> "jpg"
                 "image/webp" -> "webp"
-                else -> throw IOException("Artwork must be PNG, JPEG or WebP")
+                else -> throw GameArtworkValidationException(GameArtworkFailure.FORMAT)
             }
-            if (options.outWidth !in 1..8192 || options.outHeight !in 1..8192 ||
-                options.outWidth.toLong() * options.outHeight > MAX_IMAGE_PIXELS) {
-                throw IOException("Artwork dimensions exceed the supported limit")
+            if (!validDimensions(options.outWidth, options.outHeight)) {
+                throw GameArtworkValidationException(GameArtworkFailure.DIMENSIONS)
             }
-            return GameArtworkFile(file, count, extension)
+            val (width, height) = displayedDimensions(file, options)
+            return GameArtworkFile(file, count, extension, width, height)
         } catch (failure: Throwable) {
             file.delete()
             throw failure
@@ -72,6 +85,35 @@ class GameArtworkFiles(context: Context) {
         val target = File(directory, "${kind.key}-${UUID.randomUUID()}.${staged.extension}")
         if (!staged.file.renameTo(target)) throw IOException("Cannot commit artwork")
         return target.absolutePath
+    }
+
+    /**
+     * Upgrade only our previously validated local images. No arbitrary provider path, ROM or
+     * network source is opened, and bounds decoding never allocates the full image bitmap.
+     */
+    internal fun dimensions(path: String): Pair<Int, Int>? {
+        if (Thread.currentThread().isInterrupted) throw InterruptedException()
+        val file = File(path)
+        val directory = file.parentFile ?: return null
+        if (!directory.name.matches(Regex("[0-9a-f]{64}")) ||
+            directory.parentFile?.canonicalFile != root.canonicalFile ||
+            directory.canonicalFile.parentFile != root.canonicalFile ||
+            file.canonicalFile.parentFile != directory.canonicalFile ||
+            !file.isFile || file.length() !in 1..MAX_IMAGE_BYTES) return null
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        return if (bounds.outMimeType in setOf("image/png", "image/jpeg", "image/webp") &&
+            validDimensions(bounds.outWidth, bounds.outHeight)) displayedDimensions(file, bounds) else null
+    }
+
+    private fun displayedDimensions(file: File, bounds: BitmapFactory.Options): Pair<Int, Int> {
+        val orientation = try {
+            ExifInterface(file.absolutePath).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+        } catch (_: IOException) { ExifInterface.ORIENTATION_NORMAL }
+        val rotated = orientation == ExifInterface.ORIENTATION_ROTATE_90 ||
+            orientation == ExifInterface.ORIENTATION_ROTATE_270 ||
+            orientation == ExifInterface.ORIENTATION_TRANSPOSE || orientation == ExifInterface.ORIENTATION_TRANSVERSE
+        return if (rotated) bounds.outHeight to bounds.outWidth else bounds.outWidth to bounds.outHeight
     }
 
     internal fun removePath(path: String) {
@@ -114,6 +156,10 @@ class GameArtworkFiles(context: Context) {
         const val MAX_IMAGE_BYTES = 8L * 1024 * 1024
         const val MAX_IMAGE_PIXELS = 16_777_216L
         const val CACHE_BYTES = 128L * 1024 * 1024
+
+        fun validDimensions(width: Int?, height: Int?): Boolean =
+            width != null && height != null && width in 1..8192 && height in 1..8192 &&
+                width.toLong() * height <= MAX_IMAGE_PIXELS
 
         internal fun directoryKey(fileId: String): String = MessageDigest.getInstance("SHA-256")
             .digest(fileId.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it.toInt() and 255) }

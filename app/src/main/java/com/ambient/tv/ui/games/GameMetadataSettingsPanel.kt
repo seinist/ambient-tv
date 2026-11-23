@@ -58,7 +58,6 @@ fun GameMetadataSettingsPanel(
     AppDialog(
         onDismiss = onDismiss,
         title = stringResource(R.string.game_metadata_settings_title),
-        hint = stringResource(R.string.game_metadata_settings_hint),
         footer = {
             TvActionButton(stringResource(R.string.settings_link_cancel), onDismiss)
             TvActionButton(stringResource(R.string.item_edit_save), onClick = {
@@ -85,7 +84,7 @@ fun GameMetadataSettingsPanel(
             }), style = MaterialTheme.typography.bodySmall)
             TvChip(stringResource(R.string.game_metadata_settings_automatic), selected = options.automatic,
                 enabled = options.enabled, onClick = { options = options.copy(automatic = !options.automatic) })
-            Text(stringResource(R.string.game_metadata_settings_automatic_hint), style = MaterialTheme.typography.bodySmall)
+            if (options.enabled) Text(stringResource(R.string.game_metadata_settings_automatic_hint), style = MaterialTheme.typography.bodySmall)
             Text(stringResource(R.string.game_metadata_settings_region), style = MaterialTheme.typography.titleSmall)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("eu" to R.string.game_metadata_region_eu, "de" to R.string.game_metadata_region_de,
@@ -108,6 +107,7 @@ fun GameMetadataSettingsPanel(
                 GameMetadataProviderIds.SCREENSCRAPER -> {
                     if (builtInScreenScraper) Text(stringResource(R.string.game_metadata_settings_builtin), style = MaterialTheme.typography.bodySmall)
                     else {
+                        Text(stringResource(R.string.game_metadata_settings_ss_setup_hint), style = MaterialTheme.typography.bodySmall)
                         TvTextField(credentials.screenScraperDevId.orEmpty(), {
                             credentials = credentials.copy(screenScraperDevId = it.trim().takeIf(String::isNotEmpty)); invalid = false
                         }, stringResource(R.string.game_metadata_settings_ss_dev_id), Modifier.fillMaxWidth())
@@ -127,10 +127,13 @@ fun GameMetadataSettingsPanel(
                 }
                 GameMetadataProviderIds.THEGAMESDB -> {
                     if (builtInGamesDb) Text(stringResource(R.string.game_metadata_settings_builtin), style = MaterialTheme.typography.bodySmall)
-                    else TvTextField(credentials.theGamesDbApiKey.orEmpty(), {
-                        credentials = credentials.copy(theGamesDbApiKey = it.trim().takeIf(String::isNotEmpty)); invalid = false
-                    }, stringResource(R.string.game_metadata_settings_tgdb_key), Modifier.fillMaxWidth(),
-                        visualTransformation = PasswordVisualTransformation())
+                    else {
+                        Text(stringResource(R.string.game_metadata_settings_tgdb_setup_hint), style = MaterialTheme.typography.bodySmall)
+                        TvTextField(credentials.theGamesDbApiKey.orEmpty(), {
+                            credentials = credentials.copy(theGamesDbApiKey = it.trim().takeIf(String::isNotEmpty)); invalid = false
+                        }, stringResource(R.string.game_metadata_settings_tgdb_key), Modifier.fillMaxWidth(),
+                            visualTransformation = PasswordVisualTransformation())
+                    }
                 }
             }
             if (invalid) Text(stringResource(R.string.game_metadata_settings_invalid), color = MaterialTheme.colorScheme.error,

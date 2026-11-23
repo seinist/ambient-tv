@@ -3,7 +3,6 @@ package com.ambient.tv.ui.settings
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -19,8 +18,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Path
@@ -38,6 +37,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.MaterialTheme
@@ -46,7 +46,6 @@ import com.ambient.tv.R
 import com.ambient.tv.ui.common.SettingsActionRow
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.mobile.LocalHandheldUi
-import com.ambient.tv.ui.theme.animatedFocusBorder
 import kotlin.math.min
 
 @Composable
@@ -81,6 +80,9 @@ private fun artworkKeyLabel(entry: InputArtworkKey): String = when (entry.id) {
  * One fitted viewport owns the image, labels and hit testing. Small screens never distort
  * the silhouette or grow individual marks independently of it. A separate key strip gives
  * dense diagrams accessible, full-size touch targets without overlapping invisible buttons.
+ *
+ * [assignments] shows every key's current mapping at a glance (key id → short label), like a
+ * legend printed next to the button; [changedKeys] marks those differing from the defaults.
  */
 @Composable
 internal fun InputDeviceArtwork(
@@ -88,6 +90,8 @@ internal fun InputDeviceArtwork(
     selectedKey: String?,
     onSelectKey: (InputArtworkKey) -> Unit,
     modifier: Modifier = Modifier,
+    assignments: Map<String, String> = emptyMap(),
+    changedKeys: Set<String> = emptySet(),
 ) {
     val colors = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -98,13 +102,15 @@ internal fun InputDeviceArtwork(
     val frontKeys = remember(artwork) { artwork.keys.filterNot { it.auxiliary } }
     val extraKeys = remember(artwork) { artwork.keys.filter { it.auxiliary } }
     BoxWithConstraints(modifier.fillMaxWidth()) {
-        val fitted = fitInputArtwork(artwork, (maxWidth.value - 24f).coerceIn(0f, 580f),
+        // Legends may sit just outside the silhouette; a slightly wider frame keeps them inside.
+        val inset = if (assignments.isEmpty()) 12f else 20f
+        val fitted = fitInputArtwork(artwork, (maxWidth.value - inset * 2).coerceIn(0f, 580f),
             if (handheld) 300f else 340f)
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (extraKeys.isNotEmpty()) SettingsActionRow {
                 extraKeys.forEach { entry ->
-                    val label = artworkKeyLabel(entry)
+                    val label = assignedButtonLabel(artworkKeyLabel(entry), assignments[entry.id])
                     TvActionButton(label, onClick = { onSelect(entry) }, selected = entry.id == selectedKey,
                         modifier = Modifier.testTag("input-artwork-extra-${entry.id}")
                             .semantics {
@@ -113,7 +119,7 @@ internal fun InputDeviceArtwork(
                             })
                 }
             }
-            if (fitted.width > 0f && fitted.height > 0f) Box(Modifier.padding(12.dp)) {
+            if (fitted.width > 0f && fitted.height > 0f) Box(Modifier.padding(inset.dp)) {
                 val pixelSize = with(density) { Size(fitted.width.dp.toPx(), fitted.height.dp.toPx()) }
                 Box(Modifier.size(fitted.width.dp, fitted.height.dp).testTag("input-artwork-image")
                     .then(if (useKeyStrip) Modifier.pointerInput(artwork, pixelSize) {
@@ -122,13 +128,25 @@ internal fun InputDeviceArtwork(
                         }
                     } else Modifier)) {
                     val vector = artwork.vectorId?.let(ControllerVectorAssets::get)
+                    val palette = inputArtworkPalette()
+                    // Flat housing in the UI's own surface tones: no gradients, outlines or shadows.
                     if (vector != null) Image(
                         painter = painterResource(vector.drawableRes), contentDescription = null,
                         modifier = Modifier.matchParentSize(), contentScale = ContentScale.Fit,
-                        colorFilter = ColorFilter.tint(colors.onSurfaceVariant.copy(alpha = .68f)),
+                        colorFilter = ColorFilter.tint(palette.housing),
                     ) else Canvas(Modifier.matchParentSize()) {
-                        drawOriginalDevice(artwork.shape, colors.surface, colors.surfaceVariant,
-                            colors.onSurfaceVariant.copy(alpha = .42f))
+                        drawOriginalDevice(artwork.shape, palette.housing, palette.well)
+                        artwork.wells.forEach { well ->
+                            drawCircle(palette.well, well.radius * size.width, Offset(well.x * size.width, well.y * size.height))
+                        }
+                        artwork.dpad?.let { pad ->
+                            val center = Offset(pad.x * size.width, pad.y * size.height)
+                            val reach = pad.radius * size.width
+                            val arm = reach * .58f
+                            val corner = CornerRadius(arm * .22f)
+                            drawRoundRect(palette.key, Offset(center.x - arm / 2f, center.y - reach), Size(arm, reach * 2f), corner)
+                            drawRoundRect(palette.key, Offset(center.x - reach, center.y - arm / 2f), Size(reach * 2f, arm), corner)
+                        }
                     }
                     frontKeys.forEach { entry ->
                         val bounds = inputArtworkKeyBounds(entry, fitted)
@@ -137,7 +155,14 @@ internal fun InputDeviceArtwork(
                             modifier = Modifier.offset(bounds.left.dp, bounds.top.dp)
                                 .size(bounds.width.dp, bounds.height.dp),
                             width = bounds.width, height = bounds.height,
+                            assignment = assignments[entry.id],
                             onClick = { onSelect(entry) })
+                    }
+                    // Drawn after all marks, so a legend is never hidden below a neighbouring key.
+                    frontKeys.forEach { entry ->
+                        val text = assignments[entry.id] ?: return@forEach
+                        ArtworkAssignmentBadge(entry, text, entry.id in changedKeys,
+                            inputArtworkKeyBounds(entry, fitted))
                     }
                 }
             }
@@ -153,7 +178,7 @@ internal fun InputDeviceArtwork(
                     contentPadding = PaddingValues(horizontal = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(frontKeys, key = { it.id }) { entry ->
-                        val label = artworkKeyLabel(entry)
+                        val label = assignedButtonLabel(artworkKeyLabel(entry), assignments[entry.id])
                         TvActionButton(label, onClick = { onSelect(entry) }, selected = entry.id == selectedKey,
                             modifier = Modifier.testTag("input-artwork-select-${entry.id}")
                                 .semantics {
@@ -171,14 +196,20 @@ internal fun InputDeviceArtwork(
 private fun ArtworkKeyMark(
     entry: InputArtworkKey, title: String, artworkShape: InputArtworkShape,
     isSelected: Boolean, interactive: Boolean, modifier: Modifier,
-    width: Float, height: Float, onClick: () -> Unit,
+    width: Float, height: Float, assignment: String? = null, onClick: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
+    val palette = inputArtworkPalette()
     var focused by remember(title, entry.id) { mutableStateOf(false) }
-    val shape = if (artworkShape == InputArtworkShape.KEYBOARD || entry.wide) RoundedCornerShape(18) else CircleShape
+    val shape = when {
+        entry.color != null -> RoundedCornerShape(50)
+        artworkShape == InputArtworkShape.KEYBOARD || entry.wide -> RoundedCornerShape(18)
+        else -> CircleShape
+    }
     val active = isSelected || focused
-    val label = artworkKeyLabel(entry)
+    val label = assignedButtonLabel(artworkKeyLabel(entry), assignment)
     val display = when {
+        entry.color != null && !active -> ""
         entry.id == "start" && entry.label.length > 3 -> "≡"
         entry.id == "select" && entry.label.length > 3 -> "▣"
         entry.id == "mode" -> "●"
@@ -188,18 +219,28 @@ private fun ArtworkKeyMark(
     // The diagram itself scales as a unit. The key strip keeps normal system font scaling.
     val textSize = (min(height * .58f, width / (display.length.coerceAtLeast(1) * .64f))
         .coerceIn(1f, 14f) / LocalDensity.current.fontScale).sp
+    // Same language as buttons and chips: a solid fill marks focus or selection, never a line.
+    val fill = when {
+        focused -> colors.onSurface
+        isSelected -> colors.primary
+        entry.color != null -> Color(entry.color)
+        entry.plain -> Color.Transparent
+        else -> palette.key
+    }
+    val foreground = when {
+        focused -> colors.surface
+        isSelected -> colors.onPrimary
+        else -> palette.label
+    }
     Box(modifier.testTag("input-artwork-key-${entry.id}")
         .clip(shape)
-        .background(if (active) colors.primary.copy(alpha = .28f) else colors.surface.copy(alpha = .86f))
-        .border(1.dp, if (isSelected) colors.primary else colors.onSurfaceVariant.copy(alpha = .4f), shape)
+        .background(fill)
         .then(if (interactive) Modifier.onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick).semantics {
                 contentDescription = "$title: $label"
                 selected = isSelected
-            } else Modifier.clearAndSetSemantics { })
-        .animatedFocusBorder(focused = focused, shape = shape, focusedColor = colors.primary, width = 2.dp),
+            } else Modifier.clearAndSetSemantics { }),
         contentAlignment = Alignment.Center) {
-        val foreground = if (active) colors.primary else colors.onSurface
         if (entry.id == "power") Canvas(Modifier.fillMaxSize()) {
             // U+23FB is missing from some Android fonts. Draw the standard power mark as
             // geometry so the remote never shows a missing-glyph box on those devices.
@@ -217,49 +258,97 @@ private fun ArtworkKeyMark(
     }
 }
 
-/** Original matching artwork for devices without an appropriate licensed front view. */
-private fun DrawScope.drawOriginalDevice(shape: InputArtworkShape, base: Color, raised: Color, rim: Color) {
+/** "B → A" in buttons and spoken labels; the plain key name when nothing is assigned. */
+internal fun assignedButtonLabel(label: String, assignment: String?): String =
+    if (assignment.isNullOrBlank()) label else "$label → $assignment"
+
+/** Where a legend sits relative to its key: d-pad legends point outwards, all others below. */
+internal enum class AssignmentBadgeSide { ABOVE, BELOW, START, END }
+
+internal fun assignmentBadgeSide(keyId: String): AssignmentBadgeSide = when (keyId) {
+    "up" -> AssignmentBadgeSide.ABOVE
+    "left" -> AssignmentBadgeSide.START
+    "right" -> AssignmentBadgeSide.END
+    else -> AssignmentBadgeSide.BELOW
+}
+
+/**
+ * The small legend next to a key: a flat pill in the artwork's own key tone, so it reads as part
+ * of the diagram. A changed mapping takes a light accent fill, never an outline or line marker.
+ */
+@Composable
+private fun ArtworkAssignmentBadge(entry: InputArtworkKey, text: String, changed: Boolean, bounds: Rect) {
+    val colors = MaterialTheme.colorScheme
+    val palette = inputArtworkPalette()
+    val fontScale = LocalDensity.current.fontScale
+    val textSize = (bounds.height * .42f).coerceIn(7f, 11f) / fontScale
+    val badgeHeight = textSize * fontScale + 5f
+    val boxWidth = maxOf(bounds.width * 2.4f, 34f)
+    val gap = 2f
+    val side = assignmentBadgeSide(entry.id)
+    val (x, y, alignment) = when (side) {
+        AssignmentBadgeSide.BELOW -> Triple(bounds.left + bounds.width / 2 - boxWidth / 2,
+            bounds.top + bounds.height + gap, Alignment.TopCenter)
+        AssignmentBadgeSide.ABOVE -> Triple(bounds.left + bounds.width / 2 - boxWidth / 2,
+            bounds.top - gap - badgeHeight, Alignment.BottomCenter)
+        AssignmentBadgeSide.START -> Triple(bounds.left - gap - boxWidth,
+            bounds.top + bounds.height / 2 - badgeHeight / 2, Alignment.CenterEnd)
+        AssignmentBadgeSide.END -> Triple(bounds.left + bounds.width + gap,
+            bounds.top + bounds.height / 2 - badgeHeight / 2, Alignment.CenterStart)
+    }
+    Box(Modifier.offset(x.dp, y.dp).size(boxWidth.dp, badgeHeight.dp)
+        .testTag("input-artwork-assignment-${entry.id}").clearAndSetSemantics { },
+        contentAlignment = alignment) {
+        Text(text,
+            modifier = Modifier.clip(RoundedCornerShape(50))
+                .background(if (changed) colors.primary.copy(alpha = .24f) else palette.key)
+                .padding(horizontal = 5.dp, vertical = 1.dp),
+            color = if (changed) colors.primary else palette.label,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = textSize.sp, lineHeight = textSize.sp),
+            maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** Flat tones taken from the UI theme, so the diagrams follow light/dark and accent settings. */
+@androidx.compose.runtime.Immutable
+internal data class InputArtworkPalette(val housing: Color, val well: Color, val key: Color, val label: Color)
+
+@Composable
+internal fun inputArtworkPalette(): InputArtworkPalette {
+    val colors = MaterialTheme.colorScheme
+    return remember(colors.surface, colors.surfaceVariant, colors.onSurface, colors.onSurfaceVariant) {
+        InputArtworkPalette(
+            housing = androidx.compose.ui.graphics.lerp(colors.surfaceVariant, colors.onSurface, .05f),
+            well = colors.surface,
+            key = androidx.compose.ui.graphics.lerp(colors.surfaceVariant, colors.onSurface, .14f),
+            label = colors.onSurfaceVariant,
+        )
+    }
+}
+
+/** Original flat housings for devices without a licensed front view: solid fills only. */
+private fun DrawScope.drawOriginalDevice(shape: InputArtworkShape, housing: Color, well: Color) {
     val w = size.width
     val h = size.height
-    val plate = Brush.verticalGradient(listOf(raised, base))
-    val line = (w * .004f).coerceIn(.75f.dp.toPx(), 1.8f.dp.toPx())
     fun body(x: Float, y: Float, width: Float, height: Float, radius: Float) {
-        val offset = Offset(w * x, h * y)
-        val bounds = Size(w * width, h * height)
-        val corner = CornerRadius(min(w, h) * radius)
-        drawRoundRect(plate, offset, bounds, corner)
-        drawRoundRect(rim, offset, bounds, corner, style = Stroke(line))
+        drawRoundRect(housing, Offset(w * x, h * y), Size(w * width, h * height), CornerRadius(min(w, h) * radius))
     }
     fun screen(x: Float, y: Float, width: Float, height: Float) {
-        val offset = Offset(w * x, h * y)
-        val bounds = Size(w * width, h * height)
-        val corner = CornerRadius(min(w, h) * .035f)
-        drawRoundRect(base, offset, bounds, corner)
-        drawRoundRect(rim.copy(alpha = rim.alpha * .65f), offset, bounds, corner, style = Stroke(line))
+        drawRoundRect(well, Offset(w * x, h * y), Size(w * width, h * height), CornerRadius(min(w, h) * .035f))
     }
     when (shape) {
-        InputArtworkShape.KEYBOARD -> {
-            body(.006f, .045f, .988f, .92f, .07f)
-            drawLine(rim.copy(alpha = .18f), Offset(w * .025f, h * .27f), Offset(w * .83f, h * .27f), line)
-            drawLine(rim.copy(alpha = .18f), Offset(w * .84f, h * .30f), Offset(w * .84f, h * .68f), line)
-        }
-        InputArtworkShape.REMOTE, InputArtworkShape.WII_REMOTE -> {
-            body(.025f, .012f, .95f, .976f, .20f)
-            drawCircle(rim.copy(alpha = .16f), radius = w * .36f, center = Offset(w * .5f, h * .34f),
-                style = Stroke(line))
-            drawLine(rim.copy(alpha = .25f), Offset(w * .35f, h * .945f), Offset(w * .65f, h * .945f), line)
-        }
+        InputArtworkShape.KEYBOARD -> body(.006f, .045f, .988f, .92f, .07f)
+        InputArtworkShape.REMOTE -> drawRoundRect(housing, Offset(w * .04f, h * .005f), Size(w * .92f, h * .99f), CornerRadius(w * .46f))
+        InputArtworkShape.WII_REMOTE -> body(.025f, .012f, .95f, .976f, .20f)
         InputArtworkShape.SCREEN_PAD -> {
             body(.018f, .10f, .964f, .82f, .16f)
             screen(.31f, .23f, .38f, .34f)
-            drawLine(rim, Offset(w * .46f, h * .17f), Offset(w * .54f, h * .17f), line)
         }
         InputArtworkShape.DUAL_SCREEN -> {
             body(.10f, .02f, .80f, .43f, .07f)
             body(.02f, .48f, .96f, .50f, .10f)
             screen(.23f, .09f, .54f, .29f)
             screen(.37f, .53f, .28f, .31f)
-            drawLine(rim, Offset(w * .20f, h * .465f), Offset(w * .80f, h * .465f), line)
         }
         InputArtworkShape.HANDHELD -> {
             body(.02f, .09f, .96f, .82f, .14f)
@@ -267,10 +356,8 @@ private fun DrawScope.drawOriginalDevice(shape: InputArtworkShape, base: Color, 
         }
         InputArtworkShape.JOYSTICK -> {
             body(.05f, .41f, .90f, .56f, .12f)
-            drawRoundRect(rim.copy(alpha = .5f), Offset(w * .39f, h * .16f), Size(w * .055f, h * .43f),
-                CornerRadius(w * .02f))
-            drawCircle(raised, w * .10f, Offset(w * .4175f, h * .17f))
-            drawCircle(rim, w * .10f, Offset(w * .4175f, h * .17f), style = Stroke(line))
+            drawRoundRect(housing, Offset(w * .39f, h * .16f), Size(w * .055f, h * .43f), CornerRadius(w * .02f))
+            drawCircle(housing, w * .10f, Offset(w * .4175f, h * .17f))
         }
         InputArtworkShape.OVAL -> body(.018f, .11f, .964f, .80f, .38f)
         InputArtworkShape.PAD, InputArtworkShape.THREE_GRIP -> {
@@ -279,14 +366,13 @@ private fun DrawScope.drawOriginalDevice(shape: InputArtworkShape, base: Color, 
                 cubicTo(w * .37f, h * .07f, w * .40f, h * .17f, w * .50f, h * .17f)
                 cubicTo(w * .60f, h * .17f, w * .63f, h * .07f, w * .73f, h * .13f)
                 cubicTo(w * .87f, h * .17f, w * .92f, h * .39f, w * .98f, h * .82f)
-                cubicTo(w, h * 1.02f, w * .79f, h * .97f, w * .69f, h * .75f)
-                cubicTo(w * .62f, h * .64f, w * .38f, h * .64f, w * .31f, h * .75f)
-                cubicTo(w * .21f, h * .97f, 0f, h * 1.02f, w * .02f, h * .82f)
+                cubicTo(w, h * 1.02f, w * .79f, h * .99f, w * .70f, h * .82f)
+                cubicTo(w * .63f, h * .74f, w * .37f, h * .74f, w * .30f, h * .82f)
+                cubicTo(w * .21f, h * .99f, 0f, h * 1.02f, w * .02f, h * .82f)
                 cubicTo(w * .08f, h * .39f, w * .13f, h * .17f, w * .27f, h * .13f)
                 close()
             }
-            drawPath(path, plate)
-            drawPath(path, rim, style = Stroke(line))
+            drawPath(path, housing)
             if (shape == InputArtworkShape.THREE_GRIP) body(.43f, .58f, .14f, .39f, .05f)
         }
     }

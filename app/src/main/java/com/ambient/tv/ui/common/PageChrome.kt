@@ -288,9 +288,15 @@ fun PageHeader(
             // The title yields to the actions, so a long library or folder name ellipsizes instead of pushing them out.
             Column(if (handheld) Modifier else Modifier.weight(1f).padding(end = 18.dp), verticalArrangement = Arrangement.spacedBy(3.dp), content = title)
             // On handheld the actions never wrap among themselves: they sit beside the title or move as one block to the next line, right-aligned.
+            // Offline status sits beside the existing actions: no extra row, no focus target.
+            val offlineStatus = LocalPageOfflineStatus.current
+            val actionsWithStatus: @Composable RowScope.() -> Unit = {
+                offlineStatus?.let { OfflineStatusLabel(it, Modifier.padding(end = 6.dp)) }
+                actions()
+            }
             androidx.compose.runtime.CompositionLocalProvider(LocalPageHeaderActions provides true) {
-            if (handheld) Row(Modifier.weight(1f).focusRequester(actionFocus).browseFocusTarget("page-actions", content = false).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically, content = actions)
-            else DeviceActionRow(modifier = Modifier.focusRequester(actionFocus).browseFocusTarget("page-actions", content = false).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
+            if (handheld) Row(Modifier.weight(1f).focusRequester(actionFocus).browseFocusTarget("page-actions", content = false).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically, content = actionsWithStatus)
+            else DeviceActionRow(modifier = Modifier.focusRequester(actionFocus).browseFocusTarget("page-actions", content = false).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = actionsWithStatus)
             }
             // Top-aligned, not centred: with every header starting at [pageHeaderTop] the clock sits at the
             // same spot on every page, also where Home's floating clock is.

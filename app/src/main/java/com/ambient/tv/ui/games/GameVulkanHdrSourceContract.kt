@@ -27,6 +27,11 @@ internal data class GameVulkanHdrSourceContract(
 }
 
 internal object GameVulkanHdrSourceEvidence {
+    /** Core option (key to value) that makes a core output HDR; only these cores offer HDR. */
+    private val hdrOptions = mapOf("mednafen_psx_hw" to ("beetle_psx_hw_color_format" to "30bit_hdr"))
+
+    fun hdrOption(coreId: String): Pair<String, String>? = hdrOptions[coreId]
+
     /** Only pinned *known* core option semantics; not a guess from bit depth. */
     fun observe(
         coreId: String,

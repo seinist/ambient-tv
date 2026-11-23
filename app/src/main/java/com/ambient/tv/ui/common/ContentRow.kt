@@ -73,6 +73,8 @@ fun ContentRow(
     onViewportNearEnd: ((Int) -> Unit)? = null,
     /** A fresh Home keeps cached and subsequently inserted cards at zero until user input. */
     followFirstItem: Boolean = false,
+    /** An explicit Info/Menu/long-press action, separate from the primary selection. */
+    onItemInfo: ((MediaItem) -> Unit)? = null,
 ) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     // A row recycled out of the list comes back scrolled to the tile it was left on.
@@ -156,6 +158,7 @@ fun ContentRow(
                             style = row.style,
                             showDescription = row.showDescription,
                             reserveEpisodeLines = hasEpisodes,
+                            onInfo = onItemInfo?.let { info -> { info(item) } },
                         )
                     }
                 }

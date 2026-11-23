@@ -37,6 +37,7 @@ internal class GameVulkanSurfaceHost(
     @Volatile private var disposed = false
     @Volatile private var nativeSdrDiagnostic = false
     @Volatile private var nativeIntegerScaling = false
+    @Volatile private var nativeIntegerScalingAuto = false
     @Volatile private var nativeShaderPreset = ""
     // Never treat a manual PQ/HLG selection as core source evidence.
     @Volatile private var confirmedCoreTransfer: GameVulkanTransferMode? = null
@@ -134,12 +135,17 @@ internal class GameVulkanSurfaceHost(
 
     /** Invalid/changed source evidence tears down an active experimental HDR surface. */
     /** Follow the ordinary picture setting without recreating the Vulkan window. */
-    fun updateIntegerScaling(enabled: Boolean) {
-        if (disposed || nativeIntegerScaling == enabled) return
-        nativeIntegerScaling = enabled
+    fun updateIntegerScaling(mode: com.ambient.tv.games.GameIntegerScaling) {
+        val auto = mode == com.ambient.tv.games.GameIntegerScaling.AUTO
+        if (disposed || (nativeIntegerScaling == mode.enabled && nativeIntegerScalingAuto == auto)) return
+        nativeIntegerScaling = mode.enabled
+        nativeIntegerScalingAuto = auto
         if (canProbe) runCatching {
             retro.queueEvent {
-                if (!disposed) LibretroDroid.setNativeVulkanIntegerScaling(nativeIntegerScaling)
+                if (!disposed) {
+                    LibretroDroid.setNativeVulkanIntegerScalingAuto(nativeIntegerScalingAuto)
+                    LibretroDroid.setNativeVulkanIntegerScaling(nativeIntegerScaling)
+                }
             }
         }
     }
@@ -269,6 +275,7 @@ internal class GameVulkanSurfaceHost(
                         LibretroDroid.setNativeVulkanCoreSourceTransfer(
                             confirmedCoreTransfer?.nativeCode ?: 0,
                         )
+                        LibretroDroid.setNativeVulkanIntegerScalingAuto(nativeIntegerScalingAuto)
                         LibretroDroid.setNativeVulkanIntegerScaling(nativeIntegerScaling)
                         LibretroDroid.setNativeVulkanOutputTransfer(outputTransfer.nativeCode)
                         // Set the shader before WSI attachment so swapchain image usage

@@ -45,12 +45,13 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
@@ -61,6 +62,8 @@ import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.data.browse.browsePresentationKey
 import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.theme.animatedFocusBorder
+import com.ambient.tv.ui.theme.screenGutter
+import com.ambient.tv.ui.games.GameCoverArtwork
 import com.ambient.tv.ui.common.activateOnTvKey
 import kotlinx.coroutines.delay
 
@@ -129,10 +132,21 @@ internal fun mediaTileWidth(style: MediaTileStyle): Dp {
         mediaTileHomeScale(style, LocalHeroRowTiles.current, LocalHeroRowTileScale.current)
 }
 
-fun mediaTileImageUrl(item: MediaItem, style: MediaTileStyle): String? = when (style) {
-    MediaTileStyle.POSTER -> item.posterArtUrl
-    MediaTileStyle.LANDSCAPE, MediaTileStyle.EPISODE, MediaTileStyle.CONTINUE -> item.landscapeArtUrl
-    MediaTileStyle.AUTO -> item.posterArtUrl
+fun mediaTileImageUrl(item: MediaItem, style: MediaTileStyle): String? = when {
+    // Game Home rows may mix box formats. Their artwork is always the cover, never a
+    // gameplay backdrop. Older cached rows used android.resource as a fallback marker.
+    item.ratingKey.startsWith(com.ambient.tv.ui.home.GAME_HOME_ITEM_PREFIX) ->
+        item.thumbUrl?.takeUnless { it.startsWith("android.resource:") }
+    style == MediaTileStyle.POSTER || style == MediaTileStyle.AUTO -> item.posterArtUrl
+    else -> item.landscapeArtUrl
+}
+
+internal fun mediaTileGameCoverRatio(item: MediaItem): Float? {
+    if (!item.ratingKey.startsWith(com.ambient.tv.ui.home.GAME_HOME_ITEM_PREFIX)) return null
+    return item.gameCoverAspectRatio?.takeIf { it.isFinite() && it > 0f }
+        ?: com.ambient.tv.games.library.GameCoverFormats.aspectRatio(
+            systemId = item.ratingKey.substringAfterLast('|', ""), filename = item.title,
+        )
 }
 
 @Composable
@@ -176,8 +190,19 @@ fun MediaTile(
     val handheld = LocalHandheldUi.current
     val heroRowTiles = LocalHeroRowTiles.current
     val resolvedStyle = resolveMediaTileStyle(style, visualItem.type, handheld)
-    val width = overrideWidth ?: mediaTileWidth(resolvedStyle)
-    val aspectRatio = when (resolvedStyle) {
+    val gameRatio = mediaTileGameCoverRatio(visualItem)
+    val baseWidth = mediaTileWidth(if (gameRatio != null) MediaTileStyle.POSTER else resolvedStyle)
+    // Game rows share one height, including in the viewport-limited Home hero. Their
+    // widths follow each cover; extreme custom artwork still fits a reachable card.
+    val gameHeight = baseWidth * 1.5f
+    val width = overrideWidth ?: if (gameRatio != null) {
+        val minimum = deviceDp(84.dp, 68.dp)
+        val viewportWidth = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.width.toDp() }
+        // The card's own 8-dp focus gutter sits inside the row's screen gutters.
+        val maximum = minOf(gameHeight * 2f, viewportWidth - screenGutter() * 2f - 16.dp).coerceAtLeast(minimum)
+        (gameHeight * gameRatio).coerceIn(minimum, maximum)
+    } else baseWidth
+    val aspectRatio = if (gameRatio != null) width / gameHeight else when (resolvedStyle) {
         MediaTileStyle.POSTER, MediaTileStyle.AUTO -> 2f / 3f
         MediaTileStyle.LANDSCAPE, MediaTileStyle.EPISODE, MediaTileStyle.CONTINUE -> 16f / 9f
     }
@@ -268,21 +293,11 @@ fun MediaTile(
                     // Monogram channel cards follow SmartTube's round-avatar treatment.
                     // Content remains the normal shared card/focus component on TV and phone.
                     if (visualItem.ratingKey.startsWith(com.ambient.tv.ui.home.GAME_HOME_ITEM_PREFIX)) {
-                        // Games has original theme-tinted system vectors rather than remote
-                        // posters. Use drawable resources directly: Coil/android.resource
-                        // support varies across devices, and Home must not download ROM art.
-                        val id = visualItem.ratingKey.substringAfterLast('|', "")
-                        Box(
-                            Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .24f)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                painter = painterResource(com.ambient.tv.ui.games.GameSystemIcons.drawable(id)),
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.fillMaxWidth(.70f).aspectRatio(1f),
-                            )
-                        }
+                        GameCoverArtwork(
+                            cover = imageUrl, title = visualItem.title,
+                            systemId = visualItem.ratingKey.substringAfterLast('|', ""),
+                            modifier = Modifier.fillMaxSize(), focused = focused,
+                        )
                     } else if (visualItem.ratingKey.startsWith("telegram-channel:")) {
                         Box(
                             Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f)),
