@@ -3,7 +3,6 @@ package com.ambient.tv.ui.settings
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -20,7 +19,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Path
@@ -46,7 +44,6 @@ import com.ambient.tv.R
 import com.ambient.tv.ui.common.SettingsActionRow
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.mobile.LocalHandheldUi
-import com.ambient.tv.ui.theme.animatedFocusBorder
 import kotlin.math.min
 
 @Composable
@@ -122,13 +119,25 @@ internal fun InputDeviceArtwork(
                         }
                     } else Modifier)) {
                     val vector = artwork.vectorId?.let(ControllerVectorAssets::get)
+                    val palette = inputArtworkPalette()
+                    // Flat housing in the UI's own surface tones: no gradients, outlines or shadows.
                     if (vector != null) Image(
                         painter = painterResource(vector.drawableRes), contentDescription = null,
                         modifier = Modifier.matchParentSize(), contentScale = ContentScale.Fit,
-                        colorFilter = ColorFilter.tint(colors.onSurfaceVariant.copy(alpha = .68f)),
+                        colorFilter = ColorFilter.tint(palette.housing),
                     ) else Canvas(Modifier.matchParentSize()) {
-                        drawOriginalDevice(artwork.shape, colors.surface, colors.surfaceVariant,
-                            colors.onSurfaceVariant.copy(alpha = .42f))
+                        drawOriginalDevice(artwork.shape, palette.housing, palette.well)
+                        artwork.wells.forEach { well ->
+                            drawCircle(palette.well, well.radius * size.width, Offset(well.x * size.width, well.y * size.height))
+                        }
+                        artwork.dpad?.let { pad ->
+                            val center = Offset(pad.x * size.width, pad.y * size.height)
+                            val reach = pad.radius * size.width
+                            val arm = reach * .58f
+                            val corner = CornerRadius(arm * .22f)
+                            drawRoundRect(palette.key, Offset(center.x - arm / 2f, center.y - reach), Size(arm, reach * 2f), corner)
+                            drawRoundRect(palette.key, Offset(center.x - reach, center.y - arm / 2f), Size(reach * 2f, arm), corner)
+                        }
                     }
                     frontKeys.forEach { entry ->
                         val bounds = inputArtworkKeyBounds(entry, fitted)
@@ -174,11 +183,17 @@ private fun ArtworkKeyMark(
     width: Float, height: Float, onClick: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
+    val palette = inputArtworkPalette()
     var focused by remember(title, entry.id) { mutableStateOf(false) }
-    val shape = if (artworkShape == InputArtworkShape.KEYBOARD || entry.wide) RoundedCornerShape(18) else CircleShape
+    val shape = when {
+        entry.color != null -> RoundedCornerShape(50)
+        artworkShape == InputArtworkShape.KEYBOARD || entry.wide -> RoundedCornerShape(18)
+        else -> CircleShape
+    }
     val active = isSelected || focused
     val label = artworkKeyLabel(entry)
     val display = when {
+        entry.color != null && !active -> ""
         entry.id == "start" && entry.label.length > 3 -> "≡"
         entry.id == "select" && entry.label.length > 3 -> "▣"
         entry.id == "mode" -> "●"
@@ -188,18 +203,28 @@ private fun ArtworkKeyMark(
     // The diagram itself scales as a unit. The key strip keeps normal system font scaling.
     val textSize = (min(height * .58f, width / (display.length.coerceAtLeast(1) * .64f))
         .coerceIn(1f, 14f) / LocalDensity.current.fontScale).sp
+    // Same language as buttons and chips: a solid fill marks focus or selection, never a line.
+    val fill = when {
+        focused -> colors.onSurface
+        isSelected -> colors.primary
+        entry.color != null -> Color(entry.color)
+        entry.plain -> Color.Transparent
+        else -> palette.key
+    }
+    val foreground = when {
+        focused -> colors.surface
+        isSelected -> colors.onPrimary
+        else -> palette.label
+    }
     Box(modifier.testTag("input-artwork-key-${entry.id}")
         .clip(shape)
-        .background(if (active) colors.primary.copy(alpha = .28f) else colors.surface.copy(alpha = .86f))
-        .border(1.dp, if (isSelected) colors.primary else colors.onSurfaceVariant.copy(alpha = .4f), shape)
+        .background(fill)
         .then(if (interactive) Modifier.onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick).semantics {
                 contentDescription = "$title: $label"
                 selected = isSelected
-            } else Modifier.clearAndSetSemantics { })
-        .animatedFocusBorder(focused = focused, shape = shape, focusedColor = colors.primary, width = 2.dp),
+            } else Modifier.clearAndSetSemantics { }),
         contentAlignment = Alignment.Center) {
-        val foreground = if (active) colors.primary else colors.onSurface
         if (entry.id == "power") Canvas(Modifier.fillMaxSize()) {
             // U+23FB is missing from some Android fonts. Draw the standard power mark as
             // geometry so the remote never shows a missing-glyph box on those devices.
@@ -217,49 +242,46 @@ private fun ArtworkKeyMark(
     }
 }
 
-/** Original matching artwork for devices without an appropriate licensed front view. */
-private fun DrawScope.drawOriginalDevice(shape: InputArtworkShape, base: Color, raised: Color, rim: Color) {
+/** Flat tones taken from the UI theme, so the diagrams follow light/dark and accent settings. */
+@androidx.compose.runtime.Immutable
+internal data class InputArtworkPalette(val housing: Color, val well: Color, val key: Color, val label: Color)
+
+@Composable
+internal fun inputArtworkPalette(): InputArtworkPalette {
+    val colors = MaterialTheme.colorScheme
+    return remember(colors.surface, colors.surfaceVariant, colors.onSurface, colors.onSurfaceVariant) {
+        InputArtworkPalette(
+            housing = androidx.compose.ui.graphics.lerp(colors.surfaceVariant, colors.onSurface, .05f),
+            well = colors.surface,
+            key = androidx.compose.ui.graphics.lerp(colors.surfaceVariant, colors.onSurface, .14f),
+            label = colors.onSurfaceVariant,
+        )
+    }
+}
+
+/** Original flat housings for devices without a licensed front view: solid fills only. */
+private fun DrawScope.drawOriginalDevice(shape: InputArtworkShape, housing: Color, well: Color) {
     val w = size.width
     val h = size.height
-    val plate = Brush.verticalGradient(listOf(raised, base))
-    val line = (w * .004f).coerceIn(.75f.dp.toPx(), 1.8f.dp.toPx())
     fun body(x: Float, y: Float, width: Float, height: Float, radius: Float) {
-        val offset = Offset(w * x, h * y)
-        val bounds = Size(w * width, h * height)
-        val corner = CornerRadius(min(w, h) * radius)
-        drawRoundRect(plate, offset, bounds, corner)
-        drawRoundRect(rim, offset, bounds, corner, style = Stroke(line))
+        drawRoundRect(housing, Offset(w * x, h * y), Size(w * width, h * height), CornerRadius(min(w, h) * radius))
     }
     fun screen(x: Float, y: Float, width: Float, height: Float) {
-        val offset = Offset(w * x, h * y)
-        val bounds = Size(w * width, h * height)
-        val corner = CornerRadius(min(w, h) * .035f)
-        drawRoundRect(base, offset, bounds, corner)
-        drawRoundRect(rim.copy(alpha = rim.alpha * .65f), offset, bounds, corner, style = Stroke(line))
+        drawRoundRect(well, Offset(w * x, h * y), Size(w * width, h * height), CornerRadius(min(w, h) * .035f))
     }
     when (shape) {
-        InputArtworkShape.KEYBOARD -> {
-            body(.006f, .045f, .988f, .92f, .07f)
-            drawLine(rim.copy(alpha = .18f), Offset(w * .025f, h * .27f), Offset(w * .83f, h * .27f), line)
-            drawLine(rim.copy(alpha = .18f), Offset(w * .84f, h * .30f), Offset(w * .84f, h * .68f), line)
-        }
-        InputArtworkShape.REMOTE, InputArtworkShape.WII_REMOTE -> {
-            body(.025f, .012f, .95f, .976f, .20f)
-            drawCircle(rim.copy(alpha = .16f), radius = w * .36f, center = Offset(w * .5f, h * .34f),
-                style = Stroke(line))
-            drawLine(rim.copy(alpha = .25f), Offset(w * .35f, h * .945f), Offset(w * .65f, h * .945f), line)
-        }
+        InputArtworkShape.KEYBOARD -> body(.006f, .045f, .988f, .92f, .07f)
+        InputArtworkShape.REMOTE -> drawRoundRect(housing, Offset(w * .04f, h * .005f), Size(w * .92f, h * .99f), CornerRadius(w * .46f))
+        InputArtworkShape.WII_REMOTE -> body(.025f, .012f, .95f, .976f, .20f)
         InputArtworkShape.SCREEN_PAD -> {
             body(.018f, .10f, .964f, .82f, .16f)
             screen(.31f, .23f, .38f, .34f)
-            drawLine(rim, Offset(w * .46f, h * .17f), Offset(w * .54f, h * .17f), line)
         }
         InputArtworkShape.DUAL_SCREEN -> {
             body(.10f, .02f, .80f, .43f, .07f)
             body(.02f, .48f, .96f, .50f, .10f)
             screen(.23f, .09f, .54f, .29f)
             screen(.37f, .53f, .28f, .31f)
-            drawLine(rim, Offset(w * .20f, h * .465f), Offset(w * .80f, h * .465f), line)
         }
         InputArtworkShape.HANDHELD -> {
             body(.02f, .09f, .96f, .82f, .14f)
@@ -267,10 +289,8 @@ private fun DrawScope.drawOriginalDevice(shape: InputArtworkShape, base: Color, 
         }
         InputArtworkShape.JOYSTICK -> {
             body(.05f, .41f, .90f, .56f, .12f)
-            drawRoundRect(rim.copy(alpha = .5f), Offset(w * .39f, h * .16f), Size(w * .055f, h * .43f),
-                CornerRadius(w * .02f))
-            drawCircle(raised, w * .10f, Offset(w * .4175f, h * .17f))
-            drawCircle(rim, w * .10f, Offset(w * .4175f, h * .17f), style = Stroke(line))
+            drawRoundRect(housing, Offset(w * .39f, h * .16f), Size(w * .055f, h * .43f), CornerRadius(w * .02f))
+            drawCircle(housing, w * .10f, Offset(w * .4175f, h * .17f))
         }
         InputArtworkShape.OVAL -> body(.018f, .11f, .964f, .80f, .38f)
         InputArtworkShape.PAD, InputArtworkShape.THREE_GRIP -> {
@@ -279,14 +299,13 @@ private fun DrawScope.drawOriginalDevice(shape: InputArtworkShape, base: Color, 
                 cubicTo(w * .37f, h * .07f, w * .40f, h * .17f, w * .50f, h * .17f)
                 cubicTo(w * .60f, h * .17f, w * .63f, h * .07f, w * .73f, h * .13f)
                 cubicTo(w * .87f, h * .17f, w * .92f, h * .39f, w * .98f, h * .82f)
-                cubicTo(w, h * 1.02f, w * .79f, h * .97f, w * .69f, h * .75f)
-                cubicTo(w * .62f, h * .64f, w * .38f, h * .64f, w * .31f, h * .75f)
-                cubicTo(w * .21f, h * .97f, 0f, h * 1.02f, w * .02f, h * .82f)
+                cubicTo(w, h * 1.02f, w * .79f, h * .99f, w * .70f, h * .82f)
+                cubicTo(w * .63f, h * .74f, w * .37f, h * .74f, w * .30f, h * .82f)
+                cubicTo(w * .21f, h * .99f, 0f, h * 1.02f, w * .02f, h * .82f)
                 cubicTo(w * .08f, h * .39f, w * .13f, h * .17f, w * .27f, h * .13f)
                 close()
             }
-            drawPath(path, plate)
-            drawPath(path, rim, style = Stroke(line))
+            drawPath(path, housing)
             if (shape == InputArtworkShape.THREE_GRIP) body(.43f, .58f, .14f, .39f, .05f)
         }
     }
