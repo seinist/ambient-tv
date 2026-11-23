@@ -80,6 +80,9 @@ class TvheadendRepository @Inject constructor(
     private val _servingCachedData = kotlinx.coroutines.flow.MutableStateFlow(false)
     /** Retry hint after a fallback; host reachability is reported independently by HostConnectivity. */
     val servingCachedData: kotlinx.coroutines.flow.StateFlow<Boolean> = _servingCachedData
+    private val fallbackCounter = java.util.concurrent.atomic.AtomicLong()
+    /** Increases on every read answered with stored data; screens compare it per load. */
+    val cacheFallbacks: Long get() = fallbackCounter.get()
     private val _revalidated = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     /** The server answered again after cached data was served; screens reload to get fresh data. */
     val revalidated: kotlinx.coroutines.flow.SharedFlow<Unit> = _revalidated
@@ -982,6 +985,7 @@ class TvheadendRepository @Inject constructor(
             if (fallback != null && !serverLikelyReachable()) {
                 ensureCurrentScope()
                 _servingCachedData.value = true
+                fallbackCounter.incrementAndGet()
                 scheduleRevalidate()
                 return@withContext fallback
             }
@@ -996,6 +1000,7 @@ class TvheadendRepository @Inject constructor(
                 // Offline only when the server is gone; one failing endpoint keeps the rest usable.
                 if (tvhFallbackMarksOffline(error)) {
                     _servingCachedData.value = true
+                    fallbackCounter.incrementAndGet()
                     scheduleRevalidate()
                 }
                 return@withContext fallback

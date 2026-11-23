@@ -271,6 +271,9 @@ class TvheadendViewModel @Inject constructor(
             val accessSource = liveTvHostSource(requestedRepository.source.id, requestedRepository.source.system)
             val forceRead = request.force || availability.browseUnconfirmed(accessSource)
             val accessGeneration = availability.accessGeneration(accessSource)
+            // Only this load's own reads decide whether the view shows stored data. A global
+            // "served cache" flag from Home or an earlier read made the status flip back and forth.
+            val cacheMarker = requestedRepository.cacheFallbackMarker
             suspendResult {
                 val prefetch = requestedRepository.prefetchDashboard(forceRead)
                 val caps = prefetch.capabilities
@@ -297,7 +300,7 @@ class TvheadendViewModel @Inject constructor(
                         failedRecordings = merge.merge(LiveTvDashboardPart.FAILED_RECORDINGS, fresh.failedRecordings, old.failedRecordings),
                         autoRecs = merge.merge(LiveTvDashboardPart.SERIES_TIMERS, fresh.autoRecs, old.autoRecs),
                     )
-                    val servedCache = repository.servingCachedData
+                    val servedCache = requestedRepository.servedCacheSince(cacheMarker)
                     if (forceRead && !servedCache && fresh.warnings.isEmpty())
                         availability.confirmBrowseRead(accessSource, accessGeneration)
                     val updatedAt = if (!servedCache) System.currentTimeMillis() else _uiState.value.lastUpdatedEpochMillis
@@ -321,7 +324,7 @@ class TvheadendViewModel @Inject constructor(
                     )) ?: return@launch
                     refreshPolicy.completed(request)
                     // Stored data may need another read, but says nothing about reachability.
-                    refreshNeedsRetry = repository.servingCachedData
+                    refreshNeedsRetry = servedCache
                     val offline = offlineNow()
                     _uiState.update { it.copy(configured = true, offline = offline, canWake = offline && canWake(),
                         savedView = servedCache, lastUpdatedEpochMillis = updatedAt,
