@@ -15,7 +15,7 @@ import retrofit2.Response
 class OnlineServiceAvailabilityTest {
     @Test fun internetLossDoesNotMarkIntranetMediaOffline() {
         val configured = setOf("plex", "jellyfin", "emby", "tvheadend", "files", "dlna",
-            "iptv", "youtube", "radio", "weather", "telegram", "trailers")
+            "iptv", "youtube", "radio", "weather", "telegram", "trailers", "spotify")
         val snapshot = OnlineServiceSnapshot(
             internet = InternetReachability.UNAVAILABLE,
             hasNetwork = true,
