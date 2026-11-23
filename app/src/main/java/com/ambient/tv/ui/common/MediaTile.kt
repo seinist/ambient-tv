@@ -45,8 +45,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -62,8 +60,6 @@ import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.data.browse.browsePresentationKey
 import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.theme.animatedFocusBorder
-import com.ambient.tv.ui.theme.screenGutter
-import com.ambient.tv.ui.games.GameCoverArtwork
 import com.ambient.tv.ui.common.activateOnTvKey
 import kotlinx.coroutines.delay
 
@@ -187,22 +183,25 @@ fun MediaTile(
         )
         return
     }
+    // Games use the game library's SmartTube-style card in Home rows as well.
+    if (isGameHomeTile(visualItem)) {
+        GameHomeCard(
+            item = visualItem,
+            onClick = onClick,
+            modifier = modifier,
+            onFocused = onFocused,
+            requestInitialFocus = requestInitialFocus,
+            fillCell = fillCell,
+            overrideWidth = overrideWidth,
+            onInfo = onInfo,
+        )
+        return
+    }
     val handheld = LocalHandheldUi.current
     val heroRowTiles = LocalHeroRowTiles.current
     val resolvedStyle = resolveMediaTileStyle(style, visualItem.type, handheld)
-    val gameRatio = mediaTileGameCoverRatio(visualItem)
-    val baseWidth = mediaTileWidth(if (gameRatio != null) MediaTileStyle.POSTER else resolvedStyle)
-    // Game rows share one height, including in the viewport-limited Home hero. Their
-    // widths follow each cover; extreme custom artwork still fits a reachable card.
-    val gameHeight = baseWidth * 1.5f
-    val width = overrideWidth ?: if (gameRatio != null) {
-        val minimum = deviceDp(84.dp, 68.dp)
-        val viewportWidth = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.width.toDp() }
-        // The card's own 8-dp focus gutter sits inside the row's screen gutters.
-        val maximum = minOf(gameHeight * 2f, viewportWidth - screenGutter() * 2f - 16.dp).coerceAtLeast(minimum)
-        (gameHeight * gameRatio).coerceIn(minimum, maximum)
-    } else baseWidth
-    val aspectRatio = if (gameRatio != null) width / gameHeight else when (resolvedStyle) {
+    val width = overrideWidth ?: mediaTileWidth(resolvedStyle)
+    val aspectRatio = when (resolvedStyle) {
         MediaTileStyle.POSTER, MediaTileStyle.AUTO -> 2f / 3f
         MediaTileStyle.LANDSCAPE, MediaTileStyle.EPISODE, MediaTileStyle.CONTINUE -> 16f / 9f
     }
@@ -292,13 +291,7 @@ fun MediaTile(
                     val imageUrl = mediaTileImageUrl(visualItem, resolvedStyle)
                     // Monogram channel cards follow SmartTube's round-avatar treatment.
                     // Content remains the normal shared card/focus component on TV and phone.
-                    if (visualItem.ratingKey.startsWith(com.ambient.tv.ui.home.GAME_HOME_ITEM_PREFIX)) {
-                        GameCoverArtwork(
-                            cover = imageUrl, title = visualItem.title,
-                            systemId = visualItem.ratingKey.substringAfterLast('|', ""),
-                            modifier = Modifier.fillMaxSize().clip(tileShape), focused = focused,
-                        )
-                    } else if (visualItem.ratingKey.startsWith("telegram-channel:")) {
+                    if (visualItem.ratingKey.startsWith("telegram-channel:")) {
                         Box(
                             Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f)),
                             contentAlignment = Alignment.Center,
