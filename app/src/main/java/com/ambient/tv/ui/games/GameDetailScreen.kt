@@ -64,22 +64,26 @@ import com.ambient.tv.ui.mobile.DeviceActionRow
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.theme.screenGutter
 import java.io.File
+import com.ambient.tv.ui.common.PageUtilityBar
+import androidx.compose.material.icons.filled.RestartAlt
 
 @Composable
 fun GameDetailScreen(
     onBack: () -> Unit,
     onPlay: (LibraryGame) -> Unit,
+    onPlayFresh: (LibraryGame) -> Unit = onPlay,
     model: GameDetailViewModel = hiltViewModel(),
 ) {
     val state by model.state.collectAsState()
     var editing by remember { mutableStateOf(false) }
+    var confirmFresh by remember { mutableStateOf(false) }
     var restoreEditFocus by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
     val primaryFocus = remember { FocusRequester() }
     val editFocus = remember { FocusRequester() }
     val handheld = LocalHandheldUi.current
     val listState = rememberLazyListState()
-    BackHandler(enabled = !editing && !settingsOpen, onBack = onBack)
+    BackHandler(enabled = !editing && !settingsOpen && !confirmFresh, onBack = onBack)
     LaunchedEffect(state.game?.fileId, handheld) {
         if (handheld || state.game == null) return@LaunchedEffect
         repeat(4) {
@@ -132,14 +136,11 @@ fun GameDetailScreen(
                 TvLazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize().overlayLazyScrollbar(listState),
-                    contentPadding = PaddingValues(horizontal = screenGutter(), vertical = 24.dp),
+                    // Room for the shared Back/Settings bar every other detail page uses.
+                    contentPadding = PaddingValues(start = screenGutter(), end = screenGutter(), top = 94.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                     wrapVerticalFocus = false,
                 ) {
-                    item("back") {
-                        TvActionButton(stringResource(R.string.back), onClick = onBack,
-                            icon = Icons.AutoMirrored.Filled.ArrowBack)
-                    }
                     item("hero") {
                         BoxWithConstraints(Modifier.fillMaxWidth()) {
                             val compact = maxWidth < 600.dp
@@ -158,9 +159,9 @@ fun GameDetailScreen(
                             val information: @Composable () -> Unit = {
                                 GameDetailInformation(game, state.metadata,
                                     busy = state.busy,
-                                    onPlay = { onPlay(game) }, onFavorite = model::favorite,
+                                    onPlay = { onPlay(game) }, onPlayFresh = { confirmFresh = true },
+                                    onFavorite = model::favorite,
                                     onEdit = { editing = true }, onRefresh = model::refresh,
-                                    onSettings = { settingsOpen = true },
                                     primaryFocus = primaryFocus, editFocus = editFocus)
                             }
                             if (compact) Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
@@ -194,9 +195,32 @@ fun GameDetailScreen(
                 }
             }
         }
+        PageUtilityBar(
+            onBack = onBack,
+            // The game's gear opens the library's metadata settings.
+            onSettings = { settingsOpen = true },
+            onDown = if (state.game != null) ({ runCatching { primaryFocus.requestFocus() } }) else null,
+            leftNavigatesBack = false,
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
     }
     if (editing && state.game != null) GameMetadataEditor(
         game = state.game!!, state = state, model = model, onDismiss = closeEditor)
+    if (confirmFresh) state.game?.let { game ->
+        com.ambient.tv.ui.common.AppDialog(
+            onDismiss = { confirmFresh = false },
+            title = stringResource(R.string.game_reset_confirm_title),
+            hint = stringResource(R.string.game_reset_confirm_hint),
+            footer = {
+                TvActionButton(stringResource(R.string.files_cancel), onClick = { confirmFresh = false })
+                TvActionButton(stringResource(R.string.game_reset), onClick = {
+                    confirmFresh = false
+                    onPlayFresh(game)
+                })
+            },
+            content = null,
+        )
+    }
     if (settingsOpen) GameMetadataSettingsPanel(onDismiss = {
         settingsOpen = false
         model.providersChanged()
@@ -209,10 +233,10 @@ private fun GameDetailInformation(
     metadata: GameMetadata,
     busy: Boolean,
     onPlay: () -> Unit,
+    onPlayFresh: () -> Unit,
     onFavorite: () -> Unit,
     onEdit: () -> Unit,
     onRefresh: () -> Unit,
-    onSettings: () -> Unit,
     primaryFocus: FocusRequester,
     editFocus: FocusRequester,
 ) {
@@ -229,7 +253,10 @@ private fun GameDetailInformation(
             TvActionButton(stringResource(R.string.game_detail_play), onClick = onPlay,
                 enabled = !busy, icon = Icons.Filled.PlayArrow,
                 modifier = Modifier.focusRequester(primaryFocus).browseFocusTarget("game-play"))
-            TvActionButton(stringResource(R.string.radio_favorites),
+            // Play continues where the game was left, like Resume on other details; this starts over.
+            TvActionButton(stringResource(R.string.game_reset), onClick = onPlayFresh,
+                enabled = !busy, icon = Icons.Filled.RestartAlt)
+            TvActionButton(stringResource(if (game.favorite) R.string.radio_remove_favorite else R.string.radio_add_favorite),
                 onClick = onFavorite, enabled = !busy, selected = game.favorite,
                 icon = if (game.favorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder)
             TvActionButton(stringResource(R.string.game_detail_edit), onClick = onEdit,
@@ -238,8 +265,6 @@ private fun GameDetailInformation(
         DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
             TvActionButton(stringResource(R.string.game_detail_refresh), onClick = onRefresh,
                 enabled = !busy, icon = Icons.Filled.Refresh)
-            TvActionButton(stringResource(R.string.game_detail_settings), onClick = onSettings,
-                enabled = !busy, icon = Icons.Filled.Settings)
         }
     }
 }

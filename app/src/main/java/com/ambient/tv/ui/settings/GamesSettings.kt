@@ -65,10 +65,10 @@ private fun GameCoreSource.titleRes(): Int = when (this) {
 }
 
 /**
- * Settings → Playback → Games: rewind, cores (load, update, remove, options for all games), firmware
+ * Settings → Games: rewind, cores (load, update, remove, options for all games), firmware
  * (BIOS) per system, further system files and the game copy cache. Everything lives in app storage.
  */
-internal fun LazyListScope.gamesSettingsItems(onOpenLibrary: () -> Unit) {
+internal fun LazyListScope.gamesSettingsItems(onOpenLibrary: () -> Unit, onOpenFiles: () -> Unit = {}) {
     item(key = "games-library") {
         SettingsNavigationRow(
             title = stringResource(R.string.game_library_settings_entry),
@@ -92,9 +92,23 @@ internal fun LazyListScope.gamesSettingsItems(onOpenLibrary: () -> Unit) {
     item(key = "games-system-cores") { GamesSystemCores() }
     item(key = "games-cores") { GamesCores() }
     item(key = "games-shader-packs") { GamesShaderPacks() }
-    item(key = "games-bios") { GamesBios() }
+    item(key = "games-bios") { GamesBios(onOpenFiles) }
     item(key = "games-files") { GamesSystemFiles() }
     item(key = "games-cache") { GamesCache() }
+}
+
+/** Removing a file or core always asks first, like save states and shader packs. */
+@Composable
+private fun GamesRemoveDialog(title: String, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    com.ambient.tv.ui.common.AppDialog(
+        onDismiss = onDismiss,
+        title = title,
+        footer = {
+            TvActionButton(stringResource(R.string.files_cancel), onClick = onDismiss)
+            TvActionButton(stringResource(R.string.saved_profiles_delete), onClick = onConfirm)
+        },
+        content = null,
+    )
 }
 
 @Composable
@@ -188,13 +202,31 @@ private fun GamesRetroAchievements() {
 }
 
 @Composable
-private fun GamesBios() {
+private fun GamesBios(onOpenFiles: () -> Unit) {
     val bios = gamesEntryPoint().bios()
     var version by remember { mutableIntStateOf(0) }
+    var removing by remember { mutableStateOf<com.ambient.tv.games.GameBios?>(null) }
     val systems = remember(version) { GameSystems.alphabetical.filter { it.bios.isNotEmpty() }.map { it to bios.status(it) } }
+    removing?.let { file ->
+        GamesRemoveDialog(
+            title = stringResource(R.string.games_remove_confirm, file.file),
+            onDismiss = { removing = null },
+            onConfirm = {
+                bios.remove(file)
+                removing = null
+                version++
+            },
+        )
+    }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsSubheader(stringResource(R.string.games_bios))
         SettingsHint(stringResource(R.string.games_bios_hint))
+        // Firmware comes from a folder: the file browser's "Take over game data" checks and copies it.
+        SettingsNavigationRow(
+            title = stringResource(R.string.games_bios_import),
+            summary = stringResource(R.string.games_bios_import_hint),
+            onClick = onOpenFiles,
+        )
         systems.forEach { (system, statuses) ->
             SettingsGroup(title = system.name, collapsible = true) {
                 statuses.forEach { status ->
@@ -203,15 +235,17 @@ private fun GamesBios() {
                         status.bios.requiredFor.isEmpty() -> stringResource(R.string.games_bios_required)
                         else -> stringResource(R.string.games_bios_required_for, status.bios.requiredFor.joinToString(", ") { ".$it" })
                     }
+                    val missing = status.state == GameBiosState.MISSING
                     SettingsNavigationRow(
                         title = status.bios.file,
-                        summary = listOf(status.bios.description, required, stringResource(status.state.titleRes())).joinToString(" · "),
-                        enabled = status.state != GameBiosState.MISSING,
-                        onClick = {
-                            // Selecting a present file removes it (e.g. to replace it with another dump).
-                            bios.remove(status.bios)
-                            version++
-                        },
+                        summary = listOf(
+                            status.bios.description,
+                            required,
+                            stringResource(status.state.titleRes()),
+                            stringResource(if (missing) R.string.games_bios_import else R.string.games_bios_remove),
+                        ).joinToString(" · "),
+                        // A missing file leads to the import; a present one asks before it is removed.
+                        onClick = { if (missing) onOpenFiles() else removing = status.bios },
                     )
                 }
             }
@@ -283,25 +317,28 @@ private fun GamesShaderPacks() {
     }
 }
 
-/** Which core plays a system when several can; single games can still choose their own (Info panel). */
+/** Which core plays a system when several can; single games can still choose their own (core panel). */
 @Composable
 private fun GamesSystemCores() {
     val settings = GameSettings.state
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsSubheader(stringResource(R.string.games_system_cores))
         SettingsHint(stringResource(R.string.games_system_cores_hint))
+        val needsBios = stringResource(R.string.game_info_core_needs_bios)
         GameSystems.alphabetical.filter { it.alternatives.isNotEmpty() }.forEach { system ->
             val current = settings.systemCore(system)
-            SettingsNavigationRow(
-                title = system.name,
-                summary = listOfNotNull(
-                    current.name,
-                    stringResource(R.string.game_info_core_needs_bios).takeIf { current.needsBios },
-                    current.license.takeIf { !current.freeLicense },
-                ).joinToString(" · "),
-                onClick = {
-                    val next = system.cores[(system.cores.indexOfFirst { it.id == current.id } + 1) % system.cores.size]
-                    GameSettings.update { it.withSystemCore(system, next) }
+            SettingsSelect(
+                label = system.name,
+                options = system.cores.map { core ->
+                    SettingsSelectOption(
+                        text = listOfNotNull(
+                            core.name,
+                            needsBios.takeIf { core.needsBios },
+                            core.license.takeIf { !core.freeLicense },
+                        ).joinToString(" · "),
+                        selected = core.id == current.id,
+                        onClick = { GameSettings.update { it.withSystemCore(system, core) } },
+                    )
                 },
             )
         }
@@ -318,23 +355,40 @@ private fun GamesCores() {
     /** Downloads in progress: core id → progress (null while the size is unknown). */
     val downloads = remember { mutableStateMapOf<String, Float?>() }
     var failed by remember { mutableStateOf<String?>(null) }
+    var removing by remember { mutableStateOf<GameCore?>(null) }
     val dateFormat = remember(context) { android.text.format.DateFormat.getMediumDateFormat(context) }
+    removing?.let { core ->
+        GamesRemoveDialog(
+            title = stringResource(R.string.games_remove_confirm, core.name),
+            onDismiss = { removing = null },
+            onConfirm = {
+                cores.remove(core)
+                removing = null
+                version++
+            },
+        )
+    }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsSubheader(stringResource(R.string.games_cores))
         SettingsHint(stringResource(R.string.games_cores_hint))
         val source = GameSettings.state.coreSource
-        SettingsNavigationRow(
-            title = stringResource(R.string.games_core_source),
-            summary = stringResource(source.titleRes()) + if (!entry.channel().available && source != GameCoreSource.BUILDBOT) {
-                " · " + stringResource(R.string.games_core_source_unavailable)
-            } else "",
-            onClick = {
-                val next = GameCoreSource.entries[(source.ordinal + 1) % GameCoreSource.entries.size]
-                GameSettings.update { it.withCoreSource(next) }
+        SettingsSelect(
+            label = stringResource(R.string.games_core_source),
+            description = stringResource(R.string.games_core_source_unavailable)
+                .takeIf { !entry.channel().available && source != GameCoreSource.BUILDBOT },
+            options = GameCoreSource.entries.map { option ->
+                SettingsSelectOption(
+                    text = stringResource(option.titleRes()),
+                    selected = option == source,
+                    onClick = { GameSettings.update { it.withCoreSource(option) } },
+                )
             },
         )
         failed?.let { SettingsHint(it) }
-        GameSystems.cores.forEach { core ->
+        val ordered = remember(version) {
+            GameSystems.cores.sortedWith(compareBy<GameCore>({ cores.info(it) == null }, { it.name.lowercase() }))
+        }
+        ordered.forEach { core ->
             key(core.id, version) {
                 val systems = GameSystems.alphabetical.filter { system -> system.cores.any { it.id == core.id } }.joinToString(", ") { it.name }
                 val info = remember(version) { cores.info(core) }
@@ -387,10 +441,7 @@ private fun GamesCores() {
                         if (info != null) TvActionButton(
                             text = stringResource(R.string.game_core_remove),
                             enabled = !downloading,
-                            onClick = {
-                                cores.remove(core)
-                                version++
-                            },
+                            onClick = { removing = core },
                         )
                     }
                     if (info != null) GameCoreOptionsSettings(core, cores.declaredOptions(core))
@@ -401,8 +452,8 @@ private fun GamesCores() {
 }
 
 /**
- * The options a core declared the last time it ran, for all its games. Choosing a row steps to the
- * next value; games with their own values (set in the game's panel) keep them.
+ * The options a core declared the last time it ran, for all its games. Each option opens the shared
+ * select; games with their own values (set in the game's panel) keep them.
  */
 @Composable
 private fun GameCoreOptionsSettings(core: GameCore, declared: List<Pair<String, String>>) {
@@ -412,22 +463,31 @@ private fun GameCoreOptionsSettings(core: GameCore, declared: List<Pair<String, 
         return
     }
     val stored = settings.coreOptions(core)
-    val options = declared.mapNotNull { (key, description) -> GameCoreOption.parse(key, description, stored[key]) }.filter { it.visible }
+    // Renderer keys follow the game's graphics choice at every start, so they are not offered here.
+    val rendererKeys = core.vulkanOptions.keys + core.glOptions.keys
+    val options = declared.filter { (key, _) -> key !in rendererKeys }
+        .mapNotNull { (key, description) -> GameCoreOption.parse(key, description, stored[key]) }.filter { it.visible }
     SettingsHint(stringResource(R.string.games_core_options_hint))
     options.groupBy { it.category }.forEach { (category, items) ->
         val rows: @Composable () -> Unit = {
             items.forEach { option ->
                 val own = option.key in stored
-                SettingsNavigationRow(
-                    title = option.title,
-                    summary = listOfNotNull(
-                        if (own) option.label else stringResource(R.string.games_core_option_default, option.label),
+                SettingsSelect(
+                    label = option.title,
+                    description = listOfNotNull(
+                        stringResource(R.string.games_core_option_default, option.label).takeIf { !own },
                         option.info.takeIf { it.isNotBlank() },
-                    ).joinToString(" · "),
-                    onClick = {
-                        val index = option.values.indexOfFirst { it.value == option.value }
-                        val next = option.values[(index + 1) % option.values.size].value
-                        GameSettings.update { it.withCoreOption(core, option.key, next.takeIf { value -> value != option.default }) }
+                    ).joinToString(" · ").ifBlank { null },
+                    options = option.values.map { value ->
+                        SettingsSelectOption(
+                            text = value.label,
+                            selected = value.value == option.value,
+                            onClick = {
+                                GameSettings.update {
+                                    it.withCoreOption(core, option.key, value.value.takeIf { chosen -> chosen != option.default })
+                                }
+                            },
+                        )
                     },
                 )
             }
@@ -448,7 +508,19 @@ private fun GamesSystemFiles() {
     val context = LocalContext.current
     val importer = gamesEntryPoint().data()
     var version by remember { mutableIntStateOf(0) }
+    var removing by remember { mutableStateOf<com.ambient.tv.games.GameSystemFile?>(null) }
     val files = remember(version) { importer.systemFiles() }
+    removing?.let { file ->
+        GamesRemoveDialog(
+            title = stringResource(R.string.games_remove_confirm, file.path),
+            onDismiss = { removing = null },
+            onConfirm = {
+                importer.removeSystemFile(file)
+                removing = null
+                version++
+            },
+        )
+    }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsSubheader(stringResource(R.string.games_system_files))
         SettingsHint(stringResource(R.string.games_system_files_hint))
@@ -462,10 +534,7 @@ private fun GamesSystemFiles() {
                 SettingsNavigationRow(
                     title = file.path,
                     summary = stringResource(R.string.games_system_file_remove, android.text.format.Formatter.formatShortFileSize(context, file.size)),
-                    onClick = {
-                        importer.removeSystemFile(file)
-                        version++
-                    },
+                    onClick = { removing = file },
                 )
             }
         }

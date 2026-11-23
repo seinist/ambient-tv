@@ -122,10 +122,15 @@ class GameLibraryBrowseLayoutTest {
         rule.waitForIdle()
         rule.runOnIdle { assertTrue(requests.getValue("mario").requestFocus()) }
         rule.waitForIdle()
-        // The favorite is the rightmost independently focusable control of the same game.
-        rule.onNodeWithTag("game-favorite:mario")
-            .performSemanticsAction(SemanticsActions.RequestFocus) { it() }
-        rule.waitForIdle()
+        // In the list the favorite is the rightmost independently focusable control of the same
+        // game. A TV grid card shows it as a badge, so the card itself is the rightmost target.
+        if (list) {
+            rule.onNodeWithTag("game-favorite:mario")
+                .performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+            rule.waitForIdle()
+        } else {
+            rule.onAllNodesWithTag("game-favorite:mario").assertCountEquals(0)
+        }
         press(AndroidKeyEvent.KEYCODE_DPAD_RIGHT)
         rule.onNodeWithTag("alphabet-letter-M").assertIsFocused()
         press(AndroidKeyEvent.KEYCODE_DPAD_LEFT)

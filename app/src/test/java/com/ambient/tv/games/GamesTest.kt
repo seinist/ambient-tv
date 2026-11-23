@@ -181,6 +181,45 @@ class GamesTest {
         assertEquals(emptyMap<String, String>(), state.withoutCoreOptions(n64).coreOptions(n64))
     }
 
+    @Test fun picturesStartWithSystemDefaultsUntilChosen() {
+        val gb = GameSystems.byId("gb")!!
+        val n64 = GameSystems.byId("n64")!!
+        val snes = GameSystems.byId("snes")!!
+        var state = GameSettingsState()
+        assertEquals(GameShader.LCD, state.shader(gb))
+        assertTrue(state.integerScaling(gb))
+        assertEquals(GameShader.SMOOTH, state.shader(n64))
+        assertEquals(GameShader.SHARP, state.shader(snes))
+        assertFalse(state.integerScaling(snes))
+        // Switching a default off is stored; switching back to the default removes the key.
+        state = state.withIntegerScaling(gb, false)
+        assertFalse(state.integerScaling(gb))
+        assertTrue("integer.gb" !in state.withIntegerScaling(gb, true).values)
+        assertTrue(GameShader.LCD in GamePictureDefaults.recommended(gb))
+    }
+
+    @Test fun gamePictureScopeCoversFilterShapeAndScaling() {
+        val snes = GameSystems.byId("snes")!!
+        var state = GameSettingsState().withShader(snes, GameShader.CRT).withAspect(snes, GameAspect.EIGHT_SEVEN)
+        assertFalse(state.gamePictureScope("game"))
+        state = state.withGamePicture(snes, "game")
+        assertTrue(state.gamePictureScope("game"))
+        // System changes no longer reach the pinned game.
+        state = state.withShader(snes, GameShader.PIXEL).withAspect(snes, GameAspect.WIDE).withIntegerScaling(snes, true)
+        assertEquals(GameShader.CRT, state.shader(snes, "game"))
+        assertEquals(GameAspect.EIGHT_SEVEN, state.aspect(snes, "game"))
+        assertFalse(state.integerScaling(snes, "game"))
+        state = state.withGameAspect("game", GameAspect.FOUR_THREE).withGameIntegerScaling("game", true)
+        assertEquals(GameAspect.FOUR_THREE, state.aspect(snes, "game"))
+        assertTrue(state.integerScaling(snes, "game"))
+        // Leaving the game scope follows the system again.
+        state = state.withoutGamePicture("game")
+        assertFalse(state.gamePictureScope("game"))
+        assertEquals(GameShader.PIXEL, state.shader(snes, "game"))
+        assertEquals(GameAspect.WIDE, state.aspect(snes, "game"))
+        assertTrue(state.integerScaling(snes, "game"))
+    }
+
     @Test fun pictureRewindAndGraphicsSettings() {
         val snes = GameSystems.byId("snes")!!
         val n64 = GameSystems.byId("n64")!!

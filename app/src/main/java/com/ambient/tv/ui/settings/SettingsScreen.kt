@@ -379,7 +379,7 @@ fun SettingsScreen(
                         SettingsCategory.KEY_BINDINGS -> inputControlsItems(com.ambient.tv.ui.keyboard.KeyBindingScope.GLOBAL)
                         SettingsCategory.CONTROLLER -> inputControlsItems(com.ambient.tv.ui.keyboard.KeyBindingScope.PLAYER)
                         SettingsCategory.GAME_CONTROLS -> gameControlsItems()
-                        SettingsCategory.GAMES -> gamesSettingsItems(onOpenGames)
+                        SettingsCategory.GAMES -> gamesSettingsItems(onOpenGames, onOpenFiles)
                         SettingsCategory.COMPANION -> companionSettingsItems()
                         SettingsCategory.TRANSFER -> {
                             item { CompanionTransferSection() }
