@@ -2814,9 +2814,6 @@ private fun AmbientTvApp(
                     onFocusOwnershipChanged = { sidebarHasFocus = it },
                     suppressTransientFocus = returnFocusPending,
                     onExitApp = ::exitApp,
-                    onOpenStartStatus = if (connectionStatusUi.isAvailable) {
-                        { onClosed -> connectionStatusUi.openDetails(onClosed) }
-                    } else null,
                     modifier = Modifier.focusRequester(sidebarFocusRequester),
                 )
             }

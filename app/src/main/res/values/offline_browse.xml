@@ -1,8 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="offline_browse_saved_title">%1$s · Saved content</string>
     <string name="offline_browse_saved_body">Reconnect for playback and recordings.</string>
-    <string name="offline_browse_saved_at">Last updated: %1$s</string>
     <string name="offline_browse_no_cache_title">No content loaded yet</string>
     <string name="offline_browse_no_cache_body">Reconnect to load content.</string>
     <string name="offline_browse_section_unavailable">Content currently unavailable</string>
