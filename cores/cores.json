@@ -10,7 +10,7 @@
     {
       "core": "nestopia",
       "repo": "https://github.com/libretro/nestopia",
-      "commit": "f1e02d12664834536edbf7352995a3d0cd1caef4",
+      "commit": "39e4b456cea6f5e962ce3e65bcdcd7313711a905",
       "build": "ndk",
       "jni": "libretro"
     },
@@ -24,7 +24,7 @@
     {
       "core": "gambatte",
       "repo": "https://github.com/libretro/gambatte-libretro",
-      "commit": "77f2567d718b8973d02caa2daa8dce4953faf811",
+      "commit": "138bcbbf311300a271896bf93a76370c72cab339",
       "build": "ndk",
       "jni": "libgambatte/libretro"
     },
@@ -38,14 +38,14 @@
     {
       "core": "genesis_plus_gx",
       "repo": "https://github.com/libretro/Genesis-Plus-GX",
-      "commit": "b9c2316441978d4015ba30e9a95d9b0e6f8ee981",
+      "commit": "099c962e7374eb84cae9bba180c9e0e49e767b40",
       "build": "ndk",
       "jni": "libretro"
     },
     {
       "core": "mednafen_pce_fast",
       "repo": "https://github.com/libretro/beetle-pce-fast-libretro",
-      "commit": "2de1ce1c3f237b161c126c54ba407990bb86d1e9",
+      "commit": "4cf066e22533186d0cfad85a0fec2aced93e4e29",
       "build": "ndk",
       "jni": "."
     },
@@ -95,14 +95,14 @@
     {
       "core": "pcsx_rearmed",
       "repo": "https://github.com/libretro/pcsx_rearmed",
-      "commit": "7b0e8f8fadfbce3d170d195b9d9eecaabfa08c8e",
+      "commit": "0f544ce1d18ac7dd114cb8f5507f01a29d3cd58c",
       "build": "ndk",
       "jni": "."
     },
     {
       "core": "fceumm",
       "repo": "https://github.com/libretro/libretro-fceumm",
-      "commit": "77468e568d9fe9c48d684ca911f1a3fe7259fdf7",
+      "commit": "fb919fb6fa881aaa6279b765d480220579e5c606",
       "build": "ndk",
       "jni": "."
     },
@@ -173,7 +173,7 @@
     {
       "core": "parallel_n64",
       "repo": "https://github.com/libretro/parallel-n64",
-      "commit": "ab48ad59754e561c721ba73ef1953823639ed611",
+      "commit": "e854c84a175388bfb4643ff654522be8c941baf1",
       "build": "ndk",
       "jni": "."
     },
@@ -187,7 +187,7 @@
     {
       "core": "mednafen_psx_hw",
       "repo": "https://github.com/libretro/beetle-psx-libretro",
-      "commit": "cbc5a8d0271830a43417179c4ae29e18fdf9b579",
+      "commit": "fb70b69a1aef1f60d9fc139ab7df34a5742ccdfd",
       "build": "ndk",
       "jni": ".",
       "env": "HAVE_HW=1"
