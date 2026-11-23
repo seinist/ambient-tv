@@ -877,6 +877,8 @@ internal fun ArtworkFallback(
         // Room for an emblem plus at least one readable title line; otherwise the emblem alone.
         val withTitle = title.isNotBlank() && maxWidth >= 88.dp && maxHeight >= 112.dp
         val iconSize = minOf(maxWidth, maxHeight) * if (withTitle) .34f else .5f
+        // Read the constraints here: the Column's own scope cannot reach BoxWithConstraints'.
+        val titleLines = if (maxHeight >= 170.dp) 3 else 2
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
@@ -893,7 +895,7 @@ internal fun ArtworkFallback(
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center,
-                maxLines = if (maxHeight >= 170.dp) 3 else 2,
+                maxLines = titleLines,
                 overflow = TextOverflow.Ellipsis,
             )
         }
