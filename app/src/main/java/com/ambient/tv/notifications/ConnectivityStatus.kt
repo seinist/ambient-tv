@@ -190,8 +190,11 @@ internal fun ConnectivitySnapshot.removeConnectivity(key: String, now: Long): Co
     )
 }
 
-internal fun ConnectivitySnapshot.tickConnectivity(now: Long, playback: Boolean, timeoutScale: Float): ConnectivitySnapshot {
-    val canInterrupt = !playback || hasErrors || entries.any { it.notice.interruptPlayback }
+internal fun ConnectivitySnapshot.tickConnectivity(
+    now: Long, playback: Boolean, timeoutScale: Float, playing: Set<String> = emptySet(),
+): ConnectivitySnapshot {
+    // Over a running player only the server it streams from (and its siblings) may appear.
+    val canInterrupt = !playback || entries.any { it.notice.concernsPlayback(playing) }
     val show = entries.isNotEmpty() && !minimized && canInterrupt && when {
         working -> hasErrors || now - startedAt >= 700
         hasErrors -> completionPresentedAt?.let { now - it < (7_000 * timeoutScale).toLong() }

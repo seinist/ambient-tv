@@ -65,7 +65,7 @@ fun rememberOfflineSources(systems: Set<String>? = null): List<String> {
     val sourceRevision by vm.availability.changes.collectAsState()
     return remember(state.offline, systems, sourceRevision) {
         val failedServices = systems.orEmpty().filter {
-            it in setOf("plex", "jellyfin", "emby", "tvheadend") && vm.availability.browseUnconfirmed(it)
+            it in setOf("plex", "jellyfin", "emby", "tvheadend") && vm.availability.browseShowsOffline(it)
         }
         (state.offline + failedServices).filter { systems == null || it in systems }.distinct()
     }

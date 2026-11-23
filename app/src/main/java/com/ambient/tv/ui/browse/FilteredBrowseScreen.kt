@@ -136,7 +136,7 @@ fun FilteredBrowseScreen(
     val connection by recovery.state.collectAsState()
     val source = viewModel.reconnectSources.single()
     val sourceRevision by recovery.availability.changes.collectAsState()
-    val sourceUnconfirmed = remember(source, sourceRevision) { recovery.availability.browseUnconfirmed(source) }
+    val sourceUnconfirmed = remember(source, sourceRevision) { recovery.availability.browseShowsOffline(source) }
     val contentUnconfirmed = source in connection.offline || sourceUnconfirmed || refreshError != null
     val retrySource: () -> Unit = { recovery.retrySystem(source) }
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(viewModel.reconnectSources) { viewModel.enter(playbackReturn) }

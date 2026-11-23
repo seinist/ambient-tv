@@ -115,7 +115,7 @@ class TvheadendViewModel @Inject constructor(
     ) { state, health, _ ->
         val offline = liveTvSourceOffline(availability.hasNetwork(), health)
         state.copy(offline = offline, canWake = offline && canWake(),
-            serviceUnconfirmed = availability.browseUnconfirmed(hostSource))
+            serviceUnconfirmed = availability.browseShowsOffline(hostSource))
     }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, _uiState.value)
 
     private val isTvheadend get() = repository.source.system == "tvheadend"
@@ -202,7 +202,8 @@ class TvheadendViewModel @Inject constructor(
     private var refreshNeedsRetry = false
 
     fun retryOffline() {
-        if ((uiState.value.connectionRequired || refreshNeedsRetry) && availability.hasNetwork() &&
+        // connectionRequiredNow() also covers a read pending after a network switch (not shown).
+        if ((connectionRequiredNow() || refreshNeedsRetry) && availability.hasNetwork() &&
             refreshJob?.isActive != true && connectionJob?.isActive != true)
             load(force = true, announceSuccess = false)
     }

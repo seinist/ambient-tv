@@ -167,7 +167,8 @@ class NotificationStore(
     fun tick(presenting: Boolean = true, playback: Boolean = false, timeoutScale: Float = 1f) {
         val now = clock()
         val state = mutable.value
-        val connectivity = state.connectivity.tickConnectivity(now, playback, timeoutScale)
+        val playing = if (playback) PlaybackNoticeScope.playingSystems() else emptySet()
+        val connectivity = state.connectivity.tickConnectivity(now, playback, timeoutScale, playing)
         var pending = state.pending.filter { entry ->
             val duration = if (entry.notice.phase == NoticePhase.ERROR) 7_000 else 3_000
             when {
@@ -191,7 +192,7 @@ class NotificationStore(
                 it.notice.kind == NoticeKind.CONNECTION && it.notice.phase == NoticePhase.WORKING &&
                     it.notice.systems.isNotEmpty() && it.notice.systems.all(wakingSystems::contains)
             }
-            .filter { !playback || it.notice.interruptPlayback || it.notice.phase == NoticePhase.ERROR }
+            .filter { !playback || it.notice.concernsPlayback(playing) }
             .sortedWith(compareBy<NoticeEntry> {
                 when (it.notice.phase) { NoticePhase.ERROR -> 0; NoticePhase.WORKING -> 2; else -> 1 }
             }.thenByDescending { it.changedAt }.thenBy { it.id })
