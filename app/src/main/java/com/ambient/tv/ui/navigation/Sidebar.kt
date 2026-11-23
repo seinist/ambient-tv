@@ -109,7 +109,6 @@ private val SIDEBAR_SUBMENU_SEPARATOR_GAP = 19.dp
 // Submenu rows (2dp outer padding + this) put their icon 17dp in from the row edge, like the main rail.
 private val SUBMENU_ICON_INSET = 15.dp
 private const val PAGE_BACK_ID = "page-back"
-private const val START_STATUS_ID = "start-status"
 // A group unfolds with the rail's own timing, so opening the rail and opening a group feel alike.
 private const val SIDEBAR_GROUP_MS = 220
 private const val SIDEBAR_OPEN_MS = 260
@@ -121,9 +120,20 @@ private val SIDEBAR_ROW_TEXT = androidx.compose.ui.text.TextStyle(fontSize = 14.
 internal data class MenuDestination(val id: String, val label: String, val icon: ImageVector, val route: String, val settingsCategory: String? = null) {
     fun isActive(activeRoute: String?) = settingsCategory == null && route == activeRoute
 }
-@Composable
-private fun offlineLabel(name: String, offline: Boolean): String =
-    if (offline) "$name · ${stringResource(R.string.offline_badge)}" else name
+/**
+ * Status key in [SidebarUiState.offlineSystems] for a row, or null for rows without a source.
+ * Offline is shown as a small dot on the row's icon, never as extra label text or an extra row.
+ */
+internal fun sidebarRowOfflineKey(row: SidebarNavRow.Item): String? {
+    val id = row.destination.id
+    return when {
+        row.opensPage -> row.systemId
+        id.startsWith("files:source:") -> "files:" + id.removePrefix("files:source:")
+        id.startsWith("dlna:") && id != "dlna:manage" -> id
+        id == WEATHER_MENU_ID -> "weather"
+        else -> null
+    }
+}
 
 private data class MenuSystem(
     val id: String,
@@ -161,8 +171,6 @@ fun Sidebar(
     currentTelegramSectionKey: String? = null,
     /** Quit button at the end of the bottom row, after a confirmation like in Settings › App. */
     onExitApp: (() -> Unit)? = null,
-    /** Opens the global status panel and receives a callback restoring this menu's focus. */
-    onOpenStartStatus: ((() -> Unit) -> Unit)? = null,
     /** The previous fullscreen page is gone, but its browse destination has not restored focus. */
     suppressTransientFocus: Boolean = false,
 ) {
@@ -186,7 +194,7 @@ fun Sidebar(
         currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId, onNavigate, onOpenSystemSettings,
         onOpenPlayback, onSidebarClosedByBack, onResumePlaybackAfterBack,
         requestContentFocus, contentReady, isEntryRequested, onEntryRequestConsumed,
-        onFocusOwnershipChanged, modifier, currentRadioSectionKey, currentTelegramSectionKey, onExitApp, onOpenStartStatus,
+        onFocusOwnershipChanged, modifier, currentRadioSectionKey, currentTelegramSectionKey, onExitApp,
         suppressTransientFocus,
     )
 }
@@ -231,12 +239,10 @@ internal fun SidebarContent(
     currentRadioSectionKey: String? = null,
     currentTelegramSectionKey: String? = null,
     onExitApp: (() -> Unit)? = null,
-    onOpenStartStatus: ((() -> Unit) -> Unit)? = null,
     suppressTransientFocus: Boolean = false,
 ) {
     val uiScale = rememberUhdScale()
     var showExitConfirmation by remember { mutableStateOf(false) }
-    var startStatusOpen by remember { mutableStateOf(false) }
     val menuMotionEnabled = LocalPerformanceProfile.current.allowSpringFocus
     val plexEnabled = sidebarState.plexEnabled
     val jellyfinEnabled = sidebarState.jellyfinEnabled
@@ -274,13 +280,13 @@ internal fun SidebarContent(
             GAMES_MENU_ID, gamesMenuName(), Icons.Filled.SportsEsports,
             entries = gameEntries,
         ))
-        if (plexShown) add(MenuSystem("plex", offlineLabel(menuSystemName(MediaSystem.PLEX), "plex" in sidebarState.offlineSystems), Icons.Filled.VideoLibrary, system = MediaSystem.PLEX, entries =
+        if (plexShown) add(MenuSystem("plex", menuSystemName(MediaSystem.PLEX), Icons.Filled.VideoLibrary, system = MediaSystem.PLEX, entries =
             providerMenuDestinations(sidebarState, "plex")))
-        if (jellyfinShown) add(MenuSystem("jellyfin", offlineLabel(menuSystemName(MediaSystem.JELLYFIN), "jellyfin" in sidebarState.offlineSystems), Icons.Filled.VideoLibrary, system = MediaSystem.JELLYFIN, entries =
+        if (jellyfinShown) add(MenuSystem("jellyfin", menuSystemName(MediaSystem.JELLYFIN), Icons.Filled.VideoLibrary, system = MediaSystem.JELLYFIN, entries =
             providerMenuDestinations(sidebarState, "jellyfin")))
-        if (embyShown) add(MenuSystem("emby", offlineLabel(menuSystemName(MediaSystem.EMBY), "emby" in sidebarState.offlineSystems), Icons.Filled.VideoLibrary, system = MediaSystem.EMBY, entries =
+        if (embyShown) add(MenuSystem("emby", menuSystemName(MediaSystem.EMBY), Icons.Filled.VideoLibrary, system = MediaSystem.EMBY, entries =
             providerMenuDestinations(sidebarState, "emby")))
-        if (sidebarState.trailersConfigured) add(MenuSystem("trailers", offlineLabel(menuSystemName(MediaSystem.TRAILERS), "trailers" in sidebarState.offlineSystems), Icons.Filled.Movie, system = MediaSystem.TRAILERS,
+        if (sidebarState.trailersConfigured) add(MenuSystem("trailers", menuSystemName(MediaSystem.TRAILERS), Icons.Filled.Movie, system = MediaSystem.TRAILERS,
             entries = TrailerFeed.entries.map { feed ->
                 MenuDestination(
                     id = "trailers:${feed.name.lowercase()}",
@@ -294,7 +300,7 @@ internal fun SidebarContent(
                     route = if (feed == TrailerFeed.CINEMA) Destinations.TRAILERS else Destinations.trailerFeed(feed.name),
                 )
             }))
-        if (youtubeEnabled) add(MenuSystem("youtube", offlineLabel(menuSystemName(MediaSystem.YOUTUBE), "youtube" in sidebarState.offlineSystems), Icons.Filled.SmartDisplay, system = MediaSystem.YOUTUBE, entries =
+        if (youtubeEnabled) add(MenuSystem("youtube", menuSystemName(MediaSystem.YOUTUBE), Icons.Filled.SmartDisplay, system = MediaSystem.YOUTUBE, entries =
             youtubeFeedKeys.ifEmpty { listOf("home") }.map { key ->
                 val label = stringResource(when (key) {
                     "subscriptions" -> R.string.nav_youtube_subscriptions
@@ -339,13 +345,13 @@ internal fun SidebarContent(
             add(MenuSystem("spotify", menuSystemName(MediaSystem.SPOTIFY), Icons.Filled.Headphones, entries, system = MediaSystem.SPOTIFY))
         }
         if (telegramEnabled) add(MenuSystem(
-            "telegram", offlineLabel(menuSystemName(MediaSystem.TELEGRAM), "telegram" in sidebarState.offlineSystems), Icons.Filled.Subscriptions, system = MediaSystem.TELEGRAM,
+            "telegram", menuSystemName(MediaSystem.TELEGRAM), Icons.Filled.Subscriptions, system = MediaSystem.TELEGRAM,
             entries = telegramMenuEntries(sidebarState.telegramSubmenuKeys).map { entry ->
                 MenuDestination("telegram:${entry.key}", stringResource(entry.title), telegramMenuIcon(entry.key), Destinations.telegramSection(entry.key))
             },
         ))
         if (radioEnabled) add(MenuSystem(
-            "radio", offlineLabel(menuSystemName(MediaSystem.RADIO), "radio" in sidebarState.offlineSystems), Icons.Filled.Headphones, system = MediaSystem.RADIO,
+            "radio", menuSystemName(MediaSystem.RADIO), Icons.Filled.Headphones, system = MediaSystem.RADIO,
             entries = listOf(
                 "popular" to stringResource(R.string.radio_popular),
                 "favorites" to stringResource(R.string.radio_favorites),
@@ -370,7 +376,7 @@ internal fun SidebarContent(
             // Rejected login: keep TVHeadend in the menu, pointing at its settings instead of vanishing.
             val entries = listOf(MenuDestination("tvheadend:login", stringResource(R.string.tvh_login_check), Icons.AutoMirrored.Filled.Login,
                 Destinations.SETTINGS, settingsCategory = MediaSystem.TVHEADEND.key))
-            add(MenuSystem("tvheadend", offlineLabel(menuSystemName(MediaSystem.TVHEADEND), "tvheadend" in sidebarState.offlineSystems), Icons.Filled.Tv, entries, system = MediaSystem.TVHEADEND))
+            add(MenuSystem("tvheadend", menuSystemName(MediaSystem.TVHEADEND), Icons.Filled.Tv, entries, system = MediaSystem.TVHEADEND))
         } else if (tvheadendEnabled) {
             val entries = listOfNotNull(
                 Triple("live", stringResource(R.string.tvh_live), liveTvMenuIcon("live")),
@@ -382,7 +388,7 @@ internal fun SidebarContent(
             ).filter { it.first in tvheadendSubmenuKeys }.map { (key, label, icon) ->
                 MenuDestination("tvheadend:$key", label, icon, if (key == "live") Destinations.LIVE_TV else Destinations.liveTvSection(key))
             }.ifEmpty { listOf(MenuDestination("tvheadend:live", stringResource(R.string.tvh_live), liveTvMenuIcon("live"), Destinations.LIVE_TV)) }
-            val label = offlineLabel(menuSystemName(MediaSystem.TVHEADEND), "tvheadend" in sidebarState.offlineSystems)
+            val label = menuSystemName(MediaSystem.TVHEADEND)
             add(MenuSystem("tvheadend", label, Icons.Filled.Tv, entries, system = MediaSystem.TVHEADEND))
         }
         // IPTV playlists (M3U + XMLTV): one entry per playlist and tab, through the shared Live TV screens.
@@ -437,7 +443,7 @@ internal fun SidebarContent(
         if (systems.isEmpty()) add(MenuDestination("setup", stringResource(R.string.sidebar_add_system), Icons.Filled.Add, Destinations.INITIAL_SETUP))
     }
     val standalone = mainMenuItems.filter { it.id == WEATHER_MENU_ID }.map {
-        MenuDestination(it.id, offlineLabel(it.label, "weather" in sidebarState.offlineSystems), it.icon, Destinations.WEATHER)
+        MenuDestination(it.id, it.label, it.icon, Destinations.WEATHER)
     }
     val configurationLabel = stringResource(R.string.nav_configuration)
     // Row lists are built once per data change, not on every recomposition.
@@ -492,13 +498,12 @@ internal fun SidebarContent(
     val inSubmenu = openGroup != null
     val navRows = rowsFor(openGroup?.id)
     // On a system page the back header is the first focusable row.
-    val navItemIds = (if (inSubmenu) listOf(PAGE_BACK_ID) else emptyList()) + navRows.map { it.destination.id } +
-        if (onOpenStartStatus != null) listOf(START_STATUS_ID) else emptyList()
+    val navItemIds = (if (inSubmenu) listOf(PAGE_BACK_ID) else emptyList()) + navRows.map { it.destination.id }
     val konfigurationShown = openGroup != null && openGroup.id !in settingsShortcutHidden
     val visibleIds = navItemIds + "settings" + "order" + "exit" + "pill"
     val allRowIds = remember(mainRows, pageRowsById) { (mainRows + pageRowsById.values.flatten()).map { it.destination.id }.toSet() }
     // Drop requesters of rows that no longer exist anywhere.
-    SideEffect { requesters.keys.retainAll(allRowIds + setOf("settings", "order", "exit", "pill", PAGE_BACK_ID, START_STATUS_ID)) }
+    SideEffect { requesters.keys.retainAll(allRowIds + setOf("settings", "order", "exit", "pill", PAGE_BACK_ID)) }
     val safeAnchor = mainRows.firstOrNull()?.destination?.id ?: "settings"
     fun childTarget(system: MenuSystem): String = chooseSidebarChild(
         system.entries.map { it.id },
@@ -667,8 +672,8 @@ internal fun SidebarContent(
             restoreEntry()
         }
     }
-    LaunchedEffect(hasFocus, showOrderDialog, startStatusOpen) {
-        if (!hasFocus && !showOrderDialog && !startStatusOpen) {
+    LaunchedEffect(hasFocus, showOrderDialog) {
+        if (!hasFocus && !showOrderDialog) {
             delay(180)
             if (!hasFocus) expanded = false
         }
@@ -697,8 +702,8 @@ internal fun SidebarContent(
     }
     // Dialog changes also update ownership; focus events register synchronously below.
     val registerBack = rememberSidebarBackRegistration()
-    DisposableEffect(hasFocus, showOrderDialog, startStatusOpen, suppressTransientFocus) {
-        if (hasFocus && !showOrderDialog && !startStatusOpen && !suppressTransientFocus) {
+    DisposableEffect(hasFocus, showOrderDialog, suppressTransientFocus) {
+        if (hasFocus && !showOrderDialog && !suppressTransientFocus) {
             registerBack { currentBackHandler.value() }
         } else {
             registerBack(null)
@@ -719,10 +724,8 @@ internal fun SidebarContent(
     val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
     val density = LocalDensity.current
     val settingsLabel = stringResource(R.string.nav_settings)
-    val startStatusLabel = stringResource(R.string.start_status_title)
-    val candidateLabels = remember(globals, standalone, systems, startStatusLabel, onOpenStartStatus != null) {
-        (globals + standalone).map { it.label } + systems.flatMap { system -> listOf(system.label) + system.entries.map { it.label } } +
-            listOfNotNull(startStatusLabel.takeIf { onOpenStartStatus != null })
+    val candidateLabels = remember(globals, standalone, systems) {
+        (globals + standalone).map { it.label } + systems.flatMap { system -> listOf(system.label) + system.entries.map { it.label } }
     }
     val headerLabels = remember(systems) { systems.map { it.label } }
     var widestPanel by remember(screenWidth, uiScale) { mutableStateOf(0.dp) }
@@ -938,6 +941,7 @@ internal fun SidebarContent(
                                                 onWrapKey = { wrapFocus(entry.destination.id, it) },
                                                 trailingChevron = entry.opensPage,
                                                 stateDescription = if (entry.opensPage) opensSubmenu else null,
+                                                offline = sidebarRowOfflineKey(entry)?.let { it in sidebarState.offlineSystems } == true,
                                                 logo = when {
                                                     entry.opensPage -> systems.firstOrNull { it.id == entry.systemId }?.system?.takeIf { it.hasBrandMark }
                                                     else -> null
@@ -952,25 +956,6 @@ internal fun SidebarContent(
                     }
                     }
                     Spacer(Modifier.height(6.dp * uiScale))
-                    onOpenStartStatus?.let { openStatus ->
-                        SidebarItem(
-                            Icons.Filled.NetworkCheck, startStatusLabel, false, true,
-                            {
-                                startStatusOpen = true
-                                openStatus {
-                                    startStatusOpen = false
-                                    expanded = true
-                                    pendingFocus = START_STATUS_ID
-                                }
-                            }, requester(START_STATUS_ID),
-                            padH = 10.dp, iconGap = 10.dp,
-                            focusable = expanded,
-                            onFocused = { markFocus(START_STATUS_ID) },
-                            onWrapKey = { wrapFocus(START_STATUS_ID, it) },
-                            testTag = "sidebar:start-status",
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-                        )
-                    }
                     // Bottom row = settings + menu editor for the current level: app settings on the
                     // main page, the system's own configuration on a system page (unless hidden).
                     val levelSystem = openGroup?.takeIf { konfigurationShown }
@@ -1143,8 +1128,11 @@ private fun SidebarItem(
     /** Horizontal padding and icon/label gap; smaller for the compact buttons of the bottom row. */
     padH: androidx.compose.ui.unit.Dp = SIDEBAR_ROW_PAD_H,
     iconGap: androidx.compose.ui.unit.Dp = SIDEBAR_ROW_ICON_GAP,
+    /** Source unreachable: a small dot on the icon; the row keeps its size and label. */
+    offline: Boolean = false,
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    val offlineDescription = if (offline) stringResource(R.string.offline_badge) else null
     val uiSounds = LocalUiSoundPlayer.current
     val uiScale = rememberUhdScale()
     val menuMotionEnabled = LocalPerformanceProfile.current.allowSpringFocus
@@ -1209,7 +1197,8 @@ private fun SidebarItem(
             .then(if (testTag != null) Modifier.testTag(testTag) else Modifier)
             .semantics(mergeDescendants = true) {
                 // TalkBack: system rows announce that they open a sub-menu.
-                if (stateDescription != null) this.stateDescription = stateDescription
+                listOfNotNull(stateDescription, offlineDescription).takeIf { it.isNotEmpty() }
+                    ?.let { this.stateDescription = it.joinToString(", ") }
             }
             .focusable()
             .pointerInput(activate) { detectTapGestures(onTap = { activate() }) }
@@ -1221,8 +1210,11 @@ private fun SidebarItem(
         horizontalArrangement = Arrangement.spacedBy(iconGap * uiScale),
     ) {
         // Active (not focused) rows carry the accent on their icon, like selected rows elsewhere.
-        if (logo != null) SystemLogo(logo, size = 20.dp * uiScale, tint = iconTint)
-        else Icon(icon, contentDescription = if (showLabel) null else label, modifier = Modifier.size(20.dp * uiScale), tint = iconTint)
+        Box {
+            if (logo != null) SystemLogo(logo, size = 20.dp * uiScale, tint = iconTint)
+            else Icon(icon, contentDescription = if (showLabel) null else label, modifier = Modifier.size(20.dp * uiScale), tint = iconTint)
+            if (offline) SidebarOfflineDot(Modifier.align(Alignment.TopEnd).offset(x = 3.dp * uiScale, y = (-2).dp * uiScale), uiScale)
+        }
         if (showLabel) {
             val labelAlpha = LocalSidebarLabelAlpha.current
             MarqueeTitle(
@@ -1238,6 +1230,22 @@ private fun SidebarItem(
             }
         }
     }
+}
+
+/** Offline marker on a sidebar icon; drawn over the icon so no row moves when it appears. */
+@Composable
+private fun SidebarOfflineDot(modifier: Modifier, uiScale: Float) {
+    val scheme = MaterialTheme.colorScheme
+    Box(
+        modifier
+            .size(8.dp * uiScale)
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .background(scheme.surface)
+            .padding(1.5.dp * uiScale)
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .background(scheme.error)
+            .testTag("sidebar:offline-dot"),
+    )
 }
 
 /** Register on focus acquisition so this callback follows the current destination's handlers. */
@@ -1266,7 +1274,7 @@ private fun rememberSidebarBackRegistration(): ((() -> Unit)?) -> Unit {
 internal fun filesMenuDestinations(state: SidebarUiState): List<MenuDestination> = listOf(
     MenuDestination("files:browse", stringResource(R.string.files_browse), Icons.Filled.Folder, Destinations.FILES),
 ) + state.networkFileSources.map { source ->
-    MenuDestination("files:source:${source.id}", offlineLabel(source.name, "files:${source.id}" in state.offlineSystems),
+    MenuDestination("files:source:${source.id}", source.name,
         Icons.Filled.Storage, Destinations.fileSource(source.id))
 } + listOf(
     MenuDestination("files:favorites", stringResource(R.string.files_favorites), Icons.Filled.Favorite, Destinations.FILE_FAVORITES),
@@ -1277,7 +1285,7 @@ internal fun filesMenuDestinations(state: SidebarUiState): List<MenuDestination>
 @Composable
 internal fun dlnaMenuDestinations(state: SidebarUiState): List<MenuDestination> =
     listOf(MenuDestination("dlna:manage", stringResource(R.string.dlna_servers), Icons.Filled.Settings, Destinations.DLNA)) +
-        state.dlnaServers.map { server -> MenuDestination("dlna:${server.id}", offlineLabel(server.name, "dlna:${server.id}" in state.offlineSystems),
+        state.dlnaServers.map { server -> MenuDestination("dlna:${server.id}", server.name,
             Icons.Filled.Storage, Destinations.dlnaServer(server.id)) }
 
 

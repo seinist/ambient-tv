@@ -67,8 +67,6 @@ class SidebarFocusUiTest {
     private var returnFocusPending by mutableStateOf(false)
     private val sidebarFocusRequester = FocusRequester()
     private val ownership = mutableListOf<Boolean>()
-    private var startStatusAvailable by mutableStateOf(false)
-    private var closeStartStatus: (() -> Unit)? = null
     private var testPlaybackBackChain = false
     private var playbackBackArmed = false
     private var sidebarBackCloses = 0
@@ -77,9 +75,7 @@ class SidebarFocusUiTest {
     private fun setUp(startRoute: String) {
         rule.setContent {
             var route by remember { mutableStateOf(startRoute) }
-            var statusOpen by remember { mutableStateOf(false) }
             val content = remember { FocusRequester() }
-            val status = remember { FocusRequester() }
             Row(Modifier.fillMaxSize()) {
                 SidebarContent(
                     sidebarState = state,
@@ -105,18 +101,8 @@ class SidebarFocusUiTest {
                     onFocusOwnershipChanged = { ownership += it },
                     suppressTransientFocus = returnFocusPending,
                     modifier = Modifier.focusRequester(sidebarFocusRequester),
-                    onOpenStartStatus = if (startStatusAvailable) {
-                        { onClosed ->
-                            closeStartStatus = { statusOpen = false; onClosed() }
-                            statusOpen = true
-                        }
-                    } else null,
                 )
                 Box(Modifier.padding(start = 40.dp).size(200.dp).focusRequester(content).testTag("content").focusable())
-            }
-            if (statusOpen) {
-                Box(Modifier.size(200.dp).focusRequester(status).testTag("start-status-panel").focusable())
-                androidx.compose.runtime.LaunchedEffect(Unit) { status.requestFocus() }
             }
             androidx.compose.runtime.LaunchedEffect(Unit) { content.requestFocus() }
         }
@@ -217,50 +203,12 @@ class SidebarFocusUiTest {
         assertEquals(1, backgroundPlayerOpens)
     }
 
-    @Test fun startStatusIsReachableAboveSettingsAndReturnsToItsOwnRow() {
-        startStatusAvailable = true
+    @Test fun mainMenuHasNoConnectionStatusRowAboveSettings() {
         setUp(Destinations.HOME)
         key(Key.DirectionLeft)
+        rule.onAllNodesWithTag("sidebar:start-status", useUnmergedTree = true).assertCountEquals(0)
         repeat(2) { key(Key.DirectionUp) }
         focused("sidebar:settings")
-        key(Key.DirectionUp)
-        focused("sidebar:start-status")
-        key(Key.Enter)
-        focused("start-status-panel")
-        rule.runOnIdle { requireNotNull(closeStartStatus).invoke() }
-        rule.waitForIdle()
-        focused("sidebar:start-status")
-        key(Key.DirectionDown)
-        focused("sidebar:settings")
-    }
-
-    @Test fun completedStatusDoesNotLeaveFocusOnARemovedSidebarRow() {
-        startStatusAvailable = true
-        setUp(Destinations.HOME)
-        key(Key.DirectionLeft)
-        repeat(3) { key(Key.DirectionUp) }
-        focused("sidebar:start-status")
-        rule.runOnIdle { startStatusAvailable = false }
-        rule.waitForIdle()
-        rule.onAllNodesWithTag("sidebar:start-status", useUnmergedTree = true).assertCountEquals(0)
-        focused("sidebar:search")
-    }
-
-    @Test fun closingACompletedStatusPanelReturnsToAnExistingSidebarRow() {
-        startStatusAvailable = true
-        setUp(Destinations.HOME)
-        key(Key.DirectionLeft)
-        repeat(3) { key(Key.DirectionUp) }
-        focused("sidebar:start-status")
-        key(Key.Enter)
-        focused("start-status-panel")
-        rule.runOnIdle {
-            startStatusAvailable = false
-            requireNotNull(closeStartStatus).invoke()
-        }
-        rule.waitForIdle()
-        rule.onAllNodesWithTag("sidebar:start-status", useUnmergedTree = true).assertCountEquals(0)
-        focused("sidebar:search")
     }
 
     @Test fun inlineSingleSystemKeepsBothProviderConfigurationAndGlobalSettings() {
