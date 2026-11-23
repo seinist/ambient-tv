@@ -4,8 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
@@ -59,62 +57,40 @@ fun OfflineSystemGuard(system: String, onOpenSettings: (String) -> Unit, content
     content()
 }
 
-/** One compact recovery action above a saved catalog; never requests focus or starts WOL. */
+/** Configured services whose saved state is shown because the source is offline or unconfirmed. */
 @Composable
-fun OfflineSourceStatus(
-    systems: Set<String>? = null,
-    modifier: Modifier = Modifier,
-    additionalSources: List<String> = emptyList(),
-    onRetryAdditional: () -> Unit = {},
-) {
+fun rememberOfflineSources(systems: Set<String>? = null): List<String> {
     val vm: UnreachableServerViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
     val sourceRevision by vm.availability.changes.collectAsState()
-    val offline = remember(state.offline, systems, sourceRevision) {
+    return remember(state.offline, systems, sourceRevision) {
         val failedServices = systems.orEmpty().filter {
-            it in setOf("plex", "jellyfin", "emby", "tvheadend") && vm.availability.browseUnconfirmed(it)
+            it in setOf("plex", "jellyfin", "emby", "tvheadend") && vm.availability.browseShowsOffline(it)
         }
-        (state.offline + failedServices).filter { systems == null || it in systems }
+        (state.offline + failedServices).filter { systems == null || it in systems }.distinct()
     }
-    if (offline.isNotEmpty() || additionalSources.isNotEmpty()) SavedBrowseStatus(
-        sources = (offline + additionalSources).distinct(), retrying = state.retrying,
-        onRetry = { offline.forEach(vm::retrySystem); onRetryAdditional() },
-        modifier = modifier,
-    )
 }
 
-/** Reusable by Live TV, where repository fallback can be stale without a host-offline flag. */
+/** Home-wide offline markers for hero badges and row titles; recomposes on availability changes. */
 @Composable
-fun SavedBrowseStatus(
-    sources: List<String>,
-    retrying: Boolean,
-    onRetry: () -> Unit,
-    modifier: Modifier = Modifier,
-    savedAt: String? = null,
-) {
-    val names = sources.map { source ->
+fun rememberOfflineMarkers(failedLiveSources: Set<String> = emptySet()): com.ambient.tv.ui.common.OfflineMarkers {
+    val vm: UnreachableServerViewModel = hiltViewModel()
+    val state by vm.state.collectAsState()
+    val sourceRevision by vm.availability.changes.collectAsState()
+    return remember(state.offline, failedLiveSources, sourceRevision) {
+        com.ambient.tv.ui.common.OfflineMarkers(state.offline + failedLiveSources, vm.availability, sourceRevision)
+    }
+}
+
+/** Page-header text for [com.ambient.tv.ui.common.LocalPageOfflineStatus]; null when nothing is offline. */
+@Composable
+fun offlineSourcesStatus(sources: List<String>): String? {
+    if (sources.isEmpty()) return null
+    // map is inline, so the composable systemName() may run in it (joinToString's transform may not).
+    val names = sources.distinct().map { source ->
         MediaSystem.fromKey(source)?.let { systemName(it) } ?: source
     }.joinToString(", ")
-    Row(
-        modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(stringResource(R.string.offline_browse_saved_title, names), style = MaterialTheme.typography.titleSmall)
-            savedAt?.let {
-                Text(
-                    stringResource(R.string.offline_browse_saved_at, it),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        TvActionButton(
-            text = stringResource(if (retrying) R.string.unreachable_retrying else R.string.home_retry),
-            onClick = onRetry, loading = retrying, enabled = !retrying,
-        )
-    }
+    return com.ambient.tv.ui.common.offlineTitle(names)
 }
 
 @Composable

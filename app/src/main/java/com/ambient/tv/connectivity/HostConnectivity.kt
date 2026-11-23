@@ -86,6 +86,10 @@ class HostConnectivity internal constructor(
         matchingHostEndpoint(endpoints(), host, port, system)
         ?.let { store.begin(it.machine) }
     fun nextCheck(previous: HostCheck?): HostCheck? = previous?.let { store.begin(it.machine) }
+    /** [system] and every configured service on the same server (machine). */
+    fun siblingSystems(system: String): Set<String> = machine(system)?.let { machine ->
+        endpoints().filter { it.machine == machine }.mapTo(mutableSetOf(system)) { it.system }
+    } ?: setOf(system)
     fun health(system: String): HostHealth = machine(system)?.let { store.current(it).health } ?: HostHealth.UNKNOWN
     fun online(check: HostCheck?) { if (check != null) store.online(check.machine) }
     /** Known unreachable from this network (and not wakeable): every service on it is offline. */

@@ -359,17 +359,15 @@ fun HomeScreen(
     // The overview's focus backdrop runs behind its header too, like the library pages: no dark
     // strip above the rows, the header actions sit on the artwork beside the title.
     val overviewRowsScrolling = remember { MutableStateFlow(false) }
+    // Offline sources are marked on the hero badges and row titles; nothing is inserted above
+    // the hero, so a source going offline never moves Home's layout.
+    val offlineMarkers = rememberOfflineMarkers(
+        (uiState as? HomeUiState.Loaded)?.savedLiveSources?.keys.orEmpty())
     Box(Modifier.fillMaxSize().claimBrowseStartupFocusOnInput(startupFocus)) {
+        androidx.compose.runtime.CompositionLocalProvider(com.ambient.tv.ui.common.LocalOfflineMarkers provides offlineMarkers) {
     if (systemOverview && !LocalHandheldUi.current) HomeFocusBackdrop(heroContent, overviewRowsScrolling)
     Column(Modifier.fillMaxSize()) {
         if (!systemOverview) com.ambient.tv.update.UpdateHomeCard()
-        if ((uiState as? HomeUiState.Loaded)?.let {
-                it.rows.isNotEmpty() || it.tvRows.isNotEmpty() || it.shortcuts.isNotEmpty()
-            } == true) OfflineSourceStatus(systems = overviewProvider?.let(::setOf)
-                ?: viewModel.reconnectSources(plexOnly, jellyfinOnly, embyOnly),
-                modifier = Modifier.padding(horizontal = screenGutter(), vertical = 8.dp),
-                additionalSources = (uiState as? HomeUiState.Loaded)?.savedLiveSources?.values.orEmpty().toList(),
-                onRetryAdditional = viewModel::retrySavedLiveSources)
         val handheldHeader = LocalHandheldUi.current
         // Phones have no tall hero corner: reserve a real row so the configured clock
         // stays visible without covering the first cards or update notice.
@@ -506,6 +504,7 @@ fun HomeScreen(
                 )
             }
             }
+        }
         }
     }
 }
@@ -799,7 +798,7 @@ internal fun LibraryContent(
                         HomeShortcutRow(it, onOpenHomeContent, onShortcutFocused, requestInitialFocus = false)
                     }
                     else -> state.rows.firstOrNull { it.id == rowKey }?.let { row ->
-                        ContentRow(row = row.withHomeYouTubeProgress(), onItemClick = { item ->
+                        ContentRow(row = row.withHomeYouTubeProgress().withOfflineTitle(), onItemClick = { item ->
                             val trailerId = homeTrailerVideoId(item.ratingKey)
                             val videoId = homeYouTubeVideoId(item.ratingKey)
                             if (trailerId != null) onTrailerHomeVideoClick(trailerId, row.id)
@@ -1229,7 +1228,7 @@ internal fun LibraryContent(
                             val index = state.rows.indexOfFirst { it.id == rowKey }
                             state.rows.getOrNull(index)?.let { row ->
                                 ContentRow(
-                                    row = row.withHomeYouTubeProgress(),
+                                    row = row.withHomeYouTubeProgress().withOfflineTitle(),
                                     onItemInfo = onGameInfo?.takeIf { row.id.startsWith("games.") }
                                         ?.let { info -> { item -> info(item.ratingKey) } },
                                     onItemClick = { item ->
@@ -1385,6 +1384,14 @@ private fun HomeShortcutRow(
 /** The default is deliberately inert for preview/tests without a HomeViewModel. */
 private val NoLiveTvTitleArt: StateFlow<Map<String, String>> = MutableStateFlow(emptyMap())
 
+/** Row title gets "· Offline" when every item's source is unreachable; the row keeps its height. */
+@Composable
+private fun com.ambient.tv.ui.common.ContentRowData.withOfflineTitle(): com.ambient.tv.ui.common.ContentRowData {
+    val markers = com.ambient.tv.ui.common.LocalOfflineMarkers.current
+    val offline = remember(this, markers) { items.isNotEmpty() && items.all { markers.media(it.ratingKey) } }
+    return if (offline) copy(title = com.ambient.tv.ui.common.offlineTitle(title)) else this
+}
+
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
 internal fun HomeLiveTvRow(
@@ -1497,7 +1504,14 @@ internal fun HomeLiveTvRow(
     ) {
         Row(Modifier.padding(horizontal = screenGutter()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             com.ambient.tv.ui.common.SystemLogo(com.ambient.tv.ui.common.MediaSystem.fromKey(items.firstOrNull()?.channel?.sourceId?.substringBefore(':').orEmpty()) ?: com.ambient.tv.ui.common.MediaSystem.TVHEADEND, size = 20.dp, tint = MaterialTheme.colorScheme.primary)
-            Text(title, style = MaterialTheme.typography.titleLarge)
+            // Saved channels of an unreachable source: marked in the heading, never by an extra row.
+            val markers = com.ambient.tv.ui.common.LocalOfflineMarkers.current
+            val offline = remember(items, markers) {
+                items.isNotEmpty() && items.all {
+                    markers.system(it.channel.sourceId) || markers.system(it.channel.sourceId.substringBefore(':'))
+                }
+            }
+            Text(if (offline) com.ambient.tv.ui.common.offlineTitle(title) else title, style = MaterialTheme.typography.titleLarge)
         }
         CompositionLocalProvider(LocalBringIntoViewSpec provides horizontalScrollSpec) {
             LazyRow(
@@ -2013,6 +2027,11 @@ internal fun HomeHero(
                     ?.let { remaining ->
                         formatDuration(remaining)?.let { stringResource(R.string.media_remaining, it) }
                     }
+                val offlineMarkers = com.ambient.tv.ui.common.LocalOfflineMarkers.current
+                // Saved title of an unreachable source: one badge in the existing metadata row.
+                val heroOffline = remember(mediaItem?.ratingKey, offlineMarkers) {
+                    mediaItem?.ratingKey?.let(offlineMarkers::media) == true
+                }
                 val summaryText = (heroItem.summary ?: mediaItem?.summary)?.takeIf { it.isNotBlank() }
                 val density = LocalDensity.current
                 com.ambient.tv.ui.common.HeroTextLayout(
@@ -2072,6 +2091,7 @@ internal fun HomeHero(
                                 mediaItem?.contentRating?.takeIf { it.isNotBlank() }?.let { ContentRatingBadge(it) }
                                 heroScore?.let { RatingScoreBadge(score = it, maxScore = heroScoreMax) }
                                 if (mediaItem?.isWatched == true) com.ambient.tv.ui.common.WatchedBadge()
+                                if (heroOffline) com.ambient.tv.ui.common.OfflineBadge()
                             }
                             // Runtime and playback progress get their own line, which leaves the badge
                             // row readable and gives continuing items a small visual progress cue.

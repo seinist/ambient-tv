@@ -216,7 +216,10 @@ fun SearchScreen(
         Box(Modifier.fillMaxSize()) {
             val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
             val queryStageFocus = remember { FocusRequester() }
+            val searchOfflineStatus = com.ambient.tv.ui.home.offlineSourcesStatus(
+                com.ambient.tv.ui.home.rememberOfflineSources(viewModel.reconnectSources))
             Column(modifier = Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(28.dp))) {
+                androidx.compose.runtime.CompositionLocalProvider(com.ambient.tv.ui.common.LocalPageOfflineStatus provides searchOfflineStatus) {
                 PageHeader(focusChain = focusChain, actions = {
                     if (uiState.hasResults) ViewOptionsChip(
                         activeCount = 0,
@@ -275,7 +278,6 @@ fun SearchScreen(
                     }
                 }
                 // Up from the results: source chips, then the query field (no chips: straight to the field).
-                com.ambient.tv.ui.home.OfflineSourceStatus(systems = viewModel.reconnectSources)
                 Box(Modifier.fillMaxSize()
                     .then(playbackFocus.modifier)
                     .pageContentUp(focusChain) { if (uiState.availableSources.isEmpty()) queryFocus else focusChain.contentUp }
@@ -326,6 +328,7 @@ fun SearchScreen(
                         }
                     }
                     }
+                }
                 }
             }
             if (showOptions && uiState.hasResults) {

@@ -23,7 +23,9 @@ fun PlaybackConnectionDialog(
 ) {
     var visible by remember { mutableStateOf(failure != null) }
     LaunchedEffect(failure) {
-        if (failure == null) kotlinx.coroutines.delay(250)
+        // A normal access check finishes quietly; the dialog appears only for a failure or a
+        // check that takes noticeably long (e.g. waking a server).
+        if (failure == null) kotlinx.coroutines.delay(1_500)
         visible = true
     }
     BackHandler(onBack = onCancel)

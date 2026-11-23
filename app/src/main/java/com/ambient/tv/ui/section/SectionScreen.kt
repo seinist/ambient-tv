@@ -219,7 +219,7 @@ fun SectionScreen(
     val recovery: com.ambient.tv.ui.home.UnreachableServerViewModel = hiltViewModel()
     val connection by recovery.state.collectAsState()
     val sourceRevision by recovery.availability.changes.collectAsState()
-    val sourceUnconfirmed = remember(source, sourceRevision) { recovery.availability.browseUnconfirmed(source) }
+    val sourceUnconfirmed = remember(source, sourceRevision) { recovery.availability.browseShowsOffline(source) }
     val contentUnconfirmed = source in connection.offline || sourceUnconfirmed || refreshFailed
     val retrySource: () -> Unit = { recovery.retrySystem(source) }
     ReportSidebarContentReady(uiState !is SectionUiState.Loading)
@@ -247,11 +247,10 @@ fun SectionScreen(
     if (onBack != null) {
         BackHandler(enabled = uiState !is SectionUiState.Loaded) { onBack() }
     }
+    val sectionOfflineStatus = com.ambient.tv.ui.home.offlineSourcesStatus(
+        if (uiState is SectionUiState.Loaded && contentUnconfirmed) listOf(source) else emptyList())
     Column(modifier = Modifier.fillMaxSize()) {
-        if (uiState is SectionUiState.Loaded && contentUnconfirmed) com.ambient.tv.ui.home.SavedBrowseStatus(
-            sources = listOf(source), retrying = connection.retrying || refreshing, onRetry = retrySource,
-            modifier = Modifier.padding(horizontal = screenGutter(), vertical = 8.dp),
-        )
+        androidx.compose.runtime.CompositionLocalProvider(com.ambient.tv.ui.common.LocalPageOfflineStatus provides sectionOfflineStatus) {
     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
         when (val state = uiState) {
             SectionUiState.Loading -> LibraryLoadingState(
@@ -293,7 +292,8 @@ fun SectionScreen(
                 onSetGridColumns = viewModel::setGridColumns,
                 onSetListRows = viewModel::setListRows,
                 onSelectLetter = viewModel::selectLetter,
-                onRefresh = viewModel::reload,
+                // Reload also re-checks an unconfirmed source; there is no separate retry button.
+                onRefresh = { if (contentUnconfirmed) retrySource(); viewModel.reload() },
                 refreshing = refreshing,
                 contentUnconfirmed = contentUnconfirmed,
                 onRetrySource = retrySource,
@@ -303,6 +303,7 @@ fun SectionScreen(
         }
 
     }
+        }
     }
 }
 

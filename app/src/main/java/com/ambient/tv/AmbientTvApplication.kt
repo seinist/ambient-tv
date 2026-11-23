@@ -198,6 +198,16 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
         }
         com.ambient.tv.companion.CompanionShareTargets.syncShareEntry(this)
         hostConnectivity.start()
+        com.ambient.tv.notifications.PlaybackNoticeScope.playingSystems = {
+            com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.value.metadata?.let { metadata ->
+                val system = when (metadata.source) {
+                    "files" -> runCatching { "files:" + com.ambient.tv.data.files.FileKeys.parse(metadata.mediaId).first }.getOrNull()
+                    "dlna" -> runCatching { "dlna:" + com.ambient.tv.data.dlna.DlnaKeys.parse(metadata.mediaId).first }.getOrNull()
+                    else -> null
+                } ?: metadata.source
+                hostConnectivity.siblingSystems(system) + system.substringBefore(':')
+            }.orEmpty()
+        }
         onlineServiceAvailability.start()
         resumeConnectivityMonitor.start()
         // Video pauses and then stops, live TV stops when the app leaves the screen.
