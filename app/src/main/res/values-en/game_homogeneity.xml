@@ -8,6 +8,9 @@
     <string name="game_core_options_heading">Options</string>
     <string name="game_info_diagnostics">Renderer and HDR details</string>
     <string name="game_info_diagnostics_hint">Vulkan surface, HDR handshake and native output tests</string>
+    <string name="game_picture_effect">Extra effect</string>
+    <string name="game_picture_effect_hint">Runs on the original picture before the filter, for example a colour signal with Sharp Bilinear or an LCD grid</string>
+    <string name="game_picture_effect_none">None</string>
     <string name="game_picture_hdr_steps">With HDR10 input the core\'s own HDR output is switched on as well. For a real HDR signal on the TV, then test the native output under Info → Renderer and HDR details; without it the picture is mapped to SDR.</string>
     <string name="game_picture_integer_auto">Automatic</string>
     <string name="game_picture_integer_auto_hint">Whole numbers only where the border stays small, such as on 4K screens; otherwise the picture fills the screen</string>

@@ -211,6 +211,24 @@ class GamesTest {
         }
     }
 
+    @Test fun effectsBelongToTheSystemOrTheGame() {
+        val snes = GameSystems.byId("snes")!!
+        var state = GameSettingsState()
+        assertEquals(null, state.effect(snes))
+        state = state.withEffect(snes, GameShader.NTSC_COMPOSITE)
+        assertEquals(GameShader.NTSC_COMPOSITE, state.effect(snes, "game"))
+        // Filters that are not effects are not stored as one.
+        assertEquals(null, GameSettingsState().withEffect(snes, GameShader.CRT).effect(snes))
+        // Pinned with the game's picture, then switched off for the game only.
+        state = state.withGamePicture(snes, "game")
+        assertEquals(GameShader.NTSC_COMPOSITE, state.effect(snes, "game"))
+        state = state.withGameEffect("game", null).withEffect(snes, GameShader.VHS_SOFT)
+        assertEquals(null, state.effect(snes, "game"))
+        assertEquals(GameShader.VHS_SOFT, state.effect(snes))
+        state = state.withoutGamePicture("game")
+        assertEquals(GameShader.VHS_SOFT, state.effect(snes, "game"))
+    }
+
     @Test fun gamePictureScopeCoversFilterShapeAndScaling() {
         val snes = GameSystems.byId("snes")!!
         var state = GameSettingsState().withShader(snes, GameShader.CRT).withAspect(snes, GameAspect.EIGHT_SEVEN)

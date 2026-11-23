@@ -112,6 +112,9 @@ enum class GameOptionOrigin { DEFAULT, CORE, GAME }
  * The picture a system starts with until someone chooses: LCD-type filters and whole-number
  * scaling for handheld screens, crisp pixels for 2D consoles, smoothed edges for 3D consoles.
  */
+/** Stored for a game whose own picture has no effect although its system has one. */
+private const val NO_EFFECT = "none"
+
 object GamePictureDefaults {
     private val handhelds = setOf("gb", "gba", "ngp", "wswan", "lynx")
     private val polygonal = setOf("n64", "gamecube", "wii", "wiiu", "ps2", "psp", "dreamcast")
@@ -126,6 +129,14 @@ object GamePictureDefaults {
 
     fun integerScaling(system: GameSystem): GameIntegerScaling =
         if (system.id in handhelds) GameIntegerScaling.ON else GameIntegerScaling.OFF
+
+    /**
+     * Effects that can run in front of any filter: they work on the original picture, so they
+     * stay correct before scaling, CRT and LCD filters alike.
+     */
+    val effects: List<GameShader> = listOf(
+        GameShader.NTSC_COMPOSITE, GameShader.VHS_SOFT, GameShader.COLOR_BOOST, GameShader.FILM_GRAIN,
+    )
 
     /** Systems with a handheld screen; the Mega Drive entry also runs Game Gear games. */
     private val handheldScreens = handhelds + setOf("nds", "n3ds", "psp", "vb", "megadrive")
@@ -222,7 +233,21 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
     fun withGameIntegerScaling(gameKey: String, mode: GameIntegerScaling?): GameSettingsState =
         set("integer.game.$gameKey", mode?.key)
 
-    /** Filter, strength, shape and scaling can belong to one game; then all four do. */
+    /** The extra effect in front of the filter, or null. A game can switch the system's effect off. */
+    fun effect(system: GameSystem, gameKey: String? = null): GameShader? {
+        val own = gameKey?.let { values["effect.game.$it"] }
+        if (own == NO_EFFECT) return null
+        return (own ?: values["effect.${system.id}"])?.let(GameShader::fromKey)
+            ?.takeIf { it in GamePictureDefaults.effects }
+    }
+
+    fun withEffect(system: GameSystem, effect: GameShader?): GameSettingsState =
+        set("effect.${system.id}", effect?.takeIf { it in GamePictureDefaults.effects }?.key)
+
+    fun withGameEffect(gameKey: String, effect: GameShader?): GameSettingsState =
+        set("effect.game.$gameKey", effect?.takeIf { it in GamePictureDefaults.effects }?.key ?: NO_EFFECT)
+
+    /** Filter, strength, effect, shape and scaling can belong to one game; then all of them do. */
     fun gamePictureScope(gameKey: String): Boolean =
         gamePictureKeys(gameKey).any { it in values }
 
@@ -235,6 +260,7 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
             .withShaderStrength(system, gameKey, current.shaderStrength(system, gameKey))
             .withGameAspect(gameKey, current.aspect(system, gameKey))
             .withGameIntegerScaling(gameKey, current.integerScaling(system, gameKey))
+            .withGameEffect(gameKey, current.effect(system, gameKey))
     }
 
     fun withoutGamePicture(gameKey: String): GameSettingsState =
@@ -242,6 +268,7 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
 
     private fun gamePictureKeys(gameKey: String) = listOf(
         "shader.game.$gameKey", "shader.intensity.game.$gameKey", "aspect.game.$gameKey", "integer.game.$gameKey",
+        "effect.game.$gameKey",
     )
 
     /** DS/3DS pointer games default to an unobstructed screen; others show buttons on phones. */

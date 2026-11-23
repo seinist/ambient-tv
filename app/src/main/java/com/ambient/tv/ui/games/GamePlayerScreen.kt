@@ -336,6 +336,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val shader = settings.shader(system, game.saveKey)
     val shaderIntensity = settings.shaderStrength(system, game.saveKey)
     val selectedPack = settings.packShader(system, game.saveKey)
+    // The extra effect needs the GLES chain and its single prefix; packs and HDR conversion keep theirs.
+    val effect = settings.effect(system, game.saveKey)
     val gamePictureScope = settings.gamePictureScope(game.saveKey)
     val installedShaders = remember(model) { model.shaderPacks.installed() }
     val selectedPackConfig = remember(selectedPack, model) { model.shaderPacks.config(selectedPack) }
@@ -352,17 +354,17 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val hideTouchForGamepad by rememberUpdatedState(touchStyle.hideOnGamepadInput)
     // A trusted small Slang preset may opt into the experimental native WSI.
     // Existing GLES filters remain available for all other choices and for HDR.
-    val nativeSlangPath = remember(context, shader, shaderIntensity, selectedPack, nativeTransfer, session.vulkan) {
+    val nativeSlangPath = remember(context, shader, shaderIntensity, selectedPack, nativeTransfer, session.vulkan, effect) {
         // Bundled native presets currently use their author's default parameter values.
         // A user-adjusted intensity must keep using GLES until native per-parameter
         // parity is implemented; never silently display the wrong chosen appearance.
-        if (BuildConfig.LIBRASHADER_NATIVE && session.vulkan &&
+        if (BuildConfig.LIBRASHADER_NATIVE && session.vulkan && effect == null &&
             nativeTransfer == GameVulkanTransferMode.SDR &&
             kotlin.math.abs(shaderIntensity - 1f) < 0.0001f)
             GameVulkanSlangPresets.prepare(context, shader, selectedPack)
         else null
     }
-    val nativePictureSupported = selectedPack == null &&
+    val nativePictureSupported = selectedPack == null && effect == null &&
         (GameVulkanPictureCompatibility.rawFullscreenEligible(shader) || nativeSlangPath != null)
     val saveStates by model.saveStates.collectAsState()
     val coverUrl by produceState<String?>(null, game.fileId) { value = model.coverUrl() }
@@ -511,6 +513,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             this.shader = GameHdrToneMapShader.forConfig(
                 selectedPackConfig ?: shader.config(shaderIntensity),
                 toneMap, session.vulkan, pixel = selectedPack == null && shader == GameShader.PIXEL,
+                effect = effect.takeIf { selectedPackConfig == null },
             )
             rumbleEventsEnabled = true
             preferLowLatencyAudio = true
@@ -1682,7 +1685,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     ).joinToString(" · "),
                                     selected = selectedPack == null && choice == shader,
                                     onClick = {
-                                        retroView.shader = GameHdrToneMapShader.forGame(choice, toneMap, session.vulkan, shaderIntensity)
+                                        retroView.shader = GameHdrToneMapShader.forGame(choice, toneMap, session.vulkan, shaderIntensity, effect)
                                         GameSettings.update {
                                             if (gamePictureScope) it.withGameShader(game.saveKey, choice)
                                             else it.withShader(system, choice)
@@ -1706,9 +1709,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             fun applyPicture(state: GameSettingsState) {
                                 val pack = state.packShader(system, game.saveKey)
                                 val chosen = state.shader(system, game.saveKey)
+                                val packConfig = model.shaderPacks.config(pack)
                                 retroView.shader = GameHdrToneMapShader.forConfig(
-                                    model.shaderPacks.config(pack) ?: chosen.config(state.shaderStrength(system, game.saveKey)),
+                                    packConfig ?: chosen.config(state.shaderStrength(system, game.saveKey)),
                                     toneMap, session.vulkan, pixel = pack == null && chosen == GameShader.PIXEL,
+                                    effect = state.effect(system, game.saveKey).takeIf { packConfig == null },
                                 )
                                 retroView.aspectRatioOverride = state.aspect(system, game.saveKey).ratio ?: -1f
                                 val scaling = state.integerScaling(system, game.saveKey)
@@ -1762,12 +1767,36 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     valueLabel = stringResource(R.string.game_shader_strength_value, percent),
                                     onValueChange = { value ->
                                         val next = value / 100f
-                                        retroView.shader = GameHdrToneMapShader.forGame(shader, toneMap, session.vulkan, next)
+                                        retroView.shader = GameHdrToneMapShader.forGame(shader, toneMap, session.vulkan, next, effect)
                                         GameSettings.update {
                                             it.withShaderStrength(system, game.saveKey.takeIf { gamePictureScope }, next)
                                         }
                                     },
                                 )
+                            }
+                            // Second stage: an effect on the original frame in front of the filter.
+                            if (selectedPack == null && !(session.vulkan && toneMap != GameHdrToneMap.OFF)) {
+                                val noEffect = stringResource(R.string.game_picture_effect_none)
+                                val effectOptions = listOf("" to noEffect) +
+                                    GamePictureDefaults.effects.map { it.key to stringResource(it.titleRes) }
+                                com.ambient.tv.ui.common.PlayerDropUpSelector(
+                                    label = stringResource(R.string.game_picture_effect),
+                                    value = effect?.let { stringResource(it.titleRes) } ?: noEffect,
+                                    options = effectOptions,
+                                    selectedKey = effect?.key.orEmpty(),
+                                    // The same look twice adds nothing.
+                                    disabledKeys = setOfNotNull(shader.key.takeIf { shader in GamePictureDefaults.effects }),
+                                    dropUp = false,
+                                    onSelected = { key ->
+                                        val chosen = GameShader.fromKey(key)?.takeIf { it in GamePictureDefaults.effects }
+                                        retroView.shader = GameHdrToneMapShader.forGame(shader, toneMap, session.vulkan, shaderIntensity, chosen)
+                                        GameSettings.update {
+                                            if (gamePictureScope) it.withGameEffect(game.saveKey, chosen)
+                                            else it.withEffect(system, chosen)
+                                        }
+                                    },
+                                )
+                                GamePanelText(stringResource(R.string.game_picture_effect_hint))
                             }
                             GamePanelHeading(stringResource(R.string.game_picture_shape))
                             GameAspect.entries.forEach { choice ->
