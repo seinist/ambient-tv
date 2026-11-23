@@ -9,6 +9,10 @@
     <string name="game_info_diagnostics">Renderer- und HDR-Details</string>
     <string name="game_info_diagnostics_hint">Vulkan-Surface, HDR-Handshake und Tests der nativen Ausgabe</string>
     <string name="game_picture_hdr_steps">Mit HDR10-Eingabe wird auch die HDR-Ausgabe des Cores eingeschaltet. Für ein echtes HDR-Signal am Fernseher danach unter Info → Renderer- und HDR-Details die native Ausgabe testen; ohne sie wird das Bild auf SDR abgebildet.</string>
+    <string name="game_picture_integer_auto">Automatisch</string>
+    <string name="game_picture_integer_auto_hint">Nur ganzzahlig, wenn der Rand klein bleibt, etwa auf 4K-Bildschirmen; sonst füllt das Bild den Schirm</string>
+    <string name="game_picture_integer_off">Aus</string>
+    <string name="game_picture_integer_on">Immer</string>
     <string name="game_picture_scope_game_hint">Filter, Stärke, Bildform und Skalierung gelten nur für dieses Spiel</string>
     <string name="game_reset_confirm_hint">Der Fortschritt seit dem letzten Spielstand wird als Rückgängig-Stand aufbewahrt.</string>
     <string name="game_reset_confirm_title">Spiel neu starten?</string>

@@ -119,6 +119,7 @@ import com.ambient.tv.games.GameOptionOrigin
 import com.ambient.tv.games.GameSettings
 import com.ambient.tv.games.GameSettingsState
 import com.ambient.tv.games.GamePictureDefaults
+import com.ambient.tv.games.GameIntegerScaling
 import com.ambient.tv.games.GameShader
 import com.ambient.tv.games.GameShaderGroup
 import com.ambient.tv.games.GameHdrToneMap
@@ -527,7 +528,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             // Starts paused: the first composition decides whether it runs.
             suppressAutoResume = true
             aspectRatioOverride = aspect.ratio ?: -1f
-            this.integerScaling = integerScaling
+            this.integerScalingAuto = integerScaling == GameIntegerScaling.AUTO
+            this.integerScaling = integerScaling.enabled
         }.also { view ->
             // Install before native creation, so even an abandoned first composition has
             // a cleanup path. The complete player cleanup replaces this once constructed.
@@ -1669,7 +1671,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         }
                         open == GamePanel.PICTURE && shaderGroup != null -> {
                             val recommended = GamePictureDefaults.recommended(system)
-                            GameShader.entries.filter { it.group == shaderGroup }
+                            GameShader.entries.filter { it.group == shaderGroup && (it == shader || GamePictureDefaults.offers(system, it)) }
                                 .sortedBy { it !in recommended }
                                 .forEach { choice ->
                                 GamePanelChoice(
@@ -1709,7 +1711,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     toneMap, session.vulkan, pixel = pack == null && chosen == GameShader.PIXEL,
                                 )
                                 retroView.aspectRatioOverride = state.aspect(system, game.saveKey).ratio ?: -1f
-                                retroView.integerScaling = state.integerScaling(system, game.saveKey)
+                                val scaling = state.integerScaling(system, game.saveKey)
+                                retroView.integerScalingAuto = scaling == GameIntegerScaling.AUTO
+                                retroView.integerScaling = scaling.enabled
                             }
                             // One scope for filter, strength, shape and scaling, like the core options.
                             GamePanelChoice(
@@ -1735,7 +1739,10 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 onClick = gamePanels::openShaderPacks,
                             )
                             val recommended = GamePictureDefaults.recommended(system)
-                            GameShaderGroup.entries.sortedBy { group -> recommended.none { it.group == group } }.forEach { group ->
+                            // Groups without a filter for this screen (handheld filters on a console) stay hidden.
+                            GameShaderGroup.entries.filter { group ->
+                                shader.group == group || GameShader.entries.any { it.group == group && GamePictureDefaults.offers(system, it) }
+                            }.sortedBy { group -> recommended.none { it.group == group } }.forEach { group ->
                                 GamePanelChoice(
                                     text = stringResource(group.titleRes),
                                     subtitle = GameShader.entries.firstOrNull { it == shader && it.group == group }
@@ -1776,18 +1783,28 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     },
                                 )
                             }
-                            GamePanelChoice(
-                                text = stringResource(R.string.game_picture_integer),
-                                subtitle = stringResource(R.string.game_picture_integer_hint),
-                                selected = integerScaling,
-                                onClick = {
-                                    retroView.integerScaling = !integerScaling
+                            // Off / On / Auto: a value choice like the other picture values, not a toggle row.
+                            val scalingOptions = GameIntegerScaling.entries.map { it.key to stringResource(it.titleRes) }
+                            com.ambient.tv.ui.common.PlayerDropUpSelector(
+                                label = stringResource(R.string.game_picture_integer),
+                                value = stringResource(integerScaling.titleRes),
+                                options = scalingOptions,
+                                selectedKey = integerScaling.key,
+                                dropUp = false,
+                                onSelected = { key ->
+                                    val chosen = GameIntegerScaling.fromKey(key) ?: return@PlayerDropUpSelector
+                                    retroView.integerScalingAuto = chosen == GameIntegerScaling.AUTO
+                                    retroView.integerScaling = chosen.enabled
                                     GameSettings.update {
-                                        if (gamePictureScope) it.withGameIntegerScaling(game.saveKey, !integerScaling)
-                                        else it.withIntegerScaling(system, !integerScaling)
+                                        if (gamePictureScope) it.withGameIntegerScaling(game.saveKey, chosen)
+                                        else it.withIntegerScaling(system, chosen)
                                     }
                                 },
                             )
+                            GamePanelText(stringResource(when (integerScaling) {
+                                GameIntegerScaling.AUTO -> R.string.game_picture_integer_auto_hint
+                                else -> R.string.game_picture_integer_hint
+                            }))
                             // HDR is offered only where a core is known to output it (or to switch it off again).
                             val hdrOption = GameVulkanHdrSourceEvidence.hdrOption(core.id)
                             if (session.vulkan && core.hardware && core.supportsVulkan && !netplay.busy && !exiting &&

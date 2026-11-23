@@ -35,6 +35,7 @@ class GameSelectionCoordinatorTest {
         var launchOffers = 0
         val details = mutableListOf<LibraryGame>()
         val started = mutableListOf<LibraryGame>()
+        val startedFresh = mutableListOf<LibraryGame>()
         var deferTarget = false
         var completeTarget: ((() -> Unit) -> Unit)? = null
         var targetGame: LibraryGame? = null
@@ -62,6 +63,7 @@ class GameSelectionCoordinatorTest {
                 completeTarget = complete
                 if (!deferTarget) complete { started += selected }
             },
+            launchFresh = { selected, complete -> complete { startedFresh += selected } },
         )
         fun completeTarget() { completeTarget?.invoke { started += requireNotNull(targetGame) } }
         fun selectOther(keepPlaybackRequest: Boolean = false): BrowseSelectionIntents.Ticket {
@@ -237,6 +239,20 @@ class GameSelectionCoordinatorTest {
         assertEquals(0, f.checks)
         assertEquals(0, f.wakes)
         assertNull(f.coordinator.state.value)
+    }
+
+    @Test fun startOverFromTheOptionsKeepsItsChoiceThroughWake() = runTest {
+        val f = Fixture(this, network = true)
+        f.needsWake = { true }
+        f.coordinator.select(f.game.fileId, MediaSelectionPreferences.ASK)
+        runCurrent()
+        f.coordinator.playPending(fresh = true)
+        runCurrent()
+        assertEquals(GameSelectionPhase.WAKE, f.coordinator.state.value?.phase)
+        f.coordinator.playPending(allowWake = true)
+        runCurrent()
+        assertEquals(listOf(f.game), f.startedFresh)
+        assertTrue(f.started.isEmpty())
     }
 
     @Test fun optionsPlayUsesTheSameSourceCheckAndExplicitWakeAsDirectPlay() = runTest {

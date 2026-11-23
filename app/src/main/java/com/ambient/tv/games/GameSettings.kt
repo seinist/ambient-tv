@@ -64,6 +64,20 @@ enum class GameHdrToneMap(val key: String, @StringRes val titleRes: Int) {
 }
 
 /** Picture shape. [ratio] null keeps the shape the core reports. */
+/** Whole-number scaling: off, always, or only where it leaves a small border (large screens). */
+enum class GameIntegerScaling(val key: String, @StringRes val titleRes: Int) {
+    OFF("0", R.string.game_picture_integer_off),
+    ON("1", R.string.game_picture_integer_on),
+    AUTO("auto", R.string.game_picture_integer_auto),
+    ;
+
+    val enabled: Boolean get() = this != OFF
+
+    companion object {
+        fun fromKey(key: String?) = entries.firstOrNull { it.key == key }
+    }
+}
+
 enum class GameAspect(val key: String, val ratio: Float?, @StringRes val titleRes: Int) {
     CORE("core", null, R.string.game_aspect_core),
     FOUR_THREE("4:3", 4f / 3f, R.string.game_aspect_4_3),
@@ -110,7 +124,22 @@ object GamePictureDefaults {
         else -> GameShader.SHARP
     }
 
-    fun integerScaling(system: GameSystem): Boolean = system.id in handhelds
+    fun integerScaling(system: GameSystem): GameIntegerScaling =
+        if (system.id in handhelds) GameIntegerScaling.ON else GameIntegerScaling.OFF
+
+    /** Systems with a handheld screen; the Mega Drive entry also runs Game Gear games. */
+    private val handheldScreens = handhelds + setOf("nds", "n3ds", "psp", "vb", "megadrive")
+
+    /**
+     * Whether the picture panel offers [shader] for [system]: handheld screen filters only on
+     * handhelds, and the console-specific ones only on their console.
+     */
+    fun offers(system: GameSystem, shader: GameShader): Boolean = when (shader) {
+        GameShader.GAMEBOY_DMG, GameShader.GBC_GRID -> system.id == "gb"
+        GameShader.GBA_COLOR -> system.id == "gba"
+        GameShader.DS_LCD -> system.id in setOf("nds", "n3ds")
+        else -> shader.group != GameShaderGroup.HANDHELD || system.id in handheldScreens
+    }
 
     /** Filters that suit the system's screen, shown first and marked in the picture panel. */
     fun recommended(system: GameSystem): Set<GameShader> = when (system.id) {
@@ -182,15 +211,16 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
     fun withAspect(system: GameSystem, aspect: GameAspect): GameSettingsState = set("aspect.${system.id}", aspect.key.takeIf { aspect != GameAspect.CORE })
 
     /** Scales by whole numbers only: every source pixel the same size, black borders around. */
-    fun integerScaling(system: GameSystem, gameKey: String? = null): Boolean =
-        (gameKey?.let { values["integer.game.$it"] } ?: values["integer.${system.id}"])?.let { it == "1" }
+    fun integerScaling(system: GameSystem, gameKey: String? = null): GameIntegerScaling =
+        gameKey?.let { GameIntegerScaling.fromKey(values["integer.game.$it"]) }
+            ?: GameIntegerScaling.fromKey(values["integer.${system.id}"])
             ?: GamePictureDefaults.integerScaling(system)
 
-    fun withIntegerScaling(system: GameSystem, on: Boolean): GameSettingsState =
-        set("integer.${system.id}", (if (on) "1" else "0").takeIf { on != GamePictureDefaults.integerScaling(system) })
+    fun withIntegerScaling(system: GameSystem, mode: GameIntegerScaling): GameSettingsState =
+        set("integer.${system.id}", mode.key.takeIf { mode != GamePictureDefaults.integerScaling(system) })
 
-    fun withGameIntegerScaling(gameKey: String, on: Boolean?): GameSettingsState =
-        set("integer.game.$gameKey", on?.let { if (it) "1" else "0" })
+    fun withGameIntegerScaling(gameKey: String, mode: GameIntegerScaling?): GameSettingsState =
+        set("integer.game.$gameKey", mode?.key)
 
     /** Filter, strength, shape and scaling can belong to one game; then all four do. */
     fun gamePictureScope(gameKey: String): Boolean =

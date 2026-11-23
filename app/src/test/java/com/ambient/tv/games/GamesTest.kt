@@ -187,15 +187,28 @@ class GamesTest {
         val snes = GameSystems.byId("snes")!!
         var state = GameSettingsState()
         assertEquals(GameShader.LCD, state.shader(gb))
-        assertTrue(state.integerScaling(gb))
+        assertEquals(GameIntegerScaling.ON, state.integerScaling(gb))
         assertEquals(GameShader.SMOOTH, state.shader(n64))
         assertEquals(GameShader.SHARP, state.shader(snes))
-        assertFalse(state.integerScaling(snes))
+        assertEquals(GameIntegerScaling.OFF, state.integerScaling(snes))
         // Switching a default off is stored; switching back to the default removes the key.
-        state = state.withIntegerScaling(gb, false)
-        assertFalse(state.integerScaling(gb))
-        assertTrue("integer.gb" !in state.withIntegerScaling(gb, true).values)
+        state = state.withIntegerScaling(gb, GameIntegerScaling.OFF)
+        assertEquals(GameIntegerScaling.OFF, state.integerScaling(gb))
+        assertTrue("integer.gb" !in state.withIntegerScaling(gb, GameIntegerScaling.ON).values)
+        // Automatic is its own stored choice; values stored before it existed read the same.
+        assertEquals(GameIntegerScaling.AUTO, state.withIntegerScaling(snes, GameIntegerScaling.AUTO).integerScaling(snes))
+        assertEquals(GameIntegerScaling.ON, GameSettingsState(mapOf("integer.snes" to "1")).integerScaling(snes))
         assertTrue(GameShader.LCD in GamePictureDefaults.recommended(gb))
+        // Handheld screen filters only where there is a handheld screen.
+        assertFalse(GamePictureDefaults.offers(n64, GameShader.LCD))
+        assertFalse(GamePictureDefaults.offers(GameSystems.byId("gba")!!, GameShader.GAMEBOY_DMG))
+        assertTrue(GamePictureDefaults.offers(gb, GameShader.GAMEBOY_DMG))
+        assertTrue(GamePictureDefaults.offers(n64, GameShader.CRT))
+        // Every recommended filter is also offered.
+        GameSystems.alphabetical.forEach { system ->
+            GamePictureDefaults.recommended(system).forEach { assertTrue(system.id, GamePictureDefaults.offers(system, it)) }
+            assertTrue(system.id, GamePictureDefaults.offers(system, GamePictureDefaults.shader(system)))
+        }
     }
 
     @Test fun gamePictureScopeCoversFilterShapeAndScaling() {
@@ -205,19 +218,19 @@ class GamesTest {
         state = state.withGamePicture(snes, "game")
         assertTrue(state.gamePictureScope("game"))
         // System changes no longer reach the pinned game.
-        state = state.withShader(snes, GameShader.PIXEL).withAspect(snes, GameAspect.WIDE).withIntegerScaling(snes, true)
+        state = state.withShader(snes, GameShader.PIXEL).withAspect(snes, GameAspect.WIDE).withIntegerScaling(snes, GameIntegerScaling.ON)
         assertEquals(GameShader.CRT, state.shader(snes, "game"))
         assertEquals(GameAspect.EIGHT_SEVEN, state.aspect(snes, "game"))
-        assertFalse(state.integerScaling(snes, "game"))
-        state = state.withGameAspect("game", GameAspect.FOUR_THREE).withGameIntegerScaling("game", true)
+        assertEquals(GameIntegerScaling.OFF, state.integerScaling(snes, "game"))
+        state = state.withGameAspect("game", GameAspect.FOUR_THREE).withGameIntegerScaling("game", GameIntegerScaling.AUTO)
         assertEquals(GameAspect.FOUR_THREE, state.aspect(snes, "game"))
-        assertTrue(state.integerScaling(snes, "game"))
+        assertEquals(GameIntegerScaling.AUTO, state.integerScaling(snes, "game"))
         // Leaving the game scope follows the system again.
         state = state.withoutGamePicture("game")
         assertFalse(state.gamePictureScope("game"))
         assertEquals(GameShader.PIXEL, state.shader(snes, "game"))
         assertEquals(GameAspect.WIDE, state.aspect(snes, "game"))
-        assertTrue(state.integerScaling(snes, "game"))
+        assertEquals(GameIntegerScaling.ON, state.integerScaling(snes, "game"))
     }
 
     @Test fun pictureRewindAndGraphicsSettings() {
@@ -225,14 +238,14 @@ class GamesTest {
         val n64 = GameSystems.byId("n64")!!
         var state = GameSettingsState()
         assertEquals(GameAspect.CORE, state.aspect(snes))
-        assertFalse(state.integerScaling(snes))
+        assertEquals(GameIntegerScaling.OFF, state.integerScaling(snes))
         assertTrue(state.rewind)
         assertFalse(state.vulkan(n64.core))
-        state = state.withAspect(snes, GameAspect.FOUR_THREE).withIntegerScaling(snes, true).withRewind(false)
+        state = state.withAspect(snes, GameAspect.FOUR_THREE).withIntegerScaling(snes, GameIntegerScaling.ON).withRewind(false)
             .withVulkan(n64.core, true).withVulkan(snes.core, true)
         assertEquals(GameAspect.FOUR_THREE, state.aspect(snes))
         assertEquals(GameAspect.CORE, state.aspect(n64))
-        assertTrue(state.integerScaling(snes))
+        assertEquals(GameIntegerScaling.ON, state.integerScaling(snes))
         assertFalse(state.rewind)
         assertTrue(state.vulkan(n64.core))
         // Only cores that render on the GPU have a graphics interface to choose.
