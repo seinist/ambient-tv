@@ -153,6 +153,10 @@ class SvpUpdateTest(unittest.TestCase):
                 stack.enter_context(mock.patch.object(updater, name, return_value={k: v for k, v in props.items() if k.startswith(prefix)}))
             stack.enter_context(mock.patch.object(updater, "rusty_latest", return_value={"SPOTIFY_RUSTY_REF": "new-jni"}))
             stack.enter_context(mock.patch.object(updater, "libvlc_latest_stable", return_value="3.7.6"))
+            (self.root / "cores").mkdir()
+            (self.root / "cores/cores.json").write_text('{"abis": [], "cores": []}\n')
+            stack.enter_context(mock.patch.object(updater, "libretrodroid_latest", return_value={
+                "LIBRETRODROID_COMMIT": props["LIBRETRODROID_COMMIT"]}))
             stack.enter_context(mock.patch.object(updater, "monogram_latest", return_value={
                 k: props[k] for k in (
                     "MONOGRAM_VERSION", "MONOGRAM_REF", "MONOGRAM_MONO_RS_REF",
