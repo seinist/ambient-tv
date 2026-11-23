@@ -51,6 +51,8 @@ class GamePanelOverlayTest {
                     RightSidePanel(
                         title = current.option ?: current.category ?: current.panel,
                         modifier = Modifier.align(Alignment.TopEnd),
+                        // As GameSidePanel: every child level returns inside the same drawer.
+                        backWithinPanel = current != Level("settings"),
                         onBack = {
                             level = when {
                                 current.option != null -> current.copy(option = null)
@@ -126,8 +128,8 @@ class GamePanelOverlayTest {
         click("open-osd-buttons", Level("osd-buttons"))
         back()
         rule.runOnIdle { assertEquals(Level("settings"), level) }
-        // An unkeyed host retained the child's closing latch at progress zero. Its parent
-        // could neither reopen a child nor receive another Back.
+        // The drawer stays for the whole session: a child's Back must not leave its closing
+        // latch behind, or the parent could neither reopen a child nor receive another Back.
         click("open-osd-buttons", Level("osd-buttons"))
         back()
         back()
