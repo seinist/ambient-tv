@@ -162,3 +162,17 @@ fun OfflineSystemPage(
         }
     }
 }
+
+/**
+ * A NAS share or DLNA server is offline when its server (machine) is: every service on the
+ * same machine shares that state, exactly like Plex, Jellyfin, Emby and TVHeadend.
+ */
+@Composable
+fun rememberHostOffline(system: String?): Boolean {
+    if (system == null) return false
+    val vm: UnreachableServerViewModel = hiltViewModel()
+    val hostStates by vm.hosts.states.collectAsState()
+    return remember(system, hostStates) {
+        vm.hosts.health(system) == com.ambient.tv.connectivity.HostHealth.OFFLINE
+    }
+}
