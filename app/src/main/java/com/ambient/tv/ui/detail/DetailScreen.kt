@@ -183,7 +183,7 @@ fun DetailScreen(
     onBrowseCollection: (String, String) -> Unit,
     viewModel: DetailViewModel = hiltViewModel(),
 ) {
-    com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
+    com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel.reconnectSources, viewModel::retryOffline)
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(viewModel.reconnectSources, viewModel::load)
     val uiState = viewModel.uiState.collectAsCurrentState()
     ThemeMusicEffect(viewModel.themeMusicPlayer, (uiState as? DetailUiState.Loaded)?.themeMusic)

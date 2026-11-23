@@ -28,7 +28,7 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 
 /** Public internet services only: Plex, local IPTV, NAS and LAN sources are intentionally excluded. */
-internal val ONLINE_SERVICE_KEYS = setOf("youtube", "radio", "weather", "telegram", "trailers")
+internal val ONLINE_SERVICE_KEYS = setOf("youtube", "radio", "weather", "telegram", "trailers", "spotify")
 internal enum class InternetReachability { UNKNOWN, AVAILABLE, UNAVAILABLE }
 
 internal data class OnlineServiceSnapshot(

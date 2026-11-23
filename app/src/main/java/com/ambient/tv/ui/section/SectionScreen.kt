@@ -208,7 +208,7 @@ fun SectionScreen(
     val uiState = (storedState as? SectionUiState.Loaded)?.let {
         prepareSectionPlaybackReturn(it, playbackReturn)
     } ?: storedState
-    com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
+    com.ambient.tv.ui.common.RetryOfflineBrowse(setOf(com.ambient.tv.data.browse.mediaProvider(viewModel.sectionKey)), viewModel::retryOffline)
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(
         setOf(com.ambient.tv.data.browse.mediaProvider(viewModel.sectionKey)),
     ) { viewModel.refreshAfterEntry(playbackReturn) }

@@ -287,11 +287,10 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
             if (nearEnd) viewModel.more()
         }
     }
-    // An offline DLNA server keeps its saved folder, marks the header and re-checks quietly,
+    // An offline DLNA server keeps its saved folder, marks the header and reloads on recovery,
     // like every other server-based source; its server's other services share the state.
     val hostOffline = com.ambient.tv.ui.home.rememberHostOffline(state.server?.id?.let { "dlna:$it" })
     val savedOffline = hostOffline && nodes.isNotEmpty()
-    com.ambient.tv.ui.common.RetryOfflineBrowse { if (hostOffline) viewModel.refreshOnReconnect() }
     val dlnaOfflineStatus = if (savedOffline) state.server?.let { com.ambient.tv.ui.common.offlineTitle(it.name) } else null
     Box(Modifier.fillMaxSize()) {
         val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()

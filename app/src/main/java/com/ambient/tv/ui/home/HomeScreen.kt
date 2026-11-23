@@ -352,7 +352,13 @@ fun HomeScreen(
 
     LaunchedEffect(viewModel, lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            while (true) { delay(15_000); viewModel.retryOffline() }
+            // Only sources whose server is reachable are re-read; recovery of an offline server
+            // reloads Home through the reconnect path. Retries become rarer while Home stays open.
+            var attempt = 0
+            while (true) {
+                delay(com.ambient.tv.ui.common.offlineRetryDelayMs(attempt))
+                if (viewModel.retryOffline()) attempt++
+            }
         }
     }
 

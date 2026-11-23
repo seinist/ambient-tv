@@ -800,8 +800,10 @@ class TvheadendRepository @Inject constructor(
             }
         } } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
         catch (error: Exception) {
-            // An optional/admin-only API error must not revoke working channel access.
-            if ((path == "api/channel/grid" || path.startsWith("api/dvr/entry/grid_")) &&
+            // An optional/admin-only API error must not revoke working channel access: a recording
+            // list only counts when the server itself failed (transport, 5xx, 401), not for 403/404.
+            val serverFailure = error !is TvheadendHttpException || error.code >= 500 || error.code == 401
+            if ((path == "api/channel/grid" || (path.startsWith("api/dvr/entry/grid_") && serverFailure)) &&
                 accessScope == browseScopes.forProvider("tvheadend")) availability.accessFailed("tvheadend")
             throw error
         }
