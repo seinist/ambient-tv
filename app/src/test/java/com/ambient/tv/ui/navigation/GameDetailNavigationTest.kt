@@ -48,6 +48,13 @@ class GameDetailNavigationTest {
         assertNull(gameSelectionFileId("files:source:rom"))
     }
 
+    @Test fun freshStartIsOnlyInTheRouteWhenAsked() {
+        assertEquals("game_player/a?system=snes", Destinations.gamePlayer("a", "snes"))
+        assertEquals("game_player/a?system=snes&fresh=true", Destinations.gamePlayer("a", "snes", fresh = true))
+        assertEquals("game_player/a?fresh=true", Destinations.gamePlayer("a", fresh = true))
+        assertEquals("game_player/a", Destinations.gamePlayer("a"))
+    }
+
     @Test fun sourceSnapshotIncludesGamesOnlyFoldersAndRetiresDeletedSourceIncarnations() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val prefs = context.getSharedPreferences("game-selection-source", Context.MODE_PRIVATE)

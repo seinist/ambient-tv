@@ -72,7 +72,7 @@
     <string name="game_shader_lcd">Handheld LCD</string>
     <string name="game_shader_lcd_hint">Pixel grid like a handheld screen</string>
     <string name="game_state_auto">Automatic</string>
-    <string name="game_state_undo">Before loading</string>
+    <string name="game_state_undo">Before load/restart</string>
     <string name="game_state_number">State %1$d</string>
     <string name="game_save_state">Save state</string>
     <string name="game_states">Save states</string>
@@ -96,7 +96,7 @@
     <string name="games_settings_hint">BIOS files, loaded cores and the game cache</string>
     <string name="games_settings_explanation">Games run with libretro cores on this device. Everything stays local: BIOS files, saves and save states.</string>
     <string name="games_bios">BIOS files</string>
-    <string name="games_bios_hint">Open a BIOS file in the file browser, or choose “Take over game data” in a folder with BIOS or core files: everything is copied into app storage to stay, subfolders included. Selecting a present file removes it.</string>
+    <string name="games_bios_hint">Open a BIOS file in the file browser, or choose “Take over game data” in a folder with BIOS or core files: everything is copied into app storage to stay, subfolders included. Selecting a present file asks before removing it.</string>
     <string name="games_bios_optional">optional</string>
     <string name="games_bios_required">required</string>
     <string name="games_bios_required_for">required for %1$s</string>
@@ -142,7 +142,7 @@
     <string name="games_core_update">Reload</string>
     <string name="games_core_download_failed">%1$s could not be loaded: %2$s</string>
     <string name="games_core_options_unknown">The options show once a game has run with this core.</string>
-    <string name="games_core_options_hint">They apply to every game with this core; selecting steps to the next value. Games with their own values keep them.</string>
+    <string name="games_core_options_hint">They apply to every game with this core. Games with their own values keep them.</string>
     <string name="games_core_option_default">%1$s (default)</string>
     <string name="games_system_files">Further system files</string>
     <string name="games_system_files_hint">Files cores look for in their system folder besides the BIOS, for example from a RetroArch “system” folder. Take them over in the file browser with “Take over game data”.</string>
@@ -227,7 +227,7 @@
     <string name="games_core_source_unavailable">not set up in this build</string>
     <string name="games_core_from_ambient">Own build %1$s · %2$s</string>
     <string name="games_system_cores">Core per system</string>
-    <string name="games_system_cores_hint">Selecting switches to the next core for the system. Single games can choose their own core in the Info panel; missing cores are loaded at start.</string>
+    <string name="games_system_cores_hint">The core each system plays with. Single games can choose their own core in the game\'s Core options panel; missing cores are loaded at start.</string>
     <string name="game_info_core_choice">Core for this game (restarts the game)</string>
     <string name="game_info_core_system_default">System default</string>
     <string name="game_info_core_needs_bios">needs BIOS</string>

@@ -164,6 +164,14 @@ private fun gameLibrarySortChoices() = listOf(
     PanelOption("recent", stringResource(R.string.game_library_sort_recent)),
 )
 
+/** Direction labels follow the sort, like the other libraries ("Newest" for recently played). */
+@Composable
+private fun gameLibrarySortOrders(sortKey: String) = if (sortKey == "recent") {
+    sortDirectionOptions(stringResource(R.string.library_sort_newest), stringResource(R.string.library_sort_oldest))
+} else {
+    sortDirectionOptions(stringResource(R.string.library_sort_az), stringResource(R.string.library_sort_za))
+}
+
 /** The shared options panel moves sorting here when the app-wide filter bar is shown. */
 @Composable
 internal fun GameLibrarySortBar(
@@ -179,7 +187,7 @@ internal fun GameLibrarySortBar(
             groups = emptyList(), onSelect = { _, _ -> },
             modifier = modifier,
             sorts = gameLibrarySortChoices(), selectedSort = state.sortKey, onSort = onSort,
-            sortOrders = sortDirectionOptions("A–Z", "Z–A"),
+            sortOrders = gameLibrarySortOrders(state.sortKey),
             selectedSortOrder = if (state.sortDescending) "DESCENDING" else "ASCENDING",
             onSortOrder = { onSortDescending(it == "DESCENDING") },
             focusRequester = controls.sortFocus, focusChain = controls.focusChain,
@@ -214,16 +222,22 @@ internal fun GameLibraryViewOptionsPanel(
                 densityPreview = if (state.view == "rows") ViewPreview.ROWS else null,
                 sorts = gameLibrarySortChoices(),
                 selectedSort = state.sortKey, onSort = onSort,
-                sortOrders = sortDirectionOptions("A–Z", "Z–A"),
+                sortOrders = gameLibrarySortOrders(state.sortKey),
                 selectedSortOrder = if (state.sortDescending) "DESCENDING" else "ASCENDING",
                 onSortOrder = { onSortDescending(it == "DESCENDING") },
                 title = stringResource(R.string.game_library_title), onClose = controls::closeOptions,
                 extraContent = {
-                    Text(stringResource(R.string.game_library_titles), style = MaterialTheme.typography.titleSmall)
+                    // The same section and choice rows as the other libraries' extra options.
+                    com.ambient.tv.ui.common.RightPanelDivider()
+                    com.ambient.tv.ui.common.RightPanelSectionTitle(stringResource(R.string.game_library_titles))
                     listOf("auto" to R.string.game_library_title_auto, "internal" to R.string.game_library_title_internal,
                         "filename" to R.string.game_library_title_filename).forEach { (key, label) ->
-                        TvActionButton(stringResource(label), onClick = { onTitleStyle(key) },
-                            selected = state.titleStyle == key, fillWidth = true)
+                        com.ambient.tv.ui.common.RightPanelChoice(
+                            text = stringResource(label),
+                            selected = state.titleStyle == key,
+                            onClick = { onTitleStyle(key) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                 },
             )

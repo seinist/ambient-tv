@@ -23,6 +23,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.testTag
@@ -65,6 +67,13 @@ import com.ambient.tv.ui.common.RegisterBrowseFocusGrid
 import com.ambient.tv.ui.common.RegisterBrowseFocusList
 import com.ambient.tv.ui.common.RegisterBrowseFocusRows
 import com.ambient.tv.ui.common.mediaFocusMotion
+import com.ambient.tv.ui.common.ContentSectionHeader
+import com.ambient.tv.ui.common.RegisterRowColumnFocus
+import com.ambient.tv.ui.common.RowColumnFocus
+import com.ambient.tv.ui.common.rememberRowColumnFocus
+import com.ambient.tv.ui.common.rowColumnFocusNavigation
+import com.ambient.tv.ui.common.rowColumnFocusTarget
+import com.ambient.tv.ui.common.rowColumnFocusWrapRight
 import com.ambient.tv.ui.common.noSurfaceScale
 import com.ambient.tv.ui.common.noSurfaceBorder
 import com.ambient.tv.ui.common.transparentSurfaceColors
@@ -130,6 +139,15 @@ fun GameLibraryScreen(
     // The repository returns just this section/search in final order, off the UI thread.
     val games = state.games
     val gameIds = remember(games) { games.map { it.fileId } }
+    // Like the other libraries: entering from the sidebar or changing section, view or sort lands
+    // on the remembered or first game, not on the header chips.
+    com.ambient.tv.ui.common.BrowseFocusContentIdentity(
+        listOf(state.section, state.view, state.sortKey, state.sortDescending), restoreInitialTarget = true,
+    )
+    val initialGame = games.firstOrNull { it.fileId == focusedId } ?: games.firstOrNull()
+    if (!managing && initialGame != null) com.ambient.tv.ui.common.BrowseFocusInitialTarget(
+        initialGame.fileId, row = initialGame.systemId.takeIf { state.view == "rows" },
+    )
     val sections = remember(state.folders, state.systems) {
         listOf("all", "favorites", "recent") +
             GameSystems.sortIdsByName(state.folders.map { it.systemId }.filter { it != "auto" } + state.systems)
@@ -227,8 +245,10 @@ fun GameLibraryScreen(
                 val firstFocus = remember(state.section, state.view) { FocusRequester() }
                 // Keep geometry fixed for this result set while background artwork finishes.
                 // Existing local dimensions are already present in the initial query.
+                // The usual shape of this result set sets the slot; a rare tall or wide cover is fitted
+                // into it instead of making every other cover shrink (median, not the narrowest).
                 val gridSlotRatio = remember(state.section, state.view, gameIds) {
-                    games.minOf { it.coverAspectRatio }.coerceIn(.6f, 1.8f)
+                    games.map { it.coverAspectRatio }.sorted().let { it[it.size / 2] }.coerceIn(.6f, 1.8f)
                 }
                 val rowArtworkHeight = (148f * 8f / state.gridColumns.coerceAtLeast(1)).coerceIn(96f, 216f).dp
                 GameLibraryAlphabetLayout(
@@ -280,28 +300,31 @@ fun GameLibraryScreen(
                         RegisterBrowseFocusRows(rowsState, remember(grouped) {
                             grouped.map { (system, entries) -> system to entries.map { it.fileId } }
                         })
+                        // Same row behavior as Home and the other libraries: Up/Down keep the column,
+                        // Right on a row's last card returns to its first, shared section headings.
+                        val rowFocus = rememberRowColumnFocus()
+                        val rowKeys = remember(grouped) { grouped.map { it.first } }
                         TvLazyColumn(
-                            modifier = Modifier.weight(1f).fillMaxHeight().focusGroup(),
+                            modifier = Modifier.weight(1f).fillMaxHeight().focusGroup()
+                                .rowColumnFocusWrapRight(rowFocus)
+                                .rowColumnFocusNavigation(
+                                    rowFocus,
+                                    scrollToRow = { rowKey ->
+                                        val index = rowKeys.indexOf(rowKey)
+                                        if (index >= 0) rowsState.animateScrollToItem(index)
+                                    },
+                                ) { rowKeys },
                             state = rowsState, allowUpExit = true,
                             verticalArrangement = Arrangement.spacedBy(15.dp),
                         ) {
                             items(grouped, key = { it.first }) { (system, entries) ->
-                                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                                        androidx.compose.material3.Icon(
-                                            painterResource(GameSystemIcons.drawable(system)),
-                                            contentDescription = null,
-                                            modifier = Modifier.size(26.dp),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                        Text(GameSystems.byId(system)?.name ?: system,
-                                            style = MaterialTheme.typography.titleMedium)
-                                    }
-                                    GameLibraryCoverRow(entries, rowArtworkHeight, system) { game, tileModifier, slotRatio ->
+                                Column {
+                                    ContentSectionHeader(GameSystems.byId(system)?.name ?: system, sectionKey = system)
+                                    GameLibraryCoverRow(entries, rowArtworkHeight, system, rowFocus = rowFocus) { game, tileModifier, slotRatio ->
                                         GameTile(game,
                                             artworkSlotAspectRatio = slotRatio,
                                             rowKey = system,
+                                            showSystem = false,
                                             onPlay = { onSelect(game) },
                                             onInfo = { onOpenDetails(game) },
                                             onFavorite = { model.favorite(game) },
@@ -309,7 +332,8 @@ fun GameLibraryScreen(
                                             onRequester = { itemRequests[game.fileId] = it },
                                             onDisposed = { itemRequests.remove(game.fileId) },
                                             modifier = (if (games.firstOrNull()?.fileId == game.fileId)
-                                                Modifier.focusRequester(firstFocus) else Modifier).then(tileModifier),
+                                                Modifier.focusRequester(firstFocus) else Modifier).then(tileModifier)
+                                                .rowColumnFocusTarget(rowFocus, system, game.fileId, soundsOnFocus = true),
                                         )
                                     }
                                 }
@@ -328,6 +352,7 @@ fun GameLibraryScreen(
                             items(games, key = { it.fileId }) { game ->
                                 GameTile(game,
                                     artworkSlotAspectRatio = gridSlotRatio,
+                                    showSystem = GameSystems.byId(state.section) == null,
                                     onPlay = { onSelect(game) }, onInfo = { onOpenDetails(game) },
                                     onFavorite = { model.favorite(game) },
                                     onFocus = { focusedId = game.fileId },
@@ -344,15 +369,15 @@ fun GameLibraryScreen(
         } else {
             Column(Modifier.weight(1f).fillMaxWidth().pageContentUp(controls.focusChain).focusGroup()) {
                 if (choosingDatSystem) {
-                    Text(stringResource(R.string.game_library_dat_system), style = MaterialTheme.typography.titleMedium)
+                    com.ambient.tv.ui.settings.SettingsSubheader(stringResource(R.string.game_library_dat_system), firstInContent = true)
                     TvLazyColumn(modifier = Modifier.fillMaxSize(), allowUpExit = true,
                         verticalArrangement = Arrangement.spacedBy(7.dp)) {
                         items(GameSystems.alphabetical, key = { it.id }) { system ->
-                            TvActionButton(system.name, onClick = {
+                            com.ambient.tv.ui.common.SettingsNavigationRow(title = system.name, icon = gameSystemVector(system.id), onClick = {
                                 datSystemId = system.id
                                 choosingDatSystem = false
                                 datPicker.launch(arrayOf("application/xml", "text/xml", "*/*"))
-                            }, icon = gameSystemVector(system.id), fillWidth = true)
+                            })
                         }
                     }
                 } else {
@@ -455,15 +480,12 @@ private fun GameFolderManager(
         color = MaterialTheme.colorScheme.error,
         style = MaterialTheme.typography.bodySmall)
     if (choosingSystem) {
-        Text(stringResource(R.string.game_library_select_system),
-            style = MaterialTheme.typography.titleMedium)
+        com.ambient.tv.ui.settings.SettingsSubheader(stringResource(R.string.game_library_select_system), firstInContent = true)
         TvLazyColumn(modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            item { TvActionButton(stringResource(R.string.game_library_auto),
-                onClick = { onAdd("auto") }, fillWidth = true) }
+            item { com.ambient.tv.ui.common.SettingsNavigationRow(title = stringResource(R.string.game_library_auto), onClick = { onAdd("auto") }) }
             items(GameSystems.alphabetical, key = { it.id }) { system ->
-                TvActionButton(system.name, onClick = { onAdd(system.id) },
-                    icon = gameSystemVector(system.id), fillWidth = true)
+                com.ambient.tv.ui.common.SettingsNavigationRow(title = system.name, icon = gameSystemVector(system.id), onClick = { onAdd(system.id) })
             }
         }
         return
@@ -472,35 +494,31 @@ private fun GameFolderManager(
     if (source == null) {
         TvLazyColumn(modifier = Modifier.fillMaxSize(), allowUpExit = true,
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Same rows as Settings: destinations are navigation rows, actions stay buttons.
             item {
-                TvActionButton(stringResource(R.string.game_metadata_settings_title),
-                    onClick = onMetadataSettings, modifier = metadataSettingsModifier,
-                    icon = Icons.Filled.Settings, fillWidth = true)
+                com.ambient.tv.ui.common.SettingsNavigationRow(title = stringResource(R.string.game_metadata_settings_title),
+                    onClick = onMetadataSettings, modifier = metadataSettingsModifier, icon = Icons.Filled.Settings)
             }
             item {
-                TvActionButton(stringResource(R.string.game_library_add_local),
-                    onClick = onAddLocal, icon = Icons.Filled.CreateNewFolder, fillWidth = true)
+                com.ambient.tv.ui.common.SettingsNavigationRow(title = stringResource(R.string.game_library_add_local),
+                    onClick = onAddLocal, icon = Icons.Filled.CreateNewFolder)
             }
             item {
-                TvActionButton(stringResource(R.string.game_library_add_network),
-                    onClick = onAddNetwork, icon = Icons.Filled.Storage, fillWidth = true)
+                com.ambient.tv.ui.common.SettingsNavigationRow(title = stringResource(R.string.game_library_add_network),
+                    onClick = onAddNetwork, icon = Icons.Filled.Storage)
             }
             item {
-                TvActionButton(stringResource(R.string.game_library_import_dat),
-                    onClick = onImportDat, icon = Icons.Filled.LibraryBooks, fillWidth = true)
+                com.ambient.tv.ui.common.SettingsNavigationRow(title = stringResource(R.string.game_library_import_dat),
+                    onClick = onImportDat, icon = Icons.Filled.LibraryBooks)
             }
-            state.message?.let { feedback -> item {
-                Text(feedback, style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } }
-            item { Text(stringResource(R.string.game_library_existing_sources),
-                style = MaterialTheme.typography.titleMedium) }
+            state.message?.let { feedback -> item { com.ambient.tv.ui.common.SettingsHint(feedback) } }
+            item { com.ambient.tv.ui.settings.SettingsSubheader(stringResource(R.string.game_library_existing_sources)) }
             items(state.sources, key = { it.id }) { entry ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TvActionButton(entry.name + " · " + entry.kind.uppercase() +
-                        (if (entry.showInFiles) " · " + stringResource(R.string.game_library_source_files_games)
-                        else " · " + stringResource(R.string.game_library_source_games_only)),
+                    com.ambient.tv.ui.common.SettingsNavigationRow(title = entry.name,
+                        summary = entry.kind.uppercase() + " · " + stringResource(if (entry.showInFiles)
+                            R.string.game_library_source_files_games else R.string.game_library_source_games_only),
                         onClick = { onSelectSource(entry) }, icon = Icons.Filled.Folder,
                         modifier = Modifier.weight(1f))
                     if (!entry.showInFiles && entry.network) {
@@ -513,8 +531,7 @@ private fun GameFolderManager(
                     }
                 }
             }
-            item { Text(stringResource(R.string.game_library_assigned),
-                style = MaterialTheme.typography.titleMedium) }
+            item { com.ambient.tv.ui.settings.SettingsSubheader(stringResource(R.string.game_library_assigned)) }
             items(state.folders, key = { it.id }) { folder ->
                 Column(Modifier.fillMaxWidth().padding(vertical = 5.dp),
                     verticalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -557,8 +574,7 @@ private fun GameFolderManager(
                         style = MaterialTheme.typography.bodySmall)
                 }
             }
-            item { Text(stringResource(R.string.game_library_add_network_hint),
-                style = MaterialTheme.typography.bodySmall) }
+            item { com.ambient.tv.ui.common.SettingsHint(stringResource(R.string.game_library_add_network_hint)) }
         }
         return
     }
@@ -580,8 +596,7 @@ private fun GameFolderManager(
     TvLazyColumn(modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
         items(state.directoryEntries, key = { it.id }) { folder ->
-            TvActionButton(folder.name, onClick = { onEnter(folder) },
-                icon = Icons.Filled.Folder, fillWidth = true)
+            com.ambient.tv.ui.common.SettingsNavigationRow(title = folder.name, onClick = { onEnter(folder) }, icon = Icons.Filled.Folder)
         }
     }
 }
@@ -623,10 +638,12 @@ internal fun GameLibraryCoverRow(
     artworkHeight: Dp,
     rowKey: String,
     modifier: Modifier = Modifier,
+    rowFocus: RowColumnFocus? = null,
     itemContent: @Composable (LibraryGame, Modifier, Float) -> Unit,
 ) {
     val rowState = rememberLazyListState()
-    RegisterBrowseFocusList(rowState, remember(games) { games.map { it.fileId } }, rowKey = rowKey)
+    // Also registers the browse focus return, like RegisterBrowseFocusList did on its own.
+    RegisterRowColumnFocus(rowFocus, rowKey, rowState, remember(games) { games.map { it.fileId } })
     BoxWithConstraints(modifier.fillMaxWidth()) {
         // A lazy row measures its children without a width bound. Reserve both its insets
         // and the tile's own padding before applying the usual artwork width limits.
@@ -647,12 +664,18 @@ internal fun GameLibraryCoverRow(
     }
 }
 
+/**
+ * A library card with the same focus treatment as [com.ambient.tv.ui.common.MediaTile] on Home:
+ * the cover frame grows and gets the accent border, the labels stay put. On a TV the favorite is a
+ * badge (Info/Menu or the detail page toggles it); touch screens keep a separate heart button.
+ */
 @Composable
 internal fun GameTile(
     game: LibraryGame,
     modifier: Modifier = Modifier,
     artworkSlotAspectRatio: Float = game.coverAspectRatio,
     rowKey: String? = null,
+    showSystem: Boolean = true,
     onPlay: () -> Unit,
     onInfo: () -> Unit,
     onFavorite: () -> Unit,
@@ -663,7 +686,8 @@ internal fun GameTile(
     var focused by remember(game.fileId) { mutableStateOf(false) }
     val requester = remember(game.fileId) { FocusRequester() }
     DisposableEffect(requester) { onRequester(requester); onDispose(onDisposed) }
-    val shape = RoundedCornerShape(10.dp)
+    val handheld = LocalHandheldUi.current
+    val shape = RoundedCornerShape(com.ambient.tv.ui.theme.LocalUiTokens.current.cardRadius)
     val activate = rememberUiSoundAction(onClick = onPlay)
     val showInfo = rememberUiSoundAction(onClick = onInfo)
     val uiSounds = LocalUiSoundPlayer.current
@@ -675,7 +699,7 @@ internal fun GameTile(
             modifier = Modifier.fillMaxWidth().focusRequester(requester)
                 .browseFocusTarget(game.fileId, rowKey = rowKey)
                 .activateOnTvKey(onClick = activate, onLongClick = showInfo)
-                .mediaFocusMotion(focused).bringFocusedContextIntoView()
+                .bringFocusedContextIntoView()
                 .semantics { customActions = listOf(CustomAccessibilityAction(infoLabel) { showInfo(); true }) }
                 .testTag("game-select:${game.fileId}")
                 .onFocusChanged {
@@ -684,9 +708,7 @@ internal fun GameTile(
                 },
         ) {
             Column(
-                Modifier.animatedFocusBorder(focused, shape,
-                    focusedColor = MaterialTheme.colorScheme.primary, unfocusedColor = Color.Transparent)
-                    .padding(GameTileContentPadding),
+                Modifier.padding(GameTileContentPadding),
                 verticalArrangement = Arrangement.spacedBy(7.dp),
             ) {
                 // A shared invisible slot keeps a mixed grid's title baselines aligned. The
@@ -694,20 +716,36 @@ internal fun GameTile(
                 BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(artworkSlotAspectRatio)
                     .testTag("game-cover-slot:${game.fileId}"), contentAlignment = Alignment.BottomCenter) {
                     val size = gameCoverFrameSize(maxWidth, maxHeight, game.coverAspectRatio)
-                    GameCoverArtwork(game.coverPath?.let { java.io.File(it) }, game.title, game.systemId,
-                        modifier = Modifier.size(size.width, size.height).clip(shape).testTag("game-cover:${game.fileId}"),
-                        focused = focused)
+                    Box(
+                        Modifier.size(size.width, size.height).mediaFocusMotion(focused)
+                            .animatedFocusBorder(focused, shape,
+                                focusedColor = MaterialTheme.colorScheme.primary.copy(alpha = .96f),
+                                unfocusedColor = Color.Transparent)
+                            .testTag("game-cover:${game.fileId}"),
+                    ) {
+                        GameCoverArtwork(game.coverPath?.let { java.io.File(it) }, game.title, game.systemId,
+                            modifier = Modifier.fillMaxSize().padding(2.dp).clip(shape), focused = focused)
+                        if (game.favorite && !handheld) androidx.tv.material3.Icon(
+                            Icons.Filled.Favorite,
+                            contentDescription = stringResource(R.string.radio_remove_favorite),
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(20.dp)
+                                .background(Color.Black.copy(alpha = .55f), CircleShape).padding(3.dp)
+                                .testTag("game-favorite-badge:${game.fileId}"),
+                        )
+                    }
                 }
                 Text(game.title, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.titleSmall, textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth().testTag("game-title:${game.fileId}"))
-                Text(GameSystems.byId(game.systemId)?.shortName ?: game.systemId,
+                if (showSystem) Text(GameSystems.byId(game.systemId)?.shortName ?: game.systemId,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
             }
         }
-        GameFavoriteButton(game, onFavorite, Modifier.align(Alignment.TopEnd).padding(6.dp))
+        // Touch only: a heart inside the card is no D-pad target of its own on a TV.
+        if (handheld) GameFavoriteButton(game, onFavorite, Modifier.align(Alignment.TopEnd).padding(6.dp))
     }
 }
 

@@ -1484,9 +1484,9 @@ private fun AmbientTvApp(
     val spotifyTakeover by spotifyRepository.playbackTakeover.collectAsState()
     val mediaSelectionScope = rememberCoroutineScope()
     val launchGameOnTarget = rememberUpdatedState<(
-        com.ambient.tv.games.library.LibraryGame, (() -> Unit) -> Unit,
-    ) -> Unit> { game, complete ->
-        playOnSelectedTarget(Destinations.gamePlayer(game.fileId, game.systemId), title = game.title,
+        com.ambient.tv.games.library.LibraryGame, Boolean, (() -> Unit) -> Unit,
+    ) -> Unit> { game, fresh, complete ->
+        playOnSelectedTarget(Destinations.gamePlayer(game.fileId, game.systemId, fresh), title = game.title,
             navigate = { route -> complete { navController.navigate(route) { launchSingleTop = true } } })
     }
     val gameSelections = remember(mediaSelectionScope, navController, gameLibraryRepository, appPreferences, tokenStore, browseSelectionIntents) {
@@ -1501,7 +1501,8 @@ private fun AmbientTvApp(
             wake = gameLibraryRepository::wakeSource,
             onNewSelection = { browseSelectionIntents.begin() },
             openDetails = { game -> navController.navigate(Destinations.gameDetail(game.fileId)) { launchSingleTop = true } },
-            launch = { game, complete -> launchGameOnTarget.value(game, complete) },
+            launch = { game, complete -> launchGameOnTarget.value(game, false, complete) },
+            launchFresh = { game, complete -> launchGameOnTarget.value(game, true, complete) },
         )
     }
     val gameSelectionState by gameSelections.state.collectAsState()
@@ -3263,6 +3264,7 @@ private fun AmbientTvApp(
                         com.ambient.tv.ui.games.GameDetailScreen(
                             onBack = { if (navController.currentBackStackEntry === entry) navigateBack() },
                             onPlay = { game -> gameSelections.play(game.fileId) },
+                            onPlayFresh = { game -> gameSelections.playFresh(game.fileId) },
                         )
                     }
                     composable(
@@ -3270,6 +3272,7 @@ private fun AmbientTvApp(
                         arguments = listOf(
                             navArgument("fileId") { type = NavType.StringType },
                             navArgument("system") { type = NavType.StringType; defaultValue = "" },
+                            navArgument("fresh") { type = NavType.BoolType; defaultValue = false },
                         ),
                     ) { entry ->
                         com.ambient.tv.ui.games.GamePlayerScreen(

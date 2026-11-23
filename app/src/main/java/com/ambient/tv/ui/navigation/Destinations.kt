@@ -13,9 +13,11 @@ object Destinations {
     const val PHOTO_VIEWER = "photo_viewer"
     const val GAME_DETAIL = "game_detail/{fileId}"
     fun gameDetail(fileId: String) = "game_detail/${Uri.encode(fileId)}"
-    const val GAME_PLAYER = "game_player/{fileId}?system={system}"
-    fun gamePlayer(fileId: String, systemId: String? = null) =
-        "game_player/${Uri.encode(fileId)}" + systemId?.let { "?system=${Uri.encode(it)}" }.orEmpty()
+    const val GAME_PLAYER = "game_player/{fileId}?system={system}&fresh={fresh}"
+    fun gamePlayer(fileId: String, systemId: String? = null, fresh: Boolean = false): String {
+        val query = listOfNotNull(systemId?.let { "system=${Uri.encode(it)}" }, "fresh=true".takeIf { fresh })
+        return "game_player/${Uri.encode(fileId)}" + query.joinToString("&").takeIf { it.isNotEmpty() }?.let { "?$it" }.orEmpty()
+    }
     const val FILE_FAVORITES = "files_favorites"
     const val FILE_RECENT = "files_recent"
     const val FILE_CONTINUE = "files_continue"
