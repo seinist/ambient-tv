@@ -5,6 +5,7 @@ package com.ambient.tv.ui.youtube
 import com.ambient.tv.ui.theme.AccentMotionScope
 import com.ambient.tv.ui.theme.screenGutter
 import com.ambient.tv.ui.theme.animatedFocusSurface
+import com.ambient.tv.ui.common.browseCardSurface
 import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.mobile.DeviceActionRow
 import com.ambient.tv.ui.mobile.LocalHandheldUi
@@ -980,7 +981,7 @@ private fun YouTubeListItem(
             com.ambient.tv.youtube.YouTubeLocalProgress.observeCached(rawItem.videoId, rawItem.percentWatched)
     }
     var focused by remember(item.videoId) { mutableStateOf(false) }
-    val shape = RoundedCornerShape(10.dp)
+    val shape = com.ambient.tv.ui.common.BrowseCardShape
     Surface(
         onClick = { click(item.videoId) },
         colors = transparentSurfaceColors(),
@@ -1399,7 +1400,7 @@ private fun Card(
             com.ambient.tv.youtube.YouTubeLocalProgress.observeCached(rawItem.videoId, rawItem.percentWatched)
     }
     var focused by remember(item.videoId) { mutableStateOf(false) }
-    val shape = RoundedCornerShape(10.dp)
+    val shape = com.ambient.tv.ui.common.BrowseCardShape
     Surface(
         onClick = { click(item.videoId) },
         colors = transparentSurfaceColors(),
@@ -1418,18 +1419,11 @@ private fun Card(
         AccentMotionScope(active = focused) {
             Column(
                 Modifier
-                    .animatedFocusSurface(
-                        focused = focused, shape = shape,
-                        focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = .12f),
-                        unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = .58f),
-                        focusedBorder = MaterialTheme.colorScheme.primary,
-                        unfocusedBorder = Color.White.copy(alpha = .04f),
-                        borderWidth = LocalUiTokens.current.focusBorder,
-                    )
+                    .browseCardSurface(focused, shape)
                     .padding(if (showText) 8.dp else 3.dp),
                 verticalArrangement = Arrangement.spacedBy(7.dp),
             ) {
-                Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(7.dp))) {
+                Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(com.ambient.tv.ui.common.BrowseCardArtworkShape)) {
                     YouTubeItemArtwork(
                         item,
                         Modifier.fillMaxSize(),

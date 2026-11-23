@@ -838,8 +838,17 @@ internal fun PulsingArtworkPlaceholder() {
     )
 }
 
+/**
+ * The one card face for artwork that is missing or failed: the same gradient fill on every
+ * system. An optional [icon] (e.g. a game system's emblem) sits above the title; tiny frames
+ * keep only the icon, which then identifies the card on its own.
+ */
 @Composable
-private fun ArtworkFallback(title: String) {
+internal fun ArtworkFallback(
+    title: String,
+    icon: androidx.compose.ui.graphics.painter.Painter? = null,
+    iconModifier: Modifier = Modifier,
+) {
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -854,14 +863,42 @@ private fun ArtworkFallback(title: String) {
         contentAlignment = Alignment.Center,
     ) {
         val compact = maxWidth < 96.dp || maxHeight < 64.dp
-        Text(
-            text = title.ifBlank { "?" }.take(42),
-            style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.titleMedium,
-            textAlign = TextAlign.Center,
-            maxLines = if (compact) 2 else 3,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(if (compact) 2.dp else 14.dp),
-        )
+        if (icon == null) {
+            Text(
+                text = title.ifBlank { "?" }.take(42),
+                style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.titleMedium,
+                textAlign = TextAlign.Center,
+                maxLines = if (compact) 2 else 3,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(if (compact) 2.dp else 14.dp),
+            )
+            return@BoxWithConstraints
+        }
+        // Room for an emblem plus at least one readable title line; otherwise the emblem alone.
+        val withTitle = title.isNotBlank() && maxWidth >= 88.dp && maxHeight >= 112.dp
+        val iconSize = minOf(maxWidth, maxHeight) * if (withTitle) .34f else .5f
+        // Read the constraints here: the Column's own scope cannot reach BoxWithConstraints'.
+        val titleLines = if (maxHeight >= 170.dp) 3 else 2
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 10.dp),
+        ) {
+            androidx.compose.material3.Icon(
+                icon,
+                contentDescription = null,
+                modifier = Modifier.size(iconSize).then(iconModifier),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (withTitle) Text(
+                text = title.take(42),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+                maxLines = titleLines,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

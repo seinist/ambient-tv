@@ -11,6 +11,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -18,7 +20,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -37,7 +38,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.MaterialTheme
@@ -45,6 +45,7 @@ import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.ui.common.SettingsActionRow
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.gamepad.retro.RetroPadButton
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import kotlin.math.min
 
@@ -81,8 +82,9 @@ private fun artworkKeyLabel(entry: InputArtworkKey): String = when (entry.id) {
  * the silhouette or grow individual marks independently of it. A separate key strip gives
  * dense diagrams accessible, full-size touch targets without overlapping invisible buttons.
  *
- * [assignments] shows every key's current mapping at a glance (key id → short label), like a
- * legend printed next to the button; [changedKeys] marks those differing from the defaults.
+ * [assignments] (key id → short label) is listed below the picture, one selectable entry per
+ * key, instead of legends crowding the drawing; [changedKeys] marks entries that differ from
+ * the defaults. The picture itself only shows the keys, so no mark is ever printed twice.
  */
 @Composable
 internal fun InputDeviceArtwork(
@@ -101,15 +103,24 @@ internal fun InputDeviceArtwork(
     val title = artworkTitle(artwork)
     val frontKeys = remember(artwork) { artwork.keys.filterNot { it.auxiliary } }
     val extraKeys = remember(artwork) { artwork.keys.filter { it.auxiliary } }
+    val showMapping = assignments.isNotEmpty()
+    // Console buttons are always listed (unassigned ones too); device keys once they act.
+    val mappedKeys = remember(artwork, assignments) {
+        if (!showMapping) emptyList() else artwork.keys.filter { it.id in assignments || it.target != null }
+    }
+    // Keys the mapping list does not already offer keep their own full-size targets:
+    // rear/auxiliary keys above the picture, and on touch a strip for the front keys.
+    val listed = remember(mappedKeys) { mappedKeys.mapTo(HashSet()) { it.id } }
+    val stripKeys = remember(frontKeys, listed) { frontKeys.filterNot { it.id in listed } }
+    val separateExtras = remember(extraKeys, listed) { extraKeys.filterNot { it.id in listed } }
     BoxWithConstraints(modifier.fillMaxWidth()) {
-        // Legends may sit just outside the silhouette; a slightly wider frame keeps them inside.
-        val inset = if (assignments.isEmpty()) 12f else 20f
+        val inset = 12f
         val fitted = fitInputArtwork(artwork, (maxWidth.value - inset * 2).coerceIn(0f, 580f),
             if (handheld) 300f else 340f)
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (extraKeys.isNotEmpty()) SettingsActionRow {
-                extraKeys.forEach { entry ->
+            if (separateExtras.isNotEmpty()) SettingsActionRow {
+                separateExtras.forEach { entry ->
                     val label = assignedButtonLabel(artworkKeyLabel(entry), assignments[entry.id])
                     TvActionButton(label, onClick = { onSelect(entry) }, selected = entry.id == selectedKey,
                         modifier = Modifier.testTag("input-artwork-extra-${entry.id}")
@@ -158,18 +169,15 @@ internal fun InputDeviceArtwork(
                             assignment = assignments[entry.id],
                             onClick = { onSelect(entry) })
                     }
-                    // Drawn after all marks, so a legend is never hidden below a neighbouring key.
-                    frontKeys.forEach { entry ->
-                        val text = assignments[entry.id] ?: return@forEach
-                        ArtworkAssignmentBadge(entry, text, entry.id in changedKeys,
-                            inputArtworkKeyBounds(entry, fitted))
-                    }
                 }
             }
-            if (useKeyStrip && frontKeys.isNotEmpty()) {
+            if (showMapping) ArtworkMappingList(mappedKeys, title, selectedKey, assignments, changedKeys) {
+                onSelect(it)
+            }
+            if (useKeyStrip && stripKeys.isNotEmpty()) {
                 val state = rememberLazyListState()
                 LaunchedEffect(artwork, selectedKey) {
-                    val index = frontKeys.indexOfFirst { it.id == selectedKey }
+                    val index = stripKeys.indexOfFirst { it.id == selectedKey }
                     if (index >= 0 && state.layoutInfo.visibleItemsInfo.none { it.index == index }) {
                         state.animateScrollToItem(index)
                     }
@@ -177,7 +185,7 @@ internal fun InputDeviceArtwork(
                 LazyRow(state = state, modifier = Modifier.fillMaxWidth().testTag("input-artwork-key-strip"),
                     contentPadding = PaddingValues(horizontal = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(frontKeys, key = { it.id }) { entry ->
+                    items(stripKeys, key = { it.id }) { entry ->
                         val label = assignedButtonLabel(artworkKeyLabel(entry), assignments[entry.id])
                         TvActionButton(label, onClick = { onSelect(entry) }, selected = entry.id == selectedKey,
                             modifier = Modifier.testTag("input-artwork-select-${entry.id}")
@@ -262,50 +270,42 @@ private fun ArtworkKeyMark(
 internal fun assignedButtonLabel(label: String, assignment: String?): String =
     if (assignment.isNullOrBlank()) label else "$label → $assignment"
 
-/** Where a legend sits relative to its key: d-pad legends point outwards, all others below. */
-internal enum class AssignmentBadgeSide { ABOVE, BELOW, START, END }
-
-internal fun assignmentBadgeSide(keyId: String): AssignmentBadgeSide = when (keyId) {
-    "up" -> AssignmentBadgeSide.ABOVE
-    "left" -> AssignmentBadgeSide.START
-    "right" -> AssignmentBadgeSide.END
-    else -> AssignmentBadgeSide.BELOW
+/** The list entry's name: d-pad directions spelled out, artwork shorthand (+/−) by its role. */
+@Composable
+private fun artworkMappingName(entry: InputArtworkKey): String {
+    val role = entry.target?.takeIf {
+        entry.label in setOf("+", "−", "-") && (it == RetroPadButton.START || it == RetroPadButton.SELECT)
+    }
+    return if (role != null) stringResource(role.titleRes) else artworkKeyLabel(entry)
 }
 
 /**
- * The small legend next to a key: a flat pill in the artwork's own key tone, so it reads as part
- * of the diagram. A changed mapping takes a light accent fill, never an outline or line marker.
+ * The current mapping as a list below the picture: "B → A" per key, in the artwork's order.
+ * The same flat buttons as everywhere in Settings; the selected key is filled like a selected
+ * chip, a key that differs from the default carries an edit icon (no outlines or lines).
  */
 @Composable
-private fun ArtworkAssignmentBadge(entry: InputArtworkKey, text: String, changed: Boolean, bounds: Rect) {
-    val colors = MaterialTheme.colorScheme
-    val palette = inputArtworkPalette()
-    val fontScale = LocalDensity.current.fontScale
-    val textSize = (bounds.height * .42f).coerceIn(7f, 11f) / fontScale
-    val badgeHeight = textSize * fontScale + 5f
-    val boxWidth = maxOf(bounds.width * 2.4f, 34f)
-    val gap = 2f
-    val side = assignmentBadgeSide(entry.id)
-    val (x, y, alignment) = when (side) {
-        AssignmentBadgeSide.BELOW -> Triple(bounds.left + bounds.width / 2 - boxWidth / 2,
-            bounds.top + bounds.height + gap, Alignment.TopCenter)
-        AssignmentBadgeSide.ABOVE -> Triple(bounds.left + bounds.width / 2 - boxWidth / 2,
-            bounds.top - gap - badgeHeight, Alignment.BottomCenter)
-        AssignmentBadgeSide.START -> Triple(bounds.left - gap - boxWidth,
-            bounds.top + bounds.height / 2 - badgeHeight / 2, Alignment.CenterEnd)
-        AssignmentBadgeSide.END -> Triple(bounds.left + bounds.width + gap,
-            bounds.top + bounds.height / 2 - badgeHeight / 2, Alignment.CenterStart)
-    }
-    Box(Modifier.offset(x.dp, y.dp).size(boxWidth.dp, badgeHeight.dp)
-        .testTag("input-artwork-assignment-${entry.id}").clearAndSetSemantics { },
-        contentAlignment = alignment) {
-        Text(text,
-            modifier = Modifier.clip(RoundedCornerShape(50))
-                .background(if (changed) colors.primary.copy(alpha = .24f) else palette.key)
-                .padding(horizontal = 5.dp, vertical = 1.dp),
-            color = if (changed) colors.primary else palette.label,
-            style = MaterialTheme.typography.labelSmall.copy(fontSize = textSize.sp, lineHeight = textSize.sp),
-            maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+private fun ArtworkMappingList(
+    keys: List<InputArtworkKey>,
+    title: String,
+    selectedKey: String?,
+    assignments: Map<String, String>,
+    changedKeys: Set<String>,
+    onSelect: (InputArtworkKey) -> Unit,
+) {
+    if (keys.isEmpty()) return
+    val none = stringResource(R.string.key_binding_none)
+    SettingsActionRow(Modifier.testTag("input-artwork-mapping")) {
+        keys.forEach { entry ->
+            val label = assignedButtonLabel(artworkMappingName(entry), assignments[entry.id] ?: none)
+            TvActionButton(label, onClick = { onSelect(entry) }, selected = entry.id == selectedKey,
+                icon = if (entry.id in changedKeys) Icons.Filled.Edit else null,
+                modifier = Modifier.testTag("input-artwork-assignment-${entry.id}")
+                    .semantics {
+                        contentDescription = "$title: $label"
+                        selected = entry.id == selectedKey
+                    })
+        }
     }
 }
 

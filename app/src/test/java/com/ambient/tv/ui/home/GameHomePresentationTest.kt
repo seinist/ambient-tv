@@ -16,6 +16,7 @@ import com.ambient.tv.ui.common.ContentRow
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.theme.AmbientTvTheme
 import com.ambient.tv.ui.theme.screenGutter
+import androidx.compose.ui.test.onNodeWithTag
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -54,11 +55,17 @@ class GameHomePresentationTest {
         }
         rule.waitForIdle()
         val nodes = rule.onAllNodes(hasClickAction())
-        val covers = nodes.fetchSemanticsNodes().map { it.boundsInRoot }
-        assertEquals(2, covers.size)
+        assertEquals(2, nodes.fetchSemanticsNodes().size)
+        // Each card holds its cover in its own box shape; one row keeps one cover height.
+        val covers = row.items.map { item ->
+            rule.onNodeWithTag("game-home-cover:${item.ratingKey}", useUnmergedTree = true)
+                .fetchSemanticsNode().boundsInRoot
+        }
         assertEquals(1.4f, covers[0].width / covers[0].height, .02f)
         assertEquals(.6f, covers[1].width / covers[1].height, .02f)
         assertEquals(covers[0].height, covers[1].height, .5f)
+        val cards = nodes.fetchSemanticsNodes().map { it.boundsInRoot }
+        assertEquals("Both cards share one height", cards[0].height, cards[1].height, .5f)
         nodes[0].performTouchInput { click() }
         nodes[1].performTouchInput { longClick() }
         rule.runOnIdle {
@@ -82,8 +89,8 @@ class GameHomePresentationTest {
         }
         rule.waitForIdle()
         val viewport = rule.onRoot().fetchSemanticsNode().boundsInRoot
-        val cover = rule.onAllNodes(hasClickAction()).fetchSemanticsNodes().single().boundsInRoot
-        assertTrue(cover.left >= gutterPx)
-        assertTrue("Cover plus focus gutter must fit without horizontal clipping", cover.right <= viewport.right - gutterPx)
+        val card = rule.onAllNodes(hasClickAction()).fetchSemanticsNodes().single().boundsInRoot
+        assertTrue(card.left >= gutterPx)
+        assertTrue("Card plus focus growth must fit without horizontal clipping", card.right <= viewport.right - gutterPx)
     }
 }

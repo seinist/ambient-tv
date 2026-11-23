@@ -56,7 +56,7 @@ internal fun GamePlayerTouchLayout(
 ) {
     BoxWithConstraints(Modifier.fillMaxSize().then(if (handheld) Modifier.safeDrawingPadding() else Modifier)) {
         val docked = handheld && touchEnabled && maxHeight > maxWidth
-        val deckHeight = if (docked) gameTouchDeckHeight(touchMode, maxWidth.value, touchStyle).dp.coerceAtMost(maxHeight) else 0.dp
+        val deckHeight = if (docked) gameTouchDeckHeight(touchMode, maxWidth.value, touchStyle, presentation).dp.coerceAtMost(maxHeight) else 0.dp
         val viewportHeight = (maxHeight - deckHeight).coerceAtLeast(1.dp)
         surface(
             Modifier.align(Alignment.TopCenter).fillMaxWidth().height(viewportHeight)

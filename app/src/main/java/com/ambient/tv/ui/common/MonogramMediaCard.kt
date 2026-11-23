@@ -3,8 +3,6 @@ package com.ambient.tv.ui.common
 import com.ambient.tv.ui.theme.AccentMotionScope
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import com.ambient.tv.ui.theme.animatedFocusSurface
-import com.ambient.tv.ui.theme.LocalUiTokens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,7 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material3.Icon
@@ -33,7 +30,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ClickableSurfaceDefaults
@@ -146,8 +142,8 @@ internal fun MonogramMediaCard(
         else -> 16f / 9f
     }
     val width = LocalMonogramRowCardWidth.current ?: mediaTileWidth(resolvedStyle)
-    val shape = RoundedCornerShape(10.dp)
-    val artworkShape = RoundedCornerShape(7.dp)
+    val shape = BrowseCardShape
+    val artworkShape = BrowseCardArtworkShape
     val heroRow = LocalHeroRowTiles.current
     val uiSounds = LocalUiSoundPlayer.current
     val filterFocus = LocalFilterFocusState.current
@@ -197,15 +193,7 @@ internal fun MonogramMediaCard(
         AccentMotionScope(active = focused) {
             Column(
                 modifier = Modifier
-                    .animatedFocusSurface(
-                        focused = focused,
-                        shape = shape,
-                        focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = .12f),
-                        unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = .58f),
-                        focusedBorder = MaterialTheme.colorScheme.primary,
-                        unfocusedBorder = Color.White.copy(alpha = .04f),
-                        borderWidth = LocalUiTokens.current.focusBorder,
-                    )
+                    .browseCardSurface(focused, shape)
                     .padding(if (heroRow) 3.dp else 8.dp),
                 verticalArrangement = Arrangement.spacedBy(7.dp),
             ) {

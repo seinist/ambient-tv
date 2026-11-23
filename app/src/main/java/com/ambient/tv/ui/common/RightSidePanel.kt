@@ -351,6 +351,11 @@ fun RightSidePanel(
     focusRescue: PanelFocusRescue? = null,
     /** Optional pinned leading footer control; never changes the panel's width. */
     footerStart: (@Composable () -> Unit)? = null,
+    /**
+     * Back returns to a parent level shown in this same drawer (a standalone overlay whose
+     * content follows its level). The drawer stays in place instead of sliding out and in.
+     */
+    backWithinPanel: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val scrollState = rememberScrollState()
@@ -384,6 +389,7 @@ fun RightSidePanel(
         retainFocus = retainFocus,
         focusRescue = focusRescue,
         footerStart = footerStart,
+        backWithinPanel = backWithinPanel,
     ) {
         Column(
             modifier = Modifier
@@ -498,6 +504,7 @@ private fun RightSidePanelChrome(
     bodyOwnsNavigation: Boolean = false,
     footerReturnFocus: FocusRequester? = null,
     footerStart: (@Composable () -> Unit)? = null,
+    backWithinPanel: Boolean = false,
     body: @Composable () -> Unit,
 ) {
     com.ambient.tv.ui.player.SleepWarningKeyGate.BlockWhileShown()
@@ -529,10 +536,12 @@ private fun RightSidePanelChrome(
         }
     }
 
-    fun dismiss(action: () -> Unit) {
+    fun dismiss(action: () -> Unit, withinPanel: Boolean = false) {
         if (!playerPanelInteractive) return
-        if (!standalone) {
+        if (!standalone || (withinPanel && !standaloneMotion.dismiss.closing)) {
             // PlayerPanelVisibility retains the outgoing level and animates its exit itself.
+            // A sub-level of a standalone drawer swaps its content in place: the drawer itself
+            // neither leaves nor claims its one-shot dismissal, so the parent stays usable.
             action()
             return
         }
@@ -554,8 +563,8 @@ private fun RightSidePanelChrome(
     }
     fun dismissBack() {
         if (!panelInteractive) return
-        if (uiSounds != null) uiSounds.perform(com.ambient.tv.ui.sound.UiSound.BACK) { dismiss(onBack) }
-        else dismiss(onBack)
+        if (uiSounds != null) uiSounds.perform(com.ambient.tv.ui.sound.UiSound.BACK) { dismiss(onBack, backWithinPanel) }
+        else dismiss(onBack, backWithinPanel)
     }
 
     if (onOutsideTap != null && com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
@@ -571,7 +580,8 @@ private fun RightSidePanelChrome(
                 RightSidePanelChrome(title, onBack, Modifier, subtitle, width, closeInsteadOfBack, requestHeaderFocus,
                     scrollToTop, scrollToEnd, scrollbar, canScrollBackward, canScrollForward, header, onOutsideTap = null,
                     retainFocus = retainFocus, focusRescue = focusRescue, bodyOwnsNavigation = bodyOwnsNavigation,
-                    footerReturnFocus = footerReturnFocus, footerStart = footerStart, body = body)
+                    footerReturnFocus = footerReturnFocus, footerStart = footerStart,
+                    backWithinPanel = backWithinPanel, body = body)
             }
         }
         return
@@ -846,7 +856,7 @@ private fun RightSidePanelChrome(
             }
             TvActionButton(
                 text = stringResource(if (closeInsteadOfBack) R.string.action_close else R.string.back),
-                onClick = { dismiss(onBack) },
+                onClick = { dismiss(onBack, backWithinPanel) },
                 modifier = Modifier.focusRequester(footerFocus)
                     .onFocusChanged { if (!it.isFocused) footerWrapJob?.cancel() }
                     .onPreviewKeyEvent { event ->

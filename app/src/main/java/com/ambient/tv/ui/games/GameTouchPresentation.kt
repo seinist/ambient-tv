@@ -32,6 +32,17 @@ internal fun gameTouchPresentation(systemId: String?, variant: String = ""): Gam
     val labels = consoleArtwork(systemId, selected).keys.mapNotNull { key ->
         key.target?.takeIf { key.label.isNotBlank() }?.let { it to key.label }
     }.toMap().toMutableMap()
+    // The settings artwork abbreviates small Start/Select slots as +/−. The touch capsules have
+    // room for the names printed on the pad; only Wii and Wii U really label them + and −.
+    if (systemId !in setOf("wii", "wiiu")) {
+        for (utility in listOf(RetroPadButton.START, RetroPadButton.SELECT)) {
+            if (labels[utility] in setOf("+", "−", "-")) labels[utility] = when {
+                utility == RetroPadButton.SELECT -> "Select"
+                systemId == "pce" -> "Run"
+                else -> "Start"
+            }
+        }
+    }
     // Analog pad artwork does not draw the stick-click labels, but those buttons remain usable.
     if (systemId in setOf("psx", "ps2", "n3ds", "wiiu")) {
         labels[RetroPadButton.L3] = "L3"

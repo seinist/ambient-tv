@@ -294,11 +294,15 @@ private fun GameTouchButton(button: RetroPadButton, pressed: Boolean, modifier: 
     label: String, action: String? = null, face: Boolean,
 ) {
     val utility = button == RetroPadButton.START || button == RetroPadButton.SELECT
+    val caption = action?.takeUnless { it.equals(label, ignoreCase = true) }
+    if (utility) {
+        GameTouchUtilityButton(button, pressed, modifier, label, caption)
+        return
+    }
     val shape = if (face) CircleShape else RoundedCornerShape(6.dp)
     val accent = MaterialTheme.colorScheme.primary
     val ink = if (pressed) Color.White else Color.White.copy(alpha = .84f)
     val labelStyle = TextStyle(shadow = Shadow(Color.Black.copy(alpha = .75f), blurRadius = 4f))
-    val caption = action?.takeUnless { it.equals(label, ignoreCase = true) }
     Box(
         modifier.testTag("game-touch-${button.key}")
             .semantics { role = Role.Button; contentDescription = if (caption == null) label else "$label: $caption" }
@@ -309,28 +313,48 @@ private fun GameTouchButton(button: RetroPadButton, pressed: Boolean, modifier: 
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(if (caption == null) 3.dp else 1.dp),
+            verticalArrangement = Arrangement.spacedBy(1.dp),
             modifier = Modifier.padding(horizontal = 3.dp)) {
-            if (utility) {
-                Canvas(Modifier.size(20.dp, 12.dp)) {
-                    if (button == RetroPadButton.START) {
-                        val triangle = Path().apply {
-                            moveTo(1.dp.toPx(), 1.dp.toPx())
-                            lineTo(size.width - 1.dp.toPx(), size.height / 2f)
-                            lineTo(1.dp.toPx(), size.height - 1.dp.toPx())
-                            close()
-                        }
-                        drawPath(triangle, ink, style = Stroke(1.5.dp.toPx()))
-                    } else drawRect(ink, topLeft = Offset(1.dp.toPx(), 1.dp.toPx()),
-                        size = size.copy(width = size.width - 2.dp.toPx(), height = size.height - 2.dp.toPx()),
-                        style = Stroke(1.5.dp.toPx()))
-                }
-                Text(label, fontSize = 11.sp, lineHeight = 12.sp, fontWeight = FontWeight.Medium,
-                    style = labelStyle, color = ink, maxLines = 1)
-            } else Text(label, fontSize = if (face) 23.sp else 16.sp,
+            Text(label, fontSize = if (face) 23.sp else 16.sp,
                 fontWeight = FontWeight.Medium, style = labelStyle, color = ink, maxLines = 1)
             if (caption != null) Text(caption, fontSize = 9.sp, lineHeight = 10.sp, style = labelStyle,
                 color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/**
+ * Start/Select as on the real pads: a slim capsule in the same flat outline as every other
+ * control, with the printed name and no extra glyphs. The whole (at least 48 dp) slot stays
+ * the touch target; only the drawing is slimmer.
+ */
+@Composable
+private fun GameTouchUtilityButton(button: RetroPadButton, pressed: Boolean, modifier: Modifier,
+    label: String, caption: String?,
+) {
+    val accent = MaterialTheme.colorScheme.primary
+    val ink = if (pressed) Color.White else Color.White.copy(alpha = .84f)
+    val shape = RoundedCornerShape(50)
+    val text = label.uppercase(java.util.Locale.ROOT)
+    BoxWithConstraints(
+        modifier.testTag("game-touch-${button.key}")
+            .semantics { role = Role.Button; contentDescription = if (caption == null) label else "$label: $caption" },
+        contentAlignment = Alignment.Center,
+    ) {
+        val pillWidth = maxWidth - 6.dp
+        // Long names (Lynx "Option 1", computer "Return") shrink rather than wrap or clip.
+        val fontSize = ((pillWidth.value - 12f) / (text.length.coerceAtLeast(1) * .74f)).coerceIn(7f, 11f).sp
+        Box(
+            Modifier.size(pillWidth, 28.dp).clip(shape)
+                .background(if (pressed) accent.copy(alpha = .36f) else Color.Black.copy(alpha = .30f))
+                .border(3.dp, Color.Black.copy(alpha = .45f), shape)
+                .border(2.dp, if (pressed) accent else Color.White.copy(alpha = .74f), shape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(text, fontSize = fontSize, lineHeight = fontSize, letterSpacing = .6.sp,
+                fontWeight = FontWeight.Medium,
+                style = TextStyle(shadow = Shadow(Color.Black.copy(alpha = .75f), blurRadius = 4f)),
+                color = ink, maxLines = 1, softWrap = false)
         }
     }
 }

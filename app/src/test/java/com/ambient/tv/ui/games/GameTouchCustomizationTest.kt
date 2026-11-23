@@ -76,6 +76,30 @@ class GameTouchCustomizationTest {
         assertTrue(cases >= 5_000)
     }
 
+    @Test fun portraitStartSelectShareTheShoulderRowWhenThereIsRoom() {
+        val snes = gameTouchPresentation("snes")
+        val height = gameTouchDeckHeight(GameTouchMode.DPAD, 360f, presentation = snes)
+        val layout = gameTouchLayout(GameTouchMode.DPAD, 360f, height, true, presentation = snes)
+        val l = layout.buttons.getValue(RetroPadButton.L)
+        val r = layout.buttons.getValue(RetroPadButton.R)
+        val select = layout.buttons.getValue(RetroPadButton.SELECT)
+        val start = layout.buttons.getValue(RetroPadButton.START)
+        // One row under the clusters: L, Select, Start, R; centred, and no extra bottom row.
+        for (utility in listOf(select, start)) assertEquals(l.top, utility.top, .01f)
+        assertTrue(l.right <= select.left && select.right <= start.left && start.right <= r.left)
+        assertEquals(180f, (select.left + start.right) / 2f, .5f)
+        assertEquals(height - 8f, maxOf(l.bottom, r.bottom, start.bottom), .5f)
+        // PlayStation-style pads with four shoulders keep a separate row on narrow phones only.
+        val ps = gameTouchPresentation("psx")
+        assertTrue(gameTouchDeckHeight(GameTouchMode.DPAD, 360f, presentation = ps) > height)
+        assertEquals(gameTouchDeckHeight(GameTouchMode.DPAD, 412f, presentation = snes),
+            gameTouchDeckHeight(GameTouchMode.DPAD, 412f, presentation = ps), .5f)
+        // Artwork shorthand becomes the printed names; Wii keeps its real + and −.
+        assertEquals("Start", snes.labels[RetroPadButton.START])
+        assertEquals("Select", snes.labels[RetroPadButton.SELECT])
+        assertEquals("+", gameTouchPresentation("wii").labels[RetroPadButton.START])
+    }
+
     @Test fun twoAndSixFacePadsSupportRollingChordsWithoutPhantomButtons() {
         for ((system, variant) in listOf("nes" to "", "megadrive" to "md3", "megadrive" to "md6")) {
             val layout = gameTouchLayout(GameTouchMode.DPAD, 360f, 380f, true,
