@@ -120,6 +120,11 @@ import com.ambient.tv.games.GameSettings
 import com.ambient.tv.games.GameSettingsState
 import com.ambient.tv.games.GamePictureDefaults
 import com.ambient.tv.games.GameIntegerScaling
+import com.ambient.tv.ui.display.effectiveSdrReferenceWhiteNits
+import com.ambient.tv.ui.player.SdrReferenceWhiteCustomSlider
+import com.ambient.tv.ui.player.sdrReferenceWhiteChoiceKey
+import com.ambient.tv.ui.player.sdrReferenceWhiteChoices
+import com.ambient.tv.ui.player.sdrReferenceWhiteForChoice
 import com.ambient.tv.games.GameShader
 import com.ambient.tv.games.GameShaderGroup
 import com.ambient.tv.games.GameHdrToneMap
@@ -270,6 +275,10 @@ internal fun GameShader.config(intensity: Float = 1f): ShaderConfig = when (this
     else -> GameRetroShaders.config(this, intensity)
 }
 
+/** SDR white in the PQ signal: the chosen value (Auto 203), never above a plausible reported peak. */
+internal fun gameSdrWhiteNits(requested: Int, display: GameHdrDisplayCapabilities): Int =
+    effectiveSdrReferenceWhiteNits(requested, display.peakNits?.takeIf { it.isFinite() && it >= 300f }?.toInt() ?: 0)
+
 /** LibretroDroid follows a lifecycle; it mirrors the activity (the menu pauses the emulation itself). */
 private class GameLifecycleOwner : LifecycleOwner {
     val registry = LifecycleRegistry(this)
@@ -364,7 +373,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             GameVulkanSlangPresets.prepare(context, shader, selectedPack)
         else null
     }
-    val nativePictureSupported = selectedPack == null && effect == null &&
+    // SDR as HDR10 is fixed when the view is created (EGL config and PQ surface); a change restarts.
+    val sdrToHdrSession = remember(session) {
+        settings.sdrToHdr && toneMap == GameHdrToneMap.OFF && GameHdrDisplayProbe.capture(context).hdr10
+    }
+    val nativePictureSupported = selectedPack == null && effect == null && !sdrToHdrSession &&
         (GameVulkanPictureCompatibility.rawFullscreenEligible(shader) || nativeSlangPath != null)
     val saveStates by model.saveStates.collectAsState()
     val coverUrl by produceState<String?>(null, game.fileId) { value = model.coverUrl() }
@@ -510,6 +523,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             variables = (settings.effectiveCoreOptions(core, game.saveKey) + if (session.vulkan) core.vulkanOptions else core.glOptions)
                 .map { (key, value) -> Variable(key, value) }.toTypedArray()
             saveRAMState = session.sram
+            sdrToHdrReferenceWhiteNits = if (sdrToHdrSession) gameSdrWhiteNits(settings.sdrReferenceWhite, displayHdr) else 0
             this.shader = GameHdrToneMapShader.forConfig(
                 selectedPackConfig ?: shader.config(shaderIntensity),
                 toneMap, session.vulkan, pixel = selectedPack == null && shader == GameShader.PIXEL,
@@ -1393,6 +1407,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         MetaBadge(core.name)
                         if (game.direct) MetaBadge(stringResource(R.string.game_direct_source))
                         if (core.hardware) MetaBadge(vulkanFrameStatus.badge(session.vulkan))
+                        if (sdrToHdrSession && retroView.sdrToHdrActive) MetaBadge(stringResource(R.string.game_badge_sdr_to_hdr))
                         if (nativeSdrFullscreenRequested &&
                             GameVulkanTransferGate.frameConfirmed(nativeTransfer, nativeSdrStatus)) {
                             MetaBadge(stringResource(when (nativeTransfer) {
@@ -1868,6 +1883,45 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                             }
                                         },
                                     )
+                                }
+                            }
+                            // SDR as HDR10: for every game on an HDR TV, while no HDR source is being converted.
+                            if ((displayHdr.hdr10 || settings.sdrToHdr) && toneMap == GameHdrToneMap.OFF) {
+                                GamePanelHeading(stringResource(R.string.game_picture_sdr_to_hdr))
+                                GamePanelChoice(
+                                    text = stringResource(R.string.game_picture_sdr_to_hdr_switch),
+                                    subtitle = stringResource(R.string.game_picture_sdr_to_hdr_hint),
+                                    selected = settings.sdrToHdr,
+                                    enabled = !netplay.busy && !exiting,
+                                    onClick = {
+                                        GameSettings.update { it.withSdrToHdr(!settings.sdrToHdr) }
+                                        // The EGL config and window surface are chosen at start.
+                                        exiting = true
+                                        destroy()
+                                        model.restart()
+                                    },
+                                )
+                                if (settings.sdrToHdr) {
+                                    val white = settings.sdrReferenceWhite
+                                    com.ambient.tv.ui.common.PlayerDropUpSelector(
+                                        label = stringResource(R.string.sdr_reference_white),
+                                        value = sdrReferenceWhiteChoices().firstOrNull { it.first == sdrReferenceWhiteChoiceKey(white) }?.second.orEmpty(),
+                                        options = sdrReferenceWhiteChoices(),
+                                        selectedKey = sdrReferenceWhiteChoiceKey(white),
+                                        dropUp = false,
+                                        onSelected = { key ->
+                                            val next = sdrReferenceWhiteForChoice(key, white)
+                                            GameSettings.update { it.withSdrReferenceWhite(next) }
+                                            retroView.sdrToHdrReferenceWhiteNits = gameSdrWhiteNits(next, displayHdr)
+                                        },
+                                    )
+                                    SdrReferenceWhiteCustomSlider(white) { next ->
+                                        GameSettings.update { it.withSdrReferenceWhite(next) }
+                                        retroView.sdrToHdrReferenceWhiteNits = gameSdrWhiteNits(next, displayHdr)
+                                    }
+                                    if (sdrToHdrSession && !retroView.sdrToHdrActive) {
+                                        GamePanelText(stringResource(R.string.game_picture_sdr_to_hdr_unavailable))
+                                    }
                                 }
                             }
                             if (core.hardware && core.supportsVulkan && !core.requiresVulkan && !netplay.busy && !exiting) {

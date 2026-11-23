@@ -1,0 +1,350 @@
+Ambient TV: SDR games as HDR10 on GLES: 10-bit BT2020 PQ window surface, last picture pass encoded to PQ.
+
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+index 145a8ba..78bfc35 100644
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -399,6 +399,9 @@ void LibretroDroid::onSurfaceCreated() {
+     if (integerScalingAuto) {
+         video->setIntegerScalingAuto(integerScalingAuto);
+     }
++    if (sdrToHdrWhiteNits > 0) {
++        video->setSdrToHdr(sdrToHdrWhiteNits);
++    }
+     if (bfiEnabled) {
+         video->setBlackFrameInsertion(bfiEnabled);
+     }
+@@ -1207,6 +1210,13 @@ void LibretroDroid::setFilterMode(int mode) {
+     }
+ }
+ 
++void LibretroDroid::setSdrToHdr(int whiteNits) {
++    sdrToHdrWhiteNits = whiteNits > 0 ? whiteNits : 0;
++    if (video) {
++        video->setSdrToHdr(sdrToHdrWhiteNits);
++    }
++}
++
+ void LibretroDroid::setIntegerScalingAuto(bool enabled) {
+     integerScalingAuto = enabled;
+     if (video) {
+diff --git a/src/main/cpp/libretrodroid.h b/src/main/cpp/libretrodroid.h
+index 4a1bfbe..05af140 100644
+--- a/src/main/cpp/libretrodroid.h
++++ b/src/main/cpp/libretrodroid.h
+@@ -221,6 +221,7 @@ public:
+         float primaryAspectRatio
+     );
+     void setBlackFrameInsertion(bool enabled);
++    void setSdrToHdr(int whiteNits);
+     void renderBlackFrame();
+ 
+     void setBackgroundFrame(const uint8_t* data, int width, int height);
+@@ -276,6 +277,7 @@ private:
+     int filterMode = -1;  // -1 = auto, 0 = nearest, 1 = linear
+     bool integerScaling = false;
+     bool integerScalingAuto = false;
++    int sdrToHdrWhiteNits = 0;
+     bool bfiEnabled = false;
+ 
+     Rect viewportRect = Rect(0.0F, 0.0F, 1.0F, 1.0F);
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+index 046a52a..2786a7f 100644
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -1107,6 +1107,14 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setInteger
+     LibretroDroid::getInstance().setIntegerScalingAuto(enabled);
+ }
+ 
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setSdrToHdr(
++    JNIEnv* env,
++    jclass obj,
++    jint whiteNits
++) {
++    LibretroDroid::getInstance().setSdrToHdr(whiteNits);
++}
++
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setBlackFrameInsertion(
+     JNIEnv* env,
+     jclass obj,
+diff --git a/src/main/cpp/sdrtohdr.h b/src/main/cpp/sdrtohdr.h
+new file mode 100644
+index 0000000..3f8682e
+--- /dev/null
++++ b/src/main/cpp/sdrtohdr.h
+@@ -0,0 +1,48 @@
++/*
++ *     Ambient TV: SDR picture as HDR10 on a BT2020 PQ window surface.
++ *
++ *     This program is free software: you can redistribute it and/or modify
++ *     it under the terms of the GNU General Public License as published by
++ *     the Free Software Foundation, either version 3 of the License, or
++ *     (at your option) any later version.
++ */
++
++#ifndef LIBRETRODROID_SDRTOHDR_H
++#define LIBRETRODROID_SDRTOHDR_H
++
++#include <string>
++
++namespace libretrodroid {
++
++/**
++ * Wraps the last picture pass so it writes PQ (SMPTE ST 2084) BT.2020 instead of sRGB:
++ * sRGB -> linear BT.709 -> BT.2020, SDR white at [whiteNits]. The pass itself is unchanged;
++ * its main() is renamed and called first. Only for GLSL ES 1.00 passes that write gl_FragColor.
++ */
++inline std::string wrapFragmentForPq(const std::string& fragment, int whiteNits) {
++    std::string head;
++    std::string body = fragment;
++    const auto first = fragment.find_first_not_of(" \t\r\n");
++    if (first != std::string::npos && fragment.compare(first, 8, "#version") == 0) {
++        const auto end = fragment.find('\n', first);
++        head = fragment.substr(0, end == std::string::npos ? fragment.size() : end + 1);
++        body = end == std::string::npos ? std::string() : fragment.substr(end + 1);
++    }
++    return head + "#define main ambient_picture_main\n" + body + "\n#undef main\n"
++        "#ifdef GL_FRAGMENT_PRECISION_HIGH\n#define AMBIENT_PQ_P highp\n#else\n#define AMBIENT_PQ_P mediump\n#endif\n"
++        "AMBIENT_PQ_P vec3 ambientSdrToPq(AMBIENT_PQ_P vec3 c) {\n"
++        "    AMBIENT_PQ_P vec3 x = clamp(c, 0.0, 1.0);\n"
++        "    AMBIENT_PQ_P vec3 lin = mix(x / 12.92, pow((x + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), x));\n"
++        "    lin = mat3(0.6274, 0.0691, 0.0164, 0.3293, 0.9195, 0.0880, 0.0433, 0.0114, 0.8956) * lin;\n"
++        "    AMBIENT_PQ_P vec3 p = pow(max(lin * (" + std::to_string(whiteNits) + ".0 / 10000.0), 0.0), vec3(0.1593017578125));\n"
++        "    return pow((0.8359375 + 18.8515625 * p) / (1.0 + 18.6875 * p), vec3(78.84375));\n"
++        "}\n"
++        "void main() {\n"
++        "    ambient_picture_main();\n"
++        "    gl_FragColor = vec4(ambientSdrToPq(gl_FragColor.rgb), gl_FragColor.a);\n"
++        "}\n";
++}
++
++}
++
++#endif
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+index c1a4dcb..de55bfe 100644
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -29,6 +29,7 @@
+ #include "libretro/libretro-common/include/libretro.h"
+ 
+ #include "video.h"
++#include "sdrtohdr.h"
+ #include "renderers/es3/framebufferrenderer.h"
+ #include "renderers/es3/imagerendereres3.h"
+ #include "renderers/es2/imagerendereres2.h"
+@@ -105,10 +106,14 @@ GLuint createProgram(const char* pVertexSource, const char* pFragmentSource) {
+ bool Video::tryBuildShaderChain(const ShaderManager::Chain& shaders, std::vector<ShaderChainEntry>& outChain) {
+     outChain.clear();
+ 
+-    for (const auto& item : shaders.passes) {
++    for (size_t index = 0; index < shaders.passes.size(); ++index) {
++        const auto& item = shaders.passes[index];
+         auto shader = ShaderChainEntry { };
+ 
+-        shader.gProgram = createProgram(item.vertex.data(), item.fragment.data());
++        // SDR to HDR: only the pass that writes the window surface changes its output encoding.
++        const bool pq = sdrToHdrWhiteNits > 0 && index + 1 == shaders.passes.size();
++        const std::string fragment = pq ? wrapFragmentForPq(item.fragment, sdrToHdrWhiteNits) : item.fragment;
++        shader.gProgram = createProgram(item.vertex.data(), fragment.data());
+         if (!shader.gProgram) {
+             LOGE("Shader pass failed to compile, will fall back to default shader");
+             for (auto& entry : outChain) {
+@@ -650,6 +655,13 @@ void Video::setShaderSensorState(const std::array<float, 9>& state) {
+     if (shaderSensorUsage != 0) isDirty = true;
+ }
+ 
++void Video::setSdrToHdr(int whiteNits) {
++    if (sdrToHdrWhiteNits != whiteNits) {
++        sdrToHdrWhiteNits = whiteNits;
++        loadedShaderType = std::nullopt;  // Rebuild the chain with the new output encoding
++    }
++}
++
+ void Video::setBlackFrameInsertion(bool enabled) {
+     bfiEnabled = enabled;
+     bfiFrameCounter = 0;
+diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
+index f68709d..17a8766 100644
+--- a/src/main/cpp/video.h
++++ b/src/main/cpp/video.h
+@@ -99,6 +99,8 @@ public:
+     void setIntegerScalingAuto(bool enabled);
+     void setTextureCrop(float left, float top, float right, float bottom);
+     void setBlackFrameInsertion(bool enabled);
++    /** SDR white in nits on a PQ window surface; 0 keeps SDR output. */
++    void setSdrToHdr(int whiteNits);
+     void setShaderSensorState(const std::array<float, 9>& state);
+     int prepareShaderAndGetSensorUsage();
+ 
+@@ -171,6 +173,7 @@ private:
+     bool skipDuplicateFrames = false;
+     int filterMode = -1;  // -1 = auto (shader decides), 0 = nearest, 1 = linear
+     bool bfiEnabled = false;
++    int sdrToHdrWhiteNits = 0;
+     unsigned int bfiFrameCounter = 0;
+     unsigned int frameCount = 0;
+ 
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+index c14212f..411a6db 100644
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+@@ -308,10 +308,29 @@ class GLRetroView(
+ 
+     private var lifecycle: Lifecycle? = null
+ 
++    /** Present only when the view was created for SDR as HDR10; decides the EGL config and surface. */
++    private val sdrToHdrSurface: SdrToHdrSurface?
++
++    /** True once the window surface really is BT2020 PQ; the picture is then encoded to PQ. */
++    val sdrToHdrActive: Boolean get() = sdrToHdrSurface?.active == true
++
++    /** SDR white in nits while [sdrToHdrActive]; changes apply with the next frame. */
++    var sdrToHdrReferenceWhiteNits: Int by Delegates.observable(data.sdrToHdrReferenceWhiteNits) { _, _, value ->
++        runOnGLThread {
++            LibretroDroid.setSdrToHdr(if (sdrToHdrActive) value else 0)
++        }
++    }
++
+     init {
+         openGLESVersion = getGLESVersion(context)
+         preserveEGLContextOnPause = true
+         setEGLContextClientVersion(openGLESVersion)
++        sdrToHdrSurface = if (data.sdrToHdrReferenceWhiteNits > 0) SdrToHdrSurface(openGLESVersion) else null
++        sdrToHdrSurface?.let {
++            // Both before setRenderer, as GLSurfaceView requires.
++            setEGLConfigChooser(it)
++            setEGLWindowSurfaceFactory(it)
++        }
+         setRenderer(Renderer())
+         renderMode = RENDERMODE_CONTINUOUSLY
+         keepScreenOn = true
+@@ -807,6 +826,8 @@ class GLRetroView(
+ 
+         override fun onSurfaceCreated(gl: GL10, config: EGLConfig) = catchExceptions {
+             Thread.currentThread().priority = Thread.MAX_PRIORITY
++            // The surface exists now: encode to PQ only if it really is a PQ surface.
++            LibretroDroid.setSdrToHdr(if (sdrToHdrActive) sdrToHdrReferenceWhiteNits else 0)
+             initializeCore()
+             prepareShaderAndUpdateSensors()
+             lastSensorState = null
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroViewData.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroViewData.kt
+index 60e332c..e9e96b4 100644
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroViewData.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroViewData.kt
+@@ -46,4 +46,6 @@ class GLRetroViewData(context: Context) {
+     /** Optional higher-precision Vulkan->GLES AHardwareBuffer transport, not HDR passthrough. */
+     var preferHighPrecisionVulkanFrames: Boolean = false
+     var vulkanDriver: VulkanDriver? = null
++    /** SDR as HDR10: SDR white in nits on a BT2020 PQ window surface; 0 = SDR. Fixed for the view. */
++    var sdrToHdrReferenceWhiteNits: Int = 0
+ }
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+index e781e59..9b7cc7a 100644
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -196,6 +196,8 @@ public class LibretroDroid {
+     /** With whole-number scaling on, use it only when the border stays small. */
+     public static native void setIntegerScalingAuto(boolean enabled);
+     public static native void setBlackFrameInsertion(boolean enabled);
++    /** SDR white in nits for a BT2020 PQ window surface; 0 keeps SDR output (GL thread). */
++    public static native void setSdrToHdr(int whiteNits);
+     public static native void renderBlackFrame();
+     public static native void setBackgroundFrame(byte[] rgbaData, int width, int height);
+     public static native void clearBackgroundFrame();
+diff --git a/src/main/java/com/swordfish/libretrodroid/SdrToHdrSurface.kt b/src/main/java/com/swordfish/libretrodroid/SdrToHdrSurface.kt
+new file mode 100644
+index 0000000..fa470eb
+--- /dev/null
++++ b/src/main/java/com/swordfish/libretrodroid/SdrToHdrSurface.kt
+@@ -0,0 +1,90 @@
++/*
++ *     Ambient TV: EGL setup for showing an SDR game as HDR10.
++ *
++ *     This program is free software: you can redistribute it and/or modify
++ *     it under the terms of the GNU General Public License as published by
++ *     the Free Software Foundation, either version 3 of the License, or
++ *     (at your option) any later version.
++ */
++
++package com.swordfish.libretrodroid
++
++import android.opengl.GLSurfaceView
++import android.util.Log
++import javax.microedition.khronos.egl.EGL10
++import javax.microedition.khronos.egl.EGLConfig
++import javax.microedition.khronos.egl.EGLDisplay
++import javax.microedition.khronos.egl.EGLSurface
++
++/**
++ * A 10-bit window config and a window surface tagged EGL_GL_COLORSPACE_BT2020_PQ_EXT, as Kodi
++ * and Ambient TV's mpv do for HDR10 on GLES. [active] is true only when both worked; otherwise
++ * the surface is a plain SDR one and the picture stays SDR.
++ */
++internal class SdrToHdrSurface(private val glesVersion: Int) :
++    GLSurfaceView.EGLConfigChooser, GLSurfaceView.EGLWindowSurfaceFactory {
++
++    @Volatile var active: Boolean = false
++        private set
++    @Volatile private var tenBit: Boolean = false
++
++    override fun chooseConfig(egl: EGL10, display: EGLDisplay): EGLConfig {
++        val renderable = if (glesVersion >= 3) EGL_OPENGL_ES3_BIT_KHR else EGL_OPENGL_ES2_BIT
++        choose(egl, display, renderable, 10, 2)?.let { tenBit = true; return it }
++        tenBit = false
++        Log.w(TAG, "No 10-bit EGL config: SDR output")
++        return choose(egl, display, renderable, 8, 0)
++            ?: throw IllegalArgumentException("No EGL config for OpenGL ES $glesVersion")
++    }
++
++    private fun choose(egl: EGL10, display: EGLDisplay, renderable: Int, bits: Int, alpha: Int): EGLConfig? {
++        val attributes = intArrayOf(
++            EGL10.EGL_RED_SIZE, bits, EGL10.EGL_GREEN_SIZE, bits, EGL10.EGL_BLUE_SIZE, bits,
++            EGL10.EGL_ALPHA_SIZE, alpha, EGL10.EGL_DEPTH_SIZE, 16,
++            EGL10.EGL_RENDERABLE_TYPE, renderable, EGL10.EGL_NONE,
++        )
++        val count = IntArray(1)
++        if (!egl.eglChooseConfig(display, attributes, null, 0, count) || count[0] <= 0) return null
++        val configs = arrayOfNulls<EGLConfig>(count[0])
++        if (!egl.eglChooseConfig(display, attributes, configs, configs.size, count)) return null
++        val value = IntArray(1)
++        fun size(config: EGLConfig, attribute: Int): Int =
++            if (egl.eglGetConfigAttrib(display, config, attribute, value)) value[0] else -1
++        // eglChooseConfig sorts deeper colour first; take the exact size asked for.
++        return configs.filterNotNull().firstOrNull { config ->
++            size(config, EGL10.EGL_RED_SIZE) == bits && size(config, EGL10.EGL_GREEN_SIZE) == bits &&
++                size(config, EGL10.EGL_BLUE_SIZE) == bits
++        }
++    }
++
++    override fun createWindowSurface(egl: EGL10, display: EGLDisplay, config: EGLConfig, nativeWindow: Any?): EGLSurface? {
++        val extensions = egl.eglQueryString(display, EGL10.EGL_EXTENSIONS).orEmpty().split(' ')
++        if (tenBit && "EGL_KHR_gl_colorspace" in extensions && "EGL_EXT_gl_colorspace_bt2020_pq" in extensions) {
++            val surface = runCatching {
++                egl.eglCreateWindowSurface(display, config, nativeWindow,
++                    intArrayOf(EGL_GL_COLORSPACE_KHR, EGL_GL_COLORSPACE_BT2020_PQ_EXT, EGL10.EGL_NONE))
++            }.getOrNull()
++            if (surface != null && surface != EGL10.EGL_NO_SURFACE) {
++                active = true
++                return surface
++            }
++            Log.w(TAG, "BT2020 PQ window surface refused: SDR output")
++        } else if (tenBit) {
++            Log.w(TAG, "EGL lacks EGL_EXT_gl_colorspace_bt2020_pq: SDR output")
++        }
++        active = false
++        return runCatching { egl.eglCreateWindowSurface(display, config, nativeWindow, null) }.getOrNull()
++    }
++
++    override fun destroySurface(egl: EGL10, display: EGLDisplay, surface: EGLSurface) {
++        egl.eglDestroySurface(display, surface)
++    }
++
++    private companion object {
++        const val TAG = "SdrToHdrSurface"
++        const val EGL_OPENGL_ES2_BIT = 0x0004
++        const val EGL_OPENGL_ES3_BIT_KHR = 0x0040
++        const val EGL_GL_COLORSPACE_KHR = 0x309D
++        const val EGL_GL_COLORSPACE_BT2020_PQ_EXT = 0x3340
++    }
++}

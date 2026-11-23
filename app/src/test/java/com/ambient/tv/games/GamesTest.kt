@@ -211,6 +211,17 @@ class GamesTest {
         }
     }
 
+    @Test fun sdrToHdrIsOffUntilChosenAndKeepsItsWhite() {
+        var state = GameSettingsState()
+        assertFalse(state.sdrToHdr)
+        assertEquals(0, state.sdrReferenceWhite)
+        state = state.withSdrToHdr(true).withSdrReferenceWhite(300)
+        assertTrue(state.sdrToHdr)
+        assertEquals(300, state.sdrReferenceWhite)
+        state = state.withSdrReferenceWhite(0).withSdrToHdr(false)
+        assertTrue("hdr.sdr" !in state.values && "hdr.sdr.white" !in state.values)
+    }
+
     @Test fun effectsBelongToTheSystemOrTheGame() {
         val snes = GameSystems.byId("snes")!!
         var state = GameSettingsState()

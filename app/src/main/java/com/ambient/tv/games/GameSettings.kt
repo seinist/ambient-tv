@@ -306,6 +306,16 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
         if (!core.hardware || !core.supportsVulkan) this
         else set("hdr.${core.id}", mode.key.takeIf { mode != GameHdrToneMap.OFF })
 
+    /** SDR games as HDR10 on HDR displays (GLES output, all games); off unless switched on. */
+    val sdrToHdr: Boolean get() = values["hdr.sdr"] == "1"
+
+    fun withSdrToHdr(on: Boolean): GameSettingsState = set("hdr.sdr", "1".takeIf { on })
+
+    /** SDR white inside the HDR signal in nits, like the video setting; 0 = Auto (203). */
+    val sdrReferenceWhite: Int get() = values["hdr.sdr.white"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0
+
+    fun withSdrReferenceWhite(nits: Int): GameSettingsState = set("hdr.sdr.white", nits.takeIf { it > 0 }?.toString())
+
     /** RetroAchievements while playing (needs an account); on unless switched off. */
     val achievements: Boolean get() = values["achievements"] != "0"
 
