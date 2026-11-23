@@ -287,9 +287,16 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
             if (nearEnd) viewModel.more()
         }
     }
+    // An offline DLNA server keeps its saved folder, marks the header and re-checks quietly,
+    // like every other server-based source; its server's other services share the state.
+    val hostOffline = com.ambient.tv.ui.home.rememberHostOffline(state.server?.id?.let { "dlna:$it" })
+    val savedOffline = hostOffline && nodes.isNotEmpty()
+    com.ambient.tv.ui.common.RetryOfflineBrowse { if (hostOffline) viewModel.refreshOnReconnect() }
+    val dlnaOfflineStatus = if (savedOffline) state.server?.let { com.ambient.tv.ui.common.offlineTitle(it.name) } else null
     Box(Modifier.fillMaxSize()) {
         val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
         Column(Modifier.fillMaxSize().focusProperties { onEnter = { if (showOptions) cancelFocusChange() } }.focusGroup().padding(start = screenGutter(), end = screenGutter(), bottom = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(screenGutter())), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            androidx.compose.runtime.CompositionLocalProvider(com.ambient.tv.ui.common.LocalPageOfflineStatus provides dlnaOfflineStatus) {
             PageHeader(focusChain = focusChain, actions = {
                 TvChip(stringResource(R.string.files_back), modifier = Modifier.leftKeyAction { if (!viewModel.up()) onBack() }, icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = { if (!viewModel.up()) onBack() })
                 TvChip(stringResource(R.string.dlna_servers), icon = Icons.Default.Storage, iconOnly = true, onClick = onManage)
@@ -300,6 +307,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
             }) {
                 SystemPageTitle(MediaSystem.DLNA, title = state.server?.name)
             }
+            }
             val failedOrEmptyFolder = !emptyPending && state.path.isNotEmpty() &&
                 nodes.isEmpty()
             DlnaBreadcrumb(
@@ -309,7 +317,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                 focusChain = focusChain,
                 onSelect = viewModel::breadcrumb,
             )
-            if (nodes.isNotEmpty()) state.error?.let {
+            if (nodes.isNotEmpty() && !savedOffline) state.error?.let {
                 OperationFeedbackContent(it, Modifier.fillMaxWidth(), actionLabel = stringResource(R.string.home_retry), onAction = viewModel::refresh)
             }
             state.pageError?.let {

@@ -168,7 +168,15 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
     }
     LaunchedEffect(state.editorSaved) { if (state.editorSaved > 0) editor = null }
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
+    // Same as the media servers: an offline NAS keeps its saved listing, marks the page header
+    // and re-checks quietly. Only a listing without saved entries shows the error page.
+    val openNetworkSource = state.sources.firstOrNull { it.id == sourceId }?.takeIf { it.kind != "local" }
+    val hostOffline = com.ambient.tv.ui.home.rememberHostOffline(openNetworkSource?.let { "files:${it.id}" })
+    val savedOffline = hostOffline && ids.isNotEmpty()
+    com.ambient.tv.ui.common.RetryOfflineBrowse { if (hostOffline) viewModel.refreshOnReconnect() }
+    val filesOfflineStatus = if (savedOffline) openNetworkSource?.let { com.ambient.tv.ui.common.offlineTitle(it.name) } else null
     Column(Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(), bottom = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(screenGutter())), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        androidx.compose.runtime.CompositionLocalProvider(com.ambient.tv.ui.common.LocalPageOfflineStatus provides filesOfflineStatus) {
         PageHeader(focusChain = focusChain, actions = {
             // Handhelds have system Back; the chip only shows while there is a level to go up (or a load to cancel).
             if (!handheld || canUp || state.loading) TvChip(stringResource(R.string.files_back), modifier = Modifier.focusRequester(top).leftKeyAction { if (state.loading) viewModel.cancelLoading() else if (!viewModel.up()) onBack() }, icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true) {
@@ -189,6 +197,7 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
                 TvChip(stringResource(R.string.photos_slideshow), icon = Icons.Default.Slideshow, iconOnly = true) { if (viewModel.preparePhotos(null)) onOpenPhotos() }
             }
         }) { com.ambient.tv.ui.common.SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.FILES) }
+        }
         com.ambient.tv.ui.common.LocalNetworkPermissionSetting(onGranted = viewModel::refresh)
         val rootLabel = stringResource(when (viewModel.tab) {
             "favorites" -> R.string.files_favorites
@@ -202,7 +211,7 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
             focusChain = focusChain,
             onSelect = viewModel::breadcrumb,
         )
-        if (ids.isNotEmpty()) state.error?.let { message ->
+        if (ids.isNotEmpty() && !savedOffline) state.error?.let { message ->
             OperationFeedbackContent(message, Modifier.fillMaxWidth())
         }
         // Up from the list: breadcrumb (parent folder), then the header actions.
