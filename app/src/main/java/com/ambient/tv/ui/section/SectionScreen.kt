@@ -219,7 +219,7 @@ fun SectionScreen(
     val recovery: com.ambient.tv.ui.home.UnreachableServerViewModel = hiltViewModel()
     val connection by recovery.state.collectAsState()
     val sourceRevision by recovery.availability.changes.collectAsState()
-    val sourceUnconfirmed = remember(source, sourceRevision) { recovery.availability.browseUnconfirmed(source) }
+    val sourceUnconfirmed = remember(source, sourceRevision) { recovery.availability.browseShowsOffline(source) }
     val contentUnconfirmed = source in connection.offline || sourceUnconfirmed || refreshFailed
     val retrySource: () -> Unit = { recovery.retrySystem(source) }
     ReportSidebarContentReady(uiState !is SectionUiState.Loading)
