@@ -1,18 +1,13 @@
 package com.ambient.tv.ui.games
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
-import androidx.tv.material3.MaterialTheme
+import com.ambient.tv.ui.common.ArtworkFallback
 import com.ambient.tv.ui.common.ArtworkImage
 
 /** The caller reserves the cover's geometry before loading. Neither success nor fallback changes it. */
@@ -32,21 +27,13 @@ fun GameCoverArtwork(
         staggerUncached = true,
         prioritizeUncached = focused,
         fallbackContent = {
-            // ArtworkImage's own Box aligns custom content at TopStart. Fill that Box first;
-            // otherwise the smaller vector ends up in the top-left quarter of the cover.
-            BoxWithConstraints(
-                Modifier.fillMaxSize()
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .24f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                val size = minOf(maxWidth, maxHeight) * .56f
-                androidx.compose.material3.Icon(
-                    painterResource(GameSystemIcons.drawable(systemId)),
-                    contentDescription = null,
-                    modifier = Modifier.size(size).testTag("game-cover-fallback"),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            // Same card face as every other library's missing artwork (gradient + title);
+            // the system emblem replaces nothing, it only adds which console the game is for.
+            ArtworkFallback(
+                title = title,
+                icon = painterResource(GameSystemIcons.drawable(systemId)),
+                iconModifier = Modifier.testTag("game-cover-fallback"),
+            )
         },
     )
 }

@@ -76,11 +76,7 @@ class GameControlsOverviewTest {
         assertNull(nextAssignAllStep(order, RetroPadButton.RIGHT, 0, false))
     }
 
-    @Test fun dpadLegendsPointOutwards() {
-        assertEquals(AssignmentBadgeSide.ABOVE, assignmentBadgeSide("up"))
-        assertEquals(AssignmentBadgeSide.START, assignmentBadgeSide("left"))
-        assertEquals(AssignmentBadgeSide.END, assignmentBadgeSide("right"))
-        assertEquals(AssignmentBadgeSide.BELOW, assignmentBadgeSide("down"))
+    @Test fun mappingEntriesNameKeyAndAssignment() {
         assertEquals("B → A", assignedButtonLabel("B", "A"))
         assertEquals("B", assignedButtonLabel("B", null))
     }

@@ -296,7 +296,7 @@ fun MediaTile(
                         GameCoverArtwork(
                             cover = imageUrl, title = visualItem.title,
                             systemId = visualItem.ratingKey.substringAfterLast('|', ""),
-                            modifier = Modifier.fillMaxSize(), focused = focused,
+                            modifier = Modifier.fillMaxSize().clip(tileShape), focused = focused,
                         )
                     } else if (visualItem.ratingKey.startsWith("telegram-channel:")) {
                         Box(

@@ -179,6 +179,8 @@ internal fun GameSidePanel(
         onBack = { panels.back(page) },
         onOutsideTap = panels::close,
         closeInsteadOfBack = navigation.depth <= 1,
+        // A child level returns to its parent inside the same drawer (see GamePanelOverlay).
+        backWithinPanel = navigation.depth > 1,
         requestHeaderFocus = initialFocus || navigation.restoreFailed,
         focusRescue = navigation.focusRescue(),
         content = content,

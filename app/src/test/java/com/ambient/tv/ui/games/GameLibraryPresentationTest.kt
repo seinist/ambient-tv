@@ -191,9 +191,11 @@ class GameLibraryPresentationTest {
         assertEquals(wideTitle.top, tallTitle.top, 1f)
         val fallbacks = rule.onAllNodesWithTag("game-cover-fallback", useUnmergedTree = true).fetchSemanticsNodes()
         assertEquals(2, fallbacks.size)
+        // The emblem sits centered on the shared card face, above the title when there is room.
         for ((index, cover) in listOf(wide, tall).withIndex()) {
-            assertEquals(cover.center.x, fallbacks[index].boundsInRoot.center.x, 1f)
-            assertEquals(cover.center.y, fallbacks[index].boundsInRoot.center.y, 1f)
+            val emblem = fallbacks[index].boundsInRoot
+            assertEquals(cover.center.x, emblem.center.x, 1f)
+            assertTrue(emblem.top >= cover.top && emblem.bottom <= cover.bottom)
         }
     }
 

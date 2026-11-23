@@ -19,12 +19,101 @@ internal data class GameTouchLayout(
 private fun portraitClusterSize(width: Float): Float = ((width - 32f) / 2f).coerceIn(144f, 176f)
 
 internal fun gameTouchDeckHeight(mode: GameTouchMode, width: Float = 320f,
-    style: TouchControlStyle = TouchControlStyle()): Float {
+    style: TouchControlStyle = TouchControlStyle(),
+    presentation: GameTouchPresentation = GameTouchPresentation.Generic,
+): Float {
     val scale = minOf(style.normalized().scalePercent / 100f, width / 320f).coerceAtLeast(1f)
-    return scale * (portraitClusterSize(width / scale) + when (mode) {
-        GameTouchMode.HYBRID, GameTouchMode.DUAL -> 256f
-        else -> 128f
-    })
+    val base = width / scale
+    val plan = portraitDeckPlan(mode, base, presentation)
+    return scale * (portraitClusterSize(base) + plan.chrome + if (plan.secondary) PORTRAIT_SECONDARY_MAX else 0f)
+}
+
+private const val PORTRAIT_MARGIN = 12f
+private const val PORTRAIT_SECONDARY_MIN = 96f
+private const val PORTRAIT_SECONDARY_MAX = 120f
+private const val UTILITY_MIN_WIDTH = 48f
+private const val UTILITY_MAX_WIDTH = 64f
+private const val UTILITY_GAP = 8f
+
+/** Which row holds Start/Select in portrait: beside the shoulders, beside the second stick, or below. */
+private enum class UtilityRow { SHOULDERS, SECONDARY, BOTTOM }
+
+/**
+ * The portrait deck's rows for one system. Start/Select sit in the first free row under the
+ * thumb clusters, like on the real pads, instead of always taking a separate bottom row:
+ * between the shoulder buttons when they fit (most pads), otherwise beside the second stick,
+ * and only as the last resort in an extra row. Absent shoulders leave no holes.
+ */
+private class PortraitDeckPlan(
+    /** Outer to inner, hugging the left / right edge. */
+    val leftShoulders: List<RetroPadButton>,
+    val rightShoulders: List<RetroPadButton>,
+    val utility: List<RetroPadButton>,
+    val utilityRow: UtilityRow,
+    /** Left-stick click beside the shoulders (analog-only pads have no second-stick row). */
+    val l3InShoulderRow: Boolean,
+    val l3: Boolean,
+    val r3: Boolean,
+    val secondary: Boolean,
+) {
+    /** Deck height without the thumb clusters and without the second stick row's stick. */
+    val chrome: Float get() = (if (secondary) 84f else 76f) + if (needsBottomRow) 52f else 0f
+    val needsBottomRow: Boolean get() = (utility.isNotEmpty() && utilityRow == UtilityRow.BOTTOM) ||
+        (l3 && !secondary && !l3InShoulderRow)
+}
+
+private fun portraitDeckPlan(mode: GameTouchMode, width: Float, presentation: GameTouchPresentation): PortraitDeckPlan {
+    fun shown(button: RetroPadButton) = button in presentation.labels && button !in presentation.faces
+    val left = listOf(RetroPadButton.L2, RetroPadButton.L).filter(::shown)
+    val right = listOf(RetroPadButton.R2, RetroPadButton.R).filter(::shown)
+    val utility = listOf(RetroPadButton.SELECT, RetroPadButton.START).filter(::shown)
+    val secondary = mode == GameTouchMode.HYBRID || mode == GameTouchMode.DUAL
+    val l3 = mode != GameTouchMode.DPAD && shown(RetroPadButton.L3)
+    val r3 = mode == GameTouchMode.DUAL && shown(RetroPadButton.R3)
+    val margin = PORTRAIT_MARGIN
+    var from = shoulderRowStart(left.size)
+    val to = shoulderRowEnd(width, right.size)
+    // The analog pad's stick click joins the shoulder row's left side when there is space for
+    // it, but never pushes Start/Select out of that row.
+    val withL3 = from + UTILITY_MIN_WIDTH + UTILITY_GAP
+    val l3InShoulderRow = l3 && !secondary && to - from >= UTILITY_MIN_WIDTH && (utility.isEmpty() ||
+        utilityGroup(utility.size, withL3, to, width / 2f) != null ||
+        utilityGroup(utility.size, from, to, width / 2f) == null)
+    if (l3InShoulderRow) from = withL3
+    val row = when {
+        utility.isEmpty() || utilityGroup(utility.size, from, to, width / 2f) != null -> UtilityRow.SHOULDERS
+        secondary && secondaryUtilitySpan(mode, width, PORTRAIT_SECONDARY_MAX, l3, r3, margin)
+            .let { (a, b) -> utilityGroup(utility.size, a, b, width / 2f) != null } -> UtilityRow.SECONDARY
+        else -> UtilityRow.BOTTOM
+    }
+    return PortraitDeckPlan(left, right, utility, row, l3InShoulderRow, l3, r3, secondary)
+}
+
+private fun shoulderRowStart(count: Int) = PORTRAIT_MARGIN + count * 64f
+private fun shoulderRowEnd(width: Float, count: Int) = width - PORTRAIT_MARGIN - count * 64f
+
+/** The free span beside the second stick and its stick-click buttons. */
+private fun secondaryUtilitySpan(mode: GameTouchMode, width: Float, secondarySize: Float,
+    l3: Boolean, r3: Boolean, margin: Float,
+): Pair<Float, Float> = if (mode == GameTouchMode.DUAL) {
+    (margin + if (l3) UTILITY_MIN_WIDTH + UTILITY_GAP else 0f) to
+        (width - margin - secondarySize - UTILITY_GAP - if (r3) UTILITY_MIN_WIDTH + UTILITY_GAP else 0f)
+} else {
+    (margin + secondarySize + UTILITY_GAP + if (l3) UTILITY_MIN_WIDTH + UTILITY_GAP else 0f) to (width - margin)
+}
+
+/**
+ * Start/Select as one group inside [from, to]: equal widths of 48..64 dp, centred on the screen
+ * when possible, otherwise on the free span. Null when even 48 dp targets do not fit.
+ */
+private fun utilityGroup(count: Int, from: Float, to: Float, center: Float): Pair<Float, Float>? {
+    if (count == 0) return from to 0f
+    val width = ((to - from - UTILITY_GAP * (count - 1)) / count).coerceAtMost(UTILITY_MAX_WIDTH)
+    if (width < UTILITY_MIN_WIDTH) return null
+    val total = width * count + UTILITY_GAP * (count - 1)
+    val centred = center - total / 2f
+    val start = if (centred >= from && centred + total <= to) centred else from + (to - from - total) / 2f
+    return start to width
 }
 
 /**
@@ -105,30 +194,57 @@ private fun baseGameTouchLayout(mode: GameTouchMode, width: Float, height: Float
     }
     val analog = mode != GameTouchMode.DPAD
     if (portrait) {
-        // Neo-RetroPad's two main thumb areas share a row. Shoulders and utility buttons
-        // sit below them, wholly inside the screen instead of clipping at either edge.
-        val hasSecondary = mode == GameTouchMode.HYBRID || mode == GameTouchMode.DUAL
-        val cluster = (height - if (hasSecondary) 232f else 128f)
+        // Neo-RetroPad's two main thumb areas share a row. Shoulders hug the edges below them;
+        // Start/Select join the first row under the clusters that has room for them.
+        val plan = portraitDeckPlan(mode, width, presentation)
+        val hasSecondary = plan.secondary
+        val cluster = (height - plan.chrome - if (hasSecondary) PORTRAIT_SECONDARY_MIN else 0f)
             .coerceIn(144f, portraitClusterSize(width))
-        val secondarySize = (height - cluster - 136f).coerceIn(96f, 120f)
-        val deckHeight = cluster + if (hasSecondary) 136f + secondarySize else 128f
+        val secondarySize = if (hasSecondary) {
+            (height - cluster - plan.chrome).coerceIn(PORTRAIT_SECONDARY_MIN, PORTRAIT_SECONDARY_MAX)
+        } else 0f
+        val deckHeight = cluster + plan.chrome + secondarySize
         val top = (height - deckHeight).coerceAtLeast(0f) * verticalPosition / 100f
         faces(width - margin - cluster, top + 8f, cluster / 3f)
         val primary = rect(margin, top + 8f, cluster, cluster)
         val shoulderY = top + cluster + 20f
-        button(RetroPadButton.L2, margin, shoulderY, 56f)
-        button(RetroPadButton.L, margin + 64f, shoulderY, 56f)
-        button(RetroPadButton.R, width - margin - 120f, shoulderY, 56f)
-        button(RetroPadButton.R2, width - margin - 56f, shoulderY, 56f)
+        plan.leftShoulders.forEachIndexed { index, shoulder -> button(shoulder, margin + index * 64f, shoulderY, 56f) }
+        plan.rightShoulders.forEachIndexed { index, shoulder ->
+            button(shoulder, width - margin - 56f - index * 64f, shoulderY, 56f)
+        }
+        val secondaryY = shoulderY + 56f
         val secondary = rect(
             if (mode == GameTouchMode.DUAL) width - margin - secondarySize else margin,
-            shoulderY + 56f, secondarySize, secondarySize,
+            secondaryY, secondarySize, secondarySize,
         )
-        val utilityY = top + deckHeight - 56f
-        button(RetroPadButton.SELECT, width / 2f - 72f, utilityY, 64f)
-        button(RetroPadButton.START, width / 2f + 8f, utilityY, 64f)
-        if (analog) button(RetroPadButton.L3, margin, utilityY)
-        if (mode == GameTouchMode.DUAL) button(RetroPadButton.R3, width - margin - key, utilityY)
+        val bottomY = top + deckHeight - 56f
+        fun placeUtility(from: Float, to: Float, y: Float) {
+            val (start, size) = utilityGroup(plan.utility.size, from, to, width / 2f) ?: return
+            plan.utility.forEachIndexed { index, utility ->
+                button(utility, start + index * (size + UTILITY_GAP), y, size)
+            }
+        }
+        var shoulderFrom = shoulderRowStart(plan.leftShoulders.size)
+        val shoulderTo = shoulderRowEnd(width, plan.rightShoulders.size)
+        if (plan.l3InShoulderRow) {
+            button(RetroPadButton.L3, shoulderFrom, shoulderY)
+            shoulderFrom += key + UTILITY_GAP
+        } else if (plan.l3 && !hasSecondary) {
+            button(RetroPadButton.L3, margin, bottomY)
+        }
+        // Stick clicks sit beside their own stick in the second row.
+        val stickRowY = secondaryY + (secondarySize - key) / 2f
+        if (hasSecondary && plan.l3) {
+            button(RetroPadButton.L3,
+                if (mode == GameTouchMode.DUAL) margin else margin + secondarySize + UTILITY_GAP, stickRowY)
+        }
+        if (plan.r3) button(RetroPadButton.R3, width - margin - secondarySize - UTILITY_GAP - key, stickRowY)
+        when (plan.utilityRow) {
+            UtilityRow.SHOULDERS -> placeUtility(shoulderFrom, shoulderTo, shoulderY)
+            UtilityRow.SECONDARY -> secondaryUtilitySpan(mode, width, secondarySize, plan.l3, plan.r3, margin)
+                .let { (from, to) -> placeUtility(from, to, stickRowY) }
+            UtilityRow.BOTTOM -> placeUtility(margin, width - margin, bottomY)
+        }
         return finish(
             dpad = primary.takeIf { mode == GameTouchMode.DPAD || mode == GameTouchMode.HYBRID },
             left = when (mode) {
