@@ -69,6 +69,7 @@ import com.ambient.tv.ui.common.RegisterBrowseFocusGrid
 import com.ambient.tv.ui.common.RegisterBrowseFocusList
 import com.ambient.tv.ui.common.RegisterBrowseFocusRows
 import com.ambient.tv.ui.common.mediaFocusMotion
+import com.ambient.tv.ui.common.browseCardSurface
 import com.ambient.tv.ui.common.ContentSectionHeader
 import com.ambient.tv.ui.common.RegisterRowColumnFocus
 import com.ambient.tv.ui.common.RowColumnFocus
@@ -80,7 +81,6 @@ import com.ambient.tv.ui.common.noSurfaceScale
 import com.ambient.tv.ui.common.noSurfaceBorder
 import com.ambient.tv.ui.common.transparentSurfaceColors
 import com.ambient.tv.ui.navigation.ReportSidebarContentReady
-import com.ambient.tv.ui.theme.animatedFocusBorder
 import com.ambient.tv.ui.theme.animatedFocusSurface
 import com.ambient.tv.ui.theme.screenGutter
 import com.ambient.tv.ui.mobile.LocalHandheldUi
@@ -667,9 +667,11 @@ internal fun GameLibraryCoverRow(
 }
 
 /**
- * A library card with the same focus treatment as [com.ambient.tv.ui.common.MediaTile] on Home:
- * the cover frame grows and gets the accent border, the labels stay put. On a TV the favorite is a
- * badge (Info/Menu or the detail page toggles it); touch screens keep a separate heart button.
+ * A library card like the SmartTube/YouTube cards: one flat card holds the cover, title and
+ * system, and the whole card takes focus (scale, accent fill and outline). Covers keep their
+ * own shape inside it; a game without one shows the shared missing-artwork face. On a TV the
+ * favorite is a badge (Info/Menu or the detail page toggles it); touch screens keep a separate
+ * heart button.
  */
 @Composable
 internal fun GameTile(
@@ -689,7 +691,8 @@ internal fun GameTile(
     val requester = remember(game.fileId) { FocusRequester() }
     DisposableEffect(requester) { onRequester(requester); onDispose(onDisposed) }
     val handheld = LocalHandheldUi.current
-    val shape = RoundedCornerShape(com.ambient.tv.ui.theme.LocalUiTokens.current.cardRadius)
+    val shape = com.ambient.tv.ui.common.BrowseCardShape
+    val artworkShape = com.ambient.tv.ui.common.BrowseCardArtworkShape
     val activate = rememberUiSoundAction(onClick = onPlay)
     val showInfo = rememberUiSoundAction(onClick = onInfo)
     val uiSounds = LocalUiSoundPlayer.current
@@ -699,6 +702,7 @@ internal fun GameTile(
             colors = transparentSurfaceColors(), border = noSurfaceBorder(), scale = noSurfaceScale(),
             shape = ClickableSurfaceDefaults.shape(shape),
             modifier = Modifier.fillMaxWidth().focusRequester(requester)
+                .mediaFocusMotion(focused)
                 .browseFocusTarget(game.fileId, rowKey = rowKey)
                 .activateOnTvKey(onClick = activate, onLongClick = showInfo)
                 .bringFocusedContextIntoView()
@@ -710,7 +714,7 @@ internal fun GameTile(
                 },
         ) {
             Column(
-                Modifier.padding(GameTileContentPadding),
+                Modifier.browseCardSurface(focused, shape).padding(GameTileContentPadding),
                 verticalArrangement = Arrangement.spacedBy(7.dp),
             ) {
                 // A shared invisible slot keeps a mixed grid's title baselines aligned. The
@@ -719,14 +723,11 @@ internal fun GameTile(
                     .testTag("game-cover-slot:${game.fileId}"), contentAlignment = Alignment.BottomCenter) {
                     val size = gameCoverFrameSize(maxWidth, maxHeight, game.coverAspectRatio)
                     Box(
-                        Modifier.size(size.width, size.height).mediaFocusMotion(focused)
-                            .animatedFocusBorder(focused, shape,
-                                focusedColor = MaterialTheme.colorScheme.primary.copy(alpha = .96f),
-                                unfocusedColor = Color.Transparent)
+                        Modifier.size(size.width, size.height).clip(artworkShape)
                             .testTag("game-cover:${game.fileId}"),
                     ) {
                         GameCoverArtwork(game.coverPath?.let { java.io.File(it) }, game.title, game.systemId,
-                            modifier = Modifier.fillMaxSize().padding(2.dp).clip(shape), focused = focused)
+                            modifier = Modifier.fillMaxSize(), focused = focused)
                         if (game.favorite && !handheld) androidx.tv.material3.Icon(
                             Icons.Filled.Favorite,
                             contentDescription = stringResource(R.string.radio_remove_favorite),
