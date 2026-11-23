@@ -780,20 +780,32 @@ internal fun GameListEntry(
                 .testTag("game-select:${game.fileId}")
                 .onFocusChanged { focused = it.isFocused; if (it.isFocused) { uiSounds?.playFocus(); onFocus() } },
         ) {
-            Column(Modifier.fillMaxWidth().heightIn(min = 58.dp * density)
+            Row(Modifier.fillMaxWidth().heightIn(min = 58.dp * density)
                 .animatedFocusSurface(focused = focused, shape = shape,
                     focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = .09f),
                     unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = .58f),
                     focusedBorder = MaterialTheme.colorScheme.primary,
                     unfocusedBorder = Color.White.copy(alpha = .06f), borderWidth = 1.5.dp)
-                .padding(horizontal = 16.dp, vertical = 10.dp * density),
-                verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                com.ambient.tv.ui.common.MarqueeTitle(game.title, focused = focused,
-                    style = MaterialTheme.typography.titleMedium)
-                Text(listOfNotNull(GameSystems.byId(game.systemId)?.shortName ?: game.systemId,
-                    game.metadataYear?.toString()).joinToString(" · "),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                .padding(start = 10.dp, end = 16.dp, top = 8.dp * density, bottom = 8.dp * density),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                // Artwork on the left like the other libraries' lists; one height, the cover's own width.
+                val coverHeight = 46.dp * density
+                Box(Modifier.size(coverHeight * 1.5f, coverHeight).testTag("game-list-cover:${game.fileId}"),
+                    contentAlignment = Alignment.Center) {
+                    val ratio = game.coverAspectRatio.coerceIn(.55f, 1.5f)
+                    GameCoverArtwork(game.coverPath?.let { java.io.File(it) }, game.title, game.systemId,
+                        modifier = Modifier.size(coverHeight * ratio, coverHeight).clip(RoundedCornerShape(4.dp)),
+                        focused = focused)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    com.ambient.tv.ui.common.MarqueeTitle(game.title, focused = focused,
+                        style = MaterialTheme.typography.titleMedium)
+                    Text(listOfNotNull(GameSystems.byId(game.systemId)?.shortName ?: game.systemId,
+                        game.metadataYear?.toString()).joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
         GameFavoriteButton(game, onFavorite)

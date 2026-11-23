@@ -6,6 +6,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -24,6 +25,8 @@ internal fun GameSelectionDialog(
     state: GameSelectionUiState?,
     onDismiss: () -> Unit,
     onPlay: () -> Unit,
+    /** Starts over, like "From the beginning" in the media dialog; only once the game was played. */
+    onPlayFresh: () -> Unit = onPlay,
     onWake: () -> Unit,
     onDetails: () -> Unit,
 ) {
@@ -57,6 +60,8 @@ internal fun GameSelectionDialog(
                 GameSelectionPhase.OPTIONS -> {
                     TvActionButton(stringResource(R.string.game_detail_play), onClick = onPlay,
                         selected = true, icon = Icons.Filled.PlayArrow)
+                    if ((state.game?.lastPlayed ?: 0L) > 0L) TvActionButton(stringResource(R.string.game_reset),
+                        onClick = onPlayFresh, icon = Icons.Filled.RestartAlt)
                     TvActionButton(stringResource(R.string.media_selection_details), onClick = onDetails,
                         icon = Icons.Filled.Info)
                 }

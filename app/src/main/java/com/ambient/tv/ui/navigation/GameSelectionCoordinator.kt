@@ -89,7 +89,7 @@ internal class GameSelectionCoordinator(
         val origin: String?,
         val source: GameSelectionSource?,
         val behavior: String,
-        val fresh: Boolean = false,
+        var fresh: Boolean = false,
         var game: LibraryGame? = null,
         var completing: Boolean = false,
     )
@@ -144,10 +144,12 @@ internal class GameSelectionCoordinator(
     fun details(fileId: String) = select(fileId, MediaSelectionPreferences.DETAILS)
 
     /** Options, a failed attempt and a wake offer all keep the same selected game. */
-    fun playPending(allowWake: Boolean = false) {
+    fun playPending(allowWake: Boolean = false, fresh: Boolean? = null) {
         val request = active ?: return
         if (mutable.value?.phase !in setOf(GameSelectionPhase.OPTIONS, GameSelectionPhase.WAKE, GameSelectionPhase.FAILED)) return
         if (!current(request)) return
+        // Chosen in the options; a retry or wake afterwards keeps that choice.
+        fresh?.let { request.fresh = it }
         job?.cancel()
         show(request, GameSelectionPhase.CHECKING)
         job = scope.launch {

@@ -139,9 +139,10 @@ class GameLibraryPresentationTest {
         }
     }
 
-    @Test fun textListHasOneMainTargetAndFavoriteIsIndependentOnRemote() {
+    @Test fun listHasOneMainTargetAndFavoriteIsIndependentOnRemote() {
         val actions = mountItem(handheld = false, list = true)
-        rule.onAllNodesWithTag("game-cover-fallback", useUnmergedTree = true).assertCountEquals(0)
+        // Like the other libraries' lists: a small cover (or its fallback) on the left.
+        rule.onNodeWithTag("game-list-cover:snes-game", useUnmergedTree = true).assertIsDisplayed()
         rule.onNodeWithText("SNES · 1990", useUnmergedTree = true).assertIsDisplayed()
         rule.runOnIdle { actions.requester.requestFocus() }
         rule.waitForIdle()

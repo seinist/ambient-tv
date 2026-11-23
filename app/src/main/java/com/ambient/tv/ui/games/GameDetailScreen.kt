@@ -254,7 +254,7 @@ private fun GameDetailInformation(
                 enabled = !busy, icon = Icons.Filled.PlayArrow,
                 modifier = Modifier.focusRequester(primaryFocus).browseFocusTarget("game-play"))
             // Play continues where the game was left, like Resume on other details; this starts over.
-            TvActionButton(stringResource(R.string.game_reset), onClick = onPlayFresh,
+            if (game.lastPlayed > 0L) TvActionButton(stringResource(R.string.game_reset), onClick = onPlayFresh,
                 enabled = !busy, icon = Icons.Filled.RestartAlt)
             TvActionButton(stringResource(if (game.favorite) R.string.radio_remove_favorite else R.string.radio_add_favorite),
                 onClick = onFavorite, enabled = !busy, selected = game.favorite,

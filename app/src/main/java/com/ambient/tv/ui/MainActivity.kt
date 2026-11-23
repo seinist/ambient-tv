@@ -4016,6 +4016,7 @@ private fun AmbientTvApp(
                     state = gameSelectionState,
                     onDismiss = gameSelections::cancel,
                     onPlay = { gameSelections.playPending() },
+                    onPlayFresh = { gameSelections.playPending(fresh = true) },
                     onWake = { gameSelections.playPending(allowWake = true) },
                     onDetails = gameSelections::detailsPending,
                 )
