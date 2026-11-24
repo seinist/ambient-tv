@@ -2449,6 +2449,8 @@
     <string name="game_library_manage">Spielebibliothek</string>
     <string name="game_library_count">%1$d Spiele</string>
     <string name="game_library_all">Alle Spiele</string>
+    <string name="game_library_favorites">Favoriten</string>
+    <string name="game_library_recent">Zuletzt gespielt</string>
     <string name="game_library_empty">Füge einen Ordner mit Spielen hinzu.</string>
     <string name="game_library_add_folder">Spieleordner hinzufügen</string>
     <string name="game_library_no_results">Keine Spiele in dieser Kategorie.</string>

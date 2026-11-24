@@ -148,8 +148,8 @@ internal fun GameLibrarySections(
             val custom = platform(key)
             val label = when (key) {
                 "all" -> stringResource(R.string.game_library_all)
-                "favorites" -> stringResource(R.string.radio_favorites)
-                "recent" -> stringResource(R.string.radio_recent)
+                "favorites" -> stringResource(R.string.game_library_favorites)
+                "recent" -> stringResource(R.string.game_library_recent)
                 else -> custom?.first ?: GameSystems.byId(key)?.shortName ?: key
             }
             TvChip(text = label, selected = selected == key,

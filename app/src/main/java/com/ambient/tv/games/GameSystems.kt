@@ -167,7 +167,8 @@ object GameSystems {
         // Buildbot cores: deliberately outside cores/cores.json until pinned source builds
         // have passed every supported ABI + 16 KB page-size validation.
         GameSystem("nds", "Nintendo DS / DSi", setOf("nds", "dsi", "ids"),
-            GameCore("melondsds", "melonDS DS", "GPL-3.0"),
+            // The libretro build server has no 32-bit x86 build of melonDS DS.
+            GameCore("melondsds", "melonDS DS", "GPL-3.0", supportedAbis = setOf("arm64-v8a", "armeabi-v7a", "x86_64")),
             bios = listOf(
                 GameBios("bios7.bin", "df692a80a5b1bc90728bc3dfc76cd948", "Nintendo DS ARM7"),
                 GameBios("bios9.bin", "a392174eb3e572fed6447e956bde4b25", "Nintendo DS ARM9"),
@@ -177,9 +178,10 @@ object GameSystems {
         GameSystem("n3ds", "Nintendo 3DS", setOf("3ds", "3dsx", "cci", "cxi"),
             GameCore("citra2018", "Citra 2018", "GPL-2.0", hardware = true, supportsVulkan = false,
                 supportedAbis = setOf("arm64-v8a", "x86_64")),
+            // Panda3DS is built for arm64 only (no x86_64 build on the libretro build server).
             alternatives = listOf(GameCore("panda3ds", "Panda3DS", "GPL-3.0",
                 hardware = true, supportsVulkan = false, rewind = false, netplay = false, achievements = false,
-                supportedAbis = setOf("arm64-v8a", "x86_64"))),
+                supportedAbis = setOf("arm64-v8a"))),
             shortName = "3DS", pointerInput = true),
         GameSystem("gamecube", "Nintendo GameCube", setOf("gcm", "dol", "tgc"),
             GameCore("dolphin", "Dolphin", "GPL-2.0", hardware = true, netplay = false, directFile = true,
@@ -216,7 +218,9 @@ object GameSystems {
                 GameCore("yabasanshiro", "Yaba Sanshiro (legacy)", "GPL-2.0", hardware = true,
                     supportsVulkan = false, rewind = false, netplay = false, achievements = false),
                 GameCore("yabause", "Yabause", "GPL-2.0", netplay = false, achievements = false),
-                GameCore("ymir", "Ymir (experimental)", "GPL-3.0", netplay = false, achievements = false, needsBios = true),
+                // Ymir is 64-bit only on the libretro build server.
+                GameCore("ymir", "Ymir (experimental)", "GPL-3.0", netplay = false, achievements = false, needsBios = true,
+                    supportedAbis = setOf("arm64-v8a", "x86_64")),
             ),
             shortName = "Saturn"),
         GameSystem("ps2", "PlayStation 2", emptySet(),
