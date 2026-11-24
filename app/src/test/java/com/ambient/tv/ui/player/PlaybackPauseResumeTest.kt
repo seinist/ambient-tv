@@ -20,6 +20,7 @@ class PlaybackPauseResumeTest {
     private lateinit var application: Application
     private lateinit var preferences: AppPreferences
     private val sourceOwners = mutableListOf<Any>()
+    private val seekStates = mutableListOf<PlaybackSeekState>()
 
     private class FakePlaybackHandle : PlaybackHandle {
         var positionMs = 60_000L
@@ -59,6 +60,7 @@ class PlaybackPauseResumeTest {
     @After fun tearDown() {
         sourceOwners.forEach(CompanionPlaybackControls::remove)
         BackgroundPlaybackSession.stop()
+        seekStates.forEach(BackgroundPlaybackSession::unregisterSeekState)
         BackgroundPlaybackSession.takeCompleted()
         preferences.pauseRewindSeconds = 0
     }
@@ -95,6 +97,146 @@ class PlaybackPauseResumeTest {
         val request = requests.single()
         assertTrue(request.stillCurrent())
         return DeferredResume(player, request)
+    }
+
+    private fun attachSeekState(player: FakePlaybackHandle, offsetMs: Long = 0L): PlaybackSeekState {
+        val generation = BackgroundPlaybackSession.snapshot.value.generation
+        return PlaybackSeekState(
+            PlaybackSeekCoordinator(), player.positionMs + offsetMs,
+            onSeekRequested = BackgroundPlaybackSession::userSeek,
+            isCurrent = {
+                val current = BackgroundPlaybackSession.snapshot.value
+                BackgroundPlaybackSession.owns(player) && current.generation == generation && !current.replacingSource
+            },
+            readEnginePositionMs = { player.positionMs + offsetMs },
+            commit = { BackgroundPlaybackSession.seekTo(it - offsetMs) },
+        ).also {
+            seekStates += it
+            BackgroundPlaybackSession.registerSeekState(player, it)
+        }
+    }
+
+    private fun deferRestart(player: FakePlaybackHandle): PendingSeek {
+        val requests = mutableListOf<PendingSeek>()
+        val owner = Any().also(sourceOwners::add)
+        CompanionPlaybackControls.update(owner, "pause-resume-test", CompanionPlaybackControls.SourceControls(
+            resumeSeekCanReload = true,
+            resumeSeek = { target, stillCurrent, complete -> requests += PendingSeek(target, stillCurrent, complete) },
+        ))
+        player.events.clear()
+        BackgroundPlaybackSession.userPlayFromStart()
+        assertEquals(listOf("pause"), player.events)
+        assertFalse(player.playing)
+        return requests.single().also {
+            assertEquals(0L, it.targetMs)
+            assertTrue(it.stillCurrent())
+        }
+    }
+
+    @Test fun explicitRestartPlaysFromZeroEvenWhenPausedAndPauseRewindIsOff() {
+        preferences.pauseRewindSeconds = 0
+        val player = acquire()
+        BackgroundPlaybackSession.userPause()
+        player.events.clear()
+        BackgroundPlaybackSession.userPlayFromStart()
+        assertEquals(listOf("pause", "seek:0", "play"), player.events)
+        assertEquals(0L, player.positionMs)
+        assertTrue(player.playing)
+    }
+
+    @Test fun explicitRestartRetiresAnEarlierDebouncedSeek() {
+        val player = acquire()
+        val seek = attachSeekState(player)
+        seek.seekTo(80_000L)
+        seek.seekTo(120_000L)
+        player.events.clear()
+        BackgroundPlaybackSession.userPlayFromStart()
+        seek.flushPending()
+        assertEquals(listOf("pause", "seek:0", "play"), player.events)
+        assertEquals(0L, seek.positionMs)
+        assertEquals(0L, player.positionMs)
+    }
+
+    @Test fun transcodeRestartWaitsAtTheRealClockAndPreservesPlayAcrossSourceReplacement() {
+        val player = acquire(metadata(offsetMs = 300_000L))
+        val seek = attachSeekState(player, offsetMs = 300_000L)
+        val request = deferRestart(player)
+        assertEquals(360_000L, seek.positionMs)
+        seek.flushPending()
+        BackgroundPlaybackSession.userPlay()
+        assertEquals(listOf("pause"), player.events)
+        BackgroundPlaybackSession.beginSourceReplacement(playWhenReadyOverride = true)
+        assertTrue(request.stillCurrent())
+        request.complete(true)
+        assertTrue(player.released)
+        assertFalse(player.events.contains("play"))
+        assertTrue(BackgroundPlaybackSession.snapshot.value.wantsToPlay)
+        val replacement = BackgroundPlaybackSession.acquire(application, metadata(), "fixture", Any()) {
+            FakePlaybackHandle().apply { positionMs = 0L }
+        }
+        assertEquals(0L, replacement.positionMs)
+        assertTrue(replacement.playing)
+    }
+
+    @Test fun failedRestartKeepsTheRealTimelinePausedAndRejectsDuplicateCompletion() {
+        val player = acquire(metadata(offsetMs = 300_000L))
+        val seek = attachSeekState(player, offsetMs = 300_000L)
+        val request = deferRestart(player)
+        request.complete(false)
+        assertFalse(request.stillCurrent())
+        request.complete(true)
+        assertEquals(listOf("pause"), player.events)
+        assertEquals(360_000L, seek.positionMs)
+        assertFalse(player.playing)
+    }
+
+    @Test fun pauseCancelsPendingRestartWithoutLeavingTheTimelineAtZero() {
+        val player = acquire()
+        val seek = attachSeekState(player)
+        val request = deferRestart(player)
+        BackgroundPlaybackSession.userPause()
+        request.complete(true)
+        assertFalse(request.stillCurrent())
+        assertFalse(player.playing)
+        assertEquals(60_000L, seek.positionMs)
+        assertFalse(player.events.contains("play"))
+    }
+
+    @Test fun aNewSeekToZeroCancelsRestartPreparationAndStillCommitsItsOwnTarget() {
+        val player = acquire()
+        val seek = attachSeekState(player)
+        val request = deferRestart(player)
+        seek.seekTo(0L)
+        seek.flushPending()
+        request.complete(true)
+        assertFalse(request.stillCurrent())
+        assertEquals(listOf("pause", "seek:0"), player.events)
+        assertEquals(0L, seek.positionMs)
+        assertEquals(0L, player.positionMs)
+        assertFalse(player.playing)
+    }
+
+    @Test fun internalReopenCancelsRestartAndRealignsThePausedClock() {
+        val player = acquire(metadata(offsetMs = 300_000L))
+        val seek = attachSeekState(player, offsetMs = 300_000L)
+        val request = deferRestart(player)
+        player.reopenVersion++
+        player.positionMs = 5_000L
+        assertFalse(request.stillCurrent())
+        request.complete(false)
+        assertEquals(305_000L, seek.positionMs)
+        assertEquals(listOf("pause"), player.events)
+        BackgroundPlaybackSession.userPlay()
+        assertEquals(listOf("pause", "play"), player.events)
+    }
+
+    @Test fun restartNeverMistakesATranscodeDecoderStartForTheTitleBeginning() {
+        val player = acquire(metadata(offsetMs = 300_000L))
+        val seek = attachSeekState(player, offsetMs = 300_000L)
+        BackgroundPlaybackSession.userPlayFromStart()
+        assertEquals(listOf("pause"), player.events)
+        assertFalse(player.playing)
+        assertEquals(360_000L, seek.positionMs)
     }
 
     @Test fun userPauseSeeksBeforePlayingAndConsumesTheJumpOnce() {

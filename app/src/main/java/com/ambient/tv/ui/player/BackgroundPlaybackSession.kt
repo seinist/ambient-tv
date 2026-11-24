@@ -831,6 +831,20 @@ object BackgroundPlaybackSession {
     }
 
     fun userPlay() {
+        userPlayAt(explicitTargetMs = null)
+    }
+
+    /** Restart the absolute title timeline, waiting for a replacement compatibility stream. */
+    fun userPlayFromStart() {
+        checkThread()
+        val current = snapshot.value
+        val metadata = current.metadata ?: return
+        if (handle == null || current.replacingSource || metadata.isLive || !metadata.hasVideo) return
+        userSeek()
+        userPlayAt(explicitTargetMs = 0L)
+    }
+
+    private fun userPlayAt(explicitTargetMs: Long?) {
         checkThread()
         registerUserInteraction()
         if (resumePreparationPending) return // Repeated Play must not bypass the pending seek.
@@ -842,7 +856,7 @@ object BackgroundPlaybackSession {
         val buffer = com.ambient.tv.livetv.LiveTimeshift.current.takeIf { metadata?.isLive == true }
         val source = com.ambient.tv.companion.CompanionPlaybackControls.current()
         val position = player?.let { resumeTimelinePosition(it, metadata) } ?: 0L
-        val target = pauseRewind.resumeTarget(
+        val target = explicitTargetMs ?: pauseRewind.resumeTarget(
             nowMs = SystemClock.elapsedRealtime(), positionMs = position,
             alreadyPlaying = player?.wantsToPlay() == true,
             eligible = player != null && pauseRewindOwner === player &&
@@ -860,6 +874,16 @@ object BackgroundPlaybackSession {
             return
         }
         resumePreparationPending = true
+        val restartSeekState = seekState.takeIf { explicitTargetMs != null && seekOwner === player }
+        if (explicitTargetMs != null) {
+            // Retire an earlier pending seek, but show the real clock until zero is prepared.
+            // A failed/cancelled reload must not leave the paused OSD at an unplayed zero.
+            restartSeekState?.cancelPendingSeek(position)
+            // A server may need time to prepare an earlier transcode segment. Do not briefly
+            // continue the old position while the viewer has asked to start from the beginning.
+            player.pause()
+            tick()
+        }
         val reopenGeneration = player.reopenGeneration()
         val stillCurrent = {
             val current = snapshot.value.metadata
@@ -867,12 +891,22 @@ object BackgroundPlaybackSession {
                 current.source == metadata.source && current.mediaId == metadata.mediaId &&
                 (handle !== player || player.reopenGeneration() == reopenGeneration)
         }
-        val prepared: (Boolean) -> Unit = {
-            // A failed seek still honours Play at the old position. A newer Pause/seek/Stop
-            // cancels both the asynchronous preparation and this playback request.
-            val mayPlay = stillCurrent()
-            if (resumeRequestVersion == requestVersion) resumePreparationPending = false
-            if (mayPlay) play()
+        val prepared: (Boolean) -> Unit = { success ->
+            // Ordinary Play still resumes after a failed pause-rewind. Explicit restart must
+            // reach the requested beginning; failure leaves the old position paused instead.
+            val currentRequest = stillCurrent()
+            if (resumeRequestVersion == requestVersion) {
+                resumePreparationPending = false
+                val mayPlay = currentRequest && (success || explicitTargetMs == null)
+                if (handle === player && seekOwner === player && seekState === restartSeekState) {
+                    if (mayPlay) restartSeekState?.followExternalSeek(target)
+                    else restartSeekState?.cancelPendingSeek(resumeTimelinePosition(player, snapshot.value.metadata))
+                }
+                if (mayPlay) play() else {
+                    clearPauseRewind()
+                    tick()
+                }
+            }
         }
         when {
             metadata.isLive -> {
@@ -881,8 +915,13 @@ object BackgroundPlaybackSession {
             }
             source.resumeSeek != null -> source.resumeSeek.invoke(target, stillCurrent, prepared)
             else -> {
-                player.seekTo((target - metadata.timelineOffsetMs).coerceAtLeast(0L))
-                play()
+                // Decoder zero is not the title beginning when a server stream has an offset.
+                if (explicitTargetMs != null && (target < metadata.timelineOffsetMs || !player.canSeekNow())) {
+                    prepared(false)
+                } else {
+                    player.seekTo((target - metadata.timelineOffsetMs).coerceAtLeast(0L))
+                    if (explicitTargetMs != null) prepared(true) else play()
+                }
             }
         }
     }

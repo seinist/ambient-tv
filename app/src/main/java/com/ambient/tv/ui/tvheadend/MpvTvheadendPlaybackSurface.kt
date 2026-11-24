@@ -409,6 +409,9 @@ internal fun MpvTvheadendPlaybackSurface(
             audioBadge = com.ambient.tv.ui.player.audioOutputBadge(controller.audioSession),
             onTogglePlayback = BackgroundPlaybackSession::userToggle,
             onSeekBy = { delta -> userSeekBy(delta); controlsVisible = true },
+            onPlayFromStart = if (!source.isLive && !audioOnlyContent) ({
+                seek.playFromStart(BackgroundPlaybackSession::userPlay)
+            }) else null,
             onZap = onZap,
             onStop = BackgroundPlaybackSession::stop,
             onBack = onBack,

@@ -82,6 +82,8 @@ fun BoxScope.TvhReferencePlayerChrome(
     playFocusRequester: FocusRequester,
     onTogglePlayback: () -> Unit,
     onSeekBy: (Long) -> Unit,
+    /** Available only for a video recording with an absolute beginning. */
+    onPlayFromStart: (() -> Unit)? = null,
     onZap: (Int) -> Unit,
     onStop: () -> Unit,
     onBack: () -> Unit,
@@ -303,6 +305,9 @@ fun BoxScope.TvhReferencePlayerChrome(
                     primary = true,
                     loading = loading,
                 )
+                if (!source.isLive) onPlayFromStart?.let { restart ->
+                    com.ambient.tv.ui.common.PlayerPlayFromStartButton(onClick = restart)
+                }
                 PlayerIconButton(Icons.Filled.Stop, stringResource(R.string.player_stop), onStop, osd = com.ambient.tv.ui.player.OsdButton.STOP)
                 val recording = LocalLiveRecordingControl.current
                 if (source.isLive && recording.available) {
@@ -423,6 +428,7 @@ internal data class LiveOsdModel(
     val audioBadge: String? = null,
     val onTogglePlayback: () -> Unit,
     val onSeekBy: (Long) -> Unit,
+    val onPlayFromStart: (() -> Unit)? = null,
     val onZap: (Int) -> Unit,
     val onStop: () -> Unit,
     val onBack: () -> Unit,
@@ -480,6 +486,7 @@ internal data class LiveOsdModel(
                 playFocusRequester = playFocusRequester,
                 onTogglePlayback = onTogglePlayback,
                 onSeekBy = onSeekBy,
+                onPlayFromStart = onPlayFromStart,
                 onZap = onZap,
                 onStop = onStop,
                 onBack = onBack,

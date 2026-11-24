@@ -840,6 +840,14 @@ private fun TelegramPlaybackContent(
                                 (position + delta).coerceIn(0, duration),
                             )
                     },
+                    onPlayFromStart = if (media.kind == TelegramMediaKind.VIDEO) ({
+                        val current = BackgroundPlaybackSession.snapshot.value
+                        if (current.metadata?.source == "telegram" && current.metadata.mediaId == media.mediaKey &&
+                            !current.replacingSource) {
+                            BackgroundPlaybackSession.seekTo(0L)
+                            BackgroundPlaybackSession.userPlay()
+                        }
+                    }) else null,
                     onStop = { BackgroundPlaybackSession.stop(); onBack() },
                     onBack = onBack,
                     hasPrevious = queue.previous != null,
@@ -949,6 +957,7 @@ internal data class TelegramOsd(
     val onToggleSubscription: () -> Unit,
     val onOpenSettings: () -> Unit,
     val onOpenSleep: () -> Unit,
+    val onPlayFromStart: (() -> Unit)? = null,
 ) : PlayerOsdSpec {
     override val sourceIdentity: String get() = media.mediaKey
 
@@ -1016,6 +1025,9 @@ internal data class TelegramOsd(
                             stringResource(if (playing) R.string.player_pause else R.string.player_play),
                             onToggle, modifier = Modifier.focusRequester(playFocus), primary = true,
                         )
+                        if (media.kind == TelegramMediaKind.VIDEO) onPlayFromStart?.let { restart ->
+                            com.ambient.tv.ui.common.PlayerPlayFromStartButton(restart)
+                        }
                         if (hasNext) PlayerIconButton(
                             Icons.Filled.SkipNext,
                             stringResource(R.string.player_next),

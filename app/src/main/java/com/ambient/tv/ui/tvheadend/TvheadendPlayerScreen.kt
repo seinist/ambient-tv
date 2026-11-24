@@ -911,6 +911,9 @@ private fun TvheadendPlaybackSurface(
                 userSeekBy(delta)
                 controlsVisible = true
             },
+            onPlayFromStart = if (!source.isLive && !(hasAudioTrack && !hasVideoTrack)) ({
+                seek.playFromStart(BackgroundPlaybackSession::userPlay)
+            }) else null,
             onZap = onZap,
             onStop = BackgroundPlaybackSession::stop,
             onBack = onBack,

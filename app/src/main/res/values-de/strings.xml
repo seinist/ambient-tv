@@ -298,6 +298,7 @@
     <string name="player_pause">Pause</string>
     <string name="player_paused">Pausiert</string>
     <string name="player_play">Abspielen</string>
+    <string name="player_play_from_start">Von Anfang abspielen</string>
     <string name="player_subtitles">Untertitel</string>
     <string name="player_audio_track_title">Audiospur</string>
     <string name="player_off">Aus</string>
