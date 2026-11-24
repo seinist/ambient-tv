@@ -367,6 +367,16 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             wireGuardRoute.status.collect { status -> _uiState.update { it.copy(wireGuard = it.wireGuard.copy(status = status)) } }
         }
+        viewModelScope.launch {
+            // The RomM page saves on its own; the system lists follow its switch and sign-in.
+            appPreferences.changes().collect {
+                val enabled = appPreferences.rommEnabled
+                val configured = appPreferences.rommServerUrl.isNotBlank() && appPreferences.rommAuthMode.isNotBlank()
+                if (_uiState.value.rommEnabled != enabled || _uiState.value.rommConfigured != configured) {
+                    _uiState.update { it.copy(rommEnabled = enabled, rommConfigured = configured) }
+                }
+            }
+        }
     }
 
     private var youtubeSettingsLoaded = false
@@ -439,6 +449,8 @@ class SettingsViewModel @Inject constructor(
         youtubeAvailable = smartTubeEngine.available,
         spotifyEnabled = appPreferences.spotifyEnabled,
         radioEnabled = appPreferences.radioEnabled,
+        rommEnabled = appPreferences.rommEnabled,
+        rommConfigured = appPreferences.rommServerUrl.isNotBlank() && appPreferences.rommAuthMode.isNotBlank(),
         spotifyClientId = appPreferences.spotifyClientId,
         fanartApiKey = tokenStore.fanartApiKey.orEmpty(),
         spotifyWebAuthorized = spotifyRepository.authState.value.authorized,

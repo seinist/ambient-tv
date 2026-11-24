@@ -63,6 +63,7 @@ class MenuOrderUiTest {
         telegramEnabled = true,
         telegramAuthorized = true,
         radioEnabled = true,
+        rommEnabled = true,
         weatherEnabled = true,
         tvheadendEnabled = true,
         liveTvSources = listOf(AvailableLiveTvSource(

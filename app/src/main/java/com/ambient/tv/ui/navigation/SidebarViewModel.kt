@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -51,6 +52,9 @@ data class SidebarUiState(
     val youtubeEnabled: Boolean = false,
     val spotifyEnabled: Boolean = false,
     val radioEnabled: Boolean = false,
+    /** RomM signed in and switched on; its platforms come from the device's catalog copy. */
+    val rommEnabled: Boolean = false,
+    val rommPlatforms: List<com.ambient.tv.romm.RommMenuPlatform> = emptyList(),
     val weatherEnabled: Boolean = false,
     val telegramEnabled: Boolean = false,
     val telegramAuthorized: Boolean = false,
@@ -106,6 +110,8 @@ class SidebarViewModel @Inject constructor(
     private val hosts: HostConnectivity,
     private val onlineServices: com.ambient.tv.data.browse.OnlineServiceAvailability,
     private val loadCoordinator: BrowseLoadCoordinator,
+    private val rommLibrary: com.ambient.tv.romm.RommLibrary,
+    private val rommAccounts: com.ambient.tv.romm.RommAccountStore,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(
@@ -213,9 +219,14 @@ class SidebarViewModel @Inject constructor(
             if (appPreferences.filesEnabled) add("files")
             if (gameLibrary.hasConfiguredFolders()) add("games")
             if (dlnaStore.servers().isNotEmpty()) add("dlna")
+            if (appPreferences.isRommConfigured) add("romm")
         }
 
     init {
+        viewModelScope.launch {
+            combine(rommLibrary.state, rommAccounts.changes, appPreferences.changes().onStart { emit(Unit) }) { _, _, _ -> Unit }
+                .collect { refreshRomm() }
+        }
         viewModelScope.launch {
             telegramRepository.authorized.collect { allowed ->
                 _uiState.update { it.copy(telegramAuthorized = allowed) }
@@ -309,6 +320,20 @@ class SidebarViewModel @Inject constructor(
         }
     }
 
+    private var rommJob: Job? = null
+
+    private fun refreshRomm() {
+        rommJob?.cancel()
+        rommJob = viewModelScope.launch {
+            val enabled = rommAccounts.account() != null
+            val platforms = if (!enabled) emptyList() else try {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { rommLibrary.menuPlatforms() }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { emptyList() }
+            _uiState.update { it.copy(rommEnabled = enabled, rommPlatforms = platforms) }
+        }
+    }
+
     private fun networkFileSourcesFromStore(): List<FileSource> =
         fileStore.fileBrowserSources().filter { it.network }
 
@@ -318,6 +343,7 @@ class SidebarViewModel @Inject constructor(
             if (appPreferences.isJellyfinConfigured) add("jellyfin")
             if (appPreferences.isEmbyConfigured) add("emby")
             if (appPreferences.hasTvheadendEndpoint) add("tvheadend")
+            if (appPreferences.isRommConfigured) add("romm")
             if (appPreferences.filesEnabled) addAll(networkFileSourcesFromStore().map { "files:${it.id}" })
             addAll(dlnaStore.servers().map { "dlna:${it.id}" })
         }
@@ -422,6 +448,12 @@ class SidebarViewModel @Inject constructor(
                             com.ambient.tv.livetv.liveTvHbbtvMenuApps(channel).isNotEmpty()
                         },
                     ) }
+                }
+                "romm" -> if (rommAccounts.account() != null) {
+                    // Opening RomM is a request for its menu: read the server again when the copy is old.
+                    val stale = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { rommLibrary.catalog() }
+                        ?.let { System.currentTimeMillis() - it.fetchedAt > 10 * 60 * 1000L } ?: true
+                    if (stale) suspendResult { rommLibrary.refresh() }
                 }
                 "iptv" -> {
                     val sources = loadCoordinator.request("iptv", "sidebar-capabilities", BrowseLoadPriority.VISIBLE) {

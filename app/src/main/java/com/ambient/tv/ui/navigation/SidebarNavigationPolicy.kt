@@ -76,6 +76,7 @@ internal fun sidebarConcreteRoute(
 ): String? = when (currentRoute) {
     Destinations.SECTION -> sectionKey?.let(Destinations::section)
     Destinations.GAME_LIBRARY_SECTION -> sectionKey?.let(Destinations::gameLibrarySection)
+    Destinations.ROMM_SECTION -> sectionKey?.let(Destinations::rommSection)
     Destinations.YOUTUBE_FEED -> youtubeFeedKey?.let(Destinations::youtubeFeed)
     Destinations.TRAILER_FEED -> trailerFeedKey?.let(Destinations::trailerFeed)
     Destinations.SPOTIFY_SECTION -> spotifySectionKey?.let(Destinations::spotifySection)
@@ -90,6 +91,7 @@ internal fun sidebarConcreteRoute(
 internal fun isParameterizedSidebarRoute(route: String): Boolean =
     route.startsWith("section/") ||
         route.startsWith("game_library/") ||
+        route.startsWith("romm/") ||
         route.startsWith("youtube_feed/") ||
         route.startsWith("trailers/feed/") ||
         route.startsWith("spotify_section/") ||

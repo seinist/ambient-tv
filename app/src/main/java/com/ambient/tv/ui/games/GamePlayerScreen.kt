@@ -228,7 +228,8 @@ fun GamePlayerScreen(onBack: () -> Unit, model: GamePlayerViewModel = hiltViewMo
             is GameUiState.Failed -> StatePanel(
                 title = stringResource(current.reason.titleRes()),
                 body = when (current.reason) {
-                    GameFailure.BIOS_MISSING -> stringResource(R.string.game_failed_bios_missing_body, current.detail.orEmpty())
+                    GameFailure.BIOS_MISSING -> stringResource(if (model.remote) R.string.romm_failed_bios_missing_body
+                        else R.string.game_failed_bios_missing_body, current.detail.orEmpty())
                     GameFailure.PREVIOUS_SESSION -> stringResource(R.string.game_failed_previous_session_body)
                     else -> current.detail
                 },
@@ -2225,6 +2226,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             GamePanelInfo(stringResource(R.string.game_info_system, system.name))
                             GamePanelInfo(stringResource(R.string.game_info_core, core.name, core.license))
                             GamePanelInfo(stringResource(R.string.game_info_file, game.file.name, game.sourceName))
+                            if (game.remote != null) {
+                                val remoteSync by model.remoteSync.collectAsState()
+                                GamePanelInfo(stringResource(R.string.romm_info_data, stringResource(
+                                    com.ambient.tv.ui.romm.rommSyncLabel(remoteSync[game.saveKey]))))
+                            }
                             val bios = remember { model.biosStatus(game) }
                             bios.forEach { status ->
                                 GamePanelInfo(stringResource(R.string.game_info_bios, status.bios.file, stringResource(status.state.titleRes())))

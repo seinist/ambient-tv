@@ -161,3 +161,12 @@ object GameCoverFormats {
 /** SQLite already contains every input; resolving this value cannot open a file or wake a NAS. */
 val LibraryGame.coverAspectRatio: Float
     get() = GameCoverFormats.aspectRatio(systemId, filename, metadataRegion, coverWidth, coverHeight, metadataPlatform)
+
+/** The cover for an image loader: an artwork file on this device, or a server image address (RomM). */
+val LibraryGame.coverModel: Any? get() = coverPath?.let(::gameArtworkModel)
+
+/** The background image for an image loader; see [coverModel]. */
+val LibraryGame.backdropModel: Any? get() = backdropPath?.let(::gameArtworkModel)
+
+fun gameArtworkModel(path: String): Any =
+    if (path.startsWith("https://") || path.startsWith("http://")) path else java.io.File(path)

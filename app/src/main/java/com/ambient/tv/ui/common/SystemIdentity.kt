@@ -64,13 +64,15 @@ enum class MediaSystem(
     DLNA("dlna", R.string.dlna_title, R.drawable.system_dlna, R.drawable.wordmark_dlna),
     TRAILERS("trailers", R.string.trailers_title, R.drawable.system_tmdb, R.drawable.wordmark_tmdb),
     IPTV("iptv", R.string.iptv_title, R.drawable.system_iptv),
+    /** RomM game server: its library plays in the game player; saves, states and firmware are the server's. */
+    ROMM("romm", R.string.romm_title, R.drawable.system_romm, brand = "RomM"),
     FILES("files", R.string.files_title, null);
 
     /** A provider mark already names its system, so a text label next to it is a duplicate. */
     val hasBrandMark: Boolean get() = logo != null
 
     /** TMDB's lettering is unreadable at icon size and DLNA's symbol has none, so neither spells its name. */
-    val markSpellsName: Boolean get() = hasBrandMark && this !in setOf(TRAILERS, DLNA, IPTV, RADIO, TELEGRAM)
+    val markSpellsName: Boolean get() = hasBrandMark && this !in setOf(TRAILERS, DLNA, IPTV, RADIO, TELEGRAM, ROMM)
 
     /** Name given to this system in Settings; null while it keeps the provider's own name. */
     val customName: String? get() = SystemNameOverrides.names[key]
@@ -89,7 +91,7 @@ enum class MediaSystem(
          * offered by builds that contain its optional native MTProto core.
          */
         val addOrder: List<MediaSystem> = listOf(
-            PLEX, JELLYFIN, EMBY, DLNA, TVHEADEND, IPTV, YOUTUBE, TELEGRAM, SPOTIFY, RADIO, TRAILERS, FILES,
+            PLEX, JELLYFIN, EMBY, DLNA, ROMM, TVHEADEND, IPTV, YOUTUBE, TELEGRAM, SPOTIFY, RADIO, TRAILERS, FILES,
         ).filter { it != TELEGRAM || com.ambient.tv.BuildConfig.MONOGRAM_NATIVE }
             .filter { it != SPOTIFY || com.ambient.tv.BuildConfig.SPOTIFY_ENABLED }
 

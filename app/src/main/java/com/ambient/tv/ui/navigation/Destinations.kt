@@ -48,6 +48,11 @@ object Destinations {
     fun tmdbTrailers(mediaType: String, tmdbId: Int) = "trailers/tmdb/${Uri.encode(mediaType)}/$tmdbId"
     const val YOUTUBE_FEED = "youtube_feed/{feedKey}"
     const val SPOTIFY = "spotify"
+    const val ROMM = "romm"
+    const val ROMM_SECTION = "romm/{sectionKey}"
+    fun rommSection(key: String) = if (key == "all") ROMM else "romm/${Uri.encode(key)}"
+    const val ROMM_DETAIL = "romm_detail/{fileId}"
+    fun rommDetail(fileId: String) = "romm_detail/${Uri.encode(fileId)}"
     const val GAME_LIBRARY = "game_library"
     /** Settings entry works while the normal Games sidebar is still hidden. */
     const val GAME_LIBRARY_SETUP = "game_library_setup"
@@ -72,7 +77,7 @@ object Destinations {
 
     /** NavDestination route patterns, not the concrete URLs passed to navigate(). */
     fun isDetailRoute(route: String?): Boolean =
-        route == GAME_DETAIL || route == DETAIL || route == YOUTUBE_DETAIL || route == SPOTIFY_DETAIL || route == TELEGRAM_DETAIL || route == RADIO_DETAIL
+        route == GAME_DETAIL || route == ROMM_DETAIL || route == DETAIL || route == YOUTUBE_DETAIL || route == SPOTIFY_DETAIL || route == TELEGRAM_DETAIL || route == RADIO_DETAIL
 
     fun setupSettings(category: String) = "setup_settings/${Uri.encode(category)}"
     fun detail(ratingKey: String, collectionId: String? = null, collectionSort: String? = null) = buildString {

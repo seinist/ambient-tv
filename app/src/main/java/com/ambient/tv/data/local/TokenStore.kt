@@ -269,6 +269,20 @@ class TokenStore @Inject constructor(
         if (keysToRemove.isNotEmpty()) prefs.edit { keysToRemove.forEach(::remove) }
     }
 
+    /** RomM client/device token ("rmm_…"), used as a bearer token. */
+    var rommToken: String?
+        get() = prefs.getString("romm_token", null)
+        set(value) = prefs.edit {
+            if (value.isNullOrBlank()) remove("romm_token") else putString("romm_token", value.trim())
+        }
+
+    /** RomM password, only for sign-in with user name and password (HTTP Basic). */
+    var rommPassword: String?
+        get() = prefs.getString("romm_password", null)
+        set(value) = prefs.edit {
+            if (value.isNullOrEmpty()) remove("romm_password") else putString("romm_password", value)
+        }
+
     var tvheadendPassword: String?
         get() = prefs.getString(KEY_TVH_PASSWORD, null)
         set(value) = prefs.edit {

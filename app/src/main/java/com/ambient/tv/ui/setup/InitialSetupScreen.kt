@@ -49,6 +49,8 @@ fun InitialSetupScreen(
     onTelegramSignedIn: () -> Unit = onSetupTelegram,
     onUseRadio: () -> Unit,
     onSetupTrailers: () -> Unit,
+    /** RomM game server: its settings page (address and sign-in). */
+    onSetupRomm: () -> Unit = {},
     onOpenSettings: () -> Unit,
     onSkip: (() -> Unit)?,
     onRestore: () -> Unit,
@@ -140,6 +142,7 @@ fun InitialSetupScreen(
                                         MediaSystem.TELEGRAM -> telegramStep = true
                                         MediaSystem.RADIO -> onUseRadio()
                                         MediaSystem.TRAILERS -> onSetupTrailers()
+                                        MediaSystem.ROMM -> onSetupRomm()
                                         MediaSystem.FILES -> onUseFiles()
                                     }
                                 }
@@ -230,6 +233,7 @@ internal fun SetupSystemCard(system: MediaSystem, modifier: Modifier, onFocused:
                 MediaSystem.TELEGRAM -> R.string.settings_page_telegram_hint
                 MediaSystem.RADIO -> R.string.setup_desc_radio
                 MediaSystem.DLNA -> R.string.dlna_explanation
+                MediaSystem.ROMM -> R.string.romm_setup_hint
                 MediaSystem.FILES -> R.string.setup_desc_files
             }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)

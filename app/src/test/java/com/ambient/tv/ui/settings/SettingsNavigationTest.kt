@@ -28,6 +28,7 @@ class SettingsNavigationTest {
         assertEquals(SettingsArea.SYSTEMS, SettingsCategory.PLEX.area)
         assertEquals(SettingsArea.SYSTEMS, SettingsCategory.DLNA.area)
         assertEquals(SettingsArea.SYSTEMS, SettingsCategory.FILES.area)
+        assertEquals(SettingsArea.SYSTEMS, SettingsCategory.ROMM.area)
         assertEquals(SettingsArea.TELEVISION, SettingsCategory.TVHEADEND.area)
         assertEquals(SettingsArea.TELEVISION, SettingsCategory.IPTV.area)
         assertEquals(SettingsArea.TELEVISION, SettingsCategory.LIVE_TV.area)
@@ -58,7 +59,7 @@ class SettingsNavigationTest {
         assertTrue(showsInAreaIndex(SettingsCategory.APPEARANCE, SettingsArea.START, listed = false))
         assertFalse(showsInAreaIndex(SettingsCategory.PLEX, SettingsArea.STREAMING, listed = true))
         assertEquals(
-            listOf(MediaSystem.PLEX, MediaSystem.JELLYFIN, MediaSystem.EMBY, MediaSystem.DLNA, MediaSystem.TVHEADEND, MediaSystem.IPTV, MediaSystem.YOUTUBE, MediaSystem.TELEGRAM, MediaSystem.SPOTIFY, MediaSystem.RADIO, MediaSystem.TRAILERS, MediaSystem.FILES)
+            listOf(MediaSystem.PLEX, MediaSystem.JELLYFIN, MediaSystem.EMBY, MediaSystem.DLNA, MediaSystem.ROMM, MediaSystem.TVHEADEND, MediaSystem.IPTV, MediaSystem.YOUTUBE, MediaSystem.TELEGRAM, MediaSystem.SPOTIFY, MediaSystem.RADIO, MediaSystem.TRAILERS, MediaSystem.FILES)
                 // Monogram is only offered by builds that contain its native core.
                 .filter { it != MediaSystem.TELEGRAM || com.ambient.tv.BuildConfig.MONOGRAM_NATIVE }
                 // Spotify only in builds with SPOTIFY_NATIVE.

@@ -102,12 +102,15 @@ internal fun GameLibraryHeader(
     managing: Boolean,
     searchShown: Boolean,
     controls: GameLibraryBrowseControls,
-    onManage: () -> Unit,
+    onManage: (() -> Unit)?,
     onSearch: () -> Unit,
     onRefresh: () -> Unit,
+    /** Heading in place of the library/console name (a RomM platform). */
+    title: String? = null,
 ) {
     PageHeader(focusChain = controls.focusChain, actions = {
-        TvChip(
+        // RomM has no folders to manage here: its library is the server's.
+        if (onManage != null) TvChip(
             text = stringResource(R.string.game_library_manage_action),
             icon = Icons.Filled.Folder, iconOnly = true, selected = managing, onClick = onManage,
         )
@@ -122,6 +125,7 @@ internal fun GameLibraryHeader(
         }
     }) {
         Text(if (managing) stringResource(R.string.game_library_manage)
+            else if (title != null) title
             else if (state.section in setOf("all", "favorites", "recent")) stringResource(R.string.game_library_title)
             else GameSystems.byId(state.section)?.name ?: stringResource(R.string.game_library_title),
             style = MaterialTheme.typography.headlineMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -135,15 +139,18 @@ internal fun GameLibrarySections(
     sections: List<String>,
     selected: String,
     controls: GameLibraryBrowseControls,
+    /** Name and console of a section that is not a console of its own (a RomM platform). */
+    platform: (String) -> Pair<String, String>? = { null },
     onSelect: (String) -> Unit,
 ) {
     PageChipRow(controls.focusChain, Modifier.fillMaxWidth(), selectedIndex = sections.indexOf(selected)) {
         items(sections, key = { it }) { key ->
+            val custom = platform(key)
             val label = when (key) {
                 "all" -> stringResource(R.string.game_library_all)
                 "favorites" -> stringResource(R.string.radio_favorites)
                 "recent" -> stringResource(R.string.radio_recent)
-                else -> GameSystems.byId(key)?.shortName ?: key
+                else -> custom?.first ?: GameSystems.byId(key)?.shortName ?: key
             }
             TvChip(text = label, selected = selected == key,
                 modifier = if (selected == key) Modifier.focusRequester(controls.focusChain.selectedChip) else Modifier,
@@ -151,7 +158,7 @@ internal fun GameLibrarySections(
                     "all" -> Icons.Filled.Apps
                     "favorites" -> Icons.Filled.Favorite
                     "recent" -> Icons.Filled.History
-                    else -> gameSystemVector(key)
+                    else -> gameSystemVector(custom?.second ?: key)
                 }, onClick = { onSelect(key) })
         }
     }

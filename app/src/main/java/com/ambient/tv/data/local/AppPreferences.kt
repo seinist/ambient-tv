@@ -493,6 +493,40 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_RADIO_ENABLED, false)
         set(value) = prefs.edit { putBoolean(KEY_RADIO_ENABLED, value) }
 
+    /** RomM game server (Settings › RomM). Its secret (token or password) lives in TokenStore. */
+    var rommEnabled: Boolean
+        get() = prefs.getBoolean("romm_enabled", false)
+        set(value) = prefs.edit { putBoolean("romm_enabled", value) }
+
+    /** The address the RomM web interface is reached at, without "/api". */
+    var rommServerUrl: String
+        get() = prefs.getString("romm_server_url", "") ?: ""
+        set(value) = prefs.edit { putString("romm_server_url", value.trim()) }
+
+    /** RomM account name, for display and as part of the server's data key. */
+    var rommUsername: String
+        get() = prefs.getString("romm_username", "") ?: ""
+        set(value) = prefs.edit { putString("romm_username", value.trim()) }
+
+    /** "token" (client/device token) or "basic" (user name and password); empty while signed out. */
+    var rommAuthMode: String
+        get() = prefs.getString("romm_auth_mode", "") ?: ""
+        set(value) = prefs.edit { putString("romm_auth_mode", value) }
+
+    /** Version the server reported when signing in (heartbeat), for the settings page. */
+    var rommServerVersion: String
+        get() = prefs.getString("romm_server_version", "") ?: ""
+        set(value) = prefs.edit { putString("romm_server_version", value) }
+
+    /** Stable identity of this device towards RomM (device pairing, save origin). Never exported. */
+    val rommDeviceId: String
+        get() = prefs.getString("romm_device_id", null)?.takeIf(String::isNotBlank)
+            ?: java.util.UUID.randomUUID().toString().also { id -> prefs.edit { putString("romm_device_id", id) } }
+
+    /** RomM is on, has an address and a stored sign-in. */
+    val isRommConfigured: Boolean
+        get() = rommEnabled && rommServerUrl.isNotBlank() && rommAuthMode.isNotBlank()
+
     /** An opt-in system: browsing requires a separately authorized MTProto session. */
     var telegramEnabled: Boolean
         get() = prefs.getBoolean(KEY_TELEGRAM_ENABLED, false)

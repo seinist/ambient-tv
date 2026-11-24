@@ -112,6 +112,28 @@ class GameStateStore @Inject constructor(private val storage: GameStorage) {
         return entry
     }
 
+    /**
+     * Stores a state exactly as a server (RomM) holds it: same id and metadata, no renumbering or
+     * pruning. Used to mirror the server's states into this device's working copy.
+     */
+    @Synchronized fun put(game: PreparedGame, entry: GameStateEntry, bytes: ByteArray, screenshotJpeg: ByteArray?) {
+        require(entry.id.matches(Regex("(auto|undo|m[0-9]+)"))) { "Invalid state id" }
+        require(bytes.isNotEmpty() && bytes.size.toLong() <= MAX_STATE_BYTES) { "Save state exceeds the memory safety limit" }
+        val directory = storage.statesDirectory(game)
+        storage.write(File(directory, "${entry.id}.state"), bytes)
+        val image = File(directory, "${entry.id}.jpg")
+        if (screenshotJpeg != null && screenshotJpeg.isNotEmpty()) storage.write(image, screenshotJpeg) else image.delete()
+        storage.write(File(directory, "${entry.id}.json"), json.encodeToString(GameStateEntry.serializer(), entry).toByteArray())
+    }
+
+    /** Size and date of the files behind [entry], to tell whether it changed since it was mirrored. */
+    @Synchronized fun stamp(game: PreparedGame, entry: GameStateEntry): String {
+        val directory = storage.statesDirectory(game)
+        return listOf("state", "jpg", "json").joinToString("|") { extension ->
+            File(directory, "${entry.id}.$extension").let { "${it.length()}:${it.lastModified()}" }
+        }
+    }
+
     /** Renaming changes metadata only; binary state, preview, timestamp and compatibility stay intact. */
     @Synchronized fun rename(game: PreparedGame, entry: GameStateEntry, label: String): GameStateEntry {
         require(entry.kind == GameStateKind.MANUAL)

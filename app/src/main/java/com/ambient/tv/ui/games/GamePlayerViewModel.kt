@@ -79,8 +79,14 @@ class GamePlayerViewModel @Inject constructor(
     val retroAchievements: com.ambient.tv.games.RetroAchievementsClient,
     private val cheatStore: com.ambient.tv.games.GameCheatStore,
     val shaderPacks: com.ambient.tv.games.GameShaderPackStore,
+    private val remoteData: com.ambient.tv.romm.RommGameData,
+    private val rommLibrary: com.ambient.tv.romm.RommLibrary,
 ) : ViewModel() {
     private val fileId: String = checkNotNull(saved.get<String>("fileId")) { "fileId" }
+    /** A game from a RomM server: its firmware, saves and states are the server's. */
+    val remote: Boolean = com.ambient.tv.romm.RommKeys.owns(fileId)
+    /** Per game: how its saves and states stand compared with the RomM server. */
+    val remoteSync: StateFlow<Map<String, com.ambient.tv.romm.RommSyncState>> = remoteData.syncStates
     private val assignedSystem: String? = saved.get<String>("system")?.takeIf(String::isNotBlank)
     private val savedArguments = saved
     /** "Start over" from the detail page: applies to the first start only, not to later restarts. */
@@ -158,7 +164,10 @@ class GamePlayerViewModel @Inject constructor(
                 mutable.value = GameUiState.Failed(GameFailure.NO_ABI, chosen.name)
                 return@launch
             }
-            bios.missingRequired(game.system, GameSystems.extension(game.file.name), chosen)?.let { missing ->
+            // A RomM game's firmware is its server's: matched to it before the check.
+            if (game.remote != null) remoteData.syncFirmware(game)
+            bios.missingRequired(game.system, GameSystems.extension(game.file.name), chosen,
+                storage.systemDirectory(game))?.let { missing ->
                 mutable.value = GameUiState.Failed(GameFailure.BIOS_MISSING, missing.file); return@launch
             }
             val core = cores.installed(chosen)
@@ -214,6 +223,8 @@ class GamePlayerViewModel @Inject constructor(
         val session = withContext(Dispatchers.IO) {
             val stamp = GameStateStore.coreStamp(core)
             val legacyStamp = GameStateStore.legacyCoreStamp(core)
+            // A RomM game continues from the server's saves and states (the last copy when offline).
+            if (game.remote != null) remoteData.beforeStart(game, chosen.id, stamp)
             val existing = states.entry(game, GameStateKind.AUTO)
             if (startFresh && existing != null) {
                 // Like a reset in the game: the last progress stays recoverable as the undo state.
@@ -237,12 +248,14 @@ class GamePlayerViewModel @Inject constructor(
                 vulkan = com.ambient.tv.games.GameSettings.state.vulkan(chosen) && (chosen.requiresVulkan || !vulkanFailed),
                 coreFile = core,
                 coreStamp = stamp,
-                systemDirectory = storage.systemDirectory,
-                savesDirectory = storage.savesDirectory,
+                systemDirectory = storage.systemDirectory(game),
+                savesDirectory = storage.savesDirectory(game),
                 sram = storage.read(storage.sramFile(game)),
                 autoState = auto?.let { states.read(game, it) },
             ).also { refreshStates(game) }
         }
+        // "Start over" moved the automatic state: the server follows.
+        if (game.remote != null) remoteData.scheduleUpload(game, chosen.id)
         mutable.value = GameUiState.Ready(session)
     }
 
@@ -252,12 +265,21 @@ class GamePlayerViewModel @Inject constructor(
         stateList.update { states.list(game) }
     }
 
-    fun biosStatus(game: PreparedGame): List<GameBiosStatus> = bios.status(game.system)
+    fun biosStatus(game: PreparedGame): List<GameBiosStatus> = bios.status(game.system, storage.systemDirectory(game))
 
     /** The library cover for the OSD header, like the artwork other players show; null outside the library. */
     suspend fun coverUrl(): String? = withContext(Dispatchers.IO) {
+        if (remote) return@withContext runCatching { rommLibrary.game(fileId)?.coverPath }.getOrNull()
         runCatching { gameLibrary.game(fileId)?.coverPath }.getOrNull()
             ?.let { android.net.Uri.fromFile(java.io.File(it)).toString() }
+    }
+
+    /** Sends this game's saves and states to its RomM server (after a change); nothing for local games. */
+    private fun upload(game: PreparedGame, coreId: String? = null) {
+        if (game.remote == null) return
+        val core = coreId ?: (state.value as? GameUiState.Ready)?.session?.core?.id
+            ?: GameSettings.state.gameCore(game.system, game.saveKey).id
+        remoteData.scheduleUpload(game, core)
     }
 
     /**
@@ -269,6 +291,10 @@ class GamePlayerViewModel @Inject constructor(
             recordedSession === session) return
         recordedSession = session
         viewModelScope.launch(Dispatchers.IO) {
+            if (session.game.remote != null) {
+                runCatching { rommLibrary.recordPlayed(session.game.fileId) }
+                return@launch
+            }
             runCatching { files.awaitReady(); files.record(session.game.entry) }
             runCatching { gameLibrary.recordPlayed(session.game.fileId) }
         }
@@ -312,11 +338,13 @@ class GamePlayerViewModel @Inject constructor(
                 }
             }
             refreshStates(session.game)
+            upload(session.game, session.core.id)
         }
 
     suspend fun saveState(session: GameSession, kind: GameStateKind, bytes: ByteArray, screenshot: Bitmap?): GameStateEntry = withContext(Dispatchers.IO) {
         val entry = states.save(session.game, kind, bytes, screenshot, session.coreStamp, coreId = session.core.id)
         refreshStates(session.game)
+        upload(session.game, session.core.id)
         entry
     }
 
@@ -332,12 +360,14 @@ class GamePlayerViewModel @Inject constructor(
     suspend fun renameState(game: PreparedGame, entry: GameStateEntry, label: String) = withContext(Dispatchers.IO) {
         states.rename(game, entry, label)
         refreshStates(game)
+        upload(game)
     }
 
     fun deleteState(game: PreparedGame, entry: GameStateEntry) {
         val remove = {
             states.delete(game, entry)
             refreshStates(game)
+            upload(game)
         }
         // Only AUTO shares files with asynchronous checkpoints. Fence its deletion like
         // "Start over", including captures that complete late after the IO wait timed out.
@@ -351,6 +381,7 @@ class GamePlayerViewModel @Inject constructor(
         GameCheckpointIo.execute {
             states.entry(game, GameStateKind.AUTO)?.let { states.delete(game, it) }
             refreshStates(game)
+            upload(game)
         }
     }
 }

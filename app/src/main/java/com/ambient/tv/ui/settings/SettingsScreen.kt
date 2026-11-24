@@ -804,6 +804,7 @@ fun SettingsScreen(
                             item { com.ambient.tv.trailers.TrailerSettings(onConnected = { viewModel.refreshTrailerConfiguration() }) }
                         }
                         SettingsCategory.DLNA,
+                        SettingsCategory.ROMM,
                         SettingsCategory.FILES,
                         SettingsCategory.WIREGUARD,
                         SettingsCategory.PLEX,

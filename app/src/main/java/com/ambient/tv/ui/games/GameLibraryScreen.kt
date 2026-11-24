@@ -48,6 +48,7 @@ import com.ambient.tv.data.files.FileSource
 import com.ambient.tv.ui.files.NetworkSourceDialog
 import com.ambient.tv.games.GameSystems
 import com.ambient.tv.games.library.LibraryGame
+import com.ambient.tv.games.library.coverModel
 import com.ambient.tv.games.library.coverAspectRatio
 import com.ambient.tv.games.library.GameLibraryFolder
 import com.ambient.tv.ui.common.AlphabetBar
@@ -154,12 +155,6 @@ fun GameLibraryScreen(
         listOf("all", "favorites", "recent") +
             GameSystems.sortIdsByName(state.folders.map { it.systemId }.filter { it != "auto" } + state.systems)
     }
-    val alphabet = remember(games, state.section, state.view, state.sortKey) {
-        if (state.section == "recent" || state.view == "rows" || state.sortKey != "name") emptyList()
-        else games.mapNotNull { game ->
-            game.title.firstOrNull()?.uppercaseChar()?.takeIf { it in 'A'..'Z' }
-        }.distinct()
-    }
 
     val datPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) model.importDat(datSystemId, uri)
@@ -244,129 +239,13 @@ fun GameLibraryScreen(
                     else stringResource(R.string.game_library_no_results),
                     style = MaterialTheme.typography.bodyMedium)
             } else {
-                val firstFocus = remember(state.section, state.view) { FocusRequester() }
-                // Keep geometry fixed for this result set while background artwork finishes.
-                // Existing local dimensions are already present in the initial query.
-                // The usual shape of this result set sets the slot; a rare tall or wide cover is fitted
-                // into it instead of making every other cover shrink (median, not the narrowest).
-                val gridSlotRatio = remember(state.section, state.view, gameIds) {
-                    games.map { it.coverAspectRatio }.sorted().let { it[it.size / 2] }.coerceIn(.6f, 1.8f)
-                }
-                val rowArtworkHeight = (148f * 8f / state.gridColumns.coerceAtLeast(1)).coerceIn(96f, 216f).dp
-                GameLibraryAlphabetLayout(
-                    letters = alphabet,
-                    selectedLetter = games.firstOrNull { it.fileId == focusedId }
-                        ?.title?.firstOrNull()?.uppercaseChar(),
-                    firstContentFocus = firstFocus,
-                    onReturnToContent = {
-                        focusedId?.let { itemRequests[it] }?.let { runCatching { it.requestFocus() } }
-                            ?: runCatching { firstFocus.requestFocus() }
-                    },
-                    onSelect = { letter ->
-                        val index = games.indexOfFirst { it.title.firstOrNull()?.uppercaseChar() == letter }
-                        if (index >= 0) scope.launch {
-                            if (state.view == "list") listState.scrollToItem(index)
-                            else gridState.scrollToItem(index)
-                            withFrameNanos { }
-                            itemRequests[games[index].fileId]?.let { runCatching { it.requestFocus() } }
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize().pageContentUp(controls.focusChain).focusGroup(),
-                ) {
-                    if (state.view == "list") {
-                        RegisterBrowseFocusList(listState, gameIds)
-                        TvLazyColumn(modifier = Modifier.weight(1f).fillMaxHeight(),
-                            state = listState, focusActionsOnRight = false, allowUpExit = true,
-                            verticalArrangement = Arrangement.spacedBy((9f * 7 / state.listRows).coerceIn(6f, 16f).dp)) {
-                            items(games, key = { it.fileId }) { game ->
-                                GameListEntry(game,
-                                    onPlay = { onSelect(game) }, onInfo = { onOpenDetails(game) },
-                                    onFavorite = { model.favorite(game) },
-                                    density = (7f / state.listRows.coerceIn(4, 10)).coerceIn(.72f, 1.75f),
-                                    onFocus = { focusedId = game.fileId },
-                                    onRequester = { itemRequests[game.fileId] = it },
-                                    onDisposed = { itemRequests.remove(game.fileId) },
-                                    modifier = if (games.firstOrNull()?.fileId == game.fileId)
-                                        Modifier.focusRequester(firstFocus) else Modifier,
-                                )
-                            }
-                        }
-                    } else if (state.view == "rows") {
-                        // As on Home, each console has a horizontal row with its own lazy
-                        // viewport. Entirely cached data means the NAS never wakes for layout.
-                        val grouped = remember(games) {
-                            games.groupBy { it.systemId }.toList().sortedBy {
-                                (GameSystems.byId(it.first)?.name ?: it.first).lowercase(Locale.ROOT)
-                            }
-                        }
-                        RegisterBrowseFocusRows(rowsState, remember(grouped) {
-                            grouped.map { (system, entries) -> system to entries.map { it.fileId } }
-                        })
-                        // Same row behavior as Home and the other libraries: Up/Down keep the column,
-                        // Right on a row's last card returns to its first, shared section headings.
-                        val rowFocus = rememberRowColumnFocus()
-                        val rowKeys = remember(grouped) { grouped.map { it.first } }
-                        TvLazyColumn(
-                            modifier = Modifier.weight(1f).fillMaxHeight().focusGroup()
-                                .rowColumnFocusWrapRight(rowFocus)
-                                .rowColumnFocusNavigation(
-                                    rowFocus,
-                                    scrollToRow = { rowKey ->
-                                        val index = rowKeys.indexOf(rowKey)
-                                        if (index >= 0) rowsState.animateScrollToItem(index)
-                                    },
-                                ) { rowKeys },
-                            state = rowsState, allowUpExit = true,
-                            verticalArrangement = Arrangement.spacedBy(15.dp),
-                        ) {
-                            items(grouped, key = { it.first }) { (system, entries) ->
-                                Column {
-                                    ContentSectionHeader(GameSystems.byId(system)?.name ?: system, sectionKey = system)
-                                    GameLibraryCoverRow(entries, rowArtworkHeight, system, rowFocus = rowFocus) { game, tileModifier, slotRatio ->
-                                        GameTile(game,
-                                            artworkSlotAspectRatio = slotRatio,
-                                            rowKey = system,
-                                            showSystem = false,
-                                            onPlay = { onSelect(game) },
-                                            onInfo = { onOpenDetails(game) },
-                                            onFavorite = { model.favorite(game) },
-                                            onFocus = { focusedId = game.fileId },
-                                            onRequester = { itemRequests[game.fileId] = it },
-                                            onDisposed = { itemRequests.remove(game.fileId) },
-                                            modifier = (if (games.firstOrNull()?.fileId == game.fileId)
-                                                Modifier.focusRequester(firstFocus) else Modifier).then(tileModifier)
-                                                .rowColumnFocusTarget(rowFocus, system, game.fileId, soundsOnFocus = true),
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        RegisterBrowseFocusGrid(gridState, gameIds)
-                        TvLazyVerticalGrid(
-                            columns = deviceDensityGridCells(state.gridColumns, 150.dp, 8),
-                            modifier = Modifier.weight(1f).fillMaxHeight().focusGroup(),
-                            state = gridState,
-                            contentPadding = PaddingValues(bottom = 40.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            items(games, key = { it.fileId }) { game ->
-                                GameTile(game,
-                                    artworkSlotAspectRatio = gridSlotRatio,
-                                    showSystem = GameSystems.byId(state.section) == null,
-                                    onPlay = { onSelect(game) }, onInfo = { onOpenDetails(game) },
-                                    onFavorite = { model.favorite(game) },
-                                    onFocus = { focusedId = game.fileId },
-                                    onRequester = { itemRequests[game.fileId] = it },
-                                    onDisposed = { itemRequests.remove(game.fileId) },
-                                    modifier = if (games.firstOrNull()?.fileId == game.fileId)
-                                        Modifier.focusRequester(firstFocus) else Modifier,
-                                )
-                            }
-                        }
-                    }
-                }
+                GameLibraryGames(
+                    games = games, view = state.view, section = state.section, sortKey = state.sortKey,
+                    gridColumns = state.gridColumns, listRows = state.listRows, controls = controls,
+                    focusedId = focusedId, onFocused = { focusedId = it }, itemRequests = itemRequests,
+                    listState = listState, gridState = gridState, rowsState = rowsState,
+                    onSelect = onSelect, onOpenDetails = onOpenDetails, onFavorite = model::favorite,
+                )
             }
         } else {
             Column(Modifier.weight(1f).fillMaxWidth().pageContentUp(controls.focusChain).focusGroup()) {
@@ -453,6 +332,163 @@ fun GameLibraryScreen(
     GameLibraryViewOptionsPanel(state, controls,
         onView = model::view, onGridColumns = model::gridColumns, onListRows = model::listRows,
         onSort = model::sort, onSortDescending = model::sortDescending, onTitleStyle = model::titleStyle)
+}
+
+/**
+ * The games of a library as grid, list or rows, with the A–Z bar: shared by the game library and
+ * RomM, so both look and move the same. [rowKey] groups the rows (console, or RomM platform).
+ */
+@Composable
+internal fun GameLibraryGames(
+    games: List<LibraryGame>,
+    view: String,
+    section: String,
+    sortKey: String,
+    gridColumns: Int,
+    listRows: Int,
+    controls: GameLibraryBrowseControls,
+    focusedId: String?,
+    onFocused: (String?) -> Unit,
+    itemRequests: MutableMap<String, FocusRequester>,
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
+    rowsState: androidx.compose.foundation.lazy.LazyListState,
+    onSelect: (LibraryGame) -> Unit,
+    onOpenDetails: (LibraryGame) -> Unit,
+    onFavorite: (LibraryGame) -> Unit,
+    rowKey: (LibraryGame) -> String = { it.systemId },
+    rowTitle: (String) -> String = { GameSystems.byId(it)?.name ?: it },
+    showSystem: Boolean = GameSystems.byId(section) == null,
+) {
+    val scope = rememberCoroutineScope()
+    val gameIds = remember(games) { games.map { it.fileId } }
+    val alphabet = remember(games, section, view, sortKey) {
+        if (section == "recent" || view == "rows" || sortKey != "name") emptyList()
+        else games.mapNotNull { game ->
+            game.title.firstOrNull()?.uppercaseChar()?.takeIf { it in 'A'..'Z' }
+        }.distinct()
+    }
+        val firstFocus = remember(section, view) { FocusRequester() }
+        // Keep geometry fixed for this result set while background artwork finishes.
+        // Existing local dimensions are already present in the initial query.
+        // The usual shape of this result set sets the slot; a rare tall or wide cover is fitted
+        // into it instead of making every other cover shrink (median, not the narrowest).
+        val gridSlotRatio = remember(section, view, gameIds) {
+            games.map { it.coverAspectRatio }.sorted().let { it[it.size / 2] }.coerceIn(.6f, 1.8f)
+        }
+        val rowArtworkHeight = (148f * 8f / gridColumns.coerceAtLeast(1)).coerceIn(96f, 216f).dp
+        GameLibraryAlphabetLayout(
+            letters = alphabet,
+            selectedLetter = games.firstOrNull { it.fileId == focusedId }
+                ?.title?.firstOrNull()?.uppercaseChar(),
+            firstContentFocus = firstFocus,
+            onReturnToContent = {
+                focusedId?.let { itemRequests[it] }?.let { runCatching { it.requestFocus() } }
+                    ?: runCatching { firstFocus.requestFocus() }
+            },
+            onSelect = { letter ->
+                val index = games.indexOfFirst { it.title.firstOrNull()?.uppercaseChar() == letter }
+                if (index >= 0) scope.launch {
+                    if (view == "list") listState.scrollToItem(index)
+                    else gridState.scrollToItem(index)
+                    withFrameNanos { }
+                    itemRequests[games[index].fileId]?.let { runCatching { it.requestFocus() } }
+                }
+            },
+            modifier = Modifier.fillMaxSize().pageContentUp(controls.focusChain).focusGroup(),
+        ) {
+            if (view == "list") {
+                RegisterBrowseFocusList(listState, gameIds)
+                TvLazyColumn(modifier = Modifier.weight(1f).fillMaxHeight(),
+                    state = listState, focusActionsOnRight = false, allowUpExit = true,
+                    verticalArrangement = Arrangement.spacedBy((9f * 7 / listRows).coerceIn(6f, 16f).dp)) {
+                    items(games, key = { it.fileId }) { game ->
+                        GameListEntry(game,
+                            onPlay = { onSelect(game) }, onInfo = { onOpenDetails(game) },
+                            onFavorite = { onFavorite(game) },
+                            density = (7f / listRows.coerceIn(4, 10)).coerceIn(.72f, 1.75f),
+                            onFocus = { onFocused(game.fileId) },
+                            onRequester = { itemRequests[game.fileId] = it },
+                            onDisposed = { itemRequests.remove(game.fileId) },
+                            modifier = if (games.firstOrNull()?.fileId == game.fileId)
+                                Modifier.focusRequester(firstFocus) else Modifier,
+                        )
+                    }
+                }
+            } else if (view == "rows") {
+                // As on Home, each console has a horizontal row with its own lazy
+                // viewport. Entirely cached data means the NAS never wakes for layout.
+                val grouped = remember(games) {
+                    games.groupBy(rowKey).toList().sortedBy { rowTitle(it.first).lowercase(Locale.ROOT) }
+                }
+                RegisterBrowseFocusRows(rowsState, remember(grouped) {
+                    grouped.map { (system, entries) -> system to entries.map { it.fileId } }
+                })
+                // Same row behavior as Home and the other libraries: Up/Down keep the column,
+                // Right on a row's last card returns to its first, shared section headings.
+                val rowFocus = rememberRowColumnFocus()
+                val rowKeys = remember(grouped) { grouped.map { it.first } }
+                TvLazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxHeight().focusGroup()
+                        .rowColumnFocusWrapRight(rowFocus)
+                        .rowColumnFocusNavigation(
+                            rowFocus,
+                            scrollToRow = { rowKey ->
+                                val index = rowKeys.indexOf(rowKey)
+                                if (index >= 0) rowsState.animateScrollToItem(index)
+                            },
+                        ) { rowKeys },
+                    state = rowsState, allowUpExit = true,
+                    verticalArrangement = Arrangement.spacedBy(15.dp),
+                ) {
+                    items(grouped, key = { it.first }) { (system, entries) ->
+                        Column {
+                            ContentSectionHeader(rowTitle(system), sectionKey = system)
+                            GameLibraryCoverRow(entries, rowArtworkHeight, system, rowFocus = rowFocus) { game, tileModifier, slotRatio ->
+                                GameTile(game,
+                                    artworkSlotAspectRatio = slotRatio,
+                                    rowKey = system,
+                                    showSystem = false,
+                                    onPlay = { onSelect(game) },
+                                    onInfo = { onOpenDetails(game) },
+                                    onFavorite = { onFavorite(game) },
+                                    onFocus = { onFocused(game.fileId) },
+                                    onRequester = { itemRequests[game.fileId] = it },
+                                    onDisposed = { itemRequests.remove(game.fileId) },
+                                    modifier = (if (games.firstOrNull()?.fileId == game.fileId)
+                                        Modifier.focusRequester(firstFocus) else Modifier).then(tileModifier)
+                                        .rowColumnFocusTarget(rowFocus, system, game.fileId, soundsOnFocus = true),
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                RegisterBrowseFocusGrid(gridState, gameIds)
+                TvLazyVerticalGrid(
+                    columns = deviceDensityGridCells(gridColumns, 150.dp, 8),
+                    modifier = Modifier.weight(1f).fillMaxHeight().focusGroup(),
+                    state = gridState,
+                    contentPadding = PaddingValues(bottom = 40.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(games, key = { it.fileId }) { game ->
+                        GameTile(game,
+                            artworkSlotAspectRatio = gridSlotRatio,
+                            showSystem = showSystem,
+                            onPlay = { onSelect(game) }, onInfo = { onOpenDetails(game) },
+                            onFavorite = { onFavorite(game) },
+                            onFocus = { onFocused(game.fileId) },
+                            onRequester = { itemRequests[game.fileId] = it },
+                            onDisposed = { itemRequests.remove(game.fileId) },
+                            modifier = if (games.firstOrNull()?.fileId == game.fileId)
+                                Modifier.focusRequester(firstFocus) else Modifier,
+                        )
+                    }
+                }
+            }
+        }
 }
 
 @Composable
@@ -726,7 +762,7 @@ internal fun GameTile(
                         Modifier.size(size.width, size.height).clip(artworkShape)
                             .testTag("game-cover:${game.fileId}"),
                     ) {
-                        GameCoverArtwork(game.coverPath?.let { java.io.File(it) }, game.title, game.systemId,
+                        GameCoverArtwork(game.coverModel, game.title, game.systemId,
                             modifier = Modifier.fillMaxSize(), focused = focused)
                         if (game.favorite && !handheld) androidx.tv.material3.Icon(
                             Icons.Filled.Favorite,
@@ -797,7 +833,7 @@ internal fun GameListEntry(
                 Box(Modifier.size(coverHeight * 1.5f, coverHeight).testTag("game-list-cover:${game.fileId}"),
                     contentAlignment = Alignment.Center) {
                     val ratio = game.coverAspectRatio.coerceIn(.55f, 1.5f)
-                    GameCoverArtwork(game.coverPath?.let { java.io.File(it) }, game.title, game.systemId,
+                    GameCoverArtwork(game.coverModel, game.title, game.systemId,
                         modifier = Modifier.size(coverHeight * ratio, coverHeight).clip(RoundedCornerShape(4.dp)),
                         focused = focused)
                 }
