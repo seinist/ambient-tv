@@ -361,7 +361,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
         if (padInputs.touchButtons != mask) {
             padInputs.touchButtons = mask
             publishPad()
-            if (pressed) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            if (pressed && touchStyle.buttonHaptics) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         }
     }
     val setPointer: (CompanionPointerState?) -> Unit = { pointer ->
@@ -532,9 +532,6 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                                     padInputs.touchButtons = mask
                                     // A complete snapshot avoids intermediate releases during face-button rolls.
                                     publishPad()
-                                    if (mask and previous.inv() and COMPANION_DPAD_MASK.inv() != 0) {
-                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    }
                                 }
                             },
                             onStick = { index, x, y ->

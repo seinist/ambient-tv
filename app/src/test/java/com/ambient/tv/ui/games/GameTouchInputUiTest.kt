@@ -11,6 +11,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.hapticfeedback.HapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
@@ -52,6 +55,7 @@ class GameTouchInputUiTest {
         var osdTaps = 0
         val held = mutableSetOf<RetroPadButton>()
         val aTransitions = mutableListOf<Boolean>()
+        val feedback = mutableListOf<HapticFeedbackType>()
         fun button(button: RetroPadButton, down: Boolean) {
             if (down) held.add(button) else held.remove(button)
             if (button == RetroPadButton.A) aTransitions += down
@@ -60,10 +64,16 @@ class GameTouchInputUiTest {
 
     private fun mount(lifecycleOwner: LifecycleOwner? = null): Fixture {
         val fixture = Fixture()
+        val haptics = object : HapticFeedback {
+            override fun performHapticFeedback(hapticFeedbackType: HapticFeedbackType) {
+                fixture.feedback += hapticFeedbackType
+            }
+        }
         rule.setContent {
             CompositionLocalProvider(
                 LocalHandheldUi provides true,
                 LocalLifecycleOwner provides (lifecycleOwner ?: LocalLifecycleOwner.current),
+                LocalHapticFeedback provides haptics,
             ) {
                 AmbientTvTheme {
                     // Ancestor tap handling reproduces the player/interop failure if the
@@ -85,6 +95,41 @@ class GameTouchInputUiTest {
         rule.waitForIdle()
         fixture.aTransitions.clear() // Disposal/initial neutral notifications are not presses.
         return fixture
+    }
+
+    @Test fun buttonHapticsAreOptInAndNeverFollowDpadStickOrHeldMovement() {
+        val fixture = mount()
+        rule.onNodeWithTag("game-touch-a", useUnmergedTree = true).performTouchInput { click() }
+        rule.runOnIdle { assertTrue(fixture.feedback.isEmpty()); fixture.style = fixture.style.copy(buttonHaptics = true) }
+        rule.onNodeWithTag("game-touch-a", useUnmergedTree = true).performTouchInput {
+            down(0, center)
+            moveTo(0, center + Offset(2f, 0f))
+            moveTo(0, center)
+            up(0)
+        }
+        rule.runOnIdle {
+            assertEquals(listOf(HapticFeedbackType.TextHandleMove), fixture.feedback)
+            fixture.mode = GameTouchMode.HYBRID
+        }
+        rule.onNodeWithTag("game-touch-dpad", useUnmergedTree = true).performTouchInput {
+            down(0, Offset(8f, center.y))
+            moveTo(0, Offset(8f, 8f))
+            moveTo(0, center)
+            up(0)
+        }
+        rule.onNodeWithTag("game-touch-stick-0", useUnmergedTree = true).performTouchInput {
+            down(0, center)
+            moveTo(0, topLeft + Offset(8f, 8f))
+            up(0)
+        }
+        rule.runOnIdle { assertEquals(1, fixture.feedback.size) }
+        rule.onNodeWithTag("game-touch-start", useUnmergedTree = true).performTouchInput { click() }
+        rule.runOnIdle {
+            assertEquals(2, fixture.feedback.size)
+            fixture.style = fixture.style.copy(buttonHaptics = false)
+        }
+        rule.onNodeWithTag("game-touch-r", useUnmergedTree = true).performTouchInput { click() }
+        rule.runOnIdle { assertEquals(2, fixture.feedback.size) }
     }
 
     @Test fun heldDirectionAndRepeatedFacePressesNeverOpenTheOsd() {

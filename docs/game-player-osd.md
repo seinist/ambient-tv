@@ -14,6 +14,11 @@ determine the reserved height. In portrait the pad stays in its separate deck be
 The picture keeps the same bounds when the menu opens, rewind becomes available or a connected
 gamepad temporarily hides touch controls, so these changes do not resize the native surface.
 
+Touch customization also offers **Button vibration**, disabled by default. It uses a light
+system haptic on a newly pressed game button, including face, Start/Select and shoulder buttons.
+The D-pad, analog movement, held-button motion and releases do not produce a pulse. Local play
+and Companion touch controls use the same saved preference.
+
 ## Available actions
 
 The action bar uses the full available width: Continue, Stop and the other playback/state
