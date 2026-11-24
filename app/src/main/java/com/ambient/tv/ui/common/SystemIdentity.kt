@@ -29,9 +29,9 @@ import com.ambient.tv.R
 import com.ambient.tv.data.local.SystemNameOverrides
 
 /**
- * [logo] is the monochrome symbol used at icon sizes. For a heading there is either a [wordmark] —
- * the provider's full lockup, name included — or, where no such lockup exists, a [coloredLogo]
- * plus [brandColor] from which one is assembled with the name set as text.
+ * [logo] is the symbol used at icon sizes, themed unless [preserveLogoColors] is set. A heading
+ * uses either a [wordmark] — the provider's full lockup, name included — or, where no such lockup
+ * exists, a [coloredLogo] plus [brandColor] from which one is assembled with the name set as text.
  * [brand] is the provider name as the string resources spell it inside longer texts.
  */
 enum class MediaSystem(
@@ -42,6 +42,7 @@ enum class MediaSystem(
     val coloredLogo: Int? = null,
     val brandColor: Color? = null,
     val brand: String? = null,
+    val preserveLogoColors: Boolean = false,
 ) {
     PLEX("plex", R.string.nav_plex, R.drawable.system_plex, R.drawable.wordmark_plex, brand = "Plex"),
     JELLYFIN("jellyfin", R.string.nav_jellyfin, R.drawable.system_jellyfin, R.drawable.wordmark_jellyfin, brand = "Jellyfin"),
@@ -65,7 +66,10 @@ enum class MediaSystem(
     TRAILERS("trailers", R.string.trailers_title, R.drawable.system_tmdb, R.drawable.wordmark_tmdb),
     IPTV("iptv", R.string.iptv_title, R.drawable.system_iptv),
     /** RomM game server: its library plays in the game player; saves, states and firmware are the server's. */
-    ROMM("romm", R.string.romm_title, R.drawable.system_romm, brand = "RomM"),
+    ROMM(
+        "romm", R.string.romm_title, R.drawable.system_romm,
+        coloredLogo = R.drawable.system_romm, brand = "RomM", preserveLogoColors = true,
+    ),
     FILES("files", R.string.files_title, null);
 
     /** A provider mark already names its system, so a text label next to it is a duplicate. */
@@ -122,10 +126,12 @@ fun systemString(system: MediaSystem, @StringRes id: Int): String = system.renam
 /** Informational only: provider marks never add a D-pad focus stop or perform network work. */
 @Composable
 fun SystemLogo(system: MediaSystem, modifier: Modifier = Modifier, size: Dp = 22.dp, tint: Color? = null) {
-    // Every provider mark is drawn monochrome from its alpha silhouette, so the rail and the
-    // page headings stay one visual system instead of mixing brand colours with themed icons.
+    // Theme the monochrome marks. RomM's full-color circular artwork needs its original fills:
+    // tinting its alpha silhouette would hide the controller and leave only a solid disc.
     if (system.logo != null) {
-        Icon(painterResource(system.logo), null, modifier.size(size), tint = tint ?: MaterialTheme.colorScheme.onSurface.copy(alpha = .82f))
+        Icon(painterResource(system.logo), null, modifier.size(size),
+            tint = if (system.preserveLogoColors) Color.Unspecified
+            else tint ?: MaterialTheme.colorScheme.onSurface.copy(alpha = .82f))
     } else {
         Icon(Icons.Filled.Folder, null, modifier.size(size), tint = tint ?: MaterialTheme.colorScheme.onSurfaceVariant)
     }

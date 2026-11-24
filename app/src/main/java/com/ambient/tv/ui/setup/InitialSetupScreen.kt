@@ -207,12 +207,11 @@ internal fun SetupSystemCard(system: MediaSystem, modifier: Modifier, onFocused:
             }
             // A fixed header height keeps every card equally tall, whatever the wordmark's own height.
             Box(Modifier.height(28.dp), contentAlignment = Alignment.CenterStart) {
-            if (system == MediaSystem.FILES || system == MediaSystem.IPTV || system == MediaSystem.ROMM) {
+            if (system == MediaSystem.FILES || system == MediaSystem.IPTV) {
                 Row( verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(
                         painterResource(when (system) {
                             MediaSystem.IPTV -> R.drawable.system_iptv
-                            MediaSystem.ROMM -> R.drawable.system_romm
                             else -> R.drawable.system_files
                         }),
                         contentDescription = null,

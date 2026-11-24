@@ -1681,6 +1681,7 @@ fun SettingsScreen(
                             item { SettingsSubheader(stringResource(R.string.settings_about_artwork)) }
                             item { AboutGameIconsCard() }
                             item { AboutInputControllerArtworkCard() }
+                            item { AboutRommLogoCard() }
                         }
                     }
                 }

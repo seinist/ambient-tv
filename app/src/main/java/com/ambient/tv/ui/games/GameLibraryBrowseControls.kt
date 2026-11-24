@@ -34,10 +34,12 @@ import com.ambient.tv.ui.common.FilterBar
 import com.ambient.tv.ui.common.FilterFocusState
 import com.ambient.tv.ui.common.LocalFilterBarSetting
 import com.ambient.tv.ui.common.LocalFilterFocusState
+import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.ui.common.PageFocusChain
 import com.ambient.tv.ui.common.PageHeader
 import com.ambient.tv.ui.common.PanelOption
 import com.ambient.tv.ui.common.RightPanelOverlay
+import com.ambient.tv.ui.common.SystemPageTitle
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.ViewOption
@@ -107,6 +109,8 @@ internal fun GameLibraryHeader(
     onRefresh: () -> Unit,
     /** Heading in place of the library/console name (a RomM platform). */
     title: String? = null,
+    /** Provider identity for a server library, including its platform sections. */
+    system: MediaSystem? = null,
 ) {
     PageHeader(focusChain = controls.focusChain, actions = {
         // RomM has no folders to manage here: its library is the server's.
@@ -124,10 +128,12 @@ internal fun GameLibraryHeader(
                 onClick = controls::openOptions)
         }
     }) {
-        Text(if (managing) stringResource(R.string.game_library_manage)
+        val heading = if (managing) stringResource(R.string.game_library_manage)
             else if (title != null) title
             else if (state.section in setOf("all", "favorites", "recent")) stringResource(R.string.game_library_title)
-            else GameSystems.byId(state.section)?.name ?: stringResource(R.string.game_library_title),
+            else GameSystems.byId(state.section)?.name ?: stringResource(R.string.game_library_title)
+        if (system != null) SystemPageTitle(system, title = heading)
+        else Text(heading,
             style = MaterialTheme.typography.headlineMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(stringResource(R.string.game_library_count, state.games.size),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
