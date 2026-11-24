@@ -94,7 +94,7 @@ fun RommLibraryScreen(
     ) {
         GameLibraryHeader(library, managing = false, searchShown = showSearch, controls = controls,
             onManage = null, onSearch = { showSearch = !showSearch }, onRefresh = model::refresh,
-            title = platformsBySection[library.section]?.title ?: rommName)
+            title = platformsBySection[library.section]?.title ?: rommName, system = MediaSystem.ROMM)
         GameLibrarySections(sections, library.section, controls,
             platform = { key -> platformsBySection[key]?.let { it.title to it.systemId } }) {
             model.section(it)

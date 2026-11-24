@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="romm_title">RomM</string>
+    <string name="romm_logo_title">RomM logo</string>
+    <string name="romm_logo_credit">Logo by the RomM Project. This app is an independent client.</string>
     <string name="romm_settings_hint">Games from your RomM server: library, firmware, saves and save states</string>
     <string name="romm_setup_hint">Play the games of your RomM server; saves and states stay on the server.</string>
     <string name="romm_enable">Use RomM</string>
