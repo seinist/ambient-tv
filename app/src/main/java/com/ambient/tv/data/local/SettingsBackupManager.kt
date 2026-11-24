@@ -1224,10 +1224,14 @@ class SettingsBackupManager @Inject constructor(
         extras?.connections?.let { connections ->
             connections.rommServerUrl?.let { url ->
                 // A sign-in belongs to its server: another address needs this device to sign in again.
-                if (url.trim() != preferences.rommServerUrl) preferences.rommAuthMode = ""
+                if (!com.ambient.tv.romm.RommKeys.sameAddress(url, preferences.rommServerUrl)) preferences.rommAuthMode = ""
                 preferences.rommServerUrl = url
             }
-            connections.rommUsername?.let { preferences.rommUsername = it }
+            connections.rommUsername?.let { name ->
+                // ... and to its account: another user's name would file this account's data under theirs.
+                if (!name.equals(preferences.rommUsername, ignoreCase = true)) preferences.rommAuthMode = ""
+                preferences.rommUsername = name
+            }
             connections.rommEnabled?.let { preferences.rommEnabled = it }
         }
     }

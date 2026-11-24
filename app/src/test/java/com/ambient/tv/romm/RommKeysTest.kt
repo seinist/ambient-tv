@@ -18,6 +18,15 @@ class RommKeysTest {
         assertNull(RommKeys.normalizeUrl("ftp://nas"))
     }
 
+    @Test fun theSameServerIsRecognisedHoweverItIsTyped() {
+        assertTrue(RommKeys.sameAddress("nas:8080", "http://NAS:8080/"))
+        assertTrue(RommKeys.sameAddress("https://games.example.com/romm/", "https://games.example.com/romm/api"))
+        assertFalse(RommKeys.sameAddress("http://nas:8080", "http://nas:8081"))
+        assertFalse(RommKeys.sameAddress("http://nas", "https://nas"))
+        assertFalse(RommKeys.sameAddress("http://nas/romm", "http://nas/"))
+        assertFalse(RommKeys.sameAddress("http://other", ""))
+    }
+
     @Test fun gameIdsRoundTripAndRejectOtherIds() {
         val key = RommKeys.serverKey("http://nas:8080/".toHttpUrl(), "Player")
         assertTrue(key.matches(Regex("[0-9a-f]{12}")))

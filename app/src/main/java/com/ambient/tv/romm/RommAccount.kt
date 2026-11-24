@@ -61,6 +61,13 @@ object RommKeys {
             .joinToString("") { "%02x".format(it) }.take(12)
     }
 
+    /** Whether two typed addresses lead to the same RomM (scheme, host, port and path). */
+    fun sameAddress(a: String, b: String): Boolean {
+        val first = normalizeUrl(a) ?: return a.trim() == b.trim()
+        val second = normalizeUrl(b) ?: return false
+        return first.toString().trimEnd('/').equals(second.toString().trimEnd('/'), ignoreCase = true)
+    }
+
     /**
      * The address as typed ("romm.local:8080", "https://games.example/romm/") made into the base of
      * the web interface: scheme added, trailing slash and a pasted "/api" removed.
@@ -119,9 +126,16 @@ class RommAccountStore @Inject constructor(
         revision.value++
     }
 
+    /**
+     * A new address. The sign-in belongs to the old server: it is dropped, so a token or a password is
+     * never sent to another host.
+     */
     fun setServerUrl(value: String) {
-        if (value.trim() == preferences.rommServerUrl) return
-        preferences.rommServerUrl = value
+        if (RommKeys.sameAddress(value, preferences.rommServerUrl)) return
+        tokens.rommToken = null
+        tokens.rommPassword = null
+        preferences.rommAuthMode = ""
+        preferences.rommServerUrl = value.trim()
         revision.value++
     }
 

@@ -34,7 +34,6 @@
     <string name="romm_open_settings">Open RomM settings</string>
     <string name="romm_library_not_loaded">The library has not been loaded from the server yet.</string>
     <string name="romm_library_empty">The server has no games for the consoles this app plays.</string>
-    <string name="romm_offline_copy">Server not reachable: showing the last loaded library.</string>
     <string name="romm_detail_source">Source: %1$s</string>
     <string name="romm_info_data">Saves and states: %1$s</string>
     <string name="romm_sync_checking">checking with the server</string>
@@ -49,4 +48,5 @@
     <string name="romm_error_unreachable">The RomM server is not reachable.</string>
     <string name="romm_error_tls">The secure connection to RomM failed.</string>
     <string name="romm_error_not_set_up">RomM is not set up.</string>
+    <string name="romm_url_signed_in_hint">Sign out to use another address.</string>
 </resources>

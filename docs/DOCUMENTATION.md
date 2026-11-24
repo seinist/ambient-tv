@@ -428,12 +428,12 @@ Settings › Systems & accounts › **IPTV**: any number of M3U playlists (http/
 
 ### 4.12 RomM (game server)
 
-Settings › Media servers › **RomM** (also in the add-system catalog and the first setup): the games of your own [RomM](https://romm.app) server, in their own menu entry with **All**, **Favorites**, **Recent** and RomM's platforms under the names given on the server. Only platforms a core in this app plays are listed (the same consoles as for local games).
+Settings › Media servers › **RomM** (also in the add-system catalog and the first setup): the games of your own [RomM](https://romm.app) server, in their own menu entry with **All games**, **Favorites**, **Recently played** and RomM's platforms under the names given on the server. Only platforms a core in this app plays are listed (the same consoles as for local games); entries without a file on the server (RomM's physical-only games) are left out.
 
 | Setting | Options / values | Default | Devices | Description |
 | --- | --- | --- | --- | --- |
 | Use RomM | On / Off | Off | All | Shows the server's games in the menu and plays them in the game player. |
-| Address | As in the browser (`http://nas:8080`, `https://games.example.com/romm`) | Empty | All | A pasted `/api` is removed. Requests follow *Local network only* and WireGuard routes like every server. |
+| Address | As in the browser (`http://nas:8080`, `https://games.example.com/romm`) | Empty | All | A pasted `/api` is removed. Requests follow *Local network only* and WireGuard routes like every server. While signed in the address is shown but fixed: a sign-in is never sent to another address; signing out frees the field. |
 | Sign in with code | QR code + code | — | TV, Phone | RomM 5: a signed-in phone approves this device (device authorization). The app gets its own device token; no password is stored. |
 | Other sign-in | Pairing code or client token (RomM 4.8+); user name and password (any version) | — | All | Token and password are kept in encrypted preferences and never exported. |
 | Check connection / Reload library / Sign out | Actions | — | All | Signing out removes the device's copy of that server's library list. |
@@ -446,7 +446,7 @@ Settings › Media servers › **RomM** (also in the add-system catalog and the 
 
 **Core data:** what a core writes into the save folder by itself (memory cards, a console's NAND, PSP SAVEDATA, backup RAM) belongs to the game that was running when it changed. It goes to RomM as `ambient-data.zip` among that game's saves, with each file's date; before a game starts, files from its archive replace the device's copy only where the archive's copy is newer. Caches, logs and core settings stay on the device; an archive over 64 MB is not sent.
 
-**Favorites:** marking a RomM game as a favorite shows at once and goes to the user's own **Favorites** collection on the server (created like RomM's web interface does when it is missing); opening RomM brings that collection back, so favorites marked in RomM or on another device appear here too. Without a connection the change waits for the server.
+**Favorites:** marking a RomM game as a favorite shows at once and goes to the user's own **Favorites** collection on the server (created like RomM's web interface does when it is missing); opening RomM brings that collection back, so favorites marked in RomM or on another device appear here too. Without a connection the change waits for the server. Playing a game also sets its *last played* in RomM, so Recently played follows the player across devices and other RomM clients.
 
 **Home and search:** the Home editor offers RomM's **Recently played games**, **Favorite games** and **All games** as rows with the same cards as local games; the global search lists matching RomM games. Both read the library list on the device and never wait for the server.
 

@@ -297,6 +297,14 @@ class RommClient @Inject constructor(
         Unit
     }
 
+    /** Tells RomM the game was just played: its "last played", which every client shows. */
+    suspend fun markPlayed(account: RommAccount, romId: Long) = io {
+        val url = api(account.baseUrl, "roms/$romId/props").newBuilder()
+            .addQueryParameter("update_last_played", "true").build()
+        execute(http, Request.Builder().url(url).put("{}".toRequestBody(JSON)).build(), account.auth)
+        Unit
+    }
+
     // Collections (the user's Favorites) ----------------------------------------------------------
 
     suspend fun collections(account: RommAccount): List<RommCollection> = io {

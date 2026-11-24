@@ -30,8 +30,10 @@ data class RommLibraryUiState(
     val platforms: List<RommMenuPlatform> = emptyList(),
     val signedIn: Boolean = false,
     val hasCatalog: Boolean = false,
-    /** Showing the device's copy because the server did not answer. */
+    /** Showing the device's copy because the server did not answer (or its machine is offline). */
     val offline: Boolean = false,
+    /** The machine RomM runs on is known to be offline (shared with the other servers on it). */
+    val serverOffline: Boolean = false,
     val signInRejected: Boolean = false,
     val error: String? = null,
 )
@@ -45,6 +47,7 @@ class RommLibraryViewModel @Inject constructor(
     private val romm: RommLibrary,
     private val accounts: RommAccountStore,
     private val gameLibrary: GameLibraryRepository,
+    private val hosts: com.ambient.tv.connectivity.HostConnectivity,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
     private val mutable = MutableStateFlow(RommLibraryUiState())
@@ -56,6 +59,13 @@ class RommLibraryViewModel @Inject constructor(
         viewModelScope.launch {
             combine(romm.state, gameLibrary.revisions, accounts.changes, section, query) { _, _, _, section, query -> section to query }
                 .collectLatest { (section, query) -> reload(section, query) }
+        }
+        // Like the other server pages: an offline machine shows in the page header, nowhere else.
+        viewModelScope.launch {
+            hosts.states.collect {
+                val offline = hosts.health(HOST_SYSTEM) == com.ambient.tv.connectivity.HostHealth.OFFLINE
+                mutable.update { state -> state.copy(serverOffline = offline) }
+            }
         }
         viewModelScope.launch {
             val stale = withContext(Dispatchers.IO) { romm.catalog() }
@@ -136,5 +146,6 @@ class RommLibraryViewModel @Inject constructor(
 
     private companion object {
         const val STALE_AFTER_MS = 10 * 60 * 1000L
+        const val HOST_SYSTEM = "romm"
     }
 }
