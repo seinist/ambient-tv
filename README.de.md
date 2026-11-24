@@ -2,7 +2,7 @@
 
 <img src="branding/png/wordmark/ambient-tv-wordmark-readme.png" alt="Ambient TV" width="420">
 
-**Android-TV- und Handy-Client für lokale Medien – Plex, Jellyfin, Emby, TVHeadend, SmartTube, Radio, DLNA, Dateien/NAS und Fotos in einer App, abgespielt mit MPV, VLC oder Media3. Optional mit Monogram (Telegram-Medien).**
+**Android-TV- und Handy-Client für lokale Medien – Plex, Jellyfin, Emby, TVHeadend, SmartTube, Radio, DLNA, Dateien/NAS und Fotos in einer App, abgespielt mit MPV, VLC oder Media3, dazu Retro-Spiele über libretro aus eigenen Ordnern oder von einem RomM-Server. Optional mit Monogram (Telegram-Medien).**
 
 [![Android 10+](https://img.shields.io/badge/Android-API%2029%2B-3DDC84?logo=android&logoColor=white)](#voraussetzungen)
 [![Android TV](https://img.shields.io/badge/Android%20TV-ready-3DDC84?logo=androidtv&logoColor=white)](#funktionen)
@@ -87,7 +87,8 @@ Ambient TV entsteht in der Freizeit, aus Liebe zu einem guten Fernsehabend. Wenn
 - **Untertitel** — externe Dateien bei Dateien/NAS und DLNA, Online-Suche über OpenSubtitles.com (eigener API-Schlüssel), **automatisch synchronisieren** am Server-Untertitel, eigenes **Aussehen** für Text-Untertitel (ASS/SSA behalten ihren Stil)
 - **Player-Werkzeuge** — A-B-Wiederholung, Einzelbild, **Lesezeichen**, Bildschirmfotos
 - **Musik** — **lückenlose** Wiedergabe (Media3), **Songtexte** (Plex, Jellyfin, optional LRCLIB)
-- **Miniplayer** & Hintergrundwiedergabe
+- **Miniplayer** & Hintergrundwiedergabe; Zurück führt zum laufenden Player zurück
+- **Als Nächstes** mit optionaler minimalistischer Karte; Schwellen für **gesehen und Fortsetzen** wie bei Kodi
 - Bildeinstellungen **pro Titel gemerkt**
 - **Anzeigemodus-Anpassung**, optional **SDR → HDR10** (Android 14+)
 - **Deinterlacing** – BWDIF, YADIF, NNEDI, IVTC, …
@@ -135,13 +136,36 @@ Ambient TV entsteht in der Freizeit, aus Liebe zu einem guten Fernsehabend. Wenn
 - **TV- (D-Pad/Sidebar)** und **Handy-Oberfläche (Touch)** in einer APK
 - **Android Auto (Audio)** – Radio, IPTV-/TVHeadend-Radiosender, Musik aus Plex/Jellyfin/Emby, DLNA und lokalen/NAS-Dateien
 - **Android-TV-System- und Sprachsuche** findet Titel aus Plex, Jellyfin und Emby
-- Offline-Server bleiben im Menü, mit einer Seite zum **Aufwecken / Neu verbinden**
+- **Offline-Server** bleiben mit dezentem Status und gespeicherten Inhalten im Menü; Erneut versuchen verbindet neu und weckt nur einen Rechner, der wirklich aus ist, Offline-Server werden nicht ständig abgefragt
 - **Handy ↔ TV koppeln** – Fernbedienung, Wiedergabe senden, Konten übertragen
 - **Uhr** in den Kopfzeilen, auf der Startseite und im Player (Format, Datum, Aussehen)
 - **Wetter** mit gespeicherten Orten, Stunden-/Tagesvorhersage sowie auswählbaren Radar- und Satellitenkarten; wahlweise in Menü, Kopfzeile und Bildschirmschoner
 - **Lichtstimmungen** über der Startseite, **Filterleiste** über Mediatheken, Programmführer, Trailern und YouTube
 - **Leistungsmodus** Auto / Ausgewogen / Sparsam, Bildschirmschoner, Startbildschirm-Kanäle
-- **Einstellungs-Backup** (Schema 82; API-Daten nur im passwortverschlüsselten Export mit Zugangsdaten) · DE/EN UI
+- **Log-Viewer** auf TV und Handy (Suche, Filter, ZIP-Export)
+- **Einstellungs-Backup** (Schema 84; API-Daten nur im passwortverschlüsselten Export mit Zugangsdaten) · DE/EN UI
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🎮 Spiele
+- **libretro-Spiele-Player** für 31 Konsolen – von NES bis PlayStation 2, GameCube/Wii/Wii U, DS/3DS, PSP, Dreamcast, Saturn und die Commodore-Familie; Cores werden bei Bedarf geladen (eigene signierte Builds oder libretro-Buildserver), mehrere je System, vorheriger Core wiederherstellbar
+- **Spielebibliothek** aus lokalen, USB- und NAS-Ordnern: eigenes Spiele-Menü, Konsolen, Favoriten, Zuletzt gespielt, A–Z und Home-Reihen; Metadaten und Cover (Libretro, optional ScreenScraper/TheGamesDB)
+- **RomM** als eigenes System – Bibliothek, Firmware, Speicherstände, Spielstände, Memory Cards und Favoriten verwaltet der Server, Anmeldung per Code, offline aus der letzten Kopie spielbar
+- **Spielstände wie Kapitel**, Zurückspulen, Vorspulen, Cheats, RetroAchievements, LAN-Spiel mit einem zweiten Ambient TV
+- **Bild** – Filter (Skalierung, Röhre, Handheld, analoges Signal), optionale signierte Shader-Pakete, ganzzahlige Skalierung, Vulkan für GPU-Cores, SDR-Spiele als HDR10
+- Große Disc-Abbilder werden **direkt vom NAS** gelesen, ohne Kopie
+
+</td>
+<td valign="top">
+
+### 🕹️ Steuerung
+- **Menü-, Wiedergabe- und Spielsteuerung** – eigene Aktionen je Taste, kurz oder gehalten, für Fernbedienung, Tastatur und Controller, gewählt am Bild des Geräts
+- **Spielecontroller** bedienen die ganze App; Modelle von Xbox, PlayStation und Nintendo werden erkannt
+- **Spielbelegungen** je Konsole, Emulator und Spiel, jede Konsole mit eigenem Controller-Bild; alle Tasten nacheinander zuweisen
+- **Touch-Steuerung** am Handy und das gekoppelte **Handy als Gamepad** für den TV
 
 </td>
 </tr>
@@ -157,8 +181,8 @@ Ambient TV entsteht in der Freizeit, aus Liebe zu einem guten Fernsehabend. Wenn
 | --- | --- |
 | **Geräte** | Android TV / Google TV, Handys und Tablets mit **Android API 29+** |
 | **ABIs** | arm64-v8a · armeabi-v7a · x86 · x86_64 |
-| **Geräteabhängig** | Vulkan-Ausgabe/-Dekodierung, SDR → HDR (Android 14+, HDR10-Display), Passthrough-Formate, SVP |
-| **Netzwerk** | LAN zu Medienserver/NAS; Internet für Plex-Link, SmartTube, Trailer und optional Monogram |
+| **Geräteabhängig** | Vulkan-Ausgabe/-Dekodierung, SDR → HDR (Android 14+, HDR10-Display), Passthrough-Formate, SVP, Vulkan für GPU-Spiele-Cores |
+| **Netzwerk** | LAN zu Medienserver/NAS/RomM; Internet für Plex-Link, SmartTube, Trailer, optional Monogram und zum Laden von Spiele-Cores |
 | **Build** | **JDK 17**, Android SDK/NDK (`ANDROID_NDK_HOME` oder `ANDROID_NDK_ROOT`); optional Keystore |
 
 ## Bauen
@@ -222,11 +246,11 @@ Ohne beides funktionieren Debug-Builds, Release-APKs bleiben unsigniert. `./buil
 | --- | --- |
 | Start & Bedienung | Home-Reihen, Medienauswahl, Sprache, Bibliothek |
 | Darstellung | Theme, Akzent, Skalierung, **Leistung**, Hintergrundvideo, Bildschirmschoner |
-| Systeme & Konten | Plex / Jellyfin / Emby / TVH / IPTV / SmartTube / Radio / Monogram / Trailer / DLNA / Dateien |
+| Systeme & Konten | Plex / Jellyfin / Emby / TVH / IPTV / SmartTube / Radio / Monogram / Trailer / DLNA / RomM / Dateien |
 | Geräte & Netzwerk | Handy & Geräte, UPnP-Receiver, WireGuard / VPN, Server & Wake-on-LAN |
-| Wiedergabe | Player-Backend, Untertitel, „Als Nächstes“, Sprungweite |
+| Wiedergabe | Player-Backend, Untertitel, „Als Nächstes“, Spulen & Fortsetzen, Spiele (Cores, BIOS, Spieleordner, Shader-Pakete) |
 | Bild & Ton | Bild-/Audioprofile, Visualizer, Fotos |
-| App & Daten | Backup, Diagnose, Erweitert, Über |
+| App & Daten | Backup, Diagnose, Menü-/Wiedergabe-/Spielsteuerung, Erweitert, Über |
 
 
 </details>
@@ -269,6 +293,7 @@ Ambient TV entsteht aus Leidenschaft – für alle, die mehr aus ihrem Medienset
 - Keine Garantie für jede Codec-/Filter-Kombination auf jedem Gerät; Bildfilter brauchen eine GPU-Videoausgabe
 - Dateien: kein NFS-Kerberos, kein NFSv4.1+, keine NetBIOS-Suche, kein FTP; WebDAV mit Basic- oder Digest-Anmeldung
 - DLNA-Renderer: kein Google Cast, keine DRM-Inhalte, keine Bilder
+- Spiele: Die Cores für PlayStation 2, Wii U und Ymir (Saturn) sind experimentell; neuere Cores brauchen noch Tests auf weiteren Geräten. ROMs, BIOS-Dateien und Spieledatenbanken sind nicht enthalten
 
 ## Dokumentation
 
@@ -278,6 +303,7 @@ Ambient TV entsteht aus Leidenschaft – für alle, die mehr aus ihrem Medienset
 | [docs/DOCUMENTATION.de.md](docs/DOCUMENTATION.de.md) | Deutsch (vollständig) |
 | [README.md](README.md) | English – Kurzüberblick |
 | [docs/README.md](docs/README.md) | Docs-Index (EN) |
+| [docs/RETRO_GAME_LIBRARY.md](docs/RETRO_GAME_LIBRARY.md) · [docs/game-player-osd.md](docs/game-player-osd.md) · [docs/game-metadata.md](docs/game-metadata.md) | EN – Spiele: Bibliothek, Spiele-Player, Metadaten |
 | [EXTERNAL_LIBRARIES.md](EXTERNAL_LIBRARIES.md) | EN – Engine-Pins |
 
 ## Lizenz
@@ -286,7 +312,7 @@ Dieses Projekt steht unter **[Creative Commons Zero v1.0 Universal (CC0-1.0)](LI
 
 Drittanbieter-Engines und Marken (Plex, Jellyfin, Emby, YouTube/SmartTube, …) unterliegen eigenen Lizenzen und Kennzeichnungen – siehe „Über“ in der App und `third_party_licenses/`.
 
-**Gebaute APKs:** Die App enthält GPL-lizenzierte Bestandteile (mpv: GPL-2.0-or-later; FFmpeg, von mpv-android mit `--enable-gpl --enable-version3` gebaut: GPL-3.0-or-later; NNEDI-Gewichte: GPL-2.0-or-later; TVHeadend-Logo: GPL-3.0-or-later) und LGPL-Bestandteile (VLC, SVP-Adapter). Die enthaltenen GLSL-Shader stehen unter LGPL-3.0-or-later, MIT, BSD-2-Clause oder CC0-1.0 (siehe `SHADER_SOURCES_027.json`). Aus diesem Repository gebaute APKs werden daher unter den Bedingungen der **GNU GPL v3.0** verteilt; der zugehörige Quelltext ist dieses Repository plus die gepinnten Upstream-Quellen in `gradle/external-versions.properties`.
+**Gebaute APKs:** Die App enthält GPL-lizenzierte Bestandteile (mpv: GPL-2.0-or-later; FFmpeg, von mpv-android mit `--enable-gpl --enable-version3` gebaut: GPL-3.0-or-later; NNEDI-Gewichte: GPL-2.0-or-later; TVHeadend-Logo: GPL-3.0-or-later) und LGPL-Bestandteile (VLC, SVP-Adapter); der Spiele-Player nutzt LibretroDroid (GPL-3.0). libretro-Cores sind nie enthalten: Jeder Core wird auf Wunsch geladen und behält seine eigene Lizenz (manche erlauben nur nicht-kommerzielle Nutzung). Die enthaltenen GLSL-Shader stehen unter LGPL-3.0-or-later, MIT, BSD-2-Clause oder CC0-1.0 (siehe `SHADER_SOURCES_027.json`). Aus diesem Repository gebaute APKs werden daher unter den Bedingungen der **GNU GPL v3.0** verteilt; der zugehörige Quelltext ist dieses Repository plus die gepinnten Upstream-Quellen in `gradle/external-versions.properties`.
 
 ---
 
