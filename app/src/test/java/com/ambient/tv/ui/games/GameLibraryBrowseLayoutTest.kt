@@ -4,14 +4,17 @@ import android.app.Application
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.CompositionLocalProvider
@@ -25,12 +28,17 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.dp
 import com.ambient.tv.games.library.LibraryGame
@@ -84,6 +92,7 @@ class GameLibraryBrowseLayoutTest {
                         GameLibraryAlphabetLayout(
                             letters = listOf('A', 'M'),
                             selectedLetter = games.first { it.fileId == focusedId }.title.first(),
+                            visibleLetter = { 'A' },
                             firstContentFocus = firstFocus,
                             onReturnToContent = { requests.getValue(focusedId).requestFocus() },
                             onSelect = {},
@@ -143,6 +152,62 @@ class GameLibraryBrowseLayoutTest {
 
     @Test fun listRightEdgeEntersCurrentLetterAndLeftReturnsToTheSameGame() {
         assertAlphabetRoundTrip(list = true)
+    }
+
+    private fun assertHandheldAlphabetTracksViewport(list: Boolean) {
+        val games = ('A'..'Z').flatMap { letter ->
+            List(6) { index -> game("$letter-$index", "$letter Game $index") }
+        }
+        val parkedFocus = FocusRequester()
+        val requests = mutableMapOf<String, FocusRequester>()
+        rule.setContent {
+            CompositionLocalProvider(LocalHandheldUi provides true) {
+                AmbientTvTheme {
+                    Column(Modifier.fillMaxSize()) {
+                        Box(Modifier.size(1.dp).focusRequester(parkedFocus).testTag("parked-focus").focusable())
+                        Box(Modifier.width(320.dp).height(600.dp)) {
+                            GameLibraryGames(
+                                games = games, view = if (list) "list" else "grid",
+                                section = "snes", sortKey = "name", gridColumns = 8, listRows = 7,
+                                controls = rememberGameLibraryBrowseControls(),
+                                focusedId = "A-0", onFocused = {}, itemRequests = requests,
+                                listState = rememberLazyListState(), gridState = rememberLazyGridState(),
+                                rowsState = rememberLazyListState(),
+                                onSelect = {}, onOpenDetails = {}, onFavorite = {},
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        rule.waitForIdle()
+        rule.runOnIdle { assertTrue(parkedFocus.requestFocus()) }
+        rule.onNodeWithTag("alphabet-letter-A").assertIsSelected()
+
+        rule.onNodeWithTag("alphabet-letter-M").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("alphabet-letter-M").assertIsSelected()
+        // A touch alphabet jump must not schedule a game focus that drags the viewport back.
+        rule.onNodeWithTag("parked-focus").assertIsFocused()
+
+        rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
+            .performScrollToIndex(6)
+        rule.waitForIdle()
+        // The last jump was M and the saved game focus is A; only the visible viewport is B.
+        rule.onNodeWithTag("alphabet-letter-B").assertIsSelected()
+        rule.onNodeWithTag("parked-focus").assertIsFocused()
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h800dp-port-mdpi")
+    fun phoneGridAlphabetTracksViewportAndNeverRequestsGameFocus() {
+        assertHandheldAlphabetTracksViewport(list = false)
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h800dp-port-mdpi")
+    fun phoneListAlphabetTracksViewportAndNeverRequestsGameFocus() {
+        assertHandheldAlphabetTracksViewport(list = true)
     }
 
     @Test

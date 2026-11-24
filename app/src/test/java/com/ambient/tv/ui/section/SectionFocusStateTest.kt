@@ -20,8 +20,11 @@ import com.ambient.tv.wol.WakeMachines
 import java.lang.reflect.Proxy
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.ContinuationInterceptor
+import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
@@ -54,6 +57,60 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = Application::class)
 class SectionFocusStateTest {
+    @Test fun alphabetScrubbingAndRepeatedJumpsPublishImmediatelyWithoutRebuildingTheLibrary() = runTest {
+        withFixture(SectionPage.LIBRARY) { fixture ->
+            val initial = fixture.model.uiState.value as SectionUiState.Loaded
+            val rebuilds = fixture.rebuildCount.get()
+
+            for ((index, letter) in listOf('A', 'M', 'M', 'Z', 'B', null).withIndex()) {
+                fixture.model.selectLetter(letter)
+                val selected = fixture.model.uiState.value as SectionUiState.Loaded
+                assertEquals("The scroll target must change before another frame", letter, selected.selectedLetter)
+                val revision = initial.alphabetJumpRevision + index + 1
+                assertEquals("Even the same letter must create a fresh jump", revision, selected.alphabetJumpRevision)
+                assertEquals(initial.copy(selectedLetter = letter, alphabetJumpRevision = revision), selected)
+                assertSame(initial.items, selected.items)
+                assertSame(initial.recommendationRows, selected.recommendationRows)
+                assertSame(initial.collections, selected.collections)
+                assertSame(initial.filterFacets, selected.filterFacets)
+            }
+            runCurrent()
+            assertEquals("Scrubbing must not start sorting or grouping work", rebuilds, fixture.rebuildCount.get())
+        }
+    }
+
+    @Test fun aCompletedRebuildKeepsTheLatestAlphabetTargetIncludingClearingIt() = runTest {
+        withFixture(SectionPage.LIBRARY) { fixture ->
+            for ((columns, letter) in listOf(12 to 'Y', 6 to 'B', 10 to null)) {
+                fixture.model.selectLetter('B')
+                val pendingRevision = (fixture.model.uiState.value as SectionUiState.Loaded).alphabetJumpRevision
+                val rebuild = fixture.pauseNextRebuild()
+                try {
+                    fixture.model.setGridColumns(columns)
+                    rebuild.awaitStarted()
+                    val publication = fixture.mainDispatcher.observeNextDispatch()
+                    rebuild.release()
+                    // Keep this test turn running while the worker finishes. Its Loaded
+                    // snapshot contains B, and its main-thread publication is now queued.
+                    assertTrue("The worker must finish before the next gesture",
+                        publication.await(10, TimeUnit.SECONDS))
+                    fixture.model.selectLetter(letter)
+                    runCurrent()
+
+                    val published = fixture.model.uiState.value as SectionUiState.Loaded
+                    assertEquals("The pending rebuild must still publish", columns, published.gridColumns)
+                    assertEquals(letter, published.selectedLetter)
+                    assertEquals(pendingRevision + 1, published.alphabetJumpRevision)
+                    val cached = SectionLoadedSnapshots.get(fixture.focusStateKey(LIBRARY_STATE_KEY))
+                    assertEquals(letter, cached?.selectedLetter)
+                    assertEquals(pendingRevision + 1, cached?.alphabetJumpRevision)
+                } finally {
+                    rebuild.release()
+                }
+            }
+        }
+    }
+
     @Test fun libraryDpadBurstDoesNotPublishScreenStateAndNavigationCapturesTheLatestItem() = runTest {
         withFixture(SectionPage.LIBRARY) { fixture ->
             val model = fixture.model
@@ -200,10 +257,12 @@ class SectionFocusStateTest {
     }
 
     private suspend fun TestScope.withFixture(page: SectionPage, block: suspend TestScope.(Fixture) -> Unit) {
-        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val mainDispatcher = ObservedMainDispatcher(StandardTestDispatcher(testScheduler))
+        Dispatchers.setMain(mainDispatcher)
+        SectionLoadedSnapshots.clear()
         var fixture: Fixture? = null
         try {
-            fixture = Fixture(page)
+            fixture = Fixture(page, mainDispatcher)
             fixture.model.awaitLoaded { it.page == page }
             block(fixture)
         } finally {
@@ -220,13 +279,13 @@ class SectionFocusStateTest {
         withTimeout(10_000) { uiState.filterIsInstance<SectionUiState.Loaded>().first(predicate) }
     }
 
-    private class Fixture(page: SectionPage) : AutoCloseable {
+    private class Fixture(page: SectionPage, val mainDispatcher: ObservedMainDispatcher) : AutoCloseable {
         val preferences = AppPreferences(memoryPreferences()).apply {
             setSectionPage(SECTION_KEY, page.name)
         }
         val items = List(40) { index ->
             MediaItem(
-                ratingKey = "movie-$index", title = "Film ${index.toString().padStart(2, '0')}",
+                ratingKey = "movie-$index", title = "${'A' + index % 26} Film ${index.toString().padStart(2, '0')}",
                 type = "movie", index = null, thumbUrl = null, artUrl = null,
                 year = 1980 + index, summary = null, tagline = null, durationMs = null,
                 viewOffsetMs = null, parentTitle = null, parentRatingKey = null,
@@ -238,6 +297,7 @@ class SectionFocusStateTest {
         private val library = LibrarySection(SECTION_KEY, "Films", "movie", null, null)
         private val nextRebuildGate = AtomicReference<RebuildGate?>()
         private val rebuildGates = mutableListOf<RebuildGate>()
+        val rebuildCount = AtomicInteger()
         private val repository = Proxy.newProxyInstance(
             MediaRepository::class.java.classLoader, arrayOf(MediaRepository::class.java),
         ) { _, method, args ->
@@ -245,6 +305,7 @@ class SectionFocusStateTest {
                 "cachedSectionItems" -> items
                 "cachedProviderOnDeck", "cachedOnDeck" -> emptyList<MediaItem>()
                 "cachedLibrarySection" -> {
+                    rebuildCount.incrementAndGet()
                     nextRebuildGate.getAndSet(null)?.awaitRelease()
                     library
                 }
@@ -278,6 +339,17 @@ class SectionFocusStateTest {
                 .apply { isAccessible = true }.get(prefetcher) as CoroutineScope
             scope.cancel()
             (scope.coroutineContext[ContinuationInterceptor] as? ExecutorCoroutineDispatcher)?.close()
+        }
+    }
+
+    private class ObservedMainDispatcher(private val delegate: CoroutineDispatcher) : CoroutineDispatcher() {
+        private val nextDispatch = AtomicReference<CountDownLatch?>()
+
+        fun observeNextDispatch(): CountDownLatch = CountDownLatch(1).also { nextDispatch.set(it) }
+
+        override fun dispatch(context: CoroutineContext, block: Runnable) {
+            delegate.dispatch(context, block)
+            nextDispatch.getAndSet(null)?.countDown()
         }
     }
 

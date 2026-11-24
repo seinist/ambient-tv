@@ -60,6 +60,7 @@ sealed interface SectionUiState {
         val gridColumns: Int = 8,
         val listRows: Int = 7,
         val playbackReturnRevision: Long = 0L,
+        val alphabetJumpRevision: Long = 0L,
     ) : SectionUiState {
         val libraryFilters: LibraryFilters
             get() = LibraryFilters(filter, qualityFilter, genreFilter, decadeFilter, contentRatingFilter)
@@ -96,6 +97,7 @@ class SectionViewModel @Inject constructor(
     private var onDeck: List<MediaItem> = mediaRepository.cachedProviderOnDeck(sectionKey).orEmpty()
     private var page = preferences.sectionPage(sectionKey)?.let { runCatching { SectionPage.valueOf(it) }.getOrNull() } ?: SectionPage.RECOMMENDATIONS
     private var selectedLetter: Char? = null
+    private var alphabetJumpRevision = 0L
     // A title may occur in several recommendation rows. The item key alone cannot identify
     // which of those rows owns the current D-pad focus.
     private var focusedRecommendationRowId: String? = null
@@ -133,7 +135,7 @@ class SectionViewModel @Inject constructor(
             // the rebuild then replaces it with the current data.
             SectionLoadedSnapshots.get(snapshotKey())?.let { snapshot ->
                 _uiState.value = snapshot.withLatestBrowseFocus(focusBuffer.get(focusStateKey()))
-                    .copy(playbackReturnRevision = playbackReturnRevision)
+                    .copy(alphabetJumpRevision = alphabetJumpRevision, playbackReturnRevision = playbackReturnRevision)
             }
             rebuild()
         }
@@ -443,8 +445,17 @@ class SectionViewModel @Inject constructor(
     }
 
     fun selectLetter(letter: Char?) {
+        if (!scopeCurrent()) {
+            load(force = false)
+            return
+        }
         selectedLetter = letter
-        rebuild()
+        alphabetJumpRevision++
+        val current = _uiState.value as? SectionUiState.Loaded ?: return
+        // Touch scrubbing changes only the scroll target. Keep the existing item lists and
+        // facets instead of sorting and grouping the entire library for every letter.
+        // A repeated letter is still a new jump after the user manually scrolled elsewhere.
+        _uiState.value = current.copy(selectedLetter = letter, alphabetJumpRevision = alphabetJumpRevision)
     }
 
     fun onItemFocused(item: MediaItem) {
@@ -547,6 +558,7 @@ class SectionViewModel @Inject constructor(
             gridColumns = preferences.layoutGridColumns(stateKey(), view.name),
             listRows = preferences.layoutListRows(stateKey(), view.name),
             playbackReturnRevision = playbackReturnRevision,
+            alphabetJumpRevision = alphabetJumpRevision,
         )
     }
 
@@ -570,11 +582,13 @@ class SectionViewModel @Inject constructor(
             val loaded = buildLoaded()
             withContext(Dispatchers.Main.immediate) {
                 if (version == rebuildVersion && rebuildScope == snapshotScope && scopeCurrent(rebuildScope)) {
-                    SectionLoadedSnapshots.put(snapshotKey(), loaded)
-                    // Sorting may finish after another key press. Publish the latest target,
-                    // including a not-yet-persisted one, instead of an older worker snapshot.
-                    _uiState.value = loaded.withLatestBrowseFocus(focusBuffer.get(focusStateKey()))
-                        .copy(playbackReturnRevision = playbackReturnRevision)
+                    // Sorting may finish after a key press or alphabet gesture. Publish the latest
+                    // target, including a not-yet-persisted one, instead of an older worker snapshot.
+                    val latest = loaded.withLatestBrowseFocus(focusBuffer.get(focusStateKey()))
+                        .copy(selectedLetter = selectedLetter, alphabetJumpRevision = alphabetJumpRevision,
+                            playbackReturnRevision = playbackReturnRevision)
+                    SectionLoadedSnapshots.put(snapshotKey(), latest)
+                    _uiState.value = latest
                 }
             }
         }
