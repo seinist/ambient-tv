@@ -11,6 +11,7 @@ import com.ambient.tv.data.files.FileAccess
 import com.ambient.tv.data.files.FileEntry
 import com.ambient.tv.data.files.FileSource
 import com.ambient.tv.data.files.FileStore
+import com.ambient.tv.games.GameSystems
 import com.ambient.tv.games.library.GameLibraryFolder
 import com.ambient.tv.games.library.GameLibraryQuery
 import com.ambient.tv.games.library.GameLibraryRepository
@@ -68,6 +69,8 @@ data class GameLibraryUiState(
     val savingNetworkSource: Boolean = false,
     val testingNetworkSource: Boolean = false,
     val networkSaveRevision: Long = 0,
+    /** Names in each system's catalog, for the name database page. */
+    val nameCatalogs: Map<String, Int> = emptyMap(),
 )
 
 @HiltViewModel
@@ -322,27 +325,48 @@ class GameLibraryViewModel @Inject constructor(
         }
     }
 
+    fun refreshNameCatalogs() {
+        viewModelScope.launch {
+            try { mutable.update { it.copy(nameCatalogs = library.datCatalogSizes()) } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { showError(error, R.string.game_error_library) }
+        }
+    }
+
     /**
-     * RetroArch's "Update Databases": loads libretro's names and checksums for the systems in
-     * the library on request, then rescans so games get their exact names (and with them Libretro
-     * box art and better matches from the other providers).
+     * RetroArch's "Update Databases": loads libretro's names and checksums on request, for one
+     * [systemId] or for all systems in the library, then rescans the folders they change so games
+     * get their exact names (and with them Libretro box art and better matches elsewhere).
      */
-    fun loadNameDatabases() {
+    fun loadNameDatabases(systemId: String? = null) {
         if (scan?.isActive == true) return
         scan = viewModelScope.launch {
             mutable.update { it.copy(busy = true, scanning = true, error = null,
                 message = context.getString(R.string.game_name_databases_progress, 0, 0)) }
             try {
-                val result = metadata.loadNameDatabases { done, total ->
+                val result = metadata.loadNameDatabases(systemId?.let(::listOf)) { done, total ->
                     mutable.update { it.copy(message = context.getString(R.string.game_name_databases_progress, done, total)) }
                 }
+                mutable.update { it.copy(nameCatalogs = library.datCatalogSizes()) }
                 if (result.systems == 0) {
                     mutable.update { it.copy(message = context.getString(R.string.game_name_databases_none)) }
                     return@launch
                 }
-                mutable.update { it.copy(message = context.getString(R.string.game_name_databases_loaded,
-                    result.names, result.systems)) }
-                scanEveryFolder()
+                if (systemId == null) {
+                    mutable.update { it.copy(message = context.getString(R.string.game_name_databases_loaded,
+                        result.names, result.systems)) }
+                    scanEveryFolder()
+                    return@launch
+                }
+                val affected = library.foldersWithSystem(systemId)
+                val name = GameSystems.byId(systemId)?.name ?: systemId
+                mutable.update { it.copy(message = context.getString(if (affected.isEmpty())
+                    R.string.game_name_databases_later else R.string.game_name_databases_loaded_one, result.names, name)) }
+                for (folder in library.folders()) {
+                    if (folder.id !in affected || folder.id in mutable.value.removingFolders) continue
+                    if (library.folders().none { it.id == folder.id }) continue
+                    scanAndEnrich(folder, scanFiles = true)
+                }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) {
                 mutable.update { it.copy(message = null) }

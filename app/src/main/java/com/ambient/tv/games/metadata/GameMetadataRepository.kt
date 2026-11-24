@@ -275,11 +275,14 @@ class GameMetadataRepository @Inject constructor(
 
     /**
      * Like RetroArch's "Update Databases", on request only: loads libretro-database's names for
-     * the systems in the library. A rescan then names games by checksum ([GameLibraryRepository.scan]).
+     * [only] these systems, or for all systems in the library. A rescan then names games by
+     * checksum ([GameLibraryRepository.scan]).
      */
-    suspend fun loadNameDatabases(onProgress: (Int, Int) -> Unit = { _, _ -> }): NameDatabaseResult =
+    suspend fun loadNameDatabases(
+        only: Collection<String>? = null, onProgress: (Int, Int) -> Unit = { _, _ -> },
+    ): NameDatabaseResult =
         withContext(Dispatchers.IO) {
-            val systems = library.indexedSystems().filter { GameNameDatabases.files(it).isNotEmpty() }.sorted()
+            val systems = (only ?: library.indexedSystems()).filter { GameNameDatabases.files(it).isNotEmpty() }.distinct().sorted()
             val staging = File(context.cacheDir, "game-name-databases")
             staging.deleteRecursively()
             staging.mkdirs()
