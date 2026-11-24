@@ -224,7 +224,15 @@ class RommClient @Inject constructor(
 
     private suspend fun assets(account: RommAccount, kind: String, romId: Long): List<RommAsset> = io {
         val url = api(account.baseUrl, kind).newBuilder().addQueryParameter("rom_id", romId.toString()).build()
-        items(json.parseToJsonElement(execute(http, get(url), account.auth))).mapNotNull {
+        val root = try {
+            json.parseToJsonElement(execute(http, get(url), account.auth))
+        } catch (error: RommHttpException) {
+            if (error is RommAuthException || (error.code != 404 && error.code != 405)) throw error
+            // Older RomM versions list them only in the game's details.
+            val detail = json.parseToJsonElement(execute(http, get(api(account.baseUrl, "roms/$romId")), account.auth))
+            (detail as? JsonObject)?.get("user_$kind") ?: JsonArray(emptyList())
+        }
+        items(root).mapNotNull {
             runCatching { json.decodeFromJsonElement(RommAsset.serializer(), it) }.getOrNull()
         }.filter { it.romId == 0L || it.romId == romId }
     }

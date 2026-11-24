@@ -81,6 +81,8 @@ class RommGameData @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val locks = ConcurrentHashMap<String, Mutex>()
     private val uploads = ConcurrentHashMap<String, Job>()
+    /** Server key → when it last failed to answer; the next steps of the same start skip it. */
+    private val unreachable = ConcurrentHashMap<String, Long>()
     private val sync = MutableStateFlow<Map<String, RommSyncState>>(emptyMap())
     /** Per game (save key): the state of its server mirror, for the game's Info panel. */
     val syncStates: StateFlow<Map<String, RommSyncState>> = sync.asStateFlow()
@@ -92,18 +94,25 @@ class RommGameData @Inject constructor(
             ?: throw FileNotFoundException("The RomM server of this game is not signed in")
         // Fresh details while the server answers; the device's catalog copy otherwise (cached game).
         val rom = try {
-            client.rom(account, romId)
+            client.rom(account, romId).also { unreachable.remove(serverKey) }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: RommAuthException) {
             throw error
         } catch (error: Exception) {
+            if (error !is RommHttpException) unreachable[serverKey] = System.currentTimeMillis()
             library.rom(fileId) ?: throw error
         }
         val system = RommPlatforms.system(rom) ?: library.platform(rom.platformId)?.let(RommPlatforms::system)
             ?: throw UnknownGameException(rom.fsName)
         val fileName = rom.fsName.ifBlank { "game" }
-        val name = if (rom.zipped && GameSystems.extension(fileName) != "zip") "$fileName.zip" else fileName
+        // A game folder with one file is served as that file: its name carries the extension.
+        val single = rom.files.singleOrNull()?.fileName?.let(RommFiles::safeName)
+        val name = when {
+            rom.zipped -> if (GameSystems.extension(fileName) != "zip") "$fileName.zip" else fileName
+            single != null -> single
+            else -> fileName
+        }
         // The list and the detail answer agree on these, so a cached game opens without the server.
         val stamp = "${rom.id}:${rom.fsSizeBytes}:${rom.updatedAt.orEmpty()}:${rom.zipped}"
         val file = preparer.materialize(fileId, name, stamp, system.id, rom.fsSizeBytes, onProgress) { target, maxBytes, progress ->
@@ -132,6 +141,7 @@ class RommGameData @Inject constructor(
         val ref = game.remote ?: return true
         try {
             val account = accounts.account()?.takeIf { it.serverKey == ref.serverKey } ?: return false
+            if (recentlyUnreachable(ref.serverKey)) return false
             return lock(game).withLock {
                 try {
                     syncFirmware(account, game)
@@ -154,7 +164,13 @@ class RommGameData @Inject constructor(
      */
     suspend fun beforeStart(game: PreparedGame, coreId: String, coreStamp: String): Boolean {
         val ref = game.remote ?: return true
-        val account = accounts.account()?.takeIf { it.serverKey == ref.serverKey } ?: return false
+        val account = accounts.account()?.takeIf { it.serverKey == ref.serverKey }
+        if (account == null || recentlyUnreachable(ref.serverKey)) {
+            // Played from the last copy; the upload waits for the server.
+            setState(game, RommSyncState.PENDING)
+            if (account != null) scheduleUpload(game, coreId, delayMs = RETRY_DELAYS_MS.first())
+            return false
+        }
         setState(game, RommSyncState.CHECKING)
         val reached = lock(game).withLock {
             try {
@@ -194,6 +210,7 @@ class RommGameData @Inject constructor(
                         pushSram(account, game, coreId)
                         pushStates(account, game)
                     }
+                    unreachable.remove(ref.serverKey)
                     setState(game, RommSyncState.SYNCED)
                     true
                 } catch (cancelled: CancellationException) {
@@ -378,6 +395,9 @@ class RommGameData @Inject constructor(
 
     private fun lock(game: PreparedGame) = locks.getOrPut(game.saveKey) { Mutex() }
 
+    private fun recentlyUnreachable(serverKey: String): Boolean =
+        unreachable[serverKey]?.let { System.currentTimeMillis() - it < UNREACHABLE_SKIP_MS } == true
+
     private fun setState(game: PreparedGame, state: RommSyncState) = sync.update { it + (game.saveKey to state) }
 
     private fun mirrorFile(game: PreparedGame): File {
@@ -407,6 +427,8 @@ class RommGameData @Inject constructor(
         const val SOURCE_NAME = "RomM"
         private const val FIRMWARE_MANIFEST = ".romm-firmware.json"
         private const val UPLOAD_DELAY_MS = 1_500L
+        /** One failed answer covers the rest of a game start, not later attempts. */
+        private const val UNREACHABLE_SKIP_MS = 60_000L
         private val RETRY_DELAYS_MS = longArrayOf(30_000L, 120_000L, 600_000L)
         private const val MAX_SRAM_BYTES = 32L * 1024 * 1024
         private const val MAX_SCREENSHOT_BYTES = 8L * 1024 * 1024

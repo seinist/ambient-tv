@@ -19,6 +19,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import okhttp3.HttpUrl
@@ -54,21 +55,25 @@ class RommSettingsViewModel @Inject constructor(
     private var pairingJob: Job? = null
 
     init {
-        viewModelScope.launch { accounts.changes.collect { load() } }
-        viewModelScope.launch { library.state.collect { load() } }
+        viewModelScope.launch {
+            kotlinx.coroutines.flow.combine(accounts.changes, library.state) { _, _ -> Unit }.collectLatest { load() }
+        }
     }
 
-    private fun load() {
+    private suspend fun load() {
         val account = accounts.configuredAccount()
-        val catalog = if (accounts.account() != null) library.catalog() else null
+        val (platforms, games) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val catalog = if (accounts.account() != null) library.catalog() else null
+            library.menuPlatforms().size to (catalog?.roms?.size ?: 0)
+        }
         mutable.update { it.copy(
             enabled = accounts.enabled,
             url = it.url.ifBlank { accounts.serverUrl },
             signedIn = account != null,
             username = accounts.username,
             serverVersion = accounts.serverVersion,
-            platformCount = library.menuPlatforms().size,
-            gameCount = catalog?.roms?.size ?: 0,
+            platformCount = platforms,
+            gameCount = games,
         ) }
     }
 

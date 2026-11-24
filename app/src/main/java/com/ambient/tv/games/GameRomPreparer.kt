@@ -331,9 +331,13 @@ class GameRomPreparer @Inject constructor(
     ): File = withContext(Dispatchers.IO) {
         val folder = File(cache, sha1(fileId))
         val marker = File(folder, ".complete")
-        val main = File(folder, safeName(name))
-        val cached = marker.isFile && runCatching { marker.readText() }.getOrNull() == stamp && main.isFile && main.length() > 0
-        if (!cached) {
+        // The marker records the file's name too: offline, the server's details may name it differently.
+        val recorded = runCatching { marker.readLines() }.getOrNull()
+            ?.takeIf { it.size == 2 && it[0] == stamp }
+            ?.let { lines -> safeRelativePath(lines[1])?.takeIf { '/' !in it }?.let { File(folder, it) } }
+            ?.takeIf { it.isFile && it.length() > 0 }
+        val main = recorded ?: File(folder, safeName(name))
+        if (recorded == null) {
             folder.deleteRecursively()
             folder.mkdirs()
             if (expectedBytes > CACHE_LIMIT_BYTES) throw IOException("Game exceeds the 4 GiB cache limit")
@@ -345,7 +349,7 @@ class GameRomPreparer @Inject constructor(
                 fetch(partial, budget, onProgress)
                 if (!partial.renameTo(main)) throw IOException("Cannot store ${main.name}")
             } finally { partial.delete() }
-            marker.writeText(stamp)
+            marker.writeText("$stamp\n${main.name}")
         }
         folder.setLastModified(System.currentTimeMillis())
         trim(keep = folder)
