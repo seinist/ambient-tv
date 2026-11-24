@@ -87,7 +87,7 @@
     {
       "core": "mupen64plus_next_gles3",
       "repo": "https://github.com/libretro/mupen64plus-libretro-nx",
-      "commit": "15bada85906593376e8fd697f1b0b3af3a20f512",
+      "commit": "8623e490a8773fcb6c10f424cebbdb0ac44e88ea",
       "build": "ndk",
       "jni": "libretro",
       "env": "GLES3=1"
@@ -173,7 +173,7 @@
     {
       "core": "parallel_n64",
       "repo": "https://github.com/libretro/parallel-n64",
-      "commit": "e854c84a175388bfb4643ff654522be8c941baf1",
+      "commit": "f22579881cffbb0e771f24f8d24bdb9b50ef72ee",
       "build": "ndk",
       "jni": "."
     },
