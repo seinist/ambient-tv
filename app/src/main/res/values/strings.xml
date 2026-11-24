@@ -2450,6 +2450,8 @@
     <string name="game_library_manage">Game library</string>
     <string name="game_library_count">%1$d games</string>
     <string name="game_library_all">All games</string>
+    <string name="game_library_favorites">Favorites</string>
+    <string name="game_library_recent">Recently played</string>
     <string name="game_library_empty">Add a folder containing games.</string>
     <string name="game_library_add_folder">Add game folder</string>
     <string name="game_library_no_results">No games in this category.</string>

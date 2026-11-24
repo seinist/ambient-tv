@@ -20,9 +20,9 @@ internal fun rommMenuDestinations(state: SidebarUiState): List<MenuDestination> 
     if (!state.rommEnabled) return emptyList()
     return listOf(
         MenuDestination("romm:all", stringResource(R.string.game_library_all), Icons.Filled.Apps, Destinations.ROMM),
-        MenuDestination("romm:favorites", stringResource(R.string.radio_favorites), Icons.Filled.Favorite,
+        MenuDestination("romm:favorites", stringResource(R.string.game_library_favorites), Icons.Filled.Favorite,
             Destinations.rommSection("favorites")),
-        MenuDestination("romm:recent", stringResource(R.string.radio_recent), Icons.Filled.History,
+        MenuDestination("romm:recent", stringResource(R.string.game_library_recent), Icons.Filled.History,
             Destinations.rommSection("recent")),
     ) + state.rommPlatforms.map { platform ->
         MenuDestination("romm:${platform.section}", platform.title, gameSystemVector(platform.systemId),

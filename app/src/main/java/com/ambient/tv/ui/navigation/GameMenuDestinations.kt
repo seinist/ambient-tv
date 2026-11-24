@@ -17,9 +17,9 @@ internal fun gamesMenuDestinations(state: SidebarUiState): List<MenuDestination>
     return listOf(
         MenuDestination("games:all", stringResource(R.string.game_library_all),
             Icons.Filled.Apps, Destinations.GAME_LIBRARY),
-        MenuDestination("games:favorites", stringResource(R.string.radio_favorites),
+        MenuDestination("games:favorites", stringResource(R.string.game_library_favorites),
             Icons.Filled.Favorite, Destinations.gameLibrarySection("favorites")),
-        MenuDestination("games:recent", stringResource(R.string.radio_recent),
+        MenuDestination("games:recent", stringResource(R.string.game_library_recent),
             Icons.Filled.History, Destinations.gameLibrarySection("recent")),
     ) + GameSystems.sortIdsByName(state.gameSystemIds).map { id ->
         val system = requireNotNull(GameSystems.byId(id))

@@ -293,7 +293,7 @@ Ambient TV entsteht aus Leidenschaft – für alle, die mehr aus ihrem Medienset
 - Keine Garantie für jede Codec-/Filter-Kombination auf jedem Gerät; Bildfilter brauchen eine GPU-Videoausgabe
 - Dateien: kein NFS-Kerberos, kein NFSv4.1+, keine NetBIOS-Suche, kein FTP; WebDAV mit Basic- oder Digest-Anmeldung
 - DLNA-Renderer: kein Google Cast, keine DRM-Inhalte, keine Bilder
-- Spiele: Die Cores für PlayStation 2, Wii U und Ymir (Saturn) sind experimentell; neuere Cores brauchen noch Tests auf weiteren Geräten. ROMs, BIOS-Dateien und Spieledatenbanken sind nicht enthalten
+- Spiele: Die Cores für PlayStation 2, Wii U und Ymir (Saturn) sind experimentell; neuere Cores brauchen noch Tests auf weiteren Geräten. GameCube, Wii, Wii U, 3DS und PlayStation 2 brauchen ein 64-Bit-Gerät, 32-Bit-TVs (armeabi-v7a) spielen also 26 der 31 Systeme. Die Cores für DS, 3DS, GameCube, Wii, Wii U, PSP, PlayStation 2, Dreamcast, Saturn, Atari 5200/7800 und die Commodore-Rechner kommen vom libretro-Buildserver, nicht aus dem signierten eigenen Build. ROMs, BIOS-Dateien und Spieledatenbanken sind nicht enthalten
 
 ## Dokumentation
 

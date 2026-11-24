@@ -94,6 +94,23 @@ class GamesTest {
             listOf("ppsspp", "vice_x64sc", "vice_x128", "vice_xvic", "yabasanshiro", "dolphin", "cemu", "melondsds")))
     }
 
+    /** Cores the libretro build server does not publish for every Android ABI (checked Nov 2026). */
+    @Test fun coresWithoutABuildForEveryAbiSayWhichTheyHave() {
+        fun abis(id: String) = GameSystems.cores.first { it.id == id }.supportedAbis
+        assertEquals(setOf("arm64-v8a"), abis("armsx2"))
+        assertEquals(setOf("arm64-v8a"), abis("panda3ds"))
+        assertEquals(setOf("arm64-v8a", "x86_64"), abis("ymir"))
+        assertEquals(setOf("arm64-v8a", "x86_64"), abis("dolphin"))
+        assertEquals(setOf("arm64-v8a", "x86_64"), abis("cemu"))
+        assertEquals(setOf("arm64-v8a", "x86_64"), abis("citra2018"))
+        assertEquals(setOf("arm64-v8a", "armeabi-v7a", "x86_64"), abis("melondsds"))
+        // Every system keeps at least one core on arm64, the ABI of current TV boxes.
+        GameSystems.all.forEach { system ->
+            assertTrue(system.id, (listOf(system.core) + system.alternatives).any {
+                it.supportedAbis.isEmpty() || "arm64-v8a" in it.supportedAbis })
+        }
+    }
+
     @Test fun originalDiscSignaturesWinOverFolderNames() {
         fun iso(name: String, wii: Boolean): File {
             val buf = ByteBuffer.allocate(0x40).order(ByteOrder.BIG_ENDIAN)

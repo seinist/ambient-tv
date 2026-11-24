@@ -2359,6 +2359,8 @@
     <string name="radio_favorites">Favorites</string>
     <string name="radio_favorite">Favorite</string>
     <string name="radio_recent">Recently played</string>
+    <string name="game_library_favorites">Favorites</string>
+    <string name="game_library_recent">Recently played</string>
     <string name="radio_add_favorite">Add to favorites</string>
     <string name="radio_remove_favorite">Remove from favorites</string>
     <string name="radio_genres">Genres</string>
