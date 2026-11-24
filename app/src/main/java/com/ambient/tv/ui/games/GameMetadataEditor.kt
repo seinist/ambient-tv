@@ -35,6 +35,8 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.games.library.LibraryGame
+import com.ambient.tv.games.library.gameDisplayTitle
+import com.ambient.tv.games.library.gameTitleRegionLabel
 import com.ambient.tv.games.metadata.GameArtworkKind
 import com.ambient.tv.games.metadata.GameMetadata
 import com.ambient.tv.games.metadata.GameMetadataCandidate
@@ -183,17 +185,23 @@ internal fun GameMetadataEditor(
     }
 }
 
-/** A newly verified DAT name must also reach the editor's explicit-search field. */
+/** Suggest the current verified/provider name without its regional display annotations. */
 internal fun gameMetadataSearchTitle(
     game: LibraryGame,
     metadata: GameMetadata,
     provider: String = metadata.provider.ifBlank { com.ambient.tv.games.metadata.GameMetadataProviderIds.LIBRETRO },
-): String = com.ambient.tv.games.metadata.gameMetadataQuery(game, metadata, "", "", null, provider = provider).title
+): String = gameDisplayTitle(
+    com.ambient.tv.games.metadata.gameMetadataQuery(game, metadata, "", "", null, provider = provider).title)
 
 /** Provider changes may replace a suggested query, but never text the user entered. */
 internal fun gameMetadataProviderSearchText(
     game: LibraryGame, metadata: GameMetadata, provider: String, query: String, edited: Boolean,
 ): String = if (edited) query else gameMetadataSearchTitle(game, metadata, provider)
+
+/** DAT editions retain distinct region labels even when their primary titles look identical. */
+internal fun gameMetadataChoiceRegion(metadata: GameMetadata): String? =
+    gameTitleRegionLabel(metadata.title) ?: gameTitleRegionLabel(metadata.canonicalTitle)
+        ?: metadata.region.takeIf(String::isNotBlank)
 
 @Composable
 private fun GameMetadataMatchChoice(
@@ -226,6 +234,7 @@ internal fun GameMetadataMatchRow(
         ?: match.metadata.provider
     val source = imageKind?.let { match.metadata.artworkSources[it.key] }
         ?: match.metadata.sourceUrl
+    val displayTitle = gameDisplayTitle(match.metadata.title)
     val sourceHost = remember(source) {
         source?.takeIf { it.startsWith("https://") }?.let {
             runCatching { java.net.URI(it).host }.getOrNull()
@@ -236,14 +245,14 @@ internal fun GameMetadataMatchRow(
         modifier = modifier.fillMaxWidth().activateOnTvKey(enabled, onClick)) {
         Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            ArtworkImage(preview?.let(::File), match.metadata.title,
+            ArtworkImage(preview?.let(::File), displayTitle,
                 modifier = Modifier.width(if (imageKind == GameArtworkKind.BACKDROP) 120.dp else 70.dp)
                     .aspectRatio(if (imageKind == GameArtworkKind.BACKDROP) 16f / 9f else 2f / 3f),
                 contentScale = ContentScale.Fit)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(match.metadata.title, style = MaterialTheme.typography.titleMedium)
+                Text(displayTitle, style = MaterialTheme.typography.titleMedium)
                 Text(listOfNotNull(match.metadata.year?.toString(),
-                    match.metadata.region.takeIf(String::isNotBlank),
+                    gameMetadataChoiceRegion(match.metadata),
                     gameMetadataProviderName(provider)).joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)

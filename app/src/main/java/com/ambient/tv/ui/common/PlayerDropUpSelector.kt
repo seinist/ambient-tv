@@ -145,10 +145,12 @@ fun PlayerDropUpSelector(
     icon: ImageVector? = null,
     /** Value-only, wrapping trigger for fixed-width footers (no ellipsis or moving label). */
     compactFooter: Boolean = false,
+    /** Stable identity for dynamic options whose translated labels may repeat. */
+    selectorKey: String? = null,
     onSelected: (String) -> Unit,
 ) {
     PlayerDropUpSelectorImpl(label, value, options, emptyList(), selectedKey, modifier, dropUp, onSelected,
-        disabledKeys, selectedKeys, optionSwatches, closeOnSelection, icon, compactFooter)
+        disabledKeys, selectedKeys, optionSwatches, closeOnSelection, icon, compactFooter, selectorKey)
 }
 
 /** Same selector with non-interactive section headings for long technical option lists. */
@@ -161,6 +163,7 @@ fun GroupedPlayerDropUpSelector(
     modifier: Modifier = Modifier,
     dropUp: Boolean = true,
     icon: ImageVector? = null,
+    selectorKey: String? = null,
     onSelected: (String) -> Unit,
 ) {
     PlayerDropUpSelectorImpl(
@@ -173,6 +176,7 @@ fun GroupedPlayerDropUpSelector(
         dropUp = dropUp,
         onSelected = onSelected,
         icon = icon,
+        selectorKey = selectorKey,
     )
 }
 
@@ -193,11 +197,12 @@ private fun PlayerDropUpSelectorImpl(
     closeOnSelection: Boolean? = null,
     icon: ImageVector? = null,
     compactFooter: Boolean = false,
+    selectorKey: String? = null,
 ) {
     val uiSounds = com.ambient.tv.ui.sound.LocalUiSoundPlayer.current
     val panelNavigation = LocalPlayerPanelNavigation.current
     val videoState = LocalVideoPanelState.current
-    val selectorId = "${videoState?.section}:$label"
+    val selectorId = "${videoState?.section}:${selectorKey ?: label}"
     var localExpanded by remember { mutableStateOf(false) }
     val expanded = videoState?.let { it.expandedSelector == selectorId } ?: localExpanded
     fun setExpanded(value: Boolean) {

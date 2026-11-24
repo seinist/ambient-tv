@@ -48,6 +48,22 @@ internal fun gameMetadataFingerprint(game: LibraryGame, query: GameMetadataQuery
 internal fun gameMetadataDigest(value: String): String = MessageDigest.getInstance("SHA-256")
     .digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 
+/** Old primary-only Libretro misses must not hide images now available from its mirror. */
+internal fun gameMetadataLookupFingerprint(provider: String, fingerprint: String): String =
+    if (provider == GameMetadataProviderIds.LIBRETRO) gameMetadataDigest("libretro-thumbnails:v2:$fingerprint")
+    else fingerprint
+
+/** A cached success for a query is usable only while its saved identity still answers it. */
+internal fun gameMetadataMatchesQueryIdentity(metadata: GameMetadata, query: GameMetadataQuery): Boolean =
+    query.canonicalTitle.isNullOrBlank() || metadata.canonicalTitle == query.canonicalTitle
+
+/** An image for a guessed filename must never overrule the ROM's checksum-verified name. */
+internal fun automaticLibretroCandidates(
+    candidates: List<GameMetadataCandidate>, verifiedTitle: String?, matchLocked: Boolean,
+): List<GameMetadataCandidate> =
+    if (!matchLocked && !verifiedTitle.isNullOrBlank()) candidates.filter { it.catalogMatch }
+    else candidates
+
 /** A catalog-only Libretro choice can acquire a proven image namespace on a later refresh. */
 internal fun sameGameMetadataMatch(previous: GameMetadata, incoming: GameMetadata): Boolean =
     previous.provider == incoming.provider &&

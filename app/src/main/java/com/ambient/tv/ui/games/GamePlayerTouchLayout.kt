@@ -7,11 +7,13 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.FastRewind
@@ -57,9 +59,18 @@ internal fun GamePlayerTouchLayout(
     BoxWithConstraints(Modifier.fillMaxSize().then(if (handheld) Modifier.safeDrawingPadding() else Modifier)) {
         val docked = handheld && touchEnabled && maxHeight > maxWidth
         val deckHeight = if (docked) gameTouchDeckHeight(touchMode, maxWidth.value, touchStyle, presentation).dp.coerceAtMost(maxHeight) else 0.dp
-        val viewportHeight = (maxHeight - deckHeight).coerceAtLeast(1.dp)
+        // Pad utilities are above the picture in landscape and below it in portrait.
+        // Reserve the same space while paused/hidden so the native surface never jumps.
+        val toolbarHeight = when {
+            !handheld -> 0.dp
+            touchEnabled && !docked -> gameTouchUtilityToolbarHeight(
+                touchMode, maxWidth.value, maxHeight.value, touchStyle, presentation,
+            ).dp
+            else -> GAME_TOUCH_TOOLBAR_MIN_HEIGHT.dp
+        }
+        val viewportHeight = (maxHeight - deckHeight - toolbarHeight).coerceAtLeast(1.dp)
         surface(
-            Modifier.align(Alignment.TopCenter).fillMaxWidth().height(viewportHeight)
+            Modifier.align(Alignment.TopCenter).offset(y = toolbarHeight).fillMaxWidth().height(viewportHeight)
                 .testTag("game-player-surface")
                 // With a gamepad shown, only the dedicated menu button opens the OSD.
                 // Pointer systems continue to receive untouched native DS/3DS/Wii input.
@@ -85,7 +96,7 @@ internal fun GamePlayerTouchLayout(
             )
         }
         if (handheld && touchEnabled && hiddenForGamepad && !menuVisible) {
-            Box(Modifier.align(Alignment.BottomEnd).padding(12.dp).size(48.dp)
+            Box(Modifier.align(Alignment.TopEnd).padding(12.dp).size(48.dp)
                 .testTag("game-touch-show").clip(CircleShape)
                 .background(Color.Black.copy(alpha = .58f)).clickable(onClick = onShowTouch),
                 contentAlignment = Alignment.Center) {
@@ -106,16 +117,17 @@ internal fun GamePlayerTouchLayout(
             }
         }
         if (handheld && playing && !menuVisible && rewindSeconds != null) {
-            Column(Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
-                horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(Modifier.size(48.dp).testTag("game-player-rewind").clip(CircleShape)
+            Box(Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
+                .size(width = 56.dp, height = 48.dp).testTag("game-player-rewind").clip(RoundedCornerShape(12.dp))
                     .background(Color.Black.copy(alpha = .58f)).holdAction(onHold = onRewind),
-                    contentAlignment = Alignment.Center) {
+                contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(Icons.Filled.FastRewind, stringResource(R.string.game_rewind_hold),
-                        tint = Color.White, modifier = Modifier.size(24.dp))
+                        tint = Color.White, modifier = Modifier.size(20.dp))
+                    Text(stringResource(R.string.game_rewind_buffer_seconds, rewindSeconds),
+                        color = Color.White, style = androidx.tv.material3.MaterialTheme.typography.labelSmall,
+                        maxLines = 1)
                 }
-                Text(stringResource(R.string.game_rewind_buffer_seconds, rewindSeconds),
-                    color = Color.White, style = androidx.tv.material3.MaterialTheme.typography.labelSmall)
             }
         }
     }

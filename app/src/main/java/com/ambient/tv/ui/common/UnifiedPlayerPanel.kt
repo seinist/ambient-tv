@@ -420,8 +420,8 @@ private val LocalPlayerBarInteractive = compositionLocalOf { true }
  * Shared player action bar: transport/source actions stay left, while playback options and
  * navigation stay right. Renderer-specific players only provide the actions they support.
  *
- * Handheld fullscreen uses the same split as television. A windowed handheld page has no room
- * for it, so there the bar packs to the start edge and scrolls.
+ * Handheld fullscreen and the game player use the same split as television. A windowed video
+ * page packs to the start edge and scrolls.
  */
 @Composable
 fun PlayerControlBar(
@@ -463,7 +463,10 @@ private fun PlayerControlBarContent(
     onDown: (() -> Boolean)? = null,
 ) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
-    val handheldFullscreen = com.ambient.tv.ui.mobile.LocalHandheldFullscreen.current?.enabled == true
+    // Games own a full player surface without the video-only orientation/fullscreen switch.
+    // They still need that same edge-aligned, overflow-scrollable action-bar layout.
+    val handheldFullscreen = com.ambient.tv.ui.mobile.LocalHandheldFullscreen.current?.enabled == true ||
+        com.ambient.tv.ui.player.LocalOsdPlayer.current == com.ambient.tv.ui.player.OsdPlayer.GAMES
     val controlFocus = com.ambient.tv.ui.player.LocalPlayerControlFocus.current
     val osd = com.ambient.tv.ui.player.LocalPlayerChromeState.current?.osd
     val osdStow = com.ambient.tv.ui.player.LocalPlayerOsdStow.current

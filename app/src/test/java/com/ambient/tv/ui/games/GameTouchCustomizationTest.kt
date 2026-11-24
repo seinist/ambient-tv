@@ -13,13 +13,42 @@ import org.junit.Test
 
 class GameTouchCustomizationTest {
     @Test fun sharedStyleAndSystemVariantsRoundTripThroughTheExistingBackupEnvelope() {
-        val config = RetroInputConfig(touchStyle = TouchControlStyle(130, 50, 0, 50, 20, 2, true),
+        val config = RetroInputConfig(touchStyle = TouchControlStyle(130, 50, 0, 50, 20, 2, true, buttonHaptics = true),
             touchVariants = mapOf("megadrive" to "md3", "n64" to "retropad"))
         assertEquals(config, RetroInputConfig.decode(config.encode()))
         assertEquals(TouchControlStyle(), RetroInputConfig.decode(emptyMap()).touchStyle)
         assertEquals(TouchControlStyle(), TouchControlStyle.decode("100,75,0,0,NaN,1,1"))
         assertEquals(TouchControlStyle(140, 25, 0, 100, 35, 0, true),
             TouchControlStyle.decode("999,-20,-10,200,50,-1,1"))
+    }
+
+    @Test fun oldTouchPreferencesKeepTheirValuesAndLeaveButtonHapticsOff() {
+        val previous = TouchControlStyle(130, 50, 0, 50, 20, 2, true)
+        val restored = RetroInputConfig.decode(mapOf("touch_style" to "130,50,0,50,20,2,1")).touchStyle
+        assertEquals(previous, restored)
+        assertFalse(restored.buttonHaptics)
+        assertFalse(TouchControlStyle().buttonHaptics)
+        assertEquals(previous, TouchControlStyle.decode(previous.encode()))
+        assertEquals(previous.copy(buttonHaptics = true), TouchControlStyle.decode("130,50,0,50,20,2,1,1"))
+        for (invalid in listOf("130,50,0,50,20,2,1,2", "130,50,0,50,20,2,1,-1",
+            "130,50,0,50,20,2,1,true", "130,50,0,50,20,2,1,1,0")) {
+            assertEquals(TouchControlStyle(), TouchControlStyle.decode(invalid))
+        }
+    }
+
+    @Test fun portableSettingsKeepTheLegacyTouchWireValueForOlderPairedClients() {
+        val legacy = TouchControlStyle(130, 50, 0, 50, 20, 2, true)
+        for (enabled in listOf(false, true)) {
+            val config = RetroInputConfig(touchStyle = legacy.copy(buttonHaptics = enabled))
+            val encoded = config.encode()
+            assertEquals("130,50,0,50,20,2,1", encoded["touch_style"])
+            assertEquals(if (enabled) "1" else "0", encoded["touch_button_haptics"])
+            assertEquals(config, RetroInputConfig.decode(encoded))
+            // An older client reads this unchanged seven-field value and ignores the new key.
+            assertEquals(legacy, TouchControlStyle.decode(encoded.getValue("touch_style")))
+        }
+        assertFalse(RetroInputConfig.decode(mapOf("touch_style" to "130,50,0,50,20,2,1",
+            "touch_button_haptics" to "invalid")).touchStyle.buttonHaptics)
     }
 
     @Test fun consoleFacesUseTheEditorTargetsAndRecognizableLabels() {

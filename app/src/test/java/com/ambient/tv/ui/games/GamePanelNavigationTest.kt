@@ -1,6 +1,5 @@
 package com.ambient.tv.ui.games
 
-import com.ambient.tv.games.GameShaderGroup
 import com.ambient.tv.ui.common.PlayerPanelNavigation
 import com.ambient.tv.ui.common.UnifiedPlayerPanel
 import org.junit.Assert.assertEquals
@@ -10,21 +9,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GamePanelNavigationTest {
-    @Test fun settingsCoreCategoryAndOptionReturnThroughTheirActualOrigins() {
+    @Test fun settingsCoreAndCategoryReturnThroughTheirActualOrigins() {
         val navigation = PlayerPanelNavigation()
         val game = GamePanelNavigation(navigation)
         navigation.fromOrigin("bar:settings", true) { game.open(GamePanel.SETTINGS) }
         navigation.fromOrigin("entry:core", false) { game.open(GamePanel.CORE) }
         navigation.fromOrigin("category:video", false) { game.openCategory("video") }
-        navigation.fromOrigin("option:renderer", false) { game.openOption("renderer") }
         assertEquals(GamePanel.CORE, game.panel)
         assertTrue(game.fromSettings)
         assertEquals("video", game.optionCategory)
-        assertEquals("renderer", game.optionKey)
-        game.back()
-        assertNull(game.optionKey)
-        assertEquals("video", game.optionCategory)
-        assertEquals("option:renderer", navigation.restoreKey)
+        assertEquals(3, navigation.depth)
         game.back()
         assertNull(game.optionCategory)
         assertEquals("category:video", navigation.restoreKey)
@@ -36,21 +30,12 @@ class GamePanelNavigationTest {
         assertEquals("bar:settings", navigation.restoreKey)
     }
 
-    @Test fun directPictureSubpagesDoNotInventASettingsParent() {
+    @Test fun directPictureDoesNotInventASettingsParent() {
         val navigation = PlayerPanelNavigation()
         val game = GamePanelNavigation(navigation)
         navigation.fromOrigin("bar:picture", true) { game.open(GamePanel.PICTURE) }
-        navigation.fromOrigin("group:crt", false) { game.openShaderGroup(GameShaderGroup.CRT) }
-        assertEquals(GameShaderGroup.CRT, game.shaderGroup)
         assertFalse(game.fromSettings)
-        game.back()
-        assertNull(game.shaderGroup)
-        assertEquals("group:crt", navigation.restoreKey)
-        navigation.fromOrigin("entry:packs", false) { game.openShaderPacks() }
-        assertTrue(game.shaderPacksOpen)
-        game.back()
-        assertFalse(game.shaderPacksOpen)
-        assertEquals("entry:packs", navigation.restoreKey)
+        assertEquals(1, navigation.depth)
         game.back()
         assertNull(game.panel)
         assertEquals("bar:picture", navigation.restoreKey)
@@ -60,13 +45,13 @@ class GamePanelNavigationTest {
         val game = GamePanelNavigation(PlayerPanelNavigation())
         game.open(GamePanel.CORE)
         game.openCategory("video")
-        game.openOption("renderer")
         val old = game.page
         game.back(old)
-        assertEquals("video", game.optionCategory)
+        assertEquals(GamePanel.CORE, game.panel)
+        assertNull(game.optionCategory)
         game.back(old)
-        assertEquals("video", game.optionCategory)
-        assertNull(game.optionKey)
+        assertEquals(GamePanel.CORE, game.panel)
+        assertNull(game.optionCategory)
     }
 
     @Test fun stateStripUsesTheBarOriginWithoutBecomingAnOsdHidingPanel() {
@@ -102,7 +87,7 @@ class GamePanelNavigationTest {
         assertNull(navigation.restoreKey)
         navigation.fromOrigin("bar:settings", true) { game.open(GamePanel.SETTINGS) }
         game.open(GamePanel.CORE)
-        game.openOption("renderer")
+        game.openCategory("video")
         game.dismissForResume()
         assertNull(game.page)
         assertNull(navigation.restoreKey)
@@ -115,10 +100,10 @@ class GamePanelNavigationTest {
         val navigation = PlayerPanelNavigation()
         val game = GamePanelNavigation(navigation)
         navigation.fromOrigin("bar:core", true) { game.open(GamePanel.CORE) }
-        game.openOption("renderer")
+        game.openCategory("video")
         game.openRoot(GamePanel.SETTINGS)
         assertEquals(GamePanel.SETTINGS, game.panel)
-        assertNull(game.optionKey)
+        assertNull(game.optionCategory)
         assertEquals(1, navigation.depth)
         game.back()
         assertNull(game.page)
@@ -127,10 +112,8 @@ class GamePanelNavigationTest {
     @Test fun unsupportedSubpageRequestsCannotAlterAnotherPanel() {
         val game = GamePanelNavigation(PlayerPanelNavigation())
         game.open(GamePanel.CONTROLS)
-        game.openOption("renderer")
         game.openCategory("video")
-        game.openShaderGroup(GameShaderGroup.CRT)
-        game.openShaderPacks()
+        game.openDiagnostics()
         assertEquals(GamePanelPage(GamePanel.CONTROLS), game.page)
     }
 }

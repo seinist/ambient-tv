@@ -252,7 +252,7 @@ class GameMetadataRepository @Inject constructor(
         val known = old?.takeIf { it.provider == provider }
         val query = gameMetadataQuery(current, known, settings.language(), options.region,
             ticket.crc32, provider = provider)
-        val fingerprint = gameMetadataFingerprint(current, query)
+        val fingerprint = gameMetadataLookupFingerprint(provider, gameMetadataFingerprint(current, query))
         // A manually chosen catalog name may still lack a proven thumbnail namespace.
         // Neither an earlier miss nor the recent text edit can postpone resolving it.
         val unresolvedLibretro = known?.provider == GameMetadataProviderIds.LIBRETRO &&
@@ -261,7 +261,7 @@ class GameMetadataRepository @Inject constructor(
         if (!force && !unresolvedLibretro) {
             when (library.lookupStatus(current.fileId, provider, fingerprint)) {
                 "found" -> {
-                    if (known != null) {
+                    if (known != null && gameMetadataMatchesQueryIdentity(known, query)) {
                         ensureStoredArtwork(current, known, GameArtworkKind.COVER, force = false)
                         return@withGame true
                     }
@@ -269,7 +269,7 @@ class GameMetadataRepository @Inject constructor(
                 "not_found", "ambiguous" -> return@withGame false
             }
             if (known != null && known.updatedAt > System.currentTimeMillis() - FOUND_TTL &&
-                (query.canonicalTitle.isNullOrBlank() || known.canonicalTitle == query.canonicalTitle)) {
+                gameMetadataMatchesQueryIdentity(known, query)) {
                 ensureStoredArtwork(current, known, GameArtworkKind.COVER, force = false)
                 return@withGame true
             }
@@ -288,14 +288,25 @@ class GameMetadataRepository @Inject constructor(
         currentCoroutineContext().ensureActive()
         val confirmed = candidates.filter { it.exactMatch }
         // Libretro's static URL is validated by an actual image response. It is not an API match.
-        val selected = if (provider == GameMetadataProviderIds.LIBRETRO) candidates
+        val selected = if (provider == GameMetadataProviderIds.LIBRETRO)
+            automaticLibretroCandidates(candidates, current.verifiedTitle, known?.matchLocked == true)
             else confirmed.singleOrNull()?.let(::listOf).orEmpty()
+        var rejectedArtwork: IOException? = null
         for (candidate in selected) {
-            if (applyCandidate(current, candidate, manual = false, force = force)) {
+            val applied = try { applyCandidate(current, candidate, manual = false, force = force) }
+            catch (error: IOException) {
+                if (!isRejectedArtworkResponse(error)) throw error
+                if (rejectedArtwork == null) rejectedArtwork = error
+                false
+            }
+            if (applied) {
                 library.saveLookupStatus(ticket, provider, fingerprint, "found", System.currentTimeMillis() + FOUND_TTL)
                 return@withGame true
             }
         }
+        // A rejected image is not a confirmed missing game. Other compatible thumbnail
+        // namespaces may work, but an entirely invalid response must remain retryable.
+        rejectedArtwork?.let { throw it }
         val status = if (candidates.isNotEmpty() && provider != GameMetadataProviderIds.LIBRETRO) "ambiguous" else "not_found"
         library.saveLookupStatus(ticket, provider, fingerprint, status, System.currentTimeMillis() + MISSING_TTL)
         false
@@ -356,6 +367,8 @@ class GameMetadataRepository @Inject constructor(
                     if (automatic && !options.automatic) return@coroutineScope
                     val total = library.folderGameCount(folderId)
                     var completed = 0
+                    var failed = 0
+                    var firstFailure: IOException? = null
                     var after: String? = null
                     var lastPulse = System.nanoTime()
                     onProgress(0, total)
@@ -366,7 +379,18 @@ class GameMetadataRepository @Inject constructor(
                         if (page.isEmpty()) break
                         for (game in page) {
                             currentCoroutineContext().ensureActive()
-                            refresh(game)
+                            try {
+                                refresh(game)
+                            } catch (error: IOException) {
+                                // A bad response for one ROM must not strand the rest of a NAS
+                                // library. Connectivity, credentials, quotas and storage errors
+                                // still stop immediately; a missing match is not an error.
+                                if (error !is GameArtworkValidationException &&
+                                    (error !is GameMetadataProviderException || error.kind != GameMetadataFailure.INVALID_RESPONSE))
+                                    throw error
+                                failed++
+                                if (firstFailure == null) firstFailure = error
+                            }
                             completed++
                             if (System.nanoTime() - lastPulse >= BATCH_PULSE_NS) {
                                 library.flushMetadataBatch()
@@ -377,6 +401,7 @@ class GameMetadataRepository @Inject constructor(
                         after = page.last().fileId
                     }
                     onProgress(completed, total)
+                    firstFailure?.let { throw GameMetadataBatchException(failed, completed, it) }
                 } finally { library.endMetadataBatch(); unregister(folderId, job) }
             }
         }
@@ -422,6 +447,7 @@ class GameMetadataRepository @Inject constructor(
         val coverLocked = previous?.lockedFields?.contains("cover") == true
         val catalogName = incomingMetadata.provider == GameMetadataProviderIds.LIBRETRO && candidate.catalogMatch
         if (incomingMetadata.provider == GameMetadataProviderIds.LIBRETRO) {
+            var rejectedArtwork: IOException? = null
             // A combined system's DAT does not identify its thumbnail subfolder. Manual
             // catalog results show each title once and try the compatible namespaces here.
             val alternatives = if (catalogName && manual) GameMetadataPlatforms.libretroCandidates(
@@ -436,6 +462,12 @@ class GameMetadataRepository @Inject constructor(
                     val reference = alternative.artwork(kind) ?: continue
                     try { confirmedImage = downloadStage(alternative.provider, reference) }
                     catch (error: IOException) {
+                        // A corrupt/oversize cover must not block a valid screenshot or
+                        // title screen. Transport, account and quota errors still stop IO.
+                        if (isRejectedArtworkResponse(error)) {
+                            if (rejectedArtwork == null) rejectedArtwork = error
+                            continue
+                        }
                         if (!catalogName || !manual) throw error
                         timber.log.Timber.w("Libretro artwork is unavailable for a catalog match")
                         break@probe
@@ -452,7 +484,10 @@ class GameMetadataRepository @Inject constructor(
             // Automatic enrichment keeps trying the other platform namespaces. Verified
             // DAT titles already display in the library independently of metadata/artwork.
             if (confirmedImage == null) {
-                if (!catalogName || !manual) return false
+                if (!catalogName || !manual) {
+                    rejectedArtwork?.let { throw it }
+                    return false
+                }
                 if (alternatives.map { it.providerGameId.substringBefore('|') }.distinct().size > 1)
                     incomingMetadata = incomingMetadata.copy(providerGameId = "", coverUrl = null,
                         backdropUrl = null, titleScreenUrl = null)
@@ -471,6 +506,10 @@ class GameMetadataRepository @Inject constructor(
         } finally { confirmedImage?.let(library.artworkFiles::discard) }
     }
 
+    private fun isRejectedArtworkResponse(error: IOException): Boolean =
+        error is GameArtworkValidationException ||
+            error is GameMetadataProviderException && error.kind == GameMetadataFailure.INVALID_RESPONSE
+
     /** Applying a text match has succeeded even if an optional image cannot be fetched. */
     private suspend fun ensureOptionalArtwork(
         game: LibraryGame, metadata: GameMetadata, kind: GameArtworkKind, force: Boolean,
@@ -487,7 +526,8 @@ class GameMetadataRepository @Inject constructor(
         val reference = metadata.artwork(kind) ?: return present
         val provider = metadata.artworkProviders[kind.key] ?: metadata.provider
         val ticket = library.metadataTicket(game.fileId) ?: return false
-        val fingerprint = gameMetadataDigest("image:${kind.key}:$provider:$reference")
+        val fingerprint = gameMetadataLookupFingerprint(provider,
+            gameMetadataDigest("image:${kind.key}:$provider:$reference"))
         if (!force && library.lookupStatus(game.fileId, provider, fingerprint) == "not_found") return false
         val staged = downloadStage(provider, reference) ?: run {
             currentCoroutineContext().ensureActive()

@@ -3,6 +3,8 @@
     <string name="game_touch_customization_hint">For games on your phone and controlling games on your TV.</string>
     <string name="game_touch_size">Control size</string>
     <string name="game_touch_opacity">Control opacity</string>
+    <string name="game_touch_button_haptics">Button vibration</string>
+    <string name="game_touch_button_haptics_hint">A light vibration on button presses, excluding the D-pad and analog sticks.</string>
     <string name="game_touch_portrait_position">Portrait position</string>
     <string name="game_touch_landscape_position">Landscape position</string>
     <string name="game_touch_position_upper">Higher</string>

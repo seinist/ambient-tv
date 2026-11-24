@@ -104,26 +104,21 @@ class GameMetadataProviders @Inject constructor(
         return artworkSlots.withPermit {
             withProviderSlot(provider) {
                 try {
-                    request(provider, url) { response ->
-                        if (response.code == 404) return@request false
-                        checkStatus(provider, response)
-                        val body = response.body
-                        if (body.contentLength() > MAX_IMAGE_BYTES ||
-                            body.contentType()?.type != "image") throw GameMetadataProviderException(GameMetadataFailure.INVALID_RESPONSE)
-                        body.byteStream().use { input -> destination.outputStream().use { output ->
-                            val buffer = ByteArray(32 * 1024)
-                            var total = 0L
-                            while (true) {
-                                val count = input.read(buffer)
-                                if (count < 0) break
-                                total += count
-                                if (total > MAX_IMAGE_BYTES) throw GameMetadataProviderException(GameMetadataFailure.INVALID_RESPONSE)
-                                output.write(buffer, 0, count)
-                            }
-                            if (total == 0L) throw GameMetadataProviderException(GameMetadataFailure.INVALID_RESPONSE)
-                        } }
-                        true
-                    }.also { if (!it) destination.delete() }
+                    val alternatives = listOfNotNull(url,
+                        if (provider == GameMetadataProviderIds.LIBRETRO) libretroArtworkMirrorUrl(url) else null)
+                    var invalidResponse: GameMetadataProviderException? = null
+                    for (target in alternatives) {
+                        try {
+                            if (downloadArtworkAt(provider, target, destination)) return@withProviderSlot true
+                        } catch (failure: GameMetadataProviderException) {
+                            if (failure.kind != GameMetadataFailure.INVALID_RESPONSE) throw failure
+                            invalidResponse = failure
+                        }
+                        destination.delete()
+                    }
+                    // A broken response followed by a missing mirror is still an error, not a cached miss.
+                    invalidResponse?.let { throw it }
+                    false
                 } catch (failure: Throwable) {
                     destination.delete()
                     throw failure
@@ -131,6 +126,29 @@ class GameMetadataProviders @Inject constructor(
             }
         }
     }
+
+    private suspend fun downloadArtworkAt(provider: String, url: HttpUrl, destination: File): Boolean =
+        request(provider, url) { response ->
+            if (response.code == 404) return@request false
+            checkStatus(provider, response)
+            val body = response.body
+            if (body.contentLength() > MAX_IMAGE_BYTES || body.contentType()?.type != "image") {
+                throw GameMetadataProviderException(GameMetadataFailure.INVALID_RESPONSE)
+            }
+            body.byteStream().use { input -> destination.outputStream().use { output ->
+                val buffer = ByteArray(32 * 1024)
+                var total = 0L
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    total += count
+                    if (total > MAX_IMAGE_BYTES) throw GameMetadataProviderException(GameMetadataFailure.INVALID_RESPONSE)
+                    output.write(buffer, 0, count)
+                }
+                if (total == 0L) throw GameMetadataProviderException(GameMetadataFailure.INVALID_RESPONSE)
+            } }
+            true
+        }
 
     /**
      * One DAT file of libretro-database ([path] below its root) into the caller's staging file.
@@ -434,13 +452,42 @@ class GameMetadataProviders @Inject constructor(
 
 internal fun allowedGameProviderHost(provider: String, url: HttpUrl): Boolean =
     url.scheme == "https" && url.username.isEmpty() && url.password.isEmpty() && url.port == 443 && when (provider) {
-        GameMetadataProviderIds.LIBRETRO -> url.host == "thumbnails.libretro.com"
+        GameMetadataProviderIds.LIBRETRO -> url.host == "thumbnails.libretro.com" || allowedLibretroArtworkMirror(url)
         GameMetadataProviderIds.SCREENSCRAPER -> url.host in setOf("api.screenscraper.fr", "www.screenscraper.fr", "screenscraper.fr", "media.screenscraper.fr")
         GameMetadataProviderIds.THEGAMESDB -> url.host in setOf("api.thegamesdb.net", "cdn.thegamesdb.net", "images.thegamesdb.net")
         GameMetadataProviderIds.LIBRETRO_DATABASE -> url.host == GameMetadataProviders.LIBRETRO_DATABASE_HOST &&
             url.encodedPath.startsWith("/" + GameMetadataProviders.LIBRETRO_DATABASE_ROOT + "/metadat/")
         else -> false
     }
+
+private val LIBRETRO_ARTWORK_DIRECTORIES = setOf("Named_Boxarts", "Named_Snaps", "Named_Titles")
+private val LIBRETRO_ENCODED_SEPARATOR = Regex("%(?:25)*(?:2f|5c)", RegexOption.IGNORE_CASE)
+
+private fun libretroPngFilename(value: String): Boolean = value.length > 4 && value.endsWith(".png") &&
+    value.none { it == '/' || it == '\\' || it.isISOControl() } &&
+    // Do not let encoded separators survive as a second path after a downstream decode.
+    !LIBRETRO_ENCODED_SEPARATOR.containsMatchIn(value)
+
+/** GitHub is an artwork host only inside explicitly mapped, official Libretro thumbnail repos. */
+private fun allowedLibretroArtworkMirror(url: HttpUrl): Boolean {
+    if (url.host != "raw.githubusercontent.com" || url.query != null || url.fragment != null) return false
+    val path = url.pathSegments
+    return path.size == 5 && path[0] == "libretro-thumbnails" &&
+        path[1] in GameMetadataPlatforms.libretroThumbnailRepositories.values && path[2] == "master" &&
+        path[3] in LIBRETRO_ARTWORK_DIRECTORIES && libretroPngFilename(path[4])
+}
+
+/** A transport fallback only: candidates/cache identities retain the canonical thumbnail URL. */
+internal fun libretroArtworkMirrorUrl(primary: HttpUrl): HttpUrl? {
+    if (primary.host != "thumbnails.libretro.com" || !allowedGameProviderHost(GameMetadataProviderIds.LIBRETRO, primary)) return null
+    val path = primary.pathSegments
+    if (path.size != 3 || path[1] !in LIBRETRO_ARTWORK_DIRECTORIES || !libretroPngFilename(path[2])) return null
+    val repository = GameMetadataPlatforms.libretroThumbnailRepositories[path[0]] ?: return null
+    // Construct afresh: no credentials, query parameters or fragments can reach the mirror.
+    return HttpUrl.Builder().scheme("https").host("raw.githubusercontent.com")
+        .addPathSegment("libretro-thumbnails").addPathSegment(repository).addPathSegment("master")
+        .addPathSegment(path[1]).addPathSegment(path[2]).build()
+}
 
 /** Shared with parsers/tests: no application identity or user credentials may survive to SQLite. */
 internal fun sanitizedGameArtworkUrl(provider: String, input: String?): String? {

@@ -13,9 +13,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performTouchInput
@@ -48,22 +50,24 @@ class GameMetadataTouchUiTest {
     private val selected = mutableListOf<Int>()
     private var dismissals = 0
 
-    private fun mount(handheld: Boolean = true, imageKind: GameArtworkKind? = null, count: Int = 1) {
+    private fun mount(handheld: Boolean = true, imageKind: GameArtworkKind? = null, count: Int = 1,
+                      matches: List<GameMetadataCandidate>? = null) {
+        val choices = matches ?: (0 until count).map { index -> GameMetadataCandidate(GameMetadata(
+            provider = GameMetadataProviderIds.THEGAMESDB,
+            providerGameId = index.toString(),
+            title = "Matching game $index",
+            year = 1994,
+            sourceUrl = "https://thegamesdb.net/game.php?id=$index",
+        )) }
         rule.setContent {
             CompositionLocalProvider(LocalHandheldUi provides handheld) {
                 AmbientTvTheme {
                     AppDialog(onDismiss = { dismissals++ }, title = "Choose game", scrollable = false) {
                         TvLazyColumn(Modifier.heightIn(max = 360.dp).testTag("matches"),
                             verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            items((0 until count).toList(), key = { it }) { index ->
+                            items(choices.indices.toList(), key = { gameMetadataChoiceKey(choices[it], imageKind) }) { index ->
                                 GameMetadataMatchRow(
-                                    match = GameMetadataCandidate(GameMetadata(
-                                        provider = GameMetadataProviderIds.THEGAMESDB,
-                                        providerGameId = index.toString(),
-                                        title = "Matching game $index",
-                                        year = 1994,
-                                        sourceUrl = "https://thegamesdb.net/game.php?id=$index",
-                                    )),
+                                    match = choices[index],
                                     imageKind = imageKind,
                                     preview = null,
                                     enabled = enabled,
@@ -105,6 +109,22 @@ class GameMetadataTouchUiTest {
         rule.onNodeWithTag("matches").performTouchInput { swipeUp() }
         rule.runOnIdle {
             assertEquals(emptyList<Int>(), selected)
+            assertEquals(0, dismissals)
+        }
+    }
+
+    @Test fun cleanedRegionalTitlesRemainDistinguishableAndSelectable() {
+        val titles = listOf("A game (Europe)", "A game (USA)")
+        mount(matches = titles.map { title -> GameMetadataCandidate(GameMetadata(
+            provider = GameMetadataProviderIds.LIBRETRO, providerGameId = "snes|$title",
+            title = title, canonicalTitle = title, region = "eu",
+        )) })
+        rule.onNodeWithTag("match-0").assert(hasText("A game"))
+            .assert(hasText("Europe", substring = true)).performTouchInput { click() }
+        rule.onNodeWithTag("match-1").assert(hasText("A game"))
+            .assert(hasText("USA", substring = true)).performTouchInput { click() }
+        rule.runOnIdle {
+            assertEquals(listOf(0, 1), selected)
             assertEquals(0, dismissals)
         }
     }

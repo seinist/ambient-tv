@@ -3,6 +3,8 @@
     <string name="game_touch_customization_hint">Für Spiele auf dem Handy und die Steuerung am TV.</string>
     <string name="game_touch_size">Größe der Bedienelemente</string>
     <string name="game_touch_opacity">Deckkraft der Bedienelemente</string>
+    <string name="game_touch_button_haptics">Vibration bei Spieltasten</string>
+    <string name="game_touch_button_haptics_hint">Leichte Vibration bei Tastendruck, ausgenommen Steuerkreuz und Analogsticks.</string>
     <string name="game_touch_portrait_position">Position im Hochformat</string>
     <string name="game_touch_landscape_position">Position im Querformat</string>
     <string name="game_touch_position_upper">Weiter oben</string>

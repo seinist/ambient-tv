@@ -11,12 +11,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.hapticfeedback.HapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -47,9 +51,11 @@ class GameTouchInputUiTest {
         var mode by mutableStateOf(GameTouchMode.DPAD)
         var style by mutableStateOf(TouchControlStyle())
         var hiddenForGamepad by mutableStateOf(false)
+        var rewindSeconds by mutableStateOf<Float?>(null)
         var osdTaps = 0
         val held = mutableSetOf<RetroPadButton>()
         val aTransitions = mutableListOf<Boolean>()
+        val feedback = mutableListOf<HapticFeedbackType>()
         fun button(button: RetroPadButton, down: Boolean) {
             if (down) held.add(button) else held.remove(button)
             if (button == RetroPadButton.A) aTransitions += down
@@ -58,10 +64,16 @@ class GameTouchInputUiTest {
 
     private fun mount(lifecycleOwner: LifecycleOwner? = null): Fixture {
         val fixture = Fixture()
+        val haptics = object : HapticFeedback {
+            override fun performHapticFeedback(hapticFeedbackType: HapticFeedbackType) {
+                fixture.feedback += hapticFeedbackType
+            }
+        }
         rule.setContent {
             CompositionLocalProvider(
                 LocalHandheldUi provides true,
                 LocalLifecycleOwner provides (lifecycleOwner ?: LocalLifecycleOwner.current),
+                LocalHapticFeedback provides haptics,
             ) {
                 AmbientTvTheme {
                     // Ancestor tap handling reproduces the player/interop failure if the
@@ -74,6 +86,7 @@ class GameTouchInputUiTest {
                             surface = { modifier -> Box(modifier) },
                             touchStyle = fixture.style, hiddenForGamepad = fixture.hiddenForGamepad,
                             onShowTouch = { fixture.hiddenForGamepad = false },
+                            rewindSeconds = fixture.rewindSeconds,
                         )
                     }
                 }
@@ -82,6 +95,41 @@ class GameTouchInputUiTest {
         rule.waitForIdle()
         fixture.aTransitions.clear() // Disposal/initial neutral notifications are not presses.
         return fixture
+    }
+
+    @Test fun buttonHapticsAreOptInAndNeverFollowDpadStickOrHeldMovement() {
+        val fixture = mount()
+        rule.onNodeWithTag("game-touch-a", useUnmergedTree = true).performTouchInput { click() }
+        rule.runOnIdle { assertTrue(fixture.feedback.isEmpty()); fixture.style = fixture.style.copy(buttonHaptics = true) }
+        rule.onNodeWithTag("game-touch-a", useUnmergedTree = true).performTouchInput {
+            down(0, center)
+            moveTo(0, center + Offset(2f, 0f))
+            moveTo(0, center)
+            up(0)
+        }
+        rule.runOnIdle {
+            assertEquals(listOf(HapticFeedbackType.TextHandleMove), fixture.feedback)
+            fixture.mode = GameTouchMode.HYBRID
+        }
+        rule.onNodeWithTag("game-touch-dpad", useUnmergedTree = true).performTouchInput {
+            down(0, Offset(8f, center.y))
+            moveTo(0, Offset(8f, 8f))
+            moveTo(0, center)
+            up(0)
+        }
+        rule.onNodeWithTag("game-touch-stick-0", useUnmergedTree = true).performTouchInput {
+            down(0, center)
+            moveTo(0, topLeft + Offset(8f, 8f))
+            up(0)
+        }
+        rule.runOnIdle { assertEquals(1, fixture.feedback.size) }
+        rule.onNodeWithTag("game-touch-start", useUnmergedTree = true).performTouchInput { click() }
+        rule.runOnIdle {
+            assertEquals(2, fixture.feedback.size)
+            fixture.style = fixture.style.copy(buttonHaptics = false)
+        }
+        rule.onNodeWithTag("game-touch-r", useUnmergedTree = true).performTouchInput { click() }
+        rule.runOnIdle { assertEquals(2, fixture.feedback.size) }
     }
 
     @Test fun heldDirectionAndRepeatedFacePressesNeverOpenTheOsd() {
@@ -238,6 +286,49 @@ class GameTouchInputUiTest {
         }
         rule.runOnIdle { fixture.menuVisible = true }
         assertEquals(surface, rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot())
+    }
+
+    private fun assertControlsOutsidePicture(tags: List<String>) {
+        val surface = rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val controls = tags.map { tag ->
+            val target = rule.onNodeWithTag(tag, useUnmergedTree = true).assertIsDisplayed()
+            val bounds = target.getBoundsInRoot()
+            assertTrue("$tag lost its touch target", bounds.right - bounds.left >= 48.dp &&
+                bounds.bottom - bounds.top >= 48.dp)
+            target.fetchSemanticsNode().boundsInRoot.also { assertFalse("$tag covers the game picture", it.overlaps(surface)) }
+        }
+        controls.forEachIndexed { index, bounds -> controls.drop(index + 1).forEach { other ->
+            assertFalse("Utility controls overlap: $bounds and $other", bounds.overlaps(other))
+        } }
+    }
+
+    @Test fun portraitMenuRewindAndPadControlsStayOutsideThePicture() {
+        val fixture = mount()
+        rule.runOnIdle { fixture.mode = GameTouchMode.DUAL; fixture.rewindSeconds = 20f }
+        assertControlsOutsidePicture(listOf("game-player-menu", "game-player-rewind") +
+            listOf("a", "b", "x", "y", "l", "l2", "r", "r2", "l3", "r3", "select", "start")
+                .map { "game-touch-$it" })
+    }
+
+    @Test
+    @Config(qualifiers = "w640dp-h360dp-land-mdpi")
+    fun landscapeUtilitiesReservePictureSpaceAtCustomSizesAndKeepItWhileHidden() {
+        val fixture = mount()
+        rule.runOnIdle { fixture.mode = GameTouchMode.DUAL }
+        for (scale in listOf(100, 125, 160)) {
+            rule.runOnIdle { fixture.style = fixture.style.copy(scalePercent = scale) }
+            val surface = rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot()
+            rule.runOnIdle { fixture.rewindSeconds = 20f }
+            assertEquals(surface, rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot())
+            assertControlsOutsidePicture(listOf("game-player-menu", "game-player-rewind") +
+                listOf("l", "l2", "r", "r2", "l3", "r3", "select", "start").map { "game-touch-$it" })
+            rule.runOnIdle { fixture.menuVisible = true }
+            assertEquals(surface, rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot())
+            rule.runOnIdle { fixture.menuVisible = false; fixture.hiddenForGamepad = true }
+            assertEquals(surface, rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot())
+            assertControlsOutsidePicture(listOf("game-player-menu", "game-player-rewind", "game-touch-show"))
+            rule.runOnIdle { fixture.hiddenForGamepad = false; fixture.rewindSeconds = null }
+        }
     }
 
     @Test fun changingLayoutOrOpeningMenuReleasesHeldButtons() {

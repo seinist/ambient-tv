@@ -61,6 +61,12 @@ internal fun GameTouchOptions(systemId: String? = null) {
             valueLabel = percent(style.opacityPercent),
             onValueChange = { value -> update { it.copy(opacityPercent = value) } },
         )
+        RightPanelChoice(
+            text = stringResource(R.string.game_touch_button_haptics),
+            subtitle = stringResource(R.string.game_touch_button_haptics_hint),
+            selected = style.buttonHaptics,
+            onClick = { update { it.copy(buttonHaptics = !it.buttonHaptics) } },
+        )
         val positions = listOf(
             "0" to stringResource(R.string.game_touch_position_upper),
             "50" to stringResource(R.string.game_touch_position_middle),

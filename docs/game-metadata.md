@@ -12,7 +12,7 @@ Choose the provider, automatic matching, metadata language and preferred artwork
 
 | Source | What it provides | Setup |
 | --- | --- | --- |
-| Libretro name databases | Exact No-Intro names by ROM checksum (the DATs RetroArch loads with *Update Databases*), loaded on request under **Manage game folders and sources**, for all consoles in the library or single ones; the folders they affect are scanned again. With an exact name, Libretro box art matches automatically | No account; cartridge systems only (disc images are not hashed) |
+| Libretro name databases | Exact No-Intro names by ROM checksum (the DATs RetroArch loads with *Update Databases*), loaded on request under **Manage game folders and sources**, for all consoles in the library or single ones; the folders they affect are scanned again. Exact names are also used to look up available Libretro artwork | No account; cartridge systems only (disc images are not hashed) |
 | Local files | Curated text from `gamelist.xml`, plus cover/background files inside the assigned ROM folder | Read during an explicit file scan; no account |
 | Libretro | Cover art, screenshots and title screens using the system's thumbnail namespace and canonical game name | Default; no API key |
 | ScreenScraper | Game descriptions, release year, genres, developer/publisher, players and regional artwork when supplied by the service | Application developer ID/password; optional personal account |
@@ -30,18 +30,44 @@ guessed image paths still require a validated image. Screenshots/title screens c
 missing Libretro cover. On combined systems, the artwork namespace is confirmed separately
 instead of assuming that the first compatible console is the correct one.
 
+Libretro artwork first uses the thumbnail server. If an image is missing there or the server
+returns an unusable image response, the downloader tries the same image in the official
+`libretro-thumbnails` GitHub repository for that exact system. The fallback keeps the same
+game name, image kind and provider; it does not guess another ROM or switch metadata services.
+Both paths use HTTPS and the same image size/format checks. A rejected image can also fall
+back to the game's other artwork kinds or compatible system namespaces.
+
 Loading or importing a DAT immediately applies already cached checksums to existing games,
 then scans affected folders to resolve missing checksums. SNES copier headers are excluded
 from the catalog checksum while the original checksum stays available to online providers.
+Opening an existing catalog also repairs old automatic Libretro display titles from already
+verified DAT names once, without a ROM scan or network request. A verified name remains
+authoritative even if its artwork is missing: an image matching only a filename guess cannot
+replace that identity. Artwork availability can differ between Libretro and TheGamesDB.
 Explicit titles, protected fields and manually chosen matches retain precedence. The progress
 display distinguishes loading databases, matching names and fetching information/artwork;
 completion is reported only after those steps finish. Cancellation retains completed imports
 and their visible catalog counts.
 
+Library, Home and detail titles omit recognized country/region annotations such as `(USA)`,
+`(Europe)` or `(Japan)`. Automatically suggested metadata searches and match headings use the
+same presentation. Region labels remain in result subtitles so different editions can still
+be selected deliberately. The full DAT/canonical name and artwork identity stay unchanged;
+language, revision, disc and meaningful title annotations are retained. Explicit custom titles
+and search text entered by the user are preserved literally. Existing catalog titles update
+locally on opening after an upgrade, without rereading the NAS.
+
 ScreenScraper availability and limits depend on the application/account and the service. The
 client serializes its requests conservatively and respects returned cooldowns/quota failures.
 TheGamesDB platform/developer/publisher reference data is cached. Temporary network, quota or
 credential errors do not become permanent “no match” results.
+
+A malformed provider response or rejected artwork for one game does not stop a folder's
+remaining games. The folder finishes with a visible partial-result warning, including the
+number of failed updates, and later folders can continue. An ordinary missing match is not
+counted as an error. Connection, account, quota and storage failures still stop the operation;
+completed matches remain in the catalog. Invalid responses remain retryable rather than being
+cached as missing games.
 
 ## Optional private-build keys
 
@@ -136,7 +162,11 @@ outside the selected folder/grant.
 - Bulk revisions and progress are coalesced; manual changes remain immediately visible.
 - Known metadata misses are cached for seven days and successful matches for thirty days.
   File version, locale, provider identity and DAT revision/name changes produce a new lookup fingerprint.
+  A cached successful lookup is reused only if the stored canonical identity still matches
+  the current query; the next permitted enrichment rematches an outdated identity.
   Missing images have independent cache entries so one missing cover cannot erase a match.
+  The Libretro artwork policy also versions its lookup/image caches, so misses from the old
+  server-only path cannot postpone a permitted lookup through the official repository.
 - Image previews load only for visible choices. They have a 24-hour lifetime, a 48-image /
   32 MiB budget, and are removed with their folder. Automatic owned artwork has a 128 MiB
   budget; explicitly selected/pinned images are preserved until their game is removed or

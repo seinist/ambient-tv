@@ -27,6 +27,18 @@ internal data class GameTouchInputState(
     val rightStickHeld: Boolean = false,
 )
 
+/** One light pulse for newly pressed game buttons; movement, held contacts and release are silent. */
+internal fun gameTouchButtonFeedback(
+    enabled: Boolean,
+    previous: Set<RetroPadButton>,
+    current: Set<RetroPadButton>,
+): Boolean = enabled && current.any { button ->
+    button !in previous && when (button) {
+        RetroPadButton.UP, RetroPadButton.DOWN, RetroPadButton.LEFT, RetroPadButton.RIGHT -> false
+        else -> true
+    }
+}
+
 /**
  * Shared contact state for the on-screen pad. Positions are in the layout's logical dp space.
  * Each visual receiver forwards its captured pointers here, including moves outside its bounds;

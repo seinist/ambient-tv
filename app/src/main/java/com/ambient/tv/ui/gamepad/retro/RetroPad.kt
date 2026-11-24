@@ -376,7 +376,9 @@ data class RetroInputConfig(
     fun encode(): Map<String, String> = buildMap {
         put("start_select_menu", if (startSelectMenu) "1" else "0")
         put("dpad_stick", if (dpadAsStick) "1" else "0")
-        put("touch_style", touchStyle.encode())
+        // Old paired clients require exactly seven fields; optional additions use their own key.
+        put("touch_style", touchStyle.encode(includeHaptics = false))
+        put("touch_button_haptics", if (touchStyle.buttonHaptics) "1" else "0")
         touchVariants.forEach { (system, variant) ->
             if (system.matches(Regex("[a-z0-9_]{1,32}")) && variant.matches(Regex("[a-z0-9_]{1,24}"))) {
                 put("touch_variant.$system", variant)
@@ -492,7 +494,10 @@ data class RetroInputConfig(
             }.toMap()
             return RetroInputConfig(
                 companionTouchProfiles = phoneLayouts,
-                touchStyle = TouchControlStyle.decode(stored["touch_style"]),
+                touchStyle = TouchControlStyle.decode(stored["touch_style"]).let { style ->
+                    if ("touch_button_haptics" in stored) style.copy(buttonHaptics = stored["touch_button_haptics"] == "1")
+                    else style
+                },
                 touchVariants = stored.filterKeys { it.startsWith("touch_variant.") }
                     .mapNotNull { (key, value) ->
                         val system = key.removePrefix("touch_variant.")

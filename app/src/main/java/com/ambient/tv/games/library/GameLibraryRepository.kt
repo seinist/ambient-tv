@@ -940,6 +940,7 @@ class GameLibraryRepository @Inject constructor(
                     }
                     refreshQueryFiles(ids, configuration)
                 } else {
+                    reconcileVerifiedMetadataTitles(writable, configuration)
                     writable.delete("game_query", null, null)
                     forEachIndexedGame(configuration) { game -> putQueryGame(writable, game, configuration, checkExisting = false) }
                 }
@@ -1075,6 +1076,27 @@ class GameLibraryRepository @Inject constructor(
             }
             if (removed.isNotEmpty()) writable.delete("game_query",
                 "file_id IN (${removed.joinToString(",") { "?" }})", removed.toTypedArray())
+        }
+    }
+
+    /** Repair previously cached automatic names once when the display projection is rebuilt. */
+    private fun reconcileVerifiedMetadataTitles(writable: SQLiteDatabase, configuration: QueryConfiguration) {
+        var afterFileId = ""
+        while (true) {
+            // Keyset batches also advance past protected matches. Close both source cursors
+            // before updating metadata, and leave the full projection rebuild to the caller.
+            val ids = writable.rawQuery("""SELECT DISTINCT g.file_id
+                FROM game_entries g JOIN game_metadata m ON m.file_id=g.file_id
+                WHERE g.file_id>? AND g.verified_title IS NOT NULL AND g.verified_title!=''
+                    AND m.title IS NOT NULL AND m.title!=g.verified_title
+                ORDER BY g.file_id LIMIT 400""", arrayOf(afterFileId)).use { rows ->
+                buildList { while (rows.moveToNext()) add(rows.getString(0)) }
+            }
+            if (ids.isEmpty()) return
+            val clause = "file_id IN (${ids.joinToString(",") { "?" }})"
+            val games = buildList { forEachIndexedGame(configuration, clause, ids.toTypedArray(), consume = ::add) }
+            games.forEach { refreshVerifiedMetadataTitle(writable, it) }
+            afterFileId = ids.last()
         }
     }
 

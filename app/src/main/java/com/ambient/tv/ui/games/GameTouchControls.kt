@@ -34,9 +34,11 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -87,6 +89,8 @@ internal fun GameTouchControls(
         val density = LocalDensity.current.density
         val opacity = style.opacityPercent.coerceIn(25, 100) / 100f
         val lifecycleOwner = LocalLifecycleOwner.current
+        val haptics by rememberUpdatedState(LocalHapticFeedback.current)
+        val buttonHaptics by rememberUpdatedState(style.buttonHaptics)
         val layout = remember(mode, maxWidth, maxHeight, tall, style, presentation) {
             gameTouchLayout(mode, maxWidth.value, maxHeight.value, tall, style, presentation)
         }
@@ -120,6 +124,10 @@ internal fun GameTouchControls(
                 }
                 if (previous.leftStick != next.leftStick) currentOnStick(0, next.leftStick.x, next.leftStick.y)
                 if (previous.rightStick != next.rightStick) currentOnStick(1, next.rightStick.x, next.rightStick.y)
+                if (gameTouchButtonFeedback(buttonHaptics, previous.buttons, next.buttons)) {
+                    // The platform respects the device's haptic setting and capability.
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                }
             }
             val currentPublish by rememberUpdatedState(publish)
             var acceptingInput by remember(lifecycleOwner) {

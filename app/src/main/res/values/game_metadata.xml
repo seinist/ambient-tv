@@ -62,6 +62,7 @@
     <string name="game_error_credentials">Check the credentials under Game information and artwork.</string>
     <string name="game_error_request_limit">The provider is not accepting more requests right now. Please try again later.</string>
     <string name="game_error_provider_response">The provider could not supply usable information. Please try again later.</string>
+    <string name="game_metadata_partial_failure">Some game information or artwork could not be updated. Failed updates: %1$d. First error: %2$s</string>
     <string name="game_error_provider_system">This provider does not support the selected system. Choose another source.</string>
     <string name="game_source_fallback">Game server</string>
     <string name="game_catalog_imported">%1$d names imported.</string>
