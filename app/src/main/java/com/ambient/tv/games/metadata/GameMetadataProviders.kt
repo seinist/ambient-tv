@@ -57,6 +57,8 @@ class GameMetadataProviders @Inject constructor(
     private val client = OkHttpClient.Builder().connectionPool(pool).dispatcher(dispatcher)
         .connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS)
         .callTimeout(35, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build()
+    // A name database is a few MB of text: slow TV networks need longer than an API answer.
+    private val databaseClient = client.newBuilder().callTimeout(3, TimeUnit.MINUTES).build()
     // ScreenScraper guests may have only one worker. A conservative shared API lane respects it.
     private val apiSlots = Semaphore(1)
     private val artworkSlots = Semaphore(2)
@@ -127,6 +129,39 @@ class GameMetadataProviders @Inject constructor(
                     throw failure
                 }
             }
+        }
+    }
+
+    /**
+     * One DAT file of libretro-database ([path] below its root) into the caller's staging file.
+     * False when the file is gone upstream; the library imports it, nothing here is kept.
+     */
+    suspend fun downloadNameDatabase(path: String, destination: File): Boolean {
+        val url = HttpUrl.Builder().scheme("https").host(LIBRETRO_DATABASE_HOST)
+            .addPathSegments(LIBRETRO_DATABASE_ROOT)
+            .apply { path.split('/').forEach(::addPathSegment) }.build()
+        val provider = GameMetadataProviderIds.LIBRETRO_DATABASE
+        return try {
+            request(provider, url, databaseClient) { response ->
+                if (response.code == 404) return@request false
+                checkStatus(provider, response)
+                response.body.byteStream().use { input -> destination.outputStream().use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        total += count
+                        if (total > MAX_DATABASE_BYTES) throw GameMetadataProviderException(GameMetadataFailure.INVALID_RESPONSE)
+                        output.write(buffer, 0, count)
+                    }
+                    if (total == 0L) throw GameMetadataProviderException(GameMetadataFailure.INVALID_RESPONSE)
+                } }
+                true
+            }.also { if (!it) destination.delete() }
+        } catch (failure: Throwable) {
+            destination.delete()
+            throw failure
         }
     }
 
@@ -335,7 +370,7 @@ class GameMetadataProviders @Inject constructor(
         return builder.build()
     }
 
-    private suspend fun <T> request(provider: String, url: HttpUrl, consume: (Response) -> T): T {
+    private suspend fun <T> request(provider: String, url: HttpUrl, http: OkHttpClient = client, consume: (Response) -> T): T {
         if (url.host in setOf("api.screenscraper.fr", "api.thegamesdb.net")) {
             val scope = credentialScope(provider)
             val until = cooldowns[scope] ?: 0L
@@ -359,7 +394,7 @@ class GameMetadataProviders @Inject constructor(
                 }
                 val request = try { Request.Builder().url(authenticatedUrl(provider, target)).header("User-Agent", "Ambient-TV").build() }
                     catch (error: Exception) { failure(error); return }
-                val call = client.newCall(request)
+                val call = http.newCall(request)
                 active.set(call)
                 if (!continuation.isActive) { call.cancel(); return }
                 call.enqueue(object : Callback {
@@ -391,6 +426,9 @@ class GameMetadataProviders @Inject constructor(
         private const val LOOKUP_MAX_AGE = 30L * 24L * 60L * 60L * 1000L
         internal const val MAX_MATCHES = 24
         internal const val MAX_ARTWORK_CHOICES = 30
+        private const val MAX_DATABASE_BYTES = 32L * 1024L * 1024L
+        internal const val LIBRETRO_DATABASE_HOST = "raw.githubusercontent.com"
+        internal const val LIBRETRO_DATABASE_ROOT = "libretro/libretro-database/master"
     }
 }
 
@@ -399,6 +437,8 @@ internal fun allowedGameProviderHost(provider: String, url: HttpUrl): Boolean =
         GameMetadataProviderIds.LIBRETRO -> url.host == "thumbnails.libretro.com"
         GameMetadataProviderIds.SCREENSCRAPER -> url.host in setOf("api.screenscraper.fr", "www.screenscraper.fr", "screenscraper.fr", "media.screenscraper.fr")
         GameMetadataProviderIds.THEGAMESDB -> url.host in setOf("api.thegamesdb.net", "cdn.thegamesdb.net", "images.thegamesdb.net")
+        GameMetadataProviderIds.LIBRETRO_DATABASE -> url.host == GameMetadataProviders.LIBRETRO_DATABASE_HOST &&
+            url.encodedPath.startsWith("/" + GameMetadataProviders.LIBRETRO_DATABASE_ROOT + "/metadat/")
         else -> false
     }
 

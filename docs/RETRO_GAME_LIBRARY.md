@@ -38,11 +38,13 @@ per folder; no actual files or access grants are changed.
 ## Metadata
 
 Readers use bounded random-access header windows where the format supports
-them. They do not promise full commercial title names. An optional user-supplied
-No-Intro/Redump style XML DAT (CRC32 key, system selection) supplies verified
-names for supported plain ROM files up to 128 MiB; the user controls importing
-and explicitly rescanning. No databases, copyrighted ROMs, BIOS files or
-vendor logos are bundled.
+them. They do not promise full commercial title names. A No-Intro/Redump DAT
+(XML or clrmamepro text, CRC32 key) supplies verified names for supported plain
+ROM files up to 128 MiB and for archive entries: either user-supplied (system
+selection) or, on request, the libretro-database DATs RetroArch uses for the
+systems in the library ("Load game names from Libretro", followed by a rescan).
+Nothing is downloaded without that request. No databases, copyrighted ROMs,
+BIOS files or vendor logos are bundled.
 
 CUE/GDI/M3U companions are grouped in the Games catalog. The playlist entry
 remains playable, and the original Libretro direct-content/fallback paths own

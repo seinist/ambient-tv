@@ -304,15 +304,50 @@ class GameLibraryViewModel @Inject constructor(
             mutable.update { it.copy(busy = true, scanning = true,
                 scanProcessed = 0, scanDiscovered = 0, error = null) }
             try {
-                for (folder in library.folders()) {
-                    // A folder may have been removed while another NAS was being scanned.
-                    if (folder.id in mutable.value.removingFolders || library.folders().none { it.id == folder.id }) continue
-                    scanAndEnrich(folder, scanFiles = true)
-                    // Each committed scan emits a catalog revision. The single query collector
-                    // publishes this folder immediately using the current section/search.
-                }
+                scanEveryFolder()
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) { showError(error, R.string.game_error_scan) }
+            finally { mutable.update { it.copy(busy = false, scanning = false,
+                activeScanFolderId = null, enriching = false) } }
+        }
+    }
+
+    private suspend fun scanEveryFolder() {
+        for (folder in library.folders()) {
+            // A folder may have been removed while another NAS was being scanned.
+            if (folder.id in mutable.value.removingFolders || library.folders().none { it.id == folder.id }) continue
+            scanAndEnrich(folder, scanFiles = true)
+            // Each committed scan emits a catalog revision. The single query collector
+            // publishes this folder immediately using the current section/search.
+        }
+    }
+
+    /**
+     * RetroArch's "Update Databases": loads libretro's names and checksums for the systems in
+     * the library on request, then rescans so games get their exact names (and with them Libretro
+     * box art and better matches from the other providers).
+     */
+    fun loadNameDatabases() {
+        if (scan?.isActive == true) return
+        scan = viewModelScope.launch {
+            mutable.update { it.copy(busy = true, scanning = true, error = null,
+                message = context.getString(R.string.game_name_databases_progress, 0, 0)) }
+            try {
+                val result = metadata.loadNameDatabases { done, total ->
+                    mutable.update { it.copy(message = context.getString(R.string.game_name_databases_progress, done, total)) }
+                }
+                if (result.systems == 0) {
+                    mutable.update { it.copy(message = context.getString(R.string.game_name_databases_none)) }
+                    return@launch
+                }
+                mutable.update { it.copy(message = context.getString(R.string.game_name_databases_loaded,
+                    result.names, result.systems)) }
+                scanEveryFolder()
+            } catch (error: CancellationException) { throw error }
+            catch (error: Exception) {
+                mutable.update { it.copy(message = null) }
+                showError(error, R.string.game_error_name_databases)
+            }
             finally { mutable.update { it.copy(busy = false, scanning = false,
                 activeScanFolderId = null, enriching = false) } }
         }

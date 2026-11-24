@@ -7,6 +7,8 @@ object GameMetadataProviderIds {
     const val LIBRETRO = "libretro"
     const val SCREENSCRAPER = "screenscraper"
     const val THEGAMESDB = "thegamesdb"
+    /** Not a metadata source: the name databases RetroArch uses (names and checksums only). */
+    const val LIBRETRO_DATABASE = "libretro-database"
 }
 
 @Serializable

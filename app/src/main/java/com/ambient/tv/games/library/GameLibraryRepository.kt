@@ -347,10 +347,27 @@ class GameLibraryRepository @Inject constructor(
     }
 
     /**
-     * An optional user-supplied DAT provides verified full names by ROM CRC32.
-     * Import is transactional and limited; it never fetches a game database online.
+     * An optional DAT provides verified full names by ROM CRC32: chosen by the user here, or
+     * loaded on request from libretro-database ([importDats]). Import is transactional and
+     * limited; the library itself never fetches a database.
      */
-    suspend fun importDat(systemId: String, input: InputStream): Int = scanLock.withLock {
+    suspend fun importDat(systemId: String, input: InputStream): Int =
+        replaceDat(systemId) { insert -> input.use { GameRomDatReader.parse(it, insert) } }
+
+    /** Downloaded name databases: all [files] of a system together replace its names. */
+    suspend fun importDats(systemId: String, files: List<java.io.File>): Int =
+        replaceDat(systemId) { insert -> files.sumOf { file -> file.inputStream().use { GameRomDatReader.parse(it, insert) } } }
+
+    /** Systems with games in the library. */
+    suspend fun indexedSystems(): Set<String> = withContext(Dispatchers.IO) {
+        db.readableDatabase.rawQuery("SELECT DISTINCT system_id FROM game_entries", null).use { rows ->
+            buildSet { while (rows.moveToNext()) add(rows.getString(0)) }
+        }
+    }
+
+    private suspend fun replaceDat(
+        systemId: String, read: ((GameRomDatReader.Entry) -> Unit) -> Int,
+    ): Int = scanLock.withLock {
         require(GameSystems.byId(systemId) != null)
         withContext(Dispatchers.IO) {
             synchronized(queryLock) {
@@ -359,16 +376,14 @@ class GameLibraryRepository @Inject constructor(
                 writable.beginTransaction()
                 try {
                     writable.delete("game_dat_entries", "system_id=?", arrayOf(systemId))
-                    val imported = input.use { stream ->
-                        GameRomDatReader.parse(stream) { record ->
-                            val values = android.content.ContentValues().apply {
-                                put("system_id", systemId)
-                                put("crc32", record.crc32)
-                                put("title", record.title)
-                            }
-                            writable.insertWithOnConflict("game_dat_entries", null, values,
-                                SQLiteDatabase.CONFLICT_REPLACE)
+                    val imported = read { record ->
+                        val values = android.content.ContentValues().apply {
+                            put("system_id", systemId)
+                            put("crc32", record.crc32)
+                            put("title", record.title)
                         }
+                        writable.insertWithOnConflict("game_dat_entries", null, values,
+                            SQLiteDatabase.CONFLICT_REPLACE)
                     }
                     require(imported > 0) { "DAT contains no ROM CRC32 entries" }
                     val previous = writable.rawQuery(
