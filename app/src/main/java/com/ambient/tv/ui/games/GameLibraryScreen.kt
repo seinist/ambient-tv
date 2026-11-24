@@ -869,7 +869,7 @@ internal fun GameTile(
                             .testTag("game-cover:${game.fileId}"),
                     ) {
                         GameCoverArtwork(game.coverModel, game.title, game.systemId,
-                            modifier = Modifier.fillMaxSize(), focused = focused)
+                            modifier = Modifier.fillMaxSize(), focused = focused, fileId = game.fileId)
                         if (game.favorite && !handheld) androidx.tv.material3.Icon(
                             Icons.Filled.Favorite,
                             contentDescription = stringResource(R.string.radio_remove_favorite),
@@ -941,7 +941,7 @@ internal fun GameListEntry(
                     val ratio = game.coverAspectRatio.coerceIn(.55f, 1.5f)
                     GameCoverArtwork(game.coverModel, game.title, game.systemId,
                         modifier = Modifier.size(coverHeight * ratio, coverHeight).clip(RoundedCornerShape(4.dp)),
-                        focused = focused)
+                        focused = focused, fileId = game.fileId)
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     com.ambient.tv.ui.common.MarqueeTitle(game.title, focused = focused,

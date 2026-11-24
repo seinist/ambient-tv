@@ -1,6 +1,8 @@
 package com.ambient.tv.ui.games
 
 import android.app.Application
+import android.view.MotionEvent
+import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -21,6 +23,7 @@ import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -50,6 +53,9 @@ class GameTouchInputUiTest {
         var menuVisible by mutableStateOf(false)
         var mode by mutableStateOf(GameTouchMode.DPAD)
         var style by mutableStateOf(TouchControlStyle())
+        var presentation by mutableStateOf(GameTouchPresentation.Generic)
+        var aspect by mutableStateOf(4f / 3f)
+        var fitSurface by mutableStateOf(true)
         var hiddenForGamepad by mutableStateOf(false)
         var rewindSeconds by mutableStateOf<Float?>(null)
         var osdTaps = 0
@@ -85,6 +91,8 @@ class GameTouchInputUiTest {
                             onMenu = { fixture.osdTaps++ }, onButton = fixture::button, onStick = { _, _, _ -> },
                             surface = { modifier -> Box(modifier) },
                             touchStyle = fixture.style, hiddenForGamepad = fixture.hiddenForGamepad,
+                            presentation = fixture.presentation, contentAspectRatio = fixture.aspect,
+                            fitSurface = fixture.fitSurface,
                             onShowTouch = { fixture.hiddenForGamepad = false },
                             rewindSeconds = fixture.rewindSeconds,
                         )
@@ -311,12 +319,28 @@ class GameTouchInputUiTest {
     }
 
     @Test
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    fun landscapeSnesUsesFullHeightAndKeepsUtilitiesInAmbientSideSpace() {
+        val fixture = mount()
+        rule.runOnIdle { fixture.presentation = gameTouchPresentation("snes"); fixture.rewindSeconds = 20f }
+        val root = rule.onNodeWithTag("game-touch-root").getBoundsInRoot()
+        val surface = rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot()
+        assertEquals(root.top, surface.top)
+        assertEquals(root.bottom, surface.bottom)
+        assertEquals(4f / 3f, (surface.right - surface.left).value / (surface.bottom - surface.top).value, .01f)
+        assertControlsOutsidePicture(listOf("game-player-menu", "game-player-rewind") +
+            listOf("l", "r", "select", "start").map { "game-touch-$it" })
+        rule.runOnIdle { fixture.menuVisible = true }
+        assertEquals(surface, rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot())
+    }
+
+    @Test
     @Config(qualifiers = "w640dp-h360dp-land-mdpi")
     fun landscapeUtilitiesReservePictureSpaceAtCustomSizesAndKeepItWhileHidden() {
         val fixture = mount()
         rule.runOnIdle { fixture.mode = GameTouchMode.DUAL }
-        for (scale in listOf(100, 125, 160)) {
-            rule.runOnIdle { fixture.style = fixture.style.copy(scalePercent = scale) }
+        for (fit in listOf(true, false)) for (scale in listOf(100, 125, 140)) {
+            rule.runOnIdle { fixture.style = fixture.style.copy(scalePercent = scale); fixture.fitSurface = fit }
             val surface = rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot()
             rule.runOnIdle { fixture.rewindSeconds = 20f }
             assertEquals(surface, rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot())
@@ -328,6 +352,46 @@ class GameTouchInputUiTest {
             assertEquals(surface, rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot())
             assertControlsOutsidePicture(listOf("game-player-menu", "game-player-rewind", "game-touch-show"))
             rule.runOnIdle { fixture.hiddenForGamepad = false; fixture.rewindSeconds = null }
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    fun nativePointerInputUsesTheFittedViewsLocalCoordinatesWithoutOpeningTheMenu() {
+        val positions = mutableListOf<Offset>()
+        var osdTaps = 0
+        lateinit var nativeView: View
+        rule.setContent {
+            AmbientTvTheme {
+                GamePlayerTouchLayout(
+                    handheld = true, directPointer = true, touchEnabled = false,
+                    touchMode = GameTouchMode.DPAD, playing = true, menuVisible = false,
+                    contentAspectRatio = 3f / 4f,
+                    onMenu = { osdTaps++ }, onButton = { _, _ -> }, onStick = { _, _, _ -> },
+                    surface = { modifier ->
+                        AndroidView(modifier = modifier, factory = { context ->
+                            object : View(context) {
+                                override fun onTouchEvent(event: MotionEvent): Boolean {
+                                    if (event.actionMasked == MotionEvent.ACTION_DOWN)
+                                        positions += Offset(event.x, event.y)
+                                    return true
+                                }
+                            }.also { nativeView = it }
+                        })
+                    },
+                )
+            }
+        }
+        rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).performTouchInput {
+            click(center)
+            click(Offset(8f, 8f))
+        }
+        rule.runOnIdle {
+            assertEquals(2, positions.size)
+            assertEquals(nativeView.width / 2f, positions[0].x, 1f)
+            assertEquals(nativeView.height / 2f, positions[0].y, 1f)
+            assertEquals(Offset(8f, 8f), positions[1])
+            assertEquals(0, osdTaps)
         }
     }
 

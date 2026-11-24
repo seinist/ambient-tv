@@ -8,11 +8,20 @@ mini-player and Companion playback bar during preparation and play.
 
 ## Phone picture and control areas
 
-Menu and rewind occupy a reserved toolbar above the native picture. In landscape that toolbar
-also contains Start, Select, shoulder buttons and stick-click controls; their real scaled bounds
-determine the reserved height. In portrait the pad stays in its separate deck below the picture.
-The picture keeps the same bounds when the menu opens, rewind becomes available or a connected
-gamepad temporarily hides touch controls, so these changes do not resize the native surface.
+Landscape uses side areas for Menu, rewind, Start, Select, shoulder buttons and stick-click
+controls, with no toolbar taking height from the picture. The layout fits the largest picture
+between those areas, keeps utility targets at least 48 dp and adapts the number of columns to
+the available height. Very short windows use a compact local pad arrangement. In portrait the
+pad stays in its separate deck below the picture, with Menu and rewind above it. The picture
+keeps the same bounds when the menu opens, rewind becomes available or a connected gamepad
+temporarily hides touch controls, so these changes do not resize the native surface.
+
+On phones, the native surface follows the core's current display aspect, including aspect
+overrides and rotation, so it no longer covers the side areas with opaque black bars. The
+existing video-style ambient backdrop remains visible there and behind the controls. Integer
+scaling retains the full central area so the core can fit its source pixels without a smaller
+surface changing the whole-number scale. Its internal integer borders can therefore remain.
+The separate Companion controller keeps its existing layout.
 
 Touch customization also offers **Button vibration**, disabled by default. It uses a light
 system haptic on a newly pressed game button, including face, Start/Select and shoulder buttons.
@@ -106,6 +115,11 @@ are parsed off the UI thread. Native option access is serialized on its owning G
 Rewind UI observers read atomic count snapshots at a bounded rate. They neither dereference the
 native ring from the UI thread nor wait for GL. The buffer is configured on capability/settings
 changes, not on panel navigation; leaving netplay begins fresh history.
+
+The phone picture layout reads a lock-free native aspect snapshot while the session is active.
+Geometry changes update that snapshot on the core's owning thread; UI reads neither access the
+core nor wait for GL. Ambient rendering reuses the existing small, lifecycle-bound frame sample
+and adds no separate frame capture.
 
 Cheat edits are queued as a single ordered GL update. Unchanged lists do no native work;
 superseded updates and session teardown invalidate pending batches without blocking the UI.

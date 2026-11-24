@@ -672,6 +672,16 @@ class GameLibraryRepository @Inject constructor(
                 folderId = folderId, afterFileId = afterFileId, limit = limit.coerceIn(1, 512)))
         }
 
+    /** Promote one visible game without reading a catalog page or touching its ROM source. */
+    fun folderGame(folderId: String, fileId: String, afterFileId: String? = null): LibraryGame? =
+        synchronized(queryLock) {
+            val folder = folders().firstOrNull { it.id == folderId } ?: return@synchronized null
+            // Membership comes from game_entries, not the winning display row's folderId:
+            // parent and child folder assignments can legitimately share the same ROM.
+            games(GameLibraryQuery(section = if (folder.systemId == "auto") "all" else folder.systemId,
+                folderId = folderId, fileId = fileId, afterFileId = afterFileId, limit = 1)).firstOrNull()
+        }
+
     fun folderGameCount(folderId: String): Int = synchronized(queryLock) {
         ensureQueryIndex()
         val folder = folders().firstOrNull { it.id == folderId } ?: return@synchronized 0

@@ -4,6 +4,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 import com.ambient.tv.games.metadata.GameArtworkKind
 import com.ambient.tv.games.metadata.GameMetadata
@@ -40,14 +41,14 @@ class GameMetadataEditorPolicyTest {
         val game = LibraryGame("game", "folder", "source", "Game.sfc", "Game.sfc", "snes",
             "Game", null, 4096, 1, false, 0, verifiedTitle = "Verified name (Europe)")
         val metadata = GameMetadata(provider = "thegamesdb", canonicalTitle = "Provider title")
-        for (query in listOf("My search", "Provider title", "Game (USA)", "")) {
+        for (query in listOf("My search", "Provider title", "Game (USA)", "Game (En,de,fr)", "")) {
             assertEquals(query, gameMetadataProviderSearchText(game, metadata, "libretro", query, edited = true))
             assertEquals(query, gameMetadataProviderSearchText(game, metadata, "thegamesdb", query, edited = true))
         }
     }
 
-    @Test fun suggestedSearchTitleDropsOnlyRegionTagsAndKeepsTheCanonicalMatchIntact() {
-        val canonical = "Game (The Lost Levels) (USA, Europe) (Rev 1)"
+    @Test fun suggestedSearchTitleDropsRegionAndLanguageTagsAndKeepsTheCanonicalMatchIntact() {
+        val canonical = "Game (The Lost Levels) (USA, Europe) (En,de,fr) (Rev 1)"
         val game = LibraryGame("game", "folder", "source", "Game.sfc", "Game.sfc", "snes",
             canonical, null, 4096, 1, false, 0, verifiedTitle = canonical)
         val metadata = GameMetadata(provider = "libretro", canonicalTitle = canonical,
@@ -94,6 +95,14 @@ class GameMetadataEditorPolicyTest {
         assertEquals("USA", gameMetadataChoiceRegion(GameMetadata(title = "Localized title",
             canonicalTitle = "Original title (USA)", region = "eu")))
         assertEquals("jp", gameMetadataChoiceRegion(GameMetadata(title = "Title", region = "jp")))
+    }
+
+    @Test fun languageSubtitlesDescribeTheRomEditionRatherThanTheRequestedMetadataLanguage() {
+        assertEquals("En, De", gameMetadataChoiceLanguages(GameMetadata(
+            title = "A game (Europe) (En,de)", language = "fr")))
+        assertEquals("Pt-BR, Zh-Hant", gameMetadataChoiceLanguages(GameMetadata(
+            title = "Localized title", canonicalTitle = "Original title (World) (pt-br,Zh-Hant)", language = "de")))
+        assertNull(gameMetadataChoiceLanguages(GameMetadata(title = "Title", language = "de")))
     }
 
     @Test fun editingOtherFieldsMustPreserveATitleChosenBeforeMetadataWasAdded() {

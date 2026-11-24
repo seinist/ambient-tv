@@ -348,8 +348,9 @@ class GameMetadataRepository @Inject constructor(
             } finally { staging.deleteRecursively() }
         } }
 
-    /** Explicit folder scans feed this bounded queue; Home never starts a folder scan. */
+    /** Explicit folder work feeds this bounded queue; visible cards only reorder an active batch. */
     suspend fun enrichFolder(folderId: String, automatic: Boolean = false,
+                             prioritizedFileIds: () -> List<String> = SharedGameArtworkPriority::prioritizedFileIds,
                              onProgress: (Int, Int) -> Unit = { _, _ -> }): Unit =
         withContext(Dispatchers.IO) {
             coroutineScope {
@@ -369,36 +370,37 @@ class GameMetadataRepository @Inject constructor(
                     var completed = 0
                     var failed = 0
                     var firstFailure: IOException? = null
-                    var after: String? = null
+                    val queue = GameMetadataBatchQueue(
+                        fileId = LibraryGame::fileId,
+                        prioritizedFileIds = prioritizedFileIds,
+                        page = { after, limit -> library.folderGames(folderId, after, limit) },
+                        find = { id, after -> library.folderGame(folderId, id, after) },
+                    )
                     var lastPulse = System.nanoTime()
                     onProgress(0, total)
                     while (true) {
                         currentCoroutineContext().ensureActive()
                         if (library.folders().none { it.id == folderId }) break
-                        val page = library.folderGames(folderId, after, 64)
-                        if (page.isEmpty()) break
-                        for (game in page) {
-                            currentCoroutineContext().ensureActive()
-                            try {
-                                refresh(game)
-                            } catch (error: IOException) {
-                                // A bad response for one ROM must not strand the rest of a NAS
-                                // library. Connectivity, credentials, quotas and storage errors
-                                // still stop immediately; a missing match is not an error.
-                                if (error !is GameArtworkValidationException &&
-                                    (error !is GameMetadataProviderException || error.kind != GameMetadataFailure.INVALID_RESPONSE))
-                                    throw error
-                                failed++
-                                if (firstFailure == null) firstFailure = error
-                            }
-                            completed++
-                            if (System.nanoTime() - lastPulse >= BATCH_PULSE_NS) {
-                                library.flushMetadataBatch()
-                                onProgress(completed, total)
-                                lastPulse = System.nanoTime()
-                            }
+                        val game = queue.next() ?: break
+                        currentCoroutineContext().ensureActive()
+                        try {
+                            refresh(game)
+                        } catch (error: IOException) {
+                            // A bad response for one ROM must not strand the rest of a NAS
+                            // library. Connectivity, credentials, quotas and storage errors
+                            // still stop immediately; a missing match is not an error.
+                            if (error !is GameArtworkValidationException &&
+                                (error !is GameMetadataProviderException || error.kind != GameMetadataFailure.INVALID_RESPONSE))
+                                throw error
+                            failed++
+                            if (firstFailure == null) firstFailure = error
                         }
-                        after = page.last().fileId
+                        completed++
+                        if (System.nanoTime() - lastPulse >= BATCH_PULSE_NS) {
+                            library.flushMetadataBatch()
+                            onProgress(completed, total)
+                            lastPulse = System.nanoTime()
+                        }
                     }
                     onProgress(completed, total)
                     firstFailure?.let { throw GameMetadataBatchException(failed, completed, it) }

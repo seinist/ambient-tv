@@ -12,7 +12,9 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performTouchInput
 import com.ambient.tv.data.local.HomeRowDefinition
 import com.ambient.tv.games.library.LibraryGame
+import com.ambient.tv.games.metadata.GameArtworkPriority
 import com.ambient.tv.ui.common.ContentRow
+import com.ambient.tv.ui.games.LocalGameArtworkPriority
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.theme.AmbientTvTheme
 import com.ambient.tv.ui.theme.screenGutter
@@ -42,11 +44,12 @@ class GameHomePresentationTest {
             contentKey = HomeRowDefinition.GAMES_ALL)), games).single()
 
     @Test fun homeKeepsMixedBoxShapesAndSeparatesTapFromExplicitInfo() {
+        val priority = GameArtworkPriority()
         val row = row(listOf(game("A SNES", "snes", 560), game("B PSP", "psp", 240)))
         val selections = mutableListOf<String>()
         val details = mutableListOf<String>()
         rule.setContent {
-            CompositionLocalProvider(LocalHandheldUi provides true) {
+            CompositionLocalProvider(LocalHandheldUi provides true, LocalGameArtworkPriority provides priority) {
                 AmbientTvTheme {
                     ContentRow(row, onItemClick = { selections += it.ratingKey },
                         onItemInfo = { details += it.ratingKey })
@@ -54,6 +57,10 @@ class GameHomePresentationTest {
             }
         }
         rule.waitForIdle()
+        rule.runOnIdle {
+            assertEquals("Home publishes decoded catalog IDs, once per visible game",
+                setOf("A SNES", "B PSP"), priority.prioritizedFileIds().toSet())
+        }
         val nodes = rule.onAllNodes(hasClickAction())
         assertEquals(2, nodes.fetchSemanticsNodes().size)
         // Each card holds its cover in its own box shape; one row keeps one cover height.

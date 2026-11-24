@@ -346,21 +346,22 @@ class GameLibraryRepositoryQueryTest {
         } }
     }
 
-    @Test fun openingPolicyFourCleansExistingDisplayOnceWithoutChangingMetadataIdentity() {
+    @Test fun openingPolicyFiveCleansLanguageTagsOnceWithoutChangingMetadataIdentity() {
         preferences.gameMetadataOptions = preferences.gameMetadataOptions.copy(automatic = false)
-        val canonical = "Super Mario World (USA) (Rev 1)"
-        seed("one", title = "Internal (Japan)", filename = "opaque.sfc", verified = canonical)
+        val canonical = "Super Mario World (USA) (En,de,fr) (Rev 1)"
+        val oldDisplay = "Super Mario World (En,de,fr) (Rev 1)"
+        seed("one", title = "Internal (Japan) (En,Ja)", filename = "opaque.sfc", verified = canonical)
         val oldLibrary = repository()
         val metadata = GameMetadata(title = canonical, canonicalTitle = canonical, provider = "libretro",
             providerGameId = "Nintendo - Super Nintendo Entertainment System|$canonical", region = "us",
-            coverUrl = "https://raw.githubusercontent.com/libretro-thumbnails/Nintendo_-_Super_Nintendo_Entertainment_System/master/Named_Boxarts/Super%20Mario%20World%20(USA)%20(Rev%201).png")
+            coverUrl = "https://raw.githubusercontent.com/libretro-thumbnails/Nintendo_-_Super_Nintendo_Entertainment_System/master/Named_Boxarts/Super%20Mario%20World%20(USA)%20(En,de,fr)%20(Rev%201).png")
         assertTrue(oldLibrary.saveMetadata(oldLibrary.metadataTicket("one")!!, metadata))
         val stored = oldLibrary.metadata("one")!!
         raw().use { db ->
-            // Model an already repaired catalog whose previous display policy kept region tags.
+            // Model the previous display policy, which removed regions but kept language tags.
             db.execSQL("UPDATE game_query SET title_auto=?,sort_auto=?,search_auto=? WHERE file_id='one'",
-                arrayOf(canonical, gameSortKey(canonical), gameSearchKey(canonical)))
-            GameLibraryQueryIndex.signature(db, gameQueryDigest(listOf("4",
+                arrayOf(oldDisplay, gameSortKey(oldDisplay), gameSearchKey("$oldDisplay\n$canonical")))
+            GameLibraryQueryIndex.signature(db, gameQueryDigest(listOf("5",
                 prefs.getString("game_library_folders", "[]").orEmpty(),
                 prefs.getString("game_library_overrides", "[]").orEmpty(),
                 prefs.getString("file_playback_scopes", "{}").orEmpty()) + files.sources().map { it.id }.sorted()))
@@ -370,7 +371,7 @@ class GameLibraryRepositoryQueryTest {
             db.execSQL("CREATE TRIGGER watch_display_metadata AFTER INSERT ON game_metadata BEGIN UPDATE display_writes SET metadata_count=metadata_count+1; END")
         }
         val before = oldLibrary.game("one")!!
-        assertEquals(canonical, before.title)
+        assertEquals(oldDisplay, before.title)
         val beforeQuery = gameMetadataQuery(before, stored, "en", "us", "12345678", provider = "libretro")
 
         val reopened = repository()
@@ -378,13 +379,14 @@ class GameLibraryRepositoryQueryTest {
         assertEquals("Super Mario World (Rev 1)", displayed.title)
         assertEquals(canonical, displayed.verifiedTitle)
         assertEquals(canonical, displayed.metadataTitle)
-        assertEquals("Internal (Japan)", displayed.internalTitle)
+        assertEquals("Internal (Japan) (En,Ja)", displayed.internalTitle)
         assertEquals("opaque.sfc", displayed.filename)
         assertEquals(stored, reopened.metadata("one"))
         val afterQuery = gameMetadataQuery(displayed, reopened.metadata("one"), "en", "us", "12345678", provider = "libretro")
         assertEquals(beforeQuery, afterQuery)
         assertEquals(gameMetadataFingerprint(before, beforeQuery), gameMetadataFingerprint(displayed, afterQuery))
         assertEquals(listOf("one"), reopened.games(GameLibraryQuery(search = "USA")).map { it.fileId })
+        assertEquals(listOf("one"), reopened.games(GameLibraryQuery(search = "En,de,fr")).map { it.fileId })
         assertEquals(listOf("one"), reopened.games(GameLibraryQuery(search = "Super Mario World (Rev 1)")).map { it.fileId })
 
         val stable = repository()
@@ -624,15 +626,59 @@ class GameLibraryRepositoryQueryTest {
         } finally { metadata.closeForTests() }
     }
 
+    @Test fun activeMetadataBatchPromotesFarFocusAndReordersTheNextRequestWithoutDoubleCounting() = runBlocking {
+        val ids = (0 until 70).map { it.toString().padStart(3, '0') }
+        ids.forEach { seed(it, verified = "Game $it (Europe)") }
+        seed("foreign", folder = "root", system = "gba", filename = "foreign.gba", verified = "Foreign Game (USA)")
+        val library = repository()
+        val priorities = java.util.concurrent.atomic.AtomicReference(listOf("foreign", "069", "068"))
+        val requested = mutableListOf<String>()
+        val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
+            val name = chain.request().url.pathSegments.last()
+            requested += name
+            if (name == "Game 069 (Europe).png") priorities.set(listOf("067", "068"))
+            okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(200).message("OK").body(imageBytes().toResponseBody("image/png".toMediaType())).build()
+        })
+        val progress = mutableListOf<Pair<Int, Int>>()
+        try {
+            withTimeout(15_000) {
+                metadata.enrichFolder("snes", prioritizedFileIds = priorities::get) { done, total ->
+                    progress += done to total
+                }
+            }
+            assertEquals(listOf("069", "067", "068", "000").map { "Game $it (Europe).png" }, requested.take(4))
+            assertEquals(ids.map { "Game $it (Europe).png" }.toSet(), requested.toSet())
+            assertEquals("The sequential cursor must not download promoted cards again", ids.size, requested.size)
+            assertEquals(0 to 70, progress.first())
+            assertEquals(70 to 70, progress.last())
+            assertNull("A visible game in another folder is never enriched by this batch", library.metadata("foreign"))
+        } finally { metadata.closeForTests() }
+    }
+
+    @Test fun promotedFolderLookupUsesMembershipEvenWhenAChildOwnsTheDisplayRow() {
+        seed("overlap", folder = "root")
+        seed("overlap", folder = "snes")
+        seed("child-only", folder = "snes")
+        val library = repository()
+        assertEquals("snes", library.folderGame("root", "overlap")!!.folderId)
+        assertEquals("snes", library.folderGame("snes", "overlap")!!.folderId)
+        assertNull(library.folderGame("root", "child-only"))
+        assertNull(library.folderGame("snes", "overlap", afterFileId = "overlap"))
+        assertNull(library.folderGame("removed", "overlap"))
+    }
+
     @Test fun invalidMetadataForOneRomReportsAPartialBatchAndContinuesTheOtherRoms() = runBlocking {
         val brokenName = "Broken Game (Europe)"
         val validName = "Valid Game (Europe)"
-        seed("00-broken", title = "INTERNAL BROKEN", verified = brokenName)
+        seed("99-broken", title = "INTERNAL BROKEN", verified = brokenName)
         seed("01-valid", title = "INTERNAL VALID", verified = validName)
         val library = repository()
         val requestedNames = mutableListOf<String>()
+        var brokenAttemptsBeforeValid = 0
         val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
             val name = chain.request().url.pathSegments.last()
+            if (name == "$validName.png") brokenAttemptsBeforeValid = requestedNames.count { it == "$brokenName.png" }
             requestedNames += name
             val bytes = if (name == "$brokenName.png") "invalid PNG".toByteArray() else imageBytes()
             okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
@@ -641,7 +687,8 @@ class GameLibraryRepositoryQueryTest {
         val progress = mutableListOf<Pair<Int, Int>>()
         try {
             val error = runCatching { withTimeout(5_000) {
-                metadata.enrichFolder("snes", automatic = true) { done, total -> progress += done to total }
+                metadata.enrichFolder("snes", automatic = true,
+                    prioritizedFileIds = { listOf("99-broken") }) { done, total -> progress += done to total }
             } }.exceptionOrNull()
             assertTrue(error is GameMetadataBatchException)
             val partial = error as GameMetadataBatchException
@@ -649,14 +696,18 @@ class GameLibraryRepositoryQueryTest {
             assertEquals(2, partial.processedGames)
             assertTrue(partial.firstFailure is GameArtworkValidationException)
             assertEquals(2 to 2, progress.last())
-            assertEquals("Broken Game", library.game("00-broken")!!.title)
-            assertNull(library.metadata("00-broken"))
-            assertNull(library.artworkPath("00-broken", GameArtworkKind.COVER))
+            assertEquals("$brokenName.png", requestedNames.first())
+            assertTrue(brokenAttemptsBeforeValid > 0)
+            assertEquals("The promoted failure is not retried when its normal cursor row arrives",
+                brokenAttemptsBeforeValid, requestedNames.count { it == "$brokenName.png" })
+            assertEquals("Broken Game", library.game("99-broken")!!.title)
+            assertNull(library.metadata("99-broken"))
+            assertNull(library.artworkPath("99-broken", GameArtworkKind.COVER))
             assertEquals(validName, library.metadata("01-valid")!!.canonicalTitle)
             assertNotNull(library.artworkPath("01-valid", GameArtworkKind.COVER))
             val previousRequests = requestedNames.size
             val retry = runCatching { withTimeout(5_000) {
-                metadata.refresh(library.game("00-broken")!!, force = false)
+                metadata.refresh(library.game("99-broken")!!, force = false)
             } }.exceptionOrNull()
             assertTrue(retry is GameArtworkValidationException)
             assertTrue("A failed ROM remains retryable instead of being cached as missing", requestedNames.size > previousRequests)

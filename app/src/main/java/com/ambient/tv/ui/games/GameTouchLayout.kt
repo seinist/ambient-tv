@@ -28,22 +28,6 @@ internal fun gameTouchDeckHeight(mode: GameTouchMode, width: Float = 320f,
     return scale * (portraitClusterSize(base) + plan.chrome + if (plan.secondary) PORTRAIT_SECONDARY_MAX else 0f)
 }
 
-/** Menu/rewind keep a real strip outside the native picture, even with the pad hidden. */
-internal const val GAME_TOUCH_TOOLBAR_MIN_HEIGHT = 72f
-
-/** The landscape utility rows scale with the pad; reserve their actual bounds above the picture. */
-internal fun gameTouchUtilityToolbarHeight(
-    mode: GameTouchMode,
-    width: Float,
-    height: Float,
-    style: TouchControlStyle = TouchControlStyle(),
-    presentation: GameTouchPresentation = GameTouchPresentation.Generic,
-): Float {
-    val layout = gameTouchLayout(mode, width, height, portrait = false, style = style, presentation = presentation)
-    val utilityBottom = layout.buttons.filterKeys { it !in layout.faces }.values.maxOfOrNull { it.bottom } ?: 0f
-    return maxOf(GAME_TOUCH_TOOLBAR_MIN_HEIGHT, utilityBottom + 8f)
-}
-
 private const val PORTRAIT_MARGIN = 12f
 private const val PORTRAIT_SECONDARY_MIN = 96f
 private const val PORTRAIT_SECONDARY_MAX = 120f
