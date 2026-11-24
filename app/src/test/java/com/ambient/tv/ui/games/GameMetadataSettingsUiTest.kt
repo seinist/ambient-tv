@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
@@ -12,6 +13,7 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.pressKey
 import com.ambient.tv.R
@@ -87,7 +89,7 @@ class GameMetadataSettingsUiTest {
 
     @Test
     @Config(qualifiers = "w960dp-h720dp-land-mdpi")
-    fun builtInGamesDbCanBeReachedAndSelectedByTvRemote() {
+    fun builtInGamesDbCanBeSelectedAndSavedByTvRemote() {
         mount(handheld = false)
         val provider = rule.onNodeWithText("TheGamesDB")
         provider.performScrollTo().assertIsDisplayed().performTouchInput { click() }
@@ -95,7 +97,9 @@ class GameMetadataSettingsUiTest {
         rule.onNodeWithText(rule.activity.getString(R.string.game_metadata_settings_builtin))
             .performScrollTo().assertIsDisplayed()
         val save = rule.onNodeWithText(rule.activity.getString(R.string.item_edit_save))
-        save.performTouchInput { click() }
+        // TV action buttons receive focus from navigation, not from a simulated touch tap.
+        // Set up that focus explicitly, then exercise the real keyboard activation below.
+        save.assertIsDisplayed().performSemanticsAction(SemanticsActions.RequestFocus) { it() }
         save.assertIsFocused().performKeyInput { pressKey(Key.Enter) }
         rule.runOnIdle {
             assertEquals(GameMetadataProviderIds.THEGAMESDB, savedOptions?.provider)
