@@ -91,7 +91,8 @@ keyboard/mouse/lightgun), device EOTF and renderer parity gates below remain req
 7. **Large-file edge cases:** Core-specific VFS bypass, multiple open file descriptors and
    network failure; never silently copy huge ROMs to internal storage, or load multi-gigabyte
    ROM bytes to the JVM/native heap.
-8. **Cross-device library:** RomM/library and save-state sync deliberately postponed.
+8. **Cross-device library:** RomM games keep firmware, saves and states on the server (DOCUMENTATION 4.12). Local games
+   still have no cross-device sync; cores that write their own save files (memory cards, NAND) are not mirrored yet.
 
 ## Acceptance before a release
 

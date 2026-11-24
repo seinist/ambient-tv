@@ -5,7 +5,8 @@
 Games is a library **view over existing FileSource transports**, not another SMB/NFS client.
 A server may hold `Movies/`, `TV/` and `Games/` on the same share. Existing
 credentials, WireGuard routes, online checks, MAC/WOL groups and wake notifications
-are reused. RomM is intentionally outside this implementation.
+are reused. RomM is a separate system with its own catalog (`romm/RommLibrary`); it reuses
+this library's screen parts (`GameLibraryGames`, header, chips, view options) and view settings.
 
 A new source created inside Games has `showInFiles=false`; an existing Files
 source remains visible by default. Each GameLibraryFolder has
