@@ -19,6 +19,7 @@ class GameLibraryQueryIndexTest {
         db.execSQL("""CREATE TABLE game_entries (folder_id TEXT NOT NULL,file_id TEXT NOT NULL,
             source_id TEXT NOT NULL,path TEXT NOT NULL,filename TEXT NOT NULL,system_id TEXT NOT NULL,
             internal_title TEXT,file_size INTEGER,modified INTEGER,verified_title TEXT,
+            dat_version INTEGER NOT NULL DEFAULT -1,
             PRIMARY KEY(folder_id,file_id))""")
         GameLibraryQueryIndex.create(db)
     }
@@ -30,9 +31,9 @@ class GameLibraryQueryIndexTest {
             size = 1, modified = 1, favorite = favorite, lastPlayed = played)
 
     private fun insert(game: LibraryGame) {
-        db.execSQL("INSERT INTO game_entries VALUES(?,?,?,?,?,?,?,?,?,?)", arrayOf<Any?>(
+        db.execSQL("INSERT INTO game_entries VALUES(?,?,?,?,?,?,?,?,?,?,?)", arrayOf<Any?>(
             game.folderId, game.fileId, game.sourceId, game.path, game.filename, game.systemId,
-            game.internalTitle, game.size, game.modified, game.verifiedTitle))
+            game.internalTitle, game.size, game.modified, game.verifiedTitle, game.datVersion))
         GameLibraryQueryIndex.put(db, game, game.systemId)
     }
 
