@@ -49,6 +49,14 @@ display distinguishes loading databases, matching names and fetching information
 completion is reported only after those steps finish. Cancellation retains completed imports
 and their visible catalog counts.
 
+Library, Home and detail titles omit recognized country/region annotations such as `(USA)`,
+`(Europe)` or `(Japan)`. Automatically suggested metadata searches and match headings use the
+same presentation. Region labels remain in result subtitles so different editions can still
+be selected deliberately. The full DAT/canonical name and artwork identity stay unchanged;
+language, revision, disc and meaningful title annotations are retained. Explicit custom titles
+and search text entered by the user are preserved literally. Existing catalog titles update
+locally on opening after an upgrade, without rereading the NAS.
+
 ScreenScraper availability and limits depend on the application/account and the service. The
 client serializes its requests conservatively and respects returned cooldowns/quota failures.
 TheGamesDB platform/developer/publisher reference data is cached. Temporary network, quota or

@@ -10,7 +10,7 @@ import android.database.sqlite.SQLiteDatabase
  */
 internal object GameLibraryQueryIndex {
     // Bump when title/search/system-label/eligibility rules change, so old projections rebuild without a NAS scan.
-    const val POLICY_VERSION = 4
+    const val POLICY_VERSION = 5
 
     fun create(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE game_query (
@@ -60,18 +60,23 @@ internal object GameLibraryQueryIndex {
         val filename = gameDisplayFileName(game.filename)
         val internal = game.internalTitle?.takeIf(String::isNotBlank)
         val verified = game.verifiedTitle?.takeIf(String::isNotBlank)
-        val titles = mapOf(
+        val sourceTitles = mapOf(
             "auto" to (game.customTitle ?: game.metadataTitle?.takeIf(String::isNotBlank) ?: verified ?: internal ?: filename),
             "internal" to (game.customTitle ?: internal ?: filename),
             "filename" to (game.customTitle ?: filename),
         )
+        // Manual renames are literal user choices. Other sources retain their full names in the
+        // catalog while all display modes omit only explicit country/region annotations.
+        val titles = sourceTitles.mapValues { (_, title) ->
+            if (game.customTitle != null) title else gameDisplayTitle(title)
+        }
         // A rescan normally changes only game_entries.seen. Keep the title indexes untouched
         // in that case; rewriting every unchanged index page is wasted I/O on TV flash.
         val stamp = gameQueryDigest(listOf(game.folderId, game.systemId, game.favorite.toString(),
             game.lastPlayed.toString(), game.customTitle.orEmpty(), folderDepth.toString(), systemName, game.filename,
             game.metadataTitle.orEmpty(), game.metadataYear?.toString().orEmpty(), game.coverPath.orEmpty(),
             game.backdropPath.orEmpty(), game.coverWidth?.toString().orEmpty(), game.coverHeight?.toString().orEmpty(),
-            game.metadataRegion.orEmpty(), game.metadataPlatform.orEmpty()) + titles.values)
+            game.metadataRegion.orEmpty(), game.metadataPlatform.orEmpty()) + sourceTitles.values + titles.values)
         if (checkExisting && db.rawQuery("SELECT projection_stamp FROM game_query WHERE file_id=?",
                 arrayOf(game.fileId)).use { it.moveToFirst() && it.getString(0) == stamp }) return
         val values = ContentValues(27).apply {
@@ -85,7 +90,10 @@ internal object GameLibraryQueryIndex {
             titles.forEach { (style, title) ->
                 put("title_$style", title)
                 put("sort_$style", gameSortKey(title))
-                put("search_$style", gameSearchKey(title))
+                val sourceTitle = sourceTitles.getValue(style)
+                // Both the clean visible name and exact source name remain searchable, so a
+                // region query still distinguishes editions even when the filename is opaque.
+                put("search_$style", gameSearchKey(if (title == sourceTitle) title else "$title\n$sourceTitle"))
             }
             put("sort_system", gameSortKey(systemName))
             put("search_filename_raw", gameSearchKey(game.filename))

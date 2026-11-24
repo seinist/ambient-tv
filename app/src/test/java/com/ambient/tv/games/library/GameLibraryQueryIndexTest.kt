@@ -69,6 +69,52 @@ class GameLibraryQueryIndexTest {
         }
     }
 
+    @Test fun regionCleanupChangesPresentationAndSortWhileKeepingBothNamesSearchable() {
+        val canonical = "Game (The Lost Levels) (USA) (Rev 1)"
+        val original = game("1", "Internal (Japan)").copy(filename = "opaque.sfc", verifiedTitle = canonical)
+        insert(original)
+        val display = "Game (The Lost Levels) (Rev 1)"
+        assertEquals(listOf(display), names(GameLibraryQuery()))
+        assertEquals(listOf(display), names(GameLibraryQuery(search = display)))
+        assertEquals(listOf(display), names(GameLibraryQuery(search = canonical)))
+        assertEquals(listOf(display), names(GameLibraryQuery(search = "USA")))
+        assertEquals(listOf("Internal"), names(GameLibraryQuery(), "internal"))
+        assertEquals(listOf("Internal"), names(GameLibraryQuery(search = "Japan"), "internal"))
+        db.rawQuery("SELECT g.verified_title,q.sort_auto FROM game_entries g JOIN game_query q ON q.file_id=g.file_id", null).use {
+            assertTrue(it.moveToFirst())
+            assertEquals(canonical, it.getString(0))
+            assertArrayEquals(gameSortKey(display), it.getBlob(1))
+        }
+        val metadataTitle = "Online name (Europe)"
+        GameLibraryQueryIndex.put(db, original.copy(metadataTitle = metadataTitle), "snes")
+        assertEquals(listOf("Online name"), names(GameLibraryQuery()))
+        assertEquals(listOf("Online name"), names(GameLibraryQuery(search = "Europe")))
+        db.rawQuery("SELECT metadata_title FROM game_query", null).use {
+            assertTrue(it.moveToFirst()); assertEquals(metadataTitle, it.getString(0))
+        }
+    }
+
+    @Test fun filenameModeCleansRegionsButExplicitManualRenamesStayLiteral() {
+        val original = game("1", "Internal").copy(filename = "Raw_Name_(Europe)_(Disc 1).sfc")
+        insert(original)
+        assertEquals(listOf("Raw Name (Disc 1)"), names(GameLibraryQuery(), "filename"))
+        assertEquals(listOf("Raw Name (Disc 1)"), names(GameLibraryQuery(search = "Europe"), "filename"))
+        GameLibraryQueryIndex.put(db, original.copy(customTitle = "My title (USA)"), "snes")
+        for (style in listOf("auto", "internal", "filename")) {
+            assertEquals(listOf("My title (USA)"), names(GameLibraryQuery(), style))
+        }
+    }
+
+    @Test fun changingOnlyTheHiddenRegionStillRefreshesTheSearchProjection() {
+        val original = game("1", "Game (USA)").copy(filename = "opaque.sfc")
+        insert(original)
+        assertEquals(listOf("Game"), names(GameLibraryQuery(search = "USA")))
+        GameLibraryQueryIndex.put(db, original.copy(internalTitle = "Game (Europe)"), "snes")
+        assertEquals(listOf("Game"), names(GameLibraryQuery()))
+        assertTrue(names(GameLibraryQuery(search = "USA")).isEmpty())
+        assertEquals(listOf("Game"), names(GameLibraryQuery(search = "Europe")))
+    }
+
     @Test fun unchangedRescanDoesNotRewriteTheProjectionOrItsIndexes() {
         val original = game("1", "Unchanged")
         insert(original)

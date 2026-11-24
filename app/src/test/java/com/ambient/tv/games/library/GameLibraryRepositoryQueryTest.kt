@@ -234,7 +234,7 @@ class GameLibraryRepositoryQueryTest {
         library.importDat("snes", dat.byteInputStream())
         assertEquals("Raw catalog title", library.game("raw")!!.title)
         assertEquals(8L, library.game("raw")!!.datVersion)
-        assertEquals("Super Mario World (Europe)", library.game("headered")!!.title)
+        assertEquals("Super Mario World", library.game("headered")!!.title)
         assertEquals("My title", library.game("manual")!!.title)
         assertEquals("Locked title", library.metadata("manual")!!.title)
         assertEquals("My notes", library.metadata("manual")!!.summary)
@@ -276,7 +276,7 @@ class GameLibraryRepositoryQueryTest {
         library.setCustomTitle("custom", "My custom name")
         val storedAutomatic = library.metadata("automatic")!!
         library.importDat("snes", """<datafile><game name="Super Mario World (USA)"><rom crc="12345678"/></game></datafile>""".byteInputStream())
-        assertEquals("Super Mario World (USA)", library.game("automatic")!!.title)
+        assertEquals("Super Mario World", library.game("automatic")!!.title)
         assertEquals("Super Mario World (USA)", library.game("automatic")!!.metadataTitle)
         assertEquals(storedAutomatic.copy(title = "Super Mario World (USA)"), library.metadata("automatic"))
         for (id in listOf("matched", "locked", "gamesdb")) {
@@ -317,7 +317,7 @@ class GameLibraryRepositoryQueryTest {
         }
 
         val reopened = repository()
-        assertEquals("Super Mario World (USA)", reopened.game("automatic")!!.title)
+        assertEquals("Super Mario World", reopened.game("automatic")!!.title)
         assertEquals("Super Mario World (USA)", reopened.game("automatic")!!.metadataTitle)
         // Preserve the old lookup identity/freshness so artwork can resolve for the corrected name.
         assertEquals(storedAutomatic.copy(title = "Super Mario World (USA)"), reopened.metadata("automatic"))
@@ -340,9 +340,57 @@ class GameLibraryRepositoryQueryTest {
             db.execSQL("CREATE TRIGGER watch_repaired_metadata AFTER INSERT ON game_metadata BEGIN UPDATE repair_writes SET count=count+1; END")
         }
         val stable = repository()
-        repeat(3) { assertEquals("Super Mario World (USA)", stable.game("automatic")!!.title) }
+        repeat(3) { assertEquals("Super Mario World", stable.game("automatic")!!.title) }
         raw().use { db -> db.rawQuery("SELECT count FROM repair_writes", null).use {
             assertTrue(it.moveToFirst()); assertEquals(0, it.getInt(0))
+        } }
+    }
+
+    @Test fun openingPolicyFourCleansExistingDisplayOnceWithoutChangingMetadataIdentity() {
+        preferences.gameMetadataOptions = preferences.gameMetadataOptions.copy(automatic = false)
+        val canonical = "Super Mario World (USA) (Rev 1)"
+        seed("one", title = "Internal (Japan)", filename = "opaque.sfc", verified = canonical)
+        val oldLibrary = repository()
+        val metadata = GameMetadata(title = canonical, canonicalTitle = canonical, provider = "libretro",
+            providerGameId = "Nintendo - Super Nintendo Entertainment System|$canonical", region = "us",
+            coverUrl = "https://raw.githubusercontent.com/libretro-thumbnails/Nintendo_-_Super_Nintendo_Entertainment_System/master/Named_Boxarts/Super%20Mario%20World%20(USA)%20(Rev%201).png")
+        assertTrue(oldLibrary.saveMetadata(oldLibrary.metadataTicket("one")!!, metadata))
+        val stored = oldLibrary.metadata("one")!!
+        raw().use { db ->
+            // Model an already repaired catalog whose previous display policy kept region tags.
+            db.execSQL("UPDATE game_query SET title_auto=?,sort_auto=?,search_auto=? WHERE file_id='one'",
+                arrayOf(canonical, gameSortKey(canonical), gameSearchKey(canonical)))
+            GameLibraryQueryIndex.signature(db, gameQueryDigest(listOf("4",
+                prefs.getString("game_library_folders", "[]").orEmpty(),
+                prefs.getString("game_library_overrides", "[]").orEmpty(),
+                prefs.getString("file_playback_scopes", "{}").orEmpty()) + files.sources().map { it.id }.sorted()))
+            db.execSQL("CREATE TABLE display_writes(projection_count INTEGER NOT NULL,metadata_count INTEGER NOT NULL)")
+            db.execSQL("INSERT INTO display_writes VALUES(0,0)")
+            db.execSQL("CREATE TRIGGER watch_display_projection AFTER INSERT ON game_query BEGIN UPDATE display_writes SET projection_count=projection_count+1; END")
+            db.execSQL("CREATE TRIGGER watch_display_metadata AFTER INSERT ON game_metadata BEGIN UPDATE display_writes SET metadata_count=metadata_count+1; END")
+        }
+        val before = oldLibrary.game("one")!!
+        assertEquals(canonical, before.title)
+        val beforeQuery = gameMetadataQuery(before, stored, "en", "us", "12345678", provider = "libretro")
+
+        val reopened = repository()
+        val displayed = reopened.game("one")!!
+        assertEquals("Super Mario World (Rev 1)", displayed.title)
+        assertEquals(canonical, displayed.verifiedTitle)
+        assertEquals(canonical, displayed.metadataTitle)
+        assertEquals("Internal (Japan)", displayed.internalTitle)
+        assertEquals("opaque.sfc", displayed.filename)
+        assertEquals(stored, reopened.metadata("one"))
+        val afterQuery = gameMetadataQuery(displayed, reopened.metadata("one"), "en", "us", "12345678", provider = "libretro")
+        assertEquals(beforeQuery, afterQuery)
+        assertEquals(gameMetadataFingerprint(before, beforeQuery), gameMetadataFingerprint(displayed, afterQuery))
+        assertEquals(listOf("one"), reopened.games(GameLibraryQuery(search = "USA")).map { it.fileId })
+        assertEquals(listOf("one"), reopened.games(GameLibraryQuery(search = "Super Mario World (Rev 1)")).map { it.fileId })
+
+        val stable = repository()
+        repeat(3) { assertEquals(displayed.title, stable.game("one")!!.title) }
+        raw().use { db -> db.rawQuery("SELECT projection_count,metadata_count FROM display_writes", null).use {
+            assertTrue(it.moveToFirst()); assertEquals(1, it.getInt(0)); assertEquals(0, it.getInt(1))
         } }
     }
 
@@ -379,7 +427,7 @@ class GameLibraryRepositoryQueryTest {
             assertTrue("An artwork-only search must hide catalog entries whose image is missing",
                 metadata.search(game, "Mario World", "libretro", GameArtworkKind.COVER).isEmpty())
             assertTrue(withTimeout(5_000) { metadata.applyMatch(game, found) })
-            assertEquals("Super Mario World (Europe)", library.game("one")!!.title)
+            assertEquals("Super Mario World", library.game("one")!!.title)
             assertEquals("Super Mario World (Europe)", library.metadata("one")!!.canonicalTitle)
             assertTrue(library.metadata("one")!!.matchLocked)
             assertTrue(requests.get() > 0)
@@ -440,7 +488,7 @@ class GameLibraryRepositoryQueryTest {
             assertFalse(withTimeout(5_000) { metadata.refresh(library.game("one")!!) })
             assertTrue(requestedNames.isNotEmpty())
             assertTrue("A checksum identity must not fall through to a guessed filename", requestedNames.all { it == "$verified.png" })
-            assertEquals(verified, library.game("one")!!.title)
+            assertEquals("Verified Game", library.game("one")!!.title)
             assertEquals(verified, library.game("one")!!.verifiedTitle)
             assertNull(library.metadata("one"))
             assertNull(library.artworkPath("one", GameArtworkKind.COVER))
@@ -481,7 +529,7 @@ class GameLibraryRepositoryQueryTest {
             val corrected = library.metadata("one")!!
             assertEquals(verified, corrected.canonicalTitle)
             assertEquals("$platform|$verified", corrected.providerGameId)
-            assertEquals(verified, library.game("one")!!.title)
+            assertEquals("Verified Game", library.game("one")!!.title)
             assertEquals("$verified.png", corrected.coverUrl!!.toHttpUrl().pathSegments.last())
             assertNotNull(library.artworkPath("one", GameArtworkKind.COVER))
         } finally { metadata.closeForTests() }
@@ -601,7 +649,7 @@ class GameLibraryRepositoryQueryTest {
             assertEquals(2, partial.processedGames)
             assertTrue(partial.firstFailure is GameArtworkValidationException)
             assertEquals(2 to 2, progress.last())
-            assertEquals(brokenName, library.game("00-broken")!!.title)
+            assertEquals("Broken Game", library.game("00-broken")!!.title)
             assertNull(library.metadata("00-broken"))
             assertNull(library.artworkPath("00-broken", GameArtworkKind.COVER))
             assertEquals(validName, library.metadata("01-valid")!!.canonicalTitle)
@@ -687,7 +735,7 @@ class GameLibraryRepositoryQueryTest {
             assertTrue(withTimeout(5_000) { metadata.refresh(library.game("color")!!) })
             assertEquals(4, requests.get())
             assertEquals("Nintendo - Game Boy Color|$verified", library.metadata("color")!!.providerGameId)
-            assertEquals(verified, library.game("color")!!.title)
+            assertEquals("Color Game", library.game("color")!!.title)
             assertNotNull(library.artworkPath("color", GameArtworkKind.COVER))
         } finally { metadata.closeForTests() }
     }
@@ -710,7 +758,7 @@ class GameLibraryRepositoryQueryTest {
             }
             assertNull(library.metadata("one"))
             assertNull(library.artworkPath("one", GameArtworkKind.COVER))
-            assertEquals("Verified Game (Europe)", library.game("one")!!.title)
+            assertEquals("Verified Game", library.game("one")!!.title)
         } finally { metadata.closeForTests() }
     }
 
