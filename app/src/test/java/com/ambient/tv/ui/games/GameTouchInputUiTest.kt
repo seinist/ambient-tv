@@ -292,8 +292,9 @@ class GameTouchInputUiTest {
         val surface = rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         val controls = tags.map { tag ->
             val target = rule.onNodeWithTag(tag, useUnmergedTree = true).assertIsDisplayed()
-            assertTrue("$tag lost its touch target", target.getBoundsInRoot().width >= 48.dp &&
-                target.getBoundsInRoot().height >= 48.dp)
+            val bounds = target.getBoundsInRoot()
+            assertTrue("$tag lost its touch target", bounds.right - bounds.left >= 48.dp &&
+                bounds.bottom - bounds.top >= 48.dp)
             target.fetchSemanticsNode().boundsInRoot.also { assertFalse("$tag covers the game picture", it.overlaps(surface)) }
         }
         controls.forEachIndexed { index, bounds -> controls.drop(index + 1).forEach { other ->
