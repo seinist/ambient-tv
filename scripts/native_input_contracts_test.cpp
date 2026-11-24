@@ -1,5 +1,6 @@
 #include "input.h"
 #include "inputdescriptors.h"
+#include "contentaspect.h"
 #include <android/input.h>
 #include <android/keycodes.h>
 #include <cassert>
@@ -162,6 +163,62 @@ static void descriptorOwnershipAndBounds() {
     assert(store.generation() == cleared);
 }
 
+static void contentAspectGeometryAndRotation() {
+    using libretrodroid::aspectRatioForGeometry;
+    using libretrodroid::contentRotationSwapsAspect;
+    const float fourThirds = 4.0F / 3.0F;
+    const float wide = 16.0F / 9.0F;
+    assert(aspectRatioForGeometry(fourThirds, 640, 224) == fourThirds);
+    assert(aspectRatioForGeometry(0.0F, 320, 240) == fourThirds);
+    assert(aspectRatioForGeometry(-1.0F, 240, 320) == 0.75F);
+    assert(aspectRatioForGeometry(std::numeric_limits<float>::quiet_NaN(), 320, 240) == fourThirds);
+    assert(aspectRatioForGeometry(std::numeric_limits<float>::infinity(), 320, 240) == fourThirds);
+    assert(aspectRatioForGeometry(0.0F, 0, 240) == 0.0F);
+    assert(aspectRatioForGeometry(0.0F, 320, 0) == 0.0F);
+
+    assert(!contentRotationSwapsAspect(-1, 1)); // automatic core rotation is already in its aspect.
+    assert(!contentRotationSwapsAspect(90, 1));
+    assert(!contentRotationSwapsAspect(270, 1)); // opposite direction, same portrait aspect.
+    assert(contentRotationSwapsAspect(0, 1));
+    assert(contentRotationSwapsAspect(90, 0));
+    assert(contentRotationSwapsAspect(270, 0));
+    assert(!contentRotationSwapsAspect(180, 0));
+
+    libretrodroid::ContentAspectSnapshot snapshot;
+    assert(snapshot.get() == 0.0F);
+    snapshot.publish(aspectRatioForGeometry(0.0F, 320, 240), false);
+    assert(snapshot.get() == fourThirds);
+    // Runtime geometry can replace the load-time aspect without recreating the observer.
+    snapshot.publish(aspectRatioForGeometry(0.0F, 240, 320), false);
+    assert(snapshot.get() == 0.75F);
+    snapshot.publish(wide, false); // a requested aspect (or primary screen split).
+    assert(snapshot.get() == wide);
+    snapshot.publish(wide, contentRotationSwapsAspect(90, 0));
+    assert(std::fabs(snapshot.get() - 9.0F / 16.0F) < 0.00001F);
+    snapshot.publish(std::numeric_limits<float>::infinity(), true);
+    assert(snapshot.get() == 0.0F);
+    snapshot.publish(wide, false);
+    snapshot.reset(); // unload must never leave the previous game's shape visible.
+    assert(snapshot.get() == 0.0F);
+}
+
+static void contentAspectConcurrentObservers() {
+    libretrodroid::ContentAspectSnapshot snapshot;
+    std::thread writer([&] {
+        for (int i = 0; i < 10000; ++i) {
+            snapshot.publish(2.0F, i % 2 == 0);
+            if (i % 3 == 0) snapshot.reset();
+        }
+    });
+    for (int i = 0; i < 10000; ++i) {
+        const float aspect = snapshot.get();
+        assert(aspect == 0.0F || aspect == 0.5F || aspect == 2.0F);
+    }
+    writer.join();
+    snapshot.reset();
+    assert(snapshot.get() == 0.0F);
+}
+
 int main() {
     fractionalAndDigitalInput();
     fastTapAndIndependentPorts();
@@ -169,5 +226,7 @@ int main() {
     netplayCaptureAndAuthoritativeFrames();
     finiteBoundsAndAtomicSampling();
     descriptorOwnershipAndBounds();
-    std::cout << "6 native input contract groups passed (including 10,000 concurrent snapshots)\n";
+    contentAspectGeometryAndRotation();
+    contentAspectConcurrentObservers();
+    std::cout << "8 native input/display contract groups passed (including concurrent snapshots)\n";
 }

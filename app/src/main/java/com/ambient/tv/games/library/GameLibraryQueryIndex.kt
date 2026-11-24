@@ -10,7 +10,7 @@ import android.database.sqlite.SQLiteDatabase
  */
 internal object GameLibraryQueryIndex {
     // Bump when title/search/system-label/eligibility rules change, so old projections rebuild without a NAS scan.
-    const val POLICY_VERSION = 5
+    const val POLICY_VERSION = 6
 
     fun create(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE game_query (
@@ -66,7 +66,7 @@ internal object GameLibraryQueryIndex {
             "filename" to (game.customTitle ?: filename),
         )
         // Manual renames are literal user choices. Other sources retain their full names in the
-        // catalog while all display modes omit only explicit country/region annotations.
+        // catalog while all display modes omit explicit region/language annotations.
         val titles = sourceTitles.mapValues { (_, title) ->
             if (game.customTitle != null) title else gameDisplayTitle(title)
         }
@@ -92,7 +92,7 @@ internal object GameLibraryQueryIndex {
                 put("sort_$style", gameSortKey(title))
                 val sourceTitle = sourceTitles.getValue(style)
                 // Both the clean visible name and exact source name remain searchable, so a
-                // region query still distinguishes editions even when the filename is opaque.
+                // region/language query distinguishes editions even when the filename is opaque.
                 put("search_$style", gameSearchKey(if (title == sourceTitle) title else "$title\n$sourceTitle"))
             }
             put("sort_system", gameSortKey(systemName))

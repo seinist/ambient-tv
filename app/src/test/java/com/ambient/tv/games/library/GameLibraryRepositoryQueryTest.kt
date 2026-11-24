@@ -346,21 +346,22 @@ class GameLibraryRepositoryQueryTest {
         } }
     }
 
-    @Test fun openingPolicyFourCleansExistingDisplayOnceWithoutChangingMetadataIdentity() {
+    @Test fun openingPolicyFiveCleansLanguageTagsOnceWithoutChangingMetadataIdentity() {
         preferences.gameMetadataOptions = preferences.gameMetadataOptions.copy(automatic = false)
-        val canonical = "Super Mario World (USA) (Rev 1)"
-        seed("one", title = "Internal (Japan)", filename = "opaque.sfc", verified = canonical)
+        val canonical = "Super Mario World (USA) (En,de,fr) (Rev 1)"
+        val oldDisplay = "Super Mario World (En,de,fr) (Rev 1)"
+        seed("one", title = "Internal (Japan) (En,Ja)", filename = "opaque.sfc", verified = canonical)
         val oldLibrary = repository()
         val metadata = GameMetadata(title = canonical, canonicalTitle = canonical, provider = "libretro",
             providerGameId = "Nintendo - Super Nintendo Entertainment System|$canonical", region = "us",
-            coverUrl = "https://raw.githubusercontent.com/libretro-thumbnails/Nintendo_-_Super_Nintendo_Entertainment_System/master/Named_Boxarts/Super%20Mario%20World%20(USA)%20(Rev%201).png")
+            coverUrl = "https://raw.githubusercontent.com/libretro-thumbnails/Nintendo_-_Super_Nintendo_Entertainment_System/master/Named_Boxarts/Super%20Mario%20World%20(USA)%20(En,de,fr)%20(Rev%201).png")
         assertTrue(oldLibrary.saveMetadata(oldLibrary.metadataTicket("one")!!, metadata))
         val stored = oldLibrary.metadata("one")!!
         raw().use { db ->
-            // Model an already repaired catalog whose previous display policy kept region tags.
+            // Model the previous display policy, which removed regions but kept language tags.
             db.execSQL("UPDATE game_query SET title_auto=?,sort_auto=?,search_auto=? WHERE file_id='one'",
-                arrayOf(canonical, gameSortKey(canonical), gameSearchKey(canonical)))
-            GameLibraryQueryIndex.signature(db, gameQueryDigest(listOf("4",
+                arrayOf(oldDisplay, gameSortKey(oldDisplay), gameSearchKey("$oldDisplay\n$canonical")))
+            GameLibraryQueryIndex.signature(db, gameQueryDigest(listOf("5",
                 prefs.getString("game_library_folders", "[]").orEmpty(),
                 prefs.getString("game_library_overrides", "[]").orEmpty(),
                 prefs.getString("file_playback_scopes", "{}").orEmpty()) + files.sources().map { it.id }.sorted()))
@@ -370,7 +371,7 @@ class GameLibraryRepositoryQueryTest {
             db.execSQL("CREATE TRIGGER watch_display_metadata AFTER INSERT ON game_metadata BEGIN UPDATE display_writes SET metadata_count=metadata_count+1; END")
         }
         val before = oldLibrary.game("one")!!
-        assertEquals(canonical, before.title)
+        assertEquals(oldDisplay, before.title)
         val beforeQuery = gameMetadataQuery(before, stored, "en", "us", "12345678", provider = "libretro")
 
         val reopened = repository()
@@ -378,13 +379,14 @@ class GameLibraryRepositoryQueryTest {
         assertEquals("Super Mario World (Rev 1)", displayed.title)
         assertEquals(canonical, displayed.verifiedTitle)
         assertEquals(canonical, displayed.metadataTitle)
-        assertEquals("Internal (Japan)", displayed.internalTitle)
+        assertEquals("Internal (Japan) (En,Ja)", displayed.internalTitle)
         assertEquals("opaque.sfc", displayed.filename)
         assertEquals(stored, reopened.metadata("one"))
         val afterQuery = gameMetadataQuery(displayed, reopened.metadata("one"), "en", "us", "12345678", provider = "libretro")
         assertEquals(beforeQuery, afterQuery)
         assertEquals(gameMetadataFingerprint(before, beforeQuery), gameMetadataFingerprint(displayed, afterQuery))
         assertEquals(listOf("one"), reopened.games(GameLibraryQuery(search = "USA")).map { it.fileId })
+        assertEquals(listOf("one"), reopened.games(GameLibraryQuery(search = "En,de,fr")).map { it.fileId })
         assertEquals(listOf("one"), reopened.games(GameLibraryQuery(search = "Super Mario World (Rev 1)")).map { it.fileId })
 
         val stable = repository()

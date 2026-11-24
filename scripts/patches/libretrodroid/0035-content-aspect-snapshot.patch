@@ -1,0 +1,288 @@
+Ambient TV: publish a lock-free primary content aspect snapshot for surface layout.
+
+diff --git a/src/main/cpp/contentaspect.h b/src/main/cpp/contentaspect.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/contentaspect.h
+@@ -0,0 +1,61 @@
++/*
++ *     Ambient TV: primary content aspect snapshots for frontend layout.
++ *
++ *     This program is free software: you can redistribute it and/or modify
++ *     it under the terms of the GNU General Public License as published by
++ *     the Free Software Foundation, either version 3 of the License, or
++ *     (at your option) any later version.
++ */
++
++#ifndef LIBRETRODROID_CONTENTASPECT_H
++#define LIBRETRODROID_CONTENTASPECT_H
++
++#include <atomic>
++#include <cmath>
++
++namespace libretrodroid {
++
++inline bool isValidContentAspect(float aspect) {
++    return std::isfinite(aspect) && aspect > 0.0F;
++}
++
++/** Libretro's zero aspect means use the base geometry's pixel ratio. */
++inline float aspectRatioForGeometry(float aspect, unsigned width, unsigned height) {
++    if (isValidContentAspect(aspect)) return aspect;
++    if (width == 0 || height == 0) return 0.0F;
++    return static_cast<float>(width) / static_cast<float>(height);
++}
++
++/** The core aspect already includes its rotation; only a manual difference swaps it. */
++inline bool contentRotationSwapsAspect(int manualDegrees, unsigned coreQuarterTurns) {
++    if (manualDegrees < 0) return false;
++    const unsigned manualTurns = (manualDegrees / 90) % 4;
++    return ((manualTurns + 4 - coreQuarterTurns) % 2) == 1;
++}
++
++/**
++ * Only the emulation thread publishes. Observers read one atomic value without
++ * touching the core, Environment, Video or any object destroyed on game exit.
++ * This is the nominal display aspect; integer scaling may add internal borders.
++ */
++class ContentAspectSnapshot {
++public:
++    void publish(float aspect, bool rotationSwapsAspect) {
++        const float effective = isValidContentAspect(aspect)
++            ? (rotationSwapsAspect ? 1.0F / aspect : aspect) : 0.0F;
++        value.store(isValidContentAspect(effective) ? effective : 0.0F,
++                    std::memory_order_relaxed);
++    }
++
++    void reset() { value.store(0.0F, std::memory_order_relaxed); }
++    float get() const { return value.load(std::memory_order_relaxed); }
++
++private:
++    static_assert(std::atomic<float>::is_always_lock_free,
++                  "Content aspect observers must never wait for the emulation thread");
++    std::atomic<float> value{0.0F};
++};
++
++}
++
++#endif
+diff --git a/src/main/cpp/environment.cpp b/src/main/cpp/environment.cpp
+--- a/src/main/cpp/environment.cpp
++++ b/src/main/cpp/environment.cpp
+@@ -29,6 +29,7 @@
+ #include "../../libretro-common/include/libretro.h"
+ #include "log.h"
+ #include "environment.h"
++#include "contentaspect.h"
+ #include "vfs/vfs.h"
+ #include "vulkan/vulkanbackend.h"
+ #include "microphone/microphoneinterface.h"
+@@ -895,11 +896,7 @@
+  * the orientation the core's reported aspect ratio describes.
+  */
+ bool Environment::rotationSwapsAspect() const {
+-    if (manualRotationDegrees < 0) {
+-        return false;
+-    }
+-    unsigned manualTurns = (manualRotationDegrees / 90) % 4;
+-    return ((manualTurns + 4 - coreRotationIndex) % 2) == 1;
++    return libretrodroid::contentRotationSwapsAspect(manualRotationDegrees, coreRotationIndex);
+ }
+ 
+ bool Environment::isGameGeometryUpdated() const {
+@@ -995,19 +992,13 @@
+ }
+ 
+ float Environment::retrieveGameSpecificAspectRatio() {
+-    if (aspectRatioOverride > 0) {
++    if (libretrodroid::isValidContentAspect(aspectRatioOverride)) {
+         return aspectRatioOverride;
+     }
+ 
+-    if (getGameGeometryAspectRatio() > 0) {
+-        return getGameGeometryAspectRatio();
+-    }
+-
+-    if (getGameGeometryWidth() > 0 && getGameGeometryHeight() > 0) {
+-        return (float) getGameGeometryWidth() / (float) getGameGeometryHeight();
+-    }
+-
+-    return -1.0f;
++    const float aspect = libretrodroid::aspectRatioForGeometry(
++        getGameGeometryAspectRatio(), getGameGeometryWidth(), getGameGeometryHeight());
++    return aspect > 0.0F ? aspect : -1.0F;
+ }
+ 
+ void Environment::setAspectRatioOverride(float ratio) {
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -95,6 +95,9 @@
+ 
+ // TODO... Do we really need this?
+ void LibretroDroid::resetGlobalVariables() {
++    gameLoaded = false;
++    defaultAspectRatio = 0.0F;
++    contentAspectSnapshot.reset();
+     core = nullptr;
+     audio = nullptr;
+     video = nullptr;
+@@ -388,6 +391,7 @@
+         Environment::getInstance().getScreenRotation(),
+         Environment::getInstance().rotationSwapsAspect()
+     );
++    refreshAspectRatio();
+ 
+     // Apply stored settings
+     if (filterMode != -1) {
+@@ -724,6 +728,9 @@
+     LOGD("Performing libretrodroid destroy");
+     ScopedSignalStackGuard signalStackGuard;
+ 
++    gameLoaded = false;
++    defaultAspectRatio = 0.0F;
++    contentAspectSnapshot.reset();
+     secondaryOutput.destroy();
+     clearScreenSplit();
+ 
+@@ -916,6 +923,7 @@
+             Environment::getInstance().getScreenRotation(),
+             Environment::getInstance().rotationSwapsAspect()
+         );
++        refreshAspectRatio();
+     }
+ 
+     if (audio && fpsSync && Environment::getInstance().isGameTimingUpdated()) {
+@@ -1001,6 +1009,7 @@
+             Environment::getInstance().getScreenRotation(),
+             Environment::getInstance().rotationSwapsAspect()
+         );
++        refreshAspectRatio();
+     }
+ 
+     if (audio && fpsSync && Environment::getInstance().isGameTimingUpdated()) {
+@@ -1115,13 +1124,21 @@
+     return gameAspectRatio > 0 ? gameAspectRatio : defaultAspectRatio;
+ }
+ 
++float LibretroDroid::getContentAspectRatio() const {
++    return contentAspectSnapshot.get();
++}
++
+ void LibretroDroid::refreshAspectRatio() {
+-    if (!video) return;
+-    if (screenSplitEnabled && splitPrimaryAspect > 0.0F) {
+-        video->updateAspectRatio(splitPrimaryAspect);
++    if (!gameLoaded) {
++        contentAspectSnapshot.reset();
+         return;
+     }
+-    video->updateAspectRatio(getAspectRatio());
++    const float aspect = screenSplitEnabled && isValidContentAspect(splitPrimaryAspect)
++        ? splitPrimaryAspect : getAspectRatio();
++    // Use the same relative rotation as VideoLayout. The core's aspect already
++    // describes its own rotation, so only an odd manual difference swaps it.
++    contentAspectSnapshot.publish(aspect, Environment::getInstance().rotationSwapsAspect());
++    if (video) video->updateAspectRatio(aspect);
+ }
+ 
+ void LibretroDroid::setAspectRatioOverride(float ratio) {
+@@ -1407,6 +1424,8 @@
+     updateAudioSampleRateMultiplier();
+ 
+     defaultAspectRatio = findDefaultAspectRatio(system_av_info);
++    gameLoaded = true;
++    refreshAspectRatio();
+ 
+     auto& controllers = Environment::getInstance().getControllers();
+     for (unsigned port = 0; port < controllers.size() && port < 4; port++) {
+@@ -1427,12 +1446,9 @@
+ }
+ 
+ float LibretroDroid::findDefaultAspectRatio(const retro_system_av_info& system_av_info) {
+-    float result = system_av_info.geometry.aspect_ratio;
+-    if (result < 0) {
+-        result =
+-            (float) system_av_info.geometry.base_width / (float) system_av_info.geometry.base_height;
+-    }
+-    return result;
++    return aspectRatioForGeometry(system_av_info.geometry.aspect_ratio,
++                                  system_av_info.geometry.base_width,
++                                  system_av_info.geometry.base_height);
+ }
+ 
+ void LibretroDroid::handleRumbleUpdates(const std::function<void(int, float, float)> &handler) {
+diff --git a/src/main/cpp/libretrodroid.h b/src/main/cpp/libretrodroid.h
+--- a/src/main/cpp/libretrodroid.h
++++ b/src/main/cpp/libretrodroid.h
+@@ -50,6 +50,7 @@
+ #include "utils/rect.h"
+ #include "rewindbuffer.h"
+ #include "stateloadpolicy.h"
++#include "contentaspect.h"
+ 
+ namespace libretrodroid {
+ 
+@@ -138,6 +139,7 @@
+                             float x, float y, unsigned flags);
+     void refreshAspectRatio();
+     float getAspectRatio();
++    float getContentAspectRatio() const;
+     void setAspectRatioOverride(float ratio);
+ 
+     bool requiresVideoRefresh() const;
+@@ -293,7 +295,9 @@
+     bool backgroundFrameBehind = false;
+     ImmersiveMode::Config immersiveModeConfig {};
+ 
+-    float defaultAspectRatio = 1.0;
++    float defaultAspectRatio = 0.0F;
++    bool gameLoaded = false;
++    ContentAspectSnapshot contentAspectSnapshot;
+     bool dirtyVideo = false;
+ 
+     void renderSecondaryFrame();
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -1245,6 +1245,13 @@
+     LibretroDroid::getInstance().refreshAspectRatio();
+ }
+ 
++JNIEXPORT jfloat JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getContentAspectRatio(
++    JNIEnv* env,
++    jclass obj
++) {
++    return LibretroDroid::getInstance().getContentAspectRatio();
++}
++
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setAspectRatioOverride(
+     JNIEnv* env,
+     jclass obj,
+diff --git a/src/main/cpp/libretrodroidjni.h b/src/main/cpp/libretrodroidjni.h
+--- a/src/main/cpp/libretrodroidjni.h
++++ b/src/main/cpp/libretrodroidjni.h
+@@ -49,6 +49,7 @@
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_onMotionEvent(JNIEnv* env, jclass obj, jint port, jint source, jfloat xAxis, jfloat yAxis);
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_onTouchEvent(JNIEnv* env, jclass obj, jfloat xAxis, jfloat yAxis);
+ JNIEXPORT jfloat JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getAspectRatio(JNIEnv* env, jclass obj);
++JNIEXPORT jfloat JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getContentAspectRatio(JNIEnv* env, jclass obj);
+ JNIEXPORT jobjectArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getVariables(JNIEnv* env, jclass obj);
+ JNIEXPORT jobjectArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getControllers(JNIEnv* env, jclass obj);
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setControllerType(JNIEnv* env, jclass obj, jint port, jint type);
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -259,6 +259,12 @@
+     public static native void onKeyEvent(int port, int action, int keyCode);
+ 
+     public static native void refreshAspectRatio();
++    /**
++     * Primary display aspect after the requested aspect and relative rotation.
++     * UI-safe atomic snapshot; zero means no loaded game or valid geometry.
++     * Integer scaling can leave extra borders inside this nominal aspect.
++     */
++    public static native float getContentAspectRatio();
+     public static native void setAspectRatioOverride(float ratio);
+     public static native void setRotation(int degrees);
+ 

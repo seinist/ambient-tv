@@ -36,6 +36,7 @@ import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.games.library.LibraryGame
 import com.ambient.tv.games.library.gameDisplayTitle
+import com.ambient.tv.games.library.gameTitleLanguageLabel
 import com.ambient.tv.games.library.gameTitleRegionLabel
 import com.ambient.tv.games.metadata.GameArtworkKind
 import com.ambient.tv.games.metadata.GameMetadata
@@ -203,6 +204,10 @@ internal fun gameMetadataChoiceRegion(metadata: GameMetadata): String? =
     gameTitleRegionLabel(metadata.title) ?: gameTitleRegionLabel(metadata.canonicalTitle)
         ?: metadata.region.takeIf(String::isNotBlank)
 
+/** Provider response language is a search preference; only ROM name tags identify its editions. */
+internal fun gameMetadataChoiceLanguages(metadata: GameMetadata): String? =
+    gameTitleLanguageLabel(metadata.title) ?: gameTitleLanguageLabel(metadata.canonicalTitle)
+
 @Composable
 private fun GameMetadataMatchChoice(
     match: GameMetadataCandidate,
@@ -253,6 +258,7 @@ internal fun GameMetadataMatchRow(
                 Text(displayTitle, style = MaterialTheme.typography.titleMedium)
                 Text(listOfNotNull(match.metadata.year?.toString(),
                     gameMetadataChoiceRegion(match.metadata),
+                    gameMetadataChoiceLanguages(match.metadata),
                     gameMetadataProviderName(provider)).joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)

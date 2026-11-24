@@ -129,6 +129,22 @@ class GameMetadataTouchUiTest {
         }
     }
 
+    @Test fun cleanedLanguageEditionsRemainDistinguishableAndSelectable() {
+        val titles = listOf("A game (Europe) (En,de)", "A game (Europe) (En,fr)")
+        mount(matches = titles.map { title -> GameMetadataCandidate(GameMetadata(
+            provider = GameMetadataProviderIds.LIBRETRO, providerGameId = "snes|$title",
+            title = title, canonicalTitle = title, region = "eu", language = "de",
+        )) })
+        rule.onNodeWithTag("match-0").assert(hasText("A game"))
+            .assert(hasText("En, De", substring = true)).performTouchInput { click() }
+        rule.onNodeWithTag("match-1").assert(hasText("A game"))
+            .assert(hasText("En, Fr", substring = true)).performTouchInput { click() }
+        rule.runOnIdle {
+            assertEquals(listOf(0, 1), selected)
+            assertEquals(0, dismissals)
+        }
+    }
+
     @Test
     @Config(qualifiers = "w960dp-h720dp-land-mdpi")
     fun tvRemoteAndKeyboardEachApplyTheFocusedMatchOnce() {

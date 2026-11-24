@@ -50,10 +50,13 @@ completion is reported only after those steps finish. Cancellation retains compl
 and their visible catalog counts.
 
 Library, Home and detail titles omit recognized country/region annotations such as `(USA)`,
-`(Europe)` or `(Japan)`. Automatically suggested metadata searches and match headings use the
-same presentation. Region labels remain in result subtitles so different editions can still
-be selected deliberately. The full DAT/canonical name and artwork identity stay unchanged;
-language, revision, disc and meaningful title annotations are retained. Explicit custom titles
+`(Europe)` or `(Japan)` and language/locale annotations such as `(En,De,Fr)`, `(En-US,Pt-BR)`
+or `(Zh-Hant,Zh-Hans)`, including differently cased tags. Automatically suggested metadata
+searches and match headings use the same presentation. Region and language labels remain in
+result subtitles so different editions can still be selected deliberately; the provider's
+requested response language is never treated as evidence of a ROM's languages. The full
+DAT/canonical name and artwork identity stay unchanged. Revision, disc and meaningful title
+annotations are retained. Explicit custom titles
 and search text entered by the user are preserved literally. Existing catalog titles update
 locally on opening after an upgrade, without rereading the NAS.
 
