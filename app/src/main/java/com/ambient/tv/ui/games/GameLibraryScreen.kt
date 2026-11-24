@@ -280,6 +280,7 @@ fun GameLibraryScreen(
                             networkEditor = FileSource(name = "Retro NAS", kind = "smb", showInFiles = false)
                         },
                         onImportDat = { choosingDatSystem = true },
+                        onLoadNameDatabases = model::loadNameDatabases,
                         onMetadataSettings = { metadataSettingsOpen = true },
                         metadataSettingsModifier = Modifier.focusRequester(metadataSettingsFocus),
                         onEditSource = { source -> networkEditor = source },
@@ -507,6 +508,7 @@ private fun GameFolderManager(
     onDeleteSource: (FileSource) -> Unit,
     onAddNetwork: () -> Unit,
     onImportDat: () -> Unit,
+    onLoadNameDatabases: () -> Unit,
     onMetadataSettings: () -> Unit,
     metadataSettingsModifier: Modifier = Modifier,
     onEditSource: (FileSource) -> Unit,
@@ -544,6 +546,11 @@ private fun GameFolderManager(
             item {
                 com.ambient.tv.ui.common.SettingsNavigationRow(title = stringResource(R.string.game_library_add_network),
                     onClick = onAddNetwork, icon = Icons.Filled.Storage)
+            }
+            item {
+                com.ambient.tv.ui.common.SettingsNavigationRow(title = stringResource(R.string.game_name_databases_load),
+                    summary = stringResource(R.string.game_name_databases_hint),
+                    onClick = onLoadNameDatabases, enabled = !state.scanning, icon = Icons.Filled.CloudDownload)
             }
             item {
                 com.ambient.tv.ui.common.SettingsNavigationRow(title = stringResource(R.string.game_library_import_dat),

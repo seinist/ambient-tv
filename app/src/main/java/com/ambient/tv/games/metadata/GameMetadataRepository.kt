@@ -243,6 +243,38 @@ class GameMetadataRepository @Inject constructor(
         false
     }
 
+    data class NameDatabaseResult(val systems: Int, val names: Int)
+
+    /**
+     * Like RetroArch's "Update Databases", on request only: loads libretro-database's names for
+     * the systems in the library. A rescan then names games by checksum ([GameLibraryRepository.scan]).
+     */
+    suspend fun loadNameDatabases(onProgress: (Int, Int) -> Unit = { _, _ -> }): NameDatabaseResult =
+        withContext(Dispatchers.IO) {
+            val systems = library.indexedSystems().filter { GameNameDatabases.files(it).isNotEmpty() }.sorted()
+            val staging = File(context.cacheDir, "game-name-databases")
+            staging.deleteRecursively()
+            staging.mkdirs()
+            try {
+                var loaded = 0
+                var names = 0
+                systems.forEachIndexed { index, system ->
+                    onProgress(index, systems.size)
+                    val files = GameNameDatabases.files(system).mapIndexedNotNull { part, path ->
+                        File(staging, "$system-$part.dat").takeIf { providers.downloadNameDatabase(path, it) }
+                    }
+                    currentCoroutineContext().ensureActive()
+                    if (files.isNotEmpty()) {
+                        names += library.importDats(system, files)
+                        loaded++
+                    }
+                    files.forEach(File::delete)
+                }
+                onProgress(systems.size, systems.size)
+                NameDatabaseResult(loaded, names)
+            } finally { staging.deleteRecursively() }
+        }
+
     /** Explicit folder scans feed this bounded queue; Home never starts a folder scan. */
     suspend fun enrichFolder(folderId: String, automatic: Boolean = false,
                              onProgress: (Int, Int) -> Unit = { _, _ -> }): Unit =

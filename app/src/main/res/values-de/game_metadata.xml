@@ -73,4 +73,10 @@
     <string name="game_error_folder_assigned">Dieser Ordner ist bereits hinzugefügt.</string>
     <string name="game_error_folder_limit">Es sind zu viele Spieleordner eingerichtet. Entferne einen Ordner, bevor du weitere hinzufügst.</string>
     <string name="game_error_scan_limit">Der Spieleordner ist zu groß. Wähle einen kleineren Unterordner.</string>
+    <string name="game_name_databases_load">Spielenamen von Libretro laden</string>
+    <string name="game_name_databases_hint">Wie die Datenbanken in RetroArch: erkennt Spiele an der Prüfsumme und benennt sie exakt, damit Cover gefunden werden. Danach werden die Spieleordner neu eingelesen.</string>
+    <string name="game_name_databases_progress">Spielenamen werden geladen: %1$d / %2$d Systeme</string>
+    <string name="game_name_databases_loaded">%1$d Namen für %2$d Systeme geladen. Spieleordner werden eingelesen…</string>
+    <string name="game_name_databases_none">Für die Systeme deiner Bibliothek hat Libretro keine Namensdatenbank (Disc-Spiele werden am Dateinamen erkannt).</string>
+    <string name="game_error_name_databases">Die Spielenamen konnten nicht geladen werden. Prüfe die Verbindung und versuche es erneut.</string>
 </resources>
