@@ -3,6 +3,7 @@ package com.ambient.tv.ui.common
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -11,14 +12,26 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.tv.material3.*
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import com.ambient.tv.ui.theme.animatedFocusSurface
+import kotlin.math.ceil
 
 private val AlphabetBarEntryHeight = 22.dp
 
@@ -69,8 +82,13 @@ fun AlphabetBar(
     // alphabet does not fit, instead of stretching a few letters across the whole column.
     // Phone keeps a slightly wider gutter so letter taps stay reachable beside the grid.
     val handheld = LocalHandheldUi.current
-    val barWidth = if (handheld) 36.dp else 28.dp
-    val naturalEntry = if (handheld) 28.dp else AlphabetBarEntryHeight
+    val barWidth = if (handheld) 48.dp else 28.dp
+    val density = LocalDensity.current
+    val readableEntry = with(density) { 18.sp.toDp() }
+    val naturalEntry = if (handheld) maxOf(20.dp, readableEntry) else AlphabetBarEntryHeight
+    var touchLetter by remember(letters) { mutableStateOf<Char?>(null) }
+    val currentOnSelect by rememberUpdatedState(onSelect)
+    val activeLetter = if (handheld) touchLetter ?: selected else selected
     val focusMemory = remember(letters) { AlphabetBarFocusMemory(selected) }
     var railFocused by remember(letters) { mutableStateOf(false) }
     SideEffect { focusMemory.observeSelection(selected, railFocused) }
@@ -88,48 +106,104 @@ fun AlphabetBar(
         contentAlignment = Alignment.Center,
     ) {
         val entryHeight = minOf(naturalEntry, maxHeight / letters.size.coerceAtLeast(1))
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(accent.copy(alpha = focusAlpha), RoundedCornerShape(9.dp))
-                .onFocusChanged { railFocused = it.hasFocus }
-                .onPreviewKeyEvent { event ->
-                    when (event.key) {
-                        Key.DirectionLeft -> {
-                            // Consume both edges: a held Left must not spill into the page menu.
-                            if (event.type == KeyEventType.KeyDown &&
-                                event.nativeKeyEvent.repeatCount == 0) {
-                                if (onReturnToContent != null) onReturnToContent()
-                                else runCatching { gridFocus.requestFocus() }
+        val railHeight = entryHeight * letters.size
+        val labelStep = if (handheld && entryHeight > 0.dp)
+            ceil(readableEntry / entryHeight).toInt().coerceAtLeast(1) else 1
+        val activeIndex = letters.indexOf(activeLetter)
+        Box(
+            Modifier.fillMaxWidth().height(railHeight).testTag("alphabet-rail")
+                .then(if (handheld) Modifier.alphabetTouchScrub(
+                    letters = letters,
+                    layoutKey = railHeight,
+                    onActiveLetter = { touchLetter = it },
+                    onSelect = { currentOnSelect(it) },
+                ) else Modifier),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(accent.copy(alpha = focusAlpha), RoundedCornerShape(9.dp))
+                    .onFocusChanged { railFocused = it.hasFocus }
+                    .onPreviewKeyEvent { event ->
+                        when (event.key) {
+                            Key.DirectionLeft -> {
+                                // Consume both edges: a held Left must not spill into the page menu.
+                                if (event.type == KeyEventType.KeyDown &&
+                                    event.nativeKeyEvent.repeatCount == 0) {
+                                    if (onReturnToContent != null) onReturnToContent()
+                                    else runCatching { gridFocus.requestFocus() }
+                                }
+                                true
                             }
-                            true
+                            // The rail has no neighbour on the right. Never send Right to the
+                            // header action buttons or let geometric focus search escape there.
+                            Key.DirectionRight -> true
+                            // Keep the first/last letter in the rail, not the page header.
+                            Key.DirectionUp -> railFocused && focusMemory.entryLetter == letters.firstOrNull()
+                            Key.DirectionDown -> railFocused && focusMemory.entryLetter == letters.lastOrNull()
+                            else -> false
                         }
-                        // The rail has no neighbour on the right. Never send Right to the
-                        // header action buttons or let geometric focus search escape there.
-                        Key.DirectionRight -> true
-                        // Keep the first/last letter in the rail, not the page header.
-                        Key.DirectionUp -> railFocused && focusMemory.entryLetter == letters.firstOrNull()
-                        Key.DirectionDown -> railFocused && focusMemory.entryLetter == letters.lastOrNull()
-                        else -> false
+                    }
+                    .focusGroup(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                letters.forEachIndexed { index, letter ->
+                    val entryModifier = Modifier.weight(1f).then(
+                        if (letter == entryFocusLetter && firstEntryFocusRequester != null)
+                            Modifier.focusRequester(firstEntryFocusRequester) else Modifier,
+                    )
+                    AlphabetBarEntry(
+                        text = letter.toString(),
+                        selected = activeLetter == letter,
+                        gridFocus = gridFocus,
+                        modifier = entryModifier,
+                        onFocused = { focusMemory.focused(letter) },
+                        isFirst = index == 0,
+                        isLast = index == letters.lastIndex,
+                        showLabel = !handheld || alphabetRailLabelVisible(index, letters.size, labelStep, activeIndex),
+                        compact = handheld && labelStep > 1,
+                    ) { onSelect(letter) }
+                }
+            }
+            if (handheld && labelStep > 1 && activeIndex >= 0 && railHeight > 0.dp) {
+                val markerHeight = minOf(maxOf(20.dp, readableEntry), railHeight)
+                val markerTop = (entryHeight * (activeIndex + .5f) - markerHeight / 2)
+                    .coerceIn(0.dp, railHeight - markerHeight)
+                Box(
+                    Modifier.align(Alignment.TopCenter)
+                        .offset { IntOffset(0, markerTop.roundToPx()) }
+                        .width(maxOf(28.dp, readableEntry)).height(markerHeight)
+                        .background(accent, RoundedCornerShape(6.dp))
+                        .clearAndSetSemantics { },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(activeLetter.toString(), color = MaterialTheme.colorScheme.onPrimary,
+                        fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.wrapContentHeight(unbounded = true))
+                }
+            }
+            if (handheld && touchLetter != null && activeIndex >= 0) {
+                val gapPx = with(density) { 16.dp.roundToPx() }
+                val marginPx = with(density) { 8.dp.roundToPx() }
+                val position = remember(activeIndex, letters.size, gapPx, marginPx) {
+                    AlphabetPreviewPositionProvider((activeIndex + .5f) / letters.size, gapPx, marginPx)
+                }
+                Popup(
+                    popupPositionProvider = position,
+                    properties = PopupProperties(focusable = false, dismissOnBackPress = false,
+                        dismissOnClickOutside = false),
+                ) {
+                    val size = maxOf(64.dp, with(density) { 48.sp.toDp() } + 16.dp)
+                    Box(
+                        Modifier.size(size).shadow(8.dp, RoundedCornerShape(16.dp))
+                            .background(accent, RoundedCornerShape(16.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(touchLetter.toString(), modifier = Modifier.testTag("alphabet-preview"),
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            fontSize = 40.sp, lineHeight = 48.sp, fontWeight = FontWeight.Bold)
                     }
                 }
-                .focusGroup(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            letters.forEachIndexed { index, letter ->
-                val entryModifier = Modifier.height(entryHeight).then(
-                    if (letter == entryFocusLetter && firstEntryFocusRequester != null)
-                        Modifier.focusRequester(firstEntryFocusRequester) else Modifier,
-                )
-                AlphabetBarEntry(
-                    text = letter.toString(),
-                    selected = selected == letter,
-                    gridFocus = gridFocus,
-                    modifier = entryModifier,
-                    onFocused = { focusMemory.focused(letter) },
-                    isFirst = index == 0,
-                    isLast = index == letters.lastIndex,
-                ) { onSelect(letter) }
             }
         }
     }
@@ -144,10 +218,16 @@ private fun AlphabetBarEntry(
     onFocused: () -> Unit,
     isFirst: Boolean,
     isLast: Boolean,
+    showLabel: Boolean = true,
+    compact: Boolean = false,
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
-    val entryModifier = modifier.fillMaxWidth().testTag("alphabet-letter-$text").focusProperties {
+    val entryModifier = modifier.fillMaxWidth().testTag("alphabet-letter-$text")
+        .semantics {
+            this.selected = selected
+            if (!showLabel) contentDescription = text
+        }.focusProperties {
         left = gridFocus
         // Parent-level D-pad acceleration calls moveFocus() directly, bypassing key handlers.
         // Hard focus boundaries prevent even fast repeated Right/Up/Down from escaping the rail.
@@ -161,6 +241,27 @@ private fun AlphabetBarEntry(
         }
     val shape = RoundedCornerShape(5.dp)
     val accent = MaterialTheme.colorScheme.primary
+    if (LocalHandheldUi.current) {
+        Box(
+            entryModifier.clickable(role = Role.Button, onClick = onClick)
+                .background(when {
+                    selected && !compact -> accent
+                    focused -> accent.copy(alpha = .22f)
+                    else -> Color.Transparent
+                }, shape),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (showLabel) Text(
+                text = text,
+                modifier = Modifier.wrapContentHeight(unbounded = true),
+                fontSize = if (selected || focused) 14.sp else 12.sp,
+                lineHeight = 18.sp,
+                fontWeight = if (selected || focused) FontWeight.Bold else FontWeight.Medium,
+                color = if (selected) MaterialTheme.colorScheme.onPrimary else Color.White.copy(alpha = .72f),
+            ) else Box(Modifier.size(2.dp).background(Color.White.copy(alpha = .42f), RoundedCornerShape(1.dp)))
+        }
+        return
+    }
     val content: @Composable () -> Unit = {
         Box(
             Modifier.fillMaxSize().padding(horizontal = 1.dp)
@@ -188,15 +289,11 @@ private fun AlphabetBarEntry(
             )
         }
     }
-    if (LocalHandheldUi.current) {
-        androidx.compose.material3.Surface(onClick = onClick, modifier = entryModifier, color = Color.Transparent) { content() }
-    } else {
-        Surface(
+    Surface(
             onClick = onClick,
             colors = transparentSurfaceColors(),
             scale = noSurfaceScale(),
             border = noSurfaceBorder(),
             modifier = entryModifier,
-        ) { content() }
-    }
+    ) { content() }
 }

@@ -475,8 +475,11 @@ private fun GuideAlphabetBar(
     onReturnToContent: () -> Unit,
 ) {
     val lettersById = remember(channels) { channels.associate { it.uuid to guideIndexLetter(it.name) } }
-    val selectedLetter = target.value?.let(lettersById::get)
-        ?: channels.getOrNull(listState.firstVisibleItemIndex)?.let { guideIndexLetter(it.name) }
+    val selectedLetter = alphabetTrackedLetter(
+        LocalHandheldUi.current,
+        channels.getOrNull(listState.firstVisibleItemIndex)?.let { guideIndexLetter(it.name) },
+        target.value?.let(lettersById::get),
+    )
     AlphabetBar(
         letters, selectedLetter, onSelect, gridFocus, modifier, onReturnToContent,
         firstEntryFocusRequester,

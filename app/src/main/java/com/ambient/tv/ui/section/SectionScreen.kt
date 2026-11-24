@@ -547,7 +547,8 @@ internal fun SectionContent(
                         CompositionLocalProvider(LocalAlphabetBarShown provides showAlphabetBar,
                             LocalBrowseRightIndexFocus provides alphabetRightFocusRequester.takeIf { showAlphabetBar }) {
                             key(state.playbackReturnRevision) {
-                                SoftViewChange(state.viewMode, Modifier.fillMaxSize()) {
+                                SoftViewChange(state.viewMode, Modifier.fillMaxSize()
+                                    .padding(end = if (alphabetHandheld && showAlphabetBar) 48.dp else 0.dp)) {
                                 val hasContent = when (state.page) {
                                     SectionPage.RECOMMENDATIONS -> state.recommendationRows.any { it.items.isNotEmpty() }
                                     SectionPage.LIBRARY -> state.items.isNotEmpty()
@@ -578,10 +579,10 @@ internal fun SectionContent(
                                         filterFocusState.restoreFilter(if (filterBarShown) FilterFocusSurface.BAR else FilterFocusSurface.PANEL)
                                     } else when (state.viewMode) {
                                         SectionViewMode.POSTER, SectionViewMode.GRID -> LibraryGrid(focusState, onItemClick, onLibraryItemFocused, onVisibleLetterChanged = onLibraryViewportChanged)
-                                        SectionViewMode.LANDSCAPE, SectionViewMode.ROWS -> LandscapeGrid(focusState.items, focusState.focusedRatingKey, focusState.gridColumns, onItemClick, onLibraryItemFocused, focusState.selectedLetter, onLibraryViewportChanged)
+                                        SectionViewMode.LANDSCAPE, SectionViewMode.ROWS -> LandscapeGrid(focusState.items, focusState.focusedRatingKey, focusState.gridColumns, onItemClick, onLibraryItemFocused, focusState.selectedLetter, onLibraryViewportChanged, alphabetJumpRevision = focusState.alphabetJumpRevision)
                                         SectionViewMode.LIST, SectionViewMode.POSTER_LIST -> LibraryList(focusState, onItemClick, onLibraryItemFocused, onVisibleLetterChanged = onLibraryViewportChanged, poster = state.viewMode == SectionViewMode.POSTER_LIST)
-                                        SectionViewMode.INFO_LIST, SectionViewMode.POSTER_INFO_LIST -> InfoList(focusState.items, focusState.focusedRatingKey, focusState.listRows, onItemClick, onLibraryItemFocused, focusState.selectedLetter, poster = state.viewMode == SectionViewMode.POSTER_INFO_LIST, onVisibleLetterChanged = onLibraryViewportChanged)
-                                        SectionViewMode.WALL, SectionViewMode.POSTER_WALL -> WallGrid(focusState.items, focusState.focusedRatingKey, focusState.gridColumns, onItemClick, onLibraryItemFocused, focusState.selectedLetter, poster = state.viewMode == SectionViewMode.POSTER_WALL, onVisibleLetterChanged = onLibraryViewportChanged)
+                                        SectionViewMode.INFO_LIST, SectionViewMode.POSTER_INFO_LIST -> InfoList(focusState.items, focusState.focusedRatingKey, focusState.listRows, onItemClick, onLibraryItemFocused, focusState.selectedLetter, poster = state.viewMode == SectionViewMode.POSTER_INFO_LIST, onVisibleLetterChanged = onLibraryViewportChanged, alphabetJumpRevision = focusState.alphabetJumpRevision)
+                                        SectionViewMode.WALL, SectionViewMode.POSTER_WALL -> WallGrid(focusState.items, focusState.focusedRatingKey, focusState.gridColumns, onItemClick, onLibraryItemFocused, focusState.selectedLetter, poster = state.viewMode == SectionViewMode.POSTER_WALL, onVisibleLetterChanged = onLibraryViewportChanged, alphabetJumpRevision = focusState.alphabetJumpRevision)
                                         SectionViewMode.CINEMATIC, SectionViewMode.POSTER_CINEMATIC -> CinematicView(focusState.items, focusState.focusedRatingKey, onItemClick, poster = state.viewMode == SectionViewMode.POSTER_CINEMATIC) { item -> markInitialFocusHandled(); onItemFocused(item) }
                                     }
                                 }
@@ -1747,7 +1748,7 @@ private fun LibraryGrid(
             gridState.scrollToItem(restoreIndex)
         }
     }
-    LaunchedEffect(state.selectedLetter, state.items) { state.selectedLetter?.let { letter -> state.items.indexOfFirst { libraryIndexLetter(it.title) == letter }.takeIf { it >= 0 }?.let { gridState.scrollToItem(it) } } }
+    LaunchedEffect(state.selectedLetter, state.alphabetJumpRevision, state.items) { state.selectedLetter?.let { letter -> state.items.indexOfFirst { libraryIndexLetter(it.title) == letter }.takeIf { it >= 0 }?.let { gridState.scrollToItem(it) } } }
     LaunchedEffect(gridState, state.items) {
         snapshotFlow { gridState.firstVisibleItemIndex }
             .collect { index ->
@@ -1783,7 +1784,7 @@ private fun LibraryList(
     onVisibleLetterChanged: (Char?) -> Unit,
     poster: Boolean = false,
 ) {
-    StylishMediaList(state.items, state.focusedRatingKey, onItemClick, onItemFocused, state.selectedLetter, onVisibleLetterChanged, visibleRows = state.listRows, poster = poster)
+    StylishMediaList(state.items, state.focusedRatingKey, onItemClick, onItemFocused, state.selectedLetter, onVisibleLetterChanged, visibleRows = state.listRows, poster = poster, alphabetJumpRevision = state.alphabetJumpRevision)
 }
 
 @Composable
@@ -1797,6 +1798,7 @@ private fun StylishMediaList(
     showDescription: Boolean = true,
     visibleRows: Int = 7,
     poster: Boolean = false,
+    alphabetJumpRevision: Long = 0L,
 ) {
     val initialFocusedKey = remember(items) { focusedKey }
     val restoreIndex = remember(items, initialFocusedKey) { items.indexOfFirst { it.ratingKey == initialFocusedKey }.coerceAtLeast(0) }
@@ -1805,7 +1807,7 @@ private fun StylishMediaList(
     val restoreRequester = remember { FocusRequester() }
     val filterFocusState = LocalFilterFocusState.current
     val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
-    LaunchedEffect(selectedLetter, items) { selectedLetter?.let { l -> items.indexOfFirst { libraryIndexLetter(it.title) == l }.takeIf { it >= 0 }?.let { listState.scrollToItem(it) } } }
+    LaunchedEffect(selectedLetter, alphabetJumpRevision, items) { selectedLetter?.let { l -> items.indexOfFirst { libraryIndexLetter(it.title) == l }.takeIf { it >= 0 }?.let { listState.scrollToItem(it) } } }
     LaunchedEffect(listState, items, onVisibleLetterChanged) {
         if (onVisibleLetterChanged != null) {
             snapshotFlow { listState.firstVisibleItemIndex }
@@ -1920,13 +1922,14 @@ private fun LandscapeGrid(
     onItemFocused: (MediaItem) -> Unit,
     selectedLetter: Char? = null,
     onVisibleLetterChanged: ((Char?) -> Unit)? = null,
+    alphabetJumpRevision: Long = 0L,
 ) {
     val restoreKey = remember(items) { focusedKey }
     var restorePending by remember(items) { mutableStateOf(true) }
     val restoreIndex = remember(items, restoreKey) { items.indexOfFirst { it.ratingKey == restoreKey }.coerceAtLeast(0) }
     val itemKeys = remember(items) { items.map { it.ratingKey } }
     val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = itemKeys)
-    LaunchedEffect(selectedLetter, items) {
+    LaunchedEffect(selectedLetter, alphabetJumpRevision, items) {
         selectedLetter?.let { letter ->
             items.indexOfFirst { libraryIndexLetter(it.title) == letter }
                 .takeIf { it >= 0 }?.let { gridState.scrollToItem(it) }
@@ -1971,9 +1974,10 @@ private fun InfoList(
     selectedLetter: Char? = null,
     poster: Boolean = false,
     onVisibleLetterChanged: ((Char?) -> Unit)? = null,
+    alphabetJumpRevision: Long = 0L,
 ) {
     if (LocalHandheldUi.current) {
-        StylishMediaList(items, focusedKey, onItemClick, onItemFocused, selectedLetter, onVisibleLetterChanged, showDescription = true, visibleRows = visibleRows, poster = poster)
+        StylishMediaList(items, focusedKey, onItemClick, onItemFocused, selectedLetter, onVisibleLetterChanged, showDescription = true, visibleRows = visibleRows, poster = poster, alphabetJumpRevision = alphabetJumpRevision)
         return
     }
 
@@ -1995,7 +1999,7 @@ private fun InfoList(
             runCatching { restoreRequester.requestFocus() }
         }
     }
-    LaunchedEffect(selectedLetter, items) {
+    LaunchedEffect(selectedLetter, alphabetJumpRevision, items) {
         selectedLetter?.let { letter ->
             items.indexOfFirst { libraryIndexLetter(it.title) == letter }
                 .takeIf { it >= 0 }?.let { listState.scrollToItem(it) }
@@ -2121,6 +2125,7 @@ private fun WallGrid(
     selectedLetter: Char? = null,
     poster: Boolean = false,
     onVisibleLetterChanged: ((Char?) -> Unit)? = null,
+    alphabetJumpRevision: Long = 0L,
 ) {
     val wallColumns = if (poster) coverWallColumns(columns) else (columns + 2).coerceIn(6, 14)
     val restoreKey = remember(items) { focusedKey }
@@ -2136,7 +2141,7 @@ private fun WallGrid(
             runCatching { restoreRequester.requestFocus() }
         }
     }
-    LaunchedEffect(selectedLetter, items) { selectedLetter?.let { l -> items.indexOfFirst { libraryIndexLetter(it.title) == l }.takeIf { it >= 0 }?.let { gridState.scrollToItem(it) } } }
+    LaunchedEffect(selectedLetter, alphabetJumpRevision, items) { selectedLetter?.let { l -> items.indexOfFirst { libraryIndexLetter(it.title) == l }.takeIf { it >= 0 }?.let { gridState.scrollToItem(it) } } }
     LaunchedEffect(gridState, items, onVisibleLetterChanged) {
         if (onVisibleLetterChanged != null) snapshotFlow { gridState.firstVisibleItemIndex }.collect { index ->
             onVisibleLetterChanged(items.getOrNull(index)?.let { libraryIndexLetter(it.title) })

@@ -15,12 +15,17 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isFocused
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.dp
 import com.ambient.tv.livetv.GuideOptions
+import com.ambient.tv.livetv.GuideSort
 import com.ambient.tv.livetv.LiveTvBrowseState
 import com.ambient.tv.livetv.LiveTvChannel
 import com.ambient.tv.livetv.LiveTvProgramme
@@ -226,5 +231,46 @@ class GuideFocusScrollTest {
         assertEquals("Sender and programme targets have the same height", programmeHeight, before.height, 1f)
         assertEquals("Missing EPG must not collapse the sender row", programmeHeight, empty.height, 1f)
         assertEquals("Rows around missing EPG keep equal spacing", empty.top - before.top, after.top - empty.top, 1f)
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h800dp-port-mdpi")
+    fun phoneAlphabetFollowsManualScrollAfterAnEarlierAlphabetJump() {
+        val browse = LiveTvBrowseState()
+        val channels = ('A'..'Z').flatMap { letter ->
+            List(3) { index -> LiveTvChannel("$letter-$index", "$letter Station $index", null, null) }
+        }
+        val options = GuideOptions(sort = GuideSort.NAME)
+        val listing = buildLiveTvChannelListing(channels, emptyList(), options, now = 7_200L)
+        val firstFocus = FocusRequester()
+        rule.setContent {
+            CompositionLocalProvider(
+                LocalHandheldUi provides true,
+                LocalFilterBarSetting provides FilterBarSetting(true) {},
+            ) {
+                AmbientTvTheme {
+                    Box(Modifier.size(360.dp, 700.dp)) {
+                        LiveTvChannelBrowser(
+                            browseState = browse, channels = channels, events = emptyList(),
+                            imageHeaders = emptyMap(), onEvent = {}, firstContentFocusRequester = firstFocus,
+                            focusTarget = TvhFocusTarget("A-0"), onFocused = { _, _ -> },
+                            options = options, onOptions = {}, onWatch = {}, canWatch = true,
+                            controls = rememberLiveTvBrowseControls(browse, "channels"),
+                            channelList = true, listing = listing,
+                        )
+                    }
+                }
+            }
+        }
+        rule.waitForIdle()
+        rule.onNodeWithTag("alphabet-letter-A").assertIsSelected()
+        rule.onNodeWithTag("alphabet-letter-M").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("alphabet-letter-M").assertIsSelected()
+
+        verticalList().performScrollToIndex(3)
+        rule.waitForIdle()
+        rule.onNodeWithTag("alphabet-letter-B").assertIsSelected()
+        rule.runOnIdle { assertEquals("B-0", browse.position("channels")?.itemId) }
     }
 }

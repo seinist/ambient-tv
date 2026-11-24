@@ -53,6 +53,7 @@ import com.ambient.tv.games.library.coverModel
 import com.ambient.tv.games.library.coverAspectRatio
 import com.ambient.tv.games.library.GameLibraryFolder
 import com.ambient.tv.ui.common.AlphabetBar
+import com.ambient.tv.ui.common.alphabetTrackedLetter
 import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.LocalBrowseRightIndexFocus
 import com.ambient.tv.ui.common.TvActionButton
@@ -89,6 +90,7 @@ import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.sound.LocalUiSoundPlayer
 import com.ambient.tv.ui.sound.rememberUiSoundAction
 import com.ambient.tv.ui.mobile.deviceDensityGridCells
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -368,6 +370,11 @@ internal fun GameLibraryGames(
     showSystem: Boolean = GameSystems.byId(section) == null,
 ) {
     val scope = rememberCoroutineScope()
+    val handheld = LocalHandheldUi.current
+    var alphabetJumpJob by remember { mutableStateOf<Job?>(null) }
+    DisposableEffect(games, view, section, handheld) {
+        onDispose { alphabetJumpJob?.cancel() }
+    }
     val gameIds = remember(games) { games.map { it.fileId } }
     val alphabet = remember(games, section, view, sortKey) {
         if (section == "recent" || view == "rows" || sortKey != "name") emptyList()
@@ -388,6 +395,10 @@ internal fun GameLibraryGames(
             letters = alphabet,
             selectedLetter = games.firstOrNull { it.fileId == focusedId }
                 ?.title?.firstOrNull()?.uppercaseChar(),
+            visibleLetter = {
+                val index = if (view == "list") listState.firstVisibleItemIndex else gridState.firstVisibleItemIndex
+                games.getOrNull(index)?.title?.firstOrNull()?.uppercaseChar()
+            },
             firstContentFocus = firstFocus,
             onReturnToContent = {
                 focusedId?.let { itemRequests[it] }?.let { runCatching { it.requestFocus() } }
@@ -395,11 +406,18 @@ internal fun GameLibraryGames(
             },
             onSelect = { letter ->
                 val index = games.indexOfFirst { it.title.firstOrNull()?.uppercaseChar() == letter }
-                if (index >= 0) scope.launch {
-                    if (view == "list") listState.scrollToItem(index)
-                    else gridState.scrollToItem(index)
-                    withFrameNanos { }
-                    itemRequests[games[index].fileId]?.let { runCatching { it.requestFocus() } }
+                if (index >= 0) {
+                    alphabetJumpJob?.cancel()
+                    alphabetJumpJob = scope.launch {
+                        if (view == "list") listState.scrollToItem(index)
+                        else gridState.scrollToItem(index)
+                        // Touch scrubbing owns the viewport; a delayed item focus would pull it
+                        // back to an earlier letter while the finger is already moving on.
+                        if (!handheld) {
+                            withFrameNanos { }
+                            itemRequests[games[index].fileId]?.let { runCatching { it.requestFocus() } }
+                        }
+                    }
                 }
             },
             modifier = Modifier.fillMaxSize().pageContentUp(controls.focusChain).focusGroup(),
@@ -712,15 +730,17 @@ internal fun GameLibraryAlphabetLayout(
     onReturnToContent: () -> Unit,
     onSelect: (Char) -> Unit,
     modifier: Modifier = Modifier,
+    visibleLetter: () -> Char? = { null },
     content: @Composable RowScope.() -> Unit,
 ) {
     val alphabetFocus = remember { FocusRequester() }
     CompositionLocalProvider(LocalBrowseRightIndexFocus provides alphabetFocus.takeIf { letters.isNotEmpty() }) {
         Row(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             content()
-            if (letters.isNotEmpty()) AlphabetBar(
+            if (letters.isNotEmpty()) GameLibraryAlphabetBar(
                 letters = letters,
-                selected = selectedLetter,
+                focusedLetter = selectedLetter,
+                visibleLetter = visibleLetter,
                 gridFocus = firstContentFocus,
                 onReturnToContent = onReturnToContent,
                 onSelect = { it?.let(onSelect) },
@@ -728,6 +748,28 @@ internal fun GameLibraryAlphabetLayout(
             )
         }
     }
+}
+
+/** Observe the scrolling viewport only here, keeping game cards out of rail recompositions. */
+@Composable
+private fun GameLibraryAlphabetBar(
+    letters: List<Char>,
+    focusedLetter: Char?,
+    visibleLetter: () -> Char?,
+    gridFocus: FocusRequester,
+    onReturnToContent: () -> Unit,
+    onSelect: (Char?) -> Unit,
+    firstEntryFocusRequester: FocusRequester,
+) {
+    AlphabetBar(
+        letters = letters,
+        selected = alphabetTrackedLetter(LocalHandheldUi.current, visibleLetter(), focusedLetter),
+        gridFocus = gridFocus,
+        modifier = Modifier.fillMaxHeight(),
+        onReturnToContent = onReturnToContent,
+        onSelect = onSelect,
+        firstEntryFocusRequester = firstEntryFocusRequester,
+    )
 }
 
 private val GameTileContentPadding = 9.dp
