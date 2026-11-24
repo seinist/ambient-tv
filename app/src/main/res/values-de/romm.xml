@@ -32,7 +32,6 @@
     <string name="romm_open_settings">RomM-Einstellungen öffnen</string>
     <string name="romm_library_not_loaded">Die Bibliothek wurde noch nicht vom Server geladen.</string>
     <string name="romm_library_empty">Der Server hat keine Spiele für die Konsolen, die diese App spielt.</string>
-    <string name="romm_offline_copy">Server nicht erreichbar: Die zuletzt geladene Bibliothek wird angezeigt.</string>
     <string name="romm_detail_source">Quelle: %1$s</string>
     <string name="romm_info_data">Spielstände und Speicher: %1$s</string>
     <string name="romm_sync_checking">Abgleich mit dem Server</string>
@@ -47,4 +46,5 @@
     <string name="romm_error_unreachable">Der RomM-Server ist nicht erreichbar.</string>
     <string name="romm_error_tls">Die sichere Verbindung zu RomM ist fehlgeschlagen.</string>
     <string name="romm_error_not_set_up">RomM ist nicht eingerichtet.</string>
+    <string name="romm_url_signed_in_hint">Zum Wechseln der Adresse zuerst abmelden.</string>
 </resources>

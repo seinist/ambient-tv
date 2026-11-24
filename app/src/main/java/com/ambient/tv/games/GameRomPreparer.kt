@@ -327,13 +327,15 @@ class GameRomPreparer @Inject constructor(
         systemId: String?,
         expectedBytes: Long,
         onProgress: (Float?) -> Unit,
+        /** The source cannot be asked right now: a complete earlier download is used as it is. */
+        acceptCached: Boolean = false,
         fetch: suspend (target: File, maxBytes: Long, onProgress: (Float?) -> Unit) -> Unit,
     ): File = withContext(Dispatchers.IO) {
         val folder = File(cache, sha1(fileId))
         val marker = File(folder, ".complete")
         // The marker records the file's name too: offline, the server's details may name it differently.
         val recorded = runCatching { marker.readLines() }.getOrNull()
-            ?.takeIf { it.size == 2 && it[0] == stamp }
+            ?.takeIf { it.size == 2 && (it[0] == stamp || acceptCached) }
             ?.let { lines -> safeRelativePath(lines[1])?.takeIf { '/' !in it }?.let { File(folder, it) } }
             ?.takeIf { it.isFile && it.length() > 0 }
         val main = recorded ?: File(folder, safeName(name))

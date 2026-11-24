@@ -20,7 +20,7 @@ object RommPlatforms {
         map("sega32x", "sega32", "sega32x", "sega-32x")
         map("pce", "tg16", "turbografx16--1", "turbografx-16", "pc-engine", "pce", "supergrafx", "pc-engine-supergrafx")
         map("ngp", "neo-geo-pocket", "neo-geo-pocket-color", "ngp", "ngpc")
-        map("wswan", "wonderswan", "wonderswan-color", "ws", "wsc")
+        map("wswan", "wonderswan", "wonderswan-color", "swancrystal", "ws", "wsc")
         map("lynx", "lynx", "atari-lynx")
         map("a2600", "atari2600", "atari-2600")
         map("a5200", "atari5200", "atari-5200")

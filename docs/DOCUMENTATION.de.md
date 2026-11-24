@@ -426,12 +426,12 @@ Einstellungen › Systeme & Konten › **IPTV**: beliebig viele M3U-Wiedergabeli
 
 ### 4.12 RomM (Spieleserver)
 
-Einstellungen › Medienserver › **RomM** (auch im Katalog „System hinzufügen“ und bei der Ersteinrichtung): die Spiele des eigenen [RomM](https://romm.app)-Servers, mit eigenem Menüpunkt mit **Alle**, **Favoriten**, **Zuletzt** und den Plattformen von RomM unter den Namen, die sie dort haben. Aufgeführt werden nur Plattformen, die ein Core dieser App spielt (dieselben Konsolen wie bei lokalen Spielen).
+Einstellungen › Medienserver › **RomM** (auch im Katalog „System hinzufügen“ und bei der Ersteinrichtung): die Spiele des eigenen [RomM](https://romm.app)-Servers, mit eigenem Menüpunkt mit **Alle Spiele**, **Favoriten**, **Zuletzt gespielt** und den Plattformen von RomM unter den Namen, die sie dort haben. Aufgeführt werden nur Plattformen, die ein Core dieser App spielt (dieselben Konsolen wie bei lokalen Spielen); Einträge ohne Datei auf dem Server (RomMs reine Sammlungseinträge physischer Spiele) fehlen.
 
 | Einstellung | Optionen / Werte | Standard | Geräte | Beschreibung |
 | --- | --- | --- | --- | --- |
 | RomM verwenden | An / Aus | Aus | Alle | Zeigt die Spiele des Servers im Menü und spielt sie im Spiele-Player. |
-| Adresse | Wie im Browser (`http://nas:8080`, `https://spiele.example.com/romm`) | Leer | Alle | Ein eingefügtes `/api` wird entfernt. Anfragen folgen *Nur lokales Netzwerk* und den WireGuard-Routen wie bei jedem Server. |
+| Adresse | Wie im Browser (`http://nas:8080`, `https://spiele.example.com/romm`) | Leer | Alle | Ein eingefügtes `/api` wird entfernt. Anfragen folgen *Nur lokales Netzwerk* und den WireGuard-Routen wie bei jedem Server. Angemeldet wird die Adresse angezeigt, lässt sich aber nicht ändern: Eine Anmeldung geht nie an eine andere Adresse; nach dem Abmelden ist das Feld wieder frei. |
 | Mit Code anmelden | QR-Code + Code | — | TV, Handy | RomM 5: Ein angemeldetes Handy bestätigt dieses Gerät (Geräte-Autorisierung). Die App bekommt ein eigenes Geräte-Token; kein Passwort wird gespeichert. |
 | Andere Anmeldung | Kopplungscode oder Client-Token (RomM 4.8+); Benutzername und Passwort (jede Version) | — | Alle | Token und Passwort liegen verschlüsselt und werden nie exportiert. |
 | Verbindung prüfen / Bibliothek neu laden / Abmelden | Aktionen | — | Alle | Abmelden entfernt die Bibliotheksliste dieses Servers vom Gerät. |
@@ -444,7 +444,7 @@ Einstellungen › Medienserver › **RomM** (auch im Katalog „System hinzufüg
 
 **Core-Daten:** Was ein Core selbst in den Speicherordner schreibt (Memory Cards, NAND einer Konsole, PSP-SAVEDATA, Backup-RAM), gehört zu dem Spiel, das beim Ändern lief. Es geht als `ambient-data.zip` zu den Speicherständen dieses Spiels in RomM, mit dem Datum jeder Datei; vor dem Start ersetzen Dateien aus seinem Archiv die Kopie auf dem Gerät nur dort, wo die Kopie im Archiv neuer ist. Caches, Logs und Core-Einstellungen bleiben auf dem Gerät; ein Archiv über 64 MB wird nicht gesendet.
 
-**Favoriten:** Ein RomM-Spiel als Favorit zu markieren wirkt sofort und geht in die eigene **Favorites**-Sammlung des Benutzers auf dem Server (fehlt sie, wird sie wie in RomMs Weboberfläche angelegt); beim Öffnen von RomM kommt diese Sammlung zurück, so erscheinen auch in RomM oder auf einem anderen Gerät markierte Favoriten hier. Ohne Verbindung wartet die Änderung auf den Server.
+**Favoriten:** Ein RomM-Spiel als Favorit zu markieren wirkt sofort und geht in die eigene **Favorites**-Sammlung des Benutzers auf dem Server (fehlt sie, wird sie wie in RomMs Weboberfläche angelegt); beim Öffnen von RomM kommt diese Sammlung zurück, so erscheinen auch in RomM oder auf einem anderen Gerät markierte Favoriten hier. Ohne Verbindung wartet die Änderung auf den Server. Ein gespieltes Spiel setzt außerdem sein *Zuletzt gespielt* in RomM, so folgt „Zuletzt gespielt“ auch über Geräte und andere RomM-Programme hinweg.
 
 **Startseite und Suche:** Der Startseiten-Editor bietet RomMs **Zuletzt gespielte Spiele**, **Lieblingsspiele** und **Alle Spiele** als Reihen mit denselben Karten wie lokale Spiele; die globale Suche listet passende RomM-Spiele. Beide lesen die Bibliotheksliste auf dem Gerät und warten nie auf den Server.
 

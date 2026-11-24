@@ -75,9 +75,37 @@ internal data class RommCoreSession(val saveKey: String, val files: Map<String, 
 
 @Serializable
 internal data class RommFirmwareManifest(
-    /** File name → "size:modified:md5" of firmware that came from the server. */
+    /** Before per-platform lists: file name → "size:modified:md5" (read only, never written again). */
     val files: Map<String, String> = emptyMap(),
+    /**
+     * Platform id → its firmware from the server: file name → "size:modified:md5". The system folder
+     * is shared by all platforms of a server, so each platform removes only what it brought.
+     */
+    val platforms: Map<String, Map<String, String>> = emptyMap(),
 )
+
+/** How a save state on the server and this device's copy come together before a game starts. */
+internal object RommStateSync {
+    enum class Action { KEEP, DOWNLOAD }
+
+    /**
+     * [known] is the last match, [localStamp] / [localCreatedAt] describe the device's copy (null
+     * when it has none). A state unchanged on the server since the last match is kept as it is here,
+     * also when it was deleted here: the upload then deletes it on the server.
+     */
+    fun action(known: RommMirrorEntry?, localStamp: String?, localCreatedAt: Long?, asset: RommAsset): Action {
+        val inSync = known != null && known.serverId == asset.id && known.fileName == asset.fileName &&
+            known.updatedAt == asset.updatedAt
+        if (inSync) return Action.KEEP
+        val localChanged = localStamp != null && known?.local != localStamp
+        // Changed here since the last match: the upload sends it.
+        if (localChanged && known != null && known.serverId == asset.id) return Action.KEEP
+        // Both sides made this state independently: the newer one wins.
+        if (localChanged && localCreatedAt != null &&
+            localCreatedAt >= (RommLibrary.parseInstant(asset.updatedAt) ?: 0L)) return Action.KEEP
+        return Action.DOWNLOAD
+    }
+}
 
 /**
  * Firmware, in-game saves and save states of RomM games are the server's. The player keeps working
@@ -97,6 +125,8 @@ class RommGameData @Inject constructor(
     private val locks = ConcurrentHashMap<String, Mutex>()
     /** The save folder is shared by every game of a server; its core data change under this lock. */
     private val coreLock = Mutex()
+    /** The firmware folder and its manifest are shared by every platform of a server. */
+    private val firmwareLock = Mutex()
     private val uploads = ConcurrentHashMap<String, Job>()
     /** Server key → when it last failed to answer; the next steps of the same start skip it. */
     private val unreachable = ConcurrentHashMap<String, Long>()
@@ -110,6 +140,7 @@ class RommGameData @Inject constructor(
         val account = accounts.account()?.takeIf { it.serverKey == serverKey }
             ?: throw FileNotFoundException("The RomM server of this game is not signed in")
         // Fresh details while the server answers; the device's catalog copy otherwise (cached game).
+        var answered = true
         val rom = try {
             client.rom(account, romId).also { unreachable.remove(serverKey) }
         } catch (cancelled: CancellationException) {
@@ -118,8 +149,10 @@ class RommGameData @Inject constructor(
             throw error
         } catch (error: Exception) {
             if (error !is RommHttpException) unreachable[serverKey] = System.currentTimeMillis()
+            answered = false
             library.rom(fileId) ?: throw error
         }
+        if (!rom.playable) throw FileNotFoundException("RomM has no file for ${rom.displayTitle}")
         val system = RommPlatforms.system(rom) ?: library.platform(rom.platformId)?.let(RommPlatforms::system)
             ?: throw UnknownGameException(rom.fsName)
         val fileName = rom.fsName.ifBlank { "game" }
@@ -130,9 +163,9 @@ class RommGameData @Inject constructor(
             single != null -> single
             else -> fileName
         }
-        // The list and the detail answer agree on these, so a cached game opens without the server.
-        val stamp = "${rom.id}:${rom.fsSizeBytes}:${rom.updatedAt.orEmpty()}:${rom.zipped}"
-        val file = preparer.materialize(fileId, name, stamp, system.id, rom.fsSizeBytes, onProgress) { target, maxBytes, progress ->
+        // Without an answer from the server the downloaded copy is played, whatever the device's list says.
+        val file = preparer.materialize(fileId, name, rom.contentStamp, system.id, rom.fsSizeBytes, onProgress,
+            acceptCached = !answered) { target, maxBytes, progress ->
             client.downloadRom(account, rom, target, maxBytes, progress)
         }
         val chosen = GameSystems.forPreparedFile(file, rom.fsName, system.id) ?: system
@@ -159,7 +192,7 @@ class RommGameData @Inject constructor(
         try {
             val account = accounts.account()?.takeIf { it.serverKey == ref.serverKey } ?: return false
             if (recentlyUnreachable(ref.serverKey)) return false
-            return lock(game).withLock {
+            return firmwareLock.withLock {
                 try {
                     syncFirmware(account, game)
                     true
@@ -271,6 +304,8 @@ class RommGameData @Inject constructor(
         val directory = storage.systemDirectory(game)
         val manifestFile = File(directory, FIRMWARE_MANIFEST)
         val manifest = read(manifestFile, RommFirmwareManifest.serializer()) ?: RommFirmwareManifest()
+        val platformKey = ref.platformId.toString()
+        val previous = manifest.platforms[platformKey].orEmpty()
         val kept = mutableMapOf<String, String>()
         client.firmware(account, ref.platformId).forEach { firmware ->
             val serverName = RommFiles.safeName(firmware.fileName) ?: return@forEach
@@ -281,7 +316,7 @@ class RommGameData @Inject constructor(
             }
             val name = known?.file ?: serverName
             val target = File(directory, name)
-            val recorded = manifest.files[name]
+            val recorded = previous[name]
             val current = if (target.isFile) "${target.length()}:${target.lastModified()}" else null
             val sizeMatches = firmware.sizeBytes <= 0L || target.length() == firmware.sizeBytes
             val upToDate = target.isFile && sizeMatches && recorded != null &&
@@ -301,9 +336,12 @@ class RommGameData @Inject constructor(
             }
             kept[name] = "${target.length()}:${target.lastModified()}:${firmware.md5 ?: GameBiosManager.md5(target)}"
         }
-        // Firmware removed on the server leaves this device's copy of it, too.
-        (manifest.files.keys - kept.keys).forEach { File(directory, it).delete() }
-        write(manifestFile, RommFirmwareManifest.serializer(), RommFirmwareManifest(kept))
+        // Firmware removed on the server leaves this device's copy of it, too, unless another
+        // platform of the server still uses a file of that name.
+        val others = manifest.platforms - platformKey
+        val usedElsewhere = others.values.flatMapTo(hashSetOf()) { it.keys }
+        (previous.keys - kept.keys - usedElsewhere).forEach { File(directory, it).delete() }
+        write(manifestFile, RommFirmwareManifest.serializer(), RommFirmwareManifest(platforms = others + (platformKey to kept)))
     }
 
     /**
@@ -357,28 +395,24 @@ class RommGameData @Inject constructor(
 
     private suspend fun pullStates(account: RommAccount, game: PreparedGame, coreStamp: String) {
         val ref = game.remote ?: return
-        val remote = client.states(account, ref.romId)
+        val copies = client.states(account, ref.romId)
             .mapNotNull { asset -> RommStateNames.parse(asset.fileName, coreStamp)?.let { it to asset } }
             .groupBy { it.first.id }
-            .mapValues { (_, copies) -> copies.maxBy { RommLibrary.parseInstant(it.second.updatedAt) ?: 0L } }
+            .mapValues { (_, list) -> list.sortedByDescending { RommLibrary.parseInstant(it.second.updatedAt) ?: 0L } }
+        val remote = copies.mapValues { (_, list) -> list.first() }
+        // Older copies of the same state (left when a device replaced it while another kept the old one).
+        val superseded = copies.values.flatMap { list -> list.drop(1).map { it.second.id } }
         val mirror = readMirror(game)
         val local = states.list(game).associateBy { it.id }
         val next = mirror.states.toMutableMap()
         remote.forEach { (id, pair) ->
             val (entry, asset) = pair
-            val known = mirror.states[id]
             val localEntry = local[id]
-            val localChanged = localEntry != null && known?.local != states.stamp(game, localEntry)
-            val inSync = known != null && known.serverId == asset.id && known.fileName == asset.fileName &&
-                known.updatedAt == asset.updatedAt
-            when {
-                inSync && localEntry != null -> Unit
-                // Changed here since the last match: the upload sends it.
-                localChanged && known != null && known.serverId == asset.id -> Unit
-                // Both sides made this state independently: the newer one wins.
-                localChanged && localEntry != null &&
-                    localEntry.createdAt >= (RommLibrary.parseInstant(asset.updatedAt) ?: 0L) -> Unit
-                else -> {
+            val action = RommStateSync.action(mirror.states[id], localEntry?.let { states.stamp(game, it) },
+                localEntry?.createdAt, asset)
+            when (action) {
+                RommStateSync.Action.KEEP -> Unit
+                RommStateSync.Action.DOWNLOAD -> {
                     val bytes = client.assetBytes(account, asset.downloadPath ?: "/api/states/${asset.id}/content",
                         GameStateStore.MAX_STATE_BYTES)
                     val screenshot = asset.screenshot?.downloadPath?.let { path ->
@@ -397,6 +431,15 @@ class RommGameData @Inject constructor(
             next.remove(id)
         }
         writeMirror(game, readMirror(game).copy(states = next))
+        superseded.forEach { id ->
+            try {
+                client.deleteStates(account, listOf(id))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                com.ambient.tv.diagnostics.DiagnosticLog.warn("romm", "old state copy not removed: ${error.message}")
+            }
+        }
     }
 
     private suspend fun pushStates(account: RommAccount, game: PreparedGame) {

@@ -60,14 +60,21 @@ fun RommSettingsSection(
         SettingsSubheader(stringResource(R.string.settings_system_server_access))
         SettingsGroup(card = true) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                TvTextField(
-                    value = state.url, onValueChange = model::setUrl,
-                    label = stringResource(R.string.romm_url),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Text(stringResource(R.string.romm_url_hint), style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (state.signedIn) {
+                    // The sign-in belongs to this address: another server needs signing out first.
+                    Text(state.url, style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.romm_url_signed_in_hint), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    TvTextField(
+                        value = state.url, onValueChange = model::setUrl,
+                        label = stringResource(R.string.romm_url),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(stringResource(R.string.romm_url_hint), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
         if (state.signedIn) {

@@ -42,4 +42,27 @@ class RommBackupTest {
         assertEquals("basic", target.rommAuthMode)
         assertTrue(target.isRommConfigured)
     }
+
+    @Test fun anotherAccountOrAnAddressTypedDifferentlyIsHandledByWhatItIs() {
+        val target = AppPreferences(memoryPreferences()).apply {
+            rommServerUrl = "http://nas:8080"
+            rommUsername = "anna"
+            rommAuthMode = "token"
+        }
+        // The same server written another way keeps the sign-in.
+        manager(target).importJson(manager(AppPreferences(memoryPreferences()).apply {
+            rommEnabled = true
+            rommServerUrl = "http://NAS:8080/"
+            rommUsername = "Anna"
+        }).exportJson())
+        assertEquals("token", target.rommAuthMode)
+        // Another account on it does not: its data would be filed under that account.
+        manager(target).importJson(manager(AppPreferences(memoryPreferences()).apply {
+            rommEnabled = true
+            rommServerUrl = "http://nas:8080"
+            rommUsername = "ben"
+        }).exportJson())
+        assertEquals("", target.rommAuthMode)
+        assertEquals("ben", target.rommUsername)
+    }
 }

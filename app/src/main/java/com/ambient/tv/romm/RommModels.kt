@@ -73,9 +73,20 @@ data class RommRom(
     val multi: Boolean = false,
     val files: List<RommRomFile> = emptyList(),
     @SerialName("missing_from_fs") val missingFromFs: Boolean = false,
+    /** RomM 5 lists physical games without a file too; those cannot be played. */
+    @SerialName("has_file_on_disk") val hasFileOnDisk: Boolean = true,
 ) {
     /** RomM sends several files of one game as a single ZIP (with an M3U for multi-disc games). */
     val zipped: Boolean get() = hasMultipleFiles || multi || files.size > 1
+
+    /** Whether there is a file to play. */
+    val playable: Boolean get() = !missingFromFs && hasFileOnDisk
+
+    /**
+     * What the downloaded copy is: the same in the list and in the details, and unchanged when RomM
+     * only updates artwork or metadata, so a new cover never downloads a 4 GB disc again.
+     */
+    val contentStamp: String get() = "$id:$fsSizeBytes:$fsName:$zipped"
 
     val displayTitle: String
         get() = name?.takeIf(String::isNotBlank) ?: fsNameNoTags.ifBlank { fsNameNoExt.ifBlank { fsName } }

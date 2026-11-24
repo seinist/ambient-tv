@@ -86,7 +86,10 @@ fun RommLibraryScreen(
     val sections = remember(state.platforms) { listOf("all", "favorites", "recent") + state.platforms.map { it.section } }
     val platformsBySection = remember(state.platforms) { state.platforms.associateBy { it.section } }
     val rommName = systemName(MediaSystem.ROMM)
+    // Offline shows beside the header actions, the way every server page shows it.
+    val offlineStatus = if (state.offline || state.serverOffline) com.ambient.tv.ui.home.offlineSourcesStatus(listOf("romm")) else null
 
+    androidx.compose.runtime.CompositionLocalProvider(com.ambient.tv.ui.common.LocalPageOfflineStatus provides offlineStatus) {
     Column(
         Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(),
             top = pageHeaderTop(screenGutter()), bottom = screenGutter()),
@@ -100,9 +103,9 @@ fun RommLibraryScreen(
             model.section(it)
             focusedId = null
         }
-        // Like the other server systems: the last copy stays usable, one quiet line says so.
-        state.error?.let { error ->
-            Text(if (state.offline && state.hasCatalog) stringResource(R.string.romm_offline_copy) else error,
+        // Offline is in the header; a refused sign-in or another server error says what happened.
+        state.error?.takeIf { !state.offline }?.let { error ->
+            Text(error,
                 style = MaterialTheme.typography.bodySmall,
                 color = if (state.signInRejected) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxWidth().pageFocusStage(controls.focusChain, PageFocusLevel.CONTEXT, controls.scanFocus))
@@ -134,6 +137,7 @@ fun RommLibraryScreen(
                 showSystem = library.section !in platformsBySection,
             )
         }
+    }
     }
     GameLibraryViewOptionsPanel(library, controls,
         onView = model::view, onGridColumns = model::gridColumns, onListRows = model::listRows,

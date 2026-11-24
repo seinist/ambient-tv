@@ -20,6 +20,7 @@ class RommPlatformsTest {
         assertEquals("gamecube", RommPlatforms.systemId("ngc"))
         assertEquals("dreamcast", RommPlatforms.systemId("dc"))
         assertEquals("plus4", RommPlatforms.systemId("c-plus-4"))
+        assertEquals("wswan", RommPlatforms.systemId("swancrystal"))
         // The folder slug decides when the platform slug is unknown.
         assertEquals("n64", RommPlatforms.systemId("unknown-custom", "n64"))
         assertNull(RommPlatforms.systemId("switch"))

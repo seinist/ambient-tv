@@ -68,7 +68,8 @@ class RommSettingsViewModel @Inject constructor(
         }
         mutable.update { it.copy(
             enabled = accounts.enabled,
-            url = it.url.ifBlank { accounts.serverUrl },
+            // Signed in, the page shows the stored address (it cannot be edited then).
+            url = if (account != null) accounts.serverUrl else it.url.ifBlank { accounts.serverUrl },
             signedIn = account != null,
             username = accounts.username,
             serverVersion = accounts.serverVersion,
@@ -190,13 +191,22 @@ class RommSettingsViewModel @Inject constructor(
         val username = user.username.ifBlank { (auth as? RommAuth.Basic)?.username.orEmpty() }
         accounts.signedIn(base, auth, username, version)
         mutable.update { it.copy(url = base.toString().trimEnd('/'), message = context.getString(R.string.romm_signed_in, username)) }
-        runCatching { library.refresh() }
+        try {
+            library.refresh()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Signed in; the library loads on the next opening of RomM.
+        }
     }
 
+    /**
+     * The typed address for a sign-in. It is stored only together with a verified sign-in
+     * ([RommAccountStore.signedIn]): until then the old server keeps its address and its sign-in.
+     */
     private fun baseUrl(): HttpUrl? {
         val base = RommKeys.normalizeUrl(mutable.value.url)
         if (base == null) mutable.update { it.copy(error = context.getString(R.string.romm_url_invalid)) }
-        else accounts.setServerUrl(base.toString().trimEnd('/'))
         return base
     }
 

@@ -80,16 +80,26 @@ class RommLibrary @Inject constructor(
         return stored
     }
 
-    /** Reads platforms and games from the server and keeps them on this device. */
-    suspend fun refresh(): RommCatalog = refreshLock.withLock {
+    /**
+     * Reads platforms and games from the server and keeps them on this device. A call that waited
+     * for another refresh (menu and library opening together) takes that result instead of a second one.
+     */
+    suspend fun refresh(): RommCatalog {
+        val requested = System.currentTimeMillis()
+        return refreshLock.withLock { refreshLocked(requested) }
+    }
+
+    private suspend fun refreshLocked(requested: Long): RommCatalog {
         val account = accounts.account() ?: throw java.io.FileNotFoundException("RomM is not set up")
+        mutable.value.takeIf { it.serverKey == account.serverKey }?.catalog
+            ?.takeIf { it.fetchedAt >= requested }?.let { return it }
         mutable.update { it.copy(serverKey = account.serverKey, refreshing = true, error = null) }
-        try {
+        return try {
             val platforms = client.platforms(account)
                 .filter { RommPlatforms.system(it) != null }
                 .sortedBy { it.title.lowercase(Locale.ROOT) }
             val roms = platforms.filter { it.romCount != 0 }.flatMap { platform ->
-                client.roms(account, platform.id).filterNot { it.missingFromFs }
+                client.roms(account, platform.id).filter { it.playable }
             }
             val catalog = RommCatalog(platforms, roms, System.currentTimeMillis())
             withContext(Dispatchers.IO) { synchronized(fileLock) { writeCatalog(account.serverKey, catalog) } }
@@ -210,9 +220,12 @@ class RommLibrary @Inject constructor(
         val adds = pending.filter { it.startsWith("+") }.mapNotNullTo(linkedSetOf()) { it.drop(1).toLongOrNull() }
         val removes = pending.filter { it.startsWith("-") }.mapNotNullTo(linkedSetOf()) { it.drop(1).toLongOrNull() }
         val me = client.me(account.baseUrl, account.auth)
-        val own = client.collections(account).filter { it.isFavorite &&
-            (if (me.id != 0L && it.userId != 0L) it.userId == me.id else it.ownerUsername.equals(account.username, ignoreCase = true)) }
-        var collection = own.firstOrNull()
+        val mine = client.collections(account).filter {
+            if (me.id != 0L && it.userId != 0L) it.userId == me.id else it.ownerUsername.equals(account.username, ignoreCase = true)
+        }
+        // Servers without favorites flags keep the collection this device made under its name.
+        var collection = mine.firstOrNull { it.isFavorite }
+            ?: mine.firstOrNull { it.name == FAVORITES_NAME || it.name == FAVORITES_FALLBACK_NAME }
         if (collection == null && adds.isNotEmpty()) {
             collection = try {
                 client.createFavorites(account, FAVORITES_NAME)
@@ -255,6 +268,17 @@ class RommLibrary @Inject constructor(
         val kept = entries.entries.sortedByDescending { it.value }.take(PLAYED_LIMIT)
         prefs.edit { putString(playedKey(serverKey), kept.joinToString(",") { "${it.key}:${it.value}" }) }
         mutable.update { it.copy(revision = it.revision + 1) }
+        // RomM's own "last played", so other clients and devices see it too; best effort.
+        val account = accounts.account()?.takeIf { it.serverKey == serverKey } ?: return
+        scope.launch {
+            try {
+                client.markPlayed(account, romId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                com.ambient.tv.diagnostics.DiagnosticLog.warn("romm", "last played not sent: ${error.message}")
+            }
+        }
     }
 
     fun coverUrl(account: RommAccount, rom: RommRom): String? =
@@ -278,6 +302,8 @@ class RommLibrary @Inject constructor(
         played: Map<Long, Long>,
         titleStyle: String = "auto",
     ): LibraryGame? {
+        // A list saved by an earlier version may still hold entries without a file.
+        if (!rom.playable) return null
         val system = RommPlatforms.system(rom) ?: platform?.let(RommPlatforms::system) ?: return null
         val cover = coverUrl(account, rom)
         val serverPlayed = rom.romUser?.lastPlayed?.let(::parseInstant) ?: 0L
