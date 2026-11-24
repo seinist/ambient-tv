@@ -82,9 +82,15 @@ internal object CompanionBackupPolicy {
             "gameMetadataOptions",
         ),
         "device" to setOf("imageCacheMb", "cardImages1080"),
-        "connections" to setOf("tvheadendHtspPort"),
+        "connections" to setOf("tvheadendHtspPort", "rommEnabled", "rommServerUrl", "rommUsername"),
         "credentials" to setOf("gameMetadata"),
     )
+    /**
+     * Classified extras the companion does not transfer: RomM pairs every device on its own (QR
+     * or code), so its address travels only in a file backup.
+     */
+    private val companionLocalExtraFields = setOf("rommEnabled", "rommServerUrl", "rommUsername")
+
     /**
      * Fields that are not synced through the companion today (unchanged behaviour, now explicit):
      * source-specific hidden sections/library choices, WireGuard toggles, Spotify device identity,
@@ -126,7 +132,7 @@ internal object CompanionBackupPolicy {
         }
         return JsonObject(extras.filterKeys { it in groups }.mapValues { (group, value) ->
             if (value is JsonObject) JsonObject(value.filterKeys {
-                it in classifiedExtraFields.getValue(group) &&
+                it in classifiedExtraFields.getValue(group) && it !in companionLocalExtraFields &&
                     !(mode == "preferences" && group == "portable" && it in setOf("gameLibraryOverrides", "gameLibraryFolders"))
             }) else JsonNull
         })
@@ -138,7 +144,7 @@ internal object CompanionBackupPolicy {
         val extras = (result["extras"] as? JsonObject).orEmpty().toMutableMap()
         for (group in groups) {
             val values = (source[group] as? JsonObject)?.filter { (key, value) ->
-                key in classifiedExtraFields.getValue(group) && value != JsonNull
+                key in classifiedExtraFields.getValue(group) && key !in companionLocalExtraFields && value != JsonNull
             } ?: continue
             if (values.isEmpty()) continue
             extras[group] = JsonObject((extras[group] as? JsonObject).orEmpty() + values)
