@@ -69,6 +69,65 @@ class GameArchiveOptimizationsTest {
             source.bytesRead < 1024L * 1024)
     }
 
+    @Test fun headeredSnesArchivesKeepRawCrcAndMatchHeaderlessDatWithoutFullDecompression() {
+        val payload = ByteArray(2 * 1024 * 1024).also(Random(42)::nextBytes)
+        val rom = ByteArray(512).also(Random(7)::nextBytes) + payload
+        "SUPER MARIOWORLD     ".toByteArray().copyInto(rom, 512 + 0x7fc0)
+        rom.copyInto(payload, 0, 512)
+        fun crc(bytes: ByteArray) = CRC32().apply { update(bytes) }.value
+            .toString(16).uppercase().padStart(8, '0')
+        val zip = Bytes(zip("opaque.smc" to rom))
+        val gzip = Bytes(ByteArrayOutputStream().also { output ->
+            GZIPOutputStream(output).use { it.write(rom) }
+        }.toByteArray())
+        for ((name, source) in listOf("opaque.zip" to zip, "opaque.smc.gz" to gzip)) {
+            val metadata = GameArchives.probe(name, source)!!
+            assertEquals(crc(rom), metadata.crc32)
+            assertEquals(crc(payload), metadata.datCrc32)
+            assertTrue("Archive DAT matching must only read its existing prefix/index", source.bytesRead < 1024L * 1024)
+        }
+        val archive = Files.createTempFile("ambient-headered-snes", ".7z").toFile()
+        try {
+            SevenZOutputFile(archive).use { output ->
+                output.putArchiveEntry(SevenZArchiveEntry().apply { name = "opaque.smc"; size = rom.size.toLong() })
+                output.write(rom)
+                output.closeArchiveEntry()
+            }
+            val source = Bytes(archive.readBytes())
+            val fastMetadata = GameArchives.probe("opaque.7z", source)!!
+            // This archive exposes only a folder CRC in commons-compress, not an entry CRC.
+            // Ordinary browsing must not decompress the full ROM to obtain one.
+            assertNull(fastMetadata.crc32)
+            assertNull(fastMetadata.datCrc32)
+            assertTrue(source.bytesRead < 1024L * 1024)
+            val explicit = Bytes(archive.readBytes())
+            val metadata = GameArchives.probe("opaque.7z", explicit, checksumSystems = setOf("snes"))!!
+            assertEquals(crc(rom), metadata.crc32)
+            assertEquals(crc(payload), metadata.datCrc32)
+            assertTrue("Only an explicit DAT scan streams the missing CRC", explicit.bytesRead > source.bytesRead)
+            assertTrue(explicit.bytesRead < 3L * 1024 * 1024)
+        } finally { archive.delete() }
+    }
+
+    @Test fun smallSevenZipRomsUseAnAlreadyCompletePrefixForMissingChecksums() {
+        val rom = ByteArray(32 * 1024 + 512).also(Random(23)::nextBytes)
+        val archive = Files.createTempFile("ambient-small-headered-snes", ".7z").toFile()
+        try {
+            SevenZOutputFile(archive).use { output ->
+                output.putArchiveEntry(SevenZArchiveEntry().apply { name = "small.smc"; size = rom.size.toLong() })
+                output.write(rom)
+                output.closeArchiveEntry()
+            }
+            val source = Bytes(archive.readBytes())
+            val metadata = GameArchives.probe("small.7z", source)!!
+            val raw = CRC32().apply { update(rom) }.value.toString(16).uppercase().padStart(8, '0')
+            val payload = CRC32().apply { update(rom, 512, rom.size - 512) }.value.toString(16).uppercase().padStart(8, '0')
+            assertEquals(raw, metadata.crc32)
+            assertEquals(payload, metadata.datCrc32)
+            assertTrue(source.bytesRead < 128L * 1024)
+        } finally { archive.delete() }
+    }
+
     @Test fun directZipStageWritesOnlyOneRomAndVerifiesItsBytes() {
         val rom = gba("GOLDEN SUN", 500_000)
         val bytes = zip("game.gba" to rom, "README.txt" to "safe".toByteArray())

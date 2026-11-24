@@ -40,6 +40,7 @@ import com.ambient.tv.games.metadata.GameMetadata
 import com.ambient.tv.games.metadata.GameMetadataCandidate
 import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.ArtworkImage
+import com.ambient.tv.ui.common.activateOnTvKey
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.TvLazyColumn
@@ -99,15 +100,16 @@ internal fun GameMetadataEditor(
             onSave = { value, locked -> model.save(value, locked, done) })
         GameEditPage.Match, is GameEditPage.Artwork -> {
             val imageKind = (current as? GameEditPage.Artwork)?.kind
-            var query by remember(game.fileId, current) { mutableStateOf(
-                state.metadata.canonicalTitle.ifBlank { game.verifiedTitle ?: game.title }) }
             var provider by remember(game.fileId, current) { mutableStateOf(
                 state.metadata.provider.takeIf { it in state.providers }
                     ?: state.providers.firstOrNull().orEmpty()) }
+            var query by remember(game.fileId, current) { mutableStateOf(
+                gameMetadataSearchTitle(game, state.metadata, provider)) }
+            var queryEdited by remember(game.fileId, current) { mutableStateOf(false) }
             LaunchedEffect(provider, current) {
                 if (imageKind != null && state.metadata.providerGameId.isNotBlank() &&
                     provider == state.metadata.provider) model.artworkChoices(imageKind)
-                else if (provider.isNotBlank()) model.search(query, provider)
+                else if (provider.isNotBlank()) model.search(query, provider, imageKind)
             }
             AppDialog(
                 onDismiss = back,
@@ -133,14 +135,19 @@ internal fun GameMetadataEditor(
                     item("providers") { DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         state.providers.forEach { id ->
                             TvChip(gameMetadataProviderName(id), selected = provider == id,
-                                onClick = { provider = id }, enabled = !state.busy)
+                                onClick = {
+                                    if (provider != id) {
+                                        query = gameMetadataProviderSearchText(game, state.metadata, id, query, queryEdited)
+                                        provider = id
+                                    }
+                                }, enabled = !state.busy)
                         }
                     } }
-                    item("query") { TvTextField(query, { query = it.take(256) }, stringResource(R.string.action_search),
+                    item("query") { TvTextField(query, { query = it.take(256); queryEdited = true }, stringResource(R.string.action_search),
                         Modifier.fillMaxWidth()) }
                     item("actions") { DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TvActionButton(stringResource(R.string.action_search),
-                            onClick = { model.search(query, provider) },
+                            onClick = { model.search(query, provider, imageKind) },
                             enabled = query.isNotBlank() && provider.isNotBlank() && !state.searching && !state.busy,
                             icon = Icons.Filled.Search)
                         if (imageKind != null) TvActionButton(stringResource(R.string.game_edit_local_image),
@@ -176,6 +183,18 @@ internal fun GameMetadataEditor(
     }
 }
 
+/** A newly verified DAT name must also reach the editor's explicit-search field. */
+internal fun gameMetadataSearchTitle(
+    game: LibraryGame,
+    metadata: GameMetadata,
+    provider: String = metadata.provider.ifBlank { com.ambient.tv.games.metadata.GameMetadataProviderIds.LIBRETRO },
+): String = com.ambient.tv.games.metadata.gameMetadataQuery(game, metadata, "", "", null, provider = provider).title
+
+/** Provider changes may replace a suggested query, but never text the user entered. */
+internal fun gameMetadataProviderSearchText(
+    game: LibraryGame, metadata: GameMetadata, provider: String, query: String, edited: Boolean,
+): String = if (edited) query else gameMetadataSearchTitle(game, metadata, provider)
+
 @Composable
 private fun GameMetadataMatchChoice(
     match: GameMetadataCandidate,
@@ -183,6 +202,25 @@ private fun GameMetadataMatchChoice(
     model: GameDetailViewModel,
     enabled: Boolean,
     onClick: () -> Unit,
+) {
+    // Lazy rows request previews only while composed; provider credentials never reach Coil.
+    val preview by produceState<String?>(null, match, imageKind) {
+        value = try { model.previewArtwork(match, imageKind ?: GameArtworkKind.COVER) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { null }
+    }
+    GameMetadataMatchRow(match, imageKind, preview, enabled, onClick)
+}
+
+/** Identical match/artwork controls for touch, remote OK and physical keyboards. */
+@Composable
+internal fun GameMetadataMatchRow(
+    match: GameMetadataCandidate,
+    imageKind: GameArtworkKind?,
+    preview: String?,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val provider = imageKind?.let { match.metadata.artworkProviders[it.key] }
         ?: match.metadata.provider
@@ -193,15 +231,9 @@ private fun GameMetadataMatchChoice(
             runCatching { java.net.URI(it).host }.getOrNull()
         }
     }
-    // Lazy rows request previews only while composed; provider credentials never reach Coil.
-    val preview by produceState<String?>(null, match, imageKind) {
-        value = try { model.previewArtwork(match, imageKind ?: GameArtworkKind.COVER) }
-        catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { null }
-    }
     Surface(onClick = onClick, enabled = enabled,
         colors = transparentSurfaceColors(), scale = noSurfaceScale(),
-        modifier = Modifier.fillMaxWidth()) {
+        modifier = modifier.fillMaxWidth().activateOnTvKey(enabled, onClick)) {
         Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             ArtworkImage(preview?.let(::File), match.metadata.title,

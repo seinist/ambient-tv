@@ -50,6 +50,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.ResponseBody.Companion.toResponseBody
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], application = android.app.Application::class, manifest = Config.NONE)
@@ -99,10 +101,17 @@ class GameLibraryRepositoryQueryTest {
 
     private fun raw(): SQLiteDatabase = SQLiteDatabase.openOrCreateDatabase(context.getDatabasePath("game_library.db"), null)
     private fun repository() = GameLibraryRepository(context, prefs, files, preferences, access, wake)
-    private fun metadataRepository(library: GameLibraryRepository): GameMetadataRepository {
+    private fun metadataRepository(library: GameLibraryRepository,
+                                   interceptor: okhttp3.Interceptor? = null): GameMetadataRepository {
         val settings = GameMetadataSettings(preferences, TokenStore(prefs, preferences))
-        return GameMetadataRepository(context, library, GameMetadataProviders(settings,
-            Json { ignoreUnknownKeys = true }, okhttp3.ConnectionPool(), okhttp3.Dispatcher(), context),
+        val providers = GameMetadataProviders(settings,
+            Json { ignoreUnknownKeys = true }, okhttp3.ConnectionPool(), okhttp3.Dispatcher(), context)
+        if (interceptor != null) {
+            val field = providers.javaClass.getDeclaredField("client").apply { isAccessible = true }
+            field.set(providers, (field.get(providers) as okhttp3.OkHttpClient).newBuilder()
+                .addInterceptor(interceptor).build())
+        }
+        return GameMetadataRepository(context, library, providers,
             settings, GameMetadataLocalImporter(library, files, access), prefs)
     }
     private fun seed(
@@ -153,7 +162,7 @@ class GameLibraryRepositoryQueryTest {
         assertEquals(listOf("other"), library.games(GameLibraryQuery(section = "gba")).map { it.fileId })
         assertTrue(library.games(GameLibraryQuery(section = "favorites")).isEmpty())
         raw().use { db ->
-            assertEquals(7, db.version)
+            assertEquals(8, db.version)
             db.rawQuery("SELECT revision FROM game_dat_versions WHERE system_id='snes'", null).use {
                 assertTrue(it.moveToFirst()); assertEquals(7L, it.getLong(0))
             }
@@ -161,6 +170,186 @@ class GameLibraryRepositoryQueryTest {
                 assertTrue(it.moveToFirst()); assertEquals("12345678", it.getString(0)); assertEquals(2, it.getInt(1))
             }
         }
+    }
+
+    @Test fun migrationMakesExistingDatTitlesSearchableWithoutSourceAccess() {
+        val library = repository()
+        assertEquals(listOf("Verified DAT name"), library.searchDatTitles("snes", "verified_datname"))
+        assertTrue(library.searchDatTitles("gba", "verified").isEmpty())
+        raw().use { db ->
+            assertEquals(8, db.version)
+            db.rawQuery("SELECT search_title FROM game_dat_entries", null).use { rows ->
+                assertTrue(rows.moveToFirst())
+                assertEquals("verifieddatname", rows.getString(0))
+            }
+        }
+    }
+
+    @Test fun importedNamesSearchBySpacingPunctuationAndAccentsWithBoundedDistinctResults() = runBlocking {
+        val library = repository()
+        val dat = """<datafile>
+            <game name="Super Mario World (USA)"><rom crc="11111111"/></game>
+            <game name="Super Mario World (USA)"><rom crc="11111112"/></game>
+            <game name="Super Mario World (Europe)"><rom crc="22222222"/></game>
+            <game name="Super Mario World 2 - Yoshi’s Island (USA)"><rom crc="33333333"/></game>
+            <game name="Pokémon (World)"><rom crc="44444444"/></game>
+            </datafile>"""
+        library.importDat("snes", dat.byteInputStream())
+        assertEquals(listOf("Super Mario World (Europe)", "Super Mario World (USA)"),
+            library.searchDatTitles("snes", "SUPER MARIOWORLD", 2))
+        assertEquals(3, library.searchDatTitles("snes", "super_mario-world").size)
+        assertEquals(listOf("Pokémon (World)"), library.searchDatTitles("snes", "pokemon"))
+        assertTrue(library.searchDatTitles("gba", "Mario").isEmpty())
+        assertTrue(library.searchDatTitles("snes", "_%").isEmpty())
+        assertTrue(library.searchDatTitles("snes", "Mario", 0).isEmpty())
+    }
+
+    @Test fun importingDatImmediatelyMatchesCachedRawAndHeaderlessCrcWithoutReplacingUserEdits() = runBlocking {
+        seed("raw", verified = "Obsolete catalog title")
+        seed("headered", title = "SUPER MARIOWORLD")
+        seed("manual", manual = "My title")
+        seed("unknown", verified = "Obsolete guess")
+        val library = repository()
+        library.games() // Finish schema migration before adding the new cached checksum.
+        raw().use { db ->
+            db.execSQL("UPDATE game_entries SET archive_crc='DEADBEEF',dat_crc='AABBCCDD' WHERE file_id='headered'")
+            db.execSQL("UPDATE game_entries SET archive_crc=NULL WHERE file_id='unknown'")
+        }
+        val locked = GameMetadata(title = "Locked title", summary = "My notes", lockedFields = setOf("title", "summary"))
+        assertTrue(library.saveMetadata(library.metadataTicket("manual")!!, locked, manual = true))
+        val dat = """<datafile>
+            <game name="Raw catalog title"><rom crc="12345678"/></game>
+            <game name="Super Mario World (Europe)"><rom crc="AABBCCDD"/></game>
+            </datafile>"""
+        library.importDat("snes", dat.byteInputStream())
+        assertEquals("Raw catalog title", library.game("raw")!!.title)
+        assertEquals(8L, library.game("raw")!!.datVersion)
+        assertEquals("Super Mario World (Europe)", library.game("headered")!!.title)
+        assertEquals("My title", library.game("manual")!!.title)
+        assertEquals("Locked title", library.metadata("manual")!!.title)
+        assertEquals("My notes", library.metadata("manual")!!.summary)
+        assertEquals(setOf("title", "summary"), library.metadata("manual")!!.lockedFields)
+        assertNull(library.game("unknown")!!.verifiedTitle)
+        raw().use { db ->
+            db.rawQuery("SELECT archive_crc,dat_crc,dat_checked,dat_version FROM game_entries WHERE file_id='headered'", null).use { row ->
+                assertTrue(row.moveToFirst())
+                assertEquals("DEADBEEF", row.getString(0))
+                assertEquals("AABBCCDD", row.getString(1))
+                assertEquals(1, row.getInt(2))
+                assertEquals(8L, row.getLong(3))
+            }
+        }
+    }
+
+    @Test fun invalidReplacementDatPreservesExistingNamesAndSearchKeys() = runBlocking {
+        val library = repository()
+        assertTrue(runCatching { library.importDat("snes", "<datafile/>".byteInputStream()) }.isFailure)
+        assertEquals(listOf("Verified DAT name"), library.searchDatTitles("snes", "Verified"))
+        assertEquals(1, library.datCatalogSizes()["snes"])
+    }
+
+    @Test fun importedDatCorrectsOnlyAutomaticLibretroDisplayTitlesEvenWhenOnlineMetadataIsOff() = runBlocking {
+        preferences.gameMetadataOptions = preferences.gameMetadataOptions.copy(automatic = false)
+        for (id in listOf("automatic", "matched", "locked", "gamesdb", "custom")) seed(id)
+        val library = repository()
+        val automatic = GameMetadata(title = "INTERNAL NAME", canonicalTitle = "INTERNAL NAME", provider = "libretro",
+            providerGameId = "Nintendo - Super Nintendo Entertainment System|INTERNAL NAME", updatedAt = 123L)
+        for (id in listOf("automatic", "matched", "locked", "gamesdb", "custom")) {
+            val value = when (id) {
+                "matched" -> automatic.copy(matchLocked = true)
+                "locked" -> automatic.copy(lockedFields = setOf("title"))
+                "gamesdb" -> automatic.copy(provider = "thegamesdb")
+                else -> automatic
+            }
+            assertTrue(library.saveMetadata(library.metadataTicket(id)!!, value))
+        }
+        library.setCustomTitle("custom", "My custom name")
+        val storedAutomatic = library.metadata("automatic")!!
+        library.importDat("snes", """<datafile><game name="Super Mario World (USA)"><rom crc="12345678"/></game></datafile>""".byteInputStream())
+        assertEquals("Super Mario World (USA)", library.game("automatic")!!.title)
+        assertEquals("Super Mario World (USA)", library.game("automatic")!!.metadataTitle)
+        assertEquals(storedAutomatic.copy(title = "Super Mario World (USA)"), library.metadata("automatic"))
+        for (id in listOf("matched", "locked", "gamesdb")) {
+            assertEquals("INTERNAL NAME", library.game(id)!!.title)
+            assertEquals("INTERNAL NAME", library.metadata(id)!!.title)
+        }
+        assertEquals("My custom name", library.game("custom")!!.title)
+        assertEquals("INTERNAL NAME", library.metadata("custom")!!.title)
+    }
+
+    @Test fun partialLibretroSearchReturnsLoadedCatalogNamesWithoutAnArtworkRequest() = runBlocking {
+        seed("one", title = "INTERNAL NAME")
+        val library = repository()
+        library.importDat("snes", """<datafile><game name="Super Mario World (Europe)"><rom crc="AABBCCDD"/></game></datafile>""".byteInputStream())
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        val metadata = metadataRepository(library, okhttp3.Interceptor {
+            requests.incrementAndGet()
+            throw AssertionError("A local DAT search must not request artwork")
+        })
+        try {
+            val found = withTimeout(3_000) { metadata.search(library.game("one")!!, "Mario World", "libretro") }
+            assertEquals(listOf("Super Mario World (Europe)"), found.map { it.metadata.title })
+            assertTrue(found.single().catalogMatch)
+            assertEquals(0, requests.get())
+        } finally { metadata.closeForTests() }
+    }
+
+    @Test fun manuallySelectingACatalogNamePersistsItWhenAllArtworkReturnsNotFound() = runBlocking {
+        seed("one", title = "INTERNAL NAME")
+        val library = repository()
+        library.importDat("snes", """<datafile><game name="Super Mario World (Europe)"><rom crc="AABBCCDD"/></game></datafile>""".byteInputStream())
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
+            requests.incrementAndGet()
+            okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(404).message("Not Found").body(byteArrayOf().toResponseBody()).build()
+        })
+        try {
+            val game = library.game("one")!!
+            val found = metadata.search(game, "Mario World", "libretro").single()
+            assertTrue("An artwork-only search must hide catalog entries whose image is missing",
+                metadata.search(game, "Mario World", "libretro", GameArtworkKind.COVER).isEmpty())
+            assertTrue(withTimeout(5_000) { metadata.applyMatch(game, found) })
+            assertEquals("Super Mario World (Europe)", library.game("one")!!.title)
+            assertEquals("Super Mario World (Europe)", library.metadata("one")!!.canonicalTitle)
+            assertTrue(library.metadata("one")!!.matchLocked)
+            assertTrue(requests.get() > 0)
+            assertNull(library.artworkPath("one", GameArtworkKind.COVER))
+        } finally { metadata.closeForTests() }
+    }
+
+    @Test fun catalogOnlyCombinedSystemMatchRetriesLaterNamespaceDespiteRecentEditAndCachedMiss() = runBlocking {
+        seed("color", folder = "root", system = "gb", filename = "opaque.zip", title = "INTERNAL NAME")
+        val library = repository()
+        library.importDat("gb", """<datafile><game name="Color Game (World)"><rom crc="12345678"/></game></datafile>""".byteInputStream())
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        val artworkAvailable = java.util.concurrent.atomic.AtomicBoolean(false)
+        val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
+            requests.incrementAndGet()
+            val found = artworkAvailable.get() && chain.request().url.pathSegments.firstOrNull() == "Nintendo - Game Boy Color"
+            okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(if (found) 200 else 404).message(if (found) "OK" else "Not Found")
+                .body(if (found) imageBytes().toResponseBody("image/png".toMediaType()) else byteArrayOf().toResponseBody())
+                .build()
+        })
+        try {
+            val game = library.game("color")!!
+            assertFalse(withTimeout(5_000) { metadata.refresh(game) }) // Cache a genuine artwork miss.
+            val candidate = metadata.search(game, "Color Game", "libretro").single()
+            assertTrue(withTimeout(5_000) { metadata.applyMatch(game, candidate) })
+            val selected = library.metadata("color")!!
+            assertTrue(selected.matchLocked)
+            assertEquals("", selected.providerGameId)
+            assertNull(selected.coverUrl)
+            val before = requests.get()
+            artworkAvailable.set(true)
+            assertTrue(withTimeout(5_000) { metadata.refresh(library.game("color")!!, force = false) })
+            assertTrue("Unresolved platform must retry despite the fresh text edit and previous miss", requests.get() > before)
+            val resolved = library.metadata("color")!!
+            assertEquals("Nintendo - Game Boy Color|Color Game (World)", resolved.providerGameId)
+            assertTrue(resolved.matchLocked)
+            assertNotNull(library.artworkPath("color", GameArtworkKind.COVER))
+        } finally { metadata.closeForTests() }
     }
 
     @Test fun restoredOverridesBeatDatabaseFavoritesAndKeepTheNewestPlayTime() {
@@ -249,7 +438,7 @@ class GameLibraryRepositoryQueryTest {
         assertEquals("Online title", library.game("one")!!.title)
         assertEquals(1995, library.game("one")!!.metadataYear)
         assertEquals("Full description", library.metadata("one")!!.summary)
-        raw().use { assertEquals(7, it.version) }
+        raw().use { assertEquals(8, it.version) }
     }
 
     @Test fun metadataLocksAndCanonicalIdentitySurviveTitleAndFavoriteEdits() {
@@ -356,7 +545,7 @@ class GameLibraryRepositoryQueryTest {
         val revision = library.revisions.value
         assertEquals(0, library.backfillCoverGeometry { error("An already checked cover must not be reopened") })
         assertEquals(revision, library.revisions.value)
-        raw().use { assertEquals(7, it.version) }
+        raw().use { assertEquals(8, it.version) }
     }
 
     private fun pendingGeometry(fileId: String) = raw().use { db ->

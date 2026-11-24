@@ -11,10 +11,16 @@ internal fun gameMetadataQuery(
     region: String,
     crc32: String?,
     searchText: String? = null,
+    provider: String? = null,
 ): GameMetadataQuery {
     val explicit = searchText?.trim()?.takeIf(String::isNotEmpty)
-    val canonical = existing?.canonicalTitle?.takeIf(String::isNotBlank)
-        ?: game.verifiedTitle?.takeIf(String::isNotBlank)
+    val matched = existing?.takeIf { provider == null || it.provider == provider }
+    // Newly loaded DAT names are the identity used by Libretro thumbnails. An earlier
+    // guessed title or another provider's display name must not hide that correction.
+    val verified = game.verifiedTitle?.takeIf(String::isNotBlank)
+    val canonical = verified?.takeIf { provider == GameMetadataProviderIds.LIBRETRO && matched?.matchLocked != true }
+        ?: matched?.canonicalTitle?.takeIf(String::isNotBlank)
+        ?: verified
         ?: game.metadataTitle?.takeIf(String::isNotBlank)
     val filename = game.filename.substringBeforeLast('.').replace('_', ' ').trim()
     return GameMetadataQuery(
@@ -26,18 +32,28 @@ internal fun gameMetadataQuery(
         language = language,
         region = region,
         canonicalTitle = if (explicit == null) canonical else null,
-        providerGameId = if (explicit == null) existing?.providerGameId?.takeIf(String::isNotBlank) else null,
+        providerGameId = if (explicit == null &&
+            !(provider == GameMetadataProviderIds.LIBRETRO && matched?.matchLocked != true && verified != null))
+            matched?.providerGameId?.takeIf(String::isNotBlank) else null,
     )
 }
 
 /** Includes file version and locale so a previous miss cannot suppress a new ROM/region. */
 internal fun gameMetadataFingerprint(game: LibraryGame, query: GameMetadataQuery): String =
     gameMetadataDigest(listOf(game.fileId, game.modified.toString(), query.systemId,
+        game.datVersion.toString(), game.verifiedTitle.orEmpty(),
         query.size.toString(), query.title, query.filename, query.crc32.orEmpty(), query.serial.orEmpty(),
         query.language, query.region, query.canonicalTitle.orEmpty(), query.providerGameId.orEmpty()).joinToString("\u0000"))
 
 internal fun gameMetadataDigest(value: String): String = MessageDigest.getInstance("SHA-256")
     .digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+
+/** A catalog-only Libretro choice can acquire a proven image namespace on a later refresh. */
+internal fun sameGameMetadataMatch(previous: GameMetadata, incoming: GameMetadata): Boolean =
+    previous.provider == incoming.provider &&
+        if (previous.provider == GameMetadataProviderIds.LIBRETRO && previous.providerGameId.isBlank())
+            previous.canonicalTitle.isNotBlank() && previous.canonicalTitle == incoming.canonicalTitle
+        else previous.providerGameId == incoming.providerGameId
 
 /** The same field locks apply to a manual rematch and to background updates. */
 internal fun preserveGameMetadataLocks(existing: GameMetadata?, incoming: GameMetadata): GameMetadata {

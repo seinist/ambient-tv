@@ -92,7 +92,7 @@ internal object GameMetadataStorage {
     fun merge(previous: GameMetadata?, incoming: GameMetadata, manual: Boolean): GameMetadata {
         val next = incoming.bounded()
         if (manual || previous == null) return next
-        if (previous.matchLocked && (next.provider != previous.provider || next.providerGameId != previous.providerGameId))
+        if (previous.matchLocked && !sameGameMetadataMatch(previous, next))
             return previous
         val locked = previous.lockedFields
         return next.copy(

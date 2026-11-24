@@ -37,6 +37,29 @@ class GameMetadataPolicyTest {
         assertEquals("Database name", query.title)
     }
 
+    @Test fun switchingProvidersDoesNotReuseTheirUnrelatedGameIds() {
+        val old = GameMetadata(provider = GameMetadataProviderIds.THEGAMESDB, providerGameId = "42",
+            canonicalTitle = "A provider display name")
+        val query = gameMetadataQuery(game(), old, "en", "eu", null,
+            provider = GameMetadataProviderIds.LIBRETRO)
+        assertEquals("Original (Europe)", query.canonicalTitle)
+        assertNull(query.providerGameId)
+    }
+
+    @Test fun loadedDatIdentityReplacesAnEarlierAutomaticLibretroGuess() {
+        val old = GameMetadata(provider = GameMetadataProviderIds.LIBRETRO,
+            providerGameId = "Nintendo - Super Nintendo Entertainment System|SHORT ROM LABEL",
+            canonicalTitle = "SHORT ROM LABEL")
+        val query = gameMetadataQuery(game(), old, "en", "eu", null,
+            provider = GameMetadataProviderIds.LIBRETRO)
+        assertEquals("Original (Europe)", query.canonicalTitle)
+        assertNull(query.providerGameId)
+        val pinned = gameMetadataQuery(game(), old.copy(matchLocked = true), "en", "eu", null,
+            provider = GameMetadataProviderIds.LIBRETRO)
+        assertEquals(old.canonicalTitle, pinned.canonicalTitle)
+        assertEquals(old.providerGameId, pinned.providerGameId)
+    }
+
     @Test fun lookupMissFingerprintChangesForRegionLanguageFileAndIdentity() {
         val game = game()
         val query = gameMetadataQuery(game, null, "de", "eu", null)
@@ -45,6 +68,8 @@ class GameMetadataPolicyTest {
         assertNotEquals(key, gameMetadataFingerprint(game, query.copy(region = "jp")))
         assertNotEquals(key, gameMetadataFingerprint(game.copy(modified = 13), query))
         assertNotEquals(key, gameMetadataFingerprint(game, query.copy(providerGameId = "5")))
+        assertNotEquals(key, gameMetadataFingerprint(game.copy(datVersion = 2), query))
+        assertNotEquals(key, gameMetadataFingerprint(game.copy(verifiedTitle = "Original (USA)"), query))
     }
 
     @Test fun lockedFieldsAndIndependentArtworkSurviveRematch() {

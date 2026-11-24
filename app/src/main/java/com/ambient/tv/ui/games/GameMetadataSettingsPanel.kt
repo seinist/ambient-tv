@@ -44,24 +44,41 @@ class GameMetadataSettingsViewModel @Inject constructor(
 
 /** Uses the same keyboard, TV focus and handheld dialog controls as the media settings. */
 @Composable
-@OptIn(ExperimentalLayoutApi::class)
 fun GameMetadataSettingsPanel(
     onDismiss: () -> Unit,
     model: GameMetadataSettingsViewModel = hiltViewModel(),
 ) {
-    var options by remember { mutableStateOf(model.settings.options()) }
+    GameMetadataSettingsDialog(
+        initialOptions = model.settings.options(),
+        initialCredentials = model.settings.editableCredentials(),
+        builtInScreenScraper = model.settings.screenScraperBuiltIn,
+        builtInGamesDb = model.settings.theGamesDbBuiltIn,
+        onDismiss = onDismiss,
+        onSave = model::save,
+    )
+}
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+internal fun GameMetadataSettingsDialog(
+    initialOptions: GameMetadataOptions,
+    initialCredentials: GameMetadataCredentials,
+    builtInScreenScraper: Boolean,
+    builtInGamesDb: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (GameMetadataOptions, GameMetadataCredentials) -> Boolean,
+) {
+    var options by remember { mutableStateOf(initialOptions) }
     // Deliberately not rememberSaveable: account secrets do not belong in saved instance state.
-    var credentials by remember { mutableStateOf(model.settings.editableCredentials()) }
+    var credentials by remember { mutableStateOf(initialCredentials) }
     var invalid by remember { mutableStateOf(false) }
-    val builtInScreenScraper = model.settings.screenScraperBuiltIn
-    val builtInGamesDb = model.settings.theGamesDbBuiltIn
     AppDialog(
         onDismiss = onDismiss,
         title = stringResource(R.string.game_metadata_settings_title),
         footer = {
             TvActionButton(stringResource(R.string.settings_link_cancel), onDismiss)
             TvActionButton(stringResource(R.string.item_edit_save), onClick = {
-                if (model.save(options, credentials)) onDismiss() else invalid = true
+                if (onSave(options, credentials)) onDismiss() else invalid = true
             }, prominent = true)
         },
     ) {

@@ -43,6 +43,19 @@ class GameMetadataStorageTest {
         assertTrue(GameMetadataStorage.merge(old, old.copy(matchLocked = false), manual = false).matchLocked)
     }
 
+    @Test fun catalogOnlyChoiceCanAcquireItsImageNamespaceWithoutChangingTheSelectedTitle() {
+        val old = GameMetadata(title = "Sonic (USA)", canonicalTitle = "Sonic (USA)",
+            provider = GameMetadataProviderIds.LIBRETRO, matchLocked = true)
+        val confirmed = old.copy(providerGameId = "Sega - Game Gear|Sonic (USA)",
+            coverUrl = "https://thumbnails.libretro.com/cover.png")
+        assertEquals(confirmed, GameMetadataStorage.merge(old, confirmed, manual = false))
+        assertEquals(old, GameMetadataStorage.merge(old, confirmed.copy(canonicalTitle = "Other game"), manual = false))
+        assertEquals(old, GameMetadataStorage.merge(old, old.copy(canonicalTitle = "Other game"), manual = false))
+        assertEquals(old, GameMetadataStorage.merge(old, confirmed.copy(provider = GameMetadataProviderIds.THEGAMESDB), manual = false))
+        val pinned = old.copy(providerGameId = "Sega - Mega Drive - Genesis|Sonic (USA)")
+        assertEquals(pinned, GameMetadataStorage.merge(pinned, confirmed, manual = false))
+    }
+
     @Test fun explicitEditCanClearAndUnlockAField() {
         val old = GameMetadata(summary = "Locked description", lockedFields = setOf("summary", "cover"))
         val edit = old.copy(summary = "", lockedFields = emptySet())

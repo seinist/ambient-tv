@@ -23,9 +23,20 @@ Local curated values and explicit edits are protected by field locks. Provider i
 canonical title are separate from the displayed title, so renaming a game does not change its
 online match. Automatic matching uses existing catalog CRC data where available; it does not
 read a large disc image just to obtain a hash. A provider's unambiguous exact result can be
-applied automatically. Other matches can be selected in the editor. Libretro is a static image
-collection, not a description API: a candidate image is downloaded and validated before its
-name is accepted. Screenshots/title screens can fill a missing Libretro cover.
+applied automatically. Other matches can be selected in the editor. Libretro artwork uses a
+static image collection. The identification editor also searches downloaded DAT names locally,
+including partial titles and regional editions. A catalog name can be selected without a cover;
+guessed image paths still require a validated image. Screenshots/title screens can fill a
+missing Libretro cover. On combined systems, the artwork namespace is confirmed separately
+instead of assuming that the first compatible console is the correct one.
+
+Loading or importing a DAT immediately applies already cached checksums to existing games,
+then scans affected folders to resolve missing checksums. SNES copier headers are excluded
+from the catalog checksum while the original checksum stays available to online providers.
+Explicit titles, protected fields and manually chosen matches retain precedence. The progress
+display distinguishes loading databases, matching names and fetching information/artwork;
+completion is reported only after those steps finish. Cancellation retains completed imports
+and their visible catalog counts.
 
 ScreenScraper availability and limits depend on the application/account and the service. The
 client serializes its requests conservatively and respects returned cooldowns/quota failures.
@@ -53,7 +64,9 @@ PRIVATE_KEYS=/absolute/path/to/private-keys.env ./build.sh release
 Direct Gradle builds use `-PprivateKeysFile=/absolute/path/to/private-keys.env`. With no file,
 the generated `BuildConfig.BUILTIN_...` values stay empty and the provider panel exposes the
 application-key inputs. With valid built-in credentials, their matching inputs are hidden.
-The personal ScreenScraper username/password remains a runtime account setting.
+The provider itself remains selectable and shows that access is already configured. A compiled
+key does not automatically change the selected provider. The personal ScreenScraper
+username/password remains a runtime account setting.
 
 Runtime keys use the existing encrypted credential store. Built-in keys are not exported to
 backups or transferred to a paired device. Runtime keys are included only in an explicitly
@@ -77,6 +90,8 @@ game or replace the background. Available alternatives can include several image
 recognized game. A local image is selected through Android's document picker and copied into
 Ambient TV's managed storage. Edited fields and chosen images can be locked; unlocking a field
 permits a future provider refresh to update it. Empty locked fields remain deliberately empty.
+Results support direct touch selection on phones and the same OK/Enter activation as other
+editor controls on TV. Optional image download failures do not undo an accepted text match.
 
 ## Individual folder actions
 
@@ -120,7 +135,7 @@ outside the selected folder/grant.
   indexed catalog, while image discovery reuses a scan session and bounded directory cache.
 - Bulk revisions and progress are coalesced; manual changes remain immediately visible.
 - Known metadata misses are cached for seven days and successful matches for thirty days.
-  File version, locale and provider identity changes produce a new lookup fingerprint.
+  File version, locale, provider identity and DAT revision/name changes produce a new lookup fingerprint.
   Missing images have independent cache entries so one missing cover cannot erase a match.
 - Image previews load only for visible choices. They have a 24-hour lifetime, a 48-image /
   32 MiB budget, and are removed with their folder. Automatic owned artwork has a 128 MiB

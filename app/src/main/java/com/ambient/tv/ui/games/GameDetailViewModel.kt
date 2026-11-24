@@ -115,8 +115,8 @@ class GameDetailViewModel @Inject constructor(
         mutable.update { it.copy(searching = false, searchCompleted = false, matches = emptyList(), error = null) }
     }
 
-    fun search(query: String, provider: String) {
-        lookup { game -> metadata.search(game, query, provider) }
+    fun search(query: String, provider: String, artworkKind: GameArtworkKind? = null) {
+        lookup { game -> metadata.search(game, query, provider, artworkKind) }
     }
 
     fun artworkChoices(kind: GameArtworkKind) {
