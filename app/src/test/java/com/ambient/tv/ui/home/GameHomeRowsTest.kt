@@ -42,6 +42,25 @@ class GameHomeRowsTest {
         assertEquals(input[0].fileId, Uri.decode(key.substringAfter(GAME_HOME_ITEM_PREFIX).substringBeforeLast('|')))
     }
 
+    @Test fun rommRowsUseTheSameCardsWithServerArtwork() {
+        val entry = game("Server game", "snes", true, 5L).copy(
+            fileId = "romm:0123456789ab:42",
+            coverPath = "http://romm.local/assets/romm/resources/roms/1/42/cover/big.png",
+            backdropPath = "https://romm.local/assets/romm/resources/roms/1/42/screenshots/0.jpg",
+        )
+        val definitions = listOf(HomeRowDefinition(system = HomeRowDefinition.SYSTEM_ROMM,
+            contentKey = HomeRowDefinition.GAMES_FAVORITES))
+        val context = RuntimeEnvironment.getApplication()
+        // A game row definition never picks RomM's games, and the other way round.
+        assertTrue(gameHomeRows(context, definitions, listOf(entry)).isEmpty())
+        val row = gameHomeRows(context, definitions, listOf(entry), system = HomeRowDefinition.SYSTEM_ROMM).single()
+        assertEquals("romm.favorites", row.id)
+        val item = row.items.single()
+        assertEquals(entry.coverPath, item.thumbUrl)
+        assertEquals(entry.backdropPath, item.artUrl)
+        assertEquals(entry.fileId, Uri.decode(item.ratingKey.substringAfter(GAME_HOME_ITEM_PREFIX).substringBeforeLast('|')))
+    }
+
     @Test fun emptyGamesDoNotPublishEmptyHomeRows() {
         val def = listOf(HomeRowDefinition(system = HomeRowDefinition.SYSTEM_GAMES, contentKey = "favorites"))
         assertTrue(gameHomeRows(RuntimeEnvironment.getApplication(), def, emptyList()).isEmpty())

@@ -280,6 +280,10 @@ internal fun SidebarContent(
             GAMES_MENU_ID, gamesMenuName(), Icons.Filled.SportsEsports,
             entries = gameEntries,
         ))
+        if (sidebarState.rommEnabled) add(MenuSystem(
+            ROMM_MENU_ID, menuSystemName(MediaSystem.ROMM), Icons.Filled.SportsEsports, system = MediaSystem.ROMM,
+            entries = rommMenuDestinations(sidebarState),
+        ))
         if (plexShown) add(MenuSystem("plex", menuSystemName(MediaSystem.PLEX), Icons.Filled.VideoLibrary, system = MediaSystem.PLEX, entries =
             providerMenuDestinations(sidebarState, "plex")))
         if (jellyfinShown) add(MenuSystem("jellyfin", menuSystemName(MediaSystem.JELLYFIN), Icons.Filled.VideoLibrary, system = MediaSystem.JELLYFIN, entries =

@@ -1,6 +1,6 @@
 # Libretro capability audit – follow-ups after PR #406
 
-RomM is postponed. This document tracks **implemented code**, **real-device acceptance still needed**
+RomM is its own system (DOCUMENTATION 4.12). This document tracks **implemented code**, **real-device acceptance still needed**
 and **unimplemented features**. A core appearing in the catalog does **not** establish that it runs.
 
 ## Implemented in the existing game player and follow-up branches
@@ -91,7 +91,8 @@ keyboard/mouse/lightgun), device EOTF and renderer parity gates below remain req
 7. **Large-file edge cases:** Core-specific VFS bypass, multiple open file descriptors and
    network failure; never silently copy huge ROMs to internal storage, or load multi-gigabyte
    ROM bytes to the JVM/native heap.
-8. **Cross-device library:** RomM/library and save-state sync deliberately postponed.
+8. **Cross-device library:** RomM games keep firmware, in-game saves, states and the files cores write themselves
+   (memory cards, NAND, PSP SAVEDATA) on the server (DOCUMENTATION 4.12). Local games still have no cross-device sync.
 
 ## Acceptance before a release
 

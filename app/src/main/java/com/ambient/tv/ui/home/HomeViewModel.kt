@@ -218,6 +218,7 @@ class HomeViewModel @Inject constructor(
     private val unreachableServers: UnreachableServerGate,
     private val launcherPublisher: com.ambient.tv.launcher.LauncherPublisher,
     private val loadCoordinator: BrowseLoadCoordinator,
+    private val rommLibrary: com.ambient.tv.romm.RommLibrary,
 ) : ViewModel() {
 
     val homeHeroStyleKey: String get() = appPreferences.homeHeroStyleKey
@@ -291,6 +292,9 @@ class HomeViewModel @Inject constructor(
     private var radioRows: List<ContentRowData> = emptyList()
     private var gameRows: List<ContentRowData> = emptyList()
     private var gameRowsJob: Job? = null
+    /** RomM rows come from the catalog copy on this device; Home never asks the server. */
+    private var rommRows: List<ContentRowData> = emptyList()
+    private var rommRowsJob: Job? = null
     /** Independent of row refreshes, so publishing migrated covers cannot cancel its own work. */
     private var gameGeometryJob: Job? = null
     private var gameRowsGeneration = 0
@@ -566,6 +570,14 @@ class HomeViewModel @Inject constructor(
                 if (hasEntered && !plexOnly && !jellyfinOnly && !embyOnly) loadGameRows()
             }
         }
+        viewModelScope.launch {
+            combine(rommLibrary.state, gameLibrary.revisions, appPreferences.changes().onStart { emit(Unit) }) { romm, _, _ ->
+                listOf(romm.serverKey, romm.catalog?.fetchedAt, romm.revision, gameLibrary.titleStyle(), appPreferences.isRommConfigured,
+                    appPreferences.homeRows.filter { it.enabled && it.system == HomeRowDefinition.SYSTEM_ROMM })
+            }.distinctUntilChanged().drop(1).collect {
+                if (hasEntered && !plexOnly && !jellyfinOnly && !embyOnly) loadRommRows()
+            }
+        }
     }
 
     init {
@@ -711,6 +723,7 @@ class HomeViewModel @Inject constructor(
         loadTrailerRows()
         loadRadioRows(forceRefresh = refreshing)
         loadGameRows()
+        loadRommRows()
         loadYouTubeRows(youtubeMode)
         loadTelegramRows()
         if (!plexOnly && !jellyfinOnly && !embyOnly && liveTvRegistry.configured().isNotEmpty()) startTvPreview()
@@ -2083,6 +2096,37 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    /** RomM's Recent, Favorites and All from the catalog on this device, in the game cards. */
+    private fun loadRommRows() {
+        rommRowsJob?.cancel()
+        val definitions = appPreferences.homeRows.filter {
+            it.enabled && it.system == HomeRowDefinition.SYSTEM_ROMM
+        }
+        if (plexOnly || jellyfinOnly || embyOnly || definitions.isEmpty() || !appPreferences.isRommConfigured) {
+            val changed = rommRows.isNotEmpty()
+            rommRows = emptyList()
+            if (changed && !_uiState.value.isFailurePage()) publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+            return
+        }
+        rommRowsJob = viewModelScope.launch {
+            val titleStyle = gameLibrary.titleStyle()
+            val rows = try {
+                kotlinx.coroutines.runInterruptible(kotlinx.coroutines.Dispatchers.IO) {
+                    definitions.distinctBy(HomeRowDefinition::contentKey).flatMap { definition ->
+                        val games = rommLibrary.games(section = definition.contentKey, titleStyle = titleStyle)
+                        gameHomeRows(context, listOf(definition), games, HOME_ROW_LIMIT, HomeRowDefinition.SYSTEM_ROMM)
+                    }
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                timber.log.Timber.w(error, "RomM Home rows unavailable")
+                return@launch
+            }
+            rommRows = rows
+            if (!_uiState.value.isFailurePage()) publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+        }
+    }
+
     private fun loadRadioRows(forceRefresh: Boolean = false) {
         val generation = ++radioRowsGeneration
         radioJob?.cancel()
@@ -2320,7 +2364,7 @@ class HomeViewModel @Inject constructor(
     private fun publishRows(rows: List<ContentRowData>) =
         publishRowsInternal(
             withAllContinueRow(applyOverviewStyle(rows)),
-            hasRows = rows.isNotEmpty() || radioRows.isNotEmpty() || gameRows.isNotEmpty() || youtubeRows.isNotEmpty() || telegramRows.isNotEmpty(),
+            hasRows = rows.isNotEmpty() || radioRows.isNotEmpty() || gameRows.isNotEmpty() || rommRows.isNotEmpty() || youtubeRows.isNotEmpty() || telegramRows.isNotEmpty(),
         )
 
     /** Re-applies the system overview's page view. Rows already carry a resolved tile style. */
@@ -2466,8 +2510,9 @@ class HomeViewModel @Inject constructor(
         @Suppress("NAME_SHADOWING")
         val combinedRows = visibleMediaRows.filterNot {
             it.id == PHOTO_ROW_ID || it.id.startsWith("trailers.") || it.id.startsWith("radio.") ||
-                it.id.startsWith("youtube.") || it.id.startsWith("telegram.") || it.id.startsWith("games.")
-        } + listOfNotNull(photoRow) + trailerRows + radioRows + gameRows + youtubeRows + telegramRows
+                it.id.startsWith("youtube.") || it.id.startsWith("telegram.") || it.id.startsWith("games.") ||
+                it.id.startsWith("romm.")
+        } + listOfNotNull(photoRow) + trailerRows + radioRows + gameRows + rommRows + youtubeRows + telegramRows
         val playedRow = trailerPlaybackReturn.source?.takeIf {
             playbackRowEnabled(it) || (it.items.none { item -> homeTrailerVideoId(item.ratingKey) != null ||
                 homeYouTubeVideoId(item.ratingKey) != null || item.ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX) })
@@ -2789,6 +2834,7 @@ class HomeViewModel @Inject constructor(
         spotifyReady = appPreferences.spotifyEnabled && spotifyRepository.nativeAvailable && spotifyRepository.webAuthorized,
         radioReady = appPreferences.radioEnabled,
         gamesReady = gameLibrary.hasConfiguredFolders(),
+        rommReady = appPreferences.isRommConfigured,
         telegramReady = appPreferences.telegramEnabled && telegramRepository.available,
         embyReady = embyOnly || appPreferences.isEmbyConfigured,
         photosReady = photoRepository.hasAnyPhotoSource(),

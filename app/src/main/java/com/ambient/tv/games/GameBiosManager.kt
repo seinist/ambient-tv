@@ -31,11 +31,14 @@ class GameBiosManager @Inject constructor(
 ) {
     private val checked = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, String>>()
 
-    fun file(bios: GameBios): File = File(storage.systemDirectory, bios.file)
+    fun file(bios: GameBios, directory: File = storage.systemDirectory): File = File(directory, bios.file)
 
-    /** Status of every firmware file of [system]; checksums are cached by file size and date. */
-    fun status(system: GameSystem): List<GameBiosStatus> = system.bios.map { bios ->
-        val file = file(bios)
+    /**
+     * Status of every firmware file of [system] in [directory] (the shared system folder, or a RomM
+     * server's for its games); checksums are cached by file size and date.
+     */
+    fun status(system: GameSystem, directory: File = storage.systemDirectory): List<GameBiosStatus> = system.bios.map { bios ->
+        val file = file(bios, directory)
         val state = when {
             !file.isFile -> GameBiosState.MISSING
             md5Cached(file).equals(bios.md5, ignoreCase = true) -> GameBiosState.PRESENT
@@ -46,12 +49,15 @@ class GameBiosManager @Inject constructor(
 
     /** A required firmware file missing for a game with [extension], or null. */
     /** A firmware file [core] cannot start [system]'s game without, or null when it has what it needs. */
-    fun missingRequired(system: GameSystem, extension: String, core: GameCore = system.core): GameBios? =
-        system.bios.firstOrNull { it.requiredFor(extension) && status(system).firstOrNull { st -> st.bios == it }?.state != GameBiosState.PRESENT }
+    fun missingRequired(system: GameSystem, extension: String, core: GameCore = system.core,
+                        directory: File = storage.systemDirectory): GameBios? {
+        val present = status(system, directory)
+        return system.bios.firstOrNull { it.requiredFor(extension) && present.firstOrNull { st -> st.bios == it }?.state != GameBiosState.PRESENT }
             // Cores without a built-in replacement need at least one recognized firmware dump.
             ?: system.bios.takeIf { core.needsBios && it.isNotEmpty() &&
-                status(system).none { item -> item.state == GameBiosState.PRESENT }
+                present.none { item -> item.state == GameBiosState.PRESENT }
             }?.first()
+    }
 
     suspend fun import(fileId: String): GameBiosImport = withContext(Dispatchers.IO) {
         val (sourceId, path) = FileKeys.parse(fileId)

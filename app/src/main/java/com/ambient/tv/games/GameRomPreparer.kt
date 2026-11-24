@@ -32,6 +32,8 @@ data class PreparedGame(
     val entry: FileEntry,
     /** Direct seekable source; null when the core needs a staged local file. */
     val directContent: GameDirectContent? = null,
+    /** A game from a RomM server: firmware, saves and states are the server's (see RommGameData). */
+    val remote: com.ambient.tv.romm.RommGameRef? = null,
 ) {
     val direct: Boolean get() = directContent != null
     fun close() { directContent?.close() }
@@ -51,10 +53,13 @@ class GameRomPreparer @Inject constructor(
     private val store: FileStore,
     private val access: FileAccess,
     private val directAccess: GameDirectAccess,
+    private val remoteGames: javax.inject.Provider<com.ambient.tv.romm.RommGameData>,
 ) {
     private val cache: File get() = File(context.cacheDir, "games/roms")
 
     suspend fun prepare(fileId: String, onProgress: (Float?) -> Unit, forceCache: Boolean = false, systemOverride: String? = null): PreparedGame = withContext(Dispatchers.IO) {
+        // A RomM game is downloaded from its server into the same cache (see materialize).
+        if (com.ambient.tv.romm.RommKeys.owns(fileId)) return@withContext remoteGames.get().prepare(fileId, onProgress, this@GameRomPreparer)
         val (sourceId, path) = FileKeys.parse(fileId)
         val source = store.sources().firstOrNull { it.id == sourceId } ?: throw FileNotFoundException(path)
         access.prepare(source)
@@ -308,6 +313,49 @@ class GameRomPreparer @Inject constructor(
         }
         return GameArchives.choose(files, systemId) { it.relativeTo(content).invariantSeparatorsPath }
             ?: throw UnknownGameException(archive.name)
+    }
+
+    /**
+     * A game fetched by [fetch] (a RomM download) into the shared 4 GiB cache: one folder per game,
+     * kept while [stamp] still describes the server's file, archives unpacked like copied games.
+     * Returns the file to start.
+     */
+    internal suspend fun materialize(
+        fileId: String,
+        name: String,
+        stamp: String,
+        systemId: String?,
+        expectedBytes: Long,
+        onProgress: (Float?) -> Unit,
+        fetch: suspend (target: File, maxBytes: Long, onProgress: (Float?) -> Unit) -> Unit,
+    ): File = withContext(Dispatchers.IO) {
+        val folder = File(cache, sha1(fileId))
+        val marker = File(folder, ".complete")
+        // The marker records the file's name too: offline, the server's details may name it differently.
+        val recorded = runCatching { marker.readLines() }.getOrNull()
+            ?.takeIf { it.size == 2 && it[0] == stamp }
+            ?.let { lines -> safeRelativePath(lines[1])?.takeIf { '/' !in it }?.let { File(folder, it) } }
+            ?.takeIf { it.isFile && it.length() > 0 }
+        val main = recorded ?: File(folder, safeName(name))
+        if (recorded == null) {
+            folder.deleteRecursively()
+            folder.mkdirs()
+            if (expectedBytes > CACHE_LIMIT_BYTES) throw IOException("Game exceeds the 4 GiB cache limit")
+            val free = StatFs(context.cacheDir.absolutePath).availableBytes - CACHE_RESERVE_BYTES
+            val budget = minOf(CACHE_LIMIT_BYTES, free)
+            if (budget <= 0 || expectedBytes > budget) throw IOException("Insufficient free space for the game")
+            val partial = File(folder, main.name + ".partial")
+            try {
+                fetch(partial, budget, onProgress)
+                if (!partial.renameTo(main)) throw IOException("Cannot store ${main.name}")
+            } finally { partial.delete() }
+            marker.writeText("$stamp\n${main.name}")
+        }
+        folder.setLastModified(System.currentTimeMillis())
+        trim(keep = folder)
+        val playable = if (GameSystems.extension(main.name) in GameSystems.archiveExtensions) unpack(main, folder, systemId) else main
+        trim(keep = folder)
+        playable
     }
 
     /** Bytes the copied games take up. */

@@ -47,6 +47,8 @@ class SettingsPreferenceCoverageTest {
         "mpvZeroCopyFailed" to "Hardware probe result",
         "playbackBookmarksJson" to "Viewing history, not settings",
         "plexLoginVerified" to "Verification of this device's login",
+        "rommAuthMode" to "This device's RomM sign-in; its token or password is never exported",
+        "rommServerVersion" to "Reported by the RomM server when this device signed in",
         "tvheadendLoginState" to "Verification of this device's login",
         "tvheadendLoginVerified" to "Legacy login-state alias",
         "videoScopeChoices" to "The player's last editing target, not its saved picture settings",

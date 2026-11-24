@@ -18,10 +18,31 @@ class GameStorage @Inject constructor(@ApplicationContext private val context: C
     /** RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY for cores that write their own files. */
     val savesDirectory: File get() = File(root, "saves").also { it.mkdirs() }
 
-    /** Save states of one game (see GameStateStore). */
-    fun statesDirectory(game: PreparedGame): File = File(root, "states/${game.saveKey}").also { it.mkdirs() }
+    /**
+     * A RomM game keeps its data apart from the local games, per server: firmware comes from the
+     * server's platform, saves and states are mirrored to the server (see RommGameData).
+     */
+    fun remoteRoot(serverKey: String): File {
+        require(serverKey.matches(Regex("[0-9a-f]{12}"))) { "Invalid server key" }
+        return File(context.filesDir, "romm/$serverKey")
+    }
 
-    fun sramFile(game: PreparedGame): File = File(savesDirectory, "${game.saveKey}.srm")
+    /** RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY for [game]: the shared one, or its RomM server's. */
+    fun systemDirectory(game: PreparedGame): File =
+        game.remote?.let { File(remoteRoot(it.serverKey), "system").also { it.mkdirs() } } ?: systemDirectory
+
+    /** RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY for [game]. */
+    fun savesDirectory(game: PreparedGame): File =
+        game.remote?.let { remoteSavesDirectory(it.serverKey) } ?: savesDirectory
+
+    /** The save folder the cores get for every game of one RomM server. */
+    fun remoteSavesDirectory(serverKey: String): File = File(remoteRoot(serverKey), "saves").also { it.mkdirs() }
+
+    /** Save states of one game (see GameStateStore). */
+    fun statesDirectory(game: PreparedGame): File = (game.remote?.let { File(remoteRoot(it.serverKey), "states/${game.saveKey}") }
+        ?: File(root, "states/${game.saveKey}")).also { it.mkdirs() }
+
+    fun sramFile(game: PreparedGame): File = File(savesDirectory(game), "${game.saveKey}.srm")
 
     fun read(file: File): ByteArray? = runCatching {
         file.takeIf { it.isFile && it.length() in 1..MAX_READ_BYTES }?.readBytes()

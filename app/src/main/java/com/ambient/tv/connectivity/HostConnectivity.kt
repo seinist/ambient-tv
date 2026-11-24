@@ -60,6 +60,10 @@ class HostConnectivity internal constructor(
         if (preferences.jellyfinEnabled && preferences.jellyfinHost.isNotBlank()) addEndpoint("jellyfin", preferences.jellyfinHost, preferences.jellyfinPort, preferences.jellyfinMacAddress)
         if (preferences.embyEnabled && preferences.embyHost.isNotBlank()) addEndpoint("emby", preferences.embyHost, preferences.embyPort, preferences.embyMacAddress)
         if (preferences.hasTvheadendEndpoint) addEndpoint("tvheadend", preferences.tvheadendHost, preferences.tvheadendPort, preferences.tvheadendMacAddress)
+        // RomM shares the machine's health with every other service on it (a NAS with Jellyfin and RomM).
+        if (preferences.isRommConfigured) com.ambient.tv.romm.RommKeys.normalizeUrl(preferences.rommServerUrl)?.let { url ->
+            addEndpoint("romm", url.host, url.port, null)
+        }
         // Live TV keeps its captured profile while another server is selected for normal browsing.
         if (preferences.plexEnabled) preferences.serverProfiles.forEach { profile ->
             mediaServerProfileSourceId("plex", profile.id)?.let {

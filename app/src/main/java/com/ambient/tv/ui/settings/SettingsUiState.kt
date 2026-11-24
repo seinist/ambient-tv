@@ -120,6 +120,10 @@ data class SettingsUiState(
     val youtubeAuthErrorRes: Int? = null,
     val spotifyEnabled: Boolean = false,
     val radioEnabled: Boolean = false,
+    /** RomM switched on (Settings › RomM keeps its own page state; these drive the system lists). */
+    val rommEnabled: Boolean = false,
+    /** RomM has an address and a stored sign-in. */
+    val rommConfigured: Boolean = false,
     val spotifyClientId: String = "",
     val fanartApiKey: String = "",
     val spotifyWebAuthorized: Boolean = false,

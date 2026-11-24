@@ -29,6 +29,8 @@ data class HomeRowDefinition(
         const val GAMES_ALL = "all"
         const val GAMES_FAVORITES = "favorites"
         const val GAMES_RECENT = "recent"
+        /** RomM's games; the content keys are the same as for [SYSTEM_GAMES]. */
+        const val SYSTEM_ROMM = "romm"
         const val RADIO_POPULAR = "popular"
         const val RADIO_FAVORITES = "favorites"
         const val RADIO_RECENT = "recent"
@@ -113,6 +115,7 @@ fun homeSystemReady(
     spotifyReady: Boolean,
     radioReady: Boolean = false,
     gamesReady: Boolean = false,
+    rommReady: Boolean = false,
     telegramReady: Boolean = false,
     embyReady: Boolean = false,
     photosReady: Boolean = false,
@@ -130,5 +133,6 @@ fun homeSystemReady(
     HomeRowDefinition.SYSTEM_SPOTIFY -> spotifyReady
     HomeRowDefinition.SYSTEM_RADIO -> radioReady
     HomeRowDefinition.SYSTEM_GAMES -> gamesReady
+    HomeRowDefinition.SYSTEM_ROMM -> rommReady
     else -> false
 }

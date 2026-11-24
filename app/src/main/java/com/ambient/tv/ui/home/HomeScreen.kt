@@ -821,7 +821,7 @@ internal fun LibraryContent(
                                 }
                             }
                         }, onItemFocused = { onItemFocused(row.id, it) },
-                            onItemInfo = onGameInfo?.takeIf { row.id.startsWith("games.") }
+                            onItemInfo = onGameInfo?.takeIf { row.id.startsWith("games.") || row.id.startsWith("romm.") }
                                 ?.let { info -> { item -> info(item.ratingKey) } },
                             restoreRatingKey = focusSnapshot.ratingKey.takeIf { row.id == focusSnapshot.rowId },
                             followFirstItem = followFirstItem)
@@ -1235,7 +1235,7 @@ internal fun LibraryContent(
                             state.rows.getOrNull(index)?.let { row ->
                                 ContentRow(
                                     row = row.withHomeYouTubeProgress().withOfflineTitle(),
-                                    onItemInfo = onGameInfo?.takeIf { row.id.startsWith("games.") }
+                                    onItemInfo = onGameInfo?.takeIf { row.id.startsWith("games.") || row.id.startsWith("romm.") }
                                         ?.let { info -> { item -> info(item.ratingKey) } },
                                     onItemClick = { item ->
                                         val trailerId = homeTrailerVideoId(item.ratingKey)

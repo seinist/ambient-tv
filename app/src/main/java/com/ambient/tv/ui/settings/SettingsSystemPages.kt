@@ -91,6 +91,13 @@ internal fun LazyListScope.settingsSystemCategoryItems(
     onOpenDlna: () -> Unit,
 ) {
     when (category) {
+        SettingsCategory.ROMM -> {
+            item(key = "romm-settings") {
+                com.ambient.tv.ui.romm.RommSettingsSection(
+                    nameField = { SystemNameField(MediaSystem.ROMM, uiState, viewModel) },
+                )
+            }
+        }
         SettingsCategory.DLNA -> {
             item { Text(stringResource(R.string.dlna_explanation), style = MaterialTheme.typography.bodyMedium) }
             item { SettingsNavigationRow(stringResource(R.string.dlna_servers), onClick = { requestExit(onOpenDlna) }) }

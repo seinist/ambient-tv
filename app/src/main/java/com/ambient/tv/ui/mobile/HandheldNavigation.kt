@@ -444,8 +444,12 @@ private fun HandheldSources(
         return SourceGroup(system.key, system, entries + listOfNotNull(settings))
     }
     val games = handheldGameSourceGroup(sidebarState)
+    val romm = com.ambient.tv.ui.navigation.rommMenuDestinations(sidebarState)
     val groups = buildList {
         games?.let(::add)
+        if (romm.isNotEmpty()) add(withSettings(MediaSystem.ROMM, romm.map {
+            SourceEntry(it.id, it.label, it.route, icon = it.icon, offline = "romm" in sidebarState.offlineSystems)
+        }))
         if (dlnaServers.isNotEmpty()) add(withSettings(MediaSystem.DLNA,
             dlnaServers.map { SourceEntry(it.id, it.name, Destinations.dlnaServer(it.id), offline = "dlna:${it.id}" in sidebarState.offlineSystems) } +
                 listOf(SourceEntry("manage", stringResource(R.string.dlna_servers), Destinations.DLNA))))

@@ -804,6 +804,7 @@ fun SettingsScreen(
                             item { com.ambient.tv.trailers.TrailerSettings(onConnected = { viewModel.refreshTrailerConfiguration() }) }
                         }
                         SettingsCategory.DLNA,
+                        SettingsCategory.ROMM,
                         SettingsCategory.FILES,
                         SettingsCategory.WIREGUARD,
                         SettingsCategory.PLEX,
@@ -2107,6 +2108,9 @@ private fun HomeRowAddButtons(
         stringResource(R.string.game_library_all) to (HomeRowDefinition.SYSTEM_GAMES to HomeRowDefinition.GAMES_ALL),
         stringResource(R.string.game_library_home_favorites) to (HomeRowDefinition.SYSTEM_GAMES to HomeRowDefinition.GAMES_FAVORITES),
         stringResource(R.string.game_library_home_recent) to (HomeRowDefinition.SYSTEM_GAMES to HomeRowDefinition.GAMES_RECENT),
+        stringResource(R.string.game_library_home_recent) to (HomeRowDefinition.SYSTEM_ROMM to HomeRowDefinition.GAMES_RECENT),
+        stringResource(R.string.game_library_home_favorites) to (HomeRowDefinition.SYSTEM_ROMM to HomeRowDefinition.GAMES_FAVORITES),
+        stringResource(R.string.game_library_all) to (HomeRowDefinition.SYSTEM_ROMM to HomeRowDefinition.GAMES_ALL),
         stringResource(R.string.settings_home_source_photos_recent) to (HomeRowDefinition.SYSTEM_PHOTOS to "recent"),
         stringResource(R.string.trailers_cinema) to (HomeRowDefinition.SYSTEM_TRAILERS to "CINEMA"),
         stringResource(R.string.trailers_upcoming) to (HomeRowDefinition.SYSTEM_TRAILERS to "UPCOMING"),
@@ -2143,6 +2147,7 @@ private fun HomeRowAddButtons(
             HomeRowDefinition.SYSTEM_SPOTIFY,
             HomeRowDefinition.SYSTEM_RADIO,
             HomeRowDefinition.SYSTEM_GAMES,
+            HomeRowDefinition.SYSTEM_ROMM,
             HomeRowDefinition.SYSTEM_PHOTOS,
             HomeRowDefinition.SYSTEM_TRAILERS,
         )

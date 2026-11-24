@@ -407,6 +407,7 @@ internal fun SettingsHub(
             if (category == SettingsCategory.WAKE) append(" mac wol wake aufwecken server nas smb nfs plex jellyfin emby tvheadend dlna retry wiederholung wiederholen")
             if (category == SettingsCategory.RECEIVER) append(" upnp dlna receiver empfänger handy cast zuspielen")
             if (category == SettingsCategory.SPOTIFY) append(" advanced developer client id entwickler")
+            if (category == SettingsCategory.ROMM) append(" romm retro spiele games rom roms server bios firmware spielstände savestates saves")
             if (category == SettingsCategory.GAMES) append(" spiele games libretro emulator bios firmware core cores retro konsole console cache speicher")
             if (category == SettingsCategory.GAME_CONTROLS) append(" gaming spiele emulator retro libretro core konsolen system spiel controller tastatur keyboard fernbedienung remote input mapping")
             if (category == SettingsCategory.CONTROLLER) append(" player playback video audio osd gamepad controller remote tastatur keyboard belegung media buttons")
@@ -1120,6 +1121,7 @@ internal fun settingsSystem(category: SettingsCategory): com.ambient.tv.ui.commo
     SettingsCategory.SPOTIFY -> com.ambient.tv.ui.common.MediaSystem.SPOTIFY
     SettingsCategory.RADIO -> com.ambient.tv.ui.common.MediaSystem.RADIO
     SettingsCategory.DLNA -> com.ambient.tv.ui.common.MediaSystem.DLNA
+    SettingsCategory.ROMM -> com.ambient.tv.ui.common.MediaSystem.ROMM
     SettingsCategory.FILES -> com.ambient.tv.ui.common.MediaSystem.FILES
     else -> null
 }
@@ -1160,6 +1162,7 @@ internal fun sourceConfigured(category: SettingsCategory, state: SettingsUiState
     SettingsCategory.RADIO -> state.radioEnabled
     SettingsCategory.FILES -> state.filesEnabled && state.fileSourceCount > 0
     SettingsCategory.DLNA -> state.dlnaServerCount > 0
+    SettingsCategory.ROMM -> state.rommEnabled && state.rommConfigured
     SettingsCategory.IPTV -> state.iptvSourceCount > 0
     SettingsCategory.WIREGUARD -> state.wireGuardSummary.isNotBlank()
     else -> false
@@ -1181,6 +1184,7 @@ internal fun homeRowSourceAddable(system: String, contentKey: String, state: Set
             spotifyReady = sourceConfigured(SettingsCategory.SPOTIFY, state),
             radioReady = sourceConfigured(SettingsCategory.RADIO, state),
             gamesReady = true,
+            rommReady = sourceConfigured(SettingsCategory.ROMM, state),
             telegramReady = sourceConfigured(SettingsCategory.TELEGRAM, state),
             photosReady = sourceConfigured(SettingsCategory.PLEX, state) ||
                 sourceConfigured(SettingsCategory.JELLYFIN, state) || sourceConfigured(SettingsCategory.EMBY, state),
@@ -1211,6 +1215,7 @@ private fun settingsPageSummary(category: SettingsCategory, state: SettingsUiSta
             SettingsCategory.TELEGRAM -> state.telegramEnabled
             SettingsCategory.SPOTIFY -> state.spotifyEnabled
             SettingsCategory.RADIO -> state.radioEnabled
+            SettingsCategory.ROMM -> state.rommEnabled
             SettingsCategory.DLNA -> true
             SettingsCategory.FILES -> state.filesEnabled
             else -> false
@@ -1221,6 +1226,7 @@ private fun settingsPageSummary(category: SettingsCategory, state: SettingsUiSta
             SettingsCategory.EMBY -> state.embyConfigured
             SettingsCategory.YOUTUBE -> state.youtubeSignedIn
             SettingsCategory.SPOTIFY -> state.spotifyWebAuthorized
+            SettingsCategory.ROMM -> state.rommConfigured
             else -> false
         }
         return stringResource(when {

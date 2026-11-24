@@ -17,13 +17,23 @@ internal const val GAME_HOME_ITEM_PREFIX = "game-home:"
 internal fun gameHomeKey(fileId: String, systemId: String): String =
     GAME_HOME_ITEM_PREFIX + Uri.encode(fileId) + "|" + systemId
 
+/** A cover or backdrop for Home: a server image address stays one, a stored file becomes a file URI. */
+internal fun gameHomeImage(path: String?): String? = path?.let {
+    if (it.startsWith("https://") || it.startsWith("http://")) it else Uri.fromFile(java.io.File(it)).toString()
+}
+
+/**
+ * Home rows of the local game library ([HomeRowDefinition.SYSTEM_GAMES]) or of RomM
+ * ([HomeRowDefinition.SYSTEM_ROMM]): the same cards, from each catalog on this device.
+ */
 internal fun gameHomeRows(
     context: Context,
     definitions: List<HomeRowDefinition>,
     games: List<LibraryGame>,
     limit: Int = 24,
+    system: String = HomeRowDefinition.SYSTEM_GAMES,
 ): List<ContentRowData> = definitions.filter {
-    it.enabled && it.system == HomeRowDefinition.SYSTEM_GAMES
+    it.enabled && it.system == system
 }.distinctBy(HomeRowDefinition::contentKey).mapNotNull { definition ->
     val selected = when (definition.contentKey) {
         HomeRowDefinition.GAMES_ALL -> games
@@ -33,7 +43,7 @@ internal fun gameHomeRows(
     }.take(limit)
     if (selected.isEmpty()) return@mapNotNull null
     ContentRowData(
-        id = "games.${definition.contentKey}",
+        id = "$system.${definition.contentKey}",
         title = definition.displayTitle(context),
         style = MediaTileStyle.POSTER,
         items = selected.map { game ->
@@ -42,8 +52,8 @@ internal fun gameHomeRows(
                 title = game.title,
                 type = "game",
                 index = null,
-                thumbUrl = game.coverPath?.let { Uri.fromFile(java.io.File(it)).toString() },
-                artUrl = game.backdropPath?.let { Uri.fromFile(java.io.File(it)).toString() },
+                thumbUrl = gameHomeImage(game.coverPath),
+                artUrl = gameHomeImage(game.backdropPath),
                 year = game.metadataYear,
                 summary = GameSystems.byId(game.systemId)?.name ?: game.systemId,
                 tagline = null,

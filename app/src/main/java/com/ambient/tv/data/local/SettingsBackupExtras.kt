@@ -63,6 +63,10 @@ data class DeviceSettingsExtras(
 @Serializable
 data class ConnectionSettingsExtras(
     val tvheadendHtspPort: Int? = null,
+    /** RomM switch, address and account name; each device signs in itself (its own device token). */
+    val rommEnabled: Boolean? = null,
+    val rommServerUrl: String? = null,
+    val rommUsername: String? = null,
 )
 
 @Serializable
