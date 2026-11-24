@@ -160,13 +160,19 @@ class GameDetailViewModel @Inject constructor(
     }
 
     fun applyMatch(match: GameMetadataCandidate, onDone: (Boolean) -> Unit) =
-        action(onDone) { metadata.applyMatch(it, match) }
+        action(reportUnapplied(onDone)) { metadata.applyMatch(it, match) }
 
     fun save(value: GameMetadata, locked: Set<String>, onDone: (Boolean) -> Unit) =
         action(onDone) { metadata.save(it, value, locked) }
 
     fun setArtwork(kind: GameArtworkKind, match: GameMetadataCandidate, onDone: (Boolean) -> Unit) =
-        action(onDone) { metadata.setArtwork(it, kind, match) }
+        action(reportUnapplied(onDone)) { metadata.setArtwork(it, kind, match) }
+
+    /** A choice that cannot be applied (its image is gone, say) must not look like an ignored tap. */
+    private fun reportUnapplied(onDone: (Boolean) -> Unit): (Boolean) -> Unit = { applied ->
+        if (!applied) mutable.update { it.copy(error = context.getString(R.string.game_edit_match_failed)) }
+        onDone(applied)
+    }
 
     fun importArtwork(kind: GameArtworkKind, uri: Uri, onDone: (Boolean) -> Unit) =
         action(onDone) { metadata.setLocalArtwork(it, kind, uri) }
