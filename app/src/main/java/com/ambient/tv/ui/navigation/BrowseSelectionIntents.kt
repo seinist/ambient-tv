@@ -5,6 +5,7 @@ internal class BrowseSelectionIntents(
     private val cancelPlayback: () -> Unit,
     private val clearPending: () -> Unit,
 ) {
+    @ConsistentCopyVisibility
     data class Ticket internal constructor(val serial: Long)
 
     private var serial = 0L
