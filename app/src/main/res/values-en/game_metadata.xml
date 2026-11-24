@@ -38,6 +38,7 @@
     <string name="game_edit_locked">Protected</string>
     <string name="game_edit_unlocked">Automatic</string>
     <string name="game_edit_year_invalid">Enter a year between 1800 and 2200, or leave the field empty.</string>
+    <string name="game_edit_match_failed">This entry could not be applied. Choose another one or search again.</string>
     <string name="game_edit_no_matches">No matching games found. Try a different title or source.</string>
     <string name="game_edit_no_artwork">No images of this type were found.</string>
     <string name="game_edit_search_hint">Choose the matching game and edition.</string>

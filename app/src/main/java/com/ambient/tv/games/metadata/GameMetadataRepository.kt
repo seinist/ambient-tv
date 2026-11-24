@@ -16,6 +16,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -96,8 +98,34 @@ class GameMetadataRepository @Inject constructor(
             val options = settings.options()
             val request = gameMetadataQuery(current, library.metadata(current.fileId),
                 settings.language(), options.region, ticket.crc32, query)
-            if (request.title.isBlank()) emptyList() else providers.search(request, provider).take(30)
+            if (request.title.isBlank()) emptyList()
+            else withLibretroImage(providers.search(request, provider).take(30), current.fileId,
+                listOf(GameArtworkKind.COVER, GameArtworkKind.BACKDROP, GameArtworkKind.TITLE))
         }
+
+    /**
+     * Libretro is a folder of images named after the exact catalog name, not a search: each
+     * entry is a guess. Only guesses with a real image are listed, since one without an image
+     * cannot be applied. A screenshot or title screen stands in for a missing box art, as in
+     * [applyCandidate]. A network or quota error fails the search instead of reading as no match.
+     */
+    private suspend fun withLibretroImage(
+        candidates: List<GameMetadataCandidate>, fileId: String, kinds: List<GameArtworkKind>,
+    ): List<GameMetadataCandidate> = coroutineScope {
+        candidates.map { candidate -> async {
+            if (candidate.metadata.provider != GameMetadataProviderIds.LIBRETRO) return@async candidate
+            val found = kinds.firstOrNull { kind ->
+                try { previewArtwork(candidate, kind, fileId) != null }
+                catch (failure: GameMetadataProviderException) { throw failure }
+                catch (_: IOException) { false }
+            } ?: return@async null
+            val reference = candidate.metadata.artwork(found)
+            if (found == kinds.first() || reference == null) candidate
+            else candidate.copy(metadata = candidate.metadata.withArtwork(kinds.first(), reference,
+                candidate.metadata.artworkProviders[found.key] ?: candidate.metadata.provider,
+                candidate.metadata.artworkSources[found.key] ?: candidate.metadata.sourceUrl))
+        } }.awaitAll().filterNotNull()
+    }
 
     suspend fun applyMatch(game: LibraryGame, candidate: GameMetadataCandidate): Boolean = withGame(game) { current ->
         applyCandidate(current, candidate, manual = true, force = true)
@@ -109,7 +137,7 @@ class GameMetadataRepository @Inject constructor(
             val ticket = library.metadataTicket(current.fileId) ?: return@withGame emptyList()
             if (stored.provider !in providers.availableProviders()) return@withGame emptyList()
             val query = gameMetadataQuery(current, stored, settings.language(), settings.options().region, ticket.crc32)
-            providers.artworkChoices(query, stored.provider, kind).take(30)
+            withLibretroImage(providers.artworkChoices(query, stored.provider, kind).take(30), current.fileId, listOf(kind))
         }
 
     suspend fun save(game: LibraryGame, metadata: GameMetadata, lockedFields: Set<String>): Boolean =
