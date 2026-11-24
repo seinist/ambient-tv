@@ -21,13 +21,12 @@ import com.ambient.tv.games.metadata.GameArtworkFile
 import com.ambient.tv.games.metadata.GameArtworkFiles
 import com.ambient.tv.games.metadata.GameArtworkKind
 import com.ambient.tv.games.metadata.GameMetadata
+import com.ambient.tv.games.metadata.GameMetadataProviderIds
 import com.ambient.tv.games.metadata.GameMetadataStorage
 import com.ambient.tv.games.metadata.GameMetadataTicket
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.IOException
 import java.io.InputStream
-import java.util.Locale
-import java.util.zip.CRC32
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -98,12 +97,19 @@ data class LibraryGame(
     val metadataRegion: String? = null,
     /** Matched provider platform namespace, used only to disambiguate grouped systems. */
     val metadataPlatform: String? = null,
+    /** Headerless catalog CRC, when it differs from the original ROM checksum. */
+    val datCrc: String? = null,
 )
 
 /** Preserve the previous fast-negative-match contract for existing library users/tests. */
 internal fun reuseDatLookup(previous: LibraryGame?, systemId: String, size: Long, modified: Long): Boolean =
     previous != null && previous.datChecked && previous.systemId == systemId &&
         modified != 0L && previous.size == size && previous.modified == modified
+
+/** A previously bounded 7z probe gets one checksum attempt when its DAT is first available. */
+internal fun needsArchiveDatChecksum(filename: String, previous: LibraryGame?, catalogVersion: Long): Boolean =
+    GameSystems.extension(filename) == "7z" && previous != null && previous.archiveCrc == null &&
+        catalogVersion > 0L && previous.datVersion != catalogVersion
 
 /** Also filter old cache rows immediately, without opening a ROM or waking its source. */
 internal fun cachedGameMatchesFolder(
@@ -120,7 +126,7 @@ internal fun cachedGameMatchesFolder(
         else GameSystems.acceptsFile(system, filename)
 }
 
-private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_library.db", null, 7) {
+private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_library.db", null, 8) {
     init { setWriteAheadLoggingEnabled(true) }
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE game_entries (
@@ -131,12 +137,12 @@ private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_li
             seen INTEGER NOT NULL DEFAULT 0, manual_title TEXT, verified_title TEXT,
             dat_checked INTEGER NOT NULL DEFAULT 0,
             probe_version INTEGER NOT NULL DEFAULT 0, dat_version INTEGER NOT NULL DEFAULT -1,
-            archive_crc TEXT,
+            archive_crc TEXT, dat_crc TEXT,
             PRIMARY KEY(folder_id, file_id))""")
         db.execSQL("CREATE INDEX game_entries_system ON game_entries(system_id)")
         db.execSQL("CREATE INDEX game_entries_source ON game_entries(source_id)")
         db.execSQL("""CREATE TABLE game_dat_entries (
-            system_id TEXT NOT NULL, crc32 TEXT NOT NULL, title TEXT NOT NULL,
+            system_id TEXT NOT NULL, crc32 TEXT NOT NULL, title TEXT NOT NULL, search_title TEXT NOT NULL,
             PRIMARY KEY(system_id, crc32))""")
         db.execSQL("""CREATE TABLE game_dat_versions (
             system_id TEXT NOT NULL PRIMARY KEY, revision INTEGER NOT NULL)""")
@@ -175,6 +181,19 @@ private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_li
             // need ALTERs. No cover bitmap is decoded while the schema lock is held.
             if (oldVersion >= 6) GameMetadataStorage.addCoverGeometryColumns(db)
             if (oldVersion >= 5) GameLibraryQueryIndex.addCoverGeometryColumns(db)
+        }
+        if (oldVersion < 8) {
+            db.execSQL("ALTER TABLE game_entries ADD COLUMN dat_crc TEXT")
+            db.execSQL("ALTER TABLE game_dat_entries ADD COLUMN search_title TEXT NOT NULL DEFAULT ''")
+            db.compileStatement("UPDATE game_dat_entries SET search_title=? WHERE rowid=?").use { update ->
+                db.rawQuery("SELECT rowid,title FROM game_dat_entries", null).use { rows ->
+                    while (rows.moveToNext()) {
+                        update.bindString(1, gameDatSearchKey(rows.getString(1)))
+                        update.bindLong(2, rows.getLong(0))
+                        update.executeUpdateDelete()
+                    }
+                }
+            }
         }
     }
 }
@@ -378,6 +397,18 @@ class GameLibraryRepository @Inject constructor(
         }
     }
 
+    /** Local, bounded manual search. No ROM read or network lookup; callers use an IO context. */
+    fun searchDatTitles(systemId: String, query: String, limit: Int = 30): List<String> {
+        val key = gameDatSearchKey(query.take(256))
+        if (key.isEmpty() || limit <= 0) return emptyList()
+        return db.readableDatabase.rawQuery("""SELECT DISTINCT title,search_title FROM game_dat_entries
+            WHERE system_id=? AND instr(search_title,?)>0
+            ORDER BY CASE WHEN search_title=? THEN 0 ELSE 1 END,title COLLATE NOCASE
+            LIMIT ?""", arrayOf(systemId, key, key, limit.coerceAtMost(100).toString())).use { rows ->
+            buildList { while (rows.moveToNext()) add(rows.getString(0)) }
+        }
+    }
+
     private suspend fun replaceDat(
         systemId: String, read: ((GameRomDatReader.Entry) -> Unit) -> Int,
     ): Int = scanLock.withLock {
@@ -394,6 +425,7 @@ class GameLibraryRepository @Inject constructor(
                             put("system_id", systemId)
                             put("crc32", record.crc32)
                             put("title", record.title)
+                            put("search_title", gameDatSearchKey(record.title))
                         }
                         writable.insertWithOnConflict("game_dat_entries", null, values,
                             SQLiteDatabase.CONFLICT_REPLACE)
@@ -406,14 +438,22 @@ class GameLibraryRepository @Inject constructor(
                         "INSERT OR REPLACE INTO game_dat_versions(system_id,revision) VALUES(?,?)",
                         arrayOf<Any>(systemId, previous + 1)
                     )
-                    // The imported DAT supersedes old verified names, including prior negatives.
+                    // Reuse checksums already collected for these files before asking their
+                    // source for anything. Manual title/metadata locks remain untouched.
                     writable.execSQL(
-                        "UPDATE game_entries SET verified_title=NULL,dat_checked=0 WHERE system_id=?",
-                        arrayOf<Any>(systemId)
+                        """UPDATE game_entries SET verified_title=COALESCE(
+                            (SELECT title FROM game_dat_entries d WHERE d.system_id=game_entries.system_id
+                                AND d.crc32=game_entries.archive_crc),
+                            (SELECT title FROM game_dat_entries d WHERE d.system_id=game_entries.system_id
+                                AND d.crc32=game_entries.dat_crc)),
+                            dat_checked=CASE WHEN archive_crc IS NOT NULL THEN 1 ELSE 0 END,
+                            dat_version=CASE WHEN archive_crc IS NOT NULL THEN ? ELSE -1 END
+                            WHERE system_id=?""",
+                        arrayOf<Any>(previous + 1, systemId)
                     )
                     val affected = writable.rawQuery("SELECT file_id FROM game_entries WHERE system_id=?",
                         arrayOf(systemId)).use { rows -> buildSet { while (rows.moveToNext()) add(rows.getString(0)) } }
-                    refreshQueryFiles(affected, configuration)
+                    refreshQueryFiles(affected, configuration, updateVerifiedMetadata = true)
                     writable.setTransactionSuccessful()
                     changed()
                     imported
@@ -438,27 +478,12 @@ class GameLibraryRepository @Inject constructor(
             arrayOf(systemId, crc32),
         ).use { rows -> if (rows.moveToFirst()) rows.getString(0) else null }
 
-    private fun datTitle(session: GameScanFileSession, entry: FileEntry, systemId: String): String? {
+    private fun datChecksums(session: GameScanFileSession, entry: FileEntry, systemId: String): GameRomChecksums.Result {
         // Never hash a huge NAS ISO or an archive merely to populate library artwork.
-        if (entry.size <= 0 || entry.size > 128L * 1024 * 1024 ||
-            GameSystems.extension(entry.name) in
-                (GameSystems.archiveExtensions + setOf("cue", "m3u", "gdi", "chd",
-                    "iso", "cso", "zso", "wbfs", "rvz", "ciso", "pbp"))) return null
-        val checksum = session.open(entry.path).use { media ->
-                val crc = CRC32()
-                val chunk = ByteArray(128 * 1024)
-                var offset = 0L
-                while (offset < entry.size) {
-                    if (Thread.currentThread().isInterrupted) throw InterruptedException()
-                    val length = minOf(chunk.size.toLong(), entry.size - offset).toInt()
-                    val read = media.read(offset, chunk, length)
-                    if (read <= 0) throw IOException("ROM read truncated")
-                    crc.update(chunk, 0, read)
-                    offset += read
-                }
-                java.lang.Long.toHexString(crc.value).uppercase(Locale.ROOT).padStart(8, '0')
-            }
-        return datNameFromCrc(systemId, checksum)
+        if (!GameRomChecksums.canHash(entry.name, entry.size)) return GameRomChecksums.Result(null)
+        return session.open(entry.path).use { media ->
+            GameRomChecksums.read(systemId, entry.size, media::read)
+        }
     }
 
     fun sortKey(): String = prefs.getString("game_library_sort", "name").orEmpty()
@@ -503,6 +528,7 @@ class GameLibraryRepository @Inject constructor(
                         coverWidth = if (rows.isNull(18)) null else rows.getInt(18),
                         coverHeight = if (rows.isNull(19)) null else rows.getInt(19),
                         metadataRegion = rows.getString(20), metadataPlatform = rows.getString(21),
+                        datVersion = rows.getLong(22),
                     ))
                 }
             }
@@ -1033,18 +1059,36 @@ class GameLibraryRepository @Inject constructor(
         return orphaned
     }
 
-    private fun refreshQueryFiles(fileIds: Collection<String>, configuration: QueryConfiguration) {
+    private fun refreshQueryFiles(fileIds: Collection<String>, configuration: QueryConfiguration,
+                                  updateVerifiedMetadata: Boolean = false) {
         val writable = db.writableDatabase
         fileIds.chunked(400).forEach { ids ->
             val clause = "file_id IN (${ids.joinToString(",") { "?" }})"
             val removed = ids.toMutableSet()
-            forEachIndexedGame(configuration, clause, ids.toTypedArray()) { game ->
-                putQueryGame(writable, game, configuration)
+            // At most 400 selected rows. Close the source cursor before a DAT correction
+            // updates a metadata row that was part of its join.
+            val games = buildList { forEachIndexedGame(configuration, clause, ids.toTypedArray(), consume = ::add) }
+            for (game in games) {
+                val current = if (updateVerifiedMetadata) refreshVerifiedMetadataTitle(writable, game) else game
+                putQueryGame(writable, current, configuration)
                 removed.remove(game.fileId)
             }
             if (removed.isNotEmpty()) writable.delete("game_query",
                 "file_id IN (${removed.joinToString(",") { "?" }})", removed.toTypedArray())
         }
+    }
+
+    /** A new catalog name is visible even with automatic online metadata disabled. */
+    private fun refreshVerifiedMetadataTitle(writable: SQLiteDatabase, game: LibraryGame): LibraryGame {
+        val verified = game.verifiedTitle?.takeIf(String::isNotBlank) ?: return game
+        if (game.customTitle != null || game.metadataTitle.isNullOrBlank() || game.metadataTitle == verified) return game
+        val metadata = GameMetadataStorage.read(writable, game.fileId) ?: return game
+        if (metadata.provider != GameMetadataProviderIds.LIBRETRO || metadata.matchLocked ||
+            "title" in metadata.lockedFields) return game
+        // Keep the old provider identity and freshness: the next online refresh sees that
+        // its canonical name differs and resolves artwork for the newly verified name.
+        GameMetadataStorage.write(writable, game.fileId, metadata.copy(title = verified))
+        return game.copy(title = verified, metadataTitle = verified)
     }
 
     private fun putQueryGame(writable: SQLiteDatabase, game: LibraryGame, configuration: QueryConfiguration,
@@ -1064,7 +1108,7 @@ class GameLibraryRepository @Inject constructor(
         db.readableDatabase.rawQuery("""SELECT g.folder_id,g.file_id,g.source_id,g.path,g.filename,g.system_id,
             g.internal_title,g.file_size,g.modified,g.favorite,g.last_played,g.manual_title,g.verified_title,
             g.probe_version,g.dat_version,g.archive_crc,g.dat_checked,m.title,m.year,c.path,b.path,
-            c.image_width,c.image_height,m.region,m.platform
+            c.image_width,c.image_height,m.region,m.platform,g.dat_crc
             FROM game_entries g LEFT JOIN game_metadata m ON m.file_id=g.file_id
             LEFT JOIN game_artwork c ON c.file_id=g.file_id AND c.kind='cover'
             LEFT JOIN game_artwork b ON b.file_id=g.file_id AND b.kind='backdrop'
@@ -1096,6 +1140,7 @@ class GameLibraryRepository @Inject constructor(
                     coverWidth = if (cursor.isNull(21)) null else cursor.getInt(21),
                     coverHeight = if (cursor.isNull(22)) null else cursor.getInt(22),
                     metadataRegion = cursor.getString(23), metadataPlatform = cursor.getString(24),
+                    datCrc = cursor.getString(25),
                 )
                 if (!deduplicate) { consume(game); continue }
                 if (selected?.fileId != game.fileId) {
@@ -1280,8 +1325,10 @@ class GameLibraryRepository @Inject constructor(
                                 val last = previous[entry.id]
                                 val unchanged = last != null && last.size == entry.size &&
                                     last.modified == entry.modified && entry.modified != 0L
+                                val needsArchiveChecksum = needsArchiveDatChecksum(entry.name, last,
+                                    last?.let { datVersions[it.systemId] } ?: 0L)
                                 val cachedProbe = unchanged && last.probeVersion == PROBE_VERSION &&
-                                    (folder.systemId == "auto" || folder.systemId == last.systemId)
+                                    (folder.systemId == "auto" || folder.systemId == last.systemId) && !needsArchiveChecksum
                                 val archive = if (ext in GameSystems.archiveExtensions && !cachedProbe) {
                                     if (ext == "rar") {
                                         // RAR title inference is filename-only. Don't open 1,000
@@ -1291,7 +1338,7 @@ class GameLibraryRepository @Inject constructor(
                                     } else {
                                         val probed = runCatching {
                                             reader().open(entry.path).use {
-                                                GameArchives.probe(entry.name, it, assigned?.id)
+                                                GameArchives.probe(entry.name, it, assigned?.id, checksumSystems = datVersions.keys)
                                             }
                                         }
                                         // Network/decoder errors must NOT silently delete a
@@ -1317,17 +1364,24 @@ class GameLibraryRepository @Inject constructor(
                                     val internal = if (cachedProbe) last.internalTitle
                                         else archive?.internalTitle ?: if (ext in GameSystems.archiveExtensions)
                                             null else extractTitle(entry, reader(), system.id)
-                                    val crc = if (cachedProbe) last.archiveCrc else archive?.crc32
                                     val version = datVersions[system.id] ?: 0L
+                                    val checksums = when {
+                                        cachedProbe && (last.archiveCrc != null || version == 0L) ->
+                                            GameRomChecksums.Result(last.archiveCrc, last.datCrc)
+                                        archive != null -> GameRomChecksums.Result(archive.crc32, archive.datCrc32)
+                                        version > 0L -> datChecksums(reader(), entry, system.id)
+                                        else -> GameRomChecksums.Result(null)
+                                    }
                                     val verified = when {
                                         version == 0L -> null
-                                        unchanged && last.datVersion == version -> last.verifiedTitle
-                                        crc != null -> datNameFromCrc(system.id, crc)
-                                        else -> datTitle(reader(), entry, system.id)
+                                        cachedProbe && last.datVersion == version -> last.verifiedTitle
+                                        else -> checksums.crc32?.let { datNameFromCrc(system.id, it) }
+                                            ?: checksums.datCrc32?.let { datNameFromCrc(system.id, it) }
                                     }
                                     indexed += IndexedGame(entry, system.id, internal,
                                         last?.favorite ?: false, last?.lastPlayed ?: 0L,
-                                        last?.customTitle, verified, PROBE_VERSION, version, crc)
+                                        last?.customTitle, verified, PROBE_VERSION, version,
+                                        checksums.crc32, checksums.datCrc32)
                                 }
                                 val count = processed.incrementAndGet()
                                 if (count % 16 == 0 || count == discovered.get())
@@ -1389,6 +1443,7 @@ class GameLibraryRepository @Inject constructor(
                             put("manual_title", game.customTitle); put("verified_title", game.verifiedTitle)
                             put("probe_version", game.probeVersion); put("dat_version", game.datVersion)
                             put("archive_crc", game.archiveCrc)
+                            put("dat_crc", game.datCrc)
                             put("dat_checked", if (game.datVersion > 0L) 1 else 0)
                         }
                         writable.insertWithOnConflict("game_entries", null, values,
@@ -1401,7 +1456,7 @@ class GameLibraryRepository @Inject constructor(
                         arrayOf(folder.id, generation.toString()), configuration)
                     writable.delete("game_entries", "folder_id=? AND seen!=?",
                         arrayOf(folder.id, generation.toString()))
-                    refreshQueryFiles(affected, configuration)
+                    refreshQueryFiles(affected, configuration, updateVerifiedMetadata = true)
                     abandoned = pruneOrphanedMetadata(writable)
                     writable.setTransactionSuccessful()
                 } finally {
@@ -1425,7 +1480,7 @@ class GameLibraryRepository @Inject constructor(
     private data class IndexedGame(val entry: FileEntry, val systemId: String,
         val internalTitle: String?, val favorite: Boolean, val lastPlayed: Long,
         val customTitle: String?, val verifiedTitle: String?,
-        val probeVersion: Int, val datVersion: Long, val archiveCrc: String?)
+        val probeVersion: Int, val datVersion: Long, val archiveCrc: String?, val datCrc: String?)
 
     private fun existing(folderId: String): Map<String, LibraryGame> = synchronized(queryLock) {
         val configuration = currentQueryConfiguration()
@@ -1448,7 +1503,7 @@ class GameLibraryRepository @Inject constructor(
     }
 
     private companion object {
-        const val PROBE_VERSION = 2
+        const val PROBE_VERSION = 3
     }
 
     private fun extractTitle(entry: FileEntry, session: GameScanFileSession, system: String): String? {

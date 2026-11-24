@@ -109,11 +109,11 @@ internal fun gameLibrarySql(query: GameLibraryQuery, titleStyle: String): GameLi
     val where = if (predicates.isEmpty()) "" else "WHERE " + predicates.joinToString(" AND ")
     val limit = query.limit?.let { " LIMIT ${it.coerceIn(0, 200_000)}" }.orEmpty()
     // The index has exactly one eligible/deepest folder per file. Only matching display rows
-    // reach the cursor; scan-only CRC/parser columns are not hydrated by library/Home queries.
+    // reach the cursor. DAT revision invalidates metadata misses; CRC/parser fields stay scan-only.
     return GameLibrarySql("""SELECT g.folder_id,g.file_id,g.source_id,g.path,g.filename,g.system_id,
         q.title_$style,g.internal_title,g.file_size,g.modified,q.favorite,q.last_played,
         q.custom_title,g.verified_title,q.metadata_title,q.metadata_year,q.cover_path,q.backdrop_path,
-        q.cover_width,q.cover_height,q.metadata_region,q.metadata_platform
+        q.cover_width,q.cover_height,q.metadata_region,q.metadata_platform,g.dat_version
         FROM game_query q JOIN game_entries g ON g.folder_id=q.folder_id AND g.file_id=q.file_id
         $where ORDER BY $order$limit""".trimIndent(), args.toTypedArray())
 }

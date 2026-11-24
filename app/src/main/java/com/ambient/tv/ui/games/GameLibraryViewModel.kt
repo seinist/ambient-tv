@@ -23,6 +23,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -36,6 +37,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.cancelAndJoin
+
+enum class GameLibraryScanPhase { FILES, NAME_DATABASES, MATCHING_NAMES, METADATA }
 
 data class GameLibraryUiState(
     val games: List<LibraryGame> = emptyList(),
@@ -52,6 +55,7 @@ data class GameLibraryUiState(
     val sortDescending: Boolean = false,
     val busy: Boolean = false,
     val scanning: Boolean = false,
+    val scanPhase: GameLibraryScanPhase = GameLibraryScanPhase.FILES,
     val scanProcessed: Int = 0,
     val scanDiscovered: Int = 0,
     val scanFolderName: String = "",
@@ -85,8 +89,12 @@ class GameLibraryViewModel @Inject constructor(
 ) : ViewModel() {
     private val mutable = MutableStateFlow(GameLibraryUiState())
     val state: StateFlow<GameLibraryUiState> = mutable.asStateFlow()
+    // A cancelled job still owns its progress until its final cleanup has completed.
     private var scan: Job? = null
     private var browse: Job? = null
+    // Reloads may finish after an import/scan failed. Only the read collector owns clearing
+    // its own error; successful catalog refreshes must not erase operation feedback.
+    private var libraryReadError: String? = null
     private val selection = MutableStateFlow<GameLibraryQuery?>(null)
 
     private data class ReadRequest(
@@ -116,8 +124,14 @@ class GameLibraryViewModel @Inject constructor(
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (error: Exception) {
                     val message = gameOperationError(context, error, R.string.game_error_library)
-                    mutable.update { it.copy(games = emptyList(), ready = true,
-                        error = message) }
+                    val previousReadError = libraryReadError
+                    var published = false
+                    mutable.update {
+                        published = it.error == null || (previousReadError != null && it.error == previousReadError)
+                        it.copy(games = emptyList(), ready = true,
+                            error = if (published) message else it.error)
+                    }
+                    libraryReadError = message.takeIf { published }
                 }
             }
         }
@@ -131,12 +145,15 @@ class GameLibraryViewModel @Inject constructor(
             ?: kotlinx.coroutines.runInterruptible(Dispatchers.IO) { library.systemIds() }
         loadedGames = request.read to games
         loadedSystems = systemsRevision to systems
+        val previousReadError = libraryReadError
         mutable.update { it.copy(
             games = games, systems = systems, folders = library.folders(), sources = files.sources(),
             view = request.view, gridColumns = request.gridColumns, listRows = request.listRows,
             titleStyle = request.read.titleStyle, sortKey = request.read.query.sort,
-            sortDescending = request.read.query.descending, ready = true, error = null,
+            sortDescending = request.read.query.descending, ready = true,
+            error = it.error.takeUnless { error -> previousReadError != null && error == previousReadError },
         ) }
+        libraryReadError = null
     }
 
     fun section(value: String) {
@@ -164,17 +181,27 @@ class GameLibraryViewModel @Inject constructor(
     fun rename(game: LibraryGame, value: String) = editCatalog { library.setCustomTitle(game.fileId, value) }
     /** Optional, offline, user-supplied DAT files. Never download a catalog implicitly. */
     fun importDat(systemId: String, uri: Uri) {
-        viewModelScope.launch {
-            mutable.update { it.copy(busy = true, error = null, message = null) }
+        if (scan?.isCompleted == false) return
+        scan = viewModelScope.launch {
+            mutable.update { it.copy(busy = true, scanning = true, scanPhase = GameLibraryScanPhase.NAME_DATABASES,
+                scanProcessed = 0, scanDiscovered = 1, error = null, message = null) }
+            var catalogsCurrent = false
             try {
                 val count = withContext(Dispatchers.IO) {
                     context.contentResolver.openInputStream(uri)?.let { library.importDat(systemId, it) }
                         ?: throw java.io.FileNotFoundException("DAT file is unavailable")
                 }
+                val catalogSizes = library.datCatalogSizes()
+                mutable.update { it.copy(nameCatalogs = catalogSizes) }
+                catalogsCurrent = true
+                scanFoldersWithNames(systemId)
                 mutable.update { it.copy(message = context.getString(R.string.game_catalog_imported, count)) }
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { showError(error, R.string.game_error_import) }
-            finally { mutable.update { it.copy(busy = false) } }
+            } catch (cancelled: CancellationException) {
+                mutable.update { it.copy(message = null) }
+                throw cancelled
+            }
+            catch (error: Exception) { showError(error, nameDatabaseErrorFallback(R.string.game_error_import)) }
+            finally { finishNameDatabaseWork(refreshCatalogs = !catalogsCurrent) }
         }
     }
     fun favorite(game: LibraryGame) = editCatalog { library.setFavorite(game.fileId, !game.favorite) }
@@ -302,10 +329,11 @@ class GameLibraryViewModel @Inject constructor(
     fun cancelScan() = scan?.cancel()
 
     fun scanAll() {
-        if (scan?.isActive == true) return
+        if (scan?.isCompleted == false) return
         scan = viewModelScope.launch {
             mutable.update { it.copy(busy = true, scanning = true,
-                scanProcessed = 0, scanDiscovered = 0, error = null) }
+                scanPhase = GameLibraryScanPhase.FILES, scanProcessed = 0, scanDiscovered = 0,
+                error = null, message = null) }
             try {
                 scanEveryFolder()
             } catch (error: CancellationException) { throw error }
@@ -327,7 +355,10 @@ class GameLibraryViewModel @Inject constructor(
 
     fun refreshNameCatalogs() {
         viewModelScope.launch {
-            try { mutable.update { it.copy(nameCatalogs = library.datCatalogSizes()) } }
+            try {
+                val catalogSizes = library.datCatalogSizes()
+                mutable.update { it.copy(nameCatalogs = catalogSizes) }
+            }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) { showError(error, R.string.game_error_library) }
         }
@@ -339,43 +370,84 @@ class GameLibraryViewModel @Inject constructor(
      * get their exact names (and with them Libretro box art and better matches elsewhere).
      */
     fun loadNameDatabases(systemId: String? = null) {
-        if (scan?.isActive == true) return
+        if (scan?.isCompleted == false) return
         scan = viewModelScope.launch {
             mutable.update { it.copy(busy = true, scanning = true, error = null,
-                message = context.getString(R.string.game_name_databases_progress, 0, 0)) }
+                scanPhase = GameLibraryScanPhase.NAME_DATABASES,
+                scanProcessed = 0, scanDiscovered = 0, message = null) }
+            var catalogsCurrent = false
             try {
                 val result = metadata.loadNameDatabases(systemId?.let(::listOf)) { done, total ->
-                    mutable.update { it.copy(message = context.getString(R.string.game_name_databases_progress, done, total)) }
+                    mutable.update { it.copy(scanProcessed = done, scanDiscovered = total) }
                 }
-                mutable.update { it.copy(nameCatalogs = library.datCatalogSizes()) }
+                val catalogSizes = library.datCatalogSizes()
+                mutable.update { it.copy(nameCatalogs = catalogSizes) }
+                catalogsCurrent = true
                 if (result.systems == 0) {
                     mutable.update { it.copy(message = context.getString(R.string.game_name_databases_none)) }
                     return@launch
                 }
                 if (systemId == null) {
+                    val affected = result.systemIds.flatMap { library.foldersWithSystem(it) }.toSet()
+                    for (folder in library.folders()) {
+                        if (folder.id !in affected || folder.id in mutable.value.removingFolders ||
+                            library.folders().none { it.id == folder.id }) continue
+                        scanAndEnrich(folder, scanFiles = true, matchingNames = true)
+                    }
                     mutable.update { it.copy(message = context.getString(R.string.game_name_databases_loaded,
                         result.names, result.systems)) }
-                    scanEveryFolder()
                     return@launch
                 }
-                val affected = library.foldersWithSystem(systemId)
+                val affected = scanFoldersWithNames(systemId)
                 val name = GameSystems.byId(systemId)?.name ?: systemId
-                mutable.update { it.copy(message = context.getString(if (affected.isEmpty())
+                mutable.update { it.copy(message = context.getString(if (!affected)
                     R.string.game_name_databases_later else R.string.game_name_databases_loaded_one, result.names, name)) }
-                for (folder in library.folders()) {
-                    if (folder.id !in affected || folder.id in mutable.value.removingFolders) continue
-                    if (library.folders().none { it.id == folder.id }) continue
-                    scanAndEnrich(folder, scanFiles = true)
-                }
-            } catch (error: CancellationException) { throw error }
+            } catch (error: CancellationException) {
+                mutable.update { it.copy(message = null) }
+                throw error
+            }
             catch (error: Exception) {
                 mutable.update { it.copy(message = null) }
-                showError(error, R.string.game_error_name_databases)
+                showError(error, nameDatabaseErrorFallback(R.string.game_error_name_databases))
             }
-            finally { mutable.update { it.copy(busy = false, scanning = false,
-                activeScanFolderId = null, enriching = false) } }
+            finally { finishNameDatabaseWork(refreshCatalogs = !catalogsCurrent) }
         }
     }
+
+    private fun nameDatabaseErrorFallback(loadingError: Int): Int = when (mutable.value.scanPhase) {
+        GameLibraryScanPhase.NAME_DATABASES -> loadingError
+        GameLibraryScanPhase.FILES, GameLibraryScanPhase.MATCHING_NAMES -> R.string.game_error_scan
+        GameLibraryScanPhase.METADATA -> R.string.game_error_search
+    }
+
+    private suspend fun finishNameDatabaseWork(refreshCatalogs: Boolean) {
+        try {
+            if (refreshCatalogs) withContext(NonCancellable) {
+                // Earlier systems may already be committed when a later download is cancelled
+                // or fails. Publish those counts without replacing the operation's actual error.
+                try {
+                    val catalogSizes = library.datCatalogSizes()
+                    mutable.update { it.copy(nameCatalogs = catalogSizes) }
+                } catch (_: Exception) { /* Keep the last counts if the database cannot be read. */ }
+            }
+        } finally {
+            mutable.update { it.copy(busy = false, scanning = false,
+                activeScanFolderId = null, enriching = false) }
+        }
+    }
+
+    private suspend fun scanFoldersWithNames(systemId: String): Boolean {
+        val affected = library.foldersWithSystem(systemId)
+        var scanned = false
+        for (folder in library.folders()) {
+            if (folder.id !in affected || folder.id in mutable.value.removingFolders) continue
+            if (library.folders().none { it.id == folder.id }) continue
+            scanAndEnrich(folder, scanFiles = true, matchingNames = true)
+            scanned = true
+        }
+        return scanned
+    }
+
     fun scanFolder(folder: GameLibraryFolder) {
         startFolderWork(folder, scanFiles = true)
     }
@@ -386,11 +458,12 @@ class GameLibraryViewModel @Inject constructor(
     }
 
     private fun startFolderWork(folder: GameLibraryFolder, scanFiles: Boolean) {
-        if (scan?.isActive == true) return
+        if (scan?.isCompleted == false) return
         if (folder.id in mutable.value.removingFolders) return
         scan = viewModelScope.launch {
             mutable.update { it.copy(busy = true, scanning = true, scanProcessed = 0,
-                scanDiscovered = 0, scanFolderName = folder.path, error = null) }
+                scanPhase = if (scanFiles) GameLibraryScanPhase.FILES else GameLibraryScanPhase.METADATA,
+                scanDiscovered = 0, scanFolderName = folder.path, error = null, message = null) }
             try {
                 scanAndEnrich(folder, scanFiles)
             } catch (error: CancellationException) { throw error }
@@ -402,8 +475,13 @@ class GameLibraryViewModel @Inject constructor(
         }
     }
 
-    private suspend fun scanAndEnrich(folder: GameLibraryFolder, scanFiles: Boolean) {
+    private suspend fun scanAndEnrich(folder: GameLibraryFolder, scanFiles: Boolean, matchingNames: Boolean = false) {
         mutable.update { it.copy(activeScanFolderId = folder.id,
+            scanPhase = when {
+                !scanFiles -> GameLibraryScanPhase.METADATA
+                matchingNames -> GameLibraryScanPhase.MATCHING_NAMES
+                else -> GameLibraryScanPhase.FILES
+            },
             scanFolderName = folder.path.ifBlank {
                 files.sources().firstOrNull { it.id == folder.sourceId }?.name
                     ?: context.getString(R.string.game_folder_fallback)
@@ -413,7 +491,8 @@ class GameLibraryViewModel @Inject constructor(
             mutable.update { it.copy(scanProcessed = processed, scanDiscovered = known) }
         }
         if (folder.id in mutable.value.removingFolders || library.folders().none { it.id == folder.id }) return
-        mutable.update { it.copy(enriching = true, scanProcessed = 0, scanDiscovered = 0) }
+        mutable.update { it.copy(enriching = true, scanPhase = GameLibraryScanPhase.METADATA,
+            scanProcessed = 0, scanDiscovered = 0) }
         if (scanFiles) metadata.importLocalFolder(folder.id)
         metadata.enrichFolder(folder.id, automatic = scanFiles) { processed, known ->
             mutable.update { it.copy(scanProcessed = processed, scanDiscovered = known) }
@@ -469,11 +548,13 @@ class GameLibraryViewModel @Inject constructor(
                 val items = withContext(Dispatchers.IO) {
                     access.list(source, path, 300) { false }
                 }
+                libraryReadError = null
                 mutable.update { it.copy(directoryEntries = items.entries.filter(FileEntry::directory),
                     error = if (items.more) context.getString(R.string.game_folder_more) else null) }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) {
                 val message = gameOperationError(context, error, FilesViewModel.errorMessage(error))
+                libraryReadError = null
                 mutable.update { it.copy(error = message, directoryEntries = emptyList()) }
             }
             finally { mutable.update { it.copy(browsing = false) } }
@@ -509,6 +590,7 @@ class GameLibraryViewModel @Inject constructor(
 
     private fun showError(error: Throwable, fallback: Int = R.string.game_error_update) {
         val message = gameOperationError(context, error, fallback)
+        libraryReadError = null
         mutable.update { it.copy(error = message) }
     }
 }

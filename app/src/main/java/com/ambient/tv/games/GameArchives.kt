@@ -2,6 +2,7 @@ package com.ambient.tv.games
 
 import com.ambient.tv.data.files.SeekableMedia
 import com.ambient.tv.games.library.GameRomTitles
+import com.ambient.tv.games.library.GameRomChecksums
 import com.github.junrar.Archive
 import com.github.junrar.exception.UnsupportedRarV5Exception
 import org.apache.commons.compress.archivers.sevenz.SevenZFile
@@ -16,6 +17,7 @@ import java.nio.ByteBuffer
 import java.nio.channels.NonWritableChannelException
 import java.nio.channels.SeekableByteChannel
 import java.util.zip.GZIPInputStream
+import java.util.zip.CRC32
 
 class GameArchiveException(message: String) : IOException(message)
 
@@ -31,7 +33,7 @@ object GameArchives {
     /** Metadata discovery needs no archive copy. CRC comes from ZIP central-directory entries. */
     data class Metadata(val innerName: String?, val system: GameSystem?,
                         val internalTitle: String? = null, val crc32: String? = null,
-                        val systemFromHeader: Boolean = false)
+                        val systemFromHeader: Boolean = false, val datCrc32: String? = null)
 
     /** Bound both decompressed header reads and the number of archive entries inspected. */
     internal const val MAX_PROBE_HEADER = 72 * 1024
@@ -74,9 +76,12 @@ object GameArchives {
      * Probe a packed game without staging the archive locally. ZIP exposes CRC32 from its
      * central directory; ZIP/7z only decompress at most a bounded ROM-header prefix.
      * 7z solid folders may still require extra decoder work, so only probe the first
-     * selected entry. RAR4/RAR5 remain filename/folder hints, not arbitrary remote extraction.
+     * selected entry. Only an explicit DAT scan may request a missing 7z CRC for one of
+     * [checksumSystems]: its first selected ROM is streamed with a 128 MiB bound, never copied.
+     * RAR4/RAR5 remain filename/folder hints, not arbitrary remote extraction.
      */
-    fun probe(fileName: String, media: SeekableMedia, systemId: String? = null): Metadata? = when (GameSystems.extension(fileName)) {
+    fun probe(fileName: String, media: SeekableMedia, systemId: String? = null,
+              checksumSystems: Set<String> = emptySet()): Metadata? = when (GameSystems.extension(fileName)) {
         "zip" -> ZipFile.builder().setSeekableByteChannel(MediaChannel(media)).get().use { zip ->
             val candidates = zip.entries.asSequence().filter { !it.isDirectory }
                 .take(MAX_PROBE_ENTRIES + 1).toList()
@@ -93,7 +98,8 @@ object GameArchives {
             val crc = entry.crc.takeIf { it in 0..0xffffffffL }
                 ?.toString(16)?.uppercase(Locale.ROOT)?.padStart(8, '0')
             Metadata(entry.name, system, title, crc,
-                systemFromHeader = GameSystems.forDiscHeader(entry.name, prefix) != null)
+                systemFromHeader = GameSystems.forDiscHeader(entry.name, prefix) != null,
+                datCrc32 = GameRomChecksums.forRom(system?.id.orEmpty(), entry.size, prefix, crc).datCrc32)
         }
         "7z" -> SevenZFile.builder().setSeekableByteChannel(MediaChannel(media))
             .setMaxMemoryLimitKb(48 * 1024).get().use { seven ->
@@ -103,10 +109,13 @@ object GameArchives {
             val byName = GameSystems.forAssignedFile(entry.name, systemId,
                 GameSystems.forSourceFile(entry.name, entry.name))
             // Advancing to later entries of a solid 7z could decompress gigabytes.
-            val first = seven.nextEntry
+            var first = seven.nextEntry
+            while (first != null && !first.hasStream()) first = seven.nextEntry
+            val prefixLimit = prefixLength(byName, entry.name).takeIf { it > 0 }
+                ?: if (byName?.id in checksumSystems && GameRomChecksums.canHash(entry.name, entry.size)) 512 else 0
             val prefix = if (first?.name == entry.name && !first.isDirectory &&
-                first.hasStream() && prefixLength(byName, entry.name) > 0) {
-                val buffer = ByteArray(prefixLength(byName, entry.name))
+                first.hasStream() && prefixLimit > 0) {
+                val buffer = ByteArray(prefixLimit)
                 var count = 0
                 runCatching {
                     while (count < buffer.size) {
@@ -120,10 +129,28 @@ object GameArchives {
             } else null
             val system = GameSystems.forDiscHeader(entry.name, prefix) ?: byName
             val title = prefix?.let { titleFromPrefix(system, entry.name, it) }
-            val crc = if (entry.hasCrc) entry.crcValue.takeIf { it in 0..0xffffffffL }
+            var crc = if (entry.hasCrc) entry.crcValue.takeIf { it in 0..0xffffffffL }
                 ?.toString(16)?.uppercase(Locale.ROOT)?.padStart(8, '0') else null
+            // Some 7z archives expose only a folder CRC, not an entry CRC. A complete
+            // prefix is free; a larger first ROM is hashed only for an explicit DAT scan.
+            if (crc == null && prefix != null && first?.name == entry.name &&
+                GameRomChecksums.canHash(entry.name, entry.size) &&
+                (prefix.size.toLong() == entry.size || system?.id in checksumSystems)) {
+                val checksum = CRC32().apply { update(prefix) }
+                var read = prefix.size.toLong()
+                val buffer = ByteArray(128 * 1024)
+                while (read < entry.size) {
+                    if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException()
+                    val count = seven.read(buffer, 0, minOf(buffer.size.toLong(), entry.size - read).toInt())
+                    if (count <= 0) throw GameArchiveException("ROM checksum read truncated")
+                    checksum.update(buffer, 0, count)
+                    read += count
+                }
+                crc = GameRomChecksums.hex(checksum.value)
+            }
             Metadata(entry.name, system, title, crc,
-                systemFromHeader = GameSystems.forDiscHeader(entry.name, prefix) != null)
+                systemFromHeader = GameSystems.forDiscHeader(entry.name, prefix) != null,
+                datCrc32 = GameRomChecksums.forRom(system?.id.orEmpty(), entry.size, prefix, crc).datCrc32)
         }
         "gz" -> {
             val name = fileName.substringBeforeLast('.')
@@ -139,15 +166,19 @@ object GameArchives {
             // RFC 1952 footer stores the CRC32 of the *uncompressed* ROM,
             // so a DAT match does not require reading or decompressing the whole file.
             val footer = ByteArray(8)
-            val crc = if (media.size >= 8 && media.read(media.size - 8, footer, 8) == 8)
+            val hasFooter = media.size >= 8 && media.read(media.size - 8, footer, 8) == 8
+            val crc = if (hasFooter)
                 java.lang.Long.toHexString(
                     (footer[0].toLong() and 255) or
                         ((footer[1].toLong() and 255) shl 8) or
                         ((footer[2].toLong() and 255) shl 16) or
                         ((footer[3].toLong() and 255) shl 24)
                 ).uppercase(Locale.ROOT).padStart(8, '0') else null
+            val size = if (hasFooter) ByteBuffer.wrap(footer, 4, 4)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN).int.toLong() and 0xffffffffL else 0L
             Metadata(name, system, title, crc,
-                systemFromHeader = GameSystems.forDiscHeader(name, prefix) != null)
+                systemFromHeader = GameSystems.forDiscHeader(name, prefix) != null,
+                datCrc32 = GameRomChecksums.forRom(system?.id.orEmpty(), size, prefix, crc).datCrc32)
         }
         "rar" -> {
             // A RAR archive's original filename may already include a known ROM extension.

@@ -54,26 +54,36 @@ internal object GameMetadataPlatforms {
     fun forQuery(query: GameMetadataQuery): List<GameMetadataPlatform> {
         val extension = query.filename.substringAfterLast('.', "").lowercase(Locale.ROOT)
         return when (query.systemId) {
-            "nes" -> if (extension == "fds") listOf(fds) else listOf(nes)
+            "nes" -> when (extension) {
+                "fds" -> listOf(fds)
+                "nes", "unf", "unif" -> listOf(nes)
+                else -> listOf(nes, fds)
+            }
             "gb" -> when (extension) { "gbc" -> listOf(gbc); "gb", "dmg" -> listOf(gb); else -> listOf(gb, gbc) }
             "megadrive" -> when (extension) { "sms" -> listOf(master); "gg" -> listOf(gear); "sg" -> listOf(sg1000)
                 "md", "gen", "smd", "68k" -> listOf(genesis); else -> listOf(genesis, master, gear, sg1000) }
-            "pce" -> if (extension == "sgx") listOf(superGrafx) else listOf(pcEngine)
+            "pce" -> when (extension) {
+                "sgx" -> listOf(superGrafx)
+                "pce" -> listOf(pcEngine)
+                else -> listOf(pcEngine, superGrafx)
+            }
             "ngp" -> if (extension == "ngc") listOf(ngpc) else if (extension == "ngp") listOf(ngp) else listOf(ngp, ngpc)
             "wswan" -> if (extension == "wsc") listOf(wonderSwanColor) else if (extension == "ws") listOf(wonderSwan) else listOf(wonderSwan, wonderSwanColor)
             else -> listOfNotNull(systems[query.systemId])
         }
     }
 
-    fun libretroCandidates(query: GameMetadataQuery): List<GameMetadataCandidate> {
+    fun libretroCandidates(query: GameMetadataQuery, catalogTitles: List<String> = emptyList()): List<GameMetadataCandidate> {
         val systems = forQuery(query).mapNotNull { it.libretro }
         if (systems.isEmpty()) return emptyList()
         val pinned = query.providerGameId?.split('|', limit = 2)?.takeIf { it.size == 2 && it[0] in systems }
-        val names = if (pinned != null) listOf(pinned[1]) else listOfNotNull(
+        val catalog = catalogTitles.asSequence().map { it.trim().take(256) }
+            .filter(String::isNotBlank).distinct().take(30).toSet()
+        val names = if (pinned != null) listOf(pinned[1]) else (catalog + listOfNotNull(
             query.canonicalTitle?.takeIf(String::isNotBlank), query.title.takeIf(String::isNotBlank),
             query.filename.substringAfterLast('/').substringBeforeLast('.').takeIf(String::isNotBlank),
-        ).map { it.trim().take(256) }.distinct().take(3)
-        return (pinned?.let { listOf(it[0]) } ?: systems).flatMap { system -> names.map { name ->
+        )).map { it.trim().take(256) }.distinct().take(if (catalog.isEmpty()) 3 else 30)
+        return names.flatMap { name -> (pinned?.let { listOf(it[0]) } ?: systems).map { system ->
             val imageName = name.map { if (it in "&*/:`<>?\\|\"" || it.isISOControl()) '_' else it }.joinToString("") + ".png"
             fun image(type: String) = HttpUrl.Builder().scheme("https").host("thumbnails.libretro.com")
                 .addPathSegment(system).addPathSegment(type).addPathSegment(imageName).build().toString()
@@ -83,8 +93,8 @@ internal object GameMetadataPlatforms {
                 backdropUrl = image("Named_Snaps"), titleScreenUrl = image("Named_Titles"),
                 sourceUrl = "https://github.com/libretro-thumbnails/libretro-thumbnails",
                 region = query.region, language = query.language,
-            ), exactMatch = pinned != null || query.canonicalTitle == name)
-        } }.take(12)
+            ), exactMatch = pinned != null || query.canonicalTitle == name, catalogMatch = name in catalog)
+        } }.take(if (catalog.isEmpty()) 12 else 30)
     }
 }
 

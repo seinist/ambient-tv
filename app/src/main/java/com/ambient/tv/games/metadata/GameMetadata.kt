@@ -93,4 +93,6 @@ data class GameMetadataCandidate(
     val metadata: GameMetadata,
     /** Automatic selection requires an unambiguous provider match; manual search can show all. */
     val exactMatch: Boolean = false,
+    /** The name exists in the local DAT catalog, independently of optional online artwork. */
+    val catalogMatch: Boolean = false,
 )

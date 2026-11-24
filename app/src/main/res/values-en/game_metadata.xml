@@ -64,7 +64,7 @@
     <string name="game_error_provider_response">The provider could not supply usable information. Please try again later.</string>
     <string name="game_error_provider_system">This provider does not support the selected system. Choose another source.</string>
     <string name="game_source_fallback">Game server</string>
-    <string name="game_catalog_imported">%1$d names imported. Scan the game folders again.</string>
+    <string name="game_catalog_imported">%1$d names imported.</string>
     <string name="game_source_duplicate">This network folder is already set up. Choose the existing source.</string>
     <string name="game_folder_more">Not all folders are shown. Choose a subfolder.</string>
     <string name="game_folder_fallback">Game folder</string>
@@ -77,7 +77,7 @@
     <string name="game_name_databases_load">Load game names from Libretro</string>
     <string name="game_name_databases_hint">Like the databases in RetroArch, for all or single systems.</string>
     <string name="game_name_databases_progress">Loading game names: %1$d / %2$d systems</string>
-    <string name="game_name_databases_loaded">%1$d names loaded for %2$d systems. Scanning the game folders…</string>
+    <string name="game_name_databases_loaded">%1$d names loaded for %2$d systems. Game folders updated.</string>
     <string name="game_name_databases_none">Libretro has no name database for the systems in your library (disc games are recognized by their file name).</string>
     <string name="game_error_name_databases">The game names could not be loaded. Check the connection and try again.</string>
     <string name="game_name_databases_page_hint">Recognizes games by checksum and names them exactly, so their covers are found. Afterwards the folders with games of that system are scanned again. Disc games are not covered: disc images are never hashed.</string>
@@ -85,6 +85,9 @@
     <string name="game_name_databases_more">More systems</string>
     <string name="game_name_databases_count">%1$s names loaded</string>
     <string name="game_name_databases_missing">Not loaded</string>
-    <string name="game_name_databases_loaded_one">%1$d names loaded for %2$s. Scanning its folders…</string>
+    <string name="game_name_databases_loaded_one">%1$d names loaded for %2$s. Game folders updated.</string>
     <string name="game_name_databases_later">%1$d names loaded for %2$s. They apply when a folder with this system is scanned.</string>
+    <string name="game_name_databases_matching">Matching game names…</string>
+    <string name="game_name_databases_matching_progress">Matching game names: %1$d / %2$d</string>
+    <string name="game_name_databases_loading">Loading game names…</string>
 </resources>

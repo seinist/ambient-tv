@@ -64,7 +64,7 @@
     <string name="game_error_provider_response">Der Anbieter konnte keine nutzbaren Informationen liefern. Bitte später erneut versuchen.</string>
     <string name="game_error_provider_system">Dieser Anbieter unterstützt das ausgewählte System nicht. Wähle eine andere Quelle.</string>
     <string name="game_source_fallback">Spieleserver</string>
-    <string name="game_catalog_imported">%1$d Namen importiert. Lies die Spieleordner erneut ein.</string>
+    <string name="game_catalog_imported">%1$d Namen eingelesen.</string>
     <string name="game_source_duplicate">Dieser Netzwerkordner ist bereits eingerichtet. Wähle die vorhandene Quelle.</string>
     <string name="game_folder_more">Nicht alle Ordner werden angezeigt. Wähle einen Unterordner.</string>
     <string name="game_folder_fallback">Spieleordner</string>
@@ -77,7 +77,7 @@
     <string name="game_name_databases_load">Spielenamen von Libretro laden</string>
     <string name="game_name_databases_hint">Wie die Datenbanken in RetroArch, für alle oder einzelne Systeme.</string>
     <string name="game_name_databases_progress">Spielenamen werden geladen: %1$d / %2$d Systeme</string>
-    <string name="game_name_databases_loaded">%1$d Namen für %2$d Systeme geladen. Spieleordner werden eingelesen…</string>
+    <string name="game_name_databases_loaded">%1$d Namen für %2$d Systeme geladen. Spieleordner aktualisiert.</string>
     <string name="game_name_databases_none">Für die Systeme deiner Bibliothek hat Libretro keine Namensdatenbank (Disc-Spiele werden am Dateinamen erkannt).</string>
     <string name="game_error_name_databases">Die Spielenamen konnten nicht geladen werden. Prüfe die Verbindung und versuche es erneut.</string>
     <string name="game_name_databases_page_hint">Erkennt Spiele an der Prüfsumme und benennt sie exakt, damit ihre Cover gefunden werden. Danach werden die Ordner mit Spielen dieses Systems neu eingelesen. Disc-Spiele sind nicht erfasst, da Disc-Images nie gehasht werden.</string>
@@ -85,6 +85,9 @@
     <string name="game_name_databases_more">Weitere Systeme</string>
     <string name="game_name_databases_count">%1$s Namen geladen</string>
     <string name="game_name_databases_missing">Nicht geladen</string>
-    <string name="game_name_databases_loaded_one">%1$d Namen für %2$s geladen. Ordner werden eingelesen…</string>
+    <string name="game_name_databases_loaded_one">%1$d Namen für %2$s geladen. Spieleordner aktualisiert.</string>
     <string name="game_name_databases_later">%1$d Namen für %2$s geladen. Sie gelten, sobald ein Ordner mit diesem System eingelesen wird.</string>
+    <string name="game_name_databases_matching">Spielenamen werden zugeordnet…</string>
+    <string name="game_name_databases_matching_progress">Spielenamen werden zugeordnet: %1$d / %2$d</string>
+    <string name="game_name_databases_loading">Spielenamen werden geladen…</string>
 </resources>

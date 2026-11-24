@@ -23,6 +23,25 @@ class GameMetadataProvidersTest {
         assertTrue(GameMetadataPlatforms.libretroCandidates(query("unknown-system")).isEmpty())
     }
 
+    @Test fun combinedNesAndPcEngineArchivesRetainTheirCompatibleNamespaces() {
+        for (extension in listOf("zip", "7z", "rar")) {
+            val nes = GameMetadataPlatforms.forQuery(query("nes", "Zelda.$extension"))
+            assertEquals(listOf(3, 106), nes.map { it.screenScraper })
+            val pce = GameMetadataPlatforms.forQuery(query("pce", "1941.$extension"))
+            assertEquals(listOf(31, 105), pce.map { it.screenScraper })
+            val candidates = GameMetadataPlatforms.libretroCandidates(
+                query("nes", "Zelda.$extension").copy(canonicalTitle = "Zelda no Densetsu (Japan)"),
+                listOf("Zelda no Densetsu (Japan)"),
+            ).filter { it.catalogMatch }
+            assertEquals(setOf("Nintendo - Nintendo Entertainment System", "Nintendo - Family Computer Disk System"),
+                candidates.map { it.metadata.providerGameId.substringBefore('|') }.toSet())
+        }
+        for (extension in listOf("nes", "unf", "unif")) {
+            assertEquals(listOf(3), GameMetadataPlatforms.forQuery(query("nes", "Game.$extension")).map { it.screenScraper })
+        }
+        assertEquals(listOf(31), GameMetadataPlatforms.forQuery(query("pce", "Game.pce")).map { it.screenScraper })
+    }
+
     @Test fun everyPlayableSystemHasAnExplicitProviderDecision() {
         // C128/CBM-II intentionally have no guessed Libretro/ScreenScraper identity.
         for (system in GameSystems.all) {
@@ -56,6 +75,27 @@ class GameMetadataProvidersTest {
         assertTrue(choices.size in 1..12)
         assertTrue(choices.none { it.exactMatch })
         assertEquals(4, choices.map { it.metadata.providerGameId.substringBefore('|') }.distinct().size)
+    }
+
+    @Test fun libretroCatalogSearchPreservesRegionalNamesWithoutGuessingAnExactRomMatch() {
+        val choices = GameMetadataPlatforms.libretroCandidates(query("snes", "short.smc").copy(title = "Super Mario"),
+            listOf("Super Mario World (Europe)", "Super Mario World (USA)"))
+        val catalog = choices.filter { it.catalogMatch }
+        assertEquals(listOf("Super Mario World (Europe)", "Super Mario World (USA)"), catalog.map { it.metadata.title })
+        assertTrue(catalog.none { it.exactMatch })
+        assertEquals("Super Mario World (Europe).png", catalog.first().metadata.coverUrl!!.toHttpUrl().pathSegments.last())
+        assertFalse(choices.last().catalogMatch)
+    }
+
+    @Test fun verifiedCatalogNameIsExactAndDistinctFromUnverifiedFilenameGuesses() {
+        val choices = GameMetadataPlatforms.libretroCandidates(query("snes", "short.smc").copy(
+            canonicalTitle = "Super Mario World (Europe)"), listOf("Super Mario World (Europe)"))
+        assertTrue(choices.first().catalogMatch)
+        assertTrue(choices.first().exactMatch)
+        assertTrue(choices.drop(1).none { it.catalogMatch })
+        val many = GameMetadataPlatforms.libretroCandidates(query("megadrive", "Sonic.zip"),
+            (1..1000).map { "Sonic $it (Europe)" })
+        assertTrue(many.size <= 30)
     }
 
     @Test fun screenScraperPreservesLocalizedMetadataButStripsAllCredentialsFromMedia() {

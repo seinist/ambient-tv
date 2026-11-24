@@ -48,6 +48,7 @@ class GameMetadataRepository @Inject constructor(
     private val gameLocks = Array(32) { Mutex() }
     private val previewLocks = Array(16) { Mutex() }
     private val downloadSlots = Semaphore(2)
+    private val nameDatabaseLock = Mutex()
     private val jobsLock = Any()
     private val folderJobs = mutableMapOf<String, MutableMap<Job, Int>>()
     private val previews get() = File(context.cacheDir, "game_metadata_previews")
@@ -92,28 +93,42 @@ class GameMetadataRepository @Inject constructor(
         } ?: stored
     }
 
-    suspend fun search(game: LibraryGame, query: String, provider: String): List<GameMetadataCandidate> =
+    suspend fun search(game: LibraryGame, query: String, provider: String,
+                       artworkKind: GameArtworkKind? = null): List<GameMetadataCandidate> =
         withGame(game) { current ->
             val ticket = library.metadataTicket(current.fileId) ?: return@withGame emptyList()
             val options = settings.options()
             val request = gameMetadataQuery(current, library.metadata(current.fileId),
-                settings.language(), options.region, ticket.crc32, query)
+                settings.language(), options.region, ticket.crc32, query, provider)
             if (request.title.isBlank()) emptyList()
-            else withLibretroImage(providers.search(request, provider).take(30), current.fileId,
-                listOf(GameArtworkKind.COVER, GameArtworkKind.BACKDROP, GameArtworkKind.TITLE))
+            else {
+                val candidates = if (provider == GameMetadataProviderIds.LIBRETRO) {
+                    val titles = library.searchDatTitles(current.systemId, request.title)
+                    GameMetadataPlatforms.libretroCandidates(request, titles).let { choices ->
+                        // Catalog search is local and usable even if the artwork server is offline.
+                        // Only fall back to probing guessed image names when the catalog has no hit.
+                        choices.filter { it.catalogMatch }.ifEmpty { choices }.let { found ->
+                            if (artworkKind == null) found.distinctBy { it.metadata.canonicalTitle } else found
+                        }
+                    }
+                } else providers.search(request, provider)
+                withLibretroImage(candidates.take(30), current.fileId,
+                    artworkKind?.let(::listOf) ?: listOf(GameArtworkKind.COVER, GameArtworkKind.BACKDROP, GameArtworkKind.TITLE),
+                    keepCatalogNames = artworkKind == null)
+            }
         }
 
     /**
-     * Libretro is a folder of images named after the exact catalog name, not a search: each
-     * entry is a guess. Only guesses with a real image are listed, since one without an image
-     * cannot be applied. A screenshot or title screen stands in for a missing box art, as in
-     * [applyCandidate]. A network or quota error fails the search instead of reading as no match.
+     * A downloaded catalog confirms names independently of artwork. Guessed Libretro image
+     * paths still require a real response, and artwork-only choices always require an image.
      */
     private suspend fun withLibretroImage(
         candidates: List<GameMetadataCandidate>, fileId: String, kinds: List<GameArtworkKind>,
+        keepCatalogNames: Boolean = false,
     ): List<GameMetadataCandidate> = coroutineScope {
         candidates.map { candidate -> async {
             if (candidate.metadata.provider != GameMetadataProviderIds.LIBRETRO) return@async candidate
+            if (keepCatalogNames && candidate.catalogMatch) return@async candidate
             val found = kinds.firstOrNull { kind ->
                 try { previewArtwork(candidate, kind, fileId) != null }
                 catch (failure: GameMetadataProviderException) { throw failure }
@@ -136,7 +151,8 @@ class GameMetadataRepository @Inject constructor(
             val stored = library.metadata(current.fileId) ?: return@withGame emptyList()
             val ticket = library.metadataTicket(current.fileId) ?: return@withGame emptyList()
             if (stored.provider !in providers.availableProviders()) return@withGame emptyList()
-            val query = gameMetadataQuery(current, stored, settings.language(), settings.options().region, ticket.crc32)
+            val query = gameMetadataQuery(current, stored, settings.language(), settings.options().region,
+                ticket.crc32, provider = stored.provider)
             withLibretroImage(providers.artworkChoices(query, stored.provider, kind).take(30), current.fileId, listOf(kind))
         }
 
@@ -234,22 +250,36 @@ class GameMetadataRepository @Inject constructor(
         if (old?.matchLocked == true && provider !in providers.availableProviders())
             throw GameMetadataProviderException(GameMetadataFailure.CREDENTIALS)
         val known = old?.takeIf { it.provider == provider }
-        val query = gameMetadataQuery(current, known, settings.language(), options.region, ticket.crc32)
+        val query = gameMetadataQuery(current, known, settings.language(), options.region,
+            ticket.crc32, provider = provider)
         val fingerprint = gameMetadataFingerprint(current, query)
-        if (!force) {
+        // A manually chosen catalog name may still lack a proven thumbnail namespace.
+        // Neither an earlier miss nor the recent text edit can postpone resolving it.
+        val unresolvedLibretro = known?.provider == GameMetadataProviderIds.LIBRETRO &&
+            (known.providerGameId.isBlank() || "cover" !in known.lockedFields &&
+                current.coverPath?.let { File(it).isFile } != true)
+        if (!force && !unresolvedLibretro) {
             when (library.lookupStatus(current.fileId, provider, fingerprint)) {
                 "found" -> {
-                    if (known != null) ensureStoredArtwork(current, known, GameArtworkKind.COVER, force = false)
-                    return@withGame known != null
+                    if (known != null) {
+                        ensureStoredArtwork(current, known, GameArtworkKind.COVER, force = false)
+                        return@withGame true
+                    }
                 }
                 "not_found", "ambiguous" -> return@withGame false
             }
-            if (known != null && known.updatedAt > System.currentTimeMillis() - FOUND_TTL) {
+            if (known != null && known.updatedAt > System.currentTimeMillis() - FOUND_TTL &&
+                (query.canonicalTitle.isNullOrBlank() || known.canonicalTitle == query.canonicalTitle)) {
                 ensureStoredArtwork(current, known, GameArtworkKind.COVER, force = false)
                 return@withGame true
             }
         }
-        val candidates = try { providers.search(query, provider) }
+        val candidates = try {
+            if (provider == GameMetadataProviderIds.LIBRETRO) {
+                GameMetadataPlatforms.libretroCandidates(query,
+                    listOfNotNull(current.verifiedTitle?.takeIf(String::isNotBlank)))
+            } else providers.search(query, provider)
+        }
         catch (error: GameMetadataProviderException) {
             if (error.kind != GameMetadataFailure.UNSUPPORTED) throw error
             library.saveLookupStatus(ticket, provider, fingerprint, "not_found", System.currentTimeMillis() + MISSING_TTL)
@@ -271,7 +301,9 @@ class GameMetadataRepository @Inject constructor(
         false
     }
 
-    data class NameDatabaseResult(val systems: Int, val names: Int)
+    data class NameDatabaseResult(val systemIds: Set<String>, val names: Int) {
+        val systems: Int get() = systemIds.size
+    }
 
     /**
      * Like RetroArch's "Update Databases", on request only: loads libretro-database's names for
@@ -281,13 +313,12 @@ class GameMetadataRepository @Inject constructor(
     suspend fun loadNameDatabases(
         only: Collection<String>? = null, onProgress: (Int, Int) -> Unit = { _, _ -> },
     ): NameDatabaseResult =
-        withContext(Dispatchers.IO) {
+        nameDatabaseLock.withLock { withContext(Dispatchers.IO) {
             val systems = (only ?: library.indexedSystems()).filter { GameNameDatabases.files(it).isNotEmpty() }.distinct().sorted()
-            val staging = File(context.cacheDir, "game-name-databases")
-            staging.deleteRecursively()
-            staging.mkdirs()
+            val staging = File(context.cacheDir, "game-name-databases-${java.util.UUID.randomUUID()}")
+            if (!staging.mkdirs()) throw IOException("The game name database cannot be staged")
             try {
-                var loaded = 0
+                val loaded = linkedSetOf<String>()
                 var names = 0
                 systems.forEachIndexed { index, system ->
                     onProgress(index, systems.size)
@@ -297,14 +328,14 @@ class GameMetadataRepository @Inject constructor(
                     currentCoroutineContext().ensureActive()
                     if (files.isNotEmpty()) {
                         names += library.importDats(system, files)
-                        loaded++
+                        loaded += system
                     }
                     files.forEach(File::delete)
                 }
                 onProgress(systems.size, systems.size)
                 NameDatabaseResult(loaded, names)
             } finally { staging.deleteRecursively() }
-        }
+        } }
 
     /** Explicit folder scans feed this bounded queue; Home never starts a folder scan. */
     suspend fun enrichFolder(folderId: String, automatic: Boolean = false,
@@ -382,25 +413,50 @@ class GameMetadataRepository @Inject constructor(
     ): Boolean {
         val ticket = library.metadataTicket(game.fileId) ?: return false
         val previous = library.metadata(game.fileId)
-        if (!manual && previous?.matchLocked == true &&
-            (previous.provider != candidate.metadata.provider || previous.providerGameId != candidate.metadata.providerGameId))
+        if (!manual && previous?.matchLocked == true && !sameGameMetadataMatch(previous, candidate.metadata))
             return false
         var incomingMetadata = candidate.metadata.copy(
             matchLocked = manual || previous?.matchLocked == true,
             updatedAt = System.currentTimeMillis())
         var confirmedImage: GameArtworkFile? = null
         val coverLocked = previous?.lockedFields?.contains("cover") == true
+        val catalogName = incomingMetadata.provider == GameMetadataProviderIds.LIBRETRO && candidate.catalogMatch
         if (incomingMetadata.provider == GameMetadataProviderIds.LIBRETRO) {
-            for (kind in listOf(GameArtworkKind.COVER, GameArtworkKind.BACKDROP, GameArtworkKind.TITLE)) {
-                val reference = incomingMetadata.artwork(kind) ?: continue
-                confirmedImage = downloadStage(incomingMetadata.provider, reference)
-                if (confirmedImage != null) {
-                    if (kind != GameArtworkKind.COVER && !coverLocked) incomingMetadata = incomingMetadata.withArtwork(
-                        GameArtworkKind.COVER, reference, incomingMetadata.provider, incomingMetadata.sourceUrl)
-                    break
+            // A combined system's DAT does not identify its thumbnail subfolder. Manual
+            // catalog results show each title once and try the compatible namespaces here.
+            val alternatives = if (catalogName && manual) GameMetadataPlatforms.libretroCandidates(
+                GameMetadataQuery(game.systemId, incomingMetadata.canonicalTitle, game.filename,
+                    canonicalTitle = incomingMetadata.canonicalTitle,
+                    language = incomingMetadata.language, region = incomingMetadata.region),
+                listOf(incomingMetadata.canonicalTitle),
+            ).map { it.metadata }.filter { it.canonicalTitle == incomingMetadata.canonicalTitle }
+                else listOf(incomingMetadata)
+            probe@ for (alternative in alternatives) {
+                for (kind in listOf(GameArtworkKind.COVER, GameArtworkKind.BACKDROP, GameArtworkKind.TITLE)) {
+                    val reference = alternative.artwork(kind) ?: continue
+                    try { confirmedImage = downloadStage(alternative.provider, reference) }
+                    catch (error: IOException) {
+                        if (!catalogName || !manual) throw error
+                        timber.log.Timber.w("Libretro artwork is unavailable for a catalog match")
+                        break@probe
+                    }
+                    if (confirmedImage != null) {
+                        incomingMetadata = alternative.copy(matchLocked = incomingMetadata.matchLocked,
+                            updatedAt = incomingMetadata.updatedAt)
+                        if (kind != GameArtworkKind.COVER && !coverLocked) incomingMetadata = incomingMetadata.withArtwork(
+                            GameArtworkKind.COVER, reference, incomingMetadata.provider, incomingMetadata.sourceUrl)
+                        break@probe
+                    }
                 }
             }
-            if (confirmedImage == null) return false
+            // Automatic enrichment keeps trying the other platform namespaces. Verified
+            // DAT titles already display in the library independently of metadata/artwork.
+            if (confirmedImage == null) {
+                if (!catalogName || !manual) return false
+                if (alternatives.map { it.providerGameId.substringBefore('|') }.distinct().size > 1)
+                    incomingMetadata = incomingMetadata.copy(providerGameId = "", coverUrl = null,
+                        backdropUrl = null, titleScreenUrl = null)
+            }
         }
         try {
             currentCoroutineContext().ensureActive()
@@ -408,10 +464,19 @@ class GameMetadataRepository @Inject constructor(
             if (!library.saveMetadata(ticket, metadata, metadata.lockedFields, manual)) return false
             if (confirmedImage != null && !coverLocked) {
                 if (!library.setArtwork(ticket, GameArtworkKind.COVER, confirmedImage, pinned = false)) return false
-            } else ensureStoredArtwork(game, metadata, GameArtworkKind.COVER, force)
-            if (manual) ensureStoredArtwork(game, metadata, GameArtworkKind.BACKDROP, force)
+            } else if (!catalogName) ensureOptionalArtwork(game, metadata, GameArtworkKind.COVER, force)
+            if (manual && (!catalogName || confirmedImage != null))
+                ensureOptionalArtwork(game, metadata, GameArtworkKind.BACKDROP, force)
             return true
         } finally { confirmedImage?.let(library.artworkFiles::discard) }
+    }
+
+    /** Applying a text match has succeeded even if an optional image cannot be fetched. */
+    private suspend fun ensureOptionalArtwork(
+        game: LibraryGame, metadata: GameMetadata, kind: GameArtworkKind, force: Boolean,
+    ) {
+        try { ensureStoredArtwork(game, metadata, kind, force) }
+        catch (_: IOException) { timber.log.Timber.w("Optional game artwork is unavailable") }
     }
 
     private suspend fun ensureStoredArtwork(

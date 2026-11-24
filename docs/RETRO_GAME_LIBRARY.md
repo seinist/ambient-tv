@@ -44,6 +44,9 @@ ROM files up to 128 MiB and for archive entries: either user-supplied (system
 selection) or, on request, the libretro-database DATs RetroArch uses for the
 systems in the library or single systems ("Load game names from Libretro", followed by a rescan
 of the affected folders).
+Catalog searches in the metadata editor use these loaded names even when artwork is missing.
+Cached checksums are matched immediately on import; SNES copier headers are normalized for
+DAT identification without replacing the original ROM checksum used by online providers.
 Nothing is downloaded without that request. No databases, copyrighted ROMs,
 BIOS files or vendor logos are bundled.
 

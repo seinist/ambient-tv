@@ -208,10 +208,7 @@ fun GameLibraryScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        if (state.scanDiscovered > 0)
-                            stringResource(if (state.enriching) R.string.game_folder_metadata_progress else R.string.game_library_scan_progress,
-                                state.scanProcessed, state.scanDiscovered)
-                        else stringResource(if (state.enriching) R.string.game_folder_enrich else R.string.game_library_scanning),
+                        gameLibraryProgressMessage(androidx.compose.ui.platform.LocalContext.current, state),
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -266,7 +263,7 @@ fun GameLibraryScreen(
                         }
                     }
                 } else if (choosingNameDatabase) {
-                    GameNameDatabasePage(state, onLoad = model::loadNameDatabases)
+                    GameNameDatabasePage(state, onLoad = model::loadNameDatabases, onCancel = model::cancelScan)
                 } else {
                     GameFolderManager(
                         state = state, choosingSystem = choosingSystem,
@@ -506,7 +503,7 @@ internal fun GameLibraryGames(
  * or of single systems, library systems first. Each row says how many names its catalog holds.
  */
 @Composable
-private fun GameNameDatabasePage(state: GameLibraryUiState, onLoad: (String?) -> Unit) {
+private fun GameNameDatabasePage(state: GameLibraryUiState, onLoad: (String?) -> Unit, onCancel: () -> Unit) {
     val available = remember { GameSystems.alphabetical.filter { GameNameDatabases.files(it.id).isNotEmpty() } }
     val (inLibrary, others) = remember(state.systems) { available.partition { it.id in state.systems } }
     val resources = androidx.compose.ui.platform.LocalContext.current.resources
@@ -524,6 +521,15 @@ private fun GameNameDatabasePage(state: GameLibraryUiState, onLoad: (String?) ->
             Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         } }
         state.message?.let { message -> item { com.ambient.tv.ui.common.SettingsHint(message) } }
+        if (state.scanning) item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(gameLibraryProgressMessage(androidx.compose.ui.platform.LocalContext.current, state),
+                    modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                TvActionButton(stringResource(R.string.game_library_scan_cancel), onClick = onCancel,
+                    icon = Icons.Filled.Close)
+            }
+        }
         if (inLibrary.isNotEmpty()) {
             item {
                 com.ambient.tv.ui.common.SettingsNavigationRow(title = stringResource(R.string.game_name_databases_library),
@@ -638,8 +644,7 @@ private fun GameFolderManager(
                         (GameSystems.byId(folder.systemId)?.shortName ?: stringResource(R.string.game_library_auto)),
                         maxLines = 2)
                     if (state.activeScanFolderId == folder.id) {
-                        Text(stringResource(if (state.enriching) R.string.game_folder_metadata_progress
-                            else R.string.game_folder_scan_progress, state.scanProcessed, state.scanDiscovered),
+                        Text(gameLibraryProgressMessage(androidx.compose.ui.platform.LocalContext.current, state),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
