@@ -62,6 +62,7 @@
     <string name="game_error_credentials">Prüfe die Zugangsdaten unter „Spieldaten und Bilder“.</string>
     <string name="game_error_request_limit">Der Anbieter lässt gerade keine weiteren Abrufe zu. Bitte später erneut versuchen.</string>
     <string name="game_error_provider_response">Der Anbieter konnte keine nutzbaren Informationen liefern. Bitte später erneut versuchen.</string>
+    <string name="game_metadata_partial_failure">Einige Spielinformationen oder Bilder konnten nicht aktualisiert werden. Fehlgeschlagene Aktualisierungen: %1$d. Erster Fehler: %2$s</string>
     <string name="game_error_provider_system">Dieser Anbieter unterstützt das ausgewählte System nicht. Wähle eine andere Quelle.</string>
     <string name="game_source_fallback">Spieleserver</string>
     <string name="game_catalog_imported">%1$d Namen eingelesen.</string>

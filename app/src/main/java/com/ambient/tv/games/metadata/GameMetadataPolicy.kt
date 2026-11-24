@@ -48,6 +48,11 @@ internal fun gameMetadataFingerprint(game: LibraryGame, query: GameMetadataQuery
 internal fun gameMetadataDigest(value: String): String = MessageDigest.getInstance("SHA-256")
     .digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 
+/** Old primary-only Libretro misses must not hide images now available from its mirror. */
+internal fun gameMetadataLookupFingerprint(provider: String, fingerprint: String): String =
+    if (provider == GameMetadataProviderIds.LIBRETRO) gameMetadataDigest("libretro-thumbnails:v2:$fingerprint")
+    else fingerprint
+
 /** A cached success for a query is usable only while its saved identity still answers it. */
 internal fun gameMetadataMatchesQueryIdentity(metadata: GameMetadata, query: GameMetadataQuery): Boolean =
     query.canonicalTitle.isNullOrBlank() || metadata.canonicalTitle == query.canonicalTitle

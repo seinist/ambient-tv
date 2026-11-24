@@ -69,4 +69,17 @@ class GameMetadataRefreshPolicyTest {
         assertFalse(gameMetadataMatchesQueryIdentity(previous, query))
         assertTrue(gameMetadataMatchesQueryIdentity(previous.copy(canonicalTitle = verified), query))
     }
+
+    @Test fun officialThumbnailMirrorVersionsOnlyTheLibretroLookupCaches() {
+        val query = gameMetadataQuery(game(), null, "en", "eu", null,
+            provider = GameMetadataProviderIds.LIBRETRO)
+        val legacy = gameMetadataFingerprint(game(), query)
+        assertNotEquals(legacy, gameMetadataLookupFingerprint(GameMetadataProviderIds.LIBRETRO, legacy))
+        for (provider in listOf(GameMetadataProviderIds.THEGAMESDB, GameMetadataProviderIds.SCREENSCRAPER)) {
+            assertEquals(legacy, gameMetadataLookupFingerprint(provider, legacy))
+        }
+        assertNotEquals(gameMetadataLookupFingerprint(GameMetadataProviderIds.LIBRETRO, legacy),
+            gameMetadataLookupFingerprint(GameMetadataProviderIds.LIBRETRO,
+                gameMetadataFingerprint(game(), query.copy(region = "jp"))))
+    }
 }

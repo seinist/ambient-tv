@@ -30,6 +30,13 @@ guessed image paths still require a validated image. Screenshots/title screens c
 missing Libretro cover. On combined systems, the artwork namespace is confirmed separately
 instead of assuming that the first compatible console is the correct one.
 
+Libretro artwork first uses the thumbnail server. If an image is missing there or the server
+returns an unusable image response, the downloader tries the same image in the official
+`libretro-thumbnails` GitHub repository for that exact system. The fallback keeps the same
+game name, image kind and provider; it does not guess another ROM or switch metadata services.
+Both paths use HTTPS and the same image size/format checks. A rejected image can also fall
+back to the game's other artwork kinds or compatible system namespaces.
+
 Loading or importing a DAT immediately applies already cached checksums to existing games,
 then scans affected folders to resolve missing checksums. SNES copier headers are excluded
 from the catalog checksum while the original checksum stays available to online providers.
@@ -46,6 +53,13 @@ ScreenScraper availability and limits depend on the application/account and the 
 client serializes its requests conservatively and respects returned cooldowns/quota failures.
 TheGamesDB platform/developer/publisher reference data is cached. Temporary network, quota or
 credential errors do not become permanent “no match” results.
+
+A malformed provider response or rejected artwork for one game does not stop a folder's
+remaining games. The folder finishes with a visible partial-result warning, including the
+number of failed updates, and later folders can continue. An ordinary missing match is not
+counted as an error. Connection, account, quota and storage failures still stop the operation;
+completed matches remain in the catalog. Invalid responses remain retryable rather than being
+cached as missing games.
 
 ## Optional private-build keys
 
@@ -143,6 +157,8 @@ outside the selected folder/grant.
   A cached successful lookup is reused only if the stored canonical identity still matches
   the current query; the next permitted enrichment rematches an outdated identity.
   Missing images have independent cache entries so one missing cover cannot erase a match.
+  The Libretro artwork policy also versions its lookup/image caches, so misses from the old
+  server-only path cannot postpone a permitted lookup through the official repository.
 - Image previews load only for visible choices. They have a 24-hour lifetime, a 48-image /
   32 MiB budget, and are removed with their folder. Automatic owned artwork has a 128 MiB
   budget; explicitly selected/pinned images are preserved until their game is removed or

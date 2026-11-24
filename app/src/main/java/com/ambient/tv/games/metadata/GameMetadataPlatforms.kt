@@ -51,6 +51,11 @@ internal object GameMetadataPlatforms {
         "sega32x" to platform("Sega - 32X", 19, "Sega 32X"),
     )
 
+    /** The official thumbnail repos use the same namespaces with spaces replaced by underscores. */
+    val libretroThumbnailRepositories: Map<String, String> = (systems.values + listOf(
+        gb, gbc, genesis, master, gear, sg1000, nes, fds, pcEngine, superGrafx, ngp, ngpc, wonderSwan, wonderSwanColor,
+    )).mapNotNull { it.libretro }.distinct().associateWith { it.replace(' ', '_') }
+
     fun forQuery(query: GameMetadataQuery): List<GameMetadataPlatform> {
         val extension = query.filename.substringAfterLast('.', "").lowercase(Locale.ROOT)
         return when (query.systemId) {

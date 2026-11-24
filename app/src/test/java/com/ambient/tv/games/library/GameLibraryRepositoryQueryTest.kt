@@ -19,14 +19,21 @@ import com.ambient.tv.ui.games.GameLibraryViewModel
 import com.ambient.tv.ui.games.GameDetailViewModel
 import com.ambient.tv.ui.games.gameOperationError
 import com.ambient.tv.R
+import com.ambient.tv.games.metadata.GameArtworkFailure
 import com.ambient.tv.games.metadata.GameArtworkKind
 import com.ambient.tv.games.metadata.GameArtworkFiles
+import com.ambient.tv.games.metadata.GameArtworkValidationException
 import com.ambient.tv.games.metadata.GameMetadata
+import com.ambient.tv.games.metadata.GameMetadataBatchException
+import com.ambient.tv.games.metadata.GameMetadataFailure
+import com.ambient.tv.games.metadata.GameMetadataProviderException
 import com.ambient.tv.games.metadata.GameMetadataProviders
 import com.ambient.tv.games.metadata.GameMetadataRepository
 import com.ambient.tv.games.metadata.GameMetadataSettings
 import com.ambient.tv.games.metadata.GameMetadataLocalImporter
 import com.ambient.tv.games.metadata.gameMetadataFingerprint
+import com.ambient.tv.games.metadata.gameMetadataDigest
+import com.ambient.tv.games.metadata.gameMetadataLookupFingerprint
 import com.ambient.tv.games.metadata.gameMetadataQuery
 import java.io.File
 import java.util.Base64
@@ -457,7 +464,7 @@ class GameLibraryRepositoryQueryTest {
         val settings = GameMetadataSettings(preferences, TokenStore(prefs, preferences))
         val query = gameMetadataQuery(game, library.metadata("one"), settings.language(),
             settings.options().region, ticket.crc32, provider = "libretro")
-        val fingerprint = gameMetadataFingerprint(game, query)
+        val fingerprint = gameMetadataLookupFingerprint("libretro", gameMetadataFingerprint(game, query))
         assertTrue(library.saveLookupStatus(ticket, "libretro", fingerprint, "found", Long.MAX_VALUE))
         val requests = java.util.concurrent.atomic.AtomicInteger()
         val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
@@ -477,6 +484,279 @@ class GameLibraryRepositoryQueryTest {
             assertEquals(verified, library.game("one")!!.title)
             assertEquals("$verified.png", corrected.coverUrl!!.toHttpUrl().pathSegments.last())
             assertNotNull(library.artworkPath("one", GameArtworkKind.COVER))
+        } finally { metadata.closeForTests() }
+    }
+
+    @Test fun primaryOnlyLibretroQueryMissDoesNotSuppressTheNewOfficialMirror() = runBlocking {
+        val verified = "Verified Game (Europe)"
+        seed("one", verified = verified)
+        val library = repository()
+        val game = library.game("one")!!
+        val ticket = library.metadataTicket("one")!!
+        val settings = GameMetadataSettings(preferences, TokenStore(prefs, preferences))
+        val query = gameMetadataQuery(game, null, settings.language(), settings.options().region,
+            ticket.crc32, provider = "libretro")
+        val legacyFingerprint = gameMetadataFingerprint(game, query)
+        assertTrue(library.saveLookupStatus(ticket, "libretro", legacyFingerprint, "not_found", Long.MAX_VALUE))
+        val requestedHosts = mutableListOf<String>()
+        val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
+            val host = chain.request().url.host
+            requestedHosts += host
+            val found = host == "raw.githubusercontent.com"
+            okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(if (found) 200 else 404).message(if (found) "OK" else "Not Found")
+                .body(if (found) imageBytes().toResponseBody("image/png".toMediaType()) else byteArrayOf().toResponseBody())
+                .build()
+        })
+        try {
+            assertTrue(withTimeout(5_000) { metadata.refresh(game, force = false) })
+            assertEquals(listOf("thumbnails.libretro.com", "raw.githubusercontent.com"), requestedHosts)
+            assertEquals(verified, library.metadata("one")!!.canonicalTitle)
+            assertEquals("thumbnails.libretro.com", library.metadata("one")!!.coverUrl!!.toHttpUrl().host)
+            assertNotNull(library.artworkPath("one", GameArtworkKind.COVER))
+            assertTrue(withTimeout(5_000) { metadata.refresh(library.game("one")!!, force = false) })
+            assertEquals("The new cache still avoids repeated downloads", 2, requestedHosts.size)
+        } finally { metadata.closeForTests() }
+    }
+
+    @Test fun primaryOnlyArtworkMissRetriesTheMirrorAndKeepsAManuallyLockedReference() = runBlocking {
+        val verified = "Verified Game (Europe)"
+        seed("one", verified = verified)
+        val library = repository()
+        val ticket = library.metadataTicket("one")!!
+        val platform = "Nintendo - Super Nintendo Entertainment System"
+        val reference = "https://thumbnails.libretro.com/$platform/Named_Boxarts/$verified.png".toHttpUrl().toString()
+        val selected = GameMetadata(title = verified, canonicalTitle = verified, provider = "libretro",
+            providerGameId = "$platform|$verified", coverUrl = reference,
+            matchLocked = true, lockedFields = setOf("cover"))
+        assertTrue(library.saveMetadata(ticket, selected, manual = true))
+        val stored = library.metadata("one")!!
+        val legacyFingerprint = gameMetadataDigest("image:cover:libretro:$reference")
+        assertTrue(library.saveLookupStatus(ticket, "libretro", legacyFingerprint, "not_found", Long.MAX_VALUE))
+        val requestedHosts = mutableListOf<String>()
+        val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
+            val host = chain.request().url.host
+            requestedHosts += host
+            val found = host == "raw.githubusercontent.com"
+            okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(if (found) 200 else 404).message(if (found) "OK" else "Not Found")
+                .body(if (found) imageBytes().toResponseBody("image/png".toMediaType()) else byteArrayOf().toResponseBody())
+                .build()
+        })
+        try {
+            assertTrue(withTimeout(5_000) { metadata.ensureArtwork(library.game("one")!!, GameArtworkKind.COVER) })
+            assertEquals(listOf("thumbnails.libretro.com", "raw.githubusercontent.com"), requestedHosts)
+            assertEquals(stored, library.metadata("one"))
+            assertNotNull(library.artworkPath("one", GameArtworkKind.COVER))
+            assertTrue(library.artworkPinned("one", GameArtworkKind.COVER))
+        } finally { metadata.closeForTests() }
+    }
+
+    @Test fun malformedLibretroCoverCanUseAValidSnapshotAndContinueTheMetadataBatch() = runBlocking {
+        seed("a", title = "INTERNAL FIRST", verified = "First Game (Europe)")
+        seed("b", title = "INTERNAL SECOND", verified = "Second Game (Europe)")
+        val library = repository()
+        val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
+            val path = chain.request().url.pathSegments
+            val invalidCover = path.last() == "First Game (Europe).png" && "Named_Boxarts" in path
+            okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(200).message("OK").body(if (invalidCover)
+                    "<html>Not an image</html>".toResponseBody("text/html".toMediaType())
+                    else imageBytes().toResponseBody("image/png".toMediaType())).build()
+        })
+        val progress = mutableListOf<Pair<Int, Int>>()
+        try {
+            withTimeout(5_000) { metadata.enrichFolder("snes", automatic = true) { done, total -> progress += done to total } }
+            assertEquals(2 to 2, progress.last())
+            assertEquals("First Game (Europe)", library.metadata("a")!!.canonicalTitle)
+            assertTrue("Named_Snaps" in library.metadata("a")!!.coverUrl!!.toHttpUrl().pathSegments)
+            assertEquals("Second Game (Europe)", library.metadata("b")!!.canonicalTitle)
+            assertNotNull(library.artworkPath("a", GameArtworkKind.COVER))
+            assertNotNull(library.artworkPath("b", GameArtworkKind.COVER))
+        } finally { metadata.closeForTests() }
+    }
+
+    @Test fun invalidMetadataForOneRomReportsAPartialBatchAndContinuesTheOtherRoms() = runBlocking {
+        val brokenName = "Broken Game (Europe)"
+        val validName = "Valid Game (Europe)"
+        seed("00-broken", title = "INTERNAL BROKEN", verified = brokenName)
+        seed("01-valid", title = "INTERNAL VALID", verified = validName)
+        val library = repository()
+        val requestedNames = mutableListOf<String>()
+        val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
+            val name = chain.request().url.pathSegments.last()
+            requestedNames += name
+            val bytes = if (name == "$brokenName.png") "invalid PNG".toByteArray() else imageBytes()
+            okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(200).message("OK").body(bytes.toResponseBody("image/png".toMediaType())).build()
+        })
+        val progress = mutableListOf<Pair<Int, Int>>()
+        try {
+            val error = runCatching { withTimeout(5_000) {
+                metadata.enrichFolder("snes", automatic = true) { done, total -> progress += done to total }
+            } }.exceptionOrNull()
+            assertTrue(error is GameMetadataBatchException)
+            val partial = error as GameMetadataBatchException
+            assertEquals(1, partial.failedGames)
+            assertEquals(2, partial.processedGames)
+            assertTrue(partial.firstFailure is GameArtworkValidationException)
+            assertEquals(2 to 2, progress.last())
+            assertEquals(brokenName, library.game("00-broken")!!.title)
+            assertNull(library.metadata("00-broken"))
+            assertNull(library.artworkPath("00-broken", GameArtworkKind.COVER))
+            assertEquals(validName, library.metadata("01-valid")!!.canonicalTitle)
+            assertNotNull(library.artworkPath("01-valid", GameArtworkKind.COVER))
+            val previousRequests = requestedNames.size
+            val retry = runCatching { withTimeout(5_000) {
+                metadata.refresh(library.game("00-broken")!!, force = false)
+            } }.exceptionOrNull()
+            assertTrue(retry is GameArtworkValidationException)
+            assertTrue("A failed ROM remains retryable instead of being cached as missing", requestedNames.size > previousRequests)
+        } finally { metadata.closeForTests() }
+    }
+
+    @Test fun metadataBatchStillStopsImmediatelyForProviderRateLimits() = runBlocking {
+        val firstName = "First Game (Europe)"
+        seed("00-first", verified = firstName)
+        seed("01-second", verified = "Second Game (Europe)")
+        val library = repository()
+        val requestedNames = mutableListOf<String>()
+        val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
+            requestedNames += chain.request().url.pathSegments.last()
+            okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(429).message("Too Many Requests").body(byteArrayOf().toResponseBody()).build()
+        })
+        try {
+            val error = runCatching { withTimeout(5_000) { metadata.enrichFolder("snes", automatic = true) } }
+                .exceptionOrNull()
+            assertTrue(error is GameMetadataProviderException)
+            assertEquals(GameMetadataFailure.RATE_LIMIT, (error as GameMetadataProviderException).kind)
+            assertEquals(listOf("$firstName.png"), requestedNames)
+            assertNull(library.metadata("01-second"))
+        } finally { metadata.closeForTests() }
+    }
+
+    @Test fun metadataBatchCancellationKeepsCompletedWorkAndDoesNotAttemptLaterRoms() = runBlocking {
+        val firstName = "First Game (Europe)"
+        val secondName = "Second Game (Europe)"
+        seed("00-first", verified = firstName)
+        seed("01-second", verified = secondName)
+        seed("02-third", verified = "Third Game (Europe)")
+        val library = repository()
+        val requestedNames = mutableListOf<String>()
+        val pending = CompletableDeferred<Unit>()
+        val release = java.util.concurrent.CountDownLatch(1)
+        val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
+            val name = chain.request().url.pathSegments.last()
+            requestedNames += name
+            if (name == "$secondName.png") {
+                pending.complete(Unit)
+                check(release.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            }
+            okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(200).message("OK").body(imageBytes().toResponseBody("image/png".toMediaType())).build()
+        })
+        val task = launch { metadata.enrichFolder("snes", automatic = true) }
+        try {
+            withTimeout(5_000) { pending.await() }
+            task.cancel()
+            release.countDown()
+            withTimeout(5_000) { task.join() }
+            assertTrue(task.isCancelled)
+            assertEquals(listOf("$firstName.png", "$secondName.png"), requestedNames)
+            assertNotNull(library.metadata("00-first"))
+            assertNotNull(library.artworkPath("00-first", GameArtworkKind.COVER))
+            assertNull(library.metadata("01-second"))
+            assertNull(library.metadata("02-third"))
+        } finally { release.countDown(); task.cancelAndJoin(); metadata.closeForTests() }
+    }
+
+    @Test fun rejectedImagesInOneCompatibleNamespaceDoNotBlockTheVerifiedNameInAnother() = runBlocking {
+        val verified = "Color Game (World)"
+        seed("color", folder = "root", system = "gb", filename = "opaque.zip", verified = verified)
+        val library = repository()
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
+            requests.incrementAndGet()
+            val valid = chain.request().url.pathSegments.first() == "Nintendo - Game Boy Color"
+            okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(200).message("OK").body(if (valid) imageBytes().toResponseBody("image/png".toMediaType())
+                    else "invalid image".toResponseBody("image/png".toMediaType())).build()
+        })
+        try {
+            assertTrue(withTimeout(5_000) { metadata.refresh(library.game("color")!!) })
+            assertEquals(4, requests.get())
+            assertEquals("Nintendo - Game Boy Color|$verified", library.metadata("color")!!.providerGameId)
+            assertEquals(verified, library.game("color")!!.title)
+            assertNotNull(library.artworkPath("color", GameArtworkKind.COVER))
+        } finally { metadata.closeForTests() }
+    }
+
+    @Test fun entirelyInvalidArtworkRemainsAnErrorAndIsNeverCachedAsAMissingGame() = runBlocking {
+        seed("one", verified = "Verified Game (Europe)")
+        val library = repository()
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
+            requests.incrementAndGet()
+            okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(200).message("OK").body("<html>Not an image</html>".toResponseBody("text/html".toMediaType())).build()
+        })
+        try {
+            repeat(2) { attempt ->
+                val error = runCatching { withTimeout(5_000) { metadata.refresh(library.game("one")!!) } }.exceptionOrNull()
+                assertTrue(error is GameMetadataProviderException)
+                assertEquals(GameMetadataFailure.INVALID_RESPONSE, (error as GameMetadataProviderException).kind)
+                assertEquals((attempt + 1) * 6, requests.get())
+            }
+            assertNull(library.metadata("one"))
+            assertNull(library.artworkPath("one", GameArtworkKind.COVER))
+            assertEquals("Verified Game (Europe)", library.game("one")!!.title)
+        } finally { metadata.closeForTests() }
+    }
+
+    @Test fun artworkRateLimitStillStopsWithoutTryingAlternativeImages() = runBlocking {
+        seed("one", verified = "Verified Game (Europe)")
+        val library = repository()
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
+            requests.incrementAndGet()
+            okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(429).message("Too Many Requests").body(byteArrayOf().toResponseBody()).build()
+        })
+        try {
+            val error = runCatching { withTimeout(5_000) { metadata.refresh(library.game("one")!!) } }.exceptionOrNull()
+            assertTrue(error is GameMetadataProviderException)
+            assertEquals(GameMetadataFailure.RATE_LIMIT, (error as GameMetadataProviderException).kind)
+            assertEquals(1, requests.get())
+            assertNull(library.metadata("one"))
+        } finally { metadata.closeForTests() }
+    }
+
+    @Test fun rejectedArtworkDimensionsKeepTheirTypedFailureAfterTryingAlternatives() = runBlocking {
+        seed("one", verified = "Verified Game (Europe)")
+        val library = repository()
+        val bitmap = android.graphics.Bitmap.createBitmap(8193, 1, android.graphics.Bitmap.Config.ARGB_8888)
+        val image = java.io.ByteArrayOutputStream().use { output ->
+            try {
+                assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output))
+                output.toByteArray()
+            } finally { bitmap.recycle() }
+        }
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
+            requests.incrementAndGet()
+            okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(200).message("OK").body(image.toResponseBody("image/png; charset=binary".toMediaType())).build()
+        })
+        try {
+            val error = runCatching { withTimeout(5_000) { metadata.refresh(library.game("one")!!) } }.exceptionOrNull()
+            assertTrue(error is GameArtworkValidationException)
+            assertEquals(GameArtworkFailure.DIMENSIONS, (error as GameArtworkValidationException).kind)
+            assertEquals(context.getString(R.string.game_error_artwork_dimensions),
+                gameOperationError(context, error, R.string.game_error_provider_response))
+            assertEquals(3, requests.get())
+            assertNull(library.metadata("one"))
+            assertTrue(File(context.cacheDir, "game_artwork_staging").listFiles().orEmpty().isEmpty())
         } finally { metadata.closeForTests() }
     }
 
@@ -1173,6 +1453,53 @@ class GameLibraryRepositoryQueryTest {
             assertFalse(removed.loading)
             assertNull(removed.error)
             assertNull(library.metadata("one"))
+        } finally {
+            owner.clear()
+            metadata.closeForTests()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test fun metadataPartialWarningSurvivesCatalogReloadAndClearsForTheNextSuccessfulOperation() = runBlocking {
+        val brokenName = "Broken Game (Europe)"
+        seed("00-broken", verified = brokenName)
+        seed("01-valid", verified = "Valid Game (Europe)")
+        val library = repository()
+        val owner = ViewModelStore()
+        val invalid = java.util.concurrent.atomic.AtomicBoolean(true)
+        val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
+            val bad = invalid.get() && chain.request().url.pathSegments.last() == "$brokenName.png"
+            okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(200).message("OK").body((if (bad) "invalid PNG".toByteArray() else imageBytes())
+                    .toResponseBody("image/png".toMediaType())).build()
+        })
+        Dispatchers.setMain(Dispatchers.Unconfined)
+        try {
+            val model = GameLibraryViewModel(library, files, access, WakeMachines(preferences, DlnaStore(prefs)),
+                preferences, context, metadata)
+            owner.put("games", model)
+            model.section("snes")
+            withTimeout(10_000) { model.state.first { it.ready } }
+            model.enrichFolder(child)
+            val partial = withTimeout(10_000) { model.state.first { !it.busy && it.scanProcessed == 2 && it.error != null } }
+            val warning = context.getString(R.string.game_metadata_partial_failure, 1,
+                context.getString(R.string.game_error_artwork_format))
+            assertEquals(warning, partial.error)
+            assertFalse(partial.enriching)
+            assertNotNull(library.artworkPath("01-valid", GameArtworkKind.COVER))
+
+            model.favorite(library.game("01-valid")!!)
+            val reloaded = withTimeout(10_000) { model.state.first { state ->
+                state.games.any { it.fileId == "01-valid" && it.favorite }
+            } }
+            assertEquals(warning, reloaded.error)
+
+            invalid.set(false)
+            model.enrichFolder(child)
+            val complete = withTimeout(10_000) { model.state.first { !it.busy && it.scanProcessed == 2 && it.error == null } }
+            assertFalse(complete.enriching)
+            assertNotNull(library.artworkPath("00-broken", GameArtworkKind.COVER))
         } finally {
             owner.clear()
             metadata.closeForTests()

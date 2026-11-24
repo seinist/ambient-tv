@@ -18,6 +18,7 @@ import com.ambient.tv.games.library.GameLibraryRepository
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.games.library.LibraryGame
 import com.ambient.tv.games.metadata.GameMetadataRepository
+import com.ambient.tv.games.metadata.GameMetadataBatchException
 import com.ambient.tv.ui.files.FilesViewModel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -95,6 +96,8 @@ class GameLibraryViewModel @Inject constructor(
     // Reloads may finish after an import/scan failed. Only the read collector owns clearing
     // its own error; successful catalog refreshes must not erase operation feedback.
     private var libraryReadError: String? = null
+    private var metadataFailedGames = 0
+    private var firstMetadataFailureReason: String? = null
     private val selection = MutableStateFlow<GameLibraryQuery?>(null)
 
     private data class ReadRequest(
@@ -183,6 +186,7 @@ class GameLibraryViewModel @Inject constructor(
     fun importDat(systemId: String, uri: Uri) {
         if (scan?.isCompleted == false) return
         scan = viewModelScope.launch {
+            resetMetadataFailures()
             mutable.update { it.copy(busy = true, scanning = true, scanPhase = GameLibraryScanPhase.NAME_DATABASES,
                 scanProcessed = 0, scanDiscovered = 1, error = null, message = null) }
             var catalogsCurrent = false
@@ -331,6 +335,7 @@ class GameLibraryViewModel @Inject constructor(
     fun scanAll() {
         if (scan?.isCompleted == false) return
         scan = viewModelScope.launch {
+            resetMetadataFailures()
             mutable.update { it.copy(busy = true, scanning = true,
                 scanPhase = GameLibraryScanPhase.FILES, scanProcessed = 0, scanDiscovered = 0,
                 error = null, message = null) }
@@ -372,6 +377,7 @@ class GameLibraryViewModel @Inject constructor(
     fun loadNameDatabases(systemId: String? = null) {
         if (scan?.isCompleted == false) return
         scan = viewModelScope.launch {
+            resetMetadataFailures()
             mutable.update { it.copy(busy = true, scanning = true, error = null,
                 scanPhase = GameLibraryScanPhase.NAME_DATABASES,
                 scanProcessed = 0, scanDiscovered = 0, message = null) }
@@ -461,6 +467,7 @@ class GameLibraryViewModel @Inject constructor(
         if (scan?.isCompleted == false) return
         if (folder.id in mutable.value.removingFolders) return
         scan = viewModelScope.launch {
+            resetMetadataFailures()
             mutable.update { it.copy(busy = true, scanning = true, scanProcessed = 0,
                 scanPhase = if (scanFiles) GameLibraryScanPhase.FILES else GameLibraryScanPhase.METADATA,
                 scanDiscovered = 0, scanFolderName = folder.path, error = null, message = null) }
@@ -494,9 +501,25 @@ class GameLibraryViewModel @Inject constructor(
         mutable.update { it.copy(enriching = true, scanPhase = GameLibraryScanPhase.METADATA,
             scanProcessed = 0, scanDiscovered = 0) }
         if (scanFiles) metadata.importLocalFolder(folder.id)
-        metadata.enrichFolder(folder.id, automatic = scanFiles) { processed, known ->
-            mutable.update { it.copy(scanProcessed = processed, scanDiscovered = known) }
+        try {
+            metadata.enrichFolder(folder.id, automatic = scanFiles) { processed, known ->
+                mutable.update { it.copy(scanProcessed = processed, scanDiscovered = known) }
+            }
+        } catch (error: GameMetadataBatchException) {
+            // The folder was fully attempted. Keep its partial result visible while other
+            // folders continue, and accumulate counts for this operation instead of replacing them.
+            metadataFailedGames += error.failedGames
+            if (firstMetadataFailureReason == null) firstMetadataFailureReason =
+                gameOperationError(context, error.firstFailure, R.string.game_error_search)
+            libraryReadError = null
+            mutable.update { it.copy(error = context.getString(R.string.game_metadata_partial_failure,
+                metadataFailedGames, firstMetadataFailureReason)) }
         }
+    }
+
+    private fun resetMetadataFailures() {
+        metadataFailedGames = 0
+        firstMetadataFailureReason = null
     }
     /** Persist the exact SAF tree grant and register it with Files, just like video folders. */
     fun addLocalSource(uri: Uri) {
