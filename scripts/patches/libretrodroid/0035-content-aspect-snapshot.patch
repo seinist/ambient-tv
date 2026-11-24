@@ -273,7 +273,7 @@ diff --git a/src/main/cpp/libretrodroidjni.h b/src/main/cpp/libretrodroidjni.h
 diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
 --- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
 +++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
-@@ -259,6 +259,12 @@
+@@ -259,7 +259,13 @@
      public static native void onKeyEvent(int port, int action, int keyCode);
  
      public static native void refreshAspectRatio();
@@ -286,3 +286,4 @@ diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/
      public static native void setAspectRatioOverride(float ratio);
      public static native void setRotation(int degrees);
  
+     public static native Controller[][] getControllers();
