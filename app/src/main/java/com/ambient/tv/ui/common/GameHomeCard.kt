@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.common
 
+import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -133,6 +134,8 @@ internal fun GameHomeCard(
                         systemId = item.ratingKey.substringAfterLast('|', ""),
                         modifier = Modifier.fillMaxSize(),
                         focused = focused,
+                        fileId = Uri.decode(item.ratingKey.removePrefix(com.ambient.tv.ui.home.GAME_HOME_ITEM_PREFIX)
+                            .substringBeforeLast('|')),
                     )
                 }
                 if (!heroRow) {

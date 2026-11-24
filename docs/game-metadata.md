@@ -162,6 +162,14 @@ outside the selected folder/grant.
   credits are decoded for the selected game.
 - Online enrichment reads a folder in bounded SQL pages. Local metadata resolution uses the
   indexed catalog, while image discovery reuses a scan session and bounded directory cache.
+- During an active folder enrichment, the focused TV game is considered first, followed by
+  games currently visible in Library or Home. Only games belonging to that folder are promoted.
+  The next request follows focus changes without cancelling an image already being fetched.
+  After up to three promoted games, ordinary folder order advances; a bounded record prevents
+  repeated downloads or progress counts when that order catches up. Browsing alone starts no
+  metadata scan and does not change automatic-matching or provider settings.
+- Uncached game-cover display requests wait until the card is visible. TV cards retain the
+  shared image loader's focus priority; memory hits and loads already admitted stay usable.
 - Bulk revisions and progress are coalesced; manual changes remain immediately visible.
 - Known metadata misses are cached for seven days and successful matches for thirty days.
   File version, locale, provider identity and DAT revision/name changes produce a new lookup fingerprint.

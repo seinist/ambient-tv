@@ -21,11 +21,14 @@ import androidx.compose.material.icons.filled.SportsEsports
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -55,22 +58,29 @@ internal fun GamePlayerTouchLayout(
     onShowTouch: () -> Unit = {},
     rewindSeconds: Float? = null,
     onRewind: (Boolean) -> Unit = {},
+    contentAspectRatio: Float = 4f / 3f,
+    fitSurface: Boolean = true,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize().then(if (handheld) Modifier.safeDrawingPadding() else Modifier)) {
+        val landscape = handheld && maxWidth >= maxHeight
         val docked = handheld && touchEnabled && maxHeight > maxWidth
         val deckHeight = if (docked) gameTouchDeckHeight(touchMode, maxWidth.value, touchStyle, presentation).dp.coerceAtMost(maxHeight) else 0.dp
-        // Pad utilities are above the picture in landscape and below it in portrait.
-        // Reserve the same space while paused/hidden so the native surface never jumps.
-        val toolbarHeight = when {
-            !handheld -> 0.dp
-            touchEnabled && !docked -> gameTouchUtilityToolbarHeight(
-                touchMode, maxWidth.value, maxHeight.value, touchStyle, presentation,
-            ).dp
-            else -> GAME_TOUCH_TOOLBAR_MIN_HEIGHT.dp
+        val sideLayout = remember(landscape, maxWidth, maxHeight, touchMode, touchEnabled, touchStyle,
+            presentation, contentAspectRatio, fitSurface) {
+            if (landscape) gamePlayerLandscapeLayout(touchMode, maxWidth.value, maxHeight.value,
+                contentAspectRatio, touchEnabled, touchStyle, presentation, fitSurface) else null
         }
+        // Portrait keeps its deck and app controls. Landscape utilities use the side gutters,
+        // so a 4:3 game can use the full safe height without a top strip shrinking its picture.
+        val toolbarHeight = if (handheld && !landscape) 72.dp else 0.dp
         val viewportHeight = (maxHeight - deckHeight - toolbarHeight).coerceAtLeast(1.dp)
+        val surfaceBounds = sideLayout?.surface ?: if (handheld && fitSurface)
+            gamePictureBounds(maxWidth.value, viewportHeight.value, contentAspectRatio)
+                .translate(Offset(0f, toolbarHeight.value))
+            else Rect(0f, toolbarHeight.value, maxWidth.value, toolbarHeight.value + viewportHeight.value)
+        fun Rect.position() = Modifier.offset(left.dp, top.dp).size(width.dp, height.dp)
         surface(
-            Modifier.align(Alignment.TopCenter).offset(y = toolbarHeight).fillMaxWidth().height(viewportHeight)
+            surfaceBounds.position()
                 .testTag("game-player-surface")
                 // With a gamepad shown, only the dedicated menu button opens the OSD.
                 // Pointer systems continue to receive untouched native DS/3DS/Wii input.
@@ -93,10 +103,11 @@ internal fun GamePlayerTouchLayout(
                 style = touchStyle,
                 presentation = presentation,
                 coreActions = coreActions,
+                layoutOverride = sideLayout?.controls,
             )
         }
         if (handheld && touchEnabled && hiddenForGamepad && !menuVisible) {
-            Box(Modifier.align(Alignment.TopEnd).padding(12.dp).size(48.dp)
+            Box((sideLayout?.showTouch?.position() ?: Modifier.align(Alignment.TopEnd).padding(12.dp).size(48.dp))
                 .testTag("game-touch-show").clip(CircleShape)
                 .background(Color.Black.copy(alpha = .58f)).clickable(onClick = onShowTouch),
                 contentAlignment = Alignment.Center) {
@@ -106,7 +117,7 @@ internal fun GamePlayerTouchLayout(
         }
         if (handheld && !menuVisible) {
             Box(
-                Modifier.align(Alignment.TopStart).padding(12.dp).size(48.dp)
+                (sideLayout?.menu?.position() ?: Modifier.align(Alignment.TopStart).padding(12.dp).size(48.dp))
                     .testTag("game-player-menu")
                     .clip(CircleShape).background(Color.Black.copy(alpha = .58f))
                     .clickable(onClick = onMenu),
@@ -117,8 +128,8 @@ internal fun GamePlayerTouchLayout(
             }
         }
         if (handheld && playing && !menuVisible && rewindSeconds != null) {
-            Box(Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
-                .size(width = 56.dp, height = 48.dp).testTag("game-player-rewind").clip(RoundedCornerShape(12.dp))
+            Box((sideLayout?.rewind?.position() ?: Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
+                .size(width = 56.dp, height = 48.dp)).testTag("game-player-rewind").clip(RoundedCornerShape(12.dp))
                     .background(Color.Black.copy(alpha = .58f)).holdAction(onHold = onRewind),
                 contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
