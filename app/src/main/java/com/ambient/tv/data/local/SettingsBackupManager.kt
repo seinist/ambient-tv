@@ -653,7 +653,12 @@ class SettingsBackupManager @Inject constructor(
                     imageCacheMb = preferences.imageCacheMb,
                     cardImages1080 = preferences.cardImages1080,
                 ),
-                connections = ConnectionSettingsExtras(tvheadendHtspPort = preferences.tvheadendHtspPort),
+                connections = ConnectionSettingsExtras(
+                    tvheadendHtspPort = preferences.tvheadendHtspPort,
+                    rommEnabled = preferences.rommEnabled,
+                    rommServerUrl = preferences.rommServerUrl.takeIf(String::isNotBlank),
+                    rommUsername = preferences.rommUsername.takeIf(String::isNotBlank),
+                ),
                 credentials = if (includeCredentials) tokenStore.exportGameMetadataCredentials()?.let {
                     CredentialSettingsExtras(gameMetadata = it)
                 } else null,
@@ -1216,6 +1221,15 @@ class SettingsBackupManager @Inject constructor(
             settings.cardImages1080?.let { preferences.cardImages1080 = it }
         }
         extras?.connections?.tvheadendHtspPort?.let { preferences.tvheadendHtspPort = it }
+        extras?.connections?.let { connections ->
+            connections.rommServerUrl?.let { url ->
+                // A sign-in belongs to its server: another address needs this device to sign in again.
+                if (url.trim() != preferences.rommServerUrl) preferences.rommAuthMode = ""
+                preferences.rommServerUrl = url
+            }
+            connections.rommUsername?.let { preferences.rommUsername = it }
+            connections.rommEnabled?.let { preferences.rommEnabled = it }
+        }
     }
 
     internal companion object {
