@@ -358,6 +358,19 @@ class GameLibraryRepository @Inject constructor(
     suspend fun importDats(systemId: String, files: List<java.io.File>): Int =
         replaceDat(systemId) { insert -> files.sumOf { file -> file.inputStream().use { GameRomDatReader.parse(it, insert) } } }
 
+    /** Names in each system's catalog (imported or loaded); systems without one are absent. */
+    suspend fun datCatalogSizes(): Map<String, Int> = withContext(Dispatchers.IO) {
+        db.readableDatabase.rawQuery("SELECT system_id,COUNT(*) FROM game_dat_entries GROUP BY system_id", null).use { rows ->
+            buildMap { while (rows.moveToNext()) put(rows.getString(0), rows.getInt(1)) }
+        }
+    }
+
+    /** Folders holding games of [systemId]: the ones a new name catalog for it changes. */
+    suspend fun foldersWithSystem(systemId: String): Set<String> = withContext(Dispatchers.IO) {
+        db.readableDatabase.rawQuery("SELECT DISTINCT folder_id FROM game_entries WHERE system_id=?",
+            arrayOf(systemId)).use { rows -> buildSet { while (rows.moveToNext()) add(rows.getString(0)) } }
+    }
+
     /** Systems with games in the library. */
     suspend fun indexedSystems(): Set<String> = withContext(Dispatchers.IO) {
         db.readableDatabase.rawQuery("SELECT DISTINCT system_id FROM game_entries", null).use { rows ->

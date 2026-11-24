@@ -12,7 +12,7 @@ Choose the provider, automatic matching, metadata language and preferred artwork
 
 | Source | What it provides | Setup |
 | --- | --- | --- |
-| Libretro name databases | Exact No-Intro names by ROM checksum (the DATs RetroArch loads with *Update Databases*), loaded on request under **Manage game folders and sources** for the consoles in the library; a rescan applies them. With an exact name, Libretro box art matches automatically | No account; cartridge systems only (disc images are not hashed) |
+| Libretro name databases | Exact No-Intro names by ROM checksum (the DATs RetroArch loads with *Update Databases*), loaded on request under **Manage game folders and sources**, for all consoles in the library or single ones; the folders they affect are scanned again. With an exact name, Libretro box art matches automatically | No account; cartridge systems only (disc images are not hashed) |
 | Local files | Curated text from `gamelist.xml`, plus cover/background files inside the assigned ROM folder | Read during an explicit file scan; no account |
 | Libretro | Cover art, screenshots and title screens using the system's thumbnail namespace and canonical game name | Default; no API key |
 | ScreenScraper | Game descriptions, release year, genres, developer/publisher, players and regional artwork when supplied by the service | Application developer ID/password; optional personal account |

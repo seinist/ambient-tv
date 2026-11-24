@@ -47,6 +47,7 @@ import com.ambient.tv.R
 import com.ambient.tv.data.files.FileSource
 import com.ambient.tv.ui.files.NetworkSourceDialog
 import com.ambient.tv.games.GameSystems
+import com.ambient.tv.games.metadata.GameNameDatabases
 import com.ambient.tv.games.library.LibraryGame
 import com.ambient.tv.games.library.coverModel
 import com.ambient.tv.games.library.coverAspectRatio
@@ -108,6 +109,7 @@ fun GameLibraryScreen(
     var removing by remember { mutableStateOf<GameLibraryFolder?>(null) }
     var metadataSettingsOpen by remember { mutableStateOf(false) }
     var choosingDatSystem by remember { mutableStateOf(false) }
+    var choosingNameDatabase by remember { mutableStateOf(false) }
     var datSystemId by rememberSaveable { mutableStateOf("snes") }
     val controls = rememberGameLibraryBrowseControls()
     val handheld = LocalHandheldUi.current
@@ -132,6 +134,7 @@ fun GameLibraryScreen(
             metadataSettingsOpen -> { metadataSettingsOpen = false; restoreMetadataFocus = true }
             controls.showOptions -> controls.closeOptions()
             choosingDatSystem -> choosingDatSystem = false
+            choosingNameDatabase -> choosingNameDatabase = false
             choosingSystem -> choosingSystem = false
             state.selectedSource != null -> if (!model.folderUp()) model.closePicker()
             managing -> if (startManaging) onBack() else managing = false
@@ -189,6 +192,7 @@ fun GameLibraryScreen(
                     managing = !managing
                     choosingSystem = false
                     choosingDatSystem = false
+                    choosingNameDatabase = false
                     if (!managing) model.closePicker()
                 }
             },
@@ -261,6 +265,8 @@ fun GameLibraryScreen(
                             })
                         }
                     }
+                } else if (choosingNameDatabase) {
+                    GameNameDatabasePage(state, onLoad = model::loadNameDatabases)
                 } else {
                     GameFolderManager(
                         state = state, choosingSystem = choosingSystem,
@@ -280,7 +286,10 @@ fun GameLibraryScreen(
                             networkEditor = FileSource(name = "Retro NAS", kind = "smb", showInFiles = false)
                         },
                         onImportDat = { choosingDatSystem = true },
-                        onLoadNameDatabases = model::loadNameDatabases,
+                        onLoadNameDatabases = {
+                            choosingNameDatabase = true
+                            model.refreshNameCatalogs()
+                        },
                         onMetadataSettings = { metadataSettingsOpen = true },
                         metadataSettingsModifier = Modifier.focusRequester(metadataSettingsFocus),
                         onEditSource = { source -> networkEditor = source },
@@ -490,6 +499,49 @@ internal fun GameLibraryGames(
                 }
             }
         }
+}
+
+/**
+ * One page per panel, like the other sub pages: load the names of every library system at once
+ * or of single systems, library systems first. Each row says how many names its catalog holds.
+ */
+@Composable
+private fun GameNameDatabasePage(state: GameLibraryUiState, onLoad: (String?) -> Unit) {
+    val available = remember { GameSystems.alphabetical.filter { GameNameDatabases.files(it.id).isNotEmpty() } }
+    val (inLibrary, others) = remember(state.systems) { available.partition { it.id in state.systems } }
+    val resources = androidx.compose.ui.platform.LocalContext.current.resources
+    val numbers = remember { java.text.NumberFormat.getIntegerInstance() }
+    fun status(systemId: String): String {
+        val count = state.nameCatalogs[systemId] ?: 0
+        return if (count > 0) resources.getString(R.string.game_name_databases_count, numbers.format(count))
+            else resources.getString(R.string.game_name_databases_missing)
+    }
+    com.ambient.tv.ui.settings.SettingsSubheader(stringResource(R.string.game_name_databases_load), firstInContent = true)
+    TvLazyColumn(modifier = Modifier.fillMaxSize(), allowUpExit = true,
+        verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        item { com.ambient.tv.ui.common.SettingsHint(stringResource(R.string.game_name_databases_page_hint)) }
+        state.error?.let { error -> item {
+            Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        } }
+        state.message?.let { message -> item { com.ambient.tv.ui.common.SettingsHint(message) } }
+        if (inLibrary.isNotEmpty()) {
+            item {
+                com.ambient.tv.ui.common.SettingsNavigationRow(title = stringResource(R.string.game_name_databases_library),
+                    onClick = { onLoad(null) }, enabled = !state.scanning, icon = Icons.Filled.CloudDownload)
+            }
+            items(inLibrary, key = { it.id }) { system ->
+                com.ambient.tv.ui.common.SettingsNavigationRow(title = system.name, summary = status(system.id),
+                    onClick = { onLoad(system.id) }, enabled = !state.scanning, icon = gameSystemVector(system.id))
+            }
+        }
+        if (others.isNotEmpty()) {
+            item { com.ambient.tv.ui.settings.SettingsSubheader(stringResource(R.string.game_name_databases_more)) }
+            items(others, key = { it.id }) { system ->
+                com.ambient.tv.ui.common.SettingsNavigationRow(title = system.name, summary = status(system.id),
+                    onClick = { onLoad(system.id) }, enabled = !state.scanning, icon = gameSystemVector(system.id))
+            }
+        }
+    }
 }
 
 @Composable

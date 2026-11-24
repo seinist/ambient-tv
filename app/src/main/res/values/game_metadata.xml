@@ -75,9 +75,16 @@
     <string name="game_error_folder_limit">Too many game folders are configured. Remove a folder before adding another.</string>
     <string name="game_error_scan_limit">This game folder is too large. Choose a smaller subfolder.</string>
     <string name="game_name_databases_load">Load game names from Libretro</string>
-    <string name="game_name_databases_hint">Like the databases in RetroArch: recognizes games by checksum and names them exactly, so covers are found. Then scans the game folders again.</string>
+    <string name="game_name_databases_hint">Like the databases in RetroArch, for all or single systems.</string>
     <string name="game_name_databases_progress">Loading game names: %1$d / %2$d systems</string>
     <string name="game_name_databases_loaded">%1$d names loaded for %2$d systems. Scanning the game folders…</string>
     <string name="game_name_databases_none">Libretro has no name database for the systems in your library (disc games are recognized by their file name).</string>
     <string name="game_error_name_databases">The game names could not be loaded. Check the connection and try again.</string>
+    <string name="game_name_databases_page_hint">Recognizes games by checksum and names them exactly, so their covers are found. Afterwards the folders with games of that system are scanned again. Disc games are not covered: disc images are never hashed.</string>
+    <string name="game_name_databases_library">All systems in the library</string>
+    <string name="game_name_databases_more">More systems</string>
+    <string name="game_name_databases_count">%1$s names loaded</string>
+    <string name="game_name_databases_missing">Not loaded</string>
+    <string name="game_name_databases_loaded_one">%1$d names loaded for %2$s. Scanning its folders…</string>
+    <string name="game_name_databases_later">%1$d names loaded for %2$s. They apply when a folder with this system is scanned.</string>
 </resources>

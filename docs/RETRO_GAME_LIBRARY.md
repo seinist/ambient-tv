@@ -42,7 +42,8 @@ them. They do not promise full commercial title names. A No-Intro/Redump DAT
 (XML or clrmamepro text, CRC32 key) supplies verified names for supported plain
 ROM files up to 128 MiB and for archive entries: either user-supplied (system
 selection) or, on request, the libretro-database DATs RetroArch uses for the
-systems in the library ("Load game names from Libretro", followed by a rescan).
+systems in the library or single systems ("Load game names from Libretro", followed by a rescan
+of the affected folders).
 Nothing is downloaded without that request. No databases, copyrighted ROMs,
 BIOS files or vendor logos are bundled.
 
