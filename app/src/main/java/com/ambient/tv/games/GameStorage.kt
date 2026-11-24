@@ -33,7 +33,10 @@ class GameStorage @Inject constructor(@ApplicationContext private val context: C
 
     /** RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY for [game]. */
     fun savesDirectory(game: PreparedGame): File =
-        game.remote?.let { File(remoteRoot(it.serverKey), "saves").also { it.mkdirs() } } ?: savesDirectory
+        game.remote?.let { remoteSavesDirectory(it.serverKey) } ?: savesDirectory
+
+    /** The save folder the cores get for every game of one RomM server. */
+    fun remoteSavesDirectory(serverKey: String): File = File(remoteRoot(serverKey), "saves").also { it.mkdirs() }
 
     /** Save states of one game (see GameStateStore). */
     fun statesDirectory(game: PreparedGame): File = (game.remote?.let { File(remoteRoot(it.serverKey), "states/${game.saveKey}") }

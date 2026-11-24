@@ -293,11 +293,11 @@ fun SearchScreen(
                         !uiState.hasSearched -> RecentSearches(uiState.recentSearches, viewModel::useRecentSearch, viewModel::clearRecentSearches)
                         uiState.hasSearched && !uiState.hasResults && !uiState.isSearching ->
                             com.ambient.tv.ui.common.BrowseStatusPanel(
-                                title = stringResource(if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState,
+                                title = stringResource(if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState, uiState.rommState,
                                     uiState.trailerState, uiState.telegramState, uiState.youtubeState, uiState.spotifyState,
                                     uiState.radioState, uiState.tvheadendState).any { it == SearchSourceState.ERROR || it == SearchSourceState.PARTIAL })
                                     R.string.offline_browse_search_unavailable else R.string.search_no_results),
-                                body = if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState, uiState.trailerState, uiState.telegramState, uiState.youtubeState, uiState.spotifyState, uiState.radioState, uiState.tvheadendState).any { it == SearchSourceState.ERROR || it == SearchSourceState.PARTIAL }) {
+                                body = if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState, uiState.rommState, uiState.trailerState, uiState.telegramState, uiState.youtubeState, uiState.spotifyState, uiState.radioState, uiState.tvheadendState).any { it == SearchSourceState.ERROR || it == SearchSourceState.PARTIAL }) {
                                     stringResource(R.string.search_no_results_partial_error)
                                 } else stringResource(R.string.search_no_results_body),
                             )
@@ -360,6 +360,7 @@ private fun searchSourceLabel(source: SearchSource): String = when (source) {
     SearchSource.JELLYFIN -> searchSystemName(MediaSystem.JELLYFIN)
     SearchSource.EMBY -> searchSystemName(MediaSystem.EMBY)
     SearchSource.LIVE_TV -> stringResource(R.string.tvh_live)
+    SearchSource.ROMM -> searchSystemName(MediaSystem.ROMM)
     SearchSource.TRAILERS -> searchSystemName(MediaSystem.TRAILERS)
     SearchSource.TELEGRAM -> searchSystemName(MediaSystem.TELEGRAM)
     SearchSource.YOUTUBE -> searchSystemName(MediaSystem.YOUTUBE)
@@ -399,6 +400,7 @@ private fun SearchRows(
     val jellyfinGroups = remember(state.jellyfinResults) { searchMediaGroups(state.jellyfinResults) }
     val embyGroups = remember(state.embyResults) { searchMediaGroups(state.embyResults) }
     val trailerGroups = remember(state.trailerResults) { searchMediaGroups(state.trailerResults) }
+    val rommGroups = remember(state.rommResults) { rommSearchGroups(state.rommResults) }
     val telegramGroups = remember(state.telegramResults) { telegramSearchGroups(state.telegramResults) }
     val spotifyGroups = remember(state.spotifyResults) {
         SpotifyEntityType.entries.mapNotNull { type ->
@@ -412,6 +414,7 @@ private fun SearchRows(
     val firstMediaKey = plexGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
         ?: jellyfinGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
         ?: embyGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
+        ?: rommGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
         ?: trailerGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
         ?: telegramGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
     val firstExternalGroup = when {
@@ -427,10 +430,10 @@ private fun SearchRows(
     // The outer list spans all provider rows. It can locate the first remaining result even
     // when the row holding focus disappears and its nested LazyRow is no longer composed.
     val focusSlots = remember(
-        plexGroups, jellyfinGroups, embyGroups, trailerGroups, telegramGroups, spotifyGroups,
+        plexGroups, jellyfinGroups, embyGroups, rommGroups, trailerGroups, telegramGroups, spotifyGroups,
         channelsBySource, programsBySource, recordingsBySource, state.liveTvSources,
         state.youtubeResults, state.radioResults,
-        state.plexState, state.jellyfinState, state.embyState, state.trailerState, state.telegramState,
+        state.plexState, state.jellyfinState, state.embyState, state.rommState, state.trailerState, state.telegramState,
         state.tvheadendState, state.youtubeState, state.spotifyState, state.radioState,
     ) { buildList {
         var index = 1 // Result count.
@@ -447,6 +450,7 @@ private fun SearchRows(
         status(state.plexState); mediaGroups(plexGroups, "plex")
         status(state.jellyfinState); mediaGroups(jellyfinGroups, "jellyfin")
         status(state.embyState); mediaGroups(embyGroups, "emby")
+        status(state.rommState); mediaGroups(rommGroups, "romm")
         status(state.trailerState); mediaGroups(trailerGroups, "trailers")
         status(state.telegramState); mediaGroups(telegramGroups, "telegram")
         status(state.tvheadendState)
@@ -562,6 +566,26 @@ private fun SearchRows(
                 LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
                     itemsIndexed(groupItems, key = { _, it -> it.ratingKey }) { _, item ->
                         MediaTile(item = item, modifier = Modifier.rowColumnFocusTarget(rowFocus, rowKey, item.ratingKey), style = mediaTileStyle, showDescription = false, onClick = { onItemClick(item.ratingKey) }, onFocused = { onFocused(item) }, requestInitialFocus = (restoreResultFocus && item.ratingKey == focusedKey) || (requestInitialResultFocus && plexGroups.isEmpty() && jellyfinGroups.isEmpty() && item.ratingKey == firstMediaKey))
+                    }
+                }
+                }
+            }
+        }
+        sourceStatusItem("romm-status", MediaSystem.ROMM, state.rommState)
+        itemsIndexed(rommGroups, key = { _, group -> "romm-${group.first}" }) { _, (titleRes, groupItems) ->
+            Column(modifier = Modifier.bringFocusedContextIntoView(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SearchGroupTitle(MediaSystem.ROMM, titleRes)
+                val rowKey = "search:romm:$titleRes"
+                val keys = remember(groupItems) { groupItems.map { it.ratingKey } }
+                val rowState = rememberBrowseRowState(initialFirstVisibleItemIndex = keys.indexOf(resultFocus.itemKey).coerceAtLeast(0))
+                RegisterRowColumnFocus(rowFocus, rowKey, rowState, keys)
+                BrowseFocusRow(rowKey) {
+                LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
+                    itemsIndexed(groupItems, key = { _, it -> it.ratingKey }) { _, item ->
+                        MediaTile(item = item, modifier = Modifier.rowColumnFocusTarget(rowFocus, rowKey, item.ratingKey), style = mediaTileStyle, showDescription = false, onClick = { onItemClick(item.ratingKey) },
+                            onFocused = { onFocused(item) },
+                            requestInitialFocus = (restoreResultFocus && item.ratingKey == focusedKey) ||
+                                (requestInitialResultFocus && item.ratingKey == firstMediaKey))
                     }
                 }
                 }
@@ -1124,6 +1148,7 @@ private fun SearchList(
     val jellyfinGroups = remember(state.jellyfinResults) { searchMediaGroups(state.jellyfinResults) }
     val embyGroups = remember(state.embyResults) { searchMediaGroups(state.embyResults) }
     val trailerGroups = remember(state.trailerResults) { searchMediaGroups(state.trailerResults) }
+    val rommGroups = remember(state.rommResults) { rommSearchGroups(state.rommResults) }
     val telegramGroups = remember(state.telegramResults) { telegramSearchGroups(state.telegramResults) }
     val spotifyGroups = remember(state.spotifyResults) {
         SpotifyEntityType.entries.mapNotNull { type ->
@@ -1136,6 +1161,7 @@ private fun SearchList(
     val firstMediaKey = plexGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
         ?: jellyfinGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
         ?: embyGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
+        ?: rommGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
         ?: trailerGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
         ?: telegramGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
     val firstExternalGroup = when {
@@ -1151,10 +1177,10 @@ private fun SearchList(
 
     // Include non-focusable headers/status rows in physical lazy indices.
     val focusSlots = remember(
-        plexGroups, jellyfinGroups, embyGroups, trailerGroups, telegramGroups, spotifyGroups,
+        plexGroups, jellyfinGroups, embyGroups, rommGroups, trailerGroups, telegramGroups, spotifyGroups,
         channelsBySource, programsBySource, recordingsBySource, state.liveTvSources,
         state.youtubeResults, state.radioResults,
-        state.plexState, state.jellyfinState, state.embyState, state.trailerState, state.telegramState,
+        state.plexState, state.jellyfinState, state.embyState, state.rommState, state.trailerState, state.telegramState,
         state.tvheadendState, state.youtubeState, state.spotifyState, state.radioState,
     ) { buildList {
         var index = 0
@@ -1170,6 +1196,7 @@ private fun SearchList(
         status(state.plexState); mediaGroups(plexGroups)
         status(state.jellyfinState); mediaGroups(jellyfinGroups)
         status(state.embyState); mediaGroups(embyGroups)
+        status(state.rommState); mediaGroups(rommGroups)
         status(state.trailerState); mediaGroups(trailerGroups)
         status(state.telegramState); mediaGroups(telegramGroups)
         status(state.tvheadendState)
@@ -1255,6 +1282,19 @@ private fun SearchList(
         embyGroups.forEach { (groupRes, groupItems) ->
             item(key = "emby-list-header:$groupRes") { SearchListGroupHeader(MediaSystem.EMBY, groupRes) }
             items(groupItems, key = { "emby-media:${it.ratingKey}" }) { item ->
+                SearchMediaListItem(
+                    item = item,
+                    onClick = { onItemClick(item.ratingKey) },
+                    onFocused = { onFocused(item) },
+                    requestInitialFocus = item.ratingKey == requestedMediaKey,
+                )
+            }
+        }
+
+        sourceListStatusItem("romm-list-status", MediaSystem.ROMM, state.rommState)
+        rommGroups.forEach { (groupRes, groupItems) ->
+            item(key = "romm-list-header:$groupRes") { SearchListGroupHeader(MediaSystem.ROMM, groupRes) }
+            items(groupItems, key = { "romm-media:${it.ratingKey}" }) { item ->
                 SearchMediaListItem(
                     item = item,
                     onClick = { onItemClick(item.ratingKey) },
@@ -1395,6 +1435,10 @@ internal fun searchMediaGroups(items: List<MediaItem>): List<Pair<Int, List<Medi
     R.string.search_episodes to items.filter { it.type == "episode" },
     R.string.search_other to items.filter { it.type !in setOf("movie", "show", "episode") },
 ).filter { it.second.isNotEmpty() }
+
+/** RomM search lists games only, in one row of game cards. */
+internal fun rommSearchGroups(items: List<MediaItem>): List<Pair<Int, List<MediaItem>>> =
+    if (items.isEmpty()) emptyList() else listOf(R.string.game_library_title to items)
 
 /** Telegram search returns only playable posts: videos first, then audio. */
 internal fun telegramSearchGroups(items: List<MediaItem>): List<Pair<Int, List<MediaItem>>> = listOf(

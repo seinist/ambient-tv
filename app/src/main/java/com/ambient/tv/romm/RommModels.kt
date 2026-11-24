@@ -126,7 +126,18 @@ data class RommPage<T>(
 
 @Serializable
 data class RommUser(
+    val id: Long = 0L,
     val username: String = "",
+)
+
+/** A user collection; each user's Favorites is the one with [isFavorite]. */
+data class RommCollection(
+    val id: Long,
+    val name: String,
+    val isFavorite: Boolean,
+    val userId: Long,
+    val ownerUsername: String,
+    val romIds: Set<Long>,
 )
 
 @Serializable

@@ -1507,9 +1507,18 @@ private fun AmbientTvApp(
     }
     val gameSelectionState by gameSelections.state.collectAsState()
     /** A RomM game opens the shared game player; its data are mirrored with the server there. */
-    fun playRomm(game: com.ambient.tv.games.library.LibraryGame, fresh: Boolean) {
+    fun playRomm(fileId: String, systemId: String, title: String, fresh: Boolean) {
         browseSelectionIntents.begin()
-        launchGameOnTarget.value(game, fresh) { navigate -> navigate() }
+        playOnSelectedTarget(Destinations.gamePlayer(fileId, systemId, fresh), title = title,
+            navigate = { route -> navController.navigate(route) { launchSingleTop = true } })
+    }
+    fun playRommGame(game: com.ambient.tv.games.library.LibraryGame, fresh: Boolean) =
+        playRomm(game.fileId, game.systemId, game.title, fresh)
+    /** Selecting a RomM game (library, Home, search) follows the media selection setting like local games. */
+    fun selectRomm(fileId: String, systemId: String, title: String) {
+        if (com.ambient.tv.data.local.MediaSelectionPreferences.normalize(appPreferences.mediaSelectionBehaviorKey) ==
+            com.ambient.tv.data.local.MediaSelectionPreferences.PLAY) playRomm(fileId, systemId, title, false)
+        else navController.navigate(Destinations.rommDetail(fileId)) { launchSingleTop = true }
     }
     DisposableEffect(gameSelections, navController, playbackGateLifecycle) {
         val listener = androidx.navigation.NavController.OnDestinationChangedListener { _, _, _ -> gameSelections.navigationChanged() }
@@ -1656,7 +1665,10 @@ private fun AmbientTvApp(
         // Home and the game library share Details/Play/Ask. Options and details remain
         // local catalog reads; only an explicit Play may probe or wake the ROM source.
         if (ratingKey.startsWith(com.ambient.tv.ui.home.GAME_HOME_ITEM_PREFIX)) {
-            gameSelectionFileId(ratingKey)?.let { gameSelections.select(it, appPreferences.mediaSelectionBehaviorKey) }
+            gameSelectionFileId(ratingKey)?.let { fileId ->
+                if (com.ambient.tv.romm.RommKeys.owns(fileId)) selectRomm(fileId, ratingKey.substringAfterLast('|'), "")
+                else gameSelections.select(fileId, appPreferences.mediaSelectionBehaviorKey)
+            }
             return
         }
 
@@ -3037,7 +3049,11 @@ private fun AmbientTvApp(
                                         handleMediaSelection(ratingKey)
                                     }
                                 },
-                                onGameInfo = { key -> gameSelectionFileId(key)?.let(gameSelections::details) },
+                                onGameInfo = { key -> gameSelectionFileId(key)?.let { fileId ->
+                                    if (com.ambient.tv.romm.RommKeys.owns(fileId))
+                                        navController.navigate(Destinations.rommDetail(fileId)) { launchSingleTop = true }
+                                    else gameSelections.details(fileId)
+                                } },
                                 onYouTubeVideoClick = { videoId, session -> handleYouTubeSelection(videoId, session) },
                                 onTrailerVideoClick = { videoId, session ->
                                     beginMediaSelection()
@@ -3602,11 +3618,7 @@ private fun AmbientTvApp(
                                 com.ambient.tv.ui.romm.RommLibraryScreen(
                                     initialSection = entry.arguments?.getString("sectionKey")?.takeIf(String::isNotBlank) ?: "all",
                                     onBack = ::focusSidebar,
-                                    onSelect = { game ->
-                                        if (com.ambient.tv.data.local.MediaSelectionPreferences.normalize(appPreferences.mediaSelectionBehaviorKey) ==
-                                            com.ambient.tv.data.local.MediaSelectionPreferences.PLAY) playRomm(game, false)
-                                        else navController.navigate(Destinations.rommDetail(game.fileId)) { launchSingleTop = true }
-                                    },
+                                    onSelect = { game -> selectRomm(game.fileId, game.systemId, game.title) },
                                     onOpenDetails = { game -> navController.navigate(Destinations.rommDetail(game.fileId)) { launchSingleTop = true } },
                                     onOpenSettings = { openSystemSettings(com.ambient.tv.ui.common.MediaSystem.ROMM.key) },
                                 )
@@ -3619,8 +3631,8 @@ private fun AmbientTvApp(
                     ) { entry ->
                         com.ambient.tv.ui.romm.RommGameDetailScreen(
                             onBack = { if (navController.currentBackStackEntry === entry) navigateBack() },
-                            onPlay = { game -> playRomm(game, false) },
-                            onPlayFresh = { game -> playRomm(game, true) },
+                            onPlay = { game -> playRommGame(game, false) },
+                            onPlayFresh = { game -> playRommGame(game, true) },
                             onOpenSettings = { openSystemSettings(com.ambient.tv.ui.common.MediaSystem.ROMM.key) },
                         )
                     }

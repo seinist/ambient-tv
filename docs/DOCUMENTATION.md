@@ -442,6 +442,12 @@ Settings › Media servers › **RomM** (also in the add-system catalog and the 
 
 **Server-managed data:** for RomM games firmware, in-game saves and save states are the server's; local games keep theirs on the device as before. Before a game starts the device's copy is matched to the server: the platform's firmware from RomM (checked by MD5; firmware removed on the server is removed here; core support folders such as fonts come from the shared system folder, firmware never does), the newest in-game save (`.srm`) and all save states. Every save, rename, deletion and the automatic state on leaving go back to the server. States keep their kind, number, label and core build in their file name on the server, so any RomM version keeps them and states of another core build stay marked; other clients' states are left alone. The game's Info panel shows where they stand (on the server, sending, waiting for the server). Without a connection the last copy is played and the changes are sent once the server answers. A required firmware file missing in RomM is named at the start.
 
+**Core data:** what a core writes into the save folder by itself (memory cards, a console's NAND, PSP SAVEDATA, backup RAM) belongs to the game that was running when it changed. It goes to RomM as `ambient-data.zip` among that game's saves, with each file's date; before a game starts, files from its archive replace the device's copy only where the archive's copy is newer. Caches, logs and core settings stay on the device; an archive over 64 MB is not sent.
+
+**Favorites:** marking a RomM game as a favorite shows at once and goes to the user's own **Favorites** collection on the server (created like RomM's web interface does when it is missing); opening RomM brings that collection back, so favorites marked in RomM or on another device appear here too. Without a connection the change waits for the server.
+
+**Home and search:** the Home editor offers RomM's **Recently played games**, **Favorite games** and **All games** as rows with the same cards as local games; the global search lists matching RomM games. Both read the library list on the device and never wait for the server.
+
 **Offline:** RomM counts as a server like Plex, Jellyfin or TVHeadend: if its machine is offline, every service on it is shown offline.
 
 ---

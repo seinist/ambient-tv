@@ -9,7 +9,7 @@ internal data class PreparedSearchPlaybackReturn(val state: SearchUiState, val t
 
 /** Player IDs and the UI's provider-qualified focus IDs intentionally have separate formats. */
 internal fun searchPlaybackReturnItemKey(state: SearchUiState, itemId: String): String? {
-    sequenceOf(state.results, state.jellyfinResults, state.embyResults, state.trailerResults, state.telegramResults)
+    sequenceOf(state.results, state.jellyfinResults, state.embyResults, state.rommResults, state.trailerResults, state.telegramResults)
         .flatten().firstOrNull { itemId in it.allRatingKeys }?.let { return it.ratingKey }
     state.youtubeResults.firstOrNull { itemId == "youtube:${it.videoId}" }
         ?.let { return "search:youtube:${it.videoId}" }
@@ -36,6 +36,7 @@ internal fun searchResultFocusAddress(state: SearchUiState, itemKey: String?): B
     media("plex", searchMediaGroups(state.results))?.let { return it }
     media("jellyfin", searchMediaGroups(state.jellyfinResults))?.let { return it }
     media("emby", searchMediaGroups(state.embyResults))?.let { return it }
+    media("romm", rommSearchGroups(state.rommResults))?.let { return it }
     media("trailers", searchMediaGroups(state.trailerResults))?.let { return it }
     media("telegram", telegramSearchGroups(state.telegramResults))?.let { return it }
     state.youtubeResults.firstOrNull { itemKey == "search:youtube:${it.videoId}" }?.let { return address("search:youtube") }
@@ -66,6 +67,7 @@ internal fun prepareSearchPlaybackReturn(state: SearchUiState, returned: Navigat
             jellyfinState = state.jellyfinState.completed(state.jellyfinResults.isNotEmpty()),
             embyState = state.embyState.completed(state.embyResults.isNotEmpty()),
             trailerState = state.trailerState.completed(state.trailerResults.isNotEmpty()),
+            rommState = state.rommState.completed(state.rommResults.isNotEmpty()),
             telegramState = state.telegramState.completed(state.telegramResults.isNotEmpty()),
             youtubeState = state.youtubeState.completed(state.youtubeResults.isNotEmpty()),
             spotifyState = state.spotifyState.completed(state.spotifyResults.isNotEmpty()),

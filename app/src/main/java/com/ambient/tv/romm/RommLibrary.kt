@@ -7,7 +7,13 @@ import com.ambient.tv.data.local.RegularPrefs
 import com.ambient.tv.games.GameSystems
 import com.ambient.tv.games.library.LibraryGame
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -59,6 +65,10 @@ class RommLibrary @Inject constructor(
     val state: StateFlow<RommLibraryState> = mutable.asStateFlow()
     private val refreshLock = Mutex()
     private val fileLock = Any()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val favoriteLock = Any()
+    private val favoriteSync = Mutex()
+    @Volatile private var favoriteJob: Job? = null
 
     /** The catalog of the current server, from memory or this device's copy. */
     fun catalog(): RommCatalog? {
@@ -85,6 +95,7 @@ class RommLibrary @Inject constructor(
             withContext(Dispatchers.IO) { synchronized(fileLock) { writeCatalog(account.serverKey, catalog) } }
             mutable.update { it.copy(serverKey = account.serverKey, catalog = catalog, refreshing = false, error = null,
                 revision = it.revision + 1) }
+            scheduleFavoriteSync()
             catalog
         } catch (error: Throwable) {
             mutable.update { it.copy(refreshing = false, error = error) }
@@ -145,12 +156,95 @@ class RommLibrary @Inject constructor(
         return libraryGame(account, rom, platform(rom.platformId), favorites(account.serverKey), played(account.serverKey))
     }
 
+    /** Shows the change here at once; RomM's Favorites collection follows when the server answers. */
     fun setFavorite(fileId: String, value: Boolean) {
         val (serverKey, romId) = RommKeys.parse(fileId) ?: return
-        val current = favorites(serverKey)
-        val next = if (value) current + romId else current - romId
-        prefs.edit { putStringSet(favoritesKey(serverKey), next.mapTo(hashSetOf()) { it.toString() }) }
+        synchronized(favoriteLock) {
+            val current = favorites(serverKey)
+            val next = if (value) current + romId else current - romId
+            val pending = pendingFavorites(serverKey).filterNot { it.drop(1).toLongOrNull() == romId }.toSet() +
+                ((if (value) "+" else "-") + romId)
+            prefs.edit {
+                putStringSet(favoritesKey(serverKey), next.mapTo(hashSetOf()) { it.toString() })
+                putStringSet(pendingFavoritesKey(serverKey), pending)
+            }
+        }
         mutable.update { it.copy(revision = it.revision + 1) }
+        scheduleFavoriteSync(FAVORITE_SYNC_DELAY_MS)
+    }
+
+    /** Brings this device's favorites and the user's RomM Favorites together, in the background. */
+    fun scheduleFavoriteSync(delayMs: Long = 0L) {
+        favoriteJob?.cancel()
+        favoriteJob = scope.launch {
+            delay(delayMs)
+            try {
+                syncFavorites()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                // Kept here and sent with the next attempt (opening RomM, the next change).
+                com.ambient.tv.diagnostics.DiagnosticLog.warn("romm", "favorites not synced: ${error.message}")
+            }
+        }
+    }
+
+    /**
+     * RomM keeps each user's favorites in a collection marked as Favorites. Changes made on this
+     * device are sent first; then the collection is what this device shows.
+     */
+    suspend fun syncFavorites() = favoriteSync.withLock {
+        val account = accounts.account() ?: return@withLock
+        val serverKey = account.serverKey
+        val pending = synchronized(favoriteLock) {
+            // Favorites marked before they were synced with RomM count as changes to send.
+            if (!prefs.getBoolean(favoritesSyncedKey(serverKey), false)) {
+                val earlier = favorites(serverKey).map { "+$it" }
+                prefs.edit {
+                    putStringSet(pendingFavoritesKey(serverKey), pendingFavorites(serverKey) + earlier)
+                    putBoolean(favoritesSyncedKey(serverKey), true)
+                }
+            }
+            pendingFavorites(serverKey)
+        }
+        val adds = pending.filter { it.startsWith("+") }.mapNotNullTo(linkedSetOf()) { it.drop(1).toLongOrNull() }
+        val removes = pending.filter { it.startsWith("-") }.mapNotNullTo(linkedSetOf()) { it.drop(1).toLongOrNull() }
+        val me = client.me(account.baseUrl, account.auth)
+        val own = client.collections(account).filter { it.isFavorite &&
+            (if (me.id != 0L && it.userId != 0L) it.userId == me.id else it.ownerUsername.equals(account.username, ignoreCase = true)) }
+        var collection = own.firstOrNull()
+        if (collection == null && adds.isNotEmpty()) {
+            collection = try {
+                client.createFavorites(account, FAVORITES_NAME)
+            } catch (error: RommHttpException) {
+                // An ordinary collection of that name already exists.
+                if (error is RommAuthException) throw error
+                client.createFavorites(account, FAVORITES_FALLBACK_NAME)
+            }
+        }
+        val current = collection
+        val synced = if (current == null) null else {
+            val add = adds.filterNot { it in current.romIds }
+            val remove = removes.filter { it in current.romIds }
+            if (add.isEmpty() && remove.isEmpty()) current else client.changeCollection(account, current, add, remove)
+        }
+        val remote = synced?.romIds.orEmpty()
+        val changed = synchronized(favoriteLock) {
+            // Changes made while this ran stay for the next round.
+            val later = pendingFavorites(serverKey) - pending
+            val next = remote.toMutableSet()
+            later.forEach { op ->
+                val id = op.drop(1).toLongOrNull() ?: return@forEach
+                if (op.startsWith("+")) next += id else next -= id
+            }
+            val before = favorites(serverKey)
+            prefs.edit {
+                putStringSet(favoritesKey(serverKey), next.mapTo(hashSetOf()) { it.toString() })
+                putStringSet(pendingFavoritesKey(serverKey), later)
+            }
+            before != next
+        }
+        if (changed) mutable.update { it.copy(revision = it.revision + 1) }
     }
 
     /** After the first frame of a RomM game, like the local library's Recent games. */
@@ -215,6 +309,9 @@ class RommLibrary @Inject constructor(
     private fun favorites(serverKey: String): Set<Long> =
         prefs.getStringSet(favoritesKey(serverKey), emptySet()).orEmpty().mapNotNullTo(hashSetOf()) { it.toLongOrNull() }
 
+    private fun pendingFavorites(serverKey: String): Set<String> =
+        prefs.getStringSet(pendingFavoritesKey(serverKey), emptySet()).orEmpty().toSet()
+
     private fun played(serverKey: String): Map<Long, Long> =
         prefs.getString(playedKey(serverKey), "").orEmpty().split(',').mapNotNull { entry ->
             val id = entry.substringBefore(':').toLongOrNull() ?: return@mapNotNull null
@@ -254,6 +351,12 @@ class RommLibrary @Inject constructor(
             section.takeIf { it.startsWith("p") }?.removePrefix("p")?.toLongOrNull()
 
         private fun favoritesKey(serverKey: String) = "romm_favorites_$serverKey"
+        private fun pendingFavoritesKey(serverKey: String) = "romm_favorites_pending_$serverKey"
+        private fun favoritesSyncedKey(serverKey: String) = "romm_favorites_synced_$serverKey"
+        private const val FAVORITE_SYNC_DELAY_MS = 1_500L
+        /** The name RomM's web interface gives the Favorites it creates. */
+        private const val FAVORITES_NAME = "Favorites"
+        private const val FAVORITES_FALLBACK_NAME = "Ambient TV Favorites"
         private fun playedKey(serverKey: String) = "romm_played_$serverKey"
 
         internal fun parseInstant(value: String): Long? = runCatching {

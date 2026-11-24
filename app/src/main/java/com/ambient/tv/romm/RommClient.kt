@@ -297,6 +297,57 @@ class RommClient @Inject constructor(
         Unit
     }
 
+    // Collections (the user's Favorites) ----------------------------------------------------------
+
+    suspend fun collections(account: RommAccount): List<RommCollection> = io {
+        items(json.parseToJsonElement(execute(http, get(api(account.baseUrl, "collections")), account.auth)))
+            .mapNotNull { collection(it) }
+    }
+
+    /** Creates the user's Favorites collection, the way RomM's web interface does. */
+    suspend fun createFavorites(account: RommAccount, name: String): RommCollection = io {
+        val url = api(account.baseUrl, "collections").newBuilder()
+            .addQueryParameter("is_favorite", "true")
+            .addQueryParameter("is_public", "false")
+            .build()
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("name", name)
+            .addFormDataPart("description", "")
+            .build()
+        collection(json.parseToJsonElement(execute(http, Request.Builder().url(url).post(body).build(), account.auth)))
+            ?: throw IOException("RomM did not return the new collection")
+    }
+
+    /** Adds or removes games in one of the user's collections, keeping the others in it. */
+    suspend fun changeCollection(account: RommAccount, target: RommCollection, add: Collection<Long>,
+                                 remove: Collection<Long>): RommCollection = io {
+        var current = target
+        try {
+            if (add.isNotEmpty()) current = collectionRoms(account, current.id, add, adding = true)
+            if (remove.isNotEmpty()) current = collectionRoms(account, current.id, remove, adding = false)
+            current
+        } catch (error: RommHttpException) {
+            if (error is RommAuthException || (error.code != 404 && error.code != 405)) throw error
+            // Older RomM versions change a collection only as a whole.
+            val ids = (current.romIds + add) - remove.toSet()
+            val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+                .addFormDataPart("rom_ids", ids.joinToString(",", "[", "]"))
+                .addFormDataPart("name", current.name)
+                .build()
+            val text = execute(http, Request.Builder().url(api(account.baseUrl, "collections/${current.id}")).put(body).build(),
+                account.auth)
+            collection(json.parseToJsonElement(text)) ?: current.copy(romIds = ids)
+        }
+    }
+
+    private fun collectionRoms(account: RommAccount, id: Long, romIds: Collection<Long>, adding: Boolean): RommCollection {
+        val payload = romIds.joinToString(",", "{\"rom_ids\":[", "]}").toRequestBody(JSON)
+        val builder = Request.Builder().url(api(account.baseUrl, "collections/$id/roms"))
+        val request = if (adding) builder.post(payload).build() else builder.delete(payload).build()
+        return collection(json.parseToJsonElement(execute(http, request, account.auth)))
+            ?: throw IOException("RomM did not return the collection")
+    }
+
     /** Absolute image address for a path RomM gives ("/assets/romm/resources/…"); images need no sign-in. */
     fun imageUrl(base: HttpUrl, path: String?): String? {
         val value = path?.trim()?.takeIf(String::isNotBlank) ?: return null
@@ -376,7 +427,29 @@ class RommClient @Inject constructor(
 
         /** What Ambient TV reads and writes: the library, firmware, and the user's saves and states. */
         val SCOPES = listOf("me.read", "roms.read", "platforms.read", "assets.read", "assets.write",
-            "firmware.read", "roms.user.read", "roms.user.write", "collections.read")
+            "firmware.read", "roms.user.read", "roms.user.write", "collections.read", "collections.write")
+
+        /** A collection as any RomM version sends it (`rom_ids`, or `roms` before 3.5). */
+        internal fun collection(element: JsonElement): RommCollection? {
+            val root = element as? JsonObject ?: return null
+            fun long(key: String) = (root[key] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull?.toLongOrNull()
+            val id = long("id") ?: return null
+            val ids = (root["rom_ids"] ?: root["roms"]) as? JsonArray
+            return RommCollection(
+                id = id,
+                name = (root["name"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull.orEmpty(),
+                isFavorite = (root["is_favorite"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull == "true",
+                userId = long("user_id") ?: 0L,
+                ownerUsername = (root["owner_username"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull.orEmpty(),
+                romIds = ids.orEmpty().mapNotNullTo(linkedSetOf()) { item ->
+                    when (item) {
+                        is kotlinx.serialization.json.JsonPrimitive -> item.contentOrNull?.toLongOrNull()
+                        is JsonObject -> (item["id"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull?.toLongOrNull()
+                        else -> null
+                    }
+                },
+            )
+        }
 
         /** `/api/<path>` below the web interface address (which may itself have a path). */
         fun api(base: HttpUrl, path: String): HttpUrl = base.newBuilder()

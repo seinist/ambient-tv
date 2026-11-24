@@ -440,6 +440,12 @@ Einstellungen › Medienserver › **RomM** (auch im Katalog „System hinzufüg
 
 **Vom Server verwaltete Daten:** Bei RomM-Spielen gehören Firmware, Speicherstände im Spiel und Spielstände dem Server; lokale Spiele behalten ihre wie bisher auf dem Gerät. Vor dem Start wird die Kopie auf dem Gerät mit dem Server abgeglichen: die Firmware der Plattform aus RomM (per MD5 geprüft; auf dem Server entfernte Firmware verschwindet auch hier; Hilfsordner der Cores wie Schriften kommen aus dem gemeinsamen Systemordner, Firmware nie), der neueste Speicherstand im Spiel (`.srm`) und alle Spielstände. Jedes Speichern, Umbenennen, Löschen und der automatische Stand beim Verlassen gehen zurück an den Server. Spielstände tragen Art, Nummer, Namen und Core-Build im Dateinamen auf dem Server, so behält sie jede RomM-Version und Stände eines anderen Core-Builds bleiben gekennzeichnet; Stände anderer Programme bleiben unberührt. Das Info-Panel des Spiels zeigt den Stand (auf dem Server, wird gesendet, wartet auf den Server). Ohne Verbindung wird der letzte Stand gespielt und die Änderungen gehen an den Server, sobald er wieder antwortet. Fehlt eine nötige Firmware in RomM, nennt der Spielstart sie.
 
+**Core-Daten:** Was ein Core selbst in den Speicherordner schreibt (Memory Cards, NAND einer Konsole, PSP-SAVEDATA, Backup-RAM), gehört zu dem Spiel, das beim Ändern lief. Es geht als `ambient-data.zip` zu den Speicherständen dieses Spiels in RomM, mit dem Datum jeder Datei; vor dem Start ersetzen Dateien aus seinem Archiv die Kopie auf dem Gerät nur dort, wo die Kopie im Archiv neuer ist. Caches, Logs und Core-Einstellungen bleiben auf dem Gerät; ein Archiv über 64 MB wird nicht gesendet.
+
+**Favoriten:** Ein RomM-Spiel als Favorit zu markieren wirkt sofort und geht in die eigene **Favorites**-Sammlung des Benutzers auf dem Server (fehlt sie, wird sie wie in RomMs Weboberfläche angelegt); beim Öffnen von RomM kommt diese Sammlung zurück, so erscheinen auch in RomM oder auf einem anderen Gerät markierte Favoriten hier. Ohne Verbindung wartet die Änderung auf den Server.
+
+**Startseite und Suche:** Der Startseiten-Editor bietet RomMs **Zuletzt gespielte Spiele**, **Lieblingsspiele** und **Alle Spiele** als Reihen mit denselben Karten wie lokale Spiele; die globale Suche listet passende RomM-Spiele. Beide lesen die Bibliotheksliste auf dem Gerät und warten nie auf den Server.
+
 **Offline:** RomM zählt als Server wie Plex, Jellyfin oder TVHeadend: Ist sein Rechner offline, werden alle Dienste darauf als offline angezeigt.
 
 ---

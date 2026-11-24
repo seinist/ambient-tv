@@ -58,6 +58,21 @@ internal data class RommMirror(
     val sram: RommMirrorEntry? = null,
 )
 
+/** A game's core data on this device ([RommCoreData]): which files are its, and the last match. */
+@Serializable
+internal data class RommCoreMirror(
+    val romId: Long,
+    /** The core of the game's last session: the archive's emulator on the server. */
+    val coreId: String,
+    val files: Set<String> = emptySet(),
+    /** The archive on the server when this device last matched it; local is [RommCoreData.digest]. */
+    val entry: RommMirrorEntry? = null,
+)
+
+/** The save folder as it was when a game started: what the game writes afterwards is its core data. */
+@Serializable
+internal data class RommCoreSession(val saveKey: String, val files: Map<String, String> = emptyMap())
+
 @Serializable
 internal data class RommFirmwareManifest(
     /** File name → "size:modified:md5" of firmware that came from the server. */
@@ -80,6 +95,8 @@ class RommGameData @Inject constructor(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val locks = ConcurrentHashMap<String, Mutex>()
+    /** The save folder is shared by every game of a server; its core data change under this lock. */
+    private val coreLock = Mutex()
     private val uploads = ConcurrentHashMap<String, Job>()
     /** Server key → when it last failed to answer; the next steps of the same start skip it. */
     private val unreachable = ConcurrentHashMap<String, Long>()
@@ -164,8 +181,11 @@ class RommGameData @Inject constructor(
      */
     suspend fun beforeStart(game: PreparedGame, coreId: String, coreStamp: String): Boolean {
         val ref = game.remote ?: return true
+        // What the last game wrote after its last upload is its own, before anything here changes.
+        val earlier = coreLock.withLock { finishCoreSession(ref.serverKey) }
         val account = accounts.account()?.takeIf { it.serverKey == ref.serverKey }
         if (account == null || recentlyUnreachable(ref.serverKey)) {
+            coreLock.withLock { beginCoreSession(game, coreId) }
             // Played from the last copy; the upload waits for the server.
             setState(game, RommSyncState.PENDING)
             if (account != null) scheduleUpload(game, coreId, delayMs = RETRY_DELAYS_MS.first())
@@ -174,8 +194,10 @@ class RommGameData @Inject constructor(
         setState(game, RommSyncState.CHECKING)
         val reached = lock(game).withLock {
             try {
-                pullSram(account, game, coreId)
+                val saves = client.saves(account, ref.romId)
+                pullSram(account, game, coreId, saves)
                 pullStates(account, game, coreStamp)
+                pullCoreData(account, game, coreId, saves)
                 setState(game, RommSyncState.SYNCED)
                 true
             } catch (cancelled: CancellationException) {
@@ -187,6 +209,16 @@ class RommGameData @Inject constructor(
                 com.ambient.tv.diagnostics.DiagnosticLog.warn("romm", "sync before start failed: ${error.message}")
                 setState(game, RommSyncState.PENDING)
                 false
+            }
+        }
+        coreLock.withLock { beginCoreSession(game, coreId) }
+        if (reached && earlier != null && earlier != game.saveKey) scope.launch {
+            try {
+                pushCoreData(account, ref.serverKey, earlier)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                com.ambient.tv.diagnostics.DiagnosticLog.warn("romm", "core data upload failed: ${error.message}")
             }
         }
         // Changes made offline in an earlier session go up as soon as the server answers.
@@ -209,6 +241,7 @@ class RommGameData @Inject constructor(
                     lock(game).withLock {
                         pushSram(account, game, coreId)
                         pushStates(account, game)
+                        pushCoreData(account, ref.serverKey, game.saveKey)
                     }
                     unreachable.remove(ref.serverKey)
                     setState(game, RommSyncState.SYNCED)
@@ -289,9 +322,9 @@ class RommGameData @Inject constructor(
 
     // In-game save (SRAM) ---------------------------------------------------------------------
 
-    private suspend fun pullSram(account: RommAccount, game: PreparedGame, coreId: String) {
-        val ref = game.remote ?: return
-        val candidates = client.saves(account, ref.romId).filter { RommFiles.isSram(it.fileName) }
+    private suspend fun pullSram(account: RommAccount, game: PreparedGame, coreId: String, saves: List<RommAsset>) {
+        if (game.remote == null) return
+        val candidates = saves.filter { RommFiles.isSram(it.fileName) }
         val remote = candidates.filter { it.emulator == coreId }.maxByOrNull { RommLibrary.parseInstant(it.updatedAt) ?: 0L }
             ?: candidates.maxByOrNull { RommLibrary.parseInstant(it.updatedAt) ?: 0L }
             ?: return
@@ -390,6 +423,106 @@ class RommGameData @Inject constructor(
             writeMirror(game, mirror)
         }
     }
+
+    // Core data (memory cards, NAND, PSP SAVEDATA) --------------------------------------------
+
+    /** Ends the recorded session: what changed in the save folder since it began is that game's. */
+    private suspend fun finishCoreSession(serverKey: String): String? = withContext(Dispatchers.IO) {
+        val sessionFile = coreSessionFile(serverKey)
+        val session = read(sessionFile, RommCoreSession.serializer()) ?: return@withContext null
+        val root = storage.remoteSavesDirectory(serverKey)
+        val mirror = readCore(serverKey, session.saveKey)
+        if (mirror != null) {
+            val changed = RommCoreData.changed(session.files, RommCoreData.scan(root))
+            val next = mirror.copy(files = mirror.files + changed)
+            if (next != mirror) writeCore(serverKey, session.saveKey, next)
+        }
+        sessionFile.delete()
+        session.saveKey.takeIf { mirror != null }
+    }
+
+    /** Records the save folder as [game] starts. */
+    private suspend fun beginCoreSession(game: PreparedGame, coreId: String) = withContext(Dispatchers.IO) {
+        val ref = game.remote ?: return@withContext
+        val mirror = readCore(ref.serverKey, game.saveKey) ?: RommCoreMirror(ref.romId, coreId)
+        if (mirror.coreId != coreId || mirror.romId != ref.romId) {
+            writeCore(ref.serverKey, game.saveKey, mirror.copy(romId = ref.romId, coreId = coreId))
+        } else if (!coreMirrorFile(ref.serverKey, game.saveKey).isFile) {
+            writeCore(ref.serverKey, game.saveKey, mirror)
+        }
+        val files = RommCoreData.scan(storage.remoteSavesDirectory(ref.serverKey))
+        write(coreSessionFile(ref.serverKey), RommCoreSession.serializer(), RommCoreSession(game.saveKey, files))
+    }
+
+    /** Before the core starts: files from the game's archive on the server where they are newer. */
+    private suspend fun pullCoreData(account: RommAccount, game: PreparedGame, coreId: String, saves: List<RommAsset>) {
+        val ref = game.remote ?: return
+        val remote = saves.filter { RommCoreData.isBundle(it.fileName) }
+            .maxByOrNull { RommLibrary.parseInstant(it.updatedAt) ?: 0L } ?: return
+        val known = coreLock.withLock { withContext(Dispatchers.IO) { readCore(ref.serverKey, game.saveKey) } }?.entry
+        if (known != null && known.serverId == remote.id && known.updatedAt == remote.updatedAt) return
+        val bytes = client.assetBytes(account, remote.downloadPath ?: "/api/saves/${remote.id}/content",
+            RommCoreData.MAX_BUNDLE_BYTES)
+        coreLock.withLock {
+            withContext(Dispatchers.IO) {
+                val root = storage.remoteSavesDirectory(ref.serverKey)
+                val unpacked = RommCoreData.unpack(bytes, root, client.json)
+                val mirror = readCore(ref.serverKey, game.saveKey) ?: RommCoreMirror(ref.romId, coreId)
+                val files = mirror.files + unpacked.paths
+                // Files only this device has, or has newer, still have to go up.
+                val localOnly = (files - unpacked.paths).any { File(root, it).isFile }
+                val local = if (unpacked.keptNewer || localOnly) "" else RommCoreData.digest(root, files)
+                writeCore(ref.serverKey, game.saveKey, mirror.copy(files = files,
+                    entry = RommMirrorEntry(remote.id, remote.fileName, remote.updatedAt, local)))
+            }
+        }
+    }
+
+    /** Sends a game's core data as one archive when it changed since the last match. */
+    private suspend fun pushCoreData(account: RommAccount, serverKey: String, saveKey: String) {
+        class Packed(val romId: Long, val coreId: String, val bytes: ByteArray, val digest: String)
+        val packed = coreLock.withLock {
+            withContext(Dispatchers.IO) {
+                var mirror = readCore(serverKey, saveKey) ?: return@withContext null
+                val root = storage.remoteSavesDirectory(serverKey)
+                val session = read(coreSessionFile(serverKey), RommCoreSession.serializer())
+                if (session?.saveKey == saveKey) {
+                    mirror = mirror.copy(files = mirror.files + RommCoreData.changed(session.files, RommCoreData.scan(root)))
+                }
+                val present = mirror.files.filterTo(linkedSetOf()) { File(root, it).isFile }
+                mirror = mirror.copy(files = present)
+                writeCore(serverKey, saveKey, mirror)
+                if (present.isEmpty()) return@withContext null
+                val digest = RommCoreData.digest(root, present)
+                if (mirror.entry?.local == digest) return@withContext null
+                val bytes = RommCoreData.pack(root, present, client.json) ?: run {
+                    com.ambient.tv.diagnostics.DiagnosticLog.warn("romm", "core data of $saveKey is too large to send")
+                    return@withContext null
+                }
+                Packed(mirror.romId, mirror.coreId, bytes, digest)
+            }
+        } ?: return
+        val emulator = packed.coreId.takeIf { it.matches(Regex("[A-Za-z0-9][A-Za-z0-9._-]*")) } ?: "ambient-tv"
+        val uploaded = client.uploadSave(account, packed.romId, emulator, RommCoreData.FILE_NAME, packed.bytes)
+        coreLock.withLock {
+            withContext(Dispatchers.IO) {
+                val mirror = readCore(serverKey, saveKey) ?: return@withContext
+                writeCore(serverKey, saveKey, mirror.copy(
+                    entry = RommMirrorEntry(uploaded.id, uploaded.fileName, uploaded.updatedAt, packed.digest)))
+            }
+        }
+    }
+
+    private fun coreMirrorFile(serverKey: String, saveKey: String) =
+        File(storage.remoteRoot(serverKey), "mirror/$saveKey.core.json")
+
+    private fun coreSessionFile(serverKey: String) = File(storage.remoteRoot(serverKey), "mirror/session.json")
+
+    private fun readCore(serverKey: String, saveKey: String): RommCoreMirror? =
+        read(coreMirrorFile(serverKey, saveKey), RommCoreMirror.serializer())
+
+    private fun writeCore(serverKey: String, saveKey: String, mirror: RommCoreMirror) =
+        write(coreMirrorFile(serverKey, saveKey), RommCoreMirror.serializer(), mirror)
 
     // Files -------------------------------------------------------------------------------------
 

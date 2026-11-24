@@ -34,9 +34,9 @@ import kotlinx.coroutines.launch
 
 enum class SearchViewMode { ROWS, LIST }
 enum class SearchSourceState { IDLE, DISABLED, LOADING, READY, PARTIAL, ERROR }
-enum class SearchSource { PLEX, JELLYFIN, EMBY, LIVE_TV, TRAILERS, TELEGRAM, YOUTUBE, SPOTIFY, RADIO }
+enum class SearchSource { PLEX, JELLYFIN, EMBY, LIVE_TV, ROMM, TRAILERS, TELEGRAM, YOUTUBE, SPOTIFY, RADIO }
 
-private val LOCAL_SEARCH_SOURCES = setOf(SearchSource.PLEX, SearchSource.JELLYFIN, SearchSource.EMBY, SearchSource.LIVE_TV)
+private val LOCAL_SEARCH_SOURCES = setOf(SearchSource.PLEX, SearchSource.JELLYFIN, SearchSource.EMBY, SearchSource.LIVE_TV, SearchSource.ROMM)
 internal fun defaultSearchSources(available: Set<SearchSource>): Set<SearchSource> =
     (available intersect LOCAL_SEARCH_SOURCES).ifEmpty { available }
 internal fun reconcileSearchSources(selected: Set<SearchSource>, previous: Set<SearchSource>, available: Set<SearchSource>): Set<SearchSource> =
@@ -92,6 +92,8 @@ data class SearchUiState(
     val jellyfinResults: List<MediaItem> = emptyList(),
     val embyResults: List<MediaItem> = emptyList(),
     val trailerResults: List<MediaItem> = emptyList(),
+    /** RomM games from the catalog on this device, as game cards (game Home keys). */
+    val rommResults: List<MediaItem> = emptyList(),
     /** Playable Telegram posts, already mapped; opened through the Telegram post detail. */
     val telegramResults: List<MediaItem> = emptyList(),
     val youtubeResults: List<YouTubeItem> = emptyList(),
@@ -106,6 +108,7 @@ data class SearchUiState(
     val jellyfinState: SearchSourceState = SearchSourceState.IDLE,
     val embyState: SearchSourceState = SearchSourceState.IDLE,
     val trailerState: SearchSourceState = SearchSourceState.IDLE,
+    val rommState: SearchSourceState = SearchSourceState.IDLE,
     val telegramState: SearchSourceState = SearchSourceState.IDLE,
     /** Seconds Telegram asked to wait (FLOOD_WAIT) before the next search, if it did. */
     val telegramRetryAfterSeconds: Int? = null,
@@ -119,12 +122,13 @@ data class SearchUiState(
     val resultResetRevision: Long = 0,
     val playbackReturnRevision: Long = 0,
 ) {
-    val resultCount: Int get() = results.size + jellyfinResults.size + embyResults.size + trailerResults.size + telegramResults.size + youtubeResults.size + spotifyResults.size + radioResults.size + tvheadendResults.size
+    val resultCount: Int get() = results.size + jellyfinResults.size + embyResults.size + rommResults.size + trailerResults.size + telegramResults.size + youtubeResults.size + spotifyResults.size + radioResults.size + tvheadendResults.size
     val hasResults: Boolean get() = resultCount > 0
-    val isSearching: Boolean get() = listOf(plexState, jellyfinState, embyState, trailerState, telegramState, youtubeState, spotifyState, radioState, tvheadendState).any { it == SearchSourceState.LOADING }
+    val isSearching: Boolean get() = listOf(plexState, jellyfinState, embyState, rommState, trailerState, telegramState, youtubeState, spotifyState, radioState, tvheadendState).any { it == SearchSourceState.LOADING }
 }
 
 private const val MIN_QUERY_LENGTH = 2
+private const val ROMM_SEARCH_LIMIT = 60
 private const val SEARCH_STATE_KEY = "search"
 
 @HiltViewModel
@@ -143,6 +147,8 @@ class SearchViewModel @Inject constructor(
     private val liveTvRegistry: com.ambient.tv.livetv.LiveTvRegistry,
     private val unreachableServers: UnreachableServerGate,
     private val telegramRepository: com.ambient.tv.data.telegram.TelegramRepository,
+    private val rommLibrary: com.ambient.tv.romm.RommLibrary,
+    @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
 ) : ViewModel() {
     private var youtubeSignedIn = false
 
@@ -154,6 +160,7 @@ class SearchViewModel @Inject constructor(
             if (preferences.isEmbyConfigured) add("emby")
             addAll(liveTvRegistry.configured().map { it.source.system })
             if (preferences.trailersEnabled && trailerRepository.configured) add("trailers")
+            if (preferences.isRommConfigured) add("romm")
             if (preferences.youtubeEnabled) add("youtube")
             if (preferences.spotifyEnabled) add("spotify")
             if (preferences.radioEnabled) add("radio")
@@ -166,6 +173,7 @@ class SearchViewModel @Inject constructor(
             if (preferences.isJellyfinConfigured) add(SearchSource.JELLYFIN)
             if (preferences.isEmbyConfigured) add(SearchSource.EMBY)
             if (liveTvRegistry.configured().any { liveTvSearchSource(it.source.system) == SearchSource.LIVE_TV }) add(SearchSource.LIVE_TV)
+            if (preferences.isRommConfigured) add(SearchSource.ROMM)
             if (preferences.trailersEnabled && trailerRepository.configured) add(SearchSource.TRAILERS)
             if (com.ambient.tv.data.telegram.telegramSearchAvailable(com.ambient.tv.BuildConfig.MONOGRAM_NATIVE,
                     preferences.telegramEnabled, telegramRepository.available)) add(SearchSource.TELEGRAM)
@@ -263,10 +271,10 @@ class SearchViewModel @Inject constructor(
         return state.copy(
             resultResetRevision = state.resultResetRevision + 1,
             results = emptyList(), jellyfinResults = emptyList(), embyResults = emptyList(),
-            trailerResults = emptyList(), telegramResults = emptyList(), youtubeResults = emptyList(), spotifyResults = emptyList(), radioResults = emptyList(),
+            trailerResults = emptyList(), rommResults = emptyList(), telegramResults = emptyList(), youtubeResults = emptyList(), spotifyResults = emptyList(), radioResults = emptyList(),
             tvheadendResults = TvhSearchResults(), hasSearched = false,
             plexState = SearchSourceState.IDLE, jellyfinState = SearchSourceState.IDLE,
-            embyState = SearchSourceState.IDLE, trailerState = SearchSourceState.IDLE,
+            embyState = SearchSourceState.IDLE, trailerState = SearchSourceState.IDLE, rommState = SearchSourceState.IDLE,
             telegramState = SearchSourceState.IDLE, telegramRetryAfterSeconds = null,
             youtubeState = SearchSourceState.IDLE, spotifyState = SearchSourceState.IDLE, radioState = SearchSourceState.IDLE,
             tvheadendState = SearchSourceState.IDLE,
@@ -330,6 +338,7 @@ class SearchViewModel @Inject constructor(
         val jellyfinEnabled = SearchSource.JELLYFIN in enabled
         val embyEnabled = SearchSource.EMBY in enabled
         val trailersEnabled = SearchSource.TRAILERS in enabled
+        val rommEnabled = SearchSource.ROMM in enabled
         val telegramEnabled = SearchSource.TELEGRAM in enabled
         // Returning to the page re-runs the search (entry/reconnect refresh). Telegram rate-limits
         // searches (FLOOD_WAIT): keep its answer to this exact query instead of asking again.
@@ -351,6 +360,7 @@ class SearchViewModel @Inject constructor(
                 jellyfinResults = if (preserveResults && jellyfinEnabled) it.jellyfinResults else emptyList(),
                 embyResults = if (preserveResults && embyEnabled) it.embyResults else emptyList(),
                 trailerResults = if (preserveResults && trailersEnabled) it.trailerResults else emptyList(),
+                rommResults = if (preserveResults && rommEnabled) it.rommResults else emptyList(),
                 telegramResults = if (preserveResults && telegramEnabled) it.telegramResults else emptyList(),
                 telegramRetryAfterSeconds = null,
                 youtubeResults = if (preserveResults && youtubeEnabled) it.youtubeResults else emptyList(),
@@ -362,6 +372,7 @@ class SearchViewModel @Inject constructor(
                 jellyfinState = if (jellyfinEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
                 embyState = if (embyEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
                 trailerState = if (trailersEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
+                rommState = if (rommEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
                 telegramState = if (reuseTelegram) SearchSourceState.READY
                     else if (telegramEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
                 youtubeState = if (youtubeEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
@@ -372,6 +383,25 @@ class SearchViewModel @Inject constructor(
             )
         }
         coroutineScope {
+            // The device's catalog copy: no request to the server, so it answers offline too.
+            if (rommEnabled) launch {
+                val result = suspendResult {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        val games = rommLibrary.games(search = query).take(ROMM_SEARCH_LIMIT)
+                        com.ambient.tv.ui.home.gameHomeRows(context, listOf(com.ambient.tv.data.local.HomeRowDefinition(
+                            system = com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_ROMM,
+                            contentKey = com.ambient.tv.data.local.HomeRowDefinition.GAMES_ALL,
+                        )), games, ROMM_SEARCH_LIMIT, com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_ROMM)
+                            .flatMap { it.items }
+                    }
+                }
+                updateForQuery(query, revision) { state ->
+                    result.fold(
+                        onSuccess = { state.copy(rommResults = it, rommState = SearchSourceState.READY) },
+                        onFailure = { state.copy(rommState = SearchSourceState.ERROR) },
+                    )
+                }
+            }
             if (plexEnabled) launch {
                 val result = suspendResult {
                     val keys = mediaRepository.getLibrarySections().getOrThrow()

@@ -2606,6 +2606,7 @@ class AppPreferences @Inject constructor(
             HomeRowDefinition.SYSTEM_RADIO,
             HomeRowDefinition.SYSTEM_TRAILERS,
             HomeRowDefinition.SYSTEM_GAMES,
+            HomeRowDefinition.SYSTEM_ROMM,
         )
         const val KEY_INITIAL_SETUP_COMPLETED = "initial_setup_completed"
         const val KEY_TELEGRAM_ENABLED = "telegram_enabled"
