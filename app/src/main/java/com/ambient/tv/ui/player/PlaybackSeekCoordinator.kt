@@ -91,6 +91,18 @@ class PlaybackSeekCoordinator(
         lastCommittedTargetMs = target
     }
 
+    /** Retire a superseded seek without pretending the decoder acknowledged another target. */
+    fun cancelPendingSeek() {
+        pendingTargetMs = null
+        lastCommittedTargetMs = null
+        chapterTargetMs = null
+        alignedAtMs = null
+        driftSinceMs = null
+        optimisticAckTargetMs = null
+        optimisticAckCommittedMs = null
+        optimisticAckStopped = false
+    }
+
     fun displayedPosition(enginePositionMs: Long): Long {
         val engine = enginePositionMs.coerceAtLeast(0L)
         val now = nowMs()

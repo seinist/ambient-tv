@@ -1043,6 +1043,15 @@ private fun YouTubeMedia3Playback(
                 )) BackgroundPlaybackSession.play()
         }
     }
+    fun playFromStart() {
+        if (!seekIsCurrent() || playback.isLive) return
+        BackgroundPlaybackSession.userSeek()
+        resume.userSeek()
+        position = seekCoordinator.requestAbsolute(0L)
+        seekCoordinator.consumeCommit(force = true)?.let(::commitSeek)
+        seekCommitVersion++
+        BackgroundPlaybackSession.userPlay()
+    }
     fun seekInMode(delta: Long) {
         if (playback.isLive && liveDvrWindow == null) osd.reveal() else {
             seek(delta)
@@ -1289,6 +1298,7 @@ private fun YouTubeMedia3Playback(
                     },
                 ),
                 panelNavigation = panelNavigation,
+                onPlayFromStart = ::playFromStart,
                 liveDvrWindow = liveDvrWindow,
                 onGoLive = ::jumpToLive,
                 pendingSeek = { seekIsCurrent() && seekCoordinator.pendingTarget != null },
@@ -1442,6 +1452,15 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
                     requested, limit, session.wantsToPlay, session.status.ended
                 )) BackgroundPlaybackSession.play()
         }
+    }
+    fun playFromStart() {
+        if (!seekIsCurrent() || playback.isLive) return
+        BackgroundPlaybackSession.userSeek()
+        resume.userSeek()
+        displayedPosition = seekCoordinator.requestAbsolute(0L)
+        seekCoordinator.consumeCommit(force = true)?.let(::commitSeek)
+        seekCommitVersion++
+        BackgroundPlaybackSession.userPlay()
     }
     fun seekInMode(delta: Long) {
         if (playback.isLive && liveDvrWindow == null) osd.reveal() else {
@@ -1645,6 +1664,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
                     },
                 ),
                 panelNavigation = panelNavigation,
+                onPlayFromStart = ::playFromStart,
                 liveDvrWindow = liveDvrWindow,
                 onGoLive = ::jumpToLive,
                 pendingSeek = { seekIsCurrent() && seekCoordinator.pendingTarget != null },
@@ -1785,6 +1805,15 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
                     requested, limit, session.wantsToPlay, session.status.ended
                 )) BackgroundPlaybackSession.play()
         }
+    }
+    fun playFromStart() {
+        if (!seekIsCurrent() || playback.isLive) return
+        BackgroundPlaybackSession.userSeek()
+        resume.userSeek()
+        displayedPosition = seekCoordinator.requestAbsolute(0L)
+        seekCoordinator.consumeCommit(force = true)?.let(::commitSeek)
+        seekCommitVersion++
+        BackgroundPlaybackSession.userPlay()
     }
     fun seekInMode(delta: Long) {
         if (playback.isLive && liveDvrWindow == null) osd.reveal() else {
@@ -1977,6 +2006,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
                     },
                 ),
                 panelNavigation = panelNavigation,
+                onPlayFromStart = ::playFromStart,
                 liveDvrWindow = liveDvrWindow,
                 onGoLive = ::jumpToLive,
                 pendingSeek = { seekIsCurrent() && seekCoordinator.pendingTarget != null },
@@ -2006,6 +2036,8 @@ internal data class YouTubeOsdModel(
     val liveDvrWindow: YouTubeLiveDvrWindow? = null,
     val onGoLive: (() -> Unit)? = null,
     val pendingSeek: () -> Boolean = { false },
+    val onPlayFromStart: (() -> Unit)? = null,
+    val hasVideo: Boolean = true,
 ) : com.ambient.tv.ui.player.PlayerOsdSpec {
     override fun hasPendingSeek(): Boolean = pendingSeek()
 
@@ -2094,6 +2126,9 @@ internal data class YouTubeOsdModel(
                             primary = true,
                             loading = loading,
                         )
+                        if (!playback.isLive && hasVideo) onPlayFromStart?.let { restart ->
+                            com.ambient.tv.ui.common.PlayerPlayFromStartButton(restart)
+                        }
                         PlayerIconButton(Icons.Filled.Stop, stringResource(R.string.player_stop), BackgroundPlaybackSession::stop, osd = com.ambient.tv.ui.player.OsdButton.STOP)
                         if (seekable) PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.player_seek_forward, seekJumpSeconds), { onSeek(BackgroundPlaybackSession.seekJumpMs(seekJumpMs)) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
                         if (liveDvrWindow != null && onGoLive != null) {
@@ -2157,6 +2192,7 @@ private fun YouTubeControls(
     info: List<String>,
     panelConfig: YouTubePanelConfig,
     panelNavigation: com.ambient.tv.ui.common.PlayerPanelNavigation,
+    onPlayFromStart: () -> Unit,
     liveDvrWindow: YouTubeLiveDvrWindow? = null,
     onGoLive: (() -> Unit)? = null,
     pendingSeek: () -> Boolean = { false },
@@ -2190,6 +2226,8 @@ private fun YouTubeControls(
         liveDvrWindow = liveDvrWindow,
         onGoLive = onGoLive,
         pendingSeek = pendingSeek,
+        onPlayFromStart = onPlayFromStart,
+        hasVideo = panelConfig.hasVideo && panelConfig.audioSession?.audioOnly != true,
     ), visible = controlsVisible)
     com.ambient.tv.ui.player.PublishPlayerPanel(com.ambient.tv.ui.player.PlayerPanelModel(
         scrimAlpha = 0.32f,

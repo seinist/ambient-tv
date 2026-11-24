@@ -60,6 +60,7 @@ class YouTubeOsdNavigationTest {
     private class Fixture {
         val chrome = PlayerChromeState().apply { osd.expand() }
         var restarts = 0
+        var starts = 0
         var previousVideos = 0
         var advances = 0
         val model = mutableStateOf(YouTubeOsdModel(
@@ -67,6 +68,7 @@ class YouTubeOsdNavigationTest {
             backend = "Media3", position = 30_000, duration = 0,
             playing = true, loading = false, seekJumpMs = 10_000,
             onToggle = {}, onSeek = {}, onBack = {}, info = emptyList(),
+            onPlayFromStart = { starts++ },
             itemControls = PlaybackItemControls(restart = { restarts++ }),
         ))
     }
@@ -74,6 +76,7 @@ class YouTubeOsdNavigationTest {
     @Before fun setUp() {
         rule.runOnUiThread {
             setOsdButtonVisible(videoImagePreferences(rule.activity), OsdPlayer.YOUTUBE, OsdButton.NEXT, true)
+            setOsdButtonVisible(videoImagePreferences(rule.activity), OsdPlayer.YOUTUBE, OsdButton.PLAY_FROM_START, false)
             previousImageLoader = SingletonImageLoader.get(rule.activity)
             // The real OSD includes thumbnail artwork. Keep this navigation fixture offline.
             testImageLoader = ImageLoader.Builder(rule.activity).components {
@@ -92,6 +95,7 @@ class YouTubeOsdNavigationTest {
     @After fun tearDown() {
         rule.runOnUiThread {
             setOsdButtonVisible(videoImagePreferences(rule.activity), OsdPlayer.YOUTUBE, OsdButton.NEXT, true)
+            setOsdButtonVisible(videoImagePreferences(rule.activity), OsdPlayer.YOUTUBE, OsdButton.PLAY_FROM_START, false)
             SingletonImageLoader.setUnsafe(previousImageLoader)
             testImageLoader.shutdown()
         }
@@ -120,6 +124,7 @@ class YouTubeOsdNavigationTest {
     }
 
     private fun restartButton() = rule.onNodeWithContentDescription(rule.activity.getString(R.string.detail_restart))
+    private fun playFromStartButton() = rule.onNodeWithContentDescription(rule.activity.getString(R.string.player_play_from_start))
     private fun previousButton() = rule.onNodeWithContentDescription(rule.activity.getString(R.string.player_previous_item))
     private fun nextButton() = rule.onNodeWithContentDescription(rule.activity.getString(R.string.player_next_item))
 
@@ -222,6 +227,54 @@ class YouTubeOsdNavigationTest {
             assertEquals(3, fixture.previousVideos)
             assertEquals(3, fixture.advances)
         }
+    }
+
+    @Test fun playFromStartIsOptInAndSitsRightOfPlayPauseForEveryRenderer() {
+        val fixture = mount()
+        playFromStartButton().assertDoesNotExist()
+        rule.runOnIdle {
+            assertTrue(OsdButton.PLAY_FROM_START in OsdPlayer.YOUTUBE.offeredButtons())
+            setOsdButtonVisible(videoImagePreferences(rule.activity), OsdPlayer.YOUTUBE, OsdButton.PLAY_FROM_START, true)
+        }
+        for ((index, backend) in listOf("Media3", "VLC", "MPV").withIndex()) {
+            rule.runOnIdle { fixture.model.value = fixture.model.value.copy(backend = backend) }
+            val restartBounds = playFromStartButton().assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            val playBounds = rule.onNodeWithContentDescription(rule.activity.getString(R.string.player_pause))
+                .fetchSemanticsNode().boundsInRoot
+            assertTrue("Restart must sit right of Play/Pause", playBounds.right <= restartBounds.left)
+            playFromStartButton().performClick()
+            rule.runOnIdle {
+                assertEquals(index + 1, fixture.starts)
+                assertEquals(0, fixture.restarts)
+                assertEquals(0, fixture.previousVideos)
+            }
+        }
+        rule.runOnIdle {
+            setOsdButtonVisible(videoImagePreferences(rule.activity), OsdPlayer.YOUTUBE, OsdButton.PLAY_FROM_START, false)
+        }
+        playFromStartButton().assertDoesNotExist()
+    }
+
+    @Test fun playFromStartIsUnavailableForLiveDvrAndAudioOnlyPlayback() {
+        val fixture = mount()
+        rule.runOnIdle {
+            setOsdButtonVisible(videoImagePreferences(rule.activity), OsdPlayer.YOUTUBE, OsdButton.PLAY_FROM_START, true)
+            fixture.model.value = fixture.model.value.copy(
+                playback = fixture.model.value.playback.copy(isLive = true),
+                liveDvrWindow = YouTubeLiveDvrWindow(120_000L),
+            )
+        }
+        playFromStartButton().assertDoesNotExist()
+        rule.runOnIdle {
+            fixture.model.value = fixture.model.value.copy(
+                playback = fixture.model.value.playback.copy(isLive = false),
+                liveDvrWindow = null,
+                hasVideo = false,
+            )
+        }
+        playFromStartButton().assertDoesNotExist()
+        rule.runOnIdle { fixture.model.value = fixture.model.value.copy(hasVideo = true) }
+        playFromStartButton().assertIsDisplayed()
     }
 
     @Test fun osdSettingHidesBothNavigationButtonsAndStillOffersTheSettingToRestoreThem() {

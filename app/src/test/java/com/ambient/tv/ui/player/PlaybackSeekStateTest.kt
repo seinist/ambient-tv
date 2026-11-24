@@ -56,6 +56,42 @@ class PlaybackSeekStateTest {
         assertEquals(0L, seek.positionMs)
         assertEquals(listOf(0L), commits)
     }
+
+    @Test fun playFromStartReplacesPendingSeekAndCommitsBeforePlaying() {
+        val actions = mutableListOf<String>()
+        val seek = PlaybackSeekState(PlaybackSeekCoordinator(nowMs = { now }), 500_000,
+            onSeekRequested = { actions += "user-seek" },
+            commit = { actions += "seek:$it" })
+        seek.seekBy(10_000, 900_000)
+        now = 40
+        seek.seekBy(10_000, 900_000)
+        actions.clear()
+
+        seek.playFromStart { actions += "play" }
+
+        assertEquals(listOf("user-seek", "seek:0", "play"), actions)
+        assertEquals(0L, seek.positionMs)
+        assertEquals(0L, seek.pendingTargetMs)
+        seek.commitSettled()
+        assertEquals(listOf("user-seek", "seek:0", "play"), actions)
+    }
+
+    @Test fun retiredOsdCannotRestartOrResumeTheNextItem() {
+        var current = true
+        var plays = 0
+        var interactions = 0
+        val seek = PlaybackSeekState(PlaybackSeekCoordinator(nowMs = { now }), 500_000,
+            onSeekRequested = { interactions++ }, isCurrent = { current },
+            commit = { commits += it })
+        current = false
+
+        seek.playFromStart { plays++ }
+
+        assertTrue(commits.isEmpty())
+        assertEquals(0, plays)
+        assertEquals(0, interactions)
+    }
+
     @Test fun immediateExitFlushesLatestTargetWithoutWaitingForDebounce() {
         val seek = seekState(100_000)
         seek.seekBy(10_000, 3_600_000)
@@ -129,6 +165,24 @@ class PlaybackSeekStateTest {
         assertEquals(10_000L, seek.chapterPositionMs)
         seek.flushPending()
         assertEquals(listOf(50_000L), commits)
+    }
+
+    @Test fun cancelledPreparationFollowsLateDecoderLandingAndAllowsANewSeekToTheSameZero() {
+        val seek = seekState(60_000L)
+        seek.seekTo(0L) // Already sent to a slow decoder.
+        now = 40L
+        seek.seekTo(120_000L) // Still waiting for debounce.
+        seek.cancelPendingSeek(actualPositionMs = 60_000L)
+        seek.flushPending()
+        assertNull(seek.pendingTargetMs)
+        assertFalse(seek.awaitingSeekAck)
+        assertEquals(listOf(0L), commits)
+
+        seek.sync(0L) // The earlier decoder seek lands after preparation was cancelled.
+        assertEquals(0L, seek.positionMs)
+        assertEquals(0L, seek.chapterPositionMs)
+        seek.seekTo(0L) // A new request must not be swallowed as an already committed zero.
+        assertEquals(listOf(0L, 0L), commits)
     }
 
     @Test fun settledDebounceCommitsLatestTargetDespiteElapsedClockRounding() {

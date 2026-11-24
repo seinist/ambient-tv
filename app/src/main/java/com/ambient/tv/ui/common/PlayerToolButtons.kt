@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.ConnectedTv
 import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SettingsBackupRestore
@@ -68,6 +69,7 @@ import kotlinx.coroutines.launch
 
 /** Icon of an action-bar button, also shown next to it in the OSD button list. */
 internal val OsdButton.icon: ImageVector get() = when (this) {
+    OsdButton.PLAY_FROM_START -> Icons.Filled.Replay
     OsdButton.SEEK -> Icons.Filled.FastForward
     OsdButton.STOP -> Icons.Filled.Stop
     OsdButton.NEXT -> Icons.Filled.SkipNext

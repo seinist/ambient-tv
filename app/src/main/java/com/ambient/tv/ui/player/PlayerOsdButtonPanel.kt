@@ -32,7 +32,7 @@ private enum class OsdButtonSection(@StringRes val title: Int) {
 
 /** Every button belongs to one section; a new button must choose its section explicitly. */
 private val OsdButton.section: OsdButtonSection get() = when (this) {
-    OsdButton.SEEK, OsdButton.STOP, OsdButton.NEXT, OsdButton.EXIT, OsdButton.CHAPTERS,
+    OsdButton.PLAY_FROM_START, OsdButton.SEEK, OsdButton.STOP, OsdButton.NEXT, OsdButton.EXIT, OsdButton.CHAPTERS,
     OsdButton.SLEEP, OsdButton.SHUFFLE, OsdButton.REPEAT -> OsdButtonSection.PLAYBACK
     OsdButton.AUDIO, OsdButton.SUBTITLES, OsdButton.VIDEO, OsdButton.VOLUME,
     OsdButton.VISUALIZER -> OsdButtonSection.PICTURE_SOUND
@@ -63,7 +63,7 @@ internal fun PlayerOsdButtonPanelControls(
     val handheld = LocalHandheldUi.current
     val hidden = osdHiddenButtons()
     // Group only actual actions: an audio-only player must not leave an empty Information heading.
-    val sections = filterVideoDiagnosticButtons(offered ?: player.offeredButtons(), hasVideo).groupBy { it.section }
+    val sections = filterVideoOnlyOsdButtons(offered ?: player.offeredButtons(), hasVideo).groupBy { it.section }
     Text(stringResource(if (player == OsdPlayer.GAMES) R.string.game_osd_buttons_hint else R.string.osd_buttons_hint),
         style = MaterialTheme.typography.bodySmall)
     OsdButtonSection.entries.forEach { section ->

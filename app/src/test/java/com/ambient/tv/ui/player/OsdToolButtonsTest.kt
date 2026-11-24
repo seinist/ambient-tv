@@ -35,9 +35,10 @@ class OsdToolButtonsTest {
 
     @Test fun audioOnlyOmitsVideoDiagnosticsAndDoesNotCreateEmptyInformationSection() {
         val informationOnly = listOf(OsdButton.STATS, OsdButton.FPS)
-        assertTrue(filterVideoDiagnosticButtons(informationOnly, hasVideo = false).isEmpty())
-        assertEquals(informationOnly, filterVideoDiagnosticButtons(informationOnly, hasVideo = true))
-        assertEquals(listOf(OsdButton.SLEEP), filterVideoDiagnosticButtons(informationOnly + OsdButton.SLEEP, hasVideo = false))
+        assertTrue(filterVideoOnlyOsdButtons(informationOnly, hasVideo = false).isEmpty())
+        val videoOnly = informationOnly + OsdButton.PLAY_FROM_START
+        assertEquals(videoOnly, filterVideoOnlyOsdButtons(videoOnly, hasVideo = true))
+        assertEquals(listOf(OsdButton.SLEEP), filterVideoOnlyOsdButtons(videoOnly + OsdButton.SLEEP, hasVideo = false))
         assertFalse(OsdButton.STATS in OsdPlayer.RADIO.buttons)
         assertFalse(OsdButton.FPS in OsdPlayer.RADIO.buttons)
     }

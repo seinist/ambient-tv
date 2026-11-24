@@ -43,12 +43,12 @@ private val osdHiddenState = mutableStateOf<Set<String>?>(null)
 
 /** Player whose action bar is on screen; each keeps its own hidden OSD buttons. */
 enum class OsdPlayer(val buttons: List<OsdButton>) {
-    MEDIA(listOf(OsdButton.SEEK, OsdButton.STOP, OsdButton.NEXT, OsdButton.EXIT, OsdButton.CHAPTERS, OsdButton.AUDIO,
+    MEDIA(listOf(OsdButton.PLAY_FROM_START, OsdButton.SEEK, OsdButton.STOP, OsdButton.NEXT, OsdButton.EXIT, OsdButton.CHAPTERS, OsdButton.AUDIO,
         OsdButton.SUBTITLES, OsdButton.VIDEO, OsdButton.VISUALIZER, OsdButton.SLEEP, OsdButton.DETAILS, OsdButton.STATS, OsdButton.FPS) + toolButtons),
-    YOUTUBE(listOf(OsdButton.SEEK, OsdButton.STOP, OsdButton.NEXT, OsdButton.GO_LIVE, OsdButton.EXIT, OsdButton.CHAPTERS, OsdButton.CHANNEL,
+    YOUTUBE(listOf(OsdButton.PLAY_FROM_START, OsdButton.SEEK, OsdButton.STOP, OsdButton.NEXT, OsdButton.GO_LIVE, OsdButton.EXIT, OsdButton.CHAPTERS, OsdButton.CHANNEL,
         OsdButton.SUBSCRIBE, OsdButton.AUDIO, OsdButton.SUBTITLES, OsdButton.VIDEO, OsdButton.SLEEP, OsdButton.DETAILS, OsdButton.STATS,
         OsdButton.FPS) + toolButtons),
-    LIVE_TV(listOf(OsdButton.ZAP, OsdButton.SEEK, OsdButton.STOP, OsdButton.RECORD, OsdButton.GO_LIVE, OsdButton.EXIT,
+    LIVE_TV(listOf(OsdButton.PLAY_FROM_START, OsdButton.ZAP, OsdButton.SEEK, OsdButton.STOP, OsdButton.RECORD, OsdButton.GO_LIVE, OsdButton.EXIT,
         OsdButton.CHAPTERS, OsdButton.AUDIO, OsdButton.SUBTITLES, OsdButton.VIDEO, OsdButton.VISUALIZER, OsdButton.SLEEP,
         OsdButton.DETAILS, OsdButton.STATS, OsdButton.FPS, OsdButton.TELETEXT, OsdButton.TELETEXT_SUBTITLES, OsdButton.HBBTV) + toolButtons),
     SPOTIFY(listOf(OsdButton.NEXT, OsdButton.STOP, OsdButton.EXIT, OsdButton.SLEEP, OsdButton.SHUFFLE,
@@ -66,6 +66,7 @@ enum class OsdPlayer(val buttons: List<OsdButton>) {
  * [optIn] buttons start hidden; the viewer switches them on under OSD buttons.
  */
 enum class OsdButton(@StringRes val label: Int, val optIn: Boolean = false) {
+    PLAY_FROM_START(R.string.player_play_from_start, optIn = true),
     SEEK(R.string.osd_button_seek), STOP(R.string.player_stop), NEXT(R.string.osd_button_next),
     ZAP(R.string.osd_button_zap), RECORD(R.string.tvh_record), GO_LIVE(R.string.timeshift_go_live),
     EXIT(R.string.osd_button_exit), CHAPTERS(R.string.player_chapters), CHANNEL(R.string.youtube_channel_open),
@@ -121,9 +122,11 @@ var activeOsdButtons by mutableStateOf<Set<OsdButton>>(emptySet())
 fun OsdPlayer.offeredButtons(): List<OsdButton> =
     activeOsdButtons.takeIf { it.isNotEmpty() }?.let { present -> buttons.filter { it in present } } ?: buttons
 
-/** Audio-only has no video diagnostic actions, including when an earlier video OSD enabled them. */
-internal fun filterVideoDiagnosticButtons(buttons: List<OsdButton>, hasVideo: Boolean): List<OsdButton> =
-    if (hasVideo) buttons else buttons.filterNot { it == OsdButton.STATS || it == OsdButton.FPS }
+/** Audio-only has no video-only actions, including when an earlier video OSD enabled them. */
+internal fun filterVideoOnlyOsdButtons(buttons: List<OsdButton>, hasVideo: Boolean): List<OsdButton> =
+    if (hasVideo) buttons else buttons.filterNot {
+        it == OsdButton.PLAY_FROM_START || it == OsdButton.STATS || it == OsdButton.FPS
+    }
 
 @Composable
 fun osdHiddenButtons(): Set<String> {

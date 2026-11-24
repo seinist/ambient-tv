@@ -33,7 +33,7 @@ private enum class OsdInfoEntry(@StringRes val summary: Int, @StringRes val sect
 
 /** The description and the submenu use the same entries for the current player. */
 private fun osdInfoEntries(audioSession: AudioSession?, hasVideo: Boolean, tvRemote: Boolean): List<OsdInfoEntry> = buildList {
-    if (activeOsdPlayer?.offeredButtons()?.let { filterVideoDiagnosticButtons(it, hasVideo).isNotEmpty() } == true) add(OsdInfoEntry.BUTTONS)
+    if (activeOsdPlayer?.offeredButtons()?.let { filterVideoOnlyOsdButtons(it, hasVideo).isNotEmpty() } == true) add(OsdInfoEntry.BUTTONS)
     add(OsdInfoEntry.DURATION)
     if (tvRemote) add(OsdInfoEntry.NAVIGATION_MODE)
     add(OsdInfoEntry.CODECS)
@@ -66,7 +66,7 @@ internal fun PlayerOsdInfoPanelControls(audioSession: AudioSession?, hasVideo: B
         when (entry) {
             OsdInfoEntry.BUTTONS -> activeOsdPlayer?.let { player ->
                 val hidden = osdHiddenButtons()
-                val offered = filterVideoDiagnosticButtons(player.offeredButtons(), hasVideo)
+                val offered = filterVideoOnlyOsdButtons(player.offeredButtons(), hasVideo)
                 PlayerPanelEntry(
                     icon = Icons.Filled.ViewWeek,
                     title = stringResource(R.string.osd_buttons),

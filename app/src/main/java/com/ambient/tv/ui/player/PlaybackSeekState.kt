@@ -53,6 +53,15 @@ class PlaybackSeekState internal constructor(
         request(coordinator.requestAbsolute(targetMs))
     }
 
+    /** Restart the absolute title timeline, replacing any pending seek before resuming. */
+    internal fun playFromStart(onPlay: () -> Unit) {
+        if (!isActive) return
+        seekTo(0L)
+        // A button press is a complete action, not a burst of relative remote-key seeks.
+        flushPending()
+        onPlay()
+    }
+
     /** Hidden OSD polling may be suspended; input still starts from the current decoder clock. */
     internal fun refreshForInput(): Long {
         if (isActive) readEnginePositionMs?.let { sync(it()) }
@@ -75,6 +84,14 @@ class PlaybackSeekState internal constructor(
         coordinator.followExternalSeek(targetMs)
         positionMs = targetMs.coerceAtLeast(0L)
         awaitingSeekAck = coordinator.pendingTarget != null
+    }
+
+    /** An asynchronous source restart owns seeking; follow the real clock until it is ready. */
+    internal fun cancelPendingSeek(actualPositionMs: Long) {
+        if (!isActive) return
+        coordinator.cancelPendingSeek()
+        positionMs = actualPositionMs.coerceAtLeast(0L)
+        awaitingSeekAck = false
     }
 
     internal fun flushPending() {

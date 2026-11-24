@@ -402,6 +402,11 @@ private fun PlayerOsdContent(model: PlayerOsdModel, visible: Boolean, panel: Uni
                         primary = true,
                         loading = model.loading,
                     )
+                    if (model.hasVideo) com.ambient.tv.ui.common.PlayerPlayFromStartButton(
+                        onClick = {
+                            if (model.seekState.isActive) BackgroundPlaybackSession.userPlayFromStart()
+                        },
+                    )
                     PlayerIconButton(Icons.Filled.Stop, stringResource(R.string.player_stop), BackgroundPlaybackSession::stop, osd = com.ambient.tv.ui.player.OsdButton.STOP)
                     PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.player_seek_forward, seekJumpSeconds), { model.onSeekButton(BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs)) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
                     nextItem?.let { next ->
