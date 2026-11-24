@@ -26,6 +26,8 @@ import com.ambient.tv.games.metadata.GameMetadataProviders
 import com.ambient.tv.games.metadata.GameMetadataRepository
 import com.ambient.tv.games.metadata.GameMetadataSettings
 import com.ambient.tv.games.metadata.GameMetadataLocalImporter
+import com.ambient.tv.games.metadata.gameMetadataFingerprint
+import com.ambient.tv.games.metadata.gameMetadataQuery
 import java.io.File
 import java.util.Base64
 import kotlinx.serialization.json.Json
@@ -50,6 +52,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
 
@@ -277,6 +280,65 @@ class GameLibraryRepositoryQueryTest {
         assertEquals("INTERNAL NAME", library.metadata("custom")!!.title)
     }
 
+    @Test fun openingAnExistingV8CatalogRepairsStaleAutomaticNamesOnlyOnceWithoutSourceAccess() {
+        preferences.gameMetadataOptions = preferences.gameMetadataOptions.copy(automatic = false)
+        val ids = listOf("automatic", "matched", "locked", "gamesdb", "custom")
+        for (id in ids) seed(id, title = "INTERNAL NAME", verified = "Super Mario World (USA)")
+        val oldLibrary = repository()
+        val automatic = GameMetadata(title = "INTERNAL NAME", canonicalTitle = "INTERNAL NAME", provider = "libretro",
+            providerGameId = "Nintendo - Super Nintendo Entertainment System|INTERNAL NAME")
+        for (id in ids) {
+            val value = when (id) {
+                "matched" -> automatic.copy(matchLocked = true)
+                "locked" -> automatic.copy(lockedFields = setOf("title"))
+                "gamesdb" -> automatic.copy(provider = "thegamesdb")
+                else -> automatic
+            }
+            assertTrue(oldLibrary.saveMetadata(oldLibrary.metadataTicket(id)!!, value))
+        }
+        oldLibrary.setCustomTitle("custom", "My custom name")
+        val storedAutomatic = oldLibrary.metadata("automatic")!!
+        assertEquals("Super Mario World (USA)", oldLibrary.game("automatic")!!.verifiedTitle)
+        assertEquals("INTERNAL NAME", oldLibrary.game("automatic")!!.title)
+        raw().use { db ->
+            assertEquals(8, db.version)
+            // Reproduce the persisted display policy from the release before this repair.
+            GameLibraryQueryIndex.signature(db, gameQueryDigest(listOf("3",
+                prefs.getString("game_library_folders", "[]").orEmpty(),
+                prefs.getString("game_library_overrides", "[]").orEmpty(),
+                prefs.getString("file_playback_scopes", "{}").orEmpty()) + files.sources().map { it.id }.sorted()))
+        }
+
+        val reopened = repository()
+        assertEquals("Super Mario World (USA)", reopened.game("automatic")!!.title)
+        assertEquals("Super Mario World (USA)", reopened.game("automatic")!!.metadataTitle)
+        // Preserve the old lookup identity/freshness so artwork can resolve for the corrected name.
+        assertEquals(storedAutomatic.copy(title = "Super Mario World (USA)"), reopened.metadata("automatic"))
+        for (id in listOf("matched", "locked", "gamesdb")) {
+            assertEquals("INTERNAL NAME", reopened.game(id)!!.title)
+            assertEquals("INTERNAL NAME", reopened.metadata(id)!!.title)
+        }
+        assertEquals("My custom name", reopened.game("custom")!!.title)
+        assertEquals("INTERNAL NAME", reopened.metadata("custom")!!.title)
+        reopened.setTitleStyle("internal")
+        assertEquals("INTERNAL NAME", reopened.game("automatic")!!.title)
+        reopened.setTitleStyle("filename")
+        assertEquals("automatic", reopened.game("automatic")!!.title)
+        reopened.setTitleStyle("auto")
+
+        raw().use { db ->
+            db.execSQL("CREATE TABLE repair_writes(count INTEGER NOT NULL)")
+            db.execSQL("INSERT INTO repair_writes VALUES(0)")
+            db.execSQL("CREATE TRIGGER watch_repaired_projection AFTER INSERT ON game_query BEGIN UPDATE repair_writes SET count=count+1; END")
+            db.execSQL("CREATE TRIGGER watch_repaired_metadata AFTER INSERT ON game_metadata BEGIN UPDATE repair_writes SET count=count+1; END")
+        }
+        val stable = repository()
+        repeat(3) { assertEquals("Super Mario World (USA)", stable.game("automatic")!!.title) }
+        raw().use { db -> db.rawQuery("SELECT count FROM repair_writes", null).use {
+            assertTrue(it.moveToFirst()); assertEquals(0, it.getInt(0))
+        } }
+    }
+
     @Test fun partialLibretroSearchReturnsLoadedCatalogNamesWithoutAnArtworkRequest() = runBlocking {
         seed("one", title = "INTERNAL NAME")
         val library = repository()
@@ -349,6 +411,72 @@ class GameLibraryRepositoryQueryTest {
             assertEquals("Nintendo - Game Boy Color|Color Game (World)", resolved.providerGameId)
             assertTrue(resolved.matchLocked)
             assertNotNull(library.artworkPath("color", GameArtworkKind.COVER))
+        } finally { metadata.closeForTests() }
+    }
+
+    @Test fun automaticDatMatchNeverAdoptsArtworkForADifferentFilenameWhenVerifiedArtworkIsMissing() = runBlocking {
+        seed("one", filename = "Misleading filename.sfc", title = "INTERNAL NAME")
+        val library = repository()
+        val verified = "Verified Game (Europe)"
+        library.importDat("snes", """<datafile><game name="$verified"><rom crc="12345678"/></game></datafile>""".byteInputStream())
+        val requestedNames = mutableListOf<String>()
+        val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
+            val name = chain.request().url.pathSegments.last()
+            requestedNames += name
+            val found = name == "Misleading filename.png"
+            okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(if (found) 200 else 404).message(if (found) "OK" else "Not Found")
+                .body(if (found) imageBytes().toResponseBody("image/png".toMediaType()) else byteArrayOf().toResponseBody())
+                .build()
+        })
+        try {
+            assertFalse(withTimeout(5_000) { metadata.refresh(library.game("one")!!) })
+            assertTrue(requestedNames.isNotEmpty())
+            assertTrue("A checksum identity must not fall through to a guessed filename", requestedNames.all { it == "$verified.png" })
+            assertEquals(verified, library.game("one")!!.title)
+            assertEquals(verified, library.game("one")!!.verifiedTitle)
+            assertNull(library.metadata("one"))
+            assertNull(library.artworkPath("one", GameArtworkKind.COVER))
+        } finally { metadata.closeForTests() }
+    }
+
+    @Test fun cachedFoundWithAnExistingCoverStillRematchesAStaleLibretroIdentityToTheVerifiedName() = runBlocking {
+        val verified = "Verified Game (Europe)"
+        seed("one", filename = "Misleading filename.sfc", title = "INTERNAL NAME", verified = verified)
+        val library = repository()
+        val ticket = library.metadataTicket("one")!!
+        val platform = "Nintendo - Super Nintendo Entertainment System"
+        val stale = GameMetadata(title = verified, canonicalTitle = "Misleading filename", provider = "libretro",
+            providerGameId = "$platform|Misleading filename",
+            coverUrl = "https://thumbnails.libretro.com/old-cover.png")
+        assertTrue(library.saveMetadata(ticket, stale))
+        assertTrue(library.setArtwork(ticket, GameArtworkKind.COVER,
+            library.artworkFiles.stage(imageBytes().inputStream())))
+        val game = library.game("one")!!
+        assertTrue(File(game.coverPath!!).isFile)
+        val settings = GameMetadataSettings(preferences, TokenStore(prefs, preferences))
+        val query = gameMetadataQuery(game, library.metadata("one"), settings.language(),
+            settings.options().region, ticket.crc32, provider = "libretro")
+        val fingerprint = gameMetadataFingerprint(game, query)
+        assertTrue(library.saveLookupStatus(ticket, "libretro", fingerprint, "found", Long.MAX_VALUE))
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
+            requests.incrementAndGet()
+            val found = chain.request().url.pathSegments.last() == "$verified.png"
+            okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(if (found) 200 else 404).message(if (found) "OK" else "Not Found")
+                .body(if (found) imageBytes().toResponseBody("image/png".toMediaType()) else byteArrayOf().toResponseBody())
+                .build()
+        })
+        try {
+            assertTrue(withTimeout(5_000) { metadata.refresh(game, force = false) })
+            assertTrue("Cached success and a local cover must not conceal a stale identity", requests.get() > 0)
+            val corrected = library.metadata("one")!!
+            assertEquals(verified, corrected.canonicalTitle)
+            assertEquals("$platform|$verified", corrected.providerGameId)
+            assertEquals(verified, library.game("one")!!.title)
+            assertEquals("$verified.png", corrected.coverUrl!!.toHttpUrl().pathSegments.last())
+            assertNotNull(library.artworkPath("one", GameArtworkKind.COVER))
         } finally { metadata.closeForTests() }
     }
 

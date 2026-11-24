@@ -115,7 +115,6 @@ import com.ambient.tv.R
 import com.ambient.tv.games.GameAspect
 import com.ambient.tv.games.GameCheat
 import com.ambient.tv.games.GameCoreOption
-import com.ambient.tv.games.GameOptionOrigin
 import com.ambient.tv.games.GameSettings
 import com.ambient.tv.games.GameSettingsState
 import com.ambient.tv.games.GamePictureDefaults
@@ -126,7 +125,6 @@ import com.ambient.tv.ui.player.sdrReferenceWhiteChoiceKey
 import com.ambient.tv.ui.player.sdrReferenceWhiteChoices
 import com.ambient.tv.ui.player.sdrReferenceWhiteForChoice
 import com.ambient.tv.games.GameShader
-import com.ambient.tv.games.GameShaderGroup
 import com.ambient.tv.games.GameHdrToneMap
 import com.ambient.tv.games.GameTouchMode
 import com.ambient.tv.ui.common.MetaBadge
@@ -149,9 +147,7 @@ import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.player.LocalPlayerChromeState
 import com.ambient.tv.ui.player.LocalPlayerControlFocus
-import com.ambient.tv.ui.player.PlayerChromeState
 import com.ambient.tv.ui.player.PlayerControlsAutoHide
-import com.ambient.tv.ui.player.PlayerOverlayVisibility
 import com.ambient.tv.ui.player.PlayerTechBadgeRow
 import com.ambient.tv.ui.player.ReferencePlayerBottomContent
 import com.ambient.tv.ui.player.ReferencePlayerClock
@@ -383,7 +379,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val saveStates by model.saveStates.collectAsState()
     val coverUrl by produceState<String?>(null, game.fileId) { value = model.coverUrl() }
 
-    val chrome = remember { PlayerChromeState() }
+    val chrome = remember { createGamePlayerChrome() }
     val osd = chrome.osd
     var menuOpen by remember { mutableStateOf(false) }
     val gamePanels = rememberGamePanelNavigation(chrome)
@@ -415,9 +411,6 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         if (panel == GamePanel.INFO) displayHdr = GameHdrDisplayProbe.capture(context)
     }
     val optionCategory = gamePanels.optionCategory
-    val shaderGroup = gamePanels.shaderGroup
-    val shaderPacksOpen = gamePanels.shaderPacksOpen
-    val optionKey = gamePanels.optionKey
     /** Core option changes go to this game only (true) or to every game of the core. */
     var gameScope by remember { mutableStateOf(settings.gameCoreOptions(core, game.saveKey).isNotEmpty()) }
     val statesOpen = gamePanels.statesOpen
@@ -703,7 +696,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         menuRewinding = false
         gamePanels.dismissForResume()
         menuOpen = false
-        osd.close()
+        osd.hideImmediately()
     }
     val openMenu: () -> Unit = {
         if (!menuOpen && !destroyed && !exiting) {
@@ -1392,7 +1385,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 Modifier.align(Alignment.TopCenter).padding(top = 32.dp),
             )
 
-            PlayerOverlayVisibility(visible = osd.visible.value && panel == null) {
+            GamePlayerMenuOverlay(menuOpen = menuOpen, panelOpen = panel != null) {
                 ReferencePlayerOverlayBackground()
                 ReferencePlayerClock(modifier = Modifier.align(Alignment.TopEnd).padding(top = 34.dp, end = 48.dp))
                 ReferencePlayerBottomContent(onTogglePlayback = resume) {
@@ -1474,6 +1467,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         leftContent = {
                             if (!stateBusy && !netplay.synchronizing) PlayerIconButton(Icons.Filled.PlayArrow, stringResource(R.string.game_continue), resume,
                                 modifier = Modifier.focusRequester(playRequester), primary = true)
+                            PlayerIconButton(Icons.Filled.Stop, stringResource(R.string.game_exit), exit,
+                                osd = OsdButton.EXIT)
                             if (availability.save) PlayerIconButton(Icons.Filled.Save, stringResource(R.string.game_save_state), saveManualState,
                                 osd = OsdButton.GAME_SAVE)
                             if (availability.latestLoadableManual != null) PlayerIconButton(Icons.Filled.SettingsBackupRestore,
@@ -1500,9 +1495,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 osd = OsdButton.GAME_REWIND, onHold = setMenuRewind)
                         },
                         rightContent = {
-                            // Same order as video: exit, playback options, information, settings.
-                            PlayerIconButton(Icons.Filled.Stop, stringResource(R.string.game_exit), exit,
-                                osd = OsdButton.EXIT)
+                            // Playback actions stay left; picture/options, information and settings stay right.
                             PlayerIconButton(Icons.Filled.Wallpaper, stringResource(R.string.game_panel_picture), {
                                 gamePanels.open(GamePanel.PICTURE)
                             }, selected = panel == GamePanel.PICTURE, osd = OsdButton.GAME_PICTURE)
@@ -1548,7 +1541,6 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 val options = if (open == GamePanel.CORE) coreOptionsSnapshot.filterNot { it.key in rendererKeys } else emptyList()
                 val categorized = options.any { it.category != null }
                 fun categoryOf(item: GameCoreOption) = item.category?.key ?: OTHER_CATEGORY
-                val option = options.firstOrNull { it.key == optionKey }
                 val category = optionCategory
                 val categoryTitle = category?.let { key ->
                     options.firstOrNull { it.category?.key == key }?.category?.title ?: stringResource(R.string.game_core_other)
@@ -1563,21 +1555,18 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     if (changes.isNotEmpty()) runCatching { retroView.updateVariables(*changes.toTypedArray()) }
                     optionsVersion++
                 }
-                @Composable
-                fun originLabel(item: GameCoreOption): String = when (settings.coreOptionOrigin(core, game.saveKey, item.key)) {
-                    GameOptionOrigin.GAME -> stringResource(R.string.game_core_origin_game, item.label)
-                    GameOptionOrigin.CORE -> stringResource(R.string.game_core_origin_core, item.label)
-                    GameOptionOrigin.DEFAULT -> item.label
+                fun changeDisc(index: Int) {
+                    if (runCatching { retroView.changeDisk(index) }.isSuccess) {
+                        currentDisc = index
+                        message = context.getString(R.string.game_disc, index + 1)
+                    }
                 }
                 GameSidePanel(
                     panels = gamePanels,
                     title = when {
-                        option != null -> option.title
                         open == GamePanel.SETTINGS -> stringResource(R.string.player_playback_settings)
                         open == GamePanel.OSD_BUTTONS -> stringResource(R.string.osd_buttons)
                         open == GamePanel.CORE && category != null -> categoryTitle.orEmpty()
-                        open == GamePanel.PICTURE && shaderPacksOpen -> stringResource(R.string.games_shader_packs_title)
-                        open == GamePanel.PICTURE && shaderGroup != null -> stringResource(shaderGroup.titleRes)
                         open == GamePanel.PICTURE -> stringResource(R.string.game_panel_picture)
                         open == GamePanel.CORE -> stringResource(R.string.game_panel_core)
                         open == GamePanel.DISC -> stringResource(R.string.game_panel_disc)
@@ -1591,7 +1580,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     subtitle = when {
                         open == GamePanel.PICTURE && gamePictureScope -> stringResource(R.string.game_core_scope_game)
                         open == GamePanel.PICTURE -> stringResource(R.string.game_picture_scope, system.name)
-                        open == GamePanel.CORE && option == null -> if (gameScope) {
+                        open == GamePanel.CORE -> if (gameScope) {
                             stringResource(R.string.game_core_scope_game)
                         } else stringResource(R.string.game_core_scope_core, core.name)
                         else -> null
@@ -1629,9 +1618,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             if (availability.netplaySetup) GamePanelChoice(stringResource(R.string.game_panel_netplay), selected = false,
                                 icon = Icons.Filled.Groups,
                                 onClick = { openSettingsPanel(GamePanel.NETPLAY) })
-                            if (availability.discs) GamePanelChoice(stringResource(R.string.game_panel_disc), selected = false,
-                                icon = Icons.Filled.Album,
-                                onClick = { openSettingsPanel(GamePanel.DISC) })
+                            if (availability.discs) GameDiscSelector(discCount, currentDisc, ::changeDisc)
                             GamePanelChoice(stringResource(R.string.game_panel_info), selected = false,
                                 icon = Icons.Filled.Info, onClick = { openSettingsPanel(GamePanel.INFO) })
                             GamePanelChoice(stringResource(R.string.game_exit), selected = false,
@@ -1642,75 +1629,6 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             player = OsdPlayer.GAMES,
                             offered = availability.buttons(),
                         )
-                        option != null -> {
-                            if (option.info.isNotBlank()) GamePanelText(option.info)
-                            option.values.forEach { choice ->
-                                GamePanelChoice(
-                                    text = choice.label,
-                                    subtitle = if (choice.value == option.default) stringResource(R.string.game_core_value_default) else null,
-                                    selected = choice.value == option.value,
-                                    onClick = {
-                                        runCatching { retroView.updateVariables(Variable(option.key, choice.value)) }
-                                        // The value a row would otherwise inherit is stored as "no own value".
-                                        val inherited = if (gameScope) settings.coreOptions(core)[option.key] ?: option.default
-                                            else option.default
-                                        val stored = choice.value.takeIf { it != inherited }
-                                        GameSettings.update {
-                                            if (gameScope) it.withGameCoreOption(core, game.saveKey, option.key, stored)
-                                            else it.withCoreOption(core, option.key, stored, gameKey = game.saveKey)
-                                        }
-                                        optionsVersion++
-                                        gamePanels.back()
-                                    },
-                                )
-                            }
-                        }
-                        open == GamePanel.PICTURE && shaderPacksOpen -> {
-                            if (installedShaders.isEmpty()) GamePanelText(stringResource(R.string.games_shader_packs_empty))
-                            installedShaders.forEach { preset ->
-                                GamePanelChoice(
-                                    text = preset.title,
-                                    subtitle = preset.packTitle + " · " + preset.license,
-                                    selected = selectedPack == preset.selection,
-                                    onClick = {
-                                        val verified = model.shaderPacks.config(preset.selection)
-                                        if (verified != null) {
-                                            retroView.shader = GameHdrToneMapShader.forConfig(
-                                                verified, toneMap, session.vulkan,
-                                            )
-                                            GameSettings.update {
-                                                it.withPackShader(system, game.saveKey.takeIf { gamePictureScope }, preset.selection)
-                                            }
-                                            // A single choice on a sub-page returns, like core option values.
-                                            gamePanels.back()
-                                        }
-                                    },
-                                )
-                            }
-                        }
-                        open == GamePanel.PICTURE && shaderGroup != null -> {
-                            val recommended = GamePictureDefaults.recommended(system)
-                            GameShader.entries.filter { it.group == shaderGroup && (it == shader || GamePictureDefaults.offers(system, it)) }
-                                .sortedBy { it !in recommended }
-                                .forEach { choice ->
-                                GamePanelChoice(
-                                    text = stringResource(choice.titleRes),
-                                    subtitle = listOfNotNull(
-                                        stringResource(R.string.game_shader_recommended).takeIf { choice in recommended },
-                                        stringResource(choice.hintRes),
-                                    ).joinToString(" · "),
-                                    selected = selectedPack == null && choice == shader,
-                                    onClick = {
-                                        retroView.shader = GameHdrToneMapShader.forGame(choice, toneMap, session.vulkan, shaderIntensity, effect)
-                                        GameSettings.update {
-                                            if (gamePictureScope) it.withGameShader(game.saveKey, choice)
-                                            else it.withShader(system, choice)
-                                        }
-                                        gamePanels.back()
-                                    },
-                                )
-                            }
-                        }
                         open == GamePanel.PICTURE -> {
                             if (session.vulkan && (nativeSdrDiagnostic || nativeSdrFullscreenRequested) && !nativePictureSupported) {
                                 GamePanelText(stringResource(R.string.game_picture_native_limit))
@@ -1751,28 +1669,28 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     }
                                 },
                             )
-                            GamePanelHeading(stringResource(R.string.game_picture_filter))
-                            if (installedShaders.isNotEmpty()) GamePanelChoice(
-                                text = stringResource(R.string.games_shader_packs_title),
-                                subtitle = installedShaders.firstOrNull { it.selection == selectedPack }?.title,
-                                selected = selectedPack != null,
-                                trailingIcon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                onClick = gamePanels::openShaderPacks,
+                            GamePictureFilterSelector(
+                                system = system,
+                                shader = shader,
+                                selectedPack = selectedPack,
+                                installedPresets = installedShaders,
+                                onShaderSelected = { choice ->
+                                    retroView.shader = GameHdrToneMapShader.forGame(choice, toneMap, session.vulkan, shaderIntensity, effect)
+                                    GameSettings.update {
+                                        if (gamePictureScope) it.withGameShader(game.saveKey, choice)
+                                        else it.withShader(system, choice)
+                                    }
+                                },
+                                onPackSelected = { preset ->
+                                    val verified = model.shaderPacks.config(preset.selection)
+                                    if (verified != null) {
+                                        retroView.shader = GameHdrToneMapShader.forConfig(verified, toneMap, session.vulkan)
+                                        GameSettings.update {
+                                            it.withPackShader(system, game.saveKey.takeIf { gamePictureScope }, preset.selection)
+                                        }
+                                    }
+                                },
                             )
-                            val recommended = GamePictureDefaults.recommended(system)
-                            // Groups without a filter for this screen (handheld filters on a console) stay hidden.
-                            GameShaderGroup.entries.filter { group ->
-                                shader.group == group || GameShader.entries.any { it.group == group && GamePictureDefaults.offers(system, it) }
-                            }.sortedBy { group -> recommended.none { it.group == group } }.forEach { group ->
-                                GamePanelChoice(
-                                    text = stringResource(group.titleRes),
-                                    subtitle = GameShader.entries.firstOrNull { it == shader && it.group == group }
-                                        ?.let { stringResource(it.titleRes) },
-                                    selected = selectedPack == null && shader.group == group,
-                                    trailingIcon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                    onClick = { gamePanels.openShaderGroup(group) },
-                                )
-                            }
                             if (selectedPack == null && GameRetroShaders.isCustom(shader)) {
                                 val percent = (shaderIntensity * 100).roundToInt()
                                 com.ambient.tv.ui.common.PlayerValueSlider(
@@ -2009,16 +1927,24 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 categorized -> emptyList()
                                 else -> options
                             }
-                            shown.forEach { item ->
-                                GamePanelChoice(
-                                    text = item.title,
-                                    subtitle = originLabel(item),
-                                    selected = false,
-                                    trailingIcon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                    focusKey = "game-option:${item.key}",
-                                    onClick = { gamePanels.openOption(item.key) },
+                            shown.forEach { item -> key(item.key) {
+                                GameCoreOptionSelector(
+                                    option = item,
+                                    origin = settings.coreOptionOrigin(core, game.saveKey, item.key),
+                                    onSelected = { value ->
+                                        runCatching { retroView.updateVariables(Variable(item.key, value)) }
+                                        // Choosing the inherited value clears this scope's override.
+                                        val inherited = if (gameScope) settings.coreOptions(core)[item.key] ?: item.default
+                                            else item.default
+                                        val stored = value.takeIf { it != inherited }
+                                        GameSettings.update {
+                                            if (gameScope) it.withGameCoreOption(core, game.saveKey, item.key, stored)
+                                            else it.withCoreOption(core, item.key, stored, gameKey = game.saveKey)
+                                        }
+                                        optionsVersion++
+                                    },
                                 )
-                            }
+                            } }
                             if (category == null) {
                                 val own = settings.gameCoreOptions(core, game.saveKey)
                                 if (own.isNotEmpty()) GamePanelChoice(
@@ -2050,19 +1976,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 )
                             }
                         }
-                        open == GamePanel.DISC -> (0 until discCount).forEach { index ->
-                            GamePanelChoice(
-                                text = stringResource(R.string.game_disc, index + 1),
-                                selected = index == currentDisc,
-                                onClick = {
-                                    // A list on a panel's own page stays open, like picture shapes.
-                                    if (runCatching { retroView.changeDisk(index) }.isSuccess) {
-                                        currentDisc = index
-                                        message = context.getString(R.string.game_disc, index + 1)
-                                    }
-                                },
-                            )
-                        }
+                        open == GamePanel.DISC -> GameDiscSelector(discCount, currentDisc, ::changeDisc)
                         open == GamePanel.CONTROLS -> {
                             // Direct touch controls only exist on a phone or tablet; a TV starts with players.
                             if (handheld) {

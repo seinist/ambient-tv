@@ -15,7 +15,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalWindowInfo
-import com.ambient.tv.games.GameShaderGroup
 import com.ambient.tv.ui.common.LocalPlayerPanelNavigation
 import com.ambient.tv.ui.common.PlayerPanelNavigation
 import com.ambient.tv.ui.common.RestorePlayerPanelFocus
@@ -30,14 +29,11 @@ internal enum class GamePanel {
     SETTINGS, OSD_BUTTONS, PICTURE, CORE, DISC, CONTROLS, INFO, ACHIEVEMENTS, CHEATS, NETPLAY,
 }
 
-/** A distinct page identity also distinguishes successive levels of the same core/picture panel. */
+/** A distinct page identity separates core categories and diagnostics from their parent panel. */
 @Immutable
 internal data class GamePanelPage(
     val panel: GamePanel,
     val optionCategory: String? = null,
-    val optionKey: String? = null,
-    val shaderGroup: GameShaderGroup? = null,
-    val shaderPacksOpen: Boolean = false,
     /** Info → Vulkan/HDR diagnostics, the game's counterpart of the video "Stats for nerds". */
     val diagnostics: Boolean = false,
 )
@@ -51,9 +47,6 @@ internal class GamePanelNavigation(
     val page: GamePanelPage? get() = navigation.externalPage as? GamePanelPage
     val panel: GamePanel? get() = page?.panel
     val optionCategory: String? get() = page?.optionCategory
-    val optionKey: String? get() = page?.optionKey
-    val shaderGroup: GameShaderGroup? get() = page?.shaderGroup
-    val shaderPacksOpen: Boolean get() = page?.shaderPacksOpen == true
     val diagnosticsOpen: Boolean get() = page?.diagnostics == true
     val fromSettings: Boolean get() = navigation.hasExternalParent(GamePanelPage(GamePanel.SETTINGS))
     var statesOpen by mutableStateOf(false)
@@ -72,24 +65,9 @@ internal class GamePanelNavigation(
         open(target)
     }
 
-    fun openOption(key: String) {
-        val current = page?.takeIf { it.panel == GamePanel.CORE } ?: return
-        navigation.openExternal(current.copy(optionKey = key))
-    }
-
     fun openCategory(key: String) {
         val current = page?.takeIf { it.panel == GamePanel.CORE } ?: return
-        navigation.openExternal(current.copy(optionCategory = key, optionKey = null))
-    }
-
-    fun openShaderGroup(group: GameShaderGroup) {
-        val current = page?.takeIf { it.panel == GamePanel.PICTURE } ?: return
-        navigation.openExternal(current.copy(shaderGroup = group, shaderPacksOpen = false))
-    }
-
-    fun openShaderPacks() {
-        val current = page?.takeIf { it.panel == GamePanel.PICTURE } ?: return
-        navigation.openExternal(current.copy(shaderGroup = null, shaderPacksOpen = true))
+        navigation.openExternal(current.copy(optionCategory = key))
     }
 
     fun openDiagnostics() {

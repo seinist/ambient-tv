@@ -2724,7 +2724,8 @@ private fun AmbientTvApp(
                 // A windowed video page is browsable chrome again: the bottom navigation returns
                 // with the system bars and only the fullscreen orientation hides it.
                 showNavigation = currentRoute !in FULLSCREEN_ROUTES || (handheld && onPlayerScreen && !handheldFullscreen.enabled),
-                playerVisible = onPlayerScreen || currentRoute == Destinations.SPOTIFY_PLAYER || currentRoute == Destinations.RADIO_PLAYER,
+                playerVisible = onPlayerScreen || currentRoute == Destinations.SPOTIFY_PLAYER ||
+                    currentRoute == Destinations.RADIO_PLAYER || currentRoute == Destinations.GAME_PLAYER,
                 onNavigate = ::navigateSidebar,
                 onOpenPlayback = { route ->
                     if (BackgroundPlaybackSession.snapshot.value.metadata?.route == route) reopenBackgroundPlayer()

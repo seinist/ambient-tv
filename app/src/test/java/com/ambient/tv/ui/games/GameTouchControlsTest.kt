@@ -1,10 +1,13 @@
 package com.ambient.tv.ui.games
 
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.unit.IntSize
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
+import com.ambient.tv.ui.gamepad.retro.TouchControlStyle
 import com.ambient.tv.games.GameTouchMode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -42,6 +45,34 @@ class GameTouchControlsTest {
                 val menu = androidx.compose.ui.geometry.Rect(12f, 12f, 60f, 60f)
                 assertTrue(layout.buttons.values.none { it.overlaps(menu) })
                 assertTrue(listOfNotNull(layout.dpad, layout.leftStick, layout.rightStick).none { it.overlaps(menu) })
+            }
+        }
+    }
+
+    @Test fun landscapeUtilitiesAndRewindStayOutsideThePictureAtEverySupportedPadSize() {
+        for ((width, height) in listOf(568f to 212f, 640f to 320f, 780f to 340f, 980f to 480f)) {
+            for (mode in GameTouchMode.entries) for (scale in listOf(100, 125, 160)) {
+                for (presentation in listOf(GameTouchPresentation.Generic, gameTouchPresentation("snes"),
+                    gameTouchPresentation("nes"), gameTouchPresentation("megadrive", "md6"),
+                    gameTouchPresentation("n64"), gameTouchPresentation("wii"))) {
+                    val style = TouchControlStyle(scalePercent = scale)
+                    val layout = gameTouchLayout(mode, width, height, false, style, presentation)
+                    val top = gameTouchUtilityToolbarHeight(mode, width, height, style, presentation)
+                    val picture = Rect(0f, top, width, height)
+                    val menu = Rect(12f, 12f, 60f, 60f)
+                    val rewind = Rect(width / 2f - 28f, 8f, width / 2f + 28f, 56f)
+                    assertTrue("$mode $width x $height scale=$scale has no picture", picture.height > 0f)
+                    assertFalse(picture.overlaps(menu))
+                    assertFalse(picture.overlaps(rewind))
+                    layout.buttons.forEach { (button, bounds) ->
+                        if (button !in layout.faces) {
+                            assertFalse("$button covers picture at $mode $width x $height scale=$scale",
+                                bounds.overlaps(picture))
+                        }
+                        assertFalse("Rewind covers $button at $mode $width x $height scale=$scale",
+                            bounds.overlaps(rewind))
+                    }
+                }
             }
         }
     }

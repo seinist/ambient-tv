@@ -10,7 +10,7 @@ import android.database.sqlite.SQLiteDatabase
  */
 internal object GameLibraryQueryIndex {
     // Bump when title/search/system-label/eligibility rules change, so old projections rebuild without a NAS scan.
-    const val POLICY_VERSION = 3
+    const val POLICY_VERSION = 4
 
     fun create(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE game_query (

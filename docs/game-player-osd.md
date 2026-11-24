@@ -2,8 +2,24 @@
 
 Games use Ambient TV's shared player chrome, action bar and right-side panels. Their actions
 and input lifetime belong to the active game, separately from background video/audio playback.
+The game starts with this chrome hidden. It is shown only while the game menu is open and is
+removed immediately on Continue. The fullscreen ROM route also suppresses the handheld media
+mini-player and Companion playback bar during preparation and play.
+
+## Phone picture and control areas
+
+Menu and rewind occupy a reserved toolbar above the native picture. In landscape that toolbar
+also contains Start, Select, shoulder buttons and stick-click controls; their real scaled bounds
+determine the reserved height. In portrait the pad stays in its separate deck below the picture.
+The picture keeps the same bounds when the menu opens, rewind becomes available or a connected
+gamepad temporarily hides touch controls, so these changes do not resize the native surface.
 
 ## Available actions
+
+The action bar uses the full available width: Continue, Stop and the other playback/state
+actions form the left group; picture, core, control, information and settings actions form
+the right group. Phones use the same fullscreen grouping without requiring the video player's
+orientation switch, and overflowing groups remain horizontally scrollable.
 
 The game OSD only composes actions which can currently be used. Unsupported core features,
 unavailable saves, an empty rewind history and actions blocked by hardcore/netplay or an active
@@ -27,7 +43,7 @@ its direct OSD button has been hidden. Settings always remains reachable.
 - General app shortcuts cannot navigate to the library, search or unrelated settings while a
   game owns input. Player settings/info shortcuts open the corresponding game panel.
 - Opening a panel records its initiating button/row. Back restores that origin, including core
-  categories/options, shader groups and the save-state strip. A disappearing action falls back
+  categories, value selectors and the save-state strip. A disappearing action falls back
   to Continue or the always-present Settings button.
 - Native and embedded dialogs share the same input boundary. Held keys, repeats and stick axes
   must be released/neutralized after a context or page change, so the old input cannot activate
@@ -35,6 +51,11 @@ its direct OSD button has been hidden. Settings always remains reachable.
 
 Android system Home/Power/volume behavior is preserved. A controller's Guide button is handled
 when Android delivers the corresponding controller/menu event to the app.
+
+Core-option values, picture filters (including installed shader packs) and the selected disc
+use the shared select control directly in their settings panel. Opening or choosing a value
+does not add a navigation page. Back first dismisses the selector and returns focus to its
+trigger; configuration panels and core categories retain their normal page navigation.
 
 ## Companion phone
 

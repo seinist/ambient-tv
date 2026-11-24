@@ -17,6 +17,7 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -47,6 +48,7 @@ class GameTouchInputUiTest {
         var mode by mutableStateOf(GameTouchMode.DPAD)
         var style by mutableStateOf(TouchControlStyle())
         var hiddenForGamepad by mutableStateOf(false)
+        var rewindSeconds by mutableStateOf<Float?>(null)
         var osdTaps = 0
         val held = mutableSetOf<RetroPadButton>()
         val aTransitions = mutableListOf<Boolean>()
@@ -74,6 +76,7 @@ class GameTouchInputUiTest {
                             surface = { modifier -> Box(modifier) },
                             touchStyle = fixture.style, hiddenForGamepad = fixture.hiddenForGamepad,
                             onShowTouch = { fixture.hiddenForGamepad = false },
+                            rewindSeconds = fixture.rewindSeconds,
                         )
                     }
                 }
@@ -238,6 +241,48 @@ class GameTouchInputUiTest {
         }
         rule.runOnIdle { fixture.menuVisible = true }
         assertEquals(surface, rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot())
+    }
+
+    private fun assertControlsOutsidePicture(tags: List<String>) {
+        val surface = rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val controls = tags.map { tag ->
+            val target = rule.onNodeWithTag(tag, useUnmergedTree = true).assertIsDisplayed()
+            assertTrue("$tag lost its touch target", target.getBoundsInRoot().width >= 48.dp &&
+                target.getBoundsInRoot().height >= 48.dp)
+            target.fetchSemanticsNode().boundsInRoot.also { assertFalse("$tag covers the game picture", it.overlaps(surface)) }
+        }
+        controls.forEachIndexed { index, bounds -> controls.drop(index + 1).forEach { other ->
+            assertFalse("Utility controls overlap: $bounds and $other", bounds.overlaps(other))
+        } }
+    }
+
+    @Test fun portraitMenuRewindAndPadControlsStayOutsideThePicture() {
+        val fixture = mount()
+        rule.runOnIdle { fixture.mode = GameTouchMode.DUAL; fixture.rewindSeconds = 20f }
+        assertControlsOutsidePicture(listOf("game-player-menu", "game-player-rewind") +
+            listOf("a", "b", "x", "y", "l", "l2", "r", "r2", "l3", "r3", "select", "start")
+                .map { "game-touch-$it" })
+    }
+
+    @Test
+    @Config(qualifiers = "w640dp-h360dp-land-mdpi")
+    fun landscapeUtilitiesReservePictureSpaceAtCustomSizesAndKeepItWhileHidden() {
+        val fixture = mount()
+        rule.runOnIdle { fixture.mode = GameTouchMode.DUAL }
+        for (scale in listOf(100, 125, 160)) {
+            rule.runOnIdle { fixture.style = fixture.style.copy(scalePercent = scale) }
+            val surface = rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot()
+            rule.runOnIdle { fixture.rewindSeconds = 20f }
+            assertEquals(surface, rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot())
+            assertControlsOutsidePicture(listOf("game-player-menu", "game-player-rewind") +
+                listOf("l", "l2", "r", "r2", "l3", "r3", "select", "start").map { "game-touch-$it" })
+            rule.runOnIdle { fixture.menuVisible = true }
+            assertEquals(surface, rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot())
+            rule.runOnIdle { fixture.menuVisible = false; fixture.hiddenForGamepad = true }
+            assertEquals(surface, rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot())
+            assertControlsOutsidePicture(listOf("game-player-menu", "game-player-rewind", "game-touch-show"))
+            rule.runOnIdle { fixture.hiddenForGamepad = false; fixture.rewindSeconds = null }
+        }
     }
 
     @Test fun changingLayoutOrOpeningMenuReleasesHeldButtons() {

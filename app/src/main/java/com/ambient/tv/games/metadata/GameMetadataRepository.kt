@@ -261,7 +261,7 @@ class GameMetadataRepository @Inject constructor(
         if (!force && !unresolvedLibretro) {
             when (library.lookupStatus(current.fileId, provider, fingerprint)) {
                 "found" -> {
-                    if (known != null) {
+                    if (known != null && gameMetadataMatchesQueryIdentity(known, query)) {
                         ensureStoredArtwork(current, known, GameArtworkKind.COVER, force = false)
                         return@withGame true
                     }
@@ -269,7 +269,7 @@ class GameMetadataRepository @Inject constructor(
                 "not_found", "ambiguous" -> return@withGame false
             }
             if (known != null && known.updatedAt > System.currentTimeMillis() - FOUND_TTL &&
-                (query.canonicalTitle.isNullOrBlank() || known.canonicalTitle == query.canonicalTitle)) {
+                gameMetadataMatchesQueryIdentity(known, query)) {
                 ensureStoredArtwork(current, known, GameArtworkKind.COVER, force = false)
                 return@withGame true
             }
@@ -288,7 +288,8 @@ class GameMetadataRepository @Inject constructor(
         currentCoroutineContext().ensureActive()
         val confirmed = candidates.filter { it.exactMatch }
         // Libretro's static URL is validated by an actual image response. It is not an API match.
-        val selected = if (provider == GameMetadataProviderIds.LIBRETRO) candidates
+        val selected = if (provider == GameMetadataProviderIds.LIBRETRO)
+            automaticLibretroCandidates(candidates, current.verifiedTitle, known?.matchLocked == true)
             else confirmed.singleOrNull()?.let(::listOf).orEmpty()
         for (candidate in selected) {
             if (applyCandidate(current, candidate, manual = false, force = force)) {

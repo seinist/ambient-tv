@@ -19,11 +19,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.InputModeManager
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.pressKey
+import com.ambient.tv.R
+import com.ambient.tv.games.GameCoreOption
+import com.ambient.tv.games.GameCoreValue
+import com.ambient.tv.games.GameOptionOrigin
+import com.ambient.tv.games.GameShader
+import com.ambient.tv.games.GameSystems
 import com.ambient.tv.ui.common.LocalPlayerPanelNavigation
 import com.ambient.tv.ui.common.PlayerIconButton
 import com.ambient.tv.ui.common.TvActionButton
@@ -36,6 +53,7 @@ import com.ambient.tv.ui.player.PLAYER_PANEL_EXIT_MS
 import com.ambient.tv.ui.player.PlayerChromeState
 import com.ambient.tv.ui.theme.AmbientTvTheme
 import com.ambient.tv.util.createAndroidComposeRule
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -46,23 +64,29 @@ import org.robolectric.annotation.Config
 /** Real shared buttons/panels exercise origin return without starting a native game core. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = Application::class, qualifiers = "w1080dp-h720dp-land-mdpi")
+@OptIn(ExperimentalTestApi::class)
 class GamePanelNavigationUiTest {
     @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
     private val chrome = PlayerChromeState()
     private lateinit var panels: GamePanelNavigation
+    private lateinit var inputModeManager: InputModeManager
     private val continueRequester = FocusRequester()
     private val settingsRequester = FocusRequester()
     private var showSettings by mutableStateOf(true)
     private var showContinue by mutableStateOf(true)
     private var showMutation by mutableStateOf(true)
+    private var renderer by mutableStateOf("software")
+    private var shader by mutableStateOf(GameShader.SHARP)
+    private var disc by mutableStateOf(0)
 
-    private fun mount() {
+    private fun mount(handheld: Boolean = false) {
         rule.mainClock.autoAdvance = false
         chrome.osd.expand()
         rule.setContent {
+            inputModeManager = LocalInputModeManager.current
             panels = rememberGamePanelNavigation(chrome)
             CompositionLocalProvider(
-                LocalHandheldUi provides false,
+                LocalHandheldUi provides handheld,
                 LocalPlayerChromeState provides chrome,
                 LocalPlayerControlFocus provides chrome.focus,
                 LocalPlayerPanelNavigation provides panels.navigation,
@@ -98,14 +122,20 @@ class GamePanelNavigationUiTest {
                                             modifier = Modifier.testTag("core-entry"))
                                         GamePanelChoice("Unavailable", false, {}, enabled = false,
                                             modifier = Modifier.testTag("unavailable"))
+                                        GameDiscSelector(3, disc) { disc = it }
                                     }
                                     page.panel == GamePanel.CORE && page.optionCategory == null -> {
                                         GamePanelChoice("Video", false, { panels.openCategory("video") },
                                             modifier = Modifier.testTag("category-entry"), focusKey = "category:video")
                                     }
-                                    page.panel == GamePanel.CORE && page.optionKey == null -> {
-                                        GamePanelChoice("Renderer", false, { panels.openOption("renderer") },
-                                            modifier = Modifier.testTag("option-entry"), focusKey = "option:renderer")
+                                    page.panel == GamePanel.CORE -> {
+                                        GameCoreOptionSelector(GameCoreOption("renderer", "Renderer", listOf(
+                                            GameCoreValue("software", "Software"), GameCoreValue("hardware", "Hardware")),
+                                            renderer, info = "Select the renderer."), GameOptionOrigin.DEFAULT) { renderer = it }
+                                    }
+                                    page.panel == GamePanel.PICTURE -> {
+                                        GamePictureFilterSelector(GameSystems.byId("snes")!!, shader, null, emptyList(),
+                                            onShaderSelected = { shader = it }, onPackSelected = {})
                                     }
                                     else -> GamePanelChoice("Value", false, {}, modifier = Modifier.testTag("value-entry"))
                                 }
@@ -115,6 +145,7 @@ class GamePanelNavigationUiTest {
                 }
             }
         }
+        if (!handheld) rule.runOnIdle { assertTrue(inputModeManager.requestInputMode(InputMode.Keyboard)) }
         settle()
     }
 
@@ -154,15 +185,74 @@ class GamePanelNavigationUiTest {
         rule.onNodeWithTag("unavailable").assertDoesNotExist()
         click("core-entry")
         click("category-entry")
-        click("option-entry")
+        rule.onNodeWithText("Renderer").performClick()
+        settle()
+        rule.runOnIdle {
+            assertEquals(GamePanelPage(GamePanel.CORE, optionCategory = "video"), panels.page)
+            assertEquals(3, panels.navigation.depth)
+        }
         back()
-        rule.onNodeWithTag("option-entry").assertIsFocused()
+        rule.onNodeWithText("Renderer").assertIsFocused()
         back()
         rule.onNodeWithTag("category-entry").assertIsFocused()
         back()
         rule.onNodeWithTag("core-entry").assertIsFocused()
         back()
         rule.onNodeWithTag("settings").assertIsFocused()
+    }
+
+    @Test fun selectingACoreValueByRemoteAppliesItWithoutOpeningAnotherPage() {
+        mount()
+        click("settings")
+        click("core-entry")
+        click("category-entry")
+        rule.runOnIdle { assertTrue(panels.navigation.requestFocus("selector:null:game-core-option:renderer")) }
+        rule.onNodeWithText("Renderer").assertIsFocused().performKeyInput { pressKey(Key.DirectionCenter) }
+        settle()
+        val defaultValue = "Software · ${rule.activity.getString(R.string.game_core_value_default)}"
+        rule.onNodeWithText(defaultValue).assertIsFocused().performKeyInput { pressKey(Key.DirectionDown) }
+        settle()
+        rule.onNodeWithText("Hardware").assertIsFocused().performKeyInput { pressKey(Key.DirectionCenter) }
+        settle()
+        rule.runOnIdle {
+            assertEquals("hardware", renderer)
+            assertEquals(GamePanelPage(GamePanel.CORE, optionCategory = "video"), panels.page)
+            assertEquals(3, panels.navigation.depth)
+        }
+        rule.onNodeWithText(defaultValue).assertDoesNotExist()
+        rule.onNodeWithText("Renderer").assertIsFocused()
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h800dp-port-mdpi")
+    fun phoneDiscAndFilterSelectionsApplyInTheirExistingSettingsPages() {
+        mount(handheld = true)
+        click("settings")
+        val discLabel = rule.activity.getString(R.string.game_panel_disc)
+        rule.onNodeWithText(discLabel).assertIsDisplayed().performTouchInput { click() }
+        settle()
+        rule.onNodeWithText(rule.activity.getString(R.string.game_disc, 2))
+            .assertIsDisplayed().performTouchInput { click() }
+        settle()
+        rule.runOnIdle {
+            assertEquals(1, disc)
+            assertEquals(GamePanelPage(GamePanel.SETTINGS), panels.page)
+            assertEquals(1, panels.navigation.depth)
+        }
+        click("picture-entry")
+        val filterLabel = rule.activity.getString(R.string.game_picture_filter)
+        rule.onNodeWithText(filterLabel).assertIsDisplayed().performTouchInput { click() }
+        settle()
+        rule.onNodeWithText(rule.activity.getString(GameShader.SMOOTH.titleRes))
+            .performScrollTo().assertIsDisplayed().performTouchInput { click() }
+        settle()
+        rule.runOnIdle {
+            assertEquals(GameShader.SMOOTH, shader)
+            assertEquals(GamePanelPage(GamePanel.PICTURE), panels.page)
+            assertEquals(2, panels.navigation.depth)
+        }
+        back()
+        rule.runOnIdle { assertEquals(GamePanel.SETTINGS, panels.panel) }
     }
 
     @Test fun closingStateStripReturnsToStatesRatherThanContinue() {
