@@ -160,6 +160,7 @@ class GameLibraryViewModel @Inject constructor(
     }
 
     fun section(value: String) {
+        metadata.startCoverRecovery()
         mutable.update { it.copy(section = value) }
         selection.update { (it ?: GameLibraryQuery(search = mutable.value.query)).copy(section = value) }
     }

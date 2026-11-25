@@ -240,8 +240,8 @@ index f80d9eb..db9b7f0 100644
  #include <optional>
  #include <atomic>
  
-@@ -51,6 +52,7 @@
- #include "rewindbuffer.h"
+@@ -52,6 +53,7 @@
+ #include "rewindtimeline.h"
  #include "stateloadpolicy.h"
  #include "contentaspect.h"
 +#include "gamecontent.h"

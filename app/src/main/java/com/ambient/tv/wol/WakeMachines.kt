@@ -1,6 +1,8 @@
 package com.ambient.tv.wol
 
 import com.ambient.tv.connectivity.mediaServerProfileSourceId
+import com.ambient.tv.connectivity.EndpointConfigurationKey
+import com.ambient.tv.data.dlna.DlnaServer
 import com.ambient.tv.data.dlna.DlnaStore
 import com.ambient.tv.data.dlna.dlnaWakeEndpoint
 import com.ambient.tv.data.local.AppPreferences
@@ -47,22 +49,88 @@ internal fun resolveWakeGroupKeys(endpoints: List<WakeEndpoint>): List<String> {
     return endpoints.indices.map { keys.getValue(find(it)) }
 }
 
+/** One immutable grouping, reused for every lookup until the configured endpoints change. */
+internal class WakeGroupIndex(endpoints: List<WakeEndpoint>) {
+    private val endpoints = endpoints.toList()
+    private val keys = resolveWakeGroupKeys(this.endpoints)
+    private val byHost = this.endpoints.mapIndexedNotNull { i, endpoint ->
+        normalizeWakeGroupHost(endpoint.host)?.let { it to keys[i] }
+    }.toMap()
+    private val byMac = this.endpoints.mapIndexedNotNull { i, endpoint ->
+        canonicalWolMacKey(endpoint.mac)?.let { it to keys[i] }
+    }.toMap()
+
+    private fun joinedGroups(host: String?, mac: String?): List<String> = listOfNotNull(
+        normalizeWakeGroupHost(host)?.let(byHost::get),
+        canonicalWolMacKey(mac)?.let(byMac::get),
+    )
+
+    fun keyFor(system: String, host: String?, mac: String?): String {
+        // An arbitrary/manual target can bridge two configured groups by host and MAC.
+        // Include its own key: a newly supplied MAC may become the group's smallest MAC.
+        val candidates = joinedGroups(host, mac) + wakeGroupKey(mac, host, system)
+        return candidates.filter { it.startsWith("mac:") }.minOrNull()
+            ?: candidates.filter { it.startsWith("host:") }.minOrNull()
+            ?: candidates.last()
+    }
+
+    fun groupFor(system: String, host: String?, mac: String?): Pair<String, List<String>> {
+        val joined = joinedGroups(host, mac)
+        // Preserve the existing order: the requested target's MAC first, then configured order.
+        val macs = listOfNotNull(canonicalWolMacKey(mac)) + endpoints.mapIndexedNotNull { i, endpoint ->
+            canonicalWolMacKey(endpoint.mac).takeIf { keys[i] in joined }
+        }
+        return keyFor(system, host, mac) to macs.distinct()
+    }
+}
+
+internal class WakeMachineSnapshot(
+    val configuration: EndpointConfigurationKey,
+    val dlnaServers: List<DlnaServer>,
+    private val groups: WakeGroupIndex,
+) {
+    fun keyFor(system: String, host: String?, mac: String?): String = groups.keyFor(system, host, mac)
+    fun groupFor(system: String, host: String?, mac: String?): Pair<String, List<String>> = groups.groupFor(system, host, mac)
+}
+
 /** Resolves the shared machine key of any wake target against every configured system. */
 @Singleton
 class WakeMachines @Inject constructor(
     private val preferences: AppPreferences,
     private val dlnaStore: DlnaStore,
 ) {
+    private val lock = Any()
+    @Volatile private var cached: WakeMachineSnapshot? = null
+
+    internal fun snapshot(): WakeMachineSnapshot {
+        val configuration = preferences.connectivityConfigurationKey()
+        val servers = dlnaStore.servers()
+        cached?.takeIf { it.configuration == configuration && it.dlnaServers == servers }?.let { return it }
+        synchronized(lock) {
+            while (true) {
+                val current = preferences.connectivityConfigurationKey()
+                val currentServers = dlnaStore.servers()
+                cached?.takeIf { it.configuration == current && it.dlnaServers == currentServers }?.let { return it }
+                // Preserve the old per-target fallback if unrelated saved metadata is unreadable.
+                val groups = runCatching { WakeGroupIndex(configured(currentServers)) }
+                    .getOrElse { WakeGroupIndex(emptyList()) }
+                // Profile migration or a concurrent settings import may have changed the inputs.
+                if (current != preferences.connectivityConfigurationKey() || currentServers != dlnaStore.servers()) continue
+                return WakeMachineSnapshot(current, currentServers, groups).also { cached = it }
+            }
+        }
+    }
+
     fun keyFor(system: String, host: String?, mac: String?): String =
-        runCatching { resolveWakeGroupKeys(configured() + WakeEndpoint(system, host, mac)).last() }
+        runCatching { snapshot().keyFor(system, host, mac) }
             .getOrElse { wakeGroupKey(mac, host, system) }
 
     /** Machine key plus every distinct canonical MAC configured anywhere on that machine. */
     fun groupFor(system: String, host: String?, mac: String?): Pair<String, List<String>> =
-        runCatching { macsOfGroup(configured() + WakeEndpoint(system, host, mac)) }
+        runCatching { snapshot().groupFor(system, host, mac) }
             .getOrElse { wakeGroupKey(mac, host, system) to listOfNotNull(canonicalWolMacKey(mac)) }
 
-    private fun configured(): List<WakeEndpoint> = buildList {
+    private fun configured(servers: List<DlnaServer>): List<WakeEndpoint> = buildList {
         if (preferences.host.isNotBlank()) add(WakeEndpoint("plex", preferences.host, preferences.macAddress))
         if (preferences.jellyfinHost.isNotBlank()) add(WakeEndpoint("jellyfin", preferences.jellyfinHost, preferences.jellyfinMacAddress))
         if (preferences.embyHost.isNotBlank()) add(WakeEndpoint("emby", preferences.embyHost, preferences.embyMacAddress))
@@ -84,7 +152,7 @@ class WakeMachines @Inject constructor(
             }
         }
         preferences.fileSources.filter { it.kind != "local" }.forEach { add(WakeEndpoint("files", it.host, it.wolMac)) }
-        dlnaStore.servers().forEach { add(WakeEndpoint("dlna", dlnaWakeEndpoint(it)?.first, it.wolMac)) }
+        servers.forEach { add(WakeEndpoint("dlna", dlnaWakeEndpoint(it)?.first, it.wolMac)) }
     }
 }
 

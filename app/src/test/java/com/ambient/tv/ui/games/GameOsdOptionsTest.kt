@@ -43,6 +43,9 @@ class GameOsdOptionsTest {
 
     @Test fun supportedActionsUseTheSameOrderingAsTheSharedGameBar() {
         assertEquals(OsdPlayer.GAMES.buttons, ready().buttons())
+        assertEquals(listOf(OsdButton.GAME_REWIND, OsdButton.GAME_RESET, OsdButton.EXIT,
+            OsdButton.GAME_FAST_FORWARD, OsdButton.GAME_SAVE, OsdButton.GAME_LOAD,
+            OsdButton.GAME_STATES), ready().buttons().take(7))
         val offered = ready().copy(achievements = false, discCount = 1).buttons()
         assertFalse(OsdButton.GAME_ACHIEVEMENTS in offered)
         assertFalse(OsdButton.GAME_DISC in offered)

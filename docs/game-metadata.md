@@ -120,7 +120,9 @@ recognized game. A local image is selected through Android's document picker and
 Ambient TV's managed storage. Edited fields and chosen images can be locked; unlocking a field
 permits a future provider refresh to update it. Empty locked fields remain deliberately empty.
 Results support direct touch selection on phones and the same OK/Enter activation as other
-editor controls on TV. Optional image download failures do not undo an accepted text match.
+editor controls on TV. Match and artwork result rows use the shared animated accent outline
+and background to show the current D-pad/keyboard focus, without resizing the row. Optional
+image download failures do not undo an accepted text match.
 
 ## Individual folder actions
 
@@ -168,6 +170,17 @@ outside the selected folder/grant.
   After up to three promoted games, ordinary folder order advances; a bounded record prevents
   repeated downloads or progress counts when that order catches up. Browsing alone starts no
   metadata scan and does not change automatic-matching or provider settings.
+- After an app restart, visible Library and Home cards reuse their saved cover files. If an
+  automatic image was evicted by the disk budget, or its file is missing, a single background
+  worker restores that exact stored image address, with the focused card first. It does not
+  identify the game again, scan ROM folders or wake the NAS. Automatic matching may remain off;
+  selecting the provider **Off** also disables this online cover recovery. Images with no
+  stored remote reference are not searched for. Failures and repeated cache eviction are
+  throttled, and offscreen cards do not start downloads.
+- Reopening or rebuilding the view within the same app session also rechecks missing covers.
+  Visibility carries its own generation, so a quick layout/navigation change cannot reuse a
+  completed request from the old view merely because the same game IDs appear again. Focus
+  changes and ordinary catalog updates retain the existing protection against repeated loads.
 - Uncached game-cover display requests wait until the card is visible. TV cards retain the
   shared image loader's focus priority; memory hits and loads already admitted stay usable.
 - Bulk revisions and progress are coalesced; manual changes remain immediately visible.

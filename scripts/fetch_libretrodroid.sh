@@ -29,7 +29,7 @@ remove_dir() {
     rm -rf "$dir"
 }
 
-patch_hash="$( (cd "$PATCHES" && cat ./*.patch 2>/dev/null; cat "$ROOT/scripts/native_libretro_vulkan/librashader.h" "$ROOT/scripts/native_libretro_vulkan/vulkanslangpipeline.h" "$ROOT/scripts/native_libretro_vulkan/vulkanslangpipeline.cpp") | git hash-object --stdin)"
+patch_hash="$( (cd "$PATCHES" && cat ./*.patch 2>/dev/null; cat "$ROOT/scripts/native_libretro_vulkan/librashader.h" "$ROOT/scripts/native_libretro_vulkan/vulkanslangpipeline.h" "$ROOT/scripts/native_libretro_vulkan/vulkanslangpipeline.cpp" "$ROOT/scripts/native_rewind/rewindbuffer.h" "$ROOT/scripts/native_rewind/rewindbuffer.cpp" "$ROOT/scripts/native_rewind/rewindtimeline.h") | git hash-object --stdin)"
 marker="$COMMIT $patch_hash recursive"
 if [[ -f "$DEST/.ambient-libretrodroid" && "$(cat "$DEST/.ambient-libretrodroid")" == "$marker" ]]; then
     log "LibretroDroid $COMMIT already prepared"
@@ -68,6 +68,11 @@ done
 cp "$ROOT/scripts/native_libretro_vulkan/librashader.h" "$DEST/src/main/cpp/vulkan/librashader.h"
 cp "$ROOT/scripts/native_libretro_vulkan/vulkanslangpipeline.h" "$DEST/src/main/cpp/vulkan/vulkanslangpipeline.h"
 cp "$ROOT/scripts/native_libretro_vulkan/vulkanslangpipeline.cpp" "$DEST/src/main/cpp/vulkan/vulkanslangpipeline.cpp"
+# Keep the host-tested compressed history implementation identical to Android's.
+# This replaces the upstream full-state ring without another runtime dependency.
+cp "$ROOT/scripts/native_rewind/rewindbuffer.h" "$DEST/src/main/cpp/rewindbuffer.h"
+cp "$ROOT/scripts/native_rewind/rewindbuffer.cpp" "$DEST/src/main/cpp/rewindbuffer.cpp"
+cp "$ROOT/scripts/native_rewind/rewindtimeline.h" "$DEST/src/main/cpp/rewindtimeline.h"
 
 grep -q "RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:" "$DEST/src/main/cpp/environment.cpp" \
     || fail "Core options patch missing after apply"

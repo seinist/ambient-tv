@@ -229,6 +229,9 @@ class AppPreferences @Inject constructor(
         return decode(raw).also { decodedLists[key] = raw to it }
     }
 
+    /** Cheap, synchronous invalidation for cached host/WOL routing after any settings write. */
+    internal fun connectivityConfigurationKey() = com.ambient.tv.connectivity.EndpointConfigurationKey.read(prefs)
+
     /**
      * Portable Games view configuration (unlike each device's disk catalog or SAF grants).
      * Keep keys explicit so a malformed/old backup cannot inject arbitrary preferences.

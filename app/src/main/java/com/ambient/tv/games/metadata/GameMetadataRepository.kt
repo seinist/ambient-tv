@@ -26,6 +26,8 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -55,6 +57,7 @@ class GameMetadataRepository @Inject constructor(
     private val incoming get() = File(context.cacheDir, "game_metadata_fetch")
     private val maintenanceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val reconcileRequests = Channel<Unit>(Channel.CONFLATED)
+    private val coverRecoveryStarted = java.util.concurrent.atomic.AtomicBoolean()
     private val preferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key in setOf("game_library_folders", "file_sources", "file_playback_scopes")) {
             reconcileRequests.trySend(Unit)
@@ -78,6 +81,38 @@ class GameMetadataRepository @Inject constructor(
     }
 
     fun availableProviders(): List<String> = providers.availableProviders()
+
+    /** Start only when Library or Home actually has game cards to display. */
+    fun startCoverRecovery() = startCoverRecovery(SharedGameArtworkPriority)
+
+    private data class MissingCover(val game: LibraryGame, val provider: String, val reference: String)
+
+    internal fun startCoverRecovery(priority: GameArtworkPriority) {
+        if (!coverRecoveryStarted.compareAndSet(false, true)) return
+        maintenanceScope.launch {
+            GameArtworkRecovery(
+                priority = priority,
+                changes = merge(library.revisions.map { Unit }, settings.changes.map { Unit }),
+                pending = { fileId ->
+                    if (!settings.options().enabled) null else {
+                        val game = library.game(fileId)
+                        if (game == null || game.coverPath?.let { File(it).isFile } == true) null else {
+                            val stored = library.metadata(fileId)
+                            stored?.artwork(GameArtworkKind.COVER)?.let { reference ->
+                                MissingCover(game, stored.artworkProviders[GameArtworkKind.COVER.key]
+                                    ?: stored.provider, reference)
+                            }
+                        }
+                    }
+                },
+                identity = { target -> gameMetadataDigest("${target.provider}\u0000${target.reference}") },
+                restore = { target ->
+                    settings.options().enabled && ensureArtwork(target.game, GameArtworkKind.COVER)
+                },
+                onFailure = { timber.log.Timber.w("Stored game cover is temporarily unavailable") },
+            ).run()
+        }
+    }
 
     internal suspend fun closeForTests() {
         preferences.unregisterOnSharedPreferenceChangeListener(preferenceListener)
