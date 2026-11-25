@@ -28,10 +28,13 @@ import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isFocused
+import androidx.compose.ui.test.isPopup
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performKeyInput
@@ -102,6 +105,11 @@ class ControllerPanelFocusTest {
                 // dispatch the controller's synthetic key without Android's ViewRoot stage.
                 val root = if (inDialog) panelView.rootView else rule.activity.window.decorView
                 root.prepareForUiKeyEvent(event)
+                // SDK 35 requests the global transition through IWindowManager, which is a
+                // no-op service in Robolectric 4.17. Mirror the resulting real root state to
+                // its window session so a later popup inherits it. A broken helper still
+                // leaves both in Touch mode and fails the navigation assertions below.
+                InstrumentationRegistry.getInstrumentation().setInTouchMode(root.isInTouchMode)
                 if (inDialog) root.dispatchKeyEvent(event) else rule.activity.dispatchKeyEvent(event)
             }
             override fun perform(action: KeyAction) = error("Unexpected action: $action")
@@ -194,7 +202,10 @@ class ControllerPanelFocusTest {
 
     private fun assertMixedRowsAreReachable() {
         hat(y = 1f)
-        rule.runOnIdle { assertEquals(InputMode.Keyboard, inputMode.inputMode) }
+        rule.runOnIdle {
+            assertFalse(panelView.isInTouchMode)
+            assertEquals(InputMode.Keyboard, inputMode.inputMode)
+        }
         rule.onNodeWithTag("choice").assertIsFocused()
         confirm()
         rule.runOnIdle { assertEquals(1, choiceClicks) }
@@ -210,6 +221,16 @@ class ControllerPanelFocusTest {
         }
     }
 
+    private fun focusedPopupOption(text: String): SemanticsNodeInteraction {
+        // The trigger also contains the currently selected option's text. Select the actual
+        // popup row, and allow its bounded withFrameNanos focus request to finish.
+        val option = hasText(text) and hasAnyAncestor(isPopup())
+        rule.waitUntil(timeoutMillis = 2_000L) {
+            rule.onAllNodes(option and isFocused()).fetchSemanticsNodes().size == 1
+        }
+        return rule.onNode(option).assertIsFocused()
+    }
+
     @Test fun controllerHatLeavesTouchModeAndNavigatesAllTvPanelControlTypes() {
         mount()
         assertMixedRowsAreReachable()
@@ -218,8 +239,8 @@ class ControllerPanelFocusTest {
         confirm()
         // The anchored list owns a separate Compose window. Send its subsequent keys to
         // that focused window; the original controller transition must already permit focus.
-        rule.onNode(hasText("Nearest") and isFocused()).performKeyInput { pressKey(Key.DirectionDown) }
-        rule.onNode(hasText("Smooth") and isFocused()).performKeyInput { pressKey(Key.DirectionCenter) }
+        focusedPopupOption("Nearest").performKeyInput { pressKey(Key.DirectionDown) }
+        focusedPopupOption("Smooth").performKeyInput { pressKey(Key.DirectionCenter) }
         rule.runOnIdle { assertEquals("smooth", filter) }
         rule.onNodeWithText("Filter").assertIsFocused()
     }
