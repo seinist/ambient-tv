@@ -126,7 +126,6 @@ fun SettingsScreen(
     onVisibleBackgroundVideoPlaybackPreview: (Boolean, Int) -> Unit = { _, _ -> },
     onUiLanguageSaved: () -> Unit = {},
     onOpenFiles: () -> Unit = {},
-    onOpenGames: () -> Unit = {},
     onOpenDlna: () -> Unit = {},
     onTestScreensaver: (SettingsUiState) -> Unit = {},
     onExitApp: () -> Unit = {},
@@ -361,7 +360,6 @@ fun SettingsScreen(
             if (selectedCategory == SettingsCategory.GAMES) {
                 val openPage = LocalOpenSettingsPage.current
                 GamesSettingsScreen(
-                    onOpenLibrary = onOpenGames,
                     onOpenFiles = onOpenFiles,
                     onOpenControls = { openPage(SettingsCategory.GAME_CONTROLS, "") },
                     focusContent = focusContent,
