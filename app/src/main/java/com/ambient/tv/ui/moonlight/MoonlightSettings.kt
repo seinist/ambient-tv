@@ -26,7 +26,7 @@ import com.ambient.tv.ui.common.TvTextField
 import com.ambient.tv.ui.settings.SettingsGroup
 import com.ambient.tv.ui.settings.SettingsSubheader
 
-/** Feature-gated setup for Moonlight hosts; intentionally no nonfunctional Play or Pair button. */
+/** Feature-gated host setup; pairing and catalogs require native protocol, never a fake Play. */
 @Composable
 fun MoonlightSettingsSection(
     nameField: @Composable () -> Unit,
@@ -43,7 +43,7 @@ fun MoonlightSettingsSection(
         if (!state.enabled) return@Column
         nameField()
         com.ambient.tv.ui.common.LocalNetworkPermissionSetting()
-        Text(stringResource(R.string.moonlight_experimental_notice),
+        Text(stringResource(if (state.nativeAvailable) R.string.moonlight_native_notice else R.string.moonlight_experimental_notice),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
 
@@ -55,10 +55,48 @@ fun MoonlightSettingsSection(
                     Text(com.ambient.tv.moonlight.MoonlightHostAddress.displayHost(host.host) + ":" + host.port,
                         style = MaterialTheme.typography.bodySmall)
                     state.status[host.id]?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    if (state.nativeAvailable) {
+                        val paired = host.id in state.pairedIds
+                        Text(stringResource(if (paired) R.string.moonlight_paired_local else R.string.moonlight_not_paired),
+                            style = MaterialTheme.typography.bodySmall)
+                        if (state.pairingHostId == host.id && state.pairingPin != null) {
+                            Text(stringResource(R.string.moonlight_pair_pin, state.pairingPin!!),
+                                style = MaterialTheme.typography.titleLarge)
+                            Text(stringResource(R.string.moonlight_pair_help),
+                                style = MaterialTheme.typography.bodySmall)
+                            if (state.pairingBusy) Text(stringResource(R.string.moonlight_pair_waiting),
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (paired) {
+                            state.appLists[host.id]?.let { apps ->
+                                Text(stringResource(R.string.moonlight_app_count, apps.size),
+                                    style = MaterialTheme.typography.bodyMedium)
+                                // Preview only. Do not offer nonfunctional Play actions.
+                                apps.take(16).forEach { app ->
+                                    Text(app.title, style = MaterialTheme.typography.bodySmall)
+                                }
+                                Text(stringResource(R.string.moonlight_catalog_preview),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
                     SettingsActionRow {
                         TvActionButton(stringResource(R.string.moonlight_check), { model.checkHost(host.id) },
-                            loading = state.checkingId == host.id)
-                        TvActionButton(stringResource(R.string.moonlight_remove), { model.removeHost(host.id) })
+                            loading = state.checkingId == host.id,
+                            enabled = !state.pairingBusy)
+                        if (state.nativeAvailable) {
+                            if (host.id !in state.pairedIds) {
+                                TvActionButton(stringResource(R.string.moonlight_pair), { model.startPairing(host.id) },
+                                    enabled = !state.pairingBusy, loading = state.pairingHostId == host.id)
+                            } else {
+                                TvActionButton(stringResource(R.string.moonlight_fetch_apps), { model.loadApplications(host.id) },
+                                    loading = state.loadingAppsId == host.id,
+                                    enabled = state.loadingAppsId == null && !state.pairingBusy)
+                            }
+                        }
+                        TvActionButton(stringResource(R.string.moonlight_remove), { model.removeHost(host.id) },
+                            enabled = !state.pairingBusy)
                     }
                 }
             }
