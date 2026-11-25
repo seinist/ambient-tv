@@ -292,6 +292,44 @@ class MoonlightStreamEngine @Inject constructor(
         runCatching { conn?.sendMouseScroll(clicks.coerceIn(-8, 8).toByte()) }
     }
 
+    /** Normalized multi-contact touchscreen events; native GameStream owns remote touch state. */
+    fun sendTouchEvent(type: Byte, pointerId: Int, x: Float, y: Float,
+                       pressure: Float = 1f): Int {
+        if (pointerId !in 0..15 || !x.isFinite() || !y.isFinite() || !pressure.isFinite())
+            return MoonBridge.LI_ERR_UNSUPPORTED
+        val conn = synchronized(lock) { active?.takeIf { it.started && !it.cancelled }?.connection }
+            ?: return MoonBridge.LI_ERR_UNSUPPORTED
+        return runCatching {
+            conn.sendTouchEvent(type, pointerId, x.coerceIn(0f, 1f), y.coerceIn(0f, 1f),
+                pressure.coerceIn(0f, 1f), 0f, 0f, 0.toShort())
+        }.getOrDefault(MoonBridge.LI_ERR_UNSUPPORTED)
+    }
+
+    /** Controller gyroscope and acceleration, from the authenticated Companion stream. */
+    fun sendMotion(port: Int, type: Byte, x: Float, y: Float, z: Float) {
+        if (port !in 0..3 || listOf(x, y, z).any { !it.isFinite() }) return
+        val conn = synchronized(lock) { active?.takeIf { it.started && !it.cancelled }?.connection }
+        runCatching { conn?.sendControllerMotionEvent(port.toByte(), type,
+            x.coerceIn(-100f, 100f), y.coerceIn(-100f, 100f), z.coerceIn(-100f, 100f)) }
+    }
+
+    fun sendMouseMove(dx: Int, dy: Int) {
+        val conn = synchronized(lock) { active?.takeIf { it.started && !it.cancelled }?.connection }
+        runCatching {
+            conn?.sendMouseMove(dx.coerceIn(-32767, 32767).toShort(),
+                dy.coerceIn(-32767, 32767).toShort())
+        }
+    }
+
+    /** Remote text entry is explicit, short and independent of Android system-key controls. */
+    fun sendText(text: String) {
+        val clean = text.filter { !it.isISOControl() || it == '\n' || it == '\t' }
+            .take(512)
+        if (clean.isEmpty()) return
+        val conn = synchronized(lock) { active?.takeIf { it.started && !it.cancelled }?.connection }
+        runCatching { conn?.sendUtf8Text(clean) }
+    }
+
     private fun callbacks(session: Active): NvConnectionListener = object : NvConnectionListener {
         override fun stageStarting(stage: String) = Unit
         override fun stageComplete(stage: String) = Unit
