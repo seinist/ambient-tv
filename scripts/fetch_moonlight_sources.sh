@@ -20,8 +20,12 @@ WORK="$ROOT/third_party/.moonlight-download"
 [[ "$TAG" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || die "invalid release tag"
 command -v git >/dev/null || die "git not found"
 
+PATCH="$ROOT/scripts/patches/moonlight/0001-use-per-install-client-identity.patch"
+[[ -f "$PATCH" ]] || die "reviewed client identity patch missing"
+PATCH_SHA="$(git hash-object "$PATCH")"
 if [[ -f "$DEST/.ambient-moonlight-pins" &&
       "$(head -n 1 "$DEST/.ambient-moonlight-pins")" == "android=$REF" &&
+      "$(sed -n 's/^patch=//p' "$DEST/.ambient-moonlight-pins")" == "$PATCH_SHA" &&
       -f "$DEST/$SUBMODULE/src/Connection.c" &&
       -f "$DEST/$SUBMODULE/enet/include/enet/enet.h" ]]; then
   printf 'Already prepared upstream Moonlight %s\n' "$REF"
@@ -52,9 +56,16 @@ git -C "$WORK" submodule update --init --recursive --depth 1 -- "$SUBMODULE"
 [[ -f "$WORK/$SUBMODULE/nanors/rs.c" ]] || die "nanors missing"
 [[ -f "$WORK/app/src/main/jni/moonlight-core/Android.mk" ]] || die "native build contract missing"
 
+# Apply the single reviewed, fail-closed Ambient TV identity patch to the pinned source.
+# It does not change TLS, pairing challenge validation or the modified ENet transport.
+git -C "$WORK" apply --check "$PATCH" || die "upstream changed; client identity patch needs review"
+git -C "$WORK" apply "$PATCH"
+grep -q 'this.uniqueId = uniqueId;' "$WORK/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java" ||
+    die "client identity patch did not apply"
+
 mv "$WORK" "$DEST"
 trap - EXIT
 ENET_SHA="$(git -C "$DEST/$SUBMODULE/enet" rev-parse HEAD)"
-printf 'android=%s\ncommon-c=%s\nenet=%s\n' "$REF" "$GITLINK" "$ENET_SHA" > "$DEST/.ambient-moonlight-pins"
+printf 'android=%s\ncommon-c=%s\nenet=%s\npatch=%s\n' "$REF" "$GITLINK" "$ENET_SHA" "$PATCH_SHA" > "$DEST/.ambient-moonlight-pins"
 printf 'Pinned Moonlight sources prepared in %s\n' "$DEST"
 printf 'Pairing, JNI bridge and streaming player are still NOT integrated.\n'
