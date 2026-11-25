@@ -299,3 +299,11 @@ internal fun settingsSearchPrefersStartPageTab(query: String): Boolean {
 /** The Wake page lists saved server profiles above the machine groups when there is a choice to make. */
 internal fun hasWakeProfilePicker(state: SettingsUiState): Boolean =
     state.savedServers.size > 1 || state.savedJellyfinServers.size > 1 || state.savedEmbyServers.size > 1
+
+
+/** A nested settings view intercepts Back before its parent category or caller is left. */
+internal class SettingsNestedBackState {
+    var onBack: (() -> Unit)? = null
+}
+
+internal val LocalSettingsNestedBack = staticCompositionLocalOf<SettingsNestedBackState?> { null }
