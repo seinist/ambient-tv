@@ -106,8 +106,22 @@ class MoonlightStreamActivity : ComponentActivity() {
                 showControls = { showOsd(true) },
                 disconnect = ::disconnectAndFinish,
                 closeControls = { showOsd(false) },
+                onCompanionMode = { phase, menu ->
+                    companion.interaction(playing = phase == MoonlightStreamPhase.STREAMING, menu = menu)
+                },
             )
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        companion.attach(
+            title = getString(R.string.moonlight_title),
+            usedPorts = { input.localUsedPorts() },
+            onMenu = { runOnUiThread { showOsd(true) } },
+        )
+        companion.interaction(playing = engine.status.value.phase == MoonlightStreamPhase.STREAMING,
+            menu = osdVisible)
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -128,6 +142,8 @@ class MoonlightStreamActivity : ComponentActivity() {
     private fun showOsd(visible: Boolean) {
         if (visible && !osdVisible) releaseRemoteInputs()
         osdVisible = visible
+        companion.interaction(playing = engine.status.value.phase == MoonlightStreamPhase.STREAMING,
+            menu = visible)
     }
 
     private fun releaseRemoteInputs() {
@@ -142,6 +158,7 @@ class MoonlightStreamActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        companion.detach()
         releaseRemoteInputs()
         engine.stop()
         super.onStop()
@@ -154,6 +171,7 @@ class MoonlightStreamActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        companion.detach()
         releaseRemoteInputs()
         engine.stop()
         super.onDestroy()
@@ -175,8 +193,10 @@ private fun MoonlightStreamContent(
     showControls: () -> Unit,
     closeControls: () -> Unit,
     disconnect: () -> Unit,
+    onCompanionMode: (MoonlightStreamPhase, Boolean) -> Unit,
 ) {
     val status by engine.status.collectAsState()
+    LaunchedEffect(status.phase, controlsShown) { onCompanionMode(status.phase, controlsShown) }
     val resumeFocus = remember { FocusRequester() }
     val disconnectFocus = remember { FocusRequester() }
     LaunchedEffect(controlsShown, status.phase) {
