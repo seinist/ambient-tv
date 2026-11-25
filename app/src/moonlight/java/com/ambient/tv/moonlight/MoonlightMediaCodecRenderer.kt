@@ -28,6 +28,14 @@ class MoonlightMediaCodecRenderer(
     @Volatile private var closing = false
     @Volatile private var failed = false
     private var ptsUs = 0L
+    private var decoderName: String? = null
+    private var currentMime: String? = null
+    private var decodedWidth = 0
+    private var decodedHeight = 0
+    private var negotiatedHdr10 = false
+    private var activeHdr = false
+    private var hdrMasteringInfo: ByteArray? = null
+    private var hdrReconfigure = false
     private var lastCsdFrame = -1
     private val vps = ArrayList<ByteArray>(2)
     private val sps = ArrayList<ByteArray>(2)
@@ -37,38 +45,99 @@ class MoonlightMediaCodecRenderer(
         synchronized(inputLock) {
             if (!surface.isValid || closing || codec != null) return@synchronized -1
             val mime = MoonlightHardwareVideo.mimeFor(format) ?: return@synchronized -1
-            val decoder = MoonlightHardwareVideo.decoder(mime, width, height, requested.fps)
+            val hdr = MoonlightHardwareVideo.isHdr10Format(format)
+            val decoder = MoonlightHardwareVideo.decoder(mime, width, height, requested.fps, hdr10 = hdr)
                 ?: return@synchronized -1
-            val mediaFormat = MediaFormat.createVideoFormat(mime, width, height).apply {
-                setInteger(MediaFormat.KEY_PRIORITY, 0)
-                setInteger(MediaFormat.KEY_FRAME_RATE, requested.fps)
-                setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709)
-                setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
-                // Low-latency request can be ignored by the hardware codec; it is not a guarantee.
-                setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
-                setFloat(MediaFormat.KEY_OPERATING_RATE, requested.fps.toFloat())
-            }
-            val created = runCatching {
-                MediaCodec.createByCodecName(decoder.name).apply {
-                    configure(mediaFormat, surface, null, 0)
-                }
-            }.getOrElse {
-                // Driver may reject a low-latency hint even when the codec otherwise works.
-                runCatching {
-                    mediaFormat.removeKey(MediaFormat.KEY_LOW_LATENCY)
-                    mediaFormat.removeKey(MediaFormat.KEY_OPERATING_RATE)
-                    MediaCodec.createByCodecName(decoder.name).apply {
-                        configure(mediaFormat, surface, null, 0)
-                    }
-                }.getOrNull()
-            }
-            if (created == null) return@synchronized -1
+            negotiatedHdr10 = hdr
+            activeHdr = hdr
+            decoderName = decoder.name
+            currentMime = mime
+            decodedWidth = width
+            decodedHeight = height
+            val created = newConfiguredDecoder(decoder.name, mime, width, height)
+                ?: return@synchronized -1
             codec = created
             ptsUs = 0L
             lastCsdFrame = -1
             vps.clear(); sps.clear(); pps.clear()
             0
         }
+
+    private fun decoderFormat(mime: String, width: Int, height: Int): MediaFormat =
+        MediaFormat.createVideoFormat(mime, width, height).apply {
+            setInteger(MediaFormat.KEY_PRIORITY, 0)
+            setInteger(MediaFormat.KEY_FRAME_RATE, requested.fps)
+            setInteger(MediaFormat.KEY_COLOR_STANDARD,
+                if (activeHdr) MediaFormat.COLOR_STANDARD_BT2020 else MediaFormat.COLOR_STANDARD_BT709)
+            setInteger(MediaFormat.KEY_COLOR_TRANSFER,
+                if (activeHdr) MediaFormat.COLOR_TRANSFER_ST2084 else MediaFormat.COLOR_TRANSFER_SDR_VIDEO)
+            setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
+            if (activeHdr) {
+                moonlightHdrStaticInfo(hdrMasteringInfo)?.let {
+                    setByteBuffer(MediaFormat.KEY_HDR_STATIC_INFO, it)
+                }
+            }
+            // Hardware can reject these hints; retry without them on configure failure.
+            setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
+            setFloat(MediaFormat.KEY_OPERATING_RATE, requested.fps.toFloat())
+        }
+
+    private fun newConfiguredDecoder(name: String, mime: String, width: Int, height: Int): MediaCodec? {
+        val format = decoderFormat(mime, width, height)
+        fun create(): MediaCodec? {
+            val decoder = MediaCodec.createByCodecName(name)
+            try {
+                decoder.configure(format, surface, null, 0)
+                return decoder
+            } catch (error: Exception) {
+                runCatching { decoder.release() }
+                throw error
+            }
+        }
+        return runCatching { create() }.recoverCatching {
+            format.removeKey(MediaFormat.KEY_LOW_LATENCY)
+            format.removeKey(MediaFormat.KEY_OPERATING_RATE)
+            create()
+        }.getOrNull()
+    }
+
+    /** Called only with inputLock held and the upcoming IDR needed for fresh SPS/PPS. */
+    private fun reconfigureAtIdr(): Boolean {
+        val name = decoderName ?: return false
+        val mime = currentMime ?: return false
+        playing = false
+        val worker = outputThread
+        worker?.interrupt()
+        if (worker != null && worker !== Thread.currentThread()) runCatching { worker.join(900) }
+        outputThread = null
+        val previous = codec
+        codec = null
+        runCatching { previous?.stop() }
+        runCatching { previous?.release() }
+        val next = newConfiguredDecoder(name, mime, decodedWidth, decodedHeight)
+        if (next == null) {
+            reportFailure("Moonlight HDR color transition could not reconfigure decoder")
+            return false
+        }
+        codec = next
+        return try {
+            next.start()
+            playing = true
+            outputThread = Thread({ drainOutput(next) }, "moonlight-decoder-output").apply {
+                priority = Thread.MAX_PRIORITY - 1
+                isDaemon = true
+                start()
+            }
+            hdrReconfigure = false
+            ptsUs = 0L
+            lastCsdFrame = -1
+            vps.clear(); sps.clear(); pps.clear()
+            true
+        } catch (_: Exception) {
+            reportFailure("Moonlight HDR color transition could not start decoder")
+            false
+        }
+    }
 
     override fun start() {
         synchronized(inputLock) {
@@ -99,6 +168,10 @@ class MoonlightMediaCodecRenderer(
         frameHostProcessingLatency: Char, receiveTimeUs: Long, enqueueTimeUs: Long,
     ): Int = synchronized(inputLock) {
         if (closing || failed || !playing || codec == null) return@synchronized MoonBridge.DR_NEED_IDR
+        if (hdrReconfigure) {
+            if (frameType != MoonBridge.FRAME_TYPE_IDR) return@synchronized MoonBridge.DR_NEED_IDR
+            if (!reconfigureAtIdr()) return@synchronized MoonBridge.DR_NEED_IDR
+        }
         if (length <= 0 || length > data.size || length > MAX_NAL_BYTES)
             return@synchronized MoonBridge.DR_NEED_IDR
         if (type != MoonBridge.BUFFER_TYPE_PICDATA) {
@@ -174,10 +247,29 @@ class MoonlightMediaCodecRenderer(
     override fun getCapabilities(): Int = 0 // Do not advertise unchecked direct-submit/invalidations.
 
     override fun setHdrMode(enabled: Boolean, hdrMetadata: ByteArray?) {
-        // 10-bit formats are never negotiated by MoonlightHardwareVideo. Ignoring an unexpected
-        // HDR signal is safer than reinterpreting 8-bit video as HDR or corrupting colors.
-        if (enabled) reportFailure("Unexpected HDR request to SDR Moonlight decoder")
+        synchronized(inputLock) {
+            if (closing || failed) return
+            if (enabled && !negotiatedHdr10) {
+                reportFailure("Unexpected HDR request to SDR Moonlight decoder")
+                return
+            }
+            if (enabled && hdrMetadata != null && moonlightHdrStaticInfo(hdrMetadata) == null) {
+                reportFailure("Sunshine sent malformed HDR mastering metadata")
+                return
+            }
+            val changed = activeHdr != enabled || !hdrMasteringInfo.contentEqualsNullable(hdrMetadata)
+            if (!changed) return
+            activeHdr = enabled
+            hdrMasteringInfo = if (enabled) hdrMetadata?.copyOf() else null
+            // The official Moonlight renderer requires a codec restart to apply static metadata.
+            // Request IDR and rebuild at that boundary, not mid-frame, so colors never become
+            // incorrectly interpreted as BT.709 or lose their color transfer.
+            hdrReconfigure = codec != null
+        }
     }
+
+    private fun ByteArray?.contentEqualsNullable(other: ByteArray?): Boolean =
+        if (this == null) other == null else other != null && contentEquals(other)
 
     override fun stop() {
         closing = true
