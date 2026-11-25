@@ -26,6 +26,10 @@ import com.ambient.tv.games.metadata.GameMetadataSettings
 import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvChip
+import com.ambient.tv.ui.common.TvSettingRow
+import com.ambient.tv.ui.common.SettingsNavigationRow
+import com.ambient.tv.ui.settings.SettingsSelect
+import com.ambient.tv.ui.settings.SettingsSelectOption
 import com.ambient.tv.ui.common.TvTextField
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -72,6 +76,7 @@ internal fun GameMetadataSettingsDialog(
     // Deliberately not rememberSaveable: account secrets do not belong in saved instance state.
     var credentials by remember { mutableStateOf(initialCredentials) }
     var invalid by remember { mutableStateOf(false) }
+    var accountOpen by remember { mutableStateOf(false) }
     AppDialog(
         onDismiss = onDismiss,
         title = stringResource(R.string.game_metadata_settings_title),
@@ -99,64 +104,86 @@ internal fun GameMetadataSettingsDialog(
                 "none" -> R.string.game_metadata_settings_off_hint
                 else -> R.string.game_metadata_settings_libretro_hint
             }), style = MaterialTheme.typography.bodySmall)
-            TvChip(stringResource(R.string.game_metadata_settings_automatic), selected = options.automatic,
-                enabled = options.enabled, onClick = { options = options.copy(automatic = !options.automatic) })
-            if (options.enabled) Text(stringResource(R.string.game_metadata_settings_automatic_hint), style = MaterialTheme.typography.bodySmall)
-            Text(stringResource(R.string.game_metadata_settings_region), style = MaterialTheme.typography.titleSmall)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("eu" to R.string.game_metadata_region_eu, "de" to R.string.game_metadata_region_de,
-                    "us" to R.string.game_metadata_region_us, "jp" to R.string.game_metadata_region_jp,
-                    "wor" to R.string.game_metadata_region_world).forEach { (id, label) ->
-                    TvChip(stringResource(label), selected = options.region == id,
-                        onClick = { options = options.copy(region = id) })
-                }
+            TvSettingRow(
+                title = stringResource(R.string.game_metadata_settings_automatic),
+                body = stringResource(R.string.game_metadata_settings_automatic_hint),
+                checked = options.automatic,
+                enabled = options.enabled,
+                onCheckedChange = { options = options.copy(automatic = it) },
+            )
+            if (options.enabled) {
+                SettingsSelect(
+                    label = stringResource(R.string.game_metadata_settings_region),
+                    options = listOf("eu" to R.string.game_metadata_region_eu,
+                        "de" to R.string.game_metadata_region_de,
+                        "us" to R.string.game_metadata_region_us,
+                        "jp" to R.string.game_metadata_region_jp,
+                        "wor" to R.string.game_metadata_region_world).map { (id, label) ->
+                        SettingsSelectOption(stringResource(label), options.region == id,
+                            onClick = { options = options.copy(region = id) })
+                    },
+                )
+                SettingsSelect(
+                    label = stringResource(R.string.game_metadata_settings_language),
+                    options = GameMetadataOptions.LANGUAGES.map { language ->
+                        val name = if (language == "auto") stringResource(R.string.game_metadata_language_auto)
+                            else java.util.Locale.forLanguageTag(language)
+                                .getDisplayLanguage(java.util.Locale.forLanguageTag(language))
+                        SettingsSelectOption(name, options.language == language,
+                            onClick = { options = options.copy(language = language) })
+                    },
+                )
             }
-            Text(stringResource(R.string.game_metadata_settings_language), style = MaterialTheme.typography.titleSmall)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                GameMetadataOptions.LANGUAGES.forEach { language ->
-                    val name = if (language == "auto") stringResource(R.string.game_metadata_language_auto)
-                        else java.util.Locale.forLanguageTag(language).getDisplayLanguage(java.util.Locale.forLanguageTag(language))
-                    TvChip(name, selected = options.language == language,
-                        onClick = { options = options.copy(language = language) })
-                }
-            }
-            when (options.provider) {
-                GameMetadataProviderIds.SCREENSCRAPER -> {
-                    if (builtInScreenScraper) Text(stringResource(R.string.game_metadata_settings_builtin), style = MaterialTheme.typography.bodySmall)
-                    else {
-                        Text(stringResource(R.string.game_metadata_settings_ss_setup_hint), style = MaterialTheme.typography.bodySmall)
-                        TvTextField(credentials.screenScraperDevId.orEmpty(), {
-                            credentials = credentials.copy(screenScraperDevId = it.trim().takeIf(String::isNotEmpty)); invalid = false
-                        }, stringResource(R.string.game_metadata_settings_ss_dev_id), Modifier.fillMaxWidth())
-                        TvTextField(credentials.screenScraperDevPassword.orEmpty(), {
-                            credentials = credentials.copy(screenScraperDevPassword = it.takeIf(String::isNotEmpty)); invalid = false
-                        }, stringResource(R.string.game_metadata_settings_ss_dev_password), Modifier.fillMaxWidth(),
-                            visualTransformation = PasswordVisualTransformation())
+            if (options.provider == GameMetadataProviderIds.SCREENSCRAPER ||
+                options.provider == GameMetadataProviderIds.THEGAMESDB) {
+                val builtIn = if (options.provider == GameMetadataProviderIds.SCREENSCRAPER)
+                    builtInScreenScraper else builtInGamesDb
+                if (builtIn) Text(stringResource(R.string.game_metadata_settings_builtin),
+                    style = MaterialTheme.typography.bodySmall)
+                SettingsNavigationRow(
+                    title = stringResource(R.string.game_metadata_account_settings),
+                    summary = stringResource(R.string.game_metadata_account_settings_hint),
+                    onClick = { accountOpen = !accountOpen },
+                )
+                if (accountOpen) {
+                    when (options.provider) {
+                        GameMetadataProviderIds.SCREENSCRAPER -> {
+                            if (!builtInScreenScraper) {
+                                Text(stringResource(R.string.game_metadata_settings_ss_setup_hint),
+                                    style = MaterialTheme.typography.bodySmall)
+                                TvTextField(credentials.screenScraperDevId.orEmpty(), {
+                                    credentials = credentials.copy(screenScraperDevId = it.trim().takeIf(String::isNotEmpty)); invalid = false
+                                }, stringResource(R.string.game_metadata_settings_ss_dev_id), Modifier.fillMaxWidth())
+                                TvTextField(credentials.screenScraperDevPassword.orEmpty(), {
+                                    credentials = credentials.copy(screenScraperDevPassword = it.takeIf(String::isNotEmpty)); invalid = false
+                                }, stringResource(R.string.game_metadata_settings_ss_dev_password), Modifier.fillMaxWidth(),
+                                    visualTransformation = PasswordVisualTransformation())
+                            }
+                            Text(stringResource(R.string.game_metadata_settings_ss_account_hint),
+                                style = MaterialTheme.typography.bodySmall)
+                            TvTextField(credentials.screenScraperUser.orEmpty(), {
+                                credentials = credentials.copy(screenScraperUser = it.trim().takeIf(String::isNotEmpty)); invalid = false
+                            }, stringResource(R.string.game_metadata_settings_ss_user), Modifier.fillMaxWidth())
+                            TvTextField(credentials.screenScraperPassword.orEmpty(), {
+                                credentials = credentials.copy(screenScraperPassword = it.takeIf(String::isNotEmpty)); invalid = false
+                            }, stringResource(R.string.game_metadata_settings_ss_password), Modifier.fillMaxWidth(),
+                                visualTransformation = PasswordVisualTransformation())
+                        }
+                        GameMetadataProviderIds.THEGAMESDB -> if (!builtInGamesDb) {
+                            Text(stringResource(R.string.game_metadata_settings_tgdb_setup_hint),
+                                style = MaterialTheme.typography.bodySmall)
+                            TvTextField(credentials.theGamesDbApiKey.orEmpty(), {
+                                credentials = credentials.copy(theGamesDbApiKey = it.trim().takeIf(String::isNotEmpty)); invalid = false
+                            }, stringResource(R.string.game_metadata_settings_tgdb_key), Modifier.fillMaxWidth(),
+                                visualTransformation = PasswordVisualTransformation())
+                        }
                     }
-                    Text(stringResource(R.string.game_metadata_settings_ss_account_hint), style = MaterialTheme.typography.bodySmall)
-                    TvTextField(credentials.screenScraperUser.orEmpty(), {
-                        credentials = credentials.copy(screenScraperUser = it.trim().takeIf(String::isNotEmpty)); invalid = false
-                    }, stringResource(R.string.game_metadata_settings_ss_user), Modifier.fillMaxWidth())
-                    TvTextField(credentials.screenScraperPassword.orEmpty(), {
-                        credentials = credentials.copy(screenScraperPassword = it.takeIf(String::isNotEmpty)); invalid = false
-                    }, stringResource(R.string.game_metadata_settings_ss_password), Modifier.fillMaxWidth(),
-                        visualTransformation = PasswordVisualTransformation())
-                }
-                GameMetadataProviderIds.THEGAMESDB -> {
-                    if (builtInGamesDb) Text(stringResource(R.string.game_metadata_settings_builtin), style = MaterialTheme.typography.bodySmall)
-                    else {
-                        Text(stringResource(R.string.game_metadata_settings_tgdb_setup_hint), style = MaterialTheme.typography.bodySmall)
-                        TvTextField(credentials.theGamesDbApiKey.orEmpty(), {
-                            credentials = credentials.copy(theGamesDbApiKey = it.trim().takeIf(String::isNotEmpty)); invalid = false
-                        }, stringResource(R.string.game_metadata_settings_tgdb_key), Modifier.fillMaxWidth(),
-                            visualTransformation = PasswordVisualTransformation())
-                    }
+                    Text(stringResource(R.string.game_metadata_settings_credentials_hint),
+                        style = MaterialTheme.typography.bodySmall)
                 }
             }
             if (invalid) Text(stringResource(R.string.game_metadata_settings_invalid), color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodySmall)
-            if (options.provider in setOf(GameMetadataProviderIds.SCREENSCRAPER, GameMetadataProviderIds.THEGAMESDB))
-                Text(stringResource(R.string.game_metadata_settings_credentials_hint), style = MaterialTheme.typography.bodySmall)
         }
     }
 }
