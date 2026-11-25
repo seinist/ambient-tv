@@ -3,6 +3,13 @@ package com.ambient.tv.ui.settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.SportsEsports
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
@@ -37,6 +44,22 @@ internal enum class GamesSettingsPage {
     STORAGE, SHADERS, SYSTEM_FILES, CACHE,
 }
 
+/** Search keeps niche settings discoverable without filling the overview with technical rows. */
+internal fun gamesSettingsPageForSearch(query: String): GamesSettingsPage? {
+    val q = query.lowercase()
+    return when {
+        listOf("shader", "filterpaket", "filter pack").any { it in q } -> GamesSettingsPage.SHADERS
+        listOf("cache", "zwischenspeicher").any { it in q } -> GamesSettingsPage.CACHE
+        listOf("systemdatei", "system file").any { it in q } -> GamesSettingsPage.SYSTEM_FILES
+        listOf("achievement", "erfolge", "hardcore").any { it in q } -> GamesSettingsPage.ACHIEVEMENTS
+        listOf("controller", "gamepad", "belegung", "mapping", "rumble", "vibration", "tasten").any { it in q } -> GamesSettingsPage.CONTROLS
+        listOf("metadaten", "metadata", "cover", "artwork", "screenscraper", "thegamesdb", "bildregion", "datenbank", "dat import").any { it in q } -> GamesSettingsPage.METADATA
+        listOf("bios", "firmware", "emulator", "libretro", "core", "konsole").any { it in q } -> GamesSettingsPage.SYSTEMS
+        listOf("rewind", "zurückspul", "zurueckspul").any { it in q } -> GamesSettingsPage.PLAY
+        else -> null
+    }
+}
+
 /** A core opened from a system returns to that system; all other detail pages return to their section. */
 internal fun gamesSettingsParent(page: GamesSettingsPage, fromSystem: Boolean = false): GamesSettingsPage = when (page) {
     GamesSettingsPage.SYSTEM -> GamesSettingsPage.SYSTEMS
@@ -58,6 +81,7 @@ internal fun GamesSettingsScreen(
     val entry = gamesEntryPoint()
     val handheld = LocalHandheldUi.current
     val parentBack = LocalSettingsNestedBack.current
+    val landingQuery = LocalSettingsSearchLanding.current
     val savedPages = rememberSaveableStateHolder()
     var page by rememberSaveable { mutableStateOf(GamesSettingsPage.HOME) }
     var selectedSystemId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -67,8 +91,15 @@ internal fun GamesSettingsScreen(
     var indexedSystemIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     // Auto-detected folders have systemId="auto"; look at the indexed ROM systems on IO,
     // never run the SQLite query as part of the Settings composition.
-    LaunchedEffect(entry) {
-        indexedSystemIds = runCatching { entry.library().indexedSystems() }.getOrDefault(emptySet())
+    LaunchedEffect(page) {
+        if (page == GamesSettingsPage.SYSTEMS) {
+            indexedSystemIds = runCatching { entry.library().indexedSystems() }.getOrDefault(emptySet())
+        }
+    }
+    LaunchedEffect(landingQuery) {
+        if (page == GamesSettingsPage.HOME && !landingQuery.isNullOrBlank()) {
+            gamesSettingsPageForSearch(landingQuery)?.let { page = it }
+        }
     }
 
     fun back() {
@@ -138,6 +169,7 @@ internal fun GamesSettingsScreen(
                         SettingsNavigationRow(
                             title = stringResource(R.string.games_settings_library_heading),
                             summary = stringResource(R.string.games_settings_library_summary),
+                            icon = Icons.Filled.Folder,
                             onClick = onOpenLibrary,
                         )
                     }
@@ -145,6 +177,7 @@ internal fun GamesSettingsScreen(
                         SettingsNavigationRow(
                             title = stringResource(R.string.games_settings_metadata_heading),
                             summary = stringResource(R.string.games_settings_metadata_summary),
+                            icon = Icons.Filled.Image,
                             onClick = { openRoot(GamesSettingsPage.METADATA) },
                         )
                     }
@@ -152,6 +185,7 @@ internal fun GamesSettingsScreen(
                         SettingsNavigationRow(
                             title = stringResource(R.string.games_settings_systems_heading),
                             summary = stringResource(R.string.games_settings_systems_summary),
+                            icon = Icons.Filled.SportsEsports,
                             onClick = { openRoot(GamesSettingsPage.SYSTEMS) },
                         )
                     }
@@ -159,6 +193,7 @@ internal fun GamesSettingsScreen(
                         SettingsNavigationRow(
                             title = stringResource(R.string.games_settings_controls_heading),
                             summary = stringResource(R.string.games_settings_controls_summary),
+                            icon = Icons.Filled.Tune,
                             onClick = { openRoot(GamesSettingsPage.CONTROLS) },
                         )
                     }
@@ -166,6 +201,7 @@ internal fun GamesSettingsScreen(
                         SettingsNavigationRow(
                             title = stringResource(R.string.games_settings_play_heading),
                             summary = stringResource(R.string.games_settings_play_summary),
+                            icon = Icons.Filled.PlayArrow,
                             onClick = { openRoot(GamesSettingsPage.PLAY) },
                         )
                     }
@@ -173,6 +209,7 @@ internal fun GamesSettingsScreen(
                         SettingsNavigationRow(
                             title = stringResource(R.string.games_settings_storage_heading),
                             summary = stringResource(R.string.games_settings_storage_summary),
+                            icon = Icons.Filled.Storage,
                             onClick = { openRoot(GamesSettingsPage.STORAGE) },
                         )
                     }
