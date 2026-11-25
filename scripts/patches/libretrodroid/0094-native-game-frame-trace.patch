@@ -142,7 +142,16 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
                                    bool pictureCompatible) {
 +    GameTraceScope trace("AmbientGame Vulkan frame");
      nativePresentation.invalidateFrame();
-@@ -1540,5 +1543,6 @@
+@@ -1510,7 +1513,8 @@
+     {
++        GameTraceScope submitTrace("AmbientGame Vulkan queue submit");
+         std::lock_guard<std::mutex> lock(queueMutex);
+         result = vk.queueSubmit(queue, 1, &submit, frameFence);
+     }
+ 
+     pendingImage.waitSemaphores.clear();
+     pendingCommandBuffers.clear();
+@@ -1540,5 +1544,6 @@
          VkResult presentResult;
          {
 +            GameTraceScope presentTrace("AmbientGame Vulkan queue present");

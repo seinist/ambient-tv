@@ -2,6 +2,7 @@
 // Execute the unmodified production handleVideoRefresh body against controlled
 // bridge acceptance and source metadata. GPU rendering is tested separately on EGL.
 #include "ambientgametrace.h"
+using libretrodroid::traceGameCall;
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
