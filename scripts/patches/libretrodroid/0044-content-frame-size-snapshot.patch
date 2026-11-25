@@ -1,0 +1,171 @@
+Ambient TV: publish the drawn source size so the frontend can size the surface to the exact whole-number picture.
+
+diff --git a/src/main/cpp/contentaspect.h b/src/main/cpp/contentaspect.h
+index e998d0b..7defe4c 100644
+--- a/src/main/cpp/contentaspect.h
++++ b/src/main/cpp/contentaspect.h
+@@ -11,6 +11,7 @@
+ #define LIBRETRODROID_CONTENTASPECT_H
+ 
+ #include <atomic>
++#include <cstdint>
+ #include <cmath>
+ 
+ namespace libretrodroid {
+@@ -47,13 +48,31 @@ public:
+                     std::memory_order_relaxed);
+     }
+ 
+-    void reset() { value.store(0.0F, std::memory_order_relaxed); }
++    /**
++     * Drawn source size (width in the high, height in the low 32 bits), zero when unknown.
++     * The frontend uses it to size the surface to the exact whole-number picture, so the
++     * area beside the picture belongs to its own UI instead of the renderer's black clear.
++     */
++    void publishFrame(unsigned width, unsigned height) {
++        const uint64_t packed = width > 0 && height > 0
++            ? (static_cast<uint64_t>(width) << 32U) | static_cast<uint64_t>(height) : 0U;
++        frame.store(packed, std::memory_order_relaxed);
++    }
++
++    void reset() {
++        value.store(0.0F, std::memory_order_relaxed);
++        frame.store(0U, std::memory_order_relaxed);
++    }
+     float get() const { return value.load(std::memory_order_relaxed); }
++    uint64_t getFrame() const { return frame.load(std::memory_order_relaxed); }
+ 
+ private:
+     static_assert(std::atomic<float>::is_always_lock_free,
+                   "Content aspect observers must never wait for the emulation thread");
++    static_assert(std::atomic<uint64_t>::is_always_lock_free,
++                  "Content frame observers must never wait for the emulation thread");
+     std::atomic<float> value{0.0F};
++    std::atomic<uint64_t> frame{0U};
+ };
+ 
+ }
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+index 4e0f936..df12014 100644
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -881,6 +881,8 @@ void LibretroDroid::step() {
+         achievements.evaluateFrame();
+     }
+ 
++    publishContentFrameSize();
++
+     // The second display is drawn before the game's own frame, never after: changing the draw
+     // surface between the emulator's draw and the swap that presents it loses that frame on
+     // Adreno, so the primary's draw and its swap stay adjacent with nothing in between.
+@@ -975,6 +977,8 @@ void LibretroDroid::stepForNetplay() {
+         achievements.evaluateFrame();
+     }
+ 
++    publishContentFrameSize();
++
+     // The second display is drawn before the game's own frame, never after: changing the draw
+     // surface between the emulator's draw and the swap that presents it loses that frame on
+     // Adreno, so the primary's draw and its swap stay adjacent with nothing in between.
+@@ -1191,6 +1195,20 @@ float LibretroDroid::getContentAspectRatio() const {
+     return contentAspectSnapshot.get();
+ }
+ 
++uint64_t LibretroDroid::getContentFrameSize() const {
++    return contentAspectSnapshot.getFrame();
++}
++
++void LibretroDroid::publishContentFrameSize() {
++    // A split screen draws a crop of the frame; its whole-number geometry is not this size.
++    if (!gameLoaded || video == nullptr || screenSplitEnabled) {
++        contentAspectSnapshot.publishFrame(0U, 0U);
++        return;
++    }
++    auto& layout = video->getLayout();
++    contentAspectSnapshot.publishFrame(layout.getDrawnContentWidth(), layout.getDrawnContentHeight());
++}
++
+ void LibretroDroid::refreshAspectRatio() {
+     if (!gameLoaded) {
+         contentAspectSnapshot.reset();
+diff --git a/src/main/cpp/libretrodroid.h b/src/main/cpp/libretrodroid.h
+index 6bc087f..534fc3c 100644
+--- a/src/main/cpp/libretrodroid.h
++++ b/src/main/cpp/libretrodroid.h
+@@ -144,6 +144,7 @@ public:
+     void refreshAspectRatio();
+     float getAspectRatio();
+     float getContentAspectRatio() const;
++    uint64_t getContentFrameSize() const;
+     void setAspectRatioOverride(float ratio);
+ 
+     bool requiresVideoRefresh() const;
+@@ -313,6 +314,7 @@ private:
+     bool dirtyVideo = false;
+ 
+     void renderSecondaryFrame();
++    void publishContentFrameSize();
+     void applyPrimaryCrop();
+     void clearScreenSplit();
+     void orientSplitCrop(const float* source, float* target);
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+index ec4e819..3c8ba4a 100644
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -1271,6 +1271,13 @@ JNIEXPORT jfloat JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getConte
+     return LibretroDroid::getInstance().getContentAspectRatio();
+ }
+ 
++JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getContentFrameSize(
++    JNIEnv* env,
++    jclass obj
++) {
++    return static_cast<jlong>(LibretroDroid::getInstance().getContentFrameSize());
++}
++
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setAspectRatioOverride(
+     JNIEnv* env,
+     jclass obj,
+diff --git a/src/main/cpp/libretrodroidjni.h b/src/main/cpp/libretrodroidjni.h
+index 41792b0..58ef396 100644
+--- a/src/main/cpp/libretrodroidjni.h
++++ b/src/main/cpp/libretrodroidjni.h
+@@ -50,6 +50,7 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_onMotionEv
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_onTouchEvent(JNIEnv* env, jclass obj, jfloat xAxis, jfloat yAxis);
+ JNIEXPORT jfloat JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getAspectRatio(JNIEnv* env, jclass obj);
+ JNIEXPORT jfloat JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getContentAspectRatio(JNIEnv* env, jclass obj);
++JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getContentFrameSize(JNIEnv* env, jclass obj);
+ JNIEXPORT jobjectArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getVariables(JNIEnv* env, jclass obj);
+ JNIEXPORT jobjectArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getControllers(JNIEnv* env, jclass obj);
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setControllerType(JNIEnv* env, jclass obj, jint port, jint type);
+diff --git a/src/main/cpp/videolayout.h b/src/main/cpp/videolayout.h
+index b0d9e2b..30b7c90 100644
+--- a/src/main/cpp/videolayout.h
++++ b/src/main/cpp/videolayout.h
+@@ -61,6 +61,10 @@ public:
+ 
+     int getScreenHeight() { return screenHeight; }
+ 
++    /** Source pixels as drawn (after a quarter-turn swap); the base of whole-number scaling. */
++    unsigned getDrawnContentWidth() const { return rotationSwapsAspect ? contentHeight : contentWidth; }
++    unsigned getDrawnContentHeight() const { return rotationSwapsAspect ? contentWidth : contentHeight; }
++
+     std::pair<float, float> getRelativePosition(float touchX, float touchY);
+ 
+ private:
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+index b3c0bff..46de0e5 100644
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -267,6 +267,11 @@ public class LibretroDroid {
+      * Integer scaling can leave extra borders inside this nominal aspect.
+      */
+     public static native float getContentAspectRatio();
++    /**
++     * Drawn source size of the primary picture: width in the high and height in the low
++     * 32 bits, zero while unknown. UI-safe atomic snapshot; whole-number scaling uses it.
++     */
++    public static native long getContentFrameSize();
+     public static native void setAspectRatioOverride(float ratio);
+     public static native void setRotation(int degrees);
+ 

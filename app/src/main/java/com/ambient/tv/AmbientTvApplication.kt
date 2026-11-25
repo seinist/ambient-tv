@@ -137,6 +137,10 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
                 add(com.ambient.tv.data.photos.FileImageFetcher.Factory { filesPhotoSource.get() })
                 // Monogram cards: the post's real thumbnail, loaded only for visible cards.
                 add(com.ambient.tv.data.telegram.MonogramThumbFetcher.Factory { telegramRepository.get() })
+                // Game covers on cards: a small disk-cached copy instead of the stored original.
+                add(com.ambient.tv.games.metadata.GameArtworkThumbInterceptor())
+                add(com.ambient.tv.games.metadata.GameArtworkThumbKeyer())
+                add(com.ambient.tv.games.metadata.GameArtworkThumbFetcher.Factory())
             }
             .build()
     }

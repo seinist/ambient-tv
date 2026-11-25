@@ -30,10 +30,11 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.tv.material3.*
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
-import com.ambient.tv.ui.theme.animatedFocusSurface
 import kotlin.math.ceil
 
 private val AlphabetBarEntryHeight = 22.dp
+/** The visible letter pill and handle: narrower than the touch/focus column around it. */
+private val AlphabetPillWidth = 22.dp
 
 /**
  * Finger-scrolling does not move DPAD focus. On handhelds, the A–Z marker therefore follows
@@ -80,9 +81,10 @@ fun AlphabetBar(
 ) {
     // Entries keep a natural height and the bar is centered; it only compresses when the full
     // alphabet does not fit, instead of stretching a few letters across the whole column.
-    // Phone keeps a slightly wider gutter so letter taps stay reachable beside the grid.
+    // Phone keeps a slightly wider gutter so letter taps stay reachable beside the grid; the
+    // visible handle stays a narrow pill inside it.
     val handheld = LocalHandheldUi.current
-    val barWidth = if (handheld) 48.dp else 28.dp
+    val barWidth = if (handheld) 40.dp else 30.dp
     val density = LocalDensity.current
     val readableEntry = with(density) { 18.sp.toDp() }
     val naturalEntry = if (handheld) maxOf(20.dp, readableEntry) else AlphabetBarEntryHeight
@@ -172,7 +174,7 @@ fun AlphabetBar(
                 Box(
                     Modifier.align(Alignment.TopCenter)
                         .offset { IntOffset(0, markerTop.roundToPx()) }
-                        .width(maxOf(28.dp, readableEntry)).height(markerHeight)
+                        .width(maxOf(AlphabetPillWidth, readableEntry + 4.dp)).height(markerHeight)
                         .background(accent, RoundedCornerShape(6.dp))
                         .clearAndSetSemantics { },
                     contentAlignment = Alignment.Center,
@@ -243,14 +245,15 @@ private fun AlphabetBarEntry(
     val accent = MaterialTheme.colorScheme.primary
     if (LocalHandheldUi.current) {
         Box(
-            entryModifier.clickable(role = Role.Button, onClick = onClick)
+            entryModifier.clickable(role = Role.Button, onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(Modifier.width(AlphabetPillWidth).fillMaxHeight()
                 .background(when {
                     selected && !compact -> accent
                     focused -> accent.copy(alpha = .22f)
                     else -> Color.Transparent
-                }, shape),
-            contentAlignment = Alignment.Center,
-        ) {
+                }, shape))
             if (showLabel) Text(
                 text = text,
                 modifier = Modifier.wrapContentHeight(unbounded = true),
@@ -262,31 +265,37 @@ private fun AlphabetBarEntry(
         }
         return
     }
+    // A filled pill like the phone's handle: no outlines as selection marks, one centred
+    // shape per letter instead of a box across the whole rail.
+    val fill by androidx.compose.animation.animateColorAsState(
+        targetValue = when {
+            focused -> accent
+            selected -> accent.copy(alpha = 0.24f)
+            else -> Color.Transparent
+        },
+        animationSpec = tween(120),
+        label = "Alphabet letter",
+    )
     val content: @Composable () -> Unit = {
-        Box(
-            Modifier.fillMaxSize().padding(horizontal = 1.dp)
-                .animatedFocusSurface(
-                    focused = focused,
-                    shape = shape,
-                    focusedBackground = accent.copy(alpha = 0.22f),
-                    unfocusedBackground = if (selected) accent.copy(alpha = 0.08f) else Color.Transparent,
-                    focusedBorder = accent,
-                    unfocusedBorder = if (selected) accent.copy(alpha = .48f) else Color.Transparent,
-                    borderWidth = 1.5.dp,
-                    focusBorderMaterial = true,
-                    selected = selected,
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = text,
-                style = MaterialTheme.typography.labelSmall.copy(fontSize = if (selected || focused) 12.sp else 10.sp),
-                color = when {
-                    focused -> Color.White
-                    selected -> accent
-                    else -> Color.White.copy(alpha = 0.38f)
-                },
-            )
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier.width(AlphabetPillWidth).fillMaxHeight().padding(vertical = 1.dp)
+                    .background(fill, shape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = if (selected || focused) 12.sp else 11.sp,
+                        fontWeight = if (selected || focused) FontWeight.Bold else FontWeight.Medium,
+                    ),
+                    color = when {
+                        focused -> MaterialTheme.colorScheme.onPrimary
+                        selected -> Color.White
+                        else -> Color.White.copy(alpha = 0.5f)
+                    },
+                )
+            }
         }
     }
     Surface(

@@ -26,7 +26,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.background
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.testTag
@@ -492,7 +491,6 @@ internal fun GameLibraryGames(
                                     showSystem = false,
                                     onPlay = { onSelect(game) },
                                     onInfo = { onOpenDetails(game) },
-                                    onFavorite = { onFavorite(game) },
                                     onFocus = { onFocused(game.fileId) },
                                     onRequester = { itemRequests[game.fileId] = it },
                                     onDisposed = { itemRequests.remove(game.fileId) },
@@ -519,7 +517,6 @@ internal fun GameLibraryGames(
                             artworkSlotAspectRatio = gridSlotRatio,
                             showSystem = showSystem,
                             onPlay = { onSelect(game) }, onInfo = { onOpenDetails(game) },
-                            onFavorite = { onFavorite(game) },
                             onFocus = { onFocused(game.fileId) },
                             onRequester = { itemRequests[game.fileId] = it },
                             onDisposed = { itemRequests.remove(game.fileId) },
@@ -897,9 +894,9 @@ internal fun GameLibraryCoverRow(
 /**
  * A library card like the SmartTube/YouTube cards: one flat card holds the cover, title and
  * system, and the whole card takes focus (scale, accent fill and outline). Covers keep their
- * own shape inside it; a game without one shows the shared missing-artwork face. On a TV the
- * favorite is a badge (Info/Menu or the detail page toggles it); touch screens keep a separate
- * heart button.
+ * own shape inside it; a game without one shows the shared missing-artwork face. Like Radio
+ * Browser, the card shows a favorite only as a corner badge; the list row's heart and the detail
+ * page change it.
  */
 @Composable
 internal fun GameTile(
@@ -910,7 +907,6 @@ internal fun GameTile(
     showSystem: Boolean = true,
     onPlay: () -> Unit,
     onInfo: () -> Unit,
-    onFavorite: () -> Unit,
     onFocus: () -> Unit,
     onRequester: (FocusRequester) -> Unit,
     onDisposed: () -> Unit,
@@ -918,7 +914,6 @@ internal fun GameTile(
     var focused by remember(game.fileId) { mutableStateOf(false) }
     val requester = remember(game.fileId) { FocusRequester() }
     DisposableEffect(requester) { onRequester(requester); onDispose(onDisposed) }
-    val handheld = LocalHandheldUi.current
     val shape = com.ambient.tv.ui.common.BrowseCardShape
     val artworkShape = com.ambient.tv.ui.common.BrowseCardArtworkShape
     val activate = rememberUiSoundAction(onClick = onPlay)
@@ -956,12 +951,12 @@ internal fun GameTile(
                     ) {
                         GameCoverArtwork(game.coverModel, game.title, game.systemId,
                             modifier = Modifier.fillMaxSize(), focused = focused, fileId = game.fileId)
-                        if (game.favorite && !handheld) androidx.tv.material3.Icon(
-                            Icons.Filled.Favorite,
-                            contentDescription = stringResource(R.string.radio_remove_favorite),
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(20.dp)
-                                .background(Color.Black.copy(alpha = .55f), CircleShape).padding(3.dp)
+                        // Status only, like Radio Browser's station cards: the list's heart, the
+                        // detail page and Info/long press change it, never a button on the card.
+                        if (game.favorite) com.ambient.tv.ui.common.ArtworkCornerIconBadge(
+                            icon = Icons.Filled.Favorite,
+                            contentDescription = stringResource(R.string.radio_favorites),
+                            modifier = Modifier.align(Alignment.TopEnd).padding(7.dp)
                                 .testTag("game-favorite-badge:${game.fileId}"),
                         )
                     }
@@ -975,8 +970,6 @@ internal fun GameTile(
                     textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
             }
         }
-        // Touch only: a heart inside the card is no D-pad target of its own on a TV.
-        if (handheld) GameFavoriteButton(game, onFavorite, Modifier.align(Alignment.TopEnd).padding(6.dp))
     }
 }
 

@@ -2,11 +2,13 @@ package com.ambient.tv.ui.games
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.unit.IntRect
 import com.ambient.tv.games.GameTouchMode
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
 import com.ambient.tv.ui.gamepad.retro.TouchControlStyle
 import kotlin.math.ceil
 import kotlin.math.floor
+import kotlin.math.roundToInt
 
 /** Local play reserves side space; the separate Companion pad keeps its existing layout. */
 internal data class GamePlayerLandscapeLayout(
@@ -22,6 +24,76 @@ internal fun gamePictureBounds(width: Float, height: Float, aspect: Float): Rect
     val w = minOf(width, height * ratio).coerceAtLeast(1f)
     val h = minOf(height, width / ratio).coerceAtLeast(1f)
     return Rect((width - w) / 2f, (height - h) / 2f, (width + w) / 2f, (height + h) / 2f)
+}
+
+/** Drawn source pixels of the core's picture (after a quarter-turn swap), the base of whole-number scaling. */
+internal data class GameContentFrame(val width: Int, val height: Int) {
+    companion object {
+        /** LibretroDroid.getContentFrameSize(): width in the high, height in the low 32 bits. */
+        fun unpack(packed: Long): GameContentFrame? {
+            val width = (packed ushr 32).toInt()
+            val height = (packed and 0xFFFFFFFFL).toInt()
+            return if (width > 0 && height > 0) GameContentFrame(width, height) else null
+        }
+    }
+}
+
+/**
+ * A changed source size is applied once two polls agree, so a core that mixes resolutions
+ * frame by frame does not resize the native surface on every poll. Unknown keeps the last size.
+ */
+internal class GameContentFrameFilter(private var applied: GameContentFrame? = null) {
+    private var candidate: GameContentFrame? = null
+
+    /** The size to apply now, or null when nothing changes. */
+    fun observe(frame: GameContentFrame?): GameContentFrame? {
+        if (frame == null || frame == applied) {
+            candidate = null
+            return null
+        }
+        if (applied != null && frame != candidate) {
+            candidate = frame
+            return null
+        }
+        applied = frame
+        candidate = null
+        return frame
+    }
+}
+
+/** In automatic mode whole-number scaling keeps at least this share of the fitted size (native rule). */
+internal const val GAME_INTEGER_SCALING_AUTO_MIN_FILL = 0.9f
+
+/**
+ * The renderer's whole-number factor for [frame] in an area of [width] x [height] pixels, or 0
+ * when it fits the picture normally instead (integerscaling.h in the LibretroDroid patches).
+ */
+internal fun gameIntegerScale(width: Int, height: Int, frame: GameContentFrame, automatic: Boolean): Int {
+    if (width <= 0 || height <= 0 || frame.width <= 0 || frame.height <= 0) return 0
+    val fit = minOf(width.toFloat() / frame.width, height.toFloat() / frame.height)
+    val whole = floor(fit).toInt()
+    if (whole < 1) return 0
+    if (automatic && whole / fit < GAME_INTEGER_SCALING_AUTO_MIN_FILL) return 0
+    return whole
+}
+
+/**
+ * Exact pixel bounds of the picture the renderer draws in [area]: the whole-number picture, or
+ * the aspect fit when it falls back. A surface of exactly this size draws the same picture
+ * without a black border of its own, so everything beside it belongs to the ambient backdrop.
+ */
+internal fun gameIntegerPictureBounds(area: IntRect, frame: GameContentFrame, automatic: Boolean, aspect: Float): IntRect {
+    val scale = gameIntegerScale(area.width, area.height, frame, automatic)
+    if (scale >= 1) {
+        val w = frame.width * scale
+        val h = frame.height * scale
+        val left = area.left + (area.width - w) / 2
+        val top = area.top + (area.height - h) / 2
+        return IntRect(left, top, left + w, top + h)
+    }
+    val fitted = gamePictureBounds(area.width.toFloat(), area.height.toFloat(), aspect)
+    return IntRect(area.left + fitted.left.roundToInt(), area.top + fitted.top.roundToInt(),
+        area.left + fitted.right.roundToInt(), area.top + fitted.bottom.roundToInt())
 }
 
 /**

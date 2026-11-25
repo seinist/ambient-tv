@@ -116,8 +116,7 @@ class GameLibraryBrowseLayoutTest {
                                         GameTile(entry,
                                             modifier = if (entry.fileId == "alpha")
                                                 Modifier.focusRequester(firstFocus) else Modifier,
-                                            onPlay = {}, onInfo = {}, onFavorite = {},
-                                            onFocus = { focusedId = entry.fileId },
+                                            onPlay = {}, onInfo = {}, onFocus = { focusedId = entry.fileId },
                                             onRequester = { requests[entry.fileId] = it },
                                             onDisposed = { requests.remove(entry.fileId) })
                                     }
@@ -227,7 +226,7 @@ class GameLibraryBrowseLayoutTest {
                                 modifier = Modifier.testTag("row:${entry.fileId}")) { item, tileModifier, slotRatio ->
                                 GameTile(item, tileModifier, artworkSlotAspectRatio = slotRatio,
                                     rowKey = entry.fileId,
-                                    onPlay = {}, onInfo = {}, onFavorite = {}, onFocus = {},
+                                    onPlay = {}, onInfo = {}, onFocus = {},
                                     onRequester = {}, onDisposed = {})
                             }
                         }
@@ -277,7 +276,7 @@ class GameLibraryBrowseLayoutTest {
                             items(rows, key = { it.first }) { (system, entries) ->
                                 GameLibraryCoverRow(entries, 148.dp, system) { entry, tileModifier, slotRatio ->
                                     GameTile(entry, tileModifier, artworkSlotAspectRatio = slotRatio,
-                                        rowKey = system, onPlay = {}, onInfo = {}, onFavorite = {}, onFocus = {},
+                                        rowKey = system, onPlay = {}, onInfo = {}, onFocus = {},
                                         onRequester = {}, onDisposed = {})
                                 }
                             }
