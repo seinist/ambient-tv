@@ -72,4 +72,8 @@
     <string name="moonlight_quit_confirm_hint">This ends the application running on the remote PC. To leave the stream without quitting the game, use Disconnect instead.</string>
     <string name="moonlight_remote_quit_failed">Sunshine could not quit the remote game.</string>
     <string name="moonlight_wake_pc">Wake PC</string>
+    <string name="moonlight_quality_hdr">HDR10</string>
+    <string name="moonlight_quality_hdr_on">HDR10 (required)</string>
+    <string name="moonlight_quality_hdr_off">SDR only</string>
+    <string name="moonlight_quality_hdr_hint">Automatic HDR10 needs a Sunshine HDR application, an HDR display and a 10-bit hardware decoder. Otherwise it uses SDR.</string>
 </resources>
