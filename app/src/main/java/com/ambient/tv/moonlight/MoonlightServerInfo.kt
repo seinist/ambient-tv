@@ -2,6 +2,8 @@ package com.ambient.tv.moonlight
 
 import java.io.ByteArrayInputStream
 import java.io.IOException
+import java.io.StringReader
+import org.xml.sax.InputSource
 import javax.xml.XMLConstants
 import javax.xml.parsers.DocumentBuilderFactory
 
@@ -17,16 +19,20 @@ data class MoonlightServerInfo(
 /** Parse a bounded response; never resolve DTDs, external entities or remote references. */
 fun parseMoonlightServerInfo(xml: ByteArray): MoonlightServerInfo {
     if (xml.size > 64 * 1024) throw IOException("Moonlight serverinfo too large")
+    val text = xml.toString(Charsets.UTF_8)
+    if (text.contains("<!DOCTYPE", ignoreCase = true) || text.contains("<!ENTITY", ignoreCase = true))
+        throw IOException("XML entities are not allowed")
     val builder = DocumentBuilderFactory.newInstance().apply {
         setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
         setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
         setFeature("http://xml.org/sax/features/external-general-entities", false)
         setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-        setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+        // Some Android XML implementations do not recognize this additional Xerces feature.
+        runCatching { setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false) }
         isExpandEntityReferences = false
         isXIncludeAware = false
     }.newDocumentBuilder()
-    val root = try { builder.parse(ByteArrayInputStream(xml)).documentElement }
+    val root = try { builder.parse(InputSource(StringReader(text))).documentElement }
                catch (error: Exception) { throw IOException("Malformed Moonlight serverinfo", error) }
     if (root == null || root.tagName != "root" || root.getAttribute("status_code") != "200")
         throw IOException("Invalid Moonlight server response")
