@@ -1677,6 +1677,15 @@ private fun AmbientTvApp(
             navController.navigate(Destinations.telegramDetail(chatId, messageId))
             return
         }
+        com.ambient.tv.ui.home.parseMoonlightHomeKey(ratingKey)?.let { (hostId, appId) ->
+            // Home never auto-wakes or plays an offline Sunshine host; its detail page
+            // performs a fresh mutually-authenticated availability check before Play.
+            beginMediaSelection()
+            navController.navigate(Destinations.moonlightDetail(hostId, appId)) {
+                launchSingleTop = true
+            }
+            return
+        }
         if (ratingKey.startsWith(com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX)) {
             val stationId = ratingKey.removePrefix(com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX)
             if (stationId.isBlank()) return
