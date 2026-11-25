@@ -62,14 +62,13 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
 diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
 --- a/src/main/cpp/vulkan/vulkanbackend.h
 +++ b/src/main/cpp/vulkan/vulkanbackend.h
-@@ -273,6 +273,10 @@
-     PendingImage pendingImage;
-     std::vector<VkCommandBuffer> pendingCommandBuffers;
-     VkSemaphore pendingSignalSemaphore = VK_NULL_HANDLE;
+@@ -269,5 +269,9 @@
+     VulkanColorCopy colorCopy;
+     bool colorCopyRejected = false;
 +    // Render-thread-owned host descriptor storage, not GPU frame slots.
 +    std::vector<VkCommandBuffer> submitCommands;
 +    std::vector<VkSemaphore> submitWaits;
 +    std::vector<VkPipelineStageFlags> submitWaitStages;
- 
-     std::mutex queueMutex;
-     retro_hw_render_interface_vulkan renderInterface {};
+     PendingImage pendingImage;
+     std::vector<VkCommandBuffer> pendingCommandBuffers;
+     VkSemaphore pendingSignalSemaphore = VK_NULL_HANDLE;
