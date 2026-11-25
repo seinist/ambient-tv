@@ -73,6 +73,9 @@ internal class MoonlightControllerRouter(
     }
 
     fun localUsedPorts(): Set<Int> = pads.values.mapTo(HashSet()) { it.port }
+    /** Map Sunshine rumble callbacks back to the physical Android device, not a TV vibration. */
+    fun deviceIdForPort(port: Int): Int? =
+        pads.entries.firstOrNull { it.value.port == port }?.key
 
     /** Clear held states even if Android did not deliver the key-up event. */
     fun releaseAll() {
