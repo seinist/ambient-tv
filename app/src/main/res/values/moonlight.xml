@@ -36,4 +36,11 @@
     <string name="moonlight_identity_changed">The saved PC certificate or identity no longer matches. Remove the PC and pair again only if you trust the new identity.</string>
     <string name="moonlight_apps_failed">Unable to retrieve the paired PC application list.</string>
     <string name="moonlight_catalog_preview">These applications are not playable yet: the streaming player is still under development.</string>
+    <string name="moonlight_stream_test">Test stream: %1$s</string>
+    <string name="moonlight_stream_running">Remote session active. Back opens the controls.</string>
+    <string name="moonlight_stream_connecting">Connecting to the gaming PC…</string>
+    <string name="moonlight_stream_ended">Stream disconnected. The game is still running on the PC.</string>
+    <string name="moonlight_stream_failed">Stream could not start.</string>
+    <string name="moonlight_stream_resume">Resume</string>
+    <string name="moonlight_stream_disconnect">Disconnect stream</string>
 </resources>
