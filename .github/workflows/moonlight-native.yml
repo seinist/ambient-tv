@@ -82,3 +82,7 @@ jobs:
           test "${#libs[@]}" -gt 0 || { echo "::error::Missing Moonlight JNI library"; exit 1; }
           readelf="$ANDROID_HOME/ndk/30.0.16248370/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
           python3 scripts/check_elf_page_alignment.py "$readelf" "${libs[@]}"
+      - name: Compile Ambient TV native Kotlin pairing and application adapter
+        if: matrix.abi == 'arm64-v8a'
+        shell: bash
+        run: ./gradlew :app:compileDebugKotlin -PMOONLIGHT_NATIVE=true -PAPK_ABI=arm64 --no-daemon --stacktrace
