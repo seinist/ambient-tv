@@ -54,6 +54,8 @@ data class SidebarUiState(
     val radioEnabled: Boolean = false,
     /** RomM signed in and switched on; its platforms come from the device's catalog copy. */
     val rommEnabled: Boolean = false,
+    val moonlightEnabled: Boolean = false,
+    val moonlightHosts: List<com.ambient.tv.moonlight.MoonlightHost> = emptyList(),
     val rommPlatforms: List<com.ambient.tv.romm.RommMenuPlatform> = emptyList(),
     val weatherEnabled: Boolean = false,
     val telegramEnabled: Boolean = false,
@@ -132,6 +134,9 @@ class SidebarViewModel @Inject constructor(
             youtubeStartFeedKey = appPreferences.youtubeStartFeedKey,
             spotifyEnabled = appPreferences.spotifyEnabled,
             radioEnabled = appPreferences.radioEnabled,
+            moonlightEnabled = com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE && appPreferences.hasMoonlightHosts,
+            moonlightHosts = if (com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE)
+                appPreferences.moonlightHosts else emptyList(),
             weatherEnabled = appPreferences.weatherSettings.let { it.enabled && it.showInSidebar },
             telegramEnabled = appPreferences.telegramEnabled,
             telegramAuthorized = telegramRepository.available,
@@ -487,6 +492,9 @@ class SidebarViewModel @Inject constructor(
                 youtubeStartFeedKey = appPreferences.youtubeStartFeedKey,
                 spotifyEnabled = appPreferences.spotifyEnabled,
                 radioEnabled = appPreferences.radioEnabled,
+                moonlightEnabled = com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE && appPreferences.hasMoonlightHosts,
+                moonlightHosts = if (com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE)
+                    appPreferences.moonlightHosts else emptyList(),
                 weatherEnabled = appPreferences.weatherSettings.let { it.enabled && it.showInSidebar },
             telegramEnabled = appPreferences.telegramEnabled,
             telegramAuthorized = telegramRepository.available,
