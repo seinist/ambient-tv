@@ -118,7 +118,7 @@ class MoonlightStreamActivity : ComponentActivity() {
         companion.attach(
             title = getString(R.string.moonlight_title),
             usedPorts = { input.localUsedPorts() },
-            onMenu = { runOnUiThread { showOsd(true) } },
+            onMenu = { runOnUiThread { showOsd(!osdVisible) } },
         )
         companion.interaction(playing = engine.status.value.phase == MoonlightStreamPhase.STREAMING,
             menu = osdVisible)
