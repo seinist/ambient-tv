@@ -496,6 +496,25 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_RADIO_ENABLED, false)
         set(value) = prefs.edit { putBoolean(KEY_RADIO_ENABLED, value) }
 
+    /** Experimental Moonlight host addresses only; TLS keys/certificates stay device-local. */
+    var moonlightEnabled: Boolean
+        get() = prefs.getBoolean("moonlight_enabled", false)
+        set(value) = prefs.edit { putBoolean("moonlight_enabled", value) }
+
+    var moonlightHosts: List<com.ambient.tv.moonlight.MoonlightHost>
+        get() = runCatching {
+            json.decodeFromString<List<com.ambient.tv.moonlight.MoonlightHost>>(
+                prefs.getString("moonlight_hosts", "[]") ?: "[]")
+        }.getOrDefault(emptyList())
+            .mapNotNull { runCatching { it.validated() }.getOrNull() }
+            .distinctBy { it.host to it.port }.take(16)
+        set(value) = prefs.edit {
+            putString("moonlight_hosts", json.encodeToString(value.map { it.validated() }
+                .distinctBy { it.host to it.port }.take(16)))
+        }
+
+    val hasMoonlightHosts: Boolean get() = moonlightEnabled && moonlightHosts.isNotEmpty()
+
     /** RomM game server (Settings › RomM). Its secret (token or password) lives in TokenStore. */
     var rommEnabled: Boolean
         get() = prefs.getBoolean("romm_enabled", false)
