@@ -17,7 +17,9 @@ data class MoonlightHost(
         val canonical = requireNotNull(MoonlightHostAddress.normalize(host, port)) { "Invalid Moonlight host or port" }
         require(id.length in 1..64 && id.all { it.isLetterOrDigit() || it == '-' || it == '_' })
         require(name.length <= 128 && !name.any { it.isISOControl() })
-        return copy(host = canonical, name = name.trim(), macAddress = macAddress.trim())
+        val mac = macAddress.trim().uppercase(Locale.ROOT).replace('-', ':')
+        require(mac.isEmpty() || Regex("([0-9A-F]{2}:){5}[0-9A-F]{2}").matches(mac))
+        return copy(host = canonical, name = name.trim(), macAddress = mac)
     }
 }
 
