@@ -480,7 +480,6 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     var coreOptionsSnapshot by remember(session) { mutableStateOf<List<GameCoreOption>>(emptyList()) }
     var fastForward by remember { mutableStateOf(false) }
     var rewinding by remember { mutableStateOf(false) }
-    var touchRewinding by remember { mutableStateOf(false) }
     var companionRewinding by remember { mutableStateOf(false) }
     var menuRewinding by remember { mutableStateOf(false) }
     var rewindHistory by remember { mutableStateOf(GameRewindHistory()) }
@@ -748,7 +747,6 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             // Pause at once; the preview is the frame the player saw last.
             retroView.pauseEmulation()
             rewinding = false
-            touchRewinding = false
             companionRewinding = false
             menuRewinding = false
             GameInputRouting.update(session, GameInputMode.MENU)
@@ -943,7 +941,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val rewindPreview = menuOpen && panel == null && !statesOpen && menuRewinding &&
         availability.rewind && activityResumed && !displayHold
     val activeRewinding = rewindPermitted && (rewindPreview ||
-        (running && rewindHistory.available && (rewinding || touchRewinding || companionRewinding)))
+        (running && rewindHistory.available && (rewinding || companionRewinding)))
     val emulating = running || rewindPreview
     LaunchedEffect(emulating, activeRewinding, fastForward, netplay.synchronizing) {
         // Set rewind before releasing the frame gate; an OSD hold must never advance one frame.
@@ -956,7 +954,6 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     LaunchedEffect(running, menuOpen, panel, statesOpen, availability.rewind) {
         if (!running || !availability.rewind) {
             rewinding = false
-            touchRewinding = false
             companionRewinding = false
         }
         if (!menuOpen || panel != null || statesOpen || !availability.rewind) menuRewinding = false
@@ -1561,8 +1558,6 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 coreActions = coreInputActions[0],
                 hiddenForGamepad = touchStyle.hideOnGamepadInput && hidingGamepadId != null,
                 onShowTouch = { hidingGamepadId = null },
-                rewindSeconds = rewindHistory.seconds.takeIf { availability.rewind },
-                onRewind = { held -> touchRewinding = held && latestAvailability.rewind },
                 playing = running,
                 menuVisible = menuOpen,
                 onMenu = openMenu,

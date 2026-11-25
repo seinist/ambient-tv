@@ -64,6 +64,28 @@ enum class RetroInputKind(val key: String, @StringRes val titleRes: Int) {
     }
 }
 
+/** One optional simultaneous gamepad shortcut, using mapped RetroPad buttons. */
+enum class RetroMenuCombo(val key: String, @StringRes val titleRes: Int, val mask: Int) {
+    START_SELECT("start_select", AppR.string.game_controls_combo_start_select,
+        RetroPadButton.START.mask or RetroPadButton.SELECT.mask),
+    L3_R3("l3_r3", AppR.string.game_controls_combo_l3_r3,
+        RetroPadButton.L3.mask or RetroPadButton.R3.mask),
+    L1_R1("l1_r1", AppR.string.game_controls_combo_l1_r1,
+        RetroPadButton.L.mask or RetroPadButton.R.mask),
+    L1_R1_START("l1_r1_start", AppR.string.game_controls_combo_l1_r1_start,
+        RetroPadButton.L.mask or RetroPadButton.R.mask or RetroPadButton.START.mask),
+    OFF("off", AppR.string.game_controls_combo_off, 0);
+
+    fun matches(held: Int): Boolean = mask != 0 && (held and mask) == mask
+
+    companion object {
+        /** Old backups stored a single Start + Select switch. Preserve both old values. */
+        fun decode(stored: Map<String, String>): RetroMenuCombo =
+            entries.firstOrNull { it.key == stored["menu_combo"] }
+                ?: if (stored["start_select_menu"] == "0") OFF else START_SELECT
+    }
+}
+
 /** What a key can do in a game besides a RetroPad button (game menu and hotkeys). */
 enum class RetroMenuTrigger(val key: String, @StringRes val titleRes: Int) {
     /** Opens the game menu (OSD) at once. */
@@ -293,8 +315,8 @@ fun companionTouchProfileKey(tvFingerprint: String?, systemId: String?): String 
     else "$tvFingerprint|$systemId"
 
 data class RetroInputConfig(
-    /** Start + Select together open the game menu on controllers. */
-    val startSelectMenu: Boolean = true,
+    /** One controller chord opens the game menu; direct/held menu hotkeys are independent. */
+    val menuCombo: RetroMenuCombo = RetroMenuCombo.START_SELECT,
     /** The D-pad also moves the left analog stick (3D games with a remote or keyboard). */
     val dpadAsStick: Boolean = false,
     /** Only changed kinds; the rest come from [defaultRetroProfile]. */
@@ -374,7 +396,9 @@ data class RetroInputConfig(
         else copy(companionTouchProfiles = companionTouchProfiles + (key to profile))
 
     fun encode(): Map<String, String> = buildMap {
-        put("start_select_menu", if (startSelectMenu) "1" else "0")
+        put("menu_combo", menuCombo.key)
+        // Older clients must not accidentally enable Start + Select for a different chord.
+        put("start_select_menu", if (menuCombo == RetroMenuCombo.START_SELECT) "1" else "0")
         put("dpad_stick", if (dpadAsStick) "1" else "0")
         // Old paired clients require exactly seven fields; optional additions use their own key.
         put("touch_style", touchStyle.encode(includeHaptics = false))
@@ -506,7 +530,7 @@ data class RetroInputConfig(
                     }.toMap(),
                 scopedProfiles = layers,
                 deviceProfiles = deviceLayers,
-                startSelectMenu = stored["start_select_menu"] != "0",
+                menuCombo = RetroMenuCombo.decode(stored),
                 dpadAsStick = stored["dpad_stick"] == "1",
                 profiles = profiles,
                 ports = ports,

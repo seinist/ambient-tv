@@ -32,6 +32,7 @@ import com.ambient.tv.ui.gamepad.retro.RetroInputDevice
 import com.ambient.tv.ui.gamepad.retro.RetroInputKind
 import com.ambient.tv.ui.gamepad.retro.RetroInputSettings
 import com.ambient.tv.ui.gamepad.retro.RetroInputTarget
+import com.ambient.tv.ui.gamepad.retro.RetroMenuCombo
 import com.ambient.tv.ui.gamepad.retro.RetroMenuTrigger
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
 import com.ambient.tv.ui.gamepad.retro.RetroPorts
@@ -97,11 +98,16 @@ private fun GameControlsOptions() {
     val config = RetroInputSettings.config
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsSubheader(stringResource(R.string.gamepad_section_general))
-        TvSettingRow(
-            title = stringResource(R.string.game_controls_start_select),
-            body = stringResource(R.string.game_controls_start_select_hint),
-            checked = config.startSelectMenu,
-            onCheckedChange = { on -> RetroInputSettings.update { it.copy(startSelectMenu = on) } },
+        SettingsSelect(
+            label = stringResource(R.string.game_controls_combo),
+            description = stringResource(R.string.game_controls_combo_hint),
+            options = RetroMenuCombo.entries.map { combo ->
+                SettingsSelectOption(
+                    text = stringResource(combo.titleRes),
+                    selected = config.menuCombo == combo,
+                    onClick = { RetroInputSettings.update { it.copy(menuCombo = combo) } },
+                )
+            },
         )
         TvSettingRow(
             title = stringResource(R.string.game_controls_dpad_stick),
