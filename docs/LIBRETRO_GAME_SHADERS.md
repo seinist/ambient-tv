@@ -23,9 +23,13 @@ Every new GLES chain first copies the actual game image to a tightly sized
 nearest-filtered source texture. This normalizes hardware framebuffer padding,
 flipping, crop and rotation before the algorithms inspect neighbouring pixels.
 It also makes ScaleFX's original-image reference refer to the picture **after**
-any selected effect or HDR-to-SDR conversion. ScaleFX uses seven GLES passes in
-total, eight with the optional prefix. Fixed 2x filters use three; the other
-single-pass algorithms use two including the source copy.
+any selected effect or HDR-to-SDR conversion. ScaleFX's software-source chain
+uses seven GLES passes, eight with the optional prefix. Fixed 2x filters use
+three; the other single-pass algorithms use two including the source copy.
+Hardware sources also receive a renderer-owned 1x content-boundary copy when the
+chain does not already declare an effective original pass. This protects older
+neighbourhood filters too. At most nine passes are supported; intermediate
+allocation limits still apply.
 
 These are pinned upstream algorithms, with default parameters and preserved
 copyright notices. They are separate from `GameRetroShaders`, whose fifteen
@@ -81,7 +85,10 @@ effective original colour image to its output. Mixing these contracts corrupts
 colours and becomes particularly visible with SDR-to-HDR output.
 
 HDR-to-SDR conversion precedes filtering and uses nearest sampling for pixel-art
-algorithms. SDR-to-HDR10 encoding runs only after the last picture pass. Native
+algorithms. It runs only when the native source handshake and the current frame
+confirm the requested transfer; an old menu selection cannot reinterpret SDR.
+SDR-to-HDR10 encoding runs only after the last picture pass. That window pass is
+always opaque; intermediate alpha is preserved for classification data. Native
 Slang output remains SDR-only. The actual television HDR signal, Android GPU
 behaviour and visual acceptance still need device verification.
 
@@ -94,7 +101,9 @@ Software cores use the normal GLES path. External signed GLSL packs, additional
 GLES effects and adjusted compact-effect intensity retain GLES presentation.
 The filtered Vulkan path requires an opaque swapchain: librashader clears unused
 output pixels to transparent black, so an alpha-composited surface would expose
-underlying layers in the side bars. Devices without opaque support retain GLES.
+underlying layers in the side bars. The raw native path also requires opaque
+composition because core alpha is not a window transparency contract. Devices
+without opaque support retain GLES.
 
 The app copies the complete fixed dependency list for a selected preset into
 private storage. Native code receives no arbitrary user preset path. Assets are
@@ -126,6 +135,10 @@ These host and CI gates do not measure Shield/Philips/phone performance or
 validate TV HDR signalling. Device checks should include repeated paused/live
 filter changes, 4:3/integer-scaled side bars, 720p/1080p/4K output, background and
 resume, and the filters with and without HDR enabled.
+
+The follow-up [gaming HDR and Vulkan audit](LIBRETRO_GAMING_HDR_AUDIT.md) covers
+all 31 built-ins and five optional pack filters, source packing, HDR input/output,
+Vulkan aspect and synchronization, and the remaining device validation limits.
 
 ## Signed optional packs (follow-up PR #436)
 

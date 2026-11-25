@@ -42,10 +42,11 @@ internal class GameVulkanSurfaceHost(
     // Never treat a manual PQ/HLG selection as core source evidence.
     @Volatile private var confirmedCoreTransfer: GameVulkanTransferMode? = null
 
-    private var canProbe = false
+    @Volatile private var canProbe = false
     @Volatile private var displayHdr = GameHdrDisplayCapabilities()
-    private var fullscreenRequested = false
-    private var fullscreenVisible = false
+    @Volatile private var fullscreenRequested = false
+    @Volatile private var fullscreenVisible = false
+    @Volatile private var fullscreenSurfaceReady = false
     private var fullscreenAttempt = 0L
     private var lastStatus = GameVulkanSdrStatus()
 
@@ -65,18 +66,26 @@ internal class GameVulkanSurfaceHost(
         addView(retro, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         probeSurface.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
+                fullscreenSurfaceReady = false
+                setNativeFullscreenGate(false)
                 activeSurface = holder.surface
                 generation++
                 tryProbe()
             }
 
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+                // Resize revokes the old presentation before another frame may
+                // skip GLES. The tiny capability probe never qualifies.
+                fullscreenSurfaceReady = fullscreenVisible && width > 16 && height > 16
+                setNativeFullscreenGate(false)
                 activeSurface = holder.surface
                 generation++
                 tryProbe()
             }
 
             override fun surfaceDestroyed(holder: SurfaceHolder) {
+                fullscreenSurfaceReady = false
+                setNativeFullscreenGate(false)
                 activeSurface = null
                 generation++
                 detachNativeSdrSurface()
@@ -204,11 +213,17 @@ internal class GameVulkanSurfaceHost(
             GameVulkanFullscreenPolicy.shouldShowFullscreen(true, status, outputTransfer)) {
             promoteToFullscreen()
         }
+        setNativeFullscreenGate(GameVulkanFullscreenPolicy.canSkipGles(
+            fullscreenRequested, fullscreenVisible, fullscreenSurfaceReady, lastStatus, outputTransfer,
+        ))
     }
 
     private fun promoteToFullscreen() {
         if (fullscreenVisible || disposed || !nativeSdrDiagnostic ||
             !GameVulkanTransferGate.frameConfirmed(outputTransfer, lastStatus)) return
+        setNativeFullscreenGate(false)
+        fullscreenSurfaceReady = false
+        generation++
         fullscreenVisible = true
         val attempt = ++fullscreenAttempt
         // Trigger a real Surface resize and Vulkan swapchain recreation.
@@ -231,8 +246,11 @@ internal class GameVulkanSurfaceHost(
     }
 
     private fun demoteToProbe() {
+        setNativeFullscreenGate(false)
+        fullscreenSurfaceReady = false
         if (!fullscreenVisible) return
         fullscreenVisible = false
+        generation++
         fullscreenAttempt++
         probeSurface.holder.setFixedSize(16, 16)
         probeSurface.layoutParams = LayoutParams(1, 1, Gravity.BOTTOM or Gravity.END)
@@ -240,7 +258,23 @@ internal class GameVulkanSurfaceHost(
 
     private fun detachNativeSdrSurface() {
         if (!canProbe) return
-        runCatching { retro.queueEvent { LibretroDroid.setNativeSdrVulkanSurface(null) } }
+        runCatching { retro.queueEvent {
+            LibretroDroid.setNativeVulkanFullscreenActive(false)
+            LibretroDroid.setNativeSdrVulkanSurface(null)
+        } }
+    }
+
+    private fun setNativeFullscreenGate(enabled: Boolean) {
+        if (!canProbe) return
+        val token = generation
+        runCatching { retro.queueEvent {
+            // The native backend additionally checks success of the exact frame
+            // being rendered. A delayed UI status never suppresses a failed frame.
+            LibretroDroid.setNativeVulkanFullscreenActive(
+                enabled && !disposed && token == generation && nativeSdrDiagnostic &&
+                    fullscreenRequested && fullscreenVisible && fullscreenSurfaceReady,
+            )
+        } }
     }
 
     private fun tryProbe() {
@@ -253,6 +287,7 @@ internal class GameVulkanSurfaceHost(
                 // while this task was queued on the GL thread.
                 if (disposed || token != generation || activeSurface !== surface || !surface.isValid)
                     return@queueEvent
+                LibretroDroid.setNativeVulkanFullscreenActive(false)
                 val bits = runCatching {
                     val caps = displayHdr
                     val eotfs = if (caps.hdr10 || caps.hlg || caps.hdr10Plus || caps.dolbyVision) {

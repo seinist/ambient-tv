@@ -5,10 +5,10 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from game_shader_output_wrapper import build_output_wrapper
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "app/src/main/java/com/ambient/tv/ui/games/GameRetroShaders.kt"
-SDR_TO_HDR_PATCH = ROOT / "scripts/patches/libretrodroid/0033-sdr-to-hdr-output.patch"
 EXPECTED = {"SHARP_BILINEAR","PIXEL_AA","CRT_LIGHT","CRT_GEOMETRY","CRT_APERTURE",
             "CRT_GLOW","GAMEBOY_DMG","GBC_GRID","GBA_COLOR","DS_LCD","NTSC","VHS",
             "FILM_GRAIN","DEBAND","COLOR_BOOST"}
@@ -36,34 +36,20 @@ def main():
             validate(compiler, out / sourceFile.name, "frag", "#version 100\n" + code)
         wrapped = check_sdr_to_hdr(compiler, out, programs)
     print(f"OK: {len(EXPECTED)} built-ins + {len(optionalFiles)} optional GLES 100 shaders; {len(raw)} Kotlin source bytes; "
-          f"{wrapped} PQ-wrapped")
+          f"{wrapped} PQ/opaque-wrapped variants")
 
 def check_sdr_to_hdr(compiler, out, programs):
-    """The SDR-to-HDR patch rewrites the last picture pass; every wrapped built-in must still compile."""
-    lines, inside = [], False
-    for line in SDR_TO_HDR_PATCH.read_text("utf-8").splitlines():
-        if line.startswith("diff --git"):
-            inside = line.endswith("b/src/main/cpp/sdrtohdr.h")
-        elif inside and line.startswith("+") and not line.startswith("+++"):
-            lines.append(line[1:])
-    assert lines, "sdrtohdr.h missing from the SDR-to-HDR patch"
-    cxx = shutil.which("g++") or shutil.which("c++")
-    if not cxx:
-        raise SystemExit("g++ required for the SDR-to-HDR shader check")
-    (out / "sdrtohdr.h").write_text("\n".join(lines) + "\n")
-    (out / "wrap.cpp").write_text(
-        '#include "sdrtohdr.h"\n#include <iostream>\n#include <iterator>\n'
-        'int main(){std::string s((std::istreambuf_iterator<char>(std::cin)),std::istreambuf_iterator<char>());'
-        'std::cout<<libretrodroid::wrapFragmentForPq(s,203);}\n')
-    subprocess.run([cxx, "-std=c++17", "-o", str(out / "wrap"), str(out / "wrap.cpp")], check=True)
+    """Compile the actual prepared SDR/PQ window wrappers, including later patches."""
+    wrapper = build_output_wrapper(out)
     count = 0
     for name in sorted(EXPECTED):
         for version in ("#version 100\n", ""):
             src = version + programs["HEADER"] + "\nconst float INTENSITY = 1.0;\n" + programs[name]
-            result = subprocess.run([str(out / "wrap")], input=src, capture_output=True, text=True, check=True)
-            stage_source = result.stdout if version else "#version 100\n" + result.stdout
-            validate(compiler, out / (name.lower() + "-pq" + str(len(version)) + ".frag"), "frag", stage_source)
-            count += 1
+            for mode in ("pq", "opaque"):
+                result = subprocess.run([str(wrapper), mode], input=src, capture_output=True, text=True, check=True)
+                stage_source = result.stdout if version else "#version 100\n" + result.stdout
+                validate(compiler, out / (name.lower() + "-" + mode + str(len(version)) + ".frag"), "frag", stage_source)
+                count += 1
     return count
 
 def validate(compiler, path, stage, source):

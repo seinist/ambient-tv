@@ -1,0 +1,698 @@
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -26,6 +26,8 @@
+ #include "../log.h"
+ #include "../integerscaling.h"
+ #include "../environment.h"
++#include <chrono>
++#include <thread>
+ 
+ #ifdef LIBRETRODROID_ADRENOTOOLS
+ #include <adrenotools/driver.h>
+@@ -88,15 +90,16 @@
+ void VulkanBackend::setPreferFp16Frame(bool enabled) {
+     // Called before a new core is created, on the same thread as the Vulkan frontend.
+     if (preferFp16Frame == enabled && !forceRgba8Frame) return;
++    if (hasFatalError() || shutdownReady) return;
++    if (frameBuffer != nullptr && !destroyFrameBuffer()) return;
+     preferFp16Frame = enabled;
+     forceRgba8Frame = false;
+-    if (frameBuffer != nullptr) destroyFrameBuffer();
+ }
+ 
+ void VulkanBackend::disableFp16Frame() {
+     if (!fp16Frame) return;
++    if (hasFatalError() || shutdownReady || !destroyFrameBuffer()) return;
+     forceRgba8Frame = true;
+-    destroyFrameBuffer();
+ }
+ 
+ void* VulkanBackend::openCustomDriver() const {
+@@ -350,13 +353,11 @@
+     LOGI("Vulkan presentation surface ready");
+ }
+ 
+-void VulkanBackend::destroyNativeSdrSwapchain() {
++bool VulkanBackend::destroyNativeSdrSwapchain() {
+     nativePresentation.invalidateFrame();
+     // Surface changes and shutdown are synchronized on the GL/emulation thread.
+     if (device != VK_NULL_HANDLE && nativeSdrSwapchain != VK_NULL_HANDLE &&
+-        vk.deviceWaitIdle != nullptr) {
+-        vk.deviceWaitIdle(device);
+-    }
++        !waitForDeviceIdle()) return false;
+     // The GPU is idle before retiring any pass/history images owned by librashader.
+     nativeSlang.releaseGpu();
+     if (device != VK_NULL_HANDLE && vk.destroySemaphore != nullptr) {
+@@ -381,20 +382,24 @@
+     nativeSdrFormat = VK_FORMAT_UNDEFINED;
+     nativeSdrStatus.store(nativeSdrWindow == nullptr ? 0u : (nativeSdrDisabled ? 9u : 1u),
+                           std::memory_order_release);
++    return true;
+ }
+ 
+ void VulkanBackend::setNativeSdrSurface(ANativeWindow* ownedWindow) {
+     // A surface callback queued after Vulkan shutdown must release its JNI-owned
+     // reference, not leave a dangling window in the singleton.
+-    if (!isStarted() && ownedWindow != nullptr) {
+-        ANativeWindow_release(ownedWindow);
+-        nativeSdrStatus.store(0u, std::memory_order_release);
++    if (!isStarted() || hasFatalError() || shutdownReady) {
++        if (ownedWindow != nullptr) ANativeWindow_release(ownedWindow);
++        if (!isStarted()) nativeSdrStatus.store(0u, std::memory_order_release);
+         return;
+     }
+     // A repeated SurfaceChanged can have the same native pointer but different
+     // dimensions: always retire the old swapchain. The JNI caller owns the new
+     // reference until this function consumes it.
+-    destroyNativeSdrSwapchain();
++    if (!destroyNativeSdrSwapchain()) {
++        if (ownedWindow != nullptr) ANativeWindow_release(ownedWindow);
++        return;
++    }
+     if (nativeSdrWindow != nullptr) ANativeWindow_release(nativeSdrWindow);
+     nativeSdrWindow = ownedWindow;
+     nativeSdrDisabled = false;
+@@ -402,30 +407,32 @@
+ }
+ 
+ void VulkanBackend::setNativeOutputTransfer(uint32_t transfer) {
++    if (hasFatalError() || shutdownReady) return;
+     const uint32_t requested = transfer <= 2u ? transfer : 0u;
+     if (requested == nativeOutputTransfer) return;
+-    destroyNativeSdrSwapchain();
++    if (!destroyNativeSdrSwapchain()) return;
+     nativeOutputTransfer = requested;
+     nativeSdrDisabled = false;
+ }
+ 
+ void VulkanBackend::setNativeCoreSourceTransfer(uint32_t sourceTransfer) {
++    if (hasFatalError() || shutdownReady) return;
+     // This is a *separate* core option + observed VkImage contract, not the
+     // manual user setting or panel capabilities. A changed source must retire
+     // any prior HDR swapchain before another frame can be presented.
+     const uint32_t accepted = sourceTransfer <= 2u ? sourceTransfer : 0u;
+     if (accepted == nativeCoreSourceTransfer) return;
+-    destroyNativeSdrSwapchain();
++    if (!destroyNativeSdrSwapchain()) return;
+     nativeCoreSourceTransfer = accepted;
+     nativeSdrDisabled = false;
+ }
+ 
+ void VulkanBackend::setNativeShaderPresetPath(const std::string& path) {
++    if (hasFatalError() || shutdownReady) return;
+     if (nativeSlangPath == path) return;
+     // This API is GL-thread only. Wait the device before destroying shader history
+     // resources; never change filters while the Vulkan queue is using them.
+-    if (device != VK_NULL_HANDLE && vk.deviceWaitIdle != nullptr) vk.deviceWaitIdle(device);
+-    destroyNativeSdrSwapchain();
++    if (!destroyNativeSdrSwapchain()) return;
+     nativeSlangPath = path;
+     nativeSlang.setPresetPath(path);
+     nativeSlangFrame = 0;
+@@ -439,6 +446,7 @@
+ }
+ 
+ bool VulkanBackend::ensureNativeSdrSwapchain() {
++    if (hasFatalError() || shutdownReady) return false;
+     if (nativeSdrSwapchain != VK_NULL_HANDLE) return true;
+     // Refuse native HDR without independent source evidence. In particular,
+     // neither a 10-bit VkFormat nor manual PQ/HLG selection is sufficient.
+@@ -539,27 +547,13 @@
+         return false;
+     }
+ 
+-    VkCompositeAlphaFlagBitsKHR alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+-    // librashader clears the full output to transparent black before its final
+-    // viewport draw. Only an opaque swapchain guarantees black letterbox bars;
+-    // an alpha-composited surface would reveal stale/colored layers underneath.
+-    if (nativeSlang.requested() && (caps.supportedCompositeAlpha & alpha) == 0) {
+-        disableNativeSdrSwapchain("opaque composition required for filtered letterbox bars");
+-        return false;
+-    }
++    const VkCompositeAlphaFlagBitsKHR alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
++    // Core images may carry unused/zero alpha, and librashader clears outside
++    // its final viewport to transparent black. Both native paths require opaque
++    // composition; GLES supplies its own opaque final pass on other surfaces.
+     if ((caps.supportedCompositeAlpha & alpha) == 0) {
+-        const VkCompositeAlphaFlagBitsKHR possibilities[] = {
+-            VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+-            VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,
+-            VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR
+-        };
+-        for (const auto item : possibilities) {
+-            if (caps.supportedCompositeAlpha & item) { alpha = item; break; }
+-        }
+-        if ((caps.supportedCompositeAlpha & alpha) == 0) {
+-            disableNativeSdrSwapchain("no supported composite alpha");
+-            return false;
+-        }
++        disableNativeSdrSwapchain("opaque composition required for native game output");
++        return false;
+     }
+     uint32_t images = caps.minImageCount + 1;
+     if (caps.maxImageCount != 0) images = std::min(images, caps.maxImageCount);
+@@ -902,7 +896,9 @@
+     vk.createSemaphore = reinterpret_cast<PFN_vkCreateSemaphore>(load("vkCreateSemaphore"));
+     vk.destroySemaphore = reinterpret_cast<PFN_vkDestroySemaphore>(load("vkDestroySemaphore"));
+ 
+-    return vk.destroyDevice && vk.queueSubmit && vk.cmdBlitImage && vk.cmdClearColorImage && vk.createImage &&
++    return vk.destroyDevice && vk.deviceWaitIdle && vk.waitForFences && vk.resetFences &&
++           vk.resetCommandBuffer && vk.beginCommandBuffer && vk.endCommandBuffer &&
++           vk.queueSubmit && vk.cmdBlitImage && vk.cmdClearColorImage && vk.createImage &&
+            vk.getAndroidHardwareBufferProperties;
+ }
+ 
+@@ -923,6 +919,7 @@
+ }
+ 
+ bool VulkanBackend::start() {
++    if (hasFatalError() || shutdownReady) return false;
+     if (isStarted()) return true;
+     if (!isAvailable()) return false;
+ 
+@@ -966,9 +963,9 @@
+     return isStarted() ? &renderInterface : nullptr;
+ }
+ 
+-void VulkanBackend::destroyFrameBuffer() {
++bool VulkanBackend::destroyFrameBuffer() {
+     if (device != VK_NULL_HANDLE) {
+-        waitForFrame();
++        if (!shutdownReady && !waitForFrame()) return false;
+         if (frameImage != VK_NULL_HANDLE) vk.destroyImage(device, frameImage, nullptr);
+         if (frameMemory != VK_NULL_HANDLE) vk.freeMemory(device, frameMemory, nullptr);
+     }
+@@ -982,12 +979,13 @@
+     frameHeight = 0;
+     fp16Frame = false;
+     frameStatus.store(0, std::memory_order_release);
++    return true;
+ }
+ 
+ bool VulkanBackend::ensureFrameBuffer(unsigned width, unsigned height) {
+-    if (!isStarted() || width == 0 || height == 0) return false;
++    if (hasFatalError() || shutdownReady || !isStarted() || width == 0 || height == 0) return false;
+     if (frameBuffer != nullptr && width == frameWidth && height == frameHeight) return true;
+-    destroyFrameBuffer();
++    if (!destroyFrameBuffer()) return false;
+ 
+     const auto publishStatus = [this]() {
+         frameStatus.store(1u | (fp16Frame ? 2u : 0u) |
+@@ -1000,6 +998,7 @@
+             publishStatus();
+             return true;
+         }
++        if (hasFatalError()) return false;
+         forceRgba8Frame = true;
+         LOGW("FP16 Vulkan/GLES bridge unavailable; using RGBA8");
+     }
+@@ -1090,18 +1089,18 @@
+     frameWidth = width;
+     frameHeight = height;
+     fp16Frame = fp16;
+-    clearFrameImage();
++    if (!clearFrameImage()) return false;
+     LOGI("Vulkan shared frame buffer ready: %ux%u (%s)", width, height, fp16 ? "FP16" : "RGBA8");
+     return true;
+ }
+ 
+-void VulkanBackend::clearFrameImage() {
+-    waitForFrame();
+-
+-    vk.resetCommandBuffer(commandBuffer, 0);
++bool VulkanBackend::clearFrameImage() {
++    if (shutdownReady || !waitForFrame()) return false;
++
++    if (!checkFrameResult(vk.resetCommandBuffer(commandBuffer, 0), "reset clear command buffer")) return false;
+     VkCommandBufferBeginInfo begin { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+-    vk.beginCommandBuffer(commandBuffer, &begin);
++    if (!checkFrameResult(vk.beginCommandBuffer(commandBuffer, &begin), "begin clear command buffer")) return false;
+ 
+     const VkImageSubresourceRange range { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+ 
+@@ -1129,7 +1128,7 @@
+     release.subresourceRange = range;
+     vk.cmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                           0, 0, nullptr, 0, nullptr, 1, &release);
+-    vk.endCommandBuffer(commandBuffer);
++    if (!checkFrameResult(vk.endCommandBuffer(commandBuffer), "end clear command buffer")) return false;
+ 
+     VkSubmitInfo submit { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+     submit.commandBufferCount = 1;
+@@ -1139,27 +1138,79 @@
+         std::lock_guard<std::mutex> lock(queueMutex);
+         result = vk.queueSubmit(queue, 1, &submit, frameFence);
+     }
+-    if (result != VK_SUCCESS) {
+-        LOGE("Clearing the shared frame buffer failed: %d", result);
+-        return;
+-    }
++    if (!checkFrameResult(result, "submit shared frame clear")) return false;
+     frameInFlight = true;
+-    waitForFrame();
+-}
+-
+-void VulkanBackend::waitForFrame() {
+-    if (!frameInFlight) return;
+-    vk.waitForFences(device, 1, &frameFence, VK_TRUE, FENCE_TIMEOUT_NS);
+-    vk.resetFences(device, 1, &frameFence);
++    return waitForFrame();
++}
++
++bool VulkanBackend::checkFrameResult(VkResult result, const char* operation) {
++    if (result == VK_SUCCESS) return true;
++    if (!hasFatalError()) {
++        fatalFrameError = result;
++        LOGE("Vulkan frame failure in %s: %d; stopping this context", operation, result);
++    }
++    nativePresentation.invalidateFrame();
++    nativeSdrStatus.store(nativeSdrWindow == nullptr ? 0u : 9u, std::memory_order_release);
++    return false;
++}
++
++bool VulkanBackend::waitForFrame() {
++    if (hasFatalError() || shutdownReady) return false;
++    if (!frameInFlight) return true;
++    bool warned = false;
++    for (;;) {
++        const VkResult result = vk.waitForFences(device, 1, &frameFence, VK_TRUE, FENCE_TIMEOUT_NS);
++        if (result == VK_TIMEOUT) {
++            // A timeout says nothing about completion. Never reset/reuse the
++            // fence, command buffer, AHB or core image while work is pending.
++            if (!warned) LOGW("Vulkan frame is still pending; waiting for its completion");
++            warned = true;
++            continue;
++        }
++        if (!checkFrameResult(result, "wait for frame fence")) return false;
++        break;
++    }
++    if (!checkFrameResult(vk.resetFences(device, 1, &frameFence), "reset frame fence")) return false;
+     frameInFlight = false;
++    return true;
++}
++
++bool VulkanBackend::waitForDeviceIdle() {
++    if (device == VK_NULL_HANDLE || shutdownReady) return true;
++    if (vk.deviceWaitIdle == nullptr) {
++        checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "missing device idle entry point");
++        return false;
++    }
++    VkResult result;
++    {
++        std::lock_guard<std::mutex> lock(queueMutex);
++        result = vk.deviceWaitIdle(device);
++    }
++    // Vulkan defines DEVICE_LOST as completion for resource lifetime purposes.
++    // Other errors prove neither idle nor safe destruction, even after a fence
++    // error. Keep every object alive and the fatal latch set in that case.
++    if (result == VK_ERROR_DEVICE_LOST) {
++        checkFrameResult(result, "wait for device idle");
++        return true;
++    }
++    return checkFrameResult(result, "wait for device idle");
++}
++
++bool VulkanBackend::prepareForShutdown() {
++    nativePresentation.invalidateFrame();
++    if (!waitForDeviceIdle()) return false;
++    shutdownReady = true;
++    frameInFlight = false; // no further submissions; the fence will be destroyed
++    return true;
+ }
+ 
+ bool VulkanBackend::presentFrame(unsigned width, unsigned height, float resolvedAspect,
+                                   bool pictureCompatible) {
+     nativePresentation.invalidateFrame();
+-    if (!isStarted() || frameImage == VK_NULL_HANDLE || pendingImage.image == VK_NULL_HANDLE) return false;
+-
+-    waitForFrame();
++    if (hasFatalError() || shutdownReady || !isStarted() || frameImage == VK_NULL_HANDLE ||
++        pendingImage.image == VK_NULL_HANDLE) return false;
++
++    if (!waitForFrame()) return false;
+ 
+     const VulkanColorCopy::Source colorSource {
+         pendingImage.format, pendingImage.components, pendingImage.viewType,
+@@ -1229,11 +1280,15 @@
+             if (acquired == VK_SUCCESS || acquired == VK_SUBOPTIMAL_KHR) {
+                 useDirect = sdrIndex < nativeSdrImages.size() &&
+                             sdrIndex < nativeSdrComplete.size();
++            } else if (acquired == VK_ERROR_DEVICE_LOST) {
++                checkFrameResult(acquired, "acquire presentation image");
++                return false;
+             } else if (acquired != VK_NOT_READY && acquired != VK_TIMEOUT) {
+                 disableNativeSdrSwapchain("native SDR swapchain out of date or surface lost");
+             }
+         }
+     }
++    if (hasFatalError()) return false;
+ 
+     const uint32_t copyWidth = width;
+     const uint32_t copyHeight = height;
+@@ -1242,10 +1297,10 @@
+     const bool transferOwnership = pendingImage.srcQueueFamily != VK_QUEUE_FAMILY_IGNORED &&
+                                    pendingImage.srcQueueFamily != queueFamily;
+ 
+-    vk.resetCommandBuffer(commandBuffer, 0);
++    if (!checkFrameResult(vk.resetCommandBuffer(commandBuffer, 0), "reset frame command buffer")) return false;
+     VkCommandBufferBeginInfo begin { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+-    vk.beginCommandBuffer(commandBuffer, &begin);
++    if (!checkFrameResult(vk.beginCommandBuffer(commandBuffer, &begin), "begin frame command buffer")) return false;
+ 
+     VkImageSubresourceRange sourceRange = pendingImage.range;
+     sourceRange.levelCount = 1;
+@@ -1411,7 +1466,7 @@
+                               VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                               0, 0, nullptr, 0, nullptr, copied ? 2u : 1u, release);
+     }
+-    vk.endCommandBuffer(commandBuffer);
++    if (!checkFrameResult(vk.endCommandBuffer(commandBuffer), "end frame command buffer")) return false;
+ 
+     std::vector<VkCommandBuffer> submitted = pendingCommandBuffers;
+     submitted.push_back(commandBuffer);
+@@ -1447,13 +1502,9 @@
+     pendingCommandBuffers.clear();
+     pendingSignalSemaphore = VK_NULL_HANDLE;
+ 
+-    if (result != VK_SUCCESS) {
+-        LOGE("Vulkan frame submit failed: %d", result);
+-        if (useDirect) disableNativeSdrSwapchain("frame submission failed");
+-        return false;
+-    }
++    if (!checkFrameResult(result, "submit frame")) return false;
+     frameInFlight = true;
+-    waitForFrame();
++    if (!waitForFrame()) return false;
+     if (shaderFailed) {
+         // Never display an incompletely recorded Slang frame; the GLES output is
+         // still rendering in parallel. The fence has completed, so retire safely.
+@@ -1478,11 +1529,13 @@
+                 (nativeOutputTransfer == 1u ? 16u : nativeOutputTransfer == 2u ? 32u : 0u) |
+                 (shaderRecorded ? 64u : 0u),
+                 std::memory_order_release);
++        } else if (presentResult == VK_ERROR_DEVICE_LOST) {
++            checkFrameResult(presentResult, "present frame");
+         } else {
+             disableNativeSdrSwapchain("frame presentation failed; GLES retained");
+         }
+     }
+-    return copied;
++    return copied && !hasFatalError();
+ }
+ 
+ void VulkanBackend::callbackSetImage(void* handle, const retro_vulkan_image* image, uint32_t numSemaphores,
+@@ -1515,7 +1568,18 @@
+ }
+ 
+ void VulkanBackend::callbackWaitSyncIndex(void* handle) {
+-    static_cast<VulkanBackend*>(handle)->waitForFrame();
++    auto* self = static_cast<VulkanBackend*>(handle);
++    if (self->waitForFrame() || !self->frameInFlight) return;
++    // This void C callback promises that the core may reuse its resources. An
++    // error cannot be reported through it, nor may an exception unwind through
++    // the core. Preserve that promise by proving device idle before returning;
++    // the post-retro_run boundary then reports the sticky failure to Android.
++    // A completely stuck driver can still block: the API has no safe timeout
++    // escape which would permit reuse of its outstanding images/command pools.
++    while (!self->waitForDeviceIdle()) {
++        std::this_thread::sleep_for(std::chrono::milliseconds(10));
++    }
++    self->frameInFlight = false;
+ }
+ 
+ void VulkanBackend::callbackLockQueue(void* handle) {
+@@ -1531,15 +1595,14 @@
+ }
+ 
+ void VulkanBackend::destroyCoreDevice() {
+-    if (device != VK_NULL_HANDLE && vk.deviceWaitIdle != nullptr) {
+-        vk.deviceWaitIdle(device);
+-    }
++    if (!prepareForShutdown()) return;
+     if (negotiation != nullptr && negotiation->destroy_device != nullptr && negotiatedDevice) {
+         negotiation->destroy_device();
+     }
+ }
+ 
+ void VulkanBackend::shutdown() {
++    if (!prepareForShutdown()) return;
+     // Retire the real display WSI resources before destroying the core's VkDevice
+     // or its VkInstance, including when a SurfaceView disappears mid-session.
+     destroyNativeSdrSwapchain();
+@@ -1556,7 +1619,6 @@
+     nativeSlangFrame = 0;
+     nativeSdrStatus.store(0u, std::memory_order_release);
+     if (device != VK_NULL_HANDLE) {
+-        if (vk.deviceWaitIdle != nullptr) vk.deviceWaitIdle(device);
+         destroyFrameBuffer();
+         colorCopy.release();
+         if (frameFence != VK_NULL_HANDLE) vk.destroyFence(device, frameFence, nullptr);
+@@ -1573,6 +1635,8 @@
+     commandPool = VK_NULL_HANDLE;
+     commandBuffer = VK_NULL_HANDLE;
+     frameInFlight = false;
++    fatalFrameError = VK_SUCCESS;
++    shutdownReady = false;
+     device = VK_NULL_HANDLE;
+     queue = VK_NULL_HANDLE;
+     gpu = VK_NULL_HANDLE;
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -88,6 +88,10 @@
+     void setNegotiationInterface(const retro_hw_render_context_negotiation_interface_vulkan* negotiation);
+     bool start();
+     bool isStarted() const { return device != VK_NULL_HANDLE; }
++    // Callback code latches errors; only the frontend's post-retro_run boundary
++    // translates them into managed errors. Never unwind through a core C callback.
++    VkResult getFatalError() const { return fatalFrameError; }
++    bool hasFatalError() const { return fatalFrameError != VK_SUCCESS; }
+     const retro_hw_render_interface_vulkan* getRenderInterface() const;
+ 
+     // Read-only WSI capability probe on a separate, real display ANativeWindow.
+@@ -123,6 +127,9 @@
+ 
+     bool presentFrame(unsigned width, unsigned height, float resolvedAspect, bool pictureCompatible);
+ 
++    // Must succeed before the core may destroy images/command pools or unload.
++    // An unproven idle state retains the entire session for a later safe teardown.
++    bool prepareForShutdown();
+     void destroyCoreDevice();
+     void shutdown();
+ 
+@@ -205,10 +212,10 @@
+     bool createDeviceWithoutNegotiation();
+     bool createFrameResources();
+     bool createFrameBuffer(unsigned width, unsigned height, bool fp16);
+-    void clearFrameImage();
+-    void destroyFrameBuffer();
++    bool clearFrameImage();
++    bool destroyFrameBuffer();
+     bool ensureNativeSdrSwapchain();
+-    void destroyNativeSdrSwapchain();
++    bool destroyNativeSdrSwapchain();
+     void disableNativeSdrSwapchain(const char* reason);
+     std::vector<const char*> requiredDeviceExtensions() const;
+     uint32_t requestedApiVersion() const;
+@@ -229,7 +236,9 @@
+     static void callbackUnlockQueue(void* handle);
+     static void callbackSetSignalSemaphore(void* handle, VkSemaphore semaphore);
+ 
+-    void waitForFrame();
++    bool waitForFrame();
++    bool waitForDeviceIdle();
++    bool checkFrameResult(VkResult result, const char* operation);
+ 
+     void* loaderHandle = nullptr;
+     bool preferVulkan = false;
+@@ -252,6 +261,8 @@
+     VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+     VkFence frameFence = VK_NULL_HANDLE;
+     bool frameInFlight = false;
++    VkResult fatalFrameError = VK_SUCCESS;
++    bool shutdownReady = false;
+ 
+     // Higher precision is opt-in for manually selected PQ/HLG content, never for SDR.
+     bool preferFp16Frame = false;
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -296,7 +296,7 @@
+ }
+ 
+ std::vector<uint8_t> LibretroDroid::captureRawFrame(int& outWidth, int& outHeight) {
+-    if (video == nullptr) {
++    if (video == nullptr || VulkanBackend::getInstance().hasFatalError()) {
+         outWidth = 0;
+         outHeight = 0;
+         return {};
+@@ -353,6 +353,7 @@
+ 
+ void LibretroDroid::onSurfaceCreated() {
+     LOGD("Performing libretrodroid onSurfaceCreated");
++    checkVulkanFrameError();
+ 
+     struct retro_system_av_info system_av_info {};
+     core->retro_get_system_av_info(&system_av_info);
+@@ -426,6 +427,7 @@
+ 
+     if (vulkan) {
+         attachVulkanFrame(system_av_info.geometry.base_width, system_av_info.geometry.base_height);
++        checkVulkanFrameError();
+         if (!vulkanContextReset && VulkanBackend::getInstance().isStarted() &&
+             Environment::getInstance().getHwContextReset() != nullptr) {
+             Environment::getInstance().getHwContextReset()();
+@@ -552,6 +554,8 @@
+ ) {
+     LOGD("Performing libretrodroid create");
+ 
++    // A failed teardown must not unload a core whose GPU work is unretired.
++    checkVulkanFrameError();
+     resetGlobalVariables();
+ 
+     Environment::getInstance().initialize(systemDir, savesDir, &callback_get_current_framebuffer);
+@@ -708,6 +712,13 @@
+     LOGD("Performing libretrodroid destroy");
+     ScopedSignalStackGuard signalStackGuard;
+ 
++    const bool vulkan = Environment::getInstance().isUseVulkan();
++    if (vulkan && !VulkanBackend::getInstance().prepareForShutdown()) {
++        // Keep the core library, content, imported image and all Vulkan objects
++        // alive. Context-destroy/unload may otherwise free still-pending work.
++        throw LibretroDroidError("Vulkan device idle could not be established for teardown", ERROR_GENERIC);
++    }
++
+     gameLoaded = false;
+     defaultAspectRatio = 0.0F;
+     contentAspectSnapshot.reset();
+@@ -715,7 +726,6 @@
+     clearScreenSplit();
+ 
+     auto contextDestroy = Environment::getInstance().getHwContextDestroy();
+-    bool vulkan = Environment::getInstance().isUseVulkan();
+     if (vulkan) {
+         if (contextDestroy != nullptr && vulkanContextReset) contextDestroy();
+     } else if (contextDestroy != nullptr && video && video->isHWAccelerated()) {
+@@ -773,6 +783,7 @@
+ }
+ 
+ void LibretroDroid::step() {
++    checkVulkanFrameError();
+     VulkanBackend::getInstance().invalidateNativeFrame();
+     if (rewinding && rewindBuffer) {
+         bool hadAudio = audioEnabled;
+@@ -796,6 +807,7 @@
+                     video->bindHWContext();
+                 }
+                 core->retro_run();
++                checkVulkanFrameError();
+                 // The core now shows the popped checkpoint plus one preview frame;
+                 // the ring's anchor is its predecessor. Preserve that gap on resume.
+                 rewindTimeline.restored(*rewindBuffer,
+@@ -848,6 +860,7 @@
+         // frame to draw a rewind preview can therefore never advance past live play.
+         for (size_t i = 0; i < frames; i++) {
+             core->retro_run();
++            checkVulkanFrameError();
+ 
+             if (input) {
+                 input->flushPendingReleases();
+@@ -941,12 +954,14 @@
+ }
+ 
+ void LibretroDroid::stepForNetplay() {
++    checkVulkanFrameError();
+     VulkanBackend::getInstance().invalidateNativeFrame();
+     if (video && video->isHWAccelerated()) {
+         video->bindHWContext();
+     }
+ 
+     core->retro_run();
++    checkVulkanFrameError();
+ 
+     if (input) {
+         input->flushPendingReleases();
+@@ -1149,7 +1164,7 @@
+ }
+ 
+ void LibretroDroid::renderPrimaryFrame(bool force) {
+-    if (!video) return;
++    if (!video || VulkanBackend::getInstance().hasFatalError()) return;
+     const bool canSkip = video->presentsExternalFrames() && nativePictureCompatible() &&
+         !secondaryOutput.hasWindow() && !rewinding.load();
+     const auto draw = VulkanBackend::getInstance().primaryDraw(force, canSkip);
+@@ -1157,6 +1172,14 @@
+     // Forced draws cover paused/duplicate frames after a native-only interval.
+     // AHB copying and GL/Vulkan synchronization remain intact for captures/fallback.
+     video->renderFrame(draw == NativePresentationGate::PrimaryDraw::Force);
++}
++
++void LibretroDroid::checkVulkanFrameError() {
++    const VkResult failure = VulkanBackend::getInstance().getFatalError();
++    if (failure == VK_SUCCESS) return;
++    if (video && video->isHWAccelerated()) video->bindMainContext();
++    throw LibretroDroidError("Vulkan frame synchronization failed: " +
++                            std::to_string(static_cast<int>(failure)), ERROR_GENERIC);
+ }
+ 
+ float LibretroDroid::getAspectRatio() {
+@@ -1338,6 +1361,7 @@
+     unsigned int height,
+     size_t pitch
+ ) {
++    if (VulkanBackend::getInstance().hasFatalError()) return;
+     if (video) {
+         unsigned nextSourceTransfer = 0;
+         if (data != nullptr) {
+@@ -1619,7 +1643,7 @@
+  * window is rebuilt by the display's own lifecycle.
+  */
+ void LibretroDroid::renderSecondaryFrame() {
+-    if (video == nullptr || !secondaryOutput.hasWindow()) {
++    if (video == nullptr || !secondaryOutput.hasWindow() || VulkanBackend::getInstance().hasFatalError()) {
+         return;
+     }
+     if (!secondaryOutput.beginFrame()) {
+--- a/src/main/cpp/libretrodroid.h
++++ b/src/main/cpp/libretrodroid.h
+@@ -253,6 +253,7 @@
+     void loadGame(std::unique_ptr<GameContent> content);
+     void refreshTimingFromCoreIfFollowingGeometry();
+     void attachVulkanFrame(unsigned int width, unsigned int height);
++    void checkVulkanFrameError();
+     void renderPrimaryFrame(bool force = false);
+     bool nativePictureCompatible() const;
+ 
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -750,7 +750,13 @@
+     jclass obj,
+     jobject glRetroView
+ ) {
+-    LibretroDroid::getInstance().step();
++    try {
++        LibretroDroid::getInstance().step();
++    } catch (LibretroDroidError& error) {
++        LOGE("Error in step: %s", error.what());
++        JavaUtils::throwRetroException(env, error.getErrorCode());
++        return;
++    }
+ 
+     if (LibretroDroid::getInstance().requiresVideoRefresh()) {
+         LibretroDroid::getInstance().clearRequiresVideoRefresh();
+@@ -792,7 +798,13 @@
+     jclass obj,
+     jobject glRetroView
+ ) {
+-    LibretroDroid::getInstance().stepForNetplay();
++    try {
++        LibretroDroid::getInstance().stepForNetplay();
++    } catch (LibretroDroidError& error) {
++        LOGE("Error in stepForNetplay: %s", error.what());
++        JavaUtils::throwRetroException(env, error.getErrorCode());
++        return;
++    }
+ 
+     if (LibretroDroid::getInstance().requiresVideoRefresh()) {
+         LibretroDroid::getInstance().clearRequiresVideoRefresh();

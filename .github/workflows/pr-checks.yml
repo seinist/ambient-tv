@@ -53,10 +53,10 @@ jobs:
           fi
           native=false
           slang=false
-          if grep -Eq '^(app/src/(main|test)/java/com/ambient/tv/(games|ui/games|ui/gamepad)/|app/src/main/assets/games/|third_party_assets/game_shaders/|libretrodroid_wrapper/|scripts/(patches/libretrodroid/|native_libretro_vulkan/|native_rewind/|native_game_.*_test\.cpp|test_game_(filter_renderer|content|rewind)\.py|import_game_upscalers\.py|fetch_libretrodroid\.sh|build_librashader_android\.sh)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
+          if grep -Eq '^(app/src/(main|test)/java/com/ambient/tv/(games|ui/games|ui/gamepad)/|app/src/main/assets/games/|third_party_assets/game_shaders/|libretrodroid_wrapper/|scripts/(patches/libretrodroid/|native_libretro_vulkan/|host_vulkan_stubs/|native_rewind/|native_game_.*_test\.cpp|test_game_(filter_renderer|content|rewind|vulkan_presentation|vulkan_color|vulkan_sync|vulkan_slang)\.py|game_(filter_audit_sources|shader_output_wrapper)\.py|import_game_upscalers\.py|fetch_libretrodroid\.sh|build_librashader_android\.sh)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
             native=true
           fi
-          if grep -Eq '^(app/src/main/assets/games/slang/|app/src/main/java/com/ambient/tv/ui/games/|scripts/(native_libretro_vulkan/|patches/libretrodroid/|build_librashader_android\.sh|check_game_slang\.py|tests/test_check_game_slang\.py|test_librashader_preset_api\.py)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
+          if grep -Eq '^(app/src/main/assets/games/slang/|app/src/main/java/com/ambient/tv/ui/games/|scripts/(native_libretro_vulkan/|host_vulkan_stubs/|native_game_vulkan_slang_test\.cpp|test_game_vulkan_slang\.py|patches/libretrodroid/|build_librashader_android\.sh|check_game_slang\.py|tests/test_check_game_slang\.py|test_librashader_preset_api\.py)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
             slang=true
           fi
           printf 'native=%s\nslang=%s\n' "$native" "$slang" >> "$GITHUB_OUTPUT"
@@ -100,17 +100,17 @@ jobs:
           python3 scripts/import_game_system_icons.py --check
           python3 scripts/import_input_controller_artwork.py --check
 
-      - name: Validate game GLES and Vulkan shader sources
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq glslang-tools g++ libegl-dev libgles-dev libgl1-mesa-dri
-          python3 scripts/check_game_glsl.py
-          python3 scripts/import_game_upscalers.py --check --validate
-          python3 scripts/check_game_slang.py
-
       - name: Fetch LibretroDroid
         # The games frontend (pinned Argosy fork plus scripts/patches/libretrodroid).
         run: ./scripts/fetch_libretrodroid.sh
+
+      - name: Validate game GLES and Vulkan shader sources
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslang-tools g++ libegl-dev libgles-dev libgl1-mesa-dri libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers
+          python3 scripts/check_game_glsl.py
+          python3 scripts/import_game_upscalers.py --check --validate
+          python3 scripts/check_game_slang.py
 
       - name: Native input contracts
         # Real patched input code; fast host tests complement the existing Android ABI build.
@@ -124,11 +124,27 @@ jobs:
         # Real ROM loading and libretro-common VFS: ownership, short reads and descriptor reuse.
         run: python3 scripts/test_game_content.py --sanitize
 
+      - name: Native Vulkan presentation contracts
+        # Shared DAR/layout and frame-local native/GLES fallback, including resize and capture.
+        run: python3 scripts/test_game_vulkan_presentation.py --sanitize
+
+      - name: Native Vulkan synchronization contracts
+        # Inject real wait/submit/retirement failures without a physical GPU or C-boundary throws.
+        run: python3 scripts/test_game_vulkan_sync.py --sanitize
+
+      - name: Vulkan source color contracts
+        # Real VkCopyImage/Blit on Lavapipe, including sRGB backing/view mismatches.
+        env:
+          VK_INSTANCE_LAYERS: VK_LAYER_KHRONOS_validation
+          VK_LAYER_ENABLES: VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT
+        run: python3 scripts/test_game_vulkan_color.py
+
       - name: Game filter renderer regressions
         # Real GLES production renderer on Mesa, including paused filter changes and black borders.
         run: |
           python3 scripts/test_game_filter_renderer.py
           python3 scripts/test_game_filter_renderer.py --test-source scripts/native_game_hdr_color_test.cpp
+          python3 scripts/test_game_filter_renderer.py --test-source scripts/native_game_hdr_filter_audit_test.cpp
 
       - name: Compile and run unit tests
         # One ABI keeps the Vulkan probe and LibretroDroid native builds short; unit tests do not depend on them.
@@ -251,6 +267,10 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v5
+      - name: Install Vulkan host validation
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq g++ libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers
       - name: Compile pinned host-side Slang C ABI and parse every bundled preset
         run: |
           set -euo pipefail
@@ -267,3 +287,10 @@ jobs:
             -p librashader-capi --release --locked --no-default-features --features runtime-vulkan
           python3 scripts/test_librashader_preset_api.py \
             third_party/.librashader-host-target/release/liblibrashader_capi.so
+      - name: Render every bundled Slang preset
+        env:
+          VK_INSTANCE_LAYERS: VK_LAYER_KHRONOS_validation
+          VK_LAYER_ENABLES: VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT
+        run: |
+          python3 scripts/test_game_vulkan_slang.py \
+            --runtime third_party/.librashader-host-target/release/liblibrashader_capi.so

@@ -56,9 +56,9 @@ enum class GameShader(val key: String, @StringRes val titleRes: Int, @StringRes 
 }
 
 /**
- * Manual input transfer conversion for the GLES compositor of a Vulkan libretro core.
- * This is HDR-to-SDR only. Most cores output SDR; never enable automatically or call it
- * native HDR output. FP16 Vulkan-to-GLES transport is optional with a safe RGBA8 fallback.
+ * Requested input conversion for a Vulkan core's GLES compositor. The shader
+ * also requires matching native source evidence for each frame. This is HDR-to-SDR;
+ * most cores output SDR. FP16 transport is optional with an RGBA8 fallback.
  */
 enum class GameHdrToneMap(val key: String, @StringRes val titleRes: Int) {
     OFF("off", R.string.game_picture_hdr_off),

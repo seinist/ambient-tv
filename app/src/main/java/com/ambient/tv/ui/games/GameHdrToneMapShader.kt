@@ -6,8 +6,9 @@ import com.swordfish.libretrodroid.ShaderConfig
 
 /**
  * The Vulkan core can export into an optional FP16 AHardwareBuffer for GLES when supported.
- * This is a manually selected PQ/HLG encoded INPUT -> SDR compositor shader,
- * not native HDR presentation. Most libretro cores output SDR: default is off.
+ * A requested PQ/HLG INPUT -> SDR conversion runs only when the native renderer
+ * confirms the matching transfer for that frame. Ordinary or rejected HDR input
+ * passes through unchanged. Most libretro cores output SDR: default is off.
  *
  * Unavailable FP16 formats or GLES import failures fall back to RGBA8 for the session.
  * Keep the normal picture filter stored and restore it when HDR conversion is off.
@@ -63,6 +64,9 @@ internal object GameHdrToneMapShader {
             // GLES sampler precision is independent of float precision. Keep
             // FP16/PQ source channels intact before the transfer conversion.
             uniform highp sampler2D texture;
+            // Set by the native renderer for this exact frame. A saved menu
+            // choice must never turn an ordinary SDR core frame into PQ/HLG.
+            uniform int ambientCoreTransfer;
             varying highp vec2 coords;
             const int INPUT_HLG = $hlg;
 
@@ -103,6 +107,10 @@ internal object GameHdrToneMapShader {
 
             void main() {
                 vec4 source = texture2D(texture, coords);
+                if (ambientCoreTransfer != (INPUT_HLG == 1 ? 2 : 1)) {
+                    gl_FragColor = source;
+                    return;
+                }
                 vec3 nits2020 = encodedToNits(source.rgb);
                 float luminance = dot(nits2020, vec3(0.2627, 0.6780, 0.0593));
 

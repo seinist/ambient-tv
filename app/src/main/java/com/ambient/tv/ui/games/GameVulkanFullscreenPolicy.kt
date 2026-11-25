@@ -3,11 +3,8 @@ package com.ambient.tv.ui.games
 import com.ambient.tv.games.GameHdrToneMap
 
 /**
- * Explicit, session-only gate for a RAW native Vulkan SDR image.
- *
- * This experimental path bypasses the GLES shader/aspect/rotation pipeline,
- * so it must never be advertised as a drop-in replacement for normal playback.
- * It is not an HDR renderer, not persisted and never enabled automatically.
+ * Explicit, session-only gate for native Vulkan presentation. Both the output
+ * transfer and each newly sized surface need their own successful presentation.
  */
 internal object GameVulkanFullscreenPolicy {
     fun canEnable(
@@ -34,4 +31,14 @@ internal object GameVulkanFullscreenPolicy {
         transfer: GameVulkanTransferMode = GameVulkanTransferMode.SDR,
     ): Boolean =
         requested && GameVulkanTransferGate.frameConfirmed(transfer, status)
+
+    /** A successful 16px probe or a frame from an old surface cannot hide GLES. */
+    fun canSkipGles(
+        requested: Boolean,
+        fullscreenVisible: Boolean,
+        fullscreenSurfaceReady: Boolean,
+        status: GameVulkanSdrStatus,
+        transfer: GameVulkanTransferMode,
+    ): Boolean = requested && fullscreenVisible && fullscreenSurfaceReady &&
+        GameVulkanTransferGate.frameConfirmed(transfer, status)
 }

@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from game_shader_output_wrapper import build_output_wrapper
 
 ROOT = Path(__file__).resolve().parents[1]
 ORIGINALS = ROOT / "third_party_assets/game_shaders"
@@ -187,41 +188,19 @@ def validate() -> None:
             # the upstream stage #defines, on every possible final shader.
             final_sources = {chain[-1][0] for chain in presets().values()}
             if name in final_sources:
-                wrapped = subprocess.run([str(wrapper)], input=fragment, capture_output=True, text=True, check=True)
-                Path(paths[1]).write_text(wrapped.stdout)
-                result = subprocess.run([compiler, "-l", *paths], capture_output=True, text=True)
-                if result.returncode:
-                    raise AssertionError(f"{name} PQ output did not compile/link:\n{result.stdout}\n{result.stderr}")
+                for mode in ("pq", "opaque"):
+                    wrapped = subprocess.run([str(wrapper), mode], input=fragment, capture_output=True, text=True, check=True)
+                    Path(paths[1]).write_text(wrapped.stdout)
+                    result = subprocess.run([compiler, "-l", *paths], capture_output=True, text=True)
+                    if result.returncode:
+                        raise AssertionError(f"{name} {mode} output did not compile/link:\n{result.stdout}\n{result.stderr}")
     print(f"OK: {len(stage_sources())} real GLES 100 programs compiled and linked")
-    print(f"OK: all {len(final_sources)} final programs compile/link with the production HDR10 wrapper")
+    print(f"OK: all {len(final_sources)} final programs compile/link with production HDR10 and opaque output wrappers")
 
 
 def pq_wrapper(directory: Path) -> Path:
-    # Before fetch_libretrodroid.sh runs in CI, the pinned wrapper is available
-    # as an added header in this patch. Compile that exact header, not a rewrite.
-    patch = ROOT / "scripts/patches/libretrodroid/0033-sdr-to-hdr-output.patch"
-    inside = False
-    lines = []
-    for line in patch.read_text().splitlines():
-        if line.startswith("diff --git"):
-            inside = line.endswith("b/src/main/cpp/sdrtohdr.h")
-        elif inside and line.startswith("+") and not line.startswith("+++"):
-            lines.append(line[1:])
-    if not lines:
-        raise AssertionError("The production SDR-to-HDR wrapper is missing")
-    compiler = shutil.which("g++") or shutil.which("c++")
-    if compiler is None:
-        raise SystemExit("C++ compiler required for HDR10 wrapper verification")
-    (directory / "sdrtohdr.h").write_text("\n".join(lines) + "\n")
-    source = directory / "wrap.cpp"
-    source.write_text(
-        '#include "sdrtohdr.h"\n#include <iostream>\n#include <iterator>\n'
-        'int main() { std::string s((std::istreambuf_iterator<char>(std::cin)), std::istreambuf_iterator<char>());'
-        'std::cout << libretrodroid::wrapFragmentForPq(s, 203); }\n'
-    )
-    target = directory / "wrap"
-    subprocess.run([compiler, "-std=c++17", str(source), "-o", str(target)], check=True)
-    return target
+    # Later patches change the wrapper too; validate the exact fetched result.
+    return build_output_wrapper(directory)
 
 
 def main() -> None:

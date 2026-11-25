@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Real production Video/Renderer integration on surfaceless EGL; no mocked GL calls.
+// Real production Video/Renderer integration on surfaceless EGL. Only the explicit
+// allocation-failure regression withholds texture storage; all rendering stays real.
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
@@ -14,6 +15,22 @@
 #include "game_filter_test_presets.h"
 
 int ambientShaderFallbacks = 0;
+namespace {
+bool rejectShaderTargetStorage = false;
+unsigned rejectedShaderTargets = 0;
+}
+extern "C" void __real_glTexStorage2D(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
+extern "C" void __wrap_glTexStorage2D(GLenum target, GLsizei levels, GLenum format,
+                                      GLsizei width, GLsizei height) {
+    if (rejectShaderTargetStorage) {
+        // Simulate a failed target allocation without allocating a huge image. A
+        // real framebuffer attached to this storage-less texture is incomplete,
+        // so the production GL error/fallback path must handle it.
+        ++rejectedShaderTargets;
+        return;
+    }
+    __real_glTexStorage2D(target, levels, format, width, height);
+}
 using namespace libretrodroid;
 namespace {
 constexpr int WIDTH = 96, HEIGHT = 64, SOURCE = 32;
@@ -187,13 +204,64 @@ void verifyPaddedHardware() {
     }
     std::puts("PASS: padded hardware source, edge clamping, vertical origin, paused changes");
 }
+void verifyHardwareAllocationFallback() {
+    struct RejectStorage {
+        RejectStorage() { rejectShaderTargetStorage = true; }
+        ~RejectStorage() { rejectShaderTargetStorage = false; }
+    };
+    for (const int whiteNits : {0, 203}) {
+        Video video(options(3, true), pixel(), true, 0, false, false, Rect(0, 0, 1, 1), {});
+        setLayout(video);
+        video.setSdrToHdr(whiteNits);
+        video.bindHWContext();
+        glBindFramebuffer(GL_FRAMEBUFFER, video.getCurrentFramebuffer());
+        glDisable(GL_SCISSOR_TEST);
+        glClearColor(1, 0, 1, 0); glClear(GL_COLOR_BUFFER_BIT);
+        glEnable(GL_SCISSOR_TEST); glScissor(0, 0, SOURCE, SOURCE);
+        glClearColor(1, 0, 0, 0); glClear(GL_COLOR_BUFFER_BIT);
+        glDisable(GL_SCISSOR_TEST); glFinish(); video.bindMainContext();
+        video.onNewFrame(RETRO_HW_FRAME_BUFFER_VALID, SOURCE, SOURCE, 0);
+        video.renderFrame(true);
+        const auto original = at(48, 32);
+        require(original[3] == 255, "hardware output must be opaque before allocation failure");
+        const int before = ambientShaderFallbacks;
+        const unsigned rejectedBefore = rejectedShaderTargets;
+        {
+            RejectStorage reject;
+            video.updateShaderType(custom({{VERTEX, INVERT, false, 1.0f}, copyPass()}));
+            video.renderFrame(true);
+            require(rejectedShaderTargets >= rejectedBefore + 2,
+                "must reject both requested normalization and ordinary safe-default target");
+            require(ambientShaderFallbacks == before + 1, "hardware target failure must choose safe fallback");
+            expectBorders("hardware allocation-free fallback");
+            expect(at(48, 32), original, "hardware fallback preserves SDR/PQ source presentation");
+            expect(at(18, 8), original, "hardware fallback does not sample padded magenta texels");
+        }
+        video.setSdrToHdr(0);
+        auto prefix = custom({{VERTEX, INVERT, false, 1.0f}, copyPass()});
+        prefix.params["AMBIENT_PREPEND"] = "1";
+        video.updateShaderType(prefix); video.renderFrame(true);
+        expect(at(48, 32), {0, 255, 255, 255}, "required prefix baseline");
+        bool refusedRawFallback = false;
+        {
+            RejectStorage reject;
+            prefix.customPasses.back().fragment = "invalid optional fragment";
+            video.updateShaderType(prefix);
+            try { video.renderFrame(true); }
+            catch (const std::runtime_error&) { refusedRawFallback = true; }
+        }
+        require(refusedRawFallback, "failed mandatory prefix must never be dropped for raw fallback");
+        switchPaused(video, pixel(), "recovery after hardware target rejection", {255, 0, 0, 255});
+    }
+    std::puts("PASS: hardware target failure, allocation-free SDR/PQ fallback, mandatory prefix retention");
+}
 }
 int main(int argc,char** argv) {
     const int version=argc>1 && std::string(argv[1])=="--gles2" ? 2:3;
     try {
         Context context(version);
         verifySwitches(version);verifyFallbacks(version);verifyFloatAndAliases(version);verifyPresets(version);
-        if(version==3) verifyPaddedHardware();
+        if(version==3) { verifyPaddedHardware(); verifyHardwareAllocationFallback(); }
         std::printf("PASS: GLES%d production renderer regression\n",version);return 0;
     } catch(const std::exception& error) {
         std::fprintf(stderr,"FAIL GLES%d: %s\n",version,error.what());return 1;

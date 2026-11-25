@@ -19,7 +19,9 @@ jobs:
       - name: Install GLSL validator
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq glslang-tools
+          sudo apt-get install -y -qq glslang-tools g++
+      - name: Prepare current game output shaders
+        run: ./scripts/fetch_libretrodroid.sh
       - name: Validate signed-pack GLSL source
         run: python3 scripts/check_game_glsl.py
       - name: Sign bounded pack and publish

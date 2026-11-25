@@ -332,7 +332,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val gamePictureScope = settings.gamePictureScope(game.saveKey)
     val installedShaders = remember(model) { model.shaderPacks.installed() }
     val selectedPackConfig = remember(selectedPack, model) { model.shaderPacks.config(selectedPack) }
-    val toneMap = settings.hdrToneMap(core)
+    // A remembered Vulkan input mode must not suppress GLES SDR-as-HDR output
+    // after switching the same core back to OpenGL ES.
+    val toneMap = if (session.vulkan) settings.hdrToneMap(core) else GameHdrToneMap.OFF
     val nativeTransfer = GameVulkanTransferMode.forInput(toneMap)
     val aspect = settings.aspect(system, game.saveKey)
     val integerScaling = settings.integerScaling(system, game.saveKey)
@@ -891,7 +893,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         }
     }
     LaunchedEffect(nativeSdrFullscreenRequested, running, vulkanSurfaceHost) {
-        if (!nativeSdrFullscreenRequested) {
+        if (!nativeSdrFullscreenRequested || !running) {
             vulkanSurfaceHost?.setFullscreenRequested(false)
         } else if (running) {
             // Arming from the paused Info panel does not cover the game with a
@@ -1444,6 +1446,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             }))
                         }
                         if (session.vulkan && vulkanFrameStatus.active && toneMap != GameHdrToneMap.OFF &&
+                            nativeSourceContract.supports(nativeTransfer) &&
                             !(nativeSdrFullscreenRequested &&
                                 GameVulkanTransferGate.frameConfirmed(nativeTransfer, nativeSdrStatus))) {
                             MetaBadge(stringResource(R.string.game_badge_hdr_to_sdr))
@@ -1663,6 +1666,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             }
                             if (session.vulkan && toneMap != GameHdrToneMap.OFF) {
                                 GamePanelText(stringResource(R.string.game_picture_hdr_filter_note))
+                                if (loaded && !nativeSourceContract.supports(nativeTransfer)) {
+                                    GamePanelText(stringResource(R.string.game_picture_hdr_unconfirmed))
+                                }
                             }
                             if (selectedPack != null && selectedPackConfig == null) {
                                 GamePanelText(stringResource(R.string.games_shader_packs_missing))
@@ -1812,15 +1818,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                         onClick = {
                                             if (choice != toneMap && !exiting && !netplay.busy) {
                                                 GameSettings.update { state ->
-                                                    val mode = state.withHdrToneMap(core, choice)
-                                                    when {
-                                                        hdrOption == null -> mode
-                                                        // The core's own HDR output follows the picture choice.
-                                                        choice == GameHdrToneMap.PQ -> mode.withCoreOption(core, hdrOption.first, hdrOption.second)
-                                                        state.coreOptions(core)[hdrOption.first] == hdrOption.second ->
-                                                            mode.withCoreOption(core, hdrOption.first, null)
-                                                        else -> mode
-                                                    }
+                                                    GameHdrInputSettings.select(state, core, game.saveKey, choice)
                                                 }
                                                 // EGL/AHB precision is negotiated at core start, not on a
                                                 // live shader toggle; restart to choose FP16 or release it.
