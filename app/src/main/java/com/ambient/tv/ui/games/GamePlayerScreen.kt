@@ -1064,13 +1064,19 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         List(RetroPorts.COUNT) { com.ambient.tv.games.GameInputDescriptions.forPort(coreInputDescriptions, it) }
     }
     var contentAspectRatio by remember(retroView) { mutableFloatStateOf(aspect.ratio ?: (4f / 3f)) }
-    // UI-safe atomic geometry snapshot: it follows core/option/rotation changes without
+    // Drawn source size for whole-number scaling. The phone surface then matches the exact
+    // integer picture, so the ambient fill reaches the picture edge instead of a black border.
+    var contentFrame by remember(retroView) { mutableStateOf<GameContentFrame?>(null) }
+    // UI-safe atomic geometry snapshots: they follow core/option/rotation changes without
     // capturing frames or waiting for the render thread. Keep the last geometry while paused.
     LaunchedEffect(retroView, handheld, loaded, activityResumed, destroyed) {
         if (!handheld || !loaded || !activityResumed || destroyed) return@LaunchedEffect
+        val frames = GameContentFrameFilter(contentFrame)
         while (true) {
             val ratio = LibretroDroid.getContentAspectRatio()
             if (ratio.isFinite() && ratio > 0f) contentAspectRatio = ratio
+            frames.observe(GameContentFrame.unpack(LibretroDroid.getContentFrameSize()))
+                ?.let { contentFrame = it }
             kotlinx.coroutines.delay(250L)
         }
     }
@@ -1372,8 +1378,10 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 presentation = touchPresentation,
                 contentAspectRatio = contentAspectRatio,
                 // Native whole-pixel scaling uses the source resolution, which may differ
-                // from the display aspect. Let it own the fit inside the full central area.
+                // from the display aspect. The known source size gives its exact picture.
                 fitSurface = integerScaling == com.ambient.tv.games.GameIntegerScaling.OFF,
+                integerFrame = contentFrame,
+                integerScalingAuto = integerScaling == com.ambient.tv.games.GameIntegerScaling.AUTO,
                 coreActions = coreInputActions[0],
                 hiddenForGamepad = touchStyle.hideOnGamepadInput && hidingGamepadId != null,
                 onShowTouch = { hidingGamepadId = null },
