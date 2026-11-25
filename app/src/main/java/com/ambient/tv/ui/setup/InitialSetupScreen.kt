@@ -143,6 +143,7 @@ fun InitialSetupScreen(
                                         MediaSystem.RADIO -> onUseRadio()
                                         MediaSystem.TRAILERS -> onSetupTrailers()
                                         MediaSystem.ROMM -> onSetupRomm()
+                                        MediaSystem.MOONLIGHT -> onOpenSettings()
                                         MediaSystem.FILES -> onUseFiles()
                                     }
                                 }
