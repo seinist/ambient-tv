@@ -20,6 +20,11 @@ class MoonlightStreamEngine @Inject constructor() {
     fun sendMousePosition(x: Int, y: Int, width: Int, height: Int) = Unit
     fun sendMouseButton(pressed: Boolean) = Unit
     fun sendMouseScroll(clicks: Int) = Unit
+    fun sendTouchEvent(type: Byte, pointerId: Int, x: Float, y: Float,
+        pressure: Float = 1f): Int = -5501
+    fun sendMotion(port: Int, type: Byte, x: Float, y: Float, z: Float) = Unit
+    fun sendMouseMove(dx: Int, dy: Int) = Unit
+    fun sendText(text: String) = Unit
     fun sendGamepad(
         port: Short, mask: Short, buttons: Int, lt: Byte, rt: Byte,
         lx: Short, ly: Short, rx: Short, ry: Short,
