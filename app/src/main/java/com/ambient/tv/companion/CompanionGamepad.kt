@@ -394,7 +394,7 @@ object CompanionGamepadSession {
      * A Sunshine desktop/game can claim the same authenticated phone controller as Libretro.
      * Source and destination switching release all held inputs before changing ownership.
      */
-    fun attachMoonlight(
+    internal fun attachMoonlight(
         sink: CompanionGamepadSink, title: String,
         onPointer: (Int, CompanionPointerState?) -> Unit = { _, _ -> },
         onMotion: (Int, CompanionMotionState?) -> Unit = { _, _ -> },
@@ -409,11 +409,11 @@ object CompanionGamepadSession {
         ), onMenu, onPointer, onMotion, onRewind = {})
     }
 
-    fun setMoonlightInteraction(sink: CompanionGamepadSink, interaction: CompanionGamepadInteraction) {
+    internal fun setMoonlightInteraction(sink: CompanionGamepadSink, interaction: CompanionGamepadInteraction) {
         setInteractionForOwner(sink, interaction)
     }
 
-    fun detachMoonlight(sink: CompanionGamepadSink) {
+    internal fun detachMoonlight(sink: CompanionGamepadSink) {
         if (active?.owner === sink) detachCurrent()
     }
 
