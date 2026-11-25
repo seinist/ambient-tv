@@ -51,6 +51,9 @@ class GameSession(
     val sram: ByteArray?,
     /** The automatic state to continue from, if its core build matches. */
     val autoState: ByteArray?,
+    /** Initial signed shader is verified during the existing IO preparation, not Compose. */
+    val initialPackSelection: String? = null,
+    val initialPackConfig: com.swordfish.libretrodroid.ShaderConfig.Custom? = null,
 )
 
 sealed interface GameUiState {
@@ -220,6 +223,7 @@ class GamePlayerViewModel @Inject constructor(
             mutable.value = GameUiState.Failed(GameFailure.PREVIOUS_SESSION)
             return
         }
+        val initialPackSelection = GameSettings.state.packShader(game.system, game.saveKey)
         val session = withContext(Dispatchers.IO) {
             val stamp = GameStateStore.coreStamp(core)
             val legacyStamp = GameStateStore.legacyCoreStamp(core)
@@ -252,6 +256,8 @@ class GamePlayerViewModel @Inject constructor(
                 savesDirectory = storage.savesDirectory(game),
                 sram = storage.read(storage.sramFile(game)),
                 autoState = auto?.let { states.read(game, it) },
+                initialPackSelection = initialPackSelection,
+                initialPackConfig = shaderPacks.config(initialPackSelection),
             ).also { refreshStates(game) }
         }
         // "Start over" moved the automatic state: the server follows.

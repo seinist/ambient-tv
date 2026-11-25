@@ -162,7 +162,6 @@ import com.ambient.tv.ui.player.ReferencePlayerOverlayBackground
 import com.swordfish.libretrodroid.GLRetroView
 import com.swordfish.libretrodroid.GLRetroViewData
 import com.swordfish.libretrodroid.LibretroDroid
-import com.swordfish.libretrodroid.ShaderConfig
 import com.swordfish.libretrodroid.Variable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -351,8 +350,33 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     // The extra effect needs the GLES chain and its single prefix; packs and HDR conversion keep theirs.
     val effect = settings.effect(system, game.saveKey)
     val gamePictureScope = settings.gamePictureScope(game.saveKey)
-    val installedShaders = remember(model) { model.shaderPacks.installed() }
-    val selectedPackConfig = remember(selectedPack, model) { model.shaderPacks.config(selectedPack) }
+    var resolvedPack by remember(session) {
+        mutableStateOf(GameShaderPackResolution(session.initialPackSelection, session.initialPackConfig))
+    }
+    val selectedPackPending = !resolvedPack.matches(selectedPack)
+    val selectedPackConfig = resolvedPack.configFor(selectedPack)
+    LaunchedEffect(session, selectedPack) {
+        if (resolvedPack.matches(selectedPack)) return@LaunchedEffect
+        val verified = withContext(Dispatchers.IO) { model.shaderPacks.config(selectedPack) }
+        // Cancellation alone cannot interrupt blocking disk IO. Check the live selection too.
+        if (GameSettings.state.packShader(system, game.saveKey) == selectedPack) {
+            resolvedPack = GameShaderPackResolution(selectedPack, verified)
+        }
+    }
+    var pendingPackChoice by remember(session) { mutableStateOf<GameShaderPackChoice?>(null) }
+    LaunchedEffect(session, pendingPackChoice) {
+        val request = pendingPackChoice ?: return@LaunchedEffect
+        val verified = withContext(Dispatchers.IO) { model.shaderPacks.config(request.selection) }
+        // Another picture choice, scope change or settings reload wins over stale IO.
+        if (pendingPackChoice !== request) return@LaunchedEffect
+        pendingPackChoice = null
+        if (verified != null && GameSettings.state == request.previousSettings) {
+            resolvedPack = GameShaderPackResolution(request.selection, verified)
+            GameSettings.update {
+                it.withPackShader(system, game.saveKey.takeIf { request.forGame }, request.selection)
+            }
+        }
+    }
     // A remembered Vulkan input mode must not suppress GLES SDR-as-HDR output
     // after switching the same core back to OpenGL ES.
     val toneMap = if (session.vulkan) settings.hdrToneMap(core) else GameHdrToneMap.OFF
@@ -402,6 +426,16 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     var menuOpen by remember { mutableStateOf(false) }
     val gamePanels = rememberGamePanelNavigation(chrome)
     val panel = gamePanels.panel
+    // Do not enumerate and verify every installed pack during normal game startup.
+    // Keep the previous catalog while the picture panel is closed.
+    var installedShaders by remember(model) {
+        mutableStateOf<List<com.ambient.tv.games.InstalledGameShaderPreset>>(emptyList())
+    }
+    LaunchedEffect(model, panel == GamePanel.PICTURE) {
+        if (panel == GamePanel.PICTURE) {
+            installedShaders = withContext(Dispatchers.IO) { model.shaderPacks.installed() }
+        }
+    }
     // A display or refresh-mode change can remove HDR while a Vulkan game is
     // running. Never infer active HDR from these platform capabilities.
     var displayHdr by remember(context) {
@@ -623,6 +657,18 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             })
             owner.registry.addObserver(view)
             owner.move(Lifecycle.State.CREATED)
+        }
+    }
+
+    // Settings are the sole source of truth for live picture changes. A pending
+    // signed pack keeps the last verified picture until its selection is resolved.
+    LaunchedEffect(retroView, shader, shaderIntensity, selectedPack, selectedPackPending, selectedPackConfig, toneMap, effect) {
+        if (!selectedPackPending && !destroyed && !exiting) {
+            retroView.shader = GameHdrToneMapShader.forConfig(
+                selectedPackConfig ?: shader.config(shaderIntensity),
+                toneMap, session.vulkan, pixel = selectedPack == null && shader == GameShader.PIXEL,
+                effect = effect.takeIf { selectedPackConfig == null },
+            )
         }
     }
 
@@ -1899,19 +1945,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     GamePanelText(stringResource(R.string.game_picture_hdr_unconfirmed))
                                 }
                             }
-                            if (selectedPack != null && selectedPackConfig == null) {
+                            if (selectedPack != null && !selectedPackPending && selectedPackConfig == null) {
                                 GamePanelText(stringResource(R.string.games_shader_packs_missing))
                             }
                             /** Shows what [state] chooses for this game, after the scope changed. */
                             fun applyPicture(state: GameSettingsState) {
-                                val pack = state.packShader(system, game.saveKey)
-                                val chosen = state.shader(system, game.saveKey)
-                                val packConfig = model.shaderPacks.config(pack)
-                                retroView.shader = GameHdrToneMapShader.forConfig(
-                                    packConfig ?: chosen.config(state.shaderStrength(system, game.saveKey)),
-                                    toneMap, session.vulkan, pixel = pack == null && chosen == GameShader.PIXEL,
-                                    effect = state.effect(system, game.saveKey).takeIf { packConfig == null },
-                                )
                                 retroView.aspectRatioOverride = state.aspect(system, game.saveKey).ratio ?: -1f
                                 val scaling = state.integerScaling(system, game.saveKey)
                                 retroView.integerScalingAuto = scaling == GameIntegerScaling.AUTO
@@ -1924,6 +1962,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     else stringResource(R.string.game_picture_scope, system.name),
                                 selected = gamePictureScope,
                                 onClick = {
+                                    pendingPackChoice = null
                                     if (gamePictureScope) {
                                         GameSettings.update { it.withoutGamePicture(game.saveKey) }
                                         applyPicture(GameSettings.state)
@@ -1938,20 +1977,16 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 selectedPack = selectedPack,
                                 installedPresets = installedShaders,
                                 onShaderSelected = { choice ->
-                                    retroView.shader = GameHdrToneMapShader.forGame(choice, toneMap, session.vulkan, shaderIntensity, effect)
+                                    pendingPackChoice = null
                                     GameSettings.update {
                                         if (gamePictureScope) it.withGameShader(game.saveKey, choice)
                                         else it.withShader(system, choice)
                                     }
                                 },
                                 onPackSelected = { preset ->
-                                    val verified = model.shaderPacks.config(preset.selection)
-                                    if (verified != null) {
-                                        retroView.shader = GameHdrToneMapShader.forConfig(verified, toneMap, session.vulkan)
-                                        GameSettings.update {
-                                            it.withPackShader(system, game.saveKey.takeIf { gamePictureScope }, preset.selection)
-                                        }
-                                    }
+                                    pendingPackChoice = GameShaderPackChoice(
+                                        preset.selection, gamePictureScope, GameSettings.state,
+                                    )
                                 },
                             )
                             if (selectedPack == null && GameRetroShaders.isCustom(shader)) {
@@ -1964,7 +1999,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     valueLabel = stringResource(R.string.game_shader_strength_value, percent),
                                     onValueChange = { value ->
                                         val next = value / 100f
-                                        retroView.shader = GameHdrToneMapShader.forGame(shader, toneMap, session.vulkan, next, effect)
+                                        pendingPackChoice = null
                                         GameSettings.update {
                                             it.withShaderStrength(system, game.saveKey.takeIf { gamePictureScope }, next)
                                         }
@@ -1986,7 +2021,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     dropUp = false,
                                     onSelected = { key ->
                                         val chosen = GameShader.fromKey(key)?.takeIf { it in GamePictureDefaults.effects }
-                                        retroView.shader = GameHdrToneMapShader.forGame(shader, toneMap, session.vulkan, shaderIntensity, chosen)
+                                        pendingPackChoice = null
                                         GameSettings.update {
                                             if (gamePictureScope) it.withGameEffect(game.saveKey, chosen)
                                             else it.withEffect(system, chosen)
