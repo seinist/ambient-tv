@@ -19,9 +19,10 @@ class LatestRenderRequestTest {
     }
 
     @Test fun aRequestDuringApplicationIsNotLost() {
-        val nested = LatestRenderRequest<String>({ fifo.addLast(it) }, {
+        lateinit var nested: LatestRenderRequest<String>
+        nested = LatestRenderRequest({ fifo.addLast(it) }, {
             applied += it
-            if (it == "first") requests.submit("second")
+            if (it == "first") nested.submit("second")
         })
         nested.submit("first")
         drain()
