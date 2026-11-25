@@ -515,6 +515,13 @@ class AppPreferences @Inject constructor(
 
     val hasMoonlightHosts: Boolean get() = moonlightEnabled && moonlightHosts.isNotEmpty()
 
+    /** Per-install GameStream client ID; never replicated to other TVs/phones. */
+    val moonlightDeviceId: String get() = prefs.getString("moonlight_device_id", null)
+        ?.takeIf { it.length == 16 && it.all { ch -> ch in '0'..'9' || ch in 'A'..'F' } }
+        ?: UUID.randomUUID().toString().replace("-", "").take(16).uppercase().also { id ->
+            prefs.edit { putString("moonlight_device_id", id) }
+        }
+
     /** RomM game server (Settings › RomM). Its secret (token or password) lives in TokenStore. */
     var rommEnabled: Boolean
         get() = prefs.getBoolean("romm_enabled", false)
