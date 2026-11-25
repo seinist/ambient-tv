@@ -50,6 +50,7 @@ import com.ambient.tv.moonlight.MoonlightKeyboardRouter
 import com.ambient.tv.moonlight.MoonlightStreamEngine
 import com.ambient.tv.moonlight.MoonlightStreamPhase
 import com.ambient.tv.moonlight.MoonlightStreamProfile
+import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.ui.common.TvActionButton
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -64,6 +65,7 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class MoonlightStreamActivity : ComponentActivity() {
     @Inject lateinit var engine: MoonlightStreamEngine
+    @Inject lateinit var preferences: AppPreferences
 
     private var osdVisible by mutableStateOf(false)
     private val keyboard by lazy {
@@ -94,6 +96,7 @@ class MoonlightStreamActivity : ComponentActivity() {
                 engine = engine,
                 hostId = hostId,
                 appId = appId,
+                streamProfile = preferences.moonlightStreamProfile,
                 controlsShown = osdVisible,
                 showControls = { showOsd(true) },
                 disconnect = ::disconnectAndFinish,
@@ -162,6 +165,7 @@ private fun MoonlightStreamContent(
     engine: MoonlightStreamEngine,
     hostId: String,
     appId: Int,
+    streamProfile: MoonlightStreamProfile,
     controlsShown: Boolean,
     showControls: () -> Unit,
     closeControls: () -> Unit,
@@ -188,7 +192,7 @@ private fun MoonlightStreamContent(
                 SurfaceView(context).apply {
                     holder.addCallback(object : SurfaceHolder.Callback {
                         override fun surfaceCreated(holder: SurfaceHolder) {
-                            engine.start(hostId, appId, holder.surface, MoonlightStreamProfile())
+                            engine.start(hostId, appId, holder.surface, streamProfile)
                         }
                         override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
                         override fun surfaceDestroyed(holder: SurfaceHolder) { engine.stop() }
