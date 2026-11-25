@@ -29,6 +29,9 @@ struct Driver {
     VkResult reset = VK_SUCCESS, commandReset = VK_SUCCESS, begin = VK_SUCCESS,
              end = VK_SUCCESS, submit = VK_SUCCESS, present = VK_SUCCESS;
     bool pending = false;
+    std::vector<VkCommandBuffer> submittedCommands;
+    std::vector<VkSemaphore> submittedWaits, submittedSignals;
+    std::vector<VkPipelineStageFlags> submittedStages;
     unsigned waitCalls = 0, resets = 0, idleCalls = 0, commandResets = 0,
              begins = 0, ends = 0, submits = 0, presents = 0, warnings = 0,
              imageFrees = 0, memoryFrees = 0, bufferFrees = 0, windowReleases = 0,
@@ -156,8 +159,21 @@ void setup(VulkanBackend& backend) {
         assert(!driver.pending); ++driver.begins; return driver.begin;
     };
     vk.endCommandBuffer = [](VkCommandBuffer) { ++driver.ends; return driver.end; };
-    vk.queueSubmit = [](VkQueue, uint32_t, const VkSubmitInfo*, VkFence) {
+    vk.queueSubmit = [](VkQueue, uint32_t count, const VkSubmitInfo* info, VkFence) {
         assert(!driver.pending); ++driver.submits;
+        assert(count == 1 && info != nullptr);
+        driver.submittedCommands.clear();
+        driver.submittedWaits.clear();
+        driver.submittedStages.clear();
+        driver.submittedSignals.clear();
+        if (info->commandBufferCount != 0)
+            driver.submittedCommands.assign(info->pCommandBuffers, info->pCommandBuffers + info->commandBufferCount);
+        if (info->waitSemaphoreCount != 0) {
+            driver.submittedWaits.assign(info->pWaitSemaphores, info->pWaitSemaphores + info->waitSemaphoreCount);
+            driver.submittedStages.assign(info->pWaitDstStageMask, info->pWaitDstStageMask + info->waitSemaphoreCount);
+        }
+        if (info->signalSemaphoreCount != 0)
+            driver.submittedSignals.assign(info->pSignalSemaphores, info->pSignalSemaphores + info->signalSemaphoreCount);
         if (driver.submit == VK_SUCCESS) driver.pending = true;
         return driver.submit;
     };
@@ -442,6 +458,63 @@ void filteredPresetSwitchRetainsSwapchain() {
     std::puts("PASS filtered preset switches retain WSI and skip duplicate clear; raw restores clear");
 }
 
+void reusableSubmitStorage() {
+    for (bool direct : {false, true}) {
+        VulkanBackend backend;
+        setup(backend);
+        if (direct) {
+            window(backend);
+            backend.nativePresentation.setFullscreenActive(true);
+            assert(backend.ensureNativeSdrSwapchain());
+        }
+        const auto commandA = object<VkCommandBuffer>(101);
+        const auto commandB = object<VkCommandBuffer>(102);
+        const auto waitA = object<VkSemaphore>(103);
+        const auto waitB = object<VkSemaphore>(104);
+        const auto signal = object<VkSemaphore>(105);
+        const auto verify = [&](bool commands, bool waits, bool coreSignal) {
+            backend.pendingCommandBuffers = commands ? std::vector<VkCommandBuffer>{commandA, commandB}
+                                                     : std::vector<VkCommandBuffer>{};
+            backend.pendingImage.waitSemaphores = waits ? std::vector<VkSemaphore>{waitA, waitB}
+                                                        : std::vector<VkSemaphore>{};
+            backend.pendingSignalSemaphore = coreSignal ? signal : VK_NULL_HANDLE;
+            auto expectedCommands = backend.pendingCommandBuffers;
+            expectedCommands.push_back(backend.commandBuffer);
+            std::vector<VkSemaphore> expectedWaits, expectedSignals;
+            if (!commands && waits) expectedWaits = {waitA, waitB};
+            if (direct) expectedWaits.push_back(backend.nativeSdrAcquire);
+            if (coreSignal) expectedSignals.push_back(signal);
+            if (direct) expectedSignals.push_back(backend.nativeSdrComplete[0]);
+            assert(backend.presentFrame(256, 224, 4.0F/3.0F, true));
+            assert(driver.submittedCommands == expectedCommands);
+            assert(driver.submittedWaits == expectedWaits);
+            assert(driver.submittedSignals == expectedSignals);
+            assert(driver.submittedStages == std::vector<VkPipelineStageFlags>(
+                expectedWaits.size(), VK_PIPELINE_STAGE_TRANSFER_BIT));
+            assert(backend.pendingCommandBuffers.empty() && backend.pendingImage.waitSemaphores.empty());
+            assert(backend.pendingSignalSemaphore == VK_NULL_HANDLE);
+            assert(!driver.pending && !backend.frameInFlight);
+        };
+        verify(true, true, true);  // Core command buffers suppress core wait semaphores.
+        verify(false, true, true); // Exercise all wait slots, including optional WSI acquire.
+        const auto cmdCapacity = backend.submitCommands.capacity();
+        const auto waitCapacity = backend.submitWaits.capacity();
+        const auto stageCapacity = backend.submitWaitStages.capacity();
+        for (int i = 0; i < 8; ++i) {
+            verify(false, false, false);
+            verify(true, true, true);
+            verify(false, true, true);
+            assert(backend.submitCommands.capacity() == cmdCapacity);
+            assert(backend.submitWaits.capacity() == waitCapacity);
+            assert(backend.submitWaitStages.capacity() == stageCapacity);
+        }
+        backend.shutdown();
+        assert(backend.submitCommands.capacity() == 0 && backend.submitWaits.capacity() == 0 &&
+               backend.submitWaitStages.capacity() == 0);
+    }
+    std::puts("PASS Vulkan submit storage reuse preserves command/wait/signal ordering and clears stale descriptors");
+}
+
 void managedBoundary() {
     auto& backend = VulkanBackend::getInstance();
     libretrodroid::Video video;
@@ -498,6 +571,7 @@ int main() {
     safeCallbackAndTeardown();
     nativeSurfacePolicyAndSuccess();
     filteredPresetSwitchRetainsSwapchain();
+    reusableSubmitStorage();
     managedBoundary();
     std::puts("PASS production Vulkan synchronization and presentation fault regression");
 }
