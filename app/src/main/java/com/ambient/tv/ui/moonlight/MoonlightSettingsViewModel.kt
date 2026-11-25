@@ -13,6 +13,7 @@ import com.ambient.tv.moonlight.MoonlightServerInfoClient
 import com.ambient.tv.moonlight.MoonlightSystemTransport
 import com.ambient.tv.moonlight.MoonlightPairResult
 import com.ambient.tv.moonlight.MoonlightApp
+import com.ambient.tv.moonlight.MoonlightLibraryStore
 import com.ambient.tv.moonlight.MoonlightStreamProfile
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -54,6 +55,7 @@ class MoonlightSettingsViewModel @Inject constructor(
     private val discovery: MoonlightDiscovery,
     private val serverInfo: MoonlightServerInfoClient,
     private val transport: MoonlightSystemTransport,
+    private val libraryStore: MoonlightLibraryStore,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
     private val mutable = MutableStateFlow(MoonlightSettingsUiState(
@@ -116,6 +118,7 @@ class MoonlightSettingsViewModel @Inject constructor(
         if (mutable.value.pairingBusy && mutable.value.pairingHostId == id) return
         // Removing a host is an explicit trust reset; do not retain its pinned certificate.
         transport.forget(id)
+        libraryStore.clearHost(id)
         preferences.moonlightHosts = preferences.moonlightHosts.filterNot { it.id == id }
         mutable.update { it.copy(
             hosts = preferences.moonlightHosts, status = it.status - id,
