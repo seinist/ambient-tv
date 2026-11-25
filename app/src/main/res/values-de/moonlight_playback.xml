@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="moonlight_player_settings">Wiedergabeeinstellungen</string>
+    <string name="moonlight_player_input">Tastatur / Texteingabe</string>
+    <string name="moonlight_player_input_hint">Text an den verbundenen PC senden. Android-Navigation und Systemtasten werden nicht weitergeleitet.</string>
+    <string name="moonlight_player_input_placeholder">Text für den PC</string>
+    <string name="moonlight_player_send_text">Text senden</string>
+    <string name="moonlight_player_info">Stream-Informationen</string>
+    <string name="moonlight_player_apply_next">Änderungen an Auflösung, FPS, Codec, HDR, Audio und Bitrate gelten ab der nächsten Stream-Verbindung.</string>
+    <string name="moonlight_player_no_seek">Für PC-Game-Streaming gibt es keine Medien-Suchleiste, Episodenwechsel oder Zeitachsen-Pause.</string>
+</resources>
