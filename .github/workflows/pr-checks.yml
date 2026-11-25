@@ -283,6 +283,8 @@ jobs:
           git -C third_party/.librashader-host-src checkout -q FETCH_HEAD
           test "$(git -C third_party/.librashader-host-src rev-parse HEAD)" = "$pin"
           python3 scripts/apply_librashader_patches.py third_party/.librashader-host-src
+          # Android builds verify the same checkout again on a cache hit.
+          python3 scripts/apply_librashader_patches.py third_party/.librashader-host-src
           export CARGO_TARGET_DIR="$PWD/third_party/.librashader-host-target"
           cargo build --manifest-path third_party/.librashader-host-src/Cargo.toml \
             -p librashader-capi --release --locked --no-default-features --features runtime-vulkan
