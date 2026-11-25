@@ -135,6 +135,10 @@ require(appDisplayName.isNotBlank() && appDisplayName.none { it == '\n' || it ==
 
 val externalVersions = loadProjectProperties("gradle/external-versions.properties")
 val vulkanVlcAar = file("libs/libvlc-vulkan.aar")
+// Experimental UI and discovery only until pinned native Moonlight transport is complete.
+val moonlightExperimental = providers.gradleProperty("MOONLIGHT_EXPERIMENTAL")
+    .orElse(providers.environmentVariable("MOONLIGHT_EXPERIMENTAL")).orElse("false").get().toBoolean()
+
 val monogramEnabled = (providers.gradleProperty("MONOGRAM_NATIVE").orElse(
     providers.environmentVariable("MONOGRAM_NATIVE")
 ).orElse("0").get()).let { it == "1" || it.equals("true", true) }
@@ -243,6 +247,7 @@ android {
 
         buildConfigField("String", "APP_DISPLAY_NAME", quotedBuildConfigString(appDisplayName))
         buildConfigField("boolean", "MONOGRAM_NATIVE", monogramEnabled.toString())
+        buildConfigField("boolean", "MOONLIGHT_EXPERIMENTAL", moonlightExperimental.toString())
         buildConfigField("boolean", "SPOTIFY_ENABLED", spotifyEnabled.toString())
         buildConfigField("boolean", "LIBRASHADER_NATIVE", (
             providers.gradleProperty("LIBRASHADER_NATIVE")
