@@ -54,4 +54,21 @@
     <string name="moonlight_quality_save_bitrate">Bitrate übernehmen</string>
     <string name="moonlight_quality_bitrate_hint">PC und Gerät müssen Auflösung, FPS und Codec unterstützen. Nicht unterstützte Formate werden nicht gestartet.</string>
     <string name="moonlight_profile_invalid">Ungültige Streaming-Einstellungen.</string>
+
+    <string name="moonlight_library_title">Moonlight-Spiele</string>
+    <string name="moonlight_refresh">Aktualisieren</string>
+    <string name="moonlight_view_toggle">Ansicht wechseln</string>
+    <string name="moonlight_open_settings">Moonlight-Einstellungen</string>
+    <string name="moonlight_library_unconfigured">Sunshine-PC in den Moonlight-Einstellungen hinzufügen und koppeln, um die Anwendungen zu durchsuchen.</string>
+    <string name="moonlight_library_empty">Keine Anwendungen gefunden. Verbindung prüfen oder anderen Filter auswählen.</string>
+    <string name="moonlight_details">Details</string>
+    <string name="moonlight_no_artwork">Kein Bild</string>
+    <string name="moonlight_offline_detail">Der PC ist nicht erreichbar. Gespeicherte Titel bleiben sichtbar, können aber bis zur Wiederherstellung der Verbindung nicht gestartet werden.</string>
+    <string name="moonlight_stream_play">Auf PC spielen</string>
+    <string name="moonlight_add_favorite">Favorit hinzufügen</string>
+    <string name="moonlight_remove_favorite">Favorit entfernen</string>
+    <string name="moonlight_quit_remote">Spiel auf PC beenden</string>
+    <string name="moonlight_quit_confirm_title">PC-Spiel beenden?</string>
+    <string name="moonlight_quit_confirm_hint">Das beendet die Anwendung auf dem entfernten PC. Um nur den Stream zu verlassen, stattdessen »Stream trennen« auswählen.</string>
+    <string name="moonlight_remote_quit_failed">Sunshine konnte das Spiel auf dem PC nicht beenden.</string>
 </resources>
