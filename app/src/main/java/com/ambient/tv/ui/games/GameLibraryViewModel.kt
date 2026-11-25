@@ -161,10 +161,15 @@ class GameLibraryViewModel @Inject constructor(
         libraryReadError = null
     }
 
+    /** Management needs folder/source configuration, not every hydrated game or cover. */
+    fun openManager() {
+        selection.value = GameLibraryQuery(limit = 0)
+    }
+
     fun section(value: String) {
         metadata.startCoverRecovery()
         mutable.update { it.copy(section = value) }
-        selection.update { (it ?: GameLibraryQuery(search = mutable.value.query)).copy(section = value) }
+        selection.update { (it ?: GameLibraryQuery(search = mutable.value.query)).copy(section = value, limit = null) }
     }
     fun query(value: String) {
         mutable.update { it.copy(query = value) }
