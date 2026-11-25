@@ -27,7 +27,7 @@ internal object MoonlightHardwareVideo {
     fun displaySupportsHdr10(context: Context): Boolean = runCatching {
         val manager = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
         val display = manager.getDisplay(Display.DEFAULT_DISPLAY) ?: return@runCatching false
-        display.hdrCapabilities.supportedHdrTypes.contains(Display.HdrCapabilities.HDR_TYPE_HDR10)
+        display.hdrCapabilities?.supportedHdrTypes?.contains(Display.HdrCapabilities.HDR_TYPE_HDR10) == true
     }.getOrDefault(false)
 
     internal fun decoder(
