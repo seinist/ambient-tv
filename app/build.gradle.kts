@@ -224,6 +224,11 @@ android {
     }
     compileSdk = 37
     ndkVersion = "30.0.16248370"
+    if (moonlightNative) {
+        // Only the Ambient TV adapter to the official GameStream protocol. No upstream UI.
+        sourceSets.getByName("main").java.directories.add("src/moonlight/java")
+        sourceSets.getByName("main").kotlin.directories.add("src/moonlight/java")
+    }
     if (monogramEnabled) {
         // This folder is not compiled or packaged in normal CC0 builds.
         sourceSets.getByName("main").java.directories.add("src/monogram/java")
