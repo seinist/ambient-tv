@@ -628,6 +628,15 @@ fun ArtworkImage(
             .build()
     }
     var loading by remember(currentModel) { mutableStateOf(hasModel && !shownFromMemory) }
+    // Keep the existing pulse *behind* the newly decoded image while Coil fades it in.
+    // Otherwise dismissing the pulse on success exposes a dark frame at fade alpha = 0.
+    var fadeBackground by remember(currentModel, refreshRevision, address?.imageKey, headerKey) { mutableStateOf(false) }
+    if (fadeBackground) {
+        LaunchedEffect(currentModel, fadeMillis) {
+            delay(fadeMillis.toLong())
+            fadeBackground = false
+        }
+    }
     var failed by remember(candidates) { mutableStateOf(false) }
     var visibleFraction by remember(currentModel, headers, refreshRevision, address?.imageKey) { mutableStateOf<Float?>(null) }
     var focusRevision by remember(currentModel, headers, refreshRevision, address?.imageKey) { mutableStateOf<String?>(null) }
@@ -636,6 +645,7 @@ fun ArtworkImage(
     val hdrFilter = com.ambient.tv.ui.display.rememberUiHdrBitmapColorFilter()
     Box(modifier = if (focusCrop) modifier.onSizeChanged { containerSize = it } else modifier) {
         if (hasModel) {
+            if (loadAdmitted && placeholder && (loading || fadeBackground)) PulsingArtworkPlaceholder()
             if (loadAdmitted) AsyncImage(
                 model = request,
                 contentDescription = title,
@@ -644,14 +654,16 @@ fun ArtworkImage(
                 alignment = focus?.alignment ?: alignment,
                 colorFilter = hdrFilter,
                 modifier = Modifier.fillMaxSize().then(cardSize?.modifier() ?: Modifier),
-                onLoading = { loading = !shownFromMemory; failed = false },
+                onLoading = { loading = !shownFromMemory; fadeBackground = false; failed = false },
                 onSuccess = {
+                    val source = it.result.dataSource
+                    fadeBackground = placeholder && fadeMillis > 0 &&
+                        source != coil3.decode.DataSource.MEMORY_CACHE && source != coil3.decode.DataSource.MEMORY
                     loading = false
                     failed = false
                     successfulNetwork = requestNetwork
                     val key = it.result.memoryCacheKey
                     // Diagnostics: why a picture that was loaded before had to load again.
-                    val source = it.result.dataSource
                     // Without the query: signed thumbnail URLs differ only there between two fetches.
                     val pictureIdentity = (currentModel as? String)?.substringBefore('?') ?: requestIdentity
                     if (!backdrop && source != coil3.decode.DataSource.MEMORY_CACHE &&
@@ -684,6 +696,7 @@ fun ArtworkImage(
                 },
                 onError = {
                     loading = false
+                    fadeBackground = false
                     successfulNetwork = null
                     if (candidateIndex < candidates.lastIndex) {
                         candidateIndex += 1
@@ -692,7 +705,6 @@ fun ArtworkImage(
                     }
                 },
             )
-            if (loading && placeholder) PulsingArtworkPlaceholder()
         }
         if (placeholder && (!hasModel || failed)) {
             when {
