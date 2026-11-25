@@ -7,6 +7,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import android.view.InputDevice
 import kotlin.math.roundToInt
 import android.view.KeyEvent
@@ -56,6 +57,7 @@ import com.ambient.tv.moonlight.MoonlightDeviceFeedback
 import com.ambient.tv.moonlight.MoonlightControllerRouter
 import com.ambient.tv.moonlight.MoonlightKeyboardRouter
 import com.ambient.tv.moonlight.MoonlightStreamEngine
+import com.ambient.tv.moonlight.MoonlightSystemTransport
 import com.ambient.tv.moonlight.MoonlightStreamPhase
 import com.ambient.tv.moonlight.MoonlightStreamProfile
 import com.ambient.tv.data.local.AppPreferences
@@ -75,8 +77,12 @@ class MoonlightStreamActivity : ComponentActivity() {
     @Inject lateinit var engine: MoonlightStreamEngine
     @Inject lateinit var preferences: AppPreferences
     @Inject lateinit var companion: MoonlightCompanionLink
+    @Inject lateinit var moonlightTransport: MoonlightSystemTransport
 
     private var osdVisible by mutableStateOf(false)
+    private var qualityProfile by mutableStateOf(MoonlightStreamProfile())
+    private var remoteQuitBusy by mutableStateOf(false)
+    private var remoteQuitError by mutableStateOf(false)
     private val inputManager by lazy {
         getSystemService(Context.INPUT_SERVICE) as InputManager
     }
@@ -108,6 +114,7 @@ class MoonlightStreamActivity : ComponentActivity() {
             finish()
             return
         }
+        qualityProfile = preferences.moonlightStreamProfile
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or
@@ -124,7 +131,15 @@ class MoonlightStreamActivity : ComponentActivity() {
                 engine = engine,
                 hostId = hostId,
                 appId = appId,
-                streamProfile = preferences.moonlightStreamProfile,
+                streamProfile = qualityProfile,
+                onUpdateProfile = { profile ->
+                    preferences.moonlightStreamProfile = profile.validated()
+                    qualityProfile = profile
+                },
+                onSendText = engine::sendText,
+                onQuitRemote = { quitRemoteGame(hostId) },
+                remoteQuitBusy = remoteQuitBusy,
+                remoteQuitError = remoteQuitError,
                 controlsShown = osdVisible,
                 showControls = { showOsd(true) },
                 disconnect = ::disconnectAndFinish,
@@ -193,6 +208,25 @@ class MoonlightStreamActivity : ComponentActivity() {
         super.onStop()
     }
 
+    /** Explicit host-side termination; never a side effect of Back or stream disconnect. */
+    private fun quitRemoteGame(hostId: String) {
+        if (remoteQuitBusy || engine.status.value.phase != MoonlightStreamPhase.STREAMING) return
+        remoteQuitBusy = true
+        remoteQuitError = false
+        lifecycleScope.launch {
+            try {
+                if (moonlightTransport.quitRemoteApp(hostId)) disconnectAndFinish()
+                else remoteQuitError = true
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (_: Exception) {
+                remoteQuitError = true
+            } finally {
+                remoteQuitBusy = false
+            }
+        }
+    }
+
     private fun disconnectAndFinish() {
         releaseRemoteInputs()
         engine.stop()
@@ -218,6 +252,11 @@ private fun MoonlightStreamContent(
     hostId: String,
     appId: Int,
     streamProfile: MoonlightStreamProfile,
+    onUpdateProfile: (MoonlightStreamProfile) -> Unit,
+    onSendText: (String) -> Unit,
+    onQuitRemote: () -> Unit,
+    remoteQuitBusy: Boolean,
+    remoteQuitError: Boolean,
     controlsShown: Boolean,
     showControls: () -> Unit,
     closeControls: () -> Unit,
