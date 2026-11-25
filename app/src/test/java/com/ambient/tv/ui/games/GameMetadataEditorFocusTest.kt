@@ -109,20 +109,36 @@ class GameMetadataEditorFocusTest {
     private fun distance(first: Color, second: Color): Float =
         abs(first.red - second.red) + abs(first.green - second.green) + abs(first.blue - second.blue)
 
+    private fun assertOutlineVisible(index: Int, idle: Color, message: String) {
+        val focused = edgeColor(index)
+        val difference = distance(focused, idle)
+        assertTrue("$message: focused=$focused, idle=$idle, RGB difference=$difference", difference > .15f)
+    }
+
+    private fun assertEdgeUnchanged(index: Int, expected: Color, message: String) {
+        val actual = edgeColor(index)
+        val difference = distance(actual, expected)
+        assertTrue("$message: actual=$actual, expected=$expected, RGB difference=$difference", difference < .04f)
+    }
+
     @Test fun visibleFocusFollowsDpadBetweenMatchesWithEveryAccentStyle() {
         mount()
         for (accent in AccentStyle.entries) {
             rule.runOnIdle { style = accent }
-            focus(0)
+            // The translucent idle stroke blends with a different part of the dialog gradient
+            // at each row. Compare each row with its own unfocused pixel at the same position.
+            focus(1)
+            val firstIdle = edgeColor(0)
             val originalBounds = match(0).fetchSemanticsNode().boundsInRoot.size
-            val idle = edgeColor(1)
-            assertTrue("$accent must visibly outline the focused result", distance(edgeColor(0), idle) > .15f)
+            focus(0)
+            val secondIdle = edgeColor(1)
+            assertOutlineVisible(0, firstIdle, "$accent must visibly outline the focused result")
 
             match(0).performKeyInput { pressKey(Key.DirectionDown) }
             settleFocus()
             match(1).assertIsFocused()
-            assertTrue("$accent must clear the previous result's focus", distance(edgeColor(0), idle) < .04f)
-            assertTrue("$accent must outline the newly focused result", distance(edgeColor(1), idle) > .15f)
+            assertEdgeUnchanged(0, firstIdle, "$accent must clear the previous result's focus")
+            assertOutlineVisible(1, secondIdle, "$accent must outline the newly focused result")
             assertEquals("Focus must not resize the result", originalBounds,
                 match(0).fetchSemanticsNode().boundsInRoot.size)
             match(1).performKeyInput { pressKey(Key.DirectionCenter) }
@@ -132,14 +148,18 @@ class GameMetadataEditorFocusTest {
 
     @Test fun handheldKeyboardArtworkChoiceKeepsItsVisibleFocusWhileSavingWithoutReapplying() {
         mount(imageKind = GameArtworkKind.COVER, handheld = true)
+        focus(1)
+        val idle = edgeColor(0)
         focus(0)
-        assertTrue(distance(edgeColor(0), edgeColor(1)) > .15f)
+        assertOutlineVisible(0, idle, "The keyboard-focused artwork choice must have a visible outline")
+        val focusedBeforeSaving = edgeColor(0)
         match(0).performKeyInput { pressKey(Key.Enter) }
         rule.runOnIdle { enabled = false }
         settleFocus()
 
         match(0).assertIsFocused().assertIsNotEnabled()
-        assertTrue("The saving result remains visibly focused", distance(edgeColor(0), edgeColor(1)) > .15f)
+        assertOutlineVisible(0, idle, "The saving result remains visibly focused")
+        assertEdgeUnchanged(0, focusedBeforeSaving, "Saving must retain the focus outline's opacity")
         match(0).performKeyInput { pressKey(Key.Enter) }
         rule.runOnIdle { assertEquals(listOf(0), selected) }
     }

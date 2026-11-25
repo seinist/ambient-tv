@@ -254,19 +254,19 @@ internal fun GameMetadataMatchRow(
             runCatching { java.net.URI(it).host }.getOrNull()
         }
     }
+    // Keep the focus outline outside Surface's disabled layers while its saving content dims.
     Surface(onClick = onClick, enabled = enabled,
         colors = transparentSurfaceColors(), scale = noSurfaceScale(),
         border = noSurfaceBorder(), shape = ClickableSurfaceDefaults.shape(shape),
         modifier = modifier.fillMaxWidth().activateOnTvKey(enabled, onClick)
             .focusProperties { canFocus = enabled || focused }
-            .onFocusChanged { focused = it.isFocused }) {
-        Row(Modifier.fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused }
             .animatedFocusSurface(focused = focused, shape = shape,
                 focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = .19f),
                 unfocusedBackground = Color.White.copy(alpha = .045f),
                 focusedBorder = MaterialTheme.colorScheme.primary,
-                unfocusedBorder = Color.White.copy(alpha = .10f), borderWidth = 2.dp)
-            .padding(10.dp), verticalAlignment = Alignment.CenterVertically,
+                unfocusedBorder = Color.White.copy(alpha = .10f), borderWidth = 2.dp)) {
+        Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             ArtworkImage(preview?.let(::File), displayTitle,
                 modifier = Modifier.width(if (imageKind == GameArtworkKind.BACKDROP) 120.dp else 70.dp)
