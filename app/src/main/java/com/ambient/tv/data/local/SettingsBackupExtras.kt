@@ -69,6 +69,9 @@ data class ConnectionSettingsExtras(
     val rommEnabled: Boolean? = null,
     val rommServerUrl: String? = null,
     val rommUsername: String? = null,
+    /** Host metadata is portable, but pairing certificates and AndroidKeyStore client keys are not. */
+    val moonlightEnabled: Boolean? = null,
+    val moonlightHosts: List<com.ambient.tv.moonlight.MoonlightHost>? = null,
 )
 
 @Serializable
