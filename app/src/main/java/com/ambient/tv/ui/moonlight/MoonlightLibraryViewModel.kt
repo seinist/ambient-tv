@@ -191,6 +191,18 @@ class MoonlightLibraryViewModel @Inject constructor(
         }
     }
 
+    fun quitRemote(hostId: String) {
+        if (hostId !in mutable.value.onlineHosts || hostId !in mutable.value.pairedHosts) return
+        viewModelScope.launch {
+            try {
+                if (transport.quitRemoteApp(hostId)) load()
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) {
+                mutable.update { it.copy(errors = it.errors + (hostId to "quit_failed")) }
+            }
+        }
+    }
+
     fun recordLaunch(hostId: String, appId: Int) {
         store.recordLaunch(hostId, appId)
         mutable.update { it.copy(recent = store.recent()) }
