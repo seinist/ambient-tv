@@ -12,12 +12,43 @@ import kotlinx.coroutines.flow.callbackFlow
 
 data class MoonlightDiscoveredHost(val name: String, val host: String, val port: Int)
 
-/** Explicit, lifecycle-bound Sunshine mDNS discovery; no cold-start multicast or background scan. */
+/**
+ * Explicit, lifecycle-bound Sunshine mDNS discovery; no cold-start multicast or background scan.
+ * Older Android NSD resolvers permit only a single outstanding resolve, so findings are queued.
+ */
 class MoonlightDiscovery @Inject constructor(@ApplicationContext context: Context) {
     private val manager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
 
     @Suppress("DEPRECATION")
     fun browse(): Flow<MoonlightDiscoveredHost> = callbackFlow {
+        val pending = ArrayDeque<NsdServiceInfo>()
+        var resolving = false
+
+        fun next() {
+            val target = synchronized(pending) {
+                if (resolving) null else pending.removeFirstOrNull()?.also { resolving = true }
+            } ?: return
+            val resolution = runCatching {
+                manager.resolveService(target, object : NsdManager.ResolveListener {
+                    override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+                        synchronized(pending) { resolving = false }
+                        next()
+                    }
+                    override fun onServiceResolved(result: NsdServiceInfo) {
+                        val address = result.host?.hostAddress
+                        val valid = address?.let { MoonlightHostAddress.normalize(it, result.port) }
+                        if (valid != null) trySend(MoonlightDiscoveredHost(result.serviceName.take(128), valid, result.port))
+                        synchronized(pending) { resolving = false }
+                        next()
+                    }
+                })
+            }
+            if (resolution.isFailure) {
+                synchronized(pending) { resolving = false }
+                next()
+            }
+        }
+
         val listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) = Unit
             override fun onDiscoveryStopped(serviceType: String) { close() }
@@ -28,16 +59,10 @@ class MoonlightDiscovery @Inject constructor(@ApplicationContext context: Contex
             override fun onServiceLost(serviceInfo: NsdServiceInfo) = Unit
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
                 if (!serviceInfo.serviceType.trimEnd('.').equals("_nvstream._tcp", ignoreCase = true)) return
-                runCatching {
-                    manager.resolveService(serviceInfo, object : NsdManager.ResolveListener {
-                        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
-                        override fun onServiceResolved(result: NsdServiceInfo) {
-                            val host = result.host?.hostAddress ?: return
-                            val normalized = MoonlightHostAddress.normalize(host, result.port) ?: return
-                            trySend(MoonlightDiscoveredHost(result.serviceName.take(128), normalized, result.port))
-                        }
-                    })
+                synchronized(pending) {
+                    if (pending.size < 64) pending.addLast(serviceInfo)
                 }
+                next()
             }
         }
         try {
