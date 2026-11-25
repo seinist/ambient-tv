@@ -3681,6 +3681,50 @@ private fun AmbientTvApp(
                             onOpenSettings = { openSystemSettings(com.ambient.tv.ui.common.MediaSystem.ROMM.key) },
                         )
                     }
+                    // Sunshine/GameStream is an independent browse system, not a Libretro core.
+                    listOf(Destinations.MOONLIGHT, Destinations.MOONLIGHT_SECTION).forEach { route ->
+                        composable(route, arguments = if (route == Destinations.MOONLIGHT_SECTION)
+                            listOf(navArgument("sectionKey") { type = NavType.StringType }) else emptyList()) { entry ->
+                            RestorableSidebarContent {
+                                com.ambient.tv.ui.moonlight.MoonlightLibraryScreen(
+                                    initialSection = entry.arguments?.getString("sectionKey")
+                                        ?.takeIf(String::isNotBlank) ?: "all",
+                                    onBack = ::focusSidebar,
+                                    onOpenSettings = { openSystemSettings("moonlight") },
+                                    onDetails = { hostId, appId ->
+                                        navController.navigate(Destinations.moonlightDetail(hostId, appId)) {
+                                            launchSingleTop = true
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    composable(
+                        Destinations.MOONLIGHT_DETAIL,
+                        arguments = listOf(
+                            navArgument("hostId") { type = NavType.StringType },
+                            navArgument("appId") { type = NavType.IntType },
+                        ),
+                    ) { entry ->
+                        val hostId = entry.arguments?.getString("hostId").orEmpty()
+                        val appId = entry.arguments?.getInt("appId") ?: -1
+                        val localContext = androidx.compose.ui.platform.LocalContext.current
+                        com.ambient.tv.ui.moonlight.MoonlightGameDetailScreen(
+                            hostId = hostId, appId = appId,
+                            onBack = { if (navController.currentBackStackEntry === entry) navigateBack() },
+                            onOpenSettings = { openSystemSettings("moonlight") },
+                            onPlay = {
+                                localContext.startActivity(
+                                    android.content.Intent(localContext,
+                                        com.ambient.tv.ui.moonlight.MoonlightStreamActivity::class.java).apply {
+                                        putExtra(com.ambient.tv.ui.moonlight.MoonlightStreamActivity.EXTRA_HOST_ID, hostId)
+                                        putExtra(com.ambient.tv.ui.moonlight.MoonlightStreamActivity.EXTRA_APP_ID, appId)
+                                    },
+                                )
+                            },
+                        )
+                    }
                     listOf(Destinations.FILES to "browse", Destinations.FILE_FAVORITES to "favorites",
                         Destinations.FILE_RECENT to "recent", Destinations.FILE_CONTINUE to "continue").forEach { (route, tab) ->
                         composable(route, arguments = listOf(navArgument("tab") { type = NavType.StringType; defaultValue = tab })) {
