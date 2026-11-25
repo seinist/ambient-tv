@@ -1,31 +1,49 @@
 package com.ambient.tv.moonlight
 
-import com.ambient.tv.companion.CompanionGamepadSession
 import com.ambient.tv.companion.CompanionGamepadInteraction
+import com.ambient.tv.companion.CompanionGamepadSession
+import com.ambient.tv.companion.CompanionMotionState
+import com.ambient.tv.companion.CompanionPointerContact
+import com.ambient.tv.companion.CompanionPointerState
+import com.ambient.tv.data.local.AppPreferences
+import com.limelight.nvstream.jni.MoonBridge
 import javax.inject.Inject
+import kotlin.math.roundToInt
 
 /**
- * Activity-owned bridge to the existing authenticated Companion TLS gamepad protocol.
- * Reuses its deadman, context tickets, ports and input-release guarantees.
+ * Fullscreen Activity owns the existing authenticated Companion phone-controller lease.
+ * Reuses TLS, port claims, deadman timers and context revisions from Libretro. Gameplay,
+ * gyro, touch and menu never create an independent unauthenticated network receiver.
  */
-class MoonlightCompanionLink @Inject constructor(private val engine: MoonlightStreamEngine) {
+class MoonlightCompanionLink @Inject constructor(
+    private val engine: MoonlightStreamEngine,
+    private val preferences: AppPreferences,
+) {
     private var sink: MoonlightCompanionSink? = null
+    private var pointerOwner: Int? = null
+    private var mouseDown = false
+    private var touchUnsupported = false
+    private val touches = LinkedHashMap<Int, CompanionPointerContact>()
 
     fun attach(title: String, usedPorts: () -> Set<Int>, onMenu: () -> Unit) {
         detach()
         val current = MoonlightCompanionSink(engine, usedPorts)
         sink = current
-        CompanionGamepadSession.attachMoonlight(current, title, onMenu = onMenu)
+        CompanionGamepadSession.attachMoonlight(
+            current, title,
+            onMenu = onMenu,
+            onPointer = ::pointer,
+            onMotion = ::motion,
+        )
     }
 
     fun interaction(playing: Boolean, menu: Boolean) {
         val current = sink ?: return
-        val state = when {
+        CompanionGamepadSession.setMoonlightInteraction(current, when {
             menu -> CompanionGamepadInteraction.MENU
             playing -> CompanionGamepadInteraction.PLAYING
             else -> CompanionGamepadInteraction.LOADING
-        }
-        CompanionGamepadSession.setMoonlightInteraction(current, state)
+        })
     }
 
     fun reservedPorts(): Set<Int> = engine.remoteReservedPorts()
@@ -35,5 +53,99 @@ class MoonlightCompanionLink @Inject constructor(private val engine: MoonlightSt
         sink = null
         CompanionGamepadSession.detachMoonlight(previous)
         previous.releaseEverything()
+        clearPointer()
+    }
+
+    private fun clearPointer() {
+        touches.values.toList().forEach { contact ->
+            engine.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_UP,
+                contact.index, contact.x, contact.y, 0f)
+        }
+        touches.clear()
+        if (mouseDown) engine.sendMouseButton(false)
+        mouseDown = false
+        pointerOwner = null
+        touchUnsupported = false
+    }
+
+    private fun mousePressed(down: Boolean) {
+        if (down == mouseDown) return
+        mouseDown = down
+        engine.sendMouseButton(down)
+    }
+
+    private fun pointer(port: Int, next: CompanionPointerState?) {
+        if (next == null) {
+            if (pointerOwner == port) clearPointer()
+            return
+        }
+        if (pointerOwner != null && pointerOwner != port) return
+        pointerOwner = port
+        val profile = preferences.moonlightStreamProfile
+        val width = profile.width
+        val height = profile.height
+        when (next.kind) {
+            "mouse" -> {
+                if (touches.isNotEmpty()) clearTouchOnly()
+                engine.sendMouseMove((next.dx * width).roundToInt(),
+                    (next.dy * height).roundToInt())
+                mousePressed((next.buttons and 1) != 0)
+            }
+            "gun" -> {
+                if (touches.isNotEmpty()) clearTouchOnly()
+                next.contacts.firstOrNull()?.let { contact ->
+                    engine.sendMousePosition((contact.x * width).roundToInt(),
+                        (contact.y * height).roundToInt(), width, height)
+                }
+                mousePressed((next.buttons and 1) != 0 ||
+                    next.contacts.any { it.pressed })
+            }
+            "touch" -> {
+                val current = next.contacts.filter { it.pressed }
+                    .associateBy { it.index }
+                val obsolete = touches.keys - current.keys
+                for (index in obsolete) {
+                    touches.remove(index)?.let { old ->
+                        engine.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_UP,
+                            index, old.x, old.y, 0f)
+                    }
+                }
+                for ((index, contact) in current) {
+                    val before = touches[index]
+                    val kind = if (before == null) MoonBridge.LI_TOUCH_EVENT_DOWN
+                        else MoonBridge.LI_TOUCH_EVENT_MOVE
+                    if (before == null || before.x != contact.x || before.y != contact.y) {
+                        val result = if (touchUnsupported) MoonBridge.LI_ERR_UNSUPPORTED
+                            else engine.sendTouchEvent(kind, index, contact.x, contact.y, 1f)
+                        if (result == MoonBridge.LI_ERR_UNSUPPORTED) touchUnsupported = true
+                    }
+                    touches[index] = contact
+                }
+                if (touchUnsupported) {
+                    // Older Sunshine hosts do not support touch; a single-finger mouse still works.
+                    current.values.firstOrNull()?.let { contact ->
+                        engine.sendMousePosition((contact.x * width).roundToInt(),
+                            (contact.y * height).roundToInt(), width, height)
+                    }
+                    mousePressed(current.isNotEmpty() || (next.buttons and 1) != 0)
+                } else mousePressed(false)
+            }
+        }
+    }
+
+    private fun clearTouchOnly() {
+        touches.values.toList().forEach { contact ->
+            engine.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_UP,
+                contact.index, contact.x, contact.y, 0f)
+        }
+        touches.clear()
+    }
+
+    private fun motion(port: Int, state: CompanionMotionState?) {
+        val data = state ?: return
+        if (data.mask and 1 != 0)
+            engine.sendMotion(port, MoonBridge.LI_MOTION_TYPE_ACCEL, data.ax, data.ay, data.az)
+        if (data.mask and 2 != 0)
+            engine.sendMotion(port, MoonBridge.LI_MOTION_TYPE_GYRO, data.gx, data.gy, data.gz)
     }
 }
