@@ -180,8 +180,16 @@ class MoonlightStreamActivity : ComponentActivity() {
         sessionProfile = qualityProfile
         displayReady = false
         displayPreparation = lifecycleScope.launch {
-            displayResult = displaySession.prepare(sessionProfile, preferences.displayModeWhitelist,
-                preferences.displaySwitchPauseMs)
+            displayResult = try {
+                displaySession.prepare(sessionProfile, preferences.displayModeWhitelist,
+                    preferences.displaySwitchPauseMs)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Exception) {
+                timber.log.Timber.w(error, "Moonlight display preparation failed")
+                displaySession.restore()
+                displaySession.snapshot(unavailable = true)
+            }
             displayReady = true
         }
         inputManager.registerInputDeviceListener(deviceListener, null)
@@ -309,19 +317,25 @@ private fun MoonlightStreamContent(
     // Surface identity is separate from the mutable next-connection profile. No decoder or
     // remote app launch occurs while the physical display is still switching.
     var binding by remember { mutableStateOf<MoonlightSurfaceBinding?>(null) }
+    var startFailed by remember { mutableStateOf(false) }
     LaunchedEffect(engine, hostId, appId, binding, displayReady, sessionProfile) {
+        startFailed = false
         val target = binding ?: return@LaunchedEffect
         if (!displayReady || !target.surface.isValid) return@LaunchedEffect
         // A resize/return from background can follow asynchronous teardown of the old stream.
         val idle = withTimeoutOrNull(5_000L) {
-            while (engine.status.value.active) delay(50L)
+            while (engine.isBusy()) delay(50L)
             true
         } ?: false
-        if (!idle || !target.surface.isValid) return@LaunchedEffect
+        if (!target.surface.isValid) return@LaunchedEffect
+        if (!idle) {
+            startFailed = true
+            return@LaunchedEffect
+        }
         if (engine.start(hostId, appId, target.surface, sessionProfile,
                 displayResult.mode?.refreshRate, displayResult.hdr10)) {
             try { awaitCancellation() } finally { engine.stop() }
-        }
+        } else startFailed = true
     }
     var panel by remember { mutableStateOf(MoonlightPlaybackPage.NONE) }
     var panelOrigin by remember { mutableStateOf(MoonlightPlaybackPage.NONE) }
@@ -417,12 +431,7 @@ private fun MoonlightStreamContent(
                 }
             },
         )
-        if (!displayReady) {
-            Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
-                Text(stringResource(R.string.moonlight_display_switching))
-            }
-        }
-        if (controlsShown || status.phase != MoonlightStreamPhase.STREAMING) {
+        if (!displayReady || controlsShown || status.phase != MoonlightStreamPhase.STREAMING || startFailed) {
             ReferencePlayerOverlayBackground()
             ReferencePlayerClock(Modifier.align(Alignment.TopEnd).padding(top = 32.dp, end = 48.dp))
             Column(
@@ -435,6 +444,7 @@ private fun MoonlightStreamContent(
                     artworkUrl = null,
                     contextLine = "Moonlight · GameStream",
                     subtitle = if (!displayReady) stringResource(R.string.moonlight_display_switching)
+                    else if (startFailed) stringResource(R.string.moonlight_stream_failed)
                     else status.error ?: stringResource(when (status.phase) {
                         MoonlightStreamPhase.STREAMING -> R.string.moonlight_stream_running
                         MoonlightStreamPhase.ENDED -> R.string.moonlight_stream_ended

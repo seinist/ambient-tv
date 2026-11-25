@@ -26,7 +26,7 @@ internal class MoonlightDisplaySession(private val activity: Activity) {
         val hdr10 = runCatching {
             val display = ContextCompat.getDisplayOrDefault(activity)
             val types = if (Build.VERSION.SDK_INT >= 34) display.mode.supportedHdrTypes
-                else display.hdrCapabilities.supportedHdrTypes
+                else display.hdrCapabilities?.supportedHdrTypes ?: intArrayOf()
             Display.HdrCapabilities.HDR_TYPE_HDR10 in types
         }.getOrDefault(false)
         return MoonlightDisplayResult(mode, hdr10, unavailable)

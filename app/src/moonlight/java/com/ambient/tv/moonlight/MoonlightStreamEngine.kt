@@ -159,6 +159,9 @@ class MoonlightStreamEngine @Inject constructor(
         return true
     }
 
+    /** Failed sessions can still own native teardown even after their public phase changes. */
+    fun isBusy(): Boolean = synchronized(lock) { active != null }
+
     fun stop() {
         val current = synchronized(lock) { active } ?: return
         stopSession(current)

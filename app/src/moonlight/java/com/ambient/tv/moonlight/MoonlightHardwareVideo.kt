@@ -29,7 +29,7 @@ internal object MoonlightHardwareVideo {
         val manager = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
         val display = manager.getDisplay(Display.DEFAULT_DISPLAY) ?: return@runCatching false
         val types = if (Build.VERSION.SDK_INT >= 34) display.mode.supportedHdrTypes
-            else display.hdrCapabilities.supportedHdrTypes
+            else display.hdrCapabilities?.supportedHdrTypes ?: intArrayOf()
         Display.HdrCapabilities.HDR_TYPE_HDR10 in types
     }.getOrDefault(false)
 
