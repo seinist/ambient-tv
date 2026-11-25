@@ -1,0 +1,67 @@
+// GPL-3.0 Moonlight GameStream protocol module, compiled from the exact v12.2 upstream release.
+// No upstream launcher/screens/resources/activities are included in this protocol-only module.
+plugins { id("com.android.library") }
+
+val upstream = rootProject.file("third_party/moonlight-android/app")
+val sourceRoot = upstream.resolve("src/main/java")
+val nativeRoot = upstream.resolve("src/main/jni")
+require(sourceRoot.resolve("com/limelight/nvstream/http/NvHTTP.java").isFile) {
+    "Moonlight native sources missing. Run: bash scripts/fetch_moonlight_sources.sh"
+}
+require(nativeRoot.resolve("moonlight-core/moonlight-common-c/enet/include/enet/enet.h").isFile) {
+    "Pinned modified ENet source missing. Re-fetch the release recursively."
+}
+
+val apkAbiMode = providers.gradleProperty("APK_ABI")
+    .orElse(providers.environmentVariable("APK_ABI")).orElse("all").get().trim().lowercase()
+val abis = when (apkAbiMode) {
+    "arm64", "arm64-v8a" -> listOf("arm64-v8a")
+    "arm", "armv7", "armeabi-v7a" -> listOf("armeabi-v7a")
+    "x86" -> listOf("x86")
+    "x86_64", "x86-64" -> listOf("x86_64")
+    else -> listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+}
+for (abi in abis) {
+    require(nativeRoot.resolve("moonlight-core/opus/$abi/libopus.a").isFile) {
+        "Missing pinned upstream Opus static library for $abi"
+    }
+    require(nativeRoot.resolve("moonlight-core/openssl/$abi/libcrypto.a").isFile) {
+        "Missing pinned upstream OpenSSL static library for $abi"
+    }
+}
+
+android {
+    namespace = "com.limelight"
+    compileSdk = 37
+    ndkVersion = "30.0.16248370"
+    buildFeatures { buildConfig = true }
+    defaultConfig {
+        minSdk = 29
+        ndk { abiFilters += abis }
+        externalNativeBuild {
+            ndkBuild { arguments += listOf("APP_PLATFORM=android-29", "APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true") }
+        }
+    }
+    externalNativeBuild {
+        ndkBuild { path = nativeRoot.resolve("Android.mk") }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    sourceSets {
+        named("main") {
+            manifest.srcFile("src/main/AndroidManifest.xml")
+            java.setSrcDirs(listOf(sourceRoot))
+            // The official streaming protocol Java source, not its Activity/UI/database.
+            java.include("com/limelight/nvstream/**")
+            java.include("com/limelight/LimeLog.java")
+        }
+    }
+    lint { abortOnError = false }
+}
+dependencies {
+    implementation(libs.okhttp.core)
+    implementation(libs.bouncycastle.prov)
+    implementation(libs.bouncycastle.pkix)
+}
