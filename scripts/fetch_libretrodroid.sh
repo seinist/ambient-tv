@@ -29,7 +29,7 @@ remove_dir() {
     rm -rf "$dir"
 }
 
-patch_hash="$( (cd "$PATCHES" && cat ./*.patch 2>/dev/null; cat "$ROOT/scripts/native_libretro_vulkan/librashader.h" "$ROOT/scripts/native_libretro_vulkan/vulkanslangpipeline.h" "$ROOT/scripts/native_libretro_vulkan/vulkanslangpipeline.cpp" "$ROOT/scripts/native_rewind/rewindbuffer.h" "$ROOT/scripts/native_rewind/rewindbuffer.cpp" "$ROOT/scripts/native_rewind/rewindtimeline.h") | git hash-object --stdin)"
+patch_hash="$( (cd "$PATCHES" && cat ./*.patch 2>/dev/null; cat "$ROOT/scripts/native_libretro_vulkan/librashader.h" "$ROOT/scripts/native_libretro_vulkan/vulkanslangpipeline.h" "$ROOT/scripts/native_libretro_vulkan/vulkanslangpipeline.cpp" "$ROOT/scripts/native_rewind/rewindbuffer.h" "$ROOT/scripts/native_rewind/rewindbuffer.cpp" "$ROOT/scripts/native_rewind/rewindtimeline.h" "$ROOT/scripts/native_rewind/rewindcapture.h") | git hash-object --stdin)"
 marker="$COMMIT $patch_hash recursive"
 if [[ -f "$DEST/.ambient-libretrodroid" && "$(cat "$DEST/.ambient-libretrodroid")" == "$marker" ]]; then
     log "LibretroDroid $COMMIT already prepared"
@@ -77,6 +77,7 @@ cp "$ROOT/scripts/native_libretro_vulkan/vulkanslangpipeline.cpp" "$DEST/src/mai
 cp "$ROOT/scripts/native_rewind/rewindbuffer.h" "$DEST/src/main/cpp/rewindbuffer.h"
 cp "$ROOT/scripts/native_rewind/rewindbuffer.cpp" "$DEST/src/main/cpp/rewindbuffer.cpp"
 cp "$ROOT/scripts/native_rewind/rewindtimeline.h" "$DEST/src/main/cpp/rewindtimeline.h"
+cp "$ROOT/scripts/native_rewind/rewindcapture.h" "$DEST/src/main/cpp/rewindcapture.h"
 
 grep -q "RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:" "$DEST/src/main/cpp/environment.cpp" \
     || fail "Core options patch missing after apply"

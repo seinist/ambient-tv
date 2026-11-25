@@ -45,9 +45,9 @@ public:
         return buffer.getValidCount() == 0 || pending >= captureInterval();
     }
 
-    /** Call only after a successful push(data, size, pendingFrames()). */
-    void captured(const RewindBuffer& buffer) {
-        pending = 0;
+    /** A completed asynchronous capture may already be several emulated frames old. */
+    void captured(const RewindBuffer& buffer, uint64_t framesSinceCapture = 0) {
+        pending = framesSinceCapture;
         const size_t count = buffer.getValidCount();
         if (count < 2 || buffer.getStoredBytes() == 0) {
             interval = 1;

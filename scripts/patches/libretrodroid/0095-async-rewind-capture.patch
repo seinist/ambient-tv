@@ -1,0 +1,226 @@
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -195,5 +195,5 @@
+     const bool loaded = unserializeStateWithPolicy(data, size, StateLoadPolicy::StrictSize);
+     // A loaded state replaces both the paused seek and its live point.
+-    if (loaded) endRewindPreview();
++    if (loaded) clearRewindBuffer();
+     return loaded;
+ }
+@@ -203,4 +203,4 @@
+     const bool loaded = unserializeStateWithPolicy(data, size, StateLoadPolicy::CoreValidated);
+-    if (loaded) endRewindPreview();
++    if (loaded) clearRewindBuffer();
+     return loaded;
+ }
+@@ -785,5 +785,6 @@
+ void LibretroDroid::pause() {
+     LOGD("Performing libretrodroid pause");
+     audio->stop();
++    collectRewindCapture(true);
+ 
+     // Pause is queued between core frames; reset also locks out concurrent UI input.
+@@ -802,6 +803,10 @@
+     unsigned measuredFrames = 0;
+-    // Continuing from a paused seek keeps the shown point; newer history is gone.
+-    if (rewindPreview.active) commitRewindPreview();
+-    VulkanBackend::getInstance().invalidateNativeFrame();
+-    if (rewinding && rewindBuffer) {
++    // A forward frame never waits for compression. Rewind/seek needs exclusive
++    // ownership and may drain the one outstanding capture at the transition.
++    collectRewindCapture(false);
++    // Continuing from a paused seek keeps the shown point; newer history is gone.
++    if (rewindPreview.active) commitRewindPreview();
++    VulkanBackend::getInstance().invalidateNativeFrame();
++    if (rewinding && rewindBuffer) {
++        collectRewindCapture(true);
+         // Rewind does not use the forward advanceFrames path. Keep the pacing
+@@ -870,14 +875,24 @@
+         const bool recording = rewindEnabled && rewindBuffer;
+-        if (recording && frames > 0 && rewindTimeline.shouldCapture(*rewindBuffer)) {
+-            GameTraceScope captureTrace("AmbientGame rewind capture");
+-            const auto captureStart = trackRewindWork ? WorkClock::now() : WorkClock::time_point{};
+-            const size_t sz = core->retro_serialize_size();
+-            if (sz > 0 && sz <= rewindBuffer->getMaxStateSize() &&
+-                core->retro_serialize(rewindTempBuffer.get(), sz) &&
+-                rewindBuffer->push(rewindTempBuffer.get(), sz, rewindTimeline.pendingFrames())) {
+-                rewindTimeline.captured(*rewindBuffer);
++        if (recording && frames > 0 && (!rewindCapture || !rewindCapture->pending()) &&
++            rewindTimeline.shouldCapture(*rewindBuffer)) {
++            GameTraceScope captureTrace("AmbientGame rewind capture");
++            const auto captureStart = trackRewindWork ? WorkClock::now() : WorkClock::time_point{};
++            const size_t sz = core->retro_serialize_size();
++            if (sz > 0 && sz <= rewindBuffer->getMaxStateSize() &&
++                core->retro_serialize(rewindTempBuffer.get(), sz)) {
++                // Only this thread serializes the core; the worker borrows the
++                // immutable scratch and ring until collection. A busy slot is
++                // skipped, not queued, and elapsed frame spans stay exact.
++                if (rewindCapture) {
++                    rewindCapture->trySubmit(*rewindBuffer, rewindTempBuffer.get(), sz,
++                                              rewindTimeline.pendingFrames());
++                } else if (rewindBuffer->push(rewindTempBuffer.get(), sz, rewindTimeline.pendingFrames())) {
++                    rewindTimeline.captured(*rewindBuffer);
++                } else {
++                    clearRewindBuffer();
++                }
+             } else {
+                 // Never advertise fresh history while failed captures leave only
+                 // old checkpoints behind. The next valid capture starts a new chain.
+                 clearRewindBuffer();
+             }
+@@ -912,8 +927,12 @@
+-        if (recording) {
++        if (rewindCapture && rewindCapture->pending()) {
++            // Do not inspect the ring or scratch until ownership returns.
++            // Account for all frames since submission, even if recording was toggled.
++            rewindTimeline.advanced(frames);
++        } else if (recording) {
+             if (rewindBuffer->getValidCount() > 0) rewindTimeline.advanced(frames);
+             publishRewindSnapshot();
+         }
+ 
+         if (video && video->isHWAccelerated()) {
+             video->bindMainContext();
+         }
+@@ -990,5 +1009,8 @@
+ void LibretroDroid::stepForNetplay() {
+     GameTraceScope trace("AmbientGame netplay step");
+     checkVulkanFrameError();
++    // A netplay branch must not retain an offline capture, even if UI teardown is queued.
++    if (rewindBuffer && ((rewindCapture && rewindCapture->pending()) ||
++        rewindValidCount.load(std::memory_order_relaxed) > 0)) clearRewindBuffer();
+     VulkanBackend::getInstance().invalidateNativeFrame();
+     if (video && video->isHWAccelerated()) {
+@@ -1125,4 +1147,4 @@
+     rewindPreview.scratchSize = 0;
+-    rewindPreview.live.reset();
++    // Keep the preallocated live-state scratch until buffer destruction.
+     rewindPreview.liveSize = 0;
+ }
+@@ -1130,4 +1152,5 @@
+ int64_t LibretroDroid::previewRewind(uint64_t framesBack) {
+-    if (!core || !rewindEnabled || !rewindBuffer || !rewindTempBuffer ||
+-        rewindBuffer->getValidCount() == 0) return -1;
++    collectRewindCapture(true);
++    if (!core || !rewindEnabled || !rewindBuffer || !rewindTempBuffer ||
++        !rewindPreview.live || rewindBuffer->getValidCount() == 0) return -1;
+     ScopedSignalStackGuard signalStackGuard;
+@@ -1140,14 +1163,5 @@
+         const size_t size = core->retro_serialize_size();
+         if (size == 0 || size > rewindBuffer->getMaxStateSize()) return -1;
+-        try {
+-            rewindPreview.live.reset(new uint8_t[size]);
+-        } catch (const std::bad_alloc&) {
+-            LOGW("Rewind seek unavailable: no memory for the live state");
+-            return -1;
+-        }
+-        if (!core->retro_serialize(rewindPreview.live.get(), size)) {
+-            rewindPreview.live.reset();
+-            return -1;
+-        }
++        if (!core->retro_serialize(rewindPreview.live.get(), size)) return -1;
+         rewindPreview.liveSize = size;
+         rewindPreview.active = true;
+@@ -1190,4 +1204,6 @@
+ bool LibretroDroid::commitRewindPreview() {
+     if (!rewindPreview.active) return false;
++    collectRewindCapture(true);
++    if (!rewindPreview.active) return false;
+     const size_t steps = rewindPreview.steps;
+     bool kept = rewindBuffer && rewindBuffer->getValidCount() > steps;
+@@ -1220,9 +1236,11 @@
+-    // Capture scratch, anchor, codec metadata and compressed history all share
+-    // the frontend's budget; no additional state-sized codec allocation exists.
+-    const size_t budget = static_cast<size_t>(std::min<jlong>(budgetBytes, 64LL * 1024 * 1024));
+-    const size_t overhead = sizeof(rewindTimeline) + sizeof(rewindBuffer) + sizeof(rewindTempBuffer);
+-    if (budget <= overhead || stateSize >= budget - overhead) {
++    // Include the paused-preview scratch, capture scratch, worker object,
++    // anchor, codec metadata and history in the same 64 MiB data budget.
++    const size_t budget = static_cast<size_t>(std::min<jlong>(budgetBytes, 64LL * 1024 * 1024));
++    const size_t overhead = sizeof(rewindTimeline) + sizeof(rewindBuffer) +
++        sizeof(rewindTempBuffer) + sizeof(rewindPreview) + sizeof(rewindCapture) + sizeof(AsyncRewindCapture);
++    const size_t storageBudget = rewindStorageBudget(budget, stateSize, overhead);
++    if (!storageBudget) {
+         LOGE("Rewind unavailable: state size %zu does not fit budget %lld",
+              stateSize, (long long) budgetBytes);
+         return;
+     }
+@@ -1241,5 +1259,11 @@
+     try {
+-        rewindBuffer = std::make_unique<RewindBuffer>(slots, stateSize,
+-            budget - stateSize - overhead, targetFrames);
+-        rewindTempBuffer.reset(new uint8_t[stateSize]);
++        rewindBuffer = std::make_unique<RewindBuffer>(slots, stateSize, storageBudget, targetFrames);
++        rewindTempBuffer.reset(new uint8_t[stateSize]);
++        rewindPreview.live.reset(new uint8_t[stateSize]);
++        try {
++            rewindCapture = std::make_unique<AsyncRewindCapture>();
++        } catch (const std::exception& error) {
++            // Resource-constrained systems keep the safe synchronous codec.
++            LOGW("Rewind worker unavailable: %s", error.what());
++        }
+         // Sparse checkpoints are a bounded fallback for poorly compressible cores.
+@@ -1260,4 +1284,7 @@
+ void LibretroDroid::destroyRewindBuffer() {
+-    endRewindPreview();
++    // Join before any borrowed ring/scratch or preview state can be freed.
++    rewindCapture.reset();
++    endRewindPreview();
++    rewindPreview.live.reset();
+     rewindEnabled = false;
+     rewinding = false;
+@@ -1275,5 +1302,7 @@
+ void LibretroDroid::clearRewindBuffer() {
++    // Discard completion on a branch change; never let a stale worker append later.
++    if (rewindCapture) rewindCapture->collect(true);
+     endRewindPreview();
+     if (rewindBuffer) {
+         rewindBuffer->clear();
+     }
+@@ -1288,3 +1317,19 @@
+-void LibretroDroid::publishRewindSnapshot() {
++void LibretroDroid::collectRewindCapture(bool wait) {
++    if (!rewindCapture || !rewindCapture->pending()) return;
++    const auto completed = rewindCapture->collect(wait);
++    if (completed.result == RewindCaptureResult::Busy) return;
++    if (completed.result != RewindCaptureResult::Saved ||
++        rewindTimeline.pendingFrames() < completed.frameSpan) {
++        clearRewindBuffer();
++        return;
++    }
++    // The capture preceded retro_run; all frames since its submission belong
++    // to the new anchor, not the old checkpoint or the compression wall clock.
++    rewindTimeline.captured(*rewindBuffer, rewindTimeline.pendingFrames() - completed.frameSpan);
++    publishRewindSnapshot();
++}
++
++void LibretroDroid::publishRewindSnapshot() {
++    if (!rewindBuffer || (rewindCapture && rewindCapture->pending())) return;
+     // These 32-bit atomics also stay cheap on ARMv7; readers never wait for GL.
+     rewindValidCount.store(static_cast<int>(rewindBuffer->getValidCount()), std::memory_order_relaxed);
+@@ -1610,5 +1655,5 @@
+ void LibretroDroid::reset() {
+     ScopedSignalStackGuard signalStackGuard;
+-    endRewindPreview();
++    clearRewindBuffer();
+     core->retro_reset();
+ }
+diff --git a/src/main/cpp/libretrodroid.h b/src/main/cpp/libretrodroid.h
+--- a/src/main/cpp/libretrodroid.h
++++ b/src/main/cpp/libretrodroid.h
+@@ -49,4 +49,5 @@
+ #include "rewindbuffer.h"
+ #include "rewindtimeline.h"
++#include "rewindcapture.h"
+ #include "stateloadpolicy.h"
+ #include "contentaspect.h"
+@@ -290,4 +291,7 @@
+     std::unique_ptr<uint8_t[]> rewindTempBuffer;
+-    RewindTimeline rewindTimeline;
++    // Declaration order ensures the worker is joined before borrowed scratch/ring destruction.
++    std::unique_ptr<AsyncRewindCapture> rewindCapture;
++    RewindTimeline rewindTimeline;
++    void collectRewindCapture(bool wait);
+     void publishRewindSnapshot();
+     /** A paused seek: the live state to return to, and the shown stored state. */
