@@ -19,6 +19,7 @@
 #include "vulkan/vulkanbackend.h"
 #undef private
 #include "utils/libretrodroidexception.h"
+#include "ambientgametrace.h"
 
 using libretrodroid::VulkanBackend;
 template<class T> T object(uintptr_t value) { return reinterpret_cast<T>(value); }
@@ -458,7 +459,39 @@ void managedBoundary() {
     std::puts("PASS production frontend boundary raises typed managed error after returning from core");
 }
 
+namespace {
+struct FakeGameTraceBackend {
+    static inline bool active = false;
+    static inline unsigned begins = 0, ends = 0, depth = 0;
+    static bool enabled() noexcept { return active; }
+    static void begin(const char*) noexcept { ++begins; ++depth; }
+    static void end() noexcept { assert(depth > 0); ++ends; --depth; }
+};
+
+void traceScopeContracts() {
+    using Scope = libretrodroid::BasicGameTraceScope<FakeGameTraceBackend>;
+    { Scope disabled("disabled"); }
+    assert(FakeGameTraceBackend::begins == 0 && FakeGameTraceBackend::ends == 0);
+    FakeGameTraceBackend::active = true;
+    {
+        Scope outer("outer");
+        try {
+            Scope inner("inner");
+            throw std::runtime_error("test unwind");
+        } catch (const std::runtime_error&) {
+            assert(FakeGameTraceBackend::depth == 1);
+        }
+        FakeGameTraceBackend::active = false;
+    }
+    assert(FakeGameTraceBackend::begins == 2 && FakeGameTraceBackend::ends == 2);
+    assert(FakeGameTraceBackend::depth == 0);
+    assert(libretrodroid::traceGameCall("host return", [] { return 42; }) == 42);
+    std::puts("PASS opt-in native trace scopes balance on exception and tracing toggle");
+}
+}
+
 int main() {
+    traceScopeContracts();
     timeoutsPreserveWork();
     errorsStopWorkAndResize();
     resetAndSubmitFailures();

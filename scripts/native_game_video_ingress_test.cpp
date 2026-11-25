@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Execute the unmodified production handleVideoRefresh body against controlled
 // bridge acceptance and source metadata. GPU rendering is tested separately on EGL.
+#include "ambientgametrace.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
