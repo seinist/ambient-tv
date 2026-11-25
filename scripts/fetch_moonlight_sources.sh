@@ -82,6 +82,10 @@ trap - EXIT
 PROTOCOL="$DEST/app/protocol-only-src/com/limelight"
 mkdir -p "$PROTOCOL"
 cp -a "$DEST/app/src/main/java/com/limelight/nvstream" "$PROTOCOL/nvstream"
+# Ambient TV already uses Android NsdManager for on-demand discovery. The
+# upstream JmDNS implementation is launcher-specific and requires javax.jmdns;
+# it is not part of the game streaming transport or auth protocol.
+rm -rf "$PROTOCOL/nvstream/mdns"
 cp "$DEST/app/src/main/java/com/limelight/LimeLog.java" "$PROTOCOL/LimeLog.java"
 ENET_SHA="$(git -C "$DEST/$SUBMODULE/enet" rev-parse HEAD)"
 printf 'android=%s\ncommon-c=%s\nenet=%s\npatch=%s\n' "$REF" "$GITLINK" "$ENET_SHA" "$PATCH_SHA" > "$DEST/.ambient-moonlight-pins"
