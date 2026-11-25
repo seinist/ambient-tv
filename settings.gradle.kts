@@ -29,8 +29,10 @@ project(":app").buildFileName = "build.gradle.kts"
 // Compile the official GPL-3.0 Moonlight GameStream core only when explicitly requested.
 // All four ABIs are prepared by bash scripts/fetch_moonlight_sources.sh.
 // Normal builds do not resolve or package this native dependency.
+// "1" and "true" both opt in, like MONOGRAM_NATIVE; ./build.sh passes the environment variable.
 val moonlightNative = providers.gradleProperty("MOONLIGHT_NATIVE")
-    .orElse(providers.environmentVariable("MOONLIGHT_NATIVE")).orElse("false").get().toBoolean()
+    .orElse(providers.environmentVariable("MOONLIGHT_NATIVE")).orElse("0").get()
+    .let { it == "1" || it.equals("true", ignoreCase = true) }
 if (moonlightNative) {
     require(file("third_party/moonlight-android/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java").isFile) {
         "Moonlight upstream sources absent. Run: bash scripts/fetch_moonlight_sources.sh"

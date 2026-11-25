@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
-# Fetch exact upstream Moonlight Android tag + its own nested GameStream native dependencies.
-# Source preparation only; this script does NOT build a playable Moonlight client.
+# Fetch the pinned Moonlight Android release together with the GameStream native dependencies that
+# release pins itself (moonlight-common-c, its modified ENet and nanors) and apply Ambient TV's
+# reviewed patches. Only the protocol layer is staged for the :moonlight_native module; upstream's
+# launcher UI is never compiled.
+#
+# Idempotent: a tree prepared from the same pins, patches and staging rules is kept. A tree prepared
+# from other pins (for example after ./build.sh libs-update moonlight) is replaced automatically,
+# because this script owns third_party/moonlight-android. A directory it did not create stops the
+# script instead of being deleted.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROPERTIES="$ROOT/gradle/external-versions.properties"
 read_pin() { sed -n "s/^$1=//p" "$PROPERTIES" | head -n 1; }
+log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'Moonlight source preparation: %s\n' "$*" >&2; exit 1; }
 
 UPSTREAM="$(read_pin MOONLIGHT_ANDROID_REPO)"
@@ -14,86 +22,125 @@ TAG="$(read_pin MOONLIGHT_ANDROID_TAG)"
 SUBMODULE="app/src/main/jni/moonlight-core/moonlight-common-c"
 DEST="$ROOT/third_party/moonlight-android"
 WORK="$ROOT/third_party/.moonlight-download"
+MARKER_NAME=".ambient-moonlight-pins"
+# Bump when the staged file set changes, so existing trees are prepared again.
+STAGING_VERSION=2
 
 [[ "$UPSTREAM" == "https://github.com/moonlight-stream/moonlight-android.git" ]] || die "unexpected upstream"
 [[ "$REF" =~ ^[[:xdigit:]]{40}$ ]] || die "full pinned commit required"
 [[ "$TAG" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || die "invalid release tag"
 command -v git >/dev/null || die "git not found"
+# No background gc/maintenance in the throwaway clone: it would still write while it is moved.
+export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=gc.auto GIT_CONFIG_VALUE_0=0 \
+    GIT_CONFIG_KEY_1=maintenance.auto GIT_CONFIG_VALUE_1=false GIT_TERMINAL_PROMPT=0
 
 PATCH_DIR="$ROOT/scripts/patches/moonlight"
-[[ -f "$PATCH_DIR/0001-use-per-install-client-identity.patch" &&
-   -f "$PATCH_DIR/0002-strict-host-certificate-pin.patch" &&
-   -f "$PATCH_DIR/0003-no-tls-to-plaintext-fallback.patch" &&
-   -f "$PATCH_DIR/0004-bound-pairing-wait.patch" &&
-   -f "$PATCH_DIR/0005-align-native-shared-library-16k.patch" &&
-   -f "$PATCH_DIR/0006-safe-native-stream-stop.patch" ]] || die "reviewed Moonlight patches missing"
-PATCH_SHA="$(cat "$PATCH_DIR"/*.patch | git hash-object --stdin)"
-if [[ -f "$DEST/.ambient-moonlight-pins" &&
-      "$(head -n 1 "$DEST/.ambient-moonlight-pins")" == "android=$REF" &&
-      "$(sed -n 's/^patch=//p' "$DEST/.ambient-moonlight-pins")" == "$PATCH_SHA" &&
+shopt -s nullglob
+PATCHES=("$PATCH_DIR"/*.patch)
+shopt -u nullglob
+[[ ${#PATCHES[@]} -gt 0 ]] || die "reviewed Moonlight patches missing in $PATCH_DIR"
+PATCH_SHA="$( { cat "${PATCHES[@]}"; printf 'staging=%s\n' "$STAGING_VERSION"; } | git hash-object --stdin)"
+
+if [[ -f "$DEST/$MARKER_NAME" &&
+      "$(head -n 1 "$DEST/$MARKER_NAME")" == "android=$REF" &&
+      "$(sed -n 's/^patch=//p' "$DEST/$MARKER_NAME")" == "$PATCH_SHA" &&
       -f "$DEST/$SUBMODULE/src/Connection.c" &&
       -f "$DEST/$SUBMODULE/enet/include/enet/enet.h" &&
-      -f "$DEST/app/protocol-only-src/com/limelight/LimeLog.java" ]]; then
-  printf 'Already prepared upstream Moonlight %s\n' "$REF"
-  exit 0
+      -f "$DEST/app/protocol-only-src/com/limelight/LimeLog.java" &&
+      -f "$DEST/app/protocol-only-src/com/limelight/binding/video/MediaCodecHelper.java" ]]; then
+    printf 'Moonlight %s (%s) already prepared\n' "$TAG" "$REF"
+    exit 0
 fi
-[[ ! -e "$DEST" ]] || die "existing $DEST requires explicit review/removal"
-[[ ! -e "$WORK" ]] || die "existing $WORK requires explicit review/removal"
-mkdir -p "$ROOT/third_party"
-trap 'rm -rf "$WORK"' EXIT
 
+remove_dir() {
+    local dir="$1" attempt
+    for attempt in 1 2 3 4 5; do
+        rm -rf "$dir" 2>/dev/null && return 0
+        sleep 1
+    done
+    rm -rf "$dir"
+}
+
+if [[ -e "$DEST" ]]; then
+    # Only a tree this script prepared is replaced; anything else needs a person to look at it.
+    [[ -f "$DEST/$MARKER_NAME" ]] || die "$DEST exists but was not prepared by this script; review and remove it"
+    log "Replacing Moonlight sources prepared from other pins or patches"
+fi
+# The scratch directory belongs to this script; a leftover from an interrupted run is removed.
+remove_dir "$WORK"
+mkdir -p "$ROOT/third_party"
+trap 'remove_dir "$WORK"' EXIT
+
+log "Fetching Moonlight Android $TAG ($REF)"
 git init -q "$WORK"
-git -C "$WORK" config gc.auto 0
 git -C "$WORK" remote add origin "$UPSTREAM"
 git -C "$WORK" fetch -q --depth 1 origin "$REF"
 git -C "$WORK" checkout -q --detach FETCH_HEAD
 [[ "$(git -C "$WORK" rev-parse HEAD)" == "$REF" ]] || die "fetched commit differs from pin"
 
 git -C "$WORK" fetch -q --depth 1 origin "refs/tags/$TAG:refs/tags/$TAG"
-[[ "$(git -C "$WORK" rev-parse "$TAG^{commit}")" == "$REF" ]] || die "release tag does not match commit"
+[[ "$(git -C "$WORK" rev-parse "$TAG^{commit}")" == "$REF" ]] || die "release tag $TAG does not match commit $REF"
 GITLINK="$(git -C "$WORK" ls-tree HEAD "$SUBMODULE" | awk '$1 == "160000" && $2 == "commit" { print $3 }')"
 [[ "$GITLINK" =~ ^[[:xdigit:]]{40}$ ]] || die "common-c gitlink missing"
 
-# Uses exactly the native core, modified ENet and nanors the official release pinned.
+# Exactly the native core, modified ENet and nanors the official release pinned.
 # Never replace the ENet gitlink with a random system or package-manager version.
 git -C "$WORK" submodule update --init --recursive --depth 1 -- "$SUBMODULE"
 [[ "$(git -C "$WORK/$SUBMODULE" rev-parse HEAD)" == "$GITLINK" ]] || die "common-c commit mismatch"
 [[ -f "$WORK/$SUBMODULE/enet/include/enet/enet.h" ]] || die "modified ENet missing"
 [[ -f "$WORK/$SUBMODULE/nanors/rs.c" ]] || die "nanors missing"
 [[ -f "$WORK/app/src/main/jni/moonlight-core/Android.mk" ]] || die "native build contract missing"
+for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+    [[ -s "$WORK/app/src/main/jni/moonlight-core/opus/$abi/libopus.a" ]] || die "upstream Opus for $abi missing"
+    [[ -s "$WORK/app/src/main/jni/moonlight-core/openssl/$abi/libcrypto.a" ]] || die "upstream OpenSSL for $abi missing"
+done
 
-# Apply the single reviewed, fail-closed Ambient TV identity patch to the pinned source.
-# It does not change TLS, pairing challenge validation or the modified ENet transport.
-for patch in "$PATCH_DIR"/*.patch; do
-    git -C "$WORK" apply --check "$patch" || die "upstream changed; patch needs review: $patch"
+# Reviewed, fail-closed patches. A patch that no longer applies means upstream changed the code it
+# protects: stop instead of building an unreviewed client.
+for patch in "${PATCHES[@]}"; do
+    git -C "$WORK" apply --check "$patch" 2>/dev/null || die "upstream changed; patch needs review: $(basename "$patch")"
     git -C "$WORK" apply "$patch"
 done
-grep -q 'this.uniqueId = uniqueId;' "$WORK/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java" ||
-    die "client identity patch did not apply"
-grep -q 'Pinned host certificate changed' "$WORK/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java" ||
-    die "strict certificate pin patch did not apply"
-grep -q 'A previously paired host must never be silently downgraded' "$WORK/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java" ||
-    die "HTTPS anti-downgrade patch did not apply"
-grep -q 'readTimeout(120, TimeUnit.SECONDS)' "$WORK/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java" ||
-    die "bounded PIN wait patch did not apply"
-grep -q 'max-page-size=16384' "$WORK/app/src/main/jni/moonlight-core/Android.mk" ||
-    die "16-KiB ELF alignment patch did not apply"
+NVHTTP="$WORK/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java"
+grep -q 'this.uniqueId = uniqueId;' "$NVHTTP" || die "client identity patch did not apply"
+grep -q 'Pinned host certificate changed' "$NVHTTP" || die "strict certificate pin patch did not apply"
+grep -q 'A previously paired host must never be silently downgraded' "$NVHTTP" || die "HTTPS anti-downgrade patch did not apply"
+grep -q 'readTimeout(120, TimeUnit.SECONDS)' "$NVHTTP" || die "bounded PIN wait patch did not apply"
+grep -q 'max-page-size=16384' "$WORK/app/src/main/jni/moonlight-core/Android.mk" || die "16-KiB ELF alignment patch did not apply"
 grep -q 'nativeSlotHeld.compareAndSet(true, false)' "$WORK/app/src/main/java/com/limelight/nvstream/NvConnection.java" ||
     die "safe native stream stop patch did not apply"
+grep -q 'Moonlight-core start and stop are serialized here' "$WORK/app/src/main/java/com/limelight/nvstream/NvConnection.java" ||
+    die "serialized native stream stop patch did not apply"
+grep -q 'context.connListener.displayMessage(AMBIENT_OTHER_APP_RUNNING);' "$WORK/app/src/main/java/com/limelight/nvstream/NvConnection.java" ||
+    die "no-implicit-remote-quit patch did not apply"
 
+# Stage only the protocol layer: nvstream, LimeLog and the decoder helper (vendor low-latency
+# options, AV1/HEVC decoder whitelists). Not Moonlight's Android launcher, preferences or UI.
+PROTOCOL="$WORK/app/protocol-only-src/com/limelight"
+mkdir -p "$PROTOCOL/binding/video"
+cp -a "$WORK/app/src/main/java/com/limelight/nvstream" "$PROTOCOL/nvstream"
+# Ambient TV uses Android NsdManager for on-demand discovery. The upstream JmDNS implementation is
+# launcher-specific and needs javax.jmdns; it is not part of the streaming transport or auth.
+rm -rf "$PROTOCOL/nvstream/mdns"
+cp "$WORK/app/src/main/java/com/limelight/LimeLog.java" "$PROTOCOL/LimeLog.java"
+HELPER="$WORK/app/src/main/java/com/limelight/binding/video/MediaCodecHelper.java"
+[[ -f "$HELPER" ]] || die "MediaCodecHelper missing upstream"
+# The helper only imports PreferenceConfiguration (the launcher's settings class) without using it.
+# Drop exactly that import; any real use is an upstream change that needs review.
+[[ "$(grep -c 'PreferenceConfiguration' "$HELPER")" == "1" ]] ||
+    die "MediaCodecHelper now uses PreferenceConfiguration; review before staging"
+grep -v '^import com\.limelight\.preferences\.PreferenceConfiguration;$' "$HELPER" > "$PROTOCOL/binding/video/MediaCodecHelper.java"
+if grep -E '^import com\.limelight\.' "$PROTOCOL/binding/video/MediaCodecHelper.java" | grep -v 'com\.limelight\.LimeLog;' >/dev/null; then
+    die "MediaCodecHelper depends on further launcher classes; review before staging"
+fi
+
+ENET_SHA="$(git -C "$WORK/$SUBMODULE/enet" rev-parse HEAD)"
+printf 'android=%s\ntag=%s\ncommon-c=%s\nenet=%s\npatch=%s\n' "$REF" "$TAG" "$GITLINK" "$ENET_SHA" "$PATCH_SHA" > "$WORK/$MARKER_NAME"
+
+# Swap in the prepared tree only after every check passed.
+if [[ -e "$DEST" ]]; then
+    remove_dir "$DEST"
+fi
 mv "$WORK" "$DEST"
 trap - EXIT
-# Include only the pinned official protocol Java packages, not Moonlight's entire
-# Android launcher/UI. The nested file tree is unmodified and reproducibly copied.
-PROTOCOL="$DEST/app/protocol-only-src/com/limelight"
-mkdir -p "$PROTOCOL"
-cp -a "$DEST/app/src/main/java/com/limelight/nvstream" "$PROTOCOL/nvstream"
-# Ambient TV already uses Android NsdManager for on-demand discovery. The
-# upstream JmDNS implementation is launcher-specific and requires javax.jmdns;
-# it is not part of the game streaming transport or auth protocol.
-rm -rf "$PROTOCOL/nvstream/mdns"
-cp "$DEST/app/src/main/java/com/limelight/LimeLog.java" "$PROTOCOL/LimeLog.java"
-ENET_SHA="$(git -C "$DEST/$SUBMODULE/enet" rev-parse HEAD)"
-printf 'android=%s\ncommon-c=%s\nenet=%s\npatch=%s\n' "$REF" "$GITLINK" "$ENET_SHA" "$PATCH_SHA" > "$DEST/.ambient-moonlight-pins"
-printf 'Pinned Moonlight sources prepared in %s\n' "$DEST"
-printf 'Pairing, JNI bridge and streaming player are still NOT integrated.\n'
+printf 'Moonlight %s prepared in %s (common-c %s, ENet %s)\n' "$TAG" "$DEST" "$GITLINK" "$ENET_SHA"

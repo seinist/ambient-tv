@@ -136,11 +136,14 @@ require(appDisplayName.isNotBlank() && appDisplayName.none { it == '\n' || it ==
 val externalVersions = loadProjectProperties("gradle/external-versions.properties")
 val vulkanVlcAar = file("libs/libvlc-vulkan.aar")
 // Full GameStream native core is opt-in until its authenticated Ambient TV adapter is complete.
+// "1" and "true" both opt in, like MONOGRAM_NATIVE; ./build.sh passes the environment variable.
 val moonlightNative = providers.gradleProperty("MOONLIGHT_NATIVE")
-    .orElse(providers.environmentVariable("MOONLIGHT_NATIVE")).orElse("false").get().toBoolean()
+    .orElse(providers.environmentVariable("MOONLIGHT_NATIVE")).orElse("0").get()
+    .let { it == "1" || it.equals("true", ignoreCase = true) }
 // Experimental UI and discovery only until native transport and pairing are usable.
 val moonlightExperimental = providers.gradleProperty("MOONLIGHT_EXPERIMENTAL")
-    .orElse(providers.environmentVariable("MOONLIGHT_EXPERIMENTAL")).orElse("false").get().toBoolean()
+    .orElse(providers.environmentVariable("MOONLIGHT_EXPERIMENTAL")).orElse("0").get()
+    .let { it == "1" || it.equals("true", ignoreCase = true) }
 
 val monogramEnabled = (providers.gradleProperty("MONOGRAM_NATIVE").orElse(
     providers.environmentVariable("MONOGRAM_NATIVE")

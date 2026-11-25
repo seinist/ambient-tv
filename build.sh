@@ -25,13 +25,17 @@
 #   ./build.sh nnedi3-shaders # pre-bundle additional NNEDI3 win8x4/win8x6 assets
 #   ./build.sh clean-mpv      # rebuild native MPV libraries from scratch
 #   ./build.sh gen-keystore   # create keystore/release.jks
-#   ./build.sh libs-check [svp|monogram|libretro]  # check managed libraries, or only one
-#   ./build.sh libs-update [svp|monogram|libretro] # update pins/assets/lockfile (no native build)
-#                               # includes Monogram, LibretroDroid and cores/cores.json; lib-check / lib-update are aliases
+#   ./build.sh libs-check [svp|monogram|libretro|moonlight]  # check managed libraries, or only one
+#   ./build.sh libs-update [svp|monogram|libretro|moonlight] # update pins/assets/lockfile (no native build)
+#                               # includes Monogram, LibretroDroid, cores/cores.json and Moonlight
+#                               # (kept at its old release when a reviewed patch no longer applies);
+#                               # lib-check / lib-update are aliases
 #
 # Environment overrides:
 #   MONOGRAM_NATIVE=1         Include Monogram in debug or single-ABI APKs (GPL distribution).
 #   MONOGRAM_NATIVE=0         Omit Monogram from ./build.sh release.
+#   MOONLIGHT_NATIVE=1        Include the native Moonlight/Sunshine GameStream client (GPL-3.0);
+#                             its pinned sources are prepared automatically.
 #   MONOGRAM_ABIS="arm64-v8a" Restrict standalone Monogram native build to ABI(s).
 #   SKIP_MPV_NATIVE=1         Do not build/check MPV before Android artifacts.
 #   REBUILD_MPV=1             Force rebuilding MPV even when .so files exist.
@@ -552,6 +556,18 @@ ensure_monogram_native() {
     MONOGRAM_ABIS="$selected" bash "$MONOGRAM_BUILD_SCRIPT"
 }
 
+moonlight_native_enabled() {
+    case "${MOONLIGHT_NATIVE:-0}" in 1|true|TRUE|True) return 0 ;; *) return 1 ;; esac
+}
+
+# Moonlight/Sunshine: the pinned, patched upstream release (third_party/moonlight-android), only
+# when MOONLIGHT_NATIVE=1. Gradle reads the same variable and then builds :moonlight_native.
+ensure_moonlight_sources() {
+    moonlight_native_enabled || return 0
+    log "Preparing pinned Moonlight GameStream sources (MOONLIGHT_NATIVE=1, GPL-3.0)"
+    bash "$ROOT_DIR/scripts/fetch_moonlight_sources.sh" || fail "Moonlight sources could not be prepared."
+}
+
 # Games: the pinned, patched LibretroDroid module (third_party/libretrodroid).
 ensure_libretrodroid() {
     "$ROOT_DIR/scripts/fetch_libretrodroid.sh" || fail "LibretroDroid could not be prepared."
@@ -996,6 +1012,7 @@ build_debug() {
     prepare_nnedi3_quality_ladder
     ensure_spotify
     ensure_libretrodroid
+    ensure_moonlight_sources
     ensure_librashader_native "${SUPPORTED_ABIS[*]}"
     ensure_youtube_engine
     ensure_mpv
@@ -1084,6 +1101,7 @@ build_release_variant() {
     ensure_monogram_native "$abi_mode"
     ensure_spotify
     ensure_libretrodroid
+    ensure_moonlight_sources
     ensure_librashader_native "$abi_mode"
     ensure_youtube_engine
     ensure_mpv
@@ -1206,6 +1224,7 @@ build_release() {
     prepare_nnedi3_quality_ladder
     ensure_spotify
     ensure_libretrodroid
+    ensure_moonlight_sources
     ensure_librashader_native "${SUPPORTED_ABIS[*]}"
     ensure_youtube_engine
     ensure_mpv
@@ -1345,7 +1364,7 @@ Android: debug, release, arm64, armv7, x86, x86_64, all, clean, gen-keystore
 Deploy: arm64-adb, armv7-adb, x86-adb, x86_64-adb [adb-ip[:port]]
 Native: youtube-engine, spotify, clean-spotify, mpv, clean-mpv, svp,
         nnedi3-shaders, projectm, clean-projectm, monogram
-Libraries: libs-check [svp|monogram|libretro], libs-update [svp|monogram|libretro],
+Libraries: libs-check [svp|monogram|libretro|moonlight], libs-update [svp|monogram|libretro|moonlight],
            monogram-check, monogram-update, monogram-size [abi|all]
 
 Libretro cores on GitHub Actions (main):
@@ -1377,7 +1396,7 @@ esac
 if [[ "$MODE" == "libs-check" || "$MODE" == "lib-check" || "$MODE" == "deps-check" || "$MODE" == "libraries-check" ]]; then
     command -v python3 >/dev/null 2>&1 || fail "python3 is required"
     [[ -f "$LIB_UPDATE_SCRIPT" ]] || fail "Missing library updater: $LIB_UPDATE_SCRIPT"
-    [[ $# -le 2 ]] || fail "Usage: $0 $MODE [svp|monogram|libretro]"
+    [[ $# -le 2 ]] || fail "Usage: $0 $MODE [svp|monogram|libretro|moonlight]"
     library_args=()
     [[ $# -eq 1 ]] || library_args=(--only "$2")
     python3 "$LIB_UPDATE_SCRIPT" --check "${library_args[@]}"
@@ -1386,7 +1405,7 @@ fi
 if [[ "$MODE" == "libs-update" || "$MODE" == "lib-update" || "$MODE" == "deps-update" || "$MODE" == "libraries-update" ]]; then
     command -v python3 >/dev/null 2>&1 || fail "python3 is required"
     [[ -f "$LIB_UPDATE_SCRIPT" ]] || fail "Missing library updater: $LIB_UPDATE_SCRIPT"
-    [[ $# -le 2 ]] || fail "Usage: $0 $MODE [svp|monogram|libretro]"
+    [[ $# -le 2 ]] || fail "Usage: $0 $MODE [svp|monogram|libretro|moonlight]"
     library_args=()
     [[ $# -eq 1 ]] || library_args=(--only "$2")
     python3 "$LIB_UPDATE_SCRIPT" --apply "${library_args[@]}"

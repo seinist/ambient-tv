@@ -15,9 +15,9 @@ import org.robolectric.annotation.Config
 class MoonlightInputRoutingTest {
     @Test fun dpadReleaseAndOsdHandoffClearRemoteButtonStates() {
         val frames = mutableListOf<Pair<Int, Int>>()
-        val router = MoonlightControllerRouter { _, mask, buttons, _, _, _, _, _, _ ->
+        val router = MoonlightControllerRouter(output = { _, mask, buttons, _, _, _, _, _, _ ->
             frames += mask.toInt() to buttons
-        }
+        })
         assertTrue(router.onKey(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_UP)))
         assertEquals(1, frames.last().first)
         assertNotEquals(0, frames.last().second)

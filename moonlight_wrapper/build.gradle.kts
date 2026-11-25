@@ -1,5 +1,6 @@
-// GPL-3.0 Moonlight GameStream protocol module, compiled from the exact v12.2 upstream release.
-// No upstream launcher/screens/resources/activities are included in this protocol-only module.
+// GPL-3.0 Moonlight GameStream protocol module, compiled from the exact upstream release pinned in
+// gradle/external-versions.properties (./build.sh libs-update moonlight moves it after checking the
+// reviewed patches). No upstream launcher screens, resources or activities are compiled.
 plugins { id("com.android.library") }
 
 val upstream = rootProject.file("third_party/moonlight-android/app")
@@ -21,6 +22,12 @@ val abis = when (apkAbiMode) {
     "x86_64", "x86-64" -> listOf("x86_64")
     else -> listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
 }
+// The release's own decoder helper parses and rewrites H.264 SPS with jcodec. Take the exact
+// version from the pinned upstream build file, so ./build.sh libs-update moonlight keeps it in step.
+val upstreamJcodec = Regex("""org\.jcodec:jcodec:([0-9][0-9.]*)""")
+    .find(upstream.resolve("build.gradle").readText())?.groupValues?.get(1)
+    ?: error("Pinned Moonlight build.gradle no longer declares org.jcodec:jcodec; review the update")
+
 for (abi in abis) {
     require(nativeRoot.resolve("moonlight-core/opus/$abi/libopus.a").isFile) {
         "Missing pinned upstream Opus static library for $abi"
@@ -37,6 +44,8 @@ android {
     buildFeatures { buildConfig = true }
     defaultConfig {
         minSdk = 29
+        // JNI calls back into MoonBridge by name; R8 must keep that contract in release APKs.
+        consumerProguardFiles("consumer-rules.pro")
         ndk { abiFilters += abis }
         externalNativeBuild {
             ndkBuild { arguments += listOf("APP_PLATFORM=android-29", "APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true") }
@@ -60,6 +69,8 @@ android {
     lint { abortOnError = false }
 }
 dependencies {
+    // H264Utils/SeqParameterSet are used by Ambient TV's renderer for the upstream SPS fixups.
+    api("org.jcodec:jcodec:$upstreamJcodec")
     implementation(libs.okhttp.core)
     implementation(libs.bouncycastle.prov)
     implementation(libs.bouncycastle.pkix)
