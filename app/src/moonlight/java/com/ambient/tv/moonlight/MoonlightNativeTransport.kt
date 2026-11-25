@@ -87,6 +87,32 @@ class MoonlightNativeTransport @Inject constructor(
         MoonlightVerifiedHost(host, info.httpsPort, pinned)
     }
 
+    /** Authenticated cover-art asset; do not expose the self-signed host URL to normal image loaders. */
+    suspend fun loadArtwork(hostId: String, appId: Int): ByteArray = withContext(Dispatchers.IO) {
+        require(appId > 0)
+        val host = verifiedHost(hostId)
+        val http = makeHttp(host.profile, host.pinnedCertificate)
+        http.getBoxArt(com.limelight.nvstream.http.NvApp("Moonlight", appId, false)).use { stream ->
+            val output = java.io.ByteArrayOutputStream(16 * 1024)
+            val chunk = ByteArray(8192)
+            while (true) {
+                val length = stream.read(chunk)
+                if (length < 0) break
+                if (output.size() + length > 3 * 1024 * 1024)
+                    throw IOException("Moonlight artwork exceeds 3 MiB")
+                output.write(chunk, 0, length)
+            }
+            output.toByteArray().takeIf { it.isNotEmpty() }
+                ?: throw IOException("Sunshine has no artwork for this app")
+        }
+    }
+
+    /** Explicit remote quit, separate from disconnect. Never invoked automatically on Back. */
+    suspend fun quitRemoteApp(hostId: String): Boolean = withContext(Dispatchers.IO) {
+        val host = verifiedHost(hostId)
+        makeHttp(host.profile, host.pinnedCertificate).quitApp()
+    }
+
     /** Device-local forget. Does NOT terminate the active game or send remote unpair commands. */
     fun forgetHost(hostId: String) = trust.clear(hostId)
 
