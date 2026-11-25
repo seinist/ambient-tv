@@ -32,6 +32,7 @@ internal class MoonlightControllerRouter(
 
     fun onKey(event: KeyEvent): Boolean {
         if (event.action !in setOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) return false
+        if (event.device?.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC) return false
         if (!isController(event.source) && event.keyCode !in DPAD_CODES) return false
         val flag = keyFlag(event.keyCode) ?: return false
         val pad = getPad(event.deviceId) ?: return false
