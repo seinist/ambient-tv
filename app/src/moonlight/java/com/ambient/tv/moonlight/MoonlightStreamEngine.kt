@@ -48,6 +48,7 @@ class MoonlightStreamEngine @Inject constructor(
         val hostId: String,
         val appId: Int,
         var connection: NvConnection? = null,
+        var advertisedControllerMask: Int = 1,
         var video: MoonlightMediaCodecRenderer? = null,
         var audio: MoonlightAudioTrackRenderer? = null,
         var started: Boolean = false,
@@ -102,6 +103,7 @@ class MoonlightStreamEngine @Inject constructor(
                     8 -> MoonBridge.AUDIO_CONFIGURATION_71_SURROUND
                     else -> MoonBridge.AUDIO_CONFIGURATION_STEREO
                 }
+                val initialMask = synchronized(lock) { 1 or localControllerMask or remoteMask() }
                 val config = StreamConfiguration.Builder()
                     .setApp(NvApp(app.title, app.id, app.hdrSupported))
                     .setResolution(valid.width, valid.height)
@@ -112,7 +114,7 @@ class MoonlightStreamEngine @Inject constructor(
                     .setSupportedVideoFormats(videoFormat)
                     .setAudioConfiguration(audioConfig)
                     .setRemoteConfiguration(StreamConfiguration.STREAM_CFG_AUTO)
-                    .setAttachedGamepadMaskByCount(1)
+                    .setAttachedGamepadMask(initialMask)
                     .setColorSpace(if (MoonlightHardwareVideo.isHdr10Format(videoFormat))
                         MoonBridge.COLORSPACE_REC_2020 else MoonBridge.COLORSPACE_REC_709)
                     .setColorRange(MoonBridge.COLOR_RANGE_LIMITED)
@@ -125,6 +127,7 @@ class MoonlightStreamEngine @Inject constructor(
                 val stillOwned = synchronized(lock) {
                     if (active !== session || session.cancelled) false else {
                         session.connection = connection
+                        session.advertisedControllerMask = initialMask
                         session.video = video
                         session.audio = audio
                         mutable.value = MoonlightStreamStatus(
@@ -180,32 +183,67 @@ class MoonlightStreamEngine @Inject constructor(
         active === session && !session.cancelled
     }
 
+    /** Hotplug-capable GameStream controller mask, shared with authenticated Companion phones. */
+    private fun desiredControllerMask(): Int = localControllerMask or remoteMask()
+
+    /** All native calls are outside the session lock; callbacks must not block on JNI. */
+    private data class PadFrame(
+        val connection: NvConnection?,
+        val mask: Short,
+        val arrivals: List<Int>,
+    )
+
+    private fun padFrame(change: () -> Unit): PadFrame = synchronized(lock) {
+        change()
+        val session = active?.takeIf { it.started && !it.cancelled }
+        val nextMask = desiredControllerMask()
+        val newPorts = if (session == null) emptyList() else (0..3).filter { port ->
+            nextMask and (1 shl port) != 0 &&
+                session.advertisedControllerMask and (1 shl port) == 0
+        }
+        if (session != null) session.advertisedControllerMask =
+            session.advertisedControllerMask or nextMask
+        PadFrame(session?.connection, nextMask.toShort(), newPorts)
+    }
+
+    private fun sendArrivals(frame: PadFrame) {
+        val connection = frame.connection ?: return
+        for (port in frame.arrivals) {
+            runCatching {
+                connection.sendControllerArrivalEvent(
+                    port.toByte(), frame.mask, MoonBridge.LI_CTYPE_XBOX,
+                    0xFFFF, (MoonBridge.LI_CCAP_ANALOG_TRIGGERS.toInt() or
+                        MoonBridge.LI_CCAP_RUMBLE.toInt() or
+                        MoonBridge.LI_CCAP_ACCEL.toInt() or
+                        MoonBridge.LI_CCAP_GYRO.toInt()).toShort(),
+                )
+            }
+        }
+    }
+
     fun sendGamepad(
         port: Short, mask: Short, buttons: Int, lt: Byte, rt: Byte,
         lx: Short, ly: Short, rx: Short, ry: Short,
     ) {
-        val frame = synchronized(lock) {
-            localControllerMask = mask.toInt() and 0xF
-            active?.takeIf { it.started && !it.cancelled }?.connection to
-                (localControllerMask or remoteMask()).toShort()
-        }
+        if (port.toInt() !in 0..3) return
+        val frame = padFrame { localControllerMask = mask.toInt() and 0xF }
+        sendArrivals(frame)
         runCatching {
-            frame.first?.sendControllerInput(port, frame.second, buttons, lt, rt, lx, ly, rx, ry)
+            frame.connection?.sendControllerInput(port, frame.mask, buttons, lt, rt, lx, ly, rx, ry)
         }
     }
 
-    /** Remote claims use exactly the same GameStream controller slots as local pads. */
+    /** Phone claims and physical devices never silently share a port. */
     fun remoteReservedPorts(): Set<Int> = synchronized(lock) { remoteControllerPorts.toSet() }
 
     fun setRemotePortActive(port: Int, enabled: Boolean) {
         if (port !in 0..3) return
-        val frame = synchronized(lock) {
+        val frame = padFrame {
             if (enabled) remoteControllerPorts.add(port) else remoteControllerPorts.remove(port)
-            active?.takeIf { it.started && !it.cancelled }?.connection to
-                (localControllerMask or remoteMask()).toShort()
         }
+        sendArrivals(frame)
         if (!enabled) runCatching {
-            frame.first?.sendControllerInput(port.toShort(), frame.second, 0,
+            frame.connection?.sendControllerInput(port.toShort(), frame.mask, 0,
                 0, 0, 0, 0, 0, 0)
         }
     }
@@ -214,13 +252,11 @@ class MoonlightStreamEngine @Inject constructor(
         port: Int, buttons: Int, lt: Byte, rt: Byte,
         lx: Short, ly: Short, rx: Short, ry: Short,
     ) {
-        val frame = synchronized(lock) {
-            if (port !in remoteControllerPorts) return
-            active?.takeIf { it.started && !it.cancelled }?.connection to
-                (localControllerMask or remoteMask()).toShort()
-        }
+        if (port !in remoteReservedPorts()) return
+        val frame = padFrame {}
+        sendArrivals(frame)
         runCatching {
-            frame.first?.sendControllerInput(port.toShort(), frame.second, buttons,
+            frame.connection?.sendControllerInput(port.toShort(), frame.mask, buttons,
                 lt, rt, lx, ly, rx, ry)
         }
     }
@@ -273,6 +309,7 @@ class MoonlightStreamEngine @Inject constructor(
                 session.cancelled
             }
             if (wasCancelled) stopSession(session)
+            else sendArrivals(padFrame {})
         }
         override fun connectionTerminated(errorCode: Int) {
             if (errorCode != 0 && !session.cancelled)
