@@ -32,4 +32,8 @@
     <string name="game_metadata_settings_credentials_hint">Zugangsdaten werden nur auf Wunsch gesichert oder an einen TV übertragen.</string>
     <string name="game_metadata_settings_ss_setup_hint">Entwickler-ID und Passwort erhältst du auf screenscraper.fr.</string>
     <string name="game_metadata_settings_tgdb_setup_hint">Einen API-Key erhältst du auf thegamesdb.net.</string>
+
+    <string name="game_metadata_account_settings">Konto &amp; Zugang</string>
+    <string name="game_metadata_account_settings_hint">Zugangsdaten und optionale API-Schlüssel</string>
+    <string name="game_metadata_scope_all">Diese Einstellungen gelten für alle Spiele.</string>
 </resources>

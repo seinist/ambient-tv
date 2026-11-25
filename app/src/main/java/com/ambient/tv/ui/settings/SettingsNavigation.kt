@@ -16,6 +16,13 @@ internal fun settingsShortcutWakeTarget(key: String?): String? {
         ?.takeIf { it in setOf("plex", "jellyfin", "emby", "tvheadend", "files", "dlna") }
 }
 
+/** Explicit Games subpages are stable shortcuts from the library, not untrusted list keys. */
+internal fun settingsShortcutGamesTarget(key: String?): String? {
+    if (settingsShortcutCategory(key) != SettingsCategory.GAMES) return null
+    return key?.substringAfter(':', missingDelimiterValue = "")?.lowercase(Locale.ROOT)
+        ?.takeIf { it in setOf("home", "systems", "metadata", "controls", "play", "storage") }
+}
+
 /** A small, explicit allowlist of stable lazy-list anchors for external Settings shortcuts.
  * A source-provided string never becomes an arbitrary list key or search query. */
 internal fun settingsShortcutItemKey(key: String?): String? {
@@ -299,3 +306,11 @@ internal fun settingsSearchPrefersStartPageTab(query: String): Boolean {
 /** The Wake page lists saved server profiles above the machine groups when there is a choice to make. */
 internal fun hasWakeProfilePicker(state: SettingsUiState): Boolean =
     state.savedServers.size > 1 || state.savedJellyfinServers.size > 1 || state.savedEmbyServers.size > 1
+
+
+/** A nested settings view intercepts Back before its parent category or caller is left. */
+internal class SettingsNestedBackState {
+    var onBack: (() -> Unit)? = null
+}
+
+internal val LocalSettingsNestedBack = staticCompositionLocalOf<SettingsNestedBackState?> { null }

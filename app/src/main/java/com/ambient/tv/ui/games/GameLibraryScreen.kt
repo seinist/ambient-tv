@@ -94,12 +94,16 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.util.Locale
 
+/** The folder manager keeps one destination visible at a time; neither ROMs nor OSD are altered. */
+internal enum class GameLibraryManagerPage { HOME, ADD, SOURCES, FOLDER }
+
 /** The existing app's Files source and game player remain responsible for transport and playback. */
 @Composable
 fun GameLibraryScreen(
     initialSection: String,
     onSelect: (LibraryGame) -> Unit,
     onOpenDetails: (LibraryGame) -> Unit,
+    onOpenGameSettings: (String?) -> Unit = {},
     startManaging: Boolean = false,
     onBack: () -> Unit,
     model: GameLibraryViewModel = hiltViewModel(),
@@ -113,6 +117,8 @@ fun GameLibraryScreen(
     var choosingDatSystem by remember { mutableStateOf(false) }
     var choosingNameDatabase by remember { mutableStateOf(false) }
     var datSystemId by rememberSaveable { mutableStateOf("snes") }
+    var managerPage by rememberSaveable { mutableStateOf(GameLibraryManagerPage.HOME) }
+    var selectedFolderId by rememberSaveable { mutableStateOf<String?>(null) }
     val controls = rememberGameLibraryBrowseControls()
     val handheld = LocalHandheldUi.current
     val metadataSettingsFocus = remember { FocusRequester() }
@@ -139,6 +145,7 @@ fun GameLibraryScreen(
             choosingNameDatabase -> choosingNameDatabase = false
             choosingSystem -> choosingSystem = false
             state.selectedSource != null -> if (!model.folderUp()) model.closePicker()
+            managerPage != GameLibraryManagerPage.HOME -> { managerPage = GameLibraryManagerPage.HOME; selectedFolderId = null }
             managing -> if (startManaging) onBack() else managing = false
             else -> onBack()
         }
@@ -195,6 +202,8 @@ fun GameLibraryScreen(
                     choosingSystem = false
                     choosingDatSystem = false
                     choosingNameDatabase = false
+                    managerPage = GameLibraryManagerPage.HOME
+                    selectedFolderId = null
                     if (!managing) model.closePicker()
                 }
             },
@@ -269,6 +278,9 @@ fun GameLibraryScreen(
                 } else {
                     GameFolderManager(
                         state = state, choosingSystem = choosingSystem,
+                        managerPage = managerPage, selectedFolderId = selectedFolderId,
+                        onManagerPage = { managerPage = it },
+                        onOpenFolder = { selectedFolderId = it.id; managerPage = GameLibraryManagerPage.FOLDER },
                         onChooseSystem = { choosingSystem = it },
                         onSelectSource = model::selectSource,
                         onEnter = model::enterFolder,
@@ -290,6 +302,8 @@ fun GameLibraryScreen(
                             model.refreshNameCatalogs()
                         },
                         onMetadataSettings = { metadataSettingsOpen = true },
+                        onOpenSystemsSettings = { onOpenGameSettings("systems") },
+                        onOpenAllSettings = { onOpenGameSettings("home") },
                         metadataSettingsModifier = Modifier.focusRequester(metadataSettingsFocus),
                         onEditSource = { source -> networkEditor = source },
                         onWake = model::wakeCurrentSource,
@@ -314,6 +328,8 @@ fun GameLibraryScreen(
                 TvActionButton(stringResource(R.string.game_library_remove), onClick = {
                     model.remove(folder)
                     removing = null
+                    managerPage = GameLibraryManagerPage.HOME
+                    selectedFolderId = null
                 })
             },
         ) {
@@ -572,6 +588,10 @@ private fun GameNameDatabasePage(state: GameLibraryUiState, onLoad: (String?) ->
 private fun GameFolderManager(
     state: GameLibraryUiState,
     choosingSystem: Boolean,
+    managerPage: GameLibraryManagerPage,
+    selectedFolderId: String?,
+    onManagerPage: (GameLibraryManagerPage) -> Unit,
+    onOpenFolder: (GameLibraryFolder) -> Unit,
     onChooseSystem: (Boolean) -> Unit,
     onSelectSource: (FileSource) -> Unit,
     onEnter: (com.ambient.tv.data.files.FileEntry) -> Unit,
@@ -586,6 +606,8 @@ private fun GameFolderManager(
     onImportDat: () -> Unit,
     onLoadNameDatabases: () -> Unit,
     onMetadataSettings: () -> Unit,
+    onOpenSystemsSettings: () -> Unit,
+    onOpenAllSettings: () -> Unit,
     metadataSettingsModifier: Modifier = Modifier,
     onEditSource: (FileSource) -> Unit,
     onWake: () -> Unit,
@@ -608,93 +630,157 @@ private fun GameFolderManager(
     }
     val source = state.selectedSource
     if (source == null) {
-        TvLazyColumn(modifier = Modifier.fillMaxSize(), allowUpExit = true,
-            verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            // Same rows as Settings: destinations are navigation rows, actions stay buttons.
-            item {
-                com.ambient.tv.ui.common.SettingsNavigationRow(title = stringResource(R.string.game_metadata_settings_title),
-                    onClick = onMetadataSettings, modifier = metadataSettingsModifier, icon = Icons.Filled.Settings)
-            }
-            item {
-                com.ambient.tv.ui.common.SettingsNavigationRow(title = stringResource(R.string.game_library_add_local),
-                    onClick = onAddLocal, icon = Icons.Filled.CreateNewFolder)
-            }
-            item {
-                com.ambient.tv.ui.common.SettingsNavigationRow(title = stringResource(R.string.game_library_add_network),
-                    onClick = onAddNetwork, icon = Icons.Filled.Storage)
-            }
-            item {
-                com.ambient.tv.ui.common.SettingsNavigationRow(title = stringResource(R.string.game_name_databases_load),
-                    summary = stringResource(R.string.game_name_databases_hint),
-                    onClick = onLoadNameDatabases, enabled = !state.scanning, icon = Icons.Filled.CloudDownload)
-            }
-            item {
-                com.ambient.tv.ui.common.SettingsNavigationRow(title = stringResource(R.string.game_library_import_dat),
-                    onClick = onImportDat, icon = Icons.AutoMirrored.Filled.LibraryBooks)
-            }
-            state.message?.let { feedback -> item { com.ambient.tv.ui.common.SettingsHint(feedback) } }
-            item { com.ambient.tv.ui.settings.SettingsSubheader(stringResource(R.string.game_library_existing_sources)) }
-            items(state.sources, key = { it.id }) { entry ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    com.ambient.tv.ui.common.SettingsNavigationRow(title = entry.name,
-                        summary = entry.kind.uppercase() + " · " + stringResource(if (entry.showInFiles)
-                            R.string.game_library_source_files_games else R.string.game_library_source_games_only),
-                        onClick = { onSelectSource(entry) }, icon = Icons.Filled.Folder,
-                        modifier = Modifier.weight(1f))
-                    if (!entry.showInFiles && entry.network) {
-                        TvActionButton(stringResource(R.string.files_edit),
-                            onClick = { onEditSource(entry) }, icon = Icons.Filled.Edit)
+        val folder = state.folders.firstOrNull { it.id == selectedFolderId }
+        when {
+            managerPage == GameLibraryManagerPage.FOLDER && folder != null -> {
+                TvLazyColumn(modifier = Modifier.fillMaxSize(), allowUpExit = true,
+                    verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    item {
+                        com.ambient.tv.ui.settings.SettingsSubheader(
+                            stringResource(R.string.game_library_folder_details), firstInContent = true)
                     }
-                    if (!entry.showInFiles && state.folders.none { it.sourceId == entry.id }) {
-                        TvActionButton(stringResource(R.string.game_library_remove),
-                            onClick = { onDeleteSource(entry) }, icon = Icons.Filled.Delete)
+                    item {
+                        Text((GameSystems.byId(folder.systemId)?.shortName ?: stringResource(R.string.game_library_auto)) +
+                            " · " + folder.path, style = MaterialTheme.typography.titleSmall, maxLines = 2)
+                        Text(state.sources.firstOrNull { it.id == folder.sourceId }?.name
+                            ?: stringResource(R.string.game_folder_fallback),
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                }
-            }
-            item { com.ambient.tv.ui.settings.SettingsSubheader(stringResource(R.string.game_library_assigned)) }
-            items(state.folders, key = { it.id }) { folder ->
-                Column(Modifier.fillMaxWidth().padding(vertical = 5.dp),
-                    verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    Text((state.sources.firstOrNull { it.id == folder.sourceId }?.name
-                        ?: stringResource(R.string.game_folder_fallback)) +
-                        " / " + folder.path + " · " +
-                        (GameSystems.byId(folder.systemId)?.shortName ?: stringResource(R.string.game_library_auto)),
-                        maxLines = 2)
-                    if (state.activeScanFolderId == folder.id) {
+                    if (state.activeScanFolderId == folder.id) item {
                         Text(gameLibraryProgressMessage(androidx.compose.ui.platform.LocalContext.current, state),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    com.ambient.tv.ui.mobile.DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (state.activeScanFolderId == folder.id) {
-                            TvActionButton(stringResource(R.string.game_library_scan_cancel),
-                                onClick = onCancelScan, icon = Icons.Filled.Close)
-                        } else {
-                            TvActionButton(stringResource(R.string.game_folder_scan),
-                                onClick = { onScan(folder) }, enabled = !state.scanning && folder.id !in state.removingFolders,
+                    item {
+                        com.ambient.tv.ui.common.SettingsActionRow {
+                            if (state.activeScanFolderId == folder.id)
+                                TvActionButton(stringResource(R.string.game_library_scan_cancel),
+                                    onClick = onCancelScan, icon = Icons.Filled.Close)
+                            else TvActionButton(stringResource(R.string.game_library_folder_scan_only),
+                                onClick = { onScan(folder) },
+                                enabled = !state.scanning && folder.id !in state.removingFolders,
                                 icon = Icons.Filled.Refresh)
                         }
-                        TvActionButton(stringResource(R.string.game_folder_enrich),
-                            onClick = { onEnrich(folder) }, enabled = !state.scanning && folder.id !in state.removingFolders,
-                            icon = Icons.Filled.Image)
                     }
-                    com.ambient.tv.ui.mobile.DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TvActionButton(stringResource(R.string.game_library_show_in_files),
-                            onClick = { onFolderFileVisibility(folder, !folder.alsoShowInFiles) },
-                            enabled = folder.id !in state.removingFolders,
-                            selected = folder.alsoShowInFiles,
-                            icon = if (folder.alsoShowInFiles) Icons.Filled.Visibility
-                                else Icons.Filled.VisibilityOff)
-                        TvActionButton(stringResource(R.string.game_library_remove),
-                            onClick = { onRemove(folder) }, enabled = folder.id !in state.removingFolders,
-                            icon = Icons.Filled.Delete)
+                    item {
+                        com.ambient.tv.ui.common.SettingsActionRow {
+                            TvActionButton(stringResource(R.string.game_library_folder_enrich_only),
+                                onClick = { onEnrich(folder) },
+                                enabled = !state.scanning && folder.id !in state.removingFolders,
+                                icon = Icons.Filled.Image)
+                        }
                     }
-                    if (folder.id in state.removingFolders) Text(stringResource(R.string.game_folder_removing),
-                        style = MaterialTheme.typography.bodySmall)
+                    item {
+                        com.ambient.tv.ui.common.SettingsActionRow {
+                            TvActionButton(stringResource(R.string.game_library_show_in_files),
+                                onClick = { onFolderFileVisibility(folder, !folder.alsoShowInFiles) },
+                                enabled = folder.id !in state.removingFolders, selected = folder.alsoShowInFiles,
+                                icon = if (folder.alsoShowInFiles) Icons.Filled.Visibility else Icons.Filled.VisibilityOff)
+                        }
+                    }
+                    item {
+                        com.ambient.tv.ui.common.SettingsActionRow {
+                            TvActionButton(stringResource(R.string.game_library_remove),
+                                onClick = { onRemove(folder) }, enabled = folder.id !in state.removingFolders,
+                                icon = Icons.Filled.Delete)
+                        }
+                    }
+                    if (folder.id in state.removingFolders) item {
+                        Text(stringResource(R.string.game_folder_removing), style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
-            item { com.ambient.tv.ui.common.SettingsHint(stringResource(R.string.game_library_add_network_hint)) }
+            managerPage == GameLibraryManagerPage.ADD -> {
+                TvLazyColumn(modifier = Modifier.fillMaxSize(), allowUpExit = true,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item { com.ambient.tv.ui.settings.SettingsSubheader(
+                        stringResource(R.string.game_library_add_options), firstInContent = true) }
+                    item { com.ambient.tv.ui.common.SettingsNavigationRow(
+                        title = stringResource(R.string.game_library_add_local),
+                        onClick = onAddLocal, icon = Icons.Filled.CreateNewFolder) }
+                    item { com.ambient.tv.ui.common.SettingsNavigationRow(
+                        title = stringResource(R.string.game_library_add_network),
+                        onClick = onAddNetwork, icon = Icons.Filled.Storage) }
+                    item { com.ambient.tv.ui.settings.SettingsSubheader(
+                        stringResource(R.string.game_library_choose_source)) }
+                    items(state.sources, key = { "source-select:" + it.id }) { entry ->
+                        com.ambient.tv.ui.common.SettingsNavigationRow(
+                            title = entry.name, summary = entry.kind.uppercase(),
+                            onClick = { onSelectSource(entry) }, icon = Icons.Filled.Folder)
+                    }
+                    item { com.ambient.tv.ui.common.SettingsHint(stringResource(R.string.game_library_add_network_hint)) }
+                }
+            }
+            managerPage == GameLibraryManagerPage.SOURCES -> {
+                TvLazyColumn(modifier = Modifier.fillMaxSize(), allowUpExit = true,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item { com.ambient.tv.ui.settings.SettingsSubheader(
+                        stringResource(R.string.game_library_sources_manage), firstInContent = true) }
+                    item { com.ambient.tv.ui.common.SettingsHint(stringResource(R.string.game_library_sources_hint)) }
+                    items(state.sources, key = { "source-manage:" + it.id }) { entry ->
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            com.ambient.tv.ui.common.SettingsNavigationRow(
+                                title = entry.name,
+                                summary = entry.kind.uppercase() + " · " + stringResource(if (entry.showInFiles)
+                                    R.string.game_library_source_files_games else R.string.game_library_source_games_only),
+                                onClick = { onSelectSource(entry) }, icon = Icons.Filled.Folder,
+                                modifier = Modifier.weight(1f))
+                            if (!entry.showInFiles && entry.network) TvActionButton(stringResource(R.string.files_edit),
+                                onClick = { onEditSource(entry) }, icon = Icons.Filled.Edit)
+                            if (!entry.showInFiles && state.folders.none { it.sourceId == entry.id })
+                                TvActionButton(stringResource(R.string.game_library_remove),
+                                    onClick = { onDeleteSource(entry) }, icon = Icons.Filled.Delete)
+                        }
+                    }
+                }
+            }
+            else -> {
+                TvLazyColumn(modifier = Modifier.fillMaxSize(), allowUpExit = true,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item { com.ambient.tv.ui.common.SettingsNavigationRow(
+                        title = stringResource(R.string.game_library_add_options),
+                        onClick = { onManagerPage(GameLibraryManagerPage.ADD) }, icon = Icons.Filled.CreateNewFolder) }
+                    item { com.ambient.tv.ui.common.SettingsNavigationRow(
+                        title = stringResource(R.string.games_settings_metadata_heading),
+                        summary = stringResource(R.string.games_settings_metadata_summary),
+                        onClick = onMetadataSettings, modifier = metadataSettingsModifier,
+                        icon = Icons.Filled.Settings) }
+                    item { com.ambient.tv.ui.common.SettingsNavigationRow(
+                        title = stringResource(R.string.games_settings_systems_heading),
+                        summary = stringResource(R.string.games_settings_systems_summary),
+                        onClick = onOpenSystemsSettings, icon = Icons.Filled.SportsEsports) }
+                    item { com.ambient.tv.ui.common.SettingsNavigationRow(
+                        title = stringResource(R.string.games_settings_all_title),
+                        summary = stringResource(R.string.games_settings_all_hint),
+                        onClick = onOpenAllSettings, icon = Icons.Filled.Tune) }
+                    item { com.ambient.tv.ui.common.SettingsNavigationRow(
+                        title = stringResource(R.string.game_library_sources_manage),
+                        onClick = { onManagerPage(GameLibraryManagerPage.SOURCES) }, icon = Icons.Filled.Storage) }
+                    item { com.ambient.tv.ui.settings.SettingsSubheader(
+                        stringResource(R.string.game_library_recognition_heading)) }
+                    item { com.ambient.tv.ui.common.SettingsNavigationRow(
+                        title = stringResource(R.string.game_name_databases_load),
+                        summary = stringResource(R.string.game_name_databases_hint),
+                        onClick = onLoadNameDatabases, enabled = !state.scanning, icon = Icons.Filled.CloudDownload) }
+                    item { com.ambient.tv.ui.common.SettingsNavigationRow(
+                        title = stringResource(R.string.game_library_import_dat),
+                        onClick = onImportDat, icon = Icons.AutoMirrored.Filled.LibraryBooks) }
+                    state.message?.let { feedback ->
+                        item { com.ambient.tv.ui.common.SettingsHint(feedback) }
+                    }
+                    item { com.ambient.tv.ui.settings.SettingsSubheader(
+                        stringResource(R.string.game_library_folders_heading)) }
+                    items(state.folders, key = { "folder:" + it.id }) { assigned ->
+                        val origin = state.sources.firstOrNull { it.id == assigned.sourceId }
+                        com.ambient.tv.ui.common.SettingsNavigationRow(
+                            title = (GameSystems.byId(assigned.systemId)?.shortName
+                                ?: stringResource(R.string.game_library_auto)) + " · " + assigned.path,
+                            summary = origin?.name ?: stringResource(R.string.game_folder_fallback),
+                            onClick = { onOpenFolder(assigned) }, icon = Icons.Filled.Folder)
+                    }
+                }
+            }
         }
         return
     }

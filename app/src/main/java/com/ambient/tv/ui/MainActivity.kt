@@ -3626,6 +3626,7 @@ private fun AmbientTvApp(
                                 onBack = { navController.popBackStack() },
                                 onSelect = { game -> gameSelections.select(game.fileId, appPreferences.mediaSelectionBehaviorKey) },
                                 onOpenDetails = { game -> gameSelections.details(game.fileId) },
+                                onOpenGameSettings = { target -> openSettings("games", target) },
                             )
                         }
                     }
@@ -3636,6 +3637,7 @@ private fun AmbientTvApp(
                                 onBack = ::focusSidebar,
                                 onSelect = { game -> gameSelections.select(game.fileId, appPreferences.mediaSelectionBehaviorKey) },
                                 onOpenDetails = { game -> gameSelections.details(game.fileId) },
+                                onOpenGameSettings = { target -> openSettings("games", target) },
                             )
                         }
                     }
@@ -3647,6 +3649,7 @@ private fun AmbientTvApp(
                                 onBack = ::focusSidebar,
                                 onSelect = { game -> gameSelections.select(game.fileId, appPreferences.mediaSelectionBehaviorKey) },
                                 onOpenDetails = { game -> gameSelections.details(game.fileId) },
+                                onOpenGameSettings = { target -> openSettings("games", target) },
                             )
                         }
                     }

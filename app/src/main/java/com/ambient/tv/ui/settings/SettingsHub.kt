@@ -193,6 +193,7 @@ internal fun SettingsHub(
     var lastRegionFocus by remember { mutableStateOf<FocusRequester?>(null) }
     val dialogFocus = remember { FocusRequester() }
     val states = rememberSaveableStateHolder()
+    val nestedBack = remember { SettingsNestedBackState() }
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val uiSounds = LocalUiSoundPlayer.current
@@ -270,12 +271,13 @@ internal fun SettingsHub(
         scope.launch { withFrameNanos { }; runCatching { target?.requestFocus() } }
     }
     var searchLandingQuery by rememberSaveable(initialCategoryKey) {
-        mutableStateOf(settingsShortcutWakeTarget(initialCategoryKey))
+        mutableStateOf(settingsShortcutWakeTarget(initialCategoryKey) ?: settingsShortcutGamesTarget(initialCategoryKey))
     }
     var shortcutItemKey by rememberSaveable(initialCategoryKey) {
         mutableStateOf(settingsShortcutItemKey(initialCategoryKey))
     }
     fun openPage(target: SettingsCategory, fromLink: Boolean = false) {
+        nestedBack.onBack = null
         val resolved = when {
             target == SettingsCategory.ADVANCED -> SettingsCategory.SPOTIFY
             !handheld && target == SettingsCategory.TRANSFER -> SettingsCategory.COMPANION
@@ -408,7 +410,7 @@ internal fun SettingsHub(
             if (category == SettingsCategory.RECEIVER) append(" upnp dlna receiver empfänger handy cast zuspielen")
             if (category == SettingsCategory.SPOTIFY) append(" advanced developer client id entwickler")
             if (category == SettingsCategory.ROMM) append(" romm retro spiele games rom roms server bios firmware spielstände savestates saves")
-            if (category == SettingsCategory.GAMES) append(" spiele games libretro emulator bios firmware core cores retro konsole console cache speicher")
+            if (category == SettingsCategory.GAMES) append(" spiele games libretro emulator bios firmware core cores retro konsole console cache speicher shader bildfilter filterpaket metadaten metadata artwork cover rom spieleordner controller vibration zurueckspulen zurückspulen retroachievements hardcore")
             if (category == SettingsCategory.GAME_CONTROLS) append(" gaming spiele emulator retro libretro core konsolen system spiel controller tastatur keyboard fernbedienung remote input mapping")
             if (category == SettingsCategory.CONTROLLER) append(" player playback video audio osd gamepad controller remote tastatur keyboard belegung media buttons")
             if (category == SettingsCategory.KEY_BINDINGS) {
@@ -455,6 +457,7 @@ internal fun SettingsHub(
 
     // Back always moves to a parent level, or exits a direct shortcut to its caller.
     fun goBack() {
+        nestedBack.onBack?.let { it(); return }
         if (!parking) {
             if (page == null) back()
             else {
@@ -927,6 +930,7 @@ internal fun SettingsHub(
                             val landingQuery = searchLandingQuery
                             val externalItemKey = shortcutItemKey.takeIf { current == initialPage }
                             CompositionLocalProvider(
+                                LocalSettingsNestedBack provides nestedBack,
                                 LocalSettingsSearchLanding provides pageSearchLanding.accept(landingQuery),
                                 LocalSettingsItemIndex provides itemIndex,
                                 com.ambient.tv.ui.common.LocalSettingsPresentation provides com.ambient.tv.ui.common.SettingsPresentation.Page,
@@ -941,7 +945,7 @@ internal fun SettingsHub(
                             ) {
                             LaunchedEffect(current, landingQuery) {
                                 if (!handheld) settlingPageFocus = true
-                                if (current != SettingsCategory.NAV_SOUNDS) withTimeoutOrNull(400) {
+                                if (current != SettingsCategory.NAV_SOUNDS && current != SettingsCategory.GAMES) withTimeoutOrNull(400) {
                                     snapshotFlow { listState.layoutInfo.totalItemsCount > 0 }.first { it }
                                 }
                                 // Consume an external stable item anchor once, without restarting page focus.
