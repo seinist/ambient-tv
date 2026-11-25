@@ -82,6 +82,7 @@ internal fun BoxScope.MoonlightPlaybackPanel(
                         text = stringResource(R.string.moonlight_player_input),
                         subtitle = stringResource(R.string.moonlight_player_input_hint),
                         selected = false,
+                        enabled = status.phase == com.ambient.tv.moonlight.MoonlightStreamPhase.STREAMING,
                         onClick = { onPage(MoonlightPlaybackPage.TEXT) },
                     )
                     RightPanelChoice(
@@ -92,6 +93,7 @@ internal fun BoxScope.MoonlightPlaybackPanel(
                     RightPanelChoice(
                         text = stringResource(R.string.moonlight_quit_remote),
                         selected = false,
+                        enabled = status.phase == com.ambient.tv.moonlight.MoonlightStreamPhase.STREAMING,
                         onClick = { onPage(MoonlightPlaybackPage.QUIT) },
                     )
                 }
