@@ -11,6 +11,8 @@ data class MoonlightStreamProfile(
     /** Network bitrate in kbit/s, as expected by Moonlight's StreamConfiguration. */
     val bitrateKbps: Int = 20000,
     val codec: String = "auto",
+    /** Auto negotiates HDR10 only with a capable app, display and 10-bit hardware decoder. */
+    val hdrMode: String = "auto",
     val audioChannels: Int = 2,
 ) {
     fun validated(): MoonlightStreamProfile {
@@ -20,11 +22,13 @@ data class MoonlightStreamProfile(
         require(fps in 24..240)
         require(bitrateKbps in 1000..150_000)
         require(codec in CODECS)
+        require(hdrMode in HDR_MODES)
         require(audioChannels in setOf(2, 6, 8))
         return this
     }
     companion object {
         val CODECS = setOf("auto", "h264", "hevc", "av1")
+        val HDR_MODES = setOf("auto", "on", "off")
     }
 }
 
