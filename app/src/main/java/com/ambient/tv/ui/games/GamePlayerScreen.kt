@@ -1211,7 +1211,10 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     SideEffect {
         GameInputRouting.update(session, gameInputMode, gameInputPage)
-        com.ambient.tv.companion.CompanionRemoteInput.setGamePointerAllowed(session, showGamePointer)
+        com.ambient.tv.companion.CompanionRemoteInput.setGamePointerAllowed(
+            session, showGamePointer,
+            inMenu = gameInputMode == GameInputMode.MENU || gameInputMode == GameInputMode.DIALOG,
+        )
         // Update the native surface as well as Compose, including Vulkan's hosting view.
         // A null icon restores Android's normal menu/device pointer resolution.
         retroView.pointerIcon = if (showGamePointer) null else hiddenPointer

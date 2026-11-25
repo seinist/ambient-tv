@@ -190,6 +190,36 @@ class CompanionRemoteInputTest {
         }
     }
 
+    @Test fun pointerGameplayEndsTheMenuHoverButAcceptsFreshPointerMovement() {
+        val native = activity()
+        val pointers = mutableListOf<Pointer>()
+        val embedded = embedded(native.get().window)
+        embedded.root.addView(pointerControl(native.get(), pointers), FrameLayout.LayoutParams(-1, -1))
+        layout(embedded.root, 1920, 1080)
+        register(native.get().window) { embedded.root }
+        val game = Any()
+        try {
+            CompanionRemoteInput.setGamePointerAllowed(game, allowed = true, inMenu = true)
+            assertTrue(CompanionRemoteInput.dispatch(CompanionInput("move", x = 0.1f)))
+            assertEquals(listOf(MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE),
+                pointers.map { it.action })
+            pointers.clear()
+
+            // Closing a DS/pointer game's menu must clear its overlay even
+            // though pointer input remains allowed in both interaction modes.
+            CompanionRemoteInput.setGamePointerAllowed(game, allowed = true, inMenu = false)
+            assertEquals(listOf(MotionEvent.ACTION_HOVER_EXIT), pointers.map { it.action })
+            pointers.clear()
+            CompanionRemoteInput.setGamePointerAllowed(game, allowed = true, inMenu = false)
+            assertTrue(pointers.isEmpty())
+            assertTrue(CompanionRemoteInput.dispatch(CompanionInput("move", x = 0.1f)))
+            assertEquals(listOf(MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE),
+                pointers.map { it.action })
+        } finally {
+            CompanionRemoteInput.releaseGamePointerPolicy(game)
+        }
+    }
+
     @Test fun registeredContentCanReturnToNativeFocusTextAndWindowPixelDispatch() {
         val native = activity()
         val embedded = embedded(native.get().window)

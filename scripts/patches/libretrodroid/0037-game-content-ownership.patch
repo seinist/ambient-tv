@@ -1,0 +1,539 @@
+Ambient TV: own ROM buffers through core teardown; check file reads and VFS FD lifetime.
+
+diff --git a/src/main/cpp/gamecontent.h b/src/main/cpp/gamecontent.h
+new file mode 100644
+index 0000000..dcadb7c
+--- /dev/null
++++ b/src/main/cpp/gamecontent.h
+@@ -0,0 +1,48 @@
++/*
++ *     Ambient TV: owned libretro content and stable path lifetime.
++ *
++ *     This program is free software: you can redistribute it and/or modify
++ *     it under the terms of the GNU General Public License as published by
++ *     the Free Software Foundation, either version 3 of the License, or
++ *     (at your option) any later version.
++ */
++
++#ifndef LIBRETRODROID_GAMECONTENT_H
++#define LIBRETRODROID_GAMECONTENT_H
++
++#include <libretro.h>
++#include <string>
++#include <utility>
++#include "utils/utils.h"
++
++namespace libretrodroid {
++
++/** Keep the source bytes and path alive through core unload/deinit, including
++ * failed startup. A unique_ptr moves this owner without invalidating info.path
++ * for short strings. Full-path cores retain their original path and no buffer.
++ */
++class GameContent {
++public:
++    explicit GameContent(std::string path, Utils::ReadResult bytes = {})
++        : path(std::move(path)), bytes(std::move(bytes)) {
++        info.path = this->path.empty() ? nullptr : this->path.c_str();
++        info.data = this->bytes.data.get();
++        info.size = this->bytes.size;
++    }
++
++    GameContent(const GameContent&) = delete;
++    GameContent& operator=(const GameContent&) = delete;
++    GameContent(GameContent&&) = delete;
++    GameContent& operator=(GameContent&&) = delete;
++
++    const retro_game_info* get() const { return &info; }
++
++private:
++    std::string path;
++    Utils::ReadResult bytes;
++    retro_game_info info {};
++};
++
++}
++
++#endif
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+index 60ea356..480eab0 100644
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -99,6 +99,8 @@ void LibretroDroid::resetGlobalVariables() {
+     defaultAspectRatio = 0.0F;
+     contentAspectSnapshot.reset();
+     core = nullptr;
++    gameContent.reset();
++    diskContent.clear();
+     audio = nullptr;
+     video = nullptr;
+     fpsSync = nullptr;
+@@ -147,23 +149,23 @@ void LibretroDroid::changeDisk(unsigned int index, const std::string& path) {
+     struct retro_system_info system_info {};
+     core->retro_get_system_info(&system_info);
+ 
+-    struct retro_game_info game_info {};
+-    game_info.path = Utils::cloneToCString(path);
+-    game_info.meta = nullptr;
+-    if (system_info.need_fullpath) {
+-        game_info.data = nullptr;
+-        game_info.size = 0;
+-    } else {
+-        struct Utils::ReadResult file = Utils::readFileAsBytes(path);
+-        game_info.data = file.data;
+-        game_info.size = file.size;
+-    }
+-
+-    diskControl->set_eject_state(true);
++    auto content = std::make_unique<GameContent>(path, system_info.need_fullpath
++        ? Utils::ReadResult{} : Utils::readFileAsBytes(path));
++    // Allocate the slot before the core accepts the replacement; an allocation
++    // failure must not invalidate a buffer the core has already retained.
++    auto& retainedContent = diskContent[index];
++    if (!diskControl->set_eject_state(true)) return;
+     while (diskControl->get_num_images() <= index) {
+-        diskControl->add_image_index();
++        if (diskControl->add_image_index == nullptr || !diskControl->add_image_index()) {
++            diskControl->set_eject_state(false);
++            return;
++        }
+     }
+-    diskControl->replace_image_index(index, &game_info);
++    if (!diskControl->replace_image_index(index, content->get())) {
++        diskControl->set_eject_state(false);
++        return;
++    }
++    retainedContent = std::move(content);
+     diskControl->set_image_index(index);
+     diskControl->set_eject_state(false);
+ }
+@@ -591,57 +593,29 @@ void LibretroDroid::loadGameFromPath(const std::string& gamePath) {
+     struct retro_system_info system_info {};
+     core->retro_get_system_info(&system_info);
+ 
+-    struct retro_game_info game_info {};
+-    game_info.path = Utils::cloneToCString(gamePath);
+-    game_info.meta = nullptr;
+-
+-    if (system_info.need_fullpath) {
+-        game_info.data = nullptr;
+-        game_info.size = 0;
+-    } else {
+-        struct Utils::ReadResult file = Utils::readFileAsBytes(gamePath);
+-        game_info.data = file.data;
+-        game_info.size = file.size;
+-    }
+-
+-    bool result = core->retro_load_game(&game_info);
+-    if (!result) {
+-        LOGE("Cannot load game. Leaving.");
+-        throw std::runtime_error("Cannot load game");
+-    }
+-
+-    afterGameLoad();
++    loadGame(std::make_unique<GameContent>(gamePath, system_info.need_fullpath
++        ? Utils::ReadResult{} : Utils::readFileAsBytes(gamePath)));
+ }
+ 
+-void LibretroDroid::loadGameFromBytes(const int8_t *data, size_t size) {
++void LibretroDroid::loadGameFromBytes(std::unique_ptr<char[]> data, size_t size) {
+     LOGD("Performing libretrodroid loadGameFromBytes");
+ 
+     struct retro_system_info system_info {};
+     core->retro_get_system_info(&system_info);
+ 
+-    struct retro_game_info game_info {};
+-    game_info.path = nullptr;
+-    game_info.meta = nullptr;
+-
+     if (system_info.need_fullpath) {
+-        game_info.data = nullptr;
+-        game_info.size = 0;
+-    } else {
+-        game_info.data = data;
+-        game_info.size = size;
++        throw std::runtime_error("This core requires a game file path");
+     }
+-
+-    bool result = core->retro_load_game(&game_info);
+-    if (!result) {
+-        LOGE("Cannot load game. Leaving.");
+-        throw std::runtime_error("Cannot load game");
++    if (!data || size == 0) {
++        throw std::runtime_error("Cannot load an empty game buffer");
+     }
+-
+-    afterGameLoad();
++    loadGame(std::make_unique<GameContent>("", Utils::ReadResult{size, std::move(data)}));
+ }
+ 
+ void LibretroDroid::loadGameFromVirtualFiles(std::vector<VFSFile> virtualFiles) {
+     LOGD("Performing libretrodroid loadGameFromVirtualFiles");
++    // Do not replace the active core's VFS descriptors on a duplicate load.
++    if (gameContent) throw std::runtime_error("Unload the previous game before loading another");
+     struct retro_system_info system_info {};
+     core->retro_get_system_info(&system_info);
+ 
+@@ -655,25 +629,22 @@ void LibretroDroid::loadGameFromVirtualFiles(std::vector<VFSFile> virtualFiles)
+ 
+     bool loadUsingVFS = system_info.need_fullpath || virtualFiles.size() > 1;
+ 
+-    struct retro_game_info game_info {};
+-    game_info.path = Utils::cloneToCString(firstFilePath);
+-    game_info.meta = nullptr;
+-
+     if (loadUsingVFS) {
+         VFS::getInstance().initialize(std::move(virtualFiles));
+     }
+ 
+-    if (loadUsingVFS) {
+-        game_info.data = nullptr;
+-        game_info.size = 0;
+-    } else {
+-        struct Utils::ReadResult file = Utils::readFileAsBytes(firstFileFD);
+-        game_info.data = file.data;
+-        game_info.size = file.size;
+-    }
++    loadGame(std::make_unique<GameContent>(firstFilePath, loadUsingVFS
++        ? Utils::ReadResult{} : Utils::readFileAsBytes(firstFileFD)));
++}
+ 
+-    bool result = core->retro_load_game(&game_info);
+-    if (!result) {
++void LibretroDroid::loadGame(std::unique_ptr<GameContent> content) {
++    if (gameContent) {
++        throw std::runtime_error("Unload the previous game before loading another");
++    }
++    // Keep ownership even if retro_load_game or afterGameLoad fails. Teardown
++    // may still reference this data; destroy releases it after core deinit.
++    gameContent = std::move(content);
++    if (!core->retro_load_game(gameContent->get())) {
+         LOGE("Cannot load game. Leaving.");
+         throw std::runtime_error("Cannot load game");
+     }
+@@ -759,6 +730,8 @@ void LibretroDroid::destroy() {
+     }
+ 
+     core = nullptr;
++    gameContent.reset();
++    diskContent.clear();
+     rumble = nullptr;
+     fpsSync = nullptr;
+     audio = nullptr;
+@@ -1379,7 +1352,7 @@ std::string LibretroDroid::coreLibraryName() {
+ }
+ 
+ void LibretroDroid::setCheat(unsigned index, bool enabled, const std::string& code) {
+-    core->retro_cheat_set(index, enabled, Utils::cloneToCString(code));
++    core->retro_cheat_set(index, enabled, code.c_str());
+ }
+ 
+ bool LibretroDroid::requiresVideoRefresh() const {
+diff --git a/src/main/cpp/libretrodroid.h b/src/main/cpp/libretrodroid.h
+index f80d9eb..db9b7f0 100644
+--- a/src/main/cpp/libretrodroid.h
++++ b/src/main/cpp/libretrodroid.h
+@@ -27,6 +27,7 @@
+ #include <unordered_set>
+ #include <mutex>
+ #include <memory>
++#include <map>
+ #include <optional>
+ #include <atomic>
+ 
+@@ -51,6 +52,7 @@
+ #include "rewindbuffer.h"
+ #include "stateloadpolicy.h"
+ #include "contentaspect.h"
++#include "gamecontent.h"
+ 
+ namespace libretrodroid {
+ 
+@@ -119,7 +121,7 @@ public:
+     void reset();
+ 
+     void loadGameFromPath(const std::string &gamePath);
+-    void loadGameFromBytes(const int8_t *data, size_t size);
++    void loadGameFromBytes(std::unique_ptr<char[]> data, size_t size);
+     void loadGameFromVirtualFiles(std::vector<VFSFile> virtualFiles);
+ 
+     void onKeyEvent(unsigned int port, int action, int keyCode);
+@@ -245,6 +247,7 @@ private:
+     void updateAudioSampleRateMultiplier();
+     float findDefaultAspectRatio(const retro_system_av_info &system_av_info);
+     void afterGameLoad();
++    void loadGame(std::unique_ptr<GameContent> content);
+     void refreshTimingFromCoreIfFollowingGeometry();
+     void attachVulkanFrame(unsigned int width, unsigned int height);
+ 
+@@ -314,6 +317,9 @@ private:
+     float secondaryCrop[4] = { 0.0F, 0.0F, 0.0F, 0.0F };
+     float secondaryAspect = 0.0F;
+ 
++    // Destroy these only after retro_unload_game/retro_deinit return.
++    std::unique_ptr<GameContent> gameContent;
++    std::map<unsigned, std::unique_ptr<GameContent>> diskContent;
+     std::unique_ptr<Core> core;
+     std::unique_ptr<Audio> audio;
+     std::unique_ptr<Video> video;
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+index fb1e7fb..acf5836 100644
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -657,14 +657,15 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_loadGameFr
+ ) {
+     try {
+         size_t size = env->GetArrayLength(gameFileBytes);
+-        auto* data = new int8_t[size];
++        auto data = std::unique_ptr<char[]>(new char[size]);
+         env->GetByteArrayRegion(
+             gameFileBytes,
+             0,
+             size,
+-            reinterpret_cast<int8_t*>(data)
++            reinterpret_cast<int8_t*>(data.get())
+         );
+-        LibretroDroid::getInstance().loadGameFromBytes(data, size);
++        if (env->ExceptionCheck()) return;
++        LibretroDroid::getInstance().loadGameFromBytes(std::move(data), size);
+     } catch (std::exception &exception) {
+         LOGE("Error in loadGameFromBytes: %s", exception.what());
+         JavaUtils::throwRetroException(env, ERROR_LOAD_GAME);
+diff --git a/src/main/cpp/utils/utils.cpp b/src/main/cpp/utils/utils.cpp
+index 16be515..5ee987e 100644
+--- a/src/main/cpp/utils/utils.cpp
++++ b/src/main/cpp/utils/utils.cpp
+@@ -15,49 +15,68 @@
+  *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+  */
+ 
+-#include <iostream>
+-#include <fstream>
++#include <algorithm>
++#include <cerrno>
++#include <cstdint>
++#include <limits>
++#include <stdexcept>
++#include <system_error>
++#include <sys/stat.h>
+ #include <unistd.h>
+ 
+ #include "utils.h"
+-#include "../log.h"
+ 
+ namespace libretrodroid {
+ 
++namespace {
++
++size_t checkedFileSize(int fd) {
++    struct stat status {};
++    if (fstat(fd, &status) != 0) {
++        throw std::system_error(errno, std::generic_category(), "Cannot stat game file");
++    }
++    if (status.st_size < 0 ||
++        static_cast<uintmax_t>(status.st_size) > std::numeric_limits<size_t>::max()) {
++        throw std::runtime_error("Game file size is not representable");
++    }
++    return static_cast<size_t>(status.st_size);
++}
++
++}
++
+ Utils::ReadResult Utils::readFileAsBytes(const std::string &filePath) {
+-    std::ifstream fileStream(filePath);
+-    fileStream.seekg(0, std::ios::end);
+-    size_t size = fileStream.tellg();
+-    char* bytes = new char[size];
+-    fileStream.seekg(0, std::ios::beg);
+-    fileStream.read(bytes, size);
+-    fileStream.close();
+-
+-    return ReadResult { size, bytes };
++    std::unique_ptr<FILE, int(*)(FILE*)> file(std::fopen(filePath.c_str(), "rb"), &std::fclose);
++    if (!file) {
++        throw std::system_error(errno, std::generic_category(), "Cannot open game file");
++    }
++    return readFileAsBytes(fileno(file.get()));
+ }
+ 
+ Utils::ReadResult Utils::readFileAsBytes(const int fileDescriptor) {
+-    FILE* file = fdopen(fileDescriptor, "r");
+-    size_t size = getFileSize(file);
++    const size_t size = checkedFileSize(fileDescriptor);
++    if (size == 0) throw std::runtime_error("Cannot load an empty game file");
+ 
+-    char* bytes = new char[size];
+-    fread(bytes, sizeof(char), size, file);
+-    close(fileDescriptor);
+-    return ReadResult { size, bytes };
++    ReadResult result { size, std::unique_ptr<char[]>(new char[size]) };
++    size_t offset = 0;
++    while (offset < size) {
++        // The VFSFile owns this descriptor. Positional reads neither close it nor
++        // change its seek position; errors unwind the buffer through RAII.
++        const size_t chunk = std::min(size - offset, static_cast<size_t>(1024 * 1024));
++        const ssize_t count = pread(fileDescriptor, result.data.get() + offset, chunk,
++                                    static_cast<off_t>(offset));
++        if (count < 0) {
++            if (errno == EINTR) continue;
++            throw std::system_error(errno, std::generic_category(), "Cannot read game file");
++        }
++        if (count == 0) throw std::runtime_error("Game file ended before its reported size");
++        offset += static_cast<size_t>(count);
++    }
++    return result;
+ }
+ 
+ size_t Utils::getFileSize(FILE* file) {
+-    fseek(file, 0, SEEK_SET);
+-    fseek(file, 0, SEEK_END);
+-    size_t size = ftell(file);
+-    fseek(file, 0, SEEK_SET);
+-    return size;
+-}
+-
+-const char* Utils::cloneToCString(const std::string &input) {
+-    char* result = new char[input.length() + 1];
+-    std::strcpy(result, input.c_str());
+-    return result;
++    if (file == nullptr) throw std::runtime_error("Cannot stat a null game file");
++    return checkedFileSize(fileno(file));
+ }
+ 
+-} //namespace libretrodroid
+\ No newline at end of file
++} //namespace libretrodroid
+diff --git a/src/main/cpp/utils/utils.h b/src/main/cpp/utils/utils.h
+index b8f5240..52895e3 100644
+--- a/src/main/cpp/utils/utils.h
++++ b/src/main/cpp/utils/utils.h
+@@ -18,20 +18,23 @@
+ #ifndef LIBRETRODROID_UTILS_H
+ #define LIBRETRODROID_UTILS_H
+ 
++#include <cstddef>
++#include <cstdio>
++#include <memory>
++#include <string>
++
+ namespace libretrodroid {
+ 
+ class Utils {
+ public:
+     struct ReadResult {
+-        size_t size;
+-        char* data;
++        size_t size = 0;
++        std::unique_ptr<char[]> data;
+     };
+ 
+     static ReadResult readFileAsBytes(const std::string &filePath);
+     static ReadResult readFileAsBytes(const int fileDescriptor);
+ 
+-    static const char* cloneToCString(const std::string &input);
+-
+     static size_t getFileSize(FILE* file);
+ };
+ 
+diff --git a/src/main/cpp/vfs/fdwrapper.cpp b/src/main/cpp/vfs/fdwrapper.cpp
+index 470b1fd..22cb9ca 100644
+--- a/src/main/cpp/vfs/fdwrapper.cpp
++++ b/src/main/cpp/vfs/fdwrapper.cpp
+@@ -18,7 +18,7 @@
+ #include "fdwrapper.h"
+ 
+ libretrodroid::FDWrapper::~FDWrapper() {
+-    if (fd > 0) {
++    if (fd >= 0) {
+         close(fd);
+         fd = -1;
+     }
+diff --git a/src/main/cpp/vfs/vfs.cpp b/src/main/cpp/vfs/vfs.cpp
+index c9c9c7b..7714453 100644
+--- a/src/main/cpp/vfs/vfs.cpp
++++ b/src/main/cpp/vfs/vfs.cpp
+@@ -21,6 +21,9 @@
+ #include <optional>
+ #include <sys/stat.h>
+ #include <limits>
++#include <cstdlib>
++#include <cstring>
++#include <exception>
+ 
+ #include "vfs/vfs_implementation.h"
+ #include "../log.h"
+@@ -193,26 +196,37 @@ struct retro_vfs_file_handle* VFS::virtualOpen(const char *path, unsigned int mo
+ 
+     LOGD("VFS Performing virtual file open: %s", virtualFile->getFileName().data());
+ 
+-    auto stream = new retro_vfs_file_handle;
+-
+-    int duplicateFD = dup(virtualFile->getFD());
+-    FILE* file = fdopen(duplicateFD, "rb");
+-    size_t size = Utils::getFileSize(file);
+-
+-    LOGV("VFS Virtual file size: %i", size);
+-
+-    stream->fd = duplicateFD;
+-    stream->hints = hints;
+-    stream->size = size;
+-    stream->buf = nullptr;
+-    stream->fp = file;
+-    stream->orig_path = strdup(virtualFile->getFileName().data());
+-    stream->mappos = 0;
+-    stream->mapsize = 0;
+-    stream->mapped = nullptr;
+-    stream->scheme = VFS_SCHEME_NONE;
++    const int duplicateFD = dup(virtualFile->getFD());
++    if (duplicateFD < 0) return nullptr;
++    std::unique_ptr<FILE, int(*)(FILE*)> file(fdopen(duplicateFD, "rb"), &std::fclose);
++    if (!file) {
++        ::close(duplicateFD);
++        return nullptr;
++    }
+ 
+-    return stream;
++    try {
++        const size_t size = Utils::getFileSize(file.get());
++        if (fseeko(file.get(), 0, SEEK_SET) != 0) return nullptr;
++
++        // libretro-common closes this handle with free(), not delete. Its
++        // buffered stream already owns the duplicated FD through fclose().
++        std::unique_ptr<retro_vfs_file_handle, void(*)(void*)> stream(
++            static_cast<retro_vfs_file_handle*>(std::calloc(1, sizeof(retro_vfs_file_handle))),
++            &std::free);
++        if (!stream) return nullptr;
++        stream->fd = -1;
++        stream->hints = hints;
++        stream->size = size;
++        stream->orig_path = strdup(virtualFile->getFileName().c_str());
++        if (!stream->orig_path) return nullptr;
++        stream->scheme = VFS_SCHEME_NONE;
++        stream->fp = file.release();
++        return stream.release();
++    } catch (const std::exception& error) {
++        // Never let a C++ exception cross a core's C VFS callback boundary.
++        LOGE("Cannot open virtual game file: %s", error.what());
++        return nullptr;
++    }
+ }
+ 
+ VFSFile* VFS::findVirtualFile(const char *path) {
+@@ -224,4 +238,4 @@ VFSFile* VFS::findVirtualFile(const char *path) {
+     return nullptr;
+ }
+ 
+-} // namespace libretrodroid
+\ No newline at end of file
++} // namespace libretrodroid
+diff --git a/src/main/cpp/vfs/vfsfile.h b/src/main/cpp/vfs/vfsfile.h
+index 20de7d0..c32ccfd 100644
+--- a/src/main/cpp/vfs/vfsfile.h
++++ b/src/main/cpp/vfs/vfsfile.h
+@@ -19,6 +19,7 @@
+ #define LIBRETRODROID_VFSFILE_H
+ 
+ #include <string>
++#include <memory>
+ 
+ #include "fdwrapper.h"
+ 

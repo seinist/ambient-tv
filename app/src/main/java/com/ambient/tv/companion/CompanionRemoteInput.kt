@@ -55,14 +55,16 @@ object CompanionRemoteInput {
     private var point = Offset(0.5f, 0.5f)
     private data class Cursor(val window: Window?, val point: Offset)
     private val cursor = MutableStateFlow(Cursor(null, point))
-    private data class GamePointerPolicy(val owner: Any, val allowed: Boolean)
+    private data class GamePointerPolicy(val owner: Any, val allowed: Boolean, val inMenu: Boolean)
     private var gamePointerPolicy: GamePointerPolicy? = null
 
     /** Gameplay must not keep a menu trackpad cursor above a gamepad-only game. */
-    internal fun setGamePointerAllowed(owner: Any, allowed: Boolean) {
+    internal fun setGamePointerAllowed(owner: Any, allowed: Boolean, inMenu: Boolean = false) {
         val previous = gamePointerPolicy
-        if (previous?.owner === owner && previous.allowed == allowed) return
-        gamePointerPolicy = GamePointerPolicy(owner, allowed)
+        if (previous?.owner === owner && previous.allowed == allowed && previous.inMenu == inMenu) return
+        gamePointerPolicy = GamePointerPolicy(owner, allowed, inMenu)
+        // DS and other pointer systems allow both menu and game input. End the
+        // menu hover on this transition too; a new game movement may start one.
         hide()
     }
 

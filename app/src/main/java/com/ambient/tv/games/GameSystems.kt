@@ -32,7 +32,7 @@ data class GameCore(
     val supportedAbis: Set<String> = emptySet(),
     /** Verified libretro core-info need_fullpath; candidate for seekable VFS ROM loading. */
     val directFile: Boolean = false,
-    /** Core options that make the core render with Vulkan, and with OpenGL ES (GPU cores). */
+    /** Backend compatibility options applied after saved user options, including software-only cores. */
     val vulkanOptions: Map<String, String> = emptyMap(),
     val glOptions: Map<String, String> = emptyMap(),
     /** Runs only with one of its system's firmware files (no built-in replacement). */
@@ -168,7 +168,11 @@ object GameSystems {
         // have passed every supported ABI + 16 KB page-size validation.
         GameSystem("nds", "Nintendo DS / DSi", setOf("nds", "dsi", "ids"),
             // The libretro build server has no 32-bit x86 build of melonDS DS.
-            GameCore("melondsds", "melonDS DS", "GPL-3.0", supportedAbis = setOf("arm64-v8a", "armeabi-v7a", "x86_64")),
+            GameCore("melondsds", "melonDS DS", "GPL-3.0",
+                // melonDS DS 1.4.0 requests desktop OpenGL 3.2 / 4.3, not OpenGL ES.
+                // Override old per-core/per-game renderer choices before the core starts.
+                glOptions = mapOf("melonds_render_mode" to "software"),
+                supportedAbis = setOf("arm64-v8a", "armeabi-v7a", "x86_64")),
             bios = listOf(
                 GameBios("bios7.bin", "df692a80a5b1bc90728bc3dfc76cd948", "Nintendo DS ARM7"),
                 GameBios("bios9.bin", "a392174eb3e572fed6447e956bde4b25", "Nintendo DS ARM9"),
