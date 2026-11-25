@@ -1,0 +1,8 @@
+diff --git a/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java b/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
+--- a/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
++++ b/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
+@@ -183,3 +183,3 @@ public class NvHTTP {
+         httpClientLongConnectNoReadTimeout = httpClientLongConnectTimeout.newBuilder()
+-                .readTimeout(0, TimeUnit.MILLISECONDS)
++                .readTimeout(120, TimeUnit.SECONDS)
+                 .build();
