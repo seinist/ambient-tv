@@ -30,7 +30,8 @@ if [[ -f "$DEST/.ambient-moonlight-pins" &&
       "$(head -n 1 "$DEST/.ambient-moonlight-pins")" == "android=$REF" &&
       "$(sed -n 's/^patch=//p' "$DEST/.ambient-moonlight-pins")" == "$PATCH_SHA" &&
       -f "$DEST/$SUBMODULE/src/Connection.c" &&
-      -f "$DEST/$SUBMODULE/enet/include/enet/enet.h" ]]; then
+      -f "$DEST/$SUBMODULE/enet/include/enet/enet.h" &&
+      -f "$DEST/app/protocol-only-src/com/limelight/LimeLog.java" ]]; then
   printf 'Already prepared upstream Moonlight %s\n' "$REF"
   exit 0
 fi
@@ -76,6 +77,12 @@ grep -q 'readTimeout(120, TimeUnit.SECONDS)' "$WORK/app/src/main/java/com/limeli
 
 mv "$WORK" "$DEST"
 trap - EXIT
+# Include only the pinned official protocol Java packages, not Moonlight's entire
+# Android launcher/UI. The nested file tree is unmodified and reproducibly copied.
+PROTOCOL="$DEST/app/protocol-only-src/com/limelight"
+mkdir -p "$PROTOCOL"
+cp -a "$DEST/app/src/main/java/com/limelight/nvstream" "$PROTOCOL/nvstream"
+cp "$DEST/app/src/main/java/com/limelight/LimeLog.java" "$PROTOCOL/LimeLog.java"
 ENET_SHA="$(git -C "$DEST/$SUBMODULE/enet" rev-parse HEAD)"
 printf 'android=%s\ncommon-c=%s\nenet=%s\npatch=%s\n' "$REF" "$GITLINK" "$ENET_SHA" "$PATCH_SHA" > "$DEST/.ambient-moonlight-pins"
 printf 'Pinned Moonlight sources prepared in %s\n' "$DEST"
