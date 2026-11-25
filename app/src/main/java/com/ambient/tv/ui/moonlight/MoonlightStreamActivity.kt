@@ -32,6 +32,7 @@ import com.ambient.tv.ui.player.ReferencePlayerHeader
 import com.ambient.tv.ui.player.ReferencePlayerClock
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
