@@ -1,0 +1,1040 @@
+diff --git a/src/main/java/com/swordfish/libretrodroid/ShaderConfig.kt b/src/main/java/com/swordfish/libretrodroid/ShaderConfig.kt
+--- a/src/main/java/com/swordfish/libretrodroid/ShaderConfig.kt
++++ b/src/main/java/com/swordfish/libretrodroid/ShaderConfig.kt
+@@ -63,7 +63,8 @@
+             val vertex: String,
+             val fragment: String,
+             val linear: Boolean = false,
+-            val scale: Float = 1.0f
++            val scale: Float = 1.0f,
++            val floatFramebuffer: Boolean = false
+         )
+     }
+ 
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroShaderPass.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroShaderPass.kt
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroShaderPass.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroShaderPass.kt
+@@ -4,5 +4,6 @@
+     val vertex: String,
+     val fragment: String,
+     val linear: Boolean = false,
+-    val scale: Float = 1.0f
++    val scale: Float = 1.0f,
++    val floatFramebuffer: Boolean = false
+ )
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+@@ -1022,7 +1022,7 @@
+                 val selected = buildShader(config.filter)
+                 // Custom GLES filters follow the mandatory HDR-to-SDR prepass too.
+                 // Bound the number of passes before handing sources to native code.
+-                require(selected.passes.size <= 4 && "AMBIENT_PREPEND" !in selected.params) {
++                require(selected.passes.size <= 8 && "AMBIENT_PREPEND" !in selected.params) {
+                     "The HDR conversion pass needs a bounded, non-nested picture chain"
+                 }
+                 selected.copy(
+@@ -1032,6 +1032,7 @@
+                         fragment = config.pass.fragment,
+                         linear = config.pass.linear,
+                         scale = config.pass.scale,
++                        floatFramebuffer = config.pass.floatFramebuffer,
+                     )) + selected.passes,
+                 )
+             }
+@@ -1042,7 +1043,8 @@
+                         vertex = pass.vertex,
+                         fragment = pass.fragment,
+                         linear = pass.linear,
+-                        scale = pass.scale
++                        scale = pass.scale,
++                        floatFramebuffer = pass.floatFramebuffer,
+                     )
+                 }
+             )
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -59,9 +59,9 @@
+                          shaderType, buf);
+                     free(buf);
+                 }
+-                glDeleteShader(shader);
+-                shader = 0;
+             }
++            glDeleteShader(shader);
++            shader = 0;
+         }
+     }
+     return shader;
+@@ -75,6 +75,7 @@
+ 
+     GLuint pixelShader = loadShader(GL_FRAGMENT_SHADER, pFragmentSource);
+     if (!pixelShader) {
++        glDeleteShader(vertexShader);
+         return 0;
+     }
+ 
+@@ -100,11 +101,16 @@
+             program = 0;
+         }
+     }
++    glDeleteShader(vertexShader);
++    glDeleteShader(pixelShader);
+     return program;
+ }
+ 
+ bool Video::tryBuildShaderChain(const ShaderManager::Chain& shaders, std::vector<ShaderChainEntry>& outChain) {
+     outChain.clear();
++    if (shaders.passes.empty() || shaders.passes.size() > 9) return false;
++    GLint textureUnits = 0;
++    glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &textureUnits);
+ 
+     for (size_t index = 0; index < shaders.passes.size(); ++index) {
+         const auto& item = shaders.passes[index];
+@@ -155,6 +161,21 @@
+         shader.gAccelerometerHandle = glGetUniformLocation(shader.gProgram, "Accelerometer");
+         shader.gAccelerometerRestHandle = glGetUniformLocation(shader.gProgram, "AccelerometerRest");
+ 
++        int neededUnits = 1 + (shader.gOrigTextureHandle != -1 ? 1 : 0) +
++            (shader.gPreviousPassTextureHandle != -1 ? 1 : 0);
++        for (size_t n = 0; n < shader.gPassPrevTextureHandles.size(); ++n) {
++            const std::string prefix = "PassPrev" + std::to_string(n + 1);
++            shader.gPassPrevTextureHandles[n] = glGetUniformLocation(shader.gProgram, (prefix + "Texture").c_str());
++            shader.gPassPrevTextureSizeHandles[n] = glGetUniformLocation(shader.gProgram, (prefix + "TextureSize").c_str());
++            shader.gPassPrevInputSizeHandles[n] = glGetUniformLocation(shader.gProgram, (prefix + "InputSize").c_str());
++            if (shader.gPassPrevTextureHandles[n] != -1) ++neededUnits;
++        }
++        if (neededUnits > textureUnits) {
++            glDeleteProgram(shader.gProgram);
++            for (auto& entry : outChain) glDeleteProgram(entry.gProgram);
++            outChain.clear();
++            return false;
++        }
+         outChain.push_back(shader);
+     }
+ 
+@@ -162,59 +183,53 @@
+ }
+ 
+ void Video::updateProgram() {
++    bool targetsFailed = false;
+     if (loadedShaderType.has_value() && loadedShaderType.value() == requestedShaderConfig) {
+-        return;
+-    }
+-
+-    loadedShaderType = requestedShaderConfig;
+-
+-    auto shaders = ShaderManager::getShader(requestedShaderConfig);
+-
+-    // Apply filter mode override if set
+-    if (filterMode == 0) {
+-        shaders.linearTexture = false;  // Nearest
+-    } else if (filterMode == 1) {
+-        shaders.linearTexture = true;   // Linear/Bilinear
+-    }
+-    // filterMode == -1 means auto (use shader's default)
+-
+-    for (auto& entry : shadersChain) {
+-        if (entry.gProgram) glDeleteProgram(entry.gProgram);
++        try {
++            renderer->prepareShaderPasses();
++            return;
++        } catch (const std::exception& error) {
++            LOGW("Shader targets failed after a source resize: %s", error.what());
++            targetsFailed = true;
++        }
+     }
+ 
+     std::vector<ShaderChainEntry> newChain;
+-    if (!tryBuildShaderChain(shaders, newChain)) {
+-        LOGE("Requested shader failed to compile, falling back to default shader");
+-        // Never show PQ/HLG input as unconverted SDR if a native CRT/LCD/CUT3
+-        // preset fails to compile. Keep the verified colour conversion prefix
+-        // while falling back only from the optional picture preset to Default.
++    auto build = [&](ShaderManager::Chain shaders) {
++        if (filterMode == 0) shaders.linearTexture = false;
++        if (filterMode == 1) shaders.linearTexture = true;
++        if (!tryBuildShaderChain(shaders, newChain)) return false;
++        try {
++            const bool linear = shaders.linearTexture;
++            const int originalPass = shaders.originalPass;
++            renderer->setShaders(std::move(shaders));
++            renderer->prepareShaderPasses();
++            sourceLinearTexture = linear;
++            normalizedOriginalPass = originalPass;
++            return true;
++        } catch (const std::exception& error) {
++            LOGW("Shader targets unavailable: %s", error.what());
++            for (auto& entry : newChain) glDeleteProgram(entry.gProgram);
++            newChain.clear();
++            return false;
++        }
++    };
++    if (targetsFailed || !build(ShaderManager::getShader(requestedShaderConfig))) {
++        LOGW("Requested shader unavailable, keeping a safe picture fallback");
+         ShaderManager::Config safeDefault { ShaderManager::Type::SHADER_DEFAULT };
+         const auto hdrPrefix = requestedShaderConfig.params.find("AMBIENT_PREPEND");
+         if (hdrPrefix != requestedShaderConfig.params.end()) {
+             safeDefault.params["AMBIENT_PREPEND"] = hdrPrefix->second;
+-            // A failed custom picture shader must not also poison the safe
+-            // fallback. Keep ONLY the mandatory color-conversion prepass;
+-            // dropping it would mislabel PQ/HLG pixels as SDR.
+-            safeDefault.customPasses.clear();
++            // Keep color conversion, never the failed optional picture passes.
+             if (!requestedShaderConfig.customPasses.empty())
+                 safeDefault.customPasses.push_back(requestedShaderConfig.customPasses.front());
+         }
+-        auto defaultShaders = ShaderManager::getShader(safeDefault);
+-        if (filterMode == 0) {
+-            defaultShaders.linearTexture = false;
+-        } else if (filterMode == 1) {
+-            defaultShaders.linearTexture = true;
+-        }
+-
+-        if (!tryBuildShaderChain(defaultShaders, newChain)) {
+-            LOGE("Default shader also failed to compile - this should not happen");
+-            throw std::runtime_error("Cannot create default gl program");
+-        }
+-        shaders = defaultShaders;
+-    }
+-
++        if (!build(ShaderManager::getShader(safeDefault)))
++            throw std::runtime_error("Cannot create safe picture shader");
++    }
++    for (auto& entry : shadersChain) if (entry.gProgram) glDeleteProgram(entry.gProgram);
+     shadersChain = std::move(newChain);
+-    renderer->setShaders(shaders);
++    loadedShaderType = requestedShaderConfig;
+     shaderSensorUsage = 0;
+     for (const auto& shader : shadersChain) {
+         if (shader.gAccelerometerHandle != -1 || shader.gAccelerometerRestHandle != -1)
+@@ -244,6 +259,11 @@
+     glDisable(GL_BLEND);
+     glDisable(GL_CULL_FACE);
+     glDisable(GL_STENCIL_TEST);
++    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
++    glDepthMask(GL_TRUE);
++    // A new program and all of its intermediate targets become visible together,
++    // even when the core is paused and sends no replacement frame.
++    updateProgram();
+ 
+     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+     glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
+@@ -280,15 +300,18 @@
+         );
+     }
+ 
+-    updateProgram();
+     float originalTextureWidth = hwRenderTexture != 0 ? hwFBOWidth : getTextureWidth();
+     float originalTextureHeight = hwRenderTexture != 0 ? hwFBOHeight : getTextureHeight();
+     for (int i = 0; i < shadersChain.size(); ++i) {
+-        auto shader = shadersChain[i];
++        const auto& shader = shadersChain[i];
+         auto passData = renderer->getPassData(i);
+         auto isLastPass = i == shadersChain.size() - 1;
+ 
++        // Only the final pass may draw to the window and its letterbox bars.
++        if (!isLastPass && !passData.framebuffer.has_value())
++            throw std::runtime_error("Missing intermediate shader framebuffer");
+         glBindFramebuffer(GL_FRAMEBUFFER, passData.framebuffer.value_or(0));
++        if (!isLastPass) glClear(GL_COLOR_BUFFER_BIT);
+ 
+         glViewport(
+             0,
+@@ -300,29 +323,83 @@
+         glUseProgram(shader.gProgram);
+ 
+         auto vertices = isLastPass ? videoLayout.getForegroundVertices() : videoLayout.getFramebufferVertices();
+-        glVertexAttribPointer(shader.gvPositionHandle, 2, GL_FLOAT, GL_FALSE, 0, vertices.data());
+-        glEnableVertexAttribArray(shader.gvPositionHandle);
++        if (shader.gvPositionHandle != -1) {
++            glVertexAttribPointer(shader.gvPositionHandle, 2, GL_FLOAT, GL_FALSE, 0, vertices.data());
++            glEnableVertexAttribArray(shader.gvPositionHandle);
++        }
+ 
+         auto coordinates = i == 0
+             ? videoLayout.getTextureCoordinates()
+             : videoLayout.getFramebufferTextureCoordinates();
+-        glVertexAttribPointer(shader.gvCoordinateHandle, 2, GL_FLOAT, GL_FALSE, 0, coordinates.data());
+-        glEnableVertexAttribArray(shader.gvCoordinateHandle);
+-
+-        // For multi-pass shaders: first pass reads original, subsequent passes read previous output
+-        GLuint mainTexture = (i > 0 && passData.texture.has_value())
+-            ? passData.texture.value()
+-            : sourceTexture;
+-
++        if (shader.gvCoordinateHandle != -1) {
++            glVertexAttribPointer(shader.gvCoordinateHandle, 2, GL_FLOAT, GL_FALSE, 0, coordinates.data());
++            glEnableVertexAttribArray(shader.gvCoordinateHandle);
++        }
++
++        const GLuint immediateTexture = (i > 0 && passData.texture.has_value())
++            ? passData.texture.value() : sourceTexture;
++        GLuint pictureOriginal = sourceTexture;
++        float pictureTextureWidth = originalTextureWidth, pictureTextureHeight = originalTextureHeight;
++        float pictureInputWidth = getTextureWidth(), pictureInputHeight = getTextureHeight();
++        if (normalizedOriginalPass >= 0 && i > normalizedOriginalPass) {
++            const auto originalOutput = renderer->getPassData(normalizedOriginalPass);
++            pictureOriginal = renderer->getPassData(normalizedOriginalPass + 1).texture.value_or(sourceTexture);
++            pictureTextureWidth = originalOutput.width.value_or(static_cast<unsigned>(getTextureWidth()));
++            pictureTextureHeight = originalOutput.height.value_or(static_cast<unsigned>(getTextureHeight()));
++            pictureInputWidth = pictureTextureWidth;
++            pictureInputHeight = pictureTextureHeight;
++        }
++        // Legacy CUT2/3 sample colors from texture and classification from
++        // previousPass. Generic GLSL uses Texture for its immediately prior pass.
++        const bool legacyPrevious = shader.gPreviousPassTextureHandle != -1;
++        const GLuint mainTexture = legacyPrevious ? pictureOriginal : immediateTexture;
+         glActiveTexture(GL_TEXTURE0);
+         glBindTexture(GL_TEXTURE_2D, mainTexture);
++        if (i == 0 && hwRenderTexture != 0) {
++            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, sourceLinearTexture ? GL_LINEAR : GL_NEAREST);
++            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, sourceLinearTexture ? GL_LINEAR : GL_NEAREST);
++        }
+         glUniform1i(shader.gTextureHandle, 0);
+ 
+-        if (shader.gPreviousPassTextureHandle != -1 || shader.gOrigTextureHandle != -1) {
+-            glActiveTexture(GL_TEXTURE0 + 1);
+-            glBindTexture(GL_TEXTURE_2D, sourceTexture);
+-            glUniform1i(shader.gPreviousPassTextureHandle, 1);
+-            glUniform1i(shader.gOrigTextureHandle, 1);
++        int nextTextureUnit = 1;
++        if (legacyPrevious) {
++            glActiveTexture(GL_TEXTURE0 + nextTextureUnit);
++            glBindTexture(GL_TEXTURE_2D, immediateTexture);
++            glUniform1i(shader.gPreviousPassTextureHandle, nextTextureUnit++);
++        }
++        if (shader.gOrigTextureHandle != -1) {
++            glActiveTexture(GL_TEXTURE0 + nextTextureUnit);
++            glBindTexture(GL_TEXTURE_2D, pictureOriginal);
++            glUniform1i(shader.gOrigTextureHandle, nextTextureUnit++);
++        }
++
++        // RetroArch PassPrev1 is the current input, PassPrev2 the preceding
++        // input, etc. Prefix passes naturally become the scaler's original input.
++        for (size_t n = 0; n < shader.gPassPrevTextureHandles.size(); ++n) {
++            if (shader.gPassPrevTextureHandles[n] == -1 && shader.gPassPrevTextureSizeHandles[n] == -1 &&
++                shader.gPassPrevInputSizeHandles[n] == -1) continue;
++            const int previousOutput = i - static_cast<int>(n) - 1;
++            GLuint previousTexture = sourceTexture;
++            float previousWidth = originalTextureWidth, previousHeight = originalTextureHeight;
++            float previousInputWidth = getTextureWidth(), previousInputHeight = getTextureHeight();
++            if (previousOutput >= 0) {
++                auto output = renderer->getPassData(previousOutput);
++                auto next = renderer->getPassData(previousOutput + 1);
++                previousTexture = next.texture.value_or(sourceTexture);
++                previousWidth = output.width.value_or(static_cast<unsigned>(getTextureWidth()));
++                previousHeight = output.height.value_or(static_cast<unsigned>(getTextureHeight()));
++                previousInputWidth = previousWidth;
++                previousInputHeight = previousHeight;
++            }
++            if (shader.gPassPrevTextureHandles[n] != -1) {
++                glActiveTexture(GL_TEXTURE0 + nextTextureUnit);
++                glBindTexture(GL_TEXTURE_2D, previousTexture);
++                glUniform1i(shader.gPassPrevTextureHandles[n], nextTextureUnit++);
++            }
++            if (shader.gPassPrevTextureSizeHandles[n] != -1)
++                glUniform2f(shader.gPassPrevTextureSizeHandles[n], previousWidth, previousHeight);
++            if (shader.gPassPrevInputSizeHandles[n] != -1)
++                glUniform2f(shader.gPassPrevInputSizeHandles[n], previousInputWidth, previousInputHeight);
+         }
+ 
+         // Input size: for pass 0 use original, for subsequent passes use previous output size
+@@ -338,13 +415,17 @@
+ 
+         float textureWidth = i > 0 && passData.texture.has_value() ? inputWidth : originalTextureWidth;
+         float textureHeight = i > 0 && passData.texture.has_value() ? inputHeight : originalTextureHeight;
++        if (legacyPrevious) {
++            textureWidth = pictureTextureWidth;
++            textureHeight = pictureTextureHeight;
++            inputWidth = pictureInputWidth;
++            inputHeight = pictureInputHeight;
++        }
+         glUniform2f(shader.gTextureSizeHandle, textureWidth, textureHeight);
+-
+-        if (shader.gOrigTextureSizeHandle != -1) {
+-            glUniform2f(shader.gOrigTextureSizeHandle, originalTextureWidth, originalTextureHeight);
+-        }
++        if (shader.gOrigTextureSizeHandle != -1)
++            glUniform2f(shader.gOrigTextureSizeHandle, pictureTextureWidth, pictureTextureHeight);
+         if (shader.gOrigInputSizeHandle != -1)
+-            glUniform2f(shader.gOrigInputSizeHandle, getTextureWidth(), getTextureHeight());
++            glUniform2f(shader.gOrigInputSizeHandle, pictureInputWidth, pictureInputHeight);
+ 
+         glUniform1f(shader.gScreenDensityHandle, getScreenDensity());
+ 
+@@ -386,11 +467,11 @@
+ 
+         glDrawArrays(GL_TRIANGLES, 0, 6);
+ 
+-        glDisableVertexAttribArray(shader.gvPositionHandle);
+-        glDisableVertexAttribArray(shader.gvCoordinateHandle);
+-
+-        if (shader.gPreviousPassTextureHandle != -1 || shader.gOrigTextureHandle != -1) {
+-            glActiveTexture(GL_TEXTURE0 + 1);
++        if (shader.gvPositionHandle != -1) glDisableVertexAttribArray(shader.gvPositionHandle);
++        if (shader.gvCoordinateHandle != -1) glDisableVertexAttribArray(shader.gvCoordinateHandle);
++
++        for (int unit = 1; unit < nextTextureUnit; ++unit) {
++            glActiveTexture(GL_TEXTURE0 + unit);
+             glBindTexture(GL_TEXTURE_2D, 0);
+         }
+         glActiveTexture(GL_TEXTURE0);
+@@ -681,6 +762,9 @@
+ 
+ void Video::renderBlackFrame() {
+     glDisable(GL_DEPTH_TEST);
++    glDisable(GL_SCISSOR_TEST);
++    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
++    glDepthMask(GL_TRUE);
+     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+     glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
+     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
+--- a/src/main/cpp/video.h
++++ b/src/main/cpp/video.h
+@@ -71,6 +71,9 @@
+         GLint gGyroscopeHandle = -1;
+         GLint gAccelerometerHandle = -1;
+         GLint gAccelerometerRestHandle = -1;
++        std::array<GLint, 8> gPassPrevTextureHandles;
++        std::array<GLint, 8> gPassPrevTextureSizeHandles;
++        std::array<GLint, 8> gPassPrevInputSizeHandles;
+     };
+ 
+     Video(
+@@ -171,6 +174,8 @@
+     bool isDirty = false;
+     bool hwAccelerated = false;
+     bool skipDuplicateFrames = false;
++    bool sourceLinearTexture = true;
++    int normalizedOriginalPass = -1;
+     int filterMode = -1;  // -1 = auto (shader decides), 0 = nearest, 1 = linear
+     bool bfiEnabled = false;
+     int sdrToHdrWhiteNits = 0;
+diff --git a/src/main/cpp/shadermanager.cpp b/src/main/cpp/shadermanager.cpp
+--- a/src/main/cpp/shadermanager.cpp
++++ b/src/main/cpp/shadermanager.cpp
+@@ -15,6 +15,7 @@
+  *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+  */
+ 
++#include <algorithm>
+ #include "shadermanager.h"
+ 
+ namespace libretrodroid {
+@@ -1544,7 +1545,7 @@
+     if (prepass != config.params.end()) {
+         const bool custom = config.type == Type::SHADER_CUSTOM;
+         if (prepass->second != "1" || config.customPasses.empty() ||
+-            config.customPasses.size() > (custom ? 5u : 1u))
++            config.customPasses.size() > (custom ? 9u : 1u))
+             return { {}, false };
+         Config unwrapped = config;
+         unwrapped.params.erase("AMBIENT_PREPEND");
+@@ -1553,10 +1554,11 @@
+         else
+             unwrapped.customPasses.clear();
+         Chain original = getShader(unwrapped);
+-        // Native pipeline reserves at most one prefix and four built-in passes.
+-        if (original.passes.empty() || original.passes.size() > 4)
++        // Native pipeline reserves at most one prefix and eight picture passes.
++        if (original.passes.empty() || original.passes.size() > 8)
+             return { {}, false };
+         original.passes.insert(original.passes.begin(), config.customPasses.front());
++        original.originalPass = original.originalPass >= 0 ? original.originalPass + 1 : 0;
+         return original;
+     }
+     switch (config.type) {
+@@ -1594,6 +1596,9 @@
+         std::string defines = buildDefines(cut2UpscaleParams, config.params);
+         return {
+             {
++                // Normalize source crop/origin once; later CUT passes read these
++                // colors while previousPass contains classification data only.
++                { defaultShaderVertex, defaultShaderFragment, false, 1.0f },
+                 {
+                     defines + cut2UpscalePass0Vertex,
+                     defines + cut2UpscalePass0Fragment,
+@@ -1607,7 +1612,8 @@
+                     1.0
+                 }
+             },
+-            false
++            false,
++            0
+         };
+     }
+ 
+@@ -1615,6 +1621,9 @@
+         std::string defines = buildDefines(cut3UpscaleParams, config.params);
+         return {
+             {
++                // Normalize source crop/origin once; later CUT passes read these
++                // colors while previousPass contains classification data only.
++                { defaultShaderVertex, defaultShaderFragment, false, 1.0f },
+                 {
+                     defines + cut3UpscalePass0Vertex,
+                     defines + cut3UpscalePass0Fragment,
+@@ -1634,14 +1643,17 @@
+                     1.0
+                 },
+             },
+-            false
++            false,
++            0
+         };
+     }
+ 
+     case Type::SHADER_CUSTOM: {
++        if (config.customPasses.empty() || config.customPasses.size() > 8) return { {}, false };
+         return { config.customPasses, false };
+     }
+-}
++    }
++    return { {}, false };
+ }
+ 
+ std::string ShaderManager::buildDefines(
+@@ -1659,7 +1671,8 @@
+ }
+ 
+ bool ShaderManager::Chain::operator==(const ShaderManager::Chain &other) const {
+-    return this->passes == other.passes && this->linearTexture == other.linearTexture;
++    return this->passes == other.passes && this->linearTexture == other.linearTexture &&
++           this->originalPass == other.originalPass;
+ }
+ 
+ bool ShaderManager::Chain::operator!=(const ShaderManager::Chain &other) const {
+@@ -1668,6 +1681,7 @@
+ 
+ bool ShaderManager::Pass::operator==(const ShaderManager::Pass &other) const {
+     return this->linear == other.linear && this->scale == other.scale &&
+-           this->vertex == other.vertex && this->fragment == other.fragment;
++           this->vertex == other.vertex && this->fragment == other.fragment &&
++           this->floatFramebuffer == other.floatFramebuffer;
+ }
+ } //namespace libretrodroid
+diff --git a/src/main/cpp/shadermanager.h b/src/main/cpp/shadermanager.h
+--- a/src/main/cpp/shadermanager.h
++++ b/src/main/cpp/shadermanager.h
+@@ -31,6 +31,8 @@
+         std::string fragment;
+         bool linear;
+         float scale;
++        // Preserve signed/high-precision classification data between authentic scaler passes.
++        bool floatFramebuffer = false;
+ 
+         bool operator==(const ShaderManager::Pass &other) const;
+     };
+@@ -38,6 +40,8 @@
+     struct Chain {
+         std::vector<Pass> passes;
+         bool linearTexture;
++        // Output index holding unclassified picture colors for legacy CUT samplers.
++        int originalPass = -1;
+ 
+         bool operator==(const ShaderManager::Chain &other) const;
+         bool operator!=(const ShaderManager::Chain &other) const;
+diff --git a/src/main/cpp/utils/javautils.cpp b/src/main/cpp/utils/javautils.cpp
+--- a/src/main/cpp/utils/javautils.cpp
++++ b/src/main/cpp/utils/javautils.cpp
+@@ -114,6 +114,7 @@
+         jfieldID jFragmentField = env->GetFieldID(jPassClass, "fragment", "Ljava/lang/String;");
+         jfieldID jLinearField = env->GetFieldID(jPassClass, "linear", "Z");
+         jfieldID jScaleField = env->GetFieldID(jPassClass, "scale", "F");
++        jfieldID jFloatField = env->GetFieldID(jPassClass, "floatFramebuffer", "Z");
+ 
+         forEachOnJavaIterable(env, jPasses, [&](jobject jPass) {
+             auto vertex = JniString(env, (jstring) env->GetObjectField(jPass, jVertexField));
+@@ -122,7 +123,8 @@
+             float scale = env->GetFloatField(jPass, jScaleField);
+ 
+             customPasses.push_back(ShaderManager::Pass {
+-                vertex.stdString(), fragment.stdString(), linear, scale
++                vertex.stdString(), fragment.stdString(), linear, scale,
++                env->GetBooleanField(jPass, jFloatField) == JNI_TRUE
+             });
+         });
+     }
+diff --git a/src/main/cpp/renderers/renderer.h b/src/main/cpp/renderers/renderer.h
+--- a/src/main/cpp/renderers/renderer.h
++++ b/src/main/cpp/renderers/renderer.h
+@@ -45,6 +45,7 @@
+     virtual bool rendersInVideoCallback() = 0;
+     virtual void setShaders(ShaderManager::Chain shaders) = 0;
+     virtual PassData getPassData(unsigned int layer) = 0;
++    virtual void prepareShaderPasses() = 0;
+ 
+     virtual ~Renderer() = default;
+ 
+diff --git a/src/main/cpp/renderers/es3/es3utils.h b/src/main/cpp/renderers/es3/es3utils.h
+--- a/src/main/cpp/renderers/es3/es3utils.h
++++ b/src/main/cpp/renderers/es3/es3utils.h
+@@ -37,6 +37,7 @@
+         std::optional<unsigned int> depth = std::nullopt;
+         unsigned int width = 0;
+         unsigned int height = 0;
++        ~Framebuffer();
+     };
+ 
+ public:
+@@ -45,7 +46,8 @@
+     static std::unique_ptr<Framebuffers> buildShaderPasses(
+         unsigned int width,
+         unsigned int height,
+-        const ShaderManager::Chain &shaders
++        const ShaderManager::Chain &shaders,
++        bool gles3 = true
+     );
+ 
+     static std::unique_ptr<ES3Utils::Framebuffer> createFramebuffer(
+@@ -54,7 +56,9 @@
+         bool linear,
+         bool repeat,
+         bool includeDepth,
+-        bool includeStencil
++        bool includeStencil,
++        bool floatFramebuffer = false,
++        bool gles3 = true
+     );
+ 
+     static void deleteFramebuffer(std::unique_ptr<Framebuffer> data);
+diff --git a/src/main/cpp/renderers/es3/es3utils.cpp b/src/main/cpp/renderers/es3/es3utils.cpp
+--- a/src/main/cpp/renderers/es3/es3utils.cpp
++++ b/src/main/cpp/renderers/es3/es3utils.cpp
+@@ -18,6 +18,9 @@
+ #include "es3utils.h"
+ 
+ #include "../../log.h"
++#include <cmath>
++#include <cstdint>
++#include <stdexcept>
+ 
+ namespace libretrodroid {
+ 
+@@ -27,8 +30,12 @@
+     bool linear,
+     bool repeat,
+     bool includeDepth,
+-    bool includeStencil
++    bool includeStencil,
++    bool floatFramebuffer,
++    bool gles3
+ ) {
++    if (floatFramebuffer && !gles3)
++        throw std::runtime_error("Floating-point shader targets require GLES3");
+     auto result = std::make_unique<Framebuffer>();
+     result->width = width;
+     result->height = height;
+@@ -45,7 +52,11 @@
+     glBindFramebuffer(GL_FRAMEBUFFER, result->framebuffer);
+ 
+     glBindTexture(GL_TEXTURE_2D, result->texture);
+-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, width, height);
++    if (gles3) {
++        glTexStorage2D(GL_TEXTURE_2D, 1, floatFramebuffer ? GL_RGBA32F : GL_RGBA8, width, height);
++    } else {
++        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
++    }
+     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, repeat ? GL_MIRRORED_REPEAT : GL_CLAMP_TO_EDGE);
+     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, repeat ? GL_MIRRORED_REPEAT : GL_CLAMP_TO_EDGE);
+     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, linear ? GL_LINEAR : GL_NEAREST);
+@@ -68,9 +79,14 @@
+         );
+     }
+ 
+-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+-        LOGE("Error while creating framebuffer. Leaving!");
+-        throw std::runtime_error("Cannot create framebuffer");
++    const bool complete = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
++    bool allocationError = false;
++    while (glGetError() != GL_NO_ERROR) allocationError = true;
++    if (!complete || allocationError) {
++        glBindTexture(GL_TEXTURE_2D, 0);
++        glBindFramebuffer(GL_FRAMEBUFFER, 0);
++        glBindRenderbuffer(GL_RENDERBUFFER, 0);
++        throw std::runtime_error("Shader framebuffer format or size is unsupported");
+     }
+ 
+     glBindTexture(GL_TEXTURE_2D, 0);
+@@ -80,41 +96,44 @@
+     return result;
+ }
+ 
++ES3Utils::Framebuffer::~Framebuffer() {
++    if (framebuffer) glDeleteFramebuffers(1, &framebuffer);
++    if (texture) glDeleteTextures(1, &texture);
++    if (depth.has_value()) glDeleteRenderbuffers(1, &depth.value());
++}
++
+ void ES3Utils::deleteFramebuffer(std::unique_ptr<ES3Utils::Framebuffer> data) {
+-    if (data == nullptr) {
+-        return;
+-    }
+-
+-    glDeleteFramebuffers(1, &data->framebuffer);
+-    glDeleteTextures(1, &data->texture);
+-
+-    if (data->depth.has_value()) {
+-        glDeleteRenderbuffers(1, &data->depth.value());
+-    }
++    // Framebuffer owns its GL objects, including during partial-allocation failures.
+ }
+ 
+ std::unique_ptr<ES3Utils::Framebuffers> ES3Utils::buildShaderPasses(
+     unsigned int width,
+     unsigned int height,
+-    const libretrodroid::ShaderManager::Chain &shaders
++    const libretrodroid::ShaderManager::Chain &shaders,
++    bool gles3
+ ) {
+     auto result = std::make_unique<std::vector<std::unique_ptr<ES3Utils::Framebuffer>>>();
+-    auto passes = shaders.passes;
+-
+-    for (int i = 0; i < passes.size() - 1; ++i) {
+-        auto pass = passes[i];
+-        unsigned int passWidth = std::lround(width * pass.scale);
+-        unsigned int passHeight = std::lround(height * pass.scale);
+-
+-        std::unique_ptr<ES3Utils::Framebuffer> data = ES3Utils::createFramebuffer(
+-            passWidth,
+-            passHeight,
+-            pass.linear,
+-            false,
+-            false,
+-            false
+-        );
+-        result->push_back(std::move(data));
++    if (shaders.passes.empty() || shaders.passes.size() > 9)
++        throw std::runtime_error("Invalid shader pass count");
++    GLint maxTextureSize = 0;
++    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
++    uint64_t targetBytes = 0;
++    for (size_t i = 0; i + 1 < shaders.passes.size(); ++i) {
++        const auto& pass = shaders.passes[i];
++        if (!std::isfinite(pass.scale) || pass.scale <= 0 || pass.scale > 8)
++            throw std::runtime_error("Invalid shader target scale");
++        const double scaledWidth = double(width) * pass.scale;
++        const double scaledHeight = double(height) * pass.scale;
++        if (scaledWidth < 0.5 || scaledHeight < 0.5 ||
++            scaledWidth > maxTextureSize || scaledHeight > maxTextureSize)
++            throw std::runtime_error("Shader target exceeds device limits");
++        const auto passWidth = static_cast<unsigned int>(std::lround(scaledWidth));
++        const auto passHeight = static_cast<unsigned int>(std::lround(scaledHeight));
++        targetBytes += uint64_t(passWidth) * passHeight * (pass.floatFramebuffer ? 16u : 4u);
++        if (targetBytes > 128u * 1024u * 1024u)
++            throw std::runtime_error("Shader intermediate storage exceeds 128 MiB");
++        result->push_back(createFramebuffer(passWidth, passHeight, pass.linear,
++            false, false, false, pass.floatFramebuffer, gles3));
+     }
+ 
+     return result;
+diff --git a/src/main/cpp/renderers/es3/imagerendereres3.h b/src/main/cpp/renderers/es3/imagerendereres3.h
+--- a/src/main/cpp/renderers/es3/imagerendereres3.h
++++ b/src/main/cpp/renderers/es3/imagerendereres3.h
+@@ -34,6 +34,7 @@
+ class ImageRendererES3: public Renderer {
+ public:
+     explicit ImageRendererES3();
++    ~ImageRendererES3() override;
+     uintptr_t getTexture() override;
+     uintptr_t getFramebuffer() override;
+     void onNewFrame(const void *data, unsigned width, unsigned height, size_t pitch) override;
+@@ -45,6 +46,7 @@
+     void setShaders(ShaderManager::Chain shaders) override;
+ 
+     PassData getPassData(unsigned int layer) override;
++    void prepareShaderPasses() override;
+ 
+ private:
+     void initializeTextures(unsigned int width, unsigned int height);
+@@ -60,6 +62,8 @@
+     unsigned int glFormat = 0;
+ 
+     bool isDirty = true;
++    bool shaderPassesDirty = true;
++    unsigned int passWidth = 0, passHeight = 0;
+ 
+     unsigned int currentTexture = 0;
+ 
+diff --git a/src/main/cpp/renderers/es3/imagerendereres3.cpp b/src/main/cpp/renderers/es3/imagerendereres3.cpp
+--- a/src/main/cpp/renderers/es3/imagerendereres3.cpp
++++ b/src/main/cpp/renderers/es3/imagerendereres3.cpp
+@@ -15,6 +15,7 @@
+  *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+  */
+ 
++#include <algorithm>
+ #include "imagerendereres3.h"
+ #include "../../libretro-common/include/libretro.h"
+ #include "es3utils.h"
+@@ -24,6 +25,10 @@
+ ImageRendererES3::ImageRendererES3() {
+     glGenTextures(1, &currentTexture);
+     glBindTexture(GL_TEXTURE_2D, currentTexture);
++}
++
++ImageRendererES3::~ImageRendererES3() {
++    if (currentTexture) glDeleteTextures(1, &currentTexture);
+ }
+ 
+ void ImageRendererES3::onNewFrame(const void *data, unsigned width, unsigned height, size_t pitch) {
+@@ -50,10 +55,7 @@
+ }
+ 
+ void ImageRendererES3::initializeTextures(unsigned int width, unsigned int height) {
+-    for (auto& i : *framebuffers) {
+-        ES3Utils::deleteFramebuffer(std::move(i));
+-    }
+-    framebuffers = libretrodroid::ES3Utils::buildShaderPasses(width, height, shaders);
++    shaderPassesDirty = true;
+ 
+     glBindTexture(GL_TEXTURE_2D, currentTexture);
+     glTexImage2D(GL_TEXTURE_2D, 0, glInternalFormat, width, height, 0, glFormat, glType, nullptr);
+@@ -140,14 +142,32 @@
+ }
+ 
+ void ImageRendererES3::setShaders(ShaderManager::Chain newShaders) {
+-    this->shaders = newShaders;
+-    this->isDirty = true;
++    if (this->shaders != newShaders) {
++        this->shaders = std::move(newShaders);
++        shaderPassesDirty = true;
++    }
++}
++
++void ImageRendererES3::prepareShaderPasses() {
++    const unsigned width = std::max(1, lastFrameSize.first);
++    const unsigned height = std::max(1, lastFrameSize.second);
++    if (!shaderPassesDirty && width == passWidth && height == passHeight) return;
++    auto next = ES3Utils::buildShaderPasses(width, height, shaders);
++    framebuffers = std::move(next);
++    // A filter change must retain the uploaded source, including while paused.
++    glBindTexture(GL_TEXTURE_2D, currentTexture);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, shaders.linearTexture ? GL_LINEAR : GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, shaders.linearTexture ? GL_LINEAR : GL_NEAREST);
++    glBindTexture(GL_TEXTURE_2D, 0);
++    passWidth = width;
++    passHeight = height;
++    shaderPassesDirty = false;
+ }
+ 
+ Renderer::PassData ImageRendererES3::getPassData(unsigned int layer) {
+     PassData result;
+ 
+-    if (layer >= 0 && layer < framebuffers->size()) {
++    if (layer < framebuffers->size()) {
+         result.framebuffer = framebuffers->at(layer)->framebuffer;
+         result.width = framebuffers->at(layer)->width;
+         result.height = framebuffers->at(layer)->height;
+diff --git a/src/main/cpp/renderers/es3/framebufferrenderer.h b/src/main/cpp/renderers/es3/framebufferrenderer.h
+--- a/src/main/cpp/renderers/es3/framebufferrenderer.h
++++ b/src/main/cpp/renderers/es3/framebufferrenderer.h
+@@ -45,6 +45,7 @@
+ 
+     void setShaders(ShaderManager::Chain shaders) override;
+     PassData getPassData(unsigned int layer) override;
++    void prepareShaderPasses() override;
+ 
+ private:
+     bool depth = false;
+@@ -54,6 +55,8 @@
+     unsigned int height;
+ 
+     bool isDirty = false;
++    bool shaderPassesDirty = true;
++    unsigned int passWidth = 0, passHeight = 0;
+ 
+     std::unique_ptr<ES3Utils::Framebuffer> framebuffer = std::make_unique<ES3Utils::Framebuffer>();
+ 
+diff --git a/src/main/cpp/renderers/es3/framebufferrenderer.cpp b/src/main/cpp/renderers/es3/framebufferrenderer.cpp
+--- a/src/main/cpp/renderers/es3/framebufferrenderer.cpp
++++ b/src/main/cpp/renderers/es3/framebufferrenderer.cpp
+@@ -15,6 +15,7 @@
+  *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+  */
+ 
++#include <algorithm>
+ #include "framebufferrenderer.h"
+ #include "es3utils.h"
+ #include "../../log.h"
+@@ -47,7 +48,7 @@
+ }
+ 
+ void FramebufferRenderer::initializeBuffers() {
+-    framebuffers = ES3Utils::buildShaderPasses(width, height, shaders);
++    shaderPassesDirty = true;
+ 
+     ES3Utils::deleteFramebuffer(std::move(framebuffer));
+     framebuffer = ES3Utils::createFramebuffer(
+@@ -85,15 +86,35 @@
+ 
+ void FramebufferRenderer::setShaders(ShaderManager::Chain shaders) {
+     if (shaders != this->shaders) {
+-        this->shaders = shaders;
+-        isDirty = true;
++        this->shaders = std::move(shaders);
++        shaderPassesDirty = true;
+     }
++}
++
++void FramebufferRenderer::prepareShaderPasses() {
++    if (isDirty) {
++        initializeBuffers();
++        isDirty = false;
++    }
++    const unsigned contentWidth = std::max(1, lastFrameSize.first);
++    const unsigned contentHeight = std::max(1, lastFrameSize.second);
++    if (!shaderPassesDirty && passWidth == contentWidth && passHeight == contentHeight) return;
++    auto next = ES3Utils::buildShaderPasses(contentWidth, contentHeight, shaders);
++    framebuffers = std::move(next);
++    // The core-owned input must survive a shader switch without a new frame.
++    glBindTexture(GL_TEXTURE_2D, framebuffer->texture);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, shaders.linearTexture ? GL_LINEAR : GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, shaders.linearTexture ? GL_LINEAR : GL_NEAREST);
++    glBindTexture(GL_TEXTURE_2D, 0);
++    passWidth = contentWidth;
++    passHeight = contentHeight;
++    shaderPassesDirty = false;
+ }
+ 
+ Renderer::PassData FramebufferRenderer::getPassData(unsigned int layer) {
+     PassData result;
+ 
+-    if (layer >= 0 && layer < framebuffers->size()) {
++    if (layer < framebuffers->size()) {
+         result.framebuffer = framebuffers->at(layer)->framebuffer;
+         result.width = framebuffers->at(layer)->width;
+         result.height = framebuffers->at(layer)->height;
+diff --git a/src/main/cpp/renderers/es2/imagerendereres2.h b/src/main/cpp/renderers/es2/imagerendereres2.h
+--- a/src/main/cpp/renderers/es2/imagerendereres2.h
++++ b/src/main/cpp/renderers/es2/imagerendereres2.h
+@@ -21,6 +21,7 @@
+ #include "GLES2/gl2.h"
+ 
+ #include "../renderer.h"
++#include "../es3/es3utils.h"
+ #include "../../libretro-common/include/libretro.h"
+ 
+ #include <cstdint>
+@@ -32,6 +33,7 @@
+ class ImageRendererES2: public Renderer {
+ public:
+     explicit ImageRendererES2();
++    ~ImageRendererES2() override;
+     uintptr_t getTexture() override;
+     uintptr_t getFramebuffer() override;
+     void onNewFrame(const void *data, unsigned width, unsigned height, size_t pitch) override;
+@@ -42,6 +44,7 @@
+     void setShaders(ShaderManager::Chain shaders) override;
+ 
+     PassData getPassData(unsigned int layer) override;
++    void prepareShaderPasses() override;
+ 
+ private:
+     void convertDataFromRGB8888(const void* pixelData, size_t size);
+@@ -55,6 +58,10 @@
+     unsigned int glFormat = 0;
+ 
+     bool linear = false;
++    bool shaderPassesDirty = true;
++    unsigned int passWidth = 0, passHeight = 0;
++    ShaderManager::Chain shaders;
++    std::unique_ptr<ES3Utils::Framebuffers> framebuffers = std::make_unique<ES3Utils::Framebuffers>();
+ 
+     unsigned int currentTexture = 0;
+ };
+diff --git a/src/main/cpp/renderers/es2/imagerendereres2.cpp b/src/main/cpp/renderers/es2/imagerendereres2.cpp
+--- a/src/main/cpp/renderers/es2/imagerendereres2.cpp
++++ b/src/main/cpp/renderers/es2/imagerendereres2.cpp
+@@ -15,6 +15,7 @@
+  *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+  */
+ 
++#include <algorithm>
+ #include "imagerendereres2.h"
+ #include "../../libretro-common/include/libretro.h"
+ #include <vector>
+@@ -25,6 +26,10 @@
+ ImageRendererES2::ImageRendererES2() {
+     glGenTextures(1, &currentTexture);
+     glBindTexture(GL_TEXTURE_2D, currentTexture);
++}
++
++ImageRendererES2::~ImageRendererES2() {
++    if (currentTexture) glDeleteTextures(1, &currentTexture);
+ }
+ 
+ void ImageRendererES2::onNewFrame(const void *data, unsigned width, unsigned height, size_t pitch) {
+@@ -147,13 +152,39 @@
+     return false;
+ }
+ 
+-void ImageRendererES2::setShaders(ShaderManager::Chain shaders) {
+-    this->linear = shaders.linearTexture;
++void ImageRendererES2::setShaders(ShaderManager::Chain newShaders) {
++    if (shaders != newShaders) {
++        shaders = std::move(newShaders);
++        linear = shaders.linearTexture;
++        shaderPassesDirty = true;
++    }
+ }
+ 
+-// ES2 Renderer doesn't currently support multiple passes.
++void ImageRendererES2::prepareShaderPasses() {
++    const unsigned width = std::max(1, lastFrameSize.first);
++    const unsigned height = std::max(1, lastFrameSize.second);
++    if (!shaderPassesDirty && width == passWidth && height == passHeight) return;
++    auto next = ES3Utils::buildShaderPasses(width, height, shaders, false);
++    framebuffers = std::move(next);
++    glBindTexture(GL_TEXTURE_2D, currentTexture);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, linear ? GL_LINEAR : GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, linear ? GL_LINEAR : GL_NEAREST);
++    glBindTexture(GL_TEXTURE_2D, 0);
++    passWidth = width;
++    passHeight = height;
++    shaderPassesDirty = false;
++}
++
+ Renderer::PassData ImageRendererES2::getPassData(unsigned int layer) {
+-    return { };
++    PassData result;
++    if (layer < framebuffers->size()) {
++        result.framebuffer = framebuffers->at(layer)->framebuffer;
++        result.width = framebuffers->at(layer)->width;
++        result.height = framebuffers->at(layer)->height;
++    }
++    if (layer > 0 && layer <= framebuffers->size())
++        result.texture = framebuffers->at(layer - 1)->texture;
++    return result;
+ }
+ 
+ } //namespace libretrodroid
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -531,6 +531,13 @@
+     }
+ 
+     VkCompositeAlphaFlagBitsKHR alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
++    // librashader clears the full output to transparent black before its final
++    // viewport draw. Only an opaque swapchain guarantees black letterbox bars;
++    // an alpha-composited surface would reveal stale/colored layers underneath.
++    if (nativeSlang.requested() && (caps.supportedCompositeAlpha & alpha) == 0) {
++        disableNativeSdrSwapchain("opaque composition required for filtered letterbox bars");
++        return false;
++    }
+     if ((caps.supportedCompositeAlpha & alpha) == 0) {
+         const VkCompositeAlphaFlagBitsKHR possibilities[] = {
+             VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+@@ -1299,7 +1306,7 @@
+             // Keep the AHB/GLES image copy above intact for captures and automatic fallback.
+             // Transition the synchronized core image from BLIT read to texture sampling.
+             VkImageMemoryBarrier sampledBarrier { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+-            sampledBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
++            sampledBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+             sampledBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+             sampledBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+             sampledBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;

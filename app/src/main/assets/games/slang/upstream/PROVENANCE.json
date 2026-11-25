@@ -1,0 +1,123 @@
+{
+  "repository": "https://github.com/libretro/slang-shaders",
+  "commit": "02bf134555c4595bd6b69be89feaff923da83754",
+  "modifications": "None; upstream shader and preset files are vendored unchanged.",
+  "license_notices": "NOTICE.txt",
+  "files": {
+    "edge-smoothing/eagle/shaders/super-2xsai.slang": {
+      "bytes": 4550,
+      "sha256": "8ae062d0607a8a5387cde6d01e0ed30c22ff96ebce617ad2fe006fb4b30f0d05",
+      "git_blob_sha1": "90b00d6bf35f770366dd5fb71f6d6fd5b3421c75"
+    },
+    "edge-smoothing/eagle/shaders/supereagle.slang": {
+      "bytes": 5148,
+      "sha256": "d701d4c731afd21df1445d8c6d95fa5bbb6b49bee0e8dbec51b345e5f192faa0",
+      "git_blob_sha1": "e00d3fb52b5756145b20f273d4f1bc34bf2bbb8a"
+    },
+    "edge-smoothing/eagle/super-2xsai.slangp": {
+      "bytes": 520,
+      "sha256": "f0c6a9bbaed11c920d28753340883019e5a8752ba8cbfe3e14c3b7395a764775",
+      "git_blob_sha1": "a5e964abfb934e343202301ceedd6a82fc5186c5"
+    },
+    "edge-smoothing/eagle/supereagle.slangp": {
+      "bytes": 96,
+      "sha256": "514fed1961c210ed51d0630c2f39a124ae811ca963b498d89a29229d000c2f3a",
+      "git_blob_sha1": "de1dbb089784f7102950d62cb614887ec9aac49a"
+    },
+    "edge-smoothing/sabr/sabr.slangp": {
+      "bytes": 93,
+      "sha256": "8b7bb0a6f89f0dffa7a647e941452b1c7ba49ddc43f7a4d561d89e5a857757c6",
+      "git_blob_sha1": "7c879b9fe711eca06536b08ed59cd5dbcd03a133"
+    },
+    "edge-smoothing/sabr/shaders/sabr-v3.0.slang": {
+      "bytes": 9799,
+      "sha256": "a65d6c82d47dcfae6463e47a730755e570463fc935d07e758c69f8f4d36e29ed",
+      "git_blob_sha1": "423a31c497f5b69545cb1b7456558fcaf7afdf32"
+    },
+    "edge-smoothing/scalefx/scalefx.slangp": {
+      "bytes": 638,
+      "sha256": "016739a084bd0f88f364d7a5994ce53bd166e29859e2b98b1af47e900674fe3f",
+      "git_blob_sha1": "2e4fc423fe8a6b9eb39aa0896813c1fe769f5093"
+    },
+    "edge-smoothing/scalefx/shaders/scalefx-pass0.slang": {
+      "bytes": 2608,
+      "sha256": "a88c923b196539d7ac1a690e4e868397213d9659d512edb0d1c6f7675b0b1d73",
+      "git_blob_sha1": "0591ce63f3a1f73df76ffa6e6050f52d700492cd"
+    },
+    "edge-smoothing/scalefx/shaders/scalefx-pass1.slang": {
+      "bytes": 3161,
+      "sha256": "b1ea2dc411e208cdda8eb8598f290f9ebc7ad7a9f1351baac4fd5fca35e9d645",
+      "git_blob_sha1": "c98a5d5afb4dc07d112cf9b4b3e4ae74278e956f"
+    },
+    "edge-smoothing/scalefx/shaders/scalefx-pass2.slang": {
+      "bytes": 5579,
+      "sha256": "3fcdec55b816c63f8cd3cf0d5bed08b52abe987e16e7fe03408a82668138b4f2",
+      "git_blob_sha1": "60676d32d107b5604bbaadcebc65bf41b776ee42"
+    },
+    "edge-smoothing/scalefx/shaders/scalefx-pass3.slang": {
+      "bytes": 8249,
+      "sha256": "99b18adb46e09c7b96d4c103c4daec08d5f70a120cf2070fb35af1a21969bd3f",
+      "git_blob_sha1": "a8b56bf9a9cbcacea438fbd6c90a0eb0e7208fa0"
+    },
+    "edge-smoothing/scalefx/shaders/scalefx-pass4.slang": {
+      "bytes": 3189,
+      "sha256": "964a07239e628f1a7fe7284b941144f96df27980fc084dbde28ff417a79b98c6",
+      "git_blob_sha1": "f7179696d1c03af19b37a53d0da1c182d4bf58e9"
+    },
+    "edge-smoothing/scalehq/2xScaleHQ.slangp": {
+      "bytes": 520,
+      "sha256": "8a203d4c344be330502dfb0296acb38c7f882a95cb7d44065c557d39873c871b",
+      "git_blob_sha1": "5b5c376cb89c570538769f36028637eb4d89a270"
+    },
+    "edge-smoothing/scalehq/shaders/2xScaleHQ.slang": {
+      "bytes": 2752,
+      "sha256": "0ca8123129fc156f4f447417d524b5fcf70d192dc41444d1621d0d7c2b849c96",
+      "git_blob_sha1": "2944b4b5bf34bd10f3f1a6313232aff2c0b6768b"
+    },
+    "edge-smoothing/xbr/other presets/xbr-lv2-standalone.slangp": {
+      "bytes": 107,
+      "sha256": "2782574938fb6a1d5aac779df4fba6128dea782dd183d8f26a6ab1db343e9baa",
+      "git_blob_sha1": "dd0818b8c7deb5617fdebf802e9ccb8b837ce30d"
+    },
+    "edge-smoothing/xbr/shaders/xbr-lv2-standalone.slang": {
+      "bytes": 9975,
+      "sha256": "8fd8e802bbd25e73c169cccf343acec79d22cf03fe5febcf3633740dffad2255",
+      "git_blob_sha1": "68d02165475fb81f372ee4190c29801c2a48da69"
+    },
+    "edge-smoothing/xbrz/shaders/xbrz-freescale.slang": {
+      "bytes": 13268,
+      "sha256": "5899b4f6a4c66acb228b49ce59925b41215fcebaff78daf5668eade9b9c23844",
+      "git_blob_sha1": "32e7c197128f5718bbbb36c44716bc09fc76392d"
+    },
+    "edge-smoothing/xbrz/xbrz-freescale.slangp": {
+      "bytes": 111,
+      "sha256": "545f35fc2edf17756a3b14d75c7beb9cb91c9a5a143daa825d5fa5625c505341",
+      "git_blob_sha1": "76eab50b9b851f00d33bccfc5dceb2802a9cc415"
+    },
+    "edge-smoothing/xsal/2xsal.slangp": {
+      "bytes": 514,
+      "sha256": "e963bec5f57d058b5b41ad5d6b5384de02a5c4ab5fa34a8cd2f14923e02fcce7",
+      "git_blob_sha1": "3addc6fae1c13ad0963d39940d78762ee02b92c8"
+    },
+    "edge-smoothing/xsal/shaders/2xsal.slang": {
+      "bytes": 2205,
+      "sha256": "ad23c4d0f5cffcd251bd71cc9ffdec1dd07ac00c322cfd38179af6ad166b4add",
+      "git_blob_sha1": "f9b7efd1f8a57b6d6736075672e4a31218abc923"
+    },
+    "interpolation/shaders/bicubic/bicubic-x.slang": {
+      "bytes": 4198,
+      "sha256": "86fa51cf24b6fbbd02986cbacb030899b49ddc023ef966ee7a708780da9e9ef4",
+      "git_blob_sha1": "1d1c9d76763c0a8ccaedb6622b3aff8f0ab68fb5"
+    },
+    "interpolation/shaders/bicubic/bicubic-y.slang": {
+      "bytes": 4377,
+      "sha256": "2557087f1dea84ecd5d80da86d55e6194f45d469a91a41bd95bcbe95db39450d",
+      "git_blob_sha1": "92baee91b5a922ca2b163313da190025705635e2"
+    },
+    "stock.slang": {
+      "bytes": 665,
+      "sha256": "fa7d346e3706a351aa77dc8e77bd049b8bfde635baf4376fedcf81f38d9a4008",
+      "git_blob_sha1": "bf3cf6b7e8e5d378e8a41effdf3d15974863a609"
+    }
+  }
+}

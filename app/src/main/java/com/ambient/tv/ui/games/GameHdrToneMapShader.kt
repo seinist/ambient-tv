@@ -37,9 +37,10 @@ internal object GameHdrToneMapShader {
             pass = ShaderConfig.Custom.ShaderPass(
                 vertex = VERTEX,
                 fragment = fragment(input),
-                // Pixel must not linearly resample the intermediate after
-                // decoding PQ/HLG; other presets retain their own sampling.
-                linear = !pixel,
+                // Pixel-art edge detectors need the same exact texels after
+                // decoding as they get from an SDR core. CUT and custom GLSL
+                // chains must not silently gain bilinear input here either.
+                linear = GamePictureEffect.sourceLinear(filter, pixel),
             ),
         )
     }
@@ -59,7 +60,9 @@ internal object GameHdrToneMapShader {
         val hlg = if (input == GameHdrToneMap.HLG) 1 else 0
         return """
             precision highp float;
-            uniform sampler2D texture;
+            // GLES sampler precision is independent of float precision. Keep
+            // FP16/PQ source channels intact before the transfer conversion.
+            uniform highp sampler2D texture;
             varying highp vec2 coords;
             const int INPUT_HLG = $hlg;
 

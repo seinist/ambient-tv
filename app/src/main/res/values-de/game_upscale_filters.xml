@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="game_shader_scalefx">ScaleFX</string>
+    <string name="game_shader_scalefx_hint">Glatte Rundungen und Diagonalen in Pixelgrafik; höhere Rechenlast</string>
+    <string name="game_shader_sabr">SABR v3</string>
+    <string name="game_shader_sabr_hint">Glättet diagonale Kanten und erhält Details der Pixelgrafik</string>
+    <string name="game_shader_xbr_lv2">xBR Level 2</string>
+    <string name="game_shader_xbr_lv2_hint">Glättet Ecken und schräge Linien in 2D-Spielen</string>
+    <string name="game_shader_xbrz">xBRZ Freescale</string>
+    <string name="game_shader_xbrz_hint">Feine Kantenglättung bei beliebiger Bildgröße</string>
+    <string name="game_shader_2xsal">2xSaL</string>
+    <string name="game_shader_2xsal_hint">Klassische weiche Skalierung mit sanften Pixelübergängen</string>
+    <string name="game_shader_super_2xsai">Super 2xSaI</string>
+    <string name="game_shader_super_2xsai_hint">Klassische Glättung für Spielfiguren und strukturierte Hintergründe</string>
+    <string name="game_shader_super_eagle">SuperEagle</string>
+    <string name="game_shader_super_eagle_hint">Rundet Pixelkanten für ein weicheres 2D-Bild ab</string>
+    <string name="game_shader_scalehq2x">ScaleHQ 2x</string>
+    <string name="game_shader_scalehq2x_hint">Glättet kleine Pixelmuster und erhält klare Konturen</string>
+</resources>

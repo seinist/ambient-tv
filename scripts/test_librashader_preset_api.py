@@ -9,6 +9,8 @@ import ctypes as ct
 from pathlib import Path
 import sys
 
+from check_game_slang import PRESETS, validate_assets
+
 ASSETS = Path(__file__).resolve().parents[1] / "app/src/main/assets/games/slang"
 
 class PresetOptions(ct.Structure):
@@ -46,8 +48,11 @@ def main() -> None:
     error_free.argtypes = [ct.POINTER(ct.c_void_p)]
     error_free.restype = ct.c_int32
 
+    # Check the exact dependency closure, then parse every selectable preset.
+    validate_assets()
     count = 0
-    for file in sorted(ASSETS.glob("*.slangp")):
+    for name in sorted(PRESETS):
+        file = ASSETS / (name + ".slangp")
         preset = ct.c_void_p()
         options = PresetOptions(5, True, True, False)
         error = create(str(file).encode(), None, ct.byref(options), ct.byref(preset))
@@ -75,8 +80,8 @@ def main() -> None:
                     error_free(ct.byref(ptr))
                     raise AssertionError(f"Cannot free librashader preset: {file.name}")
 
-    if count != 9:
-        raise AssertionError(f"Expected exactly 9 approved Slang presets, got {count}")
+    if count != len(PRESETS):
+        raise AssertionError(f"Expected exactly {len(PRESETS)} approved Slang presets, got {count}")
     print(f"OK: pinned librashader v{api}/ABI{abi} loaded and parsed {count} SDR Slang presets")
 
 if __name__ == "__main__":

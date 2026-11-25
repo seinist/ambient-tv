@@ -53,10 +53,10 @@ jobs:
           fi
           native=false
           slang=false
-          if grep -Eq '^(app/src/(main|test)/java/com/ambient/tv/(games|ui/games|ui/gamepad)/|app/src/main/assets/games/|libretrodroid_wrapper/|scripts/(patches/libretrodroid/|native_libretro_vulkan/|fetch_libretrodroid\.sh|build_librashader_android\.sh)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
+          if grep -Eq '^(app/src/(main|test)/java/com/ambient/tv/(games|ui/games|ui/gamepad)/|app/src/main/assets/games/|third_party_assets/game_shaders/|libretrodroid_wrapper/|scripts/(patches/libretrodroid/|native_libretro_vulkan/|native_game_.*_test\.cpp|test_game_filter_renderer\.py|import_game_upscalers\.py|fetch_libretrodroid\.sh|build_librashader_android\.sh)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
             native=true
           fi
-          if grep -Eq '^(app/src/main/assets/games/slang/|app/src/main/java/com/ambient/tv/ui/games/|scripts/(native_libretro_vulkan/|patches/libretrodroid/|build_librashader_android\.sh|test_librashader_preset_api\.py)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
+          if grep -Eq '^(app/src/main/assets/games/slang/|app/src/main/java/com/ambient/tv/ui/games/|scripts/(native_libretro_vulkan/|patches/libretrodroid/|build_librashader_android\.sh|check_game_slang\.py|tests/test_check_game_slang\.py|test_librashader_preset_api\.py)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
             slang=true
           fi
           printf 'native=%s\nslang=%s\n' "$native" "$slang" >> "$GITHUB_OUTPUT"
@@ -100,11 +100,12 @@ jobs:
           python3 scripts/import_game_system_icons.py --check
           python3 scripts/import_input_controller_artwork.py --check
 
-      - name: Validate game GLSL ES 100 shader sources
+      - name: Validate game GLES and Vulkan shader sources
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq glslang-tools
+          sudo apt-get install -y -qq glslang-tools g++ libegl-dev libgles-dev libgl1-mesa-dri
           python3 scripts/check_game_glsl.py
+          python3 scripts/import_game_upscalers.py --check --validate
           python3 scripts/check_game_slang.py
 
       - name: Fetch LibretroDroid
@@ -114,6 +115,12 @@ jobs:
       - name: Native input contracts
         # Real patched input code; fast host tests complement the existing Android ABI build.
         run: python3 scripts/test_libretro_input.py --sanitize
+
+      - name: Game filter renderer regressions
+        # Real GLES production renderer on Mesa, including paused filter changes and black borders.
+        run: |
+          python3 scripts/test_game_filter_renderer.py
+          python3 scripts/test_game_filter_renderer.py --test-source scripts/native_game_hdr_color_test.cpp
 
       - name: Compile and run unit tests
         # One ABI keeps the Vulkan probe and LibretroDroid native builds short; unit tests do not depend on them.

@@ -55,6 +55,23 @@ object CompanionRemoteInput {
     private var point = Offset(0.5f, 0.5f)
     private data class Cursor(val window: Window?, val point: Offset)
     private val cursor = MutableStateFlow(Cursor(null, point))
+    private data class GamePointerPolicy(val owner: Any, val allowed: Boolean)
+    private var gamePointerPolicy: GamePointerPolicy? = null
+
+    /** Gameplay must not keep a menu trackpad cursor above a gamepad-only game. */
+    internal fun setGamePointerAllowed(owner: Any, allowed: Boolean) {
+        val previous = gamePointerPolicy
+        if (previous?.owner === owner && previous.allowed == allowed) return
+        gamePointerPolicy = GamePointerPolicy(owner, allowed)
+        hide()
+    }
+
+    /** An old game's disposal must not clear the replacement game's policy. */
+    internal fun releaseGamePointerPolicy(owner: Any) {
+        if (gamePointerPolicy?.owner !== owner) return
+        gamePointerPolicy = null
+        hide()
+    }
 
     /** Native callbacks take window pixels; embedded roots take their own render pixels. */
     private data class Endpoint(val window: Window, val root: View, val embedded: Boolean) {
@@ -122,6 +139,10 @@ object CompanionRemoteInput {
 
     fun dispatch(input: CompanionInput): Boolean {
         input.validate()
+        if (input.action in setOf("move", "click", "scroll") && gamePointerPolicy?.allowed == false) {
+            hide()
+            return true
+        }
         if (input.action == "key" || input.action == "text") hide()
         val endpoint = active() ?: run { hide(); return false }
         if (hover?.endpoint?.let { it != endpoint } == true) hide()

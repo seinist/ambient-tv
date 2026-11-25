@@ -15,7 +15,7 @@ enum class GameShaderGroup(@StringRes val titleRes: Int) {
     EFFECTS(R.string.game_shader_group_effects),
 }
 
-/** Stable stored IDs: do not rename existing keys. Extra shaders are original compact GLSL. */
+/** Stable stored IDs: do not rename existing keys. Includes original effects and pinned Libretro filters. */
 enum class GameShader(val key: String, @StringRes val titleRes: Int, @StringRes val hintRes: Int, val group: GameShaderGroup) {
     SHARP("sharp", R.string.game_shader_sharp, R.string.game_shader_sharp_hint, GameShaderGroup.SCALING),
     PIXEL("pixel", R.string.game_shader_pixel, R.string.game_shader_pixel_hint, GameShaderGroup.SCALING),
@@ -25,6 +25,14 @@ enum class GameShader(val key: String, @StringRes val titleRes: Int, @StringRes 
     ADAPTIVE("adaptive", R.string.game_shader_adaptive, R.string.game_shader_adaptive_hint, GameShaderGroup.SCALING),
     SHARP_BILINEAR("sharp-bilinear", R.string.game_shader_sharp_bilinear, R.string.game_shader_sharp_bilinear_hint, GameShaderGroup.SCALING),
     PIXEL_AA("pixel-aa", R.string.game_shader_pixel_aa, R.string.game_shader_pixel_aa_hint, GameShaderGroup.SCALING),
+    SCALEFX("scalefx", R.string.game_shader_scalefx, R.string.game_shader_scalefx_hint, GameShaderGroup.SCALING),
+    SABR("sabr", R.string.game_shader_sabr, R.string.game_shader_sabr_hint, GameShaderGroup.SCALING),
+    XBR_LV2("xbr-lv2", R.string.game_shader_xbr_lv2, R.string.game_shader_xbr_lv2_hint, GameShaderGroup.SCALING),
+    XBRZ_FREESCALE("xbrz-freescale", R.string.game_shader_xbrz, R.string.game_shader_xbrz_hint, GameShaderGroup.SCALING),
+    XSAL_2X("2xsal", R.string.game_shader_2xsal, R.string.game_shader_2xsal_hint, GameShaderGroup.SCALING),
+    SUPER_2XSAI("super-2xsai", R.string.game_shader_super_2xsai, R.string.game_shader_super_2xsai_hint, GameShaderGroup.SCALING),
+    SUPER_EAGLE("super-eagle", R.string.game_shader_super_eagle, R.string.game_shader_super_eagle_hint, GameShaderGroup.SCALING),
+    SCALEHQ2X("scalehq2x", R.string.game_shader_scalehq2x, R.string.game_shader_scalehq2x_hint, GameShaderGroup.SCALING),
     CRT("crt", R.string.game_shader_crt, R.string.game_shader_crt_hint, GameShaderGroup.CRT),
     CRT_LIGHT("crt-light", R.string.game_shader_crt_light, R.string.game_shader_crt_light_hint, GameShaderGroup.CRT),
     CRT_GEOMETRY("crt-geometry", R.string.game_shader_crt_geometry, R.string.game_shader_crt_geometry_hint, GameShaderGroup.CRT),

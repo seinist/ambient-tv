@@ -1,0 +1,130 @@
+{
+  "files": [
+    {
+      "path": "glsl/eagle/shaders/supereagle.glsl",
+      "sha256": "f11ea11ffece9dc0afa59b905f5388df5fb3a50d2a0813a92ef76da9d0155bcd",
+      "upstream_path": "eagle/shaders/supereagle.glsl",
+      "repository": "libretro/glsl-shaders",
+      "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e"
+    },
+    {
+      "path": "glsl/sabr/sabr.glslp",
+      "sha256": "0c21f0b783466c1456fdc9ae88bca7bfd8cc6c578166c5c16066da7fb82b4a06",
+      "upstream_path": "sabr/sabr.glslp",
+      "repository": "libretro/glsl-shaders",
+      "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e"
+    },
+    {
+      "path": "glsl/sabr/shaders/sabr-v3.0.glsl",
+      "sha256": "6dc4422253e439cf5a6450a25c4c9086b76c3b76cf6508da87665d5b65eac353",
+      "upstream_path": "sabr/shaders/sabr-v3.0.glsl",
+      "repository": "libretro/glsl-shaders",
+      "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e"
+    },
+    {
+      "path": "glsl/scalefx/scalefx.glslp",
+      "sha256": "9f8494ce092c3d7a1d6ac3d018e7db42d79455c17c2eeaca7c26539c965db06d",
+      "upstream_path": "scalefx/scalefx.glslp",
+      "repository": "libretro/glsl-shaders",
+      "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e"
+    },
+    {
+      "path": "glsl/scalefx/shaders/scalefx-pass0.glsl",
+      "sha256": "37e534d5e600b5bac5d66f05e78f8688cc4631432d7887502e58e106a15ca40c",
+      "upstream_path": "scalefx/shaders/scalefx-pass0.glsl",
+      "repository": "libretro/glsl-shaders",
+      "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e"
+    },
+    {
+      "path": "glsl/scalefx/shaders/scalefx-pass1.glsl",
+      "sha256": "5e5f27731d7dc918f1cee610218aead459e62284dc33e22e22ab65f82f03e18c",
+      "upstream_path": "scalefx/shaders/scalefx-pass1.glsl",
+      "repository": "libretro/glsl-shaders",
+      "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e"
+    },
+    {
+      "path": "glsl/scalefx/shaders/scalefx-pass2.glsl",
+      "sha256": "7899f17fb6c156075d02a2cbf84462c184191229a9e795c6abbc023d64b3600a",
+      "upstream_path": "scalefx/shaders/scalefx-pass2.glsl",
+      "repository": "libretro/glsl-shaders",
+      "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e"
+    },
+    {
+      "path": "glsl/scalefx/shaders/scalefx-pass3.glsl",
+      "sha256": "0f7290476c4e8e4330ef81ba10a72a6547fc0f1ffa2d18c94cadcc8f1998b9ec",
+      "upstream_path": "scalefx/shaders/scalefx-pass3.glsl",
+      "repository": "libretro/glsl-shaders",
+      "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e"
+    },
+    {
+      "path": "glsl/scalefx/shaders/scalefx-pass4.glsl",
+      "sha256": "b6ad74bc8211399149166e77264d03eea582772d7f08b2dea9fbc9440d3f84c5",
+      "upstream_path": "scalefx/shaders/scalefx-pass4.glsl",
+      "repository": "libretro/glsl-shaders",
+      "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e"
+    },
+    {
+      "path": "glsl/scalehq/2xScaleHQ.glslp",
+      "sha256": "99bbfa98d3209cf5f5bac7624f890a14991e738b2070d6335eafb888321536f8",
+      "upstream_path": "scalehq/2xScaleHQ.glslp",
+      "repository": "libretro/glsl-shaders",
+      "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e"
+    },
+    {
+      "path": "glsl/scalehq/shaders/2xScaleHQ.glsl",
+      "sha256": "c1a858bb7a0230d69a0f7cf53ae1e909487f1d58342ddf34719e849a10805f76",
+      "upstream_path": "scalehq/shaders/2xScaleHQ.glsl",
+      "repository": "libretro/glsl-shaders",
+      "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e"
+    },
+    {
+      "path": "glsl/xbr/shaders/xbr-lv2.glsl",
+      "sha256": "9cf5b08c7378305b558204354e898f6837c481fd5b4371dfbe6b5092cffe5062",
+      "upstream_path": "xbr/shaders/xbr-lv2.glsl",
+      "repository": "libretro/glsl-shaders",
+      "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e"
+    },
+    {
+      "path": "glsl/xbr/xbr-lv2.glslp",
+      "sha256": "57e8843ec1d21494d6fe2eb47ce38e52dddbfff3ec81da9f37f6bf4eba59f537",
+      "upstream_path": "xbr/xbr-lv2.glslp",
+      "repository": "libretro/glsl-shaders",
+      "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e"
+    },
+    {
+      "path": "glsl/xbrz/shaders/xbrz-freescale.glsl",
+      "sha256": "4af7e0af2d65f6f93e622ec86fb6e46e66f23ba6e4c400421ff4d62c2c3835e5",
+      "upstream_path": "xbrz/shaders/xbrz-freescale.glsl",
+      "repository": "libretro/glsl-shaders",
+      "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e"
+    },
+    {
+      "path": "glsl/xbrz/xbrz-freescale.glslp",
+      "sha256": "ca32aa93de130dbe14a643f9bf0ed032c088a25c50a7d0b8f23ae8cbd90d6cf0",
+      "upstream_path": "xbrz/xbrz-freescale.glslp",
+      "repository": "libretro/glsl-shaders",
+      "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e"
+    },
+    {
+      "path": "glsl/xsal/2xsal.glslp",
+      "sha256": "6490bdb0d9cffcdcbf93c87b9d538bc7bd4188ed07d6e40f09224a173a73390e",
+      "upstream_path": "xsal/2xsal.glslp",
+      "repository": "libretro/glsl-shaders",
+      "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e"
+    },
+    {
+      "path": "glsl/xsal/shaders/2xsal.glsl",
+      "sha256": "afd998fa82f7bd65f257cdf7455b80ae72176b03a79a0e89fc2225e8e43adfec",
+      "upstream_path": "xsal/shaders/2xsal.glsl",
+      "repository": "libretro/glsl-shaders",
+      "commit": "a35069864b4bf30f8c8e740d57206543fb7e745e"
+    },
+    {
+      "path": "slang/edge-smoothing/eagle/shaders/super-2xsai.slang",
+      "sha256": "8ae062d0607a8a5387cde6d01e0ed30c22ff96ebce617ad2fe006fb4b30f0d05",
+      "upstream_path": "edge-smoothing/eagle/shaders/super-2xsai.slang",
+      "repository": "libretro/slang-shaders",
+      "commit": "02bf134555c4595bd6b69be89feaff923da83754"
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+Authentic Libretro Slang upscalers bundled with Ambient TV
+========================================================
+
+Source repository: https://github.com/libretro/slang-shaders
+Pinned commit: 02bf134555c4595bd6b69be89feaff923da83754
+
+All .slang and .slangp files below this directory are unmodified files from
+that commit, preserving their upstream directory structure. PROVENANCE.json
+records the exact SHA-256 and byte length of every vendored source/preset.
+Only the listed presets and their complete dependencies are included; this
+is not the complete RetroArch shader collection. No assets are downloaded
+when a game starts.
+
+The app's CC0 license does not replace these third-party license terms.
+Original notices remain in the corresponding shader sources. GPL-2.0.txt
+and GPL-3.0.txt include the complete GNU General Public License texts.
+
+The same license texts also accompany Ambient TV's GLES adaptations of
+these algorithms. Their original GLSL sources are pinned to:
+  https://github.com/libretro/glsl-shaders/tree/a35069864b4bf30f8c8e740d57206543fb7e745e
+Those adaptations change the renderer interface while retaining the
+original algorithm and notices. The reproducible source manifest and
+adaptation details are in third_party_assets/game_shaders in Ambient TV's
+source repository. Super2xSaI's GLES adaptation uses the Slang source at
+the Slang commit stated above. GLES and Slang use their respective upstream
+presentation passes; they are not promised to produce identical pixels.
+
+Included works and notices
+-------------------------
+
+ScaleFX (edge-smoothing/scalefx):
+  Copyright (c) 2016 Sp00kyFox. MIT license, reproduced in each shader.
+  Includes the upstream stock.slang reference-image pass.
+
+SABR v3.0 (edge-smoothing/sabr):
+  Joshua Street; includes portions of Hyllian's 5xBR v3.7c algorithm.
+  GNU General Public License, version 2 or any later version.
+
+xBR Lv2 standalone (edge-smoothing/xbr):
+  Copyright (C) 2011-2022 Hyllian. MIT license, reproduced in the shader.
+
+xBRZ Freescale (edge-smoothing/xbrz):
+  Hyllian's vertex/texel mapping: Copyright (C) 2011/2016 Hyllian, MIT.
+  xBRZ portions: Copyright (C) Zenju, GNU General Public License version 3.
+  The upstream MAME linking exception is preserved verbatim in the shader.
+
+2xSaL (edge-smoothing/xsal):
+  Copyright (C) 2007 guest(r).
+  GNU General Public License, version 2 or any later version.
+  The upstream directory/name is xsal; this is separate from Super2xSaI.
+
+Super2xSaI and SuperEagle (edge-smoothing/eagle):
+  Copyright (C) 2002-2007 The DOSBox Team, adapted by guest(r) in 2007.
+  SuperEagle also retains Derek Liauw Kie Fa's 1999-2001 notice.
+  These upstream files identify their license as GNU-GPL; their embedded
+  notices are retained without assigning a more specific version here.
+
+2xScaleHQ (edge-smoothing/scalehq):
+  Copyright (C) 2005 guest(r).
+  GNU General Public License, version 2 or any later version, as recorded
+  in the corresponding original GLSL shader (the Slang conversion omits
+  the header):
+  https://github.com/libretro/glsl-shaders/blob/a35069864b4bf30f8c8e740d57206543fb7e745e/scalehq/shaders/2xScaleHQ.glsl
+
+Bicubic presentation passes (interpolation/shaders/bicubic):
+  Copyright (C) 2011-2025 Hyllian. MIT license, reproduced in each shader.
+  Shared dependencies of 2xSaL, Super2xSaI and 2xScaleHQ.
+
+The stock pass and preset files retain their original content and source
+provenance; no additional license is asserted for files without a header.

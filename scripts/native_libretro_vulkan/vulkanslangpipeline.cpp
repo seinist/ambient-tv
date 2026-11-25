@@ -15,8 +15,29 @@ namespace {
     constexpr const char* TAG = "AmbientLibretroSlang";
     constexpr uint32_t MAX_SOURCE_DIMENSION = 8192;
     constexpr uint64_t MAX_RENDER_PIXELS = 4096ull * 2160ull;
-    // Keep frame-history and intermediate textures capped to a realistic TV output budget.
-    // Additional per-preset limits are enforced by the package validator before activation.
+    // Bound the actual preset intermediates as well as the presentation image.
+    constexpr uint64_t MAX_INTERMEDIATE_BYTES = 128ull * 1024ull * 1024ull;
+    bool endsWith(const std::string& path, const char* suffix) {
+        const size_t count = std::strlen(suffix);
+        return path.size() >= count && path.compare(path.size() - count, count, suffix) == 0;
+    }
+    bool withinIntermediateBudget(const std::string& path, uint32_t width, uint32_t height,
+                                  uint32_t viewportHeight, uint32_t deviceLimit) {
+        const uint64_t pixels = uint64_t(width) * height;
+        if (endsWith(path, "/scalefx/scalefx.slangp")) {
+            // Original, two float metric buffers, classification, 3x output;
+            // include a second set for runtimes retaining prior targets.
+            return uint64_t(width) * 3 <= deviceLimit && uint64_t(height) * 3 <= deviceLimit &&
+                pixels * 160 <= MAX_INTERMEDIATE_BYTES;
+        }
+        if (endsWith(path, "/xsal/2xsal.slangp") || endsWith(path, "/eagle/super-2xsai.slangp") ||
+            endsWith(path, "/scalehq/2xScaleHQ.slangp")) {
+            // 2x scaler image and the separable bicubic presentation intermediate.
+            return uint64_t(width) * 2 <= deviceLimit && uint64_t(height) * 2 <= deviceLimit &&
+                pixels * 32 + uint64_t(width) * viewportHeight * 16 <= MAX_INTERMEDIATE_BYTES;
+        }
+        return true;
+    }
     constexpr size_t MAX_PRESET_PATH_BYTES = 4096;
     bool isRegular(const std::string& path) {
         struct stat info {};
@@ -98,6 +119,15 @@ bool VulkanSlangPipeline::ensure(VkInstance instance, VkPhysicalDevice physicalD
         errorForThisPreset = true;
         return false;
     }
+    const auto getProperties = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(
+        getInstanceProcAddr(instance, "vkGetPhysicalDeviceProperties"));
+    if (getProperties == nullptr) {
+        errorForThisPreset = true;
+        return false;
+    }
+    VkPhysicalDeviceProperties properties {};
+    getProperties(physicalDevice, &properties);
+    maxImageDimension = std::min(MAX_SOURCE_DIMENSION, properties.limits.maxImageDimension2D);
     libra_shader_preset_t preset = nullptr;
     libra_preset_opt_t parseOptions {};
     parseOptions.version = LIBRASHADER_CURRENT_VERSION;
@@ -150,7 +180,8 @@ bool VulkanSlangPipeline::record(VkCommandBuffer commands, uint64_t frameCount,
     if (chain == nullptr || errorForThisPreset || commands == VK_NULL_HANDLE ||
         input == VK_NULL_HANDLE || target == VK_NULL_HANDLE ||
         sourceWidth == 0 || sourceHeight == 0 || targetWidth == 0 || targetHeight == 0 ||
-        sourceWidth > MAX_SOURCE_DIMENSION || sourceHeight > MAX_SOURCE_DIMENSION ||
+        sourceWidth > maxImageDimension || sourceHeight > maxImageDimension ||
+        !withinIntermediateBudget(presetPath, sourceWidth, sourceHeight, viewportHeight, maxImageDimension) ||
         uint64_t(targetWidth) * targetHeight > MAX_RENDER_PIXELS ||
         viewportWidth == 0 || viewportHeight == 0 ||
         uint64_t(viewportWidth) * viewportHeight > MAX_RENDER_PIXELS) return false;

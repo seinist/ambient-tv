@@ -146,6 +146,50 @@ class CompanionRemoteInputTest {
         assertEquals(1, hooks.count { it.action == MotionEvent.ACTION_HOVER_EXIT })
     }
 
+    @Test fun padGameplayClearsTrackpadHoverAndOnlyTheCurrentGameCanRestoreIt() {
+        val native = activity()
+        val pointers = mutableListOf<Pointer>()
+        val keys = mutableListOf<Int>()
+        val embedded = embedded(native.get().window, callbacks = UiRenderHostCallbacks(
+            dispatchKeyEvent = { event, dispatch -> keys += event.action; dispatch() },
+            onFailure = { throw AssertionError(it) },
+        ))
+        embedded.root.addView(pointerControl(native.get(), pointers), FrameLayout.LayoutParams(-1, -1))
+        layout(embedded.root, 1920, 1080)
+        register(native.get().window) { embedded.root }
+        val oldGame = Any()
+        val currentGame = Any()
+        try {
+            assertTrue(CompanionRemoteInput.dispatch(CompanionInput("move", x = 0.1f)))
+            CompanionRemoteInput.setGamePointerAllowed(oldGame, false)
+            assertEquals(MotionEvent.ACTION_HOVER_EXIT, pointers.last().action)
+            pointers.clear()
+            CompanionRemoteInput.setGamePointerAllowed(currentGame, false)
+            CompanionRemoteInput.releaseGamePointerPolicy(oldGame)
+            for (action in listOf("move", "click", "scroll")) {
+                assertTrue(CompanionRemoteInput.dispatch(CompanionInput(action)))
+            }
+            assertTrue(pointers.isEmpty())
+            assertTrue(CompanionRemoteInput.dispatch(CompanionInput("key", key = "back")))
+            assertEquals(listOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP), keys)
+
+            // The current game's menu or explicit pointer mode restores normal trackpad input.
+            CompanionRemoteInput.setGamePointerAllowed(currentGame, true)
+            assertTrue(CompanionRemoteInput.dispatch(CompanionInput("move", x = 0.1f)))
+            assertEquals(listOf(MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE),
+                pointers.map { it.action })
+            CompanionRemoteInput.setGamePointerAllowed(currentGame, false)
+            pointers.clear()
+            CompanionRemoteInput.releaseGamePointerPolicy(currentGame)
+            assertTrue(CompanionRemoteInput.dispatch(CompanionInput("move", x = 0.1f)))
+            assertEquals(listOf(MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE),
+                pointers.map { it.action })
+        } finally {
+            CompanionRemoteInput.releaseGamePointerPolicy(oldGame)
+            CompanionRemoteInput.releaseGamePointerPolicy(currentGame)
+        }
+    }
+
     @Test fun registeredContentCanReturnToNativeFocusTextAndWindowPixelDispatch() {
         val native = activity()
         val embedded = embedded(native.get().window)
