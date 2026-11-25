@@ -7,6 +7,8 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.Json
 
 @Serializable
@@ -31,6 +33,9 @@ class MoonlightLibraryStore @Inject constructor(
     private val artworkDir = File(context.filesDir, "moonlight_artwork").apply { mkdirs() }
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val lock = Any()
+    private val mutableRevisions = MutableStateFlow(0L)
+    val revisions = mutableRevisions.asStateFlow()
+    private fun changed() { mutableRevisions.value += 1L }
     private val prefix = Regex("[a-zA-Z0-9_-]{1,64}")
 
     fun catalog(hostId: String): MoonlightHostCatalog? = synchronized(lock) {
@@ -51,6 +56,7 @@ class MoonlightLibraryStore @Inject constructor(
         ))
         require(value.length <= 384 * 1024)
         prefs.edit().putString("catalog:$hostId", value).apply()
+        changed()
     }
 
     fun favorites(): Set<String> = synchronized(lock) {
@@ -64,6 +70,7 @@ class MoonlightLibraryStore @Inject constructor(
         val next = favorites().toMutableSet()
         val added = if (item in next) { next.remove(item); false } else { next.add(item); true }
         prefs.edit().putStringSet("favorites", next.take(2048).toSet()).apply()
+        changed()
         added
     }
 
@@ -75,6 +82,7 @@ class MoonlightLibraryStore @Inject constructor(
         val item = key(hostId, appId)
         val ordered = listOf(item) + recent().filterNot { it == item }
         prefs.edit().putString("recent", ordered.take(128).joinToString("|")).apply()
+        changed()
     }
 
     fun artworkFile(hostId: String, appId: Int): File? {
@@ -95,6 +103,7 @@ class MoonlightLibraryStore @Inject constructor(
                 return null
             }
             trimArtwork()
+            changed()
             target
         } catch (_: Exception) {
             temporary.delete()
@@ -108,6 +117,7 @@ class MoonlightLibraryStore @Inject constructor(
             "favorites", favorites().filterNot { it.startsWith("$hostId:") }.toSet(),
         ).putString("recent", recent().filterNot { it.startsWith("$hostId:") }.joinToString("|")).apply()
         artworkDir.listFiles()?.filter { it.name.startsWith("$hostId-") }?.forEach(File::delete)
+        changed()
     }
 
     private fun trimArtwork() {
