@@ -55,6 +55,9 @@ jobs:
             "$sdkmanager" --channel=3 "platforms;android-37.0" "ndk;30.0.16248370"
           fi
       - uses: gradle/actions/setup-gradle@v4
+      - name: Prepare Ambient TV's mandatory LibretroDroid build dependency
+        shell: bash
+        run: bash scripts/fetch_libretrodroid.sh
       - name: Fetch exact Moonlight release and verify audited source patches
         shell: bash
         run: bash scripts/fetch_moonlight_sources.sh
