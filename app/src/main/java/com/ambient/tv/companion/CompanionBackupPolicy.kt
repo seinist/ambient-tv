@@ -82,14 +82,18 @@ internal object CompanionBackupPolicy {
             "gameMetadataOptions",
         ),
         "device" to setOf("imageCacheMb", "cardImages1080"),
-        "connections" to setOf("tvheadendHtspPort", "rommEnabled", "rommServerUrl", "rommUsername"),
+        "connections" to setOf("tvheadendHtspPort", "rommEnabled", "rommServerUrl", "rommUsername",
+            "moonlightEnabled", "moonlightHosts"),
         "credentials" to setOf("gameMetadata"),
     )
     /**
      * Classified extras the companion does not transfer: RomM pairs every device on its own (QR
      * or code), so its address travels only in a file backup.
      */
-    private val companionLocalExtraFields = setOf("rommEnabled", "rommServerUrl", "rommUsername")
+    private val companionLocalExtraFields = setOf("rommEnabled", "rommServerUrl", "rommUsername",
+        // Server addresses can be transferred by explicit file backup, but a phone's local
+        // network host inventory must not silently replace the TV's paired identities.
+        "moonlightEnabled", "moonlightHosts")
 
     /**
      * Fields that are not synced through the companion today (unchanged behaviour, now explicit):
