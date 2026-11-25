@@ -16,6 +16,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -24,7 +25,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * One owner for the native Moonlight GameStream connection.
@@ -51,6 +51,7 @@ class MoonlightStreamEngine @Inject constructor(
         var cancelled: Boolean = false,
         var stopIssued: Boolean = false,
         var preparation: Job? = null,
+        var audioFocus: AudioFocusRequest? = null,
     )
 
     private val lock = Any()
@@ -59,7 +60,6 @@ class MoonlightStreamEngine @Inject constructor(
     private val mutable = MutableStateFlow(MoonlightStreamStatus())
     val status: StateFlow<MoonlightStreamStatus> = mutable.asStateFlow()
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    private var audioFocusRequest: AudioFocusRequest? = null
     private var active: Active? = null
 
     /** All calls are non-blocking for the Compose UI, including HTTPS launch negotiation. */
@@ -82,7 +82,8 @@ class MoonlightStreamEngine @Inject constructor(
                 val videoFormat = MoonlightHardwareVideo.supportedFormat(valid)
                 if (videoFormat == 0) throw UnsupportedOperationException("No compatible hardware video decoder")
                 if (!surface.isValid) throw IllegalStateException("Stream surface was destroyed")
-                if (!requestAudioFocus()) throw IllegalStateException("Audio focus denied")
+                if (!isOwned(session)) return@launch
+                if (!requestAudioFocus(session)) throw IllegalStateException("Audio focus denied")
 
                 val video = MoonlightMediaCodecRenderer(surface, valid) { text ->
                     fail(session, text)
@@ -124,11 +125,14 @@ class MoonlightStreamEngine @Inject constructor(
                     }
                 }
                 if (!stillOwned) {
-                    releaseAudioFocus()
+                    releaseAudioFocus(session)
                     return@launch
                 }
                 // NvConnection spawns its own native start thread; callbacks are generation-gated.
                 connection.start(audio, video, callbacks(session))
+            } catch (cancel: CancellationException) {
+                finishStopped(session)
+                throw cancel
             } catch (error: Exception) {
                 fail(session, error.message ?: "Moonlight streaming could not start")
             }
@@ -137,21 +141,34 @@ class MoonlightStreamEngine @Inject constructor(
     }
 
     fun stop() {
-        val toStop = synchronized(lock) {
-            val session = active ?: return
+        val current = synchronized(lock) { active } ?: return
+        stopSession(current)
+    }
+
+    private fun stopSession(session: Active) {
+        val connection = synchronized(lock) {
+            if (active !== session || session.stopIssued) return
             session.cancelled = true
-            mutable.value = mutable.value.copy(phase = MoonlightStreamPhase.STOPPING)
-            // NvConnection.stop() releases a native semaphore and must not be invoked before
-            // its connectionStarted callback: doing so can leak permits in upstream v12.2.
-            if (session.started && !session.stopIssued) {
-                session.stopIssued = true
-                session.connection
-            } else null
+            session.stopIssued = true
+            if (mutable.value.phase != MoonlightStreamPhase.FAILED)
+                mutable.value = mutable.value.copy(phase = MoonlightStreamPhase.STOPPING)
+            session.connection
         }
-        if (toStop != null) scope.launch(Dispatchers.IO) {
-            runCatching { toStop.stop() }
-            finishStopped()
+        // The reviewed upstream NvConnection patch owns its semaphore and permits a safe
+        // stop before connectionStarted, without leaking global native-connection permits.
+        session.preparation?.cancel()
+        if (connection == null) {
+            finishStopped(session)
+        } else {
+            scope.launch(Dispatchers.IO) {
+                runCatching { connection.stop() }
+                finishStopped(session)
+            }
         }
+    }
+
+    private fun isOwned(session: Active): Boolean = synchronized(lock) {
+        active === session && !session.cancelled
     }
 
     fun sendGamepad(
@@ -169,28 +186,19 @@ class MoonlightStreamEngine @Inject constructor(
             fail(session, "Sunshine connection failed ($errorCode)")
         }
         override fun connectionStarted() {
-            val quit = synchronized(lock) {
+            val wasCancelled = synchronized(lock) {
                 if (active !== session) return
                 session.started = true
-                if (session.cancelled) {
-                    if (!session.stopIssued) {
-                        session.stopIssued = true
-                        session.connection
-                    } else null
-                } else {
+                if (!session.cancelled)
                     mutable.value = mutable.value.copy(phase = MoonlightStreamPhase.STREAMING)
-                    null
-                }
+                session.cancelled
             }
-            if (quit != null) scope.launch(Dispatchers.IO) {
-                runCatching { quit.stop() }
-                finishStopped(session)
-            }
+            if (wasCancelled) stopSession(session)
         }
         override fun connectionTerminated(errorCode: Int) {
-            if (errorCode != 0 && !session.cancelled) {
+            if (errorCode != 0 && !session.cancelled)
                 fail(session, "Sunshine stream disconnected ($errorCode)")
-            } else finishStopped(session)
+            else stopSession(session)
         }
         override fun connectionStatusUpdate(connectionStatus: Int) = Unit
         override fun displayMessage(message: String) = Unit
@@ -204,7 +212,7 @@ class MoonlightStreamEngine @Inject constructor(
         override fun setControllerLED(controllerNumber: Short, r: Byte, g: Byte, b: Byte) = Unit
     }
 
-    private fun requestAudioFocus(): Boolean {
+    private fun requestAudioFocus(session: Active): Boolean {
         val attributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_GAME)
             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
@@ -212,37 +220,46 @@ class MoonlightStreamEngine @Inject constructor(
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
             .setAudioAttributes(attributes)
             .setOnAudioFocusChangeListener { focus ->
-                if (focus == AudioManager.AUDIOFOCUS_LOSS) stop()
+                if (focus == AudioManager.AUDIOFOCUS_LOSS) stopSession(session)
             }.build()
         val granted = audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        if (granted) audioFocusRequest = request
-        return granted
+        if (!granted) return false
+        val keep = synchronized(lock) {
+            if (active !== session || session.cancelled) false
+            else { session.audioFocus = request; true }
+        }
+        if (!keep) audioManager.abandonAudioFocusRequest(request)
+        return keep
     }
 
-    private fun releaseAudioFocus() {
-        val request = audioFocusRequest ?: return
-        audioFocusRequest = null
+    private fun releaseAudioFocus(session: Active) {
+        val request = synchronized(lock) {
+            session.audioFocus.also { session.audioFocus = null }
+        } ?: return
         audioManager.abandonAudioFocusRequest(request)
     }
 
     private fun fail(session: Active, text: String) {
         synchronized(lock) {
             if (active !== session) return
-            session.cancelled = true
             mutable.value = mutable.value.copy(phase = MoonlightStreamPhase.FAILED, error = text)
         }
-        releaseAudioFocus()
+        stopSession(session)
     }
 
-    private fun finishStopped(session: Active? = null) {
+    private fun finishStopped(session: Active) {
         synchronized(lock) {
-            val current = active ?: return
-            if (session != null && current !== session) return
+            if (active !== session) return
             active = null
-            mutable.value = mutable.value.copy(phase =
-                if (mutable.value.phase == MoonlightStreamPhase.FAILED)
-                    MoonlightStreamPhase.FAILED else MoonlightStreamPhase.ENDED)
+            mutable.value = mutable.value.copy(
+                phase = if (mutable.value.phase == MoonlightStreamPhase.FAILED)
+                    MoonlightStreamPhase.FAILED else MoonlightStreamPhase.ENDED,
+            )
         }
-        releaseAudioFocus()
+        releaseAudioFocus(session)
+        // Native connection teardown also owns renderer.stop()/cleanup(); if startup failed
+        // before native setup, these calls are harmless and release no hardware resources.
+        runCatching { session.video?.cleanup() }
+        runCatching { session.audio?.cleanup() }
     }
 }
