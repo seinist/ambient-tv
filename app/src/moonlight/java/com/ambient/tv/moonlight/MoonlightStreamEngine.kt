@@ -23,6 +23,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -63,6 +65,8 @@ class MoonlightStreamEngine @Inject constructor(
     private val revision = AtomicLong(0)
     private val mutable = MutableStateFlow(MoonlightStreamStatus())
     val status: StateFlow<MoonlightStreamStatus> = mutable.asStateFlow()
+    private val mutableRumble = MutableSharedFlow<MoonlightRumble>(extraBufferCapacity = 16)
+    val rumbleEvents = mutableRumble.asSharedFlow()
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var active: Active? = null
     private var localControllerMask = 0
@@ -357,8 +361,16 @@ class MoonlightStreamEngine @Inject constructor(
         override fun connectionStatusUpdate(connectionStatus: Int) = Unit
         override fun displayMessage(message: String) = Unit
         override fun displayTransientMessage(message: String) = Unit
-        override fun rumble(controllerNumber: Short, lowFreqMotor: Short, highFreqMotor: Short) = Unit
-        override fun rumbleTriggers(controllerNumber: Short, leftTrigger: Short, rightTrigger: Short) = Unit
+        override fun rumble(controllerNumber: Short, lowFreqMotor: Short, highFreqMotor: Short) {
+            if (controllerNumber.toInt() !in 0..3 || !isOwned(session)) return
+            mutableRumble.tryEmit(MoonlightRumble(controllerNumber.toInt(),
+                lowFreqMotor.toInt() and 0xffff, highFreqMotor.toInt() and 0xffff))
+        }
+        override fun rumbleTriggers(controllerNumber: Short, leftTrigger: Short, rightTrigger: Short) {
+            if (controllerNumber.toInt() !in 0..3 || !isOwned(session)) return
+            mutableRumble.tryEmit(MoonlightRumble(controllerNumber.toInt(),
+                leftTrigger.toInt() and 0xffff, rightTrigger.toInt() and 0xffff))
+        }
         override fun setHdrMode(enabled: Boolean, hdrMetadata: ByteArray?) {
             session.video?.setHdrMode(enabled, hdrMetadata)
         }
