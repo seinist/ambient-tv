@@ -1,0 +1,81 @@
+name: Moonlight native verification
+
+# Only native Moonlight files trigger this potentially expensive NDK build.
+on:
+  pull_request:
+    paths:
+      - 'moonlight_wrapper/**'
+      - 'app/src/moonlight/**'
+      - 'app/src/moonlightStub/**'
+      - 'app/src/main/java/com/ambient/tv/moonlight/**'
+      - 'scripts/fetch_moonlight_sources.sh'
+      - 'scripts/patches/moonlight/**'
+      - 'gradle/external-versions.properties'
+      - 'settings.gradle.kts'
+      - '.github/workflows/moonlight-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: moonlight-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-game-stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - build: arm64
+            abi: arm64-v8a
+          - build: armv7
+            abi: armeabi-v7a
+          - build: x86
+            abi: x86
+          - build: x86_64
+            abi: x86_64
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install Android platform and NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$sdkmanager" || sdkmanager="$(command -v sdkmanager)"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          if ! "$sdkmanager" "platforms;android-37.0" "ndk;30.0.16248370"; then
+            "$sdkmanager" --channel=3 "platforms;android-37.0" "ndk;30.0.16248370"
+          fi
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Fetch exact Moonlight release and verify audited source patches
+        shell: bash
+        run: bash scripts/fetch_moonlight_sources.sh
+      - name: Verify upstream GameStream native dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=third_party/moonlight-android/app/src/main/jni/moonlight-core
+          test -s "$root/opus/${{ matrix.abi }}/libopus.a"
+          test -s "$root/openssl/${{ matrix.abi }}/libcrypto.a"
+          test -f "$root/moonlight-common-c/enet/include/enet/enet.h"
+          grep -q 'this.uniqueId = uniqueId' third_party/moonlight-android/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
+          grep -q 'Pinned host certificate changed' third_party/moonlight-android/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
+      - name: Compile pinned native Moonlight protocol module
+        shell: bash
+        run: ./gradlew :moonlight_native:assembleDebug -PMOONLIGHT_NATIVE=true -PAPK_ABI=${{ matrix.build }} --no-daemon --stacktrace
+      - name: Check Moonlight JNI alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t libs < <(find moonlight_wrapper/build -type f -name libmoonlight-core.so -path "*/${{ matrix.abi }}/*")
+          test "${#libs[@]}" -gt 0 || { echo "::error::Missing Moonlight JNI library"; exit 1; }
+          readelf="$ANDROID_HOME/ndk/30.0.16248370/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          python3 scripts/check_elf_page_alignment.py "$readelf" "${libs[@]}"
