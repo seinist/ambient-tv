@@ -47,6 +47,8 @@ class HostConnectivity internal constructor(
 
     private val store = HostHealthStore()
     val states = store.states
+    /** A cancelled NAS outage ends when any verified request reaches its physical machine. */
+    internal val resumeWakePauses = ResumeWakePauses()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val checks = ConcurrentHashMap<String, Mutex>()
     private var started = false
@@ -118,7 +120,12 @@ class HostConnectivity internal constructor(
         endpoints().filter { it.machine == machine }.mapTo(mutableSetOf(system)) { it.system }
     } ?: setOf(system)
     fun health(system: String): HostHealth = machine(system)?.let { store.current(it).health } ?: HostHealth.UNKNOWN
-    fun online(check: HostCheck?) { if (check != null) store.online(check.machine) }
+    fun online(check: HostCheck?) {
+        if (check != null) {
+            store.online(check.machine)
+            resumeWakePauses.online(check.machine)
+        }
+    }
     /** Known unreachable from this network (and not wakeable): every service on it is offline. */
     fun markOffline(system: String) { begin(system)?.let(store::offline) }
     fun interceptor() = okhttp3.Interceptor { chain ->
@@ -167,7 +174,7 @@ class HostConnectivity internal constructor(
                 }
             } }.awaitAll().any { it }
         }
-        if (reachable) store.online(check.machine) else store.offline(check)
+        if (reachable) online(check) else store.offline(check)
         store.current(check.machine).health == HostHealth.ONLINE
     }
 

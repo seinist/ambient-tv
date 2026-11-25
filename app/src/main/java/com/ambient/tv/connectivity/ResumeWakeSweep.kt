@@ -41,20 +41,24 @@ internal data class ResumeWakeEndpoint(
 )
 
 /**
- * The serialized resume worker retains a cancelled outage across queued network rechecks.
- * Passive probes and explicit wake actions stay available; confirmed reachability or changed
- * endpoint configuration releases the automatic-wake pause.
+ * A cancelled outage stays paused across queued network rechecks. Shared host tracking
+ * releases it after verified recovery, including successful explicit Files wake/access.
+ * The worker and host probes may update it from different threads.
  */
 internal class ResumeWakePauses {
     private val paused = mutableMapOf<String, Set<ResumeWakeEndpoint>>()
 
-    fun sweep(endpoints: Map<String, Set<ResumeWakeEndpoint>>): ResumeWakeSweep {
+    @Synchronized fun sweep(endpoints: Map<String, Set<ResumeWakeEndpoint>>): ResumeWakeSweep {
         val snapshot = endpoints.mapValues { it.value.toSet() }
         paused.entries.removeAll { (machine, configured) -> snapshot[machine] != configured }
-        return ResumeWakeSweep { machine -> snapshot[machine]?.let { paused[machine] = it } }
+        return ResumeWakeSweep { machine -> snapshot[machine]?.let { pause(machine, it) } }
     }
 
-    fun isPaused(machine: String): Boolean = machine in paused
+    @Synchronized private fun pause(machine: String, endpoints: Set<ResumeWakeEndpoint>) {
+        paused[machine] = endpoints
+    }
 
-    fun online(machine: String) { paused.remove(machine) }
+    @Synchronized fun isPaused(machine: String): Boolean = machine in paused
+
+    @Synchronized fun online(machine: String) { paused.remove(machine) }
 }

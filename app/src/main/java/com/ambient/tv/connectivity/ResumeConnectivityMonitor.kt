@@ -59,13 +59,14 @@ class ResumeConnectivityMonitor @Inject constructor(
     private val wakeOnLan: WakeOnLan,
     private val wireGuardRoute: WireGuardRouteController,
     private val wakeMachines: com.ambient.tv.wol.WakeMachines,
+    private val hosts: HostConnectivity,
 ) : DefaultLifecycleObserver {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     // Conflated requests never cancel a running, app-scoped wake. A network change during a
     // long wake is checked once more when that attempt completes.
     private val recheckRequests = Channel<String>(Channel.CONFLATED)
-    private val fileWakePauses = ResumeWakePauses()
+    private val fileWakePauses = hosts.resumeWakePauses
     private var networkChangeJob: Job? = null
     private var started = false
     @Volatile private var foreground = false
@@ -378,10 +379,7 @@ class ResumeConnectivityMonitor @Inject constructor(
         var allOk = true
         for ((machine, source) in targets) {
             val ok = sweep.check(machine) {
-                if (wakeOnLan.isReachable(source)) {
-                    fileWakePauses.online(machine)
-                    return@check true
-                }
+                if (wakeOnLan.isReachable(source)) return@check true
                 if (fileWakePauses.isPaused(machine)) return@check false
                 if (source.wolAuto && source.wolMac.isNotBlank()) {
                     onWaking?.invoke()

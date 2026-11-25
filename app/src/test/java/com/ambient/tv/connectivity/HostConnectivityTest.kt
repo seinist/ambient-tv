@@ -8,6 +8,7 @@ import com.ambient.tv.data.files.FileSource
 import com.ambient.tv.domain.model.JellyfinServerProfile
 import com.ambient.tv.wol.WakeMachines
 import java.net.ServerSocket
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
@@ -181,5 +182,51 @@ class HostConnectivityTest {
         assertEquals("host:127.0.0.1", machines.keyFor("tvheadend", preferences.tvheadendHost, null))
         assertEquals("mac:aabbccddee10", hosts.machine("plex"))
         assertEquals("host:127.0.0.1", hosts.machine("tvheadend"))
+    }
+
+    @Test fun `verified external recovery releases only its machine pause for later outages`() = runBlocking {
+        val closed = ServerSocket(0).use { it.localPort }
+        preferences.port = closed
+        preferences.tvheadendPort = closed
+        val machine = hosts.machine("plex")!!
+        pauseResumeWake(machine)
+        assertFalse(hosts.verifySystem("plex"))
+        assertTrue(hosts.resumeWakePauses.isPaused(machine))
+
+        hosts.online(HostCheck("host:unrelated.local", 0L))
+        assertTrue(hosts.resumeWakePauses.isPaused(machine))
+        // A manual wake or successful NAS request reports through this shared evidence path.
+        hosts.online(hosts.begin("plex"))
+        assertFalse(hosts.resumeWakePauses.isPaused(machine))
+
+        assertFalse(hosts.verifySystem("plex"))
+        assertEquals(HostHealth.OFFLINE, hosts.health("plex"))
+        assertFalse(hosts.resumeWakePauses.isPaused(machine))
+    }
+
+    @Test fun `successful passive host probe releases the cancelled outage before a later sleep`() = runBlocking {
+        val live = ServerSocket(0)
+        preferences.port = live.localPort
+        preferences.tvheadendPort = live.localPort
+        val machine = hosts.machine("plex")!!
+        pauseResumeWake(machine)
+        try {
+            assertTrue(hosts.verifySystem("plex"))
+            assertEquals(HostHealth.ONLINE, hosts.health("plex"))
+            assertFalse(hosts.resumeWakePauses.isPaused(machine))
+        } finally {
+            live.close()
+        }
+
+        assertFalse(hosts.verifySystem("plex"))
+        assertEquals(HostHealth.OFFLINE, hosts.health("plex"))
+        assertFalse(hosts.resumeWakePauses.isPaused(machine))
+    }
+
+    private suspend fun pauseResumeWake(machine: String) {
+        val endpoint = ResumeWakeEndpoint("127.0.0.1", preferences.port, "", "255.255.255.255", 9, true, false)
+        val sweep = hosts.resumeWakePauses.sweep(mapOf(machine to setOf(endpoint)))
+        assertFalse(sweep.check(machine) { throw CancellationException("Wake cancelled") })
+        assertTrue(hosts.resumeWakePauses.isPaused(machine))
     }
 }
