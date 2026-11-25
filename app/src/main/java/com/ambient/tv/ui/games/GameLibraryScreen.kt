@@ -103,6 +103,7 @@ fun GameLibraryScreen(
     initialSection: String,
     onSelect: (LibraryGame) -> Unit,
     onOpenDetails: (LibraryGame) -> Unit,
+    onOpenGameSettings: (String?) -> Unit = {},
     startManaging: Boolean = false,
     onBack: () -> Unit,
     model: GameLibraryViewModel = hiltViewModel(),
@@ -301,6 +302,8 @@ fun GameLibraryScreen(
                             model.refreshNameCatalogs()
                         },
                         onMetadataSettings = { metadataSettingsOpen = true },
+                        onOpenSystemsSettings = { onOpenGameSettings("systems") },
+                        onOpenAllSettings = { onOpenGameSettings("home") },
                         metadataSettingsModifier = Modifier.focusRequester(metadataSettingsFocus),
                         onEditSource = { source -> networkEditor = source },
                         onWake = model::wakeCurrentSource,
@@ -603,6 +606,8 @@ private fun GameFolderManager(
     onImportDat: () -> Unit,
     onLoadNameDatabases: () -> Unit,
     onMetadataSettings: () -> Unit,
+    onOpenSystemsSettings: () -> Unit,
+    onOpenAllSettings: () -> Unit,
     metadataSettingsModifier: Modifier = Modifier,
     onEditSource: (FileSource) -> Unit,
     onWake: () -> Unit,
@@ -741,6 +746,14 @@ private fun GameFolderManager(
                         summary = stringResource(R.string.games_settings_metadata_summary),
                         onClick = onMetadataSettings, modifier = metadataSettingsModifier,
                         icon = Icons.Filled.Settings) }
+                    item { com.ambient.tv.ui.common.SettingsNavigationRow(
+                        title = stringResource(R.string.games_settings_systems_heading),
+                        summary = stringResource(R.string.games_settings_systems_summary),
+                        onClick = onOpenSystemsSettings, icon = Icons.Filled.SportsEsports) }
+                    item { com.ambient.tv.ui.common.SettingsNavigationRow(
+                        title = stringResource(R.string.games_settings_all_title),
+                        summary = stringResource(R.string.games_settings_all_hint),
+                        onClick = onOpenAllSettings, icon = Icons.Filled.Tune) }
                     item { com.ambient.tv.ui.common.SettingsNavigationRow(
                         title = stringResource(R.string.game_library_sources_manage),
                         onClick = { onManagerPage(GameLibraryManagerPage.SOURCES) }, icon = Icons.Filled.Storage) }
