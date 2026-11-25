@@ -271,6 +271,7 @@ private fun MoonlightStreamContent(
 ) {
     val status by engine.status.collectAsState()
     var panel by remember { mutableStateOf(MoonlightPlaybackPage.NONE) }
+    var panelOrigin by remember { mutableStateOf(MoonlightPlaybackPage.NONE) }
     LaunchedEffect(controlsShown) {
         if (!controlsShown) panel = MoonlightPlaybackPage.NONE
     }
@@ -278,6 +279,8 @@ private fun MoonlightStreamContent(
         onCompanionMode(status.phase, controlsShown || panel != MoonlightPlaybackPage.NONE)
     }
     val resumeFocus = remember { FocusRequester() }
+    val textFocus = remember { FocusRequester() }
+    val infoFocus = remember { FocusRequester() }
     val settingsFocus = remember { FocusRequester() }
     val disconnectFocus = remember { FocusRequester() }
     LaunchedEffect(controlsShown, status.phase, panel) {
@@ -285,9 +288,15 @@ private fun MoonlightStreamContent(
             panel == MoonlightPlaybackPage.NONE) {
             withFrameNanos { }
             runCatching {
-                if (controlsShown && status.phase == MoonlightStreamPhase.STREAMING)
-                    resumeFocus.requestFocus()
-                else disconnectFocus.requestFocus()
+                val target = when {
+                    controlsShown && panelOrigin == MoonlightPlaybackPage.TEXT -> textFocus
+                    controlsShown && panelOrigin == MoonlightPlaybackPage.INFO -> infoFocus
+                    controlsShown && panelOrigin != MoonlightPlaybackPage.NONE -> settingsFocus
+                    controlsShown && status.phase == MoonlightStreamPhase.STREAMING -> resumeFocus
+                    else -> disconnectFocus
+                }
+                target.requestFocus()
+                if (panelOrigin != MoonlightPlaybackPage.NONE) panelOrigin = MoonlightPlaybackPage.NONE
             }
         }
     }
@@ -388,12 +397,23 @@ private fun MoonlightStreamContent(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (status.phase == MoonlightStreamPhase.STREAMING) {
                             TvActionButton(stringResource(R.string.moonlight_player_input_short),
-                                { panel = MoonlightPlaybackPage.TEXT }, icon = Icons.Filled.Keyboard)
+                                {
+                                    panelOrigin = MoonlightPlaybackPage.TEXT
+                                    panel = MoonlightPlaybackPage.TEXT
+                                }, modifier = Modifier.focusRequester(textFocus),
+                                icon = Icons.Filled.Keyboard)
                         }
                         TvActionButton(stringResource(R.string.moonlight_player_info_short),
-                            { panel = MoonlightPlaybackPage.INFO }, icon = Icons.Filled.Info)
+                            {
+                                panelOrigin = MoonlightPlaybackPage.INFO
+                                panel = MoonlightPlaybackPage.INFO
+                            }, modifier = Modifier.focusRequester(infoFocus),
+                            icon = Icons.Filled.Info)
                         TvActionButton(stringResource(R.string.moonlight_player_options),
-                            { panel = MoonlightPlaybackPage.ROOT },
+                            {
+                                panelOrigin = MoonlightPlaybackPage.ROOT
+                                panel = MoonlightPlaybackPage.ROOT
+                            },
                             modifier = Modifier.focusRequester(settingsFocus),
                             icon = Icons.Filled.Settings)
                         TvActionButton(stringResource(R.string.moonlight_stream_disconnect),
