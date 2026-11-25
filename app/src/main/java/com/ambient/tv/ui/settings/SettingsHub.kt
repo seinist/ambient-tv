@@ -193,6 +193,7 @@ internal fun SettingsHub(
     var lastRegionFocus by remember { mutableStateOf<FocusRequester?>(null) }
     val dialogFocus = remember { FocusRequester() }
     val states = rememberSaveableStateHolder()
+    val nestedBack = remember { SettingsNestedBackState() }
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val uiSounds = LocalUiSoundPlayer.current
@@ -276,6 +277,7 @@ internal fun SettingsHub(
         mutableStateOf(settingsShortcutItemKey(initialCategoryKey))
     }
     fun openPage(target: SettingsCategory, fromLink: Boolean = false) {
+        nestedBack.onBack = null
         val resolved = when {
             target == SettingsCategory.ADVANCED -> SettingsCategory.SPOTIFY
             !handheld && target == SettingsCategory.TRANSFER -> SettingsCategory.COMPANION
@@ -455,6 +457,7 @@ internal fun SettingsHub(
 
     // Back always moves to a parent level, or exits a direct shortcut to its caller.
     fun goBack() {
+        nestedBack.onBack?.let { it(); return }
         if (!parking) {
             if (page == null) back()
             else {
@@ -927,6 +930,7 @@ internal fun SettingsHub(
                             val landingQuery = searchLandingQuery
                             val externalItemKey = shortcutItemKey.takeIf { current == initialPage }
                             CompositionLocalProvider(
+                                LocalSettingsNestedBack provides nestedBack,
                                 LocalSettingsSearchLanding provides pageSearchLanding.accept(landingQuery),
                                 LocalSettingsItemIndex provides itemIndex,
                                 com.ambient.tv.ui.common.LocalSettingsPresentation provides com.ambient.tv.ui.common.SettingsPresentation.Page,
