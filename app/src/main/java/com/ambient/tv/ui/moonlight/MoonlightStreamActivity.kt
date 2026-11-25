@@ -45,6 +45,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.ambient.tv.BuildConfig
 import com.ambient.tv.R
+import com.ambient.tv.moonlight.MoonlightCompanionLink
 import com.ambient.tv.moonlight.MoonlightControllerRouter
 import com.ambient.tv.moonlight.MoonlightKeyboardRouter
 import com.ambient.tv.moonlight.MoonlightStreamEngine
@@ -66,6 +67,7 @@ import javax.inject.Inject
 class MoonlightStreamActivity : ComponentActivity() {
     @Inject lateinit var engine: MoonlightStreamEngine
     @Inject lateinit var preferences: AppPreferences
+    @Inject lateinit var companion: MoonlightCompanionLink
 
     private var osdVisible by mutableStateOf(false)
     private val keyboard by lazy {
@@ -74,9 +76,12 @@ class MoonlightStreamActivity : ComponentActivity() {
         }
     }
     private val input by lazy {
-        MoonlightControllerRouter { port, mask, buttons, lt, rt, lx, ly, rx, ry ->
-            engine.sendGamepad(port, mask, buttons, lt, rt, lx, ly, rx, ry)
-        }
+        MoonlightControllerRouter(
+            output = { port, mask, buttons, lt, rt, lx, ly, rx, ry ->
+                engine.sendGamepad(port, mask, buttons, lt, rt, lx, ly, rx, ry)
+            },
+            reservedPorts = { companion.reservedPorts() },
+        )
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
