@@ -36,4 +36,11 @@
     <string name="moonlight_identity_changed">Das gespeicherte PC-Zertifikat oder die Identität stimmt nicht mehr überein. PC nur dann entfernen und erneut koppeln, wenn du der neuen Identität vertraust.</string>
     <string name="moonlight_apps_failed">Die Anwendungsliste des gekoppelten PCs konnte nicht geladen werden.</string>
     <string name="moonlight_catalog_preview">Diese Anwendungen sind noch nicht abspielbar: Der Streaming-Player ist weiterhin in Entwicklung.</string>
+    <string name="moonlight_stream_test">Stream testen: %1$s</string>
+    <string name="moonlight_stream_running">Remote-Sitzung aktiv. Zurück öffnet die Steuerung.</string>
+    <string name="moonlight_stream_connecting">Verbindung zum Gaming-PC wird hergestellt…</string>
+    <string name="moonlight_stream_ended">Stream getrennt. Das Spiel läuft auf dem PC weiter.</string>
+    <string name="moonlight_stream_failed">Der Stream konnte nicht gestartet werden.</string>
+    <string name="moonlight_stream_resume">Fortsetzen</string>
+    <string name="moonlight_stream_disconnect">Stream trennen</string>
 </resources>
