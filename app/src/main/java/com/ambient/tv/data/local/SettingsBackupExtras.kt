@@ -54,6 +54,8 @@ data class PortableSettingsExtras(
     /** Source-linked ROM folder assignments live in Extras to stay under JVM 255-slot limit. */
     val gameLibraryFolders: List<com.ambient.tv.games.library.GameLibraryFolder>? = null,
     val gameMetadataOptions: com.ambient.tv.games.metadata.GameMetadataOptions? = null,
+    /** Portable playback quality; no GameStream certificates or private client keys. */
+    val moonlightStreamProfile: com.ambient.tv.moonlight.MoonlightStreamProfile? = null,
 )
 
 @Serializable
