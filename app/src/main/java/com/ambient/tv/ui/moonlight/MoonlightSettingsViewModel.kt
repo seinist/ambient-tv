@@ -151,7 +151,7 @@ class MoonlightSettingsViewModel @Inject constructor(
                 }
                 mutable.update { it.copy(
                     pairedIds = it.hosts.filter { host -> transport.locallyPaired(host.id) }.map { host -> host.id }.toSet(),
-                    error = error?.let(context::getString),
+                    error = error?.let { res -> context.getString(res) },
                 ) }
             } catch (cancel: CancellationException) {
                 throw cancel
