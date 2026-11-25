@@ -659,6 +659,8 @@ class SettingsBackupManager @Inject constructor(
                     rommEnabled = preferences.rommEnabled,
                     rommServerUrl = preferences.rommServerUrl.takeIf(String::isNotBlank),
                     rommUsername = preferences.rommUsername.takeIf(String::isNotBlank),
+                    moonlightEnabled = preferences.moonlightEnabled,
+                    moonlightHosts = preferences.moonlightHosts,
                 ),
                 credentials = if (includeCredentials) tokenStore.exportGameMetadataCredentials()?.let {
                     CredentialSettingsExtras(gameMetadata = it)
@@ -1235,11 +1237,17 @@ class SettingsBackupManager @Inject constructor(
                 preferences.rommUsername = name
             }
             connections.rommEnabled?.let { preferences.rommEnabled = it }
+            connections.moonlightHosts?.let { profiles ->
+                // Only addresses and display names travel. Restored hosts are still unpaired.
+                preferences.moonlightHosts = profiles.map { it.validated() }
+                    .distinctBy { it.host to it.port }.take(16)
+            }
+            connections.moonlightEnabled?.let { preferences.moonlightEnabled = it }
         }
     }
 
     internal companion object {
-        const val CURRENT_SCHEMA_VERSION = 84
+        const val CURRENT_SCHEMA_VERSION = 85
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }
