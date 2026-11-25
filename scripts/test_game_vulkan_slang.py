@@ -48,6 +48,8 @@ def main() -> None:
             raise SystemExit("Mesa lavapipe unavailable: install mesa-vulkan-drivers or set VK_ICD_FILENAMES")
         environment["VK_ICD_FILENAMES"] = str(candidates[0])
     environment.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
+    # Report all leaked object classes, not only the first ten repeated VUIDs.
+    environment.setdefault("VK_LAYER_DUPLICATE_MESSAGE_LIMIT", "1000")
     with tempfile.TemporaryDirectory(prefix="ambient-vulkan-slang-") as temporary:
         scratch = Path(temporary)
         executable = scratch / "vulkan-slang-test"

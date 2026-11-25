@@ -3,6 +3,7 @@
 #include "vulkanslangpipeline.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
@@ -18,6 +19,63 @@ static void require(bool value, const std::string& message) {
 }
 static void check(VkResult result, const char* operation) {
     require(result == VK_SUCCESS, std::string(operation) + ": " + std::to_string(result));
+}
+
+// Only librashader receives this dispatch proxy; fixture images/commands still
+// use the real loader. Each armed site returns one legal allocation failure,
+// then forwards normally, including when the runtime builds passes in parallel.
+enum class Fault { None, DescriptorSets, GraphicsPipeline, Framebuffer };
+static std::atomic<Fault> armedFault { Fault::None };
+static std::atomic<unsigned> injectedFaults { 0 };
+static bool inject(Fault site) {
+    if (!armedFault.compare_exchange_strong(site, Fault::None)) return false;
+    ++injectedFaults;
+    return true;
+}
+static void arm(Fault site) { injectedFaults = 0; armedFault = site; }
+static VKAPI_ATTR VkResult VKAPI_CALL faultDescriptorSets(VkDevice device,
+    const VkDescriptorSetAllocateInfo* info, VkDescriptorSet* sets) {
+    if (inject(Fault::DescriptorSets)) {
+        std::fill_n(sets, info->descriptorSetCount, VK_NULL_HANDLE);
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    }
+    return vkAllocateDescriptorSets(device, info, sets);
+}
+static VKAPI_ATTR VkResult VKAPI_CALL faultGraphicsPipeline(VkDevice device, VkPipelineCache cache,
+    uint32_t count, const VkGraphicsPipelineCreateInfo* info,
+    const VkAllocationCallbacks* allocator, VkPipeline* pipelines) {
+    if (inject(Fault::GraphicsPipeline)) {
+        std::fill_n(pipelines, count, VK_NULL_HANDLE);
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    }
+    return vkCreateGraphicsPipelines(device, cache, count, info, allocator, pipelines);
+}
+static VKAPI_ATTR VkResult VKAPI_CALL faultFramebuffer(VkDevice device,
+    const VkFramebufferCreateInfo* info, const VkAllocationCallbacks* allocator, VkFramebuffer* frame) {
+    if (inject(Fault::Framebuffer)) {
+        *frame = VK_NULL_HANDLE;
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    }
+    return vkCreateFramebuffer(device, info, allocator, frame);
+}
+static PFN_vkVoidFunction faultFunction(const char* name) {
+    if (std::strcmp(name, "vkAllocateDescriptorSets") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(faultDescriptorSets);
+    if (std::strcmp(name, "vkCreateGraphicsPipelines") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(faultGraphicsPipeline);
+    if (std::strcmp(name, "vkCreateFramebuffer") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(faultFramebuffer);
+    return nullptr;
+}
+static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL faultDeviceProc(VkDevice device, const char* name) {
+    if (const auto replacement = faultFunction(name)) return replacement;
+    return vkGetDeviceProcAddr(device, name);
+}
+static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL faultInstanceProc(VkInstance instance, const char* name) {
+    if (std::strcmp(name, "vkGetDeviceProcAddr") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(faultDeviceProc);
+    if (const auto replacement = faultFunction(name)) return replacement;
+    return vkGetInstanceProcAddr(instance, name);
 }
 
 struct Device {
@@ -187,7 +245,8 @@ static void fillChart(void* output, uint32_t width, uint32_t height) {
     }
 }
 
-static void renderFrame(Device& d, VulkanSlangPipeline& pipeline, unsigned frame) {
+static void renderFrame(Device& d, VulkanSlangPipeline& pipeline, unsigned frame,
+                        bool expectAllocationFailure = false) {
     // The second frame shrinks both source and output while retaining the chain.
     const uint32_t sourceWidth = frame == 0 ? 32 : 16;
     const uint32_t sourceHeight = frame == 0 ? 24 : 12;
@@ -222,10 +281,19 @@ static void renderFrame(Device& d, VulkanSlangPipeline& pipeline, unsigned frame
     d.barrier(target.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
               VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
               VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-    require(pipeline.record(d.commands, frame, input.image, VK_FORMAT_R8G8B8A8_UNORM,
+    const bool recorded = pipeline.record(d.commands, frame, input.image, VK_FORMAT_R8G8B8A8_UNORM,
                             sourceWidth, sourceHeight, target.image, VK_FORMAT_R8G8B8A8_UNORM,
                             targetWidth, targetHeight, float(border), float(border),
-                            contentWidth, contentHeight, 4.0f/3.0f, 60.0), "record failed");
+                            contentWidth, contentHeight, 4.0f/3.0f, 60.0);
+    if (!recorded || expectAllocationFailure) {
+        // These commands were never submitted. Discard them BEFORE releasing
+        // the failed chain's views/framebuffers and the fixture's input images.
+        check(vkResetCommandBuffer(d.commands, 0), "discard incomplete shader frame");
+        pipeline.releaseGpu();
+        require(expectAllocationFailure && !recorded && injectedFaults == 1,
+                "frame record failed unexpectedly or allocation fault was not reached/rejected");
+        return;
+    }
     d.barrier(target.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
               VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
               VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
@@ -268,6 +336,33 @@ static void renderFrame(Device& d, VulkanSlangPipeline& pipeline, unsigned frame
     // while the production Android swapchain requires opaque composition.
 }
 
+static void allocationFailures(Device& device, const char* preset) {
+    for (const auto site : {Fault::DescriptorSets, Fault::GraphicsPipeline}) {
+        const char* name = site == Fault::DescriptorSets ? "descriptor sets" : "graphics pipeline";
+        std::cout << "Slang injected constructor failure: " << name << std::endl;
+        VulkanSlangPipeline pipeline;
+        pipeline.setPresetPath(preset);
+        arm(site);
+        const bool ready = pipeline.ensure(device.instance, device.physical, device.device,
+                                            device.queue, faultInstanceProc);
+        armedFault = Fault::None;
+        check(vkDeviceWaitIdle(device.device), "wait after rejected chain construction");
+        pipeline.releaseGpu();
+        require(!ready && injectedFaults == 1, std::string("constructor fault was not reached/rejected: ") + name);
+    }
+    std::cout << "Slang injected frame failure: framebuffer" << std::endl;
+    VulkanSlangPipeline pipeline;
+    pipeline.setPresetPath(preset);
+    require(pipeline.ensure(device.instance, device.physical, device.device, device.queue,
+                             faultInstanceProc), "fault fixture chain creation failed");
+    arm(Fault::Framebuffer);
+    renderFrame(device, pipeline, 0, true);
+    armedFault = Fault::None;
+    // Validation runs through final VkDevice destruction in Device::~Device:
+    // leaked constructor layouts/pools/cache or early-frame views fail the runner.
+    std::cout << "PASS 2 real Slang constructor allocation failures / 1 unsubmitted frame failure\n";
+}
+
 int main(int argc, char** argv) {
     try {
         require(argc > 1, "usage: vulkan-slang-test ABSOLUTE_PRESET_PATH ...");
@@ -284,6 +379,7 @@ int main(int argc, char** argv) {
         }
         std::cout << "PASS " << argc-1 << " real Slang presets / " << 2*(argc-1)
                   << " GPU frames; color-chart content, 16px black borders and shrinking source/target\n";
+        allocationFailures(device, argv[1]);
         return 0;
     } catch (const std::exception& exception) {
         std::cerr << "FAIL: " << exception.what() << '\n';

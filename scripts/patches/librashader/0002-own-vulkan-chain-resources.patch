@@ -1,0 +1,553 @@
+Pinned upstream: SnowflakePowered/librashader 07ac790cdb9826f37cf8e1daf5011f03e3c4daa7
+
+Own every active pipeline layout/descriptor pool/set layout, with partial-constructor
+cleanup. Free pipeline caches and any partial pipelines on pipeline creation errors.
+Own temporary initialization command pools before fallible setup; after a submit
+error, require successful idle or DEVICE_LOST before releasing submitted resources.
+If idle cannot prove completion, deliberately retain those resources rather than
+free objects that the GPU may still be using.
+
+Register per-frame input/output image views immediately with the existing deferred
+residual owner, including draw/allocation errors. Own buffers/images before memory
+allocation or binding, release handles before their memory, and postpone ManuallyDrop
+until the mapped-buffer constructor has succeeded. These are unique owners: no new
+Clone/Copy implementation and no second manual free of descriptor sets. The existing
+caller remains responsible for GPU completion before normal chain destruction.
+LUT support and shader algorithms are unchanged.
+
+diff --git a/librashader-runtime-vk/src/filter_chain.rs b/librashader-runtime-vk/src/filter_chain.rs
+index b894531..20b634b 100644
+--- a/librashader-runtime-vk/src/filter_chain.rs
++++ b/librashader-runtime-vk/src/filter_chain.rs
+@@ -206,6 +206,21 @@ struct FrameResiduals {
+     framebuffers: Vec<Option<vk::Framebuffer>>,
+ }
+ 
++/// Owns the temporary initialization pool and its implicitly freed command buffers.
++/// The submit path must prove completion (or retain this owner) before dropping it.
++struct InitializationCommandPool {
++    device: ash::Device,
++    handle: vk::CommandPool,
++}
++
++impl Drop for InitializationCommandPool {
++    fn drop(&mut self) {
++        unsafe {
++            self.device.destroy_command_pool(self.handle, None);
++        }
++    }
++}
++
+ impl FrameResiduals {
+     pub(crate) fn new(device: &ash::Device) -> Self {
+         FrameResiduals {
+@@ -216,7 +231,7 @@ impl FrameResiduals {
+         }
+     }
+ 
+-    pub(crate) fn dispose_outputs(&mut self, output_framebuffer: OutputImage) {
++    pub(crate) fn dispose_outputs(&mut self, output_framebuffer: &OutputImage) {
+         self.image_views.push(output_framebuffer.image_view);
+     }
+ 
+@@ -347,19 +362,22 @@ impl FilterChainVulkan {
+         let device = Arc::clone(&vulkan.device);
+         let queue = vulkan.queue.clone();
+ 
+-        let command_pool = unsafe {
+-            device.create_command_pool(
+-                &vk::CommandPoolCreateInfo::default()
+-                    .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER),
+-                None,
+-            )?
++        let command_pool = InitializationCommandPool {
++            device: device.as_ref().clone(),
++            handle: unsafe {
++                device.create_command_pool(
++                    &vk::CommandPoolCreateInfo::default()
++                        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER),
++                    None,
++                )?
++            },
+         };
+ 
+         let command_buffer = unsafe {
+             // panic safety: command buffer count = 1
+             device.allocate_command_buffers(
+                 &vk::CommandBufferAllocateInfo::default()
+-                    .command_pool(command_pool)
++                    .command_pool(command_pool.handle)
+                     .level(vk::CommandBufferLevel::PRIMARY)
+                     .command_buffer_count(1),
+             )?[0]
+@@ -383,10 +401,24 @@ impl FilterChainVulkan {
+             let buffers = [command_buffer];
+             let submit_info = vk::SubmitInfo::default().command_buffers(&buffers);
+ 
+-            device.queue_submit(queue, &[submit_info], vk::Fence::null())?;
+-            device.queue_wait_idle(queue)?;
+-            device.free_command_buffers(command_pool, &buffers);
+-            device.destroy_command_pool(command_pool, None);
++            let completion = device
++                .queue_submit(queue, &[submit_info], vk::Fence::null())
++                .and_then(|()| device.queue_wait_idle(queue));
++            if let Err(error) = completion {
++                // Do not free resources while initialization might still be executing.
++                // DEVICE_LOST permits cleanup; any other failure needs an idle proof.
++                if error != vk::Result::ERROR_DEVICE_LOST {
++                    match device.device_wait_idle() {
++                        Ok(()) | Err(vk::Result::ERROR_DEVICE_LOST) => (),
++                        Err(_) => {
++                            std::mem::forget(filter_chain);
++                            std::mem::forget(command_pool);
++                            return Err(error.into());
++                        }
++                    }
++                }
++                return Err(error.into());
++            }
+         }
+ 
+         Ok(filter_chain)
+@@ -709,6 +741,8 @@ impl FilterChainVulkan {
+ 
+             self.vulkan.device.create_image_view(&create_info, None)?
+         };
++        // Register immediately so resize/recompile/draw failures cannot leak this view.
++        intermediates.dispose_image_view(original_image_view);
+ 
+         let filter = passes[0].meta.filter;
+         let wrap_mode = passes[0].meta.wrap_mode;
+@@ -788,6 +822,7 @@ impl FilterChainVulkan {
+ 
+                 if index != passes_len - 1 {
+                     let output_image = OutputImage::new(&self.vulkan.device, target.image.clone())?;
++                    intermediates.dispose_outputs(&output_image);
+                     let out = RenderTarget::identity(&output_image)?;
+ 
+                     let residual_fb = pass.draw(
+@@ -815,7 +850,6 @@ impl FilterChainVulkan {
+                     self.common.output_textures[index] =
+                         Some(target.as_input(pass.meta.filter, pass.meta.wrap_mode));
+                     source = self.common.output_textures[index].clone().unwrap();
+-                    intermediates.dispose_outputs(output_image);
+                     intermediates.dispose_framebuffers(residual_fb);
+                     return Ok(());
+                 }
+@@ -838,6 +872,7 @@ impl FilterChainVulkan {
+                 // or they won't render correctly for feedback.
+                 let output_size_override = if self.draw_last_pass_feedback {
+                     let output_image = OutputImage::new(&self.vulkan.device, target.image.clone())?;
++                    intermediates.dispose_outputs(&output_image);
+                     let out = RenderTarget::viewport_with_output(&output_image, viewport);
+ 
+                     let residual_fb = pass.draw(
+@@ -856,7 +891,6 @@ impl FilterChainVulkan {
+                         true,
+                     )?;
+                     out.output.end_pass(&self.vulkan.device, cmd);
+-                    intermediates.dispose_outputs(output_image);
+                     intermediates.dispose_framebuffers(residual_fb);
+                     Some(target.image.size)
+                 } else {
+@@ -864,6 +898,7 @@ impl FilterChainVulkan {
+                 };
+ 
+                 let output_image = OutputImage::new(&self.vulkan.device, viewport.output.clone())?;
++                intermediates.dispose_outputs(&output_image);
+                 let out = RenderTarget::viewport_with_output(&output_image, viewport);
+ 
+                 let residual_fb = pass.draw(
+@@ -882,14 +917,11 @@ impl FilterChainVulkan {
+                     false,
+                 )?;
+ 
+-                intermediates.dispose_outputs(output_image);
+                 intermediates.dispose_framebuffers(residual_fb);
+                 Ok(())
+             },
+         )?;
+ 
+-        intermediates.dispose_image_view(original_image_view);
+-
+         self.push_history(input, cmd)?;
+         self.common.internal_frame_count = self.common.internal_frame_count.wrapping_add(1);
+         Ok(())
+diff --git a/librashader-runtime-vk/src/graphics_pipeline.rs b/librashader-runtime-vk/src/graphics_pipeline.rs
+index 5e52318..ea84fc5 100644
+--- a/librashader-runtime-vk/src/graphics_pipeline.rs
++++ b/librashader-runtime-vk/src/graphics_pipeline.rs
+@@ -97,6 +97,7 @@ pub struct PipelineLayoutObjects {
+ 
+     pub _pool: vk::DescriptorPool,
+     pub _descriptor_set_layout: [vk::DescriptorSetLayout; 1],
++    device: ash::Device,
+ }
+ 
+ impl PipelineLayoutObjects {
+@@ -109,10 +110,19 @@ impl PipelineLayoutObjects {
+         descriptors.add_ubo_binding(reflection.ubo.as_ref());
+         descriptors.add_texture_bindings(reflection.meta.texture_meta.values());
+ 
+-        let descriptor_set_layout = [descriptors.create_descriptor_set_layout(device)?];
++        // Own each handle as soon as it is created, including partial failures.
++        let mut objects = Self {
++            layout: vk::PipelineLayout::null(),
++            descriptor_sets: Vec::new(),
++            descriptor_sets_alt: Vec::new(),
++            _pool: vk::DescriptorPool::null(),
++            _descriptor_set_layout: [vk::DescriptorSetLayout::null()],
++            device: device.clone(),
++        };
++        objects._descriptor_set_layout[0] = descriptors.create_descriptor_set_layout(device)?;
+ 
+         let pipeline_create_info =
+-            vk::PipelineLayoutCreateInfo::default().set_layouts(&descriptor_set_layout);
++            vk::PipelineLayoutCreateInfo::default().set_layouts(&objects._descriptor_set_layout);
+ 
+         let push_constant_range = reflection.push_constant.as_ref().map(|push_constant| {
+             let stage_mask = util::binding_stage_to_vulkan_stage(push_constant.stage_mask);
+@@ -126,47 +136,48 @@ impl PipelineLayoutObjects {
+ 
+         let pipeline_create_info = pipeline_create_info.push_constant_ranges(push_constant_range);
+ 
+-        let layout = unsafe { device.create_pipeline_layout(&pipeline_create_info, None)? };
++        objects.layout = unsafe { device.create_pipeline_layout(&pipeline_create_info, None)? };
+ 
+         let pool_info = vk::DescriptorPoolCreateInfo::default()
+             .max_sets(replicas * 2)
+             .pool_sizes(&descriptors.pool_sizes);
+ 
+-        let pool = unsafe { device.create_descriptor_pool(&pool_info, None)? };
++        objects._pool = unsafe { device.create_descriptor_pool(&pool_info, None)? };
+ 
+-        let mut descriptor_sets = Vec::new();
+         let alloc_info = vk::DescriptorSetAllocateInfo::default()
+-            .descriptor_pool(pool)
+-            .set_layouts(&descriptor_set_layout);
++            .descriptor_pool(objects._pool)
++            .set_layouts(&objects._descriptor_set_layout);
+ 
+         for _ in 0..replicas {
+             let set = unsafe { device.allocate_descriptor_sets(&alloc_info)? };
+-            descriptor_sets.push(set)
++            objects.descriptor_sets.extend(set);
+         }
+ 
+-        let descriptor_sets: Vec<vk::DescriptorSet> =
+-            descriptor_sets.into_iter().flatten().collect();
+-
+-        let mut descriptor_sets_alt = Vec::new();
+-        let alloc_info = vk::DescriptorSetAllocateInfo::default()
+-            .descriptor_pool(pool)
+-            .set_layouts(&descriptor_set_layout);
+-
+         for _ in 0..replicas {
+             let set = unsafe { device.allocate_descriptor_sets(&alloc_info)? };
+-            descriptor_sets_alt.push(set)
++            objects.descriptor_sets_alt.extend(set);
+         }
+ 
+-        let descriptor_sets_alt: Vec<vk::DescriptorSet> =
+-            descriptor_sets_alt.into_iter().flatten().collect();
++        Ok(objects)
++    }
++}
+ 
+-        Ok(PipelineLayoutObjects {
+-            layout,
+-            _descriptor_set_layout: descriptor_set_layout,
+-            descriptor_sets,
+-            descriptor_sets_alt,
+-            _pool: pool,
+-        })
++impl Drop for PipelineLayoutObjects {
++    fn drop(&mut self) {
++        unsafe {
++            // Destroying the pool also frees every descriptor set allocated from it.
++            if self._pool != vk::DescriptorPool::null() {
++                self.device.destroy_descriptor_pool(self._pool, None);
++            }
++            if self.layout != vk::PipelineLayout::null() {
++                self.device.destroy_pipeline_layout(self.layout, None);
++            }
++            for layout in self._descriptor_set_layout {
++                if layout != vk::DescriptorSetLayout::null() {
++                    self.device.destroy_descriptor_set_layout(layout, None);
++                }
++            }
++        }
+     }
+ }
+ 
+@@ -315,7 +326,15 @@ impl VulkanGraphicsPipeline {
+             // panic_safety: if this is successful this should return 1 pipelines.
+             device
+                 .create_graphics_pipelines(*cache, &[pipeline_info], None)
+-                .map_err(|e| e.1)?[0]
++                .map_err(|(pipelines, error)| {
++                    // Vulkan can return successfully created handles along with an error.
++                    for pipeline in pipelines {
++                        if pipeline != vk::Pipeline::null() {
++                            device.destroy_pipeline(pipeline, None);
++                        }
++                    }
++                    error
++                })?[0]
+         };
+ 
+         Ok(pipeline)
+@@ -362,7 +381,7 @@ impl VulkanGraphicsPipeline {
+ 
+                 let pipeline_cache = unsafe { device.create_pipeline_cache(&cache_info, None)? };
+ 
+-                let pipeline = Self::create_pipeline(
++                let pipeline = match Self::create_pipeline(
+                     &device,
+                     &pipeline_cache,
+                     &pipeline_layout,
+@@ -371,7 +390,15 @@ impl VulkanGraphicsPipeline {
+                     render_pass.as_ref(),
+                     use_dynamic_rendering,
+                     render_pass_format,
+-                )?;
++                ) {
++                    Ok(pipeline) => pipeline,
++                    Err(error) => {
++                        unsafe {
++                            device.destroy_pipeline_cache(pipeline_cache, None);
++                        }
++                        return Err(error);
++                    }
++                };
+                 Ok::<_, FilterChainError>((pipeline, pipeline_cache))
+             },
+             |(_pipeline, cache)| unsafe { Ok(device.get_pipeline_cache_data(*cache)?) },
+diff --git a/librashader-runtime-vk/src/memory.rs b/librashader-runtime-vk/src/memory.rs
+index 85a0f9a..bd8ee95 100644
+--- a/librashader-runtime-vk/src/memory.rs
++++ b/librashader-runtime-vk/src/memory.rs
+@@ -25,6 +25,16 @@ impl VulkanImageMemory {
+         allocator: &Arc<Mutex<Allocator>>,
+         requirements: vk::MemoryRequirements,
+         image: &vk::Image,
++    ) -> error::Result<VulkanImageMemory> {
++        let memory = Self::allocate(allocator, requirements, image)?;
++        memory.bind(device, image)?;
++        Ok(memory)
++    }
++
++    pub(crate) fn allocate(
++        allocator: &Arc<Mutex<Allocator>>,
++        requirements: vk::MemoryRequirements,
++        image: &vk::Image,
+     ) -> error::Result<VulkanImageMemory> {
+         let allocation = allocator.lock().allocate(&AllocationCreateDesc {
+             name: "imagemem",
+@@ -34,13 +44,19 @@ impl VulkanImageMemory {
+             allocation_scheme: AllocationScheme::DedicatedImage(*image),
+         })?;
+ 
+-        unsafe {
+-            device.bind_image_memory(*image, allocation.memory(), 0)?;
+-            Ok(VulkanImageMemory {
+-                allocation: Some(allocation),
+-                allocator: Arc::clone(allocator),
+-            })
+-        }
++        Ok(VulkanImageMemory {
++            allocation: Some(allocation),
++            allocator: Arc::clone(allocator),
++        })
++    }
++
++    pub(crate) fn bind(&self, device: &ash::Device, image: &vk::Image) -> error::Result<()> {
++        let allocation = self
++            .allocation
++            .as_ref()
++            .ok_or(FilterChainError::AllocationDoesNotExist)?;
++        unsafe { device.bind_image_memory(*image, allocation.memory(), 0)? };
++        Ok(())
+     }
+ }
+ 
+@@ -58,7 +74,7 @@ impl Drop for VulkanImageMemory {
+ pub struct VulkanBuffer {
+     pub handle: vk::Buffer,
+     device: Arc<ash::Device>,
+-    allocation: ManuallyDrop<Allocation>,
++    allocation: Option<Allocation>,
+     allocator: Arc<Mutex<Allocator>>,
+     size: vk::DeviceSize,
+ }
+@@ -75,32 +91,40 @@ impl VulkanBuffer {
+                 .size(size as vk::DeviceSize)
+                 .usage(usage)
+                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
+-            let buffer = device.create_buffer(&buffer_info, None)?;
++            // Own the handle before the next fallible operation. Drop destroys
++            // the buffer before returning any successfully allocated memory.
++            let mut buffer = VulkanBuffer {
++                handle: device.create_buffer(&buffer_info, None)?,
++                allocation: None,
++                allocator: Arc::clone(allocator),
++                size: size as vk::DeviceSize,
++                device: device.clone(),
++            };
+ 
+-            let memory_reqs = device.get_buffer_memory_requirements(buffer);
++            let memory_reqs = device.get_buffer_memory_requirements(buffer.handle);
+ 
+-            let alloc = allocator.lock().allocate(&AllocationCreateDesc {
++            let allocation = allocator.lock().allocate(&AllocationCreateDesc {
+                 name: "buffer",
+                 requirements: memory_reqs,
+                 location: MemoryLocation::CpuToGpu,
+                 linear: true,
+-                allocation_scheme: AllocationScheme::DedicatedBuffer(buffer),
++                allocation_scheme: AllocationScheme::DedicatedBuffer(buffer.handle),
+             })?;
+ 
+-            device.bind_buffer_memory(buffer, alloc.memory(), 0)?;
++            let memory = allocation.memory();
++            buffer.allocation = Some(allocation);
++            device.bind_buffer_memory(buffer.handle, memory, 0)?;
+ 
+-            Ok(VulkanBuffer {
+-                handle: buffer,
+-                allocation: ManuallyDrop::new(alloc),
+-                allocator: Arc::clone(allocator),
+-                size: size as vk::DeviceSize,
+-                device: device.clone(),
+-            })
++            Ok(buffer)
+         }
+     }
+ 
+     pub fn as_mut_slice(&mut self) -> error::Result<&mut [u8]> {
+-        let Some(allocation) = self.allocation.mapped_slice_mut() else {
++        let Some(allocation) = self
++            .allocation
++            .as_mut()
++            .and_then(|allocation| allocation.mapped_slice_mut())
++        else {
+             return Err(FilterChainError::AllocationDoesNotExist);
+         };
+         Ok(&mut allocation[..self.size as usize])
+@@ -110,16 +134,15 @@ impl VulkanBuffer {
+ impl Drop for VulkanBuffer {
+     fn drop(&mut self) {
+         unsafe {
+-            // SAFETY: things can not be double dropped.
+-            let allocation = ManuallyDrop::take(&mut self.allocation);
+-            if let Err(e) = self.allocator.lock().free(allocation) {
+-                println!("librashader-runtime-vk: [warn] failed to deallocate buffer memory {e}")
+-            }
+-
+             if self.handle != vk::Buffer::null() {
+                 self.device.destroy_buffer(self.handle, None);
+             }
+         }
++        if let Some(allocation) = self.allocation.take() {
++            if let Err(e) = self.allocator.lock().free(allocation) {
++                println!("librashader-runtime-vk: [warn] failed to deallocate buffer memory {e}")
++            }
++        }
+     }
+ }
+ 
+@@ -141,13 +164,20 @@ impl RawVulkanBuffer {
+         usage: vk::BufferUsageFlags,
+         size: usize,
+     ) -> error::Result<Self> {
+-        let buffer = ManuallyDrop::new(VulkanBuffer::new(device, allocator, usage, size)?);
++        let buffer = VulkanBuffer::new(device, allocator, usage, size)?;
+ 
+-        let Some(ptr) = buffer.allocation.mapped_ptr() else {
++        let Some(ptr) = buffer
++            .allocation
++            .as_ref()
++            .and_then(|allocation| allocation.mapped_ptr())
++        else {
+             return Err(FilterChainError::AllocationDoesNotExist);
+         };
+ 
+-        Ok(RawVulkanBuffer { buffer, ptr })
++        Ok(RawVulkanBuffer {
++            buffer: ManuallyDrop::new(buffer),
++            ptr,
++        })
+     }
+ 
+     pub fn bind_to_descriptor_set(
+diff --git a/librashader-runtime-vk/src/texture.rs b/librashader-runtime-vk/src/texture.rs
+index b8a984d..6b0bd78 100644
+--- a/librashader-runtime-vk/src/texture.rs
++++ b/librashader-runtime-vk/src/texture.rs
+@@ -18,7 +18,7 @@ pub struct OwnedImage {
+     pub image: VulkanImage,
+     pub max_miplevels: u32,
+     pub levels: u32,
+-    pub _memory: VulkanImageMemory,
++    pub _memory: Option<VulkanImageMemory>,
+ }
+ 
+ #[derive(Clone)]
+@@ -61,9 +61,30 @@ impl OwnedImage {
+             .initial_layout(vk::ImageLayout::UNDEFINED);
+ 
+         let image = unsafe { device.create_image(&image_create_info, None)? };
+-        let mem_reqs = unsafe { device.get_image_memory_requirements(image) };
+-
+-        let memory = VulkanImageMemory::new(&device, alloc, mem_reqs, &image)?;
++        // Establish ownership before allocation, binding, or view creation can
++        // fail. Drop always destroys the view/image before its memory field.
++        let mut owned = OwnedImage {
++            device,
++            allocator: Arc::clone(alloc),
++            image_view: vk::ImageView::null(),
++            image: VulkanImage {
++                image,
++                size,
++                format,
++            },
++            _memory: None,
++            max_miplevels,
++            levels: image_create_info.mip_levels,
++        };
++        let mem_reqs = unsafe { owned.device.get_image_memory_requirements(image) };
++
++        let memory = VulkanImageMemory::allocate(alloc, mem_reqs, &image)?;
++        owned._memory = Some(memory);
++        owned
++            ._memory
++            .as_ref()
++            .ok_or(FilterChainError::AllocationDoesNotExist)?
++            .bind(&owned.device, &image)?;
+         let image_subresource = vk::ImageSubresourceRange::default()
+             .base_mip_level(0)
+             .base_array_layer(0)
+@@ -84,21 +105,9 @@ impl OwnedImage {
+             .subresource_range(image_subresource)
+             .components(swizzle_components);
+ 
+-        let image_view = unsafe { device.create_image_view(&view_info, None)? };
++        owned.image_view = unsafe { owned.device.create_image_view(&view_info, None)? };
+ 
+-        Ok(OwnedImage {
+-            device,
+-            allocator: Arc::clone(alloc),
+-            image_view,
+-            image: VulkanImage {
+-                image,
+-                size,
+-                format,
+-            },
+-            _memory: memory,
+-            max_miplevels,
+-            levels: std::cmp::min(max_miplevels, size.calculate_miplevels()),
+-        })
++        Ok(owned)
+     }
+ 
+     pub fn new(
