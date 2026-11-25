@@ -228,6 +228,10 @@ android {
         // Only the Ambient TV adapter to the official GameStream protocol. No upstream UI.
         sourceSets.getByName("main").java.directories.add("src/moonlight/java")
         sourceSets.getByName("main").kotlin.directories.add("src/moonlight/java")
+    } else {
+        // Explicit no-op backend; never show pairing controls for normal APKs.
+        sourceSets.getByName("main").java.directories.add("src/moonlightStub/java")
+        sourceSets.getByName("main").kotlin.directories.add("src/moonlightStub/java")
     }
     if (monogramEnabled) {
         // This folder is not compiled or packaged in normal CC0 builds.
