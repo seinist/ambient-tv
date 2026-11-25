@@ -43,4 +43,15 @@
     <string name="moonlight_stream_failed">Stream could not start.</string>
     <string name="moonlight_stream_resume">Resume</string>
     <string name="moonlight_stream_disconnect">Disconnect stream</string>
+
+    <string name="moonlight_quality_title">Streaming quality</string>
+    <string name="moonlight_quality_resolution">Resolution</string>
+    <string name="moonlight_quality_fps">Frame rate</string>
+    <string name="moonlight_quality_codec">Video codec</string>
+    <string name="moonlight_quality_auto">Automatic</string>
+    <string name="moonlight_quality_audio">Audio channels</string>
+    <string name="moonlight_quality_bitrate">Video bitrate (kbit/s)</string>
+    <string name="moonlight_quality_save_bitrate">Apply bitrate</string>
+    <string name="moonlight_quality_bitrate_hint">The PC and device must support the chosen resolution, FPS and codec. Unsupported formats are not started.</string>
+    <string name="moonlight_profile_invalid">Invalid streaming settings.</string>
 </resources>
