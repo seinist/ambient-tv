@@ -1,68 +1,85 @@
-# Moonlight / Sunshine — integration work
+# Moonlight / Sunshine — native Ambient TV integration (experimental)
 
-## Scope and status (2026-11-25)
+## Status as of 2026-11-25
 
-The goal is a native Moonlight GameStream client in Ambient TV, not launching an
-external APK and not passing the stream to Media3, MPV or VLC.
+PR #494 builds a native GameStream client **inside** Ambient TV; it does not
+launch an external Moonlight APK or route game video through Media3/MPV/VLC.
+The PR is a **DRAFT** and normal APKs still ship with the optional native core
+disabled. No real Sunshine/Shield/Philips/phone session has been accepted yet.
 
-**Experimental groundwork only** in this branch:
-- normalized host profiles and explicit user-controlled enabling;
-- defensive, bounded, unauthenticated GameStream serverinfo probing;
-- on-demand mDNS discovery via Android's NsdManager;
-- feature-gated system identity and Settings host management;
-- address/XML unit tests.
+### Implemented technical components
+- Host profiles, on-demand Android NSD/mDNS discovery and bounded public serverinfo.
+- Moonlight Android v12.2 with pinned common-c and patched ENet, 4 ABI build
+  matrix, 16 KiB ELF alignment; original upstream protocol Java/JNI in a
+  protocol-only module rather than upstream's launcher UI.
+- Upstream PIN challenge-response pairing, per-install AndroidKeystore client
+  identity, encrypted host certificate pins and HTTPS-only authenticated catalog.
+  A host certificate change must not auto-repair or silently use HTTP.
+- Cached multi-host application lists and artwork, favorites/recents, explicit
+  PC wake button, browse/detail screens, sidebar/handheld navigation, global
+  search and configurable Home shelves; no automatic NAS or PC wake on Home.
+- Experimental StreamEngine using NvConnection + MediaCodec Surface + AudioTrack
+  with separate media player lifecycle. 8-bit H.264/HEVC/AV1, tentative HDR10
+  negotiation with Main10/BT.2020/PQ metadata and SDR fallback.
+- Physical gamepads, keyboard, mouse, touch, input release on focus changes,
+  native controller hotplug and rumble, and reuse of the existing Companion
+  TLS phone-gamepad session, not a new unauthenticated receiver.
+- Portable stream quality preferences: resolution, FPS, bitrate, H.264/HEVC/AV1,
+  HDR10 auto/on/off, stereo/5.1/7.1. Host profiles and preferences are portable;
+  certificates and keystore keys are never part of backup or Companion sync.
 
-This does **not** implement pairing, mutually authenticated TLS, an application catalog,
-transport, game streaming, controller passthrough or recovery. Normal builds have
-MOONLIGHT_EXPERIMENTAL=false. Set -PMOONLIGHT_EXPERIMENTAL=true for the host setup UI.
-The app must never advertise these experiments as a working Moonlight player.
+### In-player playback UI
 
-## Upstream and licenses
+The `MoonlightStreamActivity` now uses the same right-anchored
+`RightPanelOverlay` / `RightSidePanel` used in Ambient TV's other systems.
+The full-screen OSD deliberately has **no seekbar, timeline pause, chapter skip,
+next episode, renderer selector or other file-video controls**, because the PC
+desktop stream is interactive rather than a seekable video file.
+
+The OSD's wired actions are:
+- **Resume**: hides the overlay; the remote game continues.
+- **Text**: sends at most 512 characters of UTF-8 to the connected PC.
+- **Info**: displays current stream title, phase and status.
+- **Options**: opens the right-side playback settings page, with streaming
+  quality, text entry, info and an explicit remote quit subpage.
+- **Disconnect**: stops the client connection and leaves the PC game running.
+- **Quit game on PC**: nested in Options, *only with explicit confirmation*;
+  invokes authenticated Sunshine cancel; errors are reported without claiming
+  success. It is never tied to Android Back or Activity destruction.
+
+Quality changes made during streaming persist for the **next stream connection**.
+They do not mutate live MediaCodec/RTSP parameters behind the user's back.
+Back moves through panel subpages within the same right drawer and returns
+the D-pad focus to the OSD button that opened the panel.
+
+### Vector logo
+`app/src/main/res/drawable/system_moonlight.xml` is the existing Android
+VectorDrawable (a stylized display and moon). It is the Android-native
+SVG-like vector asset, **not a standalone `.svg` file**. It is referenced by
+`MediaSystem.MOONLIGHT` and used by the system menu, settings and player panel.
+
+## Upstream and license
 
 - Moonlight Android: https://github.com/moonlight-stream/moonlight-android
-- Version reviewed: v12.2 (2026-09-12).
+- Pinned reviewed release: v12.2.
 - Native transport: https://github.com/moonlight-stream/moonlight-common-c
-- The common C library uses a **modified ENet submodule**. Never replace it
-  with a generic system libenet.
-- Official Moonlight Android/common-c are GPL-3.0. Reuse must preserve upstream
-  notices and corresponding source, reproducible pins and ABI/NDK build rules.
-  Ambient TV's release APKs already use GPLv3 distribution terms.
+- common-c includes a **modified ENet**. Do not substitute an unrelated
+  system libenet. Retain GPL-3.0 notices and corresponding sources.
 
-## Security model
+## Security and lifecycle invariants
 
-Moonlight host profiles contain **only** user-entered address, port, name
-and optional MAC. Pairing keys and pinned server certificates must be stored
-separately in device-secure storage; never export them through backup, TV sync,
-logs or discovery data. An unauthenticated serverinfo result is not proof of
-host trust, pairing, or streaming support. HTTPS APIs for application listing,
-assets, launch, resume and termination MUST use reviewed upstream Moonlight
-certificate pinning and mutual TLS. Never use a trust-all certificate verifier.
+Pairing data must remain separate from portable profile preferences. Discovery
+never confers trust. Application list/artwork and remote quit must use mutually
+authenticated, pinned HTTPS. Disconnect must not terminate the remote process.
+OSD/settings/menu transitions release held buttons, cursor inputs and vibration.
+The libretro engine, video players and Android Auto do not own these resources.
 
-The standalone Moonlight streaming lifecycle must not be confused with
-Libretro cores or background video. Disconnecting a stream must not terminate
-the remote PC application. Input ownership must switch atomically and deliver
-all held-key releases to the remote.
+## Implementation-first plan
 
-## Development order (2026-11-25)
+Complete remaining code, audits, native builds and unit tests first. Only after
+the technical integration is complete perform practical acceptance against
+Windows/Linux Sunshine on Shield, Philips TV and handsets. Outstanding work
+includes full A/V and HDR frame-pacing/performance audits, resilient reconnect,
+controller capabilities and source/license release audit.
 
-Implement all technical features and complete automated CI/code audits first.
-Sunshine/device-based acceptance tests are deliberately postponed until the
-technical integration is complete. No claims of verified live gameplay before then.
-
-## Work still required before release
-
-1. Pin and integrate upstream Moonlight Android Java/NDK, common-c and bundled
-   ENet into all four target ABIs with exact licenses, source, reproducible builds.
-2. Pair/repair/unpair, client certificates, pinned host identities, secure
-   per-device key storage, real authenticated app catalog and box art.
-3. Native streaming pipeline: MediaCodec, AudioTrack, Surface lifetimes,
-   audio focus, codec/frame-rate/HDR capability validation, low-latency metrics.
-4. Controller, keyboard, mouse, touch and Companion controller input sink
-   with context generation, button releases and focus-safe OSD.
-5. Full TV/phone pages, host/app detail, Home, search, favorites, recents,
-   optional backup of non-secret settings, WOL and WireGuard.
-6. Error/reconnect/pause/resume and lifecycle policies, host trust audit.
-7. CI native builds and tests, plus device acceptance on Shield, Philips
-   TV and handset with Windows/Linux Sunshine, including HDR and latency.
-
-NO MERGE until the full native implementation is ready and validated.
+**Do not merge until the native feature is complete and verified.**
