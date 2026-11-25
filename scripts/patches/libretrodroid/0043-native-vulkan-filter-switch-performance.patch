@@ -29,10 +29,18 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
      nativeSlangFrame = 0;
      nativeSdrDisabled = false;
  }
-@@ -1330,2 +1330,4 @@
+@@ -1361,10 +1361,12 @@
+         toTransfer.subresourceRange = targetRange;
+         vk.cmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                               VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toTransfer);
+         VkClearColorValue black {};
+         black.float32[3] = 1.0f;
 -        vk.cmdClearColorImage(commandBuffer, target, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 -                              &black, 1, &targetRange);
 +        if (!nativeSlang.requested()) {
 +            vk.cmdClearColorImage(commandBuffer, target, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 +                                  &black, 1, &targetRange);
 +        }
+         // Vulkan core image dimensions are not always square-pixel display
+         // dimensions (e.g. consoles with nonsquare pixels). Use the libretro
+         // core-reported aspect, not blindly the VkImage width/height ratio.

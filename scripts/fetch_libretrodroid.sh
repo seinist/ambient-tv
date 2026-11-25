@@ -58,10 +58,6 @@ find "$DEST" -name .git -prune -exec rm -rf {} +
 for patch in "$PATCHES"/*.patch; do
     [[ -f "$patch" ]] || continue
     log "Applying $(basename "$patch")"
-    # Temporary audit diagnostic: inspect the actual post-patch Vulkan clear.
-    if [[ "$(basename "$patch")" == 0043-* ]]; then
-        grep -n -B7 -A7 -E 'cmdClearColorImage|VkClearColorValue' "$DEST/src/main/cpp/vulkan/vulkanbackend.cpp" || true
-    fi
     # Ceiling dir: inside the app repo, git apply would otherwise silently skip every path.
     (cd "$DEST" && GIT_CEILING_DIRECTORIES="$(dirname "$DEST")" git apply --whitespace=nowarn "$patch") \
         || fail "Patch $(basename "$patch") does not apply"
