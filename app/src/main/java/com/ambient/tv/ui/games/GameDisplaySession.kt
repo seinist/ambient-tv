@@ -82,13 +82,15 @@ internal class GameDisplaySession(private val host: GameDisplayHost) {
         if (actualMode()?.key == target.key && requested == null) return true
         // A new core after a host reattachment waits for the original request instead
         // of sending the same HDMI change again. The route owns it until it exits.
-        if (requested?.key != target.key || host.preferenceId() != target.modeId) {
+        if (requested?.key != target.key || requested?.modeId != target.modeId || host.preferenceId() != target.modeId) {
+            val previous = requested
             requested = target
             val accepted = runCatching { host.request(target, settleMs) }
                 .onFailure { Timber.w(it, "Game display request failed") }.isSuccess
             if (!accepted) {
+                if (!ownsRequest()) requested = previous
                 failedKey = target.key
-                restoreOwned()?.let { host.confirm(it.key, SWITCH_TIMEOUT_MS) }
+                if (!host.videoOwnsDisplay()) restoreOwned()?.let { host.confirm(it.key, SWITCH_TIMEOUT_MS) }
                 return false
             }
         }
