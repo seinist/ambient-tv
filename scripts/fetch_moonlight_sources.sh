@@ -20,9 +20,10 @@ WORK="$ROOT/third_party/.moonlight-download"
 [[ "$TAG" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || die "invalid release tag"
 command -v git >/dev/null || die "git not found"
 
-PATCH="$ROOT/scripts/patches/moonlight/0001-use-per-install-client-identity.patch"
-[[ -f "$PATCH" ]] || die "reviewed client identity patch missing"
-PATCH_SHA="$(git hash-object "$PATCH")"
+PATCH_DIR="$ROOT/scripts/patches/moonlight"
+[[ -f "$PATCH_DIR/0001-use-per-install-client-identity.patch" &&
+   -f "$PATCH_DIR/0002-strict-host-certificate-pin.patch" ]] || die "reviewed Moonlight patches missing"
+PATCH_SHA="$(cat "$PATCH_DIR"/*.patch | git hash-object --stdin)"
 if [[ -f "$DEST/.ambient-moonlight-pins" &&
       "$(head -n 1 "$DEST/.ambient-moonlight-pins")" == "android=$REF" &&
       "$(sed -n 's/^patch=//p' "$DEST/.ambient-moonlight-pins")" == "$PATCH_SHA" &&
@@ -58,10 +59,14 @@ git -C "$WORK" submodule update --init --recursive --depth 1 -- "$SUBMODULE"
 
 # Apply the single reviewed, fail-closed Ambient TV identity patch to the pinned source.
 # It does not change TLS, pairing challenge validation or the modified ENet transport.
-git -C "$WORK" apply --check "$PATCH" || die "upstream changed; client identity patch needs review"
-git -C "$WORK" apply "$PATCH"
+for patch in "$PATCH_DIR"/*.patch; do
+    git -C "$WORK" apply --check "$patch" || die "upstream changed; patch needs review: $patch"
+    git -C "$WORK" apply "$patch"
+done
 grep -q 'this.uniqueId = uniqueId;' "$WORK/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java" ||
     die "client identity patch did not apply"
+grep -q 'Pinned host certificate changed' "$WORK/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java" ||
+    die "strict certificate pin patch did not apply"
 
 mv "$WORK" "$DEST"
 trap - EXIT
