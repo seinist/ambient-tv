@@ -98,6 +98,7 @@ class GamepadController(
             kotlin.math.abs(leftX) > cfg.deadzone.release || kotlin.math.abs(leftY) > cfg.deadzone.release ||
             kotlin.math.abs(rightX) > cfg.deadzone.release || kotlin.math.abs(rightY) > cfg.deadzone.release ||
             leftTrigger >= TRIGGER_RELEASE || rightTrigger >= TRIGGER_RELEASE
+        if (moving) com.ambient.tv.ui.input.PointerVisibility.onNonPointerInput()
         if (transitions.motion(deviceId, moving)) return true
         if (gameMode == null || gameMode == GameInputMode.RUNNING) {
             rawSink()?.let { sink -> if (sink(event)) return true }

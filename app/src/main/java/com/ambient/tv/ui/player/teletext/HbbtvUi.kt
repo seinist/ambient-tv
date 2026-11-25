@@ -76,6 +76,8 @@ import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.display.LocalUiRenderEnvironment
 import com.ambient.tv.ui.display.ProvideUiRenderEnvironment
+import com.ambient.tv.ui.input.PointerIconFrameLayout
+import com.ambient.tv.ui.input.PointerIdleSurface
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.player.PlaybackVideoWindow
@@ -146,7 +148,9 @@ private fun HbbtvBrowserDialog(onDismissRequest: () -> Unit, content: @Composabl
             onDismissRequest = onDismissRequest,
             properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
         ) {
-            ProvideUiRenderEnvironment(UiRenderResolutionPolicy.SYSTEM, null, nativeDensity, content)
+            ProvideUiRenderEnvironment(UiRenderResolutionPolicy.SYSTEM, null, nativeDensity) {
+                PointerIdleSurface(content = content)
+            }
         }
     }
 }
@@ -254,7 +258,7 @@ private fun HbbtvViewer(app: HbbtvApplication, channelName: String?, channelKey:
             key(browserVersion) {
                 AndroidView(
                     factory = { context ->
-                        HbbtvWebView(
+                        val webView = HbbtvWebView(
                             context, channelName.orEmpty(), language, broadcast, currentChannel,
                             onVideoWindow = { hbbtvVideoWindow.update(windowOwner, it) },
                             onClose = onClose,
@@ -268,9 +272,15 @@ private fun HbbtvViewer(app: HbbtvApplication, channelName: String?, channelKey:
                             },
                             allowPageFocus = { !controlsVisible && pageState != HbbtvPageState.ERROR },
                         ).also { browser = it; it.open(startUrl) }
+                        PointerIconFrameLayout(context).apply {
+                            addView(webView, android.widget.FrameLayout.LayoutParams(
+                                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                            ))
+                        }
                     },
                     modifier = Modifier.fillMaxSize(),
-                    onRelease = { it.destroy() },
+                    onRelease = { container -> (container.getChildAt(0) as? HbbtvWebView)?.destroy() },
                 )
             }
             BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding().padding(16.dp)) {

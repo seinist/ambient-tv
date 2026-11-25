@@ -45,6 +45,7 @@ import androidx.core.content.ContextCompat
 import com.ambient.tv.R
 import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.input.PointerIconFrameLayout
 import java.io.Closeable
 
 /**
@@ -147,7 +148,7 @@ private fun CameraPreview(modifier: Modifier, onDecoded: (String) -> Unit, onFai
     AndroidView(
         modifier = modifier,
         factory = { viewContext ->
-            TextureView(viewContext).apply {
+            val preview = TextureView(viewContext).apply {
                 surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                     override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
                         if (!session.start(this@apply, texture, width, height)) onFailure()
@@ -163,6 +164,12 @@ private fun CameraPreview(modifier: Modifier, onDecoded: (String) -> Unit, onFai
                     }
                     override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
                 }
+            }
+            PointerIconFrameLayout(viewContext).apply {
+                addView(preview, android.widget.FrameLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                ))
             }
         },
     )

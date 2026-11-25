@@ -33,6 +33,7 @@ import androidx.compose.ui.window.Popup as ComposePopup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import com.ambient.tv.data.local.UiRenderResolutionPolicy
+import com.ambient.tv.ui.input.PointerIdleSurface
 import kotlin.math.roundToInt
 
 /** Interactive popups use the selected UI buffer; informational overlays keep a small native window. */
@@ -47,7 +48,9 @@ internal fun UiResolutionPopup(
     val environment = LocalUiRenderEnvironment.current
     val embeddedAtCreation = remember { environment.embedded }
     if (!embeddedAtCreation) {
-        ComposePopup(alignment, offset, onDismissRequest, properties, content)
+        ComposePopup(alignment, offset, onDismissRequest, properties) {
+            PointerIdleSurface(content = content)
+        }
         return
     }
     UiResolutionPopup(
@@ -70,7 +73,9 @@ internal fun UiResolutionPopup(
     // still follows the live coordinate space, and the dialog reparents its existing content.
     val embeddedAtCreation = remember { sourceEnvironment.embedded }
     if (!embeddedAtCreation) {
-        ComposePopup(popupPositionProvider, onDismissRequest, properties, content)
+        ComposePopup(popupPositionProvider, onDismissRequest, properties) {
+            PointerIdleSurface(content = content)
+        }
         return
     }
 
@@ -96,7 +101,9 @@ internal fun UiResolutionPopup(
         CompositionLocalProvider(LocalView provides nativeParentView, LocalDensity provides nativeDensity) {
             ComposePopup(nativePositionProvider, onDismissRequest, properties) {
                 // Compose Popup installs fresh Android locals in its own ViewRoot.
-                ProvideUiRenderEnvironment(UiRenderResolutionPolicy.SYSTEM, null, nativeDensity, content)
+                ProvideUiRenderEnvironment(UiRenderResolutionPolicy.SYSTEM, null, nativeDensity) {
+                    PointerIdleSurface(content = content)
+                }
             }
         }
         return

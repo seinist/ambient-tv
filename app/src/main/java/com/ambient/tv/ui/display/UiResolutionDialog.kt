@@ -30,6 +30,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.ambient.tv.companion.CompanionDialogInputSurface
 import com.ambient.tv.data.local.UiRenderResolutionPolicy
+import com.ambient.tv.ui.input.pointerIdleVisibility
 import com.ambient.tv.ui.player.findActivity
 import timber.log.Timber
 
@@ -191,7 +192,7 @@ internal fun UiResolutionDialog(
 /** Every dialog owns one input registration in its actual native or embedded Compose root. */
 @Composable
 private fun DialogInputContent(focusable: Boolean, content: @Composable () -> Unit) {
-    Box(propagateMinConstraints = true) {
+    Box(Modifier.pointerIdleVisibility(), propagateMinConstraints = true) {
         content()
         if (focusable) {
             com.ambient.tv.ui.gamepad.GameDialogInputSurface()
