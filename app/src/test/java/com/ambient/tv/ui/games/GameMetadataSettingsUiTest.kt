@@ -82,6 +82,8 @@ class GameMetadataSettingsUiTest {
     @Test fun providerWithoutACompiledKeyStillOffersManualSetup() {
         mount(builtIn = false)
         rule.onNodeWithText("TheGamesDB").performScrollTo().performTouchInput { click() }
+        rule.onNodeWithText(rule.activity.getString(R.string.game_metadata_account_settings))
+            .performScrollTo().performTouchInput { click() }
         rule.onNodeWithText(rule.activity.getString(R.string.game_metadata_settings_tgdb_key))
             .performScrollTo().assertIsDisplayed()
         rule.onNodeWithText(rule.activity.getString(R.string.game_metadata_settings_builtin)).assertDoesNotExist()

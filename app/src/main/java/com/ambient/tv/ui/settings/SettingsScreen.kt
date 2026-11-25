@@ -358,6 +358,17 @@ fun SettingsScreen(
                 com.ambient.tv.ui.weather.WeatherSettingsScreen(embedded = true, modifier = Modifier.weight(1f))
                 return@Column
             }
+            if (selectedCategory == SettingsCategory.GAMES) {
+                val openPage = LocalOpenSettingsPage.current
+                GamesSettingsScreen(
+                    onOpenLibrary = onOpenGames,
+                    onOpenFiles = onOpenFiles,
+                    onOpenControls = { openPage(SettingsCategory.GAME_CONTROLS, "") },
+                    focusContent = focusContent,
+                    modifier = Modifier.weight(1f),
+                )
+                return@Column
+            }
             val wakeRevision by viewModel.wakeSourcesRevision.collectAsState(initial = 0L to 0L)
             val wakeGroups = remember(uiState, wakeRevision, selectedCategory) {
                 if (selectedCategory == SettingsCategory.WAKE) viewModel.wakeGroups(uiState) else emptyList()
@@ -394,7 +405,7 @@ fun SettingsScreen(
                         }
                         SettingsCategory.CONTROLLER -> inputControlsItems(com.ambient.tv.ui.keyboard.KeyBindingScope.PLAYER)
                         SettingsCategory.GAME_CONTROLS -> gameControlsItems()
-                        SettingsCategory.GAMES -> gamesSettingsItems(onOpenGames, onOpenFiles)
+                        SettingsCategory.GAMES -> Unit // Dedicated navigator above the generic LazyColumn
                         SettingsCategory.COMPANION -> companionSettingsItems()
                         SettingsCategory.TRANSFER -> {
                             item { CompanionTransferSection() }

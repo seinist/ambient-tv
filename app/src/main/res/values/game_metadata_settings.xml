@@ -32,4 +32,8 @@
     <string name="game_metadata_settings_credentials_hint">Credentials are only included in backups or TV transfers when you choose to share them.</string>
     <string name="game_metadata_settings_ss_setup_hint">Get a developer ID and password at screenscraper.fr.</string>
     <string name="game_metadata_settings_tgdb_setup_hint">Get an API key at thegamesdb.net.</string>
+
+    <string name="game_metadata_account_settings">Account &amp; access</string>
+    <string name="game_metadata_account_settings_hint">Sign-in details and optional API keys</string>
+    <string name="game_metadata_scope_all">These settings apply to all games.</string>
 </resources>
