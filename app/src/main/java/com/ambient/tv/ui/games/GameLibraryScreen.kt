@@ -137,8 +137,10 @@ fun GameLibraryScreen(
     // The route is an initial entry point, not the currently selected chip. Navigation
     // Compose saves this selection with the back stack entry while the player is open.
     var selectedSection by rememberSaveable(initialSection) { mutableStateOf(initialSection) }
-    LaunchedEffect(initialSection) { model.section(selectedSection) }
-    LaunchedEffect(searchText) { model.query(searchText) }
+    LaunchedEffect(initialSection, managing) {
+        if (managing) model.openManager() else model.section(selectedSection)
+    }
+    LaunchedEffect(searchText, managing) { if (!managing) model.query(searchText) }
     if (!embeddedManager) ReportSidebarContentReady(state.ready)
 
     fun handleBack() {
@@ -166,7 +168,6 @@ fun GameLibraryScreen(
     val sourcesById = remember(state.sources) { state.sources.associateBy { it.id } }
     // The repository returns just this section/search in final order, off the UI thread.
     val games = state.games
-    val gameIds = remember(games) { games.map { it.fileId } }
     // Like the other libraries: entering from the sidebar or changing section, view or sort lands
     // on the remembered or first game, not on the header chips.
     if (!managing) com.ambient.tv.ui.common.BrowseFocusContentIdentity(
