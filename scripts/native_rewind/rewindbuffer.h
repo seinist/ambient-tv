@@ -38,6 +38,18 @@ public:
     /** outData must have getMaxStateSize() bytes; rejected arguments do not mutate history. */
     bool pop(uint8_t* outData, size_t* outSize);
     bool discard();
+    /**
+     * Non-destructive: reconstruct the state [steps] records older than the newest stored
+     * state (0 = the newest) into outData (getMaxStateSize() bytes). History is unchanged.
+     */
+    bool peek(size_t steps, uint8_t* outData, size_t* outSize) const;
+    /**
+     * Continue a peek without starting again at the newest state: data holds the state
+     * [from] records back (size in *size) and is decoded further to [to] (from <= to).
+     */
+    bool peekFurther(size_t from, size_t to, uint8_t* data, size_t* size) const;
+    /** Emulated frames of the [index]-th newest record (0: newest state to its predecessor). */
+    uint64_t recordFrames(size_t index) const;
     /** Retains all allocations so reset/load/restart cannot allocate per frame. */
     void clear();
 
@@ -72,6 +84,9 @@ private:
     size_t encodedSize(const uint8_t* data, size_t size) const;
     void encode(const uint8_t* data, size_t size);
     bool decode(const Record& record);
+    /** Apply [record] to target, which holds its successor state of targetSize bytes. */
+    bool decodeInto(const Record& record, uint8_t* target, size_t targetSize) const;
+    const Record& newestRecord(size_t index) const;
     void writeBytes(const uint8_t* data, size_t size);
     void writeVarint(uint64_t value);
     bool readBytes(size_t& offset, size_t& remaining, uint8_t* out, size_t size) const;
