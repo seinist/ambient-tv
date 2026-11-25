@@ -60,7 +60,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 /** Initial layout follows the console but never changes the TV's authoritative core mapping. */
 internal fun companionDefaultTouchMode(systemId: String?): GameTouchMode = when (systemId) {
     "n64", "nds", "wii" -> GameTouchMode.HYBRID
-    "psx", "ps2", "psp", "n3ds", "gamecube", "wiiu", "dreamcast", "saturn" -> GameTouchMode.DUAL
+    "psx", "ps2", "psp", "n3ds", "gamecube", "wiiu", "dreamcast", "saturn", "moonlight" -> GameTouchMode.DUAL
     else -> GameTouchMode.DPAD
 }
 
