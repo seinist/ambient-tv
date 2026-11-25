@@ -8,4 +8,7 @@
     <string name="moonlight_player_info">Stream-Informationen</string>
     <string name="moonlight_player_apply_next">Änderungen an Auflösung, FPS, Codec, HDR, Audio und Bitrate gelten ab der nächsten Stream-Verbindung.</string>
     <string name="moonlight_player_no_seek">Für PC-Game-Streaming gibt es keine Medien-Suchleiste, Episodenwechsel oder Zeitachsen-Pause.</string>
+    <string name="moonlight_player_options">Optionen</string>
+    <string name="moonlight_player_input_short">Text</string>
+    <string name="moonlight_player_info_short">Info</string>
 </resources>
