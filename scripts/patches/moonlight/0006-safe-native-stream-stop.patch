@@ -9,7 +9,7 @@ diff --git a/app/src/main/java/com/limelight/nvstream/NvConnection.java b/app/sr
  
  import javax.crypto.KeyGenerator;
  import javax.crypto.SecretKey;
-@@ -46,6 +47,8 @@ public class NvConnection {
+@@ -46,5 +47,7 @@ public class NvConnection {
      private String uniqueId;
      private ConnectionContext context;
      private static Semaphore connectionAllowed = new Semaphore(1);
@@ -17,7 +17,7 @@ diff --git a/app/src/main/java/com/limelight/nvstream/NvConnection.java b/app/sr
 +    private volatile boolean stopping = false;
      private final boolean isMonkey;
      private final Context appContext;
-@@ -86,17 +89,21 @@ public class NvConnection {
+@@ -86,16 +89,18 @@ public class NvConnection {
      }
  
      public void stop() {
@@ -42,7 +42,7 @@ diff --git a/app/src/main/java/com/limelight/nvstream/NvConnection.java b/app/sr
 -        // Now a pending connection can be processed
 -        connectionAllowed.release();
      }
-@@ -422,9 +429,16 @@ public class NvConnection {
+@@ -422,5 +429,11 @@ public class NvConnection {
                  // Moonlight-core is not thread-safe with respect to connection start and stop, so
                  // we must not invoke that functionality in parallel.
                  synchronized (MoonBridge.class) {
@@ -54,7 +54,7 @@ diff --git a/app/src/main/java/com/limelight/nvstream/NvConnection.java b/app/sr
 +                    nativeSlotHeld.set(true);
                      MoonBridge.setupBridge(videoDecoderRenderer, audioRenderer, connectionListener);
                      int ret = MoonBridge.startConnection(context.serverAddress.address,
-@@ -440,7 +454,9 @@ public class NvConnection {
+@@ -440,6 +454,8 @@ public class NvConnection {
                          // LiStartConnection() failed, so the caller is not expected
                          // to stop the connection themselves. We need to release their
                          // semaphore count for them.
