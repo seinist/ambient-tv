@@ -497,8 +497,8 @@ fun ArtworkImage(
      * weighs as much as dozens of cards and must not push them out of the card cache.
      */
     backdrop: Boolean = focusCrop,
-    /** Coil fades the real bitmap in only after load; opt in for changing Live TV backdrops. */
-    crossfadeOnLoad: Boolean = false,
+    /** Fade new loaded artwork in; Coil and our memory index keep cached tiles instantaneous. */
+    crossfadeOnLoad: Boolean = true,
     /** Locked detail previews may display cached bytes, but must not fetch remote artwork. */
     cacheOnly: Boolean = false,
     /** A caller can defer offscreen requests; memory hits and already-admitted work remain usable. */
@@ -598,8 +598,14 @@ fun ArtworkImage(
         mutableStateOf<com.ambient.tv.network.ArtworkNetworkState?>(null)
     }
     val requestNetwork = successfulNetwork ?: network
-    val request = remember(currentModel, context, headers, constrainDecode, cardSize, crossfadeOnLoad, refreshRevision, address?.imageKey, headerKey, requestNetwork, cacheOnly) {
-        ImageRequest.Builder(context).data(currentModel).crossfade(crossfadeOnLoad)
+    val fadeMillis = artworkLoadFadeMillis(
+        requested = crossfadeOnLoad,
+        reducedEffects = LocalPerformanceProfile.current.reducedEffects,
+        cachedInMemory = shownFromMemory,
+    )
+    val request = remember(currentModel, context, headers, constrainDecode, cardSize, fadeMillis, refreshRevision, address?.imageKey, headerKey, requestNetwork, cacheOnly) {
+        ImageRequest.Builder(context).data(currentModel)
+            .apply { if (fadeMillis > 0) crossfade(fadeMillis) else crossfade(false) }
             .placeholderMemoryCacheKey(cachedKey)
             .apply {
                 // Only reuse a full cache key inside the same composable/card. That guarantees
