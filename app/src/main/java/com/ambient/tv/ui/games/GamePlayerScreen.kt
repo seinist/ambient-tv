@@ -115,6 +115,11 @@ import com.ambient.tv.games.GameCheat
 import com.ambient.tv.games.GameCoreOption
 import com.ambient.tv.games.GameSettings
 import com.ambient.tv.games.GameSettingsState
+import com.ambient.tv.games.displayProfile
+import com.ambient.tv.ui.player.DisplayRefreshRateMatcher
+import com.ambient.tv.ui.player.findActivity
+import com.ambient.tv.ui.player.rememberAvailableDisplayModes
+import com.ambient.tv.ui.player.videoImagePreferences
 import com.ambient.tv.games.GamePictureDefaults
 import com.ambient.tv.games.GameIntegerScaling
 import com.ambient.tv.ui.display.effectiveSdrReferenceWhiteNits
@@ -168,6 +173,13 @@ import kotlin.math.roundToInt
 @Composable
 fun GamePlayerScreen(onBack: () -> Unit, model: GamePlayerViewModel = hiltViewModel()) {
     val state by model.state.collectAsState()
+    val activity = LocalContext.current.findActivity()
+    // One physical-display lease for the route, including core/HDR/renderer restarts.
+    val gameDisplay = remember(activity) { GameDisplaySession(activity) }
+    DisposableEffect(gameDisplay) { onDispose { gameDisplay.close() } }
+    LaunchedEffect(state is GameUiState.Failed) {
+        if (state is GameUiState.Failed) gameDisplay.close()
+    }
     val preparingInputOwner = remember { Any() }
     DisposableEffect(state is GameUiState.Ready) {
         if (state !is GameUiState.Ready) GameInputRouting.attach(
@@ -243,7 +255,7 @@ fun GamePlayerScreen(onBack: () -> Unit, model: GamePlayerViewModel = hiltViewMo
                 modifier = center, centered = true,
             )
             // A new session (other core, OpenGL ES after Vulkan) is a new player.
-            is GameUiState.Ready -> key(current.session) { GameContent(current.session, model, onBack) }
+            is GameUiState.Ready -> key(current.session) { GameContent(current.session, model, onBack, gameDisplay) }
         }
     }
 }
@@ -299,9 +311,13 @@ private suspend fun GLRetroView.preview(
 }
 
 @Composable
-private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack: () -> Unit) {
+private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack: () -> Unit, gameDisplay: GameDisplaySession) {
     val context = LocalContext.current
     val uiInputView = LocalView.current
+    val physicalActivity = context.findActivity()
+    val physicalContext = physicalActivity ?: context
+    val displayPreferences = remember(context) { videoImagePreferences(context) }
+    val displayModes = rememberAvailableDisplayModes(physicalContext)
     val handheld = LocalHandheldUi.current
     val scope = rememberCoroutineScope()
     val activityLifecycle = LocalLifecycleOwner.current.lifecycle
@@ -326,6 +342,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             )
     }
     val settings = GameSettings.state
+    val gameDisplayProfile = settings.displayProfile(core.id, game.saveKey)
     val shader = settings.shader(system, game.saveKey)
     val shaderIntensity = settings.shaderStrength(system, game.saveKey)
     val selectedPack = settings.packShader(system, game.saveKey)
@@ -361,7 +378,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     // SDR as HDR10 is fixed when the view is created (EGL config and PQ surface); a change restarts.
     val sdrToHdrSession = remember(session) {
-        settings.sdrToHdr && toneMap == GameHdrToneMap.OFF && GameHdrDisplayProbe.capture(context).hdr10
+        settings.sdrToHdr && toneMap == GameHdrToneMap.OFF && GameHdrDisplayProbe.capture(physicalContext).hdr10
     }
     val nativePictureSupported = selectedPack == null && effect == null && !sdrToHdrSession &&
         (GameVulkanPictureCompatibility.rawFullscreenEligible(shader) || nativeSlangPath != null)
@@ -376,19 +393,33 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     // A display or refresh-mode change can remove HDR while a Vulkan game is
     // running. Never infer active HDR from these platform capabilities.
     var displayHdr by remember(context) {
-        mutableStateOf(GameHdrDisplayProbe.capture(context))
+        mutableStateOf(GameHdrDisplayProbe.capture(physicalContext))
     }
-    DisposableEffect(context) {
+    var actualGameMode by remember(gameDisplay) { mutableStateOf(gameDisplay.actualMode()) }
+    val requiredGameHdr = remember(session, sdrToHdrSession, nativeTransfer) {
+        when {
+            sdrToHdrSession -> android.view.Display.HdrCapabilities.HDR_TYPE_HDR10
+            nativeTransfer == GameVulkanTransferMode.PQ_BT2020 && displayHdr.hdr10 ->
+                android.view.Display.HdrCapabilities.HDR_TYPE_HDR10
+            nativeTransfer == GameVulkanTransferMode.HLG_BT2020 && displayHdr.hlg ->
+                android.view.Display.HdrCapabilities.HDR_TYPE_HLG
+            else -> null
+        }
+    }
+    DisposableEffect(physicalContext) {
         val manager = context.getSystemService(android.hardware.display.DisplayManager::class.java)
         val listener = object : android.hardware.display.DisplayManager.DisplayListener {
             override fun onDisplayAdded(displayId: Int) {
-                displayHdr = GameHdrDisplayProbe.capture(context)
+                displayHdr = GameHdrDisplayProbe.capture(physicalContext)
+                actualGameMode = gameDisplay.actualMode()
             }
             override fun onDisplayRemoved(displayId: Int) {
-                displayHdr = GameHdrDisplayProbe.capture(context)
+                displayHdr = GameHdrDisplayProbe.capture(physicalContext)
+                actualGameMode = gameDisplay.actualMode()
             }
             override fun onDisplayChanged(displayId: Int) {
-                displayHdr = GameHdrDisplayProbe.capture(context)
+                displayHdr = GameHdrDisplayProbe.capture(physicalContext)
+                actualGameMode = gameDisplay.actualMode()
             }
         }
         manager?.registerDisplayListener(listener, Handler(Looper.getMainLooper()))
@@ -397,7 +428,10 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     // Also re-query when opening Info; some vendors do not deliver callbacks
     // for every HDMI EOTF switch.
     LaunchedEffect(panel) {
-        if (panel == GamePanel.INFO) displayHdr = GameHdrDisplayProbe.capture(context)
+        if (panel == GamePanel.INFO || panel == GamePanel.DISPLAY) {
+            displayHdr = GameHdrDisplayProbe.capture(physicalContext)
+            actualGameMode = gameDisplay.actualMode()
+        }
     }
     val optionCategory = gamePanels.optionCategory
     /** Core option changes go to this game only (true) or to every game of the core. */
@@ -409,6 +443,13 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     /** The core has loaded the game (its surface exists); before that nothing may step it. */
     var coreReady by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
+    var displayFormat by remember { mutableStateOf<GameDisplayFormat?>(null) }
+    var displayPrepared by remember { mutableStateOf(false) }
+    var displaySwitching by remember { mutableStateOf(false) }
+    var displayFailed by remember { mutableStateOf(false) }
+    // Once armed, continue refreshing the native clock even when the user disables matching.
+    var displayTimingArmed by remember { mutableStateOf(gameDisplayProfile.active) }
+    val backgroundVideo by BackgroundPlaybackSession.snapshot.collectAsState()
     /** The native Vulkan image format, not merely the user's requested graphics mode. */
     var vulkanFrameStatus by remember { mutableStateOf(GameVulkanFrameStatus()) }
     /** Native VkImage pixel layout, NOT color transfer or HDR source provenance. */
@@ -464,6 +505,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             NetplayInput(captured[0], captured[1], captured[2], captured[3], captured[4], captured[5], captured[6])
         }
     }
+    val displayHold = displaySwitching ||
+        (gameDisplayProfile.active && loaded && !displayPrepared && !netplay.busy && !backgroundVideo.active)
+    val availableGameModes = actualGameMode?.let {
+        gameDisplayModes(displayModes, it, handheld, displayPreferences.displayModeWhitelist, requiredGameHdr)
+    }.orEmpty()
     var cheats by remember { mutableStateOf(model.cheats(game)) }
     var cheatsLoading by remember { mutableStateOf(false) }
     var cheatsDeleting by remember { mutableStateOf(false) }
@@ -519,6 +565,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             )
             rumbleEventsEnabled = true
             preferLowLatencyAudio = true
+            // A requested cadence must never change the core's native game speed.
+            forceSoftwareTiming = gameDisplayProfile.active
             preferVulkan = session.vulkan
             // Before retro_init an HDR-aware Vulkan core may ask for configured PQ output;
             // distinguish capability from the later verified real-surface HDR signal.
@@ -824,10 +872,65 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         }
     }
 
+    // Initial metadata arrives after the first native frame. Subsequent switches use
+    // the same paused lifecycle as the OSD and do not resume a deliberately paused game.
+    LaunchedEffect(retroView, displayFormat, gameDisplayProfile, activityResumed,
+        netplay.busy, backgroundVideo.active, destroyed, exiting) {
+        val format = displayFormat ?: return@LaunchedEffect
+        if (!activityResumed || netplay.busy || backgroundVideo.active || destroyed || exiting) return@LaunchedEffect
+        if (!gameDisplayProfile.active && !gameDisplay.hasLease && !displayTimingArmed) {
+            displayPrepared = true
+            displayFailed = false
+            return@LaunchedEffect
+        }
+        displaySwitching = true
+        retroView.suppressAutoResume = true
+        retroView.pauseEmulation()
+        try {
+            if (gameDisplayProfile.active) {
+                displayTimingArmed = true
+                val baseline = gameDisplay.baseline()
+                val selected = baseline?.let {
+                    selectGameDisplayMode(
+                        displayModes, it, format, gameDisplayProfile, handheld,
+                        displayPreferences.displayModeWhitelist, requiredGameHdr,
+                    )
+                }
+                displayFailed = if (selected != null) {
+                    !gameDisplay.apply(selected, displayPreferences.displaySwitchPauseMs)
+                } else {
+                    gameDisplay.reset()
+                    true
+                }
+            } else {
+                gameDisplay.reset()
+                displayFailed = false
+            }
+        } finally {
+            // Queue clock/audio changes before the running effect can release the frame gate.
+            val actual = gameDisplay.actualMode()
+            actualGameMode = actual
+            if (!destroyed && !exiting && actual != null && displayTimingArmed) {
+                val strict = gameDisplayProfile.active
+                retroView.queueEvent { LibretroDroid.setGameDisplayTiming(actual.refreshRate, strict) }
+            }
+            displayPrepared = true
+            displaySwitching = false
+        }
+    }
+    // Also retime after external Android/HDMI changes. No format observation in the frame loop.
+    LaunchedEffect(retroView, loaded, actualGameMode?.key, displayTimingArmed, gameDisplayProfile.active,
+        activityResumed, netplay.busy, displaySwitching, destroyed, exiting) {
+        if (!loaded || !activityResumed || netplay.busy || displaySwitching || destroyed || exiting ||
+            !displayTimingArmed) return@LaunchedEffect
+        val actual = actualGameMode ?: return@LaunchedEffect
+        val strict = gameDisplayProfile.active
+        retroView.queueEvent { LibretroDroid.setGameDisplayTiming(actual.refreshRate, strict) }
+    }
     val running = coreReady && activityResumed && !menuOpen && panel == null &&
-        !exiting && !destroyed && !stateBusy && !netplay.synchronizing
+        !exiting && !destroyed && !stateBusy && !netplay.synchronizing && !displayHold
     val rewindPreview = menuOpen && panel == null && !statesOpen && menuRewinding &&
-        availability.rewind && activityResumed
+        availability.rewind && activityResumed && !displayHold
     val activeRewinding = rewindPermitted && (rewindPreview ||
         (running && rewindHistory.available && (rewinding || touchRewinding || companionRewinding)))
     val emulating = running || rewindPreview
@@ -1038,6 +1141,12 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 loaded = true
                 model.firstFrameRendered(session)
                 refreshStateSupport()
+                // Read the nominal core cadence, never the frame counter or display Hz.
+                displayFormat = GameDisplayFormat(
+                    runCatching { LibretroDroid.getContentFps().toFloat() }.getOrNull()
+                        ?.takeIf { it.isFinite() && it in 1f..240f },
+                    runCatching { GameContentFrame.unpack(LibretroDroid.getContentFrameSize()) }.getOrNull(),
+                )
                 withContext(Dispatchers.Default) {
                     runCatching {
                         val variables = retroView.getVariables()
@@ -1213,7 +1322,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             netplay.synchronizing)
     val companionInteraction = when {
         !activityResumed || exiting || destroyed -> CompanionGamepadInteraction.BACKGROUND
-        stateBusy -> CompanionGamepadInteraction.BUSY
+        stateBusy || displayHold -> CompanionGamepadInteraction.BUSY
         !coreReady || !loaded -> CompanionGamepadInteraction.LOADING
         gameDialogOpen -> CompanionGamepadInteraction.DIALOG
         menuOpen || panel != null -> CompanionGamepadInteraction.MENU
@@ -1221,7 +1330,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         else -> CompanionGamepadInteraction.PLAYING
     }
     val gameInputMode = when {
-        !activityResumed || exiting || destroyed || stateBusy || !coreReady || !loaded -> GameInputMode.BLOCKED
+        !activityResumed || exiting || destroyed || stateBusy || !coreReady || !loaded || (displayHold && !menuOpen) -> GameInputMode.BLOCKED
         gameDialogOpen -> GameInputMode.DIALOG
         menuOpen || panel != null -> GameInputMode.MENU
         netplay.synchronizing -> GameInputMode.BLOCKED
@@ -1437,6 +1546,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     AndroidView(factory = { vulkanSurfaceHost ?: retroView }, modifier = surfaceModifier)
                 },
             )
+            if (displayHold && !menuOpen) {
+                Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+                    Text(stringResource(R.string.game_display_switching), color = Color.White)
+                }
+            }
             if (resetConfirmOpen) com.ambient.tv.ui.common.AppDialog(
                 onDismiss = { resetConfirmOpen = false },
                 title = stringResource(R.string.game_reset_confirm_title),
@@ -1679,6 +1793,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         open == GamePanel.OSD_BUTTONS -> stringResource(R.string.osd_buttons)
                         open == GamePanel.CORE && category != null -> categoryTitle.orEmpty()
                         open == GamePanel.PICTURE -> stringResource(R.string.game_panel_picture)
+                        open == GamePanel.DISPLAY -> stringResource(R.string.game_display_title)
                         open == GamePanel.CORE -> stringResource(R.string.game_panel_core)
                         open == GamePanel.DISC -> stringResource(R.string.game_panel_disc)
                         open == GamePanel.CONTROLS -> stringResource(R.string.game_panel_controls)
@@ -1715,6 +1830,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             )
                             GamePanelChoice(stringResource(R.string.game_panel_picture), selected = false,
                                 icon = Icons.Filled.Wallpaper, onClick = { openSettingsPanel(GamePanel.PICTURE) })
+                            if (availableGameModes.size > 1 || gameDisplayProfile.active) GamePanelChoice(
+                                stringResource(R.string.game_display_title), selected = false,
+                                onClick = { openSettingsPanel(GamePanel.DISPLAY) })
                             if (availability.coreOptions) GamePanelChoice(stringResource(R.string.game_panel_core), selected = false,
                                 icon = Icons.Filled.Tune,
                                 onClick = { openSettingsPanel(GamePanel.CORE) })
@@ -1739,6 +1857,10 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             hasVideo = true,
                             player = OsdPlayer.GAMES,
                             offered = availability.buttons(),
+                        )
+                        open == GamePanel.DISPLAY -> GameDisplayPanel(
+                            core.id, game.saveKey, availableGameModes, handheld, displayFormat, actualGameMode,
+                            displaySwitching, displayFailed, netplay.busy,
                         )
                         open == GamePanel.PICTURE -> {
                             if (session.vulkan && (nativeSdrDiagnostic || nativeSdrFullscreenRequested) && !nativePictureSupported) {
