@@ -27,6 +27,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.weight
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -49,6 +52,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.tv.material3.MaterialTheme
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.tv.material3.Text
 import com.ambient.tv.BuildConfig
 import com.ambient.tv.R
@@ -264,11 +273,19 @@ private fun MoonlightStreamContent(
     onCompanionMode: (MoonlightStreamPhase, Boolean) -> Unit,
 ) {
     val status by engine.status.collectAsState()
-    LaunchedEffect(status.phase, controlsShown) { onCompanionMode(status.phase, controlsShown) }
+    var panel by remember { mutableStateOf(MoonlightPlaybackPage.NONE) }
+    LaunchedEffect(controlsShown) {
+        if (!controlsShown) panel = MoonlightPlaybackPage.NONE
+    }
+    LaunchedEffect(status.phase, controlsShown, panel) {
+        onCompanionMode(status.phase, controlsShown || panel != MoonlightPlaybackPage.NONE)
+    }
     val resumeFocus = remember { FocusRequester() }
+    val settingsFocus = remember { FocusRequester() }
     val disconnectFocus = remember { FocusRequester() }
-    LaunchedEffect(controlsShown, status.phase) {
-        if (controlsShown || status.phase != MoonlightStreamPhase.STREAMING) {
+    LaunchedEffect(controlsShown, status.phase, panel) {
+        if ((controlsShown || status.phase != MoonlightStreamPhase.STREAMING) &&
+            panel == MoonlightPlaybackPage.NONE) {
             withFrameNanos { }
             runCatching {
                 if (controlsShown && status.phase == MoonlightStreamPhase.STREAMING)
@@ -277,7 +294,13 @@ private fun MoonlightStreamContent(
             }
         }
     }
-    BackHandler { if (controlsShown) disconnect() else showControls() }
+    BackHandler(enabled = panel == MoonlightPlaybackPage.NONE) {
+        if (controlsShown) disconnect() else showControls()
+    }
+    val backPanel = {
+        panel = if (panel == MoonlightPlaybackPage.ROOT) MoonlightPlaybackPage.NONE
+            else MoonlightPlaybackPage.ROOT
+    }
     Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
@@ -352,15 +375,49 @@ private fun MoonlightStreamContent(
                         else -> R.string.moonlight_stream_connecting
                     }),
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (status.phase == MoonlightStreamPhase.STREAMING && controlsShown)
-                        TvActionButton(stringResource(R.string.moonlight_stream_resume), closeControls,
-                            modifier = Modifier.focusRequester(resumeFocus))
-                    TvActionButton(stringResource(R.string.moonlight_stream_disconnect), disconnect,
-                        modifier = Modifier.focusRequester(disconnectFocus))
+                // As in the regular video/game OSD: primary action at left, options at right.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (status.phase == MoonlightStreamPhase.STREAMING && controlsShown) {
+                            TvActionButton(stringResource(R.string.moonlight_stream_resume),
+                                closeControls, modifier = Modifier.focusRequester(resumeFocus),
+                                icon = Icons.Filled.PlayArrow)
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (status.phase == MoonlightStreamPhase.STREAMING) {
+                            TvActionButton(stringResource(R.string.moonlight_player_input_short),
+                                { panel = MoonlightPlaybackPage.TEXT }, icon = Icons.Filled.Keyboard)
+                        }
+                        TvActionButton(stringResource(R.string.moonlight_player_info_short),
+                            { panel = MoonlightPlaybackPage.INFO }, icon = Icons.Filled.Info)
+                        TvActionButton(stringResource(R.string.moonlight_player_options),
+                            { panel = MoonlightPlaybackPage.ROOT },
+                            modifier = Modifier.focusRequester(settingsFocus),
+                            icon = Icons.Filled.Settings)
+                        TvActionButton(stringResource(R.string.moonlight_stream_disconnect),
+                            disconnect, modifier = Modifier.focusRequester(disconnectFocus),
+                            icon = Icons.Filled.Stop)
+                    }
                 }
             }
         }
+        MoonlightPlaybackPanel(
+            page = panel,
+            status = status,
+            streamProfile = streamProfile,
+            onUpdateProfile = onUpdateProfile,
+            onPage = { panel = it },
+            onBack = backPanel,
+            onSendText = onSendText,
+            onQuitRemote = onQuitRemote,
+            remoteQuitBusy = remoteQuitBusy,
+            remoteQuitError = remoteQuitError,
+        )
     }
     DisposableEffect(engine, hostId, appId) {
         onDispose { engine.stop() }
