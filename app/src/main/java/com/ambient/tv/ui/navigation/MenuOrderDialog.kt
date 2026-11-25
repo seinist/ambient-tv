@@ -86,7 +86,7 @@ internal fun menuSystemIcon(system: MediaSystem): ImageVector = when (system) {
     MediaSystem.SPOTIFY, MediaSystem.RADIO -> Icons.Filled.Headphones
     MediaSystem.TVHEADEND -> Icons.Filled.Tv
     MediaSystem.IPTV -> Icons.Filled.LiveTv
-    MediaSystem.ROMM -> Icons.Filled.SportsEsports
+    MediaSystem.ROMM, MediaSystem.MOONLIGHT -> Icons.Filled.SportsEsports
     else -> Icons.Filled.VideoLibrary
 }
 
