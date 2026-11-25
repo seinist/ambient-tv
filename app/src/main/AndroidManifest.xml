@@ -12,6 +12,8 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Opt-in touch game-button feedback on the phone; no runtime permission prompt. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Android 13+: playback, companion and "progress not saved" notifications on phones.
          Requested once by the handheld UI; TVs do not show the prompt. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />

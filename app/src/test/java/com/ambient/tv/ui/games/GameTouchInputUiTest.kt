@@ -13,9 +13,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.hapticfeedback.HapticFeedback
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
@@ -61,7 +58,7 @@ class GameTouchInputUiTest {
         var osdTaps = 0
         val held = mutableSetOf<RetroPadButton>()
         val aTransitions = mutableListOf<Boolean>()
-        val feedback = mutableListOf<HapticFeedbackType>()
+        val feedback = mutableListOf<Unit>()
         fun button(button: RetroPadButton, down: Boolean) {
             if (down) held.add(button) else held.remove(button)
             if (button == RetroPadButton.A) aTransitions += down
@@ -70,16 +67,11 @@ class GameTouchInputUiTest {
 
     private fun mount(lifecycleOwner: LifecycleOwner? = null): Fixture {
         val fixture = Fixture()
-        val haptics = object : HapticFeedback {
-            override fun performHapticFeedback(hapticFeedbackType: HapticFeedbackType) {
-                fixture.feedback += hapticFeedbackType
-            }
-        }
         rule.setContent {
             CompositionLocalProvider(
                 LocalHandheldUi provides true,
                 LocalLifecycleOwner provides (lifecycleOwner ?: LocalLifecycleOwner.current),
-                LocalHapticFeedback provides haptics,
+                LocalGameButtonHaptic provides { fixture.feedback += Unit },
             ) {
                 AmbientTvTheme {
                     // Ancestor tap handling reproduces the player/interop failure if the
@@ -116,7 +108,7 @@ class GameTouchInputUiTest {
             up(0)
         }
         rule.runOnIdle {
-            assertEquals(listOf(HapticFeedbackType.TextHandleMove), fixture.feedback)
+            assertEquals(1, fixture.feedback.size)
             fixture.mode = GameTouchMode.HYBRID
         }
         rule.onNodeWithTag("game-touch-dpad", useUnmergedTree = true).performTouchInput {
