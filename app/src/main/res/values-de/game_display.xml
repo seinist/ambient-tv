@@ -24,4 +24,5 @@
     <string name="game_display_switching">Display wird angepasst …</string>
     <string name="game_display_netplay">Während einer Netplay-Sitzung sind Displaywechsel deaktiviert.</string>
     <string name="game_display_unknown">Unbekannt</string>
+    <string name="game_display_prefer_double_on">An</string>
 </resources>
