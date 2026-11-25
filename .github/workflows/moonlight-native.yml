@@ -84,5 +84,8 @@ jobs:
           python3 scripts/check_elf_page_alignment.py "$readelf" "${libs[@]}"
       - name: Compile Ambient TV native Kotlin pairing and application adapter
         if: matrix.abi == 'arm64-v8a'
+        env:
+          # This job verifies Moonlight/Kotlin, not the unrelated local FFmpeg decoder.
+          SKIP_MPV_NATIVE: "1"
         shell: bash
         run: ./gradlew :app:compileDebugKotlin -PMOONLIGHT_NATIVE=true -PAPK_ABI=arm64 --no-daemon --stacktrace
