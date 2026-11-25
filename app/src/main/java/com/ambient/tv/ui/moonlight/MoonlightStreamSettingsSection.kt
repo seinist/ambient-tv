@@ -60,6 +60,22 @@ fun MoonlightStreamSettingsSection(
                         selected = profile.codec == codec)
                 }
             }
+            Text(stringResource(R.string.moonlight_quality_hdr),
+                style = MaterialTheme.typography.titleSmall)
+            SettingsActionRow {
+                listOf("auto", "on", "off").forEach { mode ->
+                    val label = stringResource(when (mode) {
+                        "on" -> R.string.moonlight_quality_hdr_on
+                        "off" -> R.string.moonlight_quality_hdr_off
+                        else -> R.string.moonlight_quality_auto
+                    })
+                    TvActionButton(label, { update(profile.copy(hdrMode = mode)) },
+                        selected = profile.hdrMode == mode)
+                }
+            }
+            Text(stringResource(R.string.moonlight_quality_hdr_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(stringResource(R.string.moonlight_quality_audio),
                 style = MaterialTheme.typography.titleSmall)
             SettingsActionRow {
