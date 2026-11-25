@@ -82,7 +82,10 @@ class MoonlightStreamEngine @Inject constructor(
                 val apps = transport.loadApplications(hostId).apps
                 val app = apps.firstOrNull { it.id == appId }
                     ?: throw SecurityException("App is no longer published by this paired host")
-                val videoFormat = MoonlightHardwareVideo.supportedFormat(valid)
+                val videoFormat = MoonlightHardwareVideo.supportedFormat(valid,
+                    appHdrSupported = app.hdrSupported,
+                    displayHdr10 = MoonlightHardwareVideo.displaySupportsHdr10(context),
+                )
                 if (videoFormat == 0) throw UnsupportedOperationException("No compatible hardware video decoder")
                 if (!surface.isValid) throw IllegalStateException("Stream surface was destroyed")
                 if (!isOwned(session)) return@launch
@@ -98,7 +101,7 @@ class MoonlightStreamEngine @Inject constructor(
                     else -> MoonBridge.AUDIO_CONFIGURATION_STEREO
                 }
                 val config = StreamConfiguration.Builder()
-                    .setApp(NvApp(app.title, app.id, false))
+                    .setApp(NvApp(app.title, app.id, app.hdrSupported))
                     .setResolution(valid.width, valid.height)
                     .setRefreshRate(valid.fps)
                     .setLaunchRefreshRate(valid.fps)
@@ -108,7 +111,8 @@ class MoonlightStreamEngine @Inject constructor(
                     .setAudioConfiguration(audioConfig)
                     .setRemoteConfiguration(StreamConfiguration.STREAM_CFG_AUTO)
                     .setAttachedGamepadMaskByCount(1)
-                    .setColorSpace(MoonBridge.COLORSPACE_REC_709)
+                    .setColorSpace(if (MoonlightHardwareVideo.isHdr10Format(videoFormat))
+                        MoonBridge.COLORSPACE_REC_2020 else MoonBridge.COLORSPACE_REC_709)
                     .setColorRange(MoonBridge.COLOR_RANGE_LIMITED)
                     .build()
                 val connection = NvConnection(
