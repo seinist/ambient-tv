@@ -33,7 +33,7 @@ diff --git a/src/main/cpp/renderers/es2/imagerendereres2.cpp b/src/main/cpp/rend
  
  namespace libretrodroid {
  
-@@ -33,15 +34,60 @@
+@@ -33,15 +34,51 @@
  }
  
  void ImageRendererES2::onNewFrame(const void *data, unsigned width, unsigned height, size_t pitch) {
@@ -77,15 +77,6 @@ diff --git a/src/main/cpp/renderers/es2/imagerendereres2.cpp b/src/main/cpp/rend
 +            }
 +        }
 +        uploadData = uploadBuffer.data();
-+    } else if (rowBytes != pitch) {
-+        // GLES2 cannot describe a padded row. Repack into the existing bounded
-+        // scratch allocation instead of issuing one driver upload per scanline.
-+        uploadBuffer.resize(rowBytes * height);
-+        for (unsigned y = 0; y < height; ++y) {
-+            std::memcpy(uploadBuffer.data() + size_t(y) * rowBytes,
-+                        static_cast<const uint8_t*>(data) + size_t(y) * pitch, rowBytes);
-+        }
-+        uploadData = uploadBuffer.data();
 +    }
 +
      glBindTexture(GL_TEXTURE_2D, currentTexture);
@@ -100,7 +91,7 @@ diff --git a/src/main/cpp/renderers/es2/imagerendereres2.cpp b/src/main/cpp/rend
  
      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, linear ? GL_LINEAR : GL_NEAREST);
      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, linear ? GL_LINEAR : GL_NEAREST);
-@@ -52,33 +98,4 @@
+@@ -52,33 +89,12 @@
          glTexImage2D(GL_TEXTURE_2D, 0, glInternalFormat, width, height, 0, glFormat, glType, nullptr);
      }
  
@@ -127,15 +118,17 @@ diff --git a/src/main/cpp/renderers/es2/imagerendereres2.cpp b/src/main/cpp/rend
 -        }
 -    } else if (bytesPerPixel * width == pitch) {
 -        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, glFormat, glType, data);
--    } else {
--        // Here we are forced to take the long and slow way to upload the padded texture.
--        for (int i = 0; i < height; i++) {
++    if (convert || rowBytes == pitch) {
++        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, glFormat, glType, uploadData);
+     } else {
+         // Here we are forced to take the long and slow way to upload the padded texture.
+         for (int i = 0; i < height; i++) {
 -            auto row = (char*) data + (pitch) * i;
--            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, i, width, 1, glFormat, glType, row);
--        }
--    }
-+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, glFormat, glType, uploadData);
-@@ -86,17 +103,6 @@
++            const auto* row = static_cast<const uint8_t*>(data) + pitch * i;
+             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, i, width, 1, glFormat, glType, row);
+         }
+     }
+@@ -86,17 +102,6 @@
      glBindTexture(GL_TEXTURE_2D, 0);
  
      Renderer::onNewFrame(data, width, height, pitch);
@@ -153,7 +146,7 @@ diff --git a/src/main/cpp/renderers/es2/imagerendereres2.cpp b/src/main/cpp/rend
  }
  
  uintptr_t ImageRendererES2::getTexture() {
-@@ -133,16 +139,6 @@
+@@ -133,16 +138,6 @@
              this->glType = GL_UNSIGNED_SHORT_5_6_5;
              this->bytesPerPixel = 2;
              break;

@@ -281,6 +281,41 @@ void auditSoftwareUpload(Audit& audit) {
             }
         });
     }
+    if (audit.version==2) audit.run("source-upload","same-size-format-and-sampler-switch",[&] {
+        ImageRendererES2 renderer;
+        const uint16_t rgb565[4]={0xf800,0x07e0,0x001f,0xffff};
+        const uint32_t xrgb[4]={0x00ff0000,0x0000ff00,0x000000ff,0x00ffffff};
+        const Image expected={{255,0,0,255},{0,255,0,255},{0,0,255,255},{255,255,255,255}};
+        auto chain=ShaderManager::getShader(pixel());
+        for (int format:{RETRO_PIXEL_FORMAT_RGB565,RETRO_PIXEL_FORMAT_XRGB8888,RETRO_PIXEL_FORMAT_RGB565}) {
+            renderer.setPixelFormat(format);
+            const bool wide=format==RETRO_PIXEL_FORMAT_XRGB8888;
+            chain.linearTexture=wide;
+            renderer.setShaders(chain);
+            renderer.onNewFrame(wide?static_cast<const void*>(xrgb):static_cast<const void*>(rgb565),
+                                2,2,wide?8:4);
+            renderer.prepareShaderPasses();
+            glBindTexture(GL_TEXTURE_2D,renderer.getTexture());
+            GLint minFilter=0,magFilter=0;
+            glGetTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,&minFilter);
+            glGetTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,&magFilter);
+            require(minFilter==(wide?GL_LINEAR:GL_NEAREST)&&magFilter==minFilter,"ES2 sampler not updated");
+            glBindTexture(GL_TEXTURE_2D,0);
+            GLuint framebuffer=0;glGenFramebuffers(1,&framebuffer);glBindFramebuffer(GL_FRAMEBUFFER,framebuffer);
+            glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,renderer.getTexture(),0);
+            require(glCheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE,"format switch texture incomplete");
+            Image actual(4);glReadPixels(0,0,2,2,GL_RGBA,GL_UNSIGNED_BYTE,actual.data());
+            glBindFramebuffer(GL_FRAMEBUFFER,0);glDeleteFramebuffers(1,&framebuffer);
+            require(glGetError()==GL_NO_ERROR,"format switch GL error");
+            require(actual==expected,"same-size format switch corrupted source colors");
+        }
+        // A paused filter switch must update the existing texture without a core frame.
+        chain.linearTexture=true;renderer.setShaders(chain);renderer.prepareShaderPasses();
+        glBindTexture(GL_TEXTURE_2D,renderer.getTexture());
+        GLint filter=0;glGetTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,&filter);
+        glBindTexture(GL_TEXTURE_2D,0);
+        require(filter==GL_LINEAR && glGetError()==GL_NO_ERROR,"paused sampler switch failed");
+    });
     std::printf("AUDIT: GLES%d immutable/reused/partially redrawn source, final texel, pitched rows and buffer growth complete\n",audit.version);
 }
 
