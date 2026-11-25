@@ -106,9 +106,12 @@ fun GameLibraryScreen(
     startManaging: Boolean = false,
     onBack: () -> Unit,
     model: GameLibraryViewModel = hiltViewModel(),
+    embeddedManager: Boolean = false,
+    modifier: Modifier = Modifier,
+    focusSettingsContent: () -> Unit = {},
 ) {
     val state by model.state.collectAsState()
-    var managing by rememberSaveable(startManaging) { mutableStateOf(startManaging) }
+    val managing = startManaging || embeddedManager
     var choosingSystem by rememberSaveable { mutableStateOf(false) }
     var networkEditor by remember { mutableStateOf<FileSource?>(null) }
     var removing by remember { mutableStateOf<GameLibraryFolder?>(null) }
@@ -122,7 +125,7 @@ fun GameLibraryScreen(
     val handheld = LocalHandheldUi.current
     val metadataSettingsFocus = remember { FocusRequester() }
     var restoreMetadataFocus by remember { mutableStateOf(false) }
-    var showSearch by remember { mutableStateOf(false) }
+    var showSearch by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val gridState = rememberLazyGridState()
@@ -131,11 +134,14 @@ fun GameLibraryScreen(
     var focusedId by rememberSaveable { mutableStateOf<String?>(null) }
     var searchText by rememberSaveable { mutableStateOf("") }
 
-    LaunchedEffect(initialSection) { model.section(initialSection) }
+    // The route is an initial entry point, not the currently selected chip. Navigation
+    // Compose saves this selection with the back stack entry while the player is open.
+    var selectedSection by rememberSaveable(initialSection) { mutableStateOf(initialSection) }
+    LaunchedEffect(initialSection) { model.section(selectedSection) }
     LaunchedEffect(searchText) { model.query(searchText) }
-    ReportSidebarContentReady(state.ready)
+    if (!embeddedManager) ReportSidebarContentReady(state.ready)
 
-    BackHandler {
+    fun handleBack() {
         when {
             removing != null -> removing = null
             metadataSettingsOpen -> { metadataSettingsOpen = false; restoreMetadataFocus = true }
@@ -145,17 +151,25 @@ fun GameLibraryScreen(
             choosingSystem -> choosingSystem = false
             state.selectedSource != null -> if (!model.folderUp()) model.closePicker()
             managerPage != GameLibraryManagerPage.HOME -> { managerPage = GameLibraryManagerPage.HOME; selectedFolderId = null }
-            managing -> if (startManaging) onBack() else managing = false
             else -> onBack()
         }
     }
+    val settingsBack = com.ambient.tv.ui.settings.LocalSettingsNestedBack.current
+    if (embeddedManager) {
+        SideEffect { settingsBack?.onBack = ::handleBack }
+        DisposableEffect(settingsBack) { onDispose { settingsBack?.onBack = null } }
+        LaunchedEffect(managerPage, choosingSystem, choosingDatSystem, choosingNameDatabase,
+            state.selectedSource?.id, state.browsedPaths.lastOrNull()?.first) {
+            if (!handheld) { withFrameNanos { }; focusSettingsContent() }
+        }
+    } else BackHandler { handleBack() }
     val sourcesById = remember(state.sources) { state.sources.associateBy { it.id } }
     // The repository returns just this section/search in final order, off the UI thread.
     val games = state.games
     val gameIds = remember(games) { games.map { it.fileId } }
     // Like the other libraries: entering from the sidebar or changing section, view or sort lands
     // on the remembered or first game, not on the header chips.
-    com.ambient.tv.ui.common.BrowseFocusContentIdentity(
+    if (!managing) com.ambient.tv.ui.common.BrowseFocusContentIdentity(
         listOf(state.section, state.view, state.sortKey, state.sortDescending), restoreInitialTarget = true,
     )
     val initialGame = games.firstOrNull { it.fileId == focusedId } ?: games.firstOrNull()
@@ -189,26 +203,21 @@ fun GameLibraryScreen(
         }
     }
     Column(
-        Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(),
-            top = pageHeaderTop(screenGutter()), bottom = screenGutter()),
+        if (embeddedManager) modifier.fillMaxSize() else modifier.fillMaxSize().padding(
+            start = screenGutter(), end = screenGutter(), top = pageHeaderTop(screenGutter()), bottom = screenGutter()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        GameLibraryHeader(state, managing, showSearch, controls,
-            onManage = {
-                if (managing && startManaging) onBack()
-                else {
-                    managing = !managing
-                    choosingSystem = false
-                    choosingDatSystem = false
-                    choosingNameDatabase = false
-                    managerPage = GameLibraryManagerPage.HOME
-                    selectedFolderId = null
-                    if (!managing) model.closePicker()
-                }
-            },
-            onSearch = { showSearch = !showSearch }, onRefresh = model::scanAll)
+        if (!embeddedManager) GameLibraryHeader(state, managing, showSearch, controls,
+            onManage = { if (managing) onBack() else onOpenGameSettings("library") },
+            onSearch = { showSearch = !showSearch }, onRefresh = model::refreshSection)
+        if (embeddedManager && managerPage == GameLibraryManagerPage.HOME && !choosingSystem &&
+            !choosingDatSystem && !choosingNameDatabase && state.selectedSource == null) {
+            com.ambient.tv.ui.settings.SettingsSubheader(
+                stringResource(R.string.games_settings_library_heading), firstInContent = true)
+        }
         if (!managing) {
             GameLibrarySections(sections, state.section, controls) {
+                selectedSection = it
                 model.section(it)
                 focusedId = null
             }
@@ -243,7 +252,7 @@ fun GameLibraryScreen(
                     Text(stringResource(R.string.game_library_empty),
                         style = MaterialTheme.typography.bodyMedium)
                     TvActionButton(stringResource(R.string.game_library_add_folder),
-                        { managing = true }, icon = Icons.Filled.CreateNewFolder)
+                        { onOpenGameSettings("library") }, icon = Icons.Filled.CreateNewFolder)
                 }
             } else if (games.isEmpty()) {
                 Text(if (state.busy) stringResource(R.string.player_loading)
@@ -255,11 +264,23 @@ fun GameLibraryScreen(
                     gridColumns = state.gridColumns, listRows = state.listRows, controls = controls,
                     focusedId = focusedId, onFocused = { focusedId = it }, itemRequests = itemRequests,
                     listState = listState, gridState = gridState, rowsState = rowsState,
-                    onSelect = onSelect, onOpenDetails = onOpenDetails, onFavorite = model::favorite,
+                    onSelect = { focusedId = it.fileId; onSelect(it) },
+                    onOpenDetails = { focusedId = it.fileId; onOpenDetails(it) }, onFavorite = model::favorite,
                 )
             }
         } else {
-            Column(Modifier.weight(1f).fillMaxWidth().pageContentUp(controls.focusChain).focusGroup()) {
+            val managerModifier = Modifier.weight(1f).fillMaxWidth()
+            Column(if (embeddedManager) managerModifier else managerModifier.pageContentUp(controls.focusChain).focusGroup()) {
+                if (state.scanning && !choosingNameDatabase &&
+                    (managerPage != GameLibraryManagerPage.FOLDER || state.activeScanFolderId != selectedFolderId)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(gameLibraryProgressMessage(androidx.compose.ui.platform.LocalContext.current, state),
+                            modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                        TvChip(text = stringResource(R.string.game_library_scan_cancel), icon = Icons.Filled.Close,
+                            iconOnly = true, onClick = { model.cancelScan() })
+                    }
+                }
                 if (choosingDatSystem) {
                     com.ambient.tv.ui.settings.SettingsSubheader(stringResource(R.string.game_library_dat_system), firstInContent = true)
                     TvLazyColumn(modifier = Modifier.fillMaxSize(), allowUpExit = true,
@@ -284,7 +305,11 @@ fun GameLibraryScreen(
                         onSelectSource = model::selectSource,
                         onEnter = model::enterFolder,
                         onAdd = { system ->
-                            if (model.assign(system)) { choosingSystem = false; managing = false }
+                            if (model.assign(system)) {
+                                choosingSystem = false
+                                managerPage = GameLibraryManagerPage.HOME
+                                selectedFolderId = null
+                            }
                         },
                         onRemove = { removing = it },
                         onScan = model::scanFolder,
@@ -353,7 +378,7 @@ fun GameLibraryScreen(
             onSave = model::saveNewNetworkSource,
         )
     }
-    GameLibraryViewOptionsPanel(state, controls,
+    if (!managing) GameLibraryViewOptionsPanel(state, controls,
         onView = model::view, onGridColumns = model::gridColumns, onListRows = model::listRows,
         onSort = model::sort, onSortDescending = model::sortDescending, onTitleStyle = model::titleStyle)
 }
