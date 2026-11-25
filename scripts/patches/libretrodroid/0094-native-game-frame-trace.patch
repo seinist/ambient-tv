@@ -119,10 +119,16 @@ diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
 -            glFinish();
 +            traceGameCall("AmbientGame GLES bridge finish", [] { glFinish(); });
              if (!backend.presentFrame(width, height, getAspectRatio(), nativePictureCompatible())) {
-@@ -1485,2 +1492,2 @@
+@@ -1483,8 +1490,8 @@
+         }
+ 
          if (data != nullptr) video->setSourceTransfer(nextSourceTransfer);
 -        video->onNewFrame(data, width, height, pitch);
 +        traceGameCall("AmbientGame source upload", [&] { video->onNewFrame(data, width, height, pitch); });
+ 
+         if (video->rendersInVideoCallback()) {
+             renderPrimaryFrame();
+         }
 diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
 --- a/src/main/cpp/vulkan/vulkanbackend.cpp
 +++ b/src/main/cpp/vulkan/vulkanbackend.cpp
