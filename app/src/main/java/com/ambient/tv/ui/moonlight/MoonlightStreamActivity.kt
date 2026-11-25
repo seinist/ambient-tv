@@ -22,6 +22,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import com.ambient.tv.ui.player.ReferencePlayerOverlayBackground
+import com.ambient.tv.ui.player.ReferencePlayerHeader
+import com.ambient.tv.ui.player.ReferencePlayerClock
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -159,6 +167,18 @@ private fun MoonlightStreamContent(
     disconnect: () -> Unit,
 ) {
     val status by engine.status.collectAsState()
+    val resumeFocus = remember { FocusRequester() }
+    val disconnectFocus = remember { FocusRequester() }
+    LaunchedEffect(controlsShown, status.phase) {
+        if (controlsShown || status.phase != MoonlightStreamPhase.STREAMING) {
+            withFrameNanos { }
+            runCatching {
+                if (controlsShown && status.phase == MoonlightStreamPhase.STREAMING)
+                    resumeFocus.requestFocus()
+                else disconnectFocus.requestFocus()
+            }
+        }
+    }
     BackHandler { if (controlsShown) disconnect() else showControls() }
     Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
         AndroidView(
