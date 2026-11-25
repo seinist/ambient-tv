@@ -513,6 +513,16 @@ class AppPreferences @Inject constructor(
                 .distinctBy { it.host to it.port }.take(16)))
         }
 
+    /** Streaming resolution, FPS, bitrate, codec and audio; no auth material. */
+    var moonlightStreamProfile: com.ambient.tv.moonlight.MoonlightStreamProfile
+        get() = runCatching {
+            json.decodeFromString<com.ambient.tv.moonlight.MoonlightStreamProfile>(
+                prefs.getString("moonlight_stream_profile", "") ?: "").validated()
+        }.getOrDefault(com.ambient.tv.moonlight.MoonlightStreamProfile())
+        set(value) = prefs.edit {
+            putString("moonlight_stream_profile", json.encodeToString(value.validated()))
+        }
+
     val hasMoonlightHosts: Boolean get() = moonlightEnabled && moonlightHosts.isNotEmpty()
 
     /** Per-install GameStream client ID; never replicated to other TVs/phones. */
