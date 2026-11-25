@@ -72,4 +72,8 @@
     <string name="moonlight_quit_confirm_hint">Das beendet die Anwendung auf dem entfernten PC. Um nur den Stream zu verlassen, stattdessen »Stream trennen« auswählen.</string>
     <string name="moonlight_remote_quit_failed">Sunshine konnte das Spiel auf dem PC nicht beenden.</string>
     <string name="moonlight_wake_pc">PC wecken</string>
+    <string name="moonlight_quality_hdr">HDR10</string>
+    <string name="moonlight_quality_hdr_on">HDR10 (erforderlich)</string>
+    <string name="moonlight_quality_hdr_off">Nur SDR</string>
+    <string name="moonlight_quality_hdr_hint">Automatisches HDR10 benötigt eine Sunshine-HDR-Anwendung, ein HDR-Display und einen 10-Bit-Hardwaredecoder. Anderenfalls wird SDR verwendet.</string>
 </resources>
