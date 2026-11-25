@@ -15,7 +15,6 @@ internal data class GamePlayerLandscapeLayout(
     val surface: Rect,
     val controls: GameTouchLayout,
     val menu: Rect,
-    val rewind: Rect,
     val showTouch: Rect,
 )
 
@@ -98,7 +97,7 @@ internal fun gameIntegerPictureBounds(area: IntRect, frame: GameContentFrame, au
 
 /**
  * Maximise the picture height, then fit the requested pad size in the available side space.
- * Menu/rewind slots always exist, so opening the OSD or hiding the pad never resizes the core.
+ * Menu and restore-pad positions stay stable when the OSD opens or the pad is hidden.
  */
 internal fun gamePlayerLandscapeLayout(
     mode: GameTouchMode,
@@ -118,7 +117,7 @@ internal fun gamePlayerLandscapeLayout(
         .filter { touchEnabled && it in utility }
     val right = listOf(RetroPadButton.R2, RetroPadButton.R, RetroPadButton.R3, RetroPadButton.START)
         .filter { touchEnabled && it in utility }
-    val slots = maxOf(left.size, right.size) + 1
+    val slots = maxOf(left.size + 1, right.size, 1)
     val requested = if (touchEnabled)
         minOf(safeStyle.scalePercent / 100f, width / 568f, height / 212f).coerceAtLeast(1f) else 1f
     data class Choice(val columns: Int, val scale: Float, val gutter: Float, val picture: Rect, val fits: Boolean)
@@ -158,19 +157,19 @@ internal fun gamePlayerLandscapeLayout(
         return Rect(x, y, x + w, y + h)
     }
     val menu = slot(0, 0, 48f, 48f)
-    val rewind = slot(1, 0, 56f, 48f)
-    val showTouch = slot(1, 1, 48f, 48f)
+    // Only visible while the pad is hidden; it can reuse the first right utility position.
+    val showTouch = slot(1, 0, 48f, 48f)
     val scaled = if (compact) compactLandscapeThumbs(mode, width, height, choice.scale, presentation)
         else gameTouchLayout(mode, width, height, false,
             safeStyle.copy(scalePercent = (choice.scale * 100f).toInt(), landscapePosition = 100), presentation)
     val buttons = scaled.buttons.filterKeys { it in scaled.faces }.toMutableMap()
     left.forEachIndexed { index, button -> buttons[button] = slot(0, index + 1) }
-    right.forEachIndexed { index, button -> buttons[button] = slot(1, index + 1) }
+    right.forEachIndexed { index, button -> buttons[button] = slot(1, index) }
     var controls = scaled.copy(buttons = buttons)
     // Position tuning can lift thumb areas only through genuinely empty space.
     // The face cluster also receives the gaps between its visible buttons for rolling chords.
     val moving = listOfNotNull(controls.dpad, controls.leftStick, controls.rightStick, controls.faceButtonsBounds)
-    val stationary = controls.buttons.filterKeys { it !in controls.faces }.values + menu + rewind
+    val stationary = controls.buttons.filterKeys { it !in controls.faces }.values + menu
     val lift = moving.minOfOrNull { area ->
         var free = (area.top - 8f).coerceAtLeast(0f)
         stationary.forEach { fixed ->
@@ -189,7 +188,7 @@ internal fun gamePlayerLandscapeLayout(
     // aspect ratio which can differ from the source resolution (e.g. SNES high resolution).
     val surface = if (fitSurface) choice.picture
         else Rect(choice.gutter, 0f, width - choice.gutter, height)
-    return GamePlayerLandscapeLayout(surface, controls, menu, rewind, showTouch)
+    return GamePlayerLandscapeLayout(surface, controls, menu, showTouch)
 }
 
 /** Only used when the usual thumb clusters cannot fit below the side utility grid. */

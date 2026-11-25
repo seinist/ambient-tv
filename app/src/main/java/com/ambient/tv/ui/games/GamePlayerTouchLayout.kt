@@ -9,22 +9,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.tv.material3.Icon
-import androidx.tv.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,7 +37,6 @@ import com.ambient.tv.R
 import com.ambient.tv.games.GameTouchMode
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
 import com.ambient.tv.ui.gamepad.retro.TouchControlStyle
-import com.ambient.tv.ui.common.holdAction
 
 /** Layout stays stable when the OSD opens, so pausing never resizes/recreates the native surface. */
 @Composable
@@ -64,8 +56,6 @@ internal fun GamePlayerTouchLayout(
     coreActions: Map<RetroPadButton, String> = emptyMap(),
     hiddenForGamepad: Boolean = false,
     onShowTouch: () -> Unit = {},
-    rewindSeconds: Float? = null,
-    onRewind: (Boolean) -> Unit = {},
     contentAspectRatio: Float = 4f / 3f,
     fitSurface: Boolean = true,
     /** Known source size while whole-number scaling owns the fit ([fitSurface] false). */
@@ -144,23 +134,6 @@ internal fun GamePlayerTouchLayout(
             ) {
                 Icon(Icons.Filled.Menu, contentDescription = stringResource(R.string.game_controls_menu),
                     tint = Color.White, modifier = Modifier.size(24.dp))
-            }
-        }
-        if (handheld && playing && !menuVisible && rewindSeconds != null) {
-            // The buffer length shows only while rewinding; during play the button is just its icon.
-            var rewinding by remember { mutableStateOf(false) }
-            Box((sideLayout?.rewind?.position() ?: Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
-                .size(width = 56.dp, height = 48.dp)).testTag("game-player-rewind").clip(RoundedCornerShape(12.dp))
-                    .background(Color.Black.copy(alpha = .58f))
-                    .holdAction(onHold = { held -> rewinding = held; onRewind(held) }),
-                contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Filled.FastRewind, stringResource(R.string.game_rewind_hold),
-                        tint = Color.White, modifier = Modifier.size(if (rewinding) 20.dp else 24.dp))
-                    if (rewinding) Text(stringResource(R.string.game_rewind_buffer_seconds, rewindSeconds),
-                        color = Color.White, style = androidx.tv.material3.MaterialTheme.typography.labelSmall,
-                        maxLines = 1, modifier = Modifier.testTag("game-player-rewind-seconds"))
-                }
             }
         }
     }
