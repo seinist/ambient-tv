@@ -80,8 +80,9 @@ class MenuOrderUiTest {
             SideEffect { items = current }
         }
         rule.runOnIdle {
-            assertEquals(MediaSystem.entries.map { it.key }.toSet() + setOf("weather", "games"), items.map { it.id }.toSet())
-            assertEquals(MediaSystem.entries.size + 2, items.size)
+            assertEquals(MediaSystem.entries.filterNot { it == MediaSystem.MOONLIGHT }.map { it.key }.toSet() +
+                setOf("weather", "games"), items.map { it.id }.toSet())
+            assertEquals(MediaSystem.entries.size + 1, items.size)
             assertEquals(listOf("weather", "radio", "tvheadend", "iptv"), items.take(4).map { it.id })
             val byId = items.associateBy { it.id }
             assertEquals("TVHeadend", byId.getValue("tvheadend").label)
