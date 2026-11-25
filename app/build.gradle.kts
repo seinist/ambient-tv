@@ -135,7 +135,10 @@ require(appDisplayName.isNotBlank() && appDisplayName.none { it == '\n' || it ==
 
 val externalVersions = loadProjectProperties("gradle/external-versions.properties")
 val vulkanVlcAar = file("libs/libvlc-vulkan.aar")
-// Experimental UI and discovery only until pinned native Moonlight transport is complete.
+// Full GameStream native core is opt-in until its authenticated Ambient TV adapter is complete.
+val moonlightNative = providers.gradleProperty("MOONLIGHT_NATIVE")
+    .orElse(providers.environmentVariable("MOONLIGHT_NATIVE")).orElse("false").get().toBoolean()
+// Experimental UI and discovery only until native transport and pairing are usable.
 val moonlightExperimental = providers.gradleProperty("MOONLIGHT_EXPERIMENTAL")
     .orElse(providers.environmentVariable("MOONLIGHT_EXPERIMENTAL")).orElse("false").get().toBoolean()
 
@@ -247,7 +250,9 @@ android {
 
         buildConfigField("String", "APP_DISPLAY_NAME", quotedBuildConfigString(appDisplayName))
         buildConfigField("boolean", "MONOGRAM_NATIVE", monogramEnabled.toString())
-        buildConfigField("boolean", "MOONLIGHT_EXPERIMENTAL", moonlightExperimental.toString())
+        buildConfigField("boolean", "MOONLIGHT_EXPERIMENTAL", (moonlightExperimental || moonlightNative).toString())
+        buildConfigField("boolean", "MOONLIGHT_NATIVE", moonlightNative.toString())
+        buildConfigField("String", "MOONLIGHT_UPSTREAM_REF", quotedBuildConfigString(externalVersion("MOONLIGHT_ANDROID_REF")))
         buildConfigField("boolean", "SPOTIFY_ENABLED", spotifyEnabled.toString())
         buildConfigField("boolean", "LIBRASHADER_NATIVE", (
             providers.gradleProperty("LIBRASHADER_NATIVE")
@@ -517,6 +522,12 @@ kotlin {
 }
 
 dependencies {
+    if (moonlightNative) {
+        check(rootProject.findProject(":moonlight_native") != null) {
+            "Pinned native Moonlight core missing. Run bash scripts/fetch_moonlight_sources.sh"
+        }
+        implementation(project(":moonlight_native"))
+    }
     // Only :native:mtproto from Monogram. No Monogram :app, feature/*, chat
     // UI, database, networking bridge or HTTP downloader is compiled.
     if (monogramEnabled) {
