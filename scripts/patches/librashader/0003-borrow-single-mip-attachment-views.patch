@@ -1,0 +1,43 @@
+diff --git a/librashader-runtime-vk/src/framebuffer.rs b/librashader-runtime-vk/src/framebuffer.rs
+--- a/librashader-runtime-vk/src/framebuffer.rs
++++ b/librashader-runtime-vk/src/framebuffer.rs
+@@ -13,2 +13,8 @@
+ impl OutputImage {
++    /// A one-mip internal OwnedImage already owns a compatible attachment
++    /// view. Borrow it; ownership remains with OwnedImage until chain teardown.
++    pub(crate) fn from_borrowed_view(image: VulkanImage, image_view: vk::ImageView) -> Self {
++        Self { size: image.size, image: image.image, image_view }
++    }
++
+     pub fn new(device: &ash::Device, image: VulkanImage) -> error::Result<OutputImage> {
+diff --git a/librashader-runtime-vk/src/filter_chain.rs b/librashader-runtime-vk/src/filter_chain.rs
+--- a/librashader-runtime-vk/src/filter_chain.rs
++++ b/librashader-runtime-vk/src/filter_chain.rs
+@@ -823,4 +823,13 @@
+                 if index != passes_len - 1 {
+-                    let output_image = OutputImage::new(&self.vulkan.device, target.image.clone())?;
+-                    intermediates.dispose_outputs(&output_image);
++                    // Single-mip OwnedImage has the exact same 2D attachment
++                    // view we would otherwise re-create every frame. Do not
++                    // transfer ownership to FrameResiduals: the texture owns it.
++                    // Multi-mip images require the original one-mip view.
++                    let output_image = if target.levels == 1 {
++                        OutputImage::from_borrowed_view(target.image.clone(), target.image_view)
++                    } else {
++                        let image = OutputImage::new(&self.vulkan.device, target.image.clone())?;
++                        intermediates.dispose_outputs(&image);
++                        image
++                    };
+                     let out = RenderTarget::identity(&output_image)?;
+@@ -873,4 +873,9 @@
+                 let output_size_override = if self.draw_last_pass_feedback {
+-                    let output_image = OutputImage::new(&self.vulkan.device, target.image.clone())?;
+-                    intermediates.dispose_outputs(&output_image);
++                    let output_image = if target.levels == 1 {
++                        OutputImage::from_borrowed_view(target.image.clone(), target.image_view)
++                    } else {
++                        let image = OutputImage::new(&self.vulkan.device, target.image.clone())?;
++                        intermediates.dispose_outputs(&image);
++                        image
++                    };
+                     let out = RenderTarget::viewport_with_output(&output_image, viewport);

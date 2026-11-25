@@ -33,7 +33,7 @@ struct Driver {
              imageFrees = 0, memoryFrees = 0, bufferFrees = 0, windowReleases = 0,
              cachePrepares = 0, cacheReleases = 0, slangReleases = 0,
              allocations = 0, deviceFrees = 0, coreDestroys = 0, swapchainCreates = 0,
-             swapchainFrees = 0, commandPoolFrees = 0, fenceFrees = 0;
+             swapchainFrees = 0, commandPoolFrees = 0, fenceFrees = 0, colorClears = 0;
     VkCompositeAlphaFlagsKHR alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     VkCompositeAlphaFlagBitsKHR chosenAlpha = VK_COMPOSITE_ALPHA_FLAG_BITS_MAX_ENUM_KHR;
     VkSurfaceTransformFlagsKHR transforms = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
@@ -164,7 +164,7 @@ void setup(VulkanBackend& backend) {
         VkDependencyFlags, uint32_t, const VkMemoryBarrier*, uint32_t, const VkBufferMemoryBarrier*,
         uint32_t, const VkImageMemoryBarrier*) {};
     vk.cmdClearColorImage = [](VkCommandBuffer, VkImage, VkImageLayout, const VkClearColorValue*,
-        uint32_t, const VkImageSubresourceRange*) {};
+        uint32_t, const VkImageSubresourceRange*) { ++driver.colorClears; };
     vk.cmdBlitImage = [](VkCommandBuffer, VkImage, VkImageLayout, VkImage, VkImageLayout,
         uint32_t, const VkImageBlit*, VkFilter) {};
     vk.destroyImage = [](VkDevice, VkImage, const VkAllocationCallbacks*) {
@@ -411,6 +411,35 @@ void nativeSurfacePolicyAndSuccess() {
     std::puts("PASS raw/filtered WSI requires opaque identity surfaces; only completed frames present");
 }
 
+void filteredPresetSwitchRetainsSwapchain() {
+    VulkanBackend backend;
+    setup(backend); window(backend);
+    backend.setNativeShaderPresetPath("shader-a");
+    assert(backend.ensureNativeSdrSwapchain());
+    assert(driver.swapchainCreates == 1 && driver.swapchainFrees == 0);
+    backend.nativePresentation.setFullscreenActive(true);
+    assert(backend.presentFrame(256, 224, 4.0F/3.0F, true));
+    assert(driver.colorClears == 0 && driver.presents == 1);
+    assert(backend.primaryDraw(false, true) ==
+           libretrodroid::NativePresentationGate::PrimaryDraw::Skip);
+    const unsigned oldReleases = driver.slangReleases;
+    backend.setNativeShaderPresetPath("shader-b");
+    assert(driver.idleCalls >= 1 && driver.slangReleases > oldReleases);
+    assert(driver.swapchainCreates == 1 && driver.swapchainFrees == 0);
+    assert(backend.getNativeSdrStatus() == 3u);
+    assert(backend.primaryDraw(false, true) !=
+           libretrodroid::NativePresentationGate::PrimaryDraw::Skip);
+    assert(backend.presentFrame(256, 224, 4.0F/3.0F, true));
+    assert(driver.colorClears == 0 && driver.presents == 2);
+    backend.setNativeShaderPresetPath("");
+    assert(driver.swapchainFrees == 1);
+    assert(backend.ensureNativeSdrSwapchain());
+    assert(driver.swapchainCreates == 2);
+    assert(backend.presentFrame(256, 224, 4.0F/3.0F, true));
+    assert(driver.colorClears == 1);
+    std::puts("PASS filtered preset switches retain WSI and skip duplicate clear; raw restores clear");
+}
+
 void managedBoundary() {
     auto& backend = VulkanBackend::getInstance();
     libretrodroid::Video video;
@@ -434,6 +463,7 @@ int main() {
     resetAndSubmitFailures();
     safeCallbackAndTeardown();
     nativeSurfacePolicyAndSuccess();
+    filteredPresetSwitchRetainsSwapchain();
     managedBoundary();
     std::puts("PASS production Vulkan synchronization and presentation fault regression");
 }
