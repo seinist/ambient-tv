@@ -192,7 +192,8 @@ internal fun companionGamepadCriticalEdge(
  */
 object CompanionGamepadSession {
     private class Active(
-        val input: RetroPadInput,
+        val owner: Any,
+        val input: CompanionGamepadSink,
         var info: CompanionGamepadInfo,
         val onMenu: () -> Unit,
         val onPointer: (Int, CompanionPointerState?) -> Unit,
@@ -378,15 +379,42 @@ object CompanionGamepadSession {
                onMotion: (Int, CompanionMotionState?) -> Unit = { _, _ -> },
                onRewind: (Boolean) -> Unit = {},
                onMenu: () -> Unit) {
-        if (active?.input === input && active?.info?.systemId == systemId &&
+        if (active?.owner === input && active?.info?.systemId == systemId &&
             active?.info?.coreId == coreId && active?.info?.title == title.take(120)) return
         detachCurrent()
-        active = Active(input, CompanionGamepadInfo(
+        active = Active(input, LibretroCompanionGamepadSink(input), CompanionGamepadInfo(
             sessionId = UUID.randomUUID().toString(),
             systemId = systemId.take(40), coreId = coreId.take(80),
             title = title.take(120), pointerInput = pointerInput,
             interaction = CompanionGamepadInteraction.LOADING.key,
         ), onMenu, onPointer, onMotion, onRewind)
+    }
+
+    /**
+     * A Sunshine desktop/game can claim the same authenticated phone controller as Libretro.
+     * Source and destination switching release all held inputs before changing ownership.
+     */
+    fun attachMoonlight(
+        sink: CompanionGamepadSink, title: String,
+        onPointer: (Int, CompanionPointerState?) -> Unit = { _, _ -> },
+        onMotion: (Int, CompanionMotionState?) -> Unit = { _, _ -> },
+        onMenu: () -> Unit,
+    ) {
+        if (active?.owner === sink && active?.info?.systemId == "moonlight") return
+        detachCurrent()
+        active = Active(sink, sink, CompanionGamepadInfo(
+            sessionId = UUID.randomUUID().toString(), systemId = "moonlight",
+            coreId = "gamestream", title = title.take(120), pointerInput = true,
+            interaction = CompanionGamepadInteraction.LOADING.key,
+        ), onMenu, onPointer, onMotion, onRewind = {})
+    }
+
+    fun setMoonlightInteraction(sink: CompanionGamepadSink, interaction: CompanionGamepadInteraction) {
+        setInteractionForOwner(sink, interaction)
+    }
+
+    fun detachMoonlight(sink: CompanionGamepadSink) {
+        if (active?.owner === sink) detachCurrent()
     }
 
     fun setReady(input: RetroPadInput, ready: Boolean) {
@@ -395,7 +423,12 @@ object CompanionGamepadSession {
 
     fun setInteraction(input: RetroPadInput, interaction: CompanionGamepadInteraction, context: Any? = null,
                        canResume: Boolean = true) {
-        val game = active?.takeIf { it.input === input } ?: return
+        setInteractionForOwner(input, interaction, context, canResume)
+    }
+
+    private fun setInteractionForOwner(owner: Any, interaction: CompanionGamepadInteraction,
+                                       context: Any? = null, canResume: Boolean = true) {
+        val game = active?.takeIf { it.owner === owner } ?: return
         if (game.info.interaction == interaction.key && game.interactionContext == context &&
             game.info.canResume == canResume) return
         releaseConfirm(game)
@@ -413,7 +446,7 @@ object CompanionGamepadSession {
 
     /** Cheap status only; the player obtains the actual buffered duration outside this bridge. */
     fun setRewind(input: RetroPadInput, available: Boolean, seconds: Float) {
-        val game = active?.takeIf { it.input === input } ?: return
+        val game = active?.takeIf { it.owner === input } ?: return
         val bounded = seconds.takeIf { it.isFinite() }?.coerceIn(0f, 60f) ?: 0f
         val enabled = available && bounded > 0f
         if (game.info.rewindAvailable != enabled || game.info.rewindSeconds != bounded) {
@@ -423,7 +456,7 @@ object CompanionGamepadSession {
     }
 
     fun setInputDescriptions(input: RetroPadInput, descriptions: Map<String, String>) {
-        val game = active?.takeIf { it.input === input } ?: return
+        val game = active?.takeIf { it.owner === input } ?: return
         val bounded = GameInputDescriptions.normalized(descriptions)
         if (game.info.inputDescriptions != bounded) game.info = game.info.copy(inputDescriptions = bounded)
     }
@@ -537,7 +570,7 @@ object CompanionGamepadSession {
         val game = active ?: return false
         if (!refreshClaim(session) || (!game.ready &&
                 (game.info.interactionMode?.navigation != true || !game.info.canResume))) return false
-        setInteraction(game.input, if (game.ready) CompanionGamepadInteraction.MENU else CompanionGamepadInteraction.BUSY,
+        setInteractionForOwner(game.owner, if (game.ready) CompanionGamepadInteraction.MENU else CompanionGamepadInteraction.BUSY,
             context = game.interactionContext, canResume = game.info.canResume)
         game.onMenu()
         return true
@@ -627,7 +660,7 @@ object CompanionGamepadSession {
     }
 
     fun detach(input: RetroPadInput) {
-        if (active?.input === input) detachCurrent()
+        if (active?.owner === input) detachCurrent()
     }
 
     private fun detachCurrent() {
