@@ -100,6 +100,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -138,6 +139,7 @@ import com.ambient.tv.ui.gamepad.GameInputRouting
 import com.ambient.tv.companion.CompanionGamepadInteraction
 import com.ambient.tv.companion.CompanionGamepadSession
 import com.ambient.tv.ui.gamepad.GamepadInput
+import com.ambient.tv.ui.input.requestUiKeyInputMode
 import com.ambient.tv.ui.gamepad.retro.RetroInputSettings
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
 import com.ambient.tv.ui.gamepad.retro.RetroPadInput
@@ -316,6 +318,7 @@ private suspend fun GLRetroView.preview(
 @Composable
 private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack: () -> Unit) {
     val context = LocalContext.current
+    val uiInputView = LocalView.current
     val handheld = LocalHandheldUi.current
     val scope = rememberCoroutineScope()
     val activityLifecycle = LocalLifecycleOwner.current.lifecycle
@@ -718,6 +721,15 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             }
         }
     }
+    // Raw game input and Companion menu callbacks bypass Android's normal key dispatch.
+    // Leave touch mode before the OSD requests its initial focus; touch controls still use
+    // openMenu directly and retain their normal touch behavior.
+    val openMenuFromKey: () -> Unit = {
+        if (!destroyed && !exiting) {
+            uiInputView.requestUiKeyInputMode()
+            openMenu()
+        }
+    }
     LaunchedEffect(netplay.synchronizing, activityResumed) {
         if (netplay.synchronizing && activityResumed && !destroyed && !exiting) {
             // A host can wait while playing. State exchange must still expose its Cancel action.
@@ -1047,7 +1059,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
 
     // Controllers, keyboards and remotes play through RetroPadInput while the game runs.
-    val latestOpenMenu by rememberUpdatedState(openMenu)
+    val latestOpenMenu by rememberUpdatedState(openMenuFromKey)
     val input = remember(system.id, core.id, game.saveKey) {
         val handler = Handler(Looper.getMainLooper())
         RetroPadInput(
@@ -1118,7 +1130,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     // synthetic Android keys into the activity. This is a TV-only, full game-session registration.
     val latestCompanionMenu by rememberUpdatedState<() -> Unit>({
         if (coreReady && !stateBusy && !destroyed && !exiting) {
-            if (menuOpen) resume() else openMenu()
+            if (menuOpen) resume() else openMenuFromKey()
         }
     })
     DisposableEffect(input, handheld, system.id, core.id, game.saveKey) {
@@ -1187,17 +1199,17 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     val latestGameMenu by rememberUpdatedState<() -> Unit>({
         if (!stateBusy && coreReady && !destroyed && !exiting) {
-            if (menuOpen) resume() else openMenu()
+            if (menuOpen) resume() else openMenuFromKey()
         }
     })
     val latestGameSettings by rememberUpdatedState<() -> Unit>({
         if (activityResumed && loaded && coreReady && !stateBusy && !destroyed && !exiting) {
-            openMenu(); gamePanels.openRoot(GamePanel.SETTINGS)
+            openMenuFromKey(); gamePanels.openRoot(GamePanel.SETTINGS)
         }
     })
     val latestGameInfo by rememberUpdatedState<() -> Unit>({
         if (activityResumed && loaded && coreReady && !stateBusy && !destroyed && !exiting) {
-            openMenu(); gamePanels.openRoot(GamePanel.INFO)
+            openMenuFromKey(); gamePanels.openRoot(GamePanel.INFO)
         }
     })
     DisposableEffect(session) {

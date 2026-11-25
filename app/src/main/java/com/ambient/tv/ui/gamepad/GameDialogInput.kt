@@ -13,10 +13,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalView
 import com.ambient.tv.ui.display.UiRenderInputRoot
 import com.ambient.tv.ui.display.findUiRenderWindow
+import com.ambient.tv.ui.input.prepareForUiKeyEvent
 import com.ambient.tv.ui.keyboard.KeyAction
 
 /** Dialogs own a separate Android/embedded input root, so they cannot rely on MainActivity. */
-internal class GameDialogInputHandler(private val dispatchTranslatedKey: (KeyEvent) -> Boolean) {
+internal class GameDialogInputHandler(
+    private val dispatchTranslatedKey: (KeyEvent) -> Boolean,
+    private val prepareUiKeyEvent: (KeyEvent) -> Unit = {},
+) {
     private val handler = Handler(Looper.getMainLooper())
     private var forwarding = false
     private var disposed = false
@@ -39,6 +43,7 @@ internal class GameDialogInputHandler(private val dispatchTranslatedKey: (KeyEve
         }
         override fun emitKey(event: KeyEvent) {
             if (disposed || !gameInputMode.isGameMenu) return
+            prepareUiKeyEvent(event)
             if (GameInputRouting.handleKey(event)) return
             forwarding = true
             try { dispatchTranslatedKey(event) } finally { forwarding = false }
@@ -54,6 +59,7 @@ internal class GameDialogInputHandler(private val dispatchTranslatedKey: (KeyEve
         if (disposed || forwarding || !GameInputRouting.active) return dispatch()
         if (controller.handleKey(event)) return true
         com.ambient.tv.ui.keyboard.KeyBindings.capture?.let { if (it(event)) return true }
+        if (host.gameInputMode.isGameMenu) prepareUiKeyEvent(event)
         if (GameInputRouting.handleKey(event)) return true
         return dispatch()
     }
@@ -92,13 +98,18 @@ internal fun GameDialogInputSurface() {
     DisposableEffect(window, view) {
         val delegate = window?.callback
         if (window == null || delegate == null) return@DisposableEffect onDispose { }
-        val input = GameDialogInputHandler { event ->
-            // Re-evaluate ancestry: a render-resolution fallback can move this same ComposeView.
-            val embedded = generateSequence(view) { it.parent as? View }
-                .filterIsInstance<UiRenderInputRoot>().firstOrNull()
-                ?.takeIf { it.isAttachedToWindow && it.isShown }
-            embedded?.dispatchKeyEvent(event) ?: delegate.dispatchKeyEvent(event)
-        }
+        // Re-evaluate ancestry: a render-resolution fallback can move this same ComposeView.
+        fun embeddedRoot() = generateSequence(view) { it.parent as? View }
+            .filterIsInstance<UiRenderInputRoot>().firstOrNull()
+            ?.takeIf { it.isAttachedToWindow && it.isShown }
+        val input = GameDialogInputHandler(
+            dispatchTranslatedKey = { event ->
+                embeddedRoot()?.dispatchKeyEvent(event) ?: delegate.dispatchKeyEvent(event)
+            },
+            prepareUiKeyEvent = { event ->
+                (embeddedRoot() ?: window.decorView).prepareForUiKeyEvent(event)
+            },
+        )
         val bridge = object : Window.Callback by delegate {
             override fun dispatchKeyEvent(event: KeyEvent): Boolean =
                 input.key(event) { delegate.dispatchKeyEvent(event) }

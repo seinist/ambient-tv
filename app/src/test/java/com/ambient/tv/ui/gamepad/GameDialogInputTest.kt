@@ -55,6 +55,57 @@ class GameDialogInputTest {
         ), sent)
     }
 
+    @Test fun translatedConfirmPreparesNavigationBeforeDialogDispatch() {
+        GameInputRouting.attach(owner, GameInputMode.DIALOG, {})
+        val order = mutableListOf<String>()
+        val input = GameDialogInputHandler(
+            dispatchTranslatedKey = { order += "dispatch:${it.keyCode}"; true },
+            prepareUiKeyEvent = { order += "prepare:${it.keyCode}" },
+        ).also { handlers += it }
+        assertTrue(input.key(event(KeyEvent.KEYCODE_BUTTON_A)) { false })
+        assertEquals(listOf("prepare:${KeyEvent.KEYCODE_DPAD_CENTER}",
+            "dispatch:${KeyEvent.KEYCODE_DPAD_CENTER}"), order)
+    }
+
+    @Test fun physicalDpadPreparesNavigationBeforeNativeDialogDispatch() {
+        GameInputRouting.attach(owner, GameInputMode.DIALOG, {})
+        val order = mutableListOf<String>()
+        val input = GameDialogInputHandler(
+            dispatchTranslatedKey = { fail("A physical D-pad key must not be translated"); false },
+            prepareUiKeyEvent = { order += "prepare:${it.keyCode}" },
+        ).also { handlers += it }
+        assertTrue(input.key(event(KeyEvent.KEYCODE_DPAD_DOWN)) { order += "native"; true })
+        assertEquals(listOf("prepare:${KeyEvent.KEYCODE_DPAD_DOWN}", "native"), order)
+    }
+
+    @Test fun controllerMenuPreparesNavigationBeforeGameMenuCallback() {
+        val order = mutableListOf<String>()
+        GameInputRouting.attach(owner, GameInputMode.DIALOG, { order += "menu" })
+        val input = GameDialogInputHandler(
+            dispatchTranslatedKey = { fail("Menu key reached the dialog content"); false },
+            prepareUiKeyEvent = { order += "prepare:${it.keyCode}" },
+        ).also { handlers += it }
+        assertTrue(input.key(event(KeyEvent.KEYCODE_BUTTON_MODE)) { false })
+        assertEquals(listOf("prepare:${KeyEvent.KEYCODE_MENU}", "menu"), order)
+    }
+
+    @Test fun capturedOrBlockedInputDoesNotPrepareNavigation() {
+        GameInputRouting.attach(owner, GameInputMode.DIALOG, {})
+        var prepared = 0
+        val input = GameDialogInputHandler(
+            dispatchTranslatedKey = { fail("Captured or blocked input reached the dialog"); false },
+            prepareUiKeyEvent = { prepared++ },
+        ).also { handlers += it }
+        GamepadInput.capture = { true }
+        assertTrue(input.key(event(KeyEvent.KEYCODE_BUTTON_A)) { false })
+        assertTrue(input.key(event(KeyEvent.KEYCODE_DPAD_DOWN)) { false })
+        GamepadInput.capture = null
+        GameInputRouting.update(owner, GameInputMode.BLOCKED)
+        assertTrue(input.key(event(KeyEvent.KEYCODE_BUTTON_A, time = 100)) { false })
+        assertTrue(input.key(event(KeyEvent.KEYCODE_DPAD_DOWN, time = 100)) { false })
+        assertEquals(0, prepared)
+    }
+
     @Test fun textAndRealSystemKeysRetainNativeWindowHandling() {
         GameInputRouting.attach(owner, GameInputMode.DIALOG, {})
         val input = input()

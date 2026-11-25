@@ -97,6 +97,8 @@ import com.ambient.tv.ui.common.AppScreensaver
 import com.ambient.tv.ui.common.AppBackground
 import com.ambient.tv.ui.common.PlexRefreshBus
 import com.ambient.tv.ui.detail.DetailScreen
+import com.ambient.tv.ui.input.prepareForUiKeyEvent
+import com.ambient.tv.ui.input.requestUiKeyInputMode
 import com.ambient.tv.ui.detail.episodeDetailAfterPlayback
 import com.ambient.tv.ui.detail.seriesDetailIsDirectlyUnder
 import com.ambient.tv.ui.home.HomeScreen
@@ -305,7 +307,11 @@ open class MainActivity : ComponentActivity() {
     private val gamepadController = com.ambient.tv.ui.gamepad.GamepadController(object : com.ambient.tv.ui.gamepad.GamepadHost {
         private val handler = android.os.Handler(android.os.Looper.getMainLooper())
         override fun emitKey(event: KeyEvent) { dispatchGamepadUiKeyEvent(event) }
-        override fun perform(action: com.ambient.tv.ui.keyboard.KeyAction) = performBoundKeyAction(action)
+        override fun perform(action: com.ambient.tv.ui.keyboard.KeyAction) {
+            // Mapped actions open panels without emitting a DPAD key first.
+            (uiResolutionHost?.inputRoot ?: window.decorView).requestUiKeyInputMode()
+            performBoundKeyAction(action)
+        }
         override fun volume(command: com.ambient.tv.ui.gamepad.GamepadVolumeCommand) = adjustKeyboardVolume(when (command) {
             com.ambient.tv.ui.gamepad.GamepadVolumeCommand.UP -> android.media.AudioManager.ADJUST_RAISE
             com.ambient.tv.ui.gamepad.GamepadVolumeCommand.DOWN -> android.media.AudioManager.ADJUST_LOWER
@@ -543,6 +549,14 @@ open class MainActivity : ComponentActivity() {
         if (event.action == KeyEvent.ACTION_DOWN) registerUserInteraction()
         // Controller buttons become the app's keys and actions (or go to a game in front).
         if (!fromGamepadUi && gamepadController.handleKey(event)) return true
+        // Some Android TV mouse drivers emit both BUTTON_BACK and KEYCODE_BACK for one side-button
+        // press. Drop the duplicate before it can also change the UI's input mode.
+        if (event.keyCode == KeyEvent.KEYCODE_BACK && SystemClock.elapsedRealtime() <= suppressMouseBackKeyUntilMs) {
+            return true
+        }
+        // Translated stick/button keys bypass ViewRoot's touch-mode handling. Use the actual
+        // receiving root (which may be embedded), after raw gameplay has had first refusal.
+        (uiResolutionHost?.inputRoot ?: window.decorView).prepareForUiKeyEvent(event)
         // Menu/media keys keep their game meaning even when a global shortcut uses that key.
         // A key recorder still receives its keys unchanged.
         if (com.ambient.tv.ui.keyboard.KeyBindings.capture == null &&
@@ -551,11 +565,6 @@ open class MainActivity : ComponentActivity() {
         if (com.ambient.tv.ui.player.SleepWarningKeyGate.takesOk(BackgroundPlaybackSession.sleepWarningDeadline != null) && event.keyCode in setOf(
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER)) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) BackgroundPlaybackSession.extendSleepTimer()
-            return true
-        }
-        // Some Android TV mouse drivers emit both BUTTON_BACK and KEYCODE_BACK for one side-button
-        // press. The generic mouse event already navigated; consume the duplicate key pair.
-        if (event.keyCode == KeyEvent.KEYCODE_BACK && SystemClock.elapsedRealtime() <= suppressMouseBackKeyUntilMs) {
             return true
         }
         // User key bindings come before the focused control (text input keeps its keys).

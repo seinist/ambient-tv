@@ -1443,6 +1443,10 @@ fun TvSettingRow(
     ) { onCheckedChange(!checked) }
     if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
         val scheme = androidx.compose.material3.MaterialTheme.colorScheme
+        val interactions = remember { MutableInteractionSource() }
+        val focused by interactions.collectIsFocusedAsState()
+        val pressed by interactions.collectIsPressedAsState()
+        val shape = RoundedCornerShape(LocalUiTokens.current.controlRadius)
         androidx.compose.material3.ListItem(
             headlineContent = { androidx.compose.material3.Text(title) },
             supportingContent = body?.let { description -> { androidx.compose.material3.Text(description) } },
@@ -1468,7 +1472,12 @@ fun TvSettingRow(
                     ),
                 )
             },
-            modifier = modifier.clickable(enabled = enabled) { toggle() },
+            colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = Color.Transparent),
+            modifier = modifier
+                .background(scheme.surface)
+                .appControlSurface(focused, enabled = enabled, shape = shape, pressed = pressed)
+                .activateOnTvKey(enabled, onClick = toggle)
+                .clickable(enabled = enabled, interactionSource = interactions, indication = null) { toggle() },
         )
         return
     }
