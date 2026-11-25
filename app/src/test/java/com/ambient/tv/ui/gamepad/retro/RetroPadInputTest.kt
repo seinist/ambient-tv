@@ -87,6 +87,28 @@ class RetroPadInputTest {
         assertFalse(input.hasActiveGamepad(3))
     }
 
+    @Test fun rumbleTargetsOnlyPhysicalGamepadsOnTheRequestedPort() {
+        config = config.withPort("dev-1", 0).withPort("dev-2", 1)
+        press(1, KeyEvent.KEYCODE_BUTTON_A)
+        press(2, KeyEvent.KEYCODE_BUTTON_A)
+        press(3, KeyEvent.KEYCODE_Z)
+        press(4, KeyEvent.KEYCODE_DPAD_CENTER)
+        input.touchButton(RetroPadButton.A, true)
+        input.reserveRemotePort(2, true)
+        input.remoteState(2, RetroPadButton.A.mask, 0f, 0f, 0f, 0f)
+
+        assertEquals(listOf(1), input.rumbleDeviceIds(0))
+        assertEquals(listOf(2), input.rumbleDeviceIds(1))
+        assertTrue(input.rumbleDeviceIds(2).isEmpty())
+
+        input.releaseAll()
+        assertEquals(listOf(1), input.rumbleDeviceIds(0))
+        config = config.withPort("dev-1", RetroPorts.OFF)
+        assertTrue(input.rumbleDeviceIds(0).isEmpty())
+        input.deviceRemoved(2)
+        assertTrue(input.rumbleDeviceIds(1).isEmpty())
+    }
+
     @Test fun defaultsFollowPositions() {
         val pad = defaultRetroProfile(RetroInputKind.GAMEPAD)
         assertEquals(RetroPadButton.B, pad.button(KeyEvent.KEYCODE_BUTTON_A))

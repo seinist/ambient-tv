@@ -28,7 +28,9 @@ Touch customization also offers **Button vibration**, disabled by default. It re
 Start/Select and shoulder buttons. Android receives the touch-feedback usage, so device/system
 haptic policies still apply. Devices without a vibrator silently ignore the request.
 The D-pad, analog movement, held-button motion and releases do not produce a pulse. Local play
-and Companion touch controls use the same saved preference.
+and Companion touch controls use the same saved preference. Physical gamepads, keyboards and
+remotes never trigger this handset pulse. Separately, the game's Rumble option (on by default)
+routes core vibration events only to assigned physical gamepads connected to the playback device.
 
 ## Available actions
 
