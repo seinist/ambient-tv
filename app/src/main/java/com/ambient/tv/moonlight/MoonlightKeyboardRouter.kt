@@ -35,10 +35,10 @@ internal class MoonlightKeyboardRouter(
         pressed.clear()
     }
 
-    private fun virtualKey(keyCode: Int): Short? = when (keyCode) {
-        in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z -> (65 + keyCode - KeyEvent.KEYCODE_A).toShort()
-        in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 -> (48 + keyCode - KeyEvent.KEYCODE_0).toShort()
-        in KeyEvent.KEYCODE_F1..KeyEvent.KEYCODE_F12 -> (112 + keyCode - KeyEvent.KEYCODE_F1).toShort()
+    private fun virtualKey(keyCode: Int): Short? = (when (keyCode) {
+        in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z -> 65 + keyCode - KeyEvent.KEYCODE_A
+        in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 -> 48 + keyCode - KeyEvent.KEYCODE_0
+        in KeyEvent.KEYCODE_F1..KeyEvent.KEYCODE_F12 -> 112 + keyCode - KeyEvent.KEYCODE_F1
         KeyEvent.KEYCODE_SPACE -> 32
         KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> 13
         KeyEvent.KEYCODE_DEL -> 8
@@ -53,8 +53,8 @@ internal class MoonlightKeyboardRouter(
         KeyEvent.KEYCODE_MOVE_END -> 35
         KeyEvent.KEYCODE_PAGE_UP -> 33
         KeyEvent.KEYCODE_PAGE_DOWN -> 34
-        else -> return null
-    }.toShort()
+        else -> null
+    })?.toShort()
 
     companion object {
         private val SYSTEM_KEYS = setOf(
