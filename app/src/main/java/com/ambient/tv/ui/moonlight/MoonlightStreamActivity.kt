@@ -2,6 +2,7 @@ package com.ambient.tv.ui.moonlight
 
 import android.os.Bundle
 import android.view.InputDevice
+import kotlin.math.roundToInt
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.SurfaceHolder
@@ -36,6 +37,7 @@ import androidx.tv.material3.Text
 import com.ambient.tv.BuildConfig
 import com.ambient.tv.R
 import com.ambient.tv.moonlight.MoonlightControllerRouter
+import com.ambient.tv.moonlight.MoonlightKeyboardRouter
 import com.ambient.tv.moonlight.MoonlightStreamEngine
 import com.ambient.tv.moonlight.MoonlightStreamPhase
 import com.ambient.tv.moonlight.MoonlightStreamProfile
@@ -55,6 +57,11 @@ class MoonlightStreamActivity : ComponentActivity() {
     @Inject lateinit var engine: MoonlightStreamEngine
 
     private var osdVisible by mutableStateOf(false)
+    private val keyboard by lazy {
+        MoonlightKeyboardRouter { virtualKey, pressed, modifiers ->
+            engine.sendKeyboard(virtualKey, pressed, modifiers)
+        }
+    }
     private val input by lazy {
         MoonlightControllerRouter { port, mask, buttons, lt, rt, lx, ly, rx, ry ->
             engine.sendGamepad(port, mask, buttons, lt, rt, lx, ly, rx, ry)
@@ -92,7 +99,7 @@ class MoonlightStreamActivity : ComponentActivity() {
             showOsd(!osdVisible)
             return true
         }
-        if (!osdVisible && input.onKey(event)) return true
+        if (!osdVisible && (input.onKey(event) || keyboard.onKey(event))) return true
         return super.dispatchKeyEvent(event)
     }
 
@@ -102,18 +109,35 @@ class MoonlightStreamActivity : ComponentActivity() {
     }
 
     private fun showOsd(visible: Boolean) {
-        if (visible && !osdVisible) input.releaseAll()
+        if (visible && !osdVisible) releaseRemoteInputs()
         osdVisible = visible
     }
 
-    private fun disconnectAndFinish() {
+    private fun releaseRemoteInputs() {
         input.releaseAll()
+        keyboard.releaseAll()
+        engine.sendMouseButton(false)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus) releaseRemoteInputs()
+    }
+
+    override fun onStop() {
+        releaseRemoteInputs()
+        engine.stop()
+        super.onStop()
+    }
+
+    private fun disconnectAndFinish() {
+        releaseRemoteInputs()
         engine.stop()
         finish()
     }
 
     override fun onDestroy() {
-        input.releaseAll()
+        releaseRemoteInputs()
         engine.stop()
         super.onDestroy()
     }
@@ -146,10 +170,48 @@ private fun MoonlightStreamContent(
                             engine.start(hostId, appId, holder.surface, MoonlightStreamProfile())
                         }
                         override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
-                        override fun surfaceDestroyed(holder: SurfaceHolder) {
-                            engine.stop()
-                        }
+                        override fun surfaceDestroyed(holder: SurfaceHolder) { engine.stop() }
                     })
+                }
+            },
+            update = { view ->
+                view.setOnTouchListener { v, event ->
+                    if (controlsShown) return@setOnTouchListener false
+                    val width = v.width.coerceAtLeast(1)
+                    val height = v.height.coerceAtLeast(1)
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> {
+                            engine.sendMousePosition(event.x.roundToInt(), event.y.roundToInt(), width, height)
+                            engine.sendMouseButton(true)
+                            true
+                        }
+                        MotionEvent.ACTION_MOVE -> {
+                            engine.sendMousePosition(event.x.roundToInt(), event.y.roundToInt(), width, height)
+                            true
+                        }
+                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                            engine.sendMouseButton(false)
+                            true
+                        }
+                        else -> false
+                    }
+                }
+                view.setOnGenericMotionListener { v, event ->
+                    if (controlsShown ||
+                        (event.source and InputDevice.SOURCE_MOUSE) != InputDevice.SOURCE_MOUSE)
+                        return@setOnGenericMotionListener false
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_HOVER_MOVE -> {
+                            engine.sendMousePosition(event.x.roundToInt(), event.y.roundToInt(),
+                                v.width.coerceAtLeast(1), v.height.coerceAtLeast(1))
+                            true
+                        }
+                        MotionEvent.ACTION_SCROLL -> {
+                            engine.sendMouseScroll(event.getAxisValue(MotionEvent.AXIS_VSCROLL).roundToInt())
+                            true
+                        }
+                        else -> false
+                    }
                 }
             },
         )
