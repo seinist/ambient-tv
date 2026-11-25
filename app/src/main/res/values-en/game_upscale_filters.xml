@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="game_shader_scalefx">ScaleFX</string>
+    <string name="game_shader_scalefx_hint">Smooth curves and diagonals in pixel art; more demanding</string>
+    <string name="game_shader_sabr">SABR v3</string>
+    <string name="game_shader_sabr_hint">Smooth diagonal edges while preserving pixel-art detail</string>
+    <string name="game_shader_xbr_lv2">xBR Level 2</string>
+    <string name="game_shader_xbr_lv2_hint">Smooth corners and diagonal lines in 2D games</string>
+    <string name="game_shader_xbrz">xBRZ Freescale</string>
+    <string name="game_shader_xbrz_hint">Fine edge smoothing at any picture size</string>
+    <string name="game_shader_2xsal">2xSaL</string>
+    <string name="game_shader_2xsal_hint">Classic soft scaling with blended pixel edges</string>
+    <string name="game_shader_super_2xsai">Super 2xSaI</string>
+    <string name="game_shader_super_2xsai_hint">Classic smoothing for sprites and textured backgrounds</string>
+    <string name="game_shader_super_eagle">SuperEagle</string>
+    <string name="game_shader_super_eagle_hint">Rounded pixel edges for a softer 2D picture</string>
+    <string name="game_shader_scalehq2x">ScaleHQ 2x</string>
+    <string name="game_shader_scalehq2x_hint">Smooth small pixel patterns while keeping distinct outlines</string>
+</resources>

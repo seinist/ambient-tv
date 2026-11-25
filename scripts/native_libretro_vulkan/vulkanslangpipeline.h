@@ -43,6 +43,7 @@ private:
     void* dynamicLibrary = nullptr;
     libra_vk_filter_chain_t chain = nullptr;
     bool errorForThisPreset = false;
+    uint32_t maxImageDimension = 0;
     std::chrono::steady_clock::time_point previousFrameTime {};
     bool hasPreviousFrameTime = false;
 

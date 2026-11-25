@@ -1,108 +1,144 @@
-# Ambient TV: compact game shader library
+# Ambient TV game picture filters
 
-## Delivered: opt-in GLES effects without increasing the native runtime
+## Built-in selection
 
-Ambient TV keeps the eight prior game picture presets, including Sharp, Pixel, CRT, LCD,
-CUT2/CUT3, bicubic and adaptive sharpening. Fifteen additional **original** single-pass
-GLSL ES 100 presets are offered by five groups in the existing right-side Picture panel:
+The existing eight native/picture options and fifteen compact original GLES
+presets are joined by eight authentic Libretro filter families. All appear in
+**Picture > Filter > Pixel & scaling**, including software cores such as SNES.
+The system defaults are unchanged. Selections use stable `GameSettings` keys,
+with the existing global/system/game precedence, backup and TV sync.
 
-- Pixel/scaling: Sharp Bilinear, Pixel Edge Smoothing.
-- CRT: Light, Geometry, RGB Aperture Mask, Glow.
-- Handheld: Game Boy DMG palette, Game Boy Color grid, GBA colors, Nintendo DS LCD.
-- Analog: NTSC composite color bleed, VHS soft.
-- Effects: Film Grain, Deband, Color Boost.
+| Added filter | Key | GLES algorithm and presentation |
+| --- | --- | --- |
+| ScaleFX | `scalefx` | Five algorithm passes; two floating-point metric targets; 3x result and nearest presentation |
+| SABR v3 | `sabr` | Edge interpolation at the game viewport size |
+| xBR Level 2 | `xbr-lv2` | Edge interpolation at the game viewport size |
+| xBRZ Freescale | `xbrz-freescale` | Edge interpolation at the game viewport size |
+| 2xSaL | `2xsal` | 2x algorithm output followed by linear presentation |
+| Super 2xSaI | `super-2xsai` | 2x algorithm output followed by nearest presentation |
+| SuperEagle | `super-eagle` | 2x algorithm output followed by nearest presentation |
+| ScaleHQ 2x | `scalehq2x` | 2x algorithm output followed by nearest presentation |
 
-These are **not** byte-for-byte ports of RetroArch GLSL/Slang shaders and do not
-claim the pixel-accurate look of CRT-Royale, Guest Advanced or other heavyweight presets.
+Every new GLES chain first copies the actual game image to a tightly sized
+nearest-filtered source texture. This normalizes hardware framebuffer padding,
+flipping, crop and rotation before the algorithms inspect neighbouring pixels.
+It also makes ScaleFX's original-image reference refer to the picture **after**
+any selected effect or HDR-to-SDR conversion. ScaleFX's software-source chain
+uses seven GLES passes, eight with the optional prefix. Fixed 2x filters use
+three; the other single-pass algorithms use two including the source copy.
+Hardware sources also receive a renderer-owned 1x content-boundary copy when the
+chain does not already declare an effective original pass. This protects older
+neighbourhood filters too. At most nine passes are supported; intermediate
+allocation limits still apply.
 
-The sources are in a single Kotlin file with an enforced 16 KiB source limit.
-Only the selected GLES shader is compiled. A GLES-only build has no native shader
-runtime. Full native Vulkan builds include a pinned librashader shared library
-per ABI (ARM64 stripped output: 6,665,232 bytes in CI before APK compression).
-Set SKIP_LIBRASHADER_NATIVE=1 for a smaller GLES-only APK; final APK size
-still needs measurement.
+These are pinned upstream algorithms, with default parameters and preserved
+copyright notices. They are separate from `GameRetroShaders`, whose fifteen
+compact effects remain original approximations with five intensity steps.
+The eight imported algorithms have no ineffective intensity slider: a strength
+saved for a previous compact effect does not change them or block native Slang.
 
-New effects have bounded strength steps 50/75/100/125/150 percent. Shader selection
-follows global/system settings unless a game override is chosen. Everything is stored
-in GameSettings, so the existing backup/TV-sync machinery handles it. Default is
-unchanged (Sharp); no shaders are downloaded automatically.
+The selected GLES configuration is cached and only the selected chain is
+compiled. Upstream originals and manifests are outside APK assets; generated
+Kotlin strings are bundled once. No filter download or extra native runtime is
+required. This source footprint is not a measurement of final APK size.
 
-## Pipeline and performance
+## Source provenance and reproduction
 
-- GLES: one-pass effects, with ES2-compatible code, no temporal history buffers or LUTs.
-- Vulkan core + GLES compositor: retained optional FP16 bridge and a required PQ/HLG
-  to SDR prepass *before* the picture effect. LibretroDroid patch 0022 composes these.
-  If a picture shader fails to compile, fallback must retain the color conversion.
-- The experimental native Vulkan **SDR** WSI now supports nine pinned, original
-  small Slang presets through the Vulkan-only librashader C runtime. Raw Pixel is
-  unchanged; all other shaders, signed external GLSL packs and adjusted strength
-  remain on GLES. This is not a native HDR signal.
-- CI validates every fragment as GLSL ES 100 and checks the 16 KiB source budget.
-  Compilation on glslang is not a guarantee of speed or correctness on hardware.
+- GLSL: `libretro/glsl-shaders`, revision
+  `a35069864b4bf30f8c8e740d57206543fb7e745e`.
+- Slang: `libretro/slang-shaders`, revision
+  `02bf134555c4595bd6b69be89feaff923da83754`.
+- Super 2xSaI has no corresponding GLSL source in that pin; its Slang interface
+  is adapted to GLES 100 while retaining its algorithm and license notice.
+- The complete GLES source list, hashes and adaptation notes are in
+  `third_party_assets/game_shaders/`. Generate/check with
+  `python3 scripts/import_game_upscalers.py --check --validate`.
+- Native Slang assets, hashes and packaged license texts are under
+  `app/src/main/assets/games/slang/upstream/`. Check with
+  `python3 scripts/check_game_slang.py`.
 
-## Native Vulkan Slang: experimental SDR path (PR #434)
+The GLES adapter changes API declarations, required precision and equivalent
+GLES 100 syntax, not the filter algorithms. Slang uses the official presets,
+including their own final interpolation where specified. Therefore exact
+pixel-for-pixel output parity across the two APIs is not claimed.
 
-Nine tiny original .slang/.slangp presets are bundled: crt-light, crt-geometry,
-crt-aperture, crt-glow, gb-dmg, gbc-grid, ntsc, color-boost and sharp-bilinear.
-They are **not** copied RetroArch presets. The Slang validator compiles both
-stages to SPIR-V in CI.
+## Switching, intermediate targets and colour
 
-The pinned Vulkan-only librashader C runtime builds for all four Android ABIs
-with 16-KiB page alignment. The renderer uses the actual Vulkan device and queue,
-records shader passes into a WSI color-attachment swapchain and samples the
-existing Vulkan/AHardwareBuffer RGBA8 intermediate. The libretro callback supplies
-VkImageViewCreateInfo, so its hidden VkImage usage and allocation extent are not
-guessed. Native transitions restore the AHardwareBuffer for ordinary GLES playback.
+Programs and intermediate framebuffers are rebuilt together **before** a new
+chain is drawn. Changing filters while paused does not depend on another core
+frame arriving and does not reallocate or erase the retained source image.
+Intermediate passes cannot accidentally render into the window and colour the
+black side bars. Window clearing resets scissor and colour-write state inherited
+from a hardware core.
 
-A native Slang frame is only available when the core uses Vulkan, the user opts
-into native WSI diagnostic/fullscreen, source and target are SDR, the preset is
-allowlisted, and shader strength is 100%. Only an **actually presented filtered
-frame** sets native status bit 6. Any failure preserves the original GLES renderer
-and HDR-to-SDR conversion. Native PQ/HLG-through-Slang output remains disabled.
+GLES 2 supports bounded RGBA8 multipass chains. ScaleFX's signed metric buffers
+need GLES 3 floating-point render targets; these use RGBA32F with high-precision
+sampling. Unsupported formats, incomplete framebuffers, shader compile errors
+or excessive intermediate allocations fall back safely. HDR-to-SDR conversion
+must remain present in that fallback. Each GLES intermediate chain is capped at
+128 MiB; an atomic replacement can briefly retain the old and new chains together.
 
-The full APK includes a Vulkan-only shared Rust library per ABI. For a smaller
-GLES-only APK, use SKIP_LIBRASHADER_NATIVE=1. Real device tests on Shield, Philips
-and Android phone are mandatory before calling this a production player.
-See docs/LIBRETRO_VULKAN_HDR.md for all color/output acceptance gates.
+The renderer distinguishes two input contracts: ordinary/RetroArch GLSL chains
+read the preceding pass as their main texture, whereas native CUT2/CUT3 passes
+read the original colour image plus preceding edge data. A prefix changes the
+effective original colour image to its output. Mixing these contracts corrupts
+colours and becomes particularly visible with SDR-to-HDR output.
 
-### Final code-only checks
+HDR-to-SDR conversion precedes filtering and uses nearest sampling for pixel-art
+algorithms. It runs only when the native source handshake and the current frame
+confirm the requested transfer; an old menu selection cannot reinterpret SDR.
+SDR-to-HDR10 encoding runs only after the last picture pass. That window pass is
+always opaque; intermediate alpha is preserved for classification data. Native
+Slang output remains SDR-only. The actual television HDR signal, Android GPU
+behaviour and visual acceptance still need device verification.
 
-- A dedicated host CI job links the exact pinned librashader C API, parses all nine
-  bundled `.slangp` presets (including the 2-pass CRT Glow) and asserts SDR
-  color-space output. GLSL/SPIR-V syntax checks run separately.
-- All four Android ABI builds verify 16-KiB ELF LOAD alignment. The size gate
-  rejects a stripped runtime above 12 MiB per ABI and publishes the raw ELF
-  and gzip-compressed sizes for footprint comparison. The compressed size is a
-  proxy: it is **not** the measured final split/universal APK delta.
-- Frame uniforms use the libretro core-reported FPS and bounded monotonic
-  frame deltas instead of a fixed assumed 60 fps.
-- The C++ runtime rejects symlinked preset files; the app sets native Slang only
-  for its verified built-in files. `SKIP_LIBRASHADER_NATIVE=1` excludes the
-  library and disables native Slang selection in the resulting app.
-- These are software/CI release gates. Real Android GPU synchronization,
-  OSD-layering, input, HDR television signaling, 4K latency and picture quality
-  remain hardware acceptance tests and cannot be inferred from green CI.
+## Native Vulkan Slang
 
-## Required hardware verification
+Seventeen fixed presets are available to the existing opt-in native Vulkan WSI
+path: the nine compact original effects and the eight authentic upscalers.
+Only Vulkan cores with an SDR source/target and an eligible selection use it.
+Software cores use the normal GLES path. External signed GLSL packs, additional
+GLES effects and adjusted compact-effect intensity retain GLES presentation.
+The filtered Vulkan path requires an opaque swapchain: librashader clears unused
+output pixels to transparent black, so an alpha-composited surface would expose
+underlying layers in the side bars. The raw native path also requires opaque
+composition because core alpha is not a window transparency contract. Devices
+without opaque support retain GLES.
 
-Test Shield TV, Philips TV and Android phone; GLES2/3, 720p/1080p/4K,
-integer/fractional scaling, 60 fps and GPU memory, background/restore,
-Back/focus, per-game settings and backup/TV-sync. For HDR-capable Vulkan cores
-test correctly negotiated HDR10 input, tone mapping and safe GLES fallbacks.
+The app copies the complete fixed dependency list for a selected preset into
+private storage. Native code receives no arbitrary user preset path. Assets are
+verified against packaged bytes; CI checks the pinned hashes, declared passes,
+shader dependencies and source budgets. Native allocation estimates also bound
+large source/viewport combinations before the shader runtime allocates them.
 
-## Future full RetroArch preset support
+The already integrated, pinned Vulkan-only librashader runtime is built for all
+four Android ABIs with 16-KiB ELF alignment. `SKIP_LIBRASHADER_NATIVE=1` still
+produces a GLES-only APK and excludes that library. Nothing in this change adds
+a second native shader runtime or promotes native HDR-through-Slang support.
 
-Original RetroArch GLSL/Slang packs can require multi-pass chains, texture LUTs,
-parameters and frame history. The pinned Vulkan-only librashader runtime has
-those engine capabilities, but the app currently allowlists only nine original
-built-in presets, including a two-pass CRT Glow Slang presets. Signed external pack files remain a separate
-GLES100 format, not arbitrary Slang. Original RetroArch preset import, parameters,
-and native HDR parity are separate follow-ups.
+## Verification
 
-For a compact APK, any future authentic shader pack should be optional,
-on-demand and removable with a pinned/signed manifest, per-file hashes,
-licenses, strict extraction limits and per-device compatibility rules.
+- GLES validation compiles and links all actual imported programs and every
+  final program wrapped by the production SDR-to-HDR10 encoder.
+- Slang validation compiles both stages of every bundled source to SPIR-V.
+  The pinned host librashader C API also parses all seventeen presets.
+- Mesa/EGL host regressions exercise the real patched production renderer:
+  paused filter switches, black borders, source retention, framebuffer failure,
+  floating metrics, earlier-pass references and padded/flipped hardware frames.
+- A separate colour regression compares production SDR/HDR filtering against
+  a numerical BT.2020/ST2084 reference at several SDR white levels.
+- Kotlin tests cover selected filter dispatch, composition with effects/HDR,
+  stable settings keys, scope precedence and the serialized settings map.
+- Android CI compiles the app and native library for the supported ABIs.
 
+These host and CI gates do not measure Shield/Philips/phone performance or
+validate TV HDR signalling. Device checks should include repeated paused/live
+filter changes, 4:3/integer-scaled side bars, 720p/1080p/4K output, background and
+resume, and the filters with and without HDR enabled.
+
+The follow-up [gaming HDR and Vulkan audit](LIBRETRO_GAMING_HDR_AUDIT.md) covers
+all 31 built-ins and five optional pack filters, source packing, HDR input/output,
+Vulkan aspect and synchronization, and the remaining device validation limits.
 
 ## Signed optional packs (follow-up PR #436)
 
@@ -132,6 +168,6 @@ contains no pack textures, no GLSL release archive and no new native runtime.
   PQ/HLG input retains the mandatory HDR-to-SDR conversion before the effect.
 
 A production release still needs hardware testing and a signed package published
-via the manual workflow. The native Slang runtime now exists for eight built-in
-presets, but original RetroArch multipass assets and native HDR color parity
-remain open in issue #435.
+via the manual workflow. The native Slang runtime now handles seventeen fixed built-in presets. Arbitrary
+RetroArch preset import, external LUT/history packs and native HDR colour parity
+remain separate work.

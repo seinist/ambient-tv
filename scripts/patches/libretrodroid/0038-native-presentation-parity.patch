@@ -1,0 +1,442 @@
+diff --git a/src/main/cpp/vulkan/nativepresentation.h b/src/main/cpp/vulkan/nativepresentation.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/vulkan/nativepresentation.h
+@@ -0,0 +1,79 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++// Geometry and draw ownership shared by the native WSI presenter and its host tests.
++#pragma once
++
++#include <algorithm>
++#include <cmath>
++#include <cstdint>
++#include <limits>
++#include "../contentaspect.h"
++#include "../integerscaling.h"
++
++namespace libretrodroid {
++
++struct NativeViewport {
++    int32_t x = 0;
++    int32_t y = 0;
++    uint32_t width = 0;
++    uint32_t height = 0;
++};
++
++inline NativeViewport nativeViewportFor(uint32_t targetWidth, uint32_t targetHeight,
++                                       uint32_t sourceWidth, uint32_t sourceHeight,
++                                       float resolvedAspect, bool integerScaling,
++                                       bool automaticIntegerScaling) {
++    if (targetWidth == 0 || targetHeight == 0 || sourceWidth == 0 || sourceHeight == 0 ||
++        targetWidth > static_cast<uint32_t>(std::numeric_limits<int32_t>::max()) ||
++        targetHeight > static_cast<uint32_t>(std::numeric_limits<int32_t>::max())) return {};
++
++    // The caller resolves the initial core AV geometry, runtime changes and user override
++    // exactly as GLES does. Source pixel ratio is only a last resort for invalid metadata.
++    const double aspect = aspectRatioForGeometry(resolvedAspect, sourceWidth, sourceHeight);
++    uint32_t width = std::clamp<uint32_t>(static_cast<uint32_t>(std::lround(
++        std::min<double>(targetWidth, targetHeight * aspect))), 1u, targetWidth);
++    uint32_t height = std::clamp<uint32_t>(static_cast<uint32_t>(std::lround(
++        std::min<double>(targetHeight, targetWidth / aspect))), 1u, targetHeight);
++    const int scale = integerScaling ? integerScaleFor(
++        static_cast<float>(targetWidth), static_cast<float>(targetHeight),
++        sourceWidth, sourceHeight, automaticIntegerScaling) : 0;
++    if (scale >= 1) {
++        width = static_cast<uint32_t>(std::min<uint64_t>(targetWidth, uint64_t(sourceWidth) * scale));
++        height = static_cast<uint32_t>(std::min<uint64_t>(targetHeight, uint64_t(sourceHeight) * scale));
++    }
++    return { static_cast<int32_t>((targetWidth - width) / 2),
++             static_cast<int32_t>((targetHeight - height) / 2), width, height };
++}
++
++/** GL-thread-only: diagnostic presentation never owns the visible primary picture. */
++class NativePresentationGate {
++public:
++    enum class PrimaryDraw { Draw, Force, Skip };
++
++    void setFullscreenActive(bool active) {
++        if (fullscreenActive == active) return;
++        fullscreenActive = active;
++        invalidateFrame();
++    }
++    void invalidateFrame() { framePresented = false; }
++    void didPresentFrame() { framePresented = true; }
++    void reset() { *this = NativePresentationGate{}; }
++
++    PrimaryDraw primaryDraw(bool force, bool canSkip) {
++        if (!force && canSkip && fullscreenActive && framePresented) {
++            primaryWasSkipped = true;
++            return PrimaryDraw::Skip;
++        }
++        // A duplicated/paused frame may not be marked dirty. Redraw it once when GLES
++        // becomes visible again, even if the core has supplied no replacement frame.
++        const bool redraw = force || primaryWasSkipped;
++        primaryWasSkipped = false;
++        return redraw ? PrimaryDraw::Force : PrimaryDraw::Draw;
++    }
++
++private:
++    bool fullscreenActive = false;
++    bool framePresented = false;
++    bool primaryWasSkipped = false;
++};
++
++} // namespace libretrodroid
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -351,6 +351,7 @@
+ }
+ 
+ void VulkanBackend::destroyNativeSdrSwapchain() {
++    nativePresentation.invalidateFrame();
+     // Surface changes and shutdown are synchronized on the GL/emulation thread.
+     if (device != VK_NULL_HANDLE && nativeSdrSwapchain != VK_NULL_HANDLE &&
+         vk.deviceWaitIdle != nullptr) {
+@@ -480,6 +481,14 @@
+         (nativeOutputTransfer != 0u ||
+          (caps.supportedUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) == 0)) {
+         disableNativeSdrSwapchain("SDR color-attachment swapchain required for Vulkan Slang");
++        return false;
++    }
++    // This presenter draws upright pixels; it does not pre-rotate its blit/MVP.
++    // Claiming currentTransform without doing that rotation can stretch/rotate the
++    // image on landscape phones and rotated displays. Let Android rotate identity
++    // images, or retain GLES if this surface requires application pre-rotation.
++    if ((caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) == 0) {
++        disableNativeSdrSwapchain("identity surface transform unavailable; GLES retained");
+         return false;
+     }
+     std::vector<VkSurfaceFormatKHR> formats(formatCount);
+@@ -564,7 +573,7 @@
+     info.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+         (nativeSlang.requested() ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT : 0u);
+     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+-    info.preTransform = caps.currentTransform;
++    info.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+     info.compositeAlpha = alpha;
+     info.presentMode = VK_PRESENT_MODE_FIFO_KHR; // guaranteed by Vulkan WSI
+     info.clipped = VK_TRUE;
+@@ -1144,13 +1153,18 @@
+     frameInFlight = false;
+ }
+ 
+-bool VulkanBackend::presentFrame(unsigned width, unsigned height) {
++bool VulkanBackend::presentFrame(unsigned width, unsigned height, float resolvedAspect,
++                                  bool pictureCompatible) {
++    nativePresentation.invalidateFrame();
+     if (!isStarted() || frameImage == VK_NULL_HANDLE || pendingImage.image == VK_NULL_HANDLE) return false;
+ 
+     waitForFrame();
+ 
+     uint32_t sdrIndex = 0;
+     bool useDirect = false;
++    if (nativeSdrWindow != nullptr && !nativeSdrDisabled && !pictureCompatible) {
++        disableNativeSdrSwapchain("crop, split, viewport or black-frame insertion requires GLES");
++    }
+     // A raw VkImage blit cannot rotate 90/180/270 degrees. Do not hide the
+     // correctly rotated GLES image behind an incorrectly oriented Surface.
+     if (nativeSdrWindow != nullptr && !nativeSdrDisabled &&
+@@ -1269,36 +1283,13 @@
+         // Vulkan core image dimensions are not always square-pixel display
+         // dimensions (e.g. consoles with nonsquare pixels). Use the libretro
+         // core-reported aspect, not blindly the VkImage width/height ratio.
+-        float coreAspect = Environment::getInstance().retrieveGameSpecificAspectRatio();
+-        if (!std::isfinite(coreAspect) || coreAspect < 0.1f || coreAspect > 10.0f)
+-            coreAspect = static_cast<float>(std::max(1u, copyWidth)) /
+-                         static_cast<float>(std::max(1u, copyHeight));
+-        const double displayWidth = std::min(
+-            static_cast<double>(nativeSdrExtent.width),
+-            static_cast<double>(nativeSdrExtent.height) * coreAspect);
+-        const double displayHeight = std::min(
+-            static_cast<double>(nativeSdrExtent.height),
+-            static_cast<double>(nativeSdrExtent.width) / coreAspect);
+-        int32_t dstW = std::clamp(static_cast<int32_t>(std::lround(displayWidth)),
+-                                        1, static_cast<int32_t>(nativeSdrExtent.width));
+-        int32_t dstH = std::clamp(static_cast<int32_t>(std::lround(displayHeight)),
+-                                        1, static_cast<int32_t>(nativeSdrExtent.height));
+-        if (nativeIntegerScaling && copyWidth > 0 && copyHeight > 0) {
+-            // Match VideoLayout: largest whole-number source-pixel scale.
+-            // If the screen is smaller than a source frame, retain normal fit.
+-            const int scale = libretrodroid::integerScaleFor(
+-                static_cast<float>(nativeSdrExtent.width), static_cast<float>(nativeSdrExtent.height),
+-                copyWidth, copyHeight, nativeIntegerScalingAuto);
+-            const uint32_t whole = scale > 0 ? static_cast<uint32_t>(scale) : 0u;
+-            if (whole >= 1u) {
+-                dstW = static_cast<int32_t>(std::min<uint64_t>(
+-                    nativeSdrExtent.width, uint64_t(copyWidth) * whole));
+-                dstH = static_cast<int32_t>(std::min<uint64_t>(
+-                    nativeSdrExtent.height, uint64_t(copyHeight) * whole));
+-            }
+-        }
+-        const int32_t left = (static_cast<int32_t>(nativeSdrExtent.width) - dstW) / 2;
+-        const int32_t top = (static_cast<int32_t>(nativeSdrExtent.height) - dstH) / 2;
++        const float coreAspect = aspectRatioForGeometry(resolvedAspect, copyWidth, copyHeight);
++        const auto viewport = nativeViewportFor(nativeSdrExtent.width, nativeSdrExtent.height,
++            copyWidth, copyHeight, coreAspect, nativeIntegerScaling, nativeIntegerScalingAuto);
++        const int32_t left = viewport.x;
++        const int32_t top = viewport.y;
++        const int32_t dstW = static_cast<int32_t>(viewport.width);
++        const int32_t dstH = static_cast<int32_t>(viewport.height);
+         VkImageBlit nativeBlit = blit;
+         nativeBlit.dstOffsets[0] = { left, top, 0 };
+         nativeBlit.dstOffsets[1] = { left + dstW, top + dstH, 1 };
+@@ -1447,6 +1438,7 @@
+             presentResult = vk.queuePresent(queue, &present);
+         }
+         if (presentResult == VK_SUCCESS || presentResult == VK_SUBOPTIMAL_KHR) {
++            nativePresentation.didPresentFrame();
+             nativeSdrStatus.store(7u |
+                 (nativeOutputTransfer == 1u ? 16u : nativeOutputTransfer == 2u ? 32u : 0u) |
+                 (shaderRecorded ? 64u : 0u),
+@@ -1516,6 +1508,7 @@
+     destroyNativeSdrSwapchain();
+     if (nativeSdrWindow != nullptr) ANativeWindow_release(nativeSdrWindow);
+     nativeSdrWindow = nullptr;
++    nativePresentation.reset();
+     nativeSdrDisabled = false;
+     nativeOutputTransfer = 0u;
+     nativeCoreSourceTransfer = 0u;
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -36,6 +36,7 @@
+ #include "../libretro/libretro-common/include/libretro.h"
+ #include "../libretro/libretro-common/include/libretro_vulkan.h"
+ #include "vulkanslangpipeline.h"
++#include "nativepresentation.h"
+ 
+ struct AImageReader;
+ 
+@@ -107,6 +108,11 @@
+     void setNativeIntegerScaling(bool enabled) { nativeIntegerScaling = enabled; }
+     void setNativeIntegerScalingAuto(bool enabled) { nativeIntegerScalingAuto = enabled; }
+     void setNativeShaderPresetPath(const std::string& path);
++    void setNativeFullscreenActive(bool active) { nativePresentation.setFullscreenActive(active); }
++    void invalidateNativeFrame() { nativePresentation.invalidateFrame(); }
++    NativePresentationGate::PrimaryDraw primaryDraw(bool force, bool canSkip) {
++        return nativePresentation.primaryDraw(force, canSkip);
++    }
+     uint32_t getNativeSdrStatus() const { return nativeSdrStatus.load(std::memory_order_acquire); }
+ 
+     bool ensureFrameBuffer(unsigned width, unsigned height);
+@@ -114,7 +120,7 @@
+     unsigned getFrameBufferWidth() const { return frameWidth; }
+     unsigned getFrameBufferHeight() const { return frameHeight; }
+ 
+-    bool presentFrame(unsigned width, unsigned height);
++    bool presentFrame(unsigned width, unsigned height, float resolvedAspect, bool pictureCompatible);
+ 
+     void destroyCoreDevice();
+     void shutdown();
+@@ -277,6 +283,7 @@
+     VulkanSlangPipeline nativeSlang;
+     std::string nativeSlangPath;
+     uint64_t nativeSlangFrame = 0;
++    NativePresentationGate nativePresentation;
+     // bit 0 window requested, bit 1 swapchain ready, bit 2 frames presented,
+     // bit 4 actual PQ/BT.2020, bit 5 actual HLG/BT.2020,
+     // bit 3 fallback due to unsupported device/surface/runtime failure.
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -22,6 +22,7 @@
+ #include <cerrno>
+ 
+ #include <algorithm>
++#include <iterator>
+ #include <string>
+ #include <utility>
+ #include <vector>
+@@ -98,6 +99,7 @@
+ 
+ // TODO... Do we really need this?
+ void LibretroDroid::resetGlobalVariables() {
++    VulkanBackend::getInstance().setNativeFullscreenActive(false);
+     gameLoaded = false;
+     defaultAspectRatio = 0.0F;
+     contentAspectSnapshot.reset();
+@@ -299,6 +301,9 @@
+         outHeight = 0;
+         return {};
+     }
++    // The bridge always retains the latest source, even when native WSI hid GLES.
++    // Restore its primary picture too, so a following menu/fallback is immediately ready.
++    renderPrimaryFrame(true);
+     return video->captureRawFrame(outWidth, outHeight);
+ }
+ 
+@@ -343,6 +348,7 @@
+ void LibretroDroid::onSurfaceChanged(unsigned int width, unsigned int height) {
+     LOGD("Performing libretrodroid onSurfaceChanged");
+     if (video) video->updateScreenSize(width, height);
++    VulkanBackend::getInstance().invalidateNativeFrame();
+ }
+ 
+ void LibretroDroid::onSurfaceCreated() {
+@@ -763,9 +769,11 @@
+ 
+     // Pause is queued between core frames; reset also locks out concurrent UI input.
+     if (input) input->reset();
++    VulkanBackend::getInstance().invalidateNativeFrame();
+ }
+ 
+ void LibretroDroid::step() {
++    VulkanBackend::getInstance().invalidateNativeFrame();
+     if (rewinding && rewindBuffer) {
+         bool hadAudio = audioEnabled;
+         audioEnabled = false;
+@@ -866,7 +874,7 @@
+     renderSecondaryFrame();
+ 
+     if (video && !video->rendersInVideoCallback()) {
+-        video->renderFrame();
++        renderPrimaryFrame();
+     }
+ 
+     if (fpsSync && frameSpeed <= 1) {
+@@ -933,6 +941,7 @@
+ }
+ 
+ void LibretroDroid::stepForNetplay() {
++    VulkanBackend::getInstance().invalidateNativeFrame();
+     if (video && video->isHWAccelerated()) {
+         video->bindHWContext();
+     }
+@@ -957,7 +966,7 @@
+     renderSecondaryFrame();
+ 
+     if (video && !video->rendersInVideoCallback()) {
+-        video->renderFrame();
++        renderPrimaryFrame();
+     }
+ 
+     if (rumble && rumbleEnabled) {
+@@ -1122,9 +1131,32 @@
+ }
+ 
+ void LibretroDroid::renderFrameOnly() {
+-    if (video) {
+-        video->renderFrame(true);
+-    }
++    renderPrimaryFrame(true);
++}
++
++void LibretroDroid::setNativeVulkanFullscreenActive(bool active) {
++    // The caller is the GL-thread owner of the actual fullscreen Surface, not
++    // the UI's earlier 16px diagnostic or a cached PRESENTING status bit.
++    VulkanBackend::getInstance().setNativeFullscreenActive(active);
++}
++
++bool LibretroDroid::nativePictureCompatible() const {
++    return !screenSplitEnabled && !bfiEnabled &&
++        viewportRect.getX() == 0.0F && viewportRect.getY() == 0.0F &&
++        viewportRect.getWidth() == 1.0F && viewportRect.getHeight() == 1.0F &&
++        std::all_of(std::begin(primaryCrop), std::end(primaryCrop),
++                    [](float crop) { return crop == 0.0F; });
++}
++
++void LibretroDroid::renderPrimaryFrame(bool force) {
++    if (!video) return;
++    const bool canSkip = video->presentsExternalFrames() && nativePictureCompatible() &&
++        !secondaryOutput.hasWindow() && !rewinding.load();
++    const auto draw = VulkanBackend::getInstance().primaryDraw(force, canSkip);
++    if (draw == NativePresentationGate::PrimaryDraw::Skip) return;
++    // Forced draws cover paused/duplicate frames after a native-only interval.
++    // AHB copying and GL/Vulkan synchronization remain intact for captures/fallback.
++    video->renderFrame(draw == NativePresentationGate::PrimaryDraw::Force);
+ }
+ 
+ float LibretroDroid::getAspectRatio() {
+@@ -1307,6 +1339,18 @@
+     size_t pitch
+ ) {
+     if (video) {
++        unsigned nextSourceTransfer = 0;
++        if (data != nullptr) {
++            auto& environment = Environment::getInstance();
++            const bool acceptedHdr10 = (environment.getHdrSourceStatus() & 3u) == 3u;
++            const bool vulkanImage = data == RETRO_HW_FRAME_BUFFER_VALID && video->presentsExternalFrames();
++            const auto format = VulkanBackend::getInstance().getCoreSourceFormat();
++            const bool packedVulkan = vulkanImage &&
++                (format == VK_FORMAT_A2R10G10B10_UNORM_PACK32 || format == VK_FORMAT_A2B10G10R10_UNORM_PACK32);
++            const bool packedSoftware = data != RETRO_HW_FRAME_BUFFER_VALID &&
++                environment.getPixelFormat() == RETRO_PIXEL_FORMAT_HDR10_2101010;
++            nextSourceTransfer = acceptedHdr10 && (packedVulkan || packedSoftware) ? 1u : 0u;
++        }
+         if (data == RETRO_HW_FRAME_BUFFER_VALID && video->presentsExternalFrames()) {
+             auto& backend = VulkanBackend::getInstance();
+             if (width > backend.getFrameBufferWidth() || height > backend.getFrameBufferHeight()) {
+@@ -1314,13 +1358,20 @@
+                                   std::max(height, backend.getFrameBufferHeight()));
+             }
+             glFinish();
+-            backend.presentFrame(width, height);
+-        }
+-
++            if (!backend.presentFrame(width, height, getAspectRatio(), nativePictureCompatible())) {
++                // No new bridge image was accepted. Keep the previous frame's transfer
++                // and dimensions; interpreting it with this rejected frame's HDR metadata
++                // would corrupt the immediate GLES fallback. WSI-only failures still return
++                // true when the bridge copy succeeded and must accept the new source.
++                return;
++            }
++        }
++
++        if (data != nullptr) video->setSourceTransfer(nextSourceTransfer);
+         video->onNewFrame(data, width, height, pitch);
+ 
+         if (video->rendersInVideoCallback()) {
+-            video->renderFrame();
++            renderPrimaryFrame();
+         }
+     }
+ }
+diff --git a/src/main/cpp/libretrodroid.h b/src/main/cpp/libretrodroid.h
+--- a/src/main/cpp/libretrodroid.h
++++ b/src/main/cpp/libretrodroid.h
+@@ -116,6 +116,7 @@
+     void step();
+     void stepForNetplay();
+     void renderFrameOnly();
++    void setNativeVulkanFullscreenActive(bool active);
+     void pause();
+     void destroy();
+ 
+@@ -252,6 +253,8 @@
+     void loadGame(std::unique_ptr<GameContent> content);
+     void refreshTimingFromCoreIfFollowingGeometry();
+     void attachVulkanFrame(unsigned int width, unsigned int height);
++    void renderPrimaryFrame(bool force = false);
++    bool nativePictureCompatible() const;
+ 
+ protected:
+     static void callback_hw_video_refresh(const void *data, unsigned width, unsigned height, size_t pitch);
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -950,6 +950,12 @@
+     VulkanBackend::getInstance().setNativeIntegerScalingAuto(enabled == JNI_TRUE);
+ }
+ 
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setNativeVulkanFullscreenActive(
++    JNIEnv* env, jclass obj, jboolean active
++) {
++    LibretroDroid::getInstance().setNativeVulkanFullscreenActive(active == JNI_TRUE);
++}
++
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setNativeVulkanShaderPreset(
+     JNIEnv* env, jclass, jstring value
+ ) {
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -165,6 +165,8 @@
+     public static native void setNativeVulkanIntegerScaling(boolean enabled);
+     /** With whole-number scaling on, use it only when the border stays small (GL thread). */
+     public static native void setNativeVulkanIntegerScalingAuto(boolean enabled);
++    /** GL-thread only: actual fullscreen visibility, distinct from the tiny WSI diagnostic. */
++    public static native void setNativeVulkanFullscreenActive(boolean active);
+     /** A verified app-private Slang preset path; empty string returns to raw nearest output. */
+     public static native void setNativeVulkanShaderPreset(String path);
+     /** Android panel capabilities (not authored content metadata); GL thread only. */

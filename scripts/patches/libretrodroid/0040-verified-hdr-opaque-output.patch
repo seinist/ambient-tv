@@ -1,0 +1,443 @@
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -116,9 +116,12 @@
+         const auto& item = shaders.passes[index];
+         auto shader = ShaderChainEntry { };
+ 
+-        // SDR to HDR: only the pass that writes the window surface changes its output encoding.
+-        const bool pq = sdrToHdrWhiteNits > 0 && index + 1 == shaders.passes.size();
+-        const std::string fragment = pq ? wrapFragmentForPq(item.fragment, sdrToHdrWhiteNits) : item.fragment;
++        // Only the window pass is opaque and optionally PQ encoded. Intermediate
++        // alpha can contain classifier data (e.g. ScaleFX); do not overwrite it.
++        const bool finalPass = index + 1 == shaders.passes.size();
++        const std::string fragment = !finalPass ? item.fragment : sdrToHdrWhiteNits > 0
++            ? wrapFragmentForPq(item.fragment, sdrToHdrWhiteNits)
++            : wrapFragmentForOpaqueOutput(item.fragment);
+         shader.gProgram = createProgram(item.vertex.data(), fragment.data());
+         if (!shader.gProgram) {
+             LOGE("Shader pass failed to compile, will fall back to default shader");
+@@ -156,6 +159,7 @@
+         shader.gOutputSizeHandle = glGetUniformLocation(shader.gProgram, "OutputSize");
+         shader.gFrameCountHandle = glGetUniformLocation(shader.gProgram, "FrameCount");
+         shader.gFrameDirectionHandle = glGetUniformLocation(shader.gProgram, "FrameDirection");
++        shader.gCoreTransferHandle = glGetUniformLocation(shader.gProgram, "ambientCoreTransfer");
+         shader.gMVPMatrixHandle = glGetUniformLocation(shader.gProgram, "MVPMatrix");
+         shader.gGyroscopeHandle = glGetUniformLocation(shader.gProgram, "Gyroscope");
+         shader.gAccelerometerHandle = glGetUniformLocation(shader.gProgram, "Accelerometer");
+@@ -195,9 +199,25 @@
+     }
+ 
+     std::vector<ShaderChainEntry> newChain;
+-    auto build = [&](ShaderManager::Chain shaders) {
++    auto build = [&](ShaderManager::Chain shaders, bool normalizeHardware = true) {
+         if (filterMode == 0) shaders.linearTexture = false;
+         if (filterMode == 1) shaders.linearTexture = true;
++        // The allocation-free last resort must remain nearest even when a
++        // caller explicitly requested linear filtering for the optional chain.
++        if (!normalizeHardware) shaders.linearTexture = false;
++        if (normalizeHardware && hwAccelerated && shaders.originalPass < 0 && !shaders.passes.empty()) {
++            // Core FBOs/AHBs can be larger than the visible image. Texture edge
++            // clamping alone clamps at the allocation edge, so neighbour filters
++            // could read uninitialized/padding colors beyond the content UVs.
++            // Copy the exact cropped/oriented texels once, then filter a tightly
++            // sized image. Existing HDR/CUT prefixes already supply this boundary.
++            auto normalized = ShaderManager::getShader({ ShaderManager::Type::SHADER_DEFAULT });
++            auto copy = normalized.passes.front();
++            copy.linear = shaders.linearTexture;
++            shaders.passes.insert(shaders.passes.begin(), std::move(copy));
++            shaders.linearTexture = false;
++            shaders.originalPass = 0;
++        }
+         if (!tryBuildShaderChain(shaders, newChain)) return false;
+         try {
+             const bool linear = shaders.linearTexture;
+@@ -224,8 +244,16 @@
+             if (!requestedShaderConfig.customPasses.empty())
+                 safeDefault.customPasses.push_back(requestedShaderConfig.customPasses.front());
+         }
+-        if (!build(ShaderManager::getShader(safeDefault)))
+-            throw std::runtime_error("Cannot create safe picture shader");
++        if (!build(ShaderManager::getShader(safeDefault))) {
++            // The normalization FBO itself can exceed the memory budget. With
++            // ordinary SDR, nearest sampling can still show the owned source
++            // without another allocation or reading outside its visible texels.
++            // Never remove a mandatory transfer/effect prefix to make this fit.
++            safeDefault.params["AMBIENT_NEAREST"] = "1";
++            if (hdrPrefix != requestedShaderConfig.params.end() ||
++                !build(ShaderManager::getShader(safeDefault), false))
++                throw std::runtime_error("Cannot create safe picture shader");
++        }
+     }
+     for (auto& entry : shadersChain) if (entry.gProgram) glDeleteProgram(entry.gProgram);
+     shadersChain = std::move(newChain);
+@@ -448,6 +476,8 @@
+ 
+         if (shader.gFrameDirectionHandle != -1)
+             glUniform1i(shader.gFrameDirectionHandle, 1);
++        if (shader.gCoreTransferHandle != -1)
++            glUniform1i(shader.gCoreTransferHandle, static_cast<GLint>(sourceTransfer));
+         if (shader.gGyroscopeHandle != -1)
+             glUniform3fv(shader.gGyroscopeHandle, 1, shaderSensorState.data());
+         if (shader.gAccelerometerHandle != -1)
+@@ -510,11 +540,13 @@
+ }
+ 
+ std::vector<uint8_t> Video::captureRawFrame(int& outWidth, int& outHeight) {
++    constexpr size_t maxCapturePixels = 128u * 1024u * 1024u / 4u;
+     {
+         std::lock_guard<std::mutex> lock(frameMutex);
+         if (!hwAccelerated && !lastFrameData.empty() && lastFrameWidth > 0 && lastFrameHeight > 0) {
+             outWidth = lastFrameWidth;
+             outHeight = lastFrameHeight;
++            if (static_cast<size_t>(outWidth) > maxCapturePixels / static_cast<size_t>(outHeight)) return {};
+             std::vector<uint8_t> rgba((size_t) outWidth * outHeight * 4);
+             for (int y = 0; y < outHeight; y++) {
+                 const uint8_t* srcRow = lastFrameData.data() + (size_t) y * lastFramePitch;
+@@ -533,11 +565,13 @@
+                         g = static_cast<uint8_t>((((packed >> 10) & 1023u) * 255u + 511u) / 1023u);
+                         b = static_cast<uint8_t>(((packed & 1023u) * 255u + 511u) / 1023u);
+                     } else if (framePixelFormat == RETRO_PIXEL_FORMAT_0RGB1555) {
+-                        uint16_t p = *reinterpret_cast<const uint16_t*>(srcRow + x * 2);
++                        uint16_t p = 0;
++                        std::memcpy(&p, srcRow + x * 2, sizeof(p));
+                         uint8_t r5 = (p >> 10) & 0x1F, g5 = (p >> 5) & 0x1F, b5 = p & 0x1F;
+                         r = (r5 << 3) | (r5 >> 2); g = (g5 << 3) | (g5 >> 2); b = (b5 << 3) | (b5 >> 2);
+                     } else {
+-                        uint16_t p = *reinterpret_cast<const uint16_t*>(srcRow + x * 2);
++                        uint16_t p = 0;
++                        std::memcpy(&p, srcRow + x * 2, sizeof(p));
+                         uint8_t r5 = (p >> 11) & 0x1F, g6 = (p >> 5) & 0x3F, b5 = p & 0x1F;
+                         r = (r5 << 3) | (r5 >> 2); g = (g6 << 2) | (g6 >> 4); b = (b5 << 3) | (b5 >> 2);
+                     }
+@@ -551,19 +585,167 @@
+ 
+     outWidth = (int)getTextureWidth();
+     outHeight = (int)getTextureHeight();
+-    if (outWidth == 0 || outHeight == 0) return {};
+-
+-    GLuint fbo;
+-    glGenFramebuffers(1, &fbo);
+-    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+-        GL_TEXTURE_2D, (hwRenderTexture != 0) ? hwRenderTexture : renderer->getTexture(), 0);
+-
+-    std::vector<uint8_t> pixels(outWidth * outHeight * 4);
++    if (outWidth <= 0 || outHeight <= 0) return {};
++    if (static_cast<size_t>(outWidth) > maxCapturePixels / static_cast<size_t>(outHeight)) return {};
++    const size_t pixelCount = static_cast<size_t>(outWidth) * static_cast<size_t>(outHeight);
++
++    // FP16 AHBs are sampleable but need not be renderable/readable as RGBA/UBYTE.
++    // Resolve raw source code values to an ordinary RGBA8 target first. This
++    // deliberately bypasses picture filters and the window's PQ output wrapper.
++    struct CaptureTarget {
++        GLint framebuffer = 0, program = 0, activeTexture = GL_TEXTURE0;
++        GLint texture = 0, arrayBuffer = 0, packAlignment = 4, viewport[4] {};
++        GLint readFramebuffer = 0, packBuffer = 0, unpackBuffer = 0, sampler = 0, vao = 0;
++        const GLenum packKeys[3] { GL_PACK_ROW_LENGTH, GL_PACK_SKIP_ROWS, GL_PACK_SKIP_PIXELS };
++        GLint packValues[3] {};
++        GLboolean rasterizerDiscard = GL_FALSE;
++        bool es3 = false;
++        GLboolean colorMask[4] {};
++        const GLenum caps[5] { GL_BLEND, GL_DEPTH_TEST, GL_SCISSOR_TEST, GL_CULL_FACE, GL_STENCIL_TEST };
++        GLboolean enabled[5] {};
++        GLuint target = 0, fbo = 0, copyProgram = 0, copyVao = 0, copyBuffer = 0;
++        GLuint source = 0;
++        GLint minFilter = GL_NEAREST, magFilter = GL_NEAREST;
++        struct Attribute {
++            GLint index = -1, enabled = 0, size = 4, type = GL_FLOAT, normalized = 0, stride = 0, buffer = 0;
++            void* pointer = nullptr;
++        } attributes[2];
++        explicit CaptureTarget(GLuint sourceTexture, bool supportsEs3) : source(sourceTexture) {
++            es3 = supportsEs3;
++            glGetIntegerv(GL_FRAMEBUFFER_BINDING, &framebuffer);
++            glGetIntegerv(GL_CURRENT_PROGRAM, &program);
++            glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
++            glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &arrayBuffer);
++            glGetIntegerv(GL_PACK_ALIGNMENT, &packAlignment);
++            glPixelStorei(GL_PACK_ALIGNMENT, 1);
++            glGetIntegerv(GL_VIEWPORT, viewport);
++            glGetBooleanv(GL_COLOR_WRITEMASK, colorMask);
++            for (size_t i = 0; i < 5; ++i) { enabled[i] = glIsEnabled(caps[i]); glDisable(caps[i]); }
++            glActiveTexture(GL_TEXTURE0);
++            if (es3) {
++                glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFramebuffer);
++                glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &packBuffer);
++                glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpackBuffer);
++                glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
++                glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
++                for (size_t i = 0; i < 3; ++i) {
++                    glGetIntegerv(packKeys[i], &packValues[i]); glPixelStorei(packKeys[i], 0);
++                }
++                glGetIntegerv(GL_SAMPLER_BINDING, &sampler);
++                glBindSampler(0, 0);
++                glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
++                glGenVertexArrays(1, &copyVao);
++                glBindVertexArray(copyVao);
++                rasterizerDiscard = glIsEnabled(GL_RASTERIZER_DISCARD);
++                glDisable(GL_RASTERIZER_DISCARD);
++            }
++            glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
++            glBindTexture(GL_TEXTURE_2D, source);
++            glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, &minFilter);
++            glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, &magFilter);
++            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++        }
++        void saveAttribute(size_t slot, GLint index) {
++            if (es3) return; // private VAO owns every changed attribute on ES3
++            auto& saved = attributes[slot];
++            saved.index = index;
++            glGetVertexAttribiv(index, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &saved.enabled);
++            glGetVertexAttribiv(index, GL_VERTEX_ATTRIB_ARRAY_SIZE, &saved.size);
++            glGetVertexAttribiv(index, GL_VERTEX_ATTRIB_ARRAY_TYPE, &saved.type);
++            glGetVertexAttribiv(index, GL_VERTEX_ATTRIB_ARRAY_NORMALIZED, &saved.normalized);
++            glGetVertexAttribiv(index, GL_VERTEX_ATTRIB_ARRAY_STRIDE, &saved.stride);
++            glGetVertexAttribiv(index, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &saved.buffer);
++            glGetVertexAttribPointerv(index, GL_VERTEX_ATTRIB_ARRAY_POINTER, &saved.pointer);
++        }
++        ~CaptureTarget() {
++            glBindTexture(GL_TEXTURE_2D, source);
++            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, minFilter);
++            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, magFilter);
++            glBindTexture(GL_TEXTURE_2D, texture);
++            if (es3) {
++                glBindSampler(0, sampler);
++                glBindVertexArray(vao);
++                glBindBuffer(GL_PIXEL_PACK_BUFFER, packBuffer);
++                glBindBuffer(GL_PIXEL_UNPACK_BUFFER, unpackBuffer);
++                for (size_t i = 0; i < 3; ++i) glPixelStorei(packKeys[i], packValues[i]);
++                if (rasterizerDiscard) glEnable(GL_RASTERIZER_DISCARD);
++            } else for (const auto& saved : attributes) if (saved.index >= 0) {
++                glBindBuffer(GL_ARRAY_BUFFER, saved.buffer);
++                glVertexAttribPointer(saved.index, saved.size, saved.type, saved.normalized,
++                                      saved.stride, saved.pointer);
++                if (saved.enabled) glEnableVertexAttribArray(saved.index);
++                else glDisableVertexAttribArray(saved.index);
++            }
++            glActiveTexture(activeTexture);
++            glBindBuffer(GL_ARRAY_BUFFER, arrayBuffer);
++            glPixelStorei(GL_PACK_ALIGNMENT, packAlignment);
++            glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
++            if (es3) glBindFramebuffer(GL_READ_FRAMEBUFFER, readFramebuffer);
++            glUseProgram(program);
++            glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
++            glColorMask(colorMask[0], colorMask[1], colorMask[2], colorMask[3]);
++            for (size_t i = 0; i < 5; ++i) if (enabled[i]) glEnable(caps[i]);
++            if (copyProgram) glDeleteProgram(copyProgram);
++            if (fbo) glDeleteFramebuffers(1, &fbo);
++            if (target) glDeleteTextures(1, &target);
++            if (copyVao) glDeleteVertexArrays(1, &copyVao);
++            if (copyBuffer) glDeleteBuffers(1, &copyBuffer);
++        }
++    } capture(hwRenderTexture != 0 ? hwRenderTexture : renderer->getTexture(), openGLESVersion >= 3);
++    glGenTextures(1, &capture.target);
++    glBindTexture(GL_TEXTURE_2D, capture.target);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, outWidth, outHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
++    glGenFramebuffers(1, &capture.fbo);
++    glBindFramebuffer(GL_FRAMEBUFFER, capture.fbo);
++    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, capture.target, 0);
++    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) return {};
++
++    const char* rawVertex =
++        "#ifdef GL_FRAGMENT_PRECISION_HIGH\n#define CAPTURE_P highp\n#else\n#define CAPTURE_P mediump\n#endif\n"
++        "attribute vec4 vPosition; attribute vec2 vCoordinate; varying CAPTURE_P vec2 coords;\n"
++        "void main() { coords = vCoordinate; gl_Position = vPosition; }\n";
++    const char* rawFragment =
++        "#ifdef GL_FRAGMENT_PRECISION_HIGH\n#define CAPTURE_P highp\n#else\n#define CAPTURE_P mediump\n#endif\n"
++        "precision CAPTURE_P float; uniform CAPTURE_P sampler2D texture; varying CAPTURE_P vec2 coords;\n"
++        "void main() { gl_FragColor = vec4(texture2D(texture, coords).rgb, 1.0); }\n";
++    capture.copyProgram = createProgram(rawVertex, rawFragment);
++    if (!capture.copyProgram) return {};
++    glUseProgram(capture.copyProgram);
++    glViewport(0, 0, outWidth, outHeight);
++    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
++    glBindTexture(GL_TEXTURE_2D, capture.source);
++    glUniform1i(glGetUniformLocation(capture.copyProgram, "texture"), 0);
++    const float u = hwRenderTexture != 0 && hwFBOWidth > 0
++        ? std::min(1.f, static_cast<float>(outWidth) / hwFBOWidth) : 1.f;
++    const float v = hwRenderTexture != 0 && hwFBOHeight > 0
++        ? std::min(1.f, static_cast<float>(outHeight) / hwFBOHeight) : 1.f;
++    const GLfloat vertices[] { -1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1 };
++    const GLfloat coordinates[] { 0,0, u,0, 0,v, 0,v, u,0, u,v };
++    const GLint position = glGetAttribLocation(capture.copyProgram, "vPosition");
++    const GLint coordinate = glGetAttribLocation(capture.copyProgram, "vCoordinate");
++    if (position < 0 || coordinate < 0) return {};
++    capture.saveAttribute(0, position);
++    capture.saveAttribute(1, coordinate);
++    glGenBuffers(1, &capture.copyBuffer);
++    glBindBuffer(GL_ARRAY_BUFFER, capture.copyBuffer);
++    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices) + sizeof(coordinates), nullptr, GL_STREAM_DRAW);
++    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
++    glBufferSubData(GL_ARRAY_BUFFER, sizeof(vertices), sizeof(coordinates), coordinates);
++    glEnableVertexAttribArray(position);
++    glEnableVertexAttribArray(coordinate);
++    glVertexAttribPointer(position, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
++    glVertexAttribPointer(coordinate, 2, GL_FLOAT, GL_FALSE, 0, reinterpret_cast<const void*>(sizeof(vertices)));
++    glDrawArrays(GL_TRIANGLES, 0, 6);
++    glDisableVertexAttribArray(position);
++    glDisableVertexAttribArray(coordinate);
++    std::vector<uint8_t> pixels(pixelCount * 4);
+     glReadPixels(0, 0, outWidth, outHeight, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+-
+-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+-    glDeleteFramebuffers(1, &fbo);
++    if (glGetError() != GL_NO_ERROR) return {};
+ 
+     if (hwAccelerated && !externalFrames) {
+         int rowBytes = outWidth * 4;
+@@ -647,6 +829,7 @@
+     ImmersiveMode::Config immersiveModeConfig
+ ) :
+     requestedShaderConfig(std::move(shaderConfig)),
++    openGLESVersion(renderingOptions.openglESVersion),
+     skipDuplicateFrames(skipDuplicateFrames),
+     immersiveModeEnabled(immersiveModeEnabled),
+     immersiveMode(immersiveModeConfig),
+@@ -741,6 +924,13 @@
+         sdrToHdrWhiteNits = whiteNits;
+         loadedShaderType = std::nullopt;  // Rebuild the chain with the new output encoding
+     }
++}
++
++void Video::setSourceTransfer(unsigned transfer) {
++    const unsigned valid = transfer <= 2u ? transfer : 0u;
++    if (sourceTransfer == valid) return;
++    sourceTransfer = valid;
++    isDirty = true;
+ }
+ 
+ void Video::setBlackFrameInsertion(bool enabled) {
+diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
+--- a/src/main/cpp/video.h
++++ b/src/main/cpp/video.h
+@@ -67,6 +67,7 @@
+         GLint gOutputSizeHandle = -1;
+         GLint gFrameCountHandle = -1;
+         GLint gFrameDirectionHandle = -1;
++        GLint gCoreTransferHandle = -1;
+         GLint gMVPMatrixHandle = -1;
+         GLint gGyroscopeHandle = -1;
+         GLint gAccelerometerHandle = -1;
+@@ -104,6 +105,8 @@
+     void setBlackFrameInsertion(bool enabled);
+     /** SDR white in nits on a PQ window surface; 0 keeps SDR output. */
+     void setSdrToHdr(int whiteNits);
++    /** Verified transfer of the current source frame: 0 SDR/unknown, 1 PQ, 2 HLG. */
++    void setSourceTransfer(unsigned transfer);
+     void setShaderSensorState(const std::array<float, 9>& state);
+     int prepareShaderAndGetSensorUsage();
+ 
+@@ -173,12 +176,14 @@
+ 
+     bool isDirty = false;
+     bool hwAccelerated = false;
++    int openGLESVersion = 2;
+     bool skipDuplicateFrames = false;
+     bool sourceLinearTexture = true;
+     int normalizedOriginalPass = -1;
+     int filterMode = -1;  // -1 = auto (shader decides), 0 = nearest, 1 = linear
+     bool bfiEnabled = false;
+     int sdrToHdrWhiteNits = 0;
++    unsigned sourceTransfer = 0;
+     unsigned int bfiFrameCounter = 0;
+     unsigned int frameCount = 0;
+ 
+diff --git a/src/main/cpp/sdrtohdr.h b/src/main/cpp/sdrtohdr.h
+--- a/src/main/cpp/sdrtohdr.h
++++ b/src/main/cpp/sdrtohdr.h
+@@ -13,6 +13,20 @@
+ #include <string>
+ 
+ namespace libretrodroid {
++
++/** XRGB and hardware core frames have no window transparency contract. */
++inline std::string wrapFragmentForOpaqueOutput(const std::string& fragment) {
++    std::string head;
++    std::string body = fragment;
++    const auto first = fragment.find_first_not_of(" \t\r\n");
++    if (first != std::string::npos && fragment.compare(first, 8, "#version") == 0) {
++        const auto end = fragment.find('\n', first);
++        head = fragment.substr(0, end == std::string::npos ? fragment.size() : end + 1);
++        body = end == std::string::npos ? std::string() : fragment.substr(end + 1);
++    }
++    return head + "#define main ambient_picture_main\n" + body + "\n#undef main\n"
++        "void main() { ambient_picture_main(); gl_FragColor.a = 1.0; }\n";
++}
+ 
+ /**
+  * Wraps the last picture pass so it writes PQ (SMPTE ST 2084) BT.2020 instead of sRGB:
+@@ -39,7 +53,7 @@
+         "}\n"
+         "void main() {\n"
+         "    ambient_picture_main();\n"
+-        "    gl_FragColor = vec4(ambientSdrToPq(gl_FragColor.rgb), gl_FragColor.a);\n"
++        "    gl_FragColor = vec4(ambientSdrToPq(gl_FragColor.rgb), 1.0);\n"
+         "}\n";
+ }
+ 
+diff --git a/src/main/cpp/environment.cpp b/src/main/cpp/environment.cpp
+--- a/src/main/cpp/environment.cpp
++++ b/src/main/cpp/environment.cpp
+@@ -496,20 +496,20 @@
+             if (requested == RETRO_PIXEL_FORMAT_HDR10_2101010) {
+                 const bool accepted = configuredHdrOutput == 1u && useVulkan &&
+                     libretrodroid::VulkanBackend::getInstance().isAvailable();
+-                hdrSourceStatus.store(accepted ? 3u : 1u, std::memory_order_release);
++                // A refused request leaves the previously accepted pixel format
++                // intact. Preserve its transfer contract until an accepted change.
++                hdrSourceStatus.fetch_or(accepted ? 3u : 1u, std::memory_order_acq_rel);
+                 if (!accepted) return false;
+                 pixelFormat = requested;
+                 return true;
+             }
+             if (requested == RETRO_PIXEL_FORMAT_SCRGB_RGBA16F) {
+-                hdrSourceStatus.store(4u, std::memory_order_release);
++                hdrSourceStatus.fetch_or(4u, std::memory_order_acq_rel);
+                 return false; // No safe linear FP16 software input path.
+             }
+             // An SDR fallback revokes HDR acceptance but preserves the fact
+             // that the core requested HDR; useful for diagnostics after a
+             // rejected SET_PIXEL_FORMAT. A new session resets all flags.
+-            const unsigned previous = hdrSourceStatus.load(std::memory_order_acquire);
+-            hdrSourceStatus.store(previous & 5u, std::memory_order_release);
+             // The GLES software upload and screenshot path currently only understand
+             // these three SDR formats. New libretro cores may ask for XRGB2101010
+             // (3), HDR10/PQ (4) or scRGB FP16 (5): do not silently treat 32/64-bit
+@@ -520,6 +520,8 @@
+                 LOGW("Refusing unsupported libretro source pixel format %d", static_cast<int>(requested));
+                 return false; // The core must keep its own supported SDR fallback.
+             }
++            const unsigned previous = hdrSourceStatus.load(std::memory_order_acquire);
++            hdrSourceStatus.store(previous & 5u, std::memory_order_release);
+             pixelFormat = requested;
+             return true;
+         }
+diff --git a/src/main/java/com/swordfish/libretrodroid/SdrToHdrSurface.kt b/src/main/java/com/swordfish/libretrodroid/SdrToHdrSurface.kt
+--- a/src/main/java/com/swordfish/libretrodroid/SdrToHdrSurface.kt
++++ b/src/main/java/com/swordfish/libretrodroid/SdrToHdrSurface.kt
+@@ -30,7 +30,12 @@
+ 
+     override fun chooseConfig(egl: EGL10, display: EGLDisplay): EGLConfig {
+         val renderable = if (glesVersion >= 3) EGL_OPENGL_ES3_BIT_KHR else EGL_OPENGL_ES2_BIT
+-        choose(egl, display, renderable, 10, 2)?.let { tenBit = true; return it }
++        // PQ needs highp fragment arithmetic. ES 2 makes it optional and we
++        // cannot probe it before this surface/context is current. ES 3 guarantees
++        // it, so retain SDR on ES 2 instead of selecting a PQ window speculatively.
++        if (glesVersion >= 3) {
++            choose(egl, display, renderable, 10, 2)?.let { tenBit = true; return it }
++        }
+         tenBit = false
+         Log.w(TAG, "No 10-bit EGL config: SDR output")
+         return choose(egl, display, renderable, 8, 0)
+@@ -77,5 +82,6 @@
+     }
+ 
+     override fun destroySurface(egl: EGL10, display: EGLDisplay, surface: EGLSurface) {
++        active = false
+         egl.eglDestroySurface(display, surface)
+     }

@@ -13,12 +13,15 @@ class GameVulkanPictureCompatibilityTest {
         }
     }
 
-    @Test fun onlyAllowlistedOriginalSlangPresetsEligibleForNativeShaderOutput() {
+    @Test fun onlyAllowlistedBundledSlangPresetsEligibleForNativeShaderOutput() {
         val allowed = setOf(
             GameShader.CRT_LIGHT, GameShader.CRT_GEOMETRY, GameShader.CRT_APERTURE,
             GameShader.CRT_GLOW, // two-pass Vulkan Slang framebuffer chain
             GameShader.GAMEBOY_DMG, GameShader.GBC_GRID, GameShader.NTSC_COMPOSITE,
             GameShader.COLOR_BOOST, GameShader.SHARP_BILINEAR,
+            GameShader.SCALEFX, GameShader.SABR, GameShader.XBR_LV2,
+            GameShader.XBRZ_FREESCALE, GameShader.XSAL_2X, GameShader.SUPER_2XSAI,
+            GameShader.SUPER_EAGLE, GameShader.SCALEHQ2X,
         )
         GameShader.entries.forEach { shader ->
             assertTrue("Shader eligibility must be explicit: " + shader.key,

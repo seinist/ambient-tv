@@ -122,7 +122,8 @@
     <string name="game_picture_hdr_off">Aus (normales SDR)</string>
     <string name="game_picture_hdr_pq">PQ-/HDR10-Eingabe</string>
     <string name="game_picture_hdr_hlg">HLG-Eingabe</string>
-    <string name="game_picture_hdr_hint">Nur für Cores, die tatsächlich PQ oder HLG ausgeben. Das Spiel startet neu; FP16 wird bei Unterstützung verwendet, sonst RGBA8. Kein natives HDR und keine automatische Erkennung.</string>
+    <string name="game_picture_hdr_hint">Das Spiel startet neu. HDR wird nur bei einer vom Core bestätigten, passenden HDR-Quelle umgewandelt; SDR-Bilder behalten ihre Farben. FP16 wird bei Unterstützung verwendet, sonst RGBA8.</string>
+    <string name="game_picture_hdr_unconfirmed">Der Core hat keine passende HDR-Quelle bestätigt. Die Eingangskonvertierung bleibt aus, damit die Spielfarben erhalten bleiben.</string>
     <string name="game_picture_hdr_filter_note">Bildfilter bleiben nach der HDR-zu-SDR-Umwandlung im GLES-Renderer aktiv. Der native RAW-Vollbildmodus wird auf kompatible Bildeinstellungen begrenzt.</string>
     <string name="game_core_scope">Änderungen gelten für</string>
     <string name="game_core_scope_game">Nur dieses Spiel</string>

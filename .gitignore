@@ -14,6 +14,9 @@ app/build/
 /third_party
 /app/src/main/jniLibs/
 /app/src/main/assets/*
+!/app/src/main/assets/games/
+/app/src/main/assets/games/*
+!/app/src/main/assets/games/slang/
 !/app/src/main/assets/branding/
 /smarttube_wrappers/youtubeapi/build
 /smarttube_wrappers/sharedutils/build

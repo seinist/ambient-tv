@@ -36,6 +36,7 @@ class GameVulkanHdrSourceContractTest {
         assertFalse(GameCoreHdrPixelHandshake(1).hdr10Accepted)
         assertFalse(GameCoreHdrPixelHandshake(4).hdr10Accepted)
         assertTrue(GameCoreHdrPixelHandshake(3).hdr10Accepted)
+        assertTrue(GameCoreHdrPixelHandshake(7).hdr10Accepted) // Rejected scRGB leaves accepted PQ intact.
         assertEquals("HDR10/PQ core pixel format rejected", GameCoreHdrPixelHandshake(1).description)
     }
 

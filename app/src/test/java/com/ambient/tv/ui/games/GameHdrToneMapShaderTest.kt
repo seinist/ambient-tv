@@ -33,7 +33,8 @@ class GameHdrToneMapShaderTest {
         GameShader.entries.forEach { filter ->
             val shader = GameHdrToneMapShader.forGame(filter, GameHdrToneMap.PQ, true) as ShaderConfig.PrependPass
             assertEquals(filter.config(), shader.filter)
-            assertEquals(filter != GameShader.PIXEL, shader.pass.linear)
+            val linearFilters = setOf(GameShader.SHARP, GameShader.CRT, GameShader.LCD)
+            assertEquals(filter.key, filter in linearFilters, shader.pass.linear)
             assertTrue(shader.pass.fragment.contains("pqEotf"))
             assertTrue(shader.pass.fragment.contains("BT.2020 -> BT.709"))
             assertFalse(shader.pass.fragment.contains("PICTURE_MODE"))

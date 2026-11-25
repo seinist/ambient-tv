@@ -45,6 +45,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.semantics.Role
 import com.ambient.tv.games.GameBiosState
 import com.ambient.tv.games.GameStateEntry
@@ -256,18 +257,6 @@ private fun GameFailure.titleRes(): Int = when (this) {
     GameFailure.PREVIOUS_SESSION -> R.string.game_failed_previous_session
 }
 
-internal fun GameShader.config(intensity: Float = 1f): ShaderConfig = when (this) {
-    GameShader.SHARP -> ShaderConfig.Sharp
-    GameShader.PIXEL -> ShaderConfig.Pixel
-    GameShader.SMOOTH -> ShaderConfig.CUT3()
-    GameShader.CUT2 -> ShaderConfig.CUT2()
-    GameShader.BICUBIC -> GamePictureShaders.bicubic()
-    GameShader.ADAPTIVE -> GamePictureShaders.adaptiveSharpen()
-    GameShader.CRT -> ShaderConfig.CRT
-    GameShader.LCD -> ShaderConfig.LCD
-    else -> GameRetroShaders.config(this, intensity)
-}
-
 /** SDR white in the PQ signal: the chosen value (Auto 203), never above a plausible reported peak. */
 internal fun gameSdrWhiteNits(requested: Int, display: GameHdrDisplayCapabilities): Int =
     effectiveSdrReferenceWhiteNits(requested, display.peakNits?.takeIf { it.isFinite() && it >= 300f }?.toInt() ?: 0)
@@ -343,7 +332,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val gamePictureScope = settings.gamePictureScope(game.saveKey)
     val installedShaders = remember(model) { model.shaderPacks.installed() }
     val selectedPackConfig = remember(selectedPack, model) { model.shaderPacks.config(selectedPack) }
-    val toneMap = settings.hdrToneMap(core)
+    // A remembered Vulkan input mode must not suppress GLES SDR-as-HDR output
+    // after switching the same core back to OpenGL ES.
+    val toneMap = if (session.vulkan) settings.hdrToneMap(core) else GameHdrToneMap.OFF
     val nativeTransfer = GameVulkanTransferMode.forInput(toneMap)
     val aspect = settings.aspect(system, game.saveKey)
     val integerScaling = settings.integerScaling(system, game.saveKey)
@@ -357,12 +348,12 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     // A trusted small Slang preset may opt into the experimental native WSI.
     // Existing GLES filters remain available for all other choices and for HDR.
     val nativeSlangPath = remember(context, shader, shaderIntensity, selectedPack, nativeTransfer, session.vulkan, effect) {
-        // Bundled native presets currently use their author's default parameter values.
-        // A user-adjusted intensity must keep using GLES until native per-parameter
-        // parity is implemented; never silently display the wrong chosen appearance.
+        // Original compact effects have an intensity control; their native presets
+        // use the default. Authored upscalers have no such control, so a strength
+        // retained from a previously selected effect must not block their native path.
         if (BuildConfig.LIBRASHADER_NATIVE && session.vulkan && effect == null &&
             nativeTransfer == GameVulkanTransferMode.SDR &&
-            kotlin.math.abs(shaderIntensity - 1f) < 0.0001f)
+            (!GameRetroShaders.isCustom(shader) || kotlin.math.abs(shaderIntensity - 1f) < 0.0001f))
             GameVulkanSlangPresets.prepare(context, shader, selectedPack)
         else null
     }
@@ -902,7 +893,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         }
     }
     LaunchedEffect(nativeSdrFullscreenRequested, running, vulkanSurfaceHost) {
-        if (!nativeSdrFullscreenRequested) {
+        if (!nativeSdrFullscreenRequested || !running) {
             vulkanSurfaceHost?.setFullscreenRequested(false)
         } else if (running) {
             // Arming from the paused Info panel does not cover the game with a
@@ -1189,6 +1180,17 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         netplay.synchronizing -> GameInputMode.BLOCKED
         else -> GameInputMode.RUNNING
     }
+    val showGamePointer = gamePointerVisible(
+        menuVisible = gameInputMode == GameInputMode.MENU || gameInputMode == GameInputMode.DIALOG,
+        directPointer = system.pointerInput,
+        controllerTypes = List(RetroPorts.COUNT) { settings.controllerType(core, it) },
+    )
+    val hiddenPointer = remember(context) {
+        android.view.PointerIcon.getSystemIcon(context, android.view.PointerIcon.TYPE_NULL)
+    }
+    val hiddenComposePointer = remember(hiddenPointer) {
+        androidx.compose.ui.input.pointer.PointerIcon(hiddenPointer)
+    }
     val latestGameMenu by rememberUpdatedState<() -> Unit>({
         if (!stateBusy && coreReady && !destroyed && !exiting) {
             if (menuOpen) resume() else openMenuFromKey()
@@ -1208,10 +1210,21 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         GameInputRouting.attach(session, gameInputMode,
             onMenu = { latestGameMenu() }, onSettings = { latestGameSettings() }, onInfo = { latestGameInfo() },
             context = gameInputPage)
-        onDispose { GameInputRouting.detach(session) }
+        onDispose {
+            GameInputRouting.detach(session)
+            com.ambient.tv.companion.CompanionRemoteInput.releaseGamePointerPolicy(session)
+        }
     }
     SideEffect {
         GameInputRouting.update(session, gameInputMode, gameInputPage)
+        com.ambient.tv.companion.CompanionRemoteInput.setGamePointerAllowed(
+            session, showGamePointer,
+            inMenu = gameInputMode == GameInputMode.MENU || gameInputMode == GameInputMode.DIALOG,
+        )
+        // Update the native surface as well as Compose, including Vulkan's hosting view.
+        // A null icon restores Android's normal menu/device pointer resolution.
+        retroView.pointerIcon = if (showGamePointer) null else hiddenPointer
+        vulkanSurfaceHost?.pointerIcon = if (showGamePointer) null else hiddenPointer
         if (!handheld) {
             CompanionGamepadSession.setInteraction(input, companionInteraction, gameInputPage,
                 canResume = !netplay.synchronizing)
@@ -1337,7 +1350,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             panelOpen = panel != null,
             onVisibilityChanged = { osd.visible.value = it },
         )
-        Box(Modifier.fillMaxSize().background(Color.Black)) {
+        Box(Modifier.fillMaxSize().background(Color.Black)
+            .then(if (showGamePointer) Modifier else
+                Modifier.pointerHoverIcon(hiddenComposePointer, overrideDescendants = true))) {
             if (handheld) AmbientSurfaceBackdropLayer(
                 surface = vulkanSurfaceHost?.presentationSurface() ?: retroView,
                 enabled = true,
@@ -1431,6 +1446,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             }))
                         }
                         if (session.vulkan && vulkanFrameStatus.active && toneMap != GameHdrToneMap.OFF &&
+                            nativeSourceContract.supports(nativeTransfer) &&
                             !(nativeSdrFullscreenRequested &&
                                 GameVulkanTransferGate.frameConfirmed(nativeTransfer, nativeSdrStatus))) {
                             MetaBadge(stringResource(R.string.game_badge_hdr_to_sdr))
@@ -1650,6 +1666,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             }
                             if (session.vulkan && toneMap != GameHdrToneMap.OFF) {
                                 GamePanelText(stringResource(R.string.game_picture_hdr_filter_note))
+                                if (loaded && !nativeSourceContract.supports(nativeTransfer)) {
+                                    GamePanelText(stringResource(R.string.game_picture_hdr_unconfirmed))
+                                }
                             }
                             if (selectedPack != null && selectedPackConfig == null) {
                                 GamePanelText(stringResource(R.string.games_shader_packs_missing))
@@ -1799,15 +1818,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                         onClick = {
                                             if (choice != toneMap && !exiting && !netplay.busy) {
                                                 GameSettings.update { state ->
-                                                    val mode = state.withHdrToneMap(core, choice)
-                                                    when {
-                                                        hdrOption == null -> mode
-                                                        // The core's own HDR output follows the picture choice.
-                                                        choice == GameHdrToneMap.PQ -> mode.withCoreOption(core, hdrOption.first, hdrOption.second)
-                                                        state.coreOptions(core)[hdrOption.first] == hdrOption.second ->
-                                                            mode.withCoreOption(core, hdrOption.first, null)
-                                                        else -> mode
-                                                    }
+                                                    GameHdrInputSettings.select(state, core, game.saveKey, choice)
                                                 }
                                                 // EGL/AHB precision is negotiated at core start, not on a
                                                 // live shader toggle; restart to choose FP16 or release it.

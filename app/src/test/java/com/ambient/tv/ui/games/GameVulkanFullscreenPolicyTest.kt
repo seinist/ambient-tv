@@ -56,4 +56,18 @@ class GameVulkanFullscreenPolicyTest {
         assertFalse(GameVulkanFullscreenPolicy.mustFallback(GameVulkanSdrStatus(3)))
         assertTrue(GameVulkanFullscreenPolicy.mustFallback(GameVulkanSdrStatus(9)))
     }
+
+    @Test fun skippingGlesNeedsAConfirmedFullscreenSurfaceInTheCurrentTransfer() {
+        fun skip(requested: Boolean = true, visible: Boolean = true, ready: Boolean = true,
+                 bits: Int = 7, transfer: GameVulkanTransferMode = GameVulkanTransferMode.SDR) =
+            GameVulkanFullscreenPolicy.canSkipGles(requested, visible, ready, GameVulkanSdrStatus(bits), transfer)
+        assertTrue(skip())
+        assertFalse(skip(requested = false)) // Menu or pause
+        assertFalse(skip(visible = false)) // Tiny diagnostic probe
+        assertFalse(skip(ready = false)) // Fullscreen resize still pending
+        assertFalse(skip(bits = 1)) // Newly attached surface
+        assertFalse(skip(bits = 9)) // Lost presentation
+        assertFalse(skip(transfer = GameVulkanTransferMode.PQ_BT2020)) // Old SDR success
+        assertTrue(skip(bits = 23, transfer = GameVulkanTransferMode.PQ_BT2020))
+    }
 }
