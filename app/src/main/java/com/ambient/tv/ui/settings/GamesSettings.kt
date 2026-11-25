@@ -56,45 +56,14 @@ internal interface GamesSettingsEntryPoint {
     fun channel(): GameCoreChannel
     fun shaderPacks(): com.ambient.tv.games.GameShaderPackStore
     fun shaderChannel(): com.ambient.tv.games.GameShaderPackChannel
+    fun library(): com.ambient.tv.games.library.GameLibraryRepository
+    fun metadata(): com.ambient.tv.games.metadata.GameMetadataSettings
 }
 
 private fun GameCoreSource.titleRes(): Int = when (this) {
     GameCoreSource.AUTO -> R.string.games_core_source_auto
     GameCoreSource.AMBIENT -> R.string.games_core_source_ambient
     GameCoreSource.BUILDBOT -> R.string.games_core_source_buildbot
-}
-
-/**
- * Settings → Games: rewind, cores (load, update, remove, options for all games), firmware
- * (BIOS) per system, further system files and the game copy cache. Everything lives in app storage.
- */
-internal fun LazyListScope.gamesSettingsItems(onOpenLibrary: () -> Unit, onOpenFiles: () -> Unit = {}) {
-    item(key = "games-library") {
-        SettingsNavigationRow(
-            title = stringResource(R.string.game_library_settings_entry),
-            summary = stringResource(R.string.game_library_settings_entry_hint),
-            onClick = onOpenLibrary,
-        )
-    }
-    item(key = "games-metadata") {
-        var sourcesOpen by remember { mutableStateOf(false) }
-        SettingsNavigationRow(
-            title = stringResource(R.string.game_metadata_settings_title),
-            summary = stringResource(R.string.game_metadata_settings_hint),
-            onClick = { sourcesOpen = true },
-        )
-        if (sourcesOpen) com.ambient.tv.ui.games.GameMetadataSettingsPanel(
-            onDismiss = { sourcesOpen = false },
-        )
-    }
-    item(key = "games-play") { GamesPlay() }
-    item(key = "games-ra") { GamesRetroAchievements() }
-    item(key = "games-system-cores") { GamesSystemCores() }
-    item(key = "games-cores") { GamesCores() }
-    item(key = "games-shader-packs") { GamesShaderPacks() }
-    item(key = "games-bios") { GamesBios(onOpenFiles) }
-    item(key = "games-files") { GamesSystemFiles() }
-    item(key = "games-cache") { GamesCache() }
 }
 
 /** Removing a file or core always asks first, like save states and shader packs. */
@@ -112,7 +81,7 @@ private fun GamesRemoveDialog(title: String, onDismiss: () -> Unit, onConfirm: (
 }
 
 @Composable
-private fun gamesEntryPoint(): GamesSettingsEntryPoint {
+internal fun gamesEntryPoint(): GamesSettingsEntryPoint {
     val context = LocalContext.current
     return remember(context) {
         EntryPointAccessors.fromApplication(context.applicationContext, GamesSettingsEntryPoint::class.java)
@@ -120,7 +89,7 @@ private fun gamesEntryPoint(): GamesSettingsEntryPoint {
 }
 
 @Composable
-private fun GamesPlay() {
+internal fun GamesPlay(includeRumble: Boolean = true) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsHint(stringResource(R.string.games_settings_explanation))
         TvSettingRow(
@@ -129,7 +98,7 @@ private fun GamesPlay() {
             checked = GameSettings.state.rewind,
             onCheckedChange = { on -> GameSettings.update { it.withRewind(on) } },
         )
-        TvSettingRow(
+        if (includeRumble) TvSettingRow(
             title = stringResource(R.string.game_settings_rumble),
             body = stringResource(R.string.game_settings_rumble_hint),
             checked = GameSettings.state.rumble,
@@ -140,7 +109,7 @@ private fun GamesPlay() {
 
 /** RetroAchievements account (token only, in encrypted storage) and play options. */
 @Composable
-private fun GamesRetroAchievements() {
+internal fun GamesRetroAchievements() {
     val client = gamesEntryPoint().retroAchievements()
     val scope = rememberCoroutineScope()
     var account by remember { mutableStateOf(client.account) }
@@ -202,11 +171,11 @@ private fun GamesRetroAchievements() {
 }
 
 @Composable
-private fun GamesBios(onOpenFiles: () -> Unit) {
+internal fun GamesBios(onOpenFiles: () -> Unit, selectedSystemId: String? = null) {
     val bios = gamesEntryPoint().bios()
     var version by remember { mutableIntStateOf(0) }
     var removing by remember { mutableStateOf<com.ambient.tv.games.GameBios?>(null) }
-    val systems = remember(version) { GameSystems.alphabetical.filter { it.bios.isNotEmpty() }.map { it to bios.status(it) } }
+    val systems = remember(version) { GameSystems.alphabetical.filter { it.bios.isNotEmpty() && (selectedSystemId == null || it.id == selectedSystemId) }.map { it to bios.status(it) } }
     removing?.let { file ->
         GamesRemoveDialog(
             title = stringResource(R.string.games_remove_confirm, file.file),
@@ -255,7 +224,7 @@ private fun GamesBios(onOpenFiles: () -> Unit) {
 
 /** Signed shader packs are only ever downloaded by an explicit click; nothing at game launch. */
 @Composable
-private fun GamesShaderPacks() {
+internal fun GamesShaderPacks() {
     val entry = gamesEntryPoint()
     val packs = entry.shaderPacks()
     val channel = entry.shaderChannel()
@@ -317,36 +286,8 @@ private fun GamesShaderPacks() {
     }
 }
 
-/** Which core plays a system when several can; single games can still choose their own (core panel). */
 @Composable
-private fun GamesSystemCores() {
-    val settings = GameSettings.state
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
-        SettingsSubheader(stringResource(R.string.games_system_cores))
-        SettingsHint(stringResource(R.string.games_system_cores_hint))
-        val needsBios = stringResource(R.string.game_info_core_needs_bios)
-        GameSystems.alphabetical.filter { it.alternatives.isNotEmpty() }.forEach { system ->
-            val current = settings.systemCore(system)
-            SettingsSelect(
-                label = system.name,
-                options = system.cores.map { core ->
-                    SettingsSelectOption(
-                        text = listOfNotNull(
-                            core.name,
-                            needsBios.takeIf { core.needsBios },
-                            core.license.takeIf { !core.freeLicense },
-                        ).joinToString(" · "),
-                        selected = core.id == current.id,
-                        onClick = { GameSettings.update { it.withSystemCore(system, core) } },
-                    )
-                },
-            )
-        }
-    }
-}
-
-@Composable
-private fun GamesCores() {
+internal fun GamesCores(onlyCoreId: String? = null) {
     val context = LocalContext.current
     val entry = gamesEntryPoint()
     val cores = entry.cores()
@@ -386,7 +327,8 @@ private fun GamesCores() {
         )
         failed?.let { SettingsHint(it) }
         val ordered = remember(version) {
-            GameSystems.cores.sortedWith(compareBy<GameCore>({ cores.info(it) == null }, { it.name.lowercase() }))
+            GameSystems.cores.filter { onlyCoreId == null || it.id == onlyCoreId }
+                .sortedWith(compareBy<GameCore>({ cores.info(it) == null }, { it.name.lowercase() }))
         }
         ordered.forEach { core ->
             key(core.id, version) {
@@ -409,7 +351,7 @@ private fun GamesCores() {
                         )
                         else -> stringResource(R.string.games_core_from_file, info.origin, dateFormat.format(java.util.Date(info.installedAt)))
                     },
-                    collapsible = true,
+                    collapsible = onlyCoreId == null,
                 ) {
                     SettingsHint(stringResource(R.string.games_core_summary, systems, core.license))
                     SettingsActionRow {
@@ -504,7 +446,7 @@ private fun GameCoreOptionsSettings(core: GameCore, declared: List<Pair<String, 
 
 /** Further files cores read from the system folder (copied from a folder in the file browser). */
 @Composable
-private fun GamesSystemFiles() {
+internal fun GamesSystemFiles() {
     val context = LocalContext.current
     val importer = gamesEntryPoint().data()
     var version by remember { mutableIntStateOf(0) }
@@ -542,7 +484,7 @@ private fun GamesSystemFiles() {
 }
 
 @Composable
-private fun GamesCache() {
+internal fun GamesCache() {
     val context = LocalContext.current
     val roms = gamesEntryPoint().roms()
     var version by remember { mutableIntStateOf(0) }
