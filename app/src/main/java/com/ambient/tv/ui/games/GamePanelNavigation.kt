@@ -28,7 +28,7 @@ import com.ambient.tv.ui.common.retryFocusFor
 import com.ambient.tv.ui.player.PlayerChromeState
 
 internal enum class GamePanel {
-    SETTINGS, OSD_BUTTONS, PICTURE, CORE, DISC, CONTROLS, INFO, ACHIEVEMENTS, CHEATS, NETPLAY,
+    SETTINGS, OSD_BUTTONS, PICTURE, DISPLAY, CORE, DISC, CONTROLS, INFO, ACHIEVEMENTS, CHEATS, NETPLAY,
 }
 
 /** A distinct page identity separates core categories and diagnostics from their parent panel. */
