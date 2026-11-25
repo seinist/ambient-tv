@@ -220,6 +220,7 @@ class HomeViewModel @Inject constructor(
     private val launcherPublisher: com.ambient.tv.launcher.LauncherPublisher,
     private val loadCoordinator: BrowseLoadCoordinator,
     private val rommLibrary: com.ambient.tv.romm.RommLibrary,
+    private val moonlightStore: com.ambient.tv.moonlight.MoonlightLibraryStore,
 ) : ViewModel() {
 
     val homeHeroStyleKey: String get() = appPreferences.homeHeroStyleKey
@@ -296,6 +297,10 @@ class HomeViewModel @Inject constructor(
     /** RomM rows come from the catalog copy on this device; Home never asks the server. */
     private var rommRows: List<ContentRowData> = emptyList()
     private var rommRowsJob: Job? = null
+    /** Cached GameStream covers and titles only; no Sunshine network call from Home. */
+    private var moonlightRows: List<ContentRowData> = emptyList()
+    private var moonlightRowsJob: Job? = null
+    private var moonlightRowsGeneration = 0
     /** Independent of row refreshes, so publishing migrated covers cannot cancel its own work. */
     private var gameGeometryJob: Job? = null
     private var gameRowsGeneration = 0
@@ -587,6 +592,17 @@ class HomeViewModel @Inject constructor(
     }
 
     init {
+        viewModelScope.launch {
+            combine(moonlightStore.revisions, appPreferences.changes().onStart { emit(Unit) }) { revision, _ ->
+                revision to appPreferences.homeRows.filter { it.enabled &&
+                    it.system == HomeRowDefinition.SYSTEM_MOONLIGHT }
+            }.distinctUntilChanged().drop(1).collect {
+                if (hasEntered && !plexOnly && !jellyfinOnly && !embyOnly) loadMoonlightRows()
+            }
+        }
+    }
+
+    init {
         var favoriteIds = appPreferences.radioFavorites.map(RadioStation::id)
         var recentIds = appPreferences.recentRadioStations.map(RadioStation::id)
         viewModelScope.launch {
@@ -730,6 +746,7 @@ class HomeViewModel @Inject constructor(
         loadRadioRows(forceRefresh = refreshing)
         loadGameRows()
         loadRommRows()
+        loadMoonlightRows()
         loadYouTubeRows(youtubeMode)
         loadTelegramRows()
         if (!plexOnly && !jellyfinOnly && !embyOnly && liveTvRegistry.configured().isNotEmpty()) startTvPreview()
@@ -2103,6 +2120,39 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    /** Saved Sunshine titles, never synchronous network discovery or WOL during Home paint. */
+    private fun loadMoonlightRows() {
+        val generation = ++moonlightRowsGeneration
+        moonlightRowsJob?.cancel()
+        val definitions = appPreferences.homeRows.filter {
+            it.enabled && it.system == HomeRowDefinition.SYSTEM_MOONLIGHT
+        }
+        if (plexOnly || jellyfinOnly || embyOnly || definitions.isEmpty() ||
+            !com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE || !appPreferences.hasMoonlightHosts) {
+            val changed = moonlightRows.isNotEmpty()
+            moonlightRows = emptyList()
+            if (changed && !_uiState.value.isFailurePage())
+                publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+            return
+        }
+        moonlightRowsJob = viewModelScope.launch {
+            val rows = try {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    moonlightHomeRows(context, definitions, appPreferences.moonlightHosts,
+                        moonlightStore, HOME_ROW_LIMIT)
+                }
+            } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+            catch (error: Exception) {
+                timber.log.Timber.w(error, "Moonlight Home cache unavailable")
+                return@launch
+            }
+            if (generation != moonlightRowsGeneration) return@launch
+            moonlightRows = rows
+            if (!_uiState.value.isFailurePage())
+                publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+        }
+    }
+
     /** RomM's Recent, Favorites and All from the catalog on this device, in the game cards. */
     private fun loadRommRows() {
         rommRowsJob?.cancel()
@@ -2372,7 +2422,7 @@ class HomeViewModel @Inject constructor(
         val offlineSystems = unreachableServers.current().offline
         publishRowsInternal(
             withAllContinueRow(applyOverviewStyle(rows), offlineSystems),
-            hasRows = rows.isNotEmpty() || radioRows.isNotEmpty() || gameRows.isNotEmpty() || rommRows.isNotEmpty() || youtubeRows.isNotEmpty() || telegramRows.isNotEmpty(),
+            hasRows = rows.isNotEmpty() || radioRows.isNotEmpty() || gameRows.isNotEmpty() || rommRows.isNotEmpty() || moonlightRows.isNotEmpty() || youtubeRows.isNotEmpty() || telegramRows.isNotEmpty(),
             offlineSystems = offlineSystems,
         )
     }
@@ -2530,8 +2580,8 @@ class HomeViewModel @Inject constructor(
         val combinedRows = visibleMediaRows.filterNot {
             it.id == PHOTO_ROW_ID || it.id.startsWith("trailers.") || it.id.startsWith("radio.") ||
                 it.id.startsWith("youtube.") || it.id.startsWith("telegram.") || it.id.startsWith("games.") ||
-                it.id.startsWith("romm.")
-        } + listOfNotNull(photoRow) + trailerRows + radioRows + gameRows + rommRows + youtubeRows + telegramRows
+                it.id.startsWith("romm.") || it.id.startsWith("moonlight.")
+        } + listOfNotNull(photoRow) + trailerRows + radioRows + gameRows + rommRows + moonlightRows + youtubeRows + telegramRows
         val playedRow = trailerPlaybackReturn.source?.takeIf {
             playbackRowEnabled(it) || (it.items.none { item -> homeTrailerVideoId(item.ratingKey) != null ||
                 homeYouTubeVideoId(item.ratingKey) != null || item.ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX) })
