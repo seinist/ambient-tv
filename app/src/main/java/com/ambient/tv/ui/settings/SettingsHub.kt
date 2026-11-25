@@ -1129,6 +1129,7 @@ internal fun settingsSystem(category: SettingsCategory): com.ambient.tv.ui.commo
     SettingsCategory.RADIO -> com.ambient.tv.ui.common.MediaSystem.RADIO
     SettingsCategory.DLNA -> com.ambient.tv.ui.common.MediaSystem.DLNA
     SettingsCategory.ROMM -> com.ambient.tv.ui.common.MediaSystem.ROMM
+    SettingsCategory.MOONLIGHT -> com.ambient.tv.ui.common.MediaSystem.MOONLIGHT
     SettingsCategory.FILES -> com.ambient.tv.ui.common.MediaSystem.FILES
     else -> null
 }
@@ -1170,6 +1171,8 @@ internal fun sourceConfigured(category: SettingsCategory, state: SettingsUiState
     SettingsCategory.FILES -> state.filesEnabled && state.fileSourceCount > 0
     SettingsCategory.DLNA -> state.dlnaServerCount > 0
     SettingsCategory.ROMM -> state.rommEnabled && state.rommConfigured
+    // Not yet a usable media source until the native GameStream transport and pairing exist.
+    SettingsCategory.MOONLIGHT -> false
     SettingsCategory.IPTV -> state.iptvSourceCount > 0
     SettingsCategory.WIREGUARD -> state.wireGuardSummary.isNotBlank()
     else -> false
