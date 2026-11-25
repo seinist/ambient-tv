@@ -16,6 +16,8 @@ internal class MoonlightControllerRouter(
         port: Short, mask: Short, buttons: Int, lt: Byte, rt: Byte,
         lx: Short, ly: Short, rx: Short, ry: Short,
     ) -> Unit,
+    /** Controller ports already reserved by authenticated Companion phones. */
+    private val reservedPorts: () -> Set<Int> = { emptySet() },
 ) {
     private data class Pad(
         val port: Int,
@@ -70,6 +72,8 @@ internal class MoonlightControllerRouter(
         return true
     }
 
+    fun localUsedPorts(): Set<Int> = pads.values.mapTo(HashSet()) { it.port }
+
     /** Clear held states even if Android did not deliver the key-up event. */
     fun releaseAll() {
         pads.values.forEach { pad ->
@@ -86,7 +90,10 @@ internal class MoonlightControllerRouter(
 
     private fun getPad(id: Int): Pad? {
         pads[id]?.let { return it }
-        val port = (0..3).firstOrNull { slot -> pads.values.none { it.port == slot } } ?: return null
+        val blocked = reservedPorts()
+        val port = (0..3).firstOrNull { slot ->
+            slot !in blocked && pads.values.none { it.port == slot }
+        } ?: return null
         return Pad(port).also { pads[id] = it }
     }
 
