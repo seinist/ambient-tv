@@ -236,23 +236,30 @@ private fun MoonlightStreamContent(
             },
         )
         if (controlsShown || status.phase != MoonlightStreamPhase.STREAMING) {
+            ReferencePlayerOverlayBackground()
+            ReferencePlayerClock(Modifier.align(Alignment.TopEnd).padding(top = 32.dp, end = 48.dp))
             Column(
                 Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                    .background(Color.Black.copy(alpha = 0.78f)).padding(24.dp),
+                    .padding(start = 58.dp, end = 58.dp, bottom = 32.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text(status.title.ifBlank { stringResource(R.string.moonlight_title) },
-                    color = Color.White, style = MaterialTheme.typography.titleMedium)
-                Text(status.error ?: stringResource(when (status.phase) {
-                    MoonlightStreamPhase.STREAMING -> R.string.moonlight_stream_running
-                    MoonlightStreamPhase.ENDED -> R.string.moonlight_stream_ended
-                    MoonlightStreamPhase.FAILED -> R.string.moonlight_stream_failed
-                    else -> R.string.moonlight_stream_connecting
-                }), color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                ReferencePlayerHeader(
+                    title = status.title.ifBlank { stringResource(R.string.moonlight_title) },
+                    artworkUrl = null,
+                    contextLine = "Moonlight · GameStream",
+                    subtitle = status.error ?: stringResource(when (status.phase) {
+                        MoonlightStreamPhase.STREAMING -> R.string.moonlight_stream_running
+                        MoonlightStreamPhase.ENDED -> R.string.moonlight_stream_ended
+                        MoonlightStreamPhase.FAILED -> R.string.moonlight_stream_failed
+                        else -> R.string.moonlight_stream_connecting
+                    }),
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (status.phase == MoonlightStreamPhase.STREAMING && controlsShown)
-                        TvActionButton(stringResource(R.string.moonlight_stream_resume), closeControls)
-                    TvActionButton(stringResource(R.string.moonlight_stream_disconnect), disconnect)
+                        TvActionButton(stringResource(R.string.moonlight_stream_resume), closeControls,
+                            modifier = Modifier.focusRequester(resumeFocus))
+                    TvActionButton(stringResource(R.string.moonlight_stream_disconnect), disconnect,
+                        modifier = Modifier.focusRequester(disconnectFocus))
                 }
             }
         }
