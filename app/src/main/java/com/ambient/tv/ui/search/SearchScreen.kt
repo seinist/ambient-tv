@@ -65,6 +65,9 @@ import com.ambient.tv.data.radio.RadioStation
 import com.ambient.tv.ui.radio.radioStationSubtitle
 import com.ambient.tv.youtube.YouTubeItem
 import com.ambient.tv.spotify.SpotifyBrowseItem
+import com.ambient.tv.ui.moonlight.MoonlightBrowseGame
+import coil3.compose.AsyncImage
+import java.io.File
 import com.ambient.tv.spotify.SpotifyEntityType
 import com.ambient.tv.tvheadend.domain.TvhChannel
 import com.ambient.tv.tvheadend.domain.TvhDvrEntry
@@ -130,6 +133,7 @@ fun SearchScreen(
     onItemClick: (String) -> Unit,
     onYouTubeClick: (String) -> Unit,
     onSpotifyClick: (SpotifyBrowseItem) -> Unit,
+    onMoonlightClick: (String, Int) -> Unit = { _, _ -> },
     onTvheadendChannelClick: (TvhChannel) -> Unit,
     onTvheadendProgramClick: (TvhEpgEvent) -> Unit,
     onTvheadendRecordingClick: (TvhDvrEntry) -> Unit,
@@ -293,11 +297,11 @@ fun SearchScreen(
                         !uiState.hasSearched -> RecentSearches(uiState.recentSearches, viewModel::useRecentSearch, viewModel::clearRecentSearches)
                         uiState.hasSearched && !uiState.hasResults && !uiState.isSearching ->
                             com.ambient.tv.ui.common.BrowseStatusPanel(
-                                title = stringResource(if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState, uiState.rommState,
+                                title = stringResource(if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState, uiState.rommState, uiState.moonlightState,
                                     uiState.trailerState, uiState.telegramState, uiState.youtubeState, uiState.spotifyState,
                                     uiState.radioState, uiState.tvheadendState).any { it == SearchSourceState.ERROR || it == SearchSourceState.PARTIAL })
                                     R.string.offline_browse_search_unavailable else R.string.search_no_results),
-                                body = if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState, uiState.rommState, uiState.trailerState, uiState.telegramState, uiState.youtubeState, uiState.spotifyState, uiState.radioState, uiState.tvheadendState).any { it == SearchSourceState.ERROR || it == SearchSourceState.PARTIAL }) {
+                                body = if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState, uiState.rommState, uiState.moonlightState, uiState.trailerState, uiState.telegramState, uiState.youtubeState, uiState.spotifyState, uiState.radioState, uiState.tvheadendState).any { it == SearchSourceState.ERROR || it == SearchSourceState.PARTIAL }) {
                                     stringResource(R.string.search_no_results_partial_error)
                                 } else stringResource(R.string.search_no_results_body),
                             )
@@ -308,6 +312,7 @@ fun SearchScreen(
                                 onItemClick,
                                 onYouTubeClick,
                                 onSpotifyClick,
+                                onMoonlightClick,
                                 { station -> viewModel.playRadio(station, onRadioStarted) },
                                 onTvheadendChannelClick,
                                 onTvheadendProgramClick,
@@ -319,6 +324,7 @@ fun SearchScreen(
                                 onItemClick,
                                 onYouTubeClick,
                                 onSpotifyClick,
+                                onMoonlightClick,
                                 { station -> viewModel.playRadio(station, onRadioStarted) },
                                 onTvheadendChannelClick,
                                 onTvheadendProgramClick,
@@ -361,6 +367,7 @@ private fun searchSourceLabel(source: SearchSource): String = when (source) {
     SearchSource.EMBY -> searchSystemName(MediaSystem.EMBY)
     SearchSource.LIVE_TV -> stringResource(R.string.tvh_live)
     SearchSource.ROMM -> searchSystemName(MediaSystem.ROMM)
+    SearchSource.MOONLIGHT -> searchSystemName(MediaSystem.MOONLIGHT)
     SearchSource.TRAILERS -> searchSystemName(MediaSystem.TRAILERS)
     SearchSource.TELEGRAM -> searchSystemName(MediaSystem.TELEGRAM)
     SearchSource.YOUTUBE -> searchSystemName(MediaSystem.YOUTUBE)
@@ -390,6 +397,7 @@ private fun SearchRows(
     onItemClick: (String) -> Unit,
     onYouTubeClick: (String) -> Unit,
     onSpotifyClick: (SpotifyBrowseItem) -> Unit,
+    onMoonlightClick: (String, Int) -> Unit,
     onRadioClick: (RadioStation) -> Unit,
     onTvheadendChannelClick: (TvhChannel) -> Unit,
     onTvheadendProgramClick: (TvhEpgEvent) -> Unit,
@@ -1138,6 +1146,7 @@ private fun SearchList(
     onItemClick: (String) -> Unit,
     onYouTubeClick: (String) -> Unit,
     onSpotifyClick: (SpotifyBrowseItem) -> Unit,
+    onMoonlightClick: (String, Int) -> Unit,
     onRadioClick: (RadioStation) -> Unit,
     onTvheadendChannelClick: (TvhChannel) -> Unit,
     onTvheadendProgramClick: (TvhEpgEvent) -> Unit,
