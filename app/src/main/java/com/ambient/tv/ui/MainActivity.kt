@@ -557,9 +557,17 @@ open class MainActivity : ComponentActivity() {
         val keyIdentity = (event.deviceId.toLong() shl 32) xor (event.keyCode.toLong() and 0xffffffffL)
         if (consumeScreensaverInput(screensaverInput.key(keyIdentity, phase, event.repeatCount,
                 screensaverActive.value, screensaverOverlayPresent.value))) return true
+        // During gameplay hand the key to the core before publishing Compose interaction
+        // state. The screensaver/intro gates above still take priority.
+        val gameRunning = com.ambient.tv.ui.gamepad.GameInputRouting.mode ==
+            com.ambient.tv.ui.gamepad.GameInputMode.RUNNING
+        if (!fromGamepadUi && gameRunning && gamepadController.handleKey(event, observePointer = false)) {
+            if (event.action == KeyEvent.ACTION_DOWN) registerUserInteraction()
+            return true
+        }
         if (event.action == KeyEvent.ACTION_DOWN) registerUserInteraction()
         // Controller buttons become the app's keys and actions (or go to a game in front).
-        if (!fromGamepadUi && gamepadController.handleKey(event)) return true
+        if (!fromGamepadUi && !gameRunning && gamepadController.handleKey(event, observePointer = false)) return true
         // Some Android TV mouse drivers emit both BUTTON_BACK and KEYCODE_BACK for one side-button
         // press. Drop the duplicate before it can also change the UI's input mode.
         if (event.keyCode == KeyEvent.KEYCODE_BACK && SystemClock.elapsedRealtime() <= suppressMouseBackKeyUntilMs) {
@@ -716,9 +724,16 @@ open class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean = withUiInputCoordinates(event) { input ->
-        dispatchUiGenericMotionEvent(input) {
-            uiResolutionHost?.dispatchGenericMotionEventToContent(input) ?: super.dispatchGenericMotionEvent(input)
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        // Joystick axes are already device-relative. Never clone a high-rate gamepad event
+        // just to transform unrelated window/pointer coordinates in the embedded UI host.
+        if (com.ambient.tv.ui.gamepad.GameInputRouting.mode == com.ambient.tv.ui.gamepad.GameInputMode.RUNNING &&
+            event.isFromSource(android.view.InputDevice.SOURCE_JOYSTICK) &&
+            event.actionMasked == MotionEvent.ACTION_MOVE && gamepadController.handleMotion(event)) return true
+        return withUiInputCoordinates(event) { input ->
+            dispatchUiGenericMotionEvent(input) {
+                uiResolutionHost?.dispatchGenericMotionEventToContent(input) ?: super.dispatchGenericMotionEvent(input)
+            }
         }
     }
 
