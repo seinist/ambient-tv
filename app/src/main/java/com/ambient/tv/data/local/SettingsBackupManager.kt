@@ -637,6 +637,7 @@ class SettingsBackupManager @Inject constructor(
                     frameDropOverlayHistory = preferences.frameDropOverlayHistory,
                     nextUpMinimalEnabled = preferences.nextUpMinimalEnabled,
                     viewTransitionStyleKey = preferences.viewTransitionStyleKey,
+                    mousePointerHideSeconds = preferences.mousePointerHideSeconds,
                     liveTvReminderAutoSwitch = context?.let { com.ambient.tv.livetv.LiveTvReminderScheduler.autoSwitch(it) },
                     autoUpdateCheck = context?.let { com.ambient.tv.update.AppUpdater.automaticUpdatesEnabled(it) },
                     projectmFavorites = context?.let { com.ambient.tv.ui.common.projectm.ProjectMFavorites(it).all().toSortedSet() },
@@ -1179,6 +1180,7 @@ class SettingsBackupManager @Inject constructor(
             settings.frameDropOverlayHistory?.let { preferences.frameDropOverlayHistory = it }
             settings.nextUpMinimalEnabled?.let { preferences.nextUpMinimalEnabled = it }
             settings.viewTransitionStyleKey?.let { preferences.viewTransitionStyleKey = it }
+            settings.mousePointerHideSeconds?.let { preferences.mousePointerHideSeconds = it }
             settings.gameLibraryOptions?.let { preferences.gameLibraryOptions = it }
             settings.gameMetadataOptions?.let { preferences.gameMetadataOptions = it }
             settings.gameLibraryOverrides?.let { preferences.gameLibraryOverrides = it.filter { row ->

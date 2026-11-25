@@ -2,6 +2,10 @@ package com.ambient.tv.ui.gamepad
 
 import android.view.InputDevice
 import android.view.KeyEvent
+import android.view.MotionEvent
+import android.os.SystemClock
+import com.ambient.tv.ui.input.PointerVisibility
+import com.ambient.tv.ui.keyboard.KeyBindings
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test
@@ -20,6 +24,8 @@ class GameDialogInputTest {
         GameInputRouting.detach(owner)
         GameInputRouting.transitions.removeDevice(7)
         GamepadInput.capture = null
+        KeyBindings.capture = null
+        PointerVisibility.stop(owner)
     }
 
     private fun event(code: Int, action: Int = KeyEvent.ACTION_DOWN, time: Long = 10) =
@@ -142,5 +148,39 @@ class GameDialogInputTest {
         val input = input { fail("Captured button was translated"); false }
         assertTrue(input.key(event(KeyEvent.KEYCODE_BUTTON_Y)) { false })
         assertEquals(listOf(KeyEvent.KEYCODE_BUTTON_Y), seen)
+    }
+
+    @Test fun consumedDialogKeysHideTheMouseBeforeCaptureAndMenuCallbacks() {
+        PointerVisibility.start(owner, 2)
+        var callbacks = 0
+        fun handled(): Boolean {
+            assertTrue("The dialog consumed this key before a content observer could see it",
+                PointerVisibility.hideNativePointer)
+            callbacks++
+            return true
+        }
+        fun showMouse(x: Float) {
+            val now = SystemClock.uptimeMillis()
+            val mouse = MotionEvent.obtain(now, now, MotionEvent.ACTION_HOVER_MOVE, x, 30f, 0)
+                .apply { source = InputDevice.SOURCE_MOUSE }
+            try { PointerVisibility.onMotionEvent(mouse) } finally { mouse.recycle() }
+            assertFalse(PointerVisibility.hideNativePointer)
+        }
+        GameInputRouting.attach(owner, GameInputMode.DIALOG, { handled() })
+        val input = input { fail("Consumed key reached the dialog content"); false }
+
+        showMouse(10f)
+        GamepadInput.capture = { handled() }
+        assertTrue(input.key(event(KeyEvent.KEYCODE_BUTTON_Y)) { fail("Gamepad capture escaped"); false })
+        GamepadInput.capture = null
+
+        showMouse(20f)
+        KeyBindings.capture = { handled() }
+        assertTrue(input.key(event(KeyEvent.KEYCODE_A)) { fail("Keyboard capture escaped"); false })
+        KeyBindings.capture = null
+
+        showMouse(30f)
+        assertTrue(input.key(event(KeyEvent.KEYCODE_BUTTON_MODE)) { fail("Menu key escaped"); false })
+        assertEquals(3, callbacks)
     }
 }

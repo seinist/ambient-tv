@@ -1066,6 +1066,11 @@ class AppPreferences @Inject constructor(
         get() = UiRenderResolutionPolicy.normalize(prefs.getString("ui_render_resolution", UiRenderResolutionPolicy.SYSTEM))
         set(value) = prefs.edit { putString("ui_render_resolution", UiRenderResolutionPolicy.normalize(value)) }
 
+    /** Idle timeout for system and companion mouse pointers throughout the app; zero means off. */
+    var mousePointerHideSeconds: Int
+        get() = MousePointerSettings.normalize(prefs.getInt(MousePointerSettings.PREFERENCE_KEY, MousePointerSettings.DEFAULT_SECONDS))
+        set(value) = prefs.edit { putInt(MousePointerSettings.PREFERENCE_KEY, MousePointerSettings.normalize(value)) }
+
     private val overscanState = androidx.compose.runtime.mutableIntStateOf(OverscanPolicy.normalize(prefs.getInt(KEY_OVERSCAN_PERCENT, 0)))
 
     /** Inset of the whole UI from each screen edge, in percent of the display size. Applies live. */

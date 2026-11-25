@@ -78,7 +78,7 @@ internal object CompanionBackupPolicy {
             "teletextSubtitleChoice", "lyricsVisible", "lyricsOnlineEnabled", "frameDropOverlayHistory",
             "nextUpMinimalEnabled",
             "liveTvReminderAutoSwitch", "autoUpdateCheck", "projectmFavorites", "keyBindings", "gamepadSettings", "retroInputSettings", "gameSettings", "gameLibraryOptions", "gameLibraryOverrides", "gameLibraryFolders",
-            "viewTransitionStyleKey",
+            "viewTransitionStyleKey", "mousePointerHideSeconds",
             "gameMetadataOptions",
         ),
         "device" to setOf("imageCacheMb", "cardImages1080"),

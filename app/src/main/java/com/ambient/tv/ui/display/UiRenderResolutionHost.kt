@@ -17,7 +17,6 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
 import android.view.Window
-import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedDispatcherOwner
 import androidx.activity.findViewTreeOnBackPressedDispatcherOwner
@@ -39,6 +38,7 @@ import androidx.savedstate.findViewTreeSavedStateRegistryOwner
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.ambient.tv.data.local.UiRenderResolutionPolicy
+import com.ambient.tv.ui.input.PointerIconFrameLayout
 
 /** The continuation dispatches to Compose once without re-entering the Activity's input hook. */
 internal class UiRenderHostCallbacks(
@@ -78,7 +78,7 @@ internal class UiRenderResolutionHost(
     parentCompositionContext: CompositionContext? = null,
     ownerView: View? = null,
     private val interactive: Boolean = true,
-) : FrameLayout(activity), AutoCloseable {
+) : PointerIconFrameLayout(activity), AutoCloseable {
     private val modeKey = UiRenderResolutionPolicy.normalize(modeKey)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val displayManager = activity.getSystemService(DisplayManager::class.java)
@@ -432,7 +432,7 @@ internal class UiRenderInputRoot(
     override val window: Window,
     private val callbacks: UiRenderHostCallbacks,
     private val interactive: Boolean = true,
-) : FrameLayout(context), DialogWindowProvider {
+) : PointerIconFrameLayout(context), DialogWindowProvider {
     init {
         isFocusable = interactive
         isFocusableInTouchMode = interactive

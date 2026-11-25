@@ -256,6 +256,10 @@ internal fun settingsSearchTargetKey(category: SettingsCategory, query: String):
             else -> null
         }
         SettingsCategory.SEEK -> "seek:controls"
+        SettingsCategory.KEY_BINDINGS -> when {
+            listOf("maus", "zeiger", "mouse", "pointer", "cursor", "touchpad", "airmouse").any { it in q } -> "input:pointer-hide"
+            else -> null
+        }
         SettingsCategory.PLAYBACK -> when {
             listOf("zurück", "zurueck", "minimier", "minimiz", "weiterspiel", "hintergrund", "background").any { it in q } ||
                 Regex("\\bback\\b").containsMatchIn(q) -> "playback:back"

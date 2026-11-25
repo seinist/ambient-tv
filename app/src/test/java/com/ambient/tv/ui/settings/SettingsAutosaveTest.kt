@@ -60,4 +60,16 @@ class SettingsAutosaveTest {
         assertEquals("#E5A00D", saved.copy(customAccentHex = "#12").deferredSettingsFrom(saved).customAccentHex)
         assertEquals("#123456", saved.copy(customAccentHex = "#123456").deferredSettingsFrom(saved).customAccentHex)
     }
+
+    @Test fun `mouse timeout saves immediately and merges independently of display settings`() {
+        val draft = saved.copy(uiDisplay = saved.uiDisplay.copy(mousePointerHideSeconds = 0))
+        val stored = saved.copy(uiDisplay = saved.uiDisplay.copy(scale = .8f, renderResolutionKey = "1080p"))
+        assertEquals(0, draft.deferredSettingsFrom(saved).mousePointerHideSeconds)
+        val merged = mergeStoredSettings(draft, saved, stored)
+        assertEquals(0, merged.mousePointerHideSeconds)
+        assertEquals(.8f, merged.uiScale, 0f)
+        assertEquals("1080p", merged.uiRenderResolutionKey)
+        assertEquals(0, mergeStoredSettings(saved, saved, draft).mousePointerHideSeconds)
+        org.junit.Assert.assertNotEquals(saved.editableValues(), draft.editableValues())
+    }
 }

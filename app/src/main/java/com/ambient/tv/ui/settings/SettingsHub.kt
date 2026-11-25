@@ -411,7 +411,10 @@ internal fun SettingsHub(
             if (category == SettingsCategory.GAMES) append(" spiele games libretro emulator bios firmware core cores retro konsole console cache speicher")
             if (category == SettingsCategory.GAME_CONTROLS) append(" gaming spiele emulator retro libretro core konsolen system spiel controller tastatur keyboard fernbedienung remote input mapping")
             if (category == SettingsCategory.CONTROLLER) append(" player playback video audio osd gamepad controller remote tastatur keyboard belegung media buttons")
-            if (category == SettingsCategory.KEY_BINDINGS) append(" ui allgemein menü navigation controller remote tastatur keyboard key binding dpad settings suche")
+            if (category == SettingsCategory.KEY_BINDINGS) {
+                append(" ui allgemein menü navigation controller remote tastatur keyboard key binding dpad settings suche maus zeiger mauszeiger mouse pointer cursor touchpad airmouse ausblenden hide timeout")
+                append(' '); append(stringResource(R.string.settings_mouse_pointer_hide_after))
+            }
         }
         // Search reaches every page; the area index only those of the chosen settings level.
         if (search) settingsSearchMatches(query, haystack)
