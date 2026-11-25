@@ -1478,7 +1478,17 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     DisposableEffect(running, input) {
         val sink: (android.view.InputEvent) -> Boolean = { event ->
-            val handled = input.onEvent(event)
+            // Perfetto can separate OS event delivery from the actual native hand-off.
+            // This is not a button-to-photon metric, and tracing is off during normal play.
+            val tracing = android.os.Trace.isEnabled()
+            if (tracing) {
+                android.os.Trace.setCounter("AmbientGame input age ms",
+                    (android.os.SystemClock.uptimeMillis() - event.eventTime).coerceAtLeast(0L))
+                android.os.Trace.beginSection("AmbientGame input to core")
+            }
+            val handled = try { input.onEvent(event) } finally {
+                if (tracing) android.os.Trace.endSection()
+            }
             if (handled && hideTouchForGamepad && isPhysicalGamepadActivity(event, input)) hidingGamepadId = event.deviceId
             handled
         }
