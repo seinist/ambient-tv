@@ -135,7 +135,7 @@
     <string name="game_core_game_reset">Eigene Werte dieses Spiels zurücksetzen</string>
     <string name="game_core_game_reset_hint">Das Spiel nutzt wieder die Werte für alle Spiele.</string>
     <string name="game_settings_rewind">Zurückspulen</string>
-    <string name="game_settings_rewind_hint">Hält die letzten 20 Sekunden bereit; die Taste dafür liegt in der Spielsteuerung.</string>
+    <string name="game_settings_rewind_hint">Hält je nach Spiel bis zu 20 Sekunden bereit; die Taste dafür liegt in der Spielsteuerung.</string>
     <string name="games_core_missing">Nicht geladen</string>
     <string name="games_core_from_buildbot">libretro-Buildserver · %1$s</string>
     <string name="games_core_from_file">Aus %1$s · %2$s</string>

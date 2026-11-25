@@ -135,7 +135,7 @@
     <string name="game_core_game_reset">Reset this game\'s own values</string>
     <string name="game_core_game_reset_hint">The game goes back to the values for all games.</string>
     <string name="game_settings_rewind">Rewind</string>
-    <string name="game_settings_rewind_hint">Keeps the last 20 seconds ready; its key is set under game controls.</string>
+    <string name="game_settings_rewind_hint">Keeps up to 20 seconds ready, depending on the game; its key is set under game controls.</string>
     <string name="games_core_missing">Not loaded</string>
     <string name="games_core_from_buildbot">libretro build server · %1$s</string>
     <string name="games_core_from_file">From %1$s · %2$s</string>

@@ -284,8 +284,7 @@ private class GameLifecycleOwner : LifecycleOwner {
     }
 }
 
-/** Rewind keeps this many seconds, within [REWIND_BUDGET_BYTES] of memory. */
-private const val REWIND_SECONDS = 20
+/** Rewind targets [GAME_REWIND_SECONDS] of history within this total memory budget. */
 private const val REWIND_BUDGET_BYTES = 64L * 1024 * 1024
 /** The category key of options without one, when others have one. */
 private const val OTHER_CATEGORY = "\u0000other"
@@ -860,7 +859,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             val fps = withContext(Dispatchers.Default) {
                 runCatching {
                     val rate = LibretroDroid.getContentFps().takeIf { it.isFinite() && it in 1.0..240.0 } ?: 60.0
-                    retroView.initRewindBuffer((REWIND_SECONDS * rate).roundToInt(), REWIND_BUDGET_BYTES)
+                    retroView.initRewindBuffer((GAME_REWIND_SECONDS * rate).roundToInt(), REWIND_BUDGET_BYTES)
                     rate
                 }.getOrNull()
             }
@@ -878,7 +877,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         }
         while (true) {
             rewindHistory = GameRewindHistory(
-                runCatching { retroView.getRewindBufferValidCount() }.getOrDefault(0), rewindFps,
+                runCatching { retroView.getRewindBufferHistoryFrames() }.getOrDefault(0L), rewindFps,
             )
             kotlinx.coroutines.delay(250)
         }

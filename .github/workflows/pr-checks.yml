@@ -53,7 +53,7 @@ jobs:
           fi
           native=false
           slang=false
-          if grep -Eq '^(app/src/(main|test)/java/com/ambient/tv/(games|ui/games|ui/gamepad)/|app/src/main/assets/games/|libretrodroid_wrapper/|scripts/(patches/libretrodroid/|native_libretro_vulkan/|fetch_libretrodroid\.sh|build_librashader_android\.sh)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
+          if grep -Eq '^(app/src/(main|test)/java/com/ambient/tv/(games|ui/games|ui/gamepad)/|app/src/main/assets/games/|libretrodroid_wrapper/|scripts/(patches/libretrodroid/|native_libretro_vulkan/|native_rewind/|test_game_rewind\.py|fetch_libretrodroid\.sh|build_librashader_android\.sh)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
             native=true
           fi
           if grep -Eq '^(app/src/main/assets/games/slang/|app/src/main/java/com/ambient/tv/ui/games/|scripts/(native_libretro_vulkan/|patches/libretrodroid/|build_librashader_android\.sh|test_librashader_preset_api\.py)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
@@ -114,6 +114,10 @@ jobs:
       - name: Native input contracts
         # Real patched input code; fast host tests complement the existing Android ABI build.
         run: python3 scripts/test_libretro_input.py --sanitize
+
+      - name: Native rewind contracts
+        # Exercise the exact Android codec/timeline with bounds and undefined-behavior checks.
+        run: python3 scripts/test_game_rewind.py --sanitize --native-dir third_party/libretrodroid/src/main/cpp
 
       - name: Compile and run unit tests
         # One ABI keeps the Vulkan probe and LibretroDroid native builds short; unit tests do not depend on them.
