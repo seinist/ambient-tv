@@ -48,6 +48,7 @@ class GamepadController(
      * controllers, keyboards and remotes all play), or a translated controller button.
      */
     fun handleKey(event: KeyEvent): Boolean {
+        com.ambient.tv.ui.input.PointerVisibility.onKeyEvent(event)
         notifyGameInputChanged()
         val blocked = transitions.key(event)
         capture()?.let { sink -> if (sink(event)) return true }
