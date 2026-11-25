@@ -8,6 +8,11 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
+import android.view.Surface
 import android.view.InputDevice
 import kotlin.math.roundToInt
 import android.view.KeyEvent
@@ -87,6 +92,12 @@ class MoonlightStreamActivity : ComponentActivity() {
 
     private var osdVisible by mutableStateOf(false)
     private var qualityProfile by mutableStateOf(MoonlightStreamProfile())
+    private var sessionProfile by mutableStateOf(MoonlightStreamProfile())
+    private val displaySession by lazy { MoonlightDisplaySession(this) }
+    private var displayPreparation: Job? = null
+    private var displayResult by mutableStateOf(MoonlightDisplayResult())
+    private var displayReady by mutableStateOf(false)
+    private var validLaunch = false
     private var remoteQuitBusy by mutableStateOf(false)
     private var remoteQuitError by mutableStateOf(false)
     private val inputManager by lazy {
@@ -121,6 +132,8 @@ class MoonlightStreamActivity : ComponentActivity() {
             return
         }
         qualityProfile = preferences.moonlightStreamProfile
+        sessionProfile = qualityProfile
+        validLaunch = true
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or
@@ -138,9 +151,13 @@ class MoonlightStreamActivity : ComponentActivity() {
                 hostId = hostId,
                 appId = appId,
                 streamProfile = qualityProfile,
+                sessionProfile = sessionProfile,
+                displayReady = displayReady,
+                displayResult = displayResult,
                 onUpdateProfile = { profile ->
-                    preferences.moonlightStreamProfile = profile.validated()
-                    qualityProfile = profile
+                    val validated = profile.validated()
+                    preferences.moonlightStreamProfile = validated
+                    qualityProfile = validated
                 },
                 onSendText = engine::sendText,
                 onQuitRemote = { quitRemoteGame(hostId) },
@@ -159,6 +176,14 @@ class MoonlightStreamActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        if (!validLaunch) return
+        sessionProfile = qualityProfile
+        displayReady = false
+        displayPreparation = lifecycleScope.launch {
+            displayResult = displaySession.prepare(sessionProfile, preferences.displayModeWhitelist,
+                preferences.displaySwitchPauseMs)
+            displayReady = true
+        }
         inputManager.registerInputDeviceListener(deviceListener, null)
         companion.attach(
             title = getString(R.string.moonlight_title),
@@ -211,6 +236,10 @@ class MoonlightStreamActivity : ComponentActivity() {
         companion.detach()
         releaseRemoteInputs()
         engine.stop()
+        displayPreparation?.cancel()
+        displayPreparation = null
+        displayReady = false
+        if (validLaunch) displaySession.restore()
         super.onStop()
     }
 
@@ -243,6 +272,8 @@ class MoonlightStreamActivity : ComponentActivity() {
         companion.detach()
         releaseRemoteInputs()
         engine.stop()
+        displayPreparation?.cancel()
+        if (validLaunch) displaySession.restore()
         super.onDestroy()
     }
 
@@ -252,12 +283,17 @@ class MoonlightStreamActivity : ComponentActivity() {
     }
 }
 
+private class MoonlightSurfaceBinding(val surface: Surface)
+
 @Composable
 private fun MoonlightStreamContent(
     engine: MoonlightStreamEngine,
     hostId: String,
     appId: Int,
     streamProfile: MoonlightStreamProfile,
+    sessionProfile: MoonlightStreamProfile,
+    displayReady: Boolean,
+    displayResult: MoonlightDisplayResult,
     onUpdateProfile: (MoonlightStreamProfile) -> Unit,
     onSendText: (String) -> Unit,
     onQuitRemote: () -> Unit,
@@ -270,6 +306,23 @@ private fun MoonlightStreamContent(
     onCompanionMode: (MoonlightStreamPhase, Boolean) -> Unit,
 ) {
     val status by engine.status.collectAsState()
+    // Surface identity is separate from the mutable next-connection profile. No decoder or
+    // remote app launch occurs while the physical display is still switching.
+    var binding by remember { mutableStateOf<MoonlightSurfaceBinding?>(null) }
+    LaunchedEffect(engine, hostId, appId, binding, displayReady, sessionProfile) {
+        val target = binding ?: return@LaunchedEffect
+        if (!displayReady || !target.surface.isValid) return@LaunchedEffect
+        // A resize/return from background can follow asynchronous teardown of the old stream.
+        val idle = withTimeoutOrNull(5_000L) {
+            while (engine.status.value.active) delay(50L)
+            true
+        } ?: false
+        if (!idle || !target.surface.isValid) return@LaunchedEffect
+        if (engine.start(hostId, appId, target.surface, sessionProfile,
+                displayResult.mode?.refreshRate, displayResult.hdr10)) {
+            try { awaitCancellation() } finally { engine.stop() }
+        }
+    }
     var panel by remember { mutableStateOf(MoonlightPlaybackPage.NONE) }
     var panelOrigin by remember { mutableStateOf(MoonlightPlaybackPage.NONE) }
     LaunchedEffect(controlsShown) {
@@ -314,10 +367,12 @@ private fun MoonlightStreamContent(
                 SurfaceView(context).apply {
                     holder.addCallback(object : SurfaceHolder.Callback {
                         override fun surfaceCreated(holder: SurfaceHolder) {
-                            engine.start(hostId, appId, holder.surface, streamProfile)
+                            binding = MoonlightSurfaceBinding(holder.surface)
                         }
                         override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
-                        override fun surfaceDestroyed(holder: SurfaceHolder) { engine.stop() }
+                        override fun surfaceDestroyed(holder: SurfaceHolder) {
+                            binding = null
+                        }
                     })
                 }
             },
@@ -362,6 +417,11 @@ private fun MoonlightStreamContent(
                 }
             },
         )
+        if (!displayReady) {
+            Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+                Text(stringResource(R.string.moonlight_display_switching))
+            }
+        }
         if (controlsShown || status.phase != MoonlightStreamPhase.STREAMING) {
             ReferencePlayerOverlayBackground()
             ReferencePlayerClock(Modifier.align(Alignment.TopEnd).padding(top = 32.dp, end = 48.dp))
@@ -374,7 +434,8 @@ private fun MoonlightStreamContent(
                     title = status.title.ifBlank { stringResource(R.string.moonlight_title) },
                     artworkUrl = null,
                     contextLine = "Moonlight · GameStream",
-                    subtitle = status.error ?: stringResource(when (status.phase) {
+                    subtitle = if (!displayReady) stringResource(R.string.moonlight_display_switching)
+                    else status.error ?: stringResource(when (status.phase) {
                         MoonlightStreamPhase.STREAMING -> R.string.moonlight_stream_running
                         MoonlightStreamPhase.ENDED -> R.string.moonlight_stream_ended
                         MoonlightStreamPhase.FAILED -> R.string.moonlight_stream_failed
@@ -427,6 +488,8 @@ private fun MoonlightStreamContent(
             page = panel,
             status = status,
             streamProfile = streamProfile,
+            activeProfile = sessionProfile,
+            displayResult = displayResult,
             onUpdateProfile = onUpdateProfile,
             onPage = { panel = it },
             onBack = backPanel,

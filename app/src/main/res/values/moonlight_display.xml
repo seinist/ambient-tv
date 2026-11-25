@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="moonlight_display_title">Display</string>
+    <string name="moonlight_display_refresh">Match display refresh rate</string>
+    <string name="moonlight_display_output">Physical display output</string>
+    <string name="moonlight_display_system">System default</string>
+    <string name="moonlight_display_stream">Auto · stream resolution</string>
+    <string name="moonlight_display_full">Auto · full display resolution</string>
+    <string name="moonlight_display_performance">Auto · performance (up to 1080p)</string>
+    <string name="moonlight_display_double">Prefer double refresh rate</string>
+    <string name="moonlight_display_off">Off</string>
+    <string name="moonlight_display_on">On</string>
+    <string name="moonlight_display_unavailable">Saved mode unavailable</string>
+    <string name="moonlight_display_hint">Applies at the next connection. Stream resolution and frame rate stay unchanged. Unsupported modes fall back safely; the previous display setting is restored on exit.</string>
+    <string name="moonlight_display_switching">Adjusting display…</string>
+    <string name="moonlight_display_fallback">Requested display mode unavailable; using current output.</string>
+    <string name="moonlight_display_actual">Display output: %1$s</string>
+    <string name="moonlight_display_source">Stream request: %1$d × %2$d · %3$d FPS</string>
+    <string name="moonlight_display_unknown">Unknown</string>
+</resources>

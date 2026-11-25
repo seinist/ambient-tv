@@ -77,7 +77,7 @@
             android:name=".ui.moonlight.MoonlightStreamActivity"
             android:exported="false"
             android:screenOrientation="sensorLandscape"
-            android:configChanges="orientation|screenSize|keyboardHidden" />
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|keyboard|keyboardHidden|navigation" />
 
         <!-- Official Android Auto media browser integration (audio, no projection). -->
         <meta-data android:name="com.google.android.gms.car.application"

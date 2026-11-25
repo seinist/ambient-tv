@@ -6,6 +6,7 @@ import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.view.Display
+import android.os.Build
 import com.limelight.nvstream.jni.MoonBridge
 
 /**
@@ -27,7 +28,9 @@ internal object MoonlightHardwareVideo {
     fun displaySupportsHdr10(context: Context): Boolean = runCatching {
         val manager = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
         val display = manager.getDisplay(Display.DEFAULT_DISPLAY) ?: return@runCatching false
-        display.hdrCapabilities?.supportedHdrTypes?.contains(Display.HdrCapabilities.HDR_TYPE_HDR10) == true
+        val types = if (Build.VERSION.SDK_INT >= 34) display.mode.supportedHdrTypes
+            else display.hdrCapabilities.supportedHdrTypes
+        Display.HdrCapabilities.HDR_TYPE_HDR10 in types
     }.getOrDefault(false)
 
     internal fun decoder(

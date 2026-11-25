@@ -18,6 +18,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -73,7 +74,8 @@ class MoonlightStreamEngine @Inject constructor(
     private val remoteControllerPorts = mutableSetOf<Int>()
 
     /** All calls are non-blocking for the Compose UI, including HTTPS launch negotiation. */
-    fun start(hostId: String, appId: Int, surface: Surface, profile: MoonlightStreamProfile): Boolean {
+    fun start(hostId: String, appId: Int, surface: Surface, profile: MoonlightStreamProfile,
+              displayRefreshHz: Float? = null, displayHdr10: Boolean? = null): Boolean {
         if (!surface.isValid || appId <= 0 || !prefs.moonlightEnabled) return false
         val valid = runCatching { profile.validated() }.getOrNull() ?: return false
         val session = synchronized(lock) {
@@ -91,7 +93,7 @@ class MoonlightStreamEngine @Inject constructor(
                     ?: throw SecurityException("App is no longer published by this paired host")
                 val videoFormat = MoonlightHardwareVideo.supportedFormat(valid,
                     appHdrSupported = app.hdrSupported,
-                    displayHdr10 = MoonlightHardwareVideo.displaySupportsHdr10(context),
+                    displayHdr10 = displayHdr10 ?: MoonlightHardwareVideo.displaySupportsHdr10(context),
                 )
                 if (videoFormat == 0) throw UnsupportedOperationException("No compatible hardware video decoder")
                 if (!surface.isValid) throw IllegalStateException("Stream surface was destroyed")
@@ -113,7 +115,8 @@ class MoonlightStreamEngine @Inject constructor(
                     .setResolution(valid.width, valid.height)
                     .setRefreshRate(valid.fps)
                     .setLaunchRefreshRate(valid.fps)
-                    .setClientRefreshRateX100(valid.fps * 100)
+                    .setClientRefreshRateX100(displayRefreshHz?.takeIf { it.isFinite() && it in 1f..999f }
+                        ?.let { (it * 100f).roundToInt() } ?: valid.fps * 100)
                     .setBitrate(valid.bitrateKbps)
                     .setSupportedVideoFormats(videoFormat)
                     .setAudioConfiguration(audioConfig)

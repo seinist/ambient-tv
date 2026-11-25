@@ -42,6 +42,8 @@ internal fun BoxScope.MoonlightPlaybackPanel(
     page: MoonlightPlaybackPage,
     status: MoonlightStreamStatus,
     streamProfile: MoonlightStreamProfile,
+    activeProfile: MoonlightStreamProfile,
+    displayResult: MoonlightDisplayResult,
     onUpdateProfile: (MoonlightStreamProfile) -> Unit,
     onPage: (MoonlightPlaybackPage) -> Unit,
     onBack: () -> Unit,
@@ -133,6 +135,11 @@ internal fun BoxScope.MoonlightPlaybackPanel(
                         else -> R.string.moonlight_stream_connecting
                     }))
                     status.error?.let { RightPanelInfoRow(it) }
+                    RightPanelInfoRow(stringResource(R.string.moonlight_display_source,
+                        activeProfile.width, activeProfile.height, activeProfile.fps))
+                    RightPanelInfoRow(stringResource(R.string.moonlight_display_actual,
+                        displayResult.mode?.label ?: stringResource(R.string.moonlight_display_unknown)))
+                    if (displayResult.unavailable) RightPanelInfoRow(stringResource(R.string.moonlight_display_fallback))
                     RightPanelInfoRow(stringResource(R.string.moonlight_player_no_seek))
                 }
                 MoonlightPlaybackPage.QUIT -> {

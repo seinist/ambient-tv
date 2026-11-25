@@ -101,4 +101,5 @@ fun MoonlightStreamSettingsSection(
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+    MoonlightDisplaySettingsSection(profile, update)
 }

@@ -18,7 +18,8 @@ class MoonlightStreamEngine @Inject constructor() {
     private val mutableRumble = MutableSharedFlow<MoonlightRumble>()
     val rumbleEvents = mutableRumble.asSharedFlow()
 
-    fun start(hostId: String, appId: Int, surface: Surface, profile: MoonlightStreamProfile): Boolean = false
+    fun start(hostId: String, appId: Int, surface: Surface, profile: MoonlightStreamProfile,
+              displayRefreshHz: Float? = null, displayHdr10: Boolean? = null): Boolean = false
     fun stop() = Unit
     fun sendKeyboard(virtualKey: Short, pressed: Boolean, modifiers: Byte) = Unit
     fun sendMousePosition(x: Int, y: Int, width: Int, height: Int) = Unit
