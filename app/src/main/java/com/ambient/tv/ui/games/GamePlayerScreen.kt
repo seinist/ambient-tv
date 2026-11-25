@@ -353,10 +353,15 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     var resolvedPack by remember(session) {
         mutableStateOf(GameShaderPackResolution(session.initialPackSelection, session.initialPackConfig))
     }
-    val selectedPackPending = !resolvedPack.matches(selectedPack)
+    val selectedPackPending = selectedPack != null && !resolvedPack.matches(selectedPack)
     val selectedPackConfig = resolvedPack.configFor(selectedPack)
     LaunchedEffect(session, selectedPack) {
         if (resolvedPack.matches(selectedPack)) return@LaunchedEffect
+        // Switching to a built-in filter needs no disk work or intermediate wait.
+        if (selectedPack == null) {
+            resolvedPack = GameShaderPackResolution(null, null)
+            return@LaunchedEffect
+        }
         val verified = withContext(Dispatchers.IO) { model.shaderPacks.config(selectedPack) }
         // Cancellation alone cannot interrupt blocking disk IO. Check the live selection too.
         if (GameSettings.state.packShader(system, game.saveKey) == selectedPack) {
