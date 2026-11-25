@@ -679,6 +679,11 @@ class SettingsBackupManager @Inject constructor(
         validateAccountBackup(backup)
         backup.smartTubeAccounts?.let { smartTube?.validateAccounts(it) }
         backup.fileSources.filter { it.kind in com.ambient.tv.data.files.FileKinds.ALL }.forEach { it.validated() }
+        backup.extras?.connections?.moonlightHosts?.let { hosts ->
+            require(hosts.size <= 16) { "Too many Moonlight hosts in backup" }
+            hosts.forEach { it.validated() } // reject malformed profiles before any settings change
+            require(hosts.map { it.id }.distinct().size == hosts.size) { "Duplicate Moonlight host IDs" }
+        }
         backup.extras?.portable?.gameLibraryOverrides?.let { overrides ->
             require(overrides.size <= 5000)
             require(overrides.distinctBy { it.sourceId to it.path }.size == overrides.size)
