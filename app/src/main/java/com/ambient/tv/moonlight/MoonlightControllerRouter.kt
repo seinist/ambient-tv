@@ -76,10 +76,11 @@ internal class MoonlightControllerRouter(
 
     /** Clear held states even if Android did not deliver the key-up event. */
     fun releaseAll() {
-        pads.values.forEach { pad ->
-            output(pad.port.toShort(), activeMask(), 0, 0, 0, 0, 0, 0, 0)
-        }
+        val released = pads.values.map { it.port }
         pads.clear()
+        released.forEach { port ->
+            output(port.toShort(), 0, 0, 0, 0, 0, 0, 0, 0)
+        }
     }
 
     fun removeDevice(deviceId: Int) {
