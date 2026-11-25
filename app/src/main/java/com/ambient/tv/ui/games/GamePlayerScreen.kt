@@ -1409,12 +1409,12 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     LaunchedEffect(retroView) {
         retroView.getRumbleEvents().collect { event ->
             if (GameSettings.state.rumble && runningNow) {
-                input.deviceIds(event.port).forEach { GameRumble.apply(it, event.strengthWeak, event.strengthStrong) }
+                input.rumbleDeviceIds(event.port).forEach { GameRumble.apply(it, event.strengthWeak, event.strengthStrong) }
             }
         }
     }
-    LaunchedEffect(running) {
-        if (!running) GameRumble.stopAll()
+    LaunchedEffect(running, settings.rumble) {
+        if (!running || !settings.rumble) GameRumble.stopAll()
     }
     // Hardcore (once the session confirms it) plays without cheats and rewind.
     LaunchedEffect(achievements.state, achievementsInitialized) {

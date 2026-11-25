@@ -23,10 +23,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -40,6 +38,7 @@ import com.ambient.tv.ui.gamepad.retro.RetroInputSettings
 import com.ambient.tv.ui.gamepad.retro.CompanionTouchProfile
 import com.ambient.tv.ui.gamepad.retro.companionTouchProfileKey
 import com.ambient.tv.ui.games.GameTouchControls
+import com.ambient.tv.ui.games.rememberGameButtonHaptic
 import com.ambient.tv.ui.games.GameTouchOptions
 import com.ambient.tv.ui.games.gameTouchPresentation
 import com.ambient.tv.ui.gamepad.GamepadInput
@@ -287,7 +286,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
         }
     }
     val motion = rememberCompanionMotionSource(transmitting && motionEnabled)
-    val haptics = LocalHapticFeedback.current
+    val pulse = rememberGameButtonHaptic()
     val scope = rememberCoroutineScope()
     val view = LocalView.current
     DisposableEffect(view) {
@@ -362,7 +361,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
         if (padInputs.touchButtons != mask) {
             padInputs.touchButtons = mask
             publishPad()
-            if (pressed && touchStyle.buttonHaptics) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            if (pressed && touchStyle.buttonHaptics && button !in COMPANION_DPAD_BUTTONS) pulse()
         }
     }
     val setPointer: (CompanionPointerState?) -> Unit = { pointer ->

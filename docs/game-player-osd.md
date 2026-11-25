@@ -23,10 +23,14 @@ scaling retains the full central area so the core can fit its source pixels with
 surface changing the whole-number scale. Its internal integer borders can therefore remain.
 The separate Companion controller keeps its existing layout.
 
-Touch customization also offers **Button vibration**, disabled by default. It uses a light
-system haptic on a newly pressed game button, including face, Start/Select and shoulder buttons.
+Touch customization also offers **Button vibration**, disabled by default. It requests a short
+20 ms pulse from the phone's vibration motor on a newly pressed game button, including face,
+Start/Select and shoulder buttons. Android receives the touch-feedback usage, so device/system
+haptic policies still apply. Devices without a vibrator silently ignore the request.
 The D-pad, analog movement, held-button motion and releases do not produce a pulse. Local play
-and Companion touch controls use the same saved preference.
+and Companion touch controls use the same saved preference. Physical gamepads, keyboards and
+remotes never trigger this handset pulse. Separately, the game's Rumble option (on by default)
+routes core vibration events only to assigned physical gamepads connected to the playback device.
 
 ## Available actions
 
