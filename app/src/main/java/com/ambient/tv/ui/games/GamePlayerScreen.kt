@@ -1101,8 +1101,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
 
     // First frame: the game is loaded; continue where the player left off, then keep rewind ready.
     LaunchedEffect(retroView) {
-        var renderedFrames = 0
-        var initializationFrames = 0
+        var lastStatusPollMs = -2_000L
+        var lastInitializationPollMs = -1_000L
         var pendingAuto = session.autoState.takeUnless { hardcoreRequested }
         suspend fun refreshStateSupport() {
             serializationPolicy = GameSerializationPolicy(runCatching { LibretroDroid.getSerializationQuirks() }.getOrDefault(0L))
@@ -1123,10 +1123,13 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             }
         }
         retroView.getGLRetroEvents().collect { event ->
-            val statusInterval = if (nativeSdrFullscreenRequested) 30 else 120
+            val now = android.os.SystemClock.elapsedRealtime()
+            val statusIntervalMs = if (nativeSdrFullscreenRequested) 500L else 2_000L
             if (event == GLRetroView.GLRetroEvents.FrameRendered &&
-                session.vulkan && renderedFrames++ % statusInterval == 0) {
-                // One atomic native status read per ~2 seconds at 60 FPS. A driver may switch to
+                session.vulkan && now - lastStatusPollMs >= statusIntervalMs) {
+                lastStatusPollMs = now
+                // Frame notifications are conflated; keep status reads on a wall-clock cadence.
+                // A driver may switch to
                 // RGBA8 on resize, so a startup-only snapshot would become inaccurate.
                 val status = GameVulkanFrameStatus(runCatching {
                     LibretroDroid.getVulkanFrameStatus()
@@ -1150,6 +1153,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             if (event == GLRetroView.GLRetroEvents.SurfaceCreated) coreReady = true
             if (event == GLRetroView.GLRetroEvents.FrameRendered && !loaded) {
                 loaded = true
+                lastInitializationPollMs = now
                 model.firstFrameRendered(session)
                 refreshStateSupport()
                 // Read the nominal core cadence, never the frame counter or display Hz.
@@ -1177,9 +1181,10 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 achievementsInitialized = true
             } else if (event == GLRetroView.GLRetroEvents.FrameRendered && loaded &&
                 !stateAvailable && core.saveStates && serializationPolicy.persistentStates &&
-                serializationPolicy.mustInitialize && ++initializationFrames % 60 == 0) {
-                // Some cores cannot serialize on frame one. Probe at most once per 60 rendered
-                // frames, off main, rather than permanently disabling saves after the first miss.
+                serializationPolicy.mustInitialize && now - lastInitializationPollMs >= 1_000L) {
+                // A slow-starting core gets another probe after a second of real elapsed time,
+                // independent of notification sampling or the emulated system's frame rate.
+                lastInitializationPollMs = now
                 refreshStateSupport()
             }
         }
