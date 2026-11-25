@@ -35,11 +35,14 @@ public:
     void reset() {
         pending = 0;
         interval = 1;
+        workInterval = 1;
+        averageWorkNs = 0;
+        averageCaptureNs = 0;
     }
 
     /** Call only when at least one forward frame will actually run. */
     bool shouldCapture(const RewindBuffer& buffer) const {
-        return buffer.getValidCount() == 0 || pending >= interval;
+        return buffer.getValidCount() == 0 || pending >= captureInterval();
     }
 
     /** Call only after a successful push(data, size, pendingFrames()). */
@@ -61,6 +64,31 @@ public:
         const uint64_t capacity = static_cast<uint64_t>(estimatedRecords);
         const uint64_t desired = target / capacity + (target % capacity != 0 ? 1 : 0);
         interval = std::max<uint64_t>(1, std::min(maximumInterval, desired));
+    }
+
+    /**
+     * Samples on the emulation thread, without counting the pacing sleep. Capture remains
+     * on this thread because a libretro core may not be serialized concurrently with retro_run.
+     * Bound its amortized cost to 1/8 frame (and at most half the observed spare time).
+     * Spikes increase spacing immediately; recovery is smoothed to avoid oscillation.
+     */
+    void observeFrameWork(uint64_t workNs, uint64_t captureNs, uint64_t frameBudgetNs,
+                          unsigned frames = 1) {
+        if (!frameBudgetNs || !frames) return;
+        // Cap samples before arithmetic, including anomalous stalls or suspended clocks.
+        constexpr uint64_t cap = 1000000000ULL;
+        const uint64_t baseline = std::min(cap, (workNs > captureNs ? workNs - captureNs : 0) / frames);
+        averageWorkNs = averageWorkNs == 0 ? baseline : (averageWorkNs * 7 + baseline) / 8;
+        if (captureNs > 0) {
+            const uint64_t sample = std::min(cap, captureNs);
+            averageCaptureNs = averageCaptureNs == 0 ? sample : (averageCaptureNs * 7 + sample) / 8;
+        }
+        if (!averageCaptureNs) return;
+        const uint64_t slack = frameBudgetNs > averageWorkNs ? frameBudgetNs - averageWorkNs : 0;
+        const uint64_t allowed = std::max<uint64_t>(1, std::min(frameBudgetNs / 8, slack / 2));
+        const uint64_t cost = std::max(averageCaptureNs, std::min(cap, captureNs));
+        const uint64_t desired = cost / allowed + (cost % allowed != 0 ? 1 : 0);
+        workInterval = std::max<uint64_t>(1, std::min(maximumInterval, desired));
     }
 
     /** Include every emulated forward frame while an anchor exists, even when capture is skipped. */
@@ -85,7 +113,7 @@ public:
     }
 
     uint64_t pendingFrames() const { return pending; }
-    uint64_t captureInterval() const { return interval; }
+    uint64_t captureInterval() const { return std::max(interval, workInterval); }
 
 private:
     static uint64_t saturatedAdd(uint64_t a, uint64_t b) {
@@ -97,6 +125,9 @@ private:
     uint64_t maximumInterval = 1;
     uint64_t pending = 0;
     uint64_t interval = 1;
+    uint64_t workInterval = 1;
+    uint64_t averageWorkNs = 0;
+    uint64_t averageCaptureNs = 0;
 };
 
 } // namespace libretrodroid
