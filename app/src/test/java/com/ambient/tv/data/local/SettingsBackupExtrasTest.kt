@@ -131,6 +131,33 @@ class SettingsBackupExtrasTest {
         assertEquals(favorites, manager(configured()).previewJson(Json.encodeToString(backup)).extras?.portable?.projectmFavorites)
     }
 
+    @Test fun moonlightBackupRestoresOnlyHostProfilesNotDeviceIdentity() {
+        val source = configured().apply {
+            moonlightEnabled = true
+            moonlightHosts = listOf(com.ambient.tv.moonlight.MoonlightHost(
+                id = "sunshine-a", host = "gaming-pc.local", port = 47989,
+                name = "Gaming PC", macAddress = "AA:BB:CC:DD:EE:FF",
+            ))
+        }
+        val target = configured()
+        val receiverId = target.moonlightDeviceId
+        manager(target).importJson(manager(source).exportJson(includeCredentials = true, includeSessions = true))
+        assertTrue(target.moonlightEnabled)
+        assertEquals(source.moonlightHosts, target.moonlightHosts)
+        assertEquals(receiverId, target.moonlightDeviceId)
+        assertNotEquals(source.moonlightDeviceId, target.moonlightDeviceId)
+    }
+
+    @Test fun invalidMoonlightHostsRejectBeforeChangingSettings() {
+        val target = configured().apply { moonlightEnabled = false }
+        val invalid = """{"schemaVersion":85,"exportedAtEpochMs":0,
+            "extras":{"connections":{"moonlightEnabled":true,
+             "moonlightHosts":[{"id":"bad","host":"http://attacker.invalid","port":47989}]}}}"""
+        assertThrows(IllegalArgumentException::class.java) { manager(target).importJson(invalid) }
+        assertFalse(target.moonlightEnabled)
+        assertTrue(target.moonlightHosts.isEmpty())
+    }
+
     @Test fun receiverActivationPairingTrustAndConsentStayOnTheReceivingDevice() {
         val source = configured()
         val target = AppPreferences(memoryPreferences()).apply {
