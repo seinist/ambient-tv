@@ -945,7 +945,7 @@ internal fun SettingsHub(
                             ) {
                             LaunchedEffect(current, landingQuery) {
                                 if (!handheld) settlingPageFocus = true
-                                if (current != SettingsCategory.NAV_SOUNDS) withTimeoutOrNull(400) {
+                                if (current != SettingsCategory.NAV_SOUNDS && current != SettingsCategory.GAMES) withTimeoutOrNull(400) {
                                     snapshotFlow { listState.layoutInfo.totalItemsCount > 0 }.first { it }
                                 }
                                 // Consume an external stable item anchor once, without restarting page focus.
