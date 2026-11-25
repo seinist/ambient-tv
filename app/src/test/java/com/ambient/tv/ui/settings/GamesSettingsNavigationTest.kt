@@ -21,6 +21,17 @@ class GamesSettingsNavigationTest {
         assertEquals(GamesSettingsPage.PLAY, gamesSettingsParent(GamesSettingsPage.ACHIEVEMENTS))
     }
 
+    @Test fun searchAndDirectShortcutsReachTheExpectedSection() {
+        assertEquals(GamesSettingsPage.SYSTEMS, gamesSettingsPageForSearch("systems"))
+        assertEquals(GamesSettingsPage.METADATA, gamesSettingsPageForSearch("metadata"))
+        assertEquals(GamesSettingsPage.SHADERS, gamesSettingsPageForSearch("Shader"))
+        assertEquals(GamesSettingsPage.CACHE, gamesSettingsPageForSearch("Spiele-Cache"))
+        assertEquals(GamesSettingsPage.ACHIEVEMENTS, gamesSettingsPageForSearch("RetroAchievements"))
+        assertEquals("systems", settingsShortcutGamesTarget("games:systems"))
+        assertEquals("home", settingsShortcutGamesTarget("games:home"))
+        assertEquals(null, settingsShortcutGamesTarget("games:not-a-page"))
+    }
+
     @Test fun categoriesReturnToGamesOverview() {
         for (page in listOf(GamesSettingsPage.SYSTEMS, GamesSettingsPage.METADATA,
                 GamesSettingsPage.CONTROLS, GamesSettingsPage.PLAY, GamesSettingsPage.STORAGE)) {
