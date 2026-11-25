@@ -70,13 +70,14 @@ enum class MediaSystem(
         "romm", R.string.romm_title, R.drawable.system_romm,
         coloredLogo = R.drawable.system_romm, brand = "RomM", preserveLogoColors = true,
     ),
+    MOONLIGHT("moonlight", R.string.moonlight_title, R.drawable.system_moonlight, brand = "Moonlight"),
     FILES("files", R.string.files_title, null);
 
     /** A provider mark already names its system, so a text label next to it is a duplicate. */
     val hasBrandMark: Boolean get() = logo != null
 
     /** TMDB's lettering is unreadable at icon size and DLNA's symbol has none, so neither spells its name. */
-    val markSpellsName: Boolean get() = hasBrandMark && this !in setOf(TRAILERS, DLNA, IPTV, RADIO, TELEGRAM, ROMM)
+    val markSpellsName: Boolean get() = hasBrandMark && this !in setOf(TRAILERS, DLNA, IPTV, RADIO, TELEGRAM, ROMM, MOONLIGHT)
 
     /** Name given to this system in Settings; null while it keeps the provider's own name. */
     val customName: String? get() = SystemNameOverrides.names[key]
@@ -95,9 +96,10 @@ enum class MediaSystem(
          * offered by builds that contain its optional native MTProto core.
          */
         val addOrder: List<MediaSystem> = listOf(
-            PLEX, JELLYFIN, EMBY, DLNA, ROMM, TVHEADEND, IPTV, YOUTUBE, TELEGRAM, SPOTIFY, RADIO, TRAILERS, FILES,
+            PLEX, JELLYFIN, EMBY, DLNA, ROMM, MOONLIGHT, TVHEADEND, IPTV, YOUTUBE, TELEGRAM, SPOTIFY, RADIO, TRAILERS, FILES,
         ).filter { it != TELEGRAM || com.ambient.tv.BuildConfig.MONOGRAM_NATIVE }
             .filter { it != SPOTIFY || com.ambient.tv.BuildConfig.SPOTIFY_ENABLED }
+            .filter { it != MOONLIGHT || com.ambient.tv.BuildConfig.MOONLIGHT_EXPERIMENTAL }
 
         fun fromKey(key: String?): MediaSystem? = when (key?.lowercase()) {
             "tv", "tvh", "live_tv" -> TVHEADEND
