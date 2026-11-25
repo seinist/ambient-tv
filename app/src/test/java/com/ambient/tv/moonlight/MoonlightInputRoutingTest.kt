@@ -2,6 +2,7 @@ package com.ambient.tv.moonlight
 
 import android.app.Application
 import android.view.KeyEvent
+import android.view.InputDevice
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -30,7 +31,9 @@ class MoonlightInputRoutingTest {
         val keyboard = MoonlightKeyboardRouter { code, pressed, modifiers ->
             events += Triple(code.toInt(), pressed, modifiers.toInt())
         }
-        assertTrue(keyboard.onKey(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_A)))
+        assertTrue(keyboard.onKey(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_A).apply {
+            source = InputDevice.SOURCE_KEYBOARD
+        }))
         assertEquals(Triple(65, true, 0), events.last())
         keyboard.releaseAll()
         assertEquals(Triple(65, false, 0), events.last())
