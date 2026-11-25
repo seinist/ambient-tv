@@ -15,6 +15,7 @@ class MoonlightHostTest {
         assertNull(MoonlightHostAddress.normalize("computer/path"))
         assertNull(MoonlightHostAddress.normalize("computer", 65536))
         assertNull(MoonlightHostAddress.normalize("a..b"))
+        assertNull(MoonlightHostAddress.normalize("[not-ipv6]"))
     }
 
     @Test fun serverInfoRejectsEntityDeclarationsAndInvalidIdentity() {
@@ -35,6 +36,9 @@ class MoonlightHostTest {
         assertEquals("test.local", MoonlightHost(id = "id-1", host = "TEST.local", name = "PC").validated().host)
         assertThrows(IllegalArgumentException::class.java) {
             MoonlightHost(id = "id-1", host = "user:pass@host").validated()
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            MoonlightHost(id = "id-2", host = "pc.local", macAddress = "not-a-mac").validated()
         }
     }
 }
