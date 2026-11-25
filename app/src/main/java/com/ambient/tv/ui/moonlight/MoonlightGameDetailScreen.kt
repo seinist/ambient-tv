@@ -88,6 +88,10 @@ fun MoonlightGameDetailScreen(
             Text(stringResource(R.string.moonlight_offline_detail),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (game.host.macAddress.isNotBlank()) {
+                TvActionButton(stringResource(R.string.moonlight_wake_pc),
+                    { model.wakeHost(hostId) })
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             TvActionButton(stringResource(R.string.moonlight_stream_play), onPlay, enabled = online)
