@@ -8,6 +8,12 @@ Base: 50dff9f8770569c788d6a7b8e11a1a914bd47c69. This change set begins with boun
 - Pack padded ES2 software frames into the reusable upload buffer for one texture upload; preserve immutable source bytes, original pitch metadata and existing color conversion.
 - Regression test: repeated unchanged touch input emits no port callback.
 
+## Stage 2 (safe subset)
+- Add native RGB565 padded, unaligned, partial-redraw pixel checks.
+- Cache ES2 texture sampling state across unchanged frames, including paused shader preparation. Capture restores sampler state.
+- Batch reverse-delta ring reads/writes in fixed 256-byte stack chunks. Wire format, frame spans, budget, and zero heap allocation unchanged.
+- Re-audit: while asynchronous shader IO is pending, demote fullscreen without setting the temporary raw preset. The new filter resets the status before promotion.
+
 ## Required checks
 Run PR CI including the native patch application, GLES/HDR and Vulkan test harnesses, and Kotlin unit tests. Device timings are not established by static review.
 

@@ -213,7 +213,8 @@ void auditAlpha(Audit& audit) {
 
 void auditSoftwareUpload(Audit& audit) {
     const std::vector<int> formats=audit.version==2 ? std::vector<int>{RETRO_PIXEL_FORMAT_XRGB8888,
-        RETRO_PIXEL_FORMAT_HDR10_2101010,RETRO_PIXEL_FORMAT_0RGB1555} : std::vector<int>{RETRO_PIXEL_FORMAT_0RGB1555};
+        RETRO_PIXEL_FORMAT_HDR10_2101010,RETRO_PIXEL_FORMAT_0RGB1555,RETRO_PIXEL_FORMAT_RGB565} :
+        std::vector<int>{RETRO_PIXEL_FORMAT_0RGB1555};
     for(int format:formats) {
         audit.run("source-upload","format/"+std::to_string(format),[&] {
             std::unique_ptr<Renderer> renderer=audit.version==2 ? std::unique_ptr<Renderer>(new ImageRendererES2()) :
@@ -221,7 +222,7 @@ void auditSoftwareUpload(Audit& audit) {
             renderer->setPixelFormat(format);renderer->setShaders(ShaderManager::getShader(pixel()));
             for(unsigned width:{1u,32u,33u,7u,64u}) {
                 const unsigned height=width==1 ? 1:17;
-                const size_t bpp=format==RETRO_PIXEL_FORMAT_0RGB1555 ? 2:4;
+                const size_t bpp=(format==RETRO_PIXEL_FORMAT_0RGB1555 || format==RETRO_PIXEL_FORMAT_RGB565) ? 2:4;
                 for(size_t padding:{0u,7u}) {
                     const size_t pitch=width*bpp+padding;
                     // No padding after the last row, and an intentionally unaligned base.
@@ -237,6 +238,12 @@ void auditSoftwareUpload(Audit& audit) {
                             packed=(r<<20)|(g<<10)|b;
                             color={static_cast<unsigned char>((r*255+511)/1023),
                                 static_cast<unsigned char>((g*255+511)/1023),static_cast<unsigned char>((b*255+511)/1023),255};
+                        } else if(format==RETRO_PIXEL_FORMAT_RGB565) {
+                            const unsigned r=color[0]>>3,g=color[1]>>2,b=color[2]>>3;
+                            packed=(r<<11)|(g<<5)|b;
+                            color={static_cast<unsigned char>(std::lround(r*255.0/31.0)),
+                                static_cast<unsigned char>(std::lround(g*255.0/63.0)),
+                                static_cast<unsigned char>(std::lround(b*255.0/31.0)),255};
                         } else if(format==RETRO_PIXEL_FORMAT_0RGB1555) {
                             const unsigned r=color[0]>>3,g=color[1]>>3,b=color[2]>>3;
                             packed=(r<<10)|(g<<5)|b;
@@ -249,7 +256,8 @@ void auditSoftwareUpload(Audit& audit) {
                     for(int repeat=0;repeat<3;++repeat) {
                     if(repeat==2) {
                         // A core may redraw only the final pixel and reuse every other byte.
-                        uint32_t white=format==RETRO_PIXEL_FORMAT_0RGB1555 ? 0x7fffu :
+                        uint32_t white=format==RETRO_PIXEL_FORMAT_RGB565 ? 0xffffu :
+                            format==RETRO_PIXEL_FORMAT_0RGB1555 ? 0x7fffu :
                             format==RETRO_PIXEL_FORMAT_HDR10_2101010 ? 0x3fffffffu : 0x00ffffffu;
                         std::memcpy(frame.data()+1+(height-1)*pitch+(width-1)*bpp,&white,bpp);
                         expected.back()={255,255,255,255};

@@ -647,8 +647,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     LaunchedEffect(integerScaling, vulkanSurfaceHost) {
         vulkanSurfaceHost?.updateIntegerScaling(integerScaling)
     }
-    LaunchedEffect(nativeSlangPath, vulkanSurfaceHost) {
-        vulkanSurfaceHost?.updateShaderPreset(nativeSlangPath)
+    LaunchedEffect(nativeSlangPath, nativeSlangPending, vulkanSurfaceHost) {
+        // Disarm fullscreen before replacing the active shader. Do not publish
+        // a transient empty (raw Pixel) preset while an IO request is pending.
+        if (nativeSlangPending) vulkanSurfaceHost?.setFullscreenRequested(false)
+        else vulkanSurfaceHost?.updateShaderPreset(nativeSlangPath)
     }
     LaunchedEffect(coreReady, vulkanSurfaceHost) {
         if (coreReady) vulkanSurfaceHost?.coreReady()

@@ -1,0 +1,50 @@
+diff --git a/src/main/cpp/renderers/es2/imagerendereres2.h b/src/main/cpp/renderers/es2/imagerendereres2.h
+--- a/src/main/cpp/renderers/es2/imagerendereres2.h
++++ b/src/main/cpp/renderers/es2/imagerendereres2.h
+@@ -60,4 +60,8 @@
+     unsigned int currentTexture = 0;
++    // The renderer owns this texture; raw capture restores its sampler state.
++    bool samplingInitialized = false;
++    bool appliedLinear = false;
++    void updateTextureSampling();
+     // GLES2 has no portable texture swizzle/row length. Reuse one tightly packed
+     // conversion buffer and never modify a const core-owned frame or its padding.
+     std::vector<uint8_t> uploadBuffer;
+diff --git a/src/main/cpp/renderers/es2/imagerendereres2.cpp b/src/main/cpp/renderers/es2/imagerendereres2.cpp
+--- a/src/main/cpp/renderers/es2/imagerendereres2.cpp
++++ b/src/main/cpp/renderers/es2/imagerendereres2.cpp
+@@ -95,8 +95,5 @@
+     glPixelStorei(GL_UNPACK_ALIGNMENT, bytesPerPixel);
+ 
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, linear ? GL_LINEAR : GL_NEAREST);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, linear ? GL_LINEAR : GL_NEAREST);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    updateTextureSampling();
+ 
+     if (lastFrameSize.first != width || lastFrameSize.second != height) {
+@@ -150,4 +147,16 @@
+ bool ImageRendererES2::rendersInVideoCallback() {
+     return false;
+ }
+ 
++void ImageRendererES2::updateTextureSampling() {
++    if (samplingInitialized && appliedLinear == linear) return;
++    if (!samplingInitialized) {
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    }
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, linear ? GL_LINEAR : GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, linear ? GL_LINEAR : GL_NEAREST);
++    appliedLinear = linear;
++    samplingInitialized = true;
++}
++
+@@ -169,6 +178,5 @@
+     framebuffers = std::move(next);
+     glBindTexture(GL_TEXTURE_2D, currentTexture);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, linear ? GL_LINEAR : GL_NEAREST);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, linear ? GL_LINEAR : GL_NEAREST);
++    updateTextureSampling();
+     glBindTexture(GL_TEXTURE_2D, 0);
+     passWidth = width;
