@@ -124,9 +124,14 @@ internal fun BoxScope.MoonlightPlaybackPanel(
                 }
                 MoonlightPlaybackPage.INFO -> {
                     RightPanelSectionTitle(stringResource(R.string.moonlight_player_info))
-                    RightPanelInfoRow(status.title)
-                    RightPanelInfoRow(status.detail)
-                    RightPanelInfoRow(status.phase.name)
+                    status.title.takeIf(String::isNotBlank)?.let { RightPanelInfoRow(it) }
+                    status.detail.takeIf(String::isNotBlank)?.let { RightPanelInfoRow(it) }
+                    RightPanelInfoRow(stringResource(when (status.phase) {
+                        com.ambient.tv.moonlight.MoonlightStreamPhase.STREAMING -> R.string.moonlight_stream_running
+                        com.ambient.tv.moonlight.MoonlightStreamPhase.ENDED -> R.string.moonlight_stream_ended
+                        com.ambient.tv.moonlight.MoonlightStreamPhase.FAILED -> R.string.moonlight_stream_failed
+                        else -> R.string.moonlight_stream_connecting
+                    }))
                     status.error?.let { RightPanelInfoRow(it) }
                     RightPanelInfoRow(stringResource(R.string.moonlight_player_no_seek))
                 }
