@@ -13,6 +13,7 @@ import com.ambient.tv.moonlight.MoonlightServerInfoClient
 import com.ambient.tv.moonlight.MoonlightSystemTransport
 import com.ambient.tv.moonlight.MoonlightPairResult
 import com.ambient.tv.moonlight.MoonlightApp
+import com.ambient.tv.moonlight.MoonlightStreamProfile
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.UUID
@@ -36,6 +37,7 @@ data class MoonlightSettingsUiState(
     val checkingId: String? = null,
     val status: Map<String, String> = emptyMap(),
     val nativeAvailable: Boolean = false,
+    val streamProfile: MoonlightStreamProfile = MoonlightStreamProfile(),
     val pairedIds: Set<String> = emptySet(),
     val pairingHostId: String? = null,
     val pairingPin: String? = null,
@@ -58,11 +60,22 @@ class MoonlightSettingsViewModel @Inject constructor(
         enabled = preferences.moonlightEnabled,
         hosts = preferences.moonlightHosts,
         nativeAvailable = transport.available,
+        streamProfile = preferences.moonlightStreamProfile,
         pairedIds = preferences.moonlightHosts.filter { transport.locallyPaired(it.id) }.map { it.id }.toSet(),
     ))
     val state: StateFlow<MoonlightSettingsUiState> = mutable.asStateFlow()
     private var scanJob: Job? = null
     private var pairJob: Job? = null
+
+    fun updateProfile(next: MoonlightStreamProfile) {
+        try {
+            val profile = next.validated()
+            preferences.moonlightStreamProfile = profile
+            mutable.update { it.copy(streamProfile = profile, error = null) }
+        } catch (_: IllegalArgumentException) {
+            mutable.update { it.copy(error = context.getString(R.string.moonlight_profile_invalid)) }
+        }
+    }
 
     fun setEnabled(enabled: Boolean) {
         if (mutable.value.pairingBusy) return
