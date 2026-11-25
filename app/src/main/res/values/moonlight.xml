@@ -71,4 +71,5 @@
     <string name="moonlight_quit_confirm_title">Quit the PC game?</string>
     <string name="moonlight_quit_confirm_hint">This ends the application running on the remote PC. To leave the stream without quitting the game, use Disconnect instead.</string>
     <string name="moonlight_remote_quit_failed">Sunshine could not quit the remote game.</string>
+    <string name="moonlight_wake_pc">Wake PC</string>
 </resources>
