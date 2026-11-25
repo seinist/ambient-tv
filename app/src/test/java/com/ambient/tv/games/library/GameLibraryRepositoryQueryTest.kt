@@ -20,6 +20,7 @@ import com.ambient.tv.ui.games.GameDetailViewModel
 import com.ambient.tv.ui.games.gameOperationError
 import com.ambient.tv.R
 import com.ambient.tv.games.metadata.GameArtworkFailure
+import com.ambient.tv.games.metadata.GameArtworkPriority
 import com.ambient.tv.games.metadata.GameArtworkKind
 import com.ambient.tv.games.metadata.GameArtworkFiles
 import com.ambient.tv.games.metadata.GameArtworkValidationException
@@ -1507,6 +1508,173 @@ class GameLibraryRepositoryQueryTest {
         assertNull(library.game("old")!!.coverPath)
         assertFalse(File(old).exists())
         assertNotNull(library.artworkPath("new", GameArtworkKind.COVER))
+    }
+
+    @Test fun storedCoverIsImmediatelyAvailableAfterReopeningTheCatalog() {
+        seed("one")
+        val library = repository()
+        val ticket = library.metadataTicket("one")!!
+        assertTrue(library.saveMetadata(ticket, GameMetadata(title = "Stored name",
+            provider = "libretro", coverUrl = "https://thumbnails.libretro.com/stored.png")))
+        assertTrue(library.setArtwork(ticket, GameArtworkKind.COVER,
+            library.artworkFiles.stage(imageBytes().inputStream())))
+        val path = library.game("one")!!.coverPath!!
+        val stored = library.metadata("one")
+
+        val reopened = repository()
+        reopened.reconcile()
+        assertEquals(path, reopened.game("one")!!.coverPath)
+        assertEquals(path, reopened.games(GameLibraryQuery(section = "snes")).single().coverPath)
+        assertEquals(path, reopened.folderGames("snes").single().coverPath)
+        assertEquals(stored, reopened.metadata("one"))
+        assertArrayEquals(imageBytes(), File(path).readBytes())
+    }
+
+    @Test fun reopenedLibraryRestoresOnlyVisibleEvictedCoversWithoutMatchingOrRomReads() = runBlocking {
+        for (id in listOf("old", "new", "offscreen", "unidentified")) seed(id)
+        preferences.gameMetadataOptions = preferences.gameMetadataOptions.copy(automatic = false)
+        val library = repository()
+        val reference = "https://thumbnails.libretro.com/stored.png"
+        for (id in listOf("old", "offscreen")) {
+            assertTrue(library.saveMetadata(library.metadataTicket(id)!!, GameMetadata(
+                title = "Identified $id", canonicalTitle = "Confirmed $id (Europe)", provider = "libretro",
+                providerGameId = "Nintendo - Super Nintendo Entertainment System|Confirmed $id (Europe)",
+                coverUrl = reference)))
+        }
+        assertTrue(library.setArtwork(library.metadataTicket("old")!!, GameArtworkKind.COVER,
+            library.artworkFiles.stage(imageBytes().inputStream())))
+        val evicted = library.game("old")!!.coverPath!!
+        raw().use { it.execSQL("UPDATE game_artwork SET bytes=?,updated_at=0 WHERE file_id='old'",
+            arrayOf<Any>(GameArtworkFiles.CACHE_BYTES + 1)) }
+        assertTrue(library.setArtwork(library.metadataTicket("new")!!, GameArtworkKind.COVER,
+            library.artworkFiles.stage(imageBytes().inputStream())))
+        assertNull(library.game("old")!!.coverPath)
+        assertFalse(File(evicted).exists())
+        val stored = library.metadata("old")
+        val retained = library.game("new")!!.coverPath
+        val reopened = repository()
+        val requests = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val metadata = metadataRepository(reopened, okhttp3.Interceptor { chain ->
+            val url = chain.request().url.toString()
+            requests += url
+            check(url == reference) { "Recovery must fetch only the stored image, never search for a game" }
+            okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(200).message("OK").body(imageBytes().toResponseBody("image/png".toMediaType())).build()
+        })
+        val priority = GameArtworkPriority()
+        priority.update(Any(), "new", visible = true, focused = false)
+        priority.update(Any(), "offscreen", visible = false, focused = false)
+        priority.update(Any(), "unidentified", visible = true, focused = false)
+        priority.update(Any(), "old", visible = true, focused = true)
+        try {
+            metadata.startCoverRecovery(priority)
+            withTimeout(10_000) { reopened.revisions.first {
+                reopened.game("old")!!.coverPath?.let { File(it).isFile } == true
+            } }
+            assertEquals(listOf(reference), requests.toList())
+            assertEquals(stored, reopened.metadata("old"))
+            assertEquals(retained, reopened.game("new")!!.coverPath)
+            assertNull(reopened.game("offscreen")!!.coverPath)
+            assertNull(reopened.metadata("unidentified"))
+            assertArrayEquals(imageBytes(), File(reopened.game("old")!!.coverPath!!).readBytes())
+        } finally { metadata.closeForTests() }
+    }
+
+    @Test fun reopenedLibraryRepairsAMissingPinnedFileFromItsExistingCoverChoice() = runBlocking {
+        seed("one")
+        val library = repository()
+        val ticket = library.metadataTicket("one")!!
+        val reference = "https://thumbnails.libretro.com/chosen.png"
+        assertTrue(library.saveMetadata(ticket, GameMetadata(title = "My chosen game", provider = "libretro",
+            coverUrl = reference, lockedFields = setOf("title", "cover"), matchLocked = true)))
+        assertTrue(library.setArtwork(ticket, GameArtworkKind.COVER,
+            library.artworkFiles.stage(imageBytes().inputStream()), pinned = true))
+        val missing = library.game("one")!!.coverPath!!
+        val stored = library.metadata("one")
+        assertTrue(File(missing).delete())
+        val reopened = repository()
+        assertEquals(missing, reopened.game("one")!!.coverPath)
+        val requests = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val metadata = metadataRepository(reopened, okhttp3.Interceptor { chain ->
+            requests += chain.request().url.toString()
+            check(chain.request().url.toString() == reference)
+            okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(200).message("OK").body(imageBytes().toResponseBody("image/png".toMediaType())).build()
+        })
+        val priority = GameArtworkPriority().apply {
+            update(Any(), "one", visible = true, focused = true)
+        }
+        try {
+            metadata.startCoverRecovery(priority)
+            withTimeout(10_000) { reopened.revisions.first {
+                reopened.game("one")!!.coverPath?.let { File(it).isFile } == true
+            } }
+            val restored = reopened.game("one")!!.coverPath!!
+            assertNotEquals(missing, restored)
+            assertEquals(listOf(reference), requests.toList())
+            assertEquals(stored, reopened.metadata("one"))
+            assertTrue(reopened.artworkPinned("one", GameArtworkKind.COVER))
+            assertArrayEquals(imageBytes(), File(restored).readBytes())
+        } finally { metadata.closeForTests() }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test fun recreatedViewRestoresAMissingCoverWithinTheSameAppSession() = runBlocking {
+        seed("one")
+        preferences.gameMetadataOptions = preferences.gameMetadataOptions.copy(automatic = false)
+        val library = repository()
+        val reference = "https://thumbnails.libretro.com/known-view-cover.png"
+        assertTrue(library.saveMetadata(library.metadataTicket("one")!!, GameMetadata(
+            title = "Known game", provider = "libretro", coverUrl = reference)))
+        val stored = library.metadata("one")
+        val requests = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
+            val url = chain.request().url.toString()
+            requests += url
+            check(url == reference) { "Reopening a view must not identify the game again" }
+            okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(200).message("OK").body(imageBytes().toResponseBody("image/png".toMediaType())).build()
+        })
+        val firstOwner = ViewModelStore()
+        val secondOwner = ViewModelStore()
+        val priority = GameArtworkPriority()
+        val firstCard = Any()
+        val secondCard = Any()
+        fun model() = GameLibraryViewModel(library, files, access, WakeMachines(preferences, DlnaStore(prefs)),
+            preferences, context, metadata)
+        Dispatchers.setMain(Dispatchers.Unconfined)
+        try {
+            metadata.startCoverRecovery(priority)
+            val first = model().also { firstOwner.put("games", it); it.section("snes") }
+            priority.update(firstCard, "one", visible = true, focused = true)
+            val displayed = withTimeout(10_000) { first.state.first { state ->
+                state.games.singleOrNull()?.coverPath?.let { File(it).isFile } == true
+            } }.games.single()
+            val previousPath = displayed.coverPath!!
+            assertEquals("Known game", displayed.title)
+            assertEquals(listOf(reference), requests.toList())
+            // The app-scoped catalog and worker survive the view. Recreate the visible
+            // card immediately, as a same-frame navigation/layout change can do.
+            assertTrue(File(previousPath).delete())
+            firstOwner.clear()
+            priority.remove(firstCard)
+            priority.update(secondCard, "one", visible = true, focused = true)
+            val second = model().also { secondOwner.put("games", it); it.section("snes") }
+            val restored = withTimeout(10_000) { second.state.first { state ->
+                state.games.singleOrNull()?.coverPath?.let { it != previousPath && File(it).isFile } == true
+            } }.games.single()
+            assertEquals(listOf(reference, reference), requests.toList())
+            assertEquals("Known game", restored.title)
+            assertEquals(stored, library.metadata("one"))
+            assertArrayEquals(imageBytes(), File(restored.coverPath!!).readBytes())
+        } finally {
+            priority.remove(firstCard)
+            priority.remove(secondCard)
+            firstOwner.clear()
+            secondOwner.clear()
+            metadata.closeForTests()
+            Dispatchers.resetMain()
+        }
     }
 
     @Test fun playbackPreferenceWritesAndViewOnlyChangesDoNotInvalidateCatalogReads() {

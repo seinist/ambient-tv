@@ -15,21 +15,23 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.InputModeManager
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performScrollTo
@@ -93,7 +95,7 @@ class GamePanelNavigationUiTest {
             ) {
                 AmbientTvTheme {
                     RequestGameOsdFocus(true, panels, continueRequester, settingsRequester)
-                    Box(Modifier.fillMaxSize()) {
+                    Box(Modifier.fillMaxSize().testTag("game-player-viewport")) {
                         if (panels.panel == null) Column {
                             Row {
                                 if (showContinue) PlayerIconButton(Icons.Filled.PlayArrow, "Continue", {},
@@ -113,7 +115,8 @@ class GamePanelNavigationUiTest {
                         }
                         val page = panels.page
                         if (page != null) GamePanelOverlay(page, onOutsideTap = panels::close) {
-                            GameSidePanel(panels, title = "Options", modifier = Modifier.align(Alignment.TopEnd)) {
+                            // Production supplies no Box alignment: the game drawer owns it.
+                            GameSidePanel(panels, title = "Options", modifier = Modifier.testTag("game-side-panel")) {
                                 when {
                                     page.panel == GamePanel.SETTINGS -> {
                                         GamePanelChoice("Picture", false, { panels.open(GamePanel.PICTURE) },
@@ -178,13 +181,89 @@ class GamePanelNavigationUiTest {
         settle()
     }
 
+    private fun panelBounds(): Rect = rule.onNodeWithTag("game-side-panel", useUnmergedTree = true)
+        .fetchSemanticsNode().boundsInRoot
+
+    private fun handheldPanelContentBounds(): Rect {
+        // On handheld the modifier/tag belongs to the full-screen outside-tap Row. The
+        // visible drawer is its inner column: the unscrolled title and trailing footer
+        // button expose its content edges without depending on body scrollbar overflow.
+        val title = rule.onNodeWithText("Options").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val footer = rule.onNodeWithText(rule.activity.getString(R.string.action_close))
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        return Rect(title.left, title.top, footer.right, footer.bottom)
+    }
+
+    @Test fun tvDrawerEntersAndLeavesAtTheRightEdgeWithoutCrossingThePlayer() {
+        mount()
+        val viewport = rule.onRoot().fetchSemanticsNode().boundsInRoot
+        val restingLeft = viewport.right - viewport.width * .38f
+        rule.onNodeWithTag("settings").performClick()
+        var previousLeft = Float.POSITIVE_INFINITY
+        repeat(PANEL_ENTRANCE_SETTLE_FRAMES + 22) {
+            frame()
+            val bounds = panelBounds()
+            if (bounds.width > 0f) {
+                assertTrue("A TV drawer must never paint to the left of its right-side slot: $bounds",
+                    bounds.left >= restingLeft - 1f)
+                assertTrue("Entrance travels left towards the right-side slot", bounds.left <= previousLeft + 1f)
+                previousLeft = bounds.left
+            }
+        }
+        val opened = panelBounds()
+        assertEquals(restingLeft, opened.left, 1f)
+        assertEquals(viewport.right, opened.right, 1f)
+
+        rule.runOnIdle { rule.activity.onBackPressedDispatcher.onBackPressed() }
+        previousLeft = opened.left
+        repeat(18) {
+            frame()
+            val bounds = rule.onAllNodesWithTag("game-side-panel", useUnmergedTree = true)
+                .fetchSemanticsNodes().singleOrNull()?.boundsInRoot
+            if (bounds != null && bounds.width > 0f) {
+                assertTrue("Exit must move towards the right edge", bounds.left >= previousLeft - 1f)
+                previousLeft = bounds.left
+            }
+        }
+        rule.onNodeWithTag("game-side-panel", useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    fun phoneLandscapeKeepsTheSharedNarrowPanelAtTheRightEdge() {
+        mount(handheld = true)
+        click("settings")
+        val viewport = rule.onNodeWithTag("game-player-viewport").fetchSemanticsNode().boundsInRoot
+        val content = handheldPanelContentBounds()
+        // mdpi: the shared drawer has an 8dp outer end gap and 16dp/24dp content insets.
+        assertEquals(viewport.right - 8f - 24f, content.right, 1f)
+        assertEquals(viewport.right - viewport.width * .38f - 8f + 16f, content.left, 1f)
+        assertEquals(viewport.width * .38f - 16f - 24f, content.width, 1f)
+        assertTrue("Landscape leaves the game visible beside the panel: $content in $viewport",
+            content.left > viewport.center.x)
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h800dp-port-mdpi")
+    fun phonePortraitKeepsTheExistingFullWidthPanel() {
+        mount(handheld = true)
+        click("settings")
+        val viewport = rule.onNodeWithTag("game-player-viewport").fetchSemanticsNode().boundsInRoot
+        val content = handheldPanelContentBounds()
+        assertEquals(viewport.left + 16f, content.left, 1f)
+        assertEquals(viewport.right - 8f - 24f, content.right, 1f)
+        assertEquals(viewport.width - 8f - 16f - 24f, content.width, 1f)
+    }
+
     @Test fun nestedCoreBackRestoresEachOpeningRowAndFinallyTheSettingsButton() {
         mount()
         rule.onNodeWithTag("continue").assertIsFocused()
         click("settings")
+        val drawerBounds = panelBounds()
         rule.onNodeWithTag("unavailable").assertDoesNotExist()
         click("core-entry")
         click("category-entry")
+        assertEquals("Subpages stay inside the same anchored drawer", drawerBounds, panelBounds())
         rule.onNodeWithText("Renderer").performClick()
         settle()
         rule.runOnIdle {
@@ -197,6 +276,7 @@ class GamePanelNavigationUiTest {
         rule.onNodeWithTag("category-entry").assertIsFocused()
         back()
         rule.onNodeWithTag("core-entry").assertIsFocused()
+        assertEquals("Back preserves the drawer position", drawerBounds, panelBounds())
         back()
         rule.onNodeWithTag("settings").assertIsFocused()
     }

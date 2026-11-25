@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
@@ -27,10 +28,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.ambient.tv.R
@@ -49,10 +54,12 @@ import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.TvLazyColumn
 import com.ambient.tv.ui.common.TvTextField
 import com.ambient.tv.ui.common.noSurfaceScale
+import com.ambient.tv.ui.common.noSurfaceBorder
 import com.ambient.tv.ui.common.transparentSurfaceColors
 import com.ambient.tv.ui.detail.DetailContextAction
 import com.ambient.tv.ui.mobile.DeviceActionRow
 import com.ambient.tv.ui.mobile.LocalHandheldUi
+import com.ambient.tv.ui.theme.animatedFocusSurface
 import java.io.File
 import kotlinx.coroutines.CancellationException
 
@@ -235,6 +242,8 @@ internal fun GameMetadataMatchRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(10.dp)
     val provider = imageKind?.let { match.metadata.artworkProviders[it.key] }
         ?: match.metadata.provider
     val source = imageKind?.let { match.metadata.artworkSources[it.key] }
@@ -245,9 +254,18 @@ internal fun GameMetadataMatchRow(
             runCatching { java.net.URI(it).host }.getOrNull()
         }
     }
+    // Keep the focus outline outside Surface's disabled layers while its saving content dims.
     Surface(onClick = onClick, enabled = enabled,
         colors = transparentSurfaceColors(), scale = noSurfaceScale(),
-        modifier = modifier.fillMaxWidth().activateOnTvKey(enabled, onClick)) {
+        border = noSurfaceBorder(), shape = ClickableSurfaceDefaults.shape(shape),
+        modifier = modifier.fillMaxWidth().activateOnTvKey(enabled, onClick)
+            .focusProperties { canFocus = enabled || focused }
+            .onFocusChanged { focused = it.isFocused }
+            .animatedFocusSurface(focused = focused, shape = shape,
+                focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = .19f),
+                unfocusedBackground = Color.White.copy(alpha = .045f),
+                focusedBorder = MaterialTheme.colorScheme.primary,
+                unfocusedBorder = Color.White.copy(alpha = .10f), borderWidth = 2.dp)) {
         Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             ArtworkImage(preview?.let(::File), displayTitle,

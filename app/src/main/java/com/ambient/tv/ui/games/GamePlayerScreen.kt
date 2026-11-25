@@ -31,12 +31,9 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Album
-import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.EmojiEvents
-import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.draw.clip
@@ -71,10 +68,6 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.Icon
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.RestartAlt
-import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.SettingsBackupRestore
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Wallpaper
@@ -1493,34 +1486,29 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             } else false
                         },
                         leftContent = {
-                            if (!stateBusy && !netplay.synchronizing) PlayerIconButton(Icons.Filled.PlayArrow, stringResource(R.string.game_continue), resume,
-                                modifier = Modifier.focusRequester(playRequester), primary = true)
-                            PlayerIconButton(Icons.Filled.Stop, stringResource(R.string.game_exit), exit,
-                                osd = OsdButton.EXIT)
-                            if (availability.save) PlayerIconButton(Icons.Filled.Save, stringResource(R.string.game_save_state), saveManualState,
-                                osd = OsdButton.GAME_SAVE)
-                            if (availability.latestLoadableManual != null) PlayerIconButton(Icons.Filled.SettingsBackupRestore,
-                                stringResource(R.string.game_quick_load), {
+                            GamePlayerTransportControls(
+                                availability = availability,
+                                canResume = !stateBusy && !netplay.synchronizing,
+                                fastForward = fastForward, rewinding = menuRewinding, statesOpen = statesOpen,
+                                onResume = resume, onExit = exit, onSave = saveManualState,
+                                onLoad = {
                                     latestAvailability.latestLoadableManual?.let(loadState)
-                                }, osd = OsdButton.GAME_LOAD)
-                            if (availability.manageStates) PlayerIconButton(Icons.Filled.Bookmarks, stringResource(R.string.game_states), {
-                                osd.interact()
-                                gamePanels.toggleStates()
-                            }, modifier = Modifier.focusRequester(statesRequester),
-                                selected = statesOpen,
-                                osd = OsdButton.GAME_STATES)
-                            if (availability.reset) PlayerIconButton(Icons.Filled.RestartAlt, stringResource(R.string.game_reset), {
-                                if (!stateBusy && !destroyed && !exiting && latestAvailability.reset) {
+                                },
+                                onStates = {
                                     osd.interact()
-                                    resetConfirmOpen = true
-                                }
-                            }, osd = OsdButton.GAME_RESET)
-                            if (availability.fastForward) PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.game_fast_forward), {
-                                if (latestAvailability.fastForward) fastForward = !fastForward
-                            }, selected = fastForward, osd = OsdButton.GAME_FAST_FORWARD)
-                            if (availability.rewind) PlayerIconButton(Icons.Filled.FastRewind,
-                                stringResource(R.string.game_rewind_hold), onClick = {}, selected = menuRewinding,
-                                osd = OsdButton.GAME_REWIND, onHold = setMenuRewind)
+                                    gamePanels.toggleStates()
+                                },
+                                onReset = {
+                                    if (!stateBusy && !destroyed && !exiting && latestAvailability.reset) {
+                                        osd.interact()
+                                        resetConfirmOpen = true
+                                    }
+                                },
+                                onFastForward = { if (latestAvailability.fastForward) fastForward = !fastForward },
+                                onRewind = setMenuRewind,
+                                resumeModifier = Modifier.focusRequester(playRequester),
+                                statesModifier = Modifier.focusRequester(statesRequester),
+                            )
                         },
                         rightContent = {
                             // Playback actions stay left; picture/options, information and settings stay right.

@@ -55,8 +55,8 @@ enum class OsdPlayer(val buttons: List<OsdButton>) {
         OsdButton.REPEAT, OsdButton.VOLUME, OsdButton.VISUALIZER)),
     RADIO(listOf(OsdButton.NEXT, OsdButton.STOP, OsdButton.EXIT, OsdButton.FAVORITE, OsdButton.AUDIO,
         OsdButton.VISUALIZER, OsdButton.SLEEP, OsdButton.DETAILS, OsdButton.TOOLS)),
-    GAMES(listOf(OsdButton.GAME_SAVE, OsdButton.GAME_LOAD, OsdButton.GAME_STATES, OsdButton.GAME_RESET,
-        OsdButton.GAME_FAST_FORWARD, OsdButton.GAME_REWIND, OsdButton.EXIT, OsdButton.GAME_PICTURE, OsdButton.GAME_CORE,
+    GAMES(listOf(OsdButton.GAME_REWIND, OsdButton.GAME_RESET, OsdButton.EXIT, OsdButton.GAME_FAST_FORWARD,
+        OsdButton.GAME_SAVE, OsdButton.GAME_LOAD, OsdButton.GAME_STATES, OsdButton.GAME_PICTURE, OsdButton.GAME_CORE,
         OsdButton.GAME_CONTROLS, OsdButton.GAME_ACHIEVEMENTS, OsdButton.GAME_CHEATS,
         OsdButton.GAME_NETPLAY, OsdButton.GAME_DISC, OsdButton.GAME_INFO)),
 }
