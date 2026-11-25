@@ -86,6 +86,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.SideEffect
@@ -1067,6 +1068,17 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val coreInputActions = remember(coreInputDescriptions) {
         List(RetroPorts.COUNT) { com.ambient.tv.games.GameInputDescriptions.forPort(coreInputDescriptions, it) }
     }
+    var contentAspectRatio by remember(retroView) { mutableFloatStateOf(aspect.ratio ?: (4f / 3f)) }
+    // UI-safe atomic geometry snapshot: it follows core/option/rotation changes without
+    // capturing frames or waiting for the render thread. Keep the last geometry while paused.
+    LaunchedEffect(retroView, handheld, loaded, activityResumed, destroyed) {
+        if (!handheld || !loaded || !activityResumed || destroyed) return@LaunchedEffect
+        while (true) {
+            val ratio = LibretroDroid.getContentAspectRatio()
+            if (ratio.isFinite() && ratio > 0f) contentAspectRatio = ratio
+            kotlinx.coroutines.delay(250L)
+        }
+    }
     // A single atomic revision check per second; descriptors are copied/parsed only when
     // they change. This also catches core-option/controller changes while the OSD is open.
     var descriptorRevision by remember(retroView) { mutableStateOf(-1L) }
@@ -1339,6 +1351,10 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 touchMode = touchMode,
                 touchStyle = touchStyle,
                 presentation = touchPresentation,
+                contentAspectRatio = contentAspectRatio,
+                // Native whole-pixel scaling uses the source resolution, which may differ
+                // from the display aspect. Let it own the fit inside the full central area.
+                fitSurface = integerScaling == com.ambient.tv.games.GameIntegerScaling.OFF,
                 coreActions = coreInputActions[0],
                 hiddenForGamepad = touchStyle.hideOnGamepadInput && hidingGamepadId != null,
                 onShowTouch = { hidingGamepadId = null },

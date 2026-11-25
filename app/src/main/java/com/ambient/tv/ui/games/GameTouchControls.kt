@@ -83,6 +83,7 @@ internal fun GameTouchControls(
     style: TouchControlStyle = TouchControlStyle(),
     presentation: GameTouchPresentation = GameTouchPresentation.Generic,
     coreActions: Map<RetroPadButton, String> = emptyMap(),
+    layoutOverride: GameTouchLayout? = null,
 ) {
     BoxWithConstraints(modifier.then(if (applySafeInsets) Modifier.safeDrawingPadding() else Modifier)) {
         val tall = portrait ?: (maxWidth < maxHeight)
@@ -91,8 +92,8 @@ internal fun GameTouchControls(
         val lifecycleOwner = LocalLifecycleOwner.current
         val haptics by rememberUpdatedState(LocalHapticFeedback.current)
         val buttonHaptics by rememberUpdatedState(style.buttonHaptics)
-        val layout = remember(mode, maxWidth, maxHeight, tall, style, presentation) {
-            gameTouchLayout(mode, maxWidth.value, maxHeight.value, tall, style, presentation)
+        val layout = remember(mode, maxWidth, maxHeight, tall, style, presentation, layoutOverride) {
+            layoutOverride ?: gameTouchLayout(mode, maxWidth.value, maxHeight.value, tall, style, presentation)
         }
         // A new layout cancels every old contact before its new targets become interactive.
         key(layout, style.stickDeadzonePercent, style.diagonalSensitivity, density, lifecycleOwner) {

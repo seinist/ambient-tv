@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Run actual patched LibretroDroid input code on the host, without an Android SDK.
+"""Run patched LibretroDroid input/display contracts on the host, without an Android SDK.
 
 The generated headers supply compile-only Android key constants; no Android event,
-JNI, graphics or lifecycle behavior is simulated. Input and descriptor behavior is
-the production C++ implementation fetched by scripts/fetch_libretrodroid.sh.
+JNI, graphics or lifecycle behavior is simulated. Input, descriptor and content
+aspect behavior uses production C++ fetched by scripts/fetch_libretrodroid.sh.
 """
 from pathlib import Path
 import argparse
@@ -19,8 +19,8 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     native = root / "third_party/libretrodroid/src/main/cpp"
-    if not (native / "inputdescriptors.h").is_file():
-        raise SystemExit("Run scripts/fetch_libretrodroid.sh with patch0028 first")
+    if not all((native / header).is_file() for header in ("inputdescriptors.h", "contentaspect.h")):
+        raise SystemExit("Run scripts/fetch_libretrodroid.sh with the current patches first")
     with tempfile.TemporaryDirectory(prefix="ambient-input-test-") as temporary:
         work = Path(temporary)
         headers = work / "android"

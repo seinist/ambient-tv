@@ -501,6 +501,8 @@ fun ArtworkImage(
     crossfadeOnLoad: Boolean = false,
     /** Locked detail previews may display cached bytes, but must not fetch remote artwork. */
     cacheOnly: Boolean = false,
+    /** A caller can defer offscreen requests; memory hits and already-admitted work remain usable. */
+    loadUncached: Boolean = true,
 ) {
     val context = LocalContext.current
     val candidates = remember(model, fallbackModels) {
@@ -564,20 +566,24 @@ fun ArtworkImage(
         !com.ambient.tv.ui.mobile.LocalHandheldUi.current && hasModel && !shownFromMemory
     // Keep admission once granted. A focus change restarts only a request still waiting in the
     // gate, which lets the newly focused card jump ahead without restarting an active load.
-    var loadAdmitted by remember(currentModel) { mutableStateOf(!staggerThisLoad) }
-    LaunchedEffect(currentModel, staggerThisLoad, prioritizeUncached) {
-        if (!staggerThisLoad) {
+    var loadAdmitted by remember(currentModel) {
+        mutableStateOf(shownFromMemory || loadUncached && !staggerThisLoad)
+    }
+    LaunchedEffect(currentModel, staggerThisLoad, prioritizeUncached, loadUncached, shownFromMemory) {
+        if (shownFromMemory) {
             loadAdmitted = true
-        } else if (!loadAdmitted) {
-            awaitBrowseArtworkIdle()
-            val waitMs = browseArtworkAdmissionDelayMs(
-                prioritized = prioritizeUncached,
-                nowMs = android.os.SystemClock.elapsedRealtime(),
-            )
-            if (waitMs > 0L) delay(waitMs)
-            // Another D-pad/touch move may have started while this card waited in its wave.
-            // Re-check once so decode/bitmap delivery never begins in the middle of a glide.
-            awaitBrowseArtworkIdle()
+        } else if (!loadAdmitted && loadUncached) {
+            if (staggerThisLoad) {
+                awaitBrowseArtworkIdle()
+                val waitMs = browseArtworkAdmissionDelayMs(
+                    prioritized = prioritizeUncached,
+                    nowMs = android.os.SystemClock.elapsedRealtime(),
+                )
+                if (waitMs > 0L) delay(waitMs)
+                // Another D-pad/touch move may have started while this card waited in its wave.
+                // Re-check once so decode/bitmap delivery never begins in the middle of a glide.
+                awaitBrowseArtworkIdle()
+            }
             loadAdmitted = true
         }
     }
