@@ -111,6 +111,7 @@ internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, 
     DLNA(SettingsArea.SYSTEMS, R.string.dlna_title, R.string.settings_page_dlna_hint),
     /** RomM game server: library, firmware, saves and save states for the game player. */
     ROMM(SettingsArea.SYSTEMS, R.string.romm_title, R.string.romm_settings_hint),
+    MOONLIGHT(SettingsArea.SYSTEMS, R.string.moonlight_title, R.string.moonlight_settings_hint),
     FILES(SettingsArea.SYSTEMS, R.string.files_title, R.string.settings_page_files_hint),
     YOUTUBE(SettingsArea.STREAMING, R.string.settings_youtube_group, R.string.settings_page_youtube_hint),
     TELEGRAM(SettingsArea.STREAMING, R.string.telegram_title, R.string.settings_page_telegram_hint),
@@ -177,6 +178,7 @@ internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, 
             "controller", "gamepad", "joystick" -> CONTROLLER
             "game_controls", "retropad" -> GAME_CONTROLS
             "games", "spiele", "bios", "cores", "libretro" -> GAMES
+            "moonlight", "sunshine", "gamestream" -> MOONLIGHT.takeIf { com.ambient.tv.BuildConfig.MOONLIGHT_EXPERIMENTAL }
             "log", "logs", "logging", "debug", "diagnostics" -> DIAGNOSTICS
             // Empty ADVANCED hub page removed; deep-link to the Spotify page (account section holds the client ID).
             "advanced", "developer", "clientid", "client_id" -> SPOTIFY
