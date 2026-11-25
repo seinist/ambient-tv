@@ -29,7 +29,7 @@
     <string name="game_controls_port_player">Player %1$d</string>
     <string name="game_controls_port_off">Does not play</string>
     <string name="game_controls_start_select">Start + Select opens the game menu</string>
-    <string name="game_controls_start_select_hint">On controllers, pressing both together pauses the game and shows its menu.</string>
+    <string name="game_controls_start_select_hint">Press both buttons together to open the game menu, even when Android reserves the Home button for the launcher.</string>
     <string name="game_controls_dpad_stick">D-pad also moves the left stick</string>
     <string name="game_controls_dpad_stick_hint">For 3D games with a remote or keyboard, which have no stick.</string>
     <string name="game_controls_menu">Open game menu</string>
