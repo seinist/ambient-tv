@@ -50,6 +50,8 @@ fun MoonlightSettingsSection(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
 
+        MoonlightStreamSettingsSection(state.streamProfile, model::updateProfile)
+
         SettingsSubheader(stringResource(R.string.moonlight_hosts))
         state.hosts.forEach { host ->
             SettingsGroup(card = true) {
