@@ -75,7 +75,7 @@ class MoonlightNativeTransport @Inject constructor(
      * The player must obtain its HTTPS port and host identity over pinned, mutually
      * authenticated HTTPS, not from public discovery. A changed identity fails closed.
      */
-    suspend fun verifiedHost(hostId: String): MoonlightVerifiedHost = withContext(Dispatchers.IO) {
+    internal suspend fun verifiedHost(hostId: String): MoonlightVerifiedHost = withContext(Dispatchers.IO) {
         val host = requireHost(hostId)
         val serverId = trust.trustedServerId(host.id)
             ?: throw SecurityException("Moonlight host not paired")
