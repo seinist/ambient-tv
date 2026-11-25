@@ -99,11 +99,13 @@ class GameLibraryViewModel @Inject constructor(
     private var metadataFailedGames = 0
     private var firstMetadataFailureReason: String? = null
     private val selection = MutableStateFlow<GameLibraryQuery?>(null)
+    private val refreshRevision = MutableStateFlow(0L)
 
     private data class ReadRequest(
         val revision: com.ambient.tv.games.library.GameLibraryRevision,
         val query: GameLibraryQuery,
         val titleStyle: String,
+        val refreshRevision: Long,
     )
     private data class LibraryRequest(
         val read: ReadRequest,
@@ -116,10 +118,10 @@ class GameLibraryViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            combine(library.revisions, files.revision, preferences.changes().onStart { emit(Unit) }, selection) { _, _, _, query ->
+            combine(library.revisions, files.revision, preferences.changes().onStart { emit(Unit) }, selection, refreshRevision) { _, _, _, query, refresh ->
                 query?.let { LibraryRequest(
                     ReadRequest(library.revisionSnapshot(),
-                        it.copy(sort = library.sortKey(), descending = library.sortDescending()), library.titleStyle()),
+                        it.copy(sort = library.sortKey(), descending = library.sortDescending()), library.titleStyle(), refresh),
                     library.viewStyle(), library.gridColumns(), library.listRows(),
                 ) }
             }.filterNotNull().distinctUntilChanged().collectLatest { request ->
@@ -159,10 +161,15 @@ class GameLibraryViewModel @Inject constructor(
         libraryReadError = null
     }
 
+    /** Management needs folder/source configuration, not every hydrated game or cover. */
+    fun openManager() {
+        selection.value = GameLibraryQuery(limit = 0)
+    }
+
     fun section(value: String) {
         metadata.startCoverRecovery()
         mutable.update { it.copy(section = value) }
-        selection.update { (it ?: GameLibraryQuery(search = mutable.value.query)).copy(section = value) }
+        selection.update { (it ?: GameLibraryQuery(search = mutable.value.query)).copy(section = value, limit = null) }
     }
     fun query(value: String) {
         mutable.update { it.copy(query = value) }
@@ -333,7 +340,17 @@ class GameLibraryViewModel @Inject constructor(
     }
     fun cancelScan() = scan?.cancel()
 
-    fun scanAll() {
+    /** Aggregate favorites/recent are local catalog filters; only All explicitly scans every source. */
+    fun refreshSection() {
+        val section = mutable.value.section
+        when (section) {
+            "all" -> scanAll()
+            "favorites", "recent" -> refreshRevision.update { it + 1 }
+            else -> if (GameSystems.byId(section) != null) scanAll(section)
+        }
+    }
+
+    fun scanAll(systemId: String? = null) {
         if (scan?.isCompleted == false) return
         scan = viewModelScope.launch {
             resetMetadataFailures()
@@ -341,7 +358,8 @@ class GameLibraryViewModel @Inject constructor(
                 scanPhase = GameLibraryScanPhase.FILES, scanProcessed = 0, scanDiscovered = 0,
                 error = null, message = null) }
             try {
-                scanEveryFolder()
+                scanEveryFolder(systemId)
+                refreshRevision.update { it + 1 }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) { showError(error, R.string.game_error_scan) }
             finally { mutable.update { it.copy(busy = false, scanning = false,
@@ -349,11 +367,15 @@ class GameLibraryViewModel @Inject constructor(
         }
     }
 
-    private suspend fun scanEveryFolder() {
+    private suspend fun scanEveryFolder(systemId: String? = null) {
+        val indexed = systemId?.let { library.foldersWithSystem(it) }.orEmpty()
         for (folder in library.folders()) {
+            // Only assigned folders and auto folders already known to contain this system.
+            if (systemId != null && folder.systemId != systemId &&
+                !(folder.systemId == "auto" && folder.id in indexed)) continue
             // A folder may have been removed while another NAS was being scanned.
             if (folder.id in mutable.value.removingFolders || library.folders().none { it.id == folder.id }) continue
-            scanAndEnrich(folder, scanFiles = true)
+            scanAndEnrich(folder, scanFiles = true, systemId = systemId.takeIf { folder.systemId == "auto" })
             // Each committed scan emits a catalog revision. The single query collector
             // publishes this folder immediately using the current section/search.
         }
@@ -483,7 +505,8 @@ class GameLibraryViewModel @Inject constructor(
         }
     }
 
-    private suspend fun scanAndEnrich(folder: GameLibraryFolder, scanFiles: Boolean, matchingNames: Boolean = false) {
+    private suspend fun scanAndEnrich(folder: GameLibraryFolder, scanFiles: Boolean,
+                                      matchingNames: Boolean = false, systemId: String? = null) {
         mutable.update { it.copy(activeScanFolderId = folder.id,
             scanPhase = when {
                 !scanFiles -> GameLibraryScanPhase.METADATA
@@ -495,15 +518,15 @@ class GameLibraryViewModel @Inject constructor(
                     ?: context.getString(R.string.game_folder_fallback)
             },
             scanProcessed = 0, scanDiscovered = 0, enriching = !scanFiles) }
-        if (scanFiles) library.scan(folder.id) { processed, known ->
+        if (scanFiles) library.scan(folder.id, systemId = systemId) { processed, known ->
             mutable.update { it.copy(scanProcessed = processed, scanDiscovered = known) }
         }
         if (folder.id in mutable.value.removingFolders || library.folders().none { it.id == folder.id }) return
         mutable.update { it.copy(enriching = true, scanPhase = GameLibraryScanPhase.METADATA,
             scanProcessed = 0, scanDiscovered = 0) }
-        if (scanFiles) metadata.importLocalFolder(folder.id)
+        if (scanFiles) metadata.importLocalFolder(folder.id, systemId = systemId)
         try {
-            metadata.enrichFolder(folder.id, automatic = scanFiles) { processed, known ->
+            metadata.enrichFolder(folder.id, automatic = scanFiles, systemId = systemId) { processed, known ->
                 mutable.update { it.copy(scanProcessed = processed, scanDiscovered = known) }
             }
         } catch (error: GameMetadataBatchException) {

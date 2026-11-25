@@ -1,0 +1,136 @@
+diff --git a/src/main/cpp/fpssync.cpp b/src/main/cpp/fpssync.cpp
+--- a/src/main/cpp/fpssync.cpp
++++ b/src/main/cpp/fpssync.cpp
+@@ -27,6 +27,6 @@
+     if (useVSync) {
+-        // Always advance lastFrame so wait() has a valid target,
+-        // even when vsync is nominally active. This provides a
+-        // backstop on devices where eglSwapBuffers doesn't block.
+-        lastFrame = lastFrame + sampleInterval;
++        // Do not accumulate a catch-up burst after a stall or an HDMI mode change.
++        const auto now = std::chrono::steady_clock::now();
++        if (now - lastFrame >= sampleInterval) lastFrame = now;
++        lastFrame = lastFrame + sampleInterval;
+         return 1;
+@@ -62,2 +62,5 @@
+ void FPSSync::wait() {
++    // A newly started or resumed core must render its first frame immediately.
++    // This also avoids subtracting from the sentinel time point.
++    if (lastFrame == MIN_TIME) return;
+     auto now = std::chrono::steady_clock::now();
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -789,3 +789,12 @@
+ void LibretroDroid::step() {
+     checkVulkanFrameError();
++    // GLSurfaceView swaps AFTER step returns. Wait for the previous deadline
++    // BEFORE running the next frame, not while a finished image is waiting for EGL.
++    // A blocking swap already consumes that wait; the timer is only the backstop.
++    if (fpsSync && frameSpeed <= 1) fpsSync->wait();
++    using WorkClock = std::chrono::steady_clock;
++    const bool trackRewindWork = rewindEnabled && rewindBuffer && !rewinding && frameSpeed <= 1;
++    const auto workStart = trackRewindWork ? WorkClock::now() : WorkClock::time_point{};
++    uint64_t captureNs = 0;
++    unsigned measuredFrames = 0;
+     // Continuing from a paused seek keeps the shown point; newer history is gone.
+@@ -794,3 +803,6 @@
+     VulkanBackend::getInstance().invalidateNativeFrame();
+     if (rewinding && rewindBuffer) {
++        // Rewind does not use the forward advanceFrames path. Keep the pacing
++        // clock current without emulating extra frames or changing rewind distances.
++        if (fpsSync && frameSpeed <= 1) fpsSync->advanceFrames();
+         bool hadAudio = audioEnabled;
+@@ -856,3 +868,4 @@
+         const bool recording = rewindEnabled && rewindBuffer;
+         if (recording && frames > 0 && rewindTimeline.shouldCapture(*rewindBuffer)) {
++            const auto captureStart = trackRewindWork ? WorkClock::now() : WorkClock::time_point{};
+             const size_t sz = core->retro_serialize_size();
+@@ -866,7 +879,10 @@
+                 clearRewindBuffer();
+             }
++            if (trackRewindWork) captureNs = static_cast<uint64_t>(
++                std::chrono::duration_cast<std::chrono::nanoseconds>(WorkClock::now() - captureStart).count());
+         }
+ 
+         // Checkpoints are captured BEFORE emulation. Restoring then running one
+         // frame to draw a rewind preview can therefore never advance past live play.
++        if (trackRewindWork) measuredFrames = frames;
+         for (size_t i = 0; i < frames; i++) {
+@@ -920,8 +936,14 @@
+         renderPrimaryFrame();
+     }
+ 
+-    if (fpsSync && frameSpeed <= 1) {
+-        fpsSync->wait();
+-    }
++    // Charge serialisation, compression, core and renderer work to the rewind
++    // policy, excluding the intentional pre-frame pacing sleep.
++    if (trackRewindWork && measuredFrames > 0 && std::isfinite(contentFps) &&
++        contentFps >= 1.0 && contentFps <= 240.0) {
++        const uint64_t workNs = static_cast<uint64_t>(
++            std::chrono::duration_cast<std::chrono::nanoseconds>(WorkClock::now() - workStart).count());
++        rewindTimeline.observeFrameWork(workNs, captureNs,
++            static_cast<uint64_t>(1000000000.0 / contentFps), measuredFrames);
++    }
+ 
+     if (rumble && rumbleEnabled) {
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -600,2 +600,4 @@
+-    uint32_t images = caps.minImageCount + 1;
++    // FIFO must not deliberately request an extra queued presentation image.
++    // A driver may still allocate more than the advertised minimum.
++    uint32_t images = caps.minImageCount;
+     if (caps.maxImageCount != 0) images = std::min(images, caps.maxImageCount);
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+@@ -300,4 +300,16 @@
+     private var previewModeEnabled = false
+ 
+-    private val retroGLEventsSubject = MutableSharedFlow<GLRetroEvents>(1)
++    // UI status is sampled, never a per-frame work queue. The first notification
++    // is retained for initialisation; a slow collector sees the newest event.
++    private val retroGLEventsSubject = MutableSharedFlow<GLRetroEvents>(
++        replay = 1, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
++    )
++    private var lastFrameEventNs = 0L
++
++    private fun emitFrameRendered() {
++        val now = System.nanoTime()
++        if (lastFrameEventNs != 0L && now - lastFrameEventNs < 100_000_000L) return
++        lastFrameEventNs = now
++        retroGLEventsSubject.tryEmit(GLRetroEvents.FrameRendered)
++    }
+     private val retroGLIssuesErrors = MutableSharedFlow<Int>(1)
+@@ -770,5 +782,3 @@
+                     tick()
+-                    lifecycle?.coroutineScope?.launch {
+-                        retroGLEventsSubject.emit(GLRetroEvents.FrameRendered)
+-                    }
++                    emitFrameRendered()
+                 } else {
+@@ -786,5 +796,3 @@
+                         bfiShowBlackNext = true
+-                        lifecycle?.coroutineScope?.launch {
+-                            retroGLEventsSubject.emit(GLRetroEvents.FrameRendered)
+-                        }
++                        emitFrameRendered()
+                     }
+@@ -793,5 +801,3 @@
+                     LibretroDroid.step(this@GLRetroView)
+-                    lifecycle?.coroutineScope?.launch {
+-                        retroGLEventsSubject.emit(GLRetroEvents.FrameRendered)
+-                    }
++                    emitFrameRendered()
+                 }
+@@ -816,5 +822,4 @@
+             lastSensorState = null
+-            lifecycle?.coroutineScope?.launch {
+-                retroGLEventsSubject.emit(GLRetroEvents.SurfaceCreated)
+-            }
++            lastFrameEventNs = 0L
++            retroGLEventsSubject.tryEmit(GLRetroEvents.SurfaceCreated)
+         }

@@ -268,6 +268,24 @@ static void saturatingArithmeticCannotWrapTheTimeline() {
     CHECK(core.timeline.historyFrames(core.buffer) == 0);
 }
 
+static void expensiveCapturesYieldToFrameBudget() {
+    RewindTimeline timeline;
+    timeline.configure(120, 15);
+    CHECK(timeline.captureInterval() == 1);
+    timeline.observeFrameWork(4000000, 1000000, 16666666);
+    CHECK(timeline.captureInterval() == 1);
+    timeline.observeFrameWork(13000000, 8000000, 16666666);
+    CHECK(timeline.captureInterval() >= 4);
+    for (int i = 0; i < 64; ++i) timeline.observeFrameWork(17000000, 0, 16666666);
+    CHECK(timeline.captureInterval() == 15);
+    for (int i = 0; i < 128; ++i) timeline.observeFrameWork(3000000, 500000, 16666666);
+    CHECK(timeline.captureInterval() == 1);
+    timeline.observeFrameWork(UINT64_MAX, UINT64_MAX, 16666666);
+    CHECK(timeline.captureInterval() == 15);
+    timeline.reset();
+    CHECK(timeline.captureInterval() == 1);
+}
+
 int main() {
     initialStateAndFastForward();
     firstRewindNeverStepsForwardAndBranchKeepsItsDistance();
@@ -278,5 +296,6 @@ int main() {
     intervalLimitKeepsVeryLargeStatesResponsive();
     randomizedTimelineMatchesAbsoluteFramePositions();
     saturatingArithmeticCannotWrapTheTimeline();
-    std::cout << "Rewind timeline: 9 integration tests passed (including 25000 randomized transitions).\n";
+    expensiveCapturesYieldToFrameBudget();
+    std::cout << "Rewind timeline: 10 integration tests passed (including 25000 randomized transitions).\n";
 }
