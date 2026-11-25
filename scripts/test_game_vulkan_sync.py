@@ -23,6 +23,7 @@ def main():
     root = Path(__file__).resolve().parents[1]
     native = root / "third_party/libretrodroid/src/main/cpp"
     source = (native / "vulkan/vulkanbackend.cpp").read_text()
+    jni_source = (native / "libretrodroidjni.cpp").read_text()
     methods = [
         "bool VulkanBackend::checkFrameResult(",
         "bool VulkanBackend::waitForFrame(",
@@ -58,6 +59,27 @@ def main():
             cpp_function(source, signature) for signature in methods))
         (work / "vulkan_error_boundary_under_test.h").write_text(cpp_function(
             (native / "libretrodroid.cpp").read_text(), "void LibretroDroid::checkVulkanFrameError("))
+        # Preserve the actual C++ include scope. Including the exception header
+        # inside namespace libretrodroid creates a different nested type even
+        # when changing the catch spelling would make that JNI unit compile.
+        prefix = jni_source[:jni_source.index("JNIEXPORT ")]
+        scope_lines = [line for line in prefix.splitlines() if line.strip() in {
+            '#include "utils/libretrodroidexception.h"',
+            'namespace libretrodroid {', 'extern "C" {', '}',
+        }]
+        jni_methods = [
+            "JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_step(",
+            "JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_stepForNetplay(",
+        ]
+        (work / "vulkan_jni_boundaries_under_test.h").write_text(
+            "\n".join(scope_lines) + "\n" +
+            "\n".join(cpp_function(jni_source, signature) for signature in jni_methods) +
+            "\n}\n}\n")
+        thrower = work / "vulkan_jni_thrower.cpp"
+        thrower.write_text(
+            '#include "utils/libretrodroidexception.h"\n'
+            'void throwProductionVulkanError() {\n'
+            '    throw ::libretrodroid::LibretroDroidError("Vulkan frame failed", -1);\n}\n')
         binary = work / "vulkan-sync-test"
         command = shlex.split(os.environ.get("CXX", "c++")) + [
             "-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
@@ -69,13 +91,17 @@ def main():
             command += ["-I", str(include)]
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-no-pie"]
-        command += [str(root / "scripts/native_game_vulkan_sync_test.cpp"),
-                    str(native / "utils/libretrodroidexception.cpp"), "-include", "stdexcept",
-                    "-o", str(binary)]
-        subprocess.run(command, check=True)
+        command += ["-include", "stdexcept"]
+        subprocess.run(command + [str(root / "scripts/native_game_vulkan_sync_test.cpp"),
+            str(native / "utils/libretrodroidexception.cpp"), "-o", str(binary)], check=True)
         # Fault queues are finite. A policy regression must fail this host test,
         # not leave CI waiting for a fabricated permanently stalled driver.
         subprocess.run([str(binary)], check=True, timeout=20)
+        jni_binary = work / "vulkan-jni-test"
+        subprocess.run(command + [str(root / "scripts/native_game_jni_error_test.cpp"),
+            str(thrower), str(native / "utils/libretrodroidexception.cpp"),
+            "-o", str(jni_binary)], check=True)
+        subprocess.run([str(jni_binary)], check=True, timeout=20)
 
 
 if __name__ == "__main__":

@@ -32,8 +32,10 @@ command -v cargo >/dev/null && command -v rustup >/dev/null ||
 WORK="$ROOT/third_party/.librashader-src"
 CARGO_CACHE="$ROOT/third_party/.librashader-target"
 OUTPUT="$ROOT/app/src/main/jniLibs"
+PATCH_HASH="$(python3 "$ROOT/scripts/apply_librashader_patches.py" --fingerprint)"
+SOURCE_STAMP="$PIN patches=$PATCH_HASH"
 mkdir -p "$ROOT/third_party" "$CARGO_CACHE"
-if [[ ! -f "$WORK/.ambient-pin" || "$(cat "$WORK/.ambient-pin")" != "$PIN" ]]; then
+if [[ ! -f "$WORK/.ambient-pin" || "$(cat "$WORK/.ambient-pin")" != "$SOURCE_STAMP" ]]; then
     rm -rf "$WORK"
     mkdir -p "$WORK"
     git -C "$WORK" init -q
@@ -41,7 +43,10 @@ if [[ ! -f "$WORK/.ambient-pin" || "$(cat "$WORK/.ambient-pin")" != "$PIN" ]]; t
     git -C "$WORK" fetch -q --depth 1 origin "$PIN"
     git -C "$WORK" checkout -q FETCH_HEAD
     [[ "$(git -C "$WORK" rev-parse HEAD)" == "$PIN" ]] || exit 1
-    printf '%s' "$PIN" > "$WORK/.ambient-pin"
+    python3 "$ROOT/scripts/apply_librashader_patches.py" "$WORK"
+    printf '%s' "$SOURCE_STAMP" > "$WORK/.ambient-pin"
+else
+    python3 "$ROOT/scripts/apply_librashader_patches.py" "$WORK"
 fi
 export CARGO_TARGET_DIR="$CARGO_CACHE"
 export CARGO_PROFILE_RELEASE_LTO=true
@@ -60,7 +65,7 @@ for abi in ${LIBRASHADER_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
     esac
     dest="$OUTPUT/$abi/liblibrashader_capi.so"
     stamp="$OUTPUT/$abi/.librashader-vulkan-pin"
-    expected="$PIN runtime-vulkan api5 abi2 lto 16k"
+    expected="$SOURCE_STAMP runtime-vulkan api5 abi2 lto 16k"
     if [[ -f "$dest" && -f "$stamp" && "$(cat "$stamp")" == "$expected" ]]; then
         echo "Pinned librashader $abi already built"
         continue

@@ -22,6 +22,8 @@ and display output. A 10-bit or FP16 image alone does not prove HDR.
 | FP16 raw capture | `glReadPixels(RGBA, UNSIGNED_BYTE)` from a float source attachment failed and returned an unusable preview. | Sample raw source code values into a separate RGBA8 target before byte readback. This bypasses picture filters and window PQ conversion. Bound storage, preserve GL state, and keep screenshots opaque. |
 | Slang source resize | AHB allocations grow; a later smaller core image failed the old source-size equality gate and disabled Slang. | Supply the shader runtime a tightly sized normalized source with truthful `SourceSize`. |
 | Vulkan error completion | Fence timeouts/errors were treated as completion, allowing reset or destruction of in-flight resources. | Wait for actual completion, latch genuine failures, retain resources without an idle proof, and report the failure at the managed boundary after the core call. Never throw across a libretro C callback. |
+| JNI exception identity | The exception header was included inside another namespace, creating a different exception type in JNI from the type thrown by the renderer. | Include the C++ header at global scope and catch the actual global type. A separate-translation-unit regression executes both complete production step wrappers and verifies their managed-error return. |
+| Slang render-pass lifetime | All 17 presets rendered correctly, but Vulkan validation found leaked render-pass objects when the pinned runtime released its chains. Repeated filter switches could accumulate those objects. | Give the runtime's render-pass owner a destructor, using the same device-dispatch ownership pattern as its shader modules. Apply the exact same pinned patch to host and Android builds; include the patch digest in source and binary build stamps. |
 
 The existing CUT2/CUT3 colour-versus-classification sampler correction and atomic
 filter/target replacement remain in place. This audit extends their coverage
@@ -136,7 +138,7 @@ from an earlier patch. Both PR CI and the optional-pack release workflow do this
 | `native_game_hdr_filter_audit_test.cpp` through that runner | All 36 catalog sources, all UI strengths, independent PQ/HLG references, 100/203/400-nit white, confirmed/unconfirmed/live transfer changes, four extra effects, alpha, pitched/unaligned immutable uploads, RGB10/FP16, hardware padding/flip, finite shader output and raw captures |
 | `test_game_vulkan_presentation.py` | 756 geometry cases against actual `VideoLayout`; fullscreen/fallback handoffs and extracted production frame-ingress failure paths |
 | `test_game_vulkan_color.py` | Actual productive copy helper on Lavapipe: backing/view format mismatches, component swaps, packing, cache resize/reuse, source subresources and unsupported-input rejection |
-| `test_game_vulkan_sync.py` | Fault injection into the production wait/submit/retire/presentation methods; no physical GPU is needed to exercise the error branches |
+| `test_game_vulkan_sync.py` | Fault injection into the production wait/submit/retire/presentation methods, plus cross-translation-unit exception matching through both complete JNI step wrappers; no physical GPU is needed to exercise the error branches |
 | `check_game_glsl.py`, `import_game_upscalers.py` | Actual GLES sources plus final opaque/PQ wrappers compile/link |
 | `check_game_slang.py` | All 17 presets, 25 source files and 50 SPIR-V stages, with pinned hashes and dependency closure |
 | `test_librashader_preset_api.py` | Real pinned C API/ABI and SDR preset colour-space declarations |
@@ -181,6 +183,13 @@ The Slang chains preserve authentic upstream float/sRGB intermediate settings.
 In particular, ScaleFX's metric targets remain floating point, and 2xSaL,
 Super 2xSaI and ScaleHQ retain their upstream sRGB/bicubic passes. No HDR Slang
 pipeline, arbitrary LUT pack support or cross-API pixel identity is inferred.
+
+The pinned Slang runtime also receives the narrowly scoped patch in
+`scripts/patches/librashader/0001-free-vulkan-render-passes.patch`.
+`apply_librashader_patches.py` checks the exact upstream commit and verifies
+repeat application; Android source and binary stamps include the patch digest.
+The GPU smoke treats Vulkan API, synchronization and teardown diagnostics as
+failures, even when all frame-content assertions have passed.
 
 ### What these tests do not establish
 

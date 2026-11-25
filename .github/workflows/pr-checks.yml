@@ -53,10 +53,10 @@ jobs:
           fi
           native=false
           slang=false
-          if grep -Eq '^(app/src/(main|test)/java/com/ambient/tv/(games|ui/games|ui/gamepad)/|app/src/main/assets/games/|third_party_assets/game_shaders/|libretrodroid_wrapper/|scripts/(patches/libretrodroid/|native_libretro_vulkan/|host_vulkan_stubs/|native_rewind/|native_game_.*_test\.cpp|test_game_(filter_renderer|content|rewind|vulkan_presentation|vulkan_color|vulkan_sync|vulkan_slang)\.py|game_(filter_audit_sources|shader_output_wrapper)\.py|import_game_upscalers\.py|fetch_libretrodroid\.sh|build_librashader_android\.sh)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
+          if grep -Eq '^(app/src/(main|test)/java/com/ambient/tv/(games|ui/games|ui/gamepad)/|app/src/main/assets/games/|third_party_assets/game_shaders/|libretrodroid_wrapper/|scripts/(patches/(libretrodroid|librashader)/|native_libretro_vulkan/|host_vulkan_stubs/|native_rewind/|native_game_.*_test\.cpp|test_game_(filter_renderer|content|rewind|vulkan_presentation|vulkan_color|vulkan_sync|vulkan_slang)\.py|game_(filter_audit_sources|shader_output_wrapper)\.py|import_game_upscalers\.py|fetch_libretrodroid\.sh|build_librashader_android\.sh|apply_librashader_patches\.py)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
             native=true
           fi
-          if grep -Eq '^(app/src/main/assets/games/slang/|app/src/main/java/com/ambient/tv/ui/games/|scripts/(native_libretro_vulkan/|host_vulkan_stubs/|native_game_vulkan_slang_test\.cpp|test_game_vulkan_slang\.py|patches/libretrodroid/|build_librashader_android\.sh|check_game_slang\.py|tests/test_check_game_slang\.py|test_librashader_preset_api\.py)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
+          if grep -Eq '^(app/src/main/assets/games/slang/|app/src/main/java/com/ambient/tv/ui/games/|scripts/(native_libretro_vulkan/|host_vulkan_stubs/|native_game_vulkan_slang_test\.cpp|test_game_vulkan_slang\.py|patches/(libretrodroid|librashader)/|build_librashader_android\.sh|apply_librashader_patches\.py|check_game_slang\.py|tests/test_check_game_slang\.py|test_librashader_preset_api\.py)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
             slang=true
           fi
           printf 'native=%s\nslang=%s\n' "$native" "$slang" >> "$GITHUB_OUTPUT"
@@ -282,6 +282,7 @@ jobs:
           git -C third_party/.librashader-host-src fetch -q --depth 1 origin "$pin"
           git -C third_party/.librashader-host-src checkout -q FETCH_HEAD
           test "$(git -C third_party/.librashader-host-src rev-parse HEAD)" = "$pin"
+          python3 scripts/apply_librashader_patches.py third_party/.librashader-host-src
           export CARGO_TARGET_DIR="$PWD/third_party/.librashader-host-target"
           cargo build --manifest-path third_party/.librashader-host-src/Cargo.toml \
             -p librashader-capi --release --locked --no-default-features --features runtime-vulkan

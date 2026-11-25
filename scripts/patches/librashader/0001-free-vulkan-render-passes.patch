@@ -1,0 +1,39 @@
+Pinned upstream: SnowflakePowered/librashader 07ac790cdb9826f37cf8e1daf5011f03e3c4daa7
+
+Give each VulkanRenderPass the same RAII ownership used by VulkanShaderModule.
+The pinned runtime drops its render_passes map without destroying its Vulkan
+handles. This leaks at every filter-chain teardown and fails device validation.
+Owning the handle also cleans up a successfully created render pass when later
+pipeline construction returns an error. ash::Device::clone copies dispatch and
+the device handle; it does not create or destroy a VkDevice.
+
+diff --git a/librashader-runtime-vk/src/render_pass.rs b/librashader-runtime-vk/src/render_pass.rs
+--- a/librashader-runtime-vk/src/render_pass.rs
++++ b/librashader-runtime-vk/src/render_pass.rs
+@@ -7,6 +7,7 @@
+ pub struct VulkanRenderPass {
+     pub handle: vk::RenderPass,
+     pub _format: vk::Format,
++    device: ash::Device,
+ }
+ 
+ impl VulkanRenderPass {
+@@ -41,7 +42,18 @@
+             Ok(Self {
+                 handle: rp,
+                 _format: format,
++                device: device.clone(),
+             })
+         }
+     }
+ }
++
++impl Drop for VulkanRenderPass {
++    fn drop(&mut self) {
++        if self.handle != vk::RenderPass::null() {
++            unsafe {
++                self.device.destroy_render_pass(self.handle, None);
++            }
++        }
++    }
++}
