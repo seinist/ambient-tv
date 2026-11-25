@@ -1,6 +1,12 @@
 package com.ambient.tv.ui.moonlight
 
 import android.os.Bundle
+import android.content.Context
+import android.hardware.input.InputManager
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.launch
 import android.view.InputDevice
 import kotlin.math.roundToInt
 import android.view.KeyEvent
@@ -46,6 +52,7 @@ import androidx.tv.material3.Text
 import com.ambient.tv.BuildConfig
 import com.ambient.tv.R
 import com.ambient.tv.moonlight.MoonlightCompanionLink
+import com.ambient.tv.moonlight.MoonlightDeviceFeedback
 import com.ambient.tv.moonlight.MoonlightControllerRouter
 import com.ambient.tv.moonlight.MoonlightKeyboardRouter
 import com.ambient.tv.moonlight.MoonlightStreamEngine
@@ -70,6 +77,15 @@ class MoonlightStreamActivity : ComponentActivity() {
     @Inject lateinit var companion: MoonlightCompanionLink
 
     private var osdVisible by mutableStateOf(false)
+    private val inputManager by lazy {
+        getSystemService(Context.INPUT_SERVICE) as InputManager
+    }
+    private val feedback by lazy { MoonlightDeviceFeedback(input) }
+    private val deviceListener = object : InputManager.InputDeviceListener {
+        override fun onInputDeviceAdded(deviceId: Int) = Unit
+        override fun onInputDeviceChanged(deviceId: Int) { input.removeDevice(deviceId) }
+        override fun onInputDeviceRemoved(deviceId: Int) { input.removeDevice(deviceId) }
+    }
     private val keyboard by lazy {
         MoonlightKeyboardRouter { virtualKey, pressed, modifiers ->
             engine.sendKeyboard(virtualKey, pressed, modifiers)
@@ -96,6 +112,13 @@ class MoonlightStreamActivity : ComponentActivity() {
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or
             View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                engine.rumbleEvents.collect { rumble ->
+                    if (!osdVisible) feedback.rumble(rumble)
+                }
+            }
+        }
         setContent {
             MoonlightStreamContent(
                 engine = engine,
@@ -115,6 +138,7 @@ class MoonlightStreamActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        inputManager.registerInputDeviceListener(deviceListener, null)
         companion.attach(
             title = getString(R.string.moonlight_title),
             usedPorts = { input.localUsedPorts() },
@@ -140,7 +164,10 @@ class MoonlightStreamActivity : ComponentActivity() {
     }
 
     private fun showOsd(visible: Boolean) {
-        if (visible && !osdVisible) releaseRemoteInputs()
+        if (visible && !osdVisible) {
+            releaseRemoteInputs()
+            feedback.cancelAll()
+        }
         osdVisible = visible
         companion.interaction(playing = engine.status.value.phase == MoonlightStreamPhase.STREAMING,
             menu = visible)
@@ -158,6 +185,8 @@ class MoonlightStreamActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        inputManager.unregisterInputDeviceListener(deviceListener)
+        feedback.cancelAll()
         companion.detach()
         releaseRemoteInputs()
         engine.stop()
