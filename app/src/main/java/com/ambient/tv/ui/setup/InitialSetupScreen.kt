@@ -238,6 +238,7 @@ internal fun SetupSystemCard(system: MediaSystem, modifier: Modifier, onFocused:
                 MediaSystem.RADIO -> R.string.setup_desc_radio
                 MediaSystem.DLNA -> R.string.dlna_explanation
                 MediaSystem.ROMM -> R.string.romm_setup_hint
+                MediaSystem.MOONLIGHT -> R.string.moonlight_settings_hint
                 MediaSystem.FILES -> R.string.setup_desc_files
             }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
