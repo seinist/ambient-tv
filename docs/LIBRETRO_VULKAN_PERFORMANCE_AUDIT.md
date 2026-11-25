@@ -12,6 +12,16 @@
   clears its letterbox bars to opaque black. Failed shader output is not
   presented; the established GLES fallback remains available.
 
+## Pinned Slang runtime resource reuse
+The Slang Vulkan runtime previously created an extra attachment ImageView for
+each intermediate output on each frame. An intermediate OwnedImage with exactly
+one mip level already has a matching 2D view. Such passes now borrow the owned
+view, skipping the redundant Vulkan allocation and subsequent destruction.
+Multi-mip images retain the separate one-level view, preserving Vulkan
+framebuffer compatibility. The existing OwnedImage lifetime is unchanged and
+the final swapchain image view is still frame-scoped. This is a bounded
+allocation optimization, not an unsafe cache of stale image handles.
+
 ## Audit requirements
 Production Vulkan methods are compiled and executed in the driver-fault
 harness. Tests verify filtered swapchain reuse, queue-idle before shader
