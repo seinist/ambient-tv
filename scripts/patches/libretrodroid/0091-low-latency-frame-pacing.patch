@@ -46,15 +46,13 @@ diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
          if (recording && frames > 0 && rewindTimeline.shouldCapture(*rewindBuffer)) {
 +            const auto captureStart = trackRewindWork ? WorkClock::now() : WorkClock::time_point{};
              const size_t sz = core->retro_serialize_size();
-@@ -866,5 +879,7 @@
+@@ -866,7 +879,10 @@
                  clearRewindBuffer();
              }
 +            if (trackRewindWork) captureNs = static_cast<uint64_t>(
 +                std::chrono::duration_cast<std::chrono::nanoseconds>(WorkClock::now() - captureStart).count());
          }
  
-         // Checkpoints are captured BEFORE emulation. Restoring then running one
-@@ -870,3 +885,4 @@
          // Checkpoints are captured BEFORE emulation. Restoring then running one
          // frame to draw a rewind preview can therefore never advance past live play.
 +        if (trackRewindWork) measuredFrames = frames;
