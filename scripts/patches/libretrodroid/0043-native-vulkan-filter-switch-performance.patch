@@ -1,0 +1,45 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -418,11 +418,24 @@
+ void VulkanBackend::setNativeShaderPresetPath(const std::string& path) {
+     if (hasFatalError() || shutdownReady) return;
+     if (nativeSlangPath == path) return;
+-    // This API is GL-thread only. Wait the device before destroying shader history
+-    // resources; never change filters while the Vulkan queue is using them.
+-    if (!destroyNativeSdrSwapchain()) return;
++    // Already filtered SDR WSI images have COLOR_ATTACHMENT usage.
++    // Keep the surface, images and semaphores across compatible filter changes.
++    // The GPU must be idle before releasing old shader history/resources.
++    // Raw <-> filtered still recreates WSI because its image usage differs.
++    const bool keepFilteredSwapchain = nativeSdrSwapchain != VK_NULL_HANDLE &&
++        !nativeSdrDisabled && !nativeSlangPath.empty() && !path.empty() &&
++        nativeOutputTransfer == 0u;
++    if (keepFilteredSwapchain) {
++        if (!waitForDeviceIdle()) return;
++        nativePresentation.invalidateFrame();
++        nativeSlang.releaseGpu();
++        // Only the window/ready bits remain until the new filter presents.
++        nativeSdrStatus.store(3u, std::memory_order_release);
++    } else if (!destroyNativeSdrSwapchain()) {
++        return;
++    }
+     nativeSlangPath = path;
+     nativeSlang.setPresetPath(path);
+     nativeSlangFrame = 0;
+     nativeSdrDisabled = false;
+ }
+@@ -1330,4 +1330,9 @@
+-        VkClearColorValue black {};
+-        black.float32[3] = 1.0f;
+-        vk.cmdClearColorImage(commandBuffer, target, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+-                              &black, 1, &targetRange);
++        // The final Slang render pass clears the entire attachment, including
++        // the bars. Only raw blits need this transfer clear; a failed shader
++        // frame is not presented and retains the GLES fallback.
++        if (!nativeSlang.requested()) {
++            VkClearColorValue black {};
++            black.float32[3] = 1.0f;
++            vk.cmdClearColorImage(commandBuffer, target, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
++                                  &black, 1, &targetRange);
++        }
