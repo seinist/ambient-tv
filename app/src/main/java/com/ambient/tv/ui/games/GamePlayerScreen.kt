@@ -54,6 +54,8 @@ import com.ambient.tv.games.GameStateEntry
 import com.ambient.tv.games.GameStateKind
 import com.ambient.tv.games.GameStateStore
 import com.ambient.tv.ui.common.activateOnTvKey
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 import android.os.Handler
@@ -450,6 +452,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     // Once armed, continue refreshing the native clock even when the user disables matching.
     var displayTimingArmed by remember { mutableStateOf(gameDisplayProfile.active) }
     val backgroundVideo by BackgroundPlaybackSession.snapshot.collectAsState()
+    val videoOwnsDisplay = backgroundVideo.active || backgroundVideo.replacingSource
     /** The native Vulkan image format, not merely the user's requested graphics mode. */
     var vulkanFrameStatus by remember { mutableStateOf(GameVulkanFrameStatus()) }
     /** Native VkImage pixel layout, NOT color transfer or HDR source provenance. */
@@ -506,7 +509,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         }
     }
     val displayHold = displaySwitching ||
-        (gameDisplayProfile.active && loaded && !displayPrepared && !netplay.busy && !backgroundVideo.active)
+        (gameDisplayProfile.active && loaded && !displayPrepared && !netplay.busy && !videoOwnsDisplay)
     val availableGameModes = actualGameMode?.let {
         gameDisplayModes(displayModes, it, handheld, displayPreferences.displayModeWhitelist, requiredGameHdr)
     }.orEmpty()
@@ -530,7 +533,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         settings.rewind && !hardcoreRules && !netplay.busy
     val availability = GameOsdAvailability(
         loaded = loaded && coreReady && activityResumed && !exiting && !destroyed,
-        busy = stateBusy, stateAvailable = stateAvailable, frameExact = serializationPolicy.frameExact,
+        busy = stateBusy || displayHold, stateAvailable = stateAvailable, frameExact = serializationPolicy.frameExact,
         hardcore = hardcoreRules, netplay = netplay.busy,
         supportsCheats = core.cheats, supportsNetplay = core.netplay, directContent = game.direct,
         // The core panel also chooses and removes the core, so it is always there.
@@ -875,10 +878,16 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     // Initial metadata arrives after the first native frame. Subsequent switches use
     // the same paused lifecycle as the OSD and do not resume a deliberately paused game.
     LaunchedEffect(retroView, displayFormat, gameDisplayProfile, activityResumed,
-        netplay.busy, backgroundVideo.active, destroyed, exiting) {
+        netplay.busy, videoOwnsDisplay, destroyed, exiting) {
+        if (videoOwnsDisplay) {
+            gameDisplay.close()
+            displayPrepared = true
+            displayFailed = false
+            return@LaunchedEffect
+        }
         val format = displayFormat ?: return@LaunchedEffect
-        if (!activityResumed || netplay.busy || backgroundVideo.active || destroyed || exiting) return@LaunchedEffect
-        if (!gameDisplayProfile.active && !gameDisplay.hasLease && !displayTimingArmed) {
+        if (!activityResumed || netplay.busy || destroyed || exiting) return@LaunchedEffect
+        if (!gameDisplayProfile.active && !gameDisplay.hasLease) {
             displayPrepared = true
             displayFailed = false
             return@LaunchedEffect
@@ -908,20 +917,22 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             }
         } finally {
             // Queue clock/audio changes before the running effect can release the frame gate.
-            val actual = gameDisplay.actualMode()
-            actualGameMode = actual
-            if (!destroyed && !exiting && actual != null && displayTimingArmed) {
-                val strict = gameDisplayProfile.active
-                retroView.queueEvent { LibretroDroid.setGameDisplayTiming(actual.refreshRate, strict) }
+            if (currentCoroutineContext().isActive) {
+                val actual = gameDisplay.actualMode()
+                actualGameMode = actual
+                if (!destroyed && !exiting && actual != null && displayTimingArmed) {
+                    val strict = gameDisplayProfile.active
+                    retroView.queueEvent { LibretroDroid.setGameDisplayTiming(actual.refreshRate, strict) }
+                }
+                displayPrepared = true
             }
-            displayPrepared = true
             displaySwitching = false
         }
     }
     // Also retime after external Android/HDMI changes. No format observation in the frame loop.
     LaunchedEffect(retroView, loaded, actualGameMode?.key, displayTimingArmed, gameDisplayProfile.active,
-        activityResumed, netplay.busy, displaySwitching, destroyed, exiting) {
-        if (!loaded || !activityResumed || netplay.busy || displaySwitching || destroyed || exiting ||
+        activityResumed, netplay.busy, videoOwnsDisplay, displaySwitching, destroyed, exiting) {
+        if (!loaded || !activityResumed || netplay.busy || videoOwnsDisplay || displaySwitching || destroyed || exiting ||
             !displayTimingArmed) return@LaunchedEffect
         val actual = actualGameMode ?: return@LaunchedEffect
         val strict = gameDisplayProfile.active
@@ -1546,7 +1557,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     AndroidView(factory = { vulkanSurfaceHost ?: retroView }, modifier = surfaceModifier)
                 },
             )
-            if (displayHold && !menuOpen) {
+            if ((displayHold || (gameDisplayProfile.active && !displayPrepared && !videoOwnsDisplay)) && !menuOpen) {
                 Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
                     Text(stringResource(R.string.game_display_switching), color = Color.White)
                 }
