@@ -88,6 +88,7 @@ internal fun GameMetadataSettingsDialog(
         },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(stringResource(R.string.game_metadata_scope_all), style = MaterialTheme.typography.bodySmall)
             Text(stringResource(R.string.game_metadata_settings_provider), style = MaterialTheme.typography.titleSmall)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("none" to R.string.game_metadata_settings_off,
@@ -95,7 +96,7 @@ internal fun GameMetadataSettingsDialog(
                     GameMetadataProviderIds.SCREENSCRAPER to R.string.game_metadata_settings_screenscraper,
                     GameMetadataProviderIds.THEGAMESDB to R.string.game_metadata_settings_thegamesdb).forEach { (id, label) ->
                     TvChip(stringResource(label), selected = options.provider == id,
-                        onClick = { options = options.copy(provider = id) })
+                        onClick = { options = options.copy(provider = id); accountOpen = false })
                 }
             }
             Text(stringResource(when (options.provider) {
