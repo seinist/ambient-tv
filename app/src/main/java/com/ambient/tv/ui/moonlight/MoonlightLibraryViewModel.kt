@@ -28,6 +28,7 @@ data class MoonlightBrowseGame(
     val app: MoonlightApp,
     val favorite: Boolean = false,
     val recentPosition: Int = Int.MAX_VALUE,
+    val artworkPath: String? = null,
 ) {
     val key: String get() = host.id + ":" + app.id
 }
