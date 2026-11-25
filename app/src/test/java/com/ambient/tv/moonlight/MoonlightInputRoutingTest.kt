@@ -1,0 +1,39 @@
+package com.ambient.tv.moonlight
+
+import android.app.Application
+import android.view.KeyEvent
+import org.junit.Assert.*
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+/** Remote button-up must survive the OSD handoff and phone/TV focus loss. */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], application = Application::class)
+class MoonlightInputRoutingTest {
+    @Test fun dpadReleaseAndOsdHandoffClearRemoteButtonStates() {
+        val frames = mutableListOf<Pair<Int, Int>>()
+        val router = MoonlightControllerRouter { _, mask, buttons, _, _, _, _, _, _ ->
+            frames += mask.toInt() to buttons
+        }
+        assertTrue(router.onKey(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_UP)))
+        assertEquals(1, frames.last().first)
+        assertNotEquals(0, frames.last().second)
+        router.releaseAll()
+        assertEquals(0, frames.last().second)
+        assertEquals(0, frames.size - 2)
+    }
+
+    @Test fun keyboardKeysAndReleaseAllUseWindowsVirtualKeyCodes() {
+        val events = mutableListOf<Triple<Int, Boolean, Int>>()
+        val keyboard = MoonlightKeyboardRouter { code, pressed, modifiers ->
+            events += Triple(code.toInt(), pressed, modifiers.toInt())
+        }
+        assertTrue(keyboard.onKey(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_A)))
+        assertEquals(Triple(65, true, 0), events.last())
+        keyboard.releaseAll()
+        assertEquals(Triple(65, false, 0), events.last())
+        assertFalse(keyboard.onKey(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_HOME)))
+    }
+}
