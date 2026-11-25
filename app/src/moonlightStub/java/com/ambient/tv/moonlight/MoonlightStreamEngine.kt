@@ -3,6 +3,8 @@ package com.ambient.tv.moonlight
 import android.view.Surface
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -13,6 +15,8 @@ class MoonlightStreamEngine @Inject constructor() {
     private val mutable = MutableStateFlow(MoonlightStreamStatus(
         phase = MoonlightStreamPhase.FAILED, error = "Native Moonlight streaming is not included"))
     val status: StateFlow<MoonlightStreamStatus> = mutable.asStateFlow()
+    private val mutableRumble = MutableSharedFlow<MoonlightRumble>()
+    val rumbleEvents = mutableRumble.asSharedFlow()
 
     fun start(hostId: String, appId: Int, surface: Surface, profile: MoonlightStreamProfile): Boolean = false
     fun stop() = Unit
