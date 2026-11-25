@@ -3192,6 +3192,9 @@ private fun AmbientTvApp(
                                 onItemClick = { ratingKey -> handleMediaSelection(ratingKey) },
                                 onYouTubeClick = { videoId -> handleYouTubeSelection(videoId) },
                                 onSpotifyClick = { item -> if (item.type.name == "TRACK") playOnSelectedTarget(Destinations.spotifyPlayer(item.uri)) else navController.navigate(Destinations.spotifyDetail(item.type.name.lowercase(), item.id)) },
+                                onMoonlightClick = { host, app ->
+                                    navController.navigate(Destinations.moonlightDetail(host, app)) { launchSingleTop = true }
+                                },
                                 onTvheadendChannelClick = { channel -> playOnSelectedTarget(Destinations.tvhPlayer("channel", channel.uuid, channel.sourceId)) },
                                 onTvheadendProgramClick = { event ->
                                     if (event.isLive(System.currentTimeMillis() / 1000L)) {
