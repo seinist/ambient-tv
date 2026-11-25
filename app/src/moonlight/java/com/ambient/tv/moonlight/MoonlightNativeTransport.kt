@@ -13,14 +13,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-sealed interface MoonlightPairResult {
-    data class Paired(val hostId: String) : MoonlightPairResult
-    data object AlreadyPaired : MoonlightPairResult
-    data object IncorrectPin : MoonlightPairResult
-    data object Busy : MoonlightPairResult
-    data object Rejected : MoonlightPairResult
-}
-
 /**
  * Native GameStream control plane. Built ONLY with MOONLIGHT_NATIVE=1 and the pinned protocol
  * module; its HTTPS client, pairing crypto and app list use original upstream Moonlight code.
