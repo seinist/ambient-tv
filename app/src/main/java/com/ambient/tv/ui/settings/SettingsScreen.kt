@@ -831,6 +831,7 @@ fun SettingsScreen(
                         }
                         SettingsCategory.DLNA,
                         SettingsCategory.ROMM,
+                        SettingsCategory.MOONLIGHT,
                         SettingsCategory.FILES,
                         SettingsCategory.WIREGUARD,
                         SettingsCategory.PLEX,
