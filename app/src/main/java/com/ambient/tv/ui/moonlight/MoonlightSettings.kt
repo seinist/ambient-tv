@@ -10,6 +10,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import android.content.Intent
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
@@ -33,6 +35,7 @@ fun MoonlightSettingsSection(
     model: MoonlightSettingsViewModel = hiltViewModel(),
 ) {
     val state by model.state.collectAsState()
+    val context = LocalContext.current
     var hostname by rememberSaveable { mutableStateOf("") }
     var port by rememberSaveable { mutableStateOf("47989") }
     var name by rememberSaveable { mutableStateOf("") }
@@ -73,7 +76,12 @@ fun MoonlightSettingsSection(
                                     style = MaterialTheme.typography.bodyMedium)
                                 // Preview only. Do not offer nonfunctional Play actions.
                                 apps.take(16).forEach { app ->
-                                    Text(app.title, style = MaterialTheme.typography.bodySmall)
+                                    TvActionButton(stringResource(R.string.moonlight_stream_test, app.title), {
+                                        context.startActivity(Intent(context, MoonlightStreamActivity::class.java).apply {
+                                            putExtra(MoonlightStreamActivity.EXTRA_HOST_ID, host.id)
+                                            putExtra(MoonlightStreamActivity.EXTRA_APP_ID, app.id)
+                                        })
+                                    }, enabled = !state.pairingBusy && state.loadingAppsId == null)
                                 }
                                 Text(stringResource(R.string.moonlight_catalog_preview),
                                     style = MaterialTheme.typography.bodySmall,
