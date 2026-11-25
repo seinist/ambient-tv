@@ -1,7 +1,7 @@
 diff --git a/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java b/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
 --- a/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
 +++ b/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
-@@ -201,9 +201,9 @@ public class NvHTTP {
+@@ -200,8 +200,8 @@ public class NvHTTP {
      }
      
      public NvHTTP(ComputerDetails.AddressTuple address, int httpsPort, String uniqueId, X509Certificate serverCert, LimelightCryptoProvider cryptoProvider) throws IOException {
