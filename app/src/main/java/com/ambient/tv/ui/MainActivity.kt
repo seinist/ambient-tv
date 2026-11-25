@@ -1271,11 +1271,11 @@ internal fun radioSectionTransitionIsInstant(fromRoute: String?, toRoute: String
 }
 
 internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.GAME_LIBRARY, Destinations.GAME_LIBRARY_SECTION, Destinations.GAME_LIBRARY_SETUP, Destinations.ROMM, Destinations.ROMM_SECTION, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.WEATHER, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.TELEGRAM, Destinations.TELEGRAM_SECTION, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.RADIO_SECTION, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
-internal val FULLSCREEN_ROUTES = setOf(Destinations.GAME_DETAIL, Destinations.ROMM_DETAIL, Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.GAME_PLAYER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.WEATHER_PLAYER, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER, Destinations.TELEGRAM_DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER, Destinations.RADIO_DETAIL, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
+internal val FULLSCREEN_ROUTES = setOf(Destinations.GAME_DETAIL, Destinations.ROMM_DETAIL, Destinations.MOONLIGHT_DETAIL, Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.GAME_PLAYER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.WEATHER_PLAYER, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER, Destinations.TELEGRAM_DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER, Destinations.RADIO_DETAIL, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
 // Details are ordinary page navigation (even though they hide the sidebar).
 // Exclude only player/video, setup and system-only destinations from page motion.
 internal val NO_VIEW_TRANSITION_ROUTES = FULLSCREEN_ROUTES - setOf(
-    Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE, Destinations.GAME_DETAIL, Destinations.ROMM_DETAIL,
+    Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE, Destinations.GAME_DETAIL, Destinations.ROMM_DETAIL, Destinations.MOONLIGHT_DETAIL,
     Destinations.TELEGRAM_DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL,
     Destinations.RADIO_DETAIL, Destinations.SPOTIFY_DETAIL,
 )
@@ -1833,6 +1833,7 @@ private fun AmbientTvApp(
         iptvSourceId = configuredIptvSourceId,
     ) ?: Destinations.GAME_LIBRARY.takeIf { gameLibraryRepository.hasConfiguredFolders() }
         ?: Destinations.ROMM.takeIf { appPreferences.isRommConfigured }
+        ?: Destinations.MOONLIGHT.takeIf { com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE && appPreferences.hasMoonlightHosts }
     val rootRoute = if (appPreferences.needsInitialSetup) Destinations.INITIAL_SETUP
         else configuredStartDestination() ?: Destinations.INITIAL_SETUP
     val startDestination = if (appPreferences.isConfigured && startupState.shouldChooseAtStartup)
@@ -2411,6 +2412,7 @@ private fun AmbientTvApp(
                 Destinations.RADIO_SECTION -> currentRadioSectionKey?.let(Destinations::radioSection) ?: Destinations.RADIO
                 Destinations.GAME_LIBRARY_SECTION -> currentSectionKey?.let(Destinations::gameLibrarySection) ?: Destinations.GAME_LIBRARY
                 Destinations.ROMM_SECTION -> currentSectionKey?.let(Destinations::rommSection) ?: Destinations.ROMM
+                Destinations.MOONLIGHT_SECTION -> currentSectionKey?.let(Destinations::moonlightSection) ?: Destinations.MOONLIGHT
                 Destinations.TELEGRAM_SECTION -> currentTelegramSectionKey?.let(Destinations::telegramSection) ?: Destinations.TELEGRAM
                 Destinations.LIVE_TV_SECTION -> currentTvheadendTab?.let { Destinations.liveTvSection(it, currentLiveTvSourceId) } ?: Destinations.LIVE_TV
                 Destinations.FILE_SOURCE -> currentFileSourceId?.let(Destinations::fileSource) ?: Destinations.FILES
@@ -3055,7 +3057,7 @@ private fun AmbientTvApp(
                         )
                     }
                     composable(Destinations.SETUP_COMPLETE, arguments = listOf(navArgument("destination") { type = NavType.StringType })) { entry ->
-                        val destination = entry.arguments?.getString("destination")?.takeIf { it in setOf(Destinations.HOME, Destinations.YOUTUBE, Destinations.TELEGRAM, Destinations.SPOTIFY, Destinations.RADIO, Destinations.FILES, Destinations.GAME_LIBRARY, Destinations.ROMM) || it == configuredStartDestination() } ?: Destinations.HOME
+                        val destination = entry.arguments?.getString("destination")?.takeIf { it in setOf(Destinations.HOME, Destinations.YOUTUBE, Destinations.TELEGRAM, Destinations.SPOTIFY, Destinations.RADIO, Destinations.FILES, Destinations.GAME_LIBRARY, Destinations.ROMM, Destinations.MOONLIGHT) || it == configuredStartDestination() } ?: Destinations.HOME
                         com.ambient.tv.ui.setup.SetupCompleteScreen(
                             onStart = { navController.navigate(destination) { popUpTo(Destinations.INITIAL_SETUP) { inclusive = true } } },
                             onAddSource = { navController.popBackStack(Destinations.INITIAL_SETUP, false) },
