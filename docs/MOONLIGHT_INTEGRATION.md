@@ -43,6 +43,12 @@ Libretro cores or background video. Disconnecting a stream must not terminate
 the remote PC application. Input ownership must switch atomically and deliver
 all held-key releases to the remote.
 
+## Development order (2026-11-25)
+
+Implement all technical features and complete automated CI/code audits first.
+Sunshine/device-based acceptance tests are deliberately postponed until the
+technical integration is complete. No claims of verified live gameplay before then.
+
 ## Work still required before release
 
 1. Pin and integrate upstream Moonlight Android Java/NDK, common-c and bundled
