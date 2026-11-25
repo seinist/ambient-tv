@@ -152,6 +152,15 @@ class RetroPadInputTest {
         assertEquals(0, input.trigger(0, 1))
     }
 
+    @Test fun portNotificationsAreLocalAndOnlyForChanges() {
+        val ports = mutableListOf<Int>()
+        input.onPortChanged = { ports += it }
+        input.touchButton(RetroPadButton.A, true)
+        input.touchButton(RetroPadButton.A, true)
+        input.touchButton(RetroPadButton.A, false)
+        assertEquals(listOf(0, 0), ports)
+    }
+
     @Test fun assigningMovesTheKeyAndTheDefaultNeedsNoStorage() {
         val keyboard = defaultRetroProfile(RetroInputKind.KEYBOARD)
         val changed = keyboard.assign(RetroInputTarget.Button(RetroPadButton.A), KeyEvent.KEYCODE_Z)

@@ -368,16 +368,26 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val hideTouchForGamepad by rememberUpdatedState(touchStyle.hideOnGamepadInput)
     // A trusted small Slang preset may opt into the experimental native WSI.
     // Existing GLES filters remain available for all other choices and for HDR.
-    val nativeSlangPath = remember(context, shader, shaderIntensity, selectedPack, nativeTransfer, session.vulkan, effect) {
-        // Original compact effects have an intensity control; their native presets
-        // use the default. Authored upscalers have no such control, so a strength
-        // retained from a previously selected effect must not block their native path.
-        if (BuildConfig.LIBRASHADER_NATIVE && session.vulkan && effect == null &&
+    // Extract and verify only the selected, eligible built-in preset off the UI thread.
+    // Key the result to the request so a previous shader can never be presented as the new one.
+    val nativeSlangRequest = shader.takeIf {
+        BuildConfig.LIBRASHADER_NATIVE && session.vulkan && effect == null &&
             nativeTransfer == GameVulkanTransferMode.SDR &&
-            (!GameRetroShaders.isCustom(shader) || kotlin.math.abs(shaderIntensity - 1f) < 0.0001f))
-            GameVulkanSlangPresets.prepare(context, shader, selectedPack)
-        else null
+            (!GameRetroShaders.isCustom(shader) || kotlin.math.abs(shaderIntensity - 1f) < 0.0001f) &&
+            GameVulkanSlangPresets.supports(shader, selectedPack)
     }
+    var nativeSlangPreparation by remember(context, nativeSlangRequest) {
+        mutableStateOf<Pair<Boolean, String?>>(false to null)
+    }
+    LaunchedEffect(context, nativeSlangRequest) {
+        val requested = nativeSlangRequest ?: return@LaunchedEffect
+        val prepared = withContext(Dispatchers.IO) {
+            GameVulkanSlangPresets.prepare(context.applicationContext, requested, null)
+        }
+        nativeSlangPreparation = true to prepared
+    }
+    val nativeSlangPath = nativeSlangPreparation.second
+    val nativeSlangPending = nativeSlangRequest != null && !nativeSlangPreparation.first
     // SDR as HDR10 is fixed when the view is created (EGL config and PQ surface); a change restarts.
     val sdrToHdrSession = remember(session) {
         settings.sdrToHdr && toneMap == GameHdrToneMap.OFF && GameHdrDisplayProbe.capture(physicalContext).hdr10
@@ -1041,14 +1051,15 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             }
         }
     }
-    LaunchedEffect(nativePictureSupported, nativeSdrFullscreenRequested, vulkanSurfaceHost) {
+    LaunchedEffect(nativePictureSupported, nativeSlangPending, nativeSdrFullscreenRequested, vulkanSurfaceHost) {
         if (!nativePictureSupported && nativeSdrFullscreenRequested) {
-            nativeSdrFullscreenRequested = false
+            // A pending asynchronous preparation is not a failed/unsupported preset.
+            if (!nativeSlangPending) nativeSdrFullscreenRequested = false
             vulkanSurfaceHost?.setFullscreenRequested(false)
         }
     }
-    LaunchedEffect(nativeSdrFullscreenRequested, running, vulkanSurfaceHost) {
-        if (!nativeSdrFullscreenRequested || !running) {
+    LaunchedEffect(nativeSdrFullscreenRequested, running, nativePictureSupported, nativeSlangPending, vulkanSurfaceHost) {
+        if (!nativeSdrFullscreenRequested || !running || !nativePictureSupported || nativeSlangPending) {
             vulkanSurfaceHost?.setFullscreenRequested(false)
         } else if (running) {
             // Arming from the paused Info panel does not cover the game with a
@@ -1442,28 +1453,15 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         }
     }
     DisposableEffect(input, retroView) {
-        val sent = IntArray(RetroPorts.COUNT * 7)
-        input.onChanged = changed@{
+        // The aggregate input already reports exactly which port changed. Publish it
+        // before optional UI observers, without scanning 28 atomic values per event.
+        input.onPortChanged = changed@{ port ->
             if (destroyed) return@changed
-            for (port in 0 until RetroPorts.COUNT) {
-                val buttons = input.buttons(port)
-                val leftX = input.analog(port, 0, 0)
-                val leftY = input.analog(port, 0, 1)
-                val rightX = input.analog(port, 1, 0)
-                val rightY = input.analog(port, 1, 1)
-                val leftTrigger = input.trigger(port, 0)
-                val rightTrigger = input.trigger(port, 1)
-                val at = port * 7
-                if (sent[at] == buttons && sent[at + 1] == leftX && sent[at + 2] == leftY &&
-                    sent[at + 3] == rightX && sent[at + 4] == rightY &&
-                    sent[at + 5] == leftTrigger && sent[at + 6] == rightTrigger) continue
-                sent[at] = buttons; sent[at + 1] = leftX; sent[at + 2] = leftY
-                sent[at + 3] = rightX; sent[at + 4] = rightY
-                sent[at + 5] = leftTrigger; sent[at + 6] = rightTrigger
-                val range = RetroPadInput.ANALOG_MAX.toFloat()
-                LibretroDroid.onInputSnapshot(port, buttons, leftX / range, leftY / range,
-                    rightX / range, rightY / range, leftTrigger / range, rightTrigger / range)
-            }
+            val range = RetroPadInput.ANALOG_MAX.toFloat()
+            LibretroDroid.onInputSnapshot(port, input.buttons(port),
+                input.analog(port, 0, 0) / range, input.analog(port, 0, 1) / range,
+                input.analog(port, 1, 0) / range, input.analog(port, 1, 1) / range,
+                input.trigger(port, 0) / range, input.trigger(port, 1) / range)
         }
         val onRemoved: (Int) -> Unit = { id ->
             input.deviceRemoved(id)
@@ -1471,7 +1469,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         }
         GamepadInput.deviceRemovedSink = onRemoved
         onDispose {
-            input.onChanged = null
+            input.onPortChanged = null
             if (GamepadInput.deviceRemovedSink === onRemoved) GamepadInput.deviceRemovedSink = null
             GameRumble.stopAll()
         }

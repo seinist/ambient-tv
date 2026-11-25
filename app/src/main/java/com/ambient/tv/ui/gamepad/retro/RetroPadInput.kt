@@ -102,6 +102,8 @@ class RetroPadInput(
 
     /** Called on the main thread only when an aggregate button, stick or pressure changed. */
     var onChanged: (() -> Unit)? = null
+    /** Immediate native hand-off, only for the changed aggregate port. Main thread. */
+    var onPortChanged: ((Int) -> Unit)? = null
 
     /** RETRO_DEVICE_JOYPAD bitmask of [port] (bit = RETRO_DEVICE_ID_JOYPAD_*). Any thread. */
     fun buttons(port: Int): Int = if (port in 0 until RetroPorts.COUNT) portButtons.get(port) else 0
@@ -620,7 +622,10 @@ class RetroPadInput(
         if (portAnalog.getAndSet(at + 3, rightY) != rightY) changed = true
         if (portTriggers.getAndSet(triggerAt, leftTrigger) != leftTrigger) changed = true
         if (portTriggers.getAndSet(triggerAt + 1, rightTrigger) != rightTrigger) changed = true
-        if (changed) onChanged?.invoke()
+        if (changed) {
+            onPortChanged?.invoke(port)
+            onChanged?.invoke()
+        }
     }
 
     private fun digitalPressure(buttons: Int, button: RetroPadButton): Int =
