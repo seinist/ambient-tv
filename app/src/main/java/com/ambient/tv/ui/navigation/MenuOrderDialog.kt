@@ -140,6 +140,7 @@ internal fun menuOrderSystems(state: SidebarUiState): List<MediaSystem> =
         if (state.telegramEnabled && state.telegramAuthorized) add(MediaSystem.TELEGRAM)
         if (state.radioEnabled) add(MediaSystem.RADIO)
         if (state.rommEnabled) add(MediaSystem.ROMM)
+        if (state.moonlightEnabled) add(MediaSystem.MOONLIGHT)
         if (state.tvheadendEnabled) add(MediaSystem.TVHEADEND)
         if (state.liveTvSources.any { it.source.system == "iptv" }) add(MediaSystem.IPTV)
     }
