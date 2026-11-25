@@ -1196,6 +1196,7 @@ internal fun homeRowSourceAddable(system: String, contentKey: String, state: Set
             radioReady = sourceConfigured(SettingsCategory.RADIO, state),
             gamesReady = true,
             rommReady = sourceConfigured(SettingsCategory.ROMM, state),
+            moonlightReady = com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE,
             telegramReady = sourceConfigured(SettingsCategory.TELEGRAM, state),
             photosReady = sourceConfigured(SettingsCategory.PLEX, state) ||
                 sourceConfigured(SettingsCategory.JELLYFIN, state) || sourceConfigured(SettingsCategory.EMBY, state),
