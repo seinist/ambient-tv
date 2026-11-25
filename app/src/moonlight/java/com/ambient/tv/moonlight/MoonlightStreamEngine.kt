@@ -41,6 +41,7 @@ class MoonlightStreamEngine @Inject constructor(
     private val prefs: AppPreferences,
     private val transport: MoonlightNativeTransport,
     private val crypto: MoonlightKeystoreCryptoProvider,
+    private val libraryStore: MoonlightLibraryStore,
 ) {
     private data class Active(
         val generation: Long,
@@ -219,8 +220,10 @@ class MoonlightStreamEngine @Inject constructor(
             val wasCancelled = synchronized(lock) {
                 if (active !== session) return
                 session.started = true
-                if (!session.cancelled)
+                if (!session.cancelled) {
                     mutable.value = mutable.value.copy(phase = MoonlightStreamPhase.STREAMING)
+                    libraryStore.recordLaunch(session.hostId, session.appId)
+                }
                 session.cancelled
             }
             if (wasCancelled) stopSession(session)
