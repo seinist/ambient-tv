@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="moonlight_title">Moonlight</string>
+    <string name="moonlight_enable">Moonlight-Host-Einrichtung aktivieren</string>
+    <string name="moonlight_settings_hint">Verbindung zu Sunshine oder GameStream einrichten</string>
+    <string name="moonlight_experimental_notice">Experimentelle Vorbereitung: Bisher nur PC-Suche und Verbindungsprüfung. Pairing und Spiele-Streaming sind in diesem Build noch nicht verfügbar.</string>
+    <string name="moonlight_hosts">Gespeicherte PCs</string>
+    <string name="moonlight_check">Verbindung prüfen</string>
+    <string name="moonlight_remove">Entfernen</string>
+    <string name="moonlight_address">PC-Adresse</string>
+    <string name="moonlight_port">HTTP-Port</string>
+    <string name="moonlight_name">Anzeigename (optional)</string>
+    <string name="moonlight_mac">MAC-Adresse (optional)</string>
+    <string name="moonlight_add">PC hinzufügen</string>
+    <string name="moonlight_scan">PCs im lokalen Netzwerk suchen</string>
+    <string name="moonlight_invalid_host">Adresse, Port und MAC-Adresse prüfen.</string>
+    <string name="moonlight_duplicate_host">Dieser PC ist bereits gespeichert.</string>
+    <string name="moonlight_too_many_hosts">Maximal 16 PCs können gespeichert werden.</string>
+    <string name="moonlight_probe_ok">Sunshine/GameStream antwortet: %1$s. Das Pairing wurde nicht geprüft.</string>
+    <string name="moonlight_probe_failed">Keine gültige Antwort von Sunshine/GameStream. Netzwerk und PC prüfen.</string>
+    <string name="moonlight_discovery_failed">PC-Suche fehlgeschlagen. Bitte PC-Adresse manuell eingeben.</string>
+</resources>
