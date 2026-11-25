@@ -20,7 +20,7 @@ internal fun settingsShortcutWakeTarget(key: String?): String? {
 internal fun settingsShortcutGamesTarget(key: String?): String? {
     if (settingsShortcutCategory(key) != SettingsCategory.GAMES) return null
     return key?.substringAfter(':', missingDelimiterValue = "")?.lowercase(Locale.ROOT)
-        ?.takeIf { it in setOf("home", "systems", "metadata", "controls", "play", "storage") }
+        ?.takeIf { it in setOf("home", "library", "systems", "metadata", "controls", "play", "storage") }
 }
 
 /** A small, explicit allowlist of stable lazy-list anchors for external Settings shortcuts.
