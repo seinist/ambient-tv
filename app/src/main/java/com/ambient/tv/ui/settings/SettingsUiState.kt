@@ -43,10 +43,11 @@ data class MediaServerAuthLiveState(
     val resolvingMac: Boolean = false,
 )
 
-/** Related UI size settings share one constructor slot to stay within the JVM method limit. */
+/** Display and pointer visibility drafts share one slot to stay within the JVM method limit. */
 data class UiDisplayDraft(
     val scale: Float = 1f,
     val renderResolutionKey: String = UiRenderResolutionPolicy.SYSTEM,
+    val mousePointerHideSeconds: Int = MousePointerSettings.DEFAULT_SECONDS,
 )
 
 /** Keep Next Up drafts together; the parent constructor is at the JVM parameter-slot limit. */
@@ -322,6 +323,7 @@ data class SettingsUiState(
 ) {
     val uiScale: Float get() = uiDisplay.scale
     val uiRenderResolutionKey: String get() = uiDisplay.renderResolutionKey
+    val mousePointerHideSeconds: Int get() = uiDisplay.mousePointerHideSeconds
     val nextUpEnabled: Boolean get() = nextUp.enabled
     val nextUpLeadSeconds: Int get() = nextUp.leadSeconds
     val nextUpCreditsDelaySeconds: Int get() = nextUp.creditsDelaySeconds
@@ -417,6 +419,7 @@ internal fun SettingsUiState.editableValues(): List<Any?> = listOf(
     forcedSubtitlesInUiLanguage,
     uiScale,
     uiRenderResolutionKey,
+    mousePointerHideSeconds,
     accentColorKey,
     customAccentHex,
     customPlaybackAccentHex,
@@ -606,6 +609,8 @@ internal fun mergeStoredSettings(draft: SettingsUiState, baseline: SettingsUiSta
         scale = if (draft.uiScale != baseline.uiScale) draft.uiScale else stored.uiScale,
         renderResolutionKey = if (draft.uiRenderResolutionKey != baseline.uiRenderResolutionKey)
             draft.uiRenderResolutionKey else stored.uiRenderResolutionKey,
+        mousePointerHideSeconds = if (draft.mousePointerHideSeconds != baseline.mousePointerHideSeconds)
+            draft.mousePointerHideSeconds else stored.mousePointerHideSeconds,
     ),
     accentColorKey = if (draft.accentColorKey != baseline.accentColorKey) draft.accentColorKey else stored.accentColorKey,
     customAccentHex = if (draft.customAccentHex != baseline.customAccentHex) draft.customAccentHex else stored.customAccentHex,

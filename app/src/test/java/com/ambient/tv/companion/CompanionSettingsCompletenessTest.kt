@@ -103,6 +103,29 @@ class CompanionSettingsCompletenessTest {
         assertTrue(target.wakeOnOpenSystems.isEmpty())
     }
 
+    @Test fun mousePointerTimeoutTravelsAsAPortablePreferenceWithoutResettingOlderSenders() {
+        fun incoming(seconds: Int) = source().copy(extras = SettingsBackupExtras(
+            portable = PortableSettingsExtras(mousePointerHideSeconds = seconds),
+        ))
+        for (mode in listOf("preferences", "settings")) {
+            val target = preferences()
+            send(incoming(5), target, mode)
+            assertEquals(5, target.mousePointerHideSeconds)
+            receive("""{"schemaVersion":79,"exportedAtEpochMs":0}""", target, mode)
+            assertEquals(5, target.mousePointerHideSeconds)
+            receive("""{"schemaVersion":$schema,"exportedAtEpochMs":0,
+                "extras":{"portable":{"mousePointerHideSeconds":null}}}""", target, mode)
+            assertEquals(5, target.mousePointerHideSeconds)
+            send(incoming(0), target, mode)
+            assertEquals(0, target.mousePointerHideSeconds)
+            send(incoming(9), target, mode)
+            assertEquals(2, target.mousePointerHideSeconds)
+        }
+        val accountsOnly = preferences().apply { mousePointerHideSeconds = 3 }
+        send(incoming(0), accountsOnly, "accounts", device = true)
+        assertEquals(3, accountsOnly.mousePointerHideSeconds)
+    }
+
     @Test fun olderCompanionDefaultsAndNullPortableFieldsPreserveTheReceiver() {
         val row = HomeRowDefinition("saved", "youtube", "subscriptions")
         val target = preferences().apply {
@@ -134,7 +157,7 @@ class CompanionSettingsCompletenessTest {
             lyricsVisible = false, lyricsOnlineEnabled = false, frameDropOverlayHistory = true,
             liveTvReminderAutoSwitch = true, autoUpdateCheck = false, projectmFavorites = setOf("chosen.milk"),
             keyBindings = mapOf("refresh" to "183:0"), gamepadSettings = mapOf("confirm" to "b"), retroInputSettings = mapOf("dpad_stick" to "1"), gameSettings = mapOf("shader" to "crt"),
-            viewTransitionStyleKey = "slide", nextUpMinimalEnabled = true,
+            viewTransitionStyleKey = "slide", nextUpMinimalEnabled = true, mousePointerHideSeconds = 5,
             gameMetadataOptions = com.ambient.tv.games.metadata.GameMetadataOptions(
                 provider = "thegamesdb", automatic = false, region = "jp", language = "de"),
         )
@@ -163,6 +186,7 @@ class CompanionSettingsCompletenessTest {
             assertTrue(target.frameDropOverlayHistory)
             assertTrue(target.nextUpMinimalEnabled)
             assertEquals("slide", target.viewTransitionStyleKey)
+            assertEquals(5, target.mousePointerHideSeconds)
             assertEquals(portable.gameMetadataOptions, target.gameMetadataOptions)
             assertEquals(mapOf("refresh" to "183:0"), target.keyBindings)
             assertEquals(mapOf("confirm" to "b"), target.gamepadSettings)

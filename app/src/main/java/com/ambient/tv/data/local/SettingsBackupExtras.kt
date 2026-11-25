@@ -34,6 +34,8 @@ data class PortableSettingsExtras(
     val nextUpMinimalEnabled: Boolean? = null,
     /** Opt-in UI navigation transition. Null from old/partial backups preserves the receiver. */
     val viewTransitionStyleKey: String? = null,
+    /** Null from old/partial backups keeps the receiver's mouse pointer timeout. */
+    val mousePointerHideSeconds: Int? = null,
     val liveTvReminderAutoSwitch: Boolean? = null,
     val autoUpdateCheck: Boolean? = null,
     val projectmFavorites: Set<String>? = null,

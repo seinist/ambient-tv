@@ -510,6 +510,7 @@ class SettingsViewModel @Inject constructor(
         uiDisplay = UiDisplayDraft(
             scale = appPreferences.uiScale,
             renderResolutionKey = appPreferences.uiRenderResolutionKey,
+            mousePointerHideSeconds = appPreferences.mousePointerHideSeconds,
         ),
         accentColorKey = appPreferences.accentColorKey,
         customAccentHex = appPreferences.customAccentHex,
@@ -2417,6 +2418,11 @@ class SettingsViewModel @Inject constructor(
         _uiState.update { it.copy(uiDisplay = it.uiDisplay.copy(renderResolutionKey = normalized)) }
     }
 
+    fun onMousePointerHideSecondsChanged(value: Int) {
+        val normalized = com.ambient.tv.data.local.MousePointerSettings.normalize(value)
+        _uiState.update { it.copy(uiDisplay = it.uiDisplay.copy(mousePointerHideSeconds = normalized)) }
+    }
+
     fun onAccentStyleChanged(value: String) {
         _uiState.update { it.withAccentStyleKey(value) }
     }
@@ -3070,6 +3076,7 @@ class SettingsViewModel @Inject constructor(
         }
         appPreferences.uiScale = state.uiScale
         appPreferences.uiRenderResolutionKey = state.uiRenderResolutionKey
+        appPreferences.mousePointerHideSeconds = state.mousePointerHideSeconds
         appPreferences.accentColorKey = state.accentColorKey
         appPreferences.accentStyleKey = state.accentStyleKey
         appPreferences.accentMotionKey = state.accentMotionKey

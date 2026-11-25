@@ -17,6 +17,7 @@ import androidx.compose.ui.platform.LocalView
 import com.ambient.tv.ui.display.UiRenderInputRoot
 import com.ambient.tv.ui.display.findUiRenderWindow
 import com.ambient.tv.ui.input.prepareForUiKeyEvent
+import com.ambient.tv.ui.input.PointerVisibility
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.Serializable
 
@@ -140,7 +141,7 @@ object CompanionRemoteInput {
         }
         return MotionEvent.obtain(time, time, action, 1, arrayOf(properties), arrayOf(coords), 0,
             if (action == MotionEvent.ACTION_DOWN) MotionEvent.BUTTON_PRIMARY else 0,
-            1f, 1f, 0, 0, InputDevice.SOURCE_MOUSE, 0)
+            1f, 1f, PointerVisibility.COMPANION_DEVICE_ID, 0, InputDevice.SOURCE_MOUSE, 0)
     }
 
     fun dispatch(input: CompanionInput): Boolean {
@@ -149,7 +150,10 @@ object CompanionRemoteInput {
             hide()
             return true
         }
-        if (input.action == "key" || input.action == "text") hide()
+        if (input.action == "key" || input.action == "text") {
+            PointerVisibility.onNonPointerInput()
+            hide()
+        }
         val endpoint = active() ?: run { hide(); return false }
         if (hover?.endpoint?.let { it != endpoint } == true) hide()
         windows.values.lastOrNull { it.interaction != null }?.interaction?.invoke()
@@ -177,7 +181,11 @@ object CompanionRemoteInput {
             endpoint.dispatchKeyEvent(KeyEvent(time, time, KeyEvent.ACTION_UP, code, 0))
             return true
         }
+        val previousPoint = point
         if (input.action == "move") point = Offset((point.x + input.x).coerceIn(0.01f, 0.99f), (point.y + input.y).coerceIn(0.01f, 0.99f))
+        if (input.action != "scroll" || input.x != 0f || input.y != 0f) {
+            PointerVisibility.onCompanionInput(input.action, point.x, point.y, moved = point != previousPoint)
+        }
         cursor.value = Cursor(endpoint.window, point)
         val x = point.x * root.width; val y = point.y * root.height
         val time = SystemClock.uptimeMillis()
@@ -227,7 +235,7 @@ object CompanionRemoteInput {
     @Composable fun Overlay(window: Window?) {
         val state by cursor.collectAsState()
         val accent = androidx.tv.material3.MaterialTheme.colorScheme.primary
-        if (window != null && state.window == window) Canvas(Modifier.fillMaxSize()) {
+        if (window != null && state.window == window && PointerVisibility.companionVisible) Canvas(Modifier.fillMaxSize()) {
             val center = Offset(size.width * state.point.x, size.height * state.point.y)
             drawCircle(Color.Black.copy(alpha = 0.7f), 11f, center)
             drawCircle(Color.White, 8f, center)

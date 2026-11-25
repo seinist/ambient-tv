@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.material3.*
+import com.ambient.tv.ui.input.pointerIdleVisibility
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -478,7 +479,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                     DropdownMenu(
                         expanded = optionsOpen,
                         onDismissRequest = { optionsOpen = false },
-                        modifier = Modifier.width(320.dp),
+                        modifier = Modifier.width(320.dp).pointerIdleVisibility(),
                     ) { options() }
                 }
                 if (compactHeader && transmitting && info.rewindAvailable && !touchOptionsOpen) {
@@ -584,6 +585,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
     }
     if (touchOptionsOpen) AlertDialog(
         onDismissRequest = { touchOptionsOpen = false },
+        modifier = Modifier.pointerIdleVisibility(),
         title = { Text(stringResource(R.string.game_touch_customize)) },
         text = { Column(Modifier.verticalScroll(rememberScrollState())) {
             com.ambient.tv.ui.games.GameCoreInputActions(coreActions, touchPresentation)

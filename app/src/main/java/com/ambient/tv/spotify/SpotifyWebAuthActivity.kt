@@ -32,7 +32,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.ambient.tv.R
@@ -52,12 +54,18 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.platform.LocalContext
 import com.ambient.tv.ui.mobile.HandheldActivity
 import com.ambient.tv.ui.mobile.isTelevision
+import com.ambient.tv.ui.input.PointerIconFrameLayout
+import com.ambient.tv.ui.input.PointerIdleSurface
+import com.ambient.tv.ui.input.PointerVisibility
 import com.ambient.tv.ui.theme.AmbientTvTheme
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 
 /**
@@ -86,6 +94,14 @@ class SpotifyWebAuthActivity : ComponentActivity() {
             return
         }
         showWeb = qrUrl.isNullOrBlank()
+        PointerVisibility.configure(preferences.mousePointerHideSeconds)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                preferences.changes().onStart { emit(Unit) }
+                    .map { preferences.mousePointerHideSeconds }.distinctUntilChanged()
+                    .collect { PointerVisibility.configure(it) }
+            }
+        }
 
         lifecycleScope.launch {
             authManager.qrAuthorizationCompleted.collect { finishSignIn() }
@@ -102,7 +118,7 @@ class SpotifyWebAuthActivity : ComponentActivity() {
                 complementaryPlayback = preferences.dualAccentEnabled,
                 themeModeKey = preferences.themeModeKey,
             ) {
-                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                PointerIdleSurface(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                     val qr = qrUrl
                     if (showWeb || qr == null) {
                         WebSignIn()
@@ -129,12 +145,20 @@ class SpotifyWebAuthActivity : ComponentActivity() {
         val url = webAuthUrl ?: return
         AndroidView(
             factory = { context ->
-                (webView ?: createWebView(context)).also { view ->
+                val view = (webView ?: createWebView(context)).also { view ->
                     (view.parent as? android.view.ViewGroup)?.removeView(view)
                     if (view.url == null) view.loadUrl(url)
                 }
+                PointerIconFrameLayout(context).apply {
+                    addView(view, android.widget.FrameLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    ))
+                }
             },
             modifier = Modifier.fillMaxSize(),
+            // The Activity retains the page/history while switching back to the QR screen.
+            onRelease = { container -> container.removeAllViews() },
         )
     }
 
@@ -268,10 +292,12 @@ class SpotifyWebAuthActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        if (!webAuthUrl.isNullOrBlank()) PointerVisibility.start(this, preferences.mousePointerHideSeconds)
         SpotifyPlaybackTakeoverUiPresence.onActivityStarted()
     }
 
     override fun onStop() {
+        PointerVisibility.stop(this)
         SpotifyPlaybackTakeoverUiPresence.onActivityStopped()
         super.onStop()
     }
@@ -301,6 +327,7 @@ class SpotifyWebAuthActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        PointerVisibility.stop(this)
         webView?.apply {
             stopLoading()
             (parent as? android.view.ViewGroup)?.removeView(this)

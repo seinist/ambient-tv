@@ -376,7 +376,22 @@ fun SettingsScreen(
                     when (selectedCategory) {
                         SettingsCategory.NAV_SOUNDS -> Unit // Full-page editor above.
                         SettingsCategory.WEATHER -> Unit // Full-page weather settings above.
-                        SettingsCategory.KEY_BINDINGS -> inputControlsItems(com.ambient.tv.ui.keyboard.KeyBindingScope.GLOBAL)
+                        SettingsCategory.KEY_BINDINGS -> {
+                            item(key = "input:pointer-hide") {
+                                SettingsSelect(
+                                    label = stringResource(R.string.settings_mouse_pointer_hide_after),
+                                    options = com.ambient.tv.data.local.MousePointerSettings.OPTIONS.map { seconds ->
+                                        SettingsSelectOption(
+                                            text = if (seconds == 0) stringResource(R.string.player_off)
+                                                else stringResource(R.string.unit_seconds, seconds),
+                                            selected = uiState.mousePointerHideSeconds == seconds,
+                                            onClick = { viewModel.onMousePointerHideSecondsChanged(seconds) },
+                                        )
+                                    },
+                                )
+                            }
+                            inputControlsItems(com.ambient.tv.ui.keyboard.KeyBindingScope.GLOBAL)
+                        }
                         SettingsCategory.CONTROLLER -> inputControlsItems(com.ambient.tv.ui.keyboard.KeyBindingScope.PLAYER)
                         SettingsCategory.GAME_CONTROLS -> gameControlsItems()
                         SettingsCategory.GAMES -> gamesSettingsItems(onOpenGames, onOpenFiles)

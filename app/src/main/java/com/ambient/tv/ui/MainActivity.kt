@@ -2,6 +2,7 @@ package com.ambient.tv.ui
 
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import com.ambient.tv.R
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.rememberUpdatedState
@@ -99,6 +100,11 @@ import com.ambient.tv.ui.common.PlexRefreshBus
 import com.ambient.tv.ui.detail.DetailScreen
 import com.ambient.tv.ui.input.prepareForUiKeyEvent
 import com.ambient.tv.ui.input.requestUiKeyInputMode
+import com.ambient.tv.ui.input.PointerVisibility
+import com.ambient.tv.ui.input.PointerIconFrameLayout
+import com.ambient.tv.ui.input.PointerIdleSurface
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.ambient.tv.ui.detail.episodeDetailAfterPlayback
 import com.ambient.tv.ui.detail.seriesDetailIsDirectlyUnder
 import com.ambient.tv.ui.home.HomeScreen
@@ -353,6 +359,7 @@ open class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        if (ownsBrowseUiSession) PointerVisibility.start(this, appPreferences.mousePointerHideSeconds)
         appUpdater.onAppStart()
         BackgroundPlaybackSession.retryBlockedPlaybackService(this)
         com.ambient.tv.data.browse.BrowseWorkBudget.foreground = true
@@ -372,6 +379,7 @@ open class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        PointerVisibility.stop(this)
         // A stopped Activity outside PiP (or a dismissed PiP window) is real background again.
         if (!isInPictureInPictureMode || isFinishing) com.ambient.tv.ui.player.BackgroundPlaybackGuard.setPictureInPicture(false)
         stopDismissedPipIfFinishing()
@@ -395,6 +403,7 @@ open class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        PointerVisibility.stop(this)
         stopDismissedPipIfFinishing()
         gameInputObserver?.let(com.ambient.tv.ui.gamepad.GameInputRouting::removeObserver)
         gameInputObserver = null
@@ -503,6 +512,7 @@ open class MainActivity : ComponentActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         if (!hasFocus) {
+            PointerVisibility.onWindowFocusLost()
             gamepadController.releaseAll()
             uiRenderBackKeyGate.reset()
             com.ambient.tv.companion.CompanionRemoteInput.hide()
@@ -530,6 +540,7 @@ open class MainActivity : ComponentActivity() {
     }
 
     private fun dispatchUiKeyEventInternal(event: KeyEvent, fromGamepadUi: Boolean, dispatchToContent: () -> Boolean): Boolean {
+        PointerVisibility.onKeyEvent(event)
         // The start intro covers the UI: a key only skips it, volume keeps working.
         if (com.ambient.tv.ui.intro.IntroPresentation.active && event.keyCode !in setOf(
                 KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_VOLUME_MUTE)) {
@@ -712,6 +723,7 @@ open class MainActivity : ComponentActivity() {
     }
 
     private fun dispatchUiGenericMotionEvent(event: MotionEvent, dispatchToContent: () -> Boolean): Boolean {
+        PointerVisibility.onMotionEvent(event)
         // Sticks, hat and triggers: before anything else, so a resting stick counts as no input.
         if (gamepadController.handleMotion(event)) return true
         com.ambient.tv.data.browse.BrowseWorkBudget.interact()
@@ -836,6 +848,7 @@ open class MainActivity : ComponentActivity() {
     }
 
     private fun dispatchUiTouchEvent(event: MotionEvent, dispatchToContent: () -> Boolean): Boolean {
+        PointerVisibility.onMotionEvent(event)
         com.ambient.tv.data.browse.BrowseWorkBudget.interact()
         val phase = when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> ScreensaverInputPhase.DOWN
@@ -928,6 +941,14 @@ open class MainActivity : ComponentActivity() {
             })
             finish()
             return
+        }
+        PointerVisibility.configure(appPreferences.mousePointerHideSeconds)
+        lifecycleScope.launch {
+            repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+                appPreferences.changes().onStart { emit(Unit) }
+                    .map { appPreferences.mousePointerHideSeconds }.distinctUntilChanged()
+                    .collect { PointerVisibility.configure(it) }
+            }
         }
         if (restoredState == null) resetBrowseSessionPositions()
         // Set here, not in the manifest: a manifest orientation also applies to the phone launch
@@ -1158,7 +1179,7 @@ open class MainActivity : ComponentActivity() {
             content = content,
         )
         if (uiRenderMode == com.ambient.tv.data.local.UiRenderResolutionPolicy.SYSTEM) {
-            setContentView(compose)
+            setPointerAwareContentView(compose)
             return
         }
         val host = try { com.ambient.tv.ui.display.UiRenderResolutionHost(
@@ -1185,7 +1206,7 @@ open class MainActivity : ComponentActivity() {
                         uiResolutionHost = null
                         uiRenderMode = com.ambient.tv.data.local.UiRenderResolutionPolicy.SYSTEM
                         uiRenderViewport = null
-                        setContentView(savedContent)
+                        setPointerAwareContentView(savedContent)
                         savedContent.requestFocus()
                     }
                 },
@@ -1196,11 +1217,18 @@ open class MainActivity : ComponentActivity() {
             (compose.parent as? ViewGroup)?.removeView(compose)
             uiRenderMode = com.ambient.tv.data.local.UiRenderResolutionPolicy.SYSTEM
             uiRenderViewport = null
-            setContentView(compose)
+            setPointerAwareContentView(compose)
             return
         }
         uiResolutionHost = host
-        setContentView(host)
+        setPointerAwareContentView(host)
+    }
+
+    private fun setPointerAwareContentView(content: View) {
+        setContentView(PointerIconFrameLayout(this).apply {
+            addView(content, android.widget.FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        })
     }
 
     /** Compose keeps a single View; Android TV's default highlight would frame the whole screen. */
@@ -1228,7 +1256,9 @@ internal fun ComponentActivity.createUiRenderContentView(
     id = View.NO_ID
     setViewCompositionStrategy(androidx.compose.ui.platform.ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
     setContent {
-        com.ambient.tv.ui.display.ProvideUiRenderEnvironment(modeKey(), viewport(), content = content)
+        com.ambient.tv.ui.display.ProvideUiRenderEnvironment(modeKey(), viewport()) {
+            PointerIdleSurface(content = content)
+        }
     }
 }
 
