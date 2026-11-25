@@ -95,7 +95,7 @@ class GamePanelNavigationUiTest {
             ) {
                 AmbientTvTheme {
                     RequestGameOsdFocus(true, panels, continueRequester, settingsRequester)
-                    Box(Modifier.fillMaxSize()) {
+                    Box(Modifier.fillMaxSize().testTag("game-player-viewport")) {
                         if (panels.panel == null) Column {
                             Row {
                                 if (showContinue) PlayerIconButton(Icons.Filled.PlayArrow, "Continue", {},
@@ -184,6 +184,16 @@ class GamePanelNavigationUiTest {
     private fun panelBounds(): Rect = rule.onNodeWithTag("game-side-panel", useUnmergedTree = true)
         .fetchSemanticsNode().boundsInRoot
 
+    private fun handheldPanelContentBounds(): Rect {
+        // On handheld the modifier/tag belongs to the full-screen outside-tap Row. The
+        // visible drawer is its inner column: the unscrolled title and trailing footer
+        // button expose its content edges without depending on body scrollbar overflow.
+        val title = rule.onNodeWithText("Options").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val footer = rule.onNodeWithText(rule.activity.getString(R.string.action_close))
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        return Rect(title.left, title.top, footer.right, footer.bottom)
+    }
+
     @Test fun tvDrawerEntersAndLeavesAtTheRightEdgeWithoutCrossingThePlayer() {
         mount()
         val viewport = rule.onRoot().fetchSemanticsNode().boundsInRoot
@@ -223,11 +233,14 @@ class GamePanelNavigationUiTest {
     fun phoneLandscapeKeepsTheSharedNarrowPanelAtTheRightEdge() {
         mount(handheld = true)
         click("settings")
-        val viewport = rule.onRoot().fetchSemanticsNode().boundsInRoot
-        val panel = panelBounds()
-        assertEquals(viewport.right, panel.right, 1f)
-        assertTrue("Landscape leaves the game visible beside the panel", panel.left > viewport.center.x)
-        assertTrue(panel.width < viewport.width * .5f)
+        val viewport = rule.onNodeWithTag("game-player-viewport").fetchSemanticsNode().boundsInRoot
+        val content = handheldPanelContentBounds()
+        // mdpi: the shared drawer has an 8dp outer end gap and 16dp/24dp content insets.
+        assertEquals(viewport.right - 8f - 24f, content.right, 1f)
+        assertEquals(viewport.right - viewport.width * .38f - 8f + 16f, content.left, 1f)
+        assertEquals(viewport.width * .38f - 16f - 24f, content.width, 1f)
+        assertTrue("Landscape leaves the game visible beside the panel: $content in $viewport",
+            content.left > viewport.center.x)
     }
 
     @Test
@@ -235,10 +248,11 @@ class GamePanelNavigationUiTest {
     fun phonePortraitKeepsTheExistingFullWidthPanel() {
         mount(handheld = true)
         click("settings")
-        val viewport = rule.onRoot().fetchSemanticsNode().boundsInRoot
-        val panel = panelBounds()
-        assertEquals(viewport.left, panel.left, 1f)
-        assertEquals(viewport.right, panel.right, 1f)
+        val viewport = rule.onNodeWithTag("game-player-viewport").fetchSemanticsNode().boundsInRoot
+        val content = handheldPanelContentBounds()
+        assertEquals(viewport.left + 16f, content.left, 1f)
+        assertEquals(viewport.right - 8f - 24f, content.right, 1f)
+        assertEquals(viewport.width - 8f - 16f - 24f, content.width, 1f)
     }
 
     @Test fun nestedCoreBackRestoresEachOpeningRowAndFinallyTheSettingsButton() {

@@ -65,10 +65,11 @@ class GameMetadataEditorFocusTest {
             providerGameId = index.toString(), title = "Matching game $index", year = 1994,
         )) }
         rule.setContent {
-            inputModeManager = LocalInputModeManager.current
             CompositionLocalProvider(LocalHandheldUi provides handheld) {
                 AmbientTvTheme(accentStyleKey = style.key, accentMotionKey = "off") {
                     AppDialog(onDismiss = {}, title = "Choose game", scrollable = false) {
+                        // The dialog owns the focused Compose window, separate from the activity.
+                        inputModeManager = LocalInputModeManager.current
                         TvLazyColumn(Modifier.heightIn(max = 360.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             items(choices.indices.toList()) { index ->
@@ -83,6 +84,7 @@ class GameMetadataEditorFocusTest {
         }
         rule.runOnIdle { assertTrue(inputModeManager.requestInputMode(InputMode.Keyboard)) }
         rule.waitForIdle()
+        rule.runOnIdle { assertEquals(InputMode.Keyboard, inputModeManager.inputMode) }
     }
 
     private fun match(index: Int) = rule.onNodeWithTag("match-$index")
