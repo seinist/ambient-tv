@@ -6,11 +6,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.testTag
@@ -19,7 +19,9 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotDisplayed
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performScrollTo
@@ -28,6 +30,11 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.ambient.tv.R
+import com.ambient.tv.games.GameStateEntry
+import com.ambient.tv.games.GameStateKind
+import com.ambient.tv.ui.games.GameOsdAvailability
+import com.ambient.tv.ui.games.GamePlayerTransportControls
 import com.ambient.tv.ui.mobile.LocalHandheldFullscreen
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.player.OsdButton
@@ -53,14 +60,21 @@ import org.robolectric.annotation.Config
 class GamePlayerControlBarLayoutTest {
     @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
     private var stopped = 0
+    private var reset = 0
+    private var fastForwarded = 0
+    private val rewind = mutableListOf<Boolean>()
     private var openedSettings = 0
+    private var availability by mutableStateOf(GameOsdAvailability(
+        loaded = true, stateAvailable = true, frameExact = true, rewindAvailable = true,
+        states = listOf(GameStateEntry("manual", GameStateKind.MANUAL, 1L, "core", "stamp")),
+        coreId = "core", coreStamp = "stamp",
+    ))
 
     private fun mount(handheld: Boolean, extraOptions: Int = 0, viewportWidth: Dp? = null) {
         rule.runOnUiThread {
             PlayerControlBarScroll.save(null, "fullscreen", 0)
             val preferences = videoImagePreferences(rule.activity)
-            setOsdButtonVisible(preferences, OsdPlayer.GAMES, OsdButton.EXIT, true)
-            setOsdButtonVisible(preferences, OsdPlayer.GAMES, OsdButton.GAME_SAVE, true)
+            OsdPlayer.GAMES.buttons.forEach { setOsdButtonVisible(preferences, OsdPlayer.GAMES, it, true) }
         }
         rule.setContent {
             CompositionLocalProvider(LocalHandheldUi provides handheld, LocalHandheldFullscreen provides null) {
@@ -69,12 +83,12 @@ class GamePlayerControlBarLayoutTest {
                         PlayerControlBar(
                             modifier = Modifier.testTag("bar"), player = OsdPlayer.GAMES,
                             leftContent = {
-                                PlayerIconButton(Icons.Filled.PlayArrow, "Continue", {}, primary = true,
-                                    modifier = Modifier.testTag("continue"))
-                                PlayerIconButton(Icons.Filled.Stop, "Stop", { stopped++ }, osd = OsdButton.EXIT,
-                                    modifier = Modifier.testTag("stop"))
-                                PlayerIconButton(Icons.Filled.Save, "Save", {}, osd = OsdButton.GAME_SAVE,
-                                    modifier = Modifier.testTag("save"))
+                                GamePlayerTransportControls(availability = availability,
+                                    canResume = !availability.busy, fastForward = false, rewinding = false,
+                                    statesOpen = false, onResume = {}, onExit = { stopped++ }, onReset = { reset++ },
+                                    onFastForward = { fastForwarded++ }, onRewind = { rewind += it },
+                                    onSave = {}, onLoad = {}, onStates = {},
+                                    resumeModifier = Modifier.testTag("continue"))
                             },
                             rightContent = {
                                 repeat(extraOptions) { PlayerIconButton(Icons.Filled.Info, "Option $it", {}) }
@@ -90,25 +104,31 @@ class GamePlayerControlBarLayoutTest {
         rule.waitForIdle()
     }
 
+    private fun action(label: Int) = rule.onNodeWithContentDescription(rule.activity.getString(label))
+
     private fun assertGroupsFillAvailableWidth() {
         val viewport = rule.onNodeWithTag("viewport").fetchSemanticsNode().boundsInRoot
         val bar = rule.onNodeWithTag("bar").fetchSemanticsNode().boundsInRoot
-        val play = rule.onNodeWithTag("continue").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
-        val stop = rule.onNodeWithTag("stop").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
-        val save = rule.onNodeWithTag("save").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val actions = listOf(R.string.game_rewind_hold, R.string.game_continue, R.string.game_reset,
+            R.string.game_exit, R.string.game_fast_forward, R.string.game_save_state,
+            R.string.game_quick_load, R.string.game_states).map { label ->
+            action(label).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        }
         val info = rule.onNodeWithTag("info").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         val settings = rule.onNodeWithTag("settings").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         assertEquals(viewport.width, bar.width, 1f)
-        assertEquals(bar.left, play.left, 1f)
-        assertTrue(play.right <= stop.left && stop.right <= save.left)
-        assertTrue("Options must stay separated from playback controls", info.left > save.right + 24f)
+        assertEquals(bar.left, actions.first().left, 1f)
+        actions.zipWithNext().forEach { (left, right) ->
+            assertTrue("Transport controls follow the shared video order before save actions", left.right <= right.left)
+        }
+        assertTrue("Options must stay separated from playback controls", info.left > actions.last().right + 24f)
         assertEquals(bar.right, settings.right, 1f)
     }
 
     @Test fun phoneGameBarAlignsPlaybackLeftAndOptionsRightWithoutAVideoFullscreenController() {
         mount(handheld = true)
         assertGroupsFillAvailableWidth()
-        rule.onNodeWithTag("stop").performTouchInput { click() }
+        action(R.string.game_exit).performTouchInput { click() }
         rule.onNodeWithTag("settings").performTouchInput { click() }
         rule.runOnIdle { assertEquals(1, stopped); assertEquals(1, openedSettings) }
     }
@@ -117,9 +137,46 @@ class GamePlayerControlBarLayoutTest {
         mount(handheld = false)
         assertGroupsFillAvailableWidth()
         rule.onNodeWithTag("continue").performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+        rule.onNodeWithTag("continue").performKeyInput { pressKey(Key.DirectionLeft) }
+        action(R.string.game_rewind_hold).assertIsFocused().performKeyInput {
+            pressKey(Key.DirectionCenter)
+            pressKey(Key.DirectionRight)
+        }
+        rule.onNodeWithTag("continue").assertIsFocused()
         rule.onNodeWithTag("continue").performKeyInput { pressKey(Key.DirectionRight) }
-        rule.onNodeWithTag("stop").assertIsFocused().performKeyInput { pressKey(Key.Enter) }
-        rule.runOnIdle { assertEquals(1, stopped) }
+        action(R.string.game_reset).assertIsFocused().performKeyInput {
+            pressKey(Key.Enter)
+            pressKey(Key.DirectionRight)
+        }
+        action(R.string.game_exit).assertIsFocused().performKeyInput {
+            pressKey(Key.Enter)
+            pressKey(Key.DirectionRight)
+        }
+        action(R.string.game_fast_forward).assertIsFocused().performKeyInput { pressKey(Key.Enter) }
+        rule.runOnIdle {
+            assertEquals(listOf(true, false), rewind)
+            assertEquals(1, reset)
+            assertEquals(1, stopped)
+            assertEquals(1, fastForwarded)
+        }
+    }
+
+    @Test fun unavailableOrHiddenGameActionsDoNotLeaveDisabledTransportButtons() {
+        mount(handheld = false)
+        rule.runOnIdle { availability = availability.copy(netplay = true, rewindAvailable = false) }
+        listOf(R.string.game_rewind_hold, R.string.game_reset, R.string.game_fast_forward,
+            R.string.game_quick_load).forEach { action(it).assertDoesNotExist() }
+        action(R.string.game_continue).assertIsDisplayed()
+        action(R.string.game_exit).assertIsDisplayed()
+        action(R.string.game_save_state).assertIsDisplayed()
+        action(R.string.game_states).assertIsDisplayed()
+        rule.runOnIdle {
+            availability = availability.copy(netplay = false, rewindAvailable = true)
+            setOsdButtonVisible(videoImagePreferences(rule.activity), OsdPlayer.GAMES, OsdButton.GAME_RESET, false)
+        }
+        action(R.string.game_reset).assertDoesNotExist()
+        action(R.string.game_rewind_hold).assertIsDisplayed()
+        action(R.string.game_fast_forward).assertIsDisplayed()
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.games
 
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -11,6 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -140,9 +142,9 @@ internal fun GamePanelChoice(
     )
 }
 
-/** The first visit starts normally; Back and remounts reuse the common keyed-row rescue. */
+/** The drawer owns its right anchor; Back and remounts reuse the common keyed-row rescue. */
 @Composable
-internal fun GameSidePanel(
+internal fun BoxScope.GameSidePanel(
     panels: GamePanelNavigation,
     title: String,
     subtitle: String? = null,
@@ -153,7 +155,9 @@ internal fun GameSidePanel(
     val navigation = panels.navigation
     val initialFocus = remember(navigation, page) { navigation.levelFresh && navigation.restoreKey == null }
     RightSidePanel(
-        title = title, subtitle = subtitle, modifier = modifier,
+        // The shared slide adds one drawer width to this resting position. Without an End
+        // anchor it enters near the centre and settles at the player's left edge.
+        title = title, subtitle = subtitle, modifier = modifier.align(Alignment.CenterEnd),
         onBack = { panels.back(page) },
         onOutsideTap = panels::close,
         closeInsteadOfBack = navigation.depth <= 1,

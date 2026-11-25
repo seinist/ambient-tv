@@ -189,6 +189,7 @@ class HomeViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val appPreferences: AppPreferences,
     private val gameLibrary: com.ambient.tv.games.library.GameLibraryRepository,
+    private val gameMetadata: dagger.Lazy<com.ambient.tv.games.metadata.GameMetadataRepository>,
     private val mediaRepository: MediaRepository,
     val metadataPrefetcher: com.ambient.tv.data.browse.MetadataPrefetcher,
     val availability: com.ambient.tv.data.browse.SourceAvailability,
@@ -2091,6 +2092,7 @@ class HomeViewModel @Inject constructor(
             }
             if (revision != gameRowsGeneration) return@launch
             gameRows = rows
+            if (rows.isNotEmpty()) gameMetadata.get().startCoverRecovery()
             if (!_uiState.value.isFailurePage())
                 publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
         }

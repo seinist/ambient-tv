@@ -139,11 +139,14 @@ class GameArtworkFiles(context: Context) {
 
     /** Recover abandoned images after a crash between file rename and the SQLite commit. */
     internal fun reconcile(paths: Set<String>) {
+        // Android can expose the same app storage through different path aliases across
+        // process starts. Compare file identities before treating a stored cover as orphaned.
+        val retained = paths.mapTo(hashSetOf()) { File(it).canonicalPath }
         root.listFiles()?.forEach { directory ->
             if (!directory.name.matches(Regex("[0-9a-f]{64}")) ||
                 directory.canonicalFile.parentFile != root.canonicalFile) return@forEach
             directory.listFiles()?.forEach { image ->
-                if (image.absolutePath !in paths) removePath(image.absolutePath)
+                if (image.canonicalPath !in retained) removePath(image.absolutePath)
             }
             if (directory.list()?.isEmpty() == true) directory.delete()
         }

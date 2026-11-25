@@ -30,9 +30,11 @@ and Companion touch controls use the same saved preference.
 
 ## Available actions
 
-The action bar uses the full available width: Continue, Stop and the other playback/state
-actions form the left group; picture, core, control, information and settings actions form
-the right group. Phones use the same fullscreen grouping without requiring the video player's
+The action bar uses the full available width and the video player's transport order:
+Rewind, Continue, Restart, Stop, Fast-forward. Quick save, quick load and saved states follow
+in that left group; picture, core, control, information and settings actions form the right
+group. Every game system uses the same positions and simply omits unavailable or hidden
+actions. Phones use the same fullscreen grouping without requiring the video player's
 orientation switch, and overflowing groups remain horizontally scrollable.
 
 The game OSD only composes actions which can currently be used. Unsupported core features,
@@ -70,6 +72,9 @@ Core-option values, picture filters (including installed shader packs) and the s
 use the shared select control directly in their settings panel. Opening or choosing a value
 does not add a navigation page. Back first dismisses the selector and returns focus to its
 trigger; configuration panels and core categories retain their normal page navigation.
+The game drawer owns its right-edge alignment, so its shared entrance/exit animation stays on
+the right side of the TV picture. Subpages and Back keep that same position. The narrow panel
+in phone landscape and full-width panel in phone portrait retain their shared sizing.
 
 ## Companion phone
 

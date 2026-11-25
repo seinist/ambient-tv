@@ -15,21 +15,23 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.InputModeManager
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performScrollTo
@@ -113,7 +115,8 @@ class GamePanelNavigationUiTest {
                         }
                         val page = panels.page
                         if (page != null) GamePanelOverlay(page, onOutsideTap = panels::close) {
-                            GameSidePanel(panels, title = "Options", modifier = Modifier.align(Alignment.TopEnd)) {
+                            // Production supplies no Box alignment: the game drawer owns it.
+                            GameSidePanel(panels, title = "Options", modifier = Modifier.testTag("game-side-panel")) {
                                 when {
                                     page.panel == GamePanel.SETTINGS -> {
                                         GamePanelChoice("Picture", false, { panels.open(GamePanel.PICTURE) },
@@ -178,13 +181,75 @@ class GamePanelNavigationUiTest {
         settle()
     }
 
+    private fun panelBounds(): Rect = rule.onNodeWithTag("game-side-panel", useUnmergedTree = true)
+        .fetchSemanticsNode().boundsInRoot
+
+    @Test fun tvDrawerEntersAndLeavesAtTheRightEdgeWithoutCrossingThePlayer() {
+        mount()
+        val viewport = rule.onRoot().fetchSemanticsNode().boundsInRoot
+        val restingLeft = viewport.right - viewport.width * .38f
+        rule.onNodeWithTag("settings").performClick()
+        var previousLeft = Float.POSITIVE_INFINITY
+        repeat(PANEL_ENTRANCE_SETTLE_FRAMES + 22) {
+            frame()
+            val bounds = panelBounds()
+            if (bounds.width > 0f) {
+                assertTrue("A TV drawer must never paint to the left of its right-side slot: $bounds",
+                    bounds.left >= restingLeft - 1f)
+                assertTrue("Entrance travels left towards the right-side slot", bounds.left <= previousLeft + 1f)
+                previousLeft = bounds.left
+            }
+        }
+        val opened = panelBounds()
+        assertEquals(restingLeft, opened.left, 1f)
+        assertEquals(viewport.right, opened.right, 1f)
+
+        rule.runOnIdle { rule.activity.onBackPressedDispatcher.onBackPressed() }
+        previousLeft = opened.left
+        repeat(18) {
+            frame()
+            val bounds = rule.onAllNodesWithTag("game-side-panel", useUnmergedTree = true)
+                .fetchSemanticsNodes().singleOrNull()?.boundsInRoot
+            if (bounds != null && bounds.width > 0f) {
+                assertTrue("Exit must move towards the right edge", bounds.left >= previousLeft - 1f)
+                previousLeft = bounds.left
+            }
+        }
+        rule.onNodeWithTag("game-side-panel", useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    fun phoneLandscapeKeepsTheSharedNarrowPanelAtTheRightEdge() {
+        mount(handheld = true)
+        click("settings")
+        val viewport = rule.onRoot().fetchSemanticsNode().boundsInRoot
+        val panel = panelBounds()
+        assertEquals(viewport.right, panel.right, 1f)
+        assertTrue("Landscape leaves the game visible beside the panel", panel.left > viewport.center.x)
+        assertTrue(panel.width < viewport.width * .5f)
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h800dp-port-mdpi")
+    fun phonePortraitKeepsTheExistingFullWidthPanel() {
+        mount(handheld = true)
+        click("settings")
+        val viewport = rule.onRoot().fetchSemanticsNode().boundsInRoot
+        val panel = panelBounds()
+        assertEquals(viewport.left, panel.left, 1f)
+        assertEquals(viewport.right, panel.right, 1f)
+    }
+
     @Test fun nestedCoreBackRestoresEachOpeningRowAndFinallyTheSettingsButton() {
         mount()
         rule.onNodeWithTag("continue").assertIsFocused()
         click("settings")
+        val drawerBounds = panelBounds()
         rule.onNodeWithTag("unavailable").assertDoesNotExist()
         click("core-entry")
         click("category-entry")
+        assertEquals("Subpages stay inside the same anchored drawer", drawerBounds, panelBounds())
         rule.onNodeWithText("Renderer").performClick()
         settle()
         rule.runOnIdle {
@@ -197,6 +262,7 @@ class GamePanelNavigationUiTest {
         rule.onNodeWithTag("category-entry").assertIsFocused()
         back()
         rule.onNodeWithTag("core-entry").assertIsFocused()
+        assertEquals("Back preserves the drawer position", drawerBounds, panelBounds())
         back()
         rule.onNodeWithTag("settings").assertIsFocused()
     }
