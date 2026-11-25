@@ -49,4 +49,45 @@ class WakeMachinesTest {
         val b = WakeEndpoint("tvheadend", "h1", "AA:BB:CC:DD:EE:00")
         assertEquals(resolveWakeGroupKeys(listOf(a, b)).first(), resolveWakeGroupKeys(listOf(b, a)).first())
     }
+
+    @Test
+    fun cachedIndexResolvesArbitraryTargetsExactlyLikeFullGrouping() {
+        val endpoints = listOf(
+            WakeEndpoint("plex", "nas.local", "AA:BB:CC:DD:EE:10"),
+            WakeEndpoint("tvheadend", "nas.local", null),
+            WakeEndpoint("files", "alias.local", "AA:BB:CC:DD:EE:10"),
+            WakeEndpoint("jellyfin", "other.local", "AA:BB:CC:DD:EE:20"),
+            WakeEndpoint("dlna", "host-only.local", null),
+        )
+        val index = WakeGroupIndex(endpoints)
+        val targets = listOf(
+            WakeEndpoint("manual", "https://NAS.local:443/", null),
+            WakeEndpoint("manual", "new.local", "aa-bb-cc-dd-ee-10"),
+            // Joins two previously distinct groups, preserving the smallest MAC key.
+            WakeEndpoint("manual", "other.local", "AA:BB:CC:DD:EE:10"),
+            // A new, smaller MAC changes the selected group key.
+            WakeEndpoint("manual", "nas.local", "AA:BB:CC:DD:EE:00"),
+            WakeEndpoint("manual", "HOST-ONLY.local.", "invalid"),
+            WakeEndpoint("manual", "new.local", null),
+            WakeEndpoint("manual", null, null),
+        )
+        for (target in targets) {
+            val all = endpoints + target
+            assertEquals(resolveWakeGroupKeys(all).last(), index.keyFor(target.system, target.host, target.mac))
+            assertEquals(macsOfGroup(all), index.groupFor(target.system, target.host, target.mac))
+        }
+    }
+
+    @Test
+    fun bridgedGroupsKeepRequestedMacFirstAndConfiguredOrderAfterIt() {
+        val index = WakeGroupIndex(listOf(
+            WakeEndpoint("plex", "first.local", "AA:BB:CC:DD:EE:30"),
+            WakeEndpoint("tvheadend", "first.local", "AA:BB:CC:DD:EE:20"),
+            WakeEndpoint("files", "second.local", "AA:BB:CC:DD:EE:10"),
+        ))
+        assertEquals(
+            "mac:aabbccddee10" to listOf("aabbccddee10", "aabbccddee30", "aabbccddee20"),
+            index.groupFor("manual", "first.local", "AA:BB:CC:DD:EE:10"),
+        )
+    }
 }

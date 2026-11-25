@@ -7,6 +7,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import com.ambient.tv.AmbientTvApplication
 import com.ambient.tv.network.ArtworkNetworkState
+import com.ambient.tv.network.artworkNetworkAccessChanges
 import kotlinx.coroutines.flow.collect
 
 /** Only this image's blocked/recovered state can recompose it; other health reports are ignored. */
@@ -17,7 +18,10 @@ internal fun rememberArtworkNetworkAccess(model: Any?, headers: Map<String, Stri
         mutableStateOf(ArtworkNetworkState(blocked = access?.blocked(model, headers) == true))
     }
     LaunchedEffect(model, headers, access) {
-        access?.changes?.collect { state.value = state.value.update(access.blocked(model, headers)) }
+        if (access != null) {
+            artworkNetworkAccessChanges(access.changes) { access.blocked(model, headers) }
+                .collect { blocked -> state.value = state.value.update(blocked) }
+        }
     }
     return state.value
 }

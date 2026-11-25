@@ -3,6 +3,9 @@ package com.ambient.tv.connectivity
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.local.memoryPreferences
 import com.ambient.tv.data.dlna.DlnaStore
+import com.ambient.tv.data.dlna.DlnaServer
+import com.ambient.tv.data.files.FileSource
+import com.ambient.tv.domain.model.JellyfinServerProfile
 import com.ambient.tv.wol.WakeMachines
 import java.net.ServerSocket
 import kotlinx.coroutines.runBlocking
@@ -10,7 +13,8 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class HostConnectivityTest {
-    private val preferences = AppPreferences(memoryPreferences()).apply {
+    private val storedPreferences = memoryPreferences()
+    private val preferences = AppPreferences(storedPreferences).apply {
         plexEnabled = true
         host = "127.0.0.1"
         tvheadendEnabled = true
@@ -18,7 +22,8 @@ class HostConnectivityTest {
         localNetworkOnly = false
     }
     private val dlna = DlnaStore(memoryPreferences())
-    private val hosts = HostConnectivity(preferences, dlna, WakeMachines(preferences, dlna))
+    private val machines = WakeMachines(preferences, dlna)
+    private val hosts = HostConnectivity(preferences, dlna, machines)
 
     @Test fun `one failed service port does not take down a reachable sibling`() = runBlocking {
         val closed = ServerSocket(0).use { it.localPort }
@@ -88,5 +93,93 @@ class HostConnectivityTest {
         assertNull(hosts.mediaSystem("spotify", "abc"))
         assertNull(hosts.mediaSystem("shared", "abc"))
         assertEquals("tvheadend", hosts.mediaSystem("tvheadend", "channel"))
+    }
+
+    @Test fun `repeated health reads and unrelated settings reuse the same routing topology`() {
+        val endpoints = hosts.endpoints()
+        val topology = machines.snapshot()
+        repeat(100) {
+            hosts.health("plex")
+            hosts.health("tvheadend")
+            assertSame(endpoints, hosts.endpoints())
+            assertSame(topology, machines.snapshot())
+        }
+        hosts.online(hosts.begin("plex"))
+        storedPreferences.edit().putInt("game_library_grid_columns", 10).commit()
+        assertSame(endpoints, hosts.endpoints())
+        assertSame(topology, machines.snapshot())
+    }
+
+    @Test fun `direct import edits immediately replace host port and enabled endpoints`() {
+        val before = hosts.endpoints()
+        storedPreferences.edit().putString("server_host", "192.0.2.40").putInt("server_port", 43210).commit()
+        val imported = hosts.endpoints()
+        assertNotSame(before, imported)
+        assertEquals("192.0.2.40", imported.first { it.system == "plex" }.host)
+        assertEquals(43210, imported.first { it.system == "plex" }.port)
+        storedPreferences.edit().putBoolean("plex_enabled", false).commit()
+        assertNull(hosts.machine("plex"))
+        assertNotNull(hosts.machine("tvheadend"))
+    }
+
+    @Test fun `saved profile and NAS changes immediately update transitive machine membership`() {
+        preferences.jellyfinEnabled = true
+        preferences.upsertJellyfinServerProfile(JellyfinServerProfile(
+            id = "saved", name = "Saved server", host = "archive.local", userId = "viewer",
+            macAddress = "AA:BB:CC:DD:EE:10",
+        ), makeActive = false)
+        preferences.fileSources = listOf(FileSource(
+            id = "nas", name = "NAS", kind = "smb", host = "127.0.0.1", share = "media",
+            wolMac = "AA:BB:CC:DD:EE:10",
+        ))
+        val profile = "jellyfin:saved:viewer"
+        assertEquals("mac:aabbccddee10", hosts.machine(profile))
+        assertEquals(hosts.machine(profile), hosts.machine("plex"))
+        assertEquals(hosts.machine(profile), hosts.machine("files:nas"))
+        preferences.fileSources = emptyList()
+        assertNull(hosts.machine("files:nas"))
+        assertNotEquals(hosts.machine(profile), hosts.machine("plex"))
+    }
+
+    @Test fun `DLNA discovery edits refresh cached endpoints and machine groups immediately`() {
+        val server = DlnaServer(
+            id = "dlna", udn = "uuid:dlna", name = "Media server",
+            descriptionUrl = "http://127.0.0.1:8200/root.xml",
+            contentDirectoryUrl = "http://127.0.0.1:8200/ContentDirectory",
+        )
+        val before = hosts.endpoints()
+        dlna.save(server)
+        assertNotSame(before, hosts.endpoints())
+        assertEquals(hosts.machine("plex"), hosts.machine("dlna:dlna"))
+        dlna.refreshSaved(listOf(server.copy(
+            descriptionUrl = "http://192.0.2.50:8201/root.xml",
+            contentDirectoryUrl = "http://192.0.2.50:8201/ContentDirectory",
+        )))
+        assertEquals("host:192.0.2.50", hosts.machine("dlna:dlna"))
+        assertEquals(8201, hosts.endpoints().first { it.system == "dlna:dlna" }.port)
+        dlna.remove("dlna")
+        assertNull(hosts.machine("dlna:dlna"))
+    }
+
+    @Test fun `RomM authentication and address edits invalidate its cached endpoint`() {
+        preferences.rommEnabled = true
+        preferences.rommServerUrl = "https://127.0.0.1:8443"
+        assertNull(hosts.machine("romm"))
+        preferences.rommAuthMode = "token"
+        assertEquals(hosts.machine("plex"), hosts.machine("romm"))
+        preferences.rommServerUrl = "https://192.0.2.60:8444"
+        assertEquals("host:192.0.2.60", hosts.machine("romm"))
+        assertEquals(8444, hosts.endpoints().first { it.system == "romm" }.port)
+        preferences.rommAuthMode = ""
+        assertNull(hosts.machine("romm"))
+    }
+
+    @Test fun `malformed disabled provider metadata retains per target wake fallback`() {
+        preferences.macAddress = "AA:BB:CC:DD:EE:10"
+        storedPreferences.edit().putInt("emby_host", 42).putString("jellyfin_port", "broken").commit()
+        assertEquals("mac:aabbccddee10", machines.keyFor("plex", preferences.host, preferences.macAddress))
+        assertEquals("host:127.0.0.1", machines.keyFor("tvheadend", preferences.tvheadendHost, null))
+        assertEquals("mac:aabbccddee10", hosts.machine("plex"))
+        assertEquals("host:127.0.0.1", hosts.machine("tvheadend"))
     }
 }

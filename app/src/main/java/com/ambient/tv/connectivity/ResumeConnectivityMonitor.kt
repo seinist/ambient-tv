@@ -65,6 +65,7 @@ class ResumeConnectivityMonitor @Inject constructor(
     // Conflated requests never cancel a running, app-scoped wake. A network change during a
     // long wake is checked once more when that attempt completes.
     private val recheckRequests = Channel<String>(Channel.CONFLATED)
+    private val fileWakePauses = ResumeWakePauses()
     private var networkChangeJob: Job? = null
     private var started = false
     @Volatile private var foreground = false
@@ -361,24 +362,42 @@ class ResumeConnectivityMonitor @Inject constructor(
      */
     private suspend fun recheckFiles(onWaking: (() -> Unit)? = null): Boolean {
         val sources = preferences.fileSources.filter { it.kind != "local" }
-        if (sources.isEmpty()) return true
+        val targets = sources.map { source -> wakeOnLan.machineKey(source) to source }
+        val endpoints = targets.groupBy({ it.first }, { (_, source) ->
+            ResumeWakeEndpoint(
+                host = source.host.trim().lowercase(java.util.Locale.ROOT),
+                port = source.port,
+                mac = source.wolMac,
+                broadcast = source.wolBroadcast,
+                wakePort = source.wolPort,
+                automatic = source.wolAuto,
+                wireGuard = source.wireGuard,
+            )
+        }).mapValues { it.value.toSet() }
+        val sweep = fileWakePauses.sweep(endpoints)
         var allOk = true
-        for (source in sources) {
-            if (wakeOnLan.isReachable(source)) continue
-            if (source.wolAuto && source.wolMac.isNotBlank()) {
-                onWaking?.invoke()
-                val woke = try {
-                    wakeOnLan.wakeAndWait(source)
-                } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                    throw cancelled
-                } catch (_: Exception) {
+        for ((machine, source) in targets) {
+            val ok = sweep.check(machine) {
+                if (wakeOnLan.isReachable(source)) {
+                    fileWakePauses.online(machine)
+                    return@check true
+                }
+                if (fileWakePauses.isPaused(machine)) return@check false
+                if (source.wolAuto && source.wolMac.isNotBlank()) {
+                    onWaking?.invoke()
+                    try {
+                        wakeOnLan.wakeAndWait(source)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        false
+                    }
+                } else {
+                    notifyResult("files:offline:${source.id}", "files", source.name, success = false, failureMessage = R.string.notice_unreachable)
                     false
                 }
-                if (!woke) allOk = false
-            } else {
-                allOk = false
-                notifyResult("files:offline:${source.id}", "files", source.name, success = false, failureMessage = R.string.notice_unreachable)
             }
+            if (!ok) allOk = false
         }
         return allOk
     }

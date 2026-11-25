@@ -8,6 +8,7 @@ import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.network.NetworkEndpoint
 import com.ambient.tv.network.LocalNetworkPolicy
 import com.ambient.tv.wol.WakeMachines
+import com.ambient.tv.wol.WakeMachineSnapshot
 import java.net.InetSocketAddress
 import java.net.Socket
 import javax.inject.Inject
@@ -50,11 +51,33 @@ class HostConnectivity internal constructor(
     private val checks = ConcurrentHashMap<String, Mutex>()
     private var started = false
 
-    internal fun endpoints(): List<HostEndpoint> = buildList {
+    private class EndpointSnapshot(val topology: WakeMachineSnapshot, val endpoints: List<HostEndpoint>) {
+        val bySystem = endpoints.distinctBy { it.system }.associateBy { it.system }
+    }
+    private val endpointLock = Any()
+    @Volatile private var cachedEndpoints: EndpointSnapshot? = null
+
+    private fun endpointSnapshot(): EndpointSnapshot {
+        val topology = machines.snapshot()
+        cachedEndpoints?.takeIf { it.topology === topology }?.let { return it }
+        synchronized(endpointLock) {
+            while (true) {
+                val current = machines.snapshot()
+                cachedEndpoints?.takeIf { it.topology === current }?.let { return it }
+                val endpoints = buildEndpoints(current)
+                if (machines.snapshot() !== current) continue
+                return EndpointSnapshot(current, endpoints).also { cachedEndpoints = it }
+            }
+        }
+    }
+
+    internal fun endpoints(): List<HostEndpoint> = endpointSnapshot().endpoints
+
+    private fun buildEndpoints(topology: WakeMachineSnapshot): List<HostEndpoint> = buildList {
         fun addEndpoint(system: String, host: String, port: Int, mac: String?) {
             val normalized = NetworkEndpoint.normalizeHost(host)
             if (normalized.isNotBlank() && port in 1..65535)
-                add(HostEndpoint(system, normalized, port, machines.keyFor(system, host, mac)))
+                add(HostEndpoint(system, normalized, port, topology.keyFor(system, host, mac)))
         }
         if (preferences.hasPlexEndpoint) addEndpoint("plex", preferences.host, preferences.port, preferences.macAddress)
         if (preferences.jellyfinEnabled && preferences.jellyfinHost.isNotBlank()) addEndpoint("jellyfin", preferences.jellyfinHost, preferences.jellyfinPort, preferences.jellyfinMacAddress)
@@ -81,10 +104,10 @@ class HostConnectivity internal constructor(
             }
         }
         preferences.fileSources.filter { it.kind != "local" }.forEach { addEndpoint("files:${it.id}", it.host, it.port, it.wolMac) }
-        dlna.servers().forEach { server -> dlnaWakeEndpoint(server)?.let { (host, port) -> addEndpoint("dlna:${server.id}", host, port, server.wolMac) } }
+        topology.dlnaServers.forEach { server -> dlnaWakeEndpoint(server)?.let { (host, port) -> addEndpoint("dlna:${server.id}", host, port, server.wolMac) } }
     }
 
-    fun machine(system: String): String? = endpoints().firstOrNull { it.system == system }?.machine
+    fun machine(system: String): String? = endpointSnapshot().bySystem[system]?.machine
     fun begin(system: String): HostCheck? = machine(system)?.let(store::begin)
     fun beginEndpoint(system: String, host: String, port: Int): HostCheck? =
         matchingHostEndpoint(endpoints(), host, port, system)
