@@ -42,6 +42,7 @@ fun MoonlightSettingsSection(
             state.enabled, model::setEnabled)
         if (!state.enabled) return@Column
         nameField()
+        com.ambient.tv.ui.common.LocalNetworkPermissionSetting()
         Text(stringResource(R.string.moonlight_experimental_notice),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
