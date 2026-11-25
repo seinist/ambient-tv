@@ -14,5 +14,7 @@ class MoonlightSystemTransport @Inject constructor(
     fun locallyPaired(hostId: String): Boolean = trust.isPaired(hostId)
     suspend fun pair(hostId: String, pin: String): MoonlightPairResult = backend.pair(hostId, pin)
     suspend fun applications(hostId: String): MoonlightAppCatalog = backend.loadApplications(hostId)
+    suspend fun artwork(hostId: String, appId: Int): ByteArray = backend.loadArtwork(hostId, appId)
+    suspend fun quitRemoteApp(hostId: String): Boolean = backend.quitRemoteApp(hostId)
     fun forget(hostId: String) = backend.forgetHost(hostId)
 }
