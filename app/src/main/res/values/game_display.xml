@@ -24,4 +24,5 @@
     <string name="game_display_switching">Adjusting display…</string>
     <string name="game_display_netplay">Display switches are disabled during netplay.</string>
     <string name="game_display_unknown">Unknown</string>
+    <string name="game_display_prefer_double_on">On</string>
 </resources>
