@@ -64,6 +64,8 @@ class MoonlightStreamEngine @Inject constructor(
     val status: StateFlow<MoonlightStreamStatus> = mutable.asStateFlow()
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var active: Active? = null
+    private var localControllerMask = 0
+    private val remoteControllerPorts = mutableSetOf<Int>()
 
     /** All calls are non-blocking for the Compose UI, including HTTPS launch negotiation. */
     fun start(hostId: String, appId: Int, surface: Surface, profile: MoonlightStreamProfile): Boolean {
@@ -182,9 +184,49 @@ class MoonlightStreamEngine @Inject constructor(
         port: Short, mask: Short, buttons: Int, lt: Byte, rt: Byte,
         lx: Short, ly: Short, rx: Short, ry: Short,
     ) {
-        val conn = synchronized(lock) { active?.takeIf { it.started && !it.cancelled }?.connection }
-        runCatching { conn?.sendControllerInput(port, mask, buttons, lt, rt, lx, ly, rx, ry) }
+        val frame = synchronized(lock) {
+            localControllerMask = mask.toInt() and 0xF
+            active?.takeIf { it.started && !it.cancelled }?.connection to
+                (localControllerMask or remoteMask()).toShort()
+        }
+        runCatching {
+            frame.first?.sendControllerInput(port, frame.second, buttons, lt, rt, lx, ly, rx, ry)
+        }
     }
+
+    /** Remote claims use exactly the same GameStream controller slots as local pads. */
+    fun remoteReservedPorts(): Set<Int> = synchronized(lock) { remoteControllerPorts.toSet() }
+
+    fun setRemotePortActive(port: Int, enabled: Boolean) {
+        if (port !in 0..3) return
+        val frame = synchronized(lock) {
+            if (enabled) remoteControllerPorts.add(port) else remoteControllerPorts.remove(port)
+            active?.takeIf { it.started && !it.cancelled }?.connection to
+                (localControllerMask or remoteMask()).toShort()
+        }
+        if (!enabled) runCatching {
+            frame.first?.sendControllerInput(port.toShort(), frame.second, 0,
+                0, 0, 0, 0, 0, 0)
+        }
+    }
+
+    fun sendRemoteGamepad(
+        port: Int, buttons: Int, lt: Byte, rt: Byte,
+        lx: Short, ly: Short, rx: Short, ry: Short,
+    ) {
+        val frame = synchronized(lock) {
+            if (port !in remoteControllerPorts) return
+            active?.takeIf { it.started && !it.cancelled }?.connection to
+                (localControllerMask or remoteMask()).toShort()
+        }
+        runCatching {
+            frame.first?.sendControllerInput(port.toShort(), frame.second, buttons,
+                lt, rt, lx, ly, rx, ry)
+        }
+    }
+
+    private fun remoteMask(): Int =
+        remoteControllerPorts.fold(0) { mask, port -> mask or (1 shl port) }
 
     fun sendKeyboard(virtualKey: Short, pressed: Boolean, modifiers: Byte) {
         val conn = synchronized(lock) { active?.takeIf { it.started && !it.cancelled }?.connection }
