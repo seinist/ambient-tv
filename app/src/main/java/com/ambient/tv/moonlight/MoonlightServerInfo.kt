@@ -1,6 +1,5 @@
 package com.ambient.tv.moonlight
 
-import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.io.StringReader
 import org.xml.sax.InputSource
