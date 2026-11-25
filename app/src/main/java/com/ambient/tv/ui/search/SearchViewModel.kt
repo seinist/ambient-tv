@@ -410,6 +410,7 @@ class SearchViewModel @Inject constructor(
                                     com.ambient.tv.ui.moonlight.MoonlightBrowseGame(
                                         host, app, key in favorites,
                                         recent[key] ?: Int.MAX_VALUE,
+                                        moonlightStore.artworkFile(host.id, app.id)?.absolutePath,
                                     )
                                 }
                         }.take(60)
