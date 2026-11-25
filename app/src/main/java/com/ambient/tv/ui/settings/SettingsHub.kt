@@ -271,7 +271,7 @@ internal fun SettingsHub(
         scope.launch { withFrameNanos { }; runCatching { target?.requestFocus() } }
     }
     var searchLandingQuery by rememberSaveable(initialCategoryKey) {
-        mutableStateOf(settingsShortcutWakeTarget(initialCategoryKey))
+        mutableStateOf(settingsShortcutWakeTarget(initialCategoryKey) ?: settingsShortcutGamesTarget(initialCategoryKey))
     }
     var shortcutItemKey by rememberSaveable(initialCategoryKey) {
         mutableStateOf(settingsShortcutItemKey(initialCategoryKey))
