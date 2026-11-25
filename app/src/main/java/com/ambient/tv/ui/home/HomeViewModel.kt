@@ -2851,6 +2851,7 @@ class HomeViewModel @Inject constructor(
         radioReady = appPreferences.radioEnabled,
         gamesReady = gameLibrary.hasConfiguredFolders(),
         rommReady = appPreferences.isRommConfigured,
+        moonlightReady = com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE && appPreferences.hasMoonlightHosts,
         telegramReady = appPreferences.telegramEnabled && telegramRepository.available,
         embyReady = embyOnly || appPreferences.isEmbyConfigured,
         photosReady = photoRepository.hasAnyPhotoSource(),
