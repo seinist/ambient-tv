@@ -71,6 +71,22 @@ class MoonlightNativeTransport @Inject constructor(
         parseMoonlightAppList(http.appListRaw.toByteArray())
     }
 
+    /**
+     * The player must obtain its HTTPS port and host identity over pinned, mutually
+     * authenticated HTTPS, not from public discovery. A changed identity fails closed.
+     */
+    suspend fun verifiedHost(hostId: String): MoonlightVerifiedHost = withContext(Dispatchers.IO) {
+        val host = requireHost(hostId)
+        val serverId = trust.trustedServerId(host.id)
+            ?: throw SecurityException("Moonlight host not paired")
+        val pinned = trust.pinnedCertificate(host.id)
+            ?: throw SecurityException("Moonlight host certificate missing")
+        val http = makeHttp(host, pinned)
+        val info = parseMoonlightServerInfo(http.getServerInfo(true).toByteArray())
+        if (info.uniqueId != serverId) throw SecurityException("Moonlight host identity changed")
+        MoonlightVerifiedHost(host, info.httpsPort, pinned)
+    }
+
     /** Device-local forget. Does NOT terminate the active game or send remote unpair commands. */
     fun forgetHost(hostId: String) = trust.clear(hostId)
 
@@ -82,3 +98,11 @@ class MoonlightNativeTransport @Inject constructor(
         NvHTTP(ComputerDetails.AddressTuple(host.host, host.port), 0,
             prefs.moonlightDeviceId, certificate, clientIdentity)
 }
+
+
+/** Not serializable: a native player may use this only for the active authenticated session. */
+internal data class MoonlightVerifiedHost(
+    val profile: MoonlightHost,
+    val httpsPort: Int,
+    val pinnedCertificate: java.security.cert.X509Certificate,
+)
