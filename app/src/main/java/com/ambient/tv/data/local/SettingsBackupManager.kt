@@ -649,6 +649,7 @@ class SettingsBackupManager @Inject constructor(
                     gameLibraryOverrides = preferences.gameLibraryOverrides,
                     gameLibraryFolders = preferences.gameLibraryFolders,
                     gameMetadataOptions = preferences.gameMetadataOptions,
+                    moonlightStreamProfile = preferences.moonlightStreamProfile,
                 ),
                 device = DeviceSettingsExtras(
                     imageCacheMb = preferences.imageCacheMb,
@@ -1190,6 +1191,7 @@ class SettingsBackupManager @Inject constructor(
             settings.mousePointerHideSeconds?.let { preferences.mousePointerHideSeconds = it }
             settings.gameLibraryOptions?.let { preferences.gameLibraryOptions = it }
             settings.gameMetadataOptions?.let { preferences.gameMetadataOptions = it }
+            settings.moonlightStreamProfile?.let { preferences.moonlightStreamProfile = it.validated() }
             settings.gameLibraryOverrides?.let { preferences.gameLibraryOverrides = it.filter { row ->
                 row.sourceId in preferences.fileSources.map { source -> source.id }
             }.takeLast(5000) }
@@ -1252,7 +1254,7 @@ class SettingsBackupManager @Inject constructor(
     }
 
     internal companion object {
-        const val CURRENT_SCHEMA_VERSION = 85
+        const val CURRENT_SCHEMA_VERSION = 86
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }
