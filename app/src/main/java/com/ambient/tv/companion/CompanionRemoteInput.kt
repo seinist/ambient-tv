@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import com.ambient.tv.ui.display.UiRenderInputRoot
 import com.ambient.tv.ui.display.findUiRenderWindow
+import com.ambient.tv.ui.input.prepareForUiKeyEvent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.Serializable
 
@@ -58,8 +59,11 @@ object CompanionRemoteInput {
 
     /** Native callbacks take window pixels; embedded roots take their own render pixels. */
     private data class Endpoint(val window: Window, val root: View, val embedded: Boolean) {
-        fun dispatchKeyEvent(event: KeyEvent): Boolean = if (embedded) root.dispatchKeyEvent(event)
-            else window.callback?.dispatchKeyEvent(event) ?: false
+        fun dispatchKeyEvent(event: KeyEvent): Boolean {
+            root.prepareForUiKeyEvent(event)
+            return if (embedded) root.dispatchKeyEvent(event)
+                else window.callback?.dispatchKeyEvent(event) ?: false
+        }
         fun dispatchTouchEvent(event: MotionEvent): Boolean = if (embedded) root.dispatchTouchEvent(event)
             else window.callback?.dispatchTouchEvent(event) ?: false
         fun dispatchGenericMotionEvent(event: MotionEvent): Boolean = if (embedded) root.dispatchGenericMotionEvent(event)
