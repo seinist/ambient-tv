@@ -64,6 +64,12 @@ internal fun GamesSettingsScreen(
     var selectedCoreId by rememberSaveable { mutableStateOf<String?>(null) }
     var showOtherSystems by rememberSaveable { mutableStateOf(false) }
     var metadataDialog by remember { mutableStateOf(false) }
+    var indexedSystemIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    // Auto-detected folders have systemId="auto"; look at the indexed ROM systems on IO,
+    // never run the SQLite query as part of the Settings composition.
+    LaunchedEffect(entry) {
+        indexedSystemIds = runCatching { entry.library().indexedSystems() }.getOrDefault(emptySet())
+    }
 
     fun back() {
         page = gamesSettingsParent(page, selectedSystemId != null)
@@ -80,8 +86,9 @@ internal fun GamesSettingsScreen(
     SideEffect { parentBack?.onBack = if (page == GamesSettingsPage.HOME) null else { { back() } } }
     DisposableEffect(parentBack) { onDispose { parentBack?.onBack = null } }
 
-    val assignedIds = remember(page) {
-        entry.library().folders().map { it.systemId }.filter { GameSystems.byId(it) != null }.toSet()
+    val assignedIds = remember(page, indexedSystemIds) {
+        (entry.library().folders().map { it.systemId } + indexedSystemIds)
+            .filter { GameSystems.byId(it) != null }.toSet()
     }
     val (mySystems, otherSystems) = remember(assignedIds) {
         GameSystems.alphabetical.partition { it.id in assignedIds }
