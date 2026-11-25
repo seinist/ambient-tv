@@ -19,4 +19,20 @@
     <string name="moonlight_probe_ok">Sunshine/GameStream responded: %1$s. Pairing has not been checked.</string>
     <string name="moonlight_probe_failed">No valid Sunshine/GameStream response. Check the network and PC.</string>
     <string name="moonlight_discovery_failed">PC discovery failed. Enter the PC address manually.</string>
+    <string name="moonlight_pair">Pair with Sunshine</string>
+    <string name="moonlight_pairing_local">Pairing pending</string>
+    <string name="moonlight_paired_local">Paired on this device</string>
+    <string name="moonlight_not_paired">Not paired</string>
+    <string name="moonlight_fetch_apps">Load applications</string>
+    <string name="moonlight_app_count">%1$d applications</string>
+    <string name="moonlight_pair_pin">Pairing PIN: %1$s</string>
+    <string name="moonlight_pair_help">Enter this PIN in Sunshine on the gaming PC. The request expires after about two minutes.</string>
+    <string name="moonlight_pair_waiting">Waiting for pairing approval…</string>
+    <string name="moonlight_pair_wrong_pin">PIN incorrect. Try again.</string>
+    <string name="moonlight_pair_busy">A different pairing is already running.</string>
+    <string name="moonlight_pair_unavailable">Moonlight native support is not part of this build.</string>
+    <string name="moonlight_pair_failed">Pairing failed. Check Sunshine and the PC connection.</string>
+    <string name="moonlight_identity_changed">The saved PC certificate or identity no longer matches. Remove the PC and pair again only if you trust the new identity.</string>
+    <string name="moonlight_apps_failed">Unable to retrieve the paired PC application list.</string>
+    <string name="moonlight_catalog_preview">These applications are not playable yet: the streaming player is still under development.</string>
 </resources>
