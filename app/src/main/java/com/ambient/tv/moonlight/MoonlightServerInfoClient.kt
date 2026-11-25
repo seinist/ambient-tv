@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
+import com.ambient.tv.data.local.AppPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
@@ -15,7 +16,7 @@ import okhttp3.Request
  * must use pinned upstream Moonlight transport with mutual TLS and trusted host certificates.
  * This client deliberately makes no HTTPS requests and never overrides TLS validation.
  */
-class MoonlightServerInfoClient @Inject constructor() {
+class MoonlightServerInfoClient @Inject constructor(private val preferences: AppPreferences) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(2500, TimeUnit.MILLISECONDS)
         .readTimeout(3000, TimeUnit.MILLISECONDS)
@@ -31,6 +32,7 @@ class MoonlightServerInfoClient @Inject constructor() {
             .host(valid.host)
             .port(valid.port)
             .addPathSegment("serverinfo")
+            .addQueryParameter("uniqueid", preferences.moonlightDeviceId)
             .build()
         client.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
             if (!response.isSuccessful) throw IOException("Moonlight HTTP " + response.code)
