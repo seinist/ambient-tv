@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="game_display_title">Display</string>
+    <string name="game_display_rate">Bildwiederholrate anpassen</string>
+    <string name="game_display_rate_off">Aus</string>
+    <string name="game_display_rate_on">Beim Start und Ende</string>
+    <string name="game_display_resolution">Displayauflösung</string>
+    <string name="game_display_system">Systemstandard</string>
+    <string name="game_display_display">Auto · volle Displayauflösung</string>
+    <string name="game_display_game">Auto · Spielauflösung</string>
+    <string name="game_display_performance">Auto · Performance (bis 1080p)</string>
+    <string name="game_display_prefer_double">Doppelte Frequenz bevorzugen</string>
+    <string name="game_display_scope">Einstellungsumfang</string>
+    <string name="game_display_global">Global</string>
+    <string name="game_display_core">Core</string>
+    <string name="game_display_game_scope">Spiel</string>
+    <string name="game_display_inherit">Übergeordnete Einstellungen übernehmen</string>
+    <string name="game_display_source">Spielausgabe</string>
+    <string name="game_display_output">Displayausgabe</string>
+    <string name="game_display_unavailable">Gespeicherter Modus nicht verfügbar</string>
+    <string name="game_display_failed">Kein passender Displaymodus verfügbar.</string>
+    <string name="game_display_hint">Nur unterstützte Displaymodi. Die interne Renderauflösung bleibt unverändert. Der vorherige Displaymodus wird beim Verlassen wiederhergestellt.</string>
+    <string name="game_display_fixed_hint">Ein manuell gewählter Modus legt Auflösung und Frequenz fest.</string>
+    <string name="game_display_switching">Display wird angepasst …</string>
+    <string name="game_display_netplay">Während einer Netplay-Sitzung sind Displaywechsel deaktiviert.</string>
+    <string name="game_display_unknown">Unbekannt</string>
+    <string name="game_display_prefer_double_on">An</string>
+</resources>

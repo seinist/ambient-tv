@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="game_display_title">Display</string>
+    <string name="game_display_rate">Match refresh rate</string>
+    <string name="game_display_rate_off">Off</string>
+    <string name="game_display_rate_on">At start and stop</string>
+    <string name="game_display_resolution">Display resolution</string>
+    <string name="game_display_system">System default</string>
+    <string name="game_display_display">Auto · full display resolution</string>
+    <string name="game_display_game">Auto · game resolution</string>
+    <string name="game_display_performance">Auto · performance (up to 1080p)</string>
+    <string name="game_display_prefer_double">Prefer double refresh rate</string>
+    <string name="game_display_scope">Settings scope</string>
+    <string name="game_display_global">Global</string>
+    <string name="game_display_core">Core</string>
+    <string name="game_display_game_scope">Game</string>
+    <string name="game_display_inherit">Use inherited settings</string>
+    <string name="game_display_source">Game output</string>
+    <string name="game_display_output">Display output</string>
+    <string name="game_display_unavailable">Saved mode unavailable</string>
+    <string name="game_display_failed">No compatible display mode available.</string>
+    <string name="game_display_hint">Only supported display modes are used. Internal rendering resolution is unchanged. The previous display mode is restored on exit.</string>
+    <string name="game_display_fixed_hint">A manually selected mode fixes both resolution and refresh rate.</string>
+    <string name="game_display_switching">Adjusting display…</string>
+    <string name="game_display_netplay">Display switches are disabled during netplay.</string>
+    <string name="game_display_unknown">Unknown</string>
+    <string name="game_display_prefer_double_on">On</string>
+</resources>
