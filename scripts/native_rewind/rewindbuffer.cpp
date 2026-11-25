@@ -162,13 +162,17 @@ bool RewindBuffer::readVarint(size_t& offset, size_t& remaining, uint64_t& value
 }
 
 bool RewindBuffer::decode(const Record& record) {
+    return decodeInto(record, latest.get(), latestSize);
+}
+
+bool RewindBuffer::decodeInto(const Record& record, uint8_t* target, size_t targetSize) const {
     size_t cursor = record.offset;
     size_t remaining = record.length;
     if (record.raw) {
         return record.length == record.stateSize &&
-               readBytes(cursor, remaining, latest.get(), record.stateSize);
+               readBytes(cursor, remaining, target, record.stateSize);
     }
-    if (record.stateSize != latestSize) return false;
+    if (record.stateSize != targetSize) return false;
     size_t position = 0;
     while (remaining != 0 && position < record.stateSize) {
         uint64_t header;
@@ -190,9 +194,9 @@ bool RewindBuffer::decode(const Record& record) {
             uint64_t delta = 0;
             uint64_t value = 0;
             if (!readBytes(cursor, remaining, reinterpret_cast<uint8_t*>(&delta), chunk)) return false;
-            std::memcpy(&value, latest.get() + position, chunk);
+            std::memcpy(&value, target + position, chunk);
             value ^= delta;
-            std::memcpy(latest.get() + position, &value, chunk);
+            std::memcpy(target + position, &value, chunk);
             position += chunk;
             left -= chunk;
         }
@@ -272,6 +276,34 @@ bool RewindBuffer::pop(uint8_t* outData, size_t* outSize) {
     std::memcpy(outData, latest.get(), latestSize);
     *outSize = latestSize;
     consumeLatest();
+    return true;
+}
+
+const RewindBuffer::Record& RewindBuffer::newestRecord(size_t index) const {
+    size_t slot = firstRecord + recordCount - 1 - index;
+    if (slot >= recordCapacity) slot -= recordCapacity;
+    return records[slot];
+}
+
+uint64_t RewindBuffer::recordFrames(size_t index) const {
+    return index < recordCount ? newestRecord(index).frames : 0;
+}
+
+bool RewindBuffer::peek(size_t steps, uint8_t* outData, size_t* outSize) const {
+    if (!outData || !outSize || latestSize == 0 || steps > recordCount) return false;
+    std::memcpy(outData, latest.get(), latestSize);
+    *outSize = latestSize;
+    return peekFurther(0, steps, outData, outSize);
+}
+
+bool RewindBuffer::peekFurther(size_t from, size_t to, uint8_t* data, size_t* size) const {
+    if (!data || !size || latestSize == 0 || from > to || to > recordCount ||
+        *size == 0 || *size > maxSize) return false;
+    for (size_t index = from; index < to; ++index) {
+        const Record& record = newestRecord(index);
+        if (!decodeInto(record, data, *size)) return false;
+        *size = record.stateSize;
+    }
     return true;
 }
 

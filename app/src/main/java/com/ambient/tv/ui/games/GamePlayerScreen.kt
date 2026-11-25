@@ -46,6 +46,8 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.semantics.Role
 import com.ambient.tv.games.GameBiosState
 import com.ambient.tv.games.GameStateEntry
@@ -439,6 +441,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     var menuRewinding by remember { mutableStateOf(false) }
     var rewindHistory by remember { mutableStateOf(GameRewindHistory()) }
     var rewindFps by remember { mutableStateOf(60.0) }
+    /** Paused timeline seek: requested and natively shown distance before live (0 = live). */
+    var rewindSeekTargetMs by remember { androidx.compose.runtime.mutableLongStateOf(0L) }
+    var rewindSeekShownFrames by remember { androidx.compose.runtime.mutableLongStateOf(0L) }
+    var rewindSeekVersion by remember { mutableIntStateOf(0) }
+    val rewindSeekRequests = remember { kotlinx.coroutines.channels.Channel<Long>(kotlinx.coroutines.channels.Channel.CONFLATED) }
     var stateDialogOpen by remember { mutableStateOf(false) }
     var resetConfirmOpen by remember { mutableStateOf(false) }
     var removeCoreConfirmOpen by remember { mutableStateOf(false) }
@@ -872,6 +879,40 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             )
             kotlinx.coroutines.delay(250)
         }
+    }
+    // Paused timeline seek like a timeshift: native shows the chosen stored state without
+    // consuming history; continuing play keeps that point and drops the newer history.
+    // Requests are conflated, so fast scrubbing renders only the latest target.
+    val rewindSeekAllowed by rememberUpdatedState(
+        menuOpen && panel == null && !statesOpen && !menuRewinding && !stateBusy && !running &&
+            availability.rewind && !destroyed && !exiting,
+    )
+    LaunchedEffect(retroView, loaded, destroyed) {
+        if (!loaded || destroyed) return@LaunchedEffect
+        for (target in rewindSeekRequests) {
+            if (!rewindSeekAllowed) continue
+            val shown = withContext(Dispatchers.Default) {
+                runCatching { retroView.previewRewind(target) }.getOrDefault(-1L)
+            }
+            if (shown >= 0L) {
+                rewindSeekShownFrames = shown
+                rewindSeekVersion++
+            }
+        }
+    }
+    // Leaving the menu or holding Rewind continues from the shown point (native commits it).
+    LaunchedEffect(menuOpen, menuRewinding) {
+        if (!menuOpen || menuRewinding) {
+            rewindSeekTargetMs = 0L
+            rewindSeekShownFrames = 0L
+        }
+    }
+    // Saves made from the menu preview the picture that is actually shown.
+    LaunchedEffect(rewindSeekVersion) {
+        if (rewindSeekVersion == 0 || !menuOpen || !loaded || destroyed || exiting) return@LaunchedEffect
+        kotlinx.coroutines.delay(300)
+        snapshot = retroView.preview(toneMap,
+            nativeTransfer != GameVulkanTransferMode.SDR && nativeSourceContract.supports(nativeTransfer))
     }
     val setMenuRewind: (Boolean) -> Unit = { held ->
         if (held && latestAvailability.rewind && menuOpen && panel == null && !statesOpen) {
@@ -1439,6 +1480,39 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         subtitle = message ?: stringResource(if (running) R.string.game_running else R.string.game_paused),
                         showPaused = !running,
                     )
+                    if (availability.rewind && rewindHistory.available) {
+                        // The rewind history as a timeline: oldest stored moment on the left, now
+                        // on the right. Seeking shows that moment; Continue plays on from there.
+                        val historyMs = (rewindHistory.seconds * 1000f).roundToInt().toLong().coerceAtLeast(1L)
+                        val shownMs = (rewindSeekShownFrames * 1000.0 / rewindFps).roundToInt().toLong()
+                            .coerceIn(0L, historyMs)
+                        com.ambient.tv.ui.player.TvPlayerSeekBar(
+                            positionMs = historyMs - shownMs,
+                            durationMs = historyMs,
+                            interactive = !stateBusy && !menuRewinding,
+                            onSeekBy = { delta ->
+                                val target = gameRewindSeekTarget(rewindSeekTargetMs, delta, historyMs)
+                                rewindSeekTargetMs = target
+                                rewindSeekRequests.trySend(gameRewindSeekFrames(target, rewindFps))
+                            },
+                            onInteraction = osd::interact,
+                            onTogglePlayback = resume,
+                            onPlay = resume,
+                            paused = true,
+                            showEndTime = false,
+                            timelineKey = "game-rewind",
+                            timelineContext = { previewPosition ->
+                                val backMs = (historyMs - previewPosition).coerceAtLeast(0L)
+                                Text(
+                                    if (backMs < GAME_REWIND_LIVE_TOLERANCE_MS) stringResource(R.string.game_rewind_timeline_live)
+                                    else stringResource(R.string.game_rewind_timeline_back, backMs / 1000f),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.testTag("game-rewind-timeline-position"),
+                                )
+                            },
+                        )
+                    }
                     PlayerTechBadgeRow {
                         MetaBadge("libretro", emphasized = true)
                         MetaBadge(core.name)
@@ -1463,8 +1537,6 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         }
                         if (aspect != GameAspect.CORE) MetaBadge(aspect.key)
                         if (fastForward) MetaBadge(stringResource(R.string.game_badge_fast_forward))
-                        if (availability.rewind) MetaBadge(stringResource(R.string.game_rewind) + " · " +
-                            stringResource(R.string.game_rewind_buffer_seconds, rewindHistory.seconds))
                         (achievements.state as? GameAchievementState.Active)?.let { active ->
                             MetaBadge(stringResource(
                                 if (active.hardcore) R.string.game_achievements_badge_hardcore else R.string.game_achievements_badge,
