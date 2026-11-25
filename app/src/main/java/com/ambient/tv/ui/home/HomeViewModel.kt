@@ -312,6 +312,7 @@ class HomeViewModel @Inject constructor(
     /** "Recently added photos" row; merged into every publish so provider reloads keep it. */
     private var photoRow: ContentRowData? = null
     private var tvPreview = HomeTvPreview()
+    private val tvReadAvailability = HomeTvReadAvailability()
     /** Last successful continue-watching list per media server, for the cross-system row. */
     private val continueBySystem = java.util.concurrent.ConcurrentHashMap<String, List<MediaItem>>()
     /** The live TV preview of this load has finished (successfully or not). */
@@ -514,16 +515,20 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    // TMDB results repaint only the current hero artwork, never the Home LazyRows. The
-    // programme's EPG image and logo are restored automatically when the artwork map resets.
+    // Availability emits for every failed request during an outage. Only changed live TV
+    // claims need new row data; media badges and artwork observe availability independently.
     init {
         viewModelScope.launch {
             availability.changes.collect {
-                if (hasEntered) (_uiState.value as? HomeUiState.Loaded)?.let { publishRows(lastPublication?.first ?: it.rows) }
+                if (hasEntered && tvReadAvailability.changed(::homeTvReadUnconfirmed)) {
+                    (_uiState.value as? HomeUiState.Loaded)?.let { publishRows(lastPublication?.first ?: it.rows) }
+                }
             }
         }
     }
 
+    // TMDB results repaint only the current hero artwork, never the Home LazyRows. The
+    // programme's EPG image and logo are restored automatically when the artwork map resets.
     init {
         viewModelScope.launch {
             liveTvArtwork.titleArt.collect { titleArt ->
@@ -2363,11 +2368,14 @@ class HomeViewModel @Inject constructor(
 
     // Whether there is anything to show is decided before the cross-system row is added, so an
     // offline Home (no rows) still leaves the launcher's channels alone.
-    private fun publishRows(rows: List<ContentRowData>) =
+    private fun publishRows(rows: List<ContentRowData>) {
+        val offlineSystems = unreachableServers.current().offline
         publishRowsInternal(
-            withAllContinueRow(applyOverviewStyle(rows)),
+            withAllContinueRow(applyOverviewStyle(rows), offlineSystems),
             hasRows = rows.isNotEmpty() || radioRows.isNotEmpty() || gameRows.isNotEmpty() || rommRows.isNotEmpty() || youtubeRows.isNotEmpty() || telegramRows.isNotEmpty(),
+            offlineSystems = offlineSystems,
         )
+    }
 
     /** Re-applies the system overview's page view. Rows already carry a resolved tile style. */
     private fun applyOverviewStyle(rows: List<ContentRowData>): List<ContentRowData> {
@@ -2416,7 +2424,7 @@ class HomeViewModel @Inject constructor(
      * row, most recently watched first, the same title from two available servers once.
      * Offline sources retain their cached lists but do not contribute playable Home cards.
      */
-    private fun withAllContinueRow(rows: List<ContentRowData>): List<ContentRowData> {
+    private fun withAllContinueRow(rows: List<ContentRowData>, offlineSystems: Set<String>): List<ContentRowData> {
         val others = rows.filterNot { it.id == ALL_CONTINUE_ROW_ID }
         val definition = allContinueRow() ?: return others
         val sources = listOf(
@@ -2429,7 +2437,7 @@ class HomeViewModel @Inject constructor(
                 ?: if (rows.any { it.id.startsWith("$system.") }) runCatching { repository.cachedOnDeck() }.getOrNull().orEmpty() else emptyList()
             )
         }
-        val items = homeContinueItems(itemsBySystem, unreachableServers.current().offline, HOME_ROW_LIMIT)
+        val items = homeContinueItems(itemsBySystem, offlineSystems, HOME_ROW_LIMIT)
         if (items.isEmpty()) return others
         val row = ContentRowData(
             definition.displayTitle(context),
@@ -2442,16 +2450,15 @@ class HomeViewModel @Inject constructor(
     }
 
     /** Library systems whose first load is still running; empty once cold start has settled. */
-    private fun coldStartPendingSystems(): Set<String> {
+    private fun coldStartPendingSystems(offlineSystems: Set<String>): Set<String> {
         // A fixed six-second cap used to publish later Live TV rows before an earlier media
         // server had answered. Only completion or confirmed offline state resolves the gap.
         if (coldStartRevealSettled || !libraryLoading) return emptySet()
-        val offline = unreachableServers.current().offline
         return buildSet {
             if (appPreferences.isConfigured) add(HomeRowDefinition.SYSTEM_PLEX)
             if (appPreferences.isJellyfinConfigured) add(HomeRowDefinition.SYSTEM_JELLYFIN)
             if (appPreferences.isEmbyConfigured) add(HomeRowDefinition.SYSTEM_EMBY)
-        } - offline
+        } - offlineSystems
     }
 
     /** Ends the ordered cold-start reveal and shows every row that was held back. */
@@ -2461,13 +2468,24 @@ class HomeViewModel @Inject constructor(
         lastPublication?.let { (rows, hasRows) -> publishRowsInternal(rows, hasRows) }
     }
 
-    private fun publishRowsInternal(rows: List<ContentRowData>, hasRows: Boolean) {
+    private fun homeTvReadUnconfirmed(sourceId: String): Boolean =
+        availability.browseUnconfirmed(com.ambient.tv.livetv.liveTvHostSource(sourceId, sourceId.substringBefore(':')))
+
+    private fun publishRowsInternal(
+        rows: List<ContentRowData>,
+        hasRows: Boolean,
+        offlineSystems: Set<String> = unreachableServers.current().offline,
+    ) {
         lastPublication = rows to hasRows
         if (refreshHoldActive) {
             heldPublication = rows to hasRows
             return
         }
-        val offlineSystems = unreachableServers.current().offline
+        val tvReadStates = tvReadAvailability.capture(
+            sequenceOf(tvPreview.live, tvPreview.recent, liveTvPlaybackReturn?.liveTvSource?.items.orEmpty())
+                .flatten().map { it.channel.sourceId }.asIterable(),
+            ::homeTvReadUnconfirmed,
+        )
         // Saved rows are previews. Their IDs and positions survive connection changes.
         val visibleMediaRows = rows
         // On handhelds there is no Android TV launcher. On TVs, convert potentially
@@ -2478,13 +2496,12 @@ class HomeViewModel @Inject constructor(
             val continueRows = launcherRows.filter { it.id == ALL_CONTINUE_ROW_ID }
                 .ifEmpty { launcherRows.filter { it.id.endsWith(".continue") } }
             val recentRows = launcherRows.filter { ".recentlyAdded" in it.id }
-            val live = launcherLiveTv().takeIf { content ->
+            val live = launcherLiveTv(offlineSystems).takeIf { content ->
                 val wantedSources = if (plexOnly || jellyfinOnly || embyOnly) emptyList()
                     else liveTvRegistry.configured().filter { repo ->
                         appPreferences.homeRows.any { it.enabled && it.system == repo.source.system &&
                             it.contentKey in setOf("live", "recent_channels") }
                     }
-                val offline = unreachableServers.current().offline
                 val tvheadendFailed = when (tvheadendConnectionManager.state.value) {
                     ServerConnectionState.Offline, ServerConnectionState.WakeTimedOut -> true
                     is ServerConnectionState.Error -> true
@@ -2494,7 +2511,7 @@ class HomeViewModel @Inject constructor(
                 // programs. Once every configured source is *confirmed* offline, publish
                 // an empty program list to remove stale Live TV tiles there as well.
                 val allOffline = allHomeTvSourcesOffline(
-                    wantedSources.map { it.source.system }, offline, tvheadendFailed,
+                    wantedSources.map { it.source.system }, offlineSystems, tvheadendFailed,
                 )
                 wantedSources.isEmpty() || (tvPreviewComplete && (content.titles.isNotEmpty() || allOffline))
             }
@@ -2523,18 +2540,16 @@ class HomeViewModel @Inject constructor(
             .filterNot { it.id == playedRow.id } + playedRow
         // Re-evaluate on every publish, not just when the preview was fetched: the server
         // can go offline while Home is still open and its cached preview is still in memory.
-        val offlineTvSystems = unreachableServers.current().offline
         val tvheadendOnline = tvheadendConnectionManager.state.value is ServerConnectionState.Online
         val nowEpochSeconds = System.currentTimeMillis() / 1_000L
         fun savedChannel(item: HomeLiveTvItem): HomeLiveTvItem = item.copy(event = item.event?.takeIf {
-            homeTvSourceReachable(item.channel.sourceId, offlineTvSystems, tvheadendOnline) &&
-                !availability.browseUnconfirmed(com.ambient.tv.livetv.liveTvHostSource(item.channel.sourceId, item.channel.sourceId.substringBefore(':'))) && it.isLive(nowEpochSeconds)
+            homeTvSourceReachable(item.channel.sourceId, offlineSystems, tvheadendOnline) &&
+                tvReadStates[item.channel.sourceId] != true && it.isLive(nowEpochSeconds)
         })
         val liveTvItems = tvPreview.live.map(::savedChannel)
         val recentTvItems = tvPreview.recent.map(::savedChannel)
         val savedLiveSources = (liveTvItems + recentTvItems).filter { item ->
-            item.channel.sourceId in savedTvSourceIds || availability.browseUnconfirmed(
-                com.ambient.tv.livetv.liveTvHostSource(item.channel.sourceId, item.channel.sourceId.substringBefore(':')))
+            item.channel.sourceId in savedTvSourceIds || tvReadStates[item.channel.sourceId] == true
         }.associate { it.channel.sourceId to it.sourceName.ifBlank { it.channel.sourceId.substringBefore(':') } }
         val previous = _uiState.value as? HomeUiState.Loaded
         val shortcuts = if (plexOnly || jellyfinOnly || embyOnly) emptyList() else appPreferences.homeRows.filter { row ->
@@ -2580,7 +2595,7 @@ class HomeViewModel @Inject constructor(
         val rowKeys = revealHomeRowsInOrder(homeDefinitions, orderedRowKeys,
             homeRowKeySources(rows.map { it.id }, shortcuts, tvRows.containsKey("live-tv"),
                 tvRows.containsKey("recent-tv"), tvRowSources, offlineReconnectSystems, homeDefinitions),
-            coldStartPendingSystems())
+            coldStartPendingSystems(offlineSystems))
         val defaultItem = rows.firstNotNullOfOrNull { it.items.firstOrNull() }
         // Initial focus belongs to the first row on screen, which follows rowKeys (the editor
         // order), not the provider order of `rows`.
@@ -2789,13 +2804,12 @@ class HomeViewModel @Inject constructor(
      * The launcher's Live TV channel: recently watched channels first, then the live row, only
      * from systems whose Home TV rows are enabled and whose server is not hidden as unreachable.
      */
-    private fun launcherLiveTv(): com.ambient.tv.launcher.LauncherChannelContent {
+    private fun launcherLiveTv(offlineSystems: Set<String>): com.ambient.tv.launcher.LauncherChannelContent {
         val enabled = appPreferences.homeRows.filter { it.enabled && it.contentKey in setOf("live", "recent_channels") }
         fun allowed(item: HomeLiveTvItem, key: String): Boolean {
             val system = item.channel.sourceId.substringBefore(':').ifBlank { HomeRowDefinition.SYSTEM_TVHEADEND }
             return enabled.any { it.system == system && it.contentKey == key }
         }
-        val offlineSystems = unreachableServers.current().offline
         val tvheadendOnline = tvheadendConnectionManager.state.value is ServerConnectionState.Online
         val items = (tvPreview.recent.filter { allowed(it, "recent_channels") } + tvPreview.live.filter { allowed(it, "live") })
             .filter { homeTvSourceReachable(it.channel.sourceId, offlineSystems, tvheadendOnline) }

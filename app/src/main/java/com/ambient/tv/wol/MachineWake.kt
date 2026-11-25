@@ -133,6 +133,7 @@ class MachineWake @Inject constructor(
     private val machines: WakeMachines,
     private val preferences: AppPreferences,
     private val wireGuardRoute: WireGuardRouteController,
+    private val hosts: com.ambient.tv.connectivity.HostConnectivity,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lock = Any()
@@ -149,8 +150,14 @@ class MachineWake @Inject constructor(
             wolManager.sendWakeBurst(mac, broadcast, port, wireGuardHost = wireGuardHost, retry = retry)
         },
         reachable = { host, port ->
+            val check = com.ambient.tv.connectivity.matchingHostEndpoint(hosts.endpoints(), host, port)
+                ?.let { hosts.begin(it.system) }
             runInterruptible(Dispatchers.IO) {
                 try { Socket().use { it.connect(InetSocketAddress(host, port), 900) }; true } catch (_: java.io.IOException) { false }
+            }.also { reachable ->
+                // A successful Settings/manual wake also ends the cancelled outage. Merely
+                // sending packets (without an answering endpoint) is not recovery evidence.
+                if (reachable) hosts.online(check)
             }
         },
         retries = { preferences.wolRetryCount },
