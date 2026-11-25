@@ -25,7 +25,8 @@ PATCH_DIR="$ROOT/scripts/patches/moonlight"
    -f "$PATCH_DIR/0002-strict-host-certificate-pin.patch" &&
    -f "$PATCH_DIR/0003-no-tls-to-plaintext-fallback.patch" &&
    -f "$PATCH_DIR/0004-bound-pairing-wait.patch" &&
-   -f "$PATCH_DIR/0005-align-native-shared-library-16k.patch" ]] || die "reviewed Moonlight patches missing"
+   -f "$PATCH_DIR/0005-align-native-shared-library-16k.patch" &&
+   -f "$PATCH_DIR/0006-safe-native-stream-stop.patch" ]] || die "reviewed Moonlight patches missing"
 PATCH_SHA="$(cat "$PATCH_DIR"/*.patch | git hash-object --stdin)"
 if [[ -f "$DEST/.ambient-moonlight-pins" &&
       "$(head -n 1 "$DEST/.ambient-moonlight-pins")" == "android=$REF" &&
@@ -77,6 +78,8 @@ grep -q 'readTimeout(120, TimeUnit.SECONDS)' "$WORK/app/src/main/java/com/limeli
     die "bounded PIN wait patch did not apply"
 grep -q 'max-page-size=16384' "$WORK/app/src/main/jni/moonlight-core/Android.mk" ||
     die "16-KiB ELF alignment patch did not apply"
+grep -q 'nativeSlotHeld.compareAndSet(true, false)' "$WORK/app/src/main/java/com/limelight/nvstream/NvConnection.java" ||
+    die "safe native stream stop patch did not apply"
 
 mv "$WORK" "$DEST"
 trap - EXIT
