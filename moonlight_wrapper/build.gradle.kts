@@ -52,10 +52,9 @@ android {
     sourceSets {
         named("main") {
             manifest.srcFile("src/main/AndroidManifest.xml")
-            java.setSrcDirs(listOf(sourceRoot))
-            // The official streaming protocol Java source, not its Activity/UI/database.
-            java.include("com/limelight/nvstream/**")
-            java.include("com/limelight/LimeLog.java")
+            // The fetch script stages a protocol-only Java tree. AGP 9's Java source
+            // set no longer supports Ant-style include filters here.
+            java.directories.add(upstream.resolve("protocol-only-src"))
         }
     }
     lint { abortOnError = false }
