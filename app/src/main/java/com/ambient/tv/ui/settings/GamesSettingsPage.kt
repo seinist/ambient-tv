@@ -48,6 +48,12 @@ internal enum class GamesSettingsPage {
 internal fun gamesSettingsPageForSearch(query: String): GamesSettingsPage? {
     val q = query.lowercase()
     return when {
+        q == "home" -> GamesSettingsPage.HOME
+        q == "systems" -> GamesSettingsPage.SYSTEMS
+        q == "metadata" -> GamesSettingsPage.METADATA
+        q == "controls" -> GamesSettingsPage.CONTROLS
+        q == "play" -> GamesSettingsPage.PLAY
+        q == "storage" -> GamesSettingsPage.STORAGE
         listOf("shader", "filterpaket", "filter pack").any { it in q } -> GamesSettingsPage.SHADERS
         listOf("cache", "zwischenspeicher").any { it in q } -> GamesSettingsPage.CACHE
         listOf("systemdatei", "system file").any { it in q } -> GamesSettingsPage.SYSTEM_FILES
