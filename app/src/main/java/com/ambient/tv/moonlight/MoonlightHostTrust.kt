@@ -20,6 +20,7 @@ enum class MoonlightTrustResult { NOT_PAIRED, MATCHED, IDENTITY_CHANGED }
  */
 class MoonlightHostTrust @Inject constructor(@EncryptedPrefs private val prefs: SharedPreferences) {
     fun isPaired(hostId: String): Boolean = read(hostId) != null
+    fun trustedServerId(hostId: String): String? = read(hostId)?.first
 
     fun check(hostId: String, candidate: MoonlightVerifiedPeer): MoonlightTrustResult {
         val trusted = read(hostId) ?: return MoonlightTrustResult.NOT_PAIRED
