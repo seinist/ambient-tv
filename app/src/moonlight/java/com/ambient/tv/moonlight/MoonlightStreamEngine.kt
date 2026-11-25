@@ -11,6 +11,8 @@ import com.limelight.nvstream.StreamConfiguration
 import com.limelight.nvstream.http.ComputerDetails
 import com.limelight.nvstream.http.NvApp
 import com.limelight.nvstream.jni.MoonBridge
+import com.limelight.nvstream.input.KeyboardPacket
+import com.limelight.nvstream.input.MouseButtonPacket
 import com.ambient.tv.data.local.AppPreferences
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.atomic.AtomicLong
@@ -177,6 +179,34 @@ class MoonlightStreamEngine @Inject constructor(
     ) {
         val conn = synchronized(lock) { active?.takeIf { it.started && !it.cancelled }?.connection }
         runCatching { conn?.sendControllerInput(port, mask, buttons, lt, rt, lx, ly, rx, ry) }
+    }
+
+    fun sendKeyboard(virtualKey: Short, pressed: Boolean, modifiers: Byte) {
+        val conn = synchronized(lock) { active?.takeIf { it.started && !it.cancelled }?.connection }
+        val direction = if (pressed) KeyboardPacket.KEY_DOWN else KeyboardPacket.KEY_UP
+        runCatching { conn?.sendKeyboardInput(virtualKey, direction, modifiers, 0) }
+    }
+
+    fun sendMousePosition(x: Int, y: Int, width: Int, height: Int) {
+        if (width !in 1..32767 || height !in 1..32767) return
+        val conn = synchronized(lock) { active?.takeIf { it.started && !it.cancelled }?.connection }
+        runCatching {
+            conn?.sendMousePosition(x.coerceIn(0, width).toShort(), y.coerceIn(0, height).toShort(),
+                width.toShort(), height.toShort())
+        }
+    }
+
+    fun sendMouseButton(pressed: Boolean) {
+        val conn = synchronized(lock) { active?.takeIf { it.started && !it.cancelled }?.connection }
+        runCatching {
+            if (pressed) conn?.sendMouseButtonDown(MouseButtonPacket.BUTTON_LEFT)
+            else conn?.sendMouseButtonUp(MouseButtonPacket.BUTTON_LEFT)
+        }
+    }
+
+    fun sendMouseScroll(clicks: Int) {
+        val conn = synchronized(lock) { active?.takeIf { it.started && !it.cancelled }?.connection }
+        runCatching { conn?.sendMouseScroll(clicks.coerceIn(-8, 8).toByte()) }
     }
 
     private fun callbacks(session: Active): NvConnectionListener = object : NvConnectionListener {
