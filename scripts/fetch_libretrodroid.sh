@@ -48,6 +48,10 @@ git -C "$WORK" checkout -q FETCH_HEAD
 # Only the module's own submodules, at the commit's gitlinks.
 git -C "$WORK" submodule update --init --recursive --depth 1 \
     libretrodroid/src/main/cpp/rcheevos libretrodroid/src/main/cpp/libadrenotools
+# About shows the rcheevos pin; keep it true to what is built.
+rcheevos_actual="$(git -C "$WORK" rev-parse HEAD:libretrodroid/src/main/cpp/rcheevos)"
+[[ "$rcheevos_actual" == "$(external_version LIBRETRODROID_RCHEEVOS_COMMIT)" ]] \
+    || fail "rcheevos is at $rcheevos_actual; update LIBRETRODROID_RCHEEVOS_COMMIT/_VERSION in $EXTERNAL_VERSIONS"
 
 remove_dir "$DEST"
 mkdir -p "$(dirname "$DEST")"

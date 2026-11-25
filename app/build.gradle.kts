@@ -304,6 +304,13 @@ android {
         buildConfigField("String", "SPOTIFY_RUSTY_VERSION", quotedBuildConfigString(externalVersion("SPOTIFY_RUSTY_REF")))
         buildConfigField("String", "SVPFLOW_VERSION", quotedBuildConfigString(externalVersion("SVPFLOW_VERSION")))
         buildConfigField("String", "SVPFLOW_REF", quotedBuildConfigString(externalVersion("SVPFLOW_REF")))
+        buildConfigField("String", "FFMPEG_VERSION", quotedBuildConfigString(externalVersion("FFMPEG_REF")))
+        buildConfigField("String", "FFMPEG_REF", quotedBuildConfigString(externalVersion("FFMPEG_COMMIT")))
+        buildConfigField("String", "LIBRETRODROID_REF", quotedBuildConfigString(externalVersion("LIBRETRODROID_COMMIT")))
+        buildConfigField("String", "RCHEEVOS_VERSION", quotedBuildConfigString(externalVersion("LIBRETRODROID_RCHEEVOS_VERSION")))
+        buildConfigField("String", "RCHEEVOS_REF", quotedBuildConfigString(externalVersion("LIBRETRODROID_RCHEEVOS_COMMIT")))
+        buildConfigField("String", "LIBRASHADER_VERSION", quotedBuildConfigString(externalVersion("LIBRASHADER_VERSION")))
+        buildConfigField("String", "LIBRASHADER_REF", quotedBuildConfigString(externalVersion("LIBRASHADER_COMMIT")))
     }
 
     splits {

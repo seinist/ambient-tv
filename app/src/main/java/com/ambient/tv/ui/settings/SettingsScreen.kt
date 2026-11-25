@@ -1704,6 +1704,10 @@ fun SettingsScreen(
                             items(aboutServiceComponents(), key = { "about-service-${it.name}" }) { component ->
                                 AboutComponentCard(component)
                             }
+                            item { SettingsSubheader(stringResource(R.string.settings_about_games)) }
+                            items(aboutGameComponents(), key = { "about-games-${it.name}" }) { component ->
+                                AboutComponentCard(component)
+                            }
                             item { SettingsSubheader(stringResource(R.string.settings_about_artwork)) }
                             item { AboutGameIconsCard() }
                             item { AboutInputControllerArtworkCard() }
@@ -1803,6 +1807,17 @@ private fun aboutPlaybackComponents() = listOf(
     AboutComponent("M3", "AndroidX Media3", BuildConfig.MEDIA3_VERSION, R.string.settings_about_role_android_player, "AndroidX / Google"),
     AboutComponent("pM", "projectM", BuildConfig.PROJECTM_VERSION, R.string.settings_about_role_visualizer, "projectM-visualizer / GitHub"),
     AboutComponent("SVP", "Open-SVPFlow", BuildConfig.SVPFLOW_VERSION, R.string.settings_about_role_motion, "Z1xus/open-svpflow / GitHub", BuildConfig.SVPFLOW_REF.shortRef()),
+    // Built into mpv-android; the decoders every mpv playback goes through.
+    AboutComponent("FF", "FFmpeg", BuildConfig.FFMPEG_VERSION, R.string.settings_about_role_ffmpeg, "FFmpeg / mpv-android build", BuildConfig.FFMPEG_REF.shortRef()),
+)
+
+private fun aboutGameComponents() = listOfNotNull(
+    AboutComponent("LR", "LibretroDroid", BuildConfig.LIBRETRODROID_REF.shortRef(), R.string.settings_about_role_libretro,
+        "rommapp/argosy-launcher / GitHub", BuildConfig.LIBRETRODROID_REF.shortRef()),
+    AboutComponent("RA", "rcheevos", BuildConfig.RCHEEVOS_VERSION, R.string.settings_about_role_achievements,
+        "RetroAchievements / GitHub", BuildConfig.RCHEEVOS_REF.shortRef()),
+    AboutComponent("SL", "librashader", BuildConfig.LIBRASHADER_VERSION, R.string.settings_about_role_librashader,
+        "SnowflakePowered/librashader / GitHub", BuildConfig.LIBRASHADER_REF.shortRef()).takeIf { BuildConfig.LIBRASHADER_NATIVE },
 )
 
 private fun aboutServiceComponents() = listOf(
