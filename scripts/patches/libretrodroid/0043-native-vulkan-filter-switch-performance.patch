@@ -29,17 +29,10 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
      nativeSlangFrame = 0;
      nativeSdrDisabled = false;
  }
-@@ -1330,4 +1330,9 @@
--        VkClearColorValue black {};
--        black.float32[3] = 1.0f;
+@@ -1330,2 +1330,4 @@
 -        vk.cmdClearColorImage(commandBuffer, target, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 -                              &black, 1, &targetRange);
-+        // The final Slang render pass clears the entire attachment, including
-+        // the bars. Only raw blits need this transfer clear; a failed shader
-+        // frame is not presented and retains the GLES fallback.
 +        if (!nativeSlang.requested()) {
-+            VkClearColorValue black {};
-+            black.float32[3] = 1.0f;
 +            vk.cmdClearColorImage(commandBuffer, target, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 +                                  &black, 1, &targetRange);
 +        }
