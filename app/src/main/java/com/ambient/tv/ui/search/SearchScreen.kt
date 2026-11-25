@@ -390,6 +390,41 @@ private fun RecentSearches(recent: List<String>, onSelect: (String) -> Unit, onC
     }
 }
 
+/** Moonlight art comes from authenticated HTTPS into a private, bounded local image cache. */
+@Composable
+private fun MoonlightSearchCard(
+    game: MoonlightBrowseGame,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val focused = LocalSearchResultFocused.current
+    Column(Modifier.width(deviceDp(238.dp, 174.dp)),
+        verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        val file = game.artworkPath?.let(::File)?.takeIf { it.isFile }
+        Box(
+            Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (file != null) {
+                AsyncImage(model = file, contentDescription = game.app.title,
+                    contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            } else {
+                Text(stringResource(R.string.moonlight_title),
+                    style = MaterialTheme.typography.titleSmall)
+            }
+        }
+        TvActionButton(game.app.title, onClick, modifier = modifier.onFocusChanged {
+            if (it.isFocused) focused("search:moonlight:" + game.key)
+        }, fillWidth = true)
+        Text(game.host.name.ifBlank { game.host.host },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
 @Composable
 private fun SearchRows(
     state: SearchUiState,
