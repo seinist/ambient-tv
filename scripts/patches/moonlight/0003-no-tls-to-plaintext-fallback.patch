@@ -1,0 +1,10 @@
+diff --git a/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java b/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
+--- a/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
++++ b/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
+@@ -335,4 +335,4 @@ public class NvHTTP {
+                 if (e.getErrorCode() == 401) {
+-                    // Cert validation error - fall back to HTTP
+-                    return openHttpConnectionToString(client, baseUrlHttp, "serverinfo");
++                    // A previously paired host must never be silently downgraded to HTTP.
++                    throw e;
+                 }
