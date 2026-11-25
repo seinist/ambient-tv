@@ -81,6 +81,7 @@ class MoonlightLibraryViewModel @Inject constructor(
     private val prefs: AppPreferences,
     private val transport: MoonlightSystemTransport,
     private val store: MoonlightLibraryStore,
+    private val machineWake: com.ambient.tv.wol.MachineWake,
 ) : ViewModel() {
     private val mutable = MutableStateFlow(MoonlightLibraryUiState())
     val state: StateFlow<MoonlightLibraryUiState> = mutable.asStateFlow()
@@ -190,6 +191,23 @@ class MoonlightLibraryViewModel @Inject constructor(
             catch (_: Exception) { /* No cover is a valid Sunshine catalog case. */ }
             finally { synchronized(inflightArtwork) { inflightArtwork.remove(key) } }
         }
+    }
+
+    /**
+     * Explicit WOL only. A cached offline card never starts this without a button press.
+     * Shared MachineWake coalesces a Moonlight PC with Plex/Jellyfin on the same machine.
+     */
+    fun wakeHost(hostId: String) {
+        val host = prefs.moonlightHosts.firstOrNull { it.id == hostId } ?: return
+        if (host.macAddress.isBlank() || host.id in mutable.value.onlineHosts) return
+        machineWake.wake(com.ambient.tv.wol.ManualWakeRequest(
+            system = "moonlight:" + host.id,
+            member = "moonlight:" + host.id,
+            subject = host.name.ifBlank { host.host },
+            host = host.host,
+            mac = host.macAddress,
+            probePort = host.port,
+        ))
     }
 
     fun quitRemote(hostId: String) {
