@@ -357,4 +357,7 @@
     <string name="game_library_source_status">%1$s · %2$s</string>
     <string name="game_library_recognition_heading">Spieleerkennung</string>
     <string name="game_library_sources_hint">Verbindung auswählen, um Ordner zu durchsuchen, oder eine ungenutzte Verbindung bearbeiten.</string>
+
+    <string name="games_settings_all_title">Alle Spiele-Einstellungen</string>
+    <string name="games_settings_all_hint">Vollständige Spiele-Einstellungen öffnen</string>
 </resources>
