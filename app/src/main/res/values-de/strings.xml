@@ -1217,6 +1217,11 @@
     <string name="settings_about_role_shared">Gemeinsame SmartTube-Hilfsbibliotheken</string>
     <string name="settings_about_role_spotify">Native Spotify-Wiedergabe</string>
     <string name="settings_about_role_telegram">Telegram-Client (Monogram)</string>
+    <string name="settings_about_games">Spiele (libretro)</string>
+    <string name="settings_about_role_ffmpeg">Decoder und Demuxer in mpv</string>
+    <string name="settings_about_role_libretro">libretro-Frontend für Spiele, mit Ambient-TV-Patches</string>
+    <string name="settings_about_role_achievements">RetroAchievements-Unterstützung</string>
+    <string name="settings_about_role_librashader">Slang-Shader-Laufzeit für Vulkan-Filter</string>
     <string name="sidebar_add_system">System hinzufügen</string>
     <string name="sidebar_customize">Menü bearbeiten</string>
     <string name="sidebar_manage_menu">Menü verwalten</string>
