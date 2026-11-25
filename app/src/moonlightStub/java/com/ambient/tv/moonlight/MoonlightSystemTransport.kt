@@ -12,5 +12,8 @@ class MoonlightSystemTransport @Inject constructor() {
     suspend fun pair(hostId: String, pin: String): MoonlightPairResult = MoonlightPairResult.Unavailable
     suspend fun applications(hostId: String): MoonlightAppCatalog =
         throw UnsupportedOperationException("Moonlight native transport is not included")
+    suspend fun artwork(hostId: String, appId: Int): ByteArray =
+        throw UnsupportedOperationException("Moonlight native transport not installed")
+    suspend fun quitRemoteApp(hostId: String): Boolean = false
     fun forget(hostId: String) = Unit
 }
