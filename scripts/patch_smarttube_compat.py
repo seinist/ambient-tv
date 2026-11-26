@@ -1037,8 +1037,6 @@ def patch_disable_unused_cronet(msc: Path, shared: Path, check: bool) -> list[Pa
     if manager.exists():
         if check:
             die(f"unused embedded Cronet manager must not be compiled: {manager}")
-        manager.unlink()
-        changed.append(manager)
 
     helper = msc / "youtubeapi/src/main/java/com/liskovsoft/googlecommon/common/helpers/RetrofitOkHttpHelper.kt"
     if not helper.is_file():
@@ -1067,6 +1065,9 @@ def patch_disable_unused_cronet(msc: Path, shared: Path, check: bool) -> list[Pa
     if text != original:
         helper.write_text(text)
         changed.append(helper)
+    if manager.exists():
+        manager.unlink()
+        changed.insert(0, manager)
     return changed
 
 
@@ -1108,7 +1109,7 @@ def patch_okhttp_manager_thread_safety(path: Path, check: bool) -> bool:
         if (current != null) return current;
         synchronized (OkHttpManager.class) {
             if (mClient == null) {
-                OkHttpCommons.enableProfiler = mEnableProfiler;
+                // Ambient TV disables upstream HTTP profiling in every build.
                 mClient = OkHttpCommons.setupBuilder(new OkHttpClient.Builder()).build();
             }
             return mClient;
