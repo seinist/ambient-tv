@@ -1,0 +1,194 @@
+diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/libplacebo/display.c
+--- a/modules/video_output/libplacebo/display.c
++++ b/modules/video_output/libplacebo/display.c
+@@ -39,9 +39,12 @@
+ #include <libplacebo/renderer.h>
+ #include <libplacebo/utils/upload.h>
+ #include <libplacebo/swapchain.h>
+-#include <libplacebo/shaders/lut.h>
+-
+-typedef struct vout_display_sys_t
++#include <libplacebo/shaders/lut.h>
++#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
++# include "display_bridge.h"
++#endif
++
++typedef struct vout_display_sys_t
+ {
+     vlc_placebo_t *pl;
+     pl_renderer renderer;
+@@ -45,8 +48,12 @@
+ {
+     vlc_placebo_t *pl;
+     pl_renderer renderer;
+-    pl_tex plane_tex[4];
+-    pl_tex fbo;
++    pl_tex plane_tex[4];
++    pl_tex fbo;
++#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
++    struct ambient_ahb_owner *ahb;
++    bool ahb_error_logged;
++#endif
+ 
+     // Pool of textures for the subpictures
+     struct pl_overlay *overlays;
+@@ -125,14 +132,25 @@
+         goto error;
+ 
+     pl_gpu gpu = sys->pl->gpu;
+-    sys->renderer = pl_renderer_create(sys->pl->log, gpu);
+-    if (!sys->renderer)
+-        goto error;
+-
+-    vlc_placebo_ReleaseCurrent(sys->pl);
+-
+-    // Attempt using the input format as the display format
+-    if (vlc_placebo_FormatSupported(gpu, vd->source->i_chroma)) {
++    sys->renderer = pl_renderer_create(sys->pl->log, gpu);
++    if (!sys->renderer)
++        goto error;
++
++#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
++    if (var_InheritBool(vd, "vk-ambient-ahb"))
++        sys->ahb = ambient_display_open(gpu, vd->source, context);
++#endif
++
++    vlc_placebo_ReleaseCurrent(sys->pl);
++
++    // Attempt using the input format as the display format
++#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
++    if (sys->ahb) {
++        fmt->i_chroma = VLC_CODEC_ANDROID_OPAQUE;
++        msg_Info(vd, "Experimental Android Vulkan AHB output selected");
++    } else
++#endif
++    if (vlc_placebo_FormatSupported(gpu, vd->source->i_chroma)) {
+         fmt->i_chroma = vd->source->i_chroma;
+     } else {
+         fmt->i_chroma = 0;
+@@ -194,11 +212,19 @@
+             pl_tex_destroy(gpu, &sys->plane_tex[i]);
+         for (int i = 0; i < sys->num_overlays; i++)
+             pl_tex_destroy(gpu, &sys->overlay_tex[i]);
+-        pl_renderer_destroy(&sys->renderer);
+-        vlc_placebo_ReleaseCurrent(sys->pl);
+-    }
+-
+-    if (sys->overlays) {
++        pl_renderer_destroy(&sys->renderer);
++#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
++        if (sys->ahb) {
++            pl_gpu_finish(gpu);
++            if (!ambient_ahb_close(sys->ahb))
++                msg_Err(vd, "Experimental AHB owner quarantined: GPU retirement unproven");
++            sys->ahb = NULL;
++        }
++#endif
++        vlc_placebo_ReleaseCurrent(sys->pl);
++    }
++
++    if (sys->overlays) {
+         free(sys->overlays);
+         free(sys->overlay_parts);
+         free(sys->overlay_tex);
+@@ -225,11 +251,31 @@
+     if (vlc_placebo_MakeCurrent(sys->pl) != VLC_SUCCESS)
+         return;
+ 
+-    struct pl_swapchain_frame frame;
+-    if (!pl_swapchain_start_frame(sys->pl->swapchain, &frame)) {
+-        vlc_placebo_ReleaseCurrent(sys->pl);
+-        return; // Probably benign error, ignore it
+-    }
++#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
++    struct ambient_ahb_output ahb_output = {0};
++    if (sys->ahb) {
++        // Drop before acquiring a swapchain frame when all GPU slots are busy.
++        // Never feed an opaque Android picture into the CPU plane uploader.
++        VkResult result = ambient_display_prepare(sys->ahb, pic, &ahb_output);
++        if (result != VK_SUCCESS) {
++            if (result != VK_NOT_READY && !sys->ahb_error_logged) {
++                msg_Err(vd, "Experimental AHB frame rejected: %d", result);
++                sys->ahb_error_logged = true;
++            }
++            vlc_placebo_ReleaseCurrent(sys->pl);
++            return;
++        }
++    }
++#endif
++    struct pl_swapchain_frame frame;
++    if (!pl_swapchain_start_frame(sys->pl->swapchain, &frame)) {
++#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
++        if (ahb_output.texture)
++            ambient_ahb_finish(sys->ahb, ahb_output);
++#endif
++        vlc_placebo_ReleaseCurrent(sys->pl);
++        return; // Probably benign error, ignore it
++    }
+     sys->fbo = frame.fbo;
+ 
+ #if PL_API_VER >= 199
+@@ -250,7 +296,12 @@
+         },
+     };
+ 
+-    vlc_placebo_frame_DoviMetadata(&img, pic, &sys->dovi_metadata);
++#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
++    if (ahb_output.texture)
++        img = ambient_pl_rgb_frame((pl_tex)ahb_output.texture, vlc_placebo_ColorSpace(vd->fmt));
++    else
++#endif
++    vlc_placebo_frame_DoviMetadata(&img, pic, &sys->dovi_metadata);
+ 
+     struct vlc_ancillary *iccp = picture_GetAncillary(pic, VLC_ANCILLARY_ID_ICC);
+     if (iccp) {
+@@ -266,8 +317,11 @@
+         vlc_placebo_HdrMetadata(hdm, &img.color.hdr);
+     }
+ 
+-    // Upload the image data for each plane
+-    struct pl_plane_data data[4];
++    // Upload the image data for each plane (software/copy-back pictures only).
++#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
++    if (!ahb_output.texture) {
++#endif
++    struct pl_plane_data data[4];
+     if (!vlc_placebo_PlaneData(pic, data)) {
+         // This should never happen, in theory
+         assert(!"Failed processing the picture_t into pl_plane_data!?");
+@@ -287,8 +341,11 @@
+                                       &plane->shift_y);
+     }
+ 
+-    struct pl_frame target;
+-    pl_frame_from_swapchain(&target, &frame);
++#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
++    }
++#endif
++    struct pl_frame target;
++    pl_frame_from_swapchain(&target, &frame);
+     if (vd->cfg->icc_profile) {
+         target.profile.data = vd->cfg->icc_profile->data;
+         target.profile.len = vd->cfg->icc_profile->size;
+@@ -444,9 +501,18 @@
+         goto done;
+     }
+ 
+-done:
+-
+-    if (failed)
++done:
++#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
++    // Includes render failures and overlay allocation failures.
++    if (ahb_output.texture && !ambient_ahb_finish(sys->ahb, ahb_output)) {
++        if (!sys->ahb_error_logged)
++            msg_Err(vd, "Experimental AHB consumer retirement failed");
++        sys->ahb_error_logged = true;
++        failed = true;
++    }
++#endif
++
++    if (failed)
+         pl_tex_clear(gpu, frame.fbo, (float[4]){ 1.0, 0.0, 0.0, 1.0 });
+ 
+     pl_gpu_flush(gpu);
