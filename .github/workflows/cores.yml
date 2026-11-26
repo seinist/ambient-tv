@@ -36,6 +36,8 @@ on:
       - scripts/core_acceleration_audit.py
       - scripts/core_link_evidence.py
       - scripts/core_hotpath_patches.py
+      - scripts/core_hotpath_remaining.py
+      - scripts/test_core_hotpath_remaining.py
       - scripts/test_core_hotpath_patches.py
       - scripts/test_core_build_policy.py
       - scripts/check_elf_pages.py
@@ -49,6 +51,8 @@ on:
       - scripts/core_acceleration_audit.py
       - scripts/core_link_evidence.py
       - scripts/core_hotpath_patches.py
+      - scripts/core_hotpath_remaining.py
+      - scripts/test_core_hotpath_remaining.py
       - scripts/test_core_hotpath_patches.py
       - scripts/test_core_build_policy.py
 
@@ -73,6 +77,7 @@ jobs:
         run: |
           python3 -m unittest discover -s scripts -p test_core_build_policy.py
           python3 -m unittest discover -s scripts -p test_core_hotpath_patches.py
+          python3 -m unittest discover -s scripts -p test_core_hotpath_remaining.py
       - id: plan
         env:
           ONLY: ${{ inputs.cores }}
@@ -142,7 +147,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/ccache
-          key: core-ccache-v1-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ matrix.core }}-${{ matrix.commit }}-${{ matrix.abi }}-${{ matrix.profile }}-${{ hashFiles('cores/cores.json', '.github/workflows/cores.yml', 'scripts/core_build_policy.py', 'scripts/core_acceleration_audit.py', 'scripts/core_link_evidence.py', 'scripts/core_hotpath_patches.py') }}
+          key: core-ccache-v1-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ matrix.core }}-${{ matrix.commit }}-${{ matrix.abi }}-${{ matrix.profile }}-${{ hashFiles('cores/cores.json', '.github/workflows/cores.yml', 'scripts/core_build_policy.py', 'scripts/core_acceleration_audit.py', 'scripts/core_link_evidence.py', 'scripts/core_hotpath_patches.py', 'scripts/core_hotpath_remaining.py') }}
 
       - name: Fetch ${{ matrix.core }} at its pinned commit
         env:
