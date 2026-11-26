@@ -24,9 +24,23 @@ class LiveSyncWatchTest {
 
     @Test fun mpvPersistentDriftRespectsIntentionalDelay() {
         val watch = LiveSyncWatch()
-        repeat(10) { assertNull(watch.observe(sample(it, frames = null, sync = 1.0), 1000)) }
-        repeat(4) { assertNull(watch.observe(sample(it + 10, frames = null, sync = 2.0), 1000)) }
-        assertEquals(LiveSyncFault.CLOCK_DRIFT, watch.observe(sample(14, frames = null, sync = 2.0), 1000))
+        repeat(10) { assertNull(watch.observe(sample(it, frames = null, sync = -1.0), 1000)) }
+        repeat(4) { assertNull(watch.observe(sample(it + 10, frames = null, sync = 0.0), 1000)) }
+        assertEquals(LiveSyncFault.CLOCK_DRIFT, watch.observe(sample(14, frames = null, sync = 0.0), 1000))
+    }
+
+    @Test fun compensatedMpvDriftIsNotMaskedByLargeUserDelay() {
+        val watch = LiveSyncWatch()
+        fun s(i: Int, sync: Double) = sample(i, frames = null, sync = sync).copy(avSyncCompensated = true)
+        repeat(10) { assertNull(watch.observe(s(it, 0.01), 1500)) }
+        repeat(4) { assertNull(watch.observe(s(it + 10, -0.8), 1500)) }
+        assertEquals(LiveSyncFault.CLOCK_DRIFT, watch.observe(s(14, -0.8), 1500))
+    }
+
+    @Test fun changingDelayDoesNotCarryOldDriftWindow() {
+        val watch = LiveSyncWatch()
+        repeat(4) { assertNull(watch.observe(sample(it, frames = null, sync = 1.0))) }
+        repeat(5) { assertNull(watch.observe(sample(it + 4, frames = null, sync = 1.0), -1000)) }
     }
 
     @Test fun seekOrCounterResetDoesNotBridgeObservationWindows() {
