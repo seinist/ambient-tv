@@ -53,7 +53,7 @@ jobs:
           fi
           native=false
           slang=false
-          if grep -Eq '^(app/src/(main|test)/java/com/ambient/tv/(games|ui/games|ui/gamepad)/|app/src/main/assets/games/|third_party_assets/game_shaders/|libretrodroid_wrapper/|scripts/(patches/(libretrodroid|librashader)/|native_libretro_vulkan/|host_vulkan_stubs/|native_rewind/|native_game_.*_test\.cpp|test_game_(filter_renderer|content|rewind|vulkan_presentation|vulkan_color|vulkan_sync|vulkan_slang)\.py|game_(filter_audit_sources|shader_output_wrapper)\.py|import_game_upscalers\.py|fetch_libretrodroid\.sh|build_librashader_android\.sh|apply_librashader_patches\.py)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
+          if grep -Eq '^(app/src/(main|test)/java/com/ambient/tv/(games|ui/games|ui/gamepad)/|app/src/main/assets/games/|third_party_assets/game_shaders/|libretrodroid_wrapper/|scripts/(patches/(libretrodroid|librashader)/|native_libretro_vulkan/|host_vulkan_stubs/|native_rewind/|native_game_.*_test\.cpp|test_game_(filter_renderer|content|rewind|vulkan_presentation|vulkan_color|vulkan_sync|vulkan_slang)\.py|game_(filter_audit_sources|shader_output_wrapper)\.py|import_game_upscalers\.py|fetch_libretrodroid\.sh|instrument_libretro_trace\.py|verify_libretro_native_profile\.py|build_librashader_android\.sh|apply_librashader_patches\.py)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
             native=true
           fi
           if grep -Eq '^(app/src/main/assets/games/slang/|app/src/main/java/com/ambient/tv/ui/games/|scripts/(native_libretro_vulkan/|host_vulkan_stubs/|native_game_vulkan_slang_test\.cpp|test_game_vulkan_slang\.py|patches/(libretrodroid|librashader)/|build_librashader_android\.sh|apply_librashader_patches\.py|check_game_slang\.py|tests/test_check_game_slang\.py|test_librashader_preset_api\.py)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
@@ -97,6 +97,9 @@ jobs:
         run: |
           bash -n build.sh
           python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+          python3 -m unittest discover -s scripts -p 'test_core_build_policy.py'
+          python3 -m unittest discover -s scripts -p 'test_instrument_libretro_trace.py'
+          python3 -m unittest discover -s scripts -p 'test_libretro_perf_tools.py'
           python3 scripts/import_game_system_icons.py --check
           python3 scripts/import_input_controller_artwork.py --check
 
