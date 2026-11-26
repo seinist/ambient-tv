@@ -55,6 +55,8 @@ data class SidebarUiState(
     /** RomM signed in and switched on; its platforms come from the device's catalog copy. */
     val rommEnabled: Boolean = false,
     val moonlightEnabled: Boolean = false,
+    val moonlightHomeEnabled: Boolean = false,
+    val moonlightPairedHosts: Set<String> = emptySet(),
     val moonlightHosts: List<com.ambient.tv.moonlight.MoonlightHost> = emptyList(),
     val rommPlatforms: List<com.ambient.tv.romm.RommMenuPlatform> = emptyList(),
     val weatherEnabled: Boolean = false,
@@ -136,6 +138,8 @@ class SidebarViewModel @Inject constructor(
             spotifyEnabled = appPreferences.spotifyEnabled,
             radioEnabled = appPreferences.radioEnabled,
             moonlightEnabled = com.ambient.tv.moonlight.MoonlightFeature.configured(appPreferences),
+                moonlightHomeEnabled = appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_MOONLIGHT },
+                moonlightPairedHosts = appPreferences.moonlightHosts.filter { moonlightStore.peerIdentity(it.id) != null }.map { it.id }.toSet(),
             moonlightHosts = if (com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE)
                 appPreferences.moonlightHosts else emptyList(),
             weatherEnabled = appPreferences.weatherSettings.let { it.enabled && it.showInSidebar },
@@ -258,6 +262,12 @@ class SidebarViewModel @Inject constructor(
             ).collect { offline -> _uiState.update { it.copy(offlineSystems = offline) } }
         }
         viewModelScope.launch {
+            moonlightStore.trustRevisions.collect {
+                val paired = appPreferences.moonlightHosts.filter { moonlightStore.peerIdentity(it.id) != null }.map { it.id }.toSet()
+                _uiState.update { it.copy(moonlightPairedHosts = paired) }
+            }
+        }
+        viewModelScope.launch {
             combine(gameLibrary.revisions, fileStore.revision) { _, _ -> gameLibrary.revisionSnapshot(includeOverrides = false) }
                 .distinctUntilChanged().collect {
                     refreshGameSystems()
@@ -295,6 +305,7 @@ class SidebarViewModel @Inject constructor(
         appPreferences.radioEnabled,
         appPreferences.moonlightEnabled,
         appPreferences.moonlightHosts,
+        appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_MOONLIGHT },
         appPreferences.weatherSettings.let { it.enabled && it.showInSidebar },
         appPreferences.telegramEnabled,
         appPreferences.telegramSubmenuKeys,
@@ -381,7 +392,7 @@ class SidebarViewModel @Inject constructor(
         val moonlight = configured.filter { it.startsWith("moonlight:") }
         moonlight.forEach { key ->
             val id = key.removePrefix("moonlight:")
-            if (moonlightStore.isRecentlyOnline(id)) offline.remove(key)
+            if (moonlightStore.peerIdentity(id) == null || moonlightStore.isRecentlyOnline(id)) offline.remove(key)
             else if (moonlightStore.isKnownOffline(id)) offline.add(key)
         }
         return if (moonlight.isNotEmpty() && moonlight.all { it in offline }) offline + "moonlight" else offline
@@ -512,6 +523,8 @@ class SidebarViewModel @Inject constructor(
                 spotifyEnabled = appPreferences.spotifyEnabled,
                 radioEnabled = appPreferences.radioEnabled,
                 moonlightEnabled = com.ambient.tv.moonlight.MoonlightFeature.configured(appPreferences),
+                moonlightHomeEnabled = appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_MOONLIGHT },
+                moonlightPairedHosts = appPreferences.moonlightHosts.filter { moonlightStore.peerIdentity(it.id) != null }.map { it.id }.toSet(),
                 moonlightHosts = if (com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE)
                     appPreferences.moonlightHosts else emptyList(),
                 weatherEnabled = appPreferences.weatherSettings.let { it.enabled && it.showInSidebar },

@@ -38,7 +38,7 @@ class MoonlightBrowsePreloader @Inject constructor(
                     coroutineScope {
                         hosts.forEach { (host, _) ->
                             launch {
-                                try { repository.refresh(host, BrowseLoadPriority.BACKGROUND) }
+                                try { repository.refresh(host, BrowseLoadPriority.BACKGROUND, renewProof = true) }
                                 catch (cancel: CancellationException) { throw cancel }
                                 catch (_: Exception) { /* Keep any identity-bound local cache. */ }
                             }

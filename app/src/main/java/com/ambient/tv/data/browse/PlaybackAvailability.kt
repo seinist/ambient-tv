@@ -280,7 +280,11 @@ class PlaybackAvailability @Inject constructor(
             if (!current()) return answer(false)
             val result = withTimeoutOrNull(25_000L) {
                 suspendResult {
-                    val catalog = moonlightCatalog.get().refresh(host, BrowseLoadPriority.VISIBLE, forceCatalog = true)
+                    // A fresh pinned catalog already authorizes this app; always renew the host proof.
+                    // Engine independently revalidates catalog membership if the 15s window expires.
+                    val fresh = moonlightStore.get().isCatalogFresh(hostId, 15_000L) &&
+                        moonlightStore.get().catalog(hostId)?.apps?.any { it.id == appId } == true
+                    val catalog = moonlightCatalog.get().refresh(host, BrowseLoadPriority.VISIBLE, forceCatalog = !fresh, renewProof = true)
                     catalog.apps.any { it.id == appId }
                 }
             }

@@ -88,7 +88,7 @@ fun HandheldNavigationHost(
         spotifyEnabled = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized,
         radioHomeEnabled = sidebarState.radioHomeEnabled,
         telegramHomeEnabled = sidebarState.telegramHomeEnabled && sidebarState.telegramEnabled && sidebarState.telegramAuthorized,
-        moonlightConfigured = sidebarState.moonlightEnabled,
+        moonlightConfigured = sidebarState.moonlightEnabled && sidebarState.moonlightHomeEnabled,
     )
     val showSearch = sidebarShowsGlobalSearch(
         plexConfigured = sidebarState.plexEnabled,

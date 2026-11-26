@@ -134,6 +134,7 @@ fun SearchScreen(
     onYouTubeClick: (String) -> Unit,
     onSpotifyClick: (SpotifyBrowseItem) -> Unit,
     onMoonlightClick: (String, Int) -> Unit = { _, _ -> },
+    onMoonlightDetails: (String, Int) -> Unit = onMoonlightClick,
     onTvheadendChannelClick: (TvhChannel) -> Unit,
     onTvheadendProgramClick: (TvhEpgEvent) -> Unit,
     onTvheadendRecordingClick: (TvhDvrEntry) -> Unit,
@@ -313,6 +314,7 @@ fun SearchScreen(
                                 onYouTubeClick,
                                 onSpotifyClick,
                                 onMoonlightClick,
+                                onMoonlightDetails,
                                 { station -> viewModel.playRadio(station, onRadioStarted) },
                                 onTvheadendChannelClick,
                                 onTvheadendProgramClick,
@@ -325,6 +327,7 @@ fun SearchScreen(
                                 onYouTubeClick,
                                 onSpotifyClick,
                                 onMoonlightClick,
+                                onMoonlightDetails,
                                 { station -> viewModel.playRadio(station, onRadioStarted) },
                                 onTvheadendChannelClick,
                                 onTvheadendProgramClick,
@@ -395,6 +398,7 @@ private fun RecentSearches(recent: List<String>, onSelect: (String) -> Unit, onC
 private fun MoonlightSearchCard(
     game: MoonlightBrowseGame,
     onClick: () -> Unit,
+    onInfo: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val focused = LocalSearchResultFocused.current
@@ -406,7 +410,7 @@ private fun MoonlightSearchCard(
     com.ambient.tv.ui.games.GameTile(presentation,
         modifier = modifier.width(deviceDp(238.dp, 174.dp)),
         artworkSlotAspectRatio = 1f,
-        onPlay = onClick, onInfo = onClick,
+        onPlay = onClick, onInfo = onInfo,
         onFocus = { focused(presentation.fileId) }, onRequester = {}, onDisposed = {},
     )
 }
@@ -419,6 +423,7 @@ private fun SearchRows(
     onYouTubeClick: (String) -> Unit,
     onSpotifyClick: (SpotifyBrowseItem) -> Unit,
     onMoonlightClick: (String, Int) -> Unit,
+    onMoonlightDetails: (String, Int) -> Unit,
     onRadioClick: (RadioStation) -> Unit,
     onTvheadendChannelClick: (TvhChannel) -> Unit,
     onTvheadendProgramClick: (TvhEpgEvent) -> Unit,
@@ -654,6 +659,7 @@ private fun SearchRows(
                                 MoonlightSearchCard(
                                     game = game,
                                     onClick = { onMoonlightClick(game.host.id, game.app.id) },
+                                    onInfo = { onMoonlightDetails(game.host.id, game.app.id) },
                                     modifier = Modifier.rowColumnFocusTarget(rowFocus, rowKey, key),
                                 )
                             }
@@ -1210,6 +1216,7 @@ private fun SearchList(
     onYouTubeClick: (String) -> Unit,
     onSpotifyClick: (SpotifyBrowseItem) -> Unit,
     onMoonlightClick: (String, Int) -> Unit,
+    onMoonlightDetails: (String, Int) -> Unit,
     onRadioClick: (RadioStation) -> Unit,
     onTvheadendChannelClick: (TvhChannel) -> Unit,
     onTvheadendProgramClick: (TvhEpgEvent) -> Unit,

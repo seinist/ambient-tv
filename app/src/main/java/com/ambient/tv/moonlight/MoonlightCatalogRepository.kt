@@ -48,14 +48,14 @@ class MoonlightCatalogRepository @Inject constructor(
         if (current()) store.artworkInfo(host.id, appId) else null
     }
 
-    suspend fun refresh(host: MoonlightHost, priority: BrowseLoadPriority, forceCatalog: Boolean = false): MoonlightHostCatalog {
+    suspend fun refresh(host: MoonlightHost, priority: BrowseLoadPriority, forceCatalog: Boolean = false, renewProof: Boolean = false): MoonlightHostCatalog {
         val identity = withContext(Dispatchers.IO) { store.peerIdentity(host.id) }
             ?: throw SecurityException("Moonlight host not paired")
         fun current() = prefs.moonlightEnabled && prefs.moonlightHosts.any { it == host } &&
             store.peerIdentity(host.id) == identity
         if (!transport.available || !current()) throw SecurityException("Moonlight host changed")
         val download = forceCatalog || !store.isCatalogFresh(host.id)
-        if (!download && store.isRecentlyOnline(host.id))
+        if (!download && !renewProof && store.isRecentlyOnline(host.id))
             store.catalog(host.id)?.let { return it }
         // Separate lightweight proof from catalog downloads, but serialize the two per host
         // so a late proof never invalidates a newer catalog request token.
@@ -67,7 +67,7 @@ class MoonlightCatalogRepository @Inject constructor(
                 val check = connectivity.begin("moonlight:${host.id}")
                 try {
                     // Forced refreshes and lightweight probes serialize per endpoint.
-                    if (download || !store.isCatalogFresh(host.id)) {
+                    if (forceCatalog || !store.isCatalogFresh(host.id)) {
                         val catalog = transport.applications(host.id)
                         if (!current() || !store.putCatalog(host.id, catalog, token))
                             throw SecurityException("Moonlight host changed")

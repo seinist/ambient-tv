@@ -40,7 +40,7 @@ fun MoonlightLibraryScreen(
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onDetails: (String, Int) -> Unit,
-    onSectionSelected: ((String) -> Unit)? = null,
+    onSelect: (String, Int) -> Unit = onDetails,
     model: MoonlightLibraryViewModel = hiltViewModel(),
 ) {
     val state by model.state.collectAsState()
@@ -78,6 +78,16 @@ fun MoonlightLibraryScreen(
     val hostBySection = remember(state.hosts) { state.hosts.associateBy { "host:" + it.id } }
     val sections = remember(state.hosts) { listOf("all", "favorites", "recent") + hostBySection.keys }
     val section = state.sections
+    fun selectSection(value: String) {
+        if (value !in sections || value == selectedSection) return
+        selectedSection = value
+        focusedId = null
+        model.section(value)
+    }
+    InPlaceSectionHost(MoonlightSectionSelection, section, ::selectSection)
+    LaunchedEffect(section, state.localLoaded) {
+        if (state.localLoaded && selectedSection !in sections) selectedSection = section
+    }
     val sectionHosts = state.hosts.filter { !section.startsWith("host:") || "host:" + it.id == section }
     val offline = sectionHosts.filter { it.id in state.pairedHosts && it.id !in state.onlineHosts && (it.id in state.offlineHosts || state.errors[it.id] == "offline") }
     val offlineStatus = offlineSourcesStatusForMoonlight(offline.map { it.name.ifBlank { it.host } })
@@ -103,10 +113,7 @@ fun MoonlightLibraryScreen(
             GameLibrarySections(sections, section, controls,
                 platform = { key -> hostBySection[key]?.let { it.name.ifBlank { it.host } to "moonlight" } },
                 sectionIcon = { key -> if (key in hostBySection) Icons.Filled.Computer else null }) { value ->
-                selectedSection = value
-                focusedId = null
-                model.section(value)
-                onSectionSelected?.invoke(value)
+                selectSection(value)
             }
             if (searchVisible) TvTextField(searchText, { searchText = it.take(150) }, stringResource(R.string.action_search),
                 Modifier.fillMaxWidth().pageFocusStage(controls.focusChain, PageFocusLevel.SEARCH_LOWER, controls.searchFocus))
@@ -114,21 +121,23 @@ fun MoonlightLibraryScreen(
             if (state.errors.values.any { it == "identity" }) Text(stringResource(R.string.moonlight_identity_changed),
                 color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             when {
-                !state.ready -> Text(stringResource(R.string.player_loading))
-                sectionHosts.isEmpty() -> {
-                    Text(stringResource(R.string.moonlight_library_unconfigured))
-                    TvActionButton(stringResource(R.string.moonlight_open_settings), onOpenSettings)
-                }
-                sectionHosts.none { it.id in state.pairedHosts } -> {
-                    Text(stringResource(R.string.moonlight_not_paired))
-                    TvActionButton(stringResource(R.string.moonlight_open_settings), onOpenSettings)
-                }
-                games.isEmpty() -> Text(stringResource(when {
+                !state.ready -> StatePanel(title = stringResource(R.string.player_loading), modifier = Modifier.weight(1f).fillMaxWidth())
+                sectionHosts.isEmpty() -> StatePanel(
+                    title = stringResource(R.string.moonlight_library_unconfigured),
+                    actionLabel = stringResource(R.string.moonlight_open_settings), onAction = onOpenSettings,
+                    modifier = Modifier.weight(1f).fillMaxWidth())
+                sectionHosts.none { it.id in state.pairedHosts } -> StatePanel(
+                    title = stringResource(R.string.moonlight_not_paired),
+                    actionLabel = stringResource(R.string.moonlight_open_settings), onAction = onOpenSettings,
+                    modifier = Modifier.weight(1f).fillMaxWidth())
+                games.isEmpty() -> StatePanel(title = stringResource(when {
                     state.loadingHosts.isNotEmpty() -> R.string.player_loading
                     offline.isNotEmpty() -> R.string.offline_browse_no_cache_body
                     state.query.isNotBlank() || section != "all" -> R.string.game_library_no_results
                     else -> R.string.moonlight_library_empty
-                }), style = MaterialTheme.typography.bodyMedium)
+                }), actionLabel = if (offline.isNotEmpty()) stringResource(R.string.moonlight_refresh) else null,
+                    onAction = if (offline.isNotEmpty()) ({ model.load(force = true, onlyHost = hostBySection[section]?.id) }) else null,
+                    modifier = Modifier.weight(1f).fillMaxWidth())
                 else -> GameLibraryGames(
                     games = games, view = state.view, section = section, sortKey = state.sortKey,
                     gridColumns = state.gridColumns, listRows = state.listRows, controls = controls,
@@ -136,7 +145,8 @@ fun MoonlightLibraryScreen(
                         focusedId = key
                         key?.let { currentGames[it] }?.let { model.prioritizeArtwork(it) }
                     }, itemRequests = requests, listState = listState, gridState = gridState, rowsState = rowsState,
-                    onSelect = ::open, onOpenDetails = ::open, onFavorite = model::favorite,
+                    onSelect = { game -> focusedId = game.key; onSelect(game.host.id, game.app.id) },
+                    onOpenDetails = ::open, onFavorite = model::favorite,
                     rowKey = { it.host.id }, rowTitle = { id ->
                         state.hosts.firstOrNull { it.id == id }?.let { it.name.ifBlank { it.host } } ?: id
                     }, showSystem = !section.startsWith("host:"),
