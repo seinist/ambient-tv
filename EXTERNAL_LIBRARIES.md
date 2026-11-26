@@ -15,12 +15,13 @@ Requires Python 3.11+. The updater reads `gradle/libs.versions.toml` (including
 inline version pins and plugin markers), checks Google Maven and Maven Central,
 and also the Gradle Plugin Portal for plugin markers. New catalog libraries are
 discovered automatically. Modules with a shared version must all advertise the
-candidate; BOM-managed dependencies follow their BOM. Ordinary APK builds never
+candidate and publish its Maven POM before the pin advances; BOM-managed
+dependencies follow their BOM. A POM check is not a full Gradle resolution or ABI test. Ordinary APK builds never
 change these pins. No native engine downloads, source pins, assets or Cargo
 lockfiles are changed by these commands.
 
-Stable numeric releases are the default; snapshots and unknown qualifiers are
-ignored. Versions are sorted numerically, including alpha, beta, milestone and
+Stable numeric releases (including Final, GA and RELEASE qualifiers) are the
+default; snapshots and unknown qualifiers are ignored. Versions are sorted numerically, including alpha, beta, milestone and
 RC stages when explicitly enabled. No downgrades are performed.
 
 ```bash
@@ -42,7 +43,8 @@ the build and playback tests after any update.
 Third-party source trees, vendored JARs, transitive dependencies, JitPack-only
 packages and Monogram's rustls pin are not independently rewritten. The old
 `libs-check` / `libs-update` workflow (including its legacy aliases and libVLC
-handling) remains available for compatibility.
+handling) remains available for compatibility. Both libVLC update paths keep
+the current major and never downgrade an explicitly selected newer pin.
 
 ## Check for external engine updates
 
