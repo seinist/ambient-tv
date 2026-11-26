@@ -150,6 +150,29 @@ def verify_elf_abi(binary, abi):
     return {"elf_class": elfclass * 32, "elf_machine": actual}
 
 
+# Public NDK libraries (API <= 29) and the C++ runtime already packaged by
+# Ambient TV. A downloaded core is a single ELF, not an arbitrary dependency bundle.
+ALLOWED_NEEDED = {
+    "libc.so", "libm.so", "libdl.so", "liblog.so", "libandroid.so",
+    "libz.so", "libEGL.so", "libGLESv1_CM.so", "libGLESv2.so", "libGLESv3.so",
+    "libvulkan.so", "libOpenSLES.so", "libaaudio.so", "libjnigraphics.so",
+    "libmediandk.so", "libnativewindow.so", "libsync.so", "libc++_shared.so",
+}
+
+
+def dynamic_dependencies(readelf, binary):
+    result = subprocess.check_output([readelf, "--dynamic", str(binary)], text=True)
+    needed = re.findall(r"\(NEEDED\).*?\[([^\]]+)\]", result)
+    if len(needed) != len(re.findall(r"\(NEEDED\)", result)):
+        raise ValueError(f"{binary}: unrecognized dynamic dependency format")
+    unknown = set(needed) - ALLOWED_NEEDED
+    if unknown:
+        raise ValueError(f"{binary}: unbundled or non-NDK shared dependencies: {sorted(unknown)}")
+    if re.search(r"\((?:RPATH|RUNPATH|TEXTREL)\)", result):
+        raise ValueError(f"{binary}: unexpected runtime search path or text relocation")
+    return sorted(set(needed))
+
+
 def exports(nm, binary):
     lines = subprocess.check_output([nm, "-D", "--defined-only", str(binary)], text=True).splitlines()
     return {line.split()[-1].split("@")[0] for line in lines if line.split()}
@@ -285,6 +308,7 @@ def main():
     p.add_argument("--pattern", required=True)
     p = sub.add_parser("report")
     p.add_argument("--nm", required=True)
+    p.add_argument("--readelf", required=True)
     p.add_argument("--binary", type=Path, required=True)
     p.add_argument("--log", type=Path, required=True)
     p.add_argument("--profile", choices=PROFILES, required=True)
@@ -311,7 +335,8 @@ def main():
         if missing:
             raise ValueError(f"Missing Libretro exports: {sorted(missing)}")
         identity = verify_elf_abi(args.binary, args.abi)
-        report = {**identity, "core": args.core, "abi": args.abi, "commit": args.commit,
+        dependencies = dynamic_dependencies(args.readelf, args.binary)
+        report = {**identity, "needed_libraries": dependencies, "core": args.core, "abi": args.abi, "commit": args.commit,
                   "ndk": args.ndk, "profile": args.profile,
                   "requested_cflags": PROFILES[args.profile][0],
                   "requested_ldflags": PROFILES[args.profile][1],
