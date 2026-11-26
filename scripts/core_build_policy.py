@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 from core_acceleration_audit import AUDITED, audit_acceleration, compiler_commands, compile_source
 import subprocess
+import struct
 import sys
 
 PROFILES = {
@@ -123,6 +124,24 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline"):
     if not matrix or len(matrix) > 256:
         raise ValueError("Build matrix is empty or exceeds the Actions limit")
     return {"include": matrix}
+
+
+# ELF e_machine, ELFCLASS, and little-endian Android ABI contract.
+ELF_ABIS = {"arm64-v8a": (183, 2), "armeabi-v7a": (40, 1),
+            "x86_64": (62, 2), "x86": (3, 1)}
+
+
+def verify_elf_abi(binary, abi):
+    with binary.open("rb") as stream:
+        header = stream.read(64)
+    machine, elfclass = ELF_ABIS[abi]
+    size = 64 if elfclass == 2 else 52
+    if len(header) < size or header[:4] != b"\x7fELF" or header[4:7] != bytes((elfclass, 1, 1)):
+        raise ValueError(f"{binary}: invalid ELF class, byte order or identification for {abi}")
+    kind, actual, version = struct.unpack_from("<HHI", header, 16)
+    if kind != 3 or actual != machine or version != 1:
+        raise ValueError(f"{binary}: expected ELF shared object for {abi}; type={kind}, machine={actual}")
+    return {"elf_class": elfclass * 32, "elf_machine": actual}
 
 
 def exports(nm, binary):
@@ -253,7 +272,8 @@ def main():
         missing = REQUIRED_EXPORTS - symbols
         if missing:
             raise ValueError(f"Missing Libretro exports: {sorted(missing)}")
-        report = {"core": args.core, "abi": args.abi, "commit": args.commit,
+        identity = verify_elf_abi(args.binary, args.abi)
+        report = {**identity, "core": args.core, "abi": args.abi, "commit": args.commit,
                   "ndk": args.ndk, "profile": args.profile,
                   "requested_cflags": PROFILES[args.profile][0],
                   "requested_ldflags": PROFILES[args.profile][1],
