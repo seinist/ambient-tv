@@ -63,8 +63,6 @@ dependencies {
             because("json-smart 2.3 from json-path 2.4.0 has known DoS vulnerabilities")
         }
     }
-    implementation(libs.smarttube.cronet.adapter)
-    implementation(libs.chromium.cronet.api)
     implementation(libs.rxandroid2)
     implementation(libs.rxjava2)
     implementation(libs.androidx.annotation)
