@@ -127,7 +127,9 @@ internal class AuthenticatedStreamProxy(
                         }
                         val rewrittenText = if (dash) rewriteVlcDashManifest(manifest, response.request.url,
                             localUri, { localOrigin + routes.registerTemplate(it, opened.credentialed) })
-                        else rewriteVlcHlsManifest(manifest, response.request.url, localUri)
+                        else rewriteVlcHlsManifest(manifest, response.request.url, resource.variables) { child, isPlaylist, vars ->
+                            localOrigin + routes.register(child, isPlaylist, opened.credentialed, vars)
+                        }
                         rewrittenText.toByteArray(Charsets.UTF_8)
                     } catch (_: IOException) {
                         status(output, 502, "Unsupported playlist")
