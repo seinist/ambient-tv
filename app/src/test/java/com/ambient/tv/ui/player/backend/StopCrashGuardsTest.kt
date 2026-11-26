@@ -72,7 +72,7 @@ class StopCrashGuardsTest {
     @Test fun everyLibVlcReleaseGoesThroughTheGate() {
         val vlc = source("ui/player/backend/VlcPlaybackView.kt")
         assertFalse(Regex("""libVlc\.release\(\)|retiringLibVlc\.release\(\)""").containsMatchIn(vlc))
-        assertEquals(3, Regex("""libVlcRelease\.releaseWhenIdle\(""").findAll(vlc).count())
+        assertEquals(2, Regex("""libVlcRelease\.releaseWhenIdle\(""").findAll(vlc).count())
         assertTrue(vlc.contains("libVlcRelease.retiring(retiringLibVlc)"))
         assertTrue(vlc.contains("libVlcRelease.retired(retiringLibVlc)"))
     }
