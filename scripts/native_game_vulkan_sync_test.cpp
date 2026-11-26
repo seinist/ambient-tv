@@ -1075,6 +1075,108 @@ void earlyNativePresentContracts() {
     std::puts("PASS WSI queues before host fence, confirms after completion, and safely handles failures");
 }
 
+void nativePresentFenceContracts() {
+#if defined(VK_EXT_swapchain_maintenance1)
+    static unsigned creates, waits, resets, frees;
+    static VkResult presentWaitResult;
+    static bool pendingPresent;
+    static unsigned failCreate;
+    for (unsigned mode = 0; mode < 6; ++mode) {
+        VulkanBackend backend;
+        setup(backend);
+        window(backend);
+        backend.nativePresentation.setFullscreenActive(true);
+        backend.nativePresentFencesEnabled = true;
+        creates = waits = resets = frees = 0;
+        failCreate = mode == 5 ? 2 : 0;
+        pendingPresent = false;
+        presentWaitResult = VK_SUCCESS;
+        backend.vk.createFence = [](VkDevice, const VkFenceCreateInfo* info,
+                const VkAllocationCallbacks*, VkFence* out) {
+            assert(info && info->flags == 0);
+            ++creates;
+            *out = object<VkFence>(creates == failCreate ? 9999 : 600 + creates);
+            return creates == failCreate ? VK_ERROR_OUT_OF_HOST_MEMORY : VK_SUCCESS;
+        };
+        backend.vk.waitForFences = [](VkDevice, uint32_t count, const VkFence* fence, VkBool32, uint64_t) {
+            assert(count == 1);
+            if (*fence == object<VkFence>(6)) {
+                ++driver.waitCalls;
+                const auto result = driver.next(driver.waits);
+                if (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST) driver.pending = false;
+                return result;
+            }
+            assert(*fence == object<VkFence>(601) && pendingPresent);
+            ++waits;
+            if (presentWaitResult == VK_SUCCESS || presentWaitResult == VK_ERROR_DEVICE_LOST)
+                pendingPresent = false;
+            return presentWaitResult;
+        };
+        backend.vk.resetFences = [](VkDevice, uint32_t count, const VkFence* fence) {
+            assert(count == 1 && !driver.pending);
+            if (*fence == object<VkFence>(6)) {
+                ++driver.resets;
+                return driver.reset;
+            }
+            assert(*fence == object<VkFence>(601) && !pendingPresent);
+            ++resets;
+            return VK_SUCCESS;
+        };
+        backend.vk.destroyFence = [](VkDevice, VkFence fence, const VkAllocationCallbacks*) {
+            assert(!driver.pending);
+            if (fence == object<VkFence>(6)) { ++driver.fenceFrees; return; }
+            assert(!pendingPresent && (fence == object<VkFence>(601) || fence == object<VkFence>(602)));
+            ++frees;
+        };
+        backend.vk.queuePresent = [](VkQueue, const VkPresentInfoKHR* present) {
+            assert(driver.pending && !pendingPresent && present->pNext);
+            const auto* fence = static_cast<const VkSwapchainPresentFenceInfoEXT*>(present->pNext);
+            assert(fence->sType == VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_EXT &&
+                   fence->swapchainCount == 1 && *fence->pFences == object<VkFence>(601));
+            ++driver.presents;
+            pendingPresent = driver.present == VK_SUCCESS || driver.present == VK_SUBOPTIMAL_KHR ||
+                driver.present == VK_ERROR_OUT_OF_DATE_KHR || driver.present == VK_ERROR_SURFACE_LOST_KHR;
+            return driver.present;
+        };
+        if (mode == 5) {
+            assert(!backend.ensureNativeSdrSwapchain() && !backend.hasFatalError());
+            assert(creates == 2 && frees == 1 && backend.nativePresentFences.empty());
+            continue;
+        }
+        assert(backend.ensureNativeSdrSwapchain() && creates == 2);
+        if (mode == 2) driver.present = VK_ERROR_OUT_OF_DATE_KHR;
+        if (mode == 3) driver.present = VK_ERROR_OUT_OF_HOST_MEMORY;
+        if (mode == 4) driver.present = VK_ERROR_DEVICE_LOST;
+        assert(backend.presentFrame(256, 224, 4.0F/3.0F, true) == (mode != 4));
+        assert(driver.presents == 1);
+        if (mode <= 1) {
+            assert(pendingPresent && waits == 0 && driver.waitCalls == 1);
+            assert(backend.nativePresentFences.get(0)->phase ==
+                   libretrodroid::VulkanPresentFences<VkFence>::Phase::Pending);
+            if (mode == 0) {
+                assert(backend.presentFrame(256, 224, 4.0F/3.0F, true));
+                assert(waits == 1 && resets == 1 && pendingPresent && driver.waitCalls == 2);
+            } else {
+                presentWaitResult = VK_TIMEOUT;
+                backend.shutdown();
+                assert(backend.device && !backend.shutdownReady && pendingPresent && waits == 1);
+                assert(frees == 0 && driver.wsiSemaphoreFrees == 0 &&
+                       driver.swapchainFrees == 0 && driver.deviceFrees == 0);
+                presentWaitResult = VK_SUCCESS;
+            }
+        }
+        if (mode == 2 || mode == 3) {
+            assert(backend.nativePresentFences.empty() && frees == 2 && driver.swapchainFrees == 1);
+            assert(waits == (mode == 2 ? 1u : 0u));
+        }
+        backend.shutdown();
+        assert(!backend.device && backend.nativePresentFences.empty() && frees == 2 && !pendingPresent);
+        assert(waits == (mode == 0 || mode == 1 ? 2u : mode == 2 ? 1u : 0u));
+    }
+    std::puts("PASS native optional present fences: pNext, independent retirement, timeout retry and errors");
+#endif
+}
+
 void abandonedWsiAcquireContracts() {
     static VkSemaphore expected;
     static unsigned drains;
@@ -1677,6 +1779,7 @@ int main() {
     earlyNativePresentContracts();
     wsiAcquireSlotContracts();
     abandonedWsiAcquireContracts();
+    nativePresentFenceContracts();
     filteredPresetSwitchRetainsSwapchain();
     reusableSubmitStorage();
     readFenceQueueContracts();

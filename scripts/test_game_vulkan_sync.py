@@ -45,6 +45,11 @@ def main():
         "bool VulkanBackend::clearSlotImage(",
         "bool VulkanBackend::destroyFrameBuffer(",
         "bool VulkanBackend::ensureFrameBuffer(",
+        "bool VulkanBackend::createNativePresentFences(",
+        "bool VulkanBackend::waitNativePresentFence(",
+        "bool VulkanBackend::prepareNativePresentFence(",
+        "void VulkanBackend::recordNativePresentResult(",
+        "bool VulkanBackend::completeNativePresentFences(",
         "bool VulkanBackend::canRetireNativeWsi(",
         "bool VulkanBackend::ensureNativeAcquireSemaphore(",
         "bool VulkanBackend::drainNativeAcquireSignals(",
@@ -200,6 +205,12 @@ def main():
             str(root / "scripts/native_game_vulkan_wsi_acquire_state_test.cpp"),
             "-o", str(wsi_state_binary)], check=True)
         subprocess.run([str(wsi_state_binary)], check=True, timeout=20)
+
+        present_fence_binary = work / "vulkan-present-fence-test"
+        subprocess.run(command + ["-I", str(native / "vulkan"),
+            str(root / "scripts/native_game_vulkan_present_fences_test.cpp"),
+            "-o", str(present_fence_binary)], check=True)
+        subprocess.run([str(present_fence_binary)], check=True, timeout=20)
 
         alternate_binary = work / "vulkan-alternate-policy-test"
         subprocess.run(command + [str(root / "scripts/native_game_vulkan_alternate_policy_test.cpp"),
