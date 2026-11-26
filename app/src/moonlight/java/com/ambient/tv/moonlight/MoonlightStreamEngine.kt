@@ -158,6 +158,9 @@ class MoonlightStreamEngine @Inject constructor(
                     .setBitrate(valid.bitrateKbps)
                     .setSupportedVideoFormats(videoFormat)
                     .setAudioConfiguration(audioConfig)
+                    // Match the pinned official client. NvConnection detects VPN/remote routes
+                    // and overrides this LAN maximum to 1024 bytes for those connections.
+                    .setMaxPacketSize(1392)
                     .setRemoteConfiguration(StreamConfiguration.STREAM_CFG_AUTO)
                     .setAttachedGamepadMask(initialMask)
                     .setColorSpace(MoonBridge.COLORSPACE_REC_709)
@@ -593,7 +596,8 @@ class MoonlightStreamEngine @Inject constructor(
         }
         override fun connectionTerminated(errorCode: Int) {
             if (errorCode != 0 && !session.cancelled)
-                fail(session, "Sunshine stream disconnected ($errorCode)", retryable = true)
+                fail(session, "Sunshine stream disconnected ($errorCode)", retryable = true,
+                    adaptNetworkQuality = session.networkPoor && session.profile.adaptiveQuality)
             else stopSession(session)
         }
         override fun connectionStatusUpdate(connectionStatus: Int) {
@@ -640,6 +644,8 @@ class MoonlightStreamEngine @Inject constructor(
                 var noOutputSeconds = 0
                 var backlogSeconds = 0
                 var noPresentationSeconds = 0
+                var poorNetworkSeconds = 0
+                var lastMissing = 0L
                 var lastTime = System.nanoTime()
                 while (isOwned(session)) {
                     kotlinx.coroutines.delay(1000)
@@ -657,7 +663,20 @@ class MoonlightStreamEngine @Inject constructor(
                     if (video.rendered > lastFrames) noOutputSeconds = 0
                     else if (video.received > lastReceived || noOutputSeconds > 0 || lastFrames == 0L)
                         noOutputSeconds++
+                    val intervalReceived = (video.received - lastReceived).coerceAtLeast(0L)
+                    val intervalMissing = (video.missing - lastMissing).coerceAtLeast(0L)
                     lastReceived = video.received
+                    lastMissing = video.missing
+                    // Do not interrupt a healthy or static stream solely because of a noisy
+                    // status callback. Only opt-in, sustained packet loss permits a resume.
+                    val highLoss = intervalMissing > 2 && intervalMissing * 10 > intervalReceived + intervalMissing
+                    poorNetworkSeconds = if (session.networkPoor && highLoss) poorNetworkSeconds + 1
+                        else (poorNetworkSeconds - 1).coerceAtLeast(0)
+                    if (session.profile.adaptiveQuality && session.profile.bitrateKbps > 1000 && poorNetworkSeconds >= 10) {
+                        fail(session, "Moonlight network loss: reconnecting at lower bitrate", retryable = true,
+                            adaptNetworkQuality = true)
+                        break
+                    }
                     backlogSeconds = if (pendingVideo >= 8) backlogSeconds + 1 else 0
                     noPresentationSeconds = if (lastPresented > 0 && video.presented == lastPresented && video.rendered > lastFrames)
                         noPresentationSeconds + 1 else 0
@@ -720,11 +739,11 @@ class MoonlightStreamEngine @Inject constructor(
     }
 
     private fun fail(session: Active, text: String, retryable: Boolean = false,
-                     rejectedVideoFormat: Int = 0) {
+                     rejectedVideoFormat: Int = 0, adaptNetworkQuality: Boolean = false) {
         synchronized(lock) {
             if (active !== session || session.cancelled) return
             mutable.value = mutable.value.copy(phase = MoonlightStreamPhase.FAILED, error = text, retryable = retryable && (session.started || rejectedVideoFormat != 0),
-                rejectedVideoFormat = rejectedVideoFormat)
+                rejectedVideoFormat = rejectedVideoFormat, adaptNetworkQuality = adaptNetworkQuality)
         }
         stopSession(session)
     }

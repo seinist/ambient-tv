@@ -19,6 +19,7 @@ data class MoonlightStreamProfile(
     val displayOutputMode: String = DISPLAY_SYSTEM,
     val preferDoubleDisplayRefresh: Boolean = false,
     val pacing: String = "balanced",
+    val adaptiveQuality: Boolean = false,
 ) {
     fun validated(): MoonlightStreamProfile {
         require(width in 640..7680 && height in 360..4320)
@@ -33,6 +34,12 @@ data class MoonlightStreamProfile(
         require(displayOutputMode in DISPLAY_POLICIES || isFixedDisplayMode(displayOutputMode))
         return this
     }
+    /** Reconnect-only fallback; never silently alter the stored host profile or game resolution. */
+    fun reducedNetworkBitrate(): MoonlightStreamProfile {
+        if (!adaptiveQuality || bitrateKbps <= 1000) return this
+        return copy(bitrateKbps = (bitrateKbps * 3 / 4).coerceAtLeast(1000))
+    }
+
     companion object {
         val CODECS = setOf("auto", "h264", "hevc", "av1")
         val HDR_MODES = setOf("auto", "on", "off")

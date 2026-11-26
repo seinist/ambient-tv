@@ -10,6 +10,7 @@ data class MoonlightStreamStatus(
     val owner: Any? = null,
     val generation: Long = 0L,
     val rejectedVideoFormat: Int = 0,
+    val adaptNetworkQuality: Boolean = false,
 ) {
     val active: Boolean get() = phase in setOf(
         MoonlightStreamPhase.CONNECTING, MoonlightStreamPhase.STREAMING, MoonlightStreamPhase.STOPPING)

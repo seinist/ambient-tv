@@ -98,4 +98,6 @@
     <string name="moonlight_stats_input_queue">Input dispatch P95: %1$d ms · Queue: %2$d</string>
     <string name="moonlight_stats_audio_native_queue">Native audio queue: %1$d ms</string>
     <string name="moonlight_stats_audio_recovering">Recovering audio device</string>
+    <string name="moonlight_adaptive_quality">Adaptive network quality</string>
+    <string name="moonlight_adaptive_quality_hint">When enabled, sustained packet loss can reconnect the running game at a lower bitrate. Saved host settings are unchanged.</string>
 </resources>

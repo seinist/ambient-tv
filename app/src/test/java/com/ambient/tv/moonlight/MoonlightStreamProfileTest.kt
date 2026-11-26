@@ -17,6 +17,16 @@ class MoonlightStreamProfileTest {
         assertThrows(IllegalArgumentException::class.java) { MoonlightStreamProfile(pacing = "unknown").validated() }
     }
 
+    @Test fun adaptiveBitrateIsOptInAndBounded() {
+        assertEquals(20000, MoonlightStreamProfile().reducedNetworkBitrate().bitrateKbps)
+        val requested = MoonlightStreamProfile(bitrateKbps = 20000, adaptiveQuality = true)
+        val reduced = requested.reducedNetworkBitrate()
+        assertEquals(15000, reduced.bitrateKbps)
+        assertEquals(requested.width, reduced.width)
+        assertEquals(requested.fps, reduced.fps)
+        assertEquals(1000, requested.copy(bitrateKbps = 1100).reducedNetworkBitrate().bitrateKbps)
+    }
+
     @Test fun stoppingCannotBeResurrectedByDelayedConnectionCallbacks() {
         val connecting = moonlightNextPhase(MoonlightStreamPhase.IDLE, "connect")
         val stopping = moonlightNextPhase(connecting, "stop")

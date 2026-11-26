@@ -78,6 +78,15 @@ fun MoonlightStreamSettingsSection(
                 selectorKey = "moonlight-pacing", onSelected = { update(profile.copy(pacing = it)) })
             Text(stringResource(R.string.moonlight_pacing_hint),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val adaptOptions = listOf("off" to stringResource(R.string.moonlight_quality_hdr_off),
+                "on" to stringResource(R.string.moonlight_quality_hdr_on))
+            val adaptKey = if (profile.adaptiveQuality) "on" else "off"
+            PlayerDropUpSelector(label = stringResource(R.string.moonlight_adaptive_quality),
+                value = adaptOptions.first { it.first == adaptKey }.second,
+                options = adaptOptions, selectedKey = adaptKey, dropUp = false,
+                selectorKey = "moonlight-adaptive-quality", onSelected = { update(profile.copy(adaptiveQuality = it == "on")) })
+            Text(stringResource(R.string.moonlight_adaptive_quality_hint),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             val audio = listOf("2" to "Stereo", "6" to "5.1", "8" to "7.1")
             val audioKey = profile.audioChannels.toString()
             PlayerDropUpSelector(label = stringResource(R.string.moonlight_quality_audio),

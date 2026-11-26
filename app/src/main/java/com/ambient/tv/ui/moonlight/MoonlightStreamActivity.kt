@@ -466,7 +466,8 @@ private fun MoonlightStreamContent(
         if (status.phase == MoonlightStreamPhase.STREAMING) resumeOnly = true
     }
     var excludedVideoFormats by remember { mutableStateOf(0) }
-    LaunchedEffect(engine, hostId, appId, binding, displayReady, sessionProfile, retryRevision) {
+    var effectiveProfile by remember(hostId, appId, sessionProfile) { mutableStateOf(sessionProfile) }
+    LaunchedEffect(engine, hostId, appId, binding, displayReady, effectiveProfile, retryRevision) {
         startFailed = false
         val target = binding ?: return@LaunchedEffect
         if (!displayReady || !target.surface.isValid) return@LaunchedEffect
@@ -492,7 +493,7 @@ private fun MoonlightStreamContent(
             runCatching { target.surface.setFrameRate(hint, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,
                 Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS) }
         }
-        if (engine.start(owner, hostId, appId, target.surface, sessionProfile,
+        if (engine.start(owner, hostId, appId, target.surface, effectiveProfile,
                 displayResult.mode?.refreshRate, displayResult.hdr10, resumeOnly = resumeOnly,
                 excludedVideoFormats = excludedVideoFormats)) {
             val generation = engine.generation(owner)
@@ -506,6 +507,7 @@ private fun MoonlightStreamContent(
             autoRetries++
             resumeOnly = true
             excludedVideoFormats = excludedVideoFormats or status.rejectedVideoFormat
+            if (status.adaptNetworkQuality) effectiveProfile = effectiveProfile.reducedNetworkBitrate()
             retryRevision++
         }
     }
@@ -625,6 +627,7 @@ private fun MoonlightStreamContent(
                             PlayerIconButton(Icons.Filled.PlayArrow, stringResource(R.string.moonlight_retry_connection), {
                                 autoRetries = 0
                                 excludedVideoFormats = 0
+                                effectiveProfile = sessionProfile
                                 resumeOnly = status.retryable || resumeOnly
                                 onManualRetry()
                                 retryRevision++
@@ -665,7 +668,7 @@ private fun MoonlightStreamContent(
             status = status,
             metricsSource = engine.status,
             streamProfile = streamProfile,
-            activeProfile = sessionProfile,
+            activeProfile = effectiveProfile,
             displayResult = displayResult,
             onUpdateProfile = onUpdateProfile,
             onPage = { panel = it },
