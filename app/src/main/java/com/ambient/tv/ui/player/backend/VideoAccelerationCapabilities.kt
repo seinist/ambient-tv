@@ -19,6 +19,7 @@ import timber.log.Timber
 internal object VulkanNativeProbe {
     val available by lazy { runCatching { System.loadLibrary("ambientvulkan"); true }.getOrDefault(false) }
     external fun probe(surface: Surface?): String
+    external fun probeValidatedSurface(surface: Surface, device: String, version: Long): String
     external fun vlcModules(): Boolean
     /** Read-only producer dataspace, not a Vulkan capability query. Unknown returns zero. */
     external fun dataSpace(surface: Surface): Int
@@ -97,11 +98,28 @@ object VideoAccelerationRuntime {
         onCapabilities: (VulkanDeviceCapabilities) -> Unit = {},
     ): Boolean {
         if (!surface.isValid) return false
-        val probed = probeDevice(surface)
+        val validated = mutable.value.device
+        val probed = if (validated.render && validated.device.isNotBlank()) {
+            try {
+                json.decodeFromString<VulkanDeviceCapabilities>(
+                    VulkanNativeProbe.probeValidatedSurface(surface, validated.device, validated.version),
+                ).let { result ->
+                    // Device profiles were established by the full startup probe.
+                    if (result.render) result.copy(profiles = validated.profiles) else result
+                }
+            } catch (_: UnsatisfiedLinkError) {
+                // Older packaged native runtime: retain the original full probe.
+                probeDevice(surface)
+            } catch (error: Exception) {
+                Timber.w(error, "Vulkan surface probe failed")
+                VulkanDeviceCapabilities()
+            }
+        } else probeDevice(surface)
         onCapabilities(probed)
         Timber.i("VULKAN surface device=%s render=%s reason=%s colorSpaces=%s hdr10=%s formats=%s",
             probed.device, probed.render, probed.reason, probed.surfaceColorSpaces, probed.hdr10SurfaceSupported, probed.surfaceFormats)
-        val supported = probed.render && probed.device == mutable.value.device.device
+        val current = mutable.value.device
+        val supported = probed.render && probed.device == current.device && probed.version == current.version
         if (backend != null) mutableEvidence.update { it + (backend to VulkanPlaybackEvidence(
             if (supported) VulkanPlaybackStage.SURFACE_READY else VulkanPlaybackStage.FAILED,
             if (supported) null else "surface",
