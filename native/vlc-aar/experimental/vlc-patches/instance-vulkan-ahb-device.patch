@@ -1,7 +1,10 @@
 diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_output/libplacebo/instance_vulkan.c
 --- a/modules/video_output/libplacebo/instance_vulkan.c
 +++ b/modules/video_output/libplacebo/instance_vulkan.c
-@@ -30,3 +30,6 @@
+@@ -27,9 +27,12 @@
+ #include <vlc_common.h>
+ #include <vlc_plugin.h>
+ 
 -#include <libplacebo/vulkan.h>
 -
 -#include "../vulkan/platform.h"
@@ -11,7 +14,13 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
 +#endif
 +
 +#include "../vulkan/platform.h"
-@@ -82,11 +85,36 @@
+ #include "instance.h"
+ #include "utils.h"
+ 
+@@ -79,17 +82,42 @@
+     if (vlc_vk_CreateSurface(sys->platform, &inst, &sys->surface) != VLC_SUCCESS)
+         goto error;
+ 
 -    // Create vulkan device
 -    char *device_name = var_InheritString(pl, "vk-device");
 -    sys->vulkan = pl_vulkan_create(pl->log, &(struct pl_vulkan_params) {
@@ -59,7 +68,13 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
 +        .features = ambient_ahb ? &features : NULL,
 +#endif
 +    });
-@@ -198,2 +226,7 @@
+     free(device_name);
+     if (!sys->vulkan)
+         goto error;
+@@ -195,8 +223,13 @@
+     add_bool("vk-allow-sw", pl_vulkan_default_params.allow_software,
+             ALLOWSW_TEXT, ALLOWSW_LONGTEXT)
+ 
 -    set_section("Performance tuning", NULL)
 -    add_bool("vk-async-xfer", pl_vulkan_default_params.async_transfer,
 +    set_section("Performance tuning", NULL)
@@ -69,3 +84,6 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
 +            "Disabled by default; a compatible display bridge is also required.")
 +#endif
 +    add_bool("vk-async-xfer", pl_vulkan_default_params.async_transfer,
+             ASYNC_XFER_TEXT, ASYNC_XFER_LONGTEXT)
+     add_bool("vk-async-comp", pl_vulkan_default_params.async_compute,
+             ASYNC_COMP_TEXT, ASYNC_COMP_LONGTEXT)
