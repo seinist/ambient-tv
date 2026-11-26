@@ -51,6 +51,24 @@ struct VulkanBackend {
     }
     void* getFrameBuffer() { return this; }
     uint64_t getFrameBufferAllocationBytes() const { return fp16 ? 8192 : 4096; }
+    unsigned spareIdentity = 0, spareEnsures = 0, spareReleases = 0;
+    bool sparePrepared = false, spareAdmitted = true, spareRetireAccepted = true;
+    uint64_t spareBudgetSeen = 0;
+    void* getSpareFrameBuffer() { return sparePrepared ? &spareIdentity : nullptr; }
+    uint64_t getSpareFrameBufferAllocationBytes() const { return 16384; }
+    bool ensureSpareFrameBuffer(uint64_t retained) {
+        ++spareEnsures;
+        spareBudgetSeen = retained;
+        if (!spareAdmitted) return false;
+        sparePrepared = true;
+        return true;
+    }
+    bool releaseSpareFrameBuffer() {
+        ++spareReleases;
+        if (!spareRetireAccepted) return false;
+        sparePrepared = false;
+        return true;
+    }
     bool isFp16Frame() const { return fp16; }
     bool ensureFrameBuffer(unsigned w, unsigned h) {
         assert(drains > 0 && !fatal);
@@ -121,6 +139,37 @@ struct Video {
         pendingUse = true;
         return backend.fp16 ? fp16ImportAccepted : rgbaImportAccepted;
     }
+    bool primaryMatches = true, spareImportAccepted = true, spareReleaseAccepted = true;
+    bool spareImported = false;
+    unsigned spareQueries = 0, spareImports = 0, spareDrops = 0;
+    uint64_t retainedBytes = 1234;
+    bool matchesPrimaryExternalFrame(void* buffer, unsigned w, unsigned h, uint64_t bytes) const {
+        auto& backend = VulkanBackend::getInstance();
+        assert(buffer == backend.getFrameBuffer() && w == backend.width && h == backend.height &&
+               bytes == backend.getFrameBufferAllocationBytes());
+        return external && primaryMatches;
+    }
+    uint64_t retainedExternalFrameBytesExcept(void* primary, void* spare) {
+        auto& backend = VulkanBackend::getInstance();
+        assert(primary == backend.getFrameBuffer() && spare == backend.getSpareFrameBuffer());
+        ++spareQueries;
+        return retainedBytes;
+    }
+    bool prepareSpareExternalFrame(void* buffer, unsigned w, unsigned h, uint64_t bytes) {
+        auto& backend = VulkanBackend::getInstance();
+        assert(backend.sparePrepared && buffer == backend.getSpareFrameBuffer() &&
+               w == backend.width && h == backend.height &&
+               bytes == backend.getSpareFrameBufferAllocationBytes());
+        ++spareImports;
+        if (spareImportAccepted) spareImported = true;
+        return spareImportAccepted;
+    }
+    bool releaseSpareExternalFrame() {
+        ++spareDrops;
+        if (!spareReleaseAccepted) return false;
+        spareImported = false;
+        return true;
+    }
     void setSourceTransfer(unsigned value) { transfer = value; ++transferUpdates; }
     void onNewFrame(const void* data, unsigned newWidth, unsigned newHeight, size_t) {
         ++frameCalls;
@@ -134,6 +183,7 @@ struct LibretroDroid {
     float getAspectRatio() const { return 4.0F / 3.0F; }
     bool nativePictureCompatible() const { return true; }
     void attachVulkanFrame(unsigned width, unsigned height);
+    bool prepareSpareVulkanFrame();
     void renderPrimaryFrame() {}
     void handleVideoRefresh(const void*, unsigned, unsigned, size_t);
 };
@@ -303,7 +353,53 @@ void writeFenceHandoffContracts() {
     std::puts("PASS reverse fence ingress: both capability gates, rejected bridge and CPU fallback");
 }
 
+void optionalSpareImportContracts() {
+    for (unsigned bits = 0; bits < 256; ++bits) {
+        auto& backend = VulkanBackend::getInstance();
+        backend = {};
+        Video video;
+        video.primaryMatches = bits & 1;
+        backend.fatal = bits & 2;
+        backend.spareAdmitted = bits & 4;
+        video.spareImportAccepted = bits & 8;
+        video.spareReleaseAccepted = bits & 16;
+        backend.spareRetireAccepted = bits & 32;
+        backend.sparePrepared = bits & 64;
+        video.external = bits & 128;
+        LibretroDroid host {&video};
+        const bool valid = video.external && video.primaryMatches && !backend.fatal;
+        const bool allocated = valid && backend.spareAdmitted;
+        const bool success = allocated && video.spareImportAccepted;
+        const bool drop = allocated && !video.spareImportAccepted;
+        assert(host.prepareSpareVulkanFrame() == success);
+        assert(video.spareQueries == unsigned(valid) && backend.spareEnsures == unsigned(valid));
+        assert(video.spareImports == unsigned(allocated) && video.spareDrops == unsigned(drop));
+        assert(backend.spareReleases == unsigned(drop && video.spareReleaseAccepted));
+        if (valid) assert(backend.spareBudgetSeen == video.retainedBytes);
+        if (success) assert(video.spareImported && backend.sparePrepared);
+        if (drop && video.spareReleaseAccepted && backend.spareRetireAccepted)
+            assert(!backend.sparePrepared);
+        assert(backend.fatal == bool(bits & 2) && !backend.rejections && !backend.submissions);
+        assert(video.transfer == 2 && !video.frameCalls && video.width == 32 && video.height == 24);
+    }
+    assert(!LibretroDroid{nullptr}.prepareSpareVulkanFrame());
+    for (bool releaseAccepted : {false, true}) {
+        auto& backend = VulkanBackend::getInstance();
+        backend = {};
+        Video video;
+        video.spareImported = true;
+        video.spareReleaseAccepted = releaseAccepted;
+        LibretroDroid host {&video};
+        host.attachVulkanFrame(512, 480);
+        assert(video.spareDrops == 1 && backend.drains == 1);
+        assert(backend.allocations == unsigned(releaseAccepted));
+        assert(video.spareImported != releaseAccepted && backend.fatal != releaseAccepted);
+    }
+    std::puts("PASS optional EGL spare coordination, retained budget and resize retirement");
+}
+
 int main() {
+    optionalSpareImportContracts();
     writeFenceHandoffContracts();
     bridgeImportContracts();
     readFenceHandoffContracts();
