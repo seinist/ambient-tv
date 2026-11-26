@@ -87,50 +87,54 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
 diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
 --- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
 +++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
-@@ -300,4 +300,16 @@
+@@ -300,4 +300,20 @@
      private var previewModeEnabled = false
  
 -    private val retroGLEventsSubject = MutableSharedFlow<GLRetroEvents>(1)
-+    // UI status is sampled, never a per-frame work queue. The first notification
-+    // is retained for initialisation; a slow collector sees the newest event.
-+    private val retroGLEventsSubject = MutableSharedFlow<GLRetroEvents>(
++    // Lifecycle readiness and sampled frame pulses must have independent replay slots.
++    // A delayed collector cannot lose SurfaceCreated to an unrelated FrameRendered.
++    private val surfaceEvents = MutableSharedFlow<GLRetroEvents>(
 +        replay = 1, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
 +    )
++    private val frameEvents = MutableSharedFlow<GLRetroEvents>(
++        replay = 1, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
++    )
++    private val retroGLEventsSubject = kotlinx.coroutines.flow.merge(surfaceEvents, frameEvents)
 +    private var lastFrameEventNs = 0L
 +
 +    private fun emitFrameRendered() {
 +        val now = System.nanoTime()
 +        if (lastFrameEventNs != 0L && now - lastFrameEventNs < 100_000_000L) return
 +        lastFrameEventNs = now
-+        retroGLEventsSubject.tryEmit(GLRetroEvents.FrameRendered)
++        frameEvents.tryEmit(GLRetroEvents.FrameRendered)
 +    }
      private val retroGLIssuesErrors = MutableSharedFlow<Int>(1)
-@@ -770,5 +782,3 @@
+@@ -770,5 +786,3 @@
                      tick()
 -                    lifecycle?.coroutineScope?.launch {
 -                        retroGLEventsSubject.emit(GLRetroEvents.FrameRendered)
 -                    }
 +                    emitFrameRendered()
                  } else {
-@@ -786,5 +796,3 @@
+@@ -786,5 +800,3 @@
                          bfiShowBlackNext = true
 -                        lifecycle?.coroutineScope?.launch {
 -                            retroGLEventsSubject.emit(GLRetroEvents.FrameRendered)
 -                        }
 +                        emitFrameRendered()
                      }
-@@ -793,5 +801,3 @@
+@@ -793,5 +805,3 @@
                      LibretroDroid.step(this@GLRetroView)
 -                    lifecycle?.coroutineScope?.launch {
 -                        retroGLEventsSubject.emit(GLRetroEvents.FrameRendered)
 -                    }
 +                    emitFrameRendered()
                  }
-@@ -816,5 +822,4 @@
+@@ -816,5 +826,4 @@
              lastSensorState = null
 -            lifecycle?.coroutineScope?.launch {
 -                retroGLEventsSubject.emit(GLRetroEvents.SurfaceCreated)
 -            }
 +            lastFrameEventNs = 0L
-+            retroGLEventsSubject.tryEmit(GLRetroEvents.SurfaceCreated)
++            surfaceEvents.tryEmit(GLRetroEvents.SurfaceCreated)
          }
