@@ -29,6 +29,10 @@ for triple in aarch64-linux-android armv7a-linux-androideabi i686-linux-android 
     "$NDK/toolchains/llvm/prebuilt/$host/bin/${triple}29-clang++" \
         -std=c++17 -Wall -Wextra -Werror -Wno-missing-field-initializers \
         -fsyntax-only "$SRC/test_android_compile.cpp" "$SRC/display_owner.cpp"
+    "$NDK/toolchains/llvm/prebuilt/$host/bin/${triple}29-clang++" \
+        -std=c++17 -Wall -Wextra -Werror -Wno-missing-field-initializers \
+        -shared -fPIC -Wl,--no-undefined "$SRC/display_owner.cpp" -landroid \
+        -o "$TMP/owner-$triple.so"
 done
 # Compile the C handoff API with the actual pinned libplacebo public headers,
 # including its generated API-version header. This is a header contract check,
