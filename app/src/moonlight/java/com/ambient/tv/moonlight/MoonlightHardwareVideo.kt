@@ -79,7 +79,7 @@ internal object MoonlightHardwareVideo {
             for (codec in codecInfos) {
                 if (codec.isEncoder || !codec.isHardwareAccelerated ||
                     codec.supportedTypes.none { it.equals(mime, ignoreCase = true) }) continue
-                val candidate: Pair<MediaCodecInfo, Int>? = try {
+                val candidate = try {
                     // Keep the framework capability object for both filtering and ranking.
                     // getCapabilitiesForType() can cross into vendor codec services, so avoid
                     // querying it twice for every decoder during stream startup.
