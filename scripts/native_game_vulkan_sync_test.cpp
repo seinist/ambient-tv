@@ -719,6 +719,62 @@ void readFenceQueueContracts() {
     std::puts("PASS Vulkan SYNC_FD ownership, queue wait order, reuse, fallback and safe teardown");
 }
 
+void duplicateFrameContracts() {
+    for (bool commands : {false, true}) {
+        for (bool signal : {false, true}) {
+            VulkanBackend backend;
+            setup(backend);
+            const auto originalImage = backend.pendingImage.image;
+            backend.pendingImage.waitSemaphores = {object<VkSemaphore>(901)};
+            if (commands) backend.pendingCommandBuffers = {object<VkCommandBuffer>(902), object<VkCommandBuffer>(903)};
+            if (signal) backend.pendingSignalSemaphore = object<VkSemaphore>(904);
+            const auto expected = backend.pendingCommandBuffers;
+            const auto expectedSignal = backend.pendingSignalSemaphore;
+            assert(backend.completeDuplicateFrame());
+            assert(driver.submits == unsigned(commands || signal));
+            assert(driver.submittedCommands == expected && driver.submittedWaits.empty());
+            if (signal) assert(driver.submittedSignals == std::vector<VkSemaphore>{expectedSignal});
+            else assert(driver.submittedSignals.empty());
+            assert(backend.pendingCommandBuffers.empty() && backend.pendingImage.waitSemaphores.empty());
+            assert(backend.pendingSignalSemaphore == VK_NULL_HANDLE);
+            assert(backend.pendingImage.image == originalImage && !driver.pending && !backend.frameInFlight);
+            assert(driver.waitCalls == driver.submits && driver.resets == driver.submits);
+            assert(!driver.commandResets && !driver.begins && !driver.presents && !driver.cachePrepares);
+            assert(backend.completeDuplicateFrame() && driver.submits == unsigned(commands || signal));
+            backend.shutdown();
+        }
+    }
+    {
+        VulkanBackend backend;
+        setup(backend);
+        backend.pendingSignalSemaphore = object<VkSemaphore>(905);
+        driver.submit = VK_ERROR_DEVICE_LOST;
+        assert(!backend.completeDuplicateFrame() && backend.hasFatalError() && !backend.frameInFlight);
+        assert(backend.pendingSignalSemaphore == VK_NULL_HANDLE && driver.submits == 1);
+        assert(!backend.completeDuplicateFrame() && driver.submits == 1);
+        backend.shutdown();
+    }
+    {
+        VulkanBackend backend;
+        setup(backend);
+        backend.pendingSignalSemaphore = object<VkSemaphore>(906);
+        driver.waits = {VK_TIMEOUT, VK_SUCCESS};
+        assert(backend.completeDuplicateFrame() && driver.waitCalls == 2 && driver.resets == 1);
+        assert(!driver.pending && !backend.frameInFlight);
+        backend.shutdown();
+    }
+    {
+        VulkanBackend backend;
+        setup(backend);
+        backend.pendingSignalSemaphore = object<VkSemaphore>(907);
+        driver.waits = {VK_ERROR_OUT_OF_DEVICE_MEMORY};
+        assert(!backend.completeDuplicateFrame() && backend.hasFatalError() && backend.frameInFlight);
+        assert(!backend.completeDuplicateFrame() && driver.submits == 1);
+        backend.shutdown();
+    }
+    std::puts("PASS duplicate frames consume command buffers and core signals once, without image or WSI work");
+}
+
 void managedBoundary() {
     auto& backend = VulkanBackend::getInstance();
     libretrodroid::Video video;
@@ -779,6 +835,7 @@ int main() {
     filteredPresetSwitchRetainsSwapchain();
     reusableSubmitStorage();
     readFenceQueueContracts();
+    duplicateFrameContracts();
     managedBoundary();
     std::puts("PASS production Vulkan synchronization and presentation fault regression");
 }

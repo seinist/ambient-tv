@@ -32,7 +32,7 @@ struct VulkanBackend {
     bool fp16 = false, allocationAccepted = true, fallbackAllocationAccepted = true;
     bool disableFails = false;
     bool readFenceSupported = false, readFenceAccepted = false, readFenceFatal = false;
-    unsigned drains = 0, allocations = 0, disables = 0, rejections = 0, fenceImports = 0;
+    unsigned drains = 0, allocations = 0, disables = 0, rejections = 0, fenceImports = 0, duplicates = 0;
     static VulkanBackend& getInstance() { static VulkanBackend value; return value; }
     unsigned getCoreSourceFormat() const { return format; }
     unsigned getFrameBufferWidth() const { return width; }
@@ -62,6 +62,10 @@ struct VulkanBackend {
         else fp16 = false;
     }
     void rejectBridgeImport() { ++rejections; fatal = true; frameConfirmed = false; }
+    bool completeDuplicateFrame() {
+        ++duplicates;
+        return !fatal;
+    }
     bool presentFrame(unsigned, unsigned, float aspect, bool compatible) {
         assert(!fatal && aspect == 4.0F / 3.0F && compatible);
         ++submissions;
@@ -268,6 +272,8 @@ int main() {
             RETRO_PIXEL_FORMAT_XRGB8888, true, 0, 1, 1},
         {"duplicate preserves transfer", Input::Duplicate, 0, 37,
             RETRO_PIXEL_FORMAT_XRGB8888, true, 2, 0, 1},
+        {"fatal duplicate preserves previous frame", Input::Duplicate, 0, 37,
+            RETRO_PIXEL_FORMAT_XRGB8888, true, 2, 0, 0, true},
         {"GLES hardware is not proven PQ", Input::GlesHardware, 3, 64,
             RETRO_PIXEL_FORMAT_HDR10_2101010, true, 0, 1, 1},
         {"fatal GPU state preserves previous frame", Input::Vulkan, 3, 64,
@@ -296,6 +302,11 @@ int main() {
         assert(video.frameCalls == test.expectedFrames);
         const bool vulkan = test.input == Input::Vulkan && !test.fatal;
         assert(backend.submissions == (vulkan ? 1u : 0u));
+        assert(backend.duplicates == (test.input == Input::Duplicate ? 1u : 0u));
+        if (test.input == Input::Duplicate) {
+            assert(!backend.drains && !backend.allocations && !backend.fenceImports);
+            assert(video.width == 32 && video.height == 24);
+        }
         assert(glFinishes - previousFinishes == (vulkan ? 1u : 0u));
         if (!test.bridgeAccepted) {
             assert(!backend.frameConfirmed);

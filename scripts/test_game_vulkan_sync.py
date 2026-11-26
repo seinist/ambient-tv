@@ -38,6 +38,7 @@ def main():
         "void VulkanBackend::disableNativeSdrSwapchain(",
         "bool VulkanBackend::ensureNativeSdrSwapchain(",
         "bool VulkanBackend::presentFrame(",
+        "bool VulkanBackend::completeDuplicateFrame(",
         "void VulkanBackend::callbackWaitSyncIndex(",
         "void VulkanBackend::destroyCoreDevice(",
         "void VulkanBackend::shutdown(",
