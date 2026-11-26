@@ -157,8 +157,9 @@ object VideoAccelerationRuntime {
             return
         }
         scope.launch {
-            val probed = try { probeSurface(copy) }
-            finally { copy.release() }
+            val probed = try {
+                runCatching { probeSurface(copy) }.getOrElse { VulkanDeviceCapabilities(reason = "surface_probe") }
+            } finally { runCatching { copy.release() } }
             main.post { result(probed) }
         }
     }
