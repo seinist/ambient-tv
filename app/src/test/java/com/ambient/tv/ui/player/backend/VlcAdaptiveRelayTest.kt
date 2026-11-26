@@ -15,8 +15,8 @@ class VlcAdaptiveRelayTest {
         val xml = """
             <MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
               <Period><AdaptationSet>
-                <SegmentTemplate initialization="init-$RepresentationID$.mp4"
-                  media="video-$RepresentationID$-$Number%05d$.m4s" startNumber="1"/>
+                <SegmentTemplate initialization="init-${dollar}RepresentationID${dollar}.mp4"
+                  media="video-${dollar}RepresentationID${dollar}-${dollar}Number%05d${dollar}.m4s" startNumber="1"/>
                 <Representation id="h264" bandwidth="1000000"><BaseURL>variant/</BaseURL></Representation>
               </AdaptationSet></Period>
             </MPD>
@@ -60,7 +60,7 @@ class VlcAdaptiveRelayTest {
                 source, { _, _ -> error("no URL") }, { error("no template") })
         }
         assertThrows(IOException::class.java) {
-            compileDashRelayTemplate(source, "https://$Number$.example.org/seg", "a", "1")
+            compileDashRelayTemplate(source, "https://${dollar}Number${dollar}.example.org/seg", "a", "1")
         }
     }
 
