@@ -1309,7 +1309,7 @@ run_cores_command() {
         cores)
             shift
             local -a inputs=(-f publish=false)
-            local selected="" profile="baseline" abis=""
+            local selected="" profile="baseline" abis="" comparison="none" core_ref="main"
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --profile)
@@ -1318,6 +1318,12 @@ run_cores_command() {
                     --abis)
                         [[ $# -ge 2 ]] || fail "--abis requires a comma-separated ABI list"
                         abis="$2"; shift 2 ;;
+                    --comparison)
+                        [[ $# -ge 2 ]] || fail "--comparison requires baseline-thinlto or o3-o3-thinlto"
+                        comparison="$2"; shift 2 ;;
+                    --ref)
+                        [[ $# -ge 2 && -n "$2" ]] || fail "--ref requires a branch or tag"
+                        core_ref="$2"; shift 2 ;;
                     -*)
                         fail "Unknown cores option: $1" ;;
                     *)
@@ -1329,7 +1335,12 @@ run_cores_command() {
             if [[ -n "$selected" ]]; then inputs+=(-f "cores=$selected"); fi
             if [[ -n "$abis" ]]; then inputs+=(-f "abis=$abis"); fi
             if [[ "$profile" != baseline ]]; then inputs+=(-f "profile=$profile"); fi
-            gh "${workflow[@]}" "${inputs[@]}"
+            case "$comparison" in none|baseline-thinlto|o3-o3-thinlto) ;; *) fail "Unknown comparison: $comparison" ;; esac
+            if [[ "$comparison" != none ]]; then
+                [[ "$profile" == baseline ]] || fail "Paired comparisons require the baseline profile"
+                inputs+=(-f "comparison=$comparison")
+            fi
+            gh workflow run cores.yml --repo "$repo" --ref "$core_ref" "${inputs[@]}"
             ;;
         cores-key)
             [[ $# -eq 1 || ( $# -eq 2 && "${2:-}" == --manual ) ]] || fail "Usage: $0 cores-key [--manual]"
@@ -1375,6 +1386,7 @@ Libraries: libs-check [svp|monogram|libretro], libs-update [svp|monogram|libretr
 
 Libretro cores on GitHub Actions (main):
   cores [id[,id...]] [--profile baseline|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2] [--abis ABI[,ABI...]]
+        [--comparison baseline-thinlto|o3-o3-thinlto] [--ref branch]
                       Build artifacts only. Omit IDs to build all cores (gh).
   cores-key [--manual] Generate signing keys. Upload the secret in the browser if gh is unavailable.
                        Commit and push cores/signing-public.pem and rebuild the app to embed it.
