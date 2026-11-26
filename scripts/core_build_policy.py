@@ -97,6 +97,8 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline"):
                  ("picodrive", "arm64-v8a", "baseline"),
                  ("picodrive", "arm64-v8a", "picodrive-sh2"),
                  ("snes9x", "arm64-v8a", "tune-a57")]
+        # ARM64 O3 candidates isolate optimization level from link-time optimization.
+        jobs += [(core, "arm64-v8a", "o3") for core in ids]
         # Cover every supported ABI with paired baseline and ThinLTO builds.
         for core in ids:
             for abi in declared_abis:
