@@ -127,6 +127,11 @@ def main():
             "-o", str(format_binary)], check=True)
         subprocess.run([str(format_binary)], check=True, timeout=20)
 
+        alternate_binary = work / "vulkan-alternate-policy-test"
+        subprocess.run(command + [str(root / "scripts/native_game_vulkan_alternate_policy_test.cpp"),
+            "-o", str(alternate_binary)], check=True)
+        subprocess.run([str(alternate_binary)], check=True, timeout=20)
+
 
 if __name__ == "__main__":
     main()

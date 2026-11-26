@@ -225,8 +225,9 @@ static std::vector<float> pixels(const void* data, VkFormat format, unsigned cou
 
 static void run(Device& d, const std::string& name, VkFormat backing, VkFormat view,
                 VkFormat target, const std::vector<uint8_t>& input, bool padded = false,
-                VkComponentMapping mapping = {}, bool subresource = false, bool oldBlit = false) {
-    const uint32_t width = 4, height = 1;
+                VkComponentMapping mapping = {}, bool subresource = false, bool oldBlit = false,
+                uint32_t width = 4) {
+    const uint32_t height = 1;
     const uint32_t targetWidth = padded ? 8 : width;
     const uint32_t targetHeight = padded ? 3 : height;
     const VkImageSubresourceRange range { VK_IMAGE_ASPECT_COLOR_BIT, subresource ? 1u : 0u,
@@ -331,6 +332,7 @@ static struct CacheAllocationCalls {
     unsigned created = 0, destroyed = 0, allocated = 0, freed = 0;
     VkDeviceSize lastBytes = 0;
     unsigned formatQueries = 0;
+    bool failNextAllocation = false;
 } cacheCalls;
 
 static VKAPI_ATTR VkResult VKAPI_CALL trackedCreateImage(VkDevice device,
@@ -346,6 +348,10 @@ static VKAPI_ATTR void VKAPI_CALL trackedDestroyImage(VkDevice device, VkImage i
 }
 static VKAPI_ATTR VkResult VKAPI_CALL trackedAllocateMemory(VkDevice device,
         const VkMemoryAllocateInfo* info, const VkAllocationCallbacks* allocator, VkDeviceMemory* memory) {
+    if (cacheCalls.failNextAllocation) {
+        cacheCalls.failNextAllocation = false;
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    }
     const auto result = vkAllocateMemory(device, info, allocator, memory);
     if (result == VK_SUCCESS) {
         ++cacheCalls.allocated;
@@ -483,6 +489,58 @@ static void testWarmNormalizationCache(Device& d, const std::vector<uint8_t>& rg
     counts(4, 4);
 }
 
+static void testAlternateNormalizationCache(Device& d, const std::vector<uint8_t>& rgba) {
+    d.color.release();
+    cacheCalls = {};
+    require(d.color.initialize(d.instance, d.physical, d.device, trackedGetInstanceProcAddr), d.color.error());
+    auto changing = rgba;
+    const auto normalize = [&](uint32_t width) {
+        changing[0] ^= 31u;
+        run(d, "alternate normalized", VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM,
+            VK_FORMAT_R8G8B8A8_UNORM, changing, true, {}, false, false, width);
+    };
+    const auto counts = [&](unsigned creates, unsigned destroys, unsigned allocs, unsigned frees) {
+        require(cacheCalls.created == creates && cacheCalls.destroyed == destroys &&
+                cacheCalls.allocated == allocs && cacheCalls.freed == frees,
+                "unexpected alternate-cache allocation/retirement count");
+    };
+    normalize(4);
+    counts(1, 0, 1, 0);
+    normalize(2);
+    counts(2, 0, 2, 0);
+    for (unsigned i = 0; i < 20; ++i) {
+        normalize(4);
+        normalize(2);
+        counts(2, 0, 2, 0);
+    }
+    for (unsigned i = 0; i < libretrodroid::VulkanColorAlternatePolicy::maxIdleFrames; ++i) {
+        normalize(2);
+        counts(2, 0, 2, 0);
+    }
+    normalize(2);
+    counts(2, 1, 2, 1);
+    normalize(4);
+    counts(3, 1, 3, 1);
+    run(d, "alternate direct", VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM,
+        VK_FORMAT_R8G8B8A8_UNORM, changing);
+    counts(3, 2, 3, 2);
+    d.color.release();
+    counts(3, 3, 3, 3);
+
+    // A retained predecessor must never turn a recoverable memory-pressure
+    // failure into a rejected frame. Actual driver allocation succeeds on retry.
+    cacheCalls = {};
+    require(d.color.initialize(d.instance, d.physical, d.device, trackedGetInstanceProcAddr), d.color.error());
+    normalize(4);
+    cacheCalls.failNextAllocation = true;
+    normalize(2);
+    counts(3, 2, 2, 1); // failed image, evicted predecessor, successful retry
+    d.color.release();
+    counts(3, 3, 2, 2);
+    d.color.release();
+    counts(3, 3, 2, 2);
+}
+
 int main() {
     try {
         testRetentionPolicy();
@@ -564,6 +622,7 @@ int main() {
             VK_FORMAT_R8G8B8A8_UNORM, rgba, true);
         testFormatFeatureCache(d);
         testWarmNormalizationCache(d, rgba);
+        testAlternateNormalizationCache(d, rgba);
         std::cout << "PASS " << d.cases << " GPU color cases; " << d.unsupportedCases
                   << " optional device format cases safely rejected; cache lifecycle and unsupported-input guards\n";
         return 0;
