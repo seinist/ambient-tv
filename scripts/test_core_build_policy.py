@@ -7,7 +7,7 @@ from core_acceleration_audit import audit_acceleration, compiler_commands, defin
 from unittest.mock import patch
 
 from core_build_policy import (REQUIRED_EXPORTS, audit_commands, ndk_flags, plan,
-                               select_library, verify_elf_abi, dynamic_dependencies, prepare_cmake)
+                               select_library, verify_elf_abi, dynamic_dependencies, prepare_cmake, prepare_ndk)
 
 
 class CoreBuildPolicyTest(unittest.TestCase):
@@ -30,9 +30,9 @@ class CoreBuildPolicyTest(unittest.TestCase):
 
     def test_pr_comparison(self):
         matrix = plan(self.catalog, "pull_request", "refs/pull/1/merge", False)["include"]
-        self.assertEqual(len(matrix), 25)
+        self.assertEqual(len(matrix), 27)
         self.assertEqual({item["profile"] for item in matrix},
-                         {"baseline", "thinlto", "picodrive-sh2", "tune-a57", "o3", "o3-thinlto"})
+                         {"baseline", "thinlto", "picodrive-sh2", "tune-a57", "o3", "o3-thinlto", "snes9x2010-threaded"})
         self.assertEqual(len({item["artifact"] for item in matrix}), len(matrix))
         self.assertEqual([item["makevars"] for item in matrix if item["profile"] == "picodrive-sh2"], ["use_sh2drc=1"])
 
@@ -220,6 +220,45 @@ class CoreBuildPolicyTest(unittest.TestCase):
             self.assertIn("if(FALSE)", path.read_text())
             with self.assertRaises(ValueError):
                 prepare_cmake(root, "swanstation", "thinlto")
+
+    def test_threaded_snes_candidate(self):
+        matrix = plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False,
+                      profile="snes9x2010-threaded")["include"]
+        self.assertEqual({item["core"] for item in matrix}, {"snes9x2010"})
+        self.assertEqual({item["abi"] for item in matrix}, set(self.catalog["abis"]))
+        self.assertTrue(all(item["artifact"].startswith("candidate-") for item in matrix))
+        with self.assertRaises(ValueError):
+            plan(self.catalog, "workflow_dispatch", "refs/heads/main", True, profile="snes9x2010-threaded")
+        with self.assertRaises(ValueError):
+            plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False, cores="mgba",
+                 profile="snes9x2010-threaded")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "jni").mkdir()
+            (root / "build").mkdir()
+            recipe = root / "jni/Android.mk"
+            source = "include $(CORE_DIR)/build/Makefile.common\nLOCAL_CFLAGS   := $(COREFLAGS)\n"
+            recipe.write_text(source)
+            (root / "build/Makefile.common").write_text(
+                "ifneq ($(HAVE_THREADS),0)\n"
+                "SOURCES_C += rthreads/rthreads.c rthreads/retro_eventcount.c\nendif\n")
+            prepare_ndk(root, "snes9x2010", "baseline")
+            self.assertEqual(recipe.read_text(), source)
+            prepare_ndk(root, "snes9x2010", "snes9x2010-threaded")
+            self.assertIn("HAVE_THREADS := 1\ninclude", recipe.read_text())
+            self.assertIn("$(COREFLAGS) -DHAVE_THREADS", recipe.read_text())
+            recipe.write_text("changed")
+            with self.assertRaises(ValueError):
+                prepare_ndk(root, "snes9x2010", "snes9x2010-threaded")
+        log = ("clang -DHAVE_THREADS -c src/ppu.c -o ppu.o\n"
+               "clang -DHAVE_THREADS -DFRONTEND_SUPPORTS_RGB565 -c libretro/libretro.c -o core.o\n"
+               "clang -c rthreads/rthreads.c -o threads.o\n"
+               "clang -c rthreads/retro_eventcount.c -o event.o\n")
+        commands = list(compiler_commands(log))
+        self.assertTrue(all(audit_acceleration(commands, "snes9x2010", "arm64-v8a",
+                                               "snes9x2010-threaded").values()))
+        with self.assertRaises(ValueError):
+            audit_acceleration(commands[:-1], "snes9x2010", "arm64-v8a", "snes9x2010-threaded")
 
     def test_select_by_exports_not_filename_order(self):
         with tempfile.TemporaryDirectory() as directory:
