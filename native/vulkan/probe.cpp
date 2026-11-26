@@ -37,7 +37,7 @@ struct Probe {
         if (window) ANativeWindow_release(window);
         if (lib) dlclose(lib);
     }
-    std::string run(JNIEnv *env, jobject javaSurface) {
+    std::string run(JNIEnv *env, jobject javaSurface, const char *validatedDevice = nullptr, uint32_t validatedVersion = 0) {
         if (!get) return "{\"reason\":\"loader\"}";
         auto enumerate = fn<PFN_vkEnumerateInstanceExtensionProperties>("vkEnumerateInstanceExtensionProperties");
         uint32_t count = 0;
@@ -77,6 +77,7 @@ struct Probe {
             VkPhysicalDeviceProperties props;
             fn<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties")(device, &props);
             auto failure = [&](const char *why) { return "{\"device\":" + quote(props.deviceName) + ",\"version\":" + std::to_string(props.apiVersion) + ",\"reason\":" + quote(why) + "}"; };
+            if (validatedDevice && (strcmp(props.deviceName, validatedDevice) || props.apiVersion != validatedVersion)) continue;
             unsupported = failure("device_features");
             if (props.apiVersion < VK_API_VERSION_1_1 || props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU) continue;
             auto devExt = fn<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
@@ -114,6 +115,9 @@ struct Probe {
             features.pNext = &timeline;
             fn<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(device, &features);
             if (!timeline.timelineSemaphore) { unsupported = failure("timeline_semaphore"); continue; }
+            // Startup already verified logical-device creation on this exact device/version.
+            // A surface recheck only needs actual presentation support and formats.
+            if (!validatedDevice) {
             const float priority = 1.0f;
             VkDeviceQueueCreateInfo qi{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
             qi.queueFamilyIndex = graphics; qi.queueCount = 1; qi.pQueuePriorities = &priority;
@@ -125,6 +129,7 @@ struct Probe {
             VkDevice logical;
             if (fn<PFN_vkCreateDevice>("vkCreateDevice")(device, &di, nullptr, &logical) != VK_SUCCESS) { unsupported = failure("logical_device"); continue; }
             fn<PFN_vkDestroyDevice>("vkDestroyDevice")(logical, nullptr);
+            }
             std::vector<VkSurfaceFormatKHR> surfaceFormats;
             if (surface) {
                 uint32_t formats = 0;
@@ -140,7 +145,7 @@ struct Probe {
             auto capsFn = fn<PFN_vkGetPhysicalDeviceVideoCapabilitiesKHR>("vkGetPhysicalDeviceVideoCapabilitiesKHR");
             auto formatsFn = fn<PFN_vkGetPhysicalDeviceVideoFormatPropertiesKHR>("vkGetPhysicalDeviceVideoFormatPropertiesKHR");
             auto profile = [&](const char *codec, const char *extension, VkVideoCodecOperationFlagBitsKHR op, int bits, void *codecProfile, void *codecCaps) {
-                if (!videoQueue || !capsFn || !formatsFn || !(operations & op) || !has(ext, extension)) return;
+                if (validatedDevice || !videoQueue || !capsFn || !formatsFn || !(operations & op) || !has(ext, extension)) return;
                 VkVideoProfileInfoKHR p{VK_STRUCTURE_TYPE_VIDEO_PROFILE_INFO_KHR};
                 p.pNext = codecProfile; p.videoCodecOperation = op; p.chromaSubsampling = VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR;
                 p.lumaBitDepth = p.chromaBitDepth = bits == 10 ? VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR : VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR;
@@ -197,6 +202,16 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_ambient_tv_ui_player_backend_VulkanNativeProbe_probe(JNIEnv *env, jobject, jobject surface) {
     Probe probe;
     auto result = probe.run(env, surface);
+    return env->NewStringUTF(result.c_str());
+}
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_ambient_tv_ui_player_backend_VulkanNativeProbe_probeValidatedSurface(JNIEnv *env, jobject, jobject surface, jstring device, jlong version) {
+    if (!surface || !device) return env->NewStringUTF("{}");
+    const char *name = env->GetStringUTFChars(device, nullptr);
+    if (!name) return nullptr;
+    Probe probe;
+    auto result = probe.run(env, surface, name, static_cast<uint32_t>(version));
+    env->ReleaseStringUTFChars(device, name);
     return env->NewStringUTF(result.c_str());
 }
 extern "C" JNIEXPORT jboolean JNICALL
