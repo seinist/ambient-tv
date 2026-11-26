@@ -523,6 +523,9 @@ class VlcPlaybackController(
     private fun reportWindowSize(width: Int, height: Int) {
         if (released || width <= 0 || height <= 0) return
         renderSurfaceSize = width to height
+        // Native stop owns the MediaPlayer until completion. Geometry is re-applied when
+        // its new media opens instead of racing that stop on the main thread.
+        if (restartStop != null || restartStopFailed || dvRetirementPending) return
         runCatching {
             // The host already fits the surface. Fill it instead of preserving source DAR again.
             player.setAspectRatio("$width:$height")
@@ -893,7 +896,13 @@ class VlcPlaybackController(
                         return
                     }
                     if (!prepared) prepare()
-                    if (restartStopFailed || headerRelayFailed || restartStop != null || dvRetirementPending) return
+                    if (restartStopFailed || headerRelayFailed || restartStop != null || dvRetirementPending ||
+                        previousReleaseOutcome == PreviousReleaseOutcome.BLOCKED ||
+                        previousReleaseOutcome == PreviousReleaseOutcome.TIMED_OUT) return
+                    if (!prepared) {
+                        if (++attempt < 80) view.postDelayed(this, 125L)
+                        return
+                    }
                     val available = videoTracks().map { it.first }.filter { it >= 0 }
                     val preferred = detachedVideoTrack?.takeIf { it in available }
                     if (preferred != null) trackAccess.setVideoTrack(preferred) else {
@@ -943,10 +952,14 @@ class VlcPlaybackController(
         view.holder.removeCallback(surfaceSizeCallback)
         videoRestoreTask?.let(view::removeCallbacks)
         videoRestoreTask = null
-        trackAccess.videoTrack.takeIf { it >= 0 }?.let { detachedVideoTrack = it }
-        Timber.i("AV-AUDIT VLC detach track=%d", trackAccess.videoTrack)
-        // Disable vout before its surface disappears; audio and demuxing keep running.
-        player.setVideoTrackEnabled(false)
+        if (restartStop == null && !restartStopFailed && !dvRetirementPending) {
+            val videoTrack = trackAccess.videoTrack
+            videoTrack.takeIf { it >= 0 }?.let { detachedVideoTrack = it }
+            Timber.i("AV-AUDIT VLC detach track=%d", videoTrack)
+            // Disable vout before its surface disappears; audio and demuxing keep running.
+            player.setVideoTrackEnabled(false)
+        }
+        // The window still must be detached even while the native player is stopping.
         player.vlcVout.detachViews()
         attachedView = null
         invalidateVulkanProbe()
@@ -1232,6 +1245,7 @@ class VlcPlaybackController(
             if (attachedView === view && view.holder.surface.isValid && surfaceWasValidated)
                 vulkanSurfaceChecked = true
         }
+        renderSurfaceSize?.let { (width, height) -> reportWindowSize(width, height) }
         nativeMediaOpened = true
         player.play()
         // Pause on the Playing event, after demux and the pending seek are ready.
