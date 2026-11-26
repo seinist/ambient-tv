@@ -75,7 +75,7 @@ public:
     }
 
     VkResult return_decoder_image() {
-        if (!accepted_ || completed_ || !lease_ || !lease_->has_decoder_image() || export_attempted_)
+        if (!accepted_ || completed_ || !lease_ || !lease_->has_decoder_image() || !lease_->allows_early_return() || export_attempted_)
             return VK_ERROR_INITIALIZATION_FAILED;
         export_attempted_ = true;
         UniqueFd release_fd;
