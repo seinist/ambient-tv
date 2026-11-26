@@ -224,25 +224,33 @@ class Media3PlaybackHandle(
         if (released) return
         com.ambient.tv.diagnostics.CrashBreadcrumbs.add("media3", "release")
         val gateRelease = if (joinsReleaseGate) com.ambient.tv.ui.player.backend.nativeAudioReleases.beginRelease() else null
-        detachVideoOutput()
-        released = true
-        Media3GaplessQueue.released(player)
-        Media3ResumePrimer.release(player)
-        player.removeListener(conversionListener)
-        hdrOutput.release()
-        handles.remove(player)
-        Media3ImageProcessing.release(player)
-        Media3AudioProcessing.release(player)
-        // Live TVHeadend (and similar unbounded HTTP streams) keep the server subscription
-        // open until the data source is cancelled. clearMediaItems() drops the media source
-        // before release() so a renderer switch does not briefly hold two subscriptions.
-        runCatching {
-            player.playWhenReady = false
-            player.clearMediaItems()
+        var failure: Throwable? = null
+        fun cleanup(action: () -> Unit) {
+            try { action() } catch (error: Throwable) {
+                val previous = failure
+                if (previous == null) failure = error else if (previous !== error) previous.addSuppressed(error)
+            }
         }
-        runCatching { player.release() }
-            .onSuccess { gateRelease?.complete(Unit) }
-            .onFailure { gateRelease?.completeExceptionally(it); throw it }
+        cleanup { detachVideoOutput() }
+        released = true
+        cleanup { Media3GaplessQueue.released(player) }
+        cleanup { Media3ResumePrimer.release(player) }
+        cleanup { player.removeListener(conversionListener) }
+        cleanup { hdrOutput.release() }
+        handles.remove(player)
+        cleanup { Media3ImageProcessing.release(player) }
+        cleanup { Media3AudioProcessing.release(player) }
+        cleanup { player.playWhenReady = false }
+        cleanup { player.clearMediaItems() }
+        // Even a failed ancillary cleanup must not strand the decoder or release gate.
+        cleanup { player.release() }
+        val error = failure
+        if (error == null) gateRelease?.complete(Unit)
+        else {
+            gateRelease?.completeExceptionally(error)
+            timber.log.Timber.e(error, "Media3 release encountered a cleanup failure")
+            if (error is Error) throw error
+        }
     }
     companion object {
         private val handles = WeakHashMap<ExoPlayer, WeakReference<Media3PlaybackHandle>>()
