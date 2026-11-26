@@ -218,3 +218,37 @@ fun useVlcVulkan(output: String, capabilities: VideoAccelerationCapabilities, gp
 internal fun vlcHdrToSdrOutputOptions(vulkan: Boolean, toneMappingRequired: Boolean): List<String> =
     if (toneMappingRequired && !vulkan) listOf("--vout=gles2,none", "--no-mediacodec-dr")
     else emptyList()
+
+/**
+ * A failed opaque MediaCodec path can be specific to the source format, resolution or the
+ * current driver state. Do not poison every other title for the lifetime of the app version.
+ * The legacy device-wide lock remains an explicit fallback for callers without source identity.
+ * Cache only process-local media/format keys, expire transient failures, and bound memory.
+ */
+internal class MpvZeroCopyFailureCache(
+    private val nowMs: () -> Long = { System.nanoTime() / 1_000_000L },
+    private val ttlMs: Long = 30 * 60 * 1000L,
+    private val capacity: Int = 64,
+) {
+    private val failed = LinkedHashMap<String, Long>(16, 0.75f, true)
+    private fun prune(now: Long) {
+        failed.entries.removeAll { now - it.value !in 0 until ttlMs }
+    }
+    @Synchronized fun contains(scope: String?): Boolean {
+        prune(nowMs())
+        return scope != null && failed[scope] != null
+    }
+    @Synchronized fun record(scope: String) {
+        val now = nowMs()
+        prune(now)
+        failed[scope] = now
+        while (failed.size > capacity) failed.remove(failed.keys.first())
+    }
+    @Synchronized fun any(): Boolean {
+        prune(nowMs())
+        return failed.isNotEmpty()
+    }
+    @Synchronized fun clear() { failed.clear() }
+}
+
+internal val mpvZeroCopyFailures = MpvZeroCopyFailureCache()
