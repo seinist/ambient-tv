@@ -424,17 +424,20 @@ class TvheadendRepository @Inject constructor(
             fun stillCurrent() = synchronized(hbbtvLock) {
                 validHbbtv(state) && state.directory?.servicesByChannel == topology
             }
-            fun canProbe() = owner?.isActive == true && stillCurrent() && BrowseWorkBudget.idle() &&
+            var probeEpoch: Long? = null
+            fun canProbe() = owner?.isActive == true && stillCurrent() &&
+                (probeEpoch?.let(BrowseWorkBudget::idleSince) ?: BrowseWorkBudget.idle()) &&
                 availability.hasNetwork() && hosts.health("tvheadend") != HostHealth.OFFLINE
             try {
                 // Bounded idle wait, not a browse permit. No queue can keep a player waiting.
                 val until = android.os.SystemClock.elapsedRealtime() + 30_000L
                 while (stillCurrent() && !canProbe() && android.os.SystemClock.elapsedRealtime() < until) delay(250)
+                probeEpoch = BrowseWorkBudget.gameEpoch()
                 if (http && canProbe()) {
                     synchronized(hbbtvLock) { state.lastHttpAttempt = android.os.SystemClock.elapsedRealtime() }
                     val result = optionalHbbtvServiceMetadata(topology.values.flatten().toHashSet(), ::canProbe)
                     synchronized(hbbtvLock) {
-                        if (result != null && stillCurrent()) state.directory?.let {
+                        if (result != null && canProbe()) state.directory?.let {
                             publishHbbtv(state, it.withHttp(result, System.currentTimeMillis()))
                         } else if (stillCurrent() && !canProbe()) state.lastHttpAttempt = null
                     }
@@ -443,7 +446,7 @@ class TvheadendRepository @Inject constructor(
                     synchronized(hbbtvLock) { state.lastHtspAttempt = android.os.SystemClock.elapsedRealtime() }
                     val result = optionalHtspHbbtvMetadata(::canProbe)
                     synchronized(hbbtvLock) {
-                        if (result != null && stillCurrent()) state.directory?.let {
+                        if (result != null && canProbe()) state.directory?.let {
                             publishHbbtv(state, it.withHtsp(result, System.currentTimeMillis()))
                         } else if (stillCurrent() && !canProbe()) state.lastHtspAttempt = null
                     }
@@ -578,22 +581,27 @@ class TvheadendRepository @Inject constructor(
     private suspend fun syncGuideWindow(scope: String, from: Long, to: Long, channelId: String?,
         wake: Boolean, force: Boolean = false, maxAgeMs: Long = 15 * 60_000L): List<TvhEpgEvent> = guideFetchMutex.withLock {
         val epoch = guideEpoch.get()
+        val gameEpoch = BrowseWorkBudget.gameEpoch()
         fun valid() = epoch == guideEpoch.get() && currentGuideScope(scope)
-        fun canPersist() = valid() && (wake || BrowseWorkBudget.idle())
+        fun canPersist() = valid() && (wake || BrowseWorkBudget.idleSince(gameEpoch))
         check(canPersist()) { "TVHeadend source changed or idle work interrupted" }
         if (!force && freshGuideWindow(scope, from, to, maxAgeMs)) {
-            indexedEpg(scope, from, to, channelId)?.let { if (valid()) return@withLock it }
+            indexedEpg(scope, from, to, channelId)?.let { if (canPersist()) return@withLock it }
         }
         val rows = loadTvhEpgPages(from, to, channelId) { params ->
             currentCoroutineContext().ensureActive()
-            check(valid()) { "TVHeadend source changed" }
-            check(wake || com.ambient.tv.data.browse.BrowseWorkBudget.idle()) { "Foreground browse work resumed" }
+            check(canPersist()) { "TVHeadend source changed or idle work interrupted" }
             getJson("api/epg/events/grid", params, wake = wake)
         }
-        check(valid()) { "TVHeadend source changed" }
-        check(wake || com.ambient.tv.data.browse.BrowseWorkBudget.idle()) { "Foreground browse work resumed" }
+        check(canPersist()) { "TVHeadend source changed or idle work interrupted" }
         // A malformed response is not authoritative. Do not remove previously cached programmes.
-        val events = rows.map { mapEvent(it) ?: error("Invalid TVHeadend programme") }
+        val events = rows.mapIndexed { index, row ->
+            if (index % 128 == 0) {
+                currentCoroutineContext().ensureActive()
+                check(canPersist()) { "TVHeadend source changed or idle work interrupted" }
+            }
+            mapEvent(row) ?: error("Invalid TVHeadend programme")
+        }
             .filter { it.stopEpochSeconds >= from && it.startEpochSeconds <= to }
         require(events.all { it.stopEpochSeconds > it.startEpochSeconds && (channelId == null || it.channelUuid == channelId) })
         require(events.map { it.eventId }.toSet().size == events.size)
@@ -608,7 +616,7 @@ class TvheadendRepository @Inject constructor(
                 if (canPersist()) guideFreshnessBlocked = false
             }
         }
-        check(valid()) { "TVHeadend source changed" }
+        check(canPersist()) { "TVHeadend source changed or idle work interrupted" }
         // Storage is optional for a live read; even a full/corrupt index must not hide a valid
         // server response. Idle prefetch stops this pass on a persistence failure.
         persisted.exceptionOrNull()?.let {
@@ -628,13 +636,17 @@ class TvheadendRepository @Inject constructor(
                     com.ambient.tv.data.browse.BrowseWorkBudget.idle()) {
                     suspendResult {
                         val scope = diskScope()
+                        val gameEpoch = BrowseWorkBudget.gameEpoch()
                         val now = System.currentTimeMillis() / 1000L
-                        guideIndex.trimExpired(EPG_INDEX_OWNER, scope, now) { currentGuideScope(scope) && BrowseWorkBudget.idle() }
-                        if (!availability.hasNetwork() || !serverLikelyReachable()) return@suspendResult
+                        guideIndex.trimExpired(EPG_INDEX_OWNER, scope, now) {
+                            currentGuideScope(scope) && BrowseWorkBudget.idleSince(gameEpoch)
+                        }
+                        if (!BrowseWorkBudget.idleSince(gameEpoch) ||
+                            !availability.hasNetwork() || !serverLikelyReachable()) return@suspendResult
                         // Six-hour aligned windows are bounded; fill the nearest missing window first.
                         val start = Math.floorDiv(now, 21600L) * 21600L
                         for (slot in 0 until 28) {
-                            if (!com.ambient.tv.data.browse.BrowseWorkBudget.idle() || !currentGuideScope(scope)) break
+                            if (!BrowseWorkBudget.idleSince(gameEpoch) || !currentGuideScope(scope)) break
                             val windowStart = start + slot * 21600L
                             val from = maxOf(windowStart, Math.floorDiv(now - 3600L, 1800L) * 1800L)
                             val to = windowStart + 21600L
