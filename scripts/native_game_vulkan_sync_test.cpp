@@ -24,7 +24,8 @@ using libretrodroid::VulkanBackend;
 template<class T> T object(uintptr_t value) { return reinterpret_cast<T>(value); }
 
 struct Driver {
-    std::deque<VkResult> waits, idles;
+    std::deque<VkResult> waits, idles, acquires;
+    unsigned requestedImages = 0, maxImages = 3, driverExtraImages = 0;
     VkResult reset = VK_SUCCESS, commandReset = VK_SUCCESS, begin = VK_SUCCESS,
              end = VK_SUCCESS, submit = VK_SUCCESS, present = VK_SUCCESS;
     bool pending = false;
@@ -198,7 +199,7 @@ void setup(VulkanBackend& backend) {
         caps->currentTransform = VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR;
         caps->currentExtent = {640,480};
         caps->supportedCompositeAlpha = driver.alpha;
-        caps->minImageCount = 2; caps->maxImageCount = 3;
+        caps->minImageCount = 2; caps->maxImageCount = driver.maxImages;
         return VK_SUCCESS;
     };
     vk.getPhysicalDeviceSurfaceFormats = [](VkPhysicalDevice, VkSurfaceKHR, uint32_t* count,
@@ -214,7 +215,8 @@ void setup(VulkanBackend& backend) {
     };
     vk.createSwapchain = [](VkDevice, const VkSwapchainCreateInfoKHR* info, const VkAllocationCallbacks*,
         VkSwapchainKHR* swapchain) {
-        assert(info->minImageCount == 2); // Request no extra FIFO image beyond driver minimum.
+        assert(info->minImageCount >= 2 && info->minImageCount <= 3);
+        driver.requestedImages = info->minImageCount;
         ++driver.swapchainCreates; driver.chosenAlpha = info->compositeAlpha;
         driver.chosenTransform = info->preTransform;
         *swapchain = object<VkSwapchainKHR>(14); return VK_SUCCESS;
@@ -223,8 +225,8 @@ void setup(VulkanBackend& backend) {
         assert(!driver.pending); ++driver.swapchainFrees;
     };
     vk.getSwapchainImages = [](VkDevice, VkSwapchainKHR, uint32_t* count, VkImage* images) {
-        *count = 2;
-        if (images) { images[0] = object<VkImage>(15); images[1] = object<VkImage>(16); }
+        *count = driver.requestedImages + driver.driverExtraImages;
+        if (images) for (uint32_t i = 0; i < *count; ++i) images[i] = object<VkImage>(15 + i);
         return VK_SUCCESS;
     };
     vk.createSemaphore = [](VkDevice, const VkSemaphoreCreateInfo*, const VkAllocationCallbacks*, VkSemaphore* value) {
@@ -232,7 +234,7 @@ void setup(VulkanBackend& backend) {
     };
     vk.destroySemaphore = [](VkDevice, VkSemaphore, const VkAllocationCallbacks*) { assert(!driver.pending); };
     vk.acquireNextImage = [](VkDevice, VkSwapchainKHR, uint64_t, VkSemaphore, VkFence, uint32_t* index) {
-        *index = 0; return VK_SUCCESS;
+        *index = 0; return driver.next(driver.acquires);
     };
     vk.queuePresent = [](VkQueue, const VkPresentInfoKHR*) {
         assert(!driver.pending); ++driver.presents; return driver.present;
@@ -382,6 +384,7 @@ void nativeSurfacePolicyAndSuccess() {
             assert(backend.ensureNativeSdrSwapchain() == allowed);
             assert(driver.swapchainCreates == (allowed ? 1u : 0u));
             if (allowed) {
+                assert(driver.requestedImages == 2);
                 assert(driver.chosenAlpha == VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR);
                 assert(driver.chosenTransform == VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR);
             }
@@ -410,6 +413,35 @@ void nativeSurfacePolicyAndSuccess() {
         assert(backend.getFatalError() == VK_ERROR_DEVICE_LOST);
     }
     std::puts("PASS raw/filtered WSI requires opaque identity surfaces; only completed frames present");
+}
+
+void adaptiveSwapchainDepth() {
+    for (int scenario = 0; scenario < 3; ++scenario) {
+        VulkanBackend backend;
+        setup(backend); window(backend);
+        backend.nativePresentation.setFullscreenActive(true);
+        if (scenario == 1) driver.maxImages = 2;
+        if (scenario == 2) driver.driverExtraImages = 1;
+        assert(backend.ensureNativeSdrSwapchain());
+        assert(driver.requestedImages == 2);
+        // A single acquire miss cannot retire a working swapchain.
+        driver.acquires = {VK_NOT_READY, VK_SUCCESS, VK_SUCCESS};
+        for (int i = 0; i < 3; ++i) assert(backend.presentFrame(256,224,4.0F/3.0F,true));
+        assert(driver.swapchainCreates == 1);
+        driver.acquires = {VK_NOT_READY, VK_TIMEOUT, VK_NOT_READY, VK_TIMEOUT, VK_NOT_READY, VK_TIMEOUT};
+        for (int i = 0; i < 6; ++i) assert(backend.presentFrame(256,224,4.0F/3.0F,true));
+        assert(driver.swapchainCreates == 1);
+        assert(backend.presentFrame(256,224,4.0F/3.0F,true));
+        assert(driver.swapchainCreates == (scenario == 0 ? 2u : 1u));
+        assert(driver.requestedImages == (scenario == 0 ? 3u : 2u));
+        // Never thrash between depths on sustained misses or a fixed driver limit.
+        for (int i = 0; i < 12; ++i) {
+            driver.acquires = {VK_NOT_READY};
+            assert(backend.presentFrame(256,224,4.0F/3.0F,true));
+        }
+        assert(driver.swapchainCreates == (scenario == 0 ? 2u : 1u));
+    }
+    std::puts("PASS FIFO depth adapts once only when a driver can benefit");
 }
 
 void filteredPresetSwitchRetainsSwapchain() {
@@ -464,6 +496,7 @@ int main() {
     resetAndSubmitFailures();
     safeCallbackAndTeardown();
     nativeSurfacePolicyAndSuccess();
+    adaptiveSwapchainDepth();
     filteredPresetSwitchRetainsSwapchain();
     managedBoundary();
     std::puts("PASS production Vulkan synchronization and presentation fault regression");
