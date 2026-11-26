@@ -191,7 +191,13 @@ class StopCrashGuardsTest {
         assertTrue(view.contains("Lifecycle.Event.ON_START -> {"))
         assertTrue(view.contains("Lifecycle.Event.ON_STOP -> {"))
         assertTrue(view.contains("attachIfReady()"))
-        assertTrue(controller.contains("} finally { surfaceGate.detached(ticket) }"))
+        assertFalse(controller.contains("} finally { surfaceGate.detached(ticket) }"))
+        val detach = controller.substring(controller.indexOf("fun detachSurface(surface:"), controller.indexOf("fun detachSurfaceAndWait("))
+        assertTrue(detach.indexOf("engine?.detachSurface()") < detach.indexOf("surfaceGate.detached(ticket)"))
+        assertTrue(wait.contains("retiringSurfaceIdentity === surface"))
+        val engine = source("ui/player/backend/MpvPlaybackEngine.kt")
+        assertTrue(engine.contains("check(trySetProperty(\"vo\", \"null\"))"))
+        assertFalse(engine.contains("runCatching { MpvNativeBridge.nativeDetachSurface(handle) }"))
         assertTrue(controller.contains("surfaceGate.closed()"))
         assertTrue(controller.indexOf("surfaceGate.attaching()") < controller.indexOf("player.attachSurface(copy, width, height)"))
         assertEquals(500L, SURFACE_DETACH_WAIT_MS)
@@ -218,6 +224,27 @@ class StopCrashGuardsTest {
             assertTrue(gate.await(2_000))
             assertTrue(done.await(2, TimeUnit.SECONDS))
         } finally { resume.countDown(); executor.shutdownNow() }
+    }
+
+    @Test fun failedDetachDoesNotWakeWaitersBeforeConfirmedClose() {
+        val gate = MpvSurfaceDetachGate()
+        val scheduled = ArrayDeque<() -> Unit>()
+        val errors = mutableListOf<Throwable>()
+        val queue = MpvCommandQueue({ scheduled.addLast(it) }, errors::add)
+        gate.attaching()
+        val ticket = gate.requestDetach()
+        queue.submit("surface-detach", keepOnClose = true) {
+            fun nativeDetach() { error("VO did not retire") }
+            nativeDetach()
+            gate.detached(ticket)
+        }
+        scheduled.removeFirst()()
+        assertEquals(1, errors.size)
+        assertTrue(gate.inUse)
+        assertFalse(gate.await(10))
+        queue.close { gate.closed() }
+        scheduled.removeFirst()()
+        assertTrue(gate.await(100))
     }
 
     @Test fun anEarlierDetachCannotAcknowledgeANewerRequest() {
