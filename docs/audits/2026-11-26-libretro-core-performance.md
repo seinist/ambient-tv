@@ -132,3 +132,21 @@ The Libretro performance interface now exposes counters and CPU feature informat
 Next work should add bounded, low-overhead frontend timing around the serialized `retro_run` boundary (excluding pacing sleep and rewind serialization), report rolling p50/p95/p99 frame execution time and deadline misses, and correlate thermal status. Any Android Performance Hint Manager session must be scoped to the actual emulation worker and target work duration; it should remain optional on unsupported devices and must not be mistaken for a substitute for measuring or fixing slow cores. Keep logging off the hot path and aggregate off-thread. Physical-device validation is required before enabling ADPF or selecting experimental core variants by default.
 
 No candidate is publishable through the signed baseline catalog.
+
+### Stage 4a — native core execution tracepoints
+
+Added `scripts/patches/libretrodroid/0210-libretro-perfetto-core-run-tracing.patch`.
+It wraps every frontend call to `retro_run()` (normal forward emulation,
+rewind preview, and netplay) in Android native trace sections named
+`AmbientTV:Libretro/retro_run`. These markers can be captured with Perfetto
+or Android system tracing and isolate the synchronous core call from the
+frontend's surrounding frame work. They are not per-frame log messages and
+do not add a Kotlin coroutine or allocation to the render loop.
+
+This is a measurement aid, not a profiler result: trace collection must be
+enabled by the operator, and trace instrumentation itself can perturb very
+short frames. Compare captures with tracing disabled/enabled and use repeated
+warm runs. The markers do not measure asynchronous audio callbacks, GPU
+completion after submission, or presentation latency. The pinned native patch
+must still pass a clean apply and Android compile in CI before the tracepoints
+are considered validated.
