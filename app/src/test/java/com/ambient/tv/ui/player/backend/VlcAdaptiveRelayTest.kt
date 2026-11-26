@@ -141,4 +141,19 @@ class VlcAdaptiveRelayTest {
             }
         }
     }
+
+    @Test fun hlsVariableExpansionIsBoundedBeforeMapping() {
+        val definition = "#EXT-X-DEFINE:NAME=\"big\",VALUE=\"" + "x".repeat(2048) + "\"\n"
+        val manifest = "#EXTM3U\n" + definition + "{\$big}".repeat(9) + "\n"
+        assertThrows(IOException::class.java) {
+            rewriteVlcHlsManifest(manifest, source) { _, _ -> error("Oversized expansion must not be mapped") }
+        }
+    }
+
+    @Test fun hlsRewrittenManifestHasAnAggregateLimit() {
+        val manifest = "#EXTM3U\n" + "segment.ts\n".repeat(1000)
+        assertThrows(IOException::class.java) {
+            rewriteVlcHlsManifest(manifest, source) { _, _ -> "/" + "x".repeat(8192) }
+        }
+    }
 }
