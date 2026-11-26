@@ -89,6 +89,7 @@ struct Probe {
     std::string run(JNIEnv *env, jobject javaSurface, const char *validatedDevice = nullptr, uint32_t validatedVersion = 0) {
         if (!get) return "{\"reason\":\"loader\"}";
         auto enumerate = fn<PFN_vkEnumerateInstanceExtensionProperties>("vkEnumerateInstanceExtensionProperties");
+        if (!enumerate) return "{\"reason\":\"instance_functions\"}";
         uint32_t count = 0;
         if (enumerate(nullptr, &count, nullptr) != VK_SUCCESS) return "{}";
         std::vector<VkExtensionProperties> ext(count);
@@ -110,23 +111,26 @@ struct Probe {
         app.apiVersion = version;
         VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
         info.pApplicationInfo = &app; info.enabledExtensionCount = extensions.size(); info.ppEnabledExtensionNames = extensions.data();
-        if (fn<PFN_vkCreateInstance>("vkCreateInstance")(&info, nullptr, &instance) != VK_SUCCESS) return "{}";
+        auto create = fn<PFN_vkCreateInstance>("vkCreateInstance");
+        if (!create || create(&info, nullptr, &instance) != VK_SUCCESS) return "{}";
         if (javaSurface) {
             window = ANativeWindow_fromSurface(env, javaSurface);
             if (!window) return "{\"reason\":\"native_window\"}";
             VkAndroidSurfaceCreateInfoKHR si{VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR};
             si.window = window;
-            if (fn<PFN_vkCreateAndroidSurfaceKHR>("vkCreateAndroidSurfaceKHR")(instance, &si, nullptr, &surface) != VK_SUCCESS) return "{\"reason\":\"surface_create\"}";
+            auto createSurface = fn<PFN_vkCreateAndroidSurfaceKHR>("vkCreateAndroidSurfaceKHR");
+            if (!createSurface || createSurface(instance, &si, nullptr, &surface) != VK_SUCCESS) return "{\"reason\":\"surface_create\"}";
         }
         auto devices = fn<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices");
-        if (devices(instance, &count, nullptr) != VK_SUCCESS) return "{}";
+        auto properties = fn<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties");
+        if (!devices || !properties || devices(instance, &count, nullptr) != VK_SUCCESS || !count) return "{}";
         std::vector<VkPhysicalDevice> physical(count);
         if (devices(instance, &count, physical.data()) != VK_SUCCESS) return "{}";
         physical.resize(count);
         std::string unsupported = "{\"reason\":\"device\"}";
         for (auto device : physical) {
             VkPhysicalDeviceProperties props;
-            fn<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties")(device, &props);
+            properties(device, &props);
             auto failure = [&](const char *why) { return "{\"device\":" + quote(props.deviceName) + ",\"version\":" + std::to_string(props.apiVersion) + ",\"reason\":" + quote(why) + "}"; };
             if (validatedDevice && (strcmp(props.deviceName, validatedDevice) || props.apiVersion != validatedVersion)) continue;
             unsupported = failure("device_features");
@@ -186,8 +190,7 @@ struct Probe {
                 getSemaphore(device, &externalSemaphore, &semaphoreProperties);
             const auto requiredSemaphore = VK_EXTERNAL_SEMAPHORE_FEATURE_IMPORTABLE_BIT | VK_EXTERNAL_SEMAPHORE_FEATURE_EXPORTABLE_BIT;
             bool syncFd = (semaphoreProperties.externalSemaphoreFeatures & requiredSemaphore) == requiredSemaphore;
-            // Startup already verified logical-device creation on this exact device/version.
-            // A surface recheck only needs actual presentation support and formats.
+            // Only the full device probe reaches logical-device creation.
             const float priority = 1.0f;
             VkDeviceQueueCreateInfo qi{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
             qi.queueFamilyIndex = graphics; qi.queueCount = 1; qi.pQueuePriorities = &priority;
