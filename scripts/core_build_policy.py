@@ -97,6 +97,12 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline"):
                  ("picodrive", "arm64-v8a", "baseline"),
                  ("picodrive", "arm64-v8a", "picodrive-sh2"),
                  ("snes9x", "arm64-v8a", "tune-a57")]
+        # Cover the entire pinned catalog on ARM64, including a separate LTO candidate.
+        for core in ids:
+            for variant in ("baseline", "thinlto"):
+                job = (core, "arm64-v8a", variant)
+                if job not in jobs:
+                    jobs.append(job)
     else:
         jobs = [(core, abi, profile) for core in chosen_cores for abi in chosen_abis]
     by_id = {entry["core"]: entry for entry in entries}
