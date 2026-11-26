@@ -62,6 +62,30 @@ part of the VLC patch glob or packaged APK. It must not be used to remove
   C++ source and assertions passed locally with ASan/UBSan; the actual NDK
   checks are still pending. The slot pool is not yet wired to VLC.
 
+## Cache and asynchronous handoff follow-up
+
+- Per-retired-slot `ConversionCacheEntry` retains a decoder buffer reference,
+  immutable sampler, descriptors, pipeline and reusable RGB target. A matching
+  slot is preferred; no active or quarantined slot is reused. Cache hits still
+  require a fresh picture lease and fresh producer/consumer synchronization.
+  This caches by retained AHB identity and geometry, not yet across distinct
+  buffers of the same format.
+- Consumer submission may wait on the conversion-complete binary semaphore
+  without a CPU fence wait. Conversion completion returns the VLC picture;
+  the semaphore and output target remain alive until independent libplacebo
+  hold/reclaim completion. Slot and mock submission regressions cover this.
+- Actual logical-device interop feature/extension gate, SDR model/range
+  comparison, and an isolated opt-in `instance_vulkan.c` patch requesting
+  features on the pinned renderer device. The patch is outside the production
+  patch glob and does not enable opaque input in display.c.
+- Native CI setup was repaired. Run 45893661716 passed host sanitizer tests,
+  GLSL compilation and four Android ABI syntax checks. Subsequent changes add
+  the mock submission test, pinned libplacebo C API checks and exact VLC patch
+  applicability check; the latest run is not yet confirmed.
+- Still required: actual display.c orchestration, dispatch/command pool owner,
+  hold-semaphore consumption, device-lost teardown, opaque negotiation and
+  fallback, linked native build and physical decoder/GPU validation.
+
 ## Required integration before activation
 
 1. Build these headers against the pinned Android NDK and supported Vulkan ABIs.
