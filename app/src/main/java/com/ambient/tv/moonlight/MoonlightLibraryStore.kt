@@ -85,6 +85,14 @@ class MoonlightLibraryStore @Inject constructor(
         moonlightProbeFresh(identity, probe.first, probe.second, android.os.SystemClock.elapsedRealtime())
     }
 
+    fun markOnline(request: Request): Boolean = synchronized(lock) {
+        if (!isCurrent(request)) return@synchronized false
+        val wasOnline = isRecentlyOnline(request.hostId)
+        online[request.hostId] = request.identity to android.os.SystemClock.elapsedRealtime()
+        if (!wasOnline) mutableAvailability.value++
+        true
+    }
+
     fun markOffline(hostId: String, request: Request? = null) = synchronized(lock) {
         if (request != null && !isCurrent(request)) return@synchronized
         requestIds[hostId] = ++sequence

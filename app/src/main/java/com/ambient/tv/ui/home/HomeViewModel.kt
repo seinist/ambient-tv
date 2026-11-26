@@ -222,6 +222,7 @@ class HomeViewModel @Inject constructor(
     private val loadCoordinator: BrowseLoadCoordinator,
     private val rommLibrary: com.ambient.tv.romm.RommLibrary,
     private val moonlightStore: com.ambient.tv.moonlight.MoonlightLibraryStore,
+    private val moonlightCatalog: com.ambient.tv.moonlight.MoonlightCatalogRepository,
 ) : ViewModel() {
 
     val homeHeroStyleKey: String get() = appPreferences.homeHeroStyleKey
@@ -301,6 +302,7 @@ class HomeViewModel @Inject constructor(
     /** Cached GameStream covers and titles only; no Sunshine network call from Home. */
     private var moonlightRows: List<ContentRowData> = emptyList()
     private var moonlightRowsJob: Job? = null
+    private var moonlightPrefetchJob: Job? = null
     private var moonlightRowsGeneration = 0
     /** Independent of row refreshes, so publishing migrated covers cannot cancel its own work. */
     private var gameGeometryJob: Job? = null
@@ -765,6 +767,8 @@ class HomeViewModel @Inject constructor(
         loadGameRows()
         loadRommRows()
         loadMoonlightRows()
+        if (!plexOnly && !jellyfinOnly && !embyOnly) prefetchMoonlightCatalogs(refreshing)
+        else moonlightPrefetchJob?.cancel()
         loadYouTubeRows(youtubeMode)
         loadTelegramRows()
         if (!plexOnly && !jellyfinOnly && !embyOnly && liveTvRegistry.configured().isNotEmpty()) startTvPreview()
@@ -2149,6 +2153,23 @@ class HomeViewModel @Inject constructor(
             if (rows.isNotEmpty()) gameMetadata.get().startCoverRecovery()
             if (!_uiState.value.isFailurePage())
                 publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+        }
+    }
+
+    /** Low-priority catalog prefetch does not delay Home or trigger WOL. */
+    private fun prefetchMoonlightCatalogs(force: Boolean) {
+        if (!com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE || !appPreferences.hasMoonlightHosts) return
+        moonlightPrefetchJob?.cancel()
+        moonlightPrefetchJob = viewModelScope.launch {
+            kotlinx.coroutines.coroutineScope {
+                appPreferences.moonlightHosts.forEach { host -> launch {
+                    try {
+                        if (moonlightStore.peerIdentity(host.id) != null && (force || !moonlightStore.isCatalogFresh(host.id)))
+                            moonlightCatalog.refresh(host, com.ambient.tv.data.browse.BrowseLoadPriority.HOME, forceCatalog = force)
+                    } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+                    catch (_: Exception) { /* Cached rows remain usable offline. */ }
+                } }
+            }
         }
     }
 

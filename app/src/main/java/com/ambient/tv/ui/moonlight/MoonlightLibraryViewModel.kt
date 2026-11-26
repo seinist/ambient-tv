@@ -98,6 +98,7 @@ class MoonlightLibraryViewModel @Inject constructor(
     private val browse: BrowseLoadCoordinator,
     private val reconnects: com.ambient.tv.data.browse.BrowseReconnects,
     private val connectivity: com.ambient.tv.connectivity.HostConnectivity,
+    private val catalogRepository: com.ambient.tv.moonlight.MoonlightCatalogRepository,
 ) : ViewModel() {
     private val mutable = MutableStateFlow(MoonlightLibraryUiState(view = prefs.moonlightLibraryView))
     val state: StateFlow<MoonlightLibraryUiState> = mutable.asStateFlow()
@@ -208,23 +209,7 @@ class MoonlightLibraryViewModel @Inject constructor(
                             try {
                                 if (identity == null) throw SecurityException("Moonlight host not paired")
                                 // Single-flight owns one request token, even with two browse consumers.
-                                browse.request("moonlight", "catalog:${host.id}:$identity:${host.host}:${host.port}",
-                                    BrowseLoadPriority.VISIBLE) {
-                                    val token = store.beginRequest(host.id) ?: throw SecurityException("Moonlight host not paired")
-                                    val check = connectivity.begin("moonlight:" + host.id)
-                                    try {
-                                        val catalog = transport.applications(host.id)
-                                        if (prefs.moonlightHosts.any { it == host } && store.putCatalog(host.id, catalog, token))
-                                            connectivity.online(check)
-                                    } catch (error: SecurityException) {
-                                        store.invalidateCatalog(host.id, token)
-                                        throw error
-                                    } catch (cancel: CancellationException) { throw cancel }
-                                    catch (error: Exception) {
-                                        store.markOffline(host.id, token)
-                                        throw error
-                                    }
-                                }
+                                catalogRepository.refresh(host, BrowseLoadPriority.VISIBLE, forceCatalog = force)
                                 if (store.peerIdentity(host.id) == identity && prefs.moonlightHosts.any { it == host }) {
                                     reloadLocal()
                                     mutable.update { it.copy(errors = it.errors - host.id) }

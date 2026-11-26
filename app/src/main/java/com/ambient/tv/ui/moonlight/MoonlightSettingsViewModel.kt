@@ -57,6 +57,7 @@ class MoonlightSettingsViewModel @Inject constructor(
     private val serverInfo: MoonlightServerInfoClient,
     private val transport: MoonlightSystemTransport,
     private val libraryStore: MoonlightLibraryStore,
+    private val catalogRepository: com.ambient.tv.moonlight.MoonlightCatalogRepository,
     private val engine: com.ambient.tv.moonlight.MoonlightStreamEngine,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
@@ -219,11 +220,10 @@ class MoonlightSettingsViewModel @Inject constructor(
         viewModelScope.launch {
             mutable.update { it.copy(loadingAppsId = hostId, error = null) }
             try {
-                val token = libraryStore.beginRequest(hostId) ?: throw SecurityException("Moonlight host not paired")
-                val catalog = transport.applications(hostId)
-                if (kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    libraryStore.putCatalog(hostId, catalog, token)
-                }) mutable.update { it.copy(appLists = it.appLists + (hostId to catalog.apps)) }
+                val host = preferences.moonlightHosts.firstOrNull { it.id == hostId }
+                    ?: throw SecurityException("Unknown Moonlight host")
+                val catalog = catalogRepository.refresh(host, com.ambient.tv.data.browse.BrowseLoadPriority.VISIBLE, forceCatalog = true)
+                if (preferences.moonlightHosts.any { it == host }) mutable.update { it.copy(appLists = it.appLists + (hostId to catalog.apps)) }
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (_: SecurityException) {

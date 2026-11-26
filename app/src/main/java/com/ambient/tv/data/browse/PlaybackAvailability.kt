@@ -50,6 +50,7 @@ class PlaybackAvailability @Inject constructor(
     private val wireGuard: Provider<com.ambient.tv.vpn.WireGuardRouteController>,
     private val moonlight: Provider<com.ambient.tv.moonlight.MoonlightSystemTransport>,
     private val moonlightStore: Provider<com.ambient.tv.moonlight.MoonlightLibraryStore>,
+    private val moonlightCatalog: Provider<com.ambient.tv.moonlight.MoonlightCatalogRepository>,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val revision = MutableStateFlow(0L)
@@ -277,25 +278,15 @@ class PlaybackAvailability @Inject constructor(
         if (!moonlight.get().locallyPaired(hostId)) return answer(false, true)
         suspend fun verify(): PlaybackAccessResult {
             if (!current()) return answer(false)
-            val token = moonlightStore.get().beginRequest(hostId) ?: return answer(false, true)
-            val check = hosts.begin(system)
             val result = withTimeoutOrNull(25_000L) {
-                withContext(Dispatchers.IO) {
-                    suspendResult {
-                        val catalog = moonlight.get().applications(hostId)
-                        if (current()) moonlightStore.get().putCatalog(hostId, catalog, token)
-                        catalog.apps.any { it.id == appId }
-                    }
+                suspendResult {
+                    val catalog = moonlightCatalog.get().refresh(host, BrowseLoadPriority.VISIBLE, forceCatalog = true)
+                    catalog.apps.any { it.id == appId }
                 }
             }
             currentCoroutineContext().ensureActive()
             if (!current()) return answer(false)
-            if (result?.isSuccess == true) {
-                hosts.online(check)
-                return answer(result.getOrNull() == true)
-            }
-            if (authenticationFailure(result?.exceptionOrNull())) moonlightStore.get().invalidateCatalog(hostId, token)
-            else moonlightStore.get().markOffline(hostId, token)
+            if (result?.isSuccess == true) return answer(result.getOrNull() == true)
             return answer(false, authenticationFailure(result?.exceptionOrNull()))
         }
         val first = verify()

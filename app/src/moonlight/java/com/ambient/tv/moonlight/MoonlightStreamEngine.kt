@@ -102,7 +102,13 @@ class MoonlightStreamEngine @Inject constructor(
         session.preparation = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
                 val target = transport.verifiedHost(hostId)
-                val apps = transport.loadApplications(target).apps
+                // Playback authorization has just refreshed the pinned catalog. Reuse it only
+                // for this exact freshly verified peer; direct entry or stale data still fetches.
+                val cached = withContext(Dispatchers.IO) {
+                    libraryStore.catalog(hostId)?.takeIf { it.peerIdentity == target.identity &&
+                        libraryStore.isCatalogFresh(hostId, 15_000L) && libraryStore.isRecentlyOnline(hostId) }
+                }
+                val apps = cached?.apps ?: transport.loadApplications(target).apps
                 val app = apps.firstOrNull { it.id == appId }
                     ?: throw SecurityException("App is no longer published by this paired host")
                 val videoFormat = withContext(Dispatchers.IO) {
