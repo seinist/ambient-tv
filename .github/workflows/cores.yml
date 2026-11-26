@@ -21,7 +21,7 @@ on:
       profile:
         description: Compiler profile (non-baseline is artifact-only)
         type: choice
-        options: [baseline, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2]
+        options: [baseline, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2, snes9x2010-threaded]
         default: baseline
       comparison:
         description: Paired full-catalog builds (artifact-only; baseline profile required)
@@ -204,6 +204,7 @@ jobs:
             cmake --build build --verbose -j"$(nproc)" -- --output-sync=target 2>&1 | tee reports/build.log
             lib=$(python3 scripts/core_build_policy.py select --nm "$bin/llvm-nm" --root build --pattern '*libretro*.so')
           else
+            python3 scripts/core_build_policy.py prepare-ndk --root "src/$JNI" --core "$CORE" --profile "$PROFILE"
             python3 scripts/core_build_policy.py ndk-flags \
               --application "src/$JNI/jni/Application.mk" --profile "$PROFILE" --cppflags="$CPPFLAGS_EXTRA"
             build_cwd="$PWD/src/$JNI/jni"
