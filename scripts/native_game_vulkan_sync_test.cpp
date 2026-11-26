@@ -1075,6 +1075,85 @@ void earlyNativePresentContracts() {
     std::puts("PASS WSI queues before host fence, confirms after completion, and safely handles failures");
 }
 
+void abandonedWsiAcquireContracts() {
+    static VkSemaphore expected;
+    static unsigned drains;
+    static VkResult drainResult;
+    for (unsigned mode = 0; mode < 8; ++mode) {
+        VulkanBackend backend;
+        setup(backend);
+        window(backend);
+        backend.nativePresentation.setFullscreenActive(true);
+        assert(backend.ensureNativeSdrSwapchain());
+        expected = backend.nativeSdrAcquireSlots.get(0);
+        auto& state = backend.nativeAcquireState;
+        drains = 0;
+        drainResult = VK_SUCCESS;
+        const auto oom = VK_ERROR_OUT_OF_HOST_MEMORY;
+        if (mode == 0 || mode == 5 || mode == 6) driver.commandReset = oom;
+        if (mode == 1) driver.begin = oom;
+        if (mode == 2) driver.end = oom;
+        if (mode == 3) driver.submit = oom;
+        if (mode == 4) backend.vk.acquireNextImage = [](VkDevice, VkSwapchainKHR, uint64_t,
+                VkSemaphore, VkFence, uint32_t* index) { *index = 999; return VK_SUBOPTIMAL_KHR; };
+        if (mode == 7) driver.submit = VK_ERROR_UNKNOWN;
+        assert(!backend.presentFrame(256, 224, 4.0F/3.0F, true));
+        assert(backend.hasFatalError() && !state.ready(0) && !driver.presents);
+        assert(state.acquired(0) == (mode != 7));
+        // Idle before a wait is queued is not proof of WSI acquire completion.
+        assert(backend.waitForDeviceIdle() && !state.ready(0));
+        backend.vk.queueSubmit = [](VkQueue, uint32_t count, const VkSubmitInfo* info, VkFence fence) {
+            assert(count == 1 && fence == VK_NULL_HANDLE && !driver.pending);
+            assert(info && info->waitSemaphoreCount == 1 && *info->pWaitSemaphores == expected &&
+                   *info->pWaitDstStageMask == VK_PIPELINE_STAGE_ALL_COMMANDS_BIT &&
+                   info->commandBufferCount == 0 && info->signalSemaphoreCount == 0);
+            ++drains;
+            if (drainResult == VK_SUCCESS) driver.pending = true;
+            return drainResult;
+        };
+        if (mode == 5) {
+            // A failed wait-only submission must preserve the unconsumed signal.
+            drainResult = oom;
+            backend.shutdown();
+            assert(drains == 1 && state.acquired(0) && backend.device && !backend.shutdownReady);
+            assert(driver.wsiSemaphoreFrees == 0 && driver.deviceFrees == 0);
+            drainResult = VK_SUCCESS;
+        }
+        if (mode == 6) {
+            // A successfully queued wait must not be submitted twice if idle fails.
+            driver.idles = {oom};
+            backend.shutdown();
+            assert(drains == 1 && !state.acquired(0) && !state.ready(0) && driver.pending);
+            assert(backend.device && !backend.shutdownReady && driver.wsiSemaphoreFrees == 0);
+        }
+        if (mode == 7) {
+            // Ambiguous submit result: never guess whether another wait is safe.
+            backend.shutdown();
+            assert(!drains && backend.device && !state.ready(0) && driver.wsiSemaphoreFrees == 0);
+            driver.idles = {VK_ERROR_DEVICE_LOST};
+        }
+        backend.shutdown();
+        assert(drains == (mode == 5 ? 2u : mode == 7 ? 0u : 1u));
+        assert(state.allIdle() && !backend.device && !backend.hasFatalError());
+        assert(driver.wsiSemaphoreFrees == 3 && driver.swapchainFrees == 1 &&
+               driver.deviceFrees == 1);
+    }
+    // Successful frames reuse their acquire semaphore after the original
+    // frame fence, without another queue submission or host wait.
+    {
+        VulkanBackend backend;
+        setup(backend); window(backend);
+        for (unsigned i = 0; i < 3; ++i) {
+            assert(backend.presentFrame(256, 224, 4.0F/3.0F, true));
+            assert(backend.nativeAcquireState.allIdle());
+            assert(driver.submits == i + 1 && driver.waitCalls == i + 1);
+        }
+        backend.shutdown();
+        assert(driver.submits == 3 && driver.wsiSemaphoreFrees == 3);
+    }
+    std::puts("PASS abandoned WSI acquire drain, retry, uncertain submit retention and normal reuse");
+}
+
 void wsiAcquireSlotContracts() {
     {
         VulkanBackend backend;
@@ -1597,6 +1676,7 @@ int main() {
     nativeSurfacePolicyAndSuccess();
     earlyNativePresentContracts();
     wsiAcquireSlotContracts();
+    abandonedWsiAcquireContracts();
     filteredPresetSwitchRetainsSwapchain();
     reusableSubmitStorage();
     readFenceQueueContracts();

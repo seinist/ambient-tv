@@ -47,6 +47,7 @@ def main():
         "bool VulkanBackend::ensureFrameBuffer(",
         "bool VulkanBackend::canRetireNativeWsi(",
         "bool VulkanBackend::ensureNativeAcquireSemaphore(",
+        "bool VulkanBackend::drainNativeAcquireSignals(",
         "bool VulkanBackend::destroyNativeSdrSwapchain(",
         "void VulkanBackend::disableNativeSdrSwapchain(",
         "bool VulkanBackend::ensureNativeSdrSwapchain(",
@@ -193,6 +194,12 @@ def main():
             str(root / "scripts/native_game_vulkan_wsi_acquire_test.cpp"),
             "-o", str(wsi_acquire_binary)], check=True)
         subprocess.run([str(wsi_acquire_binary)], check=True, timeout=20)
+
+        wsi_state_binary = work / "vulkan-wsi-acquire-state-test"
+        subprocess.run(command + ["-I", str(native / "vulkan"),
+            str(root / "scripts/native_game_vulkan_wsi_acquire_state_test.cpp"),
+            "-o", str(wsi_state_binary)], check=True)
+        subprocess.run([str(wsi_state_binary)], check=True, timeout=20)
 
         alternate_binary = work / "vulkan-alternate-policy-test"
         subprocess.run(command + [str(root / "scripts/native_game_vulkan_alternate_policy_test.cpp"),
