@@ -42,7 +42,8 @@ struct Driver {
              imageFrees = 0, memoryFrees = 0, bufferFrees = 0, windowReleases = 0,
              cachePrepares = 0, cacheReleases = 0, slangReleases = 0,
              allocations = 0, deviceFrees = 0, coreDestroys = 0, swapchainCreates = 0,
-             swapchainFrees = 0, commandPoolFrees = 0, fenceFrees = 0, colorClears = 0;
+             swapchainFrees = 0, commandPoolFrees = 0, fenceFrees = 0, colorClears = 0,
+             wsiSemaphoreCreates = 0, wsiSemaphoreFrees = 0;
     VkCompositeAlphaFlagsKHR alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     VkCompositeAlphaFlagBitsKHR chosenAlpha = VK_COMPOSITE_ALPHA_FLAG_BITS_MAX_ENUM_KHR;
     VkSurfaceTransformFlagsKHR transforms = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
@@ -268,9 +269,11 @@ void setup(VulkanBackend& backend) {
         return VK_SUCCESS;
     };
     vk.createSemaphore = [](VkDevice, const VkSemaphoreCreateInfo*, const VkAllocationCallbacks*, VkSemaphore* value) {
-        *value = object<VkSemaphore>(17); return VK_SUCCESS;
+        *value = object<VkSemaphore>(1000 + ++driver.wsiSemaphoreCreates); return VK_SUCCESS;
     };
-    vk.destroySemaphore = [](VkDevice, VkSemaphore, const VkAllocationCallbacks*) { assert(!driver.pending); };
+    vk.destroySemaphore = [](VkDevice, VkSemaphore, const VkAllocationCallbacks*) {
+        assert(!driver.pending); ++driver.wsiSemaphoreFrees;
+    };
     vk.acquireNextImage = [](VkDevice, VkSwapchainKHR, uint64_t, VkSemaphore, VkFence, uint32_t* index) {
         *index = 0; return VK_SUCCESS;
     };
@@ -1072,6 +1075,72 @@ void earlyNativePresentContracts() {
     std::puts("PASS WSI queues before host fence, confirms after completion, and safely handles failures");
 }
 
+void wsiAcquireSlotContracts() {
+    {
+        VulkanBackend backend;
+        setup(backend);
+        window(backend);
+        assert(backend.ensureNativeSdrSwapchain());
+        auto& slots = backend.nativeSdrAcquireSlots;
+        const auto primary = slots.get(0);
+        const auto complete = backend.nativeSdrComplete;
+        assert(primary && !slots.get(1) && complete.size() == 2 && driver.wsiSemaphoreCreates == 3);
+        assert(!backend.ensureNativeAcquireSemaphore(2));
+        const auto create = backend.vk.createSemaphore;
+        backend.vk.createSemaphore = [](VkDevice, const VkSemaphoreCreateInfo*,
+                const VkAllocationCallbacks*, VkSemaphore* out) {
+            *out = object<VkSemaphore>(9999);
+            return VK_ERROR_OUT_OF_HOST_MEMORY;
+        };
+        assert(!backend.ensureNativeAcquireSemaphore(1) && !slots.get(1));
+        assert(!backend.hasFatalError() && slots.get(0) == primary && backend.nativeSdrComplete == complete);
+        backend.vk.createSemaphore = create;
+        assert(backend.ensureNativeAcquireSemaphore(1));
+        const auto spare = slots.get(1);
+        assert(spare && spare != primary && backend.ensureNativeAcquireSemaphore(1));
+        assert(driver.wsiSemaphoreCreates == 4 && backend.nativeSdrComplete == complete);
+        assert(backend.presentFrame(256, 224, 4.0F / 3.0F, true));
+        assert(std::find(driver.submittedWaits.begin(), driver.submittedWaits.end(), primary) !=
+               driver.submittedWaits.end());
+        assert(std::find(driver.submittedWaits.begin(), driver.submittedWaits.end(), spare) ==
+               driver.submittedWaits.end());
+        const auto destroy = backend.vk.destroySemaphore;
+        backend.vk.destroySemaphore = nullptr;
+        backend.shutdown();
+        assert(backend.device && !backend.shutdownReady && backend.nativeSdrSwapchain);
+        assert(slots.get(0) == primary && slots.get(1) == spare && backend.nativeSdrComplete == complete);
+        assert(driver.wsiSemaphoreFrees == 0 && driver.slangReleases == 0 &&
+               driver.swapchainFrees == 0 && driver.deviceFrees == 0);
+        backend.vk.destroySemaphore = destroy;
+        backend.shutdown();
+        assert(!backend.device && !slots.get(0) && !slots.get(1) && backend.nativeSdrComplete.empty());
+        assert(driver.wsiSemaphoreFrees == 4 && driver.swapchainFrees == 1 && driver.deviceFrees == 1);
+    }
+    for (unsigned failure = 1; failure <= 3; ++failure) {
+        VulkanBackend backend;
+        setup(backend);
+        window(backend);
+        static unsigned failAt;
+        failAt = failure;
+        backend.vk.createSemaphore = [](VkDevice, const VkSemaphoreCreateInfo*,
+                const VkAllocationCallbacks*, VkSemaphore* out) {
+            const auto call = ++driver.wsiSemaphoreCreates;
+            *out = object<VkSemaphore>(call == failAt ? 9999 : 1000 + call);
+            return call == failAt ? VK_ERROR_OUT_OF_HOST_MEMORY : VK_SUCCESS;
+        };
+        backend.vk.destroySemaphore = [](VkDevice, VkSemaphore semaphore, const VkAllocationCallbacks*) {
+            assert(!driver.pending && semaphore != object<VkSemaphore>(9999));
+            ++driver.wsiSemaphoreFrees;
+        };
+        assert(!backend.ensureNativeSdrSwapchain() && !backend.hasFatalError());
+        assert(!backend.nativeSdrSwapchain && !backend.nativeSdrAcquireSlots.get(0) &&
+               !backend.nativeSdrAcquireSlots.get(1) && backend.nativeSdrComplete.empty());
+        assert(driver.wsiSemaphoreCreates == failure && driver.wsiSemaphoreFrees == failure - 1 &&
+               driver.swapchainFrees == 1);
+    }
+    std::puts("PASS slot-indexed WSI acquisition, image-indexed completion and transactional teardown");
+}
+
 void filteredPresetSwitchRetainsSwapchain() {
     VulkanBackend backend;
     setup(backend); window(backend);
@@ -1125,7 +1194,7 @@ void reusableSubmitStorage() {
             expectedCommands.push_back(backend.frameSlot.command);
             std::vector<VkSemaphore> expectedWaits, expectedSignals;
             if (!commands && waits) expectedWaits = {waitA, waitB};
-            if (direct) expectedWaits.push_back(backend.nativeSdrAcquire);
+            if (direct) expectedWaits.push_back(backend.nativeSdrAcquireSlots.get(0));
             if (coreSignal) expectedSignals.push_back(signal);
             if (direct) expectedSignals.push_back(backend.nativeSdrComplete[0]);
             assert(backend.presentFrame(256, 224, 4.0F/3.0F, true));
@@ -1227,7 +1296,7 @@ void readFenceQueueContracts() {
             assert(!backend.frameSlot.bridgeSync.readPending && !backend.frameSlot.inFlight && !driver.pending);
             std::vector<VkSemaphore> expected;
             if (!coreCommands) expected.push_back(coreWait);
-            if (direct) expected.push_back(backend.nativeSdrAcquire);
+            if (direct) expected.push_back(backend.nativeSdrAcquireSlots.get(0));
             expected.push_back(readSemaphore);
             assert(driver.submittedWaits == expected);
             assert(driver.submittedStages.size() == expected.size());
@@ -1527,6 +1596,7 @@ int main() {
     safeCallbackAndTeardown();
     nativeSurfacePolicyAndSuccess();
     earlyNativePresentContracts();
+    wsiAcquireSlotContracts();
     filteredPresetSwitchRetainsSwapchain();
     reusableSubmitStorage();
     readFenceQueueContracts();
