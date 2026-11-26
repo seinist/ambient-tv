@@ -133,6 +133,14 @@ class VlcPlaybackController(
     var usesAndroidSurfaceOutput by mutableStateOf(!vulkanOutput)
         private set
     private var vulkanSurfaceChecked = false
+    private var vulkanProbePending = false
+    private var vulkanProbeGeneration = 0L
+
+    private fun invalidateVulkanProbe() {
+        vulkanSurfaceChecked = false
+        vulkanProbePending = false
+        vulkanProbeGeneration++
+    }
     private var vulkanStartedAt = 0L
     var accelerationFallback: String? = if (!audioOnly && videoOutputMode == "vulkan" && !vulkanOutput)
         if (nativeHdrPreferred) "Vulkan → Android: native HDR surface" else "Vulkan → Android: unavailable" else null
@@ -507,7 +515,7 @@ class VlcPlaybackController(
             if (attachedView?.holder === holder) {
                 renderSurfaceSize = null
                 // A surviving SurfaceView may get an entirely new native window.
-                vulkanSurfaceChecked = false
+                invalidateVulkanProbe()
             }
         }
     }
@@ -870,11 +878,19 @@ class VlcPlaybackController(
                 // timer could expire while AudioTrack/HDMI or network initialization continued.
                 if (view.holder.surface.isValid) {
                     if (vulkanOutput && !vulkanSurfaceChecked) {
-                        vulkanSurfaceChecked = true
-                        if (!VideoAccelerationRuntime.surfaceSupported(view.holder.surface, "vlc")) {
-                            fallbackVulkan("surface")
-                            return
+                        if (!vulkanProbePending) {
+                            vulkanProbePending = true
+                            val generation = ++vulkanProbeGeneration
+                            val target = java.lang.ref.WeakReference(this@VlcPlaybackController)
+                            val viewRef = java.lang.ref.WeakReference(view)
+                            VideoAccelerationRuntime.probeSurfaceAsync(view.holder.surface) { probed ->
+                                val current = target.get()
+                                val window = viewRef.get()
+                                if (current != null && window != null)
+                                    current.completeVulkanProbe(window, generation, probed)
+                            }
                         }
+                        return
                     }
                     if (!prepared) prepare()
                     if (restartStopFailed || headerRelayFailed || restartStop != null || dvRetirementPending) return
@@ -902,6 +918,18 @@ class VlcPlaybackController(
         view.post(task)
     }
 
+    private fun completeVulkanProbe(view: SurfaceView, generation: Long, probed: VulkanDeviceCapabilities) {
+        if (released || generation != vulkanProbeGeneration) return
+        vulkanProbePending = false
+        if (!vulkanOutput || attachedView !== view || !view.holder.surface.isValid) return
+        if (!VideoAccelerationRuntime.acceptSurfaceProbe(probed, "vlc")) {
+            fallbackVulkan("surface")
+            return
+        }
+        vulkanSurfaceChecked = true
+        restoreVideoTrackWhenSurfaceIsReady(view)
+    }
+
     fun detach(view: SurfaceView) {
         if (pendingAttachView === view) pendingAttachView = null
         if (released || attachedView !== view) return
@@ -921,7 +949,7 @@ class VlcPlaybackController(
         player.setVideoTrackEnabled(false)
         player.vlcVout.detachViews()
         attachedView = null
-        vulkanSurfaceChecked = false
+        invalidateVulkanProbe()
         renderSurfaceSize = null
     }
 
