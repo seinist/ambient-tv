@@ -537,6 +537,10 @@ class AppPreferences @Inject constructor(
         }
     }
 
+    fun resetMoonlightDeviceId() = synchronized(prefs) {
+        prefs.edit { remove("moonlight_device_id") }
+    }
+
     /** RomM game server (Settings › RomM). Its secret (token or password) lives in TokenStore. */
     var rommEnabled: Boolean
         get() = prefs.getBoolean("romm_enabled", false)

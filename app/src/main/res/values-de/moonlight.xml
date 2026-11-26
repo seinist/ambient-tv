@@ -35,7 +35,7 @@
     <string name="moonlight_pair_failed">Kopplung fehlgeschlagen. Sunshine und die PC-Verbindung prüfen.</string>
     <string name="moonlight_identity_changed">Das gespeicherte PC-Zertifikat oder die Identität stimmt nicht mehr überein. PC nur dann entfernen und erneut koppeln, wenn du der neuen Identität vertraust.</string>
     <string name="moonlight_apps_failed">Die Anwendungsliste des gekoppelten PCs konnte nicht geladen werden.</string>
-    <string name="moonlight_catalog_preview">Diese Anwendungen sind noch nicht abspielbar: Der Streaming-Player ist weiterhin in Entwicklung.</string>
+    <string name="moonlight_catalog_preview">Anwendungen können über die Moonlight-Spielebibliothek gestartet werden.</string>
     <string name="moonlight_stream_test">Stream testen: %1$s</string>
     <string name="moonlight_stream_running">Remote-Sitzung aktiv. Zurück öffnet die Steuerung.</string>
     <string name="moonlight_stream_connecting">Verbindung zum Gaming-PC wird hergestellt…</string>
@@ -79,4 +79,9 @@
     <string name="moonlight_about_role">Nativer GameStream-Client</string>
     <string name="moonlight_companion_rumble_on">Spielvibration an</string>
     <string name="moonlight_companion_rumble_off">Spielvibration aus</string>
+    <string name="moonlight_forget_pairing">Kopplung zurücksetzen</string>
+    <string name="moonlight_forget_hint">Die lokale Kopplung wird gelöscht. Kopple den PC nur erneut, wenn du seiner Identität vertraust.</string>
+    <string name="moonlight_reset_identity">Client-Identität zurücksetzen</string>
+    <string name="moonlight_reset_hint">Alle Moonlight-Kopplungen und der lokale Schlüssel werden gelöscht. Die PCs bleiben gespeichert und müssen neu gekoppelt werden. Beende vorher den Stream.</string>
+    <string name="moonlight_reset_failed">Client-Identität konnte nicht zurückgesetzt werden. Erneut versuchen.</string>
 </resources>

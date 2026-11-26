@@ -35,7 +35,7 @@
     <string name="moonlight_pair_failed">Pairing failed. Check Sunshine and the PC connection.</string>
     <string name="moonlight_identity_changed">The saved PC certificate or identity no longer matches. Remove the PC and pair again only if you trust the new identity.</string>
     <string name="moonlight_apps_failed">Unable to retrieve the paired PC application list.</string>
-    <string name="moonlight_catalog_preview">These applications are not playable yet: the streaming player is still under development.</string>
+    <string name="moonlight_catalog_preview">Start applications from the Moonlight game library.</string>
     <string name="moonlight_stream_test">Test stream: %1$s</string>
     <string name="moonlight_stream_running">Remote session active. Back opens the controls.</string>
     <string name="moonlight_stream_connecting">Connecting to the gaming PC…</string>
@@ -79,4 +79,9 @@
     <string name="moonlight_about_role">Native GameStream client</string>
     <string name="moonlight_companion_rumble_on">Game rumble on</string>
     <string name="moonlight_companion_rumble_off">Game rumble off</string>
+    <string name="moonlight_forget_pairing">Forget pairing</string>
+    <string name="moonlight_forget_hint">Removes local trust for this PC. Pair again only if you trust its identity.</string>
+    <string name="moonlight_reset_identity">Reset client identity</string>
+    <string name="moonlight_reset_hint">Deletes all local Moonlight pairings and the client key. Saved PCs remain and must be paired again. Disconnect any stream first.</string>
+    <string name="moonlight_reset_failed">Could not reset the client identity. Try again.</string>
 </resources>

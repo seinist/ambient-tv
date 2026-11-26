@@ -15,5 +15,6 @@ class MoonlightSystemTransport @Inject constructor() {
     suspend fun artwork(hostId: String, appId: Int): ByteArray =
         throw UnsupportedOperationException("Moonlight native transport not installed")
     suspend fun quitRemoteApp(hostId: String, expectedAppId: Int): Boolean = false
+    suspend fun resetClientIdentity() = Unit
     fun forget(hostId: String) = Unit
 }

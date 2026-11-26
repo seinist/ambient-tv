@@ -10,8 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import android.content.Intent
-import androidx.compose.ui.platform.LocalContext
+import com.ambient.tv.ui.common.AppDialog
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
@@ -35,7 +34,8 @@ fun MoonlightSettingsSection(
     model: MoonlightSettingsViewModel = hiltViewModel(),
 ) {
     val state by model.state.collectAsState()
-    val context = LocalContext.current
+    var forgetHost by rememberSaveable { mutableStateOf<String?>(null) }
+    var confirmReset by rememberSaveable { mutableStateOf(false) }
     var hostname by rememberSaveable { mutableStateOf("") }
     var port by rememberSaveable { mutableStateOf("47989") }
     var name by rememberSaveable { mutableStateOf("") }
@@ -71,20 +71,12 @@ fun MoonlightSettingsSection(
                                 style = MaterialTheme.typography.bodySmall)
                             if (state.pairingBusy) Text(stringResource(R.string.moonlight_pair_waiting),
                                 style = MaterialTheme.typography.bodySmall)
+                            TvActionButton(stringResource(R.string.files_cancel), model::cancelPairing)
                         }
                         if (paired) {
                             state.appLists[host.id]?.let { apps ->
                                 Text(stringResource(R.string.moonlight_app_count, apps.size),
                                     style = MaterialTheme.typography.bodyMedium)
-                                // Preview only. Do not offer nonfunctional Play actions.
-                                apps.take(16).forEach { app ->
-                                    TvActionButton(stringResource(R.string.moonlight_stream_test, app.title), {
-                                        context.startActivity(Intent(context, MoonlightStreamActivity::class.java).apply {
-                                            putExtra(MoonlightStreamActivity.EXTRA_HOST_ID, host.id)
-                                            putExtra(MoonlightStreamActivity.EXTRA_APP_ID, app.id)
-                                        })
-                                    }, enabled = !state.pairingBusy && state.loadingAppsId == null)
-                                }
                                 Text(stringResource(R.string.moonlight_catalog_preview),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -94,7 +86,7 @@ fun MoonlightSettingsSection(
                     SettingsActionRow {
                         TvActionButton(stringResource(R.string.moonlight_check), { model.checkHost(host.id) },
                             loading = state.checkingId == host.id,
-                            enabled = !state.pairingBusy)
+                            enabled = !state.pairingBusy && !state.resetBusy)
                         if (state.nativeAvailable) {
                             if (host.id !in state.pairedIds) {
                                 TvActionButton(stringResource(R.string.moonlight_pair), { model.startPairing(host.id) },
@@ -102,11 +94,13 @@ fun MoonlightSettingsSection(
                             } else {
                                 TvActionButton(stringResource(R.string.moonlight_fetch_apps), { model.loadApplications(host.id) },
                                     loading = state.loadingAppsId == host.id,
-                                    enabled = state.loadingAppsId == null && !state.pairingBusy)
+                                    enabled = state.loadingAppsId == null && !state.pairingBusy && !state.resetBusy)
+                                TvActionButton(stringResource(R.string.moonlight_forget_pairing), { forgetHost = host.id },
+                                    enabled = !state.pairingBusy && !state.resetBusy && state.loadingAppsId == null)
                             }
                         }
                         TvActionButton(stringResource(R.string.moonlight_remove), { model.removeHost(host.id) },
-                            enabled = !state.pairingBusy)
+                            enabled = !state.pairingBusy && !state.resetBusy)
                     }
                 }
             }
@@ -146,8 +140,32 @@ fun MoonlightSettingsSection(
                     model.addHost(found.host, found.port.toString(), found.name)
                 })
             }
+        if (state.nativeAvailable) {
+            TvActionButton(stringResource(R.string.moonlight_reset_identity), { confirmReset = true },
+                enabled = !state.pairingBusy && !state.resetBusy && state.loadingAppsId == null, loading = state.resetBusy)
+        }
         state.error?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         }
     }
+    forgetHost?.let { id ->
+        AppDialog(onDismiss = { forgetHost = null },
+            title = stringResource(R.string.moonlight_forget_pairing),
+            hint = stringResource(R.string.moonlight_forget_hint),
+            footer = {
+                TvActionButton(stringResource(R.string.files_cancel), { forgetHost = null })
+                TvActionButton(stringResource(R.string.moonlight_forget_pairing), {
+                    forgetHost = null; model.forgetPairing(id)
+                })
+            }, content = null)
+    }
+    if (confirmReset) AppDialog(onDismiss = { confirmReset = false },
+        title = stringResource(R.string.moonlight_reset_identity),
+        hint = stringResource(R.string.moonlight_reset_hint),
+        footer = {
+            TvActionButton(stringResource(R.string.files_cancel), { confirmReset = false })
+            TvActionButton(stringResource(R.string.moonlight_reset_identity), {
+                confirmReset = false; model.resetClientIdentity()
+            })
+        }, content = null)
 }

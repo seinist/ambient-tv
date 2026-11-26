@@ -56,6 +56,10 @@ class MoonlightKeystoreCryptoProvider @Inject constructor() : LimelightCryptoPro
         newCert
     }
 
+    internal fun resetIdentity() = synchronized(lock) {
+        keyStore().deleteEntry(alias)
+    }
+
     override fun getClientCertificate(): X509Certificate = certificate()
 
     override fun getClientPrivateKey(): PrivateKey {

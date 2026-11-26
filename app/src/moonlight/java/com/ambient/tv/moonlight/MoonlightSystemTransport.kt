@@ -16,5 +16,6 @@ class MoonlightSystemTransport @Inject constructor(
     suspend fun applications(hostId: String): MoonlightAppCatalog = backend.loadApplications(hostId)
     suspend fun artwork(hostId: String, appId: Int): ByteArray = backend.loadArtwork(hostId, appId)
     suspend fun quitRemoteApp(hostId: String, expectedAppId: Int): Boolean = backend.quitRemoteApp(hostId, expectedAppId)
+    suspend fun resetClientIdentity() = backend.resetClientIdentity()
     fun forget(hostId: String) = backend.forgetHost(hostId)
 }

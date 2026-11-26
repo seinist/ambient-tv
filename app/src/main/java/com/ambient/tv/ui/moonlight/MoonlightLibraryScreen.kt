@@ -48,6 +48,13 @@ import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.ambient.tv.R
 import com.ambient.tv.moonlight.MoonlightHost
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import com.ambient.tv.ui.common.BrowseFocusContentIdentity
+import com.ambient.tv.ui.common.BrowseFocusInitialTarget
+import com.ambient.tv.ui.common.RegisterBrowseFocusGrid
+import com.ambient.tv.ui.common.RegisterBrowseFocusList
+import com.ambient.tv.ui.common.browseFocusTarget
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvTextField
 import com.ambient.tv.ui.navigation.ReportSidebarContentReady
@@ -80,6 +87,11 @@ fun MoonlightLibraryScreen(
     val games = remember(state.hosts, state.catalogs, state.favorites, state.recent, section, state.query) {
         state.games
     }
+    val gridState = rememberLazyGridState()
+    val listState = rememberLazyListState()
+    BrowseFocusContentIdentity(listOf(section, state.view, state.query), restoreInitialTarget = true)
+    BrowseFocusInitialTarget(games.firstOrNull()?.key)
+    val keys = remember(games) { games.map { it.key } }
     // Also retry initial prefetch after the host becomes authenticated and available.
     LaunchedEffect(section, games.take(8).map { it.key }, state.onlineHosts) {
         games.take(8).forEach { model.prioritizeArtwork(it, visible = false) }
@@ -89,9 +101,8 @@ fun MoonlightLibraryScreen(
             top = pageHeaderTop(screenGutter()), bottom = screenGutter()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(stringResource(R.string.moonlight_library_title),
-                style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
+        Text(stringResource(R.string.moonlight_library_title), style = MaterialTheme.typography.headlineMedium)
+        com.ambient.tv.ui.common.SettingsActionRow {
             TvActionButton(stringResource(R.string.action_search), { searchVisible = !searchVisible })
             TvActionButton(stringResource(R.string.moonlight_refresh), { model.load(force = true) }, loading = state.loadingHosts.isNotEmpty())
             TvActionButton(stringResource(R.string.moonlight_view_toggle), {
@@ -127,19 +138,22 @@ fun MoonlightLibraryScreen(
             Text(stringResource(if (state.loadingHosts.isNotEmpty()) R.string.player_loading
                 else R.string.moonlight_library_empty), style = MaterialTheme.typography.bodyMedium)
         } else if (state.view == "list") {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            RegisterBrowseFocusList(listState, keys)
+            LazyColumn(state = listState, modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 lazyItems(games, key = { it.key }) { game ->
-                    MoonlightLibraryTile(game, model, true, state.artworkVersion) { onDetails(game.host.id, game.app.id) }
+                    MoonlightLibraryTile(game, model, true, state.artworkVersion, game.host.id in state.onlineHosts) { onDetails(game.host.id, game.app.id) }
                 }
             }
         } else {
+            RegisterBrowseFocusGrid(gridState, keys)
             LazyVerticalGrid(
+                state = gridState, modifier = Modifier.weight(1f),
                 columns = GridCells.Adaptive(184.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 gridItems(games, key = { it.key }) { game ->
-                    MoonlightLibraryTile(game, model, false, state.artworkVersion) { onDetails(game.host.id, game.app.id) }
+                    MoonlightLibraryTile(game, model, false, state.artworkVersion, game.host.id in state.onlineHosts) { onDetails(game.host.id, game.app.id) }
                 }
             }
         }
@@ -152,8 +166,12 @@ private fun MoonlightLibraryTile(
     model: MoonlightLibraryViewModel,
     horizontal: Boolean,
     artworkVersion: Long,
+    online: Boolean,
     onOpen: () -> Unit,
 ) {
+    LaunchedEffect(game.key, online) {
+        if (online) model.prioritizeArtwork(game, visible = false)
+    }
     val cached by produceState<java.io.File?>(null, game.key, artworkVersion) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { model.artwork(game) }
     }
@@ -190,7 +208,7 @@ private fun MoonlightLibraryTile(
     }
     Surface(
         onClick = onOpen,
-        modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) model.prioritizeArtwork(game) },
+        modifier = Modifier.fillMaxWidth().browseFocusTarget(game.key).onFocusChanged { if (it.isFocused) model.prioritizeArtwork(game) },
     ) {
         if (horizontal) {
             Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically,

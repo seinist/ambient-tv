@@ -196,6 +196,15 @@ class MoonlightNativeTransport @Inject constructor(
     /** Device-local forget. Does NOT terminate the active game or send remote unpair commands. */
     fun forgetHost(hostId: String) = trust.clear(hostId)
 
+    suspend fun resetClientIdentity() = pairingMutex.withLock {
+        withContext(Dispatchers.IO) {
+            // Revoke local trust first. A partial Keystore failure never leaves accepted old pins.
+            prefs.moonlightHosts.forEach { trust.clear(it.id) }
+            clientIdentity.resetIdentity()
+            prefs.resetMoonlightDeviceId()
+        }
+    }
+
     private fun requireHost(hostId: String): MoonlightHost =
         prefs.moonlightHosts.firstOrNull { prefs.moonlightEnabled && it.id == hostId }
             ?: throw SecurityException("Unknown or disabled Moonlight host")

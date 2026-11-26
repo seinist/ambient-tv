@@ -2,6 +2,9 @@ package com.ambient.tv.ui.moonlight
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,9 +59,10 @@ fun MoonlightGameDetailScreen(
     }
     BackHandler { if (showQuitConfirmation) showQuitConfirmation = false else onBack() }
     val online = hostId in state.onlineHosts && hostId in state.pairedHosts
+    val artworkWidth = if (com.ambient.tv.ui.mobile.isTelevision(LocalContext.current)) 0.55f else 1f
     Column(
         Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(),
-            top = pageHeaderTop(screenGutter()), bottom = screenGutter()),
+            top = pageHeaderTop(screenGutter()), bottom = screenGutter()).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         if (game == null) {
@@ -78,10 +82,10 @@ fun MoonlightGameDetailScreen(
         if (artwork != null) {
             AsyncImage(model = artwork, contentDescription = game.app.title,
                 contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxWidth(0.7f).aspectRatio(16f / 9f)
+                modifier = Modifier.fillMaxWidth(artworkWidth).aspectRatio(16f / 9f)
                     .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp)))
         } else {
-            Box(Modifier.fillMaxWidth(0.7f).aspectRatio(16f / 9f)
+            Box(Modifier.fillMaxWidth(artworkWidth).aspectRatio(16f / 9f)
                 .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center) {
                 Text(stringResource(R.string.moonlight_no_artwork))
@@ -96,7 +100,7 @@ fun MoonlightGameDetailScreen(
                     { model.wakeHost(hostId) }, loading = hostId in state.wakingHosts)
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        com.ambient.tv.ui.common.SettingsActionRow {
             TvActionButton(stringResource(R.string.moonlight_stream_play), onPlay, enabled = online)
             TvActionButton(stringResource(if (state.favorites.contains("$hostId:$appId"))
                 R.string.moonlight_remove_favorite else R.string.moonlight_add_favorite),
