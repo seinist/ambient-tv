@@ -160,6 +160,10 @@ internal fun BoxScope.MoonlightPlaybackPanel(
                         RightPanelInfoRow(stringResource(R.string.moonlight_stats_output, metrics.outputFps))
                         if (video.presented > 0) RightPanelInfoRow(stringResource(R.string.moonlight_stats_presented, metrics.presentedFps))
                         RightPanelInfoRow(stringResource(R.string.moonlight_stats_drops, video.missing, video.dropped))
+                        RightPanelInfoRow(stringResource(R.string.moonlight_stats_video_queue, metrics.pendingVideoFrames))
+                        RightPanelInfoRow(stringResource(R.string.moonlight_stats_latency_p95,
+                            video.assemblyP95Ms?.toString() ?: "–", video.releaseP95Ms?.toString() ?: "–",
+                            video.presentationP95Ms?.toString() ?: "–"))
                         if (video.rendered > 0)
                             RightPanelInfoRow(stringResource(R.string.moonlight_stats_decode,
                                 video.decodeMicros / video.rendered / 1000.0))
@@ -170,6 +174,7 @@ internal fun BoxScope.MoonlightPlaybackPanel(
                     if (metrics.rttMs != null && metrics.rttVarianceMs != null)
                         RightPanelInfoRow(stringResource(R.string.moonlight_stats_network,
                             metrics.rttMs, metrics.rttVarianceMs))
+                    if (metrics.networkPoor) RightPanelInfoRow(stringResource(R.string.moonlight_stats_network_poor))
                     val audio = metrics.audio
                     if (audio.rate > 0) RightPanelInfoRow(stringResource(R.string.moonlight_stats_audio,
                         audio.channels, audio.bufferFrames * 1000.0 / audio.rate, audio.underruns,

@@ -69,6 +69,15 @@ fun MoonlightStreamSettingsSection(
                 selectorKey = "moonlight-hdr", onSelected = { update(profile.copy(hdrMode = it)) })
             Text(stringResource(R.string.moonlight_quality_hdr_hint),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val pacing = listOf("latency" to stringResource(R.string.moonlight_pacing_latency),
+                "balanced" to stringResource(R.string.moonlight_pacing_balanced),
+                "smooth" to stringResource(R.string.moonlight_pacing_smooth))
+            PlayerDropUpSelector(label = stringResource(R.string.moonlight_pacing_title),
+                value = pacing.firstOrNull { it.first == profile.pacing }?.second ?: profile.pacing,
+                options = pacing, selectedKey = profile.pacing, dropUp = false,
+                selectorKey = "moonlight-pacing", onSelected = { update(profile.copy(pacing = it)) })
+            Text(stringResource(R.string.moonlight_pacing_hint),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             val audio = listOf("2" to "Stereo", "6" to "5.1", "8" to "7.1")
             val audioKey = profile.audioChannels.toString()
             PlayerDropUpSelector(label = stringResource(R.string.moonlight_quality_audio),

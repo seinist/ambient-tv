@@ -44,10 +44,32 @@ internal object MoonlightHardwareVideo {
     }
 
     private val codecInfos by lazy { MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos }
+    private data class DecoderKey(val mime: String, val width: Int, val height: Int, val fps: Int, val hdr: Boolean)
+    private val decoderCache = LinkedHashMap<DecoderKey, List<MediaCodecInfo>>(16, .75f, true)
 
-    internal fun decoders(
+    private fun performanceRank(codec: MediaCodecInfo, mime: String, width: Int, height: Int, fps: Int): Int =
+        runCatching {
+            val caps = codec.getCapabilitiesForType(mime)
+            val point = MediaCodecInfo.VideoCapabilities.PerformancePoint(width, height, fps)
+            val points = caps.videoCapabilities?.supportedPerformancePoints
+            val guaranteed = if (points.isNullOrEmpty()) 1 else if (points.any { it.covers(point) }) 2 else 0
+            val lowLatency = Build.VERSION.SDK_INT >= 30 &&
+                caps.isFeatureSupported(MediaCodecInfo.CodecCapabilities.FEATURE_LowLatency)
+            val recommended = when (mime) {
+                MediaFormat.MIMETYPE_VIDEO_HEVC -> MediaCodecHelper.decoderIsWhitelistedForHevc(codec)
+                MediaFormat.MIMETYPE_VIDEO_AV1 -> MediaCodecHelper.isDecoderWhitelistedForAv1(codec)
+                else -> !MediaCodecHelper.decoderNeedsBaselineSpsHack(codec.name) &&
+                    !MediaCodecHelper.decoderNeedsSpsBitstreamRestrictions(codec.name)
+            }
+            guaranteed * 4 + (if (lowLatency) 2 else 0) + (if (recommended) 1 else 0)
+        }.getOrDefault(0)
+
+    @Synchronized internal fun decoders(
         mime: String, width: Int, height: Int, fps: Int, hdr10: Boolean = false,
-    ): List<MediaCodecInfo> = runCatching {
+    ): List<MediaCodecInfo> {
+        val key = DecoderKey(mime, width, height, fps, hdr10)
+        decoderCache[key]?.let { return it }
+        val result = runCatching {
         codecInfos.filter { codec ->
             !codec.isEncoder && codec.isHardwareAccelerated &&
                 codec.supportedTypes.any { it.equals(mime, ignoreCase = true) } &&
@@ -72,7 +94,11 @@ internal object MoonlightHardwareVideo {
                         })
                 }.getOrDefault(false)
         }
-    }.getOrDefault(emptyList())
+        }.getOrDefault(emptyList()).sortedByDescending { performanceRank(it, mime, width, height, fps) }
+        if (decoderCache.size >= 32) decoderCache.remove(decoderCache.keys.first())
+        decoderCache[key] = result
+        return result
+    }
 
     internal fun decoder(mime: String, width: Int, height: Int, fps: Int, hdr10: Boolean = false) =
         decoders(mime, width, height, fps, hdr10).firstOrNull()
@@ -115,6 +141,47 @@ internal object MoonlightHardwareVideo {
             "off" -> sdr
             else -> hdr or sdr
         }
+    }
+
+    /** Negotiate conservative capabilities for every offered format, before setup(). */
+    fun rendererCapabilities(profile: MoonlightStreamProfile, offered: Int): Int {
+        var flags = 0
+        var slices: Byte = 1
+        val candidates = mutableListOf<MediaCodecInfo>()
+        for (choice in codecs) {
+            val available = buildList {
+                if (offered and choice.sdr != 0) addAll(decoders(choice.mime, profile.width, profile.height, profile.fps))
+                if (choice.hdr10 != 0 && offered and choice.hdr10 != 0)
+                    addAll(decoders(choice.mime, profile.width, profile.height, profile.fps, hdr10 = true))
+            }.distinctBy { it.name }
+            if (available.isEmpty()) continue
+            candidates.addAll(available)
+            if (choice.name != "av1") for (decoder in available) {
+                val preferred = MediaCodecHelper.getDecoderOptimalSlicesPerFrame(decoder.name)
+                if (preferred > slices) slices = preferred
+            }
+            val rfi = when (choice.name) {
+                "h264" -> available.all { MediaCodecHelper.decoderSupportsRefFrameInvalidationAvc(it.name, profile.height) &&
+                    !MediaCodecHelper.decoderNeedsSpsBitstreamRestrictions(it.name) &&
+                    !MediaCodecHelper.decoderNeedsBaselineSpsHack(it.name) }
+                "hevc" -> available.all { MediaCodecHelper.decoderSupportsRefFrameInvalidationHevc(it) }
+                else -> available.all { MediaCodecHelper.decoderSupportsRefFrameInvalidationAv1(it) }
+            }
+            if (rfi) flags = flags or when (choice.name) {
+                "h264" -> MoonBridge.CAPABILITY_REFERENCE_FRAME_INVALIDATION_AVC
+                "hevc" -> MoonBridge.CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC
+                else -> MoonBridge.CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1
+            }
+        }
+        // Direct submit is opt-in and restricted to SDR H.264 with no known SPS fixups.
+        if (profile.pacing == "latency" && profile.hdrMode == "off" &&
+            offered == MoonBridge.VIDEO_FORMAT_H264 && candidates.isNotEmpty() && candidates.all {
+                MediaCodecHelper.decoderCanDirectSubmit(it.name) &&
+                    !MediaCodecHelper.decoderNeedsSpsBitstreamRestrictions(it.name) &&
+                    !MediaCodecHelper.decoderNeedsBaselineSpsHack(it.name) &&
+                    !MediaCodecHelper.decoderNeedsConstrainedHighProfile(it.name)
+            }) flags = flags or MoonBridge.CAPABILITY_DIRECT_SUBMIT
+        return flags or MoonBridge.CAPABILITY_SLICES_PER_FRAME(slices)
     }
 
     fun isHdr10Format(format: Int): Boolean =

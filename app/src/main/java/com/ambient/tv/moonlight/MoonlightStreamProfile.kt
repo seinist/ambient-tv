@@ -18,6 +18,7 @@ data class MoonlightStreamProfile(
     val matchDisplayRefresh: Boolean = false,
     val displayOutputMode: String = DISPLAY_SYSTEM,
     val preferDoubleDisplayRefresh: Boolean = false,
+    val pacing: String = "balanced",
 ) {
     fun validated(): MoonlightStreamProfile {
         require(width in 640..7680 && height in 360..4320)
@@ -28,12 +29,14 @@ data class MoonlightStreamProfile(
         require(codec in CODECS)
         require(hdrMode in HDR_MODES)
         require(audioChannels in setOf(2, 6, 8))
+        require(pacing in PACING_MODES)
         require(displayOutputMode in DISPLAY_POLICIES || isFixedDisplayMode(displayOutputMode))
         return this
     }
     companion object {
         val CODECS = setOf("auto", "h264", "hevc", "av1")
         val HDR_MODES = setOf("auto", "on", "off")
+        val PACING_MODES = setOf("latency", "balanced", "smooth")
         const val DISPLAY_SYSTEM = "system"
         const val DISPLAY_STREAM = "stream"
         const val DISPLAY_FULL = "full"

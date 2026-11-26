@@ -14,10 +14,11 @@ import kotlin.math.max
 class MoonlightMediaCodecRenderer(
     private val surface: Surface,
     private val requested: MoonlightStreamProfile,
+    private val offeredFormats: Int,
     private val onError: (String, Int) -> Unit,
 ) : VideoDecoderRenderer() {
     private val inputLock = Any()
-    private var codec: MediaCodec? = null
+    @Volatile private var codec: MediaCodec? = null
     private var outputThread: Thread? = null
     private var outputRunning: AtomicBoolean? = null
     @Volatile private var playing = false
@@ -52,6 +53,11 @@ class MoonlightMediaCodecRenderer(
     private val decodeMicros = AtomicLong()
     private val hostTenthsMs = AtomicLong()
     private val hostSamples = AtomicLong()
+    private val assemblyLatency = MoonlightLatencyHistogram()
+    private val releaseLatency = MoonlightLatencyHistogram()
+    private val presentationLatency = MoonlightLatencyHistogram()
+    private val capabilities by lazy { MoonlightHardwareVideo.rendererCapabilities(requested, offeredFormats) }
+    private val directSubmit get() = capabilities and MoonBridge.CAPABILITY_DIRECT_SUBMIT != 0
 
     override fun setup(format: Int, width: Int, height: Int, redrawRate: Int): Int =
         synchronized(inputLock) {
@@ -111,7 +117,12 @@ class MoonlightMediaCodecRenderer(
                         presentationThread = it
                     }
                     runCatching {
-                        decoder.setOnFrameRenderedListener({ _, _, _ -> presented.incrementAndGet() },
+                        decoder.setOnFrameRenderedListener({ renderedCodec, presentationUs, renderNanos ->
+                            if (codec === renderedCodec && !closing) {
+                                presented.incrementAndGet()
+                                presentationLatency.recordUs(renderNanos / 1000L - presentationUs)
+                            }
+                        },
                             android.os.Handler(handlerThread.looper))
                     }
                     return decoder
@@ -210,6 +221,10 @@ class MoonlightMediaCodecRenderer(
         val idr = frameType == MoonBridge.FRAME_TYPE_IDR
         val newFrame = lastFrame != frameNumber
         if (hdrReconfigure || forceRecovery) {
+            if (directSubmit) {
+                reportFailure("Moonlight direct-submit decoder needs a reconnect")
+                return@synchronized MoonBridge.DR_NEED_IDR
+            }
             if (!idr || !newFrame) return@synchronized MoonBridge.DR_NEED_IDR
             if (!reconfigureAtIdr()) return@synchronized MoonBridge.DR_NEED_IDR
         }
@@ -243,6 +258,7 @@ class MoonlightMediaCodecRenderer(
             vps.clear(); sps.clear(); pps.clear()
         }
         received.incrementAndGet()
+        assemblyLatency.recordUs(enqueueTimeUs - receiveTimeUs)
         if (frameHostProcessingLatency.code != 0) {
             hostTenthsMs.addAndGet(frameHostProcessingLatency.code.toLong())
             hostSamples.incrementAndGet()
@@ -258,7 +274,7 @@ class MoonlightMediaCodecRenderer(
                                   fill: (java.nio.ByteBuffer) -> Unit): Boolean {
         val decoder = codec ?: return false
         return try {
-            val index = decoder.dequeueInputBuffer(3_000)
+            val index = decoder.dequeueInputBuffer(if (directSubmit) 500L else 3_000L)
             if (index < 0) return false
             val buffer = decoder.getInputBuffer(index)
             if (buffer == null || length > buffer.capacity()) {
@@ -278,6 +294,7 @@ class MoonlightMediaCodecRenderer(
     private fun drainOutput(decoder: MediaCodec, running: AtomicBoolean) {
         val info = MediaCodec.BufferInfo()
         val next = MediaCodec.BufferInfo()
+        val pacer = MoonlightFramePacer(requested.pacing, decodedFps)
         while (running.get() && !closing) {
             try {
                 var index = decoder.dequeueOutputBuffer(info, 8_000)
@@ -286,7 +303,9 @@ class MoonlightMediaCodecRenderer(
                 var size = info.size
                 // Keep the newest ready picture if the decoder has accumulated a backlog.
                 // Never add an extra frame of waiting just to pace an otherwise empty queue.
-                for (i in 0 until 3) {
+                val deadline = System.nanoTime() + 1_000_000L
+                for (i in 0 until 16) {
+                    if (!pacer.shouldDrain(pts, System.nanoTime()) || System.nanoTime() >= deadline) break
                     val newer = decoder.dequeueOutputBuffer(next, 0)
                     if (newer < 0) break
                     decoder.releaseOutputBuffer(index, false)
@@ -298,11 +317,13 @@ class MoonlightMediaCodecRenderer(
                 val render = size > 0 && running.get() && !closing
                 // A real monotonic timestamp lets Surface drop superseded frames in the
                 // same VSync interval, like the upstream low-latency pacing mode.
-                if (render) decoder.releaseOutputBuffer(index, System.nanoTime())
+                if (render) decoder.releaseOutputBuffer(index, pacer.presentationTime(System.nanoTime()))
                 else decoder.releaseOutputBuffer(index, false)
                 if (render) {
                     rendered.incrementAndGet()
-                    decodeMicros.addAndGet((System.nanoTime() / 1000L - pts).coerceIn(0L, 10_000_000L))
+                    val elapsedUs = (System.nanoTime() / 1000L - pts).coerceIn(0L, 10_000_000L)
+                    decodeMicros.addAndGet(elapsedUs)
+                    releaseLatency.recordUs(elapsedUs)
                 }
             } catch (_: Exception) {
                 if (running.get() && !closing) reportFailure("Moonlight hardware decoder output failed")
@@ -315,17 +336,18 @@ class MoonlightMediaCodecRenderer(
         currentMime, decoderName, decodedWidth, decodedHeight, decodedFps, activeHdr,
         received.get(), missing.get(), rendered.get(), dropped.get(), decodeMicros.get(),
         hostTenthsMs.get(), hostSamples.get(), presented.get(),
+        assemblyLatency.p95Ms(), releaseLatency.p95Ms(), presentationLatency.p95Ms(),
     )
 
     /** Called from the telemetry worker; next decoder input requests a fresh IDR. */
     internal fun requestRecovery(): Boolean = synchronized(inputLock) {
         if (closing || failed.get() || !playing || recoveryAttempts >= 1) return@synchronized false
         recoveryAttempts++
-        forceRecovery = true
+        if (directSubmit) reportFailure("Moonlight direct-submit decoder stalled") else forceRecovery = true
         true
     }
 
-    override fun getCapabilities(): Int = 0
+    override fun getCapabilities(): Int = capabilities
 
     override fun setHdrMode(enabled: Boolean, hdrMetadata: ByteArray?) {
         synchronized(inputLock) {

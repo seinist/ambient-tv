@@ -62,6 +62,7 @@ class MoonlightStreamEngine @Inject constructor(
         var audio: MoonlightAudioTrackRenderer? = null,
         var started: Boolean = false,
         @Volatile var cancelled: Boolean = false,
+        @Volatile var networkPoor: Boolean = false,
         var stopIssued: Boolean = false,
         var preparation: Job? = null,
         var audioFocus: AudioFocusRequest? = null,
@@ -125,9 +126,9 @@ class MoonlightStreamEngine @Inject constructor(
                 if (!transport.current(target)) throw SecurityException("Moonlight host changed")
                 if (!requestAudioFocus(session)) throw IllegalStateException("Audio focus denied")
 
-                val video = MoonlightMediaCodecRenderer(surface, valid) { text, rejected ->
+                val video = MoonlightMediaCodecRenderer(surface, valid, videoFormat) { text, rejected ->
                     val remaining = videoFormat and rejected.inv()
-                    fail(session, text, retryable = rejected != 0 && remaining != 0,
+                    fail(session, text, retryable = rejected == 0 || remaining != 0,
                         rejectedVideoFormat = if (remaining != 0) rejected else 0)
                 }
                 val audio = MoonlightAudioTrackRenderer { text -> fail(session, text) }
@@ -513,7 +514,9 @@ class MoonlightStreamEngine @Inject constructor(
                 fail(session, "Sunshine stream disconnected ($errorCode)", retryable = true)
             else stopSession(session)
         }
-        override fun connectionStatusUpdate(connectionStatus: Int) = Unit
+        override fun connectionStatusUpdate(connectionStatus: Int) {
+            if (isOwned(session)) session.networkPoor = connectionStatus == MoonBridge.CONN_STATUS_POOR
+        }
         override fun displayMessage(message: String) {
             when (message) {
                 NvConnection.AMBIENT_OTHER_APP_RUNNING ->
@@ -555,6 +558,8 @@ class MoonlightStreamEngine @Inject constructor(
                 var lastPresented = 0L
                 var lastReceived = 0L
                 var noOutputSeconds = 0
+                var backlogSeconds = 0
+                var noPresentationSeconds = 0
                 var lastTime = System.nanoTime()
                 while (isOwned(session)) {
                     kotlinx.coroutines.delay(1000)
@@ -564,14 +569,20 @@ class MoonlightStreamEngine @Inject constructor(
                     val rtt = synchronized(inputGate) {
                         if (isOwned(session)) runCatching { MoonBridge.getEstimatedRttInfo() }.getOrNull() else null
                     }
+                    val pendingVideo = synchronized(inputGate) {
+                        if (isOwned(session)) runCatching { MoonBridge.getPendingVideoFrames() }.getOrDefault(0) else 0
+                    }
                     // Once stalled, the recovery deadline keeps running even when IDR
                     // recovery suppresses incoming pictures. Don't wait forever for more packets.
                     if (video.rendered > lastFrames) noOutputSeconds = 0
                     else if (video.received > lastReceived || noOutputSeconds > 0 || lastFrames == 0L)
                         noOutputSeconds++
                     lastReceived = video.received
-                    if (noOutputSeconds == 3) session.video?.requestRecovery()
-                    if (noOutputSeconds >= 7) {
+                    backlogSeconds = if (pendingVideo >= 8) backlogSeconds + 1 else 0
+                    noPresentationSeconds = if (lastPresented > 0 && video.presented == lastPresented && video.rendered > lastFrames)
+                        noPresentationSeconds + 1 else 0
+                    if (noOutputSeconds == 3 || backlogSeconds == 3 || noPresentationSeconds == 3) session.video?.requestRecovery()
+                    if (noOutputSeconds >= 7 || backlogSeconds >= 7 || noPresentationSeconds >= 7) {
                         fail(session, "Moonlight decoder stopped producing frames", retryable = true)
                         break
                     }
@@ -587,7 +598,7 @@ class MoonlightStreamEngine @Inject constructor(
                             mutable.value = mutable.value.copy(metrics = MoonlightStreamMetrics(
                                 video, audio, rtt?.let { (it shr 32).toInt().takeIf { n -> n >= 0 } },
                                 rtt?.let { it.toInt().takeIf { n -> n >= 0 } }, fps.coerceAtLeast(0.0),
-                                presentedFps.coerceAtLeast(0.0)))
+                                presentedFps.coerceAtLeast(0.0), pendingVideo.coerceAtLeast(0), session.networkPoor))
                     }
                 }
             }

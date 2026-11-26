@@ -87,4 +87,12 @@
     <string name="moonlight_app_running">This application is running on the PC.</string>
     <string name="moonlight_logo_title">Moonlight logo</string>
     <string name="moonlight_logo_credit">Original artwork by the Moonlight project. Shape and colors preserved in the Android vector.</string>
+    <string name="moonlight_pacing_title">Frame pacing</string>
+    <string name="moonlight_pacing_latency">Lowest latency</string>
+    <string name="moonlight_pacing_balanced">Balanced</string>
+    <string name="moonlight_pacing_smooth">Smooth</string>
+    <string name="moonlight_pacing_hint">Applied on the next connection. Smooth may add presentation delay.</string>
+    <string name="moonlight_stats_video_queue">Native video queue: %1$d frames</string>
+    <string name="moonlight_stats_latency_p95">P95 receive-to-enqueue / submit-to-surface / submit-to-render callback: %1$s / %2$s / %3$s ms</string>
+    <string name="moonlight_stats_network_poor">Streaming connection degraded</string>
 </resources>

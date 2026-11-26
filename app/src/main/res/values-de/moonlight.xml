@@ -87,4 +87,12 @@
     <string name="moonlight_app_running">Diese Anwendung läuft bereits auf dem PC.</string>
     <string name="moonlight_logo_title">Moonlight-Logo</string>
     <string name="moonlight_logo_credit">Originalgrafik des Moonlight-Projekts. Form und Farben wurden im Android-Vektor beibehalten.</string>
+    <string name="moonlight_pacing_title">Bildtaktung</string>
+    <string name="moonlight_pacing_latency">Niedrigste Latenz</string>
+    <string name="moonlight_pacing_balanced">Ausgewogen</string>
+    <string name="moonlight_pacing_smooth">Flüssig</string>
+    <string name="moonlight_pacing_hint">Gilt ab der nächsten Verbindung. Flüssig kann die Bildausgabe verzögern.</string>
+    <string name="moonlight_stats_video_queue">Native Video-Warteschlange: %1$d Frames</string>
+    <string name="moonlight_stats_latency_p95">P95 Empfang–Queue / Decoder–Surface / Decoder–Render-Callback: %1$s / %2$s / %3$s ms</string>
+    <string name="moonlight_stats_network_poor">Streaming-Verbindung beeinträchtigt</string>
 </resources>
