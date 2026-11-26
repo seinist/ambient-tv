@@ -1045,6 +1045,72 @@ def patch_upcoming_streams(msc: Path, check: bool) -> list[Path]:
     return changed
 
 
+
+def patch_disable_unused_cronet(msc: Path, shared: Path, check: bool) -> list[Path]:
+    """Remove SmartTube's dormant embedded-Cronet adapter; Ambient TV uses Media3's GMS Cronet."""
+    changed: list[Path] = []
+    manager = shared / "sharedutils/src/main/java/com/liskovsoft/sharedutils/cronet/CronetManager.kt"
+    if manager.exists():
+        if check:
+            die(f"unused embedded Cronet manager must not be compiled: {manager}")
+        manager.unlink()
+        changed.append(manager)
+
+    helper = msc / "youtubeapi/src/main/java/com/liskovsoft/googlecommon/common/helpers/RetrofitOkHttpHelper.kt"
+    if not helper.is_file():
+        die(f"SmartTube Retrofit helper moved or disappeared: {helper}")
+    text = helper.read_text()
+    original = text
+    for line in (
+        "import com.google.net.cronet.okhttptransport.CronetInterceptor\\n",
+        "import com.liskovsoft.sharedutils.cronet.CronetManager\\n",
+        "        //addCronetInterceptor(builder)\\n",
+    ):
+        text = text.replace(line, "")
+    text, count = re.subn(
+        r"\\n    private fun addCronetInterceptor\\(builder: OkHttpClient\\.Builder\\) \\{.*?\\n    \\}\\n(?=\\})",
+        "",
+        text,
+        count=1,
+        flags=re.DOTALL,
+    )
+    if check:
+        if "CronetInterceptor" in text or "CronetManager" in text or "addCronetInterceptor" in text:
+            die(f"dormant SmartTube Cronet adapter remains in {helper}")
+        return changed
+    if text != original:
+        helper.write_text(text)
+        changed.append(helper)
+    return changed
+
+
+def patch_okhttp_manager_thread_safety(path: Path, check: bool) -> bool:
+    """Serialize SmartTube OkHttp singleton/client initialization and invalidation."""
+    if not path.is_file():
+        die(f"SmartTube OkHttp manager moved or disappeared: {path}")
+    text = path.read_text()
+    replacements = [
+        ("private static OkHttpManager sInstance;", "private static volatile OkHttpManager sInstance;"),
+        ("private OkHttpClient mClient;", "private volatile OkHttpClient mClient;"),
+        ("public static OkHttpManager instance()", "public static synchronized OkHttpManager instance()"),
+        ("public static OkHttpManager instance(boolean enableProfiler)", "public static synchronized OkHttpManager instance(boolean enableProfiler)"),
+        ("public static void unhold()", "public static synchronized void unhold()"),
+        ("public OkHttpClient getClient()", "public synchronized OkHttpClient getClient()"),
+    ]
+    if check:
+        missing = [old for old, new in replacements if old in text or new not in text]
+        if missing:
+            die(f"OkHttp singleton thread-safety patch is incomplete in {path}: {missing[0]}")
+        return False
+    changed = False
+    for old, new in replacements:
+        if old in text:
+            text = text.replace(old, new, 1)
+            changed = True
+    if changed:
+        path.write_text(text)
+    return changed
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
@@ -1077,10 +1143,10 @@ def main() -> int:
     okhttp_manager = shared / "sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/OkHttpManager.java"
     if patch_okhttp_manager_request_body(okhttp_manager, args.check):
         changed.append(okhttp_manager)
+    if patch_okhttp_manager_thread_safety(okhttp_manager, args.check):
+        changed.append(okhttp_manager)
 
-    cronet = shared / "sharedutils/src/main/java/com/liskovsoft/sharedutils/cronet/CronetManager.kt"
-    if patch_cronet_experimental_import(cronet, args.check):
-        changed.append(cronet)
+    changed.extend(patch_disable_unused_cronet(msc, shared, args.check))
 
     v8_utils = shared / "j2v8/src/main/java/com/eclipsesource/v8/utils/V8ObjectUtils.java"
     if patch_v8_object_utils_double(v8_utils, args.check):
