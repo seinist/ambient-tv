@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fpssync.h"
+#include "softwareframelayout.h"
 #include <cassert>
 #include <chrono>
 #include <cmath>
@@ -71,6 +72,20 @@ int main() {
     assert(FramePacingDeadline::cadenceRate(59.73, 60.0, false, false) == 59.73);
     assert(FramePacingDeadline::cadenceRate(50.0, 100.0, true, true) == 50.0);
     assert(FramePacingDeadline::cadenceRate(60.0, 0.0, true, false) == 60.0);
+    using libretrodroid::SoftwareFrameLayout;
+    SoftwareFrameLayout layout;
+    assert(SoftwareFrameLayout::checked(320, 240, 1283, 4, 4096, layout));
+    assert(layout.rowBytes == 1280 && layout.packedBytes == 307200);
+    assert(!SoftwareFrameLayout::checked(320, 240, 1279, 4, 4096, layout));
+    assert(!SoftwareFrameLayout::checked(0, 240, 1280, 4, 4096, layout));
+    assert(!SoftwareFrameLayout::checked(4097, 1, 20000, 4, 4096, layout));
+    assert(!SoftwareFrameLayout::checked(2, 3, std::numeric_limits<size_t>::max(), 4, 4096, layout));
+    assert(FramePacingDeadline::nearMatch(59.73, 60.0));
+    assert(FramePacingDeadline::nearMatch(60000.0 / 1001.0, 60.0));
+    assert(!FramePacingDeadline::nearMatch(56.0, 60.0));
+    assert(!FramePacingDeadline::nearMatch(24.0, 25.0));
+    FPSSync mismatch(56.0, 60.0);
+    assert(mismatch.getTimeStretchFactor() == 1.0);
     // Exercise the real FPSSync adapter, including unchanged display/BFI policy.
     FPSSync normal(59.73, 60.0);
     assert(std::abs(normal.getTimeStretchFactor() - 59.73 / 60.0) < 1e-12);

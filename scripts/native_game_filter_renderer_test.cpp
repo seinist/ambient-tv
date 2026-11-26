@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include "video.h"
+#include <limits>
 #include "libretro/libretro-common/include/libretro.h"
 #include "game_filter_test_presets.h"
 
@@ -419,11 +420,38 @@ void verifyHardwareAllocationFallback() {
     std::puts("PASS: hardware target failure, allocation-free SDR/PQ fallback, mandatory prefix retention");
 }
 }
+// Validate the production ingress and raw capture on both real GLES contexts.
+void verifySoftwareFrameIngress(int version) {
+    Video video(options(version),pixel(),true,0,false,false,Rect(0,0,1,1),{});
+    setLayout(video);
+    constexpr unsigned w = 4, h = 3;
+    std::vector<uint8_t> data((w*4+3)*h, 0x7e);
+    for(unsigned y=0;y<h;++y) for(unsigned x=0;x<w;++x) {
+        auto* px=data.data()+y*(w*4+3)+x*4;
+        px[0]=uint8_t(20+x);px[1]=uint8_t(40+y);px[2]=uint8_t(80+x+y);px[3]=255;
+    }
+    video.onNewFrame(data.data(),w,h,w*4+3);
+    int cw=0,ch=0;
+    auto raw=video.captureRawFrame(cw,ch);
+    require(cw==int(w)&&ch==int(h)&&raw.size()==w*h*4,"valid raw capture");
+    for(unsigned y=0;y<h;++y) for(unsigned x=0;x<w;++x) {
+        auto i=(y*w+x)*4;
+        require(raw[i]==80+x+y&&raw[i+1]==40+y&&raw[i+2]==20+x&&raw[i+3]==255,
+                "software capture channel order, padding or orientation changed");
+    }
+    video.onNewFrame(data.data(),w,h,w*4-1);
+    video.onNewFrame(data.data(),0,h,w*4+3);
+    video.onNewFrame(data.data(),w,h,std::numeric_limits<size_t>::max());
+    int aw=0,ah=0;
+    auto after=video.captureRawFrame(aw,ah);
+    require(aw==cw&&ah==ch&&after==raw,"invalid upload changed retained frame");
+}
+
 int main(int argc,char** argv) {
     const int version=argc>1 && std::string(argv[1])=="--gles2" ? 2:3;
     try {
         Context context(version);
-        verifySwitches(version);verifyFallbacks(version);verifyFloatAndAliases(version);verifySamplerBindings(version);verifyIntensityUniforms(version);verifyGeometryUniforms(version);verifyPresets(version);
+        verifySoftwareFrameIngress(version);verifySwitches(version);verifyFallbacks(version);verifyFloatAndAliases(version);verifySamplerBindings(version);verifyIntensityUniforms(version);verifyGeometryUniforms(version);verifyPresets(version);
         if(version==3) { verifyPaddedHardware(); verifyHardwareAllocationFallback(); }
         std::printf("PASS: GLES%d production renderer regression\n",version);return 0;
     } catch(const std::exception& error) {
