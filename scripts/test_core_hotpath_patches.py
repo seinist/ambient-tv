@@ -68,6 +68,19 @@ class CoreHotpathTests(unittest.TestCase):
                                   + FIXED_WRITE_OLD + FIXED_GROW_OLD + "\n   }\n}\n")
                 old = FIXED_RETRO_OLD.replace("   st.initial_malloc = 0;\n", "") if core == "mednafen_vb" else FIXED_RETRO_OLD
                 entry.write_text((NGP_OLD + "\n" if core == "mednafen_ngp" else "") + old)
+                # A late anchor mismatch must not partially apply the NGP AV fix
+                # or leave a modified state writer/header behind.
+                original_writer = writer.read_text()
+                original_header = header.read_text()
+                original_entry = entry.read_text()
+                writer.write_text(original_writer.replace(FIXED_GROW_OLD, "/* drift */"))
+                changed_writer = writer.read_text()
+                with self.assertRaises(ValueError):
+                    prepare_hotpaths(root, core)
+                self.assertEqual(writer.read_text(), changed_writer)
+                self.assertEqual(header.read_text(), original_header)
+                self.assertEqual(entry.read_text(), original_entry)
+                writer.write_text(original_writer)
                 prepare_hotpaths(root, core)
                 self.assertIn(FIXED_RETRO_NEW, entry.read_text())
                 self.assertIn(FIXED_WRITE_NEW, writer.read_text())
@@ -146,6 +159,13 @@ int main(void) {
     assert(!AmbientSaveFixed(data, 128));
     force_failure = false;
     assert(AmbientSaveFixed(data, 128));
+    // Reject a write which cannot be represented by the signed return type.
+    StateMem oversized;
+    memset(&oversized, 0, sizeof(oversized));
+    oversized.data = data;
+    oversized.malloced = UINT32_MAX;
+    assert(smem_write(&oversized, payload, UINT32_MAX) == 0);
+    assert(oversized.loc == 0 && oversized.len == 0);
 }
 """
         self.compile_and_run(source, "cc", "c99", "c")

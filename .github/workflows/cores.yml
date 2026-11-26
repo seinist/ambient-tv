@@ -136,15 +136,25 @@ jobs:
 
       - name: Set up content-checked compiler cache
         run: |
-          command -v ccache >/dev/null || {
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq ccache
-          }
-          ccache --set-config=compiler_check=content
-          ccache --set-config=max_size=512M
-          ccache --set-config=compression=true
-          echo "CCACHE_BASEDIR=$PWD" >> "$GITHUB_ENV"
+          if ! command -v ccache >/dev/null; then
+            # The cache is a build-time convenience, not part of the proof.
+            # Hosted runner third-party apt feeds can fail independently of NDK.
+            sudo apt-get install -y -qq ccache || {
+              sudo apt-get update -qq && sudo apt-get install -y -qq ccache
+            } || true
+          fi
+          if command -v ccache >/dev/null &&
+             ccache --set-config=compiler_check=content &&
+             ccache --set-config=max_size=512M &&
+             ccache --set-config=compression=true; then
+            echo "CORE_CCACHE=$(command -v ccache)" >> "$GITHUB_ENV"
+            echo "CCACHE_BASEDIR=$PWD" >> "$GITHUB_ENV"
+          else
+            echo "::warning::Compiler cache unavailable; compiling without it"
+            echo "CORE_CCACHE=" >> "$GITHUB_ENV"
+          fi
       - uses: actions/cache@v4
+        if: env.CORE_CCACHE != ''
         with:
           path: ~/.cache/ccache
           key: core-ccache-v1-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ matrix.core }}-${{ matrix.commit }}-${{ matrix.abi }}-${{ matrix.profile }}-${{ hashFiles('cores/cores.json', '.github/workflows/cores.yml', 'scripts/core_build_policy.py', 'scripts/core_acceleration_audit.py', 'scripts/core_link_evidence.py', 'scripts/core_hotpath_patches.py', 'scripts/core_hotpath_remaining.py') }}
@@ -197,7 +207,10 @@ jobs:
           fi
           if [ "$BUILD_KIND" = "cmake" ]; then
             python3 scripts/core_build_policy.py prepare-cmake --root src --core "$CORE" --profile "$PROFILE"
-            flags=("-DCMAKE_C_COMPILER_LAUNCHER=ccache" "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache")
+            flags=()
+            if [ -n "${CORE_CCACHE:-}" ]; then
+              flags+=("-DCMAKE_C_COMPILER_LAUNCHER=$CORE_CCACHE" "-DCMAKE_CXX_COMPILER_LAUNCHER=$CORE_CCACHE")
+            fi
             if [ -n "$CFLAGS_EXTRA" ]; then
               flags+=("-DCMAKE_C_FLAGS=$CFLAGS_EXTRA" "-DCMAKE_CXX_FLAGS=$CFLAGS_EXTRA")
             fi
@@ -223,7 +236,7 @@ jobs:
               --application "src/$JNI/jni/Application.mk" --profile "$PROFILE" --cppflags="$CPPFLAGS_EXTRA"
             build_cwd="$PWD/src/$JNI/jni"
             env "${extra_env[@]}" "${NDK}/ndk-build" --no-print-directory --output-sync=target -j"$(nproc)" -C "src/$JNI/jni" \
-              APP_ABI="$ABI" APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true NDK_CCACHE="$(command -v ccache)" V=1 "${makevars[@]}" 2>&1 | tee reports/build.log
+              APP_ABI="$ABI" APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true NDK_CCACHE="${CORE_CCACHE:-}" V=1 "${makevars[@]}" 2>&1 | tee reports/build.log
             lib=$(python3 scripts/core_build_policy.py select --nm "$bin/llvm-nm" --root "src/$JNI/libs/$ABI" --pattern '*.so')
           fi
           target="out/${CORE}_libretro_android.so"
@@ -234,7 +247,7 @@ jobs:
             --log reports/build.log --profile "$PROFILE" --core "$CORE" --abi "$ABI" \
             --commit "$CORE_COMMIT" --ndk "$NDK_VERSION" --build-cwd "$build_cwd" --output reports/build.json
           cat reports/build.json
-          ccache --show-stats
+          if [ -n "${CORE_CCACHE:-}" ]; then ccache --show-stats || true; fi
 
       - uses: actions/upload-artifact@v5
         with:

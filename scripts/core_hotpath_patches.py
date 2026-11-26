@@ -164,7 +164,15 @@ static __thread bool ambient_fixed_failed;
 FIXED_WRITE_OLD = """   if ((len + st->loc) > st->malloced)
    {
 """
-FIXED_WRITE_NEW = """   if (st->loc > st->malloced || len > st->malloced - st->loc)
+FIXED_WRITE_NEW = """   if (st == ambient_fixed_state && ambient_fixed_failed)
+      return 0;
+   if (len > INT32_MAX)
+   {
+      if (st == ambient_fixed_state)
+         ambient_fixed_failed = true;
+      return 0;
+   }
+   if (st->loc > st->malloced || len > st->malloced - st->loc)
    {
       /* Never realloc or free the caller-owned libretro buffer. The sticky
        * flag is checked even when an upstream state action ignores a short
@@ -267,6 +275,8 @@ def prepare_fixed_states(root, core):
     source = state.read_bytes().decode("utf-8")
     declarations = header.read_bytes().decode("utf-8")
     frontend = entry.read_bytes().decode("utf-8")
+    if core == "mednafen_ngp":
+        frontend = replace_once(frontend, NGP_OLD, NGP_NEW, core + " AV update")
     declaration = re.findall(r"^int MDFNSS_SaveSM\([^\n]+\);$", declarations, re.M)
     if len(declaration) != 1:
         raise ValueError(f"{core}: unexpected state API declaration")
@@ -300,16 +310,15 @@ def prepare_hotpaths(root, core):
         path = root / "libretro/libretro.c"
         source = path.read_bytes().decode("utf-8")
         path.write_bytes(replace_once(source, SAMEBOY_OLD, SAMEBOY_NEW, "SameBoy dual-screen blit").encode("utf-8"))
-    elif core in {"mednafen_pce_fast", "mednafen_supergrafx", "mednafen_ngp"}:
+    elif core in {"mednafen_pce_fast", "mednafen_supergrafx"}:
         relative, old, new = {
             "mednafen_pce_fast": ("libretro.c", PCE_OLD, PCE_NEW),
             "mednafen_supergrafx": ("libretro.cpp", SGX_OLD, SGX_NEW),
-            "mednafen_ngp": ("libretro.c", NGP_OLD, NGP_NEW),
         }[core]
         path = root / relative
         source = path.read_bytes().decode("utf-8")
         path.write_bytes(replace_once(source, old, new, core).encode("utf-8"))
-    elif core not in {"mednafen_wswan", "mednafen_vb", "mednafen_lynx"}:
+    elif core not in {"mednafen_ngp", "mednafen_wswan", "mednafen_vb", "mednafen_lynx"}:
         raise ValueError(f"No reviewed source-level hotpath patch for {core}")
     if core in {"mednafen_ngp", "mednafen_wswan", "mednafen_vb", "mednafen_lynx"}:
         prepare_fixed_states(root, core)

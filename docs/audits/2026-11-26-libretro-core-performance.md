@@ -344,3 +344,20 @@ Fresh CI and device performance evidence remain required.
 ### CI integration follow-up
 
 Run 45887609371 passed planning and the core builds reported successful on its first jobs page except SwanStation baseline. SwanStation actually linked and passed 16 KiB ELF alignment; the evidence reader lost CMake's per-target working directory and ignored quoted llvm-ar invocations. Added link-script context handling and a regression fixture with a static dependency. Run 45887609366 reached and applied patch 0200, but the trace validator did not recognize the shared runCoreFrame helper introduced by main's patch 0135. The validator now checks the four named call sites and single underlying retro_run call. The main trace spans include Vulkan sync-index reservation and cleanup, unlike the historical direct retro_run spans; do not compare those as identical measurements. Native profile CI now also reacts to changes in the fetch, patch and link-evidence inputs. All fixes need fresh CI.
+
+### Context audit: state serialization and build-cache failures
+
+Reviewed exact pinned state writers and save entry points of Beetle NGP,
+WonderSwan, VB and Lynx, the Nestopia save footer, Stella2014 Serializer
+implementation and Handy RGB555/565 ghosting macro. The fixed state writers
+retain the upstream section/header format and never transfer buffer ownership.
+The NGP AV change is now staged with the other state-source transformations so
+a later anchor mismatch cannot partially apply it. Failed fixed-buffer writes
+remain sticky and subsequent writes are rejected; lengths outside the signed
+writer return range are rejected before touching storage. Regression fixtures
+exercise drift and overflow. Actual gameplay state interchange remains untested.
+
+CI run 45888396167 passed all three ARM64 native profile builds. Core run
+45888396254 reported a runner apt HTTP 403 during optional ccache installation
+for FCEUmm, not a compiler error. Cache setup now falls back to uncached builds
+without changing compiler/link/ELF evidence requirements.
