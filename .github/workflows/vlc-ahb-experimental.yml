@@ -1,0 +1,27 @@
+name: Experimental VLC Android hardware buffer
+on:
+  pull_request:
+    paths:
+      - 'native/vlc-aar/experimental/**'
+      - 'scripts/test_vlc_ahb_import.sh'
+      - '.github/workflows/vlc-ahb-experimental.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ndk-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install pinned Android NDK and shader compiler
+        run: |
+          sdkmanager "ndk;30.0.16248370"
+          sudo apt-get update
+          sudo apt-get install -y glslc
+      - name: Host sanitizer regressions, GLSL and Android ABI checks
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/30.0.16248370
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
+          bash scripts/test_vlc_ahb_import.sh
