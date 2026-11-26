@@ -824,10 +824,10 @@ class VlcPlaybackController(
                 runCatching { retiring.stop() }
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
                     val closed = runCatching { retiring.release() }
-                    libVlcRelease.retired(retiringLibVlc)
+                    if (closed.isSuccess) libVlcRelease.retired(retiringLibVlc)
                     dvRetirementPending = false
                     closed.onSuccess { retirement.complete(Unit) }
-                        .onFailure { retirement.completeExceptionally(it) }
+                        .onFailure { retirement.completeExceptionally(NativeOutputReleaseUncertain(it)) }
                     if (!released) {
                         if (closed.isSuccess) {
                             if (!prepared) prepare()
@@ -981,7 +981,7 @@ class VlcPlaybackController(
         frameDropSamples.prepare()
         if (previousReleaseOutcome == null && previousAudioRelease.isDone) {
             // Nothing to wait for: open in this call, not one main-thread round trip later.
-            previousReleaseOutcome = previousReleaseOutcome(true, previousAudioRelease.failed, 0L)
+            previousReleaseOutcome = previousReleaseOutcome(true, previousAudioRelease.failed, 0L, blocked = previousAudioRelease.blocked)
             if (previousReleaseOutcome == PreviousReleaseOutcome.READY_AFTER_FAILURE)
                 Timber.w(previousAudioRelease.failure, "VLC start: previous player failed to close; starting anyway")
         }
@@ -1000,9 +1000,22 @@ class VlcPlaybackController(
                         val waited = android.os.SystemClock.elapsedRealtime() - createdAt
                         com.ambient.tv.diagnostics.CrashBreadcrumbs.add("vlc", "previous player $outcome after $waited ms")
                         when (outcome) {
+                            PreviousReleaseOutcome.BLOCKED -> {
+                                if (!released) errorMessage = context.getString(R.string.audio_output_release_failed)
+                            }
                             PreviousReleaseOutcome.TIMED_OUT -> {
                                 Timber.w("VLC start: previous player still closing after %d ms; not starting", waited)
                                 if (!released) errorMessage = context.getString(com.ambient.tv.R.string.audio_output_release_failed)
+                                val target = java.lang.ref.WeakReference(this@VlcPlaybackController)
+                                val previous = previousAudioRelease
+                                previous.future.whenComplete { _, _ -> main.post {
+                                    val current = target.get() ?: return@post
+                                    if (!current.released && !previous.blocked) {
+                                        current.previousReleaseOutcome = previousReleaseOutcome(true, previous.failed, 0L)
+                                        current.errorMessage = null
+                                        current.prepare()
+                                    }
+                                } }
                             }
                             PreviousReleaseOutcome.READY_AFTER_FAILURE -> {
                                 Timber.w(previousAudioRelease.failure, "VLC start: previous player failed to close; starting anyway")
@@ -1018,7 +1031,10 @@ class VlcPlaybackController(
             }
             return
         }
-        if (previousReleaseOutcome == PreviousReleaseOutcome.TIMED_OUT) return
+        if (previousReleaseOutcome == PreviousReleaseOutcome.TIMED_OUT || previousReleaseOutcome == PreviousReleaseOutcome.BLOCKED) {
+            errorMessage = context.getString(R.string.audio_output_release_failed)
+            return
+        }
         if (!applyAudioOutputDevice()) {
             errorMessage = context.getString(com.ambient.tv.R.string.audio_output_config_failed)
             return
@@ -1991,9 +2007,9 @@ class VlcPlaybackController(
                 .onFailure { Timber.w(it, "VLC native stop failed") }
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 val closed = runCatching { retiringPlayer.release() }
-                libVlcRelease.releaseWhenIdle(retiringLibVlc)
+                if (closed.isSuccess) libVlcRelease.releaseWhenIdle(retiringLibVlc)
                 closed.onSuccess { audioRelease.complete(Unit) }
-                    .onFailure { audioRelease.completeExceptionally(it) }
+                    .onFailure { audioRelease.completeExceptionally(NativeOutputReleaseUncertain(it)) }
                 com.ambient.tv.diagnostics.CrashBreadcrumbs.add("vlc", "native release done")
                 Timber.i("VLC native release completed in %d ms", android.os.SystemClock.elapsedRealtime() - started)
             }
