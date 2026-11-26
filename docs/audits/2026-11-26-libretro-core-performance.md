@@ -275,3 +275,54 @@ No source change is claimed for a core merely because it has an audit
 contract or a compiler experiment. Do not equate the nine source-level
 candidates (plus the earlier Snes9x2010 and PicoDrive focused candidates)
 with proven optimization of all 26 core implementations.
+
+## Stage 8 — individual candidate coverage for all 26 cores
+
+The remaining fifteen pinned core recipes now have 24 unique, exact source
+replacements in `scripts/core_hotpath_remaining.py`. Together with the nine
+Stage 7 transformations and the two earlier dedicated profiles, every catalog
+core has a concrete individual optimization candidate. This is coverage of
+implemented candidates, not a measured ranking or a proof that every candidate
+is faster on Android.
+
+| Core | Candidate |
+|---|---|
+| Nestopia | Read the existing savestate stream directly into the frontend buffer; retain footer and padding. |
+| Snes9x | AArch64 NEON deinterleaved loads and exact floor RGB565 average for hi-res merge. |
+| Gambatte | AArch64 NEON rounded RGB565 two-frame mixing, preserving history writes and pitch. |
+| mGBA | Separate the no-colour-correction blend loop from the LUT loop. |
+| Genesis Plus GX | Specialize both FM quality paths for unity gain, avoiding per-sample multiply/divide. |
+| Handy | AArch64 NEON exact RGB555/RGB565 two-frame LCD ghosting, preserving history. |
+| Stella2014 | Read existing Serializer stream bytes without constructing a duplicate string. |
+| Mupen64Plus Next | Skip sqrt/atan2 in the stick deadzone and widen squared coordinates before summing. |
+| PCSX ReARMed | Do not query digital joypad state for mouse and lightgun handlers that never consume it. |
+| FCEUmm | Reuse the already sampled digital mask for turbo buttons. |
+| gpSP | AArch64 NEON rounded RGB565 blend; preserve the upstream buffer swap. |
+| RACE | AArch64 NEON interleaved stereo stores for mono sample duplication. |
+| ParaLLEl N64 | Exact squared-radius early-out for the integer-sqrt deadzone. |
+| SwanStation | Reference existing disk path rather than allocating a duplicate string on snapshot. |
+| Beetle PSX HW | One digital input bitmask for the ten VCD menu buttons, with legacy fallback. |
+
+The ARM64 paths keep scalar fallbacks on other ABIs and for remaining tail
+elements. The source-only profile preserves SwanStation's upstream IPO settings,
+so the comparison does not accidentally change LTO at the same time. The
+deduplicated PR matrix has 67 build jobs. The manual source profile covers 24
+cores on four ABIs (96 candidate builds); the remaining two use
+`picodrive-sh2` and `snes9x2010-threaded`.
+
+Added tests exercise unique anchors, rejection of source drift without partial
+writes, ARM64 kernel compilation, packed-pixel arithmetic, deadzone boundaries,
+FM sample events and savestate-copy equality. A standalone C++11/UBSan
+reconstruction of the arithmetic checks completed successfully locally:
+2,655,360 pixel pairs (each checked for floor and ceil mixing) and 2,293,760
+axis/deadzone combinations (each checked against real and floored radii).
+A standalone Clang freestanding AArch64 compilation of the merge, rounded
+mix and interleaved stereo kernels also succeeded. These are isolated checks,
+not full pinned-core Android builds. The actual repository test suite and
+complete ABI matrix remain unverified.
+
+At this stage GitHub reports the feature branch 126 commits behind main and
+the draft PR as non-mergeable, with no fresh PR workflow runs returned for
+the tested head. The execution container cannot resolve github.com for a
+checkout. Resolve integration conflicts and obtain fresh CI before promoting
+any candidate; no production profile was changed or merged.
