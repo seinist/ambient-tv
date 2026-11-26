@@ -85,3 +85,27 @@ fun RefreshOnReconnect(sources: Set<String>, onRefresh: () -> Unit) {
         }
     }
 }
+
+/** Live TV owns its freshness policy. A navigation entry is not a network recovery. */
+@Composable
+internal fun LiveTvRefreshOnEntry(sources: Set<String>, onEntry: (Long) -> Unit) {
+    val context = LocalContext.current
+    val reconnects = remember(context) {
+        EntryPointAccessors.fromApplication(context.applicationContext, BrowseReconnectEntryPoint::class.java).browseReconnects()
+    }
+    val owner = LocalLifecycleOwner.current
+    val watched = rememberUpdatedState(sources.toSet())
+    val callback = rememberUpdatedState(onEntry)
+    LaunchedEffect(reconnects, owner) {
+        owner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            val entry = watched.value
+            val revisions = reconnects.revisions.value
+            val observation = BrowseRefreshObservation(entry, revisions)
+            callback.value(browseReconnectVersion(revisions, entry))
+            combine(snapshotFlow { watched.value }, reconnects.revisions) { sources, versions -> sources to versions }
+                .collect { (sources, versions) ->
+                    if (observation.changed(sources, versions)) callback.value(browseReconnectVersion(versions, sources))
+                }
+        }
+    }
+}

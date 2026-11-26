@@ -7,16 +7,28 @@ class LiveTvBrowseState(private val now: () -> Long = { System.nanoTime() / 1_00
     var capabilities = LiveTvCapabilities()
         private set
     private var loadedAt: Long? = null
+    private var recoveryRevision = 0L
+    var savedView: Boolean = false
+        private set
+    internal var preparedListing: com.ambient.tv.ui.tvheadend.CompletedLiveTvListing? = null
+
+    fun observeRecovery(revision: Long): Boolean {
+        if (revision <= recoveryRevision) return false
+        recoveryRevision = revision
+        loadedAt = null
+        return true
+    }
     private val positions = mutableMapOf<String, Position>()
 
     data class Position(val itemId: String, val offset: Int)
 
     fun needsRefresh(): Boolean = loadedAt?.let { now() - it >= 45_000 } ?: true
 
-    fun update(dashboard: LiveTvDashboard, capabilities: LiveTvCapabilities) {
+    fun update(dashboard: LiveTvDashboard, capabilities: LiveTvCapabilities, savedView: Boolean = false) {
         this.dashboard = dashboard
         this.capabilities = capabilities
-        loadedAt = if (dashboard.warnings.isEmpty()) now() else null
+        this.savedView = savedView
+        loadedAt = if (!savedView && dashboard.warnings.isEmpty()) now() else null
     }
 
     /** A confirmed mutation must survive navigation even if its follow-up request fails. */

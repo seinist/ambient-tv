@@ -192,13 +192,13 @@ class TvheadendRepository @Inject constructor(
             }
         }
 
-    suspend fun dashboard(force: Boolean = false): TvhDashboard = coroutineScope {
+    suspend fun dashboard(force: Boolean = false, preparedChannels: List<TvhChannel>? = null, infoPrepared: Boolean = false): TvhDashboard = coroutineScope {
         val warnings = java.util.concurrent.ConcurrentLinkedQueue<String>()
         suspend fun <T> optional(label: String, block: suspend () -> List<T>): List<T> = suspendResult { block() }.getOrElse {
             warnings.add("$label: ${it.message ?: "Unavailable"}"); emptyList()
         }
-        val info = async { serverInfo(force) }
-        val channels = async { channels(force) }
+        val info = async { serverInfo(force && !infoPrepared) }
+        val channels = async { preparedChannels ?: channels(force) }
         val events = async { optional("EPG") { epgEvents(windowHours = 12, force = force) } }
         val upcoming = async { optional("Timers") { upcomingRecordings(force) } }
         val recordings = async { optional("Recordings") { finishedRecordings(force) } }

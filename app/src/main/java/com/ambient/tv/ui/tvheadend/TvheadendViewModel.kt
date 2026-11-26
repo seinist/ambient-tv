@@ -105,6 +105,7 @@ class TvheadendViewModel @Inject constructor(
         offline = offlineNow(), canWake = offlineNow() && canWake(),
         guideOptions = preferences.guideOptions(repository.source.id),
         dashboard = browseState.dashboard, capabilities = browseState.capabilities,
+        savedView = browseState.savedView, initialDashboardSettled = browseState.dashboard != null,
         loading = browseState.dashboard == null,
         tab = TvheadendTab.entries.firstOrNull {
             it.name.equals(savedStateHandle.get<String>("tab"), ignoreCase = true)
@@ -213,9 +214,15 @@ class TvheadendViewModel @Inject constructor(
         if (connectionRequiredNow()) retryConnection() else load(force = true)
     }
 
-    /** Each entry and recovery fetches fresh data, retaining the shown dashboard and selection. */
-    fun refreshAfterReconnect() {
-        refreshPolicy.reconnected()
+    /** Navigation reuses the current snapshot. Only a new recovery revision forces a read. */
+    fun refreshOnEntry(revision: Long) {
+        val current = registry.configured().firstOrNull { it.source.id == repository.source.id }
+        if (current !== repository) { load(force = false); return }
+        val recovered = browseState.observeRecovery(revision)
+        if (recovered) refreshPolicy.reconnected()
+        if (!recovered && refreshJob?.isActive == true) return
+        if (!recovered && !refreshPolicy.recoveryPending && !refreshNeedsRetry &&
+            !connectionRequiredNow() && !browseState.needsRefresh() && _uiState.value.dashboard != null) return
         load(force = false)
     }
 
@@ -251,6 +258,7 @@ class TvheadendViewModel @Inject constructor(
             val owner = "livetv:${requestedRepository.source.id}"
             val namespace = liveTvDisplayNamespace(snapshots, requestedRepository, registry)
                 ?: run { load(force = false); return@launch }
+            if (_uiState.value.dashboard == null) {
             val savedAt = snapshots.read<Long>(namespace, "updated_at")
             if (!stillCurrent()) { load(force = false); return@launch }
             val savedCapabilities = snapshots.read<LiveTvCapabilities>(namespace, "capabilities")
@@ -266,6 +274,8 @@ class TvheadendViewModel @Inject constructor(
                         guide = isTvheadend || cached.events.isNotEmpty(), recordings = isTvheadend || cached.recordings.isNotEmpty(),
                         timers = isTvheadend || cached.upcoming.isNotEmpty() || cached.autoRecs.isNotEmpty()),
                     lastUpdatedEpochMillis = savedAt, savedView = true, loading = false, refreshing = true) }
+                browseState.update(cached, _uiState.value.capabilities, savedView = true)
+            }
             }
             if (!stillCurrent()) { load(force = false); return@launch }
             _uiState.update { it.copy(loading = it.dashboard == null, refreshing = it.dashboard != null, error = null) }
@@ -276,13 +286,14 @@ class TvheadendViewModel @Inject constructor(
             // "served cache" flag from Home or an earlier read made the status flip back and forth.
             val cacheMarker = requestedRepository.cacheFallbackMarker
             suspendResult {
-                val prefetch = requestedRepository.prefetchDashboard(forceRead)
+                var prefetch = requestedRepository.prefetchDashboard(forceRead)
                 val caps = prefetch.capabilities
                 currentCoroutineContext().ensureActive()
                 check(stillCurrent()) { "Live TV source configuration changed" }
                 _uiState.update { it.copy(capabilities = caps) }
                 if (caps.available && _uiState.value.dashboard == null) {
                     val channels = prefetch.channels ?: requestedRepository.channels(forceRead)
+                    prefetch = prefetch.copy(channels = channels)
                     currentCoroutineContext().ensureActive()
                     check(stillCurrent()) { "Live TV source configuration changed" }
                     _uiState.update { it.copy(loading = false, refreshing = true, dashboard = LiveTvDashboard(
@@ -294,13 +305,18 @@ class TvheadendViewModel @Inject constructor(
                     if (!stillCurrent()) { load(force = false); return@launch }
                     val old = _uiState.value.dashboard
                     val merge = LiveTvDashboardMergePolicy(fresh.warnings)
-                    val dashboard = if (fresh.warnings.isEmpty() || old == null) fresh else fresh.copy(
+                    val merged = if (fresh.warnings.isEmpty() || old == null) fresh else fresh.copy(
                         events = merge.merge(LiveTvDashboardPart.EPG, fresh.events, old.events),
                         recordings = merge.merge(LiveTvDashboardPart.RECORDINGS, fresh.recordings, old.recordings),
                         upcoming = merge.merge(LiveTvDashboardPart.TIMERS, fresh.upcoming, old.upcoming),
                         failedRecordings = merge.merge(LiveTvDashboardPart.FAILED_RECORDINGS, fresh.failedRecordings, old.failedRecordings),
                         autoRecs = merge.merge(LiveTvDashboardPart.SERIES_TIMERS, fresh.autoRecs, old.autoRecs),
                     )
+                    val dashboard = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                        merged.copy(channels = old?.channels?.takeIf { it == merged.channels } ?: merged.channels,
+                            events = old?.events?.takeIf { it == merged.events } ?: merged.events)
+                    }
+                    if (!stillCurrent()) { load(force = false); return@launch }
                     val servedCache = requestedRepository.servedCacheSince(cacheMarker)
                     if (forceRead && !servedCache && fresh.warnings.isEmpty())
                         availability.confirmBrowseRead(accessSource, accessGeneration)
@@ -314,7 +330,7 @@ class TvheadendViewModel @Inject constructor(
                         snapshots.write(owner, namespace, "updated_at", checkNotNull(updatedAt))
                         snapshots.write(owner, namespace, "capabilities", _uiState.value.capabilities)
                     }
-                    browseState.update(dashboard, _uiState.value.capabilities)
+                    browseState.update(dashboard, _uiState.value.capabilities, savedView = servedCache)
                     val result = feedback.complete(ticket, OperationFeedback(
                         "refresh:${repository.source.id}", "dashboard",
                         if (dashboard.warnings.isEmpty()) R.string.notice_refresh_done else R.string.feedback_live_partial,
