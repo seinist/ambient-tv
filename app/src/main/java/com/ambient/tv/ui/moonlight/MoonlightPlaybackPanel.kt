@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import kotlinx.coroutines.flow.StateFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -41,6 +43,7 @@ internal enum class MoonlightPlaybackPage { NONE, ROOT, QUALITY, DISPLAY, TEXT, 
 internal fun BoxScope.MoonlightPlaybackPanel(
     page: MoonlightPlaybackPage,
     status: MoonlightStreamStatus,
+    metricsSource: StateFlow<MoonlightStreamStatus>,
     streamProfile: MoonlightStreamProfile,
     activeProfile: MoonlightStreamProfile,
     displayResult: MoonlightDisplayResult,
@@ -151,7 +154,9 @@ internal fun BoxScope.MoonlightPlaybackPanel(
                     RightPanelInfoRow(stringResource(R.string.moonlight_display_actual,
                         displayResult.mode?.label ?: stringResource(R.string.moonlight_display_unknown)))
                     if (displayResult.unavailable) RightPanelInfoRow(stringResource(R.string.moonlight_display_fallback))
-                    val metrics = status.metrics
+                    val detailed by metricsSource.collectAsState()
+                    val metrics = if (detailed.owner === status.owner && detailed.generation == status.generation)
+                        detailed.metrics else com.ambient.tv.moonlight.MoonlightStreamMetrics()
                     val video = metrics.video
                     if (video.width > 0) {
                         RightPanelInfoRow(stringResource(R.string.moonlight_stats_video, video.mime.substringAfter('/'),

@@ -36,6 +36,7 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
     private var lastHead = 0L
     private var headEpoch = 0L
     private var lastQueueSample = 0L
+    private var lastSnapshotNanos = 0L
     private var localQueuedMs = 0.0
     private var nativeQueuedMs = 0
     @Volatile private var snapshot = MoonlightAudioMetrics()
@@ -148,7 +149,10 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
                     localQueuedMs = ((writtenFrames - headEpoch - head).coerceAtLeast(0L) * 1000.0 / rate)
                         .coerceAtMost(1000.0)
                     lastQueueSample = now
-                    publishSnapshot(t)
+                    if (now - lastSnapshotNanos >= 250_000_000L) {
+                        publishSnapshot(t)
+                        lastSnapshotNanos = now
+                    }
                 }
                 // The device may impose a larger hardware floor. Account for both queues
                 // rather than letting a second PCM queue accumulate behind common-c.
@@ -267,6 +271,7 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
         lastHead = 0L
         headEpoch = 0L
         lastQueueSample = 0L
+        lastSnapshotNanos = 0L
         localQueuedMs = 0.0
         nativeQueuedMs = 0
     }

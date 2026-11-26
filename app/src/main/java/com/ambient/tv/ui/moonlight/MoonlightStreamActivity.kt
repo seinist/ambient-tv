@@ -38,6 +38,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -112,6 +115,7 @@ class MoonlightStreamActivity : ComponentActivity() {
     private var sessionProfile by mutableStateOf(MoonlightStreamProfile())
     private val displaySession by lazy { MoonlightDisplaySession(this) }
     private var displayPreparation: Job? = null
+    private var displayRestore: Job? = null
     private val displayManager by lazy { getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager }
     private val displayListener = object : android.hardware.display.DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) = Unit
@@ -248,7 +252,10 @@ class MoonlightStreamActivity : ComponentActivity() {
 
     private fun prepareDisplay() {
         displayPreparation?.cancel()
+        displayRestore?.cancel()
+        displayRestore = null
         sessionProfile = qualityProfile
+        setSustainedMode(sessionProfile.pacing == "smooth")
         displayReady = false
         displayPreparation = lifecycleScope.launch {
             // Avoid an HDMI mode switch while a previous decoder still owns its surface.
@@ -273,6 +280,27 @@ class MoonlightStreamActivity : ComponentActivity() {
                 displaySession.snapshot(unavailable = true)
             }
             displayReady = true
+        }
+    }
+
+    private fun setSustainedMode(enabled: Boolean) {
+        // This is a media app with an optional streaming activity; do not reclassify the
+        // entire application as an Android game. Smooth pacing may favor thermal stability.
+        runCatching {
+            val power = getSystemService(android.os.PowerManager::class.java)
+            if (power?.isSustainedPerformanceModeSupported == true) window.setSustainedPerformanceMode(enabled)
+        }
+    }
+
+    private fun restoreDisplayWhenIdle() {
+        displayRestore?.cancel()
+        displayRestore = lifecycleScope.launch {
+            val idle = withTimeoutOrNull(20_000L) {
+                while (engine.isBusy()) delay(50L)
+                true
+            } ?: false
+            if (idle) displaySession.restore()
+            else timber.log.Timber.w("Moonlight: decoder teardown still busy; not requesting a competing display mode")
         }
     }
 
@@ -331,7 +359,10 @@ class MoonlightStreamActivity : ComponentActivity() {
         displayPreparation?.cancel()
         displayPreparation = null
         displayReady = false
-        if (validLaunch) displaySession.restore()
+        if (validLaunch) {
+            setSustainedMode(false)
+            restoreDisplayWhenIdle()
+        }
         super.onStop()
     }
 
@@ -365,7 +396,10 @@ class MoonlightStreamActivity : ComponentActivity() {
         releaseRemoteInputs()
         engine.stop(streamOwner)
         displayPreparation?.cancel()
-        if (validLaunch) displaySession.restore()
+        displayRestore?.cancel()
+        // A destroyed window no longer participates in Android mode selection. Never request
+        // a competing HDMI switch while the old native decoder still owns its surface.
+        if (validLaunch && !engine.isBusy()) displaySession.restore()
         super.onDestroy()
     }
 
@@ -409,7 +443,16 @@ private fun MoonlightStreamContent(
     val artwork by produceState<com.ambient.tv.moonlight.MoonlightArtwork?>(null, hostId, appId, trustRevision, artworkRevision["$hostId:$appId"] ?: 0L) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { libraryStore.artworkInfo(hostId, appId) }
     }
-    val globalStatus by engine.status.collectAsState()
+    // Only the negotiated dimensions affect Surface layout. Per-second diagnostics must not
+    // invalidate the player, input listeners, or artwork composables when the info panel is closed.
+    val playerStatus = remember(engine) {
+        engine.status.map { state ->
+            state.copy(metrics = com.ambient.tv.moonlight.MoonlightStreamMetrics(
+                video = com.ambient.tv.moonlight.MoonlightVideoMetrics(width = state.metrics.video.width,
+                    height = state.metrics.video.height)))
+        }.distinctUntilChanged()
+    }
+    val globalStatus by playerStatus.collectAsState(initial = engine.status.value)
     val status = if (globalStatus.owner === owner) globalStatus else com.ambient.tv.moonlight.MoonlightStreamStatus()
     // Surface identity is separate from the mutable next-connection profile. No decoder or
     // remote app launch occurs while the physical display is still switching.
@@ -436,6 +479,18 @@ private fun MoonlightStreamContent(
         if (!idle) {
             startFailed = true
             return@LaunchedEffect
+        }
+        // Hint the compositor only when the chosen system mode already matches the cadence.
+        // Do not override a fixed output mode, resolution policy or failed HDMI switch.
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            val hz = displayResult.mode?.refreshRate
+            val compatible = hz != null && (kotlin.math.abs(hz - sessionProfile.fps) < .6f ||
+                kotlin.math.abs(hz - sessionProfile.fps * 2) < .6f)
+            val hint = if (sessionProfile.matchDisplayRefresh &&
+                sessionProfile.displayOutputMode == MoonlightStreamProfile.DISPLAY_SYSTEM &&
+                compatible && !displayResult.unavailable) sessionProfile.fps.toFloat() else 0f
+            runCatching { target.surface.setFrameRate(hint, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,
+                Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS) }
         }
         if (engine.start(owner, hostId, appId, target.surface, sessionProfile,
                 displayResult.mode?.refreshRate, displayResult.hdr10, resumeOnly = resumeOnly,
@@ -499,6 +554,8 @@ private fun MoonlightStreamContent(
         panel = if (panel == MoonlightPlaybackPage.ROOT) MoonlightPlaybackPage.NONE
             else MoonlightPlaybackPage.ROOT
     }
+    val inputEnabled by rememberUpdatedState(!controlsShown && panel == MoonlightPlaybackPage.NONE &&
+        status.phase == MoonlightStreamPhase.STREAMING && !startFailed)
     BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
         val video = status.metrics.video
         val width = video.width.takeIf { it > 0 } ?: sessionProfile.width
@@ -512,6 +569,9 @@ private fun MoonlightStreamContent(
                 SurfaceView(context).apply {
                     isFocusableInTouchMode = true
                     pointer.attach(this)
+                    setOnTouchListener { v, event -> inputEnabled && v.hasWindowFocus() && engine.owns(owner) && pointer.touch(v, event) }
+                    setOnGenericMotionListener { v, event -> inputEnabled && v.hasWindowFocus() && engine.owns(owner) && pointer.mouse(v, event) }
+                    setOnCapturedPointerListener { v, event -> inputEnabled && v.hasWindowFocus() && engine.owns(owner) && pointer.mouse(v, event, captured = true) }
                     holder.addCallback(object : SurfaceHolder.Callback {
                         override fun surfaceCreated(holder: SurfaceHolder) {
                             binding = MoonlightSurfaceBinding(holder.surface)
@@ -524,14 +584,7 @@ private fun MoonlightStreamContent(
                     })
                 }
             },
-            update = { view ->
-                val inputEnabled = !controlsShown && panel == MoonlightPlaybackPage.NONE &&
-                    status.phase == MoonlightStreamPhase.STREAMING && !startFailed && engine.owns(owner)
-                view.setOnTouchListener { v, event -> inputEnabled && v.hasWindowFocus() && pointer.touch(v, event) }
-                view.setOnGenericMotionListener { v, event -> inputEnabled && v.hasWindowFocus() && pointer.mouse(v, event) }
-                view.setOnCapturedPointerListener { v, event -> inputEnabled && v.hasWindowFocus() && pointer.mouse(v, event, captured = true) }
-
-            },
+            update = {},
         )
         if (showMobileHint && !controlsShown && status.phase == MoonlightStreamPhase.STREAMING &&
             !com.ambient.tv.ui.mobile.isTelevision(LocalContext.current)) {
@@ -610,6 +663,7 @@ private fun MoonlightStreamContent(
         MoonlightPlaybackPanel(
             page = panel,
             status = status,
+            metricsSource = engine.status,
             streamProfile = streamProfile,
             activeProfile = sessionProfile,
             displayResult = displayResult,
