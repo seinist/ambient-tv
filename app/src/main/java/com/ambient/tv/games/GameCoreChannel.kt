@@ -21,13 +21,20 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /** Where cores come from. */
-enum class GameCoreSource(val key: String) {
+enum class GameCoreSource(val key: String, val experimentalProfile: String? = null) {
     /** The app's own signed build when it has the core, otherwise the libretro buildbot. */
     AUTO("auto"),
     /** Only the app's own build (pinned commits, 16 KB pages, signed manifest). */
     AMBIENT("ambient"),
     /** Only the libretro buildbot (nightly). */
     BUILDBOT("buildbot"),
+    HOTPATHS("experiment-hotpaths", "core-hotpaths"),
+    O3("experiment-o3", "o3"),
+    THINLTO("experiment-thinlto", "thinlto"),
+    O3_THINLTO("experiment-o3-thinlto", "o3-thinlto"),
+    TUNE_A57("experiment-a57", "tune-a57"),
+    PICODRIVE_SH2("experiment-sh2", "picodrive-sh2"),
+    SNES_THREADED("experiment-snes-threaded", "snes9x2010-threaded"),
     ;
 
     companion object {
@@ -48,7 +55,7 @@ data class GameCoreBuild(
 )
 
 @Serializable
-data class GameCoreManifest(val version: Int = 1, val tag: String = "", val created: String = "", val cores: List<GameCoreBuild> = emptyList())
+data class GameCoreManifest(val version: Int = 1, val tag: String = "", val created: String = "", val cores: List<GameCoreBuild> = emptyList(), val profile: String = "baseline")
 
 class GameCoreSignatureException(message: String) : IOException(message)
 
@@ -62,39 +69,61 @@ class GameCoreChannel @Inject constructor() {
     private val http = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
     private val json = Json { ignoreUnknownKeys = true }
     private val lock = Mutex()
-    private var cached: Pair<GameCoreManifest, Map<String, String>>? = null
+    private data class VerifiedRelease(val manifest: GameCoreManifest, val assets: Map<String, String>)
+    private var cachedReleases = emptyList<Release>()
     private var cachedAt = 0L
+    private val verified = mutableMapOf<String, VerifiedRelease>()
 
     /** False in builds without the public key: the channel then never answers. */
     val available: Boolean get() = BuildConfig.CORES_PUBLIC_KEY.isNotBlank()
 
-    /** The verified manifest and its asset URLs, or null when there is no release yet. */
-    suspend fun manifest(): Pair<GameCoreManifest, Map<String, String>>? = lock.withLock {
-        if (!available) return@withLock null
-        cached?.takeIf { System.currentTimeMillis() - cachedAt < CACHE_MS }?.let { return@withLock it }
-        withContext(Dispatchers.IO) {
-            val releases = json.decodeFromString(ListSerializer(Release.serializer()),
-                get("https://api.github.com/repos/${BuildConfig.CORES_REPO}/releases?per_page=40").decodeToString())
-            val release = releases.filter { it.tag.startsWith("cores-") && !it.draft }.maxByOrNull { it.published.orEmpty() }
-                ?: return@withContext null
-            val assets = release.assets.associate { it.name to it.url }
-            val manifestBytes = get(assets["manifest.json"] ?: throw GameCoreSignatureException("manifest missing"))
-            val signature = get(assets["manifest.json.sig"] ?: throw GameCoreSignatureException("signature missing"))
-            if (!verify(manifestBytes, signature, BuildConfig.CORES_PUBLIC_KEY)) throw GameCoreSignatureException("manifest signature invalid")
-            val manifest = json.decodeFromString(GameCoreManifest.serializer(), manifestBytes.decodeToString())
-            (manifest to assets).also {
-                cached = it
-                cachedAt = System.currentTimeMillis()
-            }
-        }
-    }
+    data class Download(val build: GameCoreBuild, val url: String, val tag: String)
 
-    /** The build of [core] for [abi], with its download URL, or null when the channel lacks it. */
-    suspend fun build(core: GameCore, abi: String): Pair<GameCoreBuild, String>? {
-        val (manifest, assets) = manifest() ?: return null
-        val build = manifest.cores.firstOrNull { it.core == core.id && it.abi == abi } ?: return null
-        val url = assets[build.asset] ?: return null
-        return build to url
+    /** Resolve partial experimental releases per core and ABI; never mix channels. */
+    suspend fun build(core: GameCore, abi: String, source: GameCoreSource = GameCoreSource.AMBIENT): Download? = lock.withLock {
+        if (!available) return@withLock null
+        withContext(Dispatchers.IO) {
+            if (cachedAt == 0L || System.currentTimeMillis() - cachedAt !in 0 until CACHE_MS) {
+                val releases = mutableListOf<Release>()
+                // Experiments must not push the production release outside the first page.
+                for (page in 1..5) {
+                    val batch = json.decodeFromString(ListSerializer(Release.serializer()),
+                        get("https://api.github.com/repos/${BuildConfig.CORES_REPO}/releases?per_page=100&page=$page").decodeToString())
+                    releases += batch
+                    if (batch.size < 100) break
+                }
+                cachedReleases = releases
+                cachedAt = System.currentTimeMillis()
+                verified.clear()
+            }
+            val profile = source.experimentalProfile ?: "baseline"
+            val candidates = cachedReleases.filter { !it.draft && matchesChannel(it.tag, it.prerelease, profile) }
+                .sortedByDescending { it.published.orEmpty() }
+            for (release in candidates) {
+                val expectedAsset = "$abi--${core.id}_libretro_android.so.zip"
+                // A partial experimental release need not include this core/ABI.
+                if (profile != "baseline" && release.assets.none { it.name == expectedAsset }) continue
+                val entry = verified[release.tag] ?: run {
+                    val assets = release.assets.associate { it.name to it.url }
+                    val bytes = get(assets["manifest.json"] ?: throw GameCoreSignatureException("manifest missing"))
+                    val signature = get(assets["manifest.json.sig"] ?: throw GameCoreSignatureException("signature missing"))
+                    if (!verify(bytes, signature, BuildConfig.CORES_PUBLIC_KEY)) throw GameCoreSignatureException("manifest signature invalid")
+                    val manifest = json.decodeFromString(GameCoreManifest.serializer(), bytes.decodeToString())
+                    if (!matchesManifest(manifest, release.tag, profile)) throw GameCoreSignatureException("manifest channel mismatch")
+                    VerifiedRelease(manifest, assets).also { verified[release.tag] = it }
+                }
+                val build = entry.manifest.cores.singleOrNull { it.core == core.id && it.abi == abi }
+                if (build == null) {
+                    if (profile == "baseline") return@withContext null
+                    throw GameCoreSignatureException("experimental core missing from signed manifest")
+                }
+                if (build.asset != expectedAsset || !build.sha256.matches(Regex("[0-9a-fA-F]{64}")) || build.size <= 0)
+                    throw GameCoreSignatureException("invalid core manifest entry")
+                val url = entry.assets[build.asset] ?: throw GameCoreSignatureException("signed asset missing")
+                return@withContext Download(build, url, release.tag)
+            }
+            null
+        }
     }
 
     /** Release-list and signature files are untrusted until the manifest signature is verified. */
@@ -127,11 +156,20 @@ class GameCoreChannel @Inject constructor() {
     @Serializable private data class Release(
         @SerialName("tag_name") val tag: String,
         val draft: Boolean = false,
+        val prerelease: Boolean = false,
         @SerialName("published_at") val published: String? = null,
         val assets: List<Asset> = emptyList(),
     )
 
     companion object {
+        internal fun matchesChannel(tag: String, prerelease: Boolean, profile: String): Boolean =
+            if (profile == "baseline") !prerelease && tag.startsWith("cores-")
+            else prerelease && tag.startsWith("core-experiments-$profile--")
+
+        internal fun matchesManifest(manifest: GameCoreManifest, tag: String, profile: String): Boolean =
+            manifest.version == 1 && manifest.tag == tag && manifest.profile == profile &&
+                manifest.cores.map { it.core to it.abi }.distinct().size == manifest.cores.size
+
         private const val CACHE_MS = 30 * 60_000L
         private const val MAX_METADATA_BYTES = 8L * 1024 * 1024
 

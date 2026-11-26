@@ -46,39 +46,40 @@ class GameCoreManager @Inject constructor(
     private val channel: GameCoreChannel,
 ) {
     private val directory: File get() = File(context.noBackupFilesDir, "games/cores")
+    private fun directory(source: GameCoreSource): File = source.experimentalProfile?.let { File(directory, "experiments/$it") } ?: directory
 
     /** The buildbot ABI folder for this device, or null when none fits. */
-    val abi: String? = Build.SUPPORTED_ABIS.firstOrNull { it in BUILDBOT_ABIS }
+    val abi: String? = Build.SUPPORTED_ABIS.firstOrNull { it in BUILDBOT_ABIS && (it in setOf("arm64-v8a", "x86_64")) == android.os.Process.is64Bit() }
 
-    fun file(core: GameCore): File = File(directory, "${core.id}_libretro_android.so")
+    fun file(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO): File = File(directory(source), "${core.id}_libretro_android.so")
 
-    fun installed(core: GameCore): File? = file(core).takeIf { it.isFile && it.length() > 0 }
+    fun installed(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO): File? = file(core, source).takeIf { it.isFile && it.length() > 0 }
 
     fun sourceUrl(core: GameCore): String? = abi
         ?.takeIf { core.supportedAbis.isEmpty() || it in core.supportedAbis }
         ?.let { "$BUILDBOT/$it/${core.id}_libretro_android.so.zip" }
 
-    fun remove(core: GameCore) {
-        file(core).let { it.setWritable(true); it.delete() }
-        rollbackFile(core).delete()
-        infoFile(core).delete()
-        rollbackInfoFile(core).delete()
+    fun remove(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO) {
+        file(core, source).let { it.setWritable(true); it.delete() }
+        rollbackFile(core, source).delete()
+        infoFile(core, source).delete()
+        rollbackInfoFile(core, source).delete()
     }
 
     /** The previous working binary is kept until a replacement has been tested. */
-    fun canRollback(core: GameCore): Boolean = rollbackFile(core).isFile
+    fun canRollback(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO): Boolean = rollbackFile(core, source).isFile
 
     /**
      * Recover the previous installed core after a failed library load. One prior build is retained,
      * without relying on the libretro buildbot preserving its overwritten nightly archives.
      */
-    fun rollback(core: GameCore): Boolean {
-        val old = rollbackFile(core)
-        val current = file(core)
+    fun rollback(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO): Boolean {
+        val old = rollbackFile(core, source)
+        val current = file(core, source)
         if (!old.isFile) return false
         if (runCatching { checkElf(old, pageSize(), abi) }.isFailure) return false
-        val oldInfo = rollbackInfoFile(core)
-        val stagedInfo = File(directory, "${core.id}.rollback-info.tmp")
+        val oldInfo = rollbackInfoFile(core, source)
+        val stagedInfo = File(directory(source), "${core.id}.rollback-info.tmp")
         try {
             // Prepare metadata before touching either binary. A full disk leaves the running
             // core and the previous core untouched.
@@ -103,13 +104,13 @@ class GameCoreManager @Inject constructor(
         if (oldInfo.isFile) {
             if (runCatching {
                 Files.move(
-                    stagedInfo.toPath(), infoFile(core).toPath(),
+                    stagedInfo.toPath(), infoFile(core, source).toPath(),
                     StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING,
                 )
             }.isSuccess) {
                 oldInfo.delete()
             }
-        } else infoFile(core).delete()
+        } else infoFile(core, source).delete()
         stagedInfo.delete()
         return true
     }
@@ -125,35 +126,34 @@ class GameCoreManager @Inject constructor(
         }
         if (source != GameCoreSource.BUILDBOT && channel.available) {
             val found = try {
-                channel.build(core, abi)
+                channel.build(core, abi, source)
             } catch (error: GameCoreSignatureException) {
                 // A signature failure is an integrity incident, never silently downgrade
                 // AUTO to an unsigned buildbot artifact.
                 throw error
             } catch (error: IOException) {
-                if (source == GameCoreSource.AMBIENT) throw error
+                if ((source == GameCoreSource.AMBIENT || source.experimentalProfile != null)) throw error
                 throw GameCoreBuildbotConsentRequired(
                     "Signed core channel unavailable: ${error.message}. Confirm the buildbot source explicitly."
                 )
             }
             if (found != null) {
-                val (build, url) = found
+                val (build, url, tag) = found
                 val archive = fetchVerifiedZip(url, build.sha256, onProgress)
                 try {
-                    val tag = channel.manifest()?.first?.tag.orEmpty()
                     return@withContext archive.inputStream().use { input ->
-                        install(core, input, zipped = true, origin = SOURCE_AMBIENT_PREFIX + tag)
+                        install(core, input, zipped = true, origin = (if (source.experimentalProfile != null) SOURCE_EXPERIMENT_PREFIX else SOURCE_AMBIENT_PREFIX) + tag, source = source)
                     }
                 } finally {
                     archive.delete()
                 }
             }
-            if (source == GameCoreSource.AMBIENT) throw GameCoreIncompatibleException("${core.id} is not in the app's core build for $abi")
+            if ((source == GameCoreSource.AMBIENT || source.experimentalProfile != null)) throw GameCoreIncompatibleException("${core.id} is not in the app's core build for $abi")
             throw GameCoreBuildbotConsentRequired(
                 "No signed ${core.id} build for $abi. Confirm the unsigned buildbot source explicitly."
             )
         }
-        if (source == GameCoreSource.AMBIENT) {
+        if ((source == GameCoreSource.AMBIENT || source.experimentalProfile != null)) {
             throw GameCoreIncompatibleException("Signed Ambient TV core channel unavailable")
         }
         if (source == GameCoreSource.AUTO) {
@@ -191,7 +191,8 @@ class GameCoreManager @Inject constructor(
      * Installs [core] from [input]: the library itself, or a ZIP holding it ([zipped]). Checked like
      * a download; [origin] is shown in settings (the buildbot or the file it came from).
      */
-    suspend fun install(core: GameCore, input: InputStream, zipped: Boolean, origin: String): File = withContext(Dispatchers.IO) {
+    suspend fun install(core: GameCore, input: InputStream, zipped: Boolean, origin: String, source: GameCoreSource = GameCoreSource.AUTO): File = withContext(Dispatchers.IO) {
+        val directory = directory(source)
         directory.mkdirs()
         val partial = File(directory, "${core.id}.download")
         partial.delete()
@@ -243,10 +244,10 @@ class GameCoreManager @Inject constructor(
                 if (!found) throw GameCoreIncompatibleException("No matching ${core.id} library in archive")
             } else input.use(::copy)
             checkElf(partial, pageSize(), abi)
-            val target = file(core)
-            val previous = rollbackFile(core)
-            val oldInfo = rollbackInfoFile(core)
-            val info = infoFile(core)
+            val target = file(core, source)
+            val previous = rollbackFile(core, source)
+            val oldInfo = rollbackInfoFile(core, source)
+            val info = infoFile(core, source)
             val installed = target.isFile
             // Save one known previous version for rollback BEFORE replacing the core atomically.
             if (installed) {
@@ -326,8 +327,8 @@ class GameCoreManager @Inject constructor(
     }
 
     /** Where the installed core came from and when, or null (older installs, none). */
-    fun info(core: GameCore): GameCoreInfo? = installed(core)?.let {
-        runCatching { json.decodeFromString(GameCoreInfo.serializer(), infoFile(core).readText()) }.getOrNull()
+    fun info(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO): GameCoreInfo? = installed(core, source)?.let {
+        runCatching { json.decodeFromString(GameCoreInfo.serializer(), infoFile(core, source).readText()) }.getOrNull()
             ?: GameCoreInfo(SOURCE_BUILDBOT, it.lastModified())
     }
 
@@ -346,15 +347,16 @@ class GameCoreManager @Inject constructor(
     }.getOrDefault(emptyList())
 
     private val optionsDirectory: File get() = File(context.noBackupFilesDir, "games/options")
-    private fun infoFile(core: GameCore) = File(directory, "${core.id}.json")
-    private fun rollbackFile(core: GameCore) = File(directory, "${core.id}_libretro_android.previous.so")
-    private fun rollbackInfoFile(core: GameCore) = File(directory, "${core.id}.previous.json")
+    private fun infoFile(core: GameCore, source: GameCoreSource) = File(directory(source), "${core.id}.json")
+    private fun rollbackFile(core: GameCore, source: GameCoreSource) = File(directory(source), "${core.id}_libretro_android.previous.so")
+    private fun rollbackInfoFile(core: GameCore, source: GameCoreSource) = File(directory(source), "${core.id}.previous.json")
 
     companion object {
         /** [GameCoreInfo.origin] of cores from the libretro buildbot. */
         const val SOURCE_BUILDBOT = "buildbot"
         /** [GameCoreInfo.origin] prefix of cores from the app's own signed build, followed by the release tag. */
         const val SOURCE_AMBIENT_PREFIX = "ambient:"
+        const val SOURCE_EXPERIMENT_PREFIX = "experiment:"
         private const val MAX_CORE_ZIP = 128L * 1024 * 1024
         private const val MAX_CORE_BINARY = 128L * 1024 * 1024
         private val json = Json { ignoreUnknownKeys = true }
