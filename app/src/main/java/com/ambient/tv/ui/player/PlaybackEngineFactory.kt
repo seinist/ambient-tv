@@ -296,7 +296,7 @@ object PlaybackEngineFactory {
      * Call inside [BackgroundPlaybackSession.acquire]: the outgoing release has begun there.
      */
     internal fun gatedMedia3Handle(context: Context, build: (deferPrepare: Boolean) -> ExoPlayer): Media3PlaybackHandle {
-        val wait = com.ambient.tv.ui.player.backend.nativeAudioReleases.snapshot().takeIf { !it.isDone }
+        val wait = com.ambient.tv.ui.player.backend.nativeAudioReleases.snapshot().takeIf { !it.isDone || it.blocked }
         val player = build(wait != null)
         return Media3PlaybackHandle(player, joinsReleaseGate = true, waitingForPreviousRelease = wait != null).also { handle ->
             if (wait != null) prepareAfterPreviousRelease(context.applicationContext, handle, wait)
@@ -312,14 +312,17 @@ object PlaybackEngineFactory {
                 val waited = android.os.SystemClock.elapsedRealtime() - started
                 com.ambient.tv.diagnostics.CrashBreadcrumbs.add("media3", "previous player $outcome after $waited ms")
                 if (Media3PlaybackHandle.forPlayer(player) !== handle) return@post
-                if (outcome == com.ambient.tv.ui.player.backend.PreviousReleaseOutcome.TIMED_OUT) {
+                if (outcome == com.ambient.tv.ui.player.backend.PreviousReleaseOutcome.BLOCKED) {
+                    handle.previousReleaseTimedOut(context.getString(com.ambient.tv.R.string.audio_output_release_failed))
+                    Timber.e(previous.failure, "Media3 start blocked: native output ownership uncertain")
+                } else if (outcome == com.ambient.tv.ui.player.backend.PreviousReleaseOutcome.TIMED_OUT) {
                     Timber.w("Media3 start: previous player still closing after %d ms; keeping prepare deferred", waited)
                     handle.previousReleaseTimedOut(context.getString(com.ambient.tv.R.string.audio_output_release_failed))
                     val target = java.lang.ref.WeakReference(handle)
                     previous.future.whenComplete { _, _ ->
                         main.post {
                             target.get()?.let { current ->
-                                if (Media3PlaybackHandle.forPlayer(current.player) === current)
+                                if (Media3PlaybackHandle.forPlayer(current.player) === current && !previous.blocked)
                                     current.previousReleaseSettled()
                             }
                         }
