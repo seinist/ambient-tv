@@ -30,7 +30,7 @@ class CoreBuildPolicyTest(unittest.TestCase):
 
     def test_pr_comparison(self):
         matrix = plan(self.catalog, "pull_request", "refs/pull/1/merge", False)["include"]
-        self.assertEqual(len(matrix), 68)
+        self.assertEqual(len(matrix), 67)
         self.assertEqual({item["core"] for item in matrix if item["profile"] == "core-hotpaths"},
                          {core["core"] for core in self.catalog["cores"]} - {"picodrive", "snes9x2010"})
         self.assertEqual({item["profile"] for item in matrix},
@@ -215,6 +215,8 @@ class CoreBuildPolicyTest(unittest.TestCase):
             path = root / "CMakeLists.txt"
             path.write_text(original)
             prepare_cmake(root, "swanstation", "baseline")
+            self.assertEqual(path.read_text(), original)
+            prepare_cmake(root, "swanstation", "core-hotpaths")
             self.assertEqual(path.read_text(), original)
             prepare_cmake(root, "mgba", "o3")
             self.assertEqual(path.read_text(), original)
