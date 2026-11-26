@@ -1,6 +1,7 @@
 #include "input.h"
 #include "inputdescriptors.h"
 #include "contentaspect.h"
+#include "ambientcoreperf.h"
 #include <android/input.h>
 #include <android/keycodes.h>
 #include <cassert>
@@ -235,7 +236,93 @@ static void contentFrameSizeSnapshot() {
     assert(snapshot.get() == 0.0F);
 }
 
+
+static void directBitmaskEquivalence() {
+    Input input;
+    const auto maskOf = [&input](unsigned port) {
+        return static_cast<uint16_t>(input.getInputState(port, RETRO_DEVICE_JOYPAD, 0,
+                                                        RETRO_DEVICE_ID_JOYPAD_MASK));
+    };
+    // Exhaustive 16-bit masks, including the signed high bit.
+    for (unsigned mask = 0; mask < 65536u; ++mask) {
+        const unsigned port = mask & 3u;
+        input.setInputPortSnapshot(port, mask, 0, 0, 0, 0, 0, 0);
+        assert(maskOf(port) == mask);
+        unsigned scalar = 0;
+        for (unsigned bit = 0; bit < 16; ++bit)
+            if (input.getInputState(port, RETRO_DEVICE_JOYPAD, 0, bit)) scalar |= 1u << bit;
+        assert(scalar == mask);
+    }
+    input.reset();
+    input.onMotionEvent(0, Input::MOTION_SOURCE_DPAD, -1, 1);
+    const unsigned diagonal = (1u << RETRO_DEVICE_ID_JOYPAD_LEFT) | (1u << RETRO_DEVICE_ID_JOYPAD_DOWN);
+    assert(maskOf(0) == diagonal);
+    input.onMotionEvent(0, Input::MOTION_SOURCE_DPAD, 0, 0);
+    assert(maskOf(0) == diagonal);
+    assert(maskOf(0) == diagonal); // core queries do not consume short taps.
+    assert(input.getInputPortBitmask(0) == diagonal);
+    assert(maskOf(0) == 0);
+    input.setNetplayActive(true);
+    input.onInputSnapshot(0, 1u << L2, .25f, 0, 0, 0, .8f, 0);
+    input.onInputSnapshot(0, 0, 0, 0, 0, 0, 0, 0);
+    input.setInputPortSnapshot(0, 1u << R2, 0, 0, 0, 0, 0, 1);
+    assert(maskOf(0) == (1u << R2));
+    assert(input.getInputPortBitmask(0) == (1u << L2));
+    assert(input.getInputPortBitmask(0) == 0);
+    assert(maskOf(0) == (1u << R2));
+    assert(maskOf(4) == 0 && input.getInputPortBitmask(4) == 0);
+}
+
+static void corePerformanceInterface() {
+    using namespace libretrodroid::coreperf;
+    clear();
+    retro_perf_callback cb{};
+    assert(!provide(nullptr) && provide(&cb));
+    assert(cb.get_time_usec && cb.get_cpu_features && cb.get_perf_counter);
+    assert(cb.perf_register && cb.perf_start && cb.perf_stop && cb.perf_log);
+    const auto first = cb.get_perf_counter();
+    const auto second = cb.get_perf_counter();
+    assert(second >= first);
+    assert(cb.get_time_usec() >= static_cast<retro_time_t>(first / 1000u));
+    assert(cb.get_cpu_features() == cb.get_cpu_features());
+    constexpr unsigned avx = (1u << 26) | (1u << 27) | (1u << 28);
+    assert(!(x86Features(avx, 0, 1u << 5, 2u) & (RETRO_SIMD_AVX | RETRO_SIMD_AVX2)));
+    assert(!(x86Features(avx & ~(1u << 27), 0, 1u << 5, 6u) & (RETRO_SIMD_AVX | RETRO_SIMD_AVX2)));
+    assert((x86Features(avx, 0, 1u << 5, 6u) & (RETRO_SIMD_AVX | RETRO_SIMD_AVX2)) ==
+           (RETRO_SIMD_AVX | RETRO_SIMD_AVX2));
+    cb.perf_register(nullptr);
+    cb.perf_start(nullptr);
+    cb.perf_stop(nullptr);
+    {
+        char name[] = "temporary";
+        retro_perf_counter value{name, 0, 0, 0, false};
+        cb.perf_register(&value);
+        assert(value.registered);
+        cb.perf_start(&value);
+        cb.perf_stop(&value);
+        assert(value.call_cnt == 1);
+        name[0] = 'X';
+        assert(std::string(records[0].name.data()) == "temporary");
+        cb.perf_register(&value); // repeated registrations preserve totals.
+        assert(value.call_cnt == 1);
+    } // Core-owned counter and string cease to exist; logging uses copies.
+    cb.perf_log();
+    clear();
+    for (const auto& record : records) assert(!record.key);
+    std::array<retro_perf_counter, 70> many{};
+    for (auto& value : many) {
+        value.ident = "overflow";
+        cb.perf_register(&value);
+        cb.perf_start(&value);
+        cb.perf_stop(&value);
+        assert(value.registered && value.call_cnt == 1);
+    }
+    clear();
+}
+
 int main() {
+    directBitmaskEquivalence();
+    corePerformanceInterface();
     fractionalAndDigitalInput();
     fastTapAndIndependentPorts();
     everyDigitalButtonAndLegacyDiagonal();
@@ -245,5 +332,5 @@ int main() {
     contentAspectGeometryAndRotation();
     contentAspectConcurrentObservers();
     contentFrameSizeSnapshot();
-    std::cout << "9 native input/display contract groups passed (including concurrent snapshots)\n";
+    std::cout << "11 native input/display/performance contract groups passed (including concurrent snapshots)\n";
 }

@@ -53,3 +53,28 @@ Examples (after merging the workflow):
 
 Status: initial code and regression tests; actual NDK builds, native wrapper
 compilation, Android-device timings and further frontend changes are pending.
+
+## Stage 2 — direct input masks and frontend performance interface
+
+The exact Argosy pin 6a9c89e6dca8b21b954c70576e78e92bf4230523 was inspected.
+GET_INPUT_BITMASKS already returns true; GET_PERF_INTERFACE and
+GET_AUDIO_VIDEO_ENABLE explicitly return false in the upstream environment.
+The existing 0028 patch provides a fixed buttonMask helper but the core's
+bitmask callback still traverses 16 individual IDs. Patch 0200 uses the same
+mask helper directly, under the existing mutex, and avoids six floating-point
+conversions on the mask-only captured-input API. Core queries remain
+non-consuming; the authoritative/captured separation and release semantics
+remain unchanged.
+
+The patch also implements GET_PERF_INTERFACE with cached runtime CPU feature
+detection, monotonic nanosecond counters and microsecond timing. ARM uses
+kernel HWCAP; x86 gates AVX and AVX2 on both CPUID and OS-enabled XCR0 state.
+It never sets unsupported ISA flags or changes floating-point modes. Counter
+diagnostics copy bounded names and totals, never retain a dereferenceable
+core-owned pointer, and clear at environment teardown. Explicit profiling
+callbacks have bounded storage; ordinary game frames do not take their lock.
+
+The existing native host harness now exercises all 65536 button masks,
+legacy motion and pending taps, netplay isolation, feature decoding with
+missing OS support, timing, copied diagnostics and overflow. Full patch
+application, all ABI builds and physical core timing remain CI/device gates.
