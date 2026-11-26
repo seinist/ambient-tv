@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include "video.h"
+#include "renderers/es3/es3utils.h"
 #include <limits>
 #include "libretro/libretro-common/include/libretro.h"
 #include "game_filter_test_presets.h"
@@ -447,11 +448,35 @@ void verifySoftwareFrameIngress(int version) {
     require(aw==cw&&ah==ch&&after==raw,"invalid upload changed retained frame");
 }
 
+void verifyTargetTransitionReuse(int version) {
+    ShaderManager::Chain chain;
+    chain.passes={copyPass(),copyPass(),copyPass()};
+    auto old=ES3Utils::buildShaderPasses(32,32,chain,version>=3);
+    require(old->size()==2,"initial two targets");
+    auto first=old->at(0)->texture,second=old->at(1)->texture;
+    chain.passes[1].fragment=INVERT;
+    auto next=ES3Utils::buildShaderPasses(32,32,chain,version>=3,old.get());
+    require(next->at(0)->texture==first&&next->at(1)->texture==second,
+            "compatible targets were reallocated");
+    require(!old->at(0)&&!old->at(1),"target ownership not moved");
+    chain.passes[1].scale=2.0f;
+    auto third=ES3Utils::buildShaderPasses(32,32,chain,version>=3,next.get());
+    require(third->at(0)->texture==first&&third->at(1)->texture!=second,
+            "partial target reuse failed");
+    const auto retained=third->at(1)->texture;
+    chain.passes[1].scale=100.0f;
+    bool rejected=false;
+    try { auto bad=ES3Utils::buildShaderPasses(32,32,chain,version>=3,third.get()); }
+    catch(const std::runtime_error&) { rejected=true; }
+    require(rejected&&third->at(0)->texture==first&&third->at(1)->texture==retained,
+            "failed preflight consumed old targets");
+}
+
 int main(int argc,char** argv) {
     const int version=argc>1 && std::string(argv[1])=="--gles2" ? 2:3;
     try {
         Context context(version);
-        verifySoftwareFrameIngress(version);verifySwitches(version);verifyFallbacks(version);verifyFloatAndAliases(version);verifySamplerBindings(version);verifyIntensityUniforms(version);verifyGeometryUniforms(version);verifyPresets(version);
+        verifySoftwareFrameIngress(version);verifyTargetTransitionReuse(version);verifySwitches(version);verifyFallbacks(version);verifyFloatAndAliases(version);verifySamplerBindings(version);verifyIntensityUniforms(version);verifyGeometryUniforms(version);verifyPresets(version);
         if(version==3) { verifyPaddedHardware(); verifyHardwareAllocationFallback(); }
         std::printf("PASS: GLES%d production renderer regression\n",version);return 0;
     } catch(const std::exception& error) {

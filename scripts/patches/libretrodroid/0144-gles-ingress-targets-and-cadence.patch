@@ -194,7 +194,7 @@ diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main
 +    fun serializeState(): ByteArray = runOnGLThread(wakePresentation = false) {
          LibretroDroid.serializeState()
      }
-@@ -932,6 +941,6 @@
+@@ -932,7 +941,7 @@
 -    private fun <T> runOnGLThread(block: () -> T): T {
 -        check(!isDestroyed) { "The game renderer has been destroyed" }
 -        if (Thread.currentThread().name.startsWith("GLThread")) {
@@ -204,6 +204,7 @@ diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main
 +        if (Thread.currentThread().name.startsWith("GLThread")) {
 +            return block().also { if (wakePresentation) wakeIdlePresentation() }
          }
+ 
          val latch = CountDownLatch(1)
 @@ -951,7 +960,7 @@
                      latch.countDown()
