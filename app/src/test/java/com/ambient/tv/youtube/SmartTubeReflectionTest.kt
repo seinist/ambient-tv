@@ -46,6 +46,46 @@ class SmartTubeReflectionTest {
         assertEquals("value", target.call("getter"))
     }
 
+    @Test fun classCacheBoundAndFifoEviction() {
+        val cache = BoundedReflectionCache<Int, Any>(256)
+        val oldest = cache.getOrPut(0) { Any() }
+        val second = cache.getOrPut(1) { Any() }
+        for (i in 2 until 256) cache.getOrPut(i) { Any() }
+        assertSame(oldest, cache.getOrPut(0) { Any() })
+        cache.getOrPut(256) { Any() }
+        assertSame(second, cache.getOrPut(1) { Any() })
+        assertNotSame(oldest, cache.getOrPut(0) { Any() })
+        assertEquals(256, cache.size)
+
+        // Distinct JVM array classes exercise the real class-index cache.
+        for (dimensions in 1..140) {
+            for (component in listOf(String::class.java, Int::class.javaPrimitiveType!!)) {
+                val target = java.lang.reflect.Array.newInstance(component, *IntArray(dimensions))
+                assertTrue(target.hasMethod("toString", 0))
+            }
+        }
+        assertEquals(256, reflectionClassCacheSize())
+        assertEquals("value", Fixture().call("getter"))
+    }
+
+    @Test fun concurrentCacheInsertionsRemainBounded() {
+        val cache = BoundedReflectionCache<Int, Int>(256)
+        val pool = Executors.newFixedThreadPool(8)
+        try {
+            val tasks = (0 until 1024).map { key ->
+                pool.submit<Int> {
+                    val value = cache.getOrPut(key) { key }
+                    check(cache.size <= 256)
+                    value
+                }
+            }
+            tasks.forEachIndexed { index, future -> assertEquals(index, future.get(5, TimeUnit.SECONDS).toInt()) }
+            assertEquals(256, cache.size)
+        } finally {
+            pool.shutdownNow()
+        }
+    }
+
     @Test fun concurrentResolutionPreservesResults() {
         val target = Fixture()
         val pool = Executors.newFixedThreadPool(4)
