@@ -269,7 +269,7 @@ class PlaybackAvailability @Inject constructor(
     suspend fun checkMoonlight(hostId: String, appId: Int, retry: Boolean = false): PlaybackAccessResult {
         val host = preferences.moonlightHosts.firstOrNull { it.id == hostId && preferences.moonlightEnabled }
         val system = "moonlight:$hostId"
-        val name = host?.name?.ifBlank { host.host } ?: "Moonlight"
+        val name = host?.let { it.name.ifBlank { it.host } } ?: "Moonlight"
         fun answer(ok: Boolean, auth: Boolean = false) = PlaybackAccessResult(ok, system, name, auth)
         if (!com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE || host == null || appId <= 0) return answer(false)
         val identity = moonlightIdentity(hostId, appId)

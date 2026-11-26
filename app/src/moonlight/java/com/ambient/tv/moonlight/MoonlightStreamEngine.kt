@@ -558,8 +558,11 @@ class MoonlightStreamEngine @Inject constructor(
                     val rtt = synchronized(inputGate) {
                         if (isOwned(session)) runCatching { MoonBridge.getEstimatedRttInfo() }.getOrNull() else null
                     }
-                    if (video.received > lastReceived && video.rendered == lastFrames) noOutputSeconds++
-                    else if (video.rendered > lastFrames) noOutputSeconds = 0
+                    // Once stalled, the recovery deadline keeps running even when IDR
+                    // recovery suppresses incoming pictures. Don't wait forever for more packets.
+                    if (video.rendered > lastFrames) noOutputSeconds = 0
+                    else if (video.received > lastReceived || noOutputSeconds > 0 || lastFrames == 0L)
+                        noOutputSeconds++
                     lastReceived = video.received
                     if (noOutputSeconds == 3) session.video?.requestRecovery()
                     if (noOutputSeconds >= 7) {

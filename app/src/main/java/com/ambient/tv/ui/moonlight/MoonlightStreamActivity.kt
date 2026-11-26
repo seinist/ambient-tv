@@ -103,6 +103,14 @@ class MoonlightStreamActivity : ComponentActivity() {
     private var sessionProfile by mutableStateOf(MoonlightStreamProfile())
     private val displaySession by lazy { MoonlightDisplaySession(this) }
     private var displayPreparation: Job? = null
+    private val displayManager by lazy { getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager }
+    private val displayListener = object : android.hardware.display.DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) = Unit
+        override fun onDisplayRemoved(displayId: Int) = Unit
+        override fun onDisplayChanged(displayId: Int) {
+            if (displayReady && validLaunch) displayResult = displaySession.snapshot(displayResult.unavailable)
+        }
+    }
     private var displayResult by mutableStateOf(MoonlightDisplayResult())
     private var displayReady by mutableStateOf(false)
     private var validLaunch = false
@@ -213,6 +221,7 @@ class MoonlightStreamActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         if (!validLaunch) return
+        displayManager.registerDisplayListener(displayListener, android.os.Handler(android.os.Looper.getMainLooper()))
         prepareDisplay()
         input.registerAttachedDevices()
         inputManager.registerInputDeviceListener(deviceListener, null)
@@ -228,10 +237,20 @@ class MoonlightStreamActivity : ComponentActivity() {
 
     private fun prepareDisplay() {
         displayPreparation?.cancel()
-        displaySession.restore()
         sessionProfile = qualityProfile
         displayReady = false
         displayPreparation = lifecycleScope.launch {
+            // Avoid an HDMI mode switch while a previous decoder still owns its surface.
+            val stopped = withTimeoutOrNull(20_000L) {
+                while (engine.isBusy()) delay(50)
+                true
+            } ?: false
+            if (!stopped) {
+                displayResult = displaySession.snapshot(unavailable = true)
+                displayReady = true
+                return@launch
+            }
+            displaySession.restore()
             displayResult = try {
                 displaySession.prepare(sessionProfile, preferences.displayModeWhitelist,
                     preferences.displaySwitchPauseMs)
@@ -290,7 +309,10 @@ class MoonlightStreamActivity : ComponentActivity() {
     override fun onStop() {
         gameplayAllowed = false
         quitJob?.cancel()
-        if (validLaunch) inputManager.unregisterInputDeviceListener(deviceListener)
+        if (validLaunch) {
+            inputManager.unregisterInputDeviceListener(deviceListener)
+            displayManager.unregisterDisplayListener(displayListener)
+        }
         feedback.cancelAll()
         companion.detach()
         releaseRemoteInputs()
@@ -412,6 +434,11 @@ private fun MoonlightStreamContent(
     }
     var panel by remember { mutableStateOf(MoonlightPlaybackPage.NONE) }
     var panelOrigin by remember { mutableStateOf(MoonlightPlaybackPage.NONE) }
+    var showMobileHint by remember { mutableStateOf(false) }
+    LaunchedEffect(status.phase, controlsShown, focusRevision) {
+        showMobileHint = status.phase == MoonlightStreamPhase.STREAMING && !controlsShown
+        if (showMobileHint) { delay(3000); showMobileHint = false }
+    }
     LaunchedEffect(controlsShown) {
         if (!controlsShown) panel = MoonlightPlaybackPage.NONE
     }
@@ -482,7 +509,7 @@ private fun MoonlightStreamContent(
 
             },
         )
-        if (!controlsShown && status.phase == MoonlightStreamPhase.STREAMING &&
+        if (showMobileHint && !controlsShown && status.phase == MoonlightStreamPhase.STREAMING &&
             !com.ambient.tv.ui.mobile.isTelevision(LocalContext.current)) {
             TvActionButton(stringResource(R.string.moonlight_player_options), showControls,
                 modifier = Modifier.align(Alignment.TopEnd).padding(12.dp), icon = Icons.Filled.Settings)

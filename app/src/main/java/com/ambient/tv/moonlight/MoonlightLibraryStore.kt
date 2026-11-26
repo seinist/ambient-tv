@@ -90,11 +90,11 @@ class MoonlightLibraryStore @Inject constructor(
         if (request != null && !isCurrent(request)) return@synchronized
         requestIds[hostId] = ++sequence
         if (online.remove(hostId) != null) mutableAvailability.value++
-        catalogs.remove(hostId)
+        val removed = catalogs.remove(hostId) != null
         if (prefs.contains("catalog:$hostId")) {
             prefs.edit().remove("catalog:$hostId").apply()
             changed()
-        }
+        } else if (removed) changed()
     }
     private val prefix = Regex("[a-zA-Z0-9_-]{1,64}")
 
@@ -213,8 +213,8 @@ class MoonlightLibraryStore @Inject constructor(
                 changes.remove(item)
                 changes[item] = revision
                 while (changes.size > 1024) changes.remove(changes.keys.first())
-                mutableArtworkChanges.value = changes
                 synchronized(lock) { changed(metadata = false) }
+                mutableArtworkChanges.value = changes
                 target
             } catch (_: Exception) {
                 temporary.delete()

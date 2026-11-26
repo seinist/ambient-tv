@@ -12,6 +12,15 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33], application = android.app.Application::class)
 class SidebarNavigationPolicyTest {
+    @Test fun moonlightOnlyKeepsHomeSearchAndHostSectionReachable() {
+        assertTrue(sidebarShowsGlobalSearch(false, false, false, false, false, false, moonlightConfigured = true))
+        assertTrue(sidebarShowsHome(false, false, false, false, false, false, moonlightConfigured = true))
+        val route = Destinations.moonlightSection("host:abc")
+        assertEquals(route, sidebarConcreteRoute(Destinations.MOONLIGHT_SECTION, sectionKey = "host:abc"))
+        assertTrue(isParameterizedSidebarRoute(route))
+        assertFalse(isParameterizedSidebarRoute(Destinations.MOONLIGHT))
+    }
+
     @Test fun restoresRememberedChildEvenAfterListReordering() {
         assertEquals("series", chooseSidebarChild(listOf("music", "series", "home"), "series", "home"))
     }

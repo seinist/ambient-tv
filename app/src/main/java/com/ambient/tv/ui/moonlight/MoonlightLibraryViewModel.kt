@@ -55,6 +55,7 @@ data class MoonlightLibraryUiState(
     val recent: List<String> = emptyList(),
     val errors: Map<String, String> = emptyMap(),
     val artworkVersion: Long = 0,
+    val artworkRevisions: Map<String, Long> = emptyMap(),
     val wakingHosts: Set<String> = emptySet(),
     val quittingHosts: Set<String> = emptySet(),
 ) {
@@ -113,8 +114,9 @@ class MoonlightLibraryViewModel @Inject constructor(
                 Triple(metadata, online, prefs.moonlightEnabled to prefs.moonlightHosts)
             }.distinctUntilChanged().collectLatest { reloadLocal() }
         }
-        viewModelScope.launch { store.artworkRevisions.collect { version ->
-            mutable.update { it.copy(artworkVersion = version) }
+        viewModelScope.launch { store.artworkChanges.collect { revisions ->
+            mutable.update { it.copy(artworkVersion = store.artworkRevisions.value,
+                artworkRevisions = revisions) }
         } }
     }
 
@@ -248,7 +250,7 @@ class MoonlightLibraryViewModel @Inject constructor(
     }
 
     fun prioritizeArtwork(game: MoonlightBrowseGame, visible: Boolean = true) {
-        if (!visible || game.host.id !in mutable.value.onlineHosts) return
+        if (!this.visible || game.host.id !in mutable.value.onlineHosts) return
         val key = game.key to visible
         synchronized(inflightArtwork) {
             if ((!visible && (game.key to true) in inflightArtwork) || !inflightArtwork.add(key)) return

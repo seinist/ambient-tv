@@ -141,7 +141,7 @@ fun MoonlightLibraryScreen(
             RegisterBrowseFocusList(listState, keys)
             LazyColumn(state = listState, modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 lazyItems(games, key = { it.key }) { game ->
-                    MoonlightLibraryTile(game, model, true, state.artworkVersion, game.host.id in state.onlineHosts) { onDetails(game.host.id, game.app.id) }
+                    MoonlightLibraryTile(game, model, true, state.artworkRevisions[game.key] ?: 0L, game.host.id in state.onlineHosts) { onDetails(game.host.id, game.app.id) }
                 }
             }
         } else {
@@ -153,7 +153,7 @@ fun MoonlightLibraryScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 gridItems(games, key = { it.key }) { game ->
-                    MoonlightLibraryTile(game, model, false, state.artworkVersion, game.host.id in state.onlineHosts) { onDetails(game.host.id, game.app.id) }
+                    MoonlightLibraryTile(game, model, false, state.artworkRevisions[game.key] ?: 0L, game.host.id in state.onlineHosts) { onDetails(game.host.id, game.app.id) }
                 }
             }
         }
