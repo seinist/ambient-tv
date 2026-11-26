@@ -131,7 +131,7 @@ jobs:
               with zipfile.ZipFile(apk) as package:
                   names = set(package.namelist())
                   assert expected in names, f"{apk}: Missing {expected}"
-                  for notice in ("moonlight-android-LICENSE.txt", "moonlight-common-c-LICENSE.txt", "SOURCE-NOTICE.txt"):
+                  for notice in ("moonlight-android-LICENSE.txt", "moonlight-common-c-LICENSE.txt", "SOURCE-NOTICE.txt", "OpenSSL-LICENSE.txt", "Opus-LICENSE.txt", "native-artifacts.git-blobs"):
                       assert "assets/moonlight-licenses/" + notice in names, f"{apk}: Missing {notice}"
                   assert {n for n in names if n.endswith("/libmoonlight-core.so")} == {expected}, f"{apk}: Unexpected Moonlight ABI"
           PY

@@ -98,9 +98,17 @@ Sunshine, and the current-game check and remote quit are separate host requests.
 - Native Android and common-c license texts, available ENet/NanoRS notices,
   exact source pins and patch list are packaged under assets/moonlight-licenses.
   The repository's CC0 dedication does not change the GPL-3.0 distribution
-  obligations for the combined APK. Verify complete corresponding source,
-  modification notices, and licenses/source provenance of the prebuilt Opus
-  and OpenSSL libraries before distributing a Moonlight-enabled release.
+  obligations for the combined APK. The upstream dependency update
+  [31b7003](https://github.com/moonlight-stream/moonlight-android/commit/31b700304a9eb2827516f52c33d9da0845fc1ece)
+  identifies the [exact Android dependency build](https://github.com/cgutman/moonlight-mobile-deps/tree/419349aa689e8749a9fb91a22dc45531ddd3df45),
+  including NDK 29.0.14206865 and submodules
+  [Opus 1.6.1](https://github.com/xiph/opus/tree/22244de5a79bd1d6d623c32e72bf1954b56235be)
+  and [OpenSSL 4.0.2](https://github.com/openssl/openssl/tree/f089acdf4bc7ba94a79f4bf6eb7362c3e7d14aa9).
+  Exact license texts, Git blob hashes of all eight static archives, and
+  source/build references are packaged and checked. New binary hashes require
+  review before an upstream upgrade is accepted. The release distributor must
+  still provide complete corresponding source and notices for the combined
+  APK; passing the license-asset check alone is not legal certification.
 - Test against Windows/Linux Sunshine on Shield, Philips TV and phones:
   pairing/revocation, WOL, cancellation at every handshake stage, hotplug and
   Companion handoff, stereo/surround, SDR/HDR10, codec negotiation, display

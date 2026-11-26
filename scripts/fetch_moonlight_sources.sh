@@ -24,7 +24,7 @@ DEST="$ROOT/third_party/moonlight-android"
 WORK="$ROOT/third_party/.moonlight-download"
 MARKER_NAME=".ambient-moonlight-pins"
 # Bump when the staged file set changes, so existing trees are prepared again.
-STAGING_VERSION=3
+STAGING_VERSION=4
 
 [[ "$UPSTREAM" == "https://github.com/moonlight-stream/moonlight-android.git" ]] || die "unexpected upstream"
 [[ "$REF" =~ ^[[:xdigit:]]{40}$ ]] || die "full pinned commit required"
@@ -39,7 +39,7 @@ shopt -s nullglob
 PATCHES=("$PATCH_DIR"/*.patch)
 shopt -u nullglob
 [[ ${#PATCHES[@]} -gt 0 ]] || die "reviewed Moonlight patches missing in $PATCH_DIR"
-PATCH_SHA="$( { cat "${PATCHES[@]}"; printf 'staging=%s\n' "$STAGING_VERSION"; } | git hash-object --stdin)"
+PATCH_SHA="$( { cat "${PATCHES[@]}" "$ROOT/scripts/moonlight/native-artifacts.git-blobs" "$ROOT/scripts/moonlight/licenses/"*.txt; printf 'staging=%s\n' "$STAGING_VERSION"; } | git hash-object --stdin)"
 
 if [[ -f "$DEST/$MARKER_NAME" &&
       "$(head -n 1 "$DEST/$MARKER_NAME")" == "android=$REF" &&
@@ -96,6 +96,14 @@ for abi in arm64-v8a armeabi-v7a x86 x86_64; do
     [[ -s "$WORK/app/src/main/jni/moonlight-core/openssl/$abi/libcrypto.a" ]] || die "upstream OpenSSL for $abi missing"
 done
 
+# The upstream Android dependency update identifies the precise build and sources.
+# New binary artifacts require an explicit provenance/license review.
+while read -r expected relative; do
+    [[ "$expected" =~ ^[[:xdigit:]]{40}$ ]] || die "invalid dependency blob pin"
+    [[ "$(git hash-object "$WORK/app/src/main/jni/moonlight-core/$relative")" == "$expected" ]] ||
+        die "Unreviewed native dependency artifact: $relative"
+done < "$ROOT/scripts/moonlight/native-artifacts.git-blobs"
+
 # Reviewed, fail-closed patches. A patch that no longer applies means upstream changed the code it
 # protects: stop instead of building an unreviewed client.
 for patch in "${PATCHES[@]}"; do
@@ -143,6 +151,8 @@ LICENSES="$WORK/app/protocol-only-assets/moonlight-licenses"
 mkdir -p "$LICENSES"
 cp "$WORK/LICENSE.txt" "$LICENSES/moonlight-android-LICENSE.txt"
 cp "$WORK/$SUBMODULE/LICENSE.txt" "$LICENSES/moonlight-common-c-LICENSE.txt"
+cp "$ROOT/scripts/moonlight/licenses/"*.txt "$LICENSES/"
+cp "$ROOT/scripts/moonlight/native-artifacts.git-blobs" "$LICENSES/native-artifacts.git-blobs"
 for component in enet nanors; do
     while IFS= read -r -d '' license; do
         relative="${license#"$WORK/$SUBMODULE/$component/"}"
@@ -157,6 +167,10 @@ NANORS_SHA="$(git -C "$WORK/$SUBMODULE/nanors" rev-parse HEAD)"
     printf 'moonlight-common-c: %s\nModified ENet: %s\nNanoRS: %s\n' "$GITLINK" "$ENET_SHA" "$NANORS_SHA"
     printf 'Corresponding integration source: https://github.com/seinist/ambient-tv\n'
     printf 'Upstream source: %s\n' "$UPSTREAM"
+    printf 'Dependency update: https://github.com/moonlight-stream/moonlight-android/commit/31b700304a9eb2827516f52c33d9da0845fc1ece\n'
+    printf 'Android build scripts (NDK 29.0.14206865): https://github.com/cgutman/moonlight-mobile-deps/tree/419349aa689e8749a9fb91a22dc45531ddd3df45\n'
+    printf 'Opus 1.6.1 corresponding source: https://github.com/xiph/opus/tree/22244de5a79bd1d6d623c32e72bf1954b56235be\n'
+    printf 'OpenSSL 4.0.2 corresponding source: https://github.com/openssl/openssl/tree/f089acdf4bc7ba94a79f4bf6eb7362c3e7d14aa9\n'
     printf 'Ambient TV modifications (reviewed through 2026-11-26):\n'
     for patch in "${PATCHES[@]}"; do basename "$patch"; done
     printf 'See docs/MOONLIGHT_INTEGRATION.md and scripts/patches/moonlight.\n'
