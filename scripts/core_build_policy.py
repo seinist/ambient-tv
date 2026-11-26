@@ -160,10 +160,15 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None):
     thin_links = 0
     commands = list(compiler_commands(log, cwd, root, strict=profile != "baseline" or core in AUDITED))
     tuning_count = 0
+    codegen_flags = {}
+    tracked_flags = {"-funroll-loops", "-fno-unroll-loops", "-ffast-math", "-fno-fast-math", "-fomit-frame-pointer", "-fno-omit-frame-pointer", "-marm", "-mthumb"}
     for args in commands:
         source = compile_source(args)
         if source and re.search(r"\.(?:c|cc|cpp|cxx|C)$", source):
             compile_count += 1
+            for flag in set(args):
+                if flag in tracked_flags or flag.startswith(("-march=", "-mcpu=", "-mtune=", "-mfpu=")):
+                    codegen_flags[flag] = codegen_flags.get(flag, 0) + 1
             levels = [token for token in args if re.fullmatch(r"-O(?:[0-3szg]|fast)?", token)]
             level = levels[-1] if levels else "(implicit)"
             opt_levels[level] = opt_levels.get(level, 0) + 1
@@ -185,7 +190,7 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None):
         raise ValueError(f"Cortex-A57 tuning not effective: {tuning_count}/{compile_count}")
     acceleration = audit_acceleration(commands, core, abi, profile) if core else {}
     return {"compile_commands": compile_count, "shared_link_commands": link_count,
-            "optimization_levels": opt_levels, "thinlto_compiles": thin_compiles,
+            "optimization_levels": opt_levels, "codegen_flag_occurrences": codegen_flags, "thinlto_compiles": thin_compiles,
             "thinlto_links": thin_links, "cortex_a57_compiles": tuning_count,
             "acceleration": acceleration}
 
