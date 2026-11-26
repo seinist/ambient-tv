@@ -1,0 +1,71 @@
+diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_output/libplacebo/instance_vulkan.c
+--- a/modules/video_output/libplacebo/instance_vulkan.c
++++ b/modules/video_output/libplacebo/instance_vulkan.c
+@@ -30,3 +30,6 @@
+-#include <libplacebo/vulkan.h>
+-
+-#include "../vulkan/platform.h"
++#include <libplacebo/vulkan.h>
++#ifdef __ANDROID__
++# include <vulkan/vulkan_android.h>
++#endif
++
++#include "../vulkan/platform.h"
+@@ -82,11 +85,36 @@
+-    // Create vulkan device
+-    char *device_name = var_InheritString(pl, "vk-device");
+-    sys->vulkan = pl_vulkan_create(pl->log, &(struct pl_vulkan_params) {
+-        .instance = sys->instance->instance,
+-        .surface = sys->surface,
+-        .device_name = device_name,
+-        .allow_software = var_InheritBool(pl, "vk-allow-sw"),
+-        .async_transfer = var_InheritBool(pl, "vk-async-xfer"),
+-        .async_compute = var_InheritBool(pl, "vk-async-comp"),
+-        .queue_count = var_InheritInteger(pl, "vk-queue-count"),
+-    });
++    // Create vulkan device
++    char *device_name = var_InheritString(pl, "vk-device");
++    bool ambient_ahb = false;
++#ifdef __ANDROID__
++    ambient_ahb = var_InheritBool(pl, "vk-ambient-ahb");
++    // Request interop on this device, not on a separate probe device.
++    // These are optional so unsupported drivers keep a valid copy-back path.
++    const char *interop_extensions[] = {
++        VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME,
++        VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
++        VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME,
++    };
++    VkPhysicalDeviceSamplerYcbcrConversionFeatures ycbcr = {
++        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES,
++        .samplerYcbcrConversion = VK_TRUE,
++    };
++    VkPhysicalDeviceFeatures2 features = {
++        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
++        .pNext = &ycbcr,
++    };
++#endif
++    sys->vulkan = pl_vulkan_create(pl->log, &(struct pl_vulkan_params) {
++        .instance = sys->instance->instance,
++        .surface = sys->surface,
++        .device_name = device_name,
++        .allow_software = var_InheritBool(pl, "vk-allow-sw"),
++        // The experimental handoff requires one shared graphics queue.
++        .async_transfer = !ambient_ahb && var_InheritBool(pl, "vk-async-xfer"),
++        .async_compute = !ambient_ahb && var_InheritBool(pl, "vk-async-comp"),
++        .queue_count = ambient_ahb ? 1 : var_InheritInteger(pl, "vk-queue-count"),
++#ifdef __ANDROID__
++        .opt_extensions = ambient_ahb ? interop_extensions : NULL,
++        .num_opt_extensions = ambient_ahb ? ARRAY_SIZE(interop_extensions) : 0,
++        .features = ambient_ahb ? &features : NULL,
++#endif
++    });
+@@ -198,2 +226,7 @@
+-    set_section("Performance tuning", NULL)
+-    add_bool("vk-async-xfer", pl_vulkan_default_params.async_transfer,
++    set_section("Performance tuning", NULL)
++#ifdef __ANDROID__
++    add_bool("vk-ambient-ahb", false, "Experimental Android buffer interop",
++            "Request AHardwareBuffer features on the rendering device. "
++            "Disabled by default; a compatible display bridge is also required.")
++#endif
++    add_bool("vk-async-xfer", pl_vulkan_default_params.async_transfer,
