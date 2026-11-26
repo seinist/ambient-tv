@@ -606,7 +606,8 @@ class SmartTubeEngine @Inject constructor(
         val media = service("getMediaItemService")
         com.ambient.tv.ui.player.logPlaybackStartup("youtube", "service_ready", started,
             "stage_ms=${(System.nanoTime() - serviceStarted) / 1_000_000}")
-        val info = loadPlayableFormatInfo(media, videoId, isTrailer, started)
+        val candidate = loadPlayableFormatInfo(media, videoId, isTrailer, started)
+        val info = candidate.info
         synchronized(playbackFormatInfos) { playbackFormatInfos[videoId] = info }
         if (info.callBool("isLiveOffline") == true) {
             throw YouTubeLiveOfflineException(YouTubeLiveEvent(
@@ -618,18 +619,19 @@ class SmartTubeEngine @Inject constructor(
         val unplayable = info.callBool("isUnplayable") == true
         if (unplayable) throw IllegalStateException(reason ?: context.getString(com.ambient.tv.R.string.youtube_video_unplayable))
 
-        val hls = info.callString("getHlsManifestUrl")?.takeIf(String::isNotBlank)
-        val lengthSeconds = info.callString("getLengthSeconds")?.toDoubleOrNull()
-        val isLive = youtubeCurrentlyLive(info.callBool("isLive") == true, hls, lengthSeconds,
-            liveContent = info.callBool("isLiveContent") != false)
+        // The winning candidate already contains its selected pair and renderer; do not
+        // re-run reflection, hardware checks or profile lookups after the format lock.
+        val hls = candidate.hls
+        val lengthSeconds = candidate.lengthSeconds
+        val isLive = candidate.live
         // Playback clocks of active broadcasts are sliding-window positions, never saved VOD
         // resume points. Discard values written by earlier versions when live is identified.
         if (isLive) YouTubeLocalProgress.discardLive(videoId)
-        val formats = if (isLive) emptyList() else adaptiveFormats(info)
-        val direct = muxedProgressiveUrl(info)
+        val formats = candidate.formats
+        val direct = candidate.direct
         val vodPolicy = youtubeVodStreamPolicy(isEmulator = isProbablyEmulator())
-        val adaptivePair = if (isLive) null else playbackAdaptivePair(formats)
-        val renderer = playbackRenderer(videoId, info, isLive, formats, adaptivePair, isTrailer)
+        val adaptivePair = candidate.pair
+        val renderer = candidate.renderer
         // An OTF-only response may still be opened by the Media3 fallback.
         val canUseDash = isLive || youtubeHasPlayableDashTracks(formats,
             allowOtf = renderer == com.ambient.tv.ui.player.backend.PlaybackBackend.MEDIA3 ||
@@ -693,11 +695,10 @@ class SmartTubeEngine @Inject constructor(
     /** A fresh URL for the stream [expiredUrl] belonged to (same format and audio track). */
     suspend fun renewStreamUrl(videoId: String, expiredUrl: String): String? = io {
         val media = service("getMediaItemService")
-        media.call("invalidateCache")
-        val info = com.ambient.tv.util.suspendResult { loadPlayableFormatInfo(media, videoId) }.getOrNull() ?: return@io null
-        val candidates = adaptiveFormats(info).mapNotNull { it.url } +
-            (info.call("getUrlFormats") as? Iterable<*>)?.mapNotNull { it?.callString("getUrl") }.orEmpty()
-        youtubeRenewedUrl(expiredUrl, candidates).also { renewed ->
+        val candidate = com.ambient.tv.util.suspendResult {
+            loadPlayableFormatInfo(media, videoId, expiredUrl = expiredUrl)
+        }.getOrNull() ?: return@io null
+        youtubeRenewedUrl(expiredUrl, candidate.renewalUrls).also { renewed ->
             com.ambient.tv.diagnostics.DiagnosticLog.log(
                 com.ambient.tv.diagnostics.DiagnosticLevel.INFO, "youtube-relay",
                 if (renewed != null) "Expired stream link renewed" else "Expired stream link could not be renewed",
@@ -730,7 +731,10 @@ class SmartTubeEngine @Inject constructor(
             .onFailure { Timber.d(it, "SmartTube format client restore") }
     }
 
-    private suspend fun loadPlayableFormatInfo(media: Any, videoId: String, isTrailer: Boolean = false, launchStarted: Long = 0L): Any {
+    private suspend fun loadPlayableFormatInfo(
+        media: Any, videoId: String, isTrailer: Boolean = false, launchStarted: Long = 0L,
+        expiredUrl: String? = null,
+    ): PlaybackFormatCandidate {
         val queuedAt = System.nanoTime()
         return formatClientMutex.withLock {
         val trace = launchStarted.takeIf { it != 0L } ?: queuedAt
@@ -740,8 +744,11 @@ class SmartTubeEngine @Inject constructor(
         restoreFormatClientOnce()
         // Do not overwrite a client selected by an actual format request with an old saved one.
         formatClientRestored = true
+        if (expiredUrl != null) media.call("invalidateCache")
         resolveYouTubeFormatInfo(
-            load = { allowInnertube -> loadFormatInfo(media, videoId, allowInnertube) },
+            load = { allowInnertube ->
+                PlaybackFormatCandidate(loadFormatInfo(media, videoId, allowInnertube), videoId, isTrailer)
+            },
             switchClient = {
                 val switched = manager().invokeCompatible("switchNextClientNow")
                 val available = if (switched.invoked) true else {
@@ -754,8 +761,21 @@ class SmartTubeEngine @Inject constructor(
                 if (available) media.call("invalidateCache")
                 available
             },
-            score = { formatInfoScore(it, videoId, isTrailer) },
-            isTerminal = { it.callBool("isLiveOffline") == true },
+            // Renewal serves an already selected representation, possibly after a renderer
+            // switch. Match its itag/audio track rather than reselecting startup quality.
+            score = { candidate ->
+                if (expiredUrl == null) formatInfoScore(candidate)
+                else if (candidate.info.callBool("isUnplayable") == true) 0
+                else {
+                    val renewed = youtubeRenewedUrl(expiredUrl, candidate.renewalUrls)
+                    when {
+                        renewed == null -> 0
+                        renewed == expiredUrl -> 2
+                        else -> 4
+                    }
+                }
+            },
+            isTerminal = { it.info.callBool("isLiveOffline") == true },
             checkActive = { caller.ensureActive() },
             onAttempt = { attempt, score, started ->
                 com.ambient.tv.ui.player.logPlaybackStartup("youtube", "format_response", trace,
@@ -787,26 +807,47 @@ class SmartTubeEngine @Inject constructor(
         return com.ambient.tv.ui.player.backend.PlaybackBackendResolver.resolve(key)
     }
 
-    private fun formatInfoScore(info: Any, videoId: String, isTrailer: Boolean): Int {
-        if (info.callBool("isUnplayable") == true) return 0
-        val hls = info.callString("getHlsManifestUrl")
-        val live = youtubeCurrentlyLive(info.callBool("isLive") == true, hls,
-            info.callString("getLengthSeconds")?.toDoubleOrNull(), liveContent = info.callBool("isLiveContent") != false)
-        val formats = if (!live && info.callBool("containsDashFormats") == true) adaptiveFormats(info) else emptyList()
-        val renderer = playbackRenderer(videoId, info, live, formats,
-            playbackAdaptivePair(formats), isTrailer)
+    /** One immutable choice per upstream response, evaluated only if the response needs it. */
+    private inner class PlaybackFormatCandidate(val info: Any, videoId: String, isTrailer: Boolean) {
+        val hls by lazy { info.callString("getHlsManifestUrl")?.takeIf(String::isNotBlank) }
+        val lengthSeconds by lazy { info.callString("getLengthSeconds")?.toDoubleOrNull() }
+        val live by lazy { youtubeCurrentlyLive(info.callBool("isLive") == true, hls, lengthSeconds,
+            liveContent = info.callBool("isLiveContent") != false) }
+        private val allFormats by lazy { adaptiveFormats(info) }
+        val formats by lazy { if (live) emptyList() else allFormats }
+        val pair by lazy { playbackAdaptivePair(formats) }
+        val renderer by lazy { playbackRenderer(videoId, info, live, formats, pair, isTrailer) }
+        val direct by lazy { muxedProgressiveUrl(info) }
+        val renewalUrls by lazy { allFormats.mapNotNull { it.url } +
+            (info.call("getUrlFormats") as? Iterable<*>)?.mapNotNull { it?.callString("getUrl") }.orEmpty() }
+    }
+
+    private fun formatInfoScore(candidate: PlaybackFormatCandidate): Int {
+        if (candidate.info.callBool("isUnplayable") == true) return 0
+        val renderer = candidate.renderer
+        val media3 = renderer == com.ambient.tv.ui.player.backend.PlaybackBackend.MEDIA3
+        // Track presence alone is insufficient on the native renderers: the selected pair
+        // must have decodable video and audio. Keep MPD as a fallback for Media3.
+        val dashFormats = candidate.formats.takeIf {
+            candidate.info.callBool("containsDashFormats") == true
+        }.orEmpty()
+        val playableFormats = if (media3 || candidate.pair != null) dashFormats else emptyList()
+        val selectedHeight = candidate.pair?.first?.let { url ->
+            candidate.formats.firstOrNull { it.url == url }?.qualityHeight()
+        }
+        val cap = appPreferences.youtubeMaxVideoHeight
         val score = youtubePlayableFormatScore(
             unplayable = false,
-            live = live,
-            hasHls = !hls.isNullOrBlank(),
-            formats = formats,
+            live = candidate.live,
+            hasHls = candidate.hls != null,
+            formats = playableFormats,
             preferLiveHls = renderer != com.ambient.tv.ui.player.backend.PlaybackBackend.VLC,
-            allowOtf = renderer == com.ambient.tv.ui.player.backend.PlaybackBackend.MEDIA3,
-            requestedMaxHeight = appPreferences.youtubeMaxVideoHeight,
-            hasProgressive = { muxedProgressiveUrl(info) != null },
+            allowOtf = media3,
+            requestedMaxHeight = cap.takeIf { selectedHeight == it } ?: 0,
+            hasProgressive = { candidate.direct != null },
         )
         // Try for native-compatible formats, but do not lose the only playable Media3 response.
-        return if (score == 0 && !live && youtubeHasPlayableDashTracks(formats, allowOtf = true)) 1 else score
+        return if (score == 0 && !candidate.live && youtubeHasPlayableDashTracks(dashFormats, allowOtf = true)) 1 else score
     }
 
     private fun loadFormatInfo(media: Any, videoId: String, allowInnertube: Boolean = true): Any {
@@ -1244,8 +1285,11 @@ class SmartTubeEngine @Inject constructor(
             file.setLastModified(System.currentTimeMillis())
             // Signed URLs expire within hours. Prune old cache files away from playback startup.
             if (manifestCachePruned.compareAndSet(false, true)) backgroundScope.launch {
-                val cutoff = System.currentTimeMillis() - 24 * 60 * 60 * 1000L
-                dir.listFiles()?.filter { it.isFile && it.lastModified() < cutoff }?.forEach { it.delete() }
+                // Keep recently touched manifests, including any delayed switch from an older
+                // session; this is only stale-cache cleanup, never a startup dependency.
+                val cutoff = System.currentTimeMillis() - 7 * 24 * 60 * 60 * 1000L
+                dir.listFiles()?.filter { it.isFile && it.lastModified() < cutoff &&
+                    (it.extension == "mpd" || it.extension == "tmp") }?.forEach { it.delete() }
             }
             android.net.Uri.fromFile(file).toString()
         }.onFailure { Timber.w(it, "SmartTube generated DASH manifest failed for %s", videoId) }.getOrNull().also {
