@@ -203,7 +203,7 @@ object Media3AudioProcessing {
                             bufferIndex, bufferFlags, sampleCount, bufferPresentationTimeUs,
                             isDecodeOnlyBuffer, isLastBuffer, format)
                         frameTimeline.pending(if (!consumed && !isDecodeOnlyBuffer)
-                            bufferPresentationTimeUs - outputStreamOffsetUs else null)
+                            bufferPresentationTimeUs - getOutputStreamOffsetUs() else -1L)
                         return consumed
                     }
 
