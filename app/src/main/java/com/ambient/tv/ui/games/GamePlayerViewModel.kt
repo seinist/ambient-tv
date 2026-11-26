@@ -54,13 +54,14 @@ class GameSession(
     /** Initial signed shader is verified during the existing IO preparation, not Compose. */
     val initialPackSelection: String? = null,
     val initialPackConfig: com.swordfish.libretrodroid.ShaderConfig.Custom? = null,
+    val coreSource: GameCoreSource = GameCoreSource.AUTO,
 )
 
 sealed interface GameUiState {
     /** Copying the game; [progress] 0…1 or null while unknown. */
     data class Preparing(val progress: Float?) : GameUiState
     /** The system's core is not installed yet: the user decides whether to load it. */
-    data class NeedsCore(val game: PreparedGame, val core: GameCore, val sourceUrl: String?) : GameUiState
+    data class NeedsCore(val game: PreparedGame, val core: GameCore, val sourceUrl: String?, val source: GameCoreSource = GameCoreSource.AUTO) : GameUiState
     data class ConfirmBuildbot(val game: PreparedGame, val core: GameCore, val reason: String) : GameUiState
     data class DownloadingCore(val game: PreparedGame, val core: GameCore, val progress: Float?) : GameUiState
     data class Ready(val session: GameSession) : GameUiState
@@ -173,14 +174,15 @@ class GamePlayerViewModel @Inject constructor(
                 storage.systemDirectory(game))?.let { missing ->
                 mutable.value = GameUiState.Failed(GameFailure.BIOS_MISSING, missing.file); return@launch
             }
-            val core = cores.installed(chosen)
-            if (core == null) mutable.value = GameUiState.NeedsCore(game, chosen, cores.sourceUrl(chosen))
-            else start(game, chosen, core)
+            val source = GameSettings.state.coreSource
+            val core = cores.installed(chosen, source)
+            if (core == null) mutable.value = GameUiState.NeedsCore(game, chosen, cores.sourceUrl(chosen), source)
+            else start(game, chosen, core, source)
         }
     }
 
     /** The user agreed to load the core for this system. */
-    fun downloadCore() = downloadCoreFrom(GameSettings.state.coreSource)
+    fun downloadCore() = downloadCoreFrom((state.value as? GameUiState.NeedsCore)?.source ?: GameSettings.state.coreSource)
     /** User-facing confirmation after AUTO would otherwise switch to unsigned native code. */
     fun confirmBuildbotCore() = downloadCoreFrom(GameCoreSource.BUILDBOT)
 
@@ -207,11 +209,12 @@ class GamePlayerViewModel @Inject constructor(
             } catch (error: Exception) {
                 mutable.value = GameUiState.Failed(GameFailure.CORE_DOWNLOAD, error.message); return@launch
             }
-            start(game, chosen, file)
+            start(game, chosen, file, source)
         }
     }
 
-    private suspend fun start(game: PreparedGame, chosen: GameCore, core: File) {
+    private suspend fun start(originalGame: PreparedGame, chosen: GameCore, core: File, source: GameCoreSource) {
+        val game = originalGame.copy(experimentalProfile = source.experimentalProfile)
         try {
             withContext(Dispatchers.IO) {
                 gameNativeSessions.awaitClosed()
@@ -228,7 +231,7 @@ class GamePlayerViewModel @Inject constructor(
             val stamp = GameStateStore.coreStamp(core)
             val legacyStamp = GameStateStore.legacyCoreStamp(core)
             // A RomM game continues from the server's saves and states (the last copy when offline).
-            if (game.remote != null) remoteData.beforeStart(game, chosen.id, stamp)
+            if (game.remote != null && game.experimentalProfile == null) remoteData.beforeStart(game, chosen.id, stamp)
             val existing = states.entry(game, GameStateKind.AUTO)
             if (startFresh && existing != null) {
                 // Like a reset in the game: the last progress stays recoverable as the undo state.
@@ -258,10 +261,11 @@ class GamePlayerViewModel @Inject constructor(
                 autoState = auto?.let { states.read(game, it) },
                 initialPackSelection = initialPackSelection,
                 initialPackConfig = shaderPacks.config(initialPackSelection),
+                coreSource = source,
             ).also { refreshStates(game) }
         }
         // "Start over" moved the automatic state: the server follows.
-        if (game.remote != null) remoteData.scheduleUpload(game, chosen.id)
+        if (game.remote != null && game.experimentalProfile == null) remoteData.scheduleUpload(game, chosen.id)
         mutable.value = GameUiState.Ready(session)
     }
 
@@ -282,7 +286,7 @@ class GamePlayerViewModel @Inject constructor(
 
     /** Sends this game's saves and states to its RomM server (after a change); nothing for local games. */
     private fun upload(game: PreparedGame, coreId: String? = null) {
-        if (game.remote == null) return
+        if (game.remote == null || game.experimentalProfile != null) return
         val core = coreId ?: (state.value as? GameUiState.Ready)?.session?.core?.id
             ?: GameSettings.state.gameCore(game.system, game.saveKey).id
         remoteData.scheduleUpload(game, core)
@@ -317,8 +321,8 @@ class GamePlayerViewModel @Inject constructor(
 
     /** Removes a core (e.g. after it failed) so the next start loads it again. */
     /** A corrupt update can be replaced by its previous installed core without downloading. */
-    fun rollbackCore(core: GameCore): Boolean = cores.rollback(core)
-    fun removeCore(core: GameCore) = cores.remove(core)
+    fun rollbackCore(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO): Boolean = cores.rollback(core, source)
+    fun removeCore(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO) = cores.remove(core, source)
 
     fun cheats(game: PreparedGame): List<com.ambient.tv.games.GameCheat> = cheatStore.load(game)
 

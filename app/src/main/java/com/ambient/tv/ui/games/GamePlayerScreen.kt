@@ -206,7 +206,7 @@ fun GamePlayerScreen(onBack: () -> Unit, model: GamePlayerViewModel = hiltViewMo
                 val core = current.core
                 StatePanel(
                     title = stringResource(R.string.game_core_needed, core.name),
-                    body = stringResource(
+                    body = if (current.source.experimentalProfile != null) stringResource(R.string.games_core_experimental_hint) + "\n" + core.license else stringResource(
                         if (core.freeLicense) R.string.game_core_needed_body else R.string.game_core_needed_body_noncommercial,
                         current.game.system.name, core.license,
                     ),
@@ -1263,12 +1263,12 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             // A broken core update is restored from the previous installed version, with
             // its own state stamp. Only if no rollback exists is the bad library removed.
             if (code == GLRetroView.ERROR_LOAD_LIBRARY) {
-                if (model.rollbackCore(core)) {
+                if (model.rollbackCore(core, session.coreSource)) {
                     destroy()
                     model.restart()
                     return@collect
                 }
-                model.removeCore(core)
+                model.removeCore(core, session.coreSource)
             }
             model.failed(context.getString(R.string.game_error_code, code))
         }
@@ -1650,7 +1650,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     com.ambient.tv.ui.common.TvActionButton(stringResource(R.string.files_cancel), onClick = { removeCoreConfirmOpen = false })
                     com.ambient.tv.ui.common.TvActionButton(stringResource(R.string.saved_profiles_delete), onClick = {
                         removeCoreConfirmOpen = false
-                        model.removeCore(core)
+                        model.removeCore(core, session.coreSource)
                         message = context.getString(R.string.game_message_core_removed)
                         closePanel()
                     })
