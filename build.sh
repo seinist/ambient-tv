@@ -18,7 +18,7 @@
 #   ./build.sh monogram       # build ONLY Monogram's native MTProto AAR, opt-in
 #   ./build.sh monogram-check / monogram-update  # check/update only the Monogram pin
 #   ./build.sh monogram-size [arm64|armv7|x86|x86_64|all]  # compare complete release APK sizes
-#   ./build.sh cores [id[,id...]]  # build pinned Libretro cores on GitHub Actions
+#   ./build.sh cores [id[,id...]] [--profile ...] [--abis ...]  # build pinned Libretro cores on GitHub Actions
 #   ./build.sh cores-key [--manual]  # configure signing or prepare the key for a browser upload
 #   ./build.sh cores-release      # build and publish all signed Libretro cores
 #   ./build.sh cores-status       # show recent Core workflow runs
@@ -1307,9 +1307,28 @@ run_cores_command() {
 
     case "$1" in
         cores)
-            [[ $# -le 2 ]] || fail "Usage: $0 cores [id[,id...]]"
+            shift
             local -a inputs=(-f publish=false)
-            if [[ -n "${2:-}" ]]; then inputs+=(-f "cores=$2"); fi
+            local selected="" profile="baseline" abis=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --profile)
+                        [[ $# -ge 2 ]] || fail "--profile requires baseline, o3, thinlto or o3-thinlto"
+                        profile="$2"; shift 2 ;;
+                    --abis)
+                        [[ $# -ge 2 ]] || fail "--abis requires a comma-separated ABI list"
+                        abis="$2"; shift 2 ;;
+                    -*)
+                        fail "Unknown cores option: $1" ;;
+                    *)
+                        [[ -z "$selected" ]] || fail "Specify core ids as one comma-separated argument"
+                        selected="$1"; shift ;;
+                esac
+            done
+            case "$profile" in baseline|o3|thinlto|o3-thinlto) ;; *) fail "Unknown core profile: $profile" ;; esac
+            if [[ -n "$selected" ]]; then inputs+=(-f "cores=$selected"); fi
+            if [[ -n "$abis" ]]; then inputs+=(-f "abis=$abis"); fi
+            if [[ "$profile" != baseline ]]; then inputs+=(-f "profile=$profile"); fi
             gh "${workflow[@]}" "${inputs[@]}"
             ;;
         cores-key)
@@ -1355,7 +1374,8 @@ Libraries: libs-check [svp|monogram|libretro], libs-update [svp|monogram|libretr
            monogram-check, monogram-update, monogram-size [abi|all]
 
 Libretro cores on GitHub Actions (main):
-  cores [id[,id...]]   Build artifacts only. Omit IDs to build all cores (gh).
+  cores [id[,id...]] [--profile baseline|o3|thinlto|o3-thinlto] [--abis ABI[,ABI...]]
+                      Build artifacts only. Omit IDs to build all cores (gh).
   cores-key [--manual] Generate signing keys. Upload the secret in the browser if gh is unavailable.
                        Commit and push cores/signing-public.pem and rebuild the app to embed it.
   cores-release       Build and publish the full signed core catalog (gh).

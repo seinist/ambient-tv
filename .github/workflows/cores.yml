@@ -11,23 +11,40 @@ on:
       publish:
         description: Publish a signed cores release
         type: boolean
-        default: true
+        default: false
       cores:
         description: Core ids to build, comma separated (empty = all)
         default: ""
+      abis:
+        description: Android ABIs, comma separated (empty = all)
+        default: ""
+      profile:
+        description: Compiler profile (non-baseline is artifact-only)
+        type: choice
+        options: [baseline, o3, thinlto, o3-thinlto]
+        default: baseline
+  pull_request:
+    paths:
+      - cores/cores.json
+      - .github/workflows/cores.yml
+      - scripts/core_build_policy.py
+      - scripts/test_core_build_policy.py
+      - scripts/check_elf_pages.py
   push:
     branches: [main]
     paths:
       - cores/cores.json
       - .github/workflows/cores.yml
       - scripts/check_elf_pages.py
+      - scripts/core_build_policy.py
+      - scripts/test_core_build_policy.py
 
 concurrency:
-  group: cores-${{ github.ref }}
+  group: cores-${{ github.ref }}-${{ (github.event_name == 'push' || inputs.publish) && 'release' || (inputs.profile || 'baseline') }}
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   NDK_VERSION: "30.0.16248370"
@@ -39,6 +56,21 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - uses: actions/checkout@v5
+      - name: Test core build policy
+        run: python3 -m unittest discover -s scripts -p test_core_build_policy.py
+      - id: plan
+        env:
+          ONLY: ${{ inputs.cores }}
+          ABIS: ${{ inputs.abis }}
+          PROFILE: ${{ inputs.profile || 'baseline' }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          matrix=$(python3 scripts/core_build_policy.py plan --catalog cores/cores.json \
+            --event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF" --publish "$PUBLISH" \
+            --cores "$ONLY" --abis "$ABIS" --profile "$PROFILE")
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "$matrix" | jq -r '.include[] | "\(.core) \(.abi) \(.profile)"'
       # Check the secret BEFORE spending 104 core-build jobs on a release that cannot
       # be signed. Never generate a new key or publish unsigned native libraries.
       - name: Check core-release signing key
@@ -60,21 +92,6 @@ jobs:
             echo "::error::CORES_SIGNING_KEY does not match the committed public key"
             exit 1
           }
-      - id: plan
-        env:
-          ONLY: ${{ inputs.cores }}
-        run: |
-          matrix=$(jq -c --arg only "$ONLY" '
-            ($only | split(",") | map(select(length > 0))) as $wanted
-            | { include: [ .abis[] as $abi | .cores[]
-                | select(($wanted | length) == 0 or (.core as $c | $wanted | index($c)))
-                | . + { abi: $abi } ] }' cores/cores.json)
-          echo "$matrix" | jq -e '.include | length > 0' >/dev/null || {
-            echo "::error::No matching cores in the requested build matrix"
-            exit 1
-          }
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-          echo "$matrix" | jq -r '.include[] | "\(.core) \(.abi)"'
 
   build:
     needs: plan
@@ -84,7 +101,7 @@ jobs:
       fail-fast: false
       max-parallel: 20
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
-    name: ${{ matrix.core }} (${{ matrix.abi }})
+    name: ${{ matrix.core }} (${{ matrix.abi }}, ${{ matrix.profile }})
     steps:
       - uses: actions/checkout@v5
 
@@ -97,10 +114,14 @@ jobs:
           echo "NDK=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
 
       - name: Fetch ${{ matrix.core }} at its pinned commit
+        env:
+          CORE_REPO: ${{ matrix.repo }}
+          CORE_COMMIT: ${{ matrix.commit }}
         run: |
+          set -euo pipefail
           git init -q src
-          git -C src remote add origin "${{ matrix.repo }}"
-          git -C src fetch -q --depth 1 origin "${{ matrix.commit }}"
+          git -C src remote add origin "$CORE_REPO"
+          git -C src fetch -q --depth 1 origin "$CORE_COMMIT"
           git -C src checkout -q FETCH_HEAD
           # Direct submodules are needed; some cores carry broken nested ones (mupen64plus-nx), which
           # libretro's own CI does not fetch either.
@@ -112,56 +133,83 @@ jobs:
             # shellcheck disable=SC2086
             git -C src submodule update -q --init --recursive --depth 1 -- $paths || echo "::warning::nested submodules incomplete"
           fi
-          test "$(git -C src rev-parse HEAD)" = "${{ matrix.commit }}"
+          test "$(git -C src rev-parse HEAD)" = "$CORE_COMMIT"
 
-      - name: Build
+      - name: Build and verify
         env:
           ABI: ${{ matrix.abi }}
           CORE: ${{ matrix.core }}
+          CORE_COMMIT: ${{ matrix.commit }}
+          BUILD_KIND: ${{ matrix.build }}
           JNI: ${{ matrix.jni }}
           ARGS: ${{ matrix.args }}
           EXTRA_ENV: ${{ matrix.env }}
           CPPFLAGS_EXTRA: ${{ matrix.cppflags }}
+          PROFILE: ${{ matrix.profile }}
+          CFLAGS_EXTRA: ${{ matrix.cflags }}
+          LDFLAGS_EXTRA: ${{ matrix.ldflags }}
         run: |
           set -euo pipefail
-          mkdir -p out
-          if [ "${{ matrix.build }}" = "cmake" ]; then
+          mkdir -p out reports
+          bin="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          read -r -a args <<< "$ARGS"
+          read -r -a extra_env <<< "$EXTRA_ENV"
+          if [ "$BUILD_KIND" = "cmake" ]; then
+            flags=()
+            if [ -n "$CFLAGS_EXTRA" ]; then
+              flags+=("-DCMAKE_C_FLAGS=$CFLAGS_EXTRA" "-DCMAKE_CXX_FLAGS=$CFLAGS_EXTRA")
+            fi
+            if [[ "$PROFILE" = o3* ]]; then
+              flags+=("-DCMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG" "-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG")
+            fi
             cmake -S src -B build \
               -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
               -DANDROID_ABI="$ABI" -DANDROID_PLATFORM=android-29 \
               -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON \
-              -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,max-page-size=16384" \
-              -DCMAKE_BUILD_TYPE=Release $ARGS
-            cmake --build build -j"$(nproc)"
-            lib=$(find build -name '*libretro*.so' | head -n 1)
+              "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384 $LDFLAGS_EXTRA" \
+              "-DCMAKE_MODULE_LINKER_FLAGS=-Wl,-z,max-page-size=16384 $LDFLAGS_EXTRA" \
+              -DCMAKE_BUILD_TYPE=Release "${args[@]}" "${flags[@]}"
+            cmake --build build --verbose -j"$(nproc)" 2>&1 | tee reports/build.log
+            lib=$(python3 scripts/core_build_policy.py select --nm "$bin/llvm-nm" --root build --pattern '*libretro*.so')
           else
-            # Flags newer compilers need (cores.json "cppflags"), added to the core's own Application.mk.
-            if [ -n "$CPPFLAGS_EXTRA" ]; then
-              printf '\nAPP_CPPFLAGS += %s\n' "$CPPFLAGS_EXTRA" >> "src/$JNI/jni/Application.mk"
-            fi
-            # The same ndk-build call as libretro's buildbot (ci-templates android-jni), plus 16 KB pages.
-            env $EXTRA_ENV "$NDK/ndk-build" --no-print-directory -j"$(nproc)" -C "src/$JNI/jni" \
-              APP_ABI="$ABI" APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true \
-              "APP_LDFLAGS=-Wl,-z,max-page-size=16384"
-            lib=$(find "src/$JNI/libs/$ABI" -name '*.so' | head -n 1)
+            python3 scripts/core_build_policy.py ndk-flags \
+              --application "src/$JNI/jni/Application.mk" --profile "$PROFILE" --cppflags="$CPPFLAGS_EXTRA"
+            env "${extra_env[@]}" "$NDK/ndk-build" --no-print-directory -j"$(nproc)" -C "src/$JNI/jni" \
+              APP_ABI="$ABI" APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true V=1 2>&1 | tee reports/build.log
+            lib=$(python3 scripts/core_build_policy.py select --nm "$bin/llvm-nm" --root "src/$JNI/libs/$ABI" --pattern '*.so')
           fi
-          test -n "$lib"
-          cp "$lib" "out/${CORE}_libretro_android.so"
-          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-unneeded "out/${CORE}_libretro_android.so"
-
-      - name: Check 16 KB pages
-        run: python3 scripts/check_elf_pages.py out/*.so
+          target="out/${CORE}_libretro_android.so"
+          cp "$lib" "$target"
+          "$bin/llvm-strip" --strip-unneeded "$target"
+          python3 scripts/check_elf_pages.py "$target"
+          python3 scripts/core_build_policy.py report --nm "$bin/llvm-nm" --binary "$target" \
+            --log reports/build.log --profile "$PROFILE" --core "$CORE" --abi "$ABI" \
+            --commit "$CORE_COMMIT" --ndk "$NDK_VERSION" --output reports/build.json
+          cat reports/build.json
 
       - uses: actions/upload-artifact@v5
         with:
-          name: core-${{ matrix.core }}-${{ matrix.abi }}
+          name: ${{ matrix.artifact }}
           path: out/*.so
+          if-no-files-found: error
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: report-${{ matrix.artifact }}
+          path: reports/
+          if-no-files-found: ignore
           retention-days: 14
 
   publish:
+    permissions:
+      contents: write
     needs: [plan, build]
     if: >-
       needs.build.result == 'success' &&
+      github.ref == 'refs/heads/main' &&
+      (inputs.profile == 'baseline' || github.event_name == 'push') &&
       ((github.event_name == 'workflow_dispatch' && inputs.publish) ||
        (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
