@@ -65,6 +65,12 @@ int main() {
         const auto actual = duration_cast<nanoseconds>(clock.target() - epoch).count();
         assert(std::abs(actual - ideal) <= frames * 0.5 + 1.0);
     }
+    // A near-match VSync path uses the same physical rate as audio; strict,
+    // nonmatching and external BFI timing keep the nominal core cadence.
+    assert(FramePacingDeadline::cadenceRate(59.73, 60.0, true, false) == 60.0);
+    assert(FramePacingDeadline::cadenceRate(59.73, 60.0, false, false) == 59.73);
+    assert(FramePacingDeadline::cadenceRate(50.0, 100.0, true, true) == 50.0);
+    assert(FramePacingDeadline::cadenceRate(60.0, 0.0, true, false) == 60.0);
     // Exercise the real FPSSync adapter, including unchanged display/BFI policy.
     FPSSync normal(59.73, 60.0);
     assert(std::abs(normal.getTimeStretchFactor() - 59.73 / 60.0) < 1e-12);

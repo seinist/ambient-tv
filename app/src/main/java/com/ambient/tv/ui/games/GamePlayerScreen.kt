@@ -1218,6 +1218,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 event == GLRetroView.GLRetroEvents.FrameRendered) coreReady = true
             if (event == GLRetroView.GLRetroEvents.FrameRendered && !loaded) {
                 loaded = true
+                // Do not park the renderer before the core has delivered its first frame.
+                retroView.enablePausedPresentationOnDemand()
                 lastInitializationPollMs = now
                 model.firstFrameRendered(session)
                 refreshStateSupport()
