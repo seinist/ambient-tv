@@ -303,11 +303,11 @@ class Media3PlaybackHandle(
         cleanup { player.playWhenReady = false }
         cleanup { player.clearMediaItems() }
         // Even a failed ancillary cleanup must not strand the decoder or release gate.
-        cleanup { player.release() }
-        val error = failure
-        if (error == null) gateRelease?.complete(Unit)
-        else {
-            gateRelease?.completeExceptionally(error)
+        val nativeFailure = runCatching { player.release() }.exceptionOrNull()
+        if (nativeFailure == null) gateRelease?.complete(Unit)
+        else gateRelease?.completeExceptionally(com.ambient.tv.ui.player.backend.NativeOutputReleaseUncertain(nativeFailure))
+        val error = nativeFailure ?: failure
+        if (error != null) {
             timber.log.Timber.e(error, "Media3 release encountered a cleanup failure")
             if (error is Error) throw error
         }
