@@ -282,7 +282,7 @@ def prepare_cmake(root, core, profile):
     # SwanStation's pin sets IPO unconditionally for Release, overriding cache flags.
     # Preserve the upstream baseline. In explicit candidates disable only the
     # automatic IPO block; the workflow supplies the requested LTO mode itself.
-    if core != "swanstation" or profile == "baseline":
+    if core != "swanstation" or profile not in {"o3", "thinlto", "o3-thinlto"}:
         return
     path = root / "CMakeLists.txt"
     source = path.read_text()
