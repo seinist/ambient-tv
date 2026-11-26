@@ -1,6 +1,7 @@
 @file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 package com.ambient.tv.ui.player
 
+import android.app.Application
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
@@ -13,7 +14,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+// Exercise real loopback HTTP without starting the production app or Android Keystore.
+@Config(sdk = [35], application = Application::class)
 class RenewingMedia3DataSourceTest {
     @Test fun expiredRangePreservedAcrossPlatformHttpSources() {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
