@@ -191,6 +191,22 @@ object Media3AudioProcessing {
                         .setEventListener(eventListener)
                         .setMaxDroppedFramesToNotify(50),
                 ) {
+                    private val frameTimeline = session.media3Frames
+                    override fun processOutputBuffer(
+                        positionUs: Long, elapsedRealtimeUs: Long,
+                        codec: androidx.media3.exoplayer.mediacodec.MediaCodecAdapter?,
+                        buffer: java.nio.ByteBuffer?, bufferIndex: Int, bufferFlags: Int, sampleCount: Int,
+                        bufferPresentationTimeUs: Long, isDecodeOnlyBuffer: Boolean, isLastBuffer: Boolean,
+                        format: Format,
+                    ): Boolean {
+                        val consumed = super.processOutputBuffer(positionUs, elapsedRealtimeUs, codec, buffer,
+                            bufferIndex, bufferFlags, sampleCount, bufferPresentationTimeUs,
+                            isDecodeOnlyBuffer, isLastBuffer, format)
+                        frameTimeline.pending(if (!consumed && !isDecodeOnlyBuffer)
+                            bufferPresentationTimeUs - outputStreamOffsetUs else null)
+                        return consumed
+                    }
+
                     override fun render(positionUs: Long, elapsedRealtimeUs: Long) {
                         // Shift only video scheduling relative to the audio master clock. Adding
                         // PCM silence would be cancelled by the sink clock and break seeks.
