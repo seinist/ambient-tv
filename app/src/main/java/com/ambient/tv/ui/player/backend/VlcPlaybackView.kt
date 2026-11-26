@@ -488,7 +488,11 @@ class VlcPlaybackController(
         override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) =
             reportWindowSize(width, height)
         override fun surfaceDestroyed(holder: SurfaceHolder) {
-            if (attachedView?.holder === holder) renderSurfaceSize = null
+            if (attachedView?.holder === holder) {
+                renderSurfaceSize = null
+                // A surviving SurfaceView may get an entirely new native window.
+                vulkanSurfaceChecked = false
+            }
         }
     }
 
@@ -887,6 +891,7 @@ class VlcPlaybackController(
         player.setVideoTrackEnabled(false)
         player.vlcVout.detachViews()
         attachedView = null
+        vulkanSurfaceChecked = false
         renderSurfaceSize = null
     }
 
@@ -1012,6 +1017,7 @@ class VlcPlaybackController(
         externalSubtitleRequests.clear()
         externalSubtitleSources.clear()
         pendingExternalSubtitle = null
+        manualExternalSubtitleUrl = null
         // An audio/route restart keeps the timeshift position; other reopens go to the live edge.
         val keepTimeshiftMs = pendingTimeshiftKeepMs.also { pendingTimeshiftKeepMs = null }
         val playbackUrl = keepTimeshiftMs?.let { com.ambient.tv.livetv.LiveTimeshift.playbackUrlKeepingPosition(url, it, "vlc-audio")?.first }
@@ -1587,7 +1593,13 @@ class VlcPlaybackController(
             externalSubtitleSources[added.first] = pending; pendingExternalSubtitle = null
             if (manualExternalSubtitleUrl == pending.externalUrl) { trackAccess.setSpuTrack(added.first); manualExternalSubtitleUrl = null }
         }
-        else if (android.os.SystemClock.elapsedRealtime() - subtitleAddStarted > 10_000) pendingExternalSubtitle = null
+        else if (android.os.SystemClock.elapsedRealtime() - subtitleAddStarted > 10_000) {
+            pendingExternalSubtitle = null
+            if (manualExternalSubtitleUrl == pending.externalUrl) {
+                pending.externalUrl?.let(externalSubtitleRequests::remove)
+                manualExternalSubtitleUrl = null
+            }
+        }
     }
     fun ensureExternalSubtitle(track: com.ambient.tv.domain.model.MediaTrack) {
         collectExternalSubtitle()
@@ -1596,7 +1608,13 @@ class VlcPlaybackController(
         subtitleIdsBeforeAdd = subtitleTracks().map { it.first }.toSet()
         subtitleAddStarted = android.os.SystemClock.elapsedRealtime()
         pendingExternalSubtitle = track
-        if (!player.addSlave(org.videolan.libvlc.interfaces.IMedia.Slave.Type.Subtitle, Uri.parse(url), false)) pendingExternalSubtitle = null
+        if (!runCatching { player.addSlave(org.videolan.libvlc.interfaces.IMedia.Slave.Type.Subtitle, Uri.parse(url), false) }.getOrDefault(false)) {
+            pendingExternalSubtitle = null
+            if (manualExternalSubtitleUrl == url) {
+                externalSubtitleRequests.remove(url)
+                manualExternalSubtitleUrl = null
+            }
+        }
     }
 
     fun selectExternalSubtitle(track: com.ambient.tv.domain.model.MediaTrack) {
@@ -1608,11 +1626,16 @@ class VlcPlaybackController(
         if (pendingExternalSubtitle == null) externalSubtitleRequests.remove(url) // An explicit retry, not an automatic fetch loop.
         manualExternalSubtitleUrl = url
         ensureExternalSubtitle(track)
-        check(pendingExternalSubtitle != null) { "Subtitle could not be loaded" }
+        if (pendingExternalSubtitle == null) {
+            manualExternalSubtitleUrl = null
+            externalSubtitleRequests.remove(url)
+            error("Subtitle could not be loaded")
+        }
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val requestedAt = subtitleAddStarted
         val poll = object : Runnable {
             override fun run() {
-                if (released || manualExternalSubtitleUrl != url) return
+                if (released || manualExternalSubtitleUrl != url || requestedAt != subtitleAddStarted) return
                 collectExternalSubtitle()
                 if (pendingExternalSubtitle != null && manualExternalSubtitleUrl == url) handler.postDelayed(this, 100)
                 else manualExternalSubtitleUrl = null
