@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from core_acceleration_audit import audit_acceleration, compiler_commands, defines
 from unittest.mock import patch
 
 from core_build_policy import (REQUIRED_EXPORTS, audit_commands, ndk_flags, plan,
@@ -28,9 +29,55 @@ class CoreBuildPolicyTest(unittest.TestCase):
 
     def test_pr_comparison(self):
         matrix = plan(self.catalog, "pull_request", "refs/pull/1/merge", False)["include"]
-        self.assertEqual(len(matrix), 8)
-        self.assertEqual({item["profile"] for item in matrix}, {"baseline", "thinlto"})
-        self.assertEqual(len({item["artifact"] for item in matrix}), 8)
+        self.assertEqual(len(matrix), 16)
+        self.assertEqual({item["profile"] for item in matrix}, {"baseline", "thinlto", "picodrive-sh2", "tune-a57"})
+        self.assertEqual(len({item["artifact"] for item in matrix}), 16)
+        self.assertEqual([item["makevars"] for item in matrix if item["profile"] == "picodrive-sh2"], ["use_sh2drc=1"])
+
+    def test_narrow_candidates(self):
+        candidate = plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False,
+                         profile="picodrive-sh2")["include"]
+        self.assertEqual(len(candidate), 1)
+        self.assertEqual((candidate[0]["core"], candidate[0]["abi"], candidate[0]["makevars"]),
+                         ("picodrive", "arm64-v8a", "use_sh2drc=1"))
+        for core, abi, profile in [("mgba", "arm64-v8a", "picodrive-sh2"),
+                                    ("picodrive", "armeabi-v7a", "picodrive-sh2"),
+                                    ("snes9x", "x86_64", "tune-a57")]:
+            with self.assertRaises(ValueError):
+                plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False, core, abi, profile)
+        with self.assertRaises(ValueError):
+            plan(self.catalog, "workflow_dispatch", "refs/heads/main", True, profile="picodrive-sh2")
+        log = "clang -O2 -mtune=cortex-a57 -c a.c -o a.o\nclang -shared a.o -o a.so\n"
+        self.assertEqual(audit_commands(log, "tune-a57")["cortex_a57_compiles"], 1)
+        with self.assertRaises(ValueError):
+            audit_commands(log.replace("-mtune=cortex-a57", "-mtune=generic"), "tune-a57")
+
+    def test_acceleration_evidence_and_effective_defines(self):
+        commands = list(compiler_commands("clang -DHAVE_DYNAREC -DMMAP_JIT_CACHE -c src/cpu_threaded.c -o a.o\n"
+                                         "clang -c src/arm/arm64_stub.S -o b.o\n"))
+        self.assertEqual(audit_acceleration(commands, "gpsp", "arm64-v8a", "baseline"),
+                         {"dynarec": True, "native_stub": True})
+        with self.assertRaises(ValueError):
+            audit_acceleration(commands[:1], "gpsp", "arm64-v8a", "baseline")
+        with self.assertRaises(ValueError):
+            audit_acceleration([["-DHAVE_DYNAREC", "-DMMAP_JIT_CACHE", "-UHAVE_DYNAREC", "-c", "cpu_threaded.c"],
+                                commands[1]], "gpsp", "arm64-v8a", "baseline")
+        self.assertEqual(defines(["-D", "A=4", "-UB", "-D", "B=0", "-UA"]), {"B": "0"})
+        self.assertFalse(audit_acceleration([], "picodrive", "arm64-v8a", "baseline")["sh2_dynarec"])
+        with self.assertRaises(ValueError):
+            audit_acceleration([], "picodrive", "arm64-v8a", "picodrive-sh2")
+        self.assertTrue(audit_acceleration([["-DDRC_SH2", "-c", "src/cpu/sh2/compiler.c"]],
+                                          "picodrive", "arm64-v8a", "picodrive-sh2")["sh2_dynarec"])
+
+    def test_response_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "compile.rsp").write_text("-DHAVE_DYNAREC -DMMAP_JIT_CACHE -c src/cpu_threaded.c -o a.o")
+            commands = list(compiler_commands("clang @compile.rsp\nclang -c src/arm/arm64_stub.S",
+                                              root, root, strict=True))
+            self.assertTrue(audit_acceleration(commands, "gpsp", "arm64-v8a", "baseline")["dynarec"])
+            with self.assertRaises(ValueError):
+                list(compiler_commands("clang @../outside.rsp", root, root, strict=True))
 
     def test_fail_closed_publish(self):
         for ref, cores, abis, profile in [

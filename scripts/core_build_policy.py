@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
-import shlex
+from core_acceleration_audit import AUDITED, audit_acceleration, compiler_commands, compile_source
 import subprocess
 import sys
 
@@ -13,6 +13,8 @@ PROFILES = {
     "o3": (("-O3",), ()),
     "thinlto": (("-flto=thin",), ("-flto=thin",)),
     "o3-thinlto": (("-O3", "-flto=thin"), ("-flto=thin",)),
+    "tune-a57": (("-mtune=cortex-a57",), ()),
+    "picodrive-sh2": ((), ()),
 }
 ABIS = {"arm64-v8a", "armeabi-v7a", "x86_64", "x86"}
 REQUIRED_EXPORTS = {
@@ -63,30 +65,52 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline"):
                 raise ValueError("Unsafe JNI path")
     if event not in {"push", "pull_request", "workflow_dispatch"}:
         raise ValueError("Unsupported build event")
+    # Narrow specialized experiments instead of silently applying them to unrelated cores.
+    if profile == "picodrive-sh2":
+        if event != "workflow_dispatch" or publish:
+            raise ValueError("PicoDrive SH2 candidate is artifact-only")
+        cores = cores or "picodrive"
+        abis = abis or "arm64-v8a"
+    if profile == "tune-a57":
+        abis = abis or "arm64-v8a"
     chosen_cores = selection(cores, ids, "core")
     chosen_abis = selection(abis, declared_abis, "ABI")
-    profiles = [profile]
-    if event == "pull_request":
-        if publish:
-            raise ValueError("PRs may never publish cores")
-        # Exercise one CMake and one ndk-build project on both ARM ABIs.
-        chosen_cores = selection("mgba,snes9x", ids, "core")
-        chosen_abis = selection("arm64-v8a,armeabi-v7a", declared_abis, "ABI")
-        profiles = ["baseline", "thinlto"]
+    if profile == "picodrive-sh2" and (chosen_cores != ["picodrive"] or chosen_abis != ["arm64-v8a"]):
+        raise ValueError("PicoDrive SH2 candidate requires PicoDrive on arm64-v8a")
+    if profile == "tune-a57" and chosen_abis != ["arm64-v8a"]:
+        raise ValueError("Cortex-A57 tuning is initially restricted to arm64-v8a")
     if event == "push" or publish:
         if ref != "refs/heads/main" or profile != "baseline" or set(chosen_cores) != set(ids) or set(chosen_abis) != set(declared_abis):
             raise ValueError("Release requires the full baseline catalog on main; use publish=false for experiments.")
+    if event == "pull_request":
+        if publish:
+            raise ValueError("PRs may never publish cores")
+        # Baseline/ThinLTO plus real dynarec/SIMD smoke builds and two narrow candidates.
+        jobs = [(core, abi, variant)
+                for core in ("mgba", "snes9x")
+                for abi in ("arm64-v8a", "armeabi-v7a")
+                for variant in ("baseline", "thinlto")]
+        jobs += [(core, abi, "baseline")
+                 for core in ("gpsp", "pcsx_rearmed")
+                 for abi in ("arm64-v8a", "armeabi-v7a")]
+        jobs += [("mupen64plus_next_gles3", "arm64-v8a", "baseline"),
+                 ("picodrive", "arm64-v8a", "baseline"),
+                 ("picodrive", "arm64-v8a", "picodrive-sh2"),
+                 ("snes9x", "arm64-v8a", "tune-a57")]
+    else:
+        jobs = [(core, abi, profile) for core in chosen_cores for abi in chosen_abis]
+    by_id = {entry["core"]: entry for entry in entries}
     matrix = []
-    for abi in chosen_abis:
-        for entry in entries:
-            if entry["core"] not in chosen_cores:
-                continue
-            for variant in profiles:
-                cflags, ldflags = PROFILES[variant]
-                matrix.append({**entry, "abi": abi, "profile": variant,
-                               "cflags": " ".join(cflags), "ldflags": " ".join(ldflags),
-                               "artifact": ("core" if variant == "baseline" else "candidate-" + variant)
-                                           + "-" + entry["core"] + "-" + abi})
+    for core, abi, variant in jobs:
+        if core not in by_id or abi not in declared_abis:
+            raise ValueError(f"Missing required CI recipe: {core}/{abi}")
+        entry = by_id[core]
+        cflags, ldflags = PROFILES[variant]
+        matrix.append({**entry, "abi": abi, "profile": variant,
+                       "cflags": " ".join(cflags), "ldflags": " ".join(ldflags),
+                       "makevars": "use_sh2drc=1" if variant == "picodrive-sh2" else "",
+                       "artifact": ("core" if variant == "baseline" else "candidate-" + variant)
+                                   + "-" + core + "-" + abi})
     if not matrix or len(matrix) > 256:
         raise ValueError("Build matrix is empty or exceeds the Actions limit")
     return {"include": matrix}
@@ -116,7 +140,7 @@ def file_digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def audit_commands(log, profile):
+def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None):
     """Check actual verbose driver invocations, not only requested CMake/Make settings.
 
     Assembly and non-compiler commands are deliberately ignored. If response files hide
@@ -127,23 +151,19 @@ def audit_commands(log, profile):
     opt_levels = {}
     thin_compiles = 0
     thin_links = 0
-    for line in log.splitlines():
-        try:
-            tokens = shlex.split(line)
-        except ValueError:
-            continue
-        driver = next((i for i, token in enumerate(tokens)
-                       if re.fullmatch(r"(?:[\w.-]+-)?clang(?:\+\+)?(?:-\d+)?", Path(token).name)), None)
-        if driver is None:
-            continue
-        args = tokens[driver + 1:]
-        if "-c" in args and any(re.search(r"\.(?:c|cc|cpp|cxx|C)$", token) for token in args):
+    commands = list(compiler_commands(log, cwd, root, strict=profile != "baseline" or core in AUDITED))
+    tuning_count = 0
+    for args in commands:
+        source = compile_source(args)
+        if source and re.search(r"\.(?:c|cc|cpp|cxx|C)$", source):
             compile_count += 1
             levels = [token for token in args if re.fullmatch(r"-O(?:[0-3szg]|fast)?", token)]
             level = levels[-1] if levels else "(implicit)"
             opt_levels[level] = opt_levels.get(level, 0) + 1
             lto = [token for token in args if token.startswith("-flto") or token == "-fno-lto"]
             thin_compiles += bool(lto and lto[-1] == "-flto=thin")
+            tune = [token for token in args if token.startswith("-mtune=")]
+            tuning_count += bool(tune and tune[-1] == "-mtune=cortex-a57")
         elif "-shared" in args:
             link_count += 1
             lto = [token for token in args if token.startswith("-flto") or token == "-fno-lto"]
@@ -154,9 +174,13 @@ def audit_commands(log, profile):
         raise ValueError(f"Core overrides requested -O3: {opt_levels}")
     if "thinlto" in profile and (thin_compiles != compile_count or thin_links != link_count):
         raise ValueError(f"ThinLTO not effective everywhere: compile {thin_compiles}/{compile_count}, link {thin_links}/{link_count}")
+    if profile == "tune-a57" and tuning_count != compile_count:
+        raise ValueError(f"Cortex-A57 tuning not effective: {tuning_count}/{compile_count}")
+    acceleration = audit_acceleration(commands, core, abi, profile) if core else {}
     return {"compile_commands": compile_count, "shared_link_commands": link_count,
             "optimization_levels": opt_levels, "thinlto_compiles": thin_compiles,
-            "thinlto_links": thin_links}
+            "thinlto_links": thin_links, "cortex_a57_compiles": tuning_count,
+            "acceleration": acceleration}
 
 
 def ndk_flags(path, profile, cppflags):
@@ -200,6 +224,7 @@ def main():
     p.add_argument("--commit", required=True)
     p.add_argument("--ndk", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--build-cwd", type=Path, default=Path.cwd())
     args = parser.parse_args()
     if args.action == "plan":
         print(json.dumps(plan(json.loads(args.catalog.read_text()), args.event, args.ref,
@@ -221,7 +246,8 @@ def main():
                   "binary_sha256": file_digest(args.binary),
                   "binary_bytes": args.binary.stat().st_size,
                   "export_count": len(symbols),
-                  **audit_commands(args.log.read_text(errors="replace"), args.profile)}
+                  **audit_commands(args.log.read_text(errors="replace"), args.profile,
+                                   args.build_cwd, Path.cwd(), args.core, args.abi)}
         args.output.write_text(json.dumps(report, indent=2) + "\n")
 
 

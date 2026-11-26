@@ -21,13 +21,14 @@ on:
       profile:
         description: Compiler profile (non-baseline is artifact-only)
         type: choice
-        options: [baseline, o3, thinlto, o3-thinlto]
+        options: [baseline, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2]
         default: baseline
   pull_request:
     paths:
       - cores/cores.json
       - .github/workflows/cores.yml
       - scripts/core_build_policy.py
+      - scripts/core_acceleration_audit.py
       - scripts/test_core_build_policy.py
       - scripts/check_elf_pages.py
   push:
@@ -37,6 +38,7 @@ on:
       - .github/workflows/cores.yml
       - scripts/check_elf_pages.py
       - scripts/core_build_policy.py
+      - scripts/core_acceleration_audit.py
       - scripts/test_core_build_policy.py
 
 concurrency:
@@ -148,12 +150,14 @@ jobs:
           PROFILE: ${{ matrix.profile }}
           CFLAGS_EXTRA: ${{ matrix.cflags }}
           LDFLAGS_EXTRA: ${{ matrix.ldflags }}
+          MAKEVARS: ${{ matrix.makevars }}
         run: |
           set -euo pipefail
           mkdir -p out reports
           bin="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
           read -r -a args <<< "$ARGS"
           read -r -a extra_env <<< "$EXTRA_ENV"
+          read -r -a makevars <<< "$MAKEVARS"
           if [ "$BUILD_KIND" = "cmake" ]; then
             flags=()
             if [ -n "$CFLAGS_EXTRA" ]; then
@@ -169,13 +173,15 @@ jobs:
               "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384 $LDFLAGS_EXTRA" \
               "-DCMAKE_MODULE_LINKER_FLAGS=-Wl,-z,max-page-size=16384 $LDFLAGS_EXTRA" \
               -DCMAKE_BUILD_TYPE=Release "${args[@]}" "${flags[@]}"
+            build_cwd="$PWD/build"
             cmake --build build --verbose -j"$(nproc)" 2>&1 | tee reports/build.log
             lib=$(python3 scripts/core_build_policy.py select --nm "$bin/llvm-nm" --root build --pattern '*libretro*.so')
           else
             python3 scripts/core_build_policy.py ndk-flags \
               --application "src/$JNI/jni/Application.mk" --profile "$PROFILE" --cppflags="$CPPFLAGS_EXTRA"
+            build_cwd="$PWD/src/$JNI/jni"
             env "${extra_env[@]}" "$NDK/ndk-build" --no-print-directory -j"$(nproc)" -C "src/$JNI/jni" \
-              APP_ABI="$ABI" APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true V=1 2>&1 | tee reports/build.log
+              APP_ABI="$ABI" APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true V=1 "${makevars[@]}" 2>&1 | tee reports/build.log
             lib=$(python3 scripts/core_build_policy.py select --nm "$bin/llvm-nm" --root "src/$JNI/libs/$ABI" --pattern '*.so')
           fi
           target="out/${CORE}_libretro_android.so"
@@ -184,7 +190,7 @@ jobs:
           python3 scripts/check_elf_pages.py "$target"
           python3 scripts/core_build_policy.py report --nm "$bin/llvm-nm" --binary "$target" \
             --log reports/build.log --profile "$PROFILE" --core "$CORE" --abi "$ABI" \
-            --commit "$CORE_COMMIT" --ndk "$NDK_VERSION" --output reports/build.json
+            --commit "$CORE_COMMIT" --ndk "$NDK_VERSION" --build-cwd "$build_cwd" --output reports/build.json
           cat reports/build.json
 
       - uses: actions/upload-artifact@v5

@@ -1313,7 +1313,7 @@ run_cores_command() {
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --profile)
-                        [[ $# -ge 2 ]] || fail "--profile requires baseline, o3, thinlto or o3-thinlto"
+                        [[ $# -ge 2 ]] || fail "--profile requires baseline, o3, thinlto, o3-thinlto, tune-a57 or picodrive-sh2"
                         profile="$2"; shift 2 ;;
                     --abis)
                         [[ $# -ge 2 ]] || fail "--abis requires a comma-separated ABI list"
@@ -1325,7 +1325,7 @@ run_cores_command() {
                         selected="$1"; shift ;;
                 esac
             done
-            case "$profile" in baseline|o3|thinlto|o3-thinlto) ;; *) fail "Unknown core profile: $profile" ;; esac
+            case "$profile" in baseline|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2) ;; *) fail "Unknown core profile: $profile" ;; esac
             if [[ -n "$selected" ]]; then inputs+=(-f "cores=$selected"); fi
             if [[ -n "$abis" ]]; then inputs+=(-f "abis=$abis"); fi
             if [[ "$profile" != baseline ]]; then inputs+=(-f "profile=$profile"); fi
@@ -1374,7 +1374,7 @@ Libraries: libs-check [svp|monogram|libretro], libs-update [svp|monogram|libretr
            monogram-check, monogram-update, monogram-size [abi|all]
 
 Libretro cores on GitHub Actions (main):
-  cores [id[,id...]] [--profile baseline|o3|thinlto|o3-thinlto] [--abis ABI[,ABI...]]
+  cores [id[,id...]] [--profile baseline|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2] [--abis ABI[,ABI...]]
                       Build artifacts only. Omit IDs to build all cores (gh).
   cores-key [--manual] Generate signing keys. Upload the secret in the browser if gh is unavailable.
                        Commit and push cores/signing-public.pem and rebuild the app to embed it.

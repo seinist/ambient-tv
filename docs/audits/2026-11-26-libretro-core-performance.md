@@ -99,3 +99,22 @@ matched uniquely; the include hunk initially missed the contentaspect.h line
 from patch 0035. It has been corrected to the post-0035 include context.
 The complete fresh git apply, native host tests and NDK compilation for this
 new head are still required; no prior green run validates these new changes.
+
+## Stage 3 — acceleration evidence and focused Android candidates
+
+Previous head b8adb0eee7fec0a87f07e525911c790e25da70fd: [PR checks](https://github.com/seinist/ambient-tv/actions/runs/45859405750) all ten successful; [Cores](https://github.com/seinist/ambient-tv/actions/runs/45859406049) plan plus all eight comparison builds successful, publication skipped. This validates Stage 2 on all four build ABIs, not Android performance.
+
+Pinned source review:
+- gpSP jni/Android.mk already sets HAVE_DYNAREC and MMAP_JIT_CACHE for all four ABIs; Makefile.common selects cpu_threaded.c plus an architecture stub.
+- PCSX ReARMed jni/Android.mk already selects ARM ari64/new_dynarec with NDRC_THREAD, x86 Lightrec, the accelerated GPU backend, async GPU/CD and SPU. Do not blindly override these settings.
+- Mupen64Plus Next libretro/jni/Android.mk selects four dynarec architectures, plus ARM parallel RSP/RDP; its ARM32 NEON recipe also includes ARM32 assembly, so do not force that entire recipe on ARM64.
+- PicoDrive jni/Android.mk only turns on use_sh2drc for TARGET_ARCH=arm even though cpu/sh2/compiler.c has an AArch64 emitter and the generic upstream Makefile enables it for aarch*. The new artifact-only picodrive-sh2 candidate uses the upstream Make variable on ARM64, preserving the default Android recipe. It targets Sega 32X specifically. The upstream executable mapping path and runtime DRC behavior must be tested on Android, including page sizes, before promotion.
+- tune-a57 tests instruction scheduling (not a higher ISA or CPU requirement) with -mtune=cortex-a57 on arm64-v8a. It is not automatically selected by device model. No unsupported instructions or new fast-math options are injected.
+
+The build report checks named translation units and effective defines together; -U overrides count and compiler response files are expanded within the workspace. The audited recipes fail when required evidence is missing. The PR build matrix now includes 16 jobs: the original eight plus ARM gpSP/PCSX ReARMed, ARM64 Mupen64Plus, baseline/candidate PicoDrive ARM64 and tuned Snes9x ARM64. These are compile gates; DRC selection/execution, timing and save compatibility need physical-device evidence.
+
+After merge, examples:
+    ./build.sh cores picodrive --profile picodrive-sh2 --abis arm64-v8a
+    ./build.sh cores snes9x --profile tune-a57 --abis arm64-v8a
+
+No candidate is publishable through the signed baseline catalog. New CI results pending.
