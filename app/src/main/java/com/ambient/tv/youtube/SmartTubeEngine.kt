@@ -1646,7 +1646,7 @@ private fun wrap(c: Class<*>) = when (c) {
     else -> c
 }
 
-private fun Any.cachedMethod(name: String, args: Array<out Any?>, allowArityFallback: Boolean): Method? {
+internal fun Any.cachedMethod(name: String, args: Array<out Any?>, allowArityFallback: Boolean): Method? {
     val index = reflectionIndex(javaClass)
     if (args.isEmpty()) return index.zeroArgumentMethods[name]
     val key = ReflectionMethodKey(name, args.map { it?.javaClass }, allowArityFallback)
