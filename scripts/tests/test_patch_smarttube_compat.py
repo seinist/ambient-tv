@@ -214,6 +214,72 @@ class SmartTubeDeprecationPatchesTest(unittest.TestCase):
         self.assertEqual(before, (helper.read_bytes(), manager.read_bytes()))
         self.assertFalse(list(helper.parent.glob(".ambient-cronet-*")))
 
+    def test_auth_headers_publish_complete_snapshots(self) -> None:
+        root = Path(self.temporary.name)
+        source = root / "youtubeapi/src/main/java"
+        fixtures = {
+            "com/liskovsoft/googlecommon/common/helpers/RetrofitOkHttpHelper.kt": """    @JvmStatic
+    val authHeaders = mutableMapOf<String, String>()
+                if (authHeaders.isEmpty() || doSkipAuth) {
+                    applyHeaders(authHeaders, headers, requestBuilder)
+""",
+            "com/liskovsoft/youtubeapi/service/YouTubeSignInService.java": """        Map<String, String> headers = RetrofitOkHttpHelper.getAuthHeaders();
+        headers.clear();
+        if (selectedAccount != null) {
+            headers.put("Authorization", mCachedAuthorizationHeader);
+        }
+    }
+
+    @Override
+    public void addOnAccountChange
+""",
+            "com/liskovsoft/googleapi/oauth2/manager/OAuth2AccountManagerBase.java": """        Map<String, String> headers = RetrofitOkHttpHelper.getAuthHeaders();
+        headers.clear();
+        if (mCachedAuthorizationHeader != null && getSelectedAccount() != null) {
+            String pageIdToken = ((YouTubeAccount) getSelectedAccount()).getPageIdToken();
+            if (pageIdToken != null) {
+                headers.put("X-Goog-Pageid", pageIdToken);
+            }
+        }
+    }
+""",
+        }
+        paths = []
+        for name, content in fixtures.items():
+            path = source / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content.replace("\n", "\r\n").encode())
+            paths.append(path)
+        before = [p.read_bytes() for p in paths]
+        with self.assertRaises(SystemExit):
+            patcher.patch_auth_header_snapshots(root, check=True)
+        self.assertEqual(before, [p.read_bytes() for p in paths])
+        self.assertEqual(paths, patcher.patch_auth_header_snapshots(root, check=False))
+        helper = paths[0].read_text()
+        self.assertIn("@Volatile", helper)
+        self.assertIn("Collections.unmodifiableMap(HashMap(headers))", helper)
+        self.assertIn("applyHeaders(requestAuthHeaders", helper)
+        for path in paths[1:]:
+            self.assertNotIn("headers.clear()", path.read_text())
+            self.assertIn("replaceAuthHeaders(headers);", path.read_text())
+        for path in paths:
+            raw = path.read_bytes()
+            self.assertNotIn(b"\n", raw.replace(b"\r\n", b""))
+        self.assertEqual([], patcher.patch_auth_header_snapshots(root, check=True))
+        self.assertEqual([], patcher.patch_auth_header_snapshots(root, check=False))
+
+    def test_http_debug_patch_fails_closed(self) -> None:
+        path = self.write("OkHttpCommons.java", "    private static void debugSetup(OkHttpClient.Builder okBuilder) {\n        if (BuildConfig.DEBUG) {\n")
+        with self.assertRaises(SystemExit):
+            patcher.patch_okhttp_debug_dump(path, check=True)
+        self.assertTrue(patcher.patch_okhttp_debug_dump(path, check=False))
+        self.assertFalse(patcher.patch_okhttp_debug_dump(path, check=True))
+        self.assertFalse(patcher.patch_okhttp_debug_dump(path, check=False))
+        path.write_text("    private static void debugSetup(OkHttpClient.Builder okBuilder) {\n        if (true) {\n")
+        for check in (False, True):
+            with self.assertRaises(SystemExit):
+                patcher.patch_okhttp_debug_dump(path, check=check)
+
     def test_legacy_tls_bypass_is_disabled(self) -> None:
         path = self.write("OkHttpCommons.java", "        configureToIgnoreCertificate(okBuilder);\n")
         with self.assertRaises(SystemExit):
