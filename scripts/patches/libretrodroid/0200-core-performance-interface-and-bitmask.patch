@@ -41,20 +41,25 @@ diff --git a/src/main/cpp/environment.cpp b/src/main/cpp/environment.cpp
  #include "vfs/vfs.h"
  #include "vulkan/vulkanbackend.h"
  #include "microphone/microphoneinterface.h"
-@@ -55,4 +55,5 @@
+@@ -55,4 +55,7 @@
  void Environment::deinitialize() {
--    callback_get_current_framebuffer = nullptr;
++#if defined(AMBIENT_CORE_PERF_EXPERIMENT)
 +    libretrodroid::coreperf::clear();
-+    callback_get_current_framebuffer = nullptr;
++#endif
+     callback_get_current_framebuffer = nullptr;
      // Ambient TV: options belong to one core; another core must not inherit them.
      variables.clear();
-@@ -403,7 +403,6 @@
+@@ -403,7 +403,10 @@
          }
  
          case RETRO_ENVIRONMENT_GET_PERF_INTERFACE:
 -            LOGD("Called RETRO_ENVIRONMENT_GET_PERF_INTERFACE");
 -            return false;
++#if defined(AMBIENT_CORE_PERF_EXPERIMENT)
 +            return libretrodroid::coreperf::provide(data);
++#else
++            return false;
++#endif
  
          case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO: {
 diff --git a/src/main/cpp/ambientcoreperf.h b/src/main/cpp/ambientcoreperf.h

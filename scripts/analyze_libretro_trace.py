@@ -47,6 +47,9 @@ def summarize(rows, fps, thermal=(), max_thermal_age_ns=5_000_000_000):
             continue
         groups[path].append((ts, dur))
 
+    if len(trace_kinds) > 1:
+        raise ValueError("Mixed core trace formats: export and analyze each instrumentation generation separately")
+
     def stats(items, frame_budget):
         durations = sorted(dur for _, dur in items)
         if not durations:

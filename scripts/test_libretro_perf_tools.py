@@ -73,6 +73,12 @@ class CorePerformanceToolsTest(unittest.TestCase):
         report = summarize(rows, 60)
         self.assertTrue(all(path["samples"] == 1 for path in report["paths"].values()))
 
+    def test_mixed_trace_generations_rejected(self):
+        rows = [{"name": name, "ts": "0", "dur": "1000"} for name in
+                ("AmbientGame core run", "AmbientTV:Libretro/retro_run")]
+        with self.assertRaisesRegex(ValueError, "Mixed core trace formats"):
+            summarize(rows, 60)
+
     def test_trace_summary(self):
         rows = [{"name": "AmbientTV:Libretro/retro_run", "ts": str(i * 1_000_000_000),
                  "dur": str(ms * 1_000_000)} for i, ms in enumerate((5, 10, 20, 30))]

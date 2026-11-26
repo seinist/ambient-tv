@@ -396,8 +396,8 @@ def main():
         dependencies = dynamic_dependencies(args.readelf, args.binary)
         build_log = args.log.read_text(errors="replace")
         scoped, link_evidence = target_commands(build_log, args.build_cwd, Path.cwd(), args.linked_library)
-        if args.profile != "baseline" and link_evidence["unresolved_local_inputs"]:
-            raise ValueError(f"Candidate has unaudited local linker inputs: {link_evidence['unresolved_local_inputs']}")
+        if link_evidence["unresolved_local_inputs"]:
+            raise ValueError(f"Core has unaudited local linker inputs: {link_evidence['unresolved_local_inputs']}")
         report = {**identity, **link_evidence, "needed_libraries": dependencies, "core": args.core, "abi": args.abi, "commit": args.commit,
                   "ndk": args.ndk, "profile": args.profile,
                   "requested_cflags": PROFILES[args.profile][0],

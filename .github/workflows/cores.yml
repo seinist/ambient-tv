@@ -57,8 +57,8 @@ on:
       - scripts/test_core_build_policy.py
 
 concurrency:
-  group: cores-${{ github.ref }}-${{ (github.event_name == 'push' || inputs.publish) && 'release' || format('{0}-{1}', inputs.profile || 'baseline', inputs.comparison || 'none') }}
-  cancel-in-progress: true
+  group: cores-${{ github.ref }}-${{ (github.event_name == 'push' || inputs.publish) && 'release' || (github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || 'pr') }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

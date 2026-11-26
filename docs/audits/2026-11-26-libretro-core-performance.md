@@ -361,3 +361,7 @@ CI run 45888396167 passed all three ARM64 native profile builds. Core run
 45888396254 reported a runner apt HTTP 403 during optional ccache installation
 for FCEUmm, not a compiler error. Cache setup now falls back to uncached builds
 without changing compiler/link/ELF evidence requirements.
+
+### Final integration audit follow-up
+
+Fail closed on unresolved local link inputs for baseline as well as candidates. The new native performance callback remains opt-in via experimental native builds; normal builds retain the upstream GET_PERF_INTERFACE=false contract while the direct input-mask optimization stays enabled. Reject mixed legacy/main trace measurements rather than aggregating incomparable samples. Manual artifact builds no longer cancel other selections sharing a profile; releases remain serialized separately. Fresh CI is required.

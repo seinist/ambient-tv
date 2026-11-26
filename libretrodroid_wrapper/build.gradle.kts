@@ -69,8 +69,8 @@ android {
                     if (nativeProfile != "baseline") {
                         arguments += "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
                         for (language in listOf("C", "CXX")) {
-                            arguments += "-DCMAKE_${language}_FLAGS_RELWITHDEBINFO=$optimize -g -DNDEBUG$lto"
-                            arguments += "-DCMAKE_${language}_FLAGS_RELEASE=$optimize -DNDEBUG$lto"
+                            arguments += "-DCMAKE_${language}_FLAGS_RELWITHDEBINFO=$optimize -g -DNDEBUG -DAMBIENT_CORE_PERF_EXPERIMENT=1$lto"
+                            arguments += "-DCMAKE_${language}_FLAGS_RELEASE=$optimize -DNDEBUG -DAMBIENT_CORE_PERF_EXPERIMENT=1$lto"
                         }
                         if (lto.isNotEmpty()) {
                             arguments += "-DCMAKE_SHARED_LINKER_FLAGS_RELEASE=$lto"
