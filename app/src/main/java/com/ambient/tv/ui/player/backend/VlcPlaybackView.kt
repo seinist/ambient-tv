@@ -363,6 +363,7 @@ class VlcPlaybackController(
     private var restartStop: java.util.concurrent.CompletableFuture<Unit>? = null
     private var restartDurationMs = 0L
     private var forceOutputRebuild = false
+    private var restartStopFailed = false
     private var dvRetirementPending = false
     private val previousAudioRelease = nativeAudioReleases.snapshot()
     private val createdAt = android.os.SystemClock.elapsedRealtime()
@@ -746,6 +747,7 @@ class VlcPlaybackController(
     }
 
     private fun applyAudioLiveOptions() {
+        if (restartStopFailed || restartStop != null || dvRetirementPending) return
         if (released) return
         // Re-applied with the audio options, which run again after every media restart.
         runCatching { player.setSpuDelay(subtitleDelayMs * 1000L) }
@@ -789,6 +791,7 @@ class VlcPlaybackController(
         dvSurfacePosition?.let { position ->
             dvSurfacePosition = null
             val retiring = player
+            restartDurationMs = runCatching { retiring.length }.getOrDefault(0L).coerceAtLeast(0L)
             val retiringVolume = pausedSeekVolume ?: retiring.volume.takeIf { it >= 0 } ?: 100
             retiring.setEventListener(null)
             retiring.vlcVout.removeCallback(surfaceCallback)
@@ -819,7 +822,10 @@ class VlcPlaybackController(
                         if (closed.isSuccess) {
                             if (!prepared) prepare()
                             attachedView?.let(::restoreVideoTrackWhenSurfaceIsReady)
-                        } else errorMessage = context.getString(R.string.audio_output_release_failed)
+                        } else {
+                            restartStopFailed = true
+                            errorMessage = context.getString(R.string.audio_output_release_failed)
+                        }
                     }
                 }
             }
@@ -917,7 +923,7 @@ class VlcPlaybackController(
 
     /** Coalesce reopens while a native stop is outstanding; never stop twice concurrently. */
     private fun restartAfterStop(position: Long, playing: Boolean) {
-        if (released) return
+        if (released || restartStopFailed) return
         pendingRestorePositionMs = position.takeUnless { liveStream }
         desiredPlayWhenReady = playing
         openingOrRestarting = true
@@ -944,6 +950,7 @@ class VlcPlaybackController(
                 if (released || restartStop !== stop || player !== stopping) return@post
                 restartStop = null
                 if (result.isFailure) {
+                    restartStopFailed = true
                     Timber.w(result.exceptionOrNull(), "VLC internal restart stop failed")
                     errorMessage = context.getString(R.string.audio_output_release_failed)
                     return@post
@@ -958,7 +965,7 @@ class VlcPlaybackController(
     }
 
     private fun prepare(resumePositionMs: Long = pendingRestorePositionMs ?: startPositionMs, resumePlaying: Boolean = desiredPlayWhenReady) {
-        if (released || restartStop != null || dvRetirementPending) return
+        if (released || restartStopFailed || restartStop != null || dvRetirementPending) return
         frameDropSamples.prepare()
         if (previousReleaseOutcome == null && previousAudioRelease.isDone) {
             // Nothing to wait for: open in this call, not one main-thread round trip later.
@@ -1143,10 +1150,11 @@ class VlcPlaybackController(
         prepared = true
         if (dvResumeWorkaround && (pendingRestorePositionMs ?: 0) > 0) beginDvPrime()
         applyAudioLiveOptions()
+        // Recreated vout must own the real surface before opening its media.
+        reattach?.let(::attach)
         player.play()
         // Pause on the Playing event, after demux and the pending seek are ready.
         // Pausing immediately can interrupt VLC 4's initial stream probe.
-        reattach?.let(::attach)
     }
 
 
@@ -1326,6 +1334,7 @@ class VlcPlaybackController(
         if (released) return
         if (!desiredPlayWhenReady) frameDropSamples.discontinuity()
         desiredPlayWhenReady = true
+        if (restartStopFailed || restartStop != null || dvRetirementPending) return
         if (!dvPrimeActive) restorePausedSeekVolume()
         hdrOutput.discontinuity()
         pauseAfterRestorePositionMs = null
@@ -1384,7 +1393,7 @@ class VlcPlaybackController(
 
     override fun status(): PlaybackStatus {
         if (released) return PlaybackStatus()
-        if (restartStop != null || dvRetirementPending)
+        if (restartStopFailed || restartStop != null || dvRetirementPending)
             return PlaybackStatus(pendingRestorePositionMs ?: lastPlaybackTimeMs, restartDurationMs, false, false, errorMessage)
         if (imageOptions.svpMode != "off" || configuredSvpMode != "off") {
             if (measuredSourceFps == null) measuredSourceFps = currentSourceFps()
@@ -1403,14 +1412,16 @@ class VlcPlaybackController(
         // Key handlers can still fire between Stop and the next recomposition; a released
         // libVLC MediaPlayer throws IllegalStateException on every native call.
         if (released) return
-        val length = player.length.takeIf { it > 0L } ?: Long.MAX_VALUE
-        seekTo((confirmedPlaybackTimeMs() + deltaMs).coerceIn(0L, length))
+        val restarting = restartStop != null || dvRetirementPending
+        val length = (if (restarting) restartDurationMs else player.length).takeIf { it > 0L } ?: Long.MAX_VALUE
+        val position = if (restarting) pendingRestorePositionMs ?: lastPlaybackTimeMs else confirmedPlaybackTimeMs()
+        seekTo((position + deltaMs).coerceIn(0L, length))
     }
 
     override fun seekTo(positionMs: Long) {
         // Live no longer means unseekable: YouTube HLS/DASH can advertise a real DVR window.
         // Still reject streams without a native seek index (ordinary live channels).
-        if (released || (liveStream && !canSeekNow())) return
+        if (released || restartStopFailed || (liveStream && !canSeekNow())) return
         if (restartStop != null || dvRetirementPending) {
             pendingRestorePositionMs = positionMs.coerceAtLeast(0L)
             return
@@ -1836,7 +1847,7 @@ class VlcPlaybackController(
     fun runtimeStats(includeCounters: Boolean = true): VlcRuntimeStats? = runCatching {
         // Compose polling can outlive session release until its disposal is applied.
         // LibVLC's Media.getStats JNI dereferences the native handle even after release.
-        if (released || restartStop != null || dvRetirementPending) return@runCatching null
+        if (released || restartStopFailed || restartStop != null || dvRetirementPending) return@runCatching null
         fun member(instance: Any, name: String): Any? = ReflectiveMembers.value(instance, name)
 
         var result = VlcRuntimeStats()
