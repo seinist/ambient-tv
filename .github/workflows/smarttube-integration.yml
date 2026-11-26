@@ -1,0 +1,62 @@
+name: SmartTube integration
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/smarttube-integration.yml'
+      - 'scripts/**'
+      - 'smarttube_wrappers/**'
+      - 'gradle/**'
+      - '**/*.gradle.kts'
+      - 'app/src/main/java/com/ambient/tv/youtube/**'
+      - 'app/src/test/java/com/ambient/tv/youtube/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smarttube-integration-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smarttube:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install Android SDK
+        shell: bash
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          yes | "$sdkmanager" --licenses >/dev/null 2>&1 || true
+          "$sdkmanager" "platforms;android-37" "ndk;30.0.16248370" "cmake;3.22.1" ||
+            "$sdkmanager" --channel=3 "platforms;android-37" "ndk;30.0.16248370" "cmake;3.22.1"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Fetch and patch pinned upstream sources
+        run: |
+          bash scripts/fetch_smarttube_engine.sh
+          bash scripts/fetch_libretrodroid.sh
+          python3 scripts/patch_smarttube_compat.py --check --root third_party/smarttube
+      - name: Compile real SmartTube modules and exercise header snapshots
+        run: |
+          ./gradlew :youtubeapi:testDebugUnitTest --tests '*AuthHeaderSnapshotTest' -PAPK_ABI=arm64
+      - name: Verify the application runtime dependency graph
+        run: |
+          ./gradlew :app:dependencies --configuration debugRuntimeClasspath -PAPK_ABI=arm64
+      - name: Verify app integration and reflection regression tests
+        run: |
+          ./gradlew :app:testDebugUnitTest --tests '*SmartTubeReflectionTest' -PAPK_ABI=arm64
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smarttube-test-reports
+          path: |
+            smarttube_wrappers/youtubeapi/build/test-results/
+            app/build/test-results/
+          if-no-files-found: warn
