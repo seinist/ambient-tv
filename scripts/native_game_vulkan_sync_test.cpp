@@ -389,8 +389,9 @@ void slotRetirementPreflightContracts() {
     backend.frameSlot.colorCopyRejected = true;
     window(backend);
     backend.nativeSdrSwapchain = object<VkSwapchainKHR>(19);
-    backend.bridgeReadSemaphore = object<VkSemaphore>(20);
-    backend.bridgeWriteSemaphore = object<VkSemaphore>(21);
+    backend.frameSlot.bridgeSync.readSemaphore = object<VkSemaphore>(20);
+    backend.frameSlot.bridgeSync.writeSemaphore = object<VkSemaphore>(21);
+    backend.frameSlot.bridgeSync.readPending = true;
     static unsigned semaphoreFrees;
     semaphoreFrees = 0;
     backend.vk.destroySemaphore = [](VkDevice, VkSemaphore semaphore, const VkAllocationCallbacks*) {
@@ -402,13 +403,20 @@ void slotRetirementPreflightContracts() {
     backend.shutdown();
     assert(backend.getFatalError() == VK_ERROR_INITIALIZATION_FAILED && !backend.shutdownReady);
     assert(backend.device && backend.nativeSdrSwapchain && backend.frameBuffer && backend.frameSlot.pool);
-    assert(backend.bridgeReadSemaphore && backend.bridgeWriteSemaphore && backend.frameSlot.colorCopyRejected);
+    assert(backend.frameSlot.bridgeSync.readSemaphore && backend.frameSlot.bridgeSync.writeSemaphore && backend.frameSlot.colorCopyRejected);
     assert(driver.cacheReleases == 0 && driver.slangReleases == 0 && driver.swapchainFrees == 0 &&
            driver.imageFrees == 0 && driver.bufferFrees == 0 && driver.commandPoolFrees == 0 &&
            driver.fenceFrees == 0 && driver.deviceFrees == 0 && semaphoreFrees == 0);
     backend.vk.destroyFence = destroyFence;
+    const auto destroySemaphore = backend.vk.destroySemaphore;
+    backend.vk.destroySemaphore = nullptr;
+    backend.shutdown();
+    assert(backend.device && !backend.shutdownReady && backend.frameSlot.bridgeSync.readPending);
+    assert(driver.imageFrees == 0 && driver.swapchainFrees == 0 && semaphoreFrees == 0);
+    backend.vk.destroySemaphore = destroySemaphore;
     backend.shutdown();
     assert(!backend.device && !backend.hasFatalError() && !backend.frameSlot.colorCopyRejected);
+    assert(backend.frameSlot.bridgeSync.empty());
     assert(driver.cacheReleases == 1 && driver.swapchainFrees == 1 && driver.imageFrees == 1 &&
            driver.bufferFrees == 1 && driver.commandPoolFrees == 1 && driver.fenceFrees == 1 &&
            driver.deviceFrees == 1 && semaphoreFrees == 2);
@@ -845,9 +853,9 @@ void readFenceQueueContracts() {
             fd = newFd();
             assert(backend.importBridgeReadFence(fd));
             closed(fd);
-            assert(backend.bridgeReadPending && creates == 1 && destroys == 0);
+            assert(backend.frameSlot.bridgeSync.readPending && creates == 1 && destroys == 0);
             assert(backend.presentFrame(256, 224, 4.0F/3.0F, true));
-            assert(!backend.bridgeReadPending && !backend.frameSlot.inFlight && !driver.pending);
+            assert(!backend.frameSlot.bridgeSync.readPending && !backend.frameSlot.inFlight && !driver.pending);
             std::vector<VkSemaphore> expected;
             if (!coreCommands) expected.push_back(coreWait);
             if (direct) expected.push_back(backend.nativeSdrAcquire);
@@ -865,7 +873,7 @@ void readFenceQueueContracts() {
         const auto image = backend.pendingImage.image;
         backend.pendingImage.image = VK_NULL_HANDLE;
         assert(!backend.presentFrame(256, 224, 4.0F/3.0F, true));
-        assert(backend.bridgeReadPending && destroys == 0);
+        assert(backend.frameSlot.bridgeSync.readPending && destroys == 0);
         backend.pendingImage.image = image;
         fd = newFd();
         assert(backend.importBridgeReadFence(fd));
@@ -873,7 +881,7 @@ void readFenceQueueContracts() {
         assert(creates == 2 && destroys == 1);
         // Export failure discards the unsubmitted payload before CPU fallback.
         assert(!backend.importBridgeReadFence(-1));
-        assert(!backend.bridgeReadPending && !backend.canImportBridgeReadFence() && destroys == 2);
+        assert(!backend.frameSlot.bridgeSync.readPending && !backend.canImportBridgeReadFence() && destroys == 2);
         assert(backend.presentFrame(256, 224, 4.0F/3.0F, true));
         assert(std::find(driver.submittedWaits.begin(), driver.submittedWaits.end(), readSemaphore) ==
                driver.submittedWaits.end());
@@ -883,14 +891,14 @@ void readFenceQueueContracts() {
         assert(!backend.importBridgeReadFence(fd));
         closed(fd);
         assert(!backend.hasFatalError() && !backend.canImportBridgeReadFence());
-        assert(backend.bridgeReadSemaphore == VK_NULL_HANDLE && creates == 3);
+        assert(backend.frameSlot.bridgeSync.readSemaphore == VK_NULL_HANDLE && creates == 3);
         backend.bridgeFenceEnabled = true;
         createResult = VK_SUCCESS;
         importResult = VK_ERROR_INVALID_EXTERNAL_HANDLE;
         fd = newFd();
         assert(!backend.importBridgeReadFence(fd));
         closed(fd);
-        assert(!backend.hasFatalError() && !backend.canImportBridgeReadFence() && !backend.bridgeReadPending);
+        assert(!backend.hasFatalError() && !backend.canImportBridgeReadFence() && !backend.frameSlot.bridgeSync.readPending);
         // An import failure retains the unused semaphore; a fatal import latches
         // the first error and does not permit another submit.
         backend.bridgeFenceEnabled = true;
@@ -904,11 +912,11 @@ void readFenceQueueContracts() {
         assert(driver.submits == oldSubmits && destroys == 2);
         driver.idles = {VK_ERROR_UNKNOWN};
         backend.shutdown();
-        assert(destroys == 2 && backend.bridgeReadSemaphore == readSemaphore);
+        assert(destroys == 2 && backend.frameSlot.bridgeSync.readSemaphore == readSemaphore);
         driver.idles = {VK_SUCCESS};
         backend.shutdown();
-        assert(destroys == 3 && backend.bridgeReadSemaphore == VK_NULL_HANDLE);
-        assert(!backend.bridgeFenceEnabled && !backend.bridgeReadPending);
+        assert(destroys == 3 && backend.frameSlot.bridgeSync.readSemaphore == VK_NULL_HANDLE);
+        assert(!backend.bridgeFenceEnabled && !backend.frameSlot.bridgeSync.readPending);
     }
     std::puts("PASS Vulkan SYNC_FD ownership, queue wait order, reuse, fallback and safe teardown");
 }
@@ -992,7 +1000,7 @@ void writeFenceQueueContracts() {
         assert(std::find(driver.submittedSignals.begin(), driver.submittedSignals.end(), semaphore) ==
                driver.submittedSignals.end());
         backend.shutdown();
-        assert(destroys == 1 && backend.bridgeWriteSemaphore == VK_NULL_HANDLE &&
+        assert(destroys == 1 && backend.frameSlot.bridgeSync.writeSemaphore == VK_NULL_HANDLE &&
                !backend.bridgeWriteFenceEnabled);
 
         VulkanBackend failed;
