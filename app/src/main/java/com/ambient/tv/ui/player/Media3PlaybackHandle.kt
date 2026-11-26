@@ -26,10 +26,17 @@ class Media3PlaybackHandle(
     @Volatile var waitingForPreviousRelease = waitingForPreviousRelease
         private set
 
-    /** The previous player closed (or the wait ended): open the stream now, exactly once. */
+    private var releaseWaitError: String? = null
+
+    internal fun previousReleaseTimedOut(message: String) {
+        if (!released && waitingForPreviousRelease) releaseWaitError = message
+    }
+
+    /** The previous player closed: open the stream now, exactly once. */
     fun previousReleaseSettled() {
         if (!waitingForPreviousRelease) return
         waitingForPreviousRelease = false
+        releaseWaitError = null
         if (!released && player.playbackState == Player.STATE_IDLE) player.prepare()
     }
 
@@ -160,7 +167,7 @@ class Media3PlaybackHandle(
         durationMs = player.duration.coerceAtLeast(0),
         playing = player.isPlaying,
         ended = player.playbackState == Player.STATE_ENDED,
-        error = outputError ?: player.playerError?.localizedMessage,
+        error = releaseWaitError ?: outputError ?: player.playerError?.localizedMessage,
     )
     internal fun liveSyncSample(): LiveSyncSample? {
         if (released || waitingForPreviousRelease || !player.isPlaying || player.playbackState != Player.STATE_READY ||
