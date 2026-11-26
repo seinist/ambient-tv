@@ -100,4 +100,6 @@
     <string name="moonlight_stats_audio_recovering">Recovering audio device</string>
     <string name="moonlight_adaptive_quality">Adaptive network quality</string>
     <string name="moonlight_adaptive_quality_hint">When enabled, sustained packet loss can reconnect the running game at a lower bitrate. Saved host settings are unchanged.</string>
+    <string name="moonlight_stats_av_queue_difference">Local queue difference (audio minus video, estimated): %1$.1f ms</string>
+    <string name="moonlight_stats_audio_queue_reduction">Adaptive audio queue target reduced by %1$d ms</string>
 </resources>

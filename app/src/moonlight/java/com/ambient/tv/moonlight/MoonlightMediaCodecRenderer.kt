@@ -56,6 +56,8 @@ class MoonlightMediaCodecRenderer(
     private val assemblyLatency = MoonlightLatencyHistogram()
     private val releaseLatency = MoonlightLatencyHistogram()
     private val presentationLatency = MoonlightLatencyHistogram()
+    private data class PresentationSample(val sampledAt: Long = 0L, val delayUs: Long = 0L)
+    @Volatile private var presentationSample = PresentationSample()
     private val directSubmit get() = capabilities and MoonBridge.CAPABILITY_DIRECT_SUBMIT != 0
 
     override fun setup(format: Int, width: Int, height: Int, redrawRate: Int): Int =
@@ -121,7 +123,15 @@ class MoonlightMediaCodecRenderer(
                         decoder.setOnFrameRenderedListener({ renderedCodec, presentationUs, renderNanos ->
                             if (codec === renderedCodec && !closing) {
                                 presented.incrementAndGet()
-                                presentationLatency.recordUs(renderNanos / 1000L - presentationUs)
+                                val elapsed = renderNanos / 1000L - presentationUs
+                                presentationLatency.recordUs(elapsed)
+                                val previous = presentationSample
+                                if (elapsed in 0L..1_000_000L && renderNanos - previous.sampledAt >= 50_000_000L) {
+                                    val filtered = if (previous.sampledAt == 0L ||
+                                        renderNanos - previous.sampledAt > 1_000_000_000L) elapsed
+                                        else (previous.delayUs * 3 + elapsed) / 4
+                                    presentationSample = PresentationSample(renderNanos, filtered)
+                                }
                             }
                         },
                             android.os.Handler(handlerThread.looper))
@@ -333,12 +343,16 @@ class MoonlightMediaCodecRenderer(
         }
     }
 
-    internal fun metrics(): MoonlightVideoMetrics = MoonlightVideoMetrics(
+    internal fun metrics(): MoonlightVideoMetrics {
+        val timing = presentationSample
+        return MoonlightVideoMetrics(
         currentMime, decoderName, decodedWidth, decodedHeight, decodedFps, activeHdr,
         received.get(), missing.get(), rendered.get(), dropped.get(), decodeMicros.get(),
         hostTenthsMs.get(), hostSamples.get(), presented.get(),
         assemblyLatency.p95Ms(), releaseLatency.p95Ms(), presentationLatency.p95Ms(),
-    )
+        timing.delayUs.takeIf { timing.sampledAt != 0L }?.div(1000.0), timing.sampledAt,
+        )
+    }
 
     /** Called from the telemetry worker; next decoder input requests a fresh IDR. */
     internal fun requestRecovery(): Boolean = synchronized(inputLock) {

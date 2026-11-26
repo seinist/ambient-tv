@@ -100,4 +100,6 @@
     <string name="moonlight_stats_audio_recovering">Audiogerät wird wiederhergestellt</string>
     <string name="moonlight_adaptive_quality">Adaptive Netzwerkqualität</string>
     <string name="moonlight_adaptive_quality_hint">Bei anhaltendem Paketverlust kann das laufende Spiel mit geringerer Bitrate neu verbunden werden. Gespeicherte Host-Einstellungen bleiben unverändert.</string>
+    <string name="moonlight_stats_av_queue_difference">Lokale Pufferdifferenz (Audio minus Video, geschätzt): %1$.1f ms</string>
+    <string name="moonlight_stats_audio_queue_reduction">Adaptives Audio-Pufferziel um %1$d ms reduziert</string>
 </resources>

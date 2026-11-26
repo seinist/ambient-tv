@@ -655,6 +655,7 @@ class MoonlightStreamEngine @Inject constructor(
                 var noPresentationSeconds = 0
                 var poorNetworkSeconds = 0
                 var lastMissing = 0L
+                val avPolicy = MoonlightAvQueuePolicy()
                 var lastTime = System.nanoTime()
                 while (isOwned(session)) {
                     kotlinx.coroutines.delay(1000)
@@ -695,6 +696,8 @@ class MoonlightStreamEngine @Inject constructor(
                         break
                     }
                     val now = System.nanoTime()
+                    val queueBalance = avPolicy.sample(now, audio, video, pendingVideo)
+                    session.audio?.setQueueReduction(queueBalance.reductionMs)
                     val interval = (now - lastTime).coerceAtLeast(1L)
                     val fps = (video.rendered - lastFrames) * 1e9 / interval
                     val presentedFps = (video.presented - lastPresented) * 1e9 / interval
@@ -707,7 +710,8 @@ class MoonlightStreamEngine @Inject constructor(
                                 video, audio, rtt?.let { (it shr 32).toInt().takeIf { n -> n >= 0 } },
                                 rtt?.let { it.toInt().takeIf { n -> n >= 0 } }, fps.coerceAtLeast(0.0),
                                 presentedFps.coerceAtLeast(0.0), pendingVideo.coerceAtLeast(0), session.networkPoor,
-                                session.inputLatency.p95Ms(), session.inputMailbox.depth()))
+                                session.inputLatency.p95Ms(), session.inputMailbox.depth(),
+                                queueBalance.differenceMs, queueBalance.reductionMs))
                     }
                 }
             }

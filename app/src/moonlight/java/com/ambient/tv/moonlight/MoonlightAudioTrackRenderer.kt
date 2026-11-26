@@ -40,7 +40,13 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
     private var localQueuedMs = 0.0
     private var nativeQueuedMs = 0
     @Volatile private var snapshot = MoonlightAudioMetrics()
-    private val targetBudgetMs get() = when (pacing) { "latency" -> 35; "smooth" -> 80; else -> 55 }
+    private val audioTimestamp = android.media.AudioTimestamp()
+    private var timestampBacked = false
+    @Volatile private var queueReductionMs = 0
+    private val nominalBudgetMs get() = when (pacing) { "latency" -> 35; "smooth" -> 80; else -> 55 }
+    private val targetBudgetMs get() = (nominalBudgetMs - queueReductionMs).coerceAtLeast(25)
+
+    internal fun setQueueReduction(ms: Int) { queueReductionMs = ms.coerceIn(0, 20) }
 
     override fun setup(configuration: MoonBridge.AudioConfiguration, sampleRate: Int, samplesPerFrame: Int): Int =
         synchronized(lock) {
@@ -146,11 +152,23 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
                     val head = t.playbackHeadPosition.toLong() and 0xffffffffL
                     if (head < lastHead && lastHead - head > 0x80000000L) headEpoch += 0x100000000L
                     lastHead = head
-                    localQueuedMs = ((writtenFrames - headEpoch - head).coerceAtLeast(0L) * 1000.0 / rate)
+                    val playbackHead = headEpoch + head
+                    // Query the device timestamp only four times a second on the existing PCM
+                    // owner. Between timestamp samples use the continuously sampled head.
+                    localQueuedMs = ((writtenFrames - playbackHead).coerceAtLeast(0L) * 1000.0 / rate)
                         .coerceAtMost(1000.0)
                     lastQueueSample = now
                     if (now - lastSnapshotNanos >= 250_000_000L) {
-                        publishSnapshot(t)
+                        val projected = runCatching {
+                            if (t.getTimestamp(audioTimestamp)) moonlightProjectAudioHead(
+                                audioTimestamp.framePosition, audioTimestamp.nanoTime, playbackHead,
+                                writtenFrames, rate, now) else null
+                        }.getOrNull()
+                        timestampBacked = projected != null
+                        if (projected != null)
+                            localQueuedMs = ((writtenFrames - projected).coerceAtLeast(0L) * 1000.0 / rate)
+                                .coerceAtMost(1000.0)
+                        publishSnapshot(t, now)
                         lastSnapshotNanos = now
                     }
                 }
@@ -196,10 +214,16 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
                         val cap = max(minimumFrames, rate * targetBudgetMs / 1000)
                         val target = (buffer + frameSamples).coerceAtMost(minOf(t.bufferCapacityInFrames, cap))
                         if (target > buffer) t.setBufferSizeInFrames(target)
-                    } else if (++stableIntervals >= 10) {
-                        stableIntervals = 0
-                        val target = (buffer - frameSamples).coerceAtLeast(minimumFrames)
-                        if (target < buffer) t.setBufferSizeInFrames(target)
+                    } else {
+                        val adaptiveCap = max(minimumFrames, rate * targetBudgetMs / 1000)
+                        if (queueReductionMs > 0 && buffer > adaptiveCap) {
+                            t.setBufferSizeInFrames((buffer - frameSamples).coerceAtLeast(adaptiveCap))
+                            stableIntervals = 0
+                        } else if (++stableIntervals >= 10) {
+                            stableIntervals = 0
+                            val target = (buffer - frameSamples).coerceAtLeast(minimumFrames)
+                            if (target < buffer) t.setBufferSizeInFrames(target)
+                        }
                     }
                     lastUnderruns = underruns
                     lastTuneNanos = now
@@ -274,13 +298,16 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
         lastSnapshotNanos = 0L
         localQueuedMs = 0.0
         nativeQueuedMs = 0
+        timestampBacked = false
+        queueReductionMs = 0
     }
 
-    private fun publishSnapshot(t: AudioTrack) {
+    private fun publishSnapshot(t: AudioTrack, sampledAt: Long = 0L) {
         // A failed metrics query is not an audio device failure or a reason to abort recovery.
         runCatching {
             snapshot = MoonlightAudioMetrics(outputChannels, rate, t.bufferSizeInFrames,
-                t.underrunCount, lostSamples.get(), localQueuedMs, nativeQueuedMs, recovering)
+                t.underrunCount, lostSamples.get(), localQueuedMs, nativeQueuedMs, recovering,
+                sampledAt, timestampBacked, queueReductionMs)
         }
     }
 
