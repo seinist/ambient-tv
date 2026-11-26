@@ -483,7 +483,7 @@ class MpvPlaybackController(
         // the previous VO before binding the (possibly surviving) SurfaceView again.
         val accepted = mailbox.submit("surface-attach", discard = { copy.release() }) {
             val player = engine
-            if (player == null) copy.release()
+            if (player == null || !copy.isValid) copy.release()
             else {
                 player.detachSurface()
                 ownedSurface?.release()
