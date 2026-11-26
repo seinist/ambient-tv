@@ -173,15 +173,19 @@ object PlaybackEngineFactory {
                 )
                 .build()
 
-            val streamClient = if (streamUrlRenewer == null) streamingHttpClient else streamingHttpClient.newBuilder()
+            val networkEngine = streamTuning?.networkEngine
+            val useNativeInterceptor = networkEngine == null || networkEngine == MEDIA3_NETWORK_OKHTTP
+            val streamClient = if (streamUrlRenewer == null || !useNativeInterceptor) streamingHttpClient else streamingHttpClient.newBuilder()
                 .addInterceptor(StreamUrlRenewalInterceptor(streamUrlRenewer)).build()
-            // Renewal must preserve the failed range request and headers. Until every engine
-            // implements that contract, prefer the renewal-capable OkHttp path for signed URLs.
-            val networkEngine = if (streamUrlRenewer != null) MEDIA3_NETWORK_OKHTTP else streamTuning?.networkEngine
             val httpDataSourceFactory = media3HttpDataSourceFactory(context, networkEngine, streamClient)
                 .setDefaultRequestProperties(streamHeaders)
+            val upstream = DefaultDataSource.Factory(context, httpDataSourceFactory)
+            // Cronet/default HTTP keep the user's selected engine and share the same bounded
+            // signed-URL recovery policy. Do not retry arbitrary read failures or non-HTTP URIs.
+            val sourceFactory = if (streamUrlRenewer != null && !useNativeInterceptor)
+                RenewingMedia3DataSource.Factory(upstream, streamUrlRenewer) else upstream
             val mediaSourceFactory = DefaultMediaSourceFactory(context)
-                .setDataSourceFactory(dataSourceFactory ?: DefaultDataSource.Factory(context, httpDataSourceFactory))
+                .setDataSourceFactory(dataSourceFactory ?: sourceFactory)
                 .apply { if (centerYouTubeCaptions) setSubtitleParserFactory(com.ambient.tv.youtube.YouTubeSubtitleParserFactory()) }
 
             val heapMb = (context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager)?.memoryClass ?: 0
@@ -382,8 +386,7 @@ internal fun media3TunedBuffer(key: String): Media3TunedBuffer = when (key) {
 
 /**
  * OkHttp unless SmartTube's setting picks another engine. Cronet comes from Play Services; without
- * it playback stays on OkHttp. Renewing expired googlevideo URLs is an OkHttp interceptor, so the
- * other engines play without it (a URL lasts hours).
+ * it playback stays on OkHttp. Signed URL renewal is enabled for every selected engine.
  */
 private fun media3HttpDataSourceFactory(
     context: Context,
