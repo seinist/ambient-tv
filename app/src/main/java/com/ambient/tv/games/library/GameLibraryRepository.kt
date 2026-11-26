@@ -66,17 +66,17 @@ data class GamePortableState(
 )
 
 data class LibraryGame(
-    val fileId: String,
+    override val fileId: String,
     val folderId: String,
     val sourceId: String,
     val path: String,
     val filename: String,
-    val systemId: String,
-    val title: String,
+    override val systemId: String,
+    override val title: String,
     val internalTitle: String?,
     val size: Long,
     val modified: Long,
-    val favorite: Boolean,
+    override val favorite: Boolean,
     val lastPlayed: Long,
     val customTitle: String? = null,
     val verifiedTitle: String? = null,
@@ -88,7 +88,7 @@ data class LibraryGame(
     /** Compatibility with Settings/Game library audit: DAT check completed for this revision. */
     val datChecked: Boolean = false,
     val metadataTitle: String? = null,
-    val metadataYear: Int? = null,
+    override val metadataYear: Int? = null,
     val coverPath: String? = null,
     val backdropPath: String? = null,
     /** Validated local image bounds; null for a missing/legacy image awaiting IO maintenance. */
@@ -99,7 +99,10 @@ data class LibraryGame(
     val metadataPlatform: String? = null,
     /** Headerless catalog CRC, when it differs from the original ROM checksum. */
     val datCrc: String? = null,
-)
+) : com.ambient.tv.domain.model.GameBrowseItem {
+    override val coverAspectRatio: Float get() = GameCoverFormats.aspectRatio(systemId, filename, metadataRegion, coverWidth, coverHeight, metadataPlatform)
+    override val coverModel: Any? get() = coverPath?.let(::gameArtworkModel)
+}
 
 /** Preserve the previous fast-negative-match contract for existing library users/tests. */
 internal fun reuseDatLookup(previous: LibraryGame?, systemId: String, size: Long, modified: Long): Boolean =

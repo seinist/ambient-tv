@@ -37,6 +37,7 @@ fun GameCoverArtwork(
     focused: Boolean = false,
     /** Browse cards supply their indexed ID. A detail's standalone artwork needs no queue demand. */
     fileId: String? = null,
+    systemIcon: Int? = null,
 ) {
     val priority = LocalGameArtworkPriority.current
     val owner = remember(fileId) { Any() }
@@ -69,7 +70,7 @@ fun GameCoverArtwork(
             // the system emblem replaces nothing, it only adds which console the game is for.
             ArtworkFallback(
                 title = title,
-                icon = painterResource(GameSystemIcons.drawable(systemId)),
+                icon = painterResource(systemIcon ?: GameSystemIcons.drawable(systemId)),
                 iconModifier = Modifier.testTag("game-cover-fallback"),
             )
         },

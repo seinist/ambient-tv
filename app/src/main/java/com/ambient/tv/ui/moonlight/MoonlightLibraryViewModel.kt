@@ -28,6 +28,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -35,11 +39,20 @@ import kotlinx.coroutines.sync.withPermit
 data class MoonlightBrowseGame(
     val host: MoonlightHost,
     val app: MoonlightApp,
-    val favorite: Boolean = false,
+    override val favorite: Boolean = false,
     val recentPosition: Int = Int.MAX_VALUE,
     val artworkPath: String? = null,
-) {
+    val artworkRatio: Float = 2f / 3f,
+) : com.ambient.tv.domain.model.GameBrowseItem {
     val key: String get() = host.id + ":" + app.id
+    override val fileId: String get() = key
+    override val title: String get() = app.title
+    override val systemId: String get() = host.id
+    override val systemLabel: String get() = host.name.ifBlank { host.host }
+    override val metadataYear: Int? get() = null
+    override val coverAspectRatio: Float get() = artworkRatio
+    override val coverModel: Any? get() = artworkPath?.let(::File)
+    override val artworkIcon: Int get() = com.ambient.tv.R.drawable.system_moonlight
 }
 
 data class MoonlightLibraryUiState(
@@ -51,6 +64,11 @@ data class MoonlightLibraryUiState(
     val sections: String = "all",
     val query: String = "",
     val view: String = "grid",
+    val gridColumns: Int = 8,
+    val listRows: Int = 7,
+    val sortKey: String = "name",
+    val sortDescending: Boolean = false,
+    val artwork: Map<String, com.ambient.tv.moonlight.MoonlightArtwork> = emptyMap(),
     val favorites: Set<String> = emptySet(),
     val recent: List<String> = emptyList(),
     val errors: Map<String, String> = emptyMap(),
@@ -79,8 +97,12 @@ data class MoonlightLibraryUiState(
             (query.isBlank() || game.app.title.contains(query, ignoreCase = true) ||
                 game.host.name.contains(query, ignoreCase = true))
         }
-        return if (sections == "recent") chosen.sortedWith(compareBy({ it.recentPosition }, { it.app.title }))
-            else chosen.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.app.title })
+        val comparator = when {
+            sections == "recent" || sortKey == "recent" -> compareBy<MoonlightBrowseGame> { it.recentPosition }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.title }
+            sortKey == "system" -> compareBy<MoonlightBrowseGame, String>(String.CASE_INSENSITIVE_ORDER) { it.systemLabel }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.title }
+            else -> compareBy<MoonlightBrowseGame, String>(String.CASE_INSENSITIVE_ORDER) { it.title }
+        }.thenBy { it.key }
+        return chosen.sortedWith(if (sortDescending && sections != "recent") comparator.reversed() else comparator)
     }
 }
 
@@ -99,9 +121,21 @@ class MoonlightLibraryViewModel @Inject constructor(
     private val reconnects: com.ambient.tv.data.browse.BrowseReconnects,
     private val connectivity: com.ambient.tv.connectivity.HostConnectivity,
     private val catalogRepository: com.ambient.tv.moonlight.MoonlightCatalogRepository,
+    private val gameLibrary: com.ambient.tv.games.library.GameLibraryRepository,
 ) : ViewModel() {
     private val mutable = MutableStateFlow(MoonlightLibraryUiState(view = prefs.moonlightLibraryView))
     val state: StateFlow<MoonlightLibraryUiState> = mutable.asStateFlow()
+    // Filter/sort off the UI thread; artwork arrivals only replace the corresponding card data.
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val sortedGames = mutable.map { it.copy(onlineHosts = emptySet(), pairedHosts = emptySet(),
+        loadingHosts = emptySet(), errors = emptyMap(), artwork = emptyMap(), artworkVersion = 0,
+        artworkRevisions = emptyMap(), wakingHosts = emptySet(), quittingHosts = emptySet(), localLoaded = false) }
+        .distinctUntilChanged().mapLatest { withContext(Dispatchers.Default) { it.games } }
+    val games = combine(sortedGames, mutable.map { it.artwork }.distinctUntilChanged()) { sorted, artwork ->
+        withContext(Dispatchers.Default) {
+            sorted.map { game -> artwork[game.key]?.let { game.copy(artworkPath = it.file.absolutePath, artworkRatio = it.aspectRatio) } ?: game }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     private val inflightArtwork = HashSet<Pair<String, Boolean>>()
     private val hostSlots = Semaphore(2)
     private var fetch: Job? = null
@@ -112,13 +146,19 @@ class MoonlightLibraryViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             combine(store.metadataRevisions, store.availabilityRevisions,
-                prefs.changes().onStart { emit(Unit) }) { metadata, online, _ ->
-                Triple(metadata, online, Triple(prefs.moonlightEnabled, prefs.moonlightHosts, prefs.moonlightLibraryView))
+                prefs.changes().onStart { emit(Unit) }, gameLibrary.revisions) { metadata, online, _, options ->
+                listOf(metadata, online, prefs.moonlightEnabled, prefs.moonlightHosts, prefs.moonlightLibraryView, options)
             }.distinctUntilChanged().collectLatest { reloadLocal() }
         }
         viewModelScope.launch { store.artworkChanges.collect { revisions ->
             mutable.update { it.copy(artworkVersion = store.artworkRevisions.value,
                 artworkRevisions = revisions) }
+            // Only refresh image descriptors that the visible cards have already requested.
+            val keys = mutable.value.artwork.keys.intersect(revisions.keys)
+            for (key in keys) {
+                val game = item(key.substringBefore(':'), key.substringAfter(':').toIntOrNull() ?: continue) ?: continue
+                refreshArtworkDescriptor(game)
+            }
         } }
     }
 
@@ -140,6 +180,9 @@ class MoonlightLibraryViewModel @Inject constructor(
                 onlineHosts = snapshot.onlineHosts, pairedHosts = snapshot.pairedHosts,
                 favorites = snapshot.favorites, recent = snapshot.recent,
                 view = prefs.moonlightLibraryView, localLoaded = true,
+                gridColumns = gameLibrary.gridColumns(), listRows = gameLibrary.listRows(),
+                sortKey = gameLibrary.sortKey(), sortDescending = gameLibrary.sortDescending(),
+                artwork = current.artwork.filterKeys { key -> snapshot.hosts.any { host -> key.startsWith(host.id + ":") } },
                 sections = current.sections.takeIf { !it.startsWith("host:") || snapshot.hosts.any { host -> "host:" + host.id == it } } ?: "all")
         }
     }
@@ -153,10 +196,15 @@ class MoonlightLibraryViewModel @Inject constructor(
     }
 
     fun view(value: String) {
-        if (value !in setOf("grid", "list")) return
+        if (value !in setOf("grid", "list", "rows")) return
         prefs.moonlightLibraryView = value
         mutable.update { it.copy(view = value) }
     }
+
+    fun gridColumns(value: Int) = gameLibrary.setGridColumns(value)
+    fun listRows(value: Int) = gameLibrary.setListRows(value)
+    fun sort(value: String) = gameLibrary.setSortKey(value)
+    fun sortDescending(value: Boolean) = gameLibrary.setSortDescending(value)
 
     fun favorite(game: MoonlightBrowseGame) {
         store.toggleFavorite(game.host.id, game.app.id)
@@ -237,14 +285,24 @@ class MoonlightLibraryViewModel @Inject constructor(
         }
     }
 
+    private suspend fun refreshArtworkDescriptor(game: MoonlightBrowseGame) {
+        val descriptor = withContext(Dispatchers.IO) { store.artworkInfo(game.host.id, game.app.id) }
+        mutable.update { state ->
+            if (state.hosts.none { it == game.host }) state
+            else state.copy(artwork = if (descriptor == null) state.artwork - game.key else state.artwork + (game.key to descriptor))
+        }
+    }
+
     fun prioritizeArtwork(game: MoonlightBrowseGame, visible: Boolean = true) {
-        if (!this.visible || game.host.id !in mutable.value.onlineHosts) return
+        if (!this.visible) return
         val key = game.key to visible
         synchronized(inflightArtwork) {
             if ((!visible && (game.key to true) in inflightArtwork) || !inflightArtwork.add(key)) return
         }
         val job = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
+                refreshArtworkDescriptor(game)
+                if (game.host.id !in mutable.value.onlineHosts) return@launch
                 val identity = withContext(Dispatchers.IO) {
                     store.peerIdentity(game.host.id)?.takeIf {
                         store.shouldLoadArtwork(game.host.id, game.app.id, it)
@@ -265,6 +323,7 @@ class MoonlightLibraryViewModel @Inject constructor(
                         }
                     }
                 }
+                refreshArtworkDescriptor(game)
             } catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) { /* No cover is a valid Sunshine catalog case. */ }
             finally { synchronized(inflightArtwork) { inflightArtwork.remove(key) } }

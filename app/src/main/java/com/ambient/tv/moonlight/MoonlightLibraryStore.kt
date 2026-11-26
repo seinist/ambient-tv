@@ -15,6 +15,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
+data class MoonlightArtwork(val file: File, val width: Int, val height: Int) {
+    val aspectRatio: Float get() = width.toFloat() / height.coerceAtLeast(1)
+}
+
 @Serializable
 data class MoonlightHostCatalog(
     val serverId: String,
@@ -180,10 +184,24 @@ class MoonlightLibraryStore @Inject constructor(
     fun artworkFile(hostId: String, appId: Int): File? {
         if (!validMoonlightHostId(hostId) || appId <= 0) return null
         val identity = trust.identity(hostId) ?: return null
+        val directory = File(artworkDir, "$hostId/$identity/$appId")
+        directory.listFiles()?.filter { it.isFile && it.extension == "img" && it.length() in 1..MAX_IMAGE_BYTES.toLong() }
+            ?.maxByOrNull(File::lastModified)?.let { return it }
         val target = File(artworkDir, "$hostId/$identity/$appId.img")
         return target.takeIf { it.isFile && it.length() in 1..MAX_IMAGE_BYTES.toLong() }
             ?: File(artworkDir, "$hostId-$identity-$appId.img")
                 .takeIf { it.isFile && it.length() in 1..MAX_IMAGE_BYTES.toLong() }
+    }
+
+    private val artworkBounds = object : android.util.LruCache<String, MoonlightArtwork>(1024) {}
+
+    fun artworkInfo(hostId: String, appId: Int): MoonlightArtwork? {
+        val file = artworkFile(hostId, appId) ?: return null
+        artworkBounds.get(file.absolutePath)?.let { return it }
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeFile(file.absolutePath, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        return MoonlightArtwork(file, bounds.outWidth, bounds.outHeight).also { artworkBounds.put(file.absolutePath, it) }
     }
 
     private fun artworkKey(hostId: String, appId: Int, identity: String) = "$hostId:$identity:$appId"
@@ -212,15 +230,31 @@ class MoonlightLibraryStore @Inject constructor(
             bounds.outWidth.toLong() * bounds.outHeight > 8_388_608L) return null
         return synchronized(artworkLock) {
             if (trust.identity(hostId) != expectedIdentity) return@synchronized null
-            val directory = File(artworkDir, "$hostId/$expectedIdentity").apply { mkdirs() }
-            val target = File(directory, "$appId.img")
-            val temporary = File(directory, "$appId.part")
+            val directory = File(artworkDir, "$hostId/$expectedIdentity/$appId").apply { mkdirs() }
+            val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+            val target = File(directory, "$digest.img")
+            if (target.isFile && target.length() == bytes.size.toLong()) {
+                target.setLastModified(System.currentTimeMillis())
+                negativeArtwork.remove(artworkKey(hostId, appId, expectedIdentity))
+                return@synchronized target
+            }
+            val temporary = File(directory, "$digest.part")
             try {
                 if (artworkBytes < 0) artworkBytes = artworkDir.walkTopDown().filter { it.isFile && it.extension == "img" }.sumOf(File::length)
                 val previousLength = target.length()
                 temporary.writeBytes(bytes)
                 if (!temporary.renameTo(target)) { temporary.delete(); return@synchronized null }
                 artworkBytes += bytes.size - previousLength
+                // The content-addressed filename changes only when bytes change, so Coil/Home
+                // cannot reuse an obsolete decode. Keep one revision per app on disk.
+                directory.listFiles()?.filter { it != target && it.extension == "img" }?.forEach { old ->
+                    val length = old.length()
+                    if (old.delete()) artworkBytes -= length
+                }
+                val legacy = File(directory.parentFile, "$appId.img")
+                val legacyLength = legacy.length()
+                if (legacy.delete()) artworkBytes -= legacyLength
+                artworkBounds.put(target.absolutePath, MoonlightArtwork(target, bounds.outWidth, bounds.outHeight))
                 negativeArtwork.remove(artworkKey(hostId, appId, expectedIdentity))
                 trimArtwork()
                 val revision = mutableArtworkRevisions.value + 1

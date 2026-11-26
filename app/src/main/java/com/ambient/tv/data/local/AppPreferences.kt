@@ -524,8 +524,8 @@ class AppPreferences @Inject constructor(
         }
 
     var moonlightLibraryView: String
-        get() = prefs.getString("moonlight_library_view", "grid")?.takeIf { it in setOf("grid", "list") } ?: "grid"
-        set(value) { if (value in setOf("grid", "list")) prefs.edit { putString("moonlight_library_view", value) } }
+        get() = prefs.getString("moonlight_library_view", "grid")?.takeIf { it in setOf("grid", "list", "rows") } ?: "grid"
+        set(value) { if (value in setOf("grid", "list", "rows")) prefs.edit { putString("moonlight_library_view", value) } }
 
     val hasMoonlightHosts: Boolean get() = moonlightEnabled && moonlightHosts.isNotEmpty()
 

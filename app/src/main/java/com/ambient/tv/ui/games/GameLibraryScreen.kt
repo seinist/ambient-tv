@@ -389,8 +389,8 @@ fun GameLibraryScreen(
  * RomM, so both look and move the same. [rowKey] groups the rows (console, or RomM platform).
  */
 @Composable
-internal fun GameLibraryGames(
-    games: List<LibraryGame>,
+internal fun <T : com.ambient.tv.domain.model.GameBrowseItem> GameLibraryGames(
+    games: List<T>,
     view: String,
     section: String,
     sortKey: String,
@@ -403,10 +403,10 @@ internal fun GameLibraryGames(
     listState: androidx.compose.foundation.lazy.LazyListState,
     gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
     rowsState: androidx.compose.foundation.lazy.LazyListState,
-    onSelect: (LibraryGame) -> Unit,
-    onOpenDetails: (LibraryGame) -> Unit,
-    onFavorite: (LibraryGame) -> Unit,
-    rowKey: (LibraryGame) -> String = { it.systemId },
+    onSelect: (T) -> Unit,
+    onOpenDetails: (T) -> Unit,
+    onFavorite: (T) -> Unit,
+    rowKey: (T) -> String = { it.systemId },
     rowTitle: (String) -> String = { GameSystems.byId(it)?.name ?: it },
     showSystem: Boolean = GameSystems.byId(section) == null,
 ) {
@@ -886,13 +886,13 @@ private val GameRowHorizontalPadding = 4.dp
 
 /** Bound a whole card to the row viewport; its inner artwork still keeps its exact ratio. */
 @Composable
-internal fun GameLibraryCoverRow(
-    games: List<LibraryGame>,
+internal fun <T : com.ambient.tv.domain.model.GameBrowseItem> GameLibraryCoverRow(
+    games: List<T>,
     artworkHeight: Dp,
     rowKey: String,
     modifier: Modifier = Modifier,
     rowFocus: RowColumnFocus? = null,
-    itemContent: @Composable (LibraryGame, Modifier, Float) -> Unit,
+    itemContent: @Composable (T, Modifier, Float) -> Unit,
 ) {
     val rowState = rememberLazyListState()
     // Also registers the browse focus return, like RegisterBrowseFocusList did on its own.
@@ -926,7 +926,7 @@ internal fun GameLibraryCoverRow(
  */
 @Composable
 internal fun GameTile(
-    game: LibraryGame,
+    game: com.ambient.tv.domain.model.GameBrowseItem,
     modifier: Modifier = Modifier,
     artworkSlotAspectRatio: Float = game.coverAspectRatio,
     rowKey: String? = null,
@@ -976,7 +976,7 @@ internal fun GameTile(
                             .testTag("game-cover:${game.fileId}"),
                     ) {
                         GameCoverArtwork(game.coverModel, game.title, game.systemId,
-                            modifier = Modifier.fillMaxSize(), focused = focused, fileId = game.fileId)
+                            modifier = Modifier.fillMaxSize(), focused = focused, fileId = game.fileId, systemIcon = game.artworkIcon)
                         // Status only, like Radio Browser's station cards: the list's heart, the
                         // detail page and Info/long press change it, never a button on the card.
                         if (game.favorite) com.ambient.tv.ui.common.ArtworkCornerIconBadge(
@@ -990,7 +990,7 @@ internal fun GameTile(
                 Text(game.title, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.titleSmall, textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth().testTag("game-title:${game.fileId}"))
-                if (showSystem) Text(GameSystems.byId(game.systemId)?.shortName ?: game.systemId,
+                if (showSystem) Text(game.systemLabel ?: GameSystems.byId(game.systemId)?.shortName ?: game.systemId,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
@@ -1001,7 +1001,7 @@ internal fun GameTile(
 
 @Composable
 internal fun GameListEntry(
-    game: LibraryGame,
+    game: com.ambient.tv.domain.model.GameBrowseItem,
     modifier: Modifier = Modifier,
     density: Float = 1f,
     onPlay: () -> Unit,
@@ -1046,12 +1046,12 @@ internal fun GameListEntry(
                     val ratio = game.coverAspectRatio.coerceIn(.55f, 1.5f)
                     GameCoverArtwork(game.coverModel, game.title, game.systemId,
                         modifier = Modifier.size(coverHeight * ratio, coverHeight).clip(RoundedCornerShape(4.dp)),
-                        focused = focused, fileId = game.fileId)
+                        focused = focused, fileId = game.fileId, systemIcon = game.artworkIcon)
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     com.ambient.tv.ui.common.MarqueeTitle(game.title, focused = focused,
                         style = MaterialTheme.typography.titleMedium)
-                    Text(listOfNotNull(GameSystems.byId(game.systemId)?.shortName ?: game.systemId,
+                    Text(listOfNotNull(game.systemLabel ?: GameSystems.byId(game.systemId)?.shortName ?: game.systemId,
                         game.metadataYear?.toString()).joinToString(" · "),
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1063,7 +1063,7 @@ internal fun GameListEntry(
 }
 
 @Composable
-private fun GameFavoriteButton(game: LibraryGame, onFavorite: () -> Unit, modifier: Modifier = Modifier) {
+private fun GameFavoriteButton(game: com.ambient.tv.domain.model.GameBrowseItem, onFavorite: () -> Unit, modifier: Modifier = Modifier) {
     val label = stringResource(if (game.favorite) R.string.radio_remove_favorite else R.string.radio_add_favorite)
     TvActionButton("", onClick = onFavorite, selected = game.favorite,
         icon = if (game.favorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
