@@ -1,7 +1,7 @@
 diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/libplacebo/display.c
 --- a/modules/video_output/libplacebo/display.c
 +++ b/modules/video_output/libplacebo/display.c
-@@ -39,9 +39,12 @@
+@@ -39,14 +39,21 @@
  #include <libplacebo/renderer.h>
  #include <libplacebo/utils/upload.h>
  #include <libplacebo/swapchain.h>
@@ -14,10 +14,6 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +#endif
 +
 +typedef struct vout_display_sys_t
- {
-     vlc_placebo_t *pl;
-     pl_renderer renderer;
-@@ -45,8 +48,12 @@
  {
      vlc_placebo_t *pl;
      pl_renderer renderer;
