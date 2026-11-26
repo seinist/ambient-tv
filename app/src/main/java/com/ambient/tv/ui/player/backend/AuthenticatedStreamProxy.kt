@@ -26,6 +26,8 @@ internal class AuthenticatedStreamProxy(
 ) : Closeable {
     private val token = UUID.randomUUID().toString() + UUID.randomUUID().toString()
     private val listener = ServerSocket(0, 8, InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)))
+    private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val capacity = java.util.concurrent.Semaphore(8)
     private val sockets = ConcurrentHashMap.newKeySet<Socket>()
     private val calls = ConcurrentHashMap.newKeySet<Call>()
 
@@ -35,11 +37,21 @@ internal class AuthenticatedStreamProxy(
         thread(name = "vlc-auth-listener", isDaemon = true) {
             while (!listener.isClosed) {
                 val socket = try { listener.accept() } catch (_: Exception) { break }
+                if (!capacity.tryAcquire()) {
+                    runCatching { socket.close() }
+                    continue
+                }
                 sockets.add(socket)
+                if (closed.get()) {
+                    sockets.remove(socket)
+                    capacity.release()
+                    runCatching { socket.close() }
+                    break
+                }
                 thread(name = "vlc-auth-stream", isDaemon = true) {
                     try { socket.use(::serve) } catch (_: Exception) {
                         // A failed relay just closes the connection; VLC surfaces the error.
-                    } finally { sockets.remove(socket) }
+                    } finally { sockets.remove(socket); capacity.release() }
                 }
             }
         }
@@ -84,6 +96,7 @@ internal class AuthenticatedStreamProxy(
         }.build()
         val call = client.newCall(upstream)
         calls.add(call)
+        if (closed.get()) call.cancel()
         try {
             call.execute().use { response ->
                 if (!response.isSuccessful && response.code != 416) { status(output, response.code, response.message.ifBlank { "Error" }); return }
@@ -120,6 +133,7 @@ internal class AuthenticatedStreamProxy(
     }
 
     override fun close() {
+        if (!closed.compareAndSet(false, true)) return
         runCatching { listener.close() }
         calls.forEach { it.cancel() }
         sockets.forEach { runCatching { it.close() } }
