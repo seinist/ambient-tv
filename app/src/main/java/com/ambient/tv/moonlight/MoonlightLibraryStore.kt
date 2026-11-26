@@ -75,6 +75,17 @@ class MoonlightLibraryStore @Inject constructor(
     val artworkRevisions = mutableArtworkRevisions.asStateFlow()
     private val online = mutableMapOf<String, Pair<String, Long>>()
     private val expiryJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
+    private val runningApps = mutableMapOf<String, Int>()
+
+    /** Unknown/offline is null; zero means authenticated idle, positive means a running app. */
+    fun runningApp(hostId: String): Int? = synchronized(lock) {
+        if (isRecentlyOnline(hostId)) runningApps[hostId] else null
+    }
+
+    private fun updateRunningApp(hostId: String, appId: Int?): Boolean {
+        val previous = if (appId == null) runningApps.remove(hostId) else runningApps.put(hostId, appId)
+        return previous != appId
+    }
 
     // A live proof expires even if no browse screen is open. Renewing a proof replaces its timer.
     private fun renewOnline(hostId: String, identity: String) {
@@ -87,6 +98,7 @@ class MoonlightLibraryStore @Inject constructor(
             synchronized(lock) {
                 if (online[hostId] == proof && !isRecentlyOnline(hostId)) {
                     online.remove(hostId)
+                    runningApps.remove(hostId)
                     expiryJobs.remove(hostId)
                     mutableAvailability.value++
                 }
@@ -96,6 +108,7 @@ class MoonlightLibraryStore @Inject constructor(
 
     private fun removeOnline(hostId: String): Boolean {
         expiryJobs.remove(hostId)?.cancel()
+        runningApps.remove(hostId)
         return online.remove(hostId) != null
     }
     private val offlineIdentities = mutableMapOf<String, String>()
@@ -122,12 +135,13 @@ class MoonlightLibraryStore @Inject constructor(
         moonlightProbeFresh(identity, probe.first, probe.second, android.os.SystemClock.elapsedRealtime())
     }
 
-    fun markOnline(request: Request): Boolean = synchronized(lock) {
+    fun markOnline(request: Request, runningAppId: Int? = null): Boolean = synchronized(lock) {
         if (!isCurrent(request)) return@synchronized false
         val wasOnline = isRecentlyOnline(request.hostId)
         renewOnline(request.hostId, request.identity)
+        val changedRunning = updateRunningApp(request.hostId, runningAppId)
         val wasOffline = offlineIdentities.remove(request.hostId) != null
-        if (!wasOnline || wasOffline) mutableAvailability.value++
+        if (!wasOnline || wasOffline || changedRunning) mutableAvailability.value++
         true
     }
 
@@ -184,8 +198,9 @@ class MoonlightLibraryStore @Inject constructor(
         catalogs[hostId] = Cached(identity, cached)
         val wasOnline = isRecentlyOnline(hostId)
         renewOnline(hostId, identity)
+        val changedRunning = updateRunningApp(hostId, catalog.runningAppId)
         val wasOffline = offlineIdentities.remove(hostId) != null
-        if (!wasOnline || wasOffline) mutableAvailability.value++
+        if (!wasOnline || wasOffline || changedRunning) mutableAvailability.value++
         if (old?.apps != apps) changed()
         true
     }

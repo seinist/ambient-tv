@@ -13,6 +13,7 @@ class MoonlightSystemTransport @Inject constructor() {
     suspend fun applications(hostId: String): MoonlightAppCatalog =
         throw UnsupportedOperationException("Moonlight native transport is not included")
     suspend fun verify(hostId: String): String = throw UnsupportedOperationException("Moonlight native transport is not included")
+    suspend fun proof(hostId: String): MoonlightHostProof = throw UnsupportedOperationException("Moonlight native transport is not included")
     suspend fun artwork(hostId: String, appId: Int): ByteArray =
         throw UnsupportedOperationException("Moonlight native transport not installed")
     suspend fun quitRemoteApp(hostId: String, expectedAppId: Int): Boolean = false

@@ -58,6 +58,7 @@ data class MoonlightLibraryUiState(
     val hosts: List<MoonlightHost> = emptyList(),
     val catalogs: Map<String, List<MoonlightApp>> = emptyMap(),
     val onlineHosts: Set<String> = emptySet(),
+    val runningApps: Map<String, Int> = emptyMap(),
     val pairedHosts: Set<String> = emptySet(),
     val offlineHosts: Set<String> = emptySet(),
     val hostIdentities: Map<String, String?> = emptyMap(),
@@ -127,7 +128,7 @@ class MoonlightLibraryViewModel @Inject constructor(
     val state: StateFlow<MoonlightLibraryUiState> = mutable.asStateFlow()
     // Filter/sort off the UI thread; artwork arrivals only replace the corresponding card data.
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    private val sortedGames = mutable.map { it.copy(onlineHosts = emptySet(), pairedHosts = emptySet(),
+    private val sortedGames = mutable.map { it.copy(onlineHosts = emptySet(), runningApps = emptyMap(), pairedHosts = emptySet(),
         loadingHosts = emptySet(), offlineHosts = emptySet(), errors = emptyMap(), artwork = emptyMap(), artworkVersion = 0,
         artworkRevisions = emptyMap(), wakingHosts = emptySet(), quittingHosts = emptySet(), localLoaded = false, initialRefreshComplete = false) }
         .distinctUntilChanged().mapLatest { withContext(Dispatchers.Default) { it.games } }
@@ -172,6 +173,7 @@ class MoonlightLibraryViewModel @Inject constructor(
                 hosts = hosts,
                 catalogs = hosts.associate { it.id to store.catalog(it.id)?.apps.orEmpty() },
                 onlineHosts = hosts.filter { store.isRecentlyOnline(it.id) }.map { it.id }.toSet(),
+                runningApps = hosts.mapNotNull { host -> store.runningApp(host.id)?.let { host.id to it } }.toMap(),
                 pairedHosts = hosts.filter { transport.locallyPaired(it.id) }.map { it.id }.toSet(),
                 offlineHosts = hosts.filter { store.isKnownOffline(it.id) }.map { it.id }.toSet(),
                 hostIdentities = hosts.associate { it.id to store.peerIdentity(it.id) },
@@ -181,7 +183,7 @@ class MoonlightLibraryViewModel @Inject constructor(
         if (revision != localRevision) return
         mutable.update { current ->
             current.copy(hosts = snapshot.hosts, catalogs = snapshot.catalogs,
-                onlineHosts = snapshot.onlineHosts, pairedHosts = snapshot.pairedHosts,
+                onlineHosts = snapshot.onlineHosts, runningApps = snapshot.runningApps, pairedHosts = snapshot.pairedHosts,
                 offlineHosts = snapshot.offlineHosts, hostIdentities = snapshot.hostIdentities,
                 favorites = snapshot.favorites, recent = snapshot.recent,
                 view = prefs.moonlightLibraryView, localLoaded = true,
@@ -198,7 +200,7 @@ class MoonlightLibraryViewModel @Inject constructor(
     fun section(value: String) {
         if (mutable.value.sections == value) return
         mutable.update { it.copy(sections = value) }
-        if (visible) { fetch?.cancel(); fetch = null; load() }
+        if (visible) load(restart = true)
     }
 
     fun search(value: String) {
@@ -251,11 +253,11 @@ class MoonlightLibraryViewModel @Inject constructor(
         }
     }
 
-    fun load(force: Boolean = false, onlyHost: String? = null) {
+    fun load(force: Boolean = false, onlyHost: String? = null, restart: Boolean = false) {
         if (!visible || !transport.available) return
         val previous = fetch
-        if (previous?.isActive == true && !force) return
-        if (force) previous?.cancel()
+        if (previous?.isActive == true && !force && !restart) return
+        if (force || restart) previous?.cancel()
         fetch = viewModelScope.launch {
             previous?.join()
             reloadLocal()

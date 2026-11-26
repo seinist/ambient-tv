@@ -50,11 +50,15 @@ fun MoonlightGameDetailScreen(
     LaunchedEffect(game?.key, state.onlineHosts) { game?.let { model.prioritizeArtwork(it) } }
     BackHandler { if (showQuitConfirmation) showQuitConfirmation = false else onBack() }
     val online = hostId in state.onlineHosts && hostId in state.pairedHosts
+    val running = state.runningApps[hostId]
+    val isRunning = online && running == appId
+    val anotherRunning = online && running != null && running > 0 && running != appId
+    val canPlay = online && !anotherRunning
     val artwork by produceState<MoonlightArtwork?>(null, game?.key,
         state.hostIdentities[hostId], state.artworkRevisions["$hostId:$appId"] ?: 0L) {
         value = withContext(Dispatchers.IO) { game?.let(model::artworkInfo) }
     }
-    LaunchedEffect(game?.key, handheld, online, showQuitConfirmation) {
+    LaunchedEffect(game?.key, handheld, canPlay, showQuitConfirmation) {
         if (game != null && !handheld && !showQuitConfirmation) repeat(4) {
             withFrameNanos { }
             if (runCatching { primaryFocus.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
@@ -96,11 +100,13 @@ fun MoonlightGameDetailScreen(
                                 if (game.app.hdrSupported) DetailPrimaryMetaRow(listOf("HDR"), item = null)
                                 if (!online) Text(stringResource(R.string.moonlight_offline_detail),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (isRunning) Text(stringResource(R.string.moonlight_app_running), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (anotherRunning) Text(stringResource(R.string.moonlight_other_app_running), color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 val canWake = !online && game.host.macAddress.isNotBlank() && hostId in state.pairedHosts
                                 DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                                    TvActionButton(stringResource(R.string.moonlight_stream_play), onPlay, enabled = online,
+                                    TvActionButton(stringResource(if (isRunning) R.string.moonlight_stream_resume else R.string.moonlight_stream_play), onPlay, enabled = canPlay,
                                         icon = Icons.Filled.PlayArrow,
-                                        modifier = if (online) Modifier.focusRequester(primaryFocus).browseFocusTarget("moonlight-play") else Modifier)
+                                        modifier = if (canPlay) Modifier.focusRequester(primaryFocus).browseFocusTarget("moonlight-play") else Modifier)
                                     if (canWake) TvActionButton(stringResource(R.string.moonlight_wake_pc),
                                         { model.wakeHost(hostId) }, loading = hostId in state.wakingHosts,
                                         modifier = Modifier.focusRequester(primaryFocus).browseFocusTarget("moonlight-wake"))
@@ -110,9 +116,9 @@ fun MoonlightGameDetailScreen(
                                     TvActionButton(stringResource(R.string.moonlight_refresh),
                                         { model.load(force = true, onlyHost = hostId) },
                                         icon = Icons.Filled.Refresh, loading = hostId in state.loadingHosts,
-                                        modifier = if (!online && !canWake) Modifier.focusRequester(primaryFocus).browseFocusTarget("moonlight-refresh") else Modifier)
+                                        modifier = if (!canPlay && !canWake) Modifier.focusRequester(primaryFocus).browseFocusTarget("moonlight-refresh") else Modifier)
                                 }
-                                if (online) TvActionButton(stringResource(R.string.moonlight_quit_remote),
+                                if (isRunning) TvActionButton(stringResource(R.string.moonlight_quit_remote),
                                     { showQuitConfirmation = true }, loading = hostId in state.quittingHosts)
                             }
                         }

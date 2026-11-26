@@ -24,7 +24,8 @@ internal fun moonlightMenuDestinations(state: SidebarUiState): List<MenuDestinat
             Icons.Filled.History, Destinations.moonlightSection("recent")),
     ) + state.moonlightHosts.map { host ->
         MenuDestination("moonlight:host:" + host.id,
-            host.name.ifBlank { host.host }, Icons.Filled.Computer,
+            host.name.ifBlank { host.host } + if (host.id in state.moonlightPairedHosts) "" else " · " + stringResource(R.string.moonlight_not_paired),
+            Icons.Filled.Computer,
             Destinations.moonlightSection("host:" + host.id))
     }
 }

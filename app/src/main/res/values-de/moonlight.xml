@@ -84,4 +84,5 @@
     <string name="moonlight_reset_identity">Client-Identität zurücksetzen</string>
     <string name="moonlight_reset_hint">Alle Moonlight-Kopplungen und der lokale Schlüssel werden gelöscht. Die PCs bleiben gespeichert und müssen neu gekoppelt werden. Beende vorher den Stream.</string>
     <string name="moonlight_reset_failed">Client-Identität konnte nicht zurückgesetzt werden. Erneut versuchen.</string>
+    <string name="moonlight_app_running">Diese Anwendung läuft bereits auf dem PC.</string>
 </resources>

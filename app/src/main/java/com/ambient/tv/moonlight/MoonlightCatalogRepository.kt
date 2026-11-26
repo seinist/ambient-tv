@@ -72,8 +72,8 @@ class MoonlightCatalogRepository @Inject constructor(
                         if (!current() || !store.putCatalog(host.id, catalog, token))
                             throw SecurityException("Moonlight host changed")
                     } else {
-                        val proof = transport.verify(host.id)
-                        if (!current() || proof != identity || !store.markOnline(token))
+                        val proof = transport.proof(host.id)
+                        if (!current() || proof.identity != identity || !store.markOnline(token, proof.runningAppId))
                             throw SecurityException("Moonlight host changed")
                     }
                     connectivity.online(check)

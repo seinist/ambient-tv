@@ -90,7 +90,7 @@ class MoonlightNativeTransport @Inject constructor(
         }
         if (trust.identity(hostId) != target.identity || requireHost(hostId) != target.profile)
             throw SecurityException("Moonlight host identity changed")
-        return catalog.copy(peerIdentity = target.identity)
+        return catalog.copy(peerIdentity = target.identity, runningAppId = target.runningAppId)
     }
 
     internal suspend fun verifiedHost(hostId: String): MoonlightVerifiedHost {
@@ -102,16 +102,17 @@ class MoonlightNativeTransport @Inject constructor(
         val pinned = trust.pinnedCertificate(host.id)
             ?: throw SecurityException("Moonlight host certificate missing")
         // Prefer the port last verified over pinned HTTPS. Legacy pins may discover it once.
-        val (info, hostCodecModes) = withHttp(host, pinned, trust.httpsPort(hostId)) { http ->
+        val (info, hostCodecModes, runningAppId) = withHttp(host, pinned, trust.httpsPort(hostId)) { http ->
             val raw = http.getServerInfo(true)
             if (http.getPairState(raw) != PairingManager.PairState.PAIRED)
                 throw SecurityException("Moonlight pairing revoked")
-            parseMoonlightServerInfo(raw.toByteArray()) to http.getServerCodecModeSupport(raw)
+            Triple(parseMoonlightServerInfo(raw.toByteArray()), http.getServerCodecModeSupport(raw),
+                http.getCurrentGame(raw).takeIf { it >= 0 })
         }
         if (info.uniqueId != serverId || trust.identity(hostId) != identity || requireHost(hostId) != host)
             throw SecurityException("Moonlight host identity changed")
         trust.rememberHttpsPort(hostId, identity, info.httpsPort)
-        return MoonlightVerifiedHost(host, info.httpsPort, pinned, identity, hostCodecModes, serverId)
+        return MoonlightVerifiedHost(host, info.httpsPort, pinned, identity, hostCodecModes, serverId, runningAppId)
     }
 
     internal fun current(target: MoonlightVerifiedHost): Boolean =
@@ -223,4 +224,5 @@ internal data class MoonlightVerifiedHost(
     val identity: String,
     val hostCodecModes: Long,
     val serverId: String,
+    val runningAppId: Int?,
 )
