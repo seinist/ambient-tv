@@ -94,6 +94,7 @@ class MpvPlaybackController(
     }
     private val queries = ConcurrentHashMap<String, Query>()
     private val sampledValues = mutableMapOf<String, Any?>() // owner thread only
+    private var publishedReadings: Map<String, Any?> = emptyMap() // owner thread only
     private var sampledMediaInfoGeneration = -1 // owner thread only
     private val previousAudioRelease = nativeAudioReleases.snapshot()
     private val createdAt = SystemClock.elapsedRealtime()
@@ -250,7 +251,8 @@ class MpvPlaybackController(
             restoredOutputAudioSelection = player.restoredOutputAudioSelection,
             restoreOutput = player.captureOutputRestartState(),
         )
-        val readings = sampledValues.toMap()
+        if (publishedReadings != sampledValues) publishedReadings = sampledValues.toMap()
+        val readings = publishedReadings
         val completed = appliedRevision
         lastProgress = SystemClock.elapsedRealtime()
         main.post {
