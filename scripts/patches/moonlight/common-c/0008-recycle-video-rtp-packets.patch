@@ -1,0 +1,171 @@
+diff --git a/src/RtpVideoQueue.h b/src/RtpVideoQueue.h
+--- a/src/RtpVideoQueue.h
++++ b/src/RtpVideoQueue.h
+@@ -54,5 +54,8 @@
+ #define RTPF_RET_REJECTED  1
+ 
+-void RtpvInitializeQueue(PRTP_VIDEO_QUEUE queue);
++// Fixed-size RTP packet storage shared by receive, FEC and depacketizer.
++void* RtpvAcquirePacket(size_t size);
++void RtpvReleasePacket(void* packet);
++void RtpvInitializeQueue(PRTP_VIDEO_QUEUE queue);
+ void RtpvCleanupQueue(PRTP_VIDEO_QUEUE queue);
+ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_QUEUE_ENTRY packetEntry);
+diff --git a/src/RtpVideoQueue.c b/src/RtpVideoQueue.c
+--- a/src/RtpVideoQueue.c
++++ b/src/RtpVideoQueue.c
+@@ -16,5 +16,37 @@
+ 
+ // RTP packets use a 90 KHz presentation timestamp clock
+-#define PTS_DIVISOR 90
++#define PTS_DIVISOR 90
++
++// Bounded cache, with nonblocking acquisition and release on hot paths.
++#define VIDEO_PACKET_POOL_LIMIT 64
++static pthread_mutex_t packetPoolLock = PTHREAD_MUTEX_INITIALIZER;
++static void* packetPool[VIDEO_PACKET_POOL_LIMIT];
++static unsigned int packetPoolCount;
++static size_t packetPoolSize;
++
++void* RtpvAcquirePacket(size_t size) {
++    void* packet = NULL;
++    if (pthread_mutex_trylock(&packetPoolLock) == 0) {
++        LC_ASSERT(packetPoolSize == size);
++        if (packetPoolCount != 0 && packetPoolSize == size) {
++            packet = packetPool[--packetPoolCount];
++        }
++        pthread_mutex_unlock(&packetPoolLock);
++    }
++    return packet != NULL ? packet : malloc(size);
++}
++
++void RtpvReleasePacket(void* packet) {
++    if (packet == NULL) return;
++    if (pthread_mutex_trylock(&packetPoolLock) == 0) {
++        if (packetPoolSize != 0 && packetPoolCount < VIDEO_PACKET_POOL_LIMIT) {
++            packetPool[packetPoolCount++] = packet;
++            pthread_mutex_unlock(&packetPoolLock);
++            return;
++        }
++        pthread_mutex_unlock(&packetPoolLock);
++    }
++    free(packet);
++}
+ 
+ void RtpvInitializeQueue(PRTP_VIDEO_QUEUE queue) {
+@@ -20,5 +52,10 @@
+ void RtpvInitializeQueue(PRTP_VIDEO_QUEUE queue) {
+     reed_solomon_init();
+-    memset(queue, 0, sizeof(*queue));
++    memset(queue, 0, sizeof(*queue));
++    // StreamConfig.packetSize stays constant for this connection.
++    pthread_mutex_lock(&packetPoolLock);
++    LC_ASSERT(packetPoolCount == 0);
++    packetPoolSize = StreamConfig.packetSize + MAX_RTP_HEADER_SIZE + sizeof(RTPV_QUEUE_ENTRY);
++    pthread_mutex_unlock(&packetPoolLock);
+ 
+     queue->currentFrameNumber = 1;
+@@ -30,5 +67,5 @@
+         PRTPV_QUEUE_ENTRY entry = list->head;
+         list->head = entry->next;
+-        free(entry->packet);
++        RtpvReleasePacket(entry->packet);
+     }
+ 
+@@ -39,6 +76,10 @@
+ void RtpvCleanupQueue(PRTP_VIDEO_QUEUE queue) {
+     purgeListEntries(&queue->pendingFecBlockList);
+-    purgeListEntries(&queue->completedFecBlockList);
+-}
++    purgeListEntries(&queue->completedFecBlockList);
++    pthread_mutex_lock(&packetPoolLock);
++    packetPoolSize = 0;
++    while (packetPoolCount != 0) free(packetPool[--packetPoolCount]);
++    pthread_mutex_unlock(&packetPoolLock);
++}
+ 
+ static void insertEntryIntoList(PRTPV_QUEUE_LIST list, PRTPV_QUEUE_ENTRY entry) {
+@@ -188,5 +229,5 @@
+             " (frame %d)", rtpPacket->sequenceNumber, \
+             queue->currentFrameNumber);               \
+-    free(packets[i]);                                 \
++    RtpvReleasePacket(packets[i]);                    \
+     continue
+ 
+@@ -322,5 +363,5 @@
+     for (i = 0; i < totalPackets; i++) {
+         if (marks[i]) {
+-            packets[i] = malloc(packetBufferSize);
++            packets[i] = RtpvAcquirePacket(packetBufferSize);
+             if (packets[i] == NULL) {
+                 ret = -4;
+@@ -416,5 +457,5 @@
+                     // This drop was fake, so we don't want to actually submit it to the depacketizer.
+                     // It will get confused because it's already seen this packet before.
+-                    free(packets[i]);
++                    RtpvReleasePacket(packets[i]);
+                     continue;
+                 }
+@@ -447,5 +488,5 @@
+                 queuePacket(queue, queueEntry, rtpPacket, StreamConfig.packetSize + dataOffset, false, true);
+             } else if (packets[i] != NULL) {
+-                free(packets[i]);
++                RtpvReleasePacket(packets[i]);
+             }
+         }
+@@ -487,5 +528,5 @@
+ 
+                 // Free the entry and packet
+-                free(parityEntry->packet);
++                RtpvReleasePacket(parityEntry->packet);
+ 
+                 continue;
+diff --git a/src/VideoStream.c b/src/VideoStream.c
+--- a/src/VideoStream.c
++++ b/src/VideoStream.c
+@@ -127,5 +127,5 @@
+ 
+         if (buffer == NULL) {
+-            buffer = (char*)malloc(bufferSize);
++            buffer = RtpvAcquirePacket(bufferSize);
+             if (buffer == NULL) {
+                 Limelog("Video Receive: malloc() failed\n");
+@@ -236,7 +236,7 @@
+     }
+ 
+-    if (buffer != NULL) {
+-        free(buffer);
+-    }
++    if (buffer != NULL) {
++        RtpvReleasePacket(buffer);
++    }
+ 
+     if (encryptedBuffer != NULL) {
+diff --git a/src/VideoDepacketizer.c b/src/VideoDepacketizer.c
+--- a/src/VideoDepacketizer.c
++++ b/src/VideoDepacketizer.c
+@@ -88,5 +88,7 @@
+         lastEntry = (PLENTRY_INTERNAL)nalChainHead;
+         nalChainHead = lastEntry->entry.next;
+-        free(lastEntry->allocPtr);
++        // Copied fragments own variable-size allocations; RTP fragments do not.
++        if (lastEntry->allocPtr == lastEntry) free(lastEntry);
++        else RtpvReleasePacket(lastEntry->allocPtr);
+     }
+ 
+@@ -300,5 +302,7 @@
+         lastEntry = (PLENTRY_INTERNAL)qdu->decodeUnit.bufferList;
+         qdu->decodeUnit.bufferList = lastEntry->entry.next;
+-        free(lastEntry->allocPtr);
++        // Copied fragments own variable-size allocations; RTP fragments do not.
++        if (lastEntry->allocPtr == lastEntry) free(lastEntry);
++        else RtpvReleasePacket(lastEntry->allocPtr);
+     }
+ 
+@@ -1188,5 +1192,5 @@
+     if (existingEntry != NULL) {
+         // processRtpPayload didn't want this packet, so just free it
+-        free(existingEntry->allocPtr);
++        RtpvReleasePacket(existingEntry->allocPtr);
+     }
+ }
