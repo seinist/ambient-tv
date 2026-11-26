@@ -30,7 +30,7 @@ class CoreBuildPolicyTest(unittest.TestCase):
 
     def test_pr_comparison(self):
         matrix = plan(self.catalog, "pull_request", "refs/pull/1/merge", False)["include"]
-        self.assertEqual(len(matrix), 29)
+        self.assertEqual(len(matrix), 33)
         self.assertEqual({item["profile"] for item in matrix},
                          {"baseline", "thinlto", "picodrive-sh2", "tune-a57", "o3", "o3-thinlto", "snes9x2010-threaded", "core-hotpaths"})
         self.assertEqual(len({item["artifact"] for item in matrix}), len(matrix))
@@ -286,8 +286,8 @@ class CoreBuildPolicyTest(unittest.TestCase):
     def test_source_hotpath_candidates(self):
         matrix = plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False,
                       profile="core-hotpaths")["include"]
-        self.assertEqual({item["core"] for item in matrix}, {"bsnes"})
-        self.assertEqual(len(matrix), len(self.catalog["abis"]))
+        self.assertEqual({item["core"] for item in matrix}, {"bsnes", "mesen", "sameboy"})
+        self.assertEqual(len(matrix), 3 * len(self.catalog["abis"]))
         self.assertTrue(all(item["artifact"].startswith("candidate-core-hotpaths-") for item in matrix))
         with self.assertRaises(ValueError):
             plan(self.catalog, "workflow_dispatch", "refs/heads/main", True, profile="core-hotpaths")
