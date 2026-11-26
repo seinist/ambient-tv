@@ -66,6 +66,11 @@ class Media3PlaybackHandle(
     private var frameDropGeneration = 0
     private var frameDropCounters: DecoderCounters? = null
     private var audioSyncCounters: DecoderCounters? = null
+    private val frameTimeline = Media3AudioProcessing.session(player)?.media3Frames ?: Media3FrameTimeline()
+    private var frameStepCursorUs: Long? = null
+    private val frameListener = androidx.media3.exoplayer.video.VideoFrameMetadataListener { ptsUs, _, _, _ ->
+        frameTimeline.presented(ptsUs)
+    }
 
     /** A polling window must not bridge a short seek, pause or decoder replacement. */
     internal fun frameDropSampleGeneration(): Int {
@@ -95,7 +100,19 @@ class Media3PlaybackHandle(
     private val conversionListener = object : Player.Listener {
         override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
             frameDropGeneration++
+            // A step seek retains neighboring timestamps; any other seek/period transition
+            // invalidates the history, including a seek issued outside this handle.
+            val expected = frameStepCursorUs
+            if (reason != Player.DISCONTINUITY_REASON_SEEK ||
+                expected == null || kotlin.math.abs(newPosition.positionMs - expected / 1000L) > 1L) {
+                frameStepCursorUs = null
+                frameTimeline.clear()
+            } else frameTimeline.pending(null)
             hdrOutput.discontinuity()
+        }
+        override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+            frameStepCursorUs = null
+            frameTimeline.clear()
         }
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             frameDropGeneration++
@@ -103,7 +120,11 @@ class Media3PlaybackHandle(
         }
         override fun onPlaybackStateChanged(playbackState: Int) { frameDropGeneration++ }
     }
-    init { handles[player] = WeakReference(this); player.addListener(conversionListener) }
+    init {
+        handles[player] = WeakReference(this)
+        player.addListener(conversionListener)
+        player.setVideoFrameMetadataListener(frameListener)
+    }
     internal fun attachVideoView(view: SurfaceView) {
         surfaceView = view
         hdrOutput.attach(view)
@@ -202,17 +223,35 @@ class Media3PlaybackHandle(
     override fun wantsToPlay(): Boolean = player.playWhenReady && player.playbackState != Player.STATE_ENDED
     override fun canSeekNow(): Boolean = player.isCurrentMediaItemSeekable
     override fun play() {
+        frameStepCursorUs = null
         if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
         if (media3PrepareNow(player.playbackState == Player.STATE_IDLE, waitingForPreviousRelease)) player.prepare()
         player.play()
     }
     override fun pause() = player.pause()
-    /** Exact seek by one frame time of the playing video (ExoPlayer seeks exactly by default). */
+    /** Use known presentation timestamps for VFR; unknown frames use the nominal cadence. */
     override fun stepFrame(forward: Boolean) {
+        if (released || waitingForPreviousRelease || !player.isCurrentMediaItemSeekable) return
         player.pause()
-        val fps = player.videoFormat?.frameRate?.takeIf { it > 1f } ?: (1000f / DEFAULT_FRAME_MS)
-        val duration = player.duration.takeIf { it != androidx.media3.common.C.TIME_UNSET } ?: 0L
-        seekTo(frameStepTarget(player.currentPosition, duration, forward, (1000f / fps).toLong().coerceAtLeast(1L)))
+        val fps = player.videoFormat?.frameRate?.takeIf { it.isFinite() && it > 1f } ?: (1000f / DEFAULT_FRAME_MS)
+        val duration = player.duration.takeIf { it != C.TIME_UNSET } ?: 0L
+        val timeline = player.currentTimeline
+        val knownTimeline = !player.isCurrentMediaItemLive && !timeline.isEmpty &&
+            !Media3ImageProcessing.gpuInitialized(player) &&
+            timeline.getWindow(player.currentMediaItemIndex, androidx.media3.common.Timeline.Window()).let { window ->
+                window.firstPeriodIndex == window.lastPeriodIndex &&
+                    timeline.getPeriod(window.firstPeriodIndex, androidx.media3.common.Timeline.Period()).positionInWindowUs == 0L
+            }
+        val positionUs = player.currentPosition.coerceAtLeast(0L) * 1000L
+        val anchor = frameStepCursorUs ?: if (knownTimeline) frameTimeline.anchor(positionUs) else positionUs
+        val candidate = if (knownTimeline) frameTimeline.neighbor(anchor, forward) else null
+        val target = candidate?.let { pts ->
+            // Floor the microsecond PTS so the requested frame is not skipped by a rounded-up seek.
+            if (duration > 0L) (pts / 1000L).coerceIn(0L, duration) else pts / 1000L
+        } ?: frameStepTarget(anchor / 1000L, duration, forward, (1000f / fps).toLong().coerceAtLeast(1L))
+        frameStepCursorUs = candidate?.takeIf { it / 1000L == target } ?: target * 1000L
+        frameTimeline.pending(null)
+        if (!Media3ResumePrimer.retarget(player, target)) player.seekToPlaybackPosition(target)
     }
     private var outputMuteVolume: Float? = null
     override fun setOutputMuted(muted: Boolean) {
@@ -225,6 +264,8 @@ class Media3PlaybackHandle(
         }
     }
     override fun seekTo(positionMs: Long) {
+        frameStepCursorUs = null
+        frameTimeline.clear()
         if (!Media3ResumePrimer.retarget(player, positionMs)) player.seekToPlaybackPosition(positionMs)
     }
     override fun restoreAfterRendererSwitch(positionMs: Long, playWhenReady: Boolean, isLive: Boolean) {
@@ -252,6 +293,8 @@ class Media3PlaybackHandle(
         cleanup { Media3GaplessQueue.released(player) }
         cleanup { Media3ResumePrimer.release(player) }
         cleanup { player.removeListener(conversionListener) }
+        cleanup { player.clearVideoFrameMetadataListener(frameListener) }
+        frameTimeline.clear()
         cleanup { hdrOutput.release() }
         handles.remove(player)
         cleanup { Media3ImageProcessing.release(player) }
