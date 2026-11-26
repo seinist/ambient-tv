@@ -2,11 +2,53 @@
 
 Ambient TV keeps external media engines pinned so normal builds are reproducible. The versions displayed under **Settings → About** are generated from the same build inputs.
 
-## Check for updates
+## Maven / Gradle dependencies (independent of external engines)
+
+```bash
+./build.sh check-deps          # read-only: all catalog pins
+./build.sh update-deps         # update eligible Maven pins, without building
+./build.sh check-deps media3   # check one shared version key
+./build.sh update-deps media3  # update Media3 alone
+```
+
+Requires Python 3.11+. The updater reads `gradle/libs.versions.toml` (including
+inline version pins and plugin markers), checks Google Maven and Maven Central,
+and also the Gradle Plugin Portal for plugin markers. New catalog libraries are
+discovered automatically. Modules with a shared version must all advertise the
+candidate; BOM-managed dependencies follow their BOM. Ordinary APK builds never
+change these pins. No native engine downloads, source pins, assets or Cargo
+lockfiles are changed by these commands.
+
+Stable numeric releases are the default; snapshots and unknown qualifiers are
+ignored. Versions are sorted numerically, including alpha, beta, milestone and
+RC stages when explicitly enabled. No downgrades are performed.
+
+```bash
+MAVEN_CHANNEL=prerelease ./build.sh check-deps
+MEDIA3_CHANNEL=prerelease ./build.sh check-deps media3
+MAVEN_ALLOW_MAJOR=1 ./build.sh update-deps okhttp
+```
+
+The same options are available with `update-deps`. Media3 stays on the stable
+channel unless an explicit prerelease channel is selected. Major-version
+upgrades are reported for manual review by default (the date-based Compose BOM
+is exempt); libVLC stays on its current major even with the major opt-in. The
+AGP/Kotlin/KSP/Hilt matrix, Chromium Cronet alignment, Bouncy Castle, Monogram's
+JNA ABI and explicitly coupled SmartTube compatibility pins remain check-only.
+Missing metadata is reported as UNAVAILABLE rather than guessing a version.
+Network/parse errors abort before writing the catalog. Review the diff and run
+the build and playback tests after any update.
+
+Third-party source trees, vendored JARs, transitive dependencies, JitPack-only
+packages and Monogram's rustls pin are not independently rewritten. The old
+`libs-check` / `libs-update` workflow (including its legacy aliases and libVLC
+handling) remains available for compatibility.
+
+## Check for external engine updates
 
 The UI uses [AndroidSVG](https://bigbadaboom.github.io/androidsvg/) 1.4 to render
 local branding SVGs as vector drawing commands. Its Maven version is pinned in
-`gradle/libs.versions.toml`; it is independent of the native media-engine updater.
+`gradle/libs.versions.toml`; it is managed by the separate Maven updater, not the native media-engine updater.
 Only SVG `currentColor` accents are replaced at runtime; branding PNGs are exports.
 
 ```bash
