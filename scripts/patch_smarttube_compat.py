@@ -1062,13 +1062,13 @@ def patch_disable_unused_cronet(msc: Path, shared: Path, check: bool) -> list[Pa
     text = helper.read_text()
     original = text
     for line in (
-        "import com.google.net.cronet.okhttptransport.CronetInterceptor\\n",
-        "import com.liskovsoft.sharedutils.cronet.CronetManager\\n",
-        "        //addCronetInterceptor(builder)\\n",
+        "import com.google.net.cronet.okhttptransport.CronetInterceptor\n",
+        "import com.liskovsoft.sharedutils.cronet.CronetManager\n",
+        "        //addCronetInterceptor(builder)\n",
     ):
         text = text.replace(line, "")
     text, count = re.subn(
-        r"\\n    private fun addCronetInterceptor\\(builder: OkHttpClient\\.Builder\\) \\{.*?\\n    \\}\\n(?=\\})",
+        r"\n    private fun addCronetInterceptor\(builder: OkHttpClient\.Builder\) \{.*?\n    \}\n(?=\})",
         "",
         text,
         count=1,
