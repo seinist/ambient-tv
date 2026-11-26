@@ -138,6 +138,60 @@ class SmartTubeDeprecationPatchesTest(unittest.TestCase):
         self.assertNotIn("JsonParser()", text)
         patcher.patch_ytcfg_json_parser(path, check=True)
 
+    def test_unused_cronet_manager_and_adapter_are_removed(self) -> None:
+        root = Path(self.temporary.name)
+        msc = root / "MediaServiceCore"
+        shared = root / "SharedModules"
+        helper = msc / "youtubeapi/src/main/java/com/liskovsoft/googlecommon/common/helpers/RetrofitOkHttpHelper.kt"
+        helper.parent.mkdir(parents=True)
+        helper.write_text(
+            "import com.google.net.cronet.okhttptransport.CronetInterceptor\\n"
+            "import com.liskovsoft.sharedutils.cronet.CronetManager\\n"
+            "    private fun createClient(): OkHttpClient {\\n"
+            "        val builder = OkHttpManager.instance().client.newBuilder()\\n"
+            "        //addCronetInterceptor(builder)\\n"
+            "        return builder.build()\\n"
+            "    }\\n"
+            "    private fun addCronetInterceptor(builder: OkHttpClient.Builder) {\\n"
+            "        val engine = CronetManager.getEngine(AppService.instance().context)\\n"
+            "        if (engine != null) builder.addInterceptor(CronetInterceptor.newBuilder(engine).build())\\n"
+            "    }\\n"
+            "}\\n"
+        )
+        manager = shared / "sharedutils/src/main/java/com/liskovsoft/sharedutils/cronet/CronetManager.kt"
+        manager.parent.mkdir(parents=True)
+        manager.write_text("object CronetManager")
+        self.assertEqual([manager, helper], patcher.patch_disable_unused_cronet(msc, shared, check=False))
+        self.assertFalse(manager.exists())
+        patched = helper.read_text()
+        self.assertNotIn("Cronet", patched)
+        self.assertNotIn("addCronetInterceptor", patched)
+        self.assertEqual([], patcher.patch_disable_unused_cronet(msc, shared, check=True))
+
+    def test_okhttp_manager_initialization_is_thread_safe(self) -> None:
+        path = self.write(
+            "OkHttpManager.java",
+            "private static OkHttpManager sInstance;\\n"
+            "private OkHttpClient mClient;\\n"
+            "public static OkHttpManager instance() {\\n"
+            "public static OkHttpManager instance(boolean enableProfiler) {\\n"
+            "public static void unhold() {\\n"
+            "public OkHttpClient getClient() {\\n",
+        )
+        self.assertTrue(patcher.patch_okhttp_manager_thread_safety(path, check=False))
+        patched = path.read_text()
+        for expected in (
+            "private static volatile OkHttpManager sInstance;",
+            "private volatile OkHttpClient mClient;",
+            "public static synchronized OkHttpManager instance()",
+            "public static synchronized OkHttpManager instance(boolean enableProfiler)",
+            "public static synchronized void unhold()",
+            "public synchronized OkHttpClient getClient()",
+        ):
+            self.assertIn(expected, patched)
+        self.assertFalse(patcher.patch_okhttp_manager_thread_safety(path, check=True))
+        self.assertFalse(patcher.patch_okhttp_manager_thread_safety(path, check=False))
+
     def test_cronet_drops_experimental_import(self) -> None:
         path = self.write(
             "CronetManager.kt",
