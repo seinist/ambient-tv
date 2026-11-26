@@ -523,6 +523,32 @@ class AppPreferences @Inject constructor(
             putString("moonlight_stream_profile", json.encodeToString(value.validated()))
         }
 
+    /** Host-specific settings are local to a saved PC, never pairing credentials. */
+    var moonlightHostProfiles: Map<String, com.ambient.tv.moonlight.MoonlightStreamProfile>
+        get() = runCatching {
+            val ids = moonlightHosts.map { it.id }.toSet()
+            json.decodeFromString<Map<String, com.ambient.tv.moonlight.MoonlightStreamProfile>>(
+                prefs.getString("moonlight_host_profiles", "{}") ?: "{}")
+                .filterKeys { it in ids }.mapNotNull { (id, profile) ->
+                    runCatching { id to profile.validated() }.getOrNull()
+                }.toMap()
+        }.getOrDefault(emptyMap())
+        set(value) {
+            val ids = moonlightHosts.map { it.id }.toSet()
+            val validated = value.filterKeys { it in ids }.mapValues { it.value.validated() }
+            prefs.edit { putString("moonlight_host_profiles", json.encodeToString(validated)) }
+        }
+
+    fun moonlightProfileFor(hostId: String) = moonlightHostProfiles[hostId] ?: moonlightStreamProfile
+
+    fun setMoonlightHostProfile(hostId: String, profile: com.ambient.tv.moonlight.MoonlightStreamProfile?) {
+        require(moonlightHosts.any { it.id == hostId })
+        synchronized(prefs) {
+            moonlightHostProfiles = if (profile == null) moonlightHostProfiles - hostId
+                else moonlightHostProfiles + (hostId to profile.validated())
+        }
+    }
+
     var moonlightLibraryView: String
         get() = prefs.getString("moonlight_library_view", "grid")?.takeIf { it in setOf("grid", "list", "rows") } ?: "grid"
         set(value) { if (value in setOf("grid", "list", "rows")) prefs.edit { putString("moonlight_library_view", value) } }

@@ -57,6 +57,10 @@ data class PortableSettingsExtras(
     /** Portable playback quality; no GameStream certificates or private client keys. */
     val moonlightStreamProfile: com.ambient.tv.moonlight.MoonlightStreamProfile? = null,
     val moonlightLibraryView: String? = null,
+    val moonlightGridColumns: Int? = null,
+    val moonlightListRows: Int? = null,
+    val moonlightSortKey: String? = null,
+    val moonlightSortDescending: Boolean? = null,
 )
 
 @Serializable
@@ -75,6 +79,7 @@ data class ConnectionSettingsExtras(
     /** Host metadata is portable, but pairing certificates and AndroidKeyStore client keys are not. */
     val moonlightEnabled: Boolean? = null,
     val moonlightHosts: List<com.ambient.tv.moonlight.MoonlightHost>? = null,
+    val moonlightHostProfiles: Map<String, com.ambient.tv.moonlight.MoonlightStreamProfile>? = null,
 )
 
 @Serializable

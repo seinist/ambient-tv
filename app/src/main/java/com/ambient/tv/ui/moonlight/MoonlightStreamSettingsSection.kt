@@ -29,6 +29,7 @@ import com.ambient.tv.ui.settings.SettingsSubheader
 fun MoonlightStreamSettingsSection(
     profile: MoonlightStreamProfile,
     update: (MoonlightStreamProfile) -> Unit,
+    includeDisplay: Boolean = true,
 ) {
     var bitrate by rememberSaveable(profile.bitrateKbps) {
         mutableStateOf(profile.bitrateKbps.toString())
@@ -91,5 +92,5 @@ fun MoonlightStreamSettingsSection(
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
-    MoonlightDisplaySettingsSection(profile, update)
+    if (includeDisplay) MoonlightDisplaySettingsSection(profile, update)
 }

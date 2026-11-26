@@ -5,6 +5,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.DisposableEffect
+import com.ambient.tv.ui.common.PlayerDropUpSelector
+import com.ambient.tv.ui.common.SettingsNavigationRow
+import com.ambient.tv.ui.settings.LocalSettingsNestedBack
+import com.ambient.tv.moonlight.MoonlightStreamProfile
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,6 +40,12 @@ fun MoonlightSettingsSection(
     model: MoonlightSettingsViewModel = hiltViewModel(),
 ) {
     val state by model.state.collectAsState()
+    var page by rememberSaveable { mutableStateOf("root") }
+    var profileHostId by rememberSaveable { mutableStateOf("") }
+    val parentBack = LocalSettingsNestedBack.current
+    fun back() { page = "root" }
+    SideEffect { parentBack?.onBack = if (page == "root") null else { { back() } } }
+    DisposableEffect(parentBack) { onDispose { parentBack?.onBack = null } }
     var forgetHost by rememberSaveable { mutableStateOf<String?>(null) }
     var confirmReset by rememberSaveable { mutableStateOf(false) }
     var hostname by rememberSaveable { mutableStateOf("") }
@@ -41,17 +53,42 @@ fun MoonlightSettingsSection(
     var name by rememberSaveable { mutableStateOf("") }
     var mac by rememberSaveable { mutableStateOf("") }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        TvSettingRow(stringResource(R.string.moonlight_enable), stringResource(R.string.moonlight_settings_hint),
-            state.enabled, model::setEnabled)
-        if (!state.enabled) return@Column
-        nameField()
-        com.ambient.tv.ui.common.LocalNetworkPermissionSetting()
-        Text(stringResource(if (state.nativeAvailable) R.string.moonlight_native_notice else R.string.moonlight_experimental_notice),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-        MoonlightStreamSettingsSection(state.streamProfile, model::updateProfile)
-
+        if (page == "root" || !state.enabled) {
+            TvSettingRow(stringResource(R.string.moonlight_enable), stringResource(R.string.moonlight_settings_hint),
+                state.enabled, model::setEnabled)
+            if (!state.enabled) return@Column
+            nameField()
+            com.ambient.tv.ui.common.LocalNetworkPermissionSetting()
+            Text(stringResource(if (state.nativeAvailable) R.string.moonlight_native_notice else R.string.moonlight_experimental_notice),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            SettingsNavigationRow(title = stringResource(R.string.moonlight_hosts), onClick = { page = "hosts" })
+            SettingsNavigationRow(title = stringResource(R.string.moonlight_quality_title), onClick = { page = "quality" })
+            SettingsNavigationRow(title = stringResource(R.string.moonlight_display_title), onClick = { page = "display" })
+            return@Column
+        }
+        TvActionButton(stringResource(R.string.back), { back() })
+        if (page == "quality" || page == "display") {
+            val selected = state.hosts.firstOrNull { it.id == profileHostId }?.id.orEmpty()
+            val options = listOf("" to stringResource(R.string.moonlight_profile_global)) +
+                state.hosts.map { it.id to it.name.ifBlank { it.host } }
+            PlayerDropUpSelector(label = stringResource(R.string.moonlight_profile_scope),
+                value = options.first { it.first == selected }.second, options = options, selectedKey = selected,
+                dropUp = false, selectorKey = "moonlight-profile-scope", onSelected = { profileHostId = it })
+            val overridden = selected in state.hostProfiles
+            if (selected.isNotEmpty()) TvSettingRow(
+                stringResource(R.string.moonlight_profile_override), stringResource(R.string.moonlight_profile_override_hint),
+                overridden, { enabled -> model.updateHostProfile(selected, if (enabled) state.streamProfile else null) })
+            if (selected.isEmpty() || overridden) {
+                val profile = state.hostProfiles[selected] ?: state.streamProfile
+                val update: (MoonlightStreamProfile) -> Unit = {
+                    if (selected.isEmpty()) model.updateProfile(it) else model.updateHostProfile(selected, it)
+                }
+                if (page == "quality") MoonlightStreamSettingsSection(profile, update, includeDisplay = false)
+                else MoonlightDisplaySettingsSection(profile, update)
+            }
+            state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            return@Column
+        }
         SettingsSubheader(stringResource(R.string.moonlight_hosts))
         state.hosts.forEach { host ->
             SettingsGroup(card = true) {

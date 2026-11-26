@@ -39,6 +39,7 @@ data class MoonlightSettingsUiState(
     val status: Map<String, String> = emptyMap(),
     val nativeAvailable: Boolean = false,
     val streamProfile: MoonlightStreamProfile = MoonlightStreamProfile(),
+    val hostProfiles: Map<String, MoonlightStreamProfile> = emptyMap(),
     val pairedIds: Set<String> = emptySet(),
     val pairingHostId: String? = null,
     val pairingPin: String? = null,
@@ -66,6 +67,7 @@ class MoonlightSettingsViewModel @Inject constructor(
         hosts = preferences.moonlightHosts,
         nativeAvailable = transport.available,
         streamProfile = preferences.moonlightStreamProfile,
+        hostProfiles = preferences.moonlightHostProfiles,
         pairedIds = preferences.moonlightHosts.filter { transport.locallyPaired(it.id) }.map { it.id }.toSet(),
     ))
     val state: StateFlow<MoonlightSettingsUiState> = mutable.asStateFlow()
@@ -77,6 +79,15 @@ class MoonlightSettingsViewModel @Inject constructor(
             val profile = next.validated()
             preferences.moonlightStreamProfile = profile
             mutable.update { it.copy(streamProfile = profile, error = null) }
+        } catch (_: IllegalArgumentException) {
+            mutable.update { it.copy(error = context.getString(R.string.moonlight_profile_invalid)) }
+        }
+    }
+
+    fun updateHostProfile(hostId: String, profile: MoonlightStreamProfile?) {
+        try {
+            preferences.setMoonlightHostProfile(hostId, profile)
+            mutable.update { it.copy(hostProfiles = preferences.moonlightHostProfiles, error = null) }
         } catch (_: IllegalArgumentException) {
             mutable.update { it.copy(error = context.getString(R.string.moonlight_profile_invalid)) }
         }
@@ -122,9 +133,10 @@ class MoonlightSettingsViewModel @Inject constructor(
         // Removing a host is an explicit trust reset; do not retain its pinned certificate.
         transport.forget(id)
         libraryStore.clearHost(id)
+        preferences.moonlightHostProfiles = preferences.moonlightHostProfiles - id
         preferences.moonlightHosts = preferences.moonlightHosts.filterNot { it.id == id }
         mutable.update { it.copy(
-            hosts = preferences.moonlightHosts, status = it.status - id,
+            hosts = preferences.moonlightHosts, hostProfiles = preferences.moonlightHostProfiles, status = it.status - id,
             pairedIds = it.pairedIds - id, appLists = it.appLists - id, error = null,
         ) }
     }

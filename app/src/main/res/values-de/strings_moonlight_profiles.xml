@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="moonlight_profile_global">Globale Standardwerte</string>
+    <string name="moonlight_profile_scope">Einstellungen für</string>
+    <string name="moonlight_profile_override">Individuelles Profil verwenden</string>
+    <string name="moonlight_profile_override_hint">Globale Standardwerte für diesen PC überschreiben. Änderungen gelten ab der nächsten Verbindung.</string>
+</resources>

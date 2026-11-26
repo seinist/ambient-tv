@@ -80,10 +80,11 @@ internal object CompanionBackupPolicy {
             "liveTvReminderAutoSwitch", "autoUpdateCheck", "projectmFavorites", "keyBindings", "gamepadSettings", "retroInputSettings", "gameSettings", "gameLibraryOptions", "gameLibraryOverrides", "gameLibraryFolders",
             "viewTransitionStyleKey", "mousePointerHideSeconds",
             "gameMetadataOptions", "moonlightStreamProfile", "moonlightLibraryView",
+            "moonlightGridColumns", "moonlightListRows", "moonlightSortKey", "moonlightSortDescending",
         ),
         "device" to setOf("imageCacheMb", "cardImages1080"),
         "connections" to setOf("tvheadendHtspPort", "rommEnabled", "rommServerUrl", "rommUsername",
-            "moonlightEnabled", "moonlightHosts"),
+            "moonlightEnabled", "moonlightHosts", "moonlightHostProfiles"),
         "credentials" to setOf("gameMetadata"),
     )
     /**
@@ -93,7 +94,7 @@ internal object CompanionBackupPolicy {
     private val companionLocalExtraFields = setOf("rommEnabled", "rommServerUrl", "rommUsername",
         // Server addresses can be transferred by explicit file backup, but a phone's local
         // network host inventory must not silently replace the TV's paired identities.
-        "moonlightEnabled", "moonlightHosts")
+        "moonlightEnabled", "moonlightHosts", "moonlightHostProfiles")
 
     /**
      * Fields that are not synced through the companion today (unchanged behaviour, now explicit):

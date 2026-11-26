@@ -45,6 +45,7 @@ import com.ambient.tv.ui.player.ReferencePlayerOverlayBackground
 import com.ambient.tv.ui.player.ReferencePlayerHeader
 import com.ambient.tv.ui.player.ReferencePlayerClock
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
@@ -159,7 +160,7 @@ class MoonlightStreamActivity : ComponentActivity() {
         }
         inputProfile = com.ambient.tv.ui.gamepad.retro.RetroInputProfileContext("moonlight", "gamestream", "$hostId:$appId")
         com.ambient.tv.ui.gamepad.retro.RetroInputSettings.lastPlayed.value = inputProfile
-        qualityProfile = preferences.moonlightStreamProfile
+        qualityProfile = preferences.moonlightProfileFor(hostId)
         sessionProfile = qualityProfile
         validLaunch = true
         // A dedicated native GameStream activity must not leave Ambient's previous
@@ -195,7 +196,7 @@ class MoonlightStreamActivity : ComponentActivity() {
                 displayResult = displayResult,
                 onUpdateProfile = { profile ->
                     val validated = profile.validated()
-                    preferences.moonlightStreamProfile = validated
+                    preferences.setMoonlightHostProfile(hostId, validated)
                     qualityProfile = validated
                 },
                 onSendText = { engine.sendText(streamOwner, it) },
@@ -416,7 +417,7 @@ private fun MoonlightStreamContent(
     var startFailed by remember { mutableStateOf(false) }
     var retryRevision by remember { mutableStateOf(0) }
     var autoRetries by remember { mutableStateOf(0) }
-    var resumeOnly by remember { mutableStateOf(false) }
+    var resumeOnly by rememberSaveable(hostId, appId) { mutableStateOf(false) }
     // A successfully started remote app must not be relaunched on surface recreation.
     LaunchedEffect(status.phase) {
         if (status.phase == MoonlightStreamPhase.STREAMING) resumeOnly = true
@@ -563,7 +564,7 @@ private fun MoonlightStreamContent(
                 // As in the regular video/game OSD: primary action at left, options at right.
                 DeviceActionRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (startFailed || status.phase in setOf(MoonlightStreamPhase.FAILED, MoonlightStreamPhase.ENDED)) {

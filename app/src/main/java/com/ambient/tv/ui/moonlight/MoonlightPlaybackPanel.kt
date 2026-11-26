@@ -35,7 +35,7 @@ import com.ambient.tv.ui.common.TvTextField
  * scrolling and entrance/exit behavior. It does not pretend a GameStream desktop has a
  * media seekbar, pause button, skip chapters or a local decoder/renderer selector.
  */
-internal enum class MoonlightPlaybackPage { NONE, ROOT, QUALITY, TEXT, INFO, QUIT }
+internal enum class MoonlightPlaybackPage { NONE, ROOT, QUALITY, DISPLAY, TEXT, INFO, QUIT }
 
 @Composable
 internal fun BoxScope.MoonlightPlaybackPanel(
@@ -59,6 +59,7 @@ internal fun BoxScope.MoonlightPlaybackPanel(
             title = when (page) {
                 MoonlightPlaybackPage.ROOT -> stringResource(R.string.moonlight_player_settings)
                 MoonlightPlaybackPage.QUALITY -> stringResource(R.string.moonlight_quality_title)
+                MoonlightPlaybackPage.DISPLAY -> stringResource(R.string.moonlight_display_title)
                 MoonlightPlaybackPage.TEXT -> stringResource(R.string.moonlight_player_input)
                 MoonlightPlaybackPage.INFO -> stringResource(R.string.moonlight_player_info)
                 MoonlightPlaybackPage.QUIT -> stringResource(R.string.moonlight_quit_remote)
@@ -81,6 +82,12 @@ internal fun BoxScope.MoonlightPlaybackPanel(
                         onClick = { onPage(MoonlightPlaybackPage.QUALITY) },
                     )
                     RightPanelChoice(
+                        text = stringResource(R.string.moonlight_display_title),
+                        subtitle = stringResource(R.string.moonlight_player_apply_next),
+                        selected = false,
+                        onClick = { onPage(MoonlightPlaybackPage.DISPLAY) },
+                    )
+                    RightPanelChoice(
                         text = stringResource(R.string.moonlight_player_input),
                         subtitle = stringResource(R.string.moonlight_player_input_hint),
                         selected = false,
@@ -101,7 +108,11 @@ internal fun BoxScope.MoonlightPlaybackPanel(
                 }
                 MoonlightPlaybackPage.QUALITY -> {
                     RightPanelInfoRow(stringResource(R.string.moonlight_player_apply_next))
-                    MoonlightStreamSettingsSection(streamProfile, onUpdateProfile)
+                    MoonlightStreamSettingsSection(streamProfile, onUpdateProfile, includeDisplay = false)
+                }
+                MoonlightPlaybackPage.DISPLAY -> {
+                    RightPanelInfoRow(stringResource(R.string.moonlight_player_apply_next))
+                    MoonlightDisplaySettingsSection(streamProfile, onUpdateProfile)
                 }
                 MoonlightPlaybackPage.TEXT -> {
                     var message by rememberSaveable { mutableStateOf("") }

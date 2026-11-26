@@ -653,6 +653,10 @@ class SettingsBackupManager @Inject constructor(
                     gameMetadataOptions = preferences.gameMetadataOptions,
                     moonlightStreamProfile = preferences.moonlightStreamProfile,
                     moonlightLibraryView = preferences.moonlightLibraryView,
+                    moonlightGridColumns = preferences.moonlightGridColumns,
+                    moonlightListRows = preferences.moonlightListRows,
+                    moonlightSortKey = preferences.moonlightSortKey,
+                    moonlightSortDescending = preferences.moonlightSortDescending,
                 ),
                 device = DeviceSettingsExtras(
                     imageCacheMb = preferences.imageCacheMb,
@@ -665,6 +669,7 @@ class SettingsBackupManager @Inject constructor(
                     rommUsername = preferences.rommUsername.takeIf(String::isNotBlank),
                     moonlightEnabled = preferences.moonlightEnabled,
                     moonlightHosts = preferences.moonlightHosts,
+                    moonlightHostProfiles = preferences.moonlightHostProfiles,
                 ),
                 credentials = if (includeCredentials) tokenStore.exportGameMetadataCredentials()?.let {
                     CredentialSettingsExtras(gameMetadata = it)
@@ -684,6 +689,10 @@ class SettingsBackupManager @Inject constructor(
         backup.smartTubeAccounts?.let { smartTube?.validateAccounts(it) }
         backup.fileSources.filter { it.kind in com.ambient.tv.data.files.FileKinds.ALL }.forEach { it.validated() }
         backup.extras?.portable?.moonlightStreamProfile?.validated()
+        backup.extras?.connections?.moonlightHostProfiles?.let { profiles ->
+            require(profiles.size <= 16 && profiles.keys.all { com.ambient.tv.moonlight.validMoonlightHostId(it) })
+            profiles.values.forEach { it.validated() }
+        }
         backup.extras?.connections?.moonlightHosts?.let { hosts ->
             require(hosts.size <= 16) { "Too many Moonlight hosts in backup" }
             hosts.forEach { it.validated() } // reject malformed profiles before any settings change
@@ -1197,6 +1206,10 @@ class SettingsBackupManager @Inject constructor(
             settings.gameMetadataOptions?.let { preferences.gameMetadataOptions = it }
             settings.moonlightStreamProfile?.let { preferences.moonlightStreamProfile = it.validated() }
             settings.moonlightLibraryView?.let { preferences.moonlightLibraryView = it }
+            settings.moonlightGridColumns?.let { preferences.moonlightGridColumns = it }
+            settings.moonlightListRows?.let { preferences.moonlightListRows = it }
+            settings.moonlightSortKey?.let { preferences.moonlightSortKey = it }
+            settings.moonlightSortDescending?.let { preferences.moonlightSortDescending = it }
             settings.gameLibraryOverrides?.let { preferences.gameLibraryOverrides = it.filter { row ->
                 row.sourceId in preferences.fileSources.map { source -> source.id }
             }.takeLast(5000) }
@@ -1262,14 +1275,21 @@ class SettingsBackupManager @Inject constructor(
                         moonlightStore?.clearHost(id)
                     }
                 }
+                val retainedProfiles = preferences.moonlightHostProfiles.filterKeys { id ->
+                    val before = old[id]
+                    val after = next[id]
+                    before != null && after != null && before.host == after.host && before.port == after.port
+                }
                 preferences.moonlightHosts = restored
+                preferences.moonlightHostProfiles = retainedProfiles
             }
+            connections.moonlightHostProfiles?.let { preferences.moonlightHostProfiles = it }
             connections.moonlightEnabled?.let { preferences.moonlightEnabled = it }
         }
     }
 
     internal companion object {
-        const val CURRENT_SCHEMA_VERSION = 86
+        const val CURRENT_SCHEMA_VERSION = 87
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }
