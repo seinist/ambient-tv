@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -112,6 +113,24 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val transmitting = playing && resumed
+    val phoneContext = LocalContext.current
+    var rumbleEnabled by rememberSaveable(state.target?.fingerprint) { mutableStateOf(true) }
+    val vibrator = remember(phoneContext) {
+        if (android.os.Build.VERSION.SDK_INT >= 31)
+            phoneContext.getSystemService(android.os.VibratorManager::class.java)?.defaultVibrator
+        else @Suppress("DEPRECATION") phoneContext.getSystemService(android.os.Vibrator::class.java)
+    }
+    val rumble = info?.rumble
+    LaunchedEffect(transmitting, rumbleEnabled, info?.sessionId, rumble) {
+        if (!transmitting || !rumbleEnabled || rumble == null || info?.systemId != "moonlight") {
+            runCatching { vibrator?.cancel() }
+        } else {
+            val level = (maxOf(rumble.low, rumble.high).coerceIn(0, 65535) * 255L / 65535L).toInt()
+            if (level > 0 && vibrator?.hasVibrator() == true)
+                runCatching { vibrator.vibrate(android.os.VibrationEffect.createOneShot(160L, level.coerceAtLeast(1))) }
+        }
+    }
+    DisposableEffect(vibrator) { onDispose { runCatching { vibrator?.cancel() } } }
     val navigating = claimed && resumed && info.acceptsNavigation
     val renderedInfo by rememberUpdatedState(info)
     val confirmHold = remember(manager) { CompanionGamepadHold(rewind = false, manager::sendGamepadCommand) }
@@ -437,6 +456,9 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                     "right" -> R.string.companion_gamepad_region_right
                     else -> R.string.companion_gamepad_region_full
                 }))
+            }
+            if (info?.systemId == "moonlight") TextButton(onClick = { rumbleEnabled = !rumbleEnabled }) {
+                Text(stringResource(if (rumbleEnabled) R.string.moonlight_companion_rumble_on else R.string.moonlight_companion_rumble_off))
             }
             if (motion.availableMask != 0) TextButton(onClick = { motionEnabled = !motionEnabled }) {
                 Text(stringResource(if (motionEnabled) R.string.companion_gamepad_motion_on

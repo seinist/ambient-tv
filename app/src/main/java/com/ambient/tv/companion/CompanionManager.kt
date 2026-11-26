@@ -1990,12 +1990,12 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                         } else {
                             val gameMenuPolling = mutable.value.let { current ->
                                 current.gamepadPanel && current.remote?.gamepadInfo?.let {
-                                    it.interaction != null && !it.acceptsGameplay
+                                    it.interaction != null && (!it.acceptsGameplay || it.systemId == "moonlight")
                                 } == true
                             }
                             command = live.receive(queue, when {
                                 returnTransfer != null || returnAck != 0L -> 50L
-                                gameMenuPolling -> 250L
+                                gameMenuPolling -> if (mutable.value.remote?.gamepadInfo?.systemId == "moonlight") 100L else 250L
                                 else -> 1_000L
                             }) ?: CompanionFrame(type = if (gameMenuPolling && returnTransfer == null && returnAck == 0L &&
                                 SystemClock.elapsedRealtime() - lastFullStateRequestAt < 1_000L)

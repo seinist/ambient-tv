@@ -18,7 +18,7 @@ internal class MoonlightPointerRouter(private val engine: MoonlightStreamEngine,
     fun release() {
         contacts.forEach { (id, point) -> engine.sendTouchEvent(owner, 4, id, point.first, point.second, 0f) }
         contacts.clear()
-        if (touchMouse) engine.sendMouseButton(owner, false)
+        if (touchMouse) engine.sendMouseButton(owner, false, source = 1)
         touchMouse = false
         touchFallback = false
         updateMouseButtons(0)
@@ -69,10 +69,12 @@ internal class MoonlightPointerRouter(private val engine: MoonlightStreamEngine,
         val height = target.height.coerceAtLeast(1)
         fun send(index: Int, type: Byte) {
             val id = event.getPointerId(index)
-            if (id !in 0..15) return
+            if (id !in 0..31) return
             val x = (event.getX(index) / width).coerceIn(0f, 1f)
             val y = (event.getY(index) / height).coerceIn(0f, 1f)
-            if (type == 2.toByte()) contacts.remove(id) else contacts[id] = x to y
+            if (type == 2.toByte()) contacts.remove(id)
+            else if (type == 1.toByte() || id in contacts) contacts[id] = x to y
+            else return
             if (!touchFallback) {
                 val result = engine.sendTouchEvent(owner, type, id, x, y, event.getPressure(index))
                 if (result == -5501) {
@@ -94,7 +96,7 @@ internal class MoonlightPointerRouter(private val engine: MoonlightStreamEngine,
                 engine.sendMousePosition(owner, (x * width).roundToInt(), (y * height).roundToInt(), width, height)
             }
             val down = contacts.isNotEmpty()
-            if (down != touchMouse) engine.sendMouseButton(owner, down)
+            if (down != touchMouse) engine.sendMouseButton(owner, down, source = 1)
             touchMouse = down
             if (!down) touchFallback = false
         }

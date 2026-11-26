@@ -50,6 +50,13 @@ class MoonlightCompanionLink @Inject constructor(
     }
 
     fun reservedPorts(): Set<Int> = sink?.reservedPorts().orEmpty()
+    fun republishReservations() { sink?.republishReservations() }
+
+    fun rumble(event: MoonlightRumble) {
+        val current = sink ?: return
+        if (event.port in current.reservedPorts())
+            CompanionGamepadSession.setMoonlightRumble(current, event.port, event.low, event.high)
+    }
 
     fun detach() {
         val previous = sink ?: return
@@ -61,12 +68,13 @@ class MoonlightCompanionLink @Inject constructor(
     }
 
     private fun clearPointer() {
+        val source = (pointerOwner ?: 0) + 1
         touches.values.toList().forEach { contact ->
-            engine.sendTouchEvent(owner ?: return, MoonBridge.LI_TOUCH_EVENT_UP,
-                contact.index, contact.x, contact.y, 0f)
+            engine.sendTouchEvent(owner ?: return, MoonBridge.LI_TOUCH_EVENT_CANCEL,
+                contact.index, contact.x, contact.y, 0f, source = source)
         }
         touches.clear()
-        if (mouseDown) engine.sendMouseButton(owner ?: return, false)
+        if (mouseDown) engine.sendMouseButton(owner ?: return, false, source = (pointerOwner ?: 0) + 2)
         mouseDown = false
         pointerOwner = null
         touchUnsupported = false
@@ -75,7 +83,7 @@ class MoonlightCompanionLink @Inject constructor(
     private fun mousePressed(down: Boolean) {
         if (down == mouseDown) return
         mouseDown = down
-        engine.sendMouseButton(owner ?: return, down)
+        engine.sendMouseButton(owner ?: return, down, source = (pointerOwner ?: 0) + 2)
     }
 
     private fun pointer(port: Int, next: CompanionPointerState?) {
@@ -109,7 +117,7 @@ class MoonlightCompanionLink @Inject constructor(
                 for (index in obsolete) {
                     touches.remove(index)?.let { old ->
                         engine.sendTouchEvent(owner ?: return, MoonBridge.LI_TOUCH_EVENT_UP,
-                            index, old.x, old.y, 0f)
+                            index, old.x, old.y, 0f, source = port + 1)
                     }
                 }
                 for ((index, contact) in current) {
@@ -118,7 +126,7 @@ class MoonlightCompanionLink @Inject constructor(
                         else MoonBridge.LI_TOUCH_EVENT_MOVE
                     if (before == null || before.x != contact.x || before.y != contact.y) {
                         val result = if (touchUnsupported) MoonBridge.LI_ERR_UNSUPPORTED
-                            else engine.sendTouchEvent(owner ?: return, kind, index, contact.x, contact.y, 1f)
+                            else engine.sendTouchEvent(owner ?: return, kind, index, contact.x, contact.y, 1f, source = port + 1)
                         if (result == MoonBridge.LI_ERR_UNSUPPORTED) touchUnsupported = true
                     }
                     touches[index] = contact
@@ -138,7 +146,7 @@ class MoonlightCompanionLink @Inject constructor(
     private fun clearTouchOnly() {
         touches.values.toList().forEach { contact ->
             engine.sendTouchEvent(owner ?: return, MoonBridge.LI_TOUCH_EVENT_UP,
-                contact.index, contact.x, contact.y, 0f)
+                contact.index, contact.x, contact.y, 0f, source = (pointerOwner ?: 0) + 1)
         }
         touches.clear()
     }

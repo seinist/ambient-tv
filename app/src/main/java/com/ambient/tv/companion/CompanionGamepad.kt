@@ -42,6 +42,9 @@ internal val COMPANION_GAMEPAD_CONFIRM = setOf("ok_down", "ok_up", "ok_cancel", 
 private val COMPANION_GAMEPAD_ACTIONS = COMPANION_GAMEPAD_NAVIGATION + COMPANION_GAMEPAD_CONFIRM +
     setOf("menu", "resume", "rewind")
 
+@Serializable
+data class CompanionRumble(val low: Int, val high: Int, val pulse: Long)
+
 /** The layout selection is advisory; the TV remains the authority for the active core. */
 @Serializable
 data class CompanionGamepadInfo(
@@ -61,6 +64,7 @@ data class CompanionGamepadInfo(
     val rewindSeconds: Float = 0f,
     /** A netplay handshake may leave the menu usable while continuation is unsafe. */
     val canResume: Boolean = true,
+    val rumble: CompanionRumble? = null,
 )
 
 internal val CompanionGamepadInfo.interactionMode: CompanionGamepadInteraction?
@@ -203,6 +207,7 @@ object CompanionGamepadSession {
         var rewindSession: String? = null,
         var interactionContext: Any? = null,
         var confirm: Confirm? = null,
+        val rumble: MutableMap<Int, Pair<Int, Int>> = mutableMapOf(),
     )
 
     private class Confirm(val session: String, val revision: Long, val release: (Boolean) -> Unit) {
@@ -327,6 +332,7 @@ object CompanionGamepadSession {
         if (releaseMenu && game.confirm?.session?.let { ports[it] == port } == true) releaseConfirm(game)
         if (game.rewindSession?.let { ports[it] == port } == true) stopRewind(game)
         clearButtons(port)
+        game.rumble.remove(port)
         game.input.clearRemotePort(port, suppressHeld = suppressHeld)
         game.onPointer(port, null)
         game.onMotion(port, null)
@@ -413,6 +419,13 @@ object CompanionGamepadSession {
         setInteractionForOwner(sink, interaction)
     }
 
+    internal fun setMoonlightRumble(sink: CompanionGamepadSink, port: Int, low: Int, high: Int) {
+        val game = active?.takeIf { it.owner === sink && it.ready } ?: return
+        if (port !in ports.values) return
+        if (low == 0 && high == 0) game.rumble.remove(port)
+        else game.rumble[port] = low.coerceIn(0, 65535) to high.coerceIn(0, 65535)
+    }
+
     internal fun detachMoonlight(sink: CompanionGamepadSink) {
         if (active?.owner === sink) detachCurrent()
     }
@@ -467,7 +480,10 @@ object CompanionGamepadSession {
             session == null -> game.info.inputDescriptions
             else -> game.input.remoteInputDescriptions(ports[session] ?: -1, game.info.inputDescriptions.orEmpty())
         }
-        game.info.copy(ready = game.ready, inputDescriptions = descriptions,
+        val rumble = if (game.ready && session != null) game.rumble[ports[session]]?.let {
+            CompanionRumble(it.first, it.second, android.os.SystemClock.elapsedRealtime() / 100L)
+        } else null
+        game.info.copy(ready = game.ready, inputDescriptions = descriptions, rumble = rumble,
             rewindAvailable = game.ready && game.info.rewindAvailable &&
                 (session == null || ports[session] == 0))
     }

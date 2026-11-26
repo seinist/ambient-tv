@@ -153,7 +153,10 @@ class MoonlightStreamActivity : ComponentActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 engine.rumbleEvents.collect { rumble ->
                     if (gameplayAllowed && hasWindowFocus() &&
-                        engine.generation(streamOwner) == rumble.generation) feedback.rumble(rumble)
+                        engine.generation(streamOwner) == rumble.generation) {
+                        if (rumble.port in companion.reservedPorts()) companion.rumble(rumble)
+                        else feedback.rumble(rumble)
+                    }
                 }
             }
         }
@@ -184,6 +187,7 @@ class MoonlightStreamActivity : ComponentActivity() {
                 closeControls = { showOsd(false) },
                 onStarted = {
                     input.releaseAll()
+                    companion.republishReservations()
                     companion.interaction(playing = false, menu = false)
                 },
                 onManualRetry = {

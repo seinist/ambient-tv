@@ -71,6 +71,8 @@ class MoonlightStreamEngine @Inject constructor(
 
     private val lock = Any()
     private val inputGate = Any()
+    private val inputOwnership = MoonlightInputOwnership()
+    private val motionRequests = mutableMapOf<Pair<Int, Byte>, Pair<Int, Long>>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val revision = AtomicLong(0)
     private val mutable = MutableStateFlow(MoonlightStreamStatus())
@@ -226,7 +228,7 @@ class MoonlightStreamEngine @Inject constructor(
             preparation?.join()
             val connection = synchronized(lock) { session.connection }
             // No more input can enter after cancellation; drain the previous JNI call.
-            synchronized(inputGate) { Unit }
+            synchronized(inputGate) { inputOwnership.clear(); motionRequests.clear() }
             var stopped = false
             repeat(3) {
                 if (!stopped) {
@@ -273,7 +275,7 @@ class MoonlightStreamEngine @Inject constructor(
             nextMask and (1 shl port) != 0 &&
                 session.advertisedControllerMask and (1 shl port) == 0
         }
-        if (session != null) session.advertisedControllerMask = nextMask
+        if (session != null) session.advertisedControllerMask = session.advertisedControllerMask and nextMask
         PadFrame(session?.connection, nextMask.toShort(), newPorts.map { port ->
             port to (if (port in remoteControllerPorts) remoteCaps[port] else localCaps[port]
                 ?: MoonlightPadCapabilities())
@@ -288,8 +290,13 @@ class MoonlightStreamEngine @Inject constructor(
             if (caps.rumble) flags = flags or MoonBridge.LI_CCAP_RUMBLE.toInt()
             if (caps.accelerometer) flags = flags or MoonBridge.LI_CCAP_ACCEL.toInt()
             if (caps.gyroscope) flags = flags or MoonBridge.LI_CCAP_GYRO.toInt()
-            runCatching { connection.sendControllerArrivalEvent(port.toByte(), frame.mask,
-                MoonBridge.LI_CTYPE_XBOX, caps.buttons, flags.toShort()) }
+            val result = runCatching { connection.sendControllerArrivalEvent(port.toByte(), frame.mask,
+                MoonBridge.LI_CTYPE_XBOX, caps.buttons, flags.toShort()) }.getOrDefault(-1)
+            if (result == 0) synchronized(lock) {
+                active?.takeIf { it.connection === connection && !it.cancelled }?.let {
+                    it.advertisedControllerMask = it.advertisedControllerMask or (1 shl port)
+                }
+            }
         }
     }
 
@@ -302,8 +309,10 @@ class MoonlightStreamEngine @Inject constructor(
             if (port.toInt() !in 0..3) return
             val frame = padFrame(owner) {
                 localControllerMask = mask.toInt() and 0xF
-                if (localControllerMask and (1 shl port.toInt()) != 0) localCaps[port.toInt()] = capabilities
-                else localCaps.remove(port.toInt())
+                if (localControllerMask and (1 shl port.toInt()) != 0) {
+                    if (localCaps.put(port.toInt(), capabilities) != capabilities)
+                        active?.let { it.advertisedControllerMask = it.advertisedControllerMask and (1 shl port.toInt()).inv() }
+                } else localCaps.remove(port.toInt())
             }
             sendArrivals(frame)
             runCatching {
@@ -323,8 +332,12 @@ class MoonlightStreamEngine @Inject constructor(
             val frame = padFrame(owner) {
                 if (enabled) {
                     remoteControllerPorts.add(port)
-                    remoteCaps.putIfAbsent(port, MoonlightPadCapabilities())
-                } else { remoteControllerPorts.remove(port); remoteCaps.remove(port) }
+                    remoteCaps.putIfAbsent(port, MoonlightPadCapabilities(rumble = true))
+                } else {
+                    remoteControllerPorts.remove(port)
+                    remoteCaps.remove(port)
+                    motionRequests.keys.removeAll { it.first == port }
+                }
             }
             sendArrivals(frame)
             if (!enabled) runCatching {
@@ -394,13 +407,14 @@ class MoonlightStreamEngine @Inject constructor(
         }
     }
 
-    fun sendMouseButton(owner: Any, pressed: Boolean, button: Int = 1) {
+    fun sendMouseButton(owner: Any, pressed: Boolean, button: Int = 1, source: Int = 0) {
         synchronized(inputGate) {
             val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
-            if (button !in 1..5) return
+            if (conn == null) return
+            val transition = inputOwnership.mouse(button, source, pressed) ?: return
             runCatching {
-                if (pressed) conn?.sendMouseButtonDown(button.toByte())
-                else conn?.sendMouseButtonUp(button.toByte())
+                if (transition) conn.sendMouseButtonDown(button.toByte())
+                else conn.sendMouseButtonUp(button.toByte())
             }
         }
     }
@@ -414,23 +428,31 @@ class MoonlightStreamEngine @Inject constructor(
 
     /** Normalized multi-contact touchscreen events; native GameStream owns remote touch state. */
     fun sendTouchEvent(owner: Any, type: Byte, pointerId: Int, x: Float, y: Float,
-                       pressure: Float = 1f): Int {
+                       pressure: Float = 1f, source: Int = 0): Int {
         synchronized(inputGate) {
-            if (pointerId !in 0..15 || !x.isFinite() || !y.isFinite() || !pressure.isFinite())
+            val id = inputOwnership.touchId(source, pointerId) ?: return MoonBridge.LI_ERR_UNSUPPORTED
+            if (!x.isFinite() || !y.isFinite() || !pressure.isFinite())
                 return MoonBridge.LI_ERR_UNSUPPORTED
             val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
                 ?: return MoonBridge.LI_ERR_UNSUPPORTED
-            return runCatching {
-                conn.sendTouchEvent(type, pointerId, x.coerceIn(0f, 1f), y.coerceIn(0f, 1f),
-                    pressure.coerceIn(0f, 1f), 0f, 0f, 0.toShort())
+            if (!inputOwnership.acceptsTouch(id, type)) return 0
+            val result = runCatching {
+                conn.sendTouchEvent(type, id, x.coerceIn(0f, 1f), y.coerceIn(0f, 1f),
+                    pressure.coerceIn(0f, 1f), 0f, 0f, (-1).toShort())
             }.getOrDefault(MoonBridge.LI_ERR_UNSUPPORTED)
+            if (result == 0) inputOwnership.acceptedTouch(id, type)
+            return result
         }
     }
 
     /** Controller gyroscope and acceleration, from the authenticated Companion stream. */
     fun sendMotion(owner: Any, port: Int, type: Byte, x: Float, y: Float, z: Float) {
         synchronized(inputGate) {
-            if (port !in 0..3 || listOf(x, y, z).any { !it.isFinite() }) return
+            if (port !in remoteReservedPorts(owner) || !x.isFinite() || !y.isFinite() || !z.isFinite()) return
+            val now = System.nanoTime()
+            val request = motionRequests[port to type] ?: return
+            if (request.first <= 0 || now - request.second < 1_000_000_000L / request.first) return
+            motionRequests[port to type] = request.first to now
             val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
             runCatching { conn?.sendControllerMotionEvent(port.toByte(), type,
                 x.coerceIn(-100f, 100f), y.coerceIn(-100f, 100f), z.coerceIn(-100f, 100f)) }
@@ -506,7 +528,16 @@ class MoonlightStreamEngine @Inject constructor(
         override fun setHdrMode(enabled: Boolean, hdrMetadata: ByteArray?) {
             if (isOwned(session)) session.video?.setHdrMode(enabled, hdrMetadata)
         }
-        override fun setMotionEventState(controllerNumber: Short, motionType: Byte, reportRateHz: Short) = Unit
+        override fun setMotionEventState(controllerNumber: Short, motionType: Byte, reportRateHz: Short) {
+            val port = controllerNumber.toInt()
+            if (port !in 0..3 || motionType !in setOf(MoonBridge.LI_MOTION_TYPE_ACCEL, MoonBridge.LI_MOTION_TYPE_GYRO)) return
+            scope.launch {
+                synchronized(inputGate) {
+                    if (isOwned(session)) motionRequests[port to motionType] =
+                        (reportRateHz.toInt() and 0xffff).coerceIn(0, 60) to 0L
+                }
+            }
+        }
         override fun setControllerLED(controllerNumber: Short, r: Byte, g: Byte, b: Byte) = Unit
     }
 

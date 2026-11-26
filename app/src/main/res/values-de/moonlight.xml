@@ -77,4 +77,6 @@
     <string name="moonlight_quality_hdr_off">Nur SDR</string>
     <string name="moonlight_quality_hdr_hint">Automatisches HDR10 benötigt eine Sunshine-HDR-Anwendung, ein HDR-Display und einen 10-Bit-Hardwaredecoder. Anderenfalls wird SDR verwendet.</string>
     <string name="moonlight_about_role">Nativer GameStream-Client</string>
+    <string name="moonlight_companion_rumble_on">Spielvibration an</string>
+    <string name="moonlight_companion_rumble_off">Spielvibration aus</string>
 </resources>
