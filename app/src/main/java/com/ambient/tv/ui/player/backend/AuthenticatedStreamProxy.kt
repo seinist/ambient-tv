@@ -123,10 +123,16 @@ internal class AuthenticatedStreamProxy(
                     val rewritten = try {
                         val manifest = readManifest(response.body.byteStream())
                         val localUri: (okhttp3.HttpUrl, Boolean) -> String = { child, isPlaylist ->
+                            requireVlcRelayTransport(response.request.url, child)
                             localOrigin + routes.register(child, isPlaylist, opened.credentialed)
                         }
                         val rewrittenText = if (dash) rewriteVlcDashManifest(manifest, response.request.url,
-                            localUri, { localOrigin + routes.registerTemplate(it, opened.credentialed) })
+                            localUri, { template ->
+                                val sample = template.resolve(List(template.slots.size) { "0" })
+                                    ?: throw IOException("Invalid DASH template")
+                                requireVlcRelayTransport(response.request.url, sample)
+                                localOrigin + routes.registerTemplate(template, opened.credentialed)
+                            })
                         else {
                             // A foreign CDN playlist must not import variables (possibly a
                             // signed ticket) supplied by a different parent origin.
@@ -134,6 +140,7 @@ internal class AuthenticatedStreamProxy(
                                 vlcRelayOriginAllowed(resource.url, response.request.url)
                             }.orEmpty()
                             rewriteVlcHlsManifest(manifest, response.request.url, inherited) { child, isPlaylist, vars ->
+                                requireVlcRelayTransport(response.request.url, child)
                                 localOrigin + routes.register(child, isPlaylist, opened.credentialed,
                                     if (vlcRelayOriginAllowed(response.request.url, child)) vars else emptyMap())
                             }
@@ -209,6 +216,7 @@ internal class AuthenticatedStreamProxy(
             response.close()
             calls.remove(call)
             if (target == null) throw IOException("Invalid media redirect")
+            requireVlcRelayTransport(url, target)
             sendCredentials = sendCredentials && vlcRelayOriginAllowed(origin, target)
             url = target
         }
@@ -284,4 +292,10 @@ internal fun vlcSameHttpOrigin(first: String, second: String): Boolean {
     val a = first.toHttpUrlOrNull() ?: return false
     val b = second.toHttpUrlOrNull() ?: return false
     return a.scheme == b.scheme && a.host == b.host && a.port == b.port
+}
+
+/** HTTP origins may upgrade to TLS, but a secure redirect or manifest must never send a
+ * subsequent request back over plaintext, even to the originally configured HTTP origin. */
+internal fun requireVlcRelayTransport(parent: okhttp3.HttpUrl, target: okhttp3.HttpUrl) {
+    if (parent.isHttps && !target.isHttps) throw IOException("Media relay TLS downgrade refused")
 }
