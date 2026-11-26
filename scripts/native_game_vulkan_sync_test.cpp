@@ -55,9 +55,21 @@ struct Driver {
     }
 } driver;
 
+struct BridgeAllocationMock {
+    unsigned failure = 0, ahbAllocations = 0, propertyQueries = 0, imageCreates = 0,
+             memoryAllocations = 0, binds = 0;
+    VkDeviceSize allocationBytes = 4096;
+} bridgeAllocation;
+
 #define LOGI(...) ((void)0)
 #define LOGE(...) ((void)0)
 #define LOGW(...) (++driver.warnings)
+int AHardwareBuffer_allocate(const AHardwareBuffer_Desc* desc, AHardwareBuffer** buffer) {
+    assert(desc && desc->width && desc->height && desc->layers == 1);
+    ++bridgeAllocation.ahbAllocations;
+    *buffer = object<AHardwareBuffer*>(101);
+    return bridgeAllocation.failure == 1 ? -1 : 0;
+}
 void AHardwareBuffer_release(AHardwareBuffer*) { assert(!driver.pending); ++driver.bufferFrees; }
 void ANativeWindow_release(ANativeWindow*) { ++driver.windowReleases; }
 int ANativeWindow_getWidth(ANativeWindow*) { return 640; }
@@ -279,6 +291,75 @@ void pendingFrame(VulkanBackend& backend) {
     driver.pending = true;
 }
 void window(VulkanBackend& backend) { backend.nativeSdrWindow = object<ANativeWindow*>(18); }
+
+void bridgeBudgetAdmissionContracts() {
+    using Budget = libretrodroid::VulkanBridgeAllocationBudget;
+    for (unsigned failure = 0; failure <= 8; ++failure) {
+        VulkanBackend backend;
+        setup(backend);
+        bridgeAllocation = {};
+        bridgeAllocation.failure = failure;
+        if (failure == 7) bridgeAllocation.allocationBytes = 4097;
+        if (failure == 8) bridgeAllocation.allocationBytes = 0;
+        auto& vk = backend.vk;
+        vk.getAndroidHardwareBufferProperties = [](VkDevice, const AHardwareBuffer* buffer,
+                VkAndroidHardwareBufferPropertiesANDROID* props) {
+            assert(buffer == object<AHardwareBuffer*>(101));
+            ++bridgeAllocation.propertyQueries;
+            props->allocationSize = bridgeAllocation.allocationBytes;
+            props->memoryTypeBits = bridgeAllocation.failure == 3 ? 0 : 1;
+            return bridgeAllocation.failure == 2 ? VK_ERROR_OUT_OF_DEVICE_MEMORY : VK_SUCCESS;
+        };
+        vk.createImage = [](VkDevice, const VkImageCreateInfo*, const VkAllocationCallbacks*, VkImage* image) {
+            ++bridgeAllocation.imageCreates;
+            *image = object<VkImage>(102);
+            return bridgeAllocation.failure == 4 ? VK_ERROR_OUT_OF_DEVICE_MEMORY : VK_SUCCESS;
+        };
+        vk.allocateMemory = [](VkDevice, const VkMemoryAllocateInfo* info,
+                const VkAllocationCallbacks*, VkDeviceMemory* memory) {
+            assert(info->allocationSize == bridgeAllocation.allocationBytes);
+            ++bridgeAllocation.memoryAllocations;
+            *memory = object<VkDeviceMemory>(103);
+            return bridgeAllocation.failure == 5 ? VK_ERROR_OUT_OF_DEVICE_MEMORY : VK_SUCCESS;
+        };
+        vk.bindImageMemory = [](VkDevice, VkImage image, VkDeviceMemory memory, VkDeviceSize offset) {
+            assert(image == object<VkImage>(102) && memory == object<VkDeviceMemory>(103) && offset == 0);
+            ++bridgeAllocation.binds;
+            return bridgeAllocation.failure == 6 ? VK_ERROR_OUT_OF_DEVICE_MEMORY : VK_SUCCESS;
+        };
+        const auto primaryBytes = backend.getFrameBufferAllocationBytes();
+        const auto primary = backend.getFrameBuffer();
+        const auto status = backend.getFrameStatus();
+        const auto budget = backend.additionalBridgeAllocationBudget(Budget::maximum - primaryBytes - 4096);
+        assert(budget.available() == 4096);
+        assert(!backend.additionalBridgeAllocationBudget(std::numeric_limits<uint64_t>::max()).available());
+        decltype(backend.frameSlot.bridgeImage) secondary;
+        assert(!backend.allocateBridgeImage(secondary, 64, 64, false, budget));
+        assert(secondary.empty() && bridgeAllocation.ahbAllocations == 0);
+        const bool accepted = backend.allocateBridgeImage(secondary, 32, 32, false, budget);
+        assert(accepted == (failure == 0));
+        assert(bridgeAllocation.ahbAllocations == 1);
+        assert(backend.getFrameBuffer() == primary && backend.getFrameBufferAllocationBytes() == primaryBytes);
+        assert(backend.getFrameStatus() == status && !backend.hasFatalError() && driver.submits == 0);
+        if (accepted) {
+            assert(secondary.allocationBytes == 4096 && secondary.buffer != primary && secondary.width == 32);
+            assert(!backend.allocateBridgeImage(secondary, 32, 32, false, budget));
+            assert(bridgeAllocation.ahbAllocations == 1);
+            assert(secondary.retire(false, true, true, true,
+                [&](VkImage image) { vk.destroyImage(backend.device, image, nullptr); },
+                [&](VkDeviceMemory memory) { vk.freeMemory(backend.device, memory, nullptr); },
+                [](AHardwareBuffer* buffer) { AHardwareBuffer_release(buffer); }));
+        }
+        assert(secondary.empty());
+        assert(driver.bufferFrees == (failure == 1 ? 0u : 1u));
+        assert(driver.imageFrees == (failure == 0 || failure == 3 || failure == 5 || failure == 6 ? 1u : 0u));
+        assert(driver.memoryFrees == (failure == 0 || failure == 6 ? 1u : 0u));
+        if (failure == 7 || failure == 8) {
+            assert(bridgeAllocation.imageCreates == 0 && bridgeAllocation.memoryAllocations == 0);
+        }
+    }
+    std::puts("PASS production optional bridge budget admission and isolated rollback");
+}
 
 void frameSlotAllocationContracts() {
     using Slot = VulkanBackend::FrameSlot;
@@ -1152,6 +1233,7 @@ void traceScopeContracts() {
 int main() {
     traceScopeContracts();
     frameSlotAllocationContracts();
+    bridgeBudgetAdmissionContracts();
     slotRetirementPreflightContracts();
     timeoutsPreserveWork();
     errorsStopWorkAndResize();

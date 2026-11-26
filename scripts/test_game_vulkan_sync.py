@@ -26,6 +26,7 @@ def main():
     jni_source = (native / "libretrodroidjni.cpp").read_text()
     methods = [
         "bool VulkanBackend::createFrameResources(",
+        "bool VulkanBackend::allocateBridgeImage(",
         "bool VulkanBackend::checkFrameResult(",
         "bool VulkanBackend::waitForFrame(",
         "bool VulkanBackend::canImportBridgeReadFence(",
@@ -57,7 +58,14 @@ def main():
         work = Path(temporary)
         (work / "android").mkdir()
         (work / "android/hardware_buffer.h").write_text(
-            "#pragma once\nstruct AHardwareBuffer;\nvoid AHardwareBuffer_release(AHardwareBuffer*);\n")
+            "#pragma once\\n#include <cstdint>\\nstruct AHardwareBuffer;\\n"
+            "struct AHardwareBuffer_Desc { uint32_t width, height, layers, format; uint64_t usage; };\\n"
+            "constexpr uint32_t AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT = 0x16;\\n"
+            "constexpr uint32_t AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM = 1;\\n"
+            "constexpr uint64_t AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE = 1ull << 8;\\n"
+            "constexpr uint64_t AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT = 1ull << 9;\\n"
+            "int AHardwareBuffer_allocate(const AHardwareBuffer_Desc*, AHardwareBuffer**);\\n"
+            "void AHardwareBuffer_release(AHardwareBuffer*);\\n")
         (work / "android/native_window.h").write_text(
             "#pragma once\nstruct ANativeWindow;\nvoid ANativeWindow_release(ANativeWindow*);\n"
             "int ANativeWindow_getWidth(ANativeWindow*);\nint ANativeWindow_getHeight(ANativeWindow*);\n")
@@ -165,6 +173,12 @@ def main():
         subprocess.run(command + [str(root / "scripts/native_game_vulkan_bridge_image_test.cpp"),
             "-o", str(bridge_image_binary)], check=True)
         subprocess.run([str(bridge_image_binary)], check=True, timeout=20)
+
+        bridge_budget_binary = work / "vulkan-bridge-budget-test"
+        subprocess.run(command + ["-I", str(native / "vulkan"),
+            str(root / "scripts/native_game_vulkan_bridge_budget_test.cpp"),
+            "-o", str(bridge_budget_binary)], check=True)
+        subprocess.run([str(bridge_budget_binary)], check=True, timeout=20)
 
         alternate_binary = work / "vulkan-alternate-policy-test"
         subprocess.run(command + [str(root / "scripts/native_game_vulkan_alternate_policy_test.cpp"),
