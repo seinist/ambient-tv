@@ -1,0 +1,138 @@
+diff --git a/app/src/main/java/com/limelight/nvstream/NvConnection.java b/app/src/main/java/com/limelight/nvstream/NvConnection.java
+--- a/app/src/main/java/com/limelight/nvstream/NvConnection.java
++++ b/app/src/main/java/com/limelight/nvstream/NvConnection.java
+@@ -53,6 +53,15 @@
+     private volatile boolean stopping = false;
+     private volatile NvHTTP activeHttp;
+     private Thread startThread;
++    private boolean resumeOnly;
++    private String expectedServerId;
++
++    // Called before start(), never mutated during the connection.
++    public synchronized void setAmbientStartPolicy(boolean resumeOnly, String expectedServerId) {
++        if (startThread != null) throw new IllegalStateException("Already started");
++        this.resumeOnly = resumeOnly;
++        this.expectedServerId = expectedServerId;
++    }
+     private final boolean isMonkey;
+     private final Context appContext;
+ 
+@@ -106,20 +115,26 @@
+         if (worker != null && worker != Thread.currentThread()) {
+             worker.interrupt();
+             try {
+-                worker.join();
++                // common-c resets its interrupt flag on entry to LiStartConnection.
++                // Repeat interruption until it exits; never free JNI while it is alive.
++                long deadline = android.os.SystemClock.elapsedRealtime() + 5000;
++                while (worker.isAlive()) {
++                    if (nativeSlotHeld.get()) MoonBridge.interruptConnection();
++                    worker.join(50);
++                    if (android.os.SystemClock.elapsedRealtime() >= deadline && worker.isAlive())
++                        throw new IllegalStateException("Moonlight starter is still stopping");
++                }
+             } catch (InterruptedException e) {
+                 Thread.currentThread().interrupt();
+                 throw new IllegalStateException("Interrupted while stopping Moonlight", e);
+             }
+         }
+         synchronized (MoonBridge.class) {
+-            if (nativeSlotHeld.compareAndSet(true, false)) {
+-                try {
+-                    MoonBridge.stopConnection();
+-                    MoonBridge.cleanupBridge();
+-                } finally {
+-                    connectionAllowed.release();
+-                }
++            if (nativeSlotHeld.get()) {
++                // A failed native cleanup must not release the global slot.
++                MoonBridge.stopConnection();
++                MoonBridge.cleanupBridge();
++                if (nativeSlotHeld.compareAndSet(true, false)) connectionAllowed.release();
+             }
+         }
+     }
+@@ -252,7 +267,9 @@
+ 
+         String serverInfo = h.getServerInfo(true);
+         if (stopping) return false;
+-        
++        if (expectedServerId != null && !expectedServerId.equals(NvHTTP.getXmlString(serverInfo, "uniqueid", true)))
++            throw new IOException("Moonlight server identity changed");
++
+         context.serverAppVersion = h.getServerVersion(serverInfo);
+         if (context.serverAppVersion == null) {
+             context.connListener.displayMessage("Server version malformed");
+@@ -372,6 +389,10 @@
+             return true;
+         }
+         else {
++            if (resumeOnly) {
++                context.connListener.displayMessage("ambient:resume-not-running");
++                return false;
++            }
+             return launchNotRunningApp(h, context);
+         }
+     }
+@@ -431,13 +452,9 @@
+                     }
+                     context.connListener.stageComplete(appName);
+                 } catch (HostHttpResponseException e) {
+-                    e.printStackTrace();
+-                    context.connListener.displayMessage(e.getMessage());
+                     context.connListener.stageFailed(appName, 0, e.getErrorCode());
+                     return;
+                 } catch (XmlPullParserException | IOException e) {
+-                    e.printStackTrace();
+-                    context.connListener.displayMessage(e.getMessage());
+                     context.connListener.stageFailed(appName, MoonBridge.ML_PORT_FLAG_TCP_47984 | MoonBridge.ML_PORT_FLAG_TCP_47989, 0);
+                     return;
+                 }
+@@ -498,6 +515,10 @@
+                 }
+             }
+         }, "ambient-moonlight-start");
++        startThread.setUncaughtExceptionHandler((thread, error) -> {
++            // The owner performs teardown. Never expose exception text/URLs to logs or UI.
++            connectionListener.stageFailed("Moonlight native startup", 0, -1);
++        });
+         startThread.start();
+     }
+     
+diff --git a/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java b/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
+--- a/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
++++ b/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java
+@@ -192,6 +192,8 @@
+                 .connectionPool(new ConnectionPool(0, 1, TimeUnit.MILLISECONDS))
+                 .hostnameVerifier(hv)
+                 .readTimeout(READ_TIMEOUT, TimeUnit.MILLISECONDS)
++                .callTimeout(20, TimeUnit.SECONDS)
++                .retryOnConnectionFailure(false)
+                 .connectTimeout(LONG_CONNECTION_TIMEOUT, TimeUnit.MILLISECONDS)
+                 .followRedirects(false)
+                 .followSslRedirects(false)
+@@ -469,10 +471,10 @@
+         }
+         
+         if (response.code() == 404) {
+-            throw new FileNotFoundException(completeUrl.toString());
++            throw new FileNotFoundException("Moonlight endpoint not found");
+         }
+         else {
+-            throw new HostHttpResponseException(response.code(), response.message());
++            throw new HostHttpResponseException(response.code(), "Moonlight request failed");
+         }
+     }
+ 
+@@ -495,7 +497,10 @@
+                     if (output.size() + count > limit) throw new IOException("Moonlight response exceeds limit");
+                     output.write(buffer, 0, count);
+                 }
+-                respString = new String(output.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
++                respString = java.nio.charset.StandardCharsets.UTF_8.newDecoder()
++                        .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
++                        .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
++                        .decode(java.nio.ByteBuffer.wrap(output.toByteArray())).toString();
+                 if (respString.toUpperCase(java.util.Locale.ROOT).contains("<!DOCTYPE") ||
+                         respString.toUpperCase(java.util.Locale.ROOT).contains("<!ENTITY"))
+                     throw new IOException("Moonlight XML declaration denied");
