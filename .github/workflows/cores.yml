@@ -198,7 +198,7 @@ jobs:
           cp "$lib" "$target"
           "$bin/llvm-strip" --strip-unneeded "$target"
           python3 scripts/check_elf_pages.py "$target"
-          python3 scripts/core_build_policy.py report --nm "$bin/llvm-nm" --binary "$target" \
+          python3 scripts/core_build_policy.py report --nm "$bin/llvm-nm" --readelf "$bin/llvm-readelf" --binary "$target" \
             --log reports/build.log --profile "$PROFILE" --core "$CORE" --abi "$ABI" \
             --commit "$CORE_COMMIT" --ndk "$NDK_VERSION" --build-cwd "$build_cwd" --output reports/build.json
           cat reports/build.json
