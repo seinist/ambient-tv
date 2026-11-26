@@ -95,6 +95,7 @@ class MpvPlaybackController(
     private val queries = ConcurrentHashMap<String, Query>()
     private val sampledValues = mutableMapOf<String, Any?>() // owner thread only
     private var publishedReadings: Map<String, Any?> = emptyMap() // owner thread only
+    private var lastTickSampleAt = 0L // main thread only
     private var sampledMediaInfoGeneration = -1 // owner thread only
     private val previousAudioRelease = nativeAudioReleases.snapshot()
     private val createdAt = SystemClock.elapsedRealtime()
@@ -141,7 +142,12 @@ class MpvPlaybackController(
                 com.ambient.tv.diagnostics.CrashBreadcrumbs.add("mpv", report)
             }
             backendUnresponsive = stalled
-            mailbox.submit("sample") { sample() }
+            val fast = openingPhase || playIntent || pendingSeek.isPending || stalled ||
+                queries.values.any { now - it.requested <= 2_500L }
+            if (fast || now - lastTickSampleAt >= 1_000L) {
+                lastTickSampleAt = now
+                mailbox.submit("sample") { sample() }
+            }
             main.postDelayed(this, 250L)
         }
     }
