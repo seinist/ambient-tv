@@ -21,7 +21,7 @@ diff --git a/src/main/cpp/fpssync.cpp b/src/main/cpp/fpssync.cpp
 diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
 --- a/src/main/cpp/libretrodroid.cpp
 +++ b/src/main/cpp/libretrodroid.cpp
-@@ -789,3 +789,12 @@
+@@ -789,3 +789,15 @@
  void LibretroDroid::step() {
      checkVulkanFrameError();
 +    // GLSurfaceView swaps AFTER step returns. Wait for the previous deadline
@@ -31,22 +31,25 @@ diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
 +    using WorkClock = std::chrono::steady_clock;
 +    const bool trackRewindWork = rewindEnabled && rewindBuffer && !rewinding && frameSpeed <= 1;
 +    const auto workStart = trackRewindWork ? WorkClock::now() : WorkClock::time_point{};
++    if (trackRewindWork) rewindTimeline.observeFrameStart(static_cast<uint64_t>(
++        std::chrono::duration_cast<std::chrono::nanoseconds>(workStart.time_since_epoch()).count()));
++    else rewindTimeline.resetFrameObservation();
 +    uint64_t captureNs = 0;
 +    unsigned measuredFrames = 0;
      // Continuing from a paused seek keeps the shown point; newer history is gone.
-@@ -794,3 +803,6 @@
+@@ -794,3 +806,6 @@
      VulkanBackend::getInstance().invalidateNativeFrame();
      if (rewinding && rewindBuffer) {
 +        // Rewind does not use the forward advanceFrames path. Keep the pacing
 +        // clock current without emulating extra frames or changing rewind distances.
 +        if (fpsSync && frameSpeed <= 1) fpsSync->advanceFrames();
          bool hadAudio = audioEnabled;
-@@ -856,3 +868,4 @@
+@@ -856,3 +871,4 @@
          const bool recording = rewindEnabled && rewindBuffer;
          if (recording && frames > 0 && rewindTimeline.shouldCapture(*rewindBuffer)) {
 +            const auto captureStart = trackRewindWork ? WorkClock::now() : WorkClock::time_point{};
              const size_t sz = core->retro_serialize_size();
-@@ -866,7 +879,10 @@
+@@ -866,7 +882,10 @@
                  clearRewindBuffer();
              }
 +            if (trackRewindWork) captureNs = static_cast<uint64_t>(
@@ -57,7 +60,7 @@ diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
          // frame to draw a rewind preview can therefore never advance past live play.
 +        if (trackRewindWork) measuredFrames = frames;
          for (size_t i = 0; i < frames; i++) {
-@@ -920,8 +936,14 @@
+@@ -920,8 +939,14 @@
          renderPrimaryFrame();
      }
  
@@ -87,54 +90,84 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
 diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
 --- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
 +++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
-@@ -300,4 +300,20 @@
+@@ -300,4 +300,16 @@
      private var previewModeEnabled = false
  
 -    private val retroGLEventsSubject = MutableSharedFlow<GLRetroEvents>(1)
-+    // Lifecycle readiness and sampled frame pulses must have independent replay slots.
-+    // A delayed collector cannot lose SurfaceCreated to an unrelated FrameRendered.
-+    private val surfaceEvents = MutableSharedFlow<GLRetroEvents>(
-+        replay = 1, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
++    private val renderEvents = GameRenderEvents<GLRetroEvents>(
++        GLRetroEvents.SurfaceCreated, GLRetroEvents.FrameRendered,
 +    )
-+    private val frameEvents = MutableSharedFlow<GLRetroEvents>(
-+        replay = 1, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
-+    )
-+    private val retroGLEventsSubject = kotlinx.coroutines.flow.merge(surfaceEvents, frameEvents)
-+    private var lastFrameEventNs = 0L
++    private val retroGLEventsSubject = renderEvents.events
 +
-+    private fun emitFrameRendered() {
-+        val now = System.nanoTime()
-+        if (lastFrameEventNs != 0L && now - lastFrameEventNs < 100_000_000L) return
-+        lastFrameEventNs = now
-+        frameEvents.tryEmit(GLRetroEvents.FrameRendered)
++    private fun emitFrameRendered() = renderEvents.frameRendered(System.nanoTime())
++
++    // Trace only on demand; no per-frame coroutine or allocations during normal play.
++    private inline fun traceGameStep(name: String, block: () -> Unit) {
++        val tracing = android.os.Trace.isEnabled()
++        if (tracing) android.os.Trace.beginSection(name)
++        try { block() } finally { if (tracing) android.os.Trace.endSection() }
 +    }
      private val retroGLIssuesErrors = MutableSharedFlow<Int>(1)
-@@ -770,5 +786,3 @@
-                     tick()
+@@ -770,5 +782,3 @@
+-                    tick()
++                    traceGameStep("AmbientGame netplay step") { tick() }
 -                    lifecycle?.coroutineScope?.launch {
 -                        retroGLEventsSubject.emit(GLRetroEvents.FrameRendered)
 -                    }
 +                    emitFrameRendered()
                  } else {
-@@ -786,5 +800,3 @@
+@@ -786,5 +796,3 @@
                          bfiShowBlackNext = true
 -                        lifecycle?.coroutineScope?.launch {
 -                            retroGLEventsSubject.emit(GLRetroEvents.FrameRendered)
 -                        }
 +                        emitFrameRendered()
                      }
-@@ -793,5 +805,3 @@
-                     LibretroDroid.step(this@GLRetroView)
+@@ -793,5 +801,3 @@
+-                    LibretroDroid.step(this@GLRetroView)
++                    traceGameStep("AmbientGame native step") { LibretroDroid.step(this@GLRetroView) }
 -                    lifecycle?.coroutineScope?.launch {
 -                        retroGLEventsSubject.emit(GLRetroEvents.FrameRendered)
 -                    }
 +                    emitFrameRendered()
                  }
-@@ -816,5 +826,4 @@
+@@ -816,5 +822,3 @@
              lastSensorState = null
 -            lifecycle?.coroutineScope?.launch {
 -                retroGLEventsSubject.emit(GLRetroEvents.SurfaceCreated)
 -            }
-+            lastFrameEventNs = 0L
-+            surfaceEvents.tryEmit(GLRetroEvents.SurfaceCreated)
++            renderEvents.surfaceCreated()
          }
+diff --git a/src/main/java/com/swordfish/libretrodroid/GameRenderEvents.kt b/src/main/java/com/swordfish/libretrodroid/GameRenderEvents.kt
+new file mode 100644
+--- /dev/null
++++ b/src/main/java/com/swordfish/libretrodroid/GameRenderEvents.kt
+@@ -0,0 +1,28 @@
++package com.swordfish.libretrodroid
++
++import kotlinx.coroutines.ExperimentalCoroutinesApi
++import kotlinx.coroutines.channels.BufferOverflow
++import kotlinx.coroutines.flow.MutableSharedFlow
++import kotlinx.coroutines.flow.merge
++import kotlinx.coroutines.flow.buffer
++
++/** GL-thread producer; independent sticky readiness and sampled status streams. */
++class GameRenderEvents<T>(private val surface: T, private val frame: T) {
++    private val surfaceEvents = MutableSharedFlow<T>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
++    private val frameEvents = MutableSharedFlow<T>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
++    @OptIn(ExperimentalCoroutinesApi::class)
++    val events = merge(surfaceEvents, frameEvents).buffer(0)
++    private var lastFrameNs: Long? = null
++
++    fun surfaceCreated() {
++        lastFrameNs = null
++        surfaceEvents.tryEmit(surface)
++    }
++
++    fun frameRendered(nowNs: Long) {
++        val previous = lastFrameNs
++        if (previous != null && nowNs - previous < 100_000_000L) return
++        lastFrameNs = nowNs
++        frameEvents.tryEmit(frame)
++    }
++}
