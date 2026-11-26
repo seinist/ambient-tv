@@ -24,7 +24,7 @@ rewind and input paths. It does not change the active core or user options.
 Examples (after merging the workflow):
     ./build.sh cores snes9x,mgba --profile thinlto --abis arm64-v8a,armeabi-v7a
     ./build.sh cores pcsx_rearmed,gpsp --profile o3-thinlto --abis arm64-v8a
-    LIBRETRO_NATIVE_PROFILE=thinlto ./build.sh arm64
+    ./gradlew :libretrodroid:assembleRelease -PAPK_ABI=arm64 -PLIBRETRO_NATIVE_PROFILE=thinlto -PLIBRETRO_NATIVE_EXPERIMENT=true
 
 ## Acceptance and remaining stages
 
@@ -150,3 +150,47 @@ warm runs. The markers do not measure asynchronous audio callbacks, GPU
 completion after submission, or presentation latency. The pinned native patch
 must still pass a clean apply and Android compile in CI before the tracepoints
 are considered validated.
+
+## Stage 5 — corrective audit work (current candidate branch)
+
+- The PR smoke matrix has 25 jobs. The complete comparison matrices are
+  explicit, artifact-only dispatches (208 jobs each for 26 cores × 4 ABIs
+  × 2 profiles); release publication remains full baseline only.
+  `./build.sh cores --comparison baseline-thinlto --ref perf/libretro-core-builds`
+  and `./build.sh cores --comparison o3-o3-thinlto --ref perf/libretro-core-builds`.
+  Compiler-object cache keys include pin, ABI, NDK, profile and recipe hashes;
+  the selected ELF is still checked for identity, alignment, exports and
+  dynamic dependencies after every build.
+- The selected-library audit follows the final link command through objects and
+  locally produced archives, reports unrelated and unresolved inputs, and
+  fails closed on unaudited candidate-local inputs. SwanStation's upstream
+  automatic IPO remains unchanged in baseline builds; explicit experiments
+  disable the automatic block and report effective LTO modes.
+- Experimental native Gradle profiles require the explicit
+  `-PLIBRETRO_NATIVE_EXPERIMENT=true` opt-in. The app release variant uses a
+  separate application ID, version name suffix and debug signing for these
+  experiments. The independent native-profile workflow builds the actual
+  Gradle release library and audits the Ninja-expanded command database.
+- The trace transformation runs after the complete pinned patch series and
+  requires exactly two step calls, one netplay call and one rewind-seek call.
+  Trace section names distinguish all four paths. The registry mutex is no
+  longer acquired by every core perf_stop; counter objects remain core-owned
+  and concurrent access to the same counter is outside the callback contract.
+- Six additional pinned core recipes now have effective macro checks:
+  Gambatte, Genesis Plus GX, Beetle PCE Fast, Beetle SuperGrafx, Beetle NGP and
+  Beetle WonderSwan. These preserve existing upstream RGB565, ARM assembly,
+  fixed-point or in-memory loading paths. This is build evidence, not a
+  claim of new runtime acceleration.
+- Off-device Perfetto analysis: export CSV using
+  `SELECT name, ts, dur FROM slice WHERE name GLOB 'AmbientTV:Libretro/*'`.
+  Run `python3 scripts/analyze_libretro_trace.py slices.csv --fps 60` using
+  the actual content frame rate. Optionally add `--thermal thermal.csv` with
+  timestamps on the same nanosecond clock and Android status (0..6), when
+  real thermal samples are available. The analysis reports nearest-rank
+  p50/p95/p99, max, core-budget overruns and thermal-status groupings. This
+  is synchronous core execution, not display latency or full-frame deadlines.
+  No percentile computation runs on the Android emulation thread.
+
+All Stage 5 changes require fresh CI. Earlier green runs do not validate
+this new code. No runtime improvement, full catalog completion, or native
+candidate promotion is claimed before measured Android results.
