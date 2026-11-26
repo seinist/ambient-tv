@@ -23,6 +23,11 @@ on:
         type: choice
         options: [baseline, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2]
         default: baseline
+      comparison:
+        description: Paired full-catalog builds (artifact-only; baseline profile required)
+        type: choice
+        options: [none, baseline-thinlto, o3-o3-thinlto]
+        default: none
   pull_request:
     paths:
       - cores/cores.json
@@ -42,7 +47,7 @@ on:
       - scripts/test_core_build_policy.py
 
 concurrency:
-  group: cores-${{ github.ref }}-${{ (github.event_name == 'push' || inputs.publish) && 'release' || (inputs.profile || 'baseline') }}
+  group: cores-${{ github.ref }}-${{ (github.event_name == 'push' || inputs.publish) && 'release' || format('{0}-{1}', inputs.profile || 'baseline', inputs.comparison || 'none') }}
   cancel-in-progress: true
 
 permissions:
@@ -66,11 +71,12 @@ jobs:
           ABIS: ${{ inputs.abis }}
           PROFILE: ${{ inputs.profile || 'baseline' }}
           PUBLISH: ${{ inputs.publish }}
+          COMPARISON: ${{ inputs.comparison || 'none' }}
         run: |
           set -euo pipefail
           matrix=$(python3 scripts/core_build_policy.py plan --catalog cores/cores.json \
             --event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF" --publish "$PUBLISH" \
-            --cores "$ONLY" --abis "$ABIS" --profile "$PROFILE")
+            --cores "$ONLY" --abis "$ABIS" --profile "$PROFILE" --comparison "$COMPARISON")
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           echo "$matrix" | jq -r '.include[] | "\(.core) \(.abi) \(.profile)"'
       # Check the secret BEFORE spending 104 core-build jobs on a release that cannot
