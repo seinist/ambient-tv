@@ -38,6 +38,21 @@ part of the VLC patch glob or packaged APK. It must not be used to remove
   The copied frame-lease source/test was executed again successfully with
   ASan/UBSan. NDK syntax checks have not run here (no NDK installed).
 
+- GPU-only RGB sampling pass (vertex/fragment GLSL, immutable YCbCr sampler,
+  descriptor set, render pass and graphics pipeline), with normalized crop.
+  Regular UNORM/float RGBA output, no sRGB encoding or CPU upload.
+- Pinned libplacebo 5.264.1 C bridge: same-device/single-graphics-queue RGB
+  texture wrapping and explicit hold/release, RGB/full-range frame metadata.
+  Requires actual conversion fence completion before handoff.
+- Pinned VLC picture adapter holds the picture_t that owns the AImage,
+  duplicates the producer fd with CLOEXEC and distinguishes duplication failure.
+  Conservative FrameLease mode forbids early decoder return and releases the
+  picture only after GPU completion. No direct AImage_deleteAsync on VLC-owned images.
+- Extended shader and Android compile check. New bridge headers require the
+  pinned VLC/libplacebo build headers; they are not yet part of the production
+  build. Neither shader compilation nor the new Android syntax checks ran here
+  (no NDK, glslc or network clone access in the local environment).
+
 ## Required integration before activation
 
 1. Build these headers against the pinned Android NDK and supported Vulkan ABIs.
@@ -45,8 +60,9 @@ part of the VLC patch glob or packaged APK. It must not be used to remove
    buffers, not a synthetic RGB allocation. Validate the dedicated allocation,
    image and conversion using validation layers on hardware.
 2. Connect to the pinned VLC Android MediaCodec/AImageReader decoder context.
-   Hold each AImage until a release fence is delivered (or GPU completion is
-   proven). AHardwareBuffer reference ownership alone does not stop decoder reuse.
+   Use the picture adapter rather than the direct AImage deletion callback;
+   retain a bounded set of VLC pictures until GPU completion. AHardwareBuffer
+   reference ownership alone does not stop decoder reuse.
 3. Enable and verify AHB import, sampler YCbCr conversion, foreign queue family
    and external semaphore fd on the **same logical device as the renderer**.
    Wire the provided acquire/release and submission primitives into the real
@@ -56,9 +72,12 @@ part of the VLC patch glob or packaged APK. It must not be used to remove
    Never destroy an imported resource while a GPU submission references it.
 4. Integrate with libplacebo 5 on its rendering device. Its pinned import API
    does not expose Android opaque external formats; an integration patch must
-   provide either an external-format sampling pass into a renderer-owned texture
-   (no CPU round-trip) or genuine external-format texture support, with correct
-   command-buffer and fence lifetime. Do not mix independent Vulkan devices.
+   connect the sampling pass and RGB handoff to display.c, allocate/recycle
+   output RGB images and command buffers, configure the same logical device's
+   required extensions/features and queue locks, and safely reclaim textures
+   after libplacebo hold completion. Do not mix independent Vulkan devices.
+   Cache pipelines and immutable sampler descriptors per supported buffer format;
+   per-frame pipeline construction is not a production performance solution.
 5. Preserve source crop, orientation, range, transfer, primaries and HDR metadata;
    driver-suggested YCbCr conversion alone does not establish HDR correctness.
    Start with SDR only. Maintain copy-back fallback for unsupported formats or
