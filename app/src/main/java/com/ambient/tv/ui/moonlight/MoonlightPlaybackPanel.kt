@@ -163,6 +163,9 @@ internal fun BoxScope.MoonlightPlaybackPanel(
                     if (audio.rate > 0) RightPanelInfoRow(stringResource(R.string.moonlight_stats_audio,
                         audio.channels, audio.bufferFrames * 1000.0 / audio.rate, audio.underruns,
                         audio.droppedSamples))
+                    audio.estimatedQueuedMs?.let {
+                        RightPanelInfoRow(stringResource(R.string.moonlight_stats_audio_queue, it))
+                    }
                 }
                 MoonlightPlaybackPage.QUIT -> {
                     Text(stringResource(R.string.moonlight_quit_confirm_hint),

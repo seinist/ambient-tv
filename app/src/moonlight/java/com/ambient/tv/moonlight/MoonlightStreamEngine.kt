@@ -593,8 +593,13 @@ class MoonlightStreamEngine @Inject constructor(
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
             .setAudioAttributes(attributes)
             .setOnAudioFocusChangeListener { focus ->
-                if (focus == AudioManager.AUDIOFOCUS_LOSS || focus == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT ||
-                    focus == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) stopSession(session)
+                if (!isOwned(session)) return@setOnAudioFocusChangeListener
+                when (focus) {
+                    AudioManager.AUDIOFOCUS_LOSS -> stopSession(session)
+                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK ->
+                        session.audio?.setMuted(true)
+                    AudioManager.AUDIOFOCUS_GAIN -> session.audio?.setMuted(false)
+                }
             }.build()
         val granted = audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         if (!granted) return false
@@ -626,12 +631,12 @@ class MoonlightStreamEngine @Inject constructor(
     private fun finishStopped(session: Active) {
         runCatching { releaseAudioFocus(session) }
         val videoReleased = runCatching { session.video?.finishCleanup() != false }.getOrDefault(false)
-        runCatching { session.audio?.cleanup() }
-        if (!videoReleased) {
+        val audioReleased = runCatching { session.audio?.finishCleanup() != false }.getOrDefault(false)
+        if (!videoReleased || !audioReleased) {
             synchronized(lock) { if (active === session) {
                 session.stopIssued = false
                 mutable.value = mutable.value.copy(phase = MoonlightStreamPhase.FAILED,
-                    error = "Moonlight decoder teardown incomplete; retry or restart the app", retryable = false)
+                    error = "Moonlight renderer teardown incomplete; retry or restart the app", retryable = false)
             } }
             return
         }

@@ -21,10 +21,20 @@ class MoonlightAudioTrackRenderer(private val onError: (String) -> Unit) : Audio
     private var failures = 0
     private var lastUnderruns = 0
     private var lastTuneNanos = 0L
+    private var stableIntervals = 0
+    private var minimumFrames = 0
+    private var pending = ShortArray(0)
+    private var pendingOffset = 0
+    private var pendingLength = 0
+    private var pendingSince = 0L
+    private var writtenFrames = 0L
+    private var muted = false
+    private var recoveryAttempts = 0
+    private val timestamp = android.media.AudioTimestamp()
 
     override fun setup(configuration: MoonBridge.AudioConfiguration, sampleRate: Int, samplesPerFrame: Int): Int =
         synchronized(lock) {
-            releaseLocked()
+            if (!releaseLocked()) return@synchronized -1
             if (sampleRate !in 8000..192000 || samplesPerFrame !in 1..8192) return@synchronized -1
             inputChannels = configuration.channelCount
             if (inputChannels !in setOf(2, 6, 8)) return@synchronized -1
@@ -35,6 +45,10 @@ class MoonlightAudioTrackRenderer(private val onError: (String) -> Unit) : Audio
                 track = candidate
                 outputChannels = count
                 scratch = if (count != inputChannels) ShortArray(samplesPerFrame * count) else ShortArray(0)
+                pending = ShortArray(samplesPerFrame * count)
+                minimumFrames = candidate.bufferSizeInFrames
+                pendingLength = 0
+                writtenFrames = 0L
                 return@synchronized 0
             }
             -1
@@ -77,7 +91,7 @@ class MoonlightAudioTrackRenderer(private val onError: (String) -> Unit) : Audio
         synchronized(lock) {
             val t = track ?: return
             try {
-                t.play()
+                if (!muted) t.play()
                 playing = true
             } catch (_: Exception) {
                 onError("Moonlight audio output could not start")
@@ -88,7 +102,7 @@ class MoonlightAudioTrackRenderer(private val onError: (String) -> Unit) : Audio
     override fun playDecodedAudio(audioData: ShortArray) {
         synchronized(lock) {
             val t = track ?: return
-            if (!playing || audioData.isEmpty()) return
+            if (!playing || muted || audioData.isEmpty() || audioData.size % inputChannels != 0) return
             val data: ShortArray
             val length: Int
             if (inputChannels != outputChannels) {
@@ -112,23 +126,50 @@ class MoonlightAudioTrackRenderer(private val onError: (String) -> Unit) : Audio
                 length = audioData.size
             }
             try {
-                // Drop only when the native/audio queues cannot keep up; never block Opus.
-                val written = if (MoonBridge.getPendingAudioDuration() < 40)
-                    t.write(data, 0, length, AudioTrack.WRITE_NON_BLOCKING) else 0
+                val now = System.nanoTime()
+                val backlog = MoonBridge.getPendingAudioDuration()
+                // Keep at most one PCM packet's tail. Never retain samples past a short
+                // latency budget or grow a second unbounded queue behind common-c.
+                if (backlog >= 40 || (pendingLength > 0 && now - pendingSince > 20_000_000L))
+                    discardPending()
+                if (backlog >= 40) { lostSamples += length; return }
+                if (pendingLength > 0) {
+                    val n = t.write(pending, pendingOffset, pendingLength, AudioTrack.WRITE_NON_BLOCKING)
+                    if (n < 0) { handleWriteError(n); lostSamples += length; return }
+                    writtenFrames += n / outputChannels
+                    pendingOffset += n
+                    pendingLength -= n
+                    // If the older tail could not drain, bound latency by dropping it.
+                    if (pendingLength > 0) discardPending()
+                }
+                val written = t.write(data, 0, length, AudioTrack.WRITE_NON_BLOCKING)
                 if (written < 0) {
                     lostSamples += length
-                    if (++failures >= 3) onError("Moonlight audio write failed ($written)")
+                    handleWriteError(written)
                     return
                 }
                 failures = 0
-                lostSamples += (length - written).coerceAtLeast(0)
-                val now = System.nanoTime()
+                writtenFrames += written / outputChannels
+                val remaining = length - written
+                if (remaining > 0) {
+                    if (remaining <= pending.size) {
+                        data.copyInto(pending, 0, written, length)
+                        pendingOffset = 0
+                        pendingLength = remaining
+                        pendingSince = now
+                    } else lostSamples += remaining
+                }
                 if (now - lastTuneNanos >= 2_000_000_000L) {
                     val underruns = t.underrunCount
+                    val buffer = t.bufferSizeInFrames
                     if (underruns > lastUnderruns) {
-                        val target = (t.bufferSizeInFrames + frameSamples)
-                            .coerceAtMost(minOf(t.bufferCapacityInFrames, rate / 12))
-                        if (target > t.bufferSizeInFrames) t.setBufferSizeInFrames(target)
+                        stableIntervals = 0
+                        val target = (buffer + frameSamples).coerceAtMost(minOf(t.bufferCapacityInFrames, rate / 12))
+                        if (target > buffer) t.setBufferSizeInFrames(target)
+                    } else if (++stableIntervals >= 10) {
+                        stableIntervals = 0
+                        val target = (buffer - frameSamples).coerceAtLeast(minimumFrames)
+                        if (target < buffer) t.setBufferSizeInFrames(target)
                     }
                     lastUnderruns = underruns
                     lastTuneNanos = now
@@ -139,28 +180,81 @@ class MoonlightAudioTrackRenderer(private val onError: (String) -> Unit) : Audio
         }
     }
 
+    private fun discardPending() {
+        lostSamples += pendingLength
+        pendingOffset = 0
+        pendingLength = 0
+    }
+
+    private fun handleWriteError(code: Int) {
+        discardPending()
+        if (code == AudioTrack.ERROR_DEAD_OBJECT && recoveryAttempts++ < 2) {
+            val wasPlaying = playing
+            if (releaseLocked()) {
+                val rebuilt = createTrack(outputChannels, rate, frameSamples)
+                if (rebuilt != null) {
+                    track = rebuilt
+                    minimumFrames = rebuilt.bufferSizeInFrames
+                    writtenFrames = 0L
+                    lastUnderruns = 0
+                    stableIntervals = 0
+                    failures = 0
+                    if (wasPlaying) start()
+                    return
+                }
+            }
+            onError("Moonlight audio device could not be restored")
+        } else if (++failures >= 3) onError("Moonlight audio write failed ($code)")
+    }
+
+    /** A transient focus loss mutes the local sink; the remote game and video continue. */
+    internal fun setMuted(value: Boolean) = synchronized(lock) {
+        if (muted == value) return@synchronized
+        muted = value
+        val t = track ?: return@synchronized
+        if (!playing) return@synchronized
+        try {
+            if (value) {
+                discardPending()
+                t.pause()
+                t.flush()
+                writtenFrames = 0L
+            } else t.play()
+        } catch (_: Exception) { onError("Moonlight audio focus recovery failed") }
+    }
+
     internal fun metrics(): MoonlightAudioMetrics = synchronized(lock) {
         val t = track
+        val queuedMs = if (t != null && playing && !muted && t.getTimestamp(timestamp)) {
+            val elapsed = (System.nanoTime() - timestamp.nanoTime).coerceAtLeast(0L)
+            val played = timestamp.framePosition + (elapsed * (rate / 1_000_000_000.0)).toLong()
+            ((writtenFrames - played).coerceAtLeast(0L) * 1000.0 / rate).takeIf { it <= 1000.0 }
+        } else null
         MoonlightAudioMetrics(outputChannels, rate, t?.bufferSizeInFrames ?: 0,
-            t?.underrunCount ?: 0, lostSamples)
+            t?.underrunCount ?: 0, lostSamples, queuedMs)
     }
 
     override fun stop() {
         synchronized(lock) {
             playing = false
+            discardPending()
             track?.let { runCatching { it.pause(); it.flush() } }
         }
     }
 
-    override fun cleanup() { synchronized(lock) { releaseLocked() } }
+    override fun cleanup() { finishCleanup() }
 
-    private fun releaseLocked() {
+    internal fun finishCleanup(): Boolean = synchronized(lock) { releaseLocked() }
+
+    private fun releaseLocked(): Boolean {
         playing = false
+        discardPending()
         track?.let {
             runCatching { it.pause() }
             runCatching { it.flush() }
-            runCatching { it.release() }
+            if (runCatching { it.release() }.isFailure) return false
         }
         track = null
+        return true
     }
 }

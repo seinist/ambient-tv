@@ -23,4 +23,5 @@
     <string name="moonlight_stats_hdr">HDR10</string>
     <string name="moonlight_stats_sdr">SDR</string>
     <string name="moonlight_stats_presented">Anzeigebestätigte Frames: %1$.1f FPS</string>
+    <string name="moonlight_stats_audio_queue">Geschätzte Audio-Warteschlange: %1$.1f ms</string>
 </resources>
