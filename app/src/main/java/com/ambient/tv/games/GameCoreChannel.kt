@@ -83,7 +83,7 @@ class GameCoreChannel @Inject constructor() {
     suspend fun build(core: GameCore, abi: String, source: GameCoreSource = GameCoreSource.AMBIENT): Download? = lock.withLock {
         if (!available) return@withLock null
         withContext(Dispatchers.IO) {
-            if (cachedAt == 0L || System.currentTimeMillis() - cachedAt !in 0 until CACHE_MS) {
+            if (cachedAt == 0L || System.currentTimeMillis() - cachedAt !in 0L until CACHE_MS) {
                 val releases = mutableListOf<Release>()
                 // Experiments must not push the production release outside the first page.
                 // A page of 100 complete core catalogs can exceed the metadata cap.
@@ -121,8 +121,8 @@ class GameCoreChannel @Inject constructor() {
                 }
                 val build = entry.manifest.cores.singleOrNull { it.core == core.id && it.abi == abi }
                 if (build == null) {
+                    if (expectedAsset in entry.assets) throw GameCoreSignatureException("core missing from signed manifest")
                     if (profile == "baseline") return@withContext null
-                    if (expectedAsset in entry.assets) throw GameCoreSignatureException("experimental core missing from signed manifest")
                     continue
                 }
                 if (build.asset != expectedAsset || !build.sha256.matches(Regex("[0-9a-fA-F]{64}")) || build.size <= 0)

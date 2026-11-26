@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from core_build_policy import plan
-from core_release_incremental import fingerprint, key, select, stage_reuse
+from core_release_incremental import fingerprint, key, select, stage_reuse, signed_history
 
 
 class IncrementalCoreReleaseTest(unittest.TestCase):
@@ -64,6 +64,54 @@ class IncrementalCoreReleaseTest(unittest.TestCase):
         result = select(matrix, records, set(records), "core-hotpaths", self.ndk)
         self.assertEqual([j["core"] for j in result["matrix"]["include"]], ["snes9x"])
         self.assertEqual(result["reuse"], [])
+
+    def test_signed_history_does_not_skip_missing_latest_experimental_asset(self):
+        profile = "core-hotpaths"
+        tag = f"core-experiments-{profile}--20261126-2-1"
+        older = f"core-experiments-{profile}--20261126-1-1"
+        entry = {"core": "mgba", "abi": "arm64-v8a",
+                 "asset": "arm64-v8a--mgba_libretro_android.so.zip",
+                 "sha256": "a" * 64, "size": 20}
+        releases = [
+            {"tag_name": tag, "id": 2, "draft": False, "prerelease": True,
+             "published_at": "2026-11-26T20:00:00Z", "assets": []},
+            {"tag_name": older, "id": 1, "draft": False, "prerelease": True,
+             "published_at": "2026-11-26T19:00:00Z",
+             "assets": [{"name": entry["asset"], "size": 20}]},
+        ]
+        def fake_gh(*args):
+            if args[0] == "api":
+                return json.dumps([releases])
+            self.assertEqual(args[2], tag)
+            directory = Path(args[args.index("--dir") + 1])
+            (directory / "manifest.json").write_text(json.dumps({
+                "version": 1, "tag": tag, "profile": profile, "cores": [entry]}))
+            return ""
+        with patch("core_release_incremental.gh", side_effect=fake_gh), \
+                patch("core_release_incremental.subprocess.run") as verify:
+            records, latest = signed_history("owner/repo", profile, {key(entry)})
+        self.assertEqual(records, {key(entry): None})
+        self.assertEqual(latest, {key(entry)})
+        verify.assert_called_once()
+
+    def test_fingerprint_ignores_catalog_order_and_release_metadata(self):
+        matrix = plan(self.catalog, "push", "refs/heads/main", False)
+        job = matrix["include"][0]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".github/workflows").mkdir(parents=True)
+            (root / "scripts").mkdir()
+            source = Path(__file__).resolve().parents[1]
+            from core_release_incremental import SHARED
+            for name in SHARED:
+                (root / "scripts" / name).write_bytes((source / "scripts" / name).read_bytes())
+            workflow = root / ".github/workflows/cores.yml"
+            workflow.write_text((source / ".github/workflows/cores.yml").read_text())
+            before = fingerprint(job, self.ndk, root)
+            workflow.write_text(workflow.read_text() + "\\n# release title only\\n")
+            self.assertEqual(before, fingerprint(job, self.ndk, root))
+            workflow.write_text(workflow.read_text().replace("android-29", "android-30"))
+            self.assertNotEqual(before, fingerprint(job, self.ndk, root))
 
     def test_reuse_rejects_tampered_asset(self):
         record = {"tag": "cores-1", "entry": {"core": "mgba", "abi": "arm64-v8a",

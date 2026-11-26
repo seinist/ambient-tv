@@ -139,7 +139,7 @@ class GameCoreManager @Inject constructor(
             }
             if (found != null) {
                 val (build, url, tag) = found
-                val archive = fetchVerifiedZip(url, build.sha256, onProgress)
+                val archive = fetchVerifiedZip(url, build.sha256, build.size, onProgress)
                 try {
                     return@withContext archive.inputStream().use { input ->
                         install(core, input, zipped = true, origin = (if (source.experimentalProfile != null) SOURCE_EXPERIMENT_PREFIX else SOURCE_AMBIENT_PREFIX) + tag, source = source)
@@ -286,7 +286,8 @@ class GameCoreManager @Inject constructor(
      * Streams signed core assets to a temporary file while hashing. Never allocates the
      * entire ZIP on a TV with limited Java heap; a failed signature leaves no install.
      */
-    private fun fetchVerifiedZip(url: String, expectedSha: String, onProgress: (Float?) -> Unit): File {
+    private fun fetchVerifiedZip(url: String, expectedSha: String, expectedSize: Long, onProgress: (Float?) -> Unit): File {
+        if (expectedSize !in 1..MAX_CORE_ZIP) throw GameCoreSignatureException("Invalid signed core size")
         val temporary = File.createTempFile("libretro-signed-", ".zip", context.cacheDir)
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 15_000
@@ -296,7 +297,7 @@ class GameCoreManager @Inject constructor(
         try {
             if (connection.responseCode != HttpURLConnection.HTTP_OK) throw IOException("HTTP ${connection.responseCode}")
             val total = connection.contentLengthLong.takeIf { it > 0 }
-            if (total != null && total > MAX_CORE_ZIP) throw IOException("Core ZIP too large")
+            if (total != null && total != expectedSize) throw GameCoreSignatureException("Core ZIP size does not match signed manifest")
             val digest = java.security.MessageDigest.getInstance("SHA-256")
             var count = 0L
             connection.inputStream.use { input ->
@@ -305,7 +306,7 @@ class GameCoreManager @Inject constructor(
                     while (true) {
                         val read = input.read(buffer)
                         if (read < 0) break
-                        if (read.toLong() > MAX_CORE_ZIP - count) throw IOException("Core ZIP too large")
+                        if (read.toLong() > expectedSize - count) throw GameCoreSignatureException("Core ZIP exceeds signed size")
                         out.write(buffer, 0, read)
                         digest.update(buffer, 0, read)
                         count += read
@@ -313,7 +314,7 @@ class GameCoreManager @Inject constructor(
                     }
                 }
             }
-            if (total != null && count != total) throw IOException("Incomplete core download")
+            if (count != expectedSize) throw GameCoreSignatureException("Core ZIP size does not match signed manifest")
             val actual = digest.digest().joinToString("") { "%02x".format(it) }
             if (!actual.equals(expectedSha, ignoreCase = true))
                 throw GameCoreSignatureException("Core ZIP checksum does not match signed manifest")
