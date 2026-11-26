@@ -905,3 +905,20 @@ tasks.matching { it.name == "packageRelease" }.configureEach {
     finalizedBy(generateUpdateManifest)
 }
 // generateUpdateManifest depends on packageRelease, so Gradle never runs it after a failed packageRelease.
+
+
+// Guard the resolved runtime graph, not merely the direct dependency declarations.
+configurations.configureEach {
+    if (name.endsWith("RuntimeClasspath") && isCanBeResolved) {
+        incoming.afterResolve {
+            val forbidden = resolutionResult.allComponents.mapNotNull { it.moduleVersion }
+                .filter {
+                    (it.group == "org.chromium.net" && it.name in setOf("cronet-embedded", "cronet-common")) ||
+                        it.name == "cronet-okhttp"
+                }
+            check(forbidden.isEmpty()) {
+                "Unexpected embedded SmartTube Cronet dependencies: " + forbidden.joinToString()
+            }
+        }
+    }
+}
