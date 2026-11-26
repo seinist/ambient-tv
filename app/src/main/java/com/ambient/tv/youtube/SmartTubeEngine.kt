@@ -99,6 +99,7 @@ class SmartTubeEngine @Inject constructor(
     /** SmartTube's client selector is global: format loads that may switch it run one at a time. */
     private val formatClientMutex = kotlinx.coroutines.sync.Mutex()
     private val playbackWarmupRequested = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val localPlaybackWarmupRequested = java.util.concurrent.atomic.AtomicBoolean(false)
     private val backgroundScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
     private val metadataInflight = java.util.concurrent.ConcurrentHashMap<String, CompletableDeferred<Result<YouTubeMetadata>?>>()
     /** Subscription changes of this session; cached metadata still carries the state it was loaded with. */
@@ -119,21 +120,42 @@ class SmartTubeEngine @Inject constructor(
     }
 
     /**
-     * Hide one-time MediaServiceCore initialization and saved format-client restoration behind
-     * the first SmartTube browse request, before the viewer presses Play. No video ID is probed,
-     * no signed URL is cached, and Home never waits for this optional task.
+     * Called only by a requested SmartTube surface (including cached Home cards).
+     * No speculative video request, decoder instance or signed URL is created.
      */
-    private fun requestPlaybackWarmup() {
-        if (!available || !playbackWarmupRequested.compareAndSet(false, true)) return
+    internal fun requestPlaybackWarmup() {
+        if (!available) return
+        if (localPlaybackWarmupRequested.compareAndSet(false, true)) {
+            backgroundScope.launch {
+                runCatching {
+                    val started = System.nanoTime()
+                    YouTubeDeviceVideo.warmup()
+                    val native = appPreferences.playbackBackendKey == "vlc" ||
+                        com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable
+                    if (native) YouTubeStreamRelay.warmup()
+                    com.ambient.tv.ui.player.logPlaybackStartup("youtube", "local_warmup", started, "native=$native")
+                }.onFailure {
+                    localPlaybackWarmupRequested.set(false)
+                    Timber.d(it, "SmartTube local playback warmup failed")
+                }
+            }
+        }
+        if (onlineServices.state.value.internetUnavailable ||
+            !playbackWarmupRequested.compareAndSet(false, true)) return
         backgroundScope.launch {
             runCatching {
-                formatClientMutex.withLock {
-                    val started = System.nanoTime()
-                    service("getMediaItemService")
-                    restoreFormatClientOnce()
-                    com.ambient.tv.ui.player.logPlaybackStartup("youtube", "format_warmup", started)
+                val started = System.nanoTime()
+                // Account restoration must never hold the shared format-client slot.
+                service("getMediaItemService")
+                // Actual playback wins: it restores the client itself if already in the slot.
+                if (formatClientMutex.tryLock()) {
+                    try { restoreFormatClientOnce() } finally { formatClientMutex.unlock() }
                 }
-            }.onFailure { Timber.d(it, "SmartTube playback warmup failed") }
+                com.ambient.tv.ui.player.logPlaybackStartup("youtube", "format_warmup", started)
+            }.onFailure {
+                playbackWarmupRequested.set(false)
+                Timber.d(it, "SmartTube playback warmup failed")
+            }
         }
     }
 
@@ -553,12 +575,18 @@ class SmartTubeEngine @Inject constructor(
     }
 
     suspend fun playback(videoId: String): YouTubePlayback {
-        YouTubeLocalProgress.awaitReady()
         val started = System.nanoTime()
         val cached = playbackMetadata.get(videoId)
         return prepareYouTubePlayback(cached,
             loadMetadata = { com.ambient.tv.util.suspendResult { metadata(videoId) }.getOrNull() },
-            loadStream = { resolvePlaybackStream(videoId) },
+            loadStream = {
+                // Network resolution overlaps local SQL priming; resume is still canonical.
+                val stream = resolvePlaybackStream(videoId)
+                val progressStarted = System.nanoTime()
+                YouTubeLocalProgress.awaitReady()
+                com.ambient.tv.ui.player.logPlaybackStartup("youtube", "progress_ready", progressStarted)
+                stream
+            },
         ).also {
             com.ambient.tv.ui.player.logPlaybackStartup("youtube", "prepared", started, "cached_metadata=${cached != null}")
         }
@@ -688,19 +716,20 @@ class SmartTubeEngine @Inject constructor(
      */
     private fun restoreFormatClientOnce() {
         if (formatClientRestored) return
-        formatClientRestored = true
         runCatching {
             val data = Class.forName("com.liskovsoft.youtubeapi.service.internal.MediaServiceData").getMethod("instance").invoke(null)
-            val ordinal = data?.callInt("getVideoInfoType")?.takeIf { it >= 0 } ?: return
+            val ordinal = data?.callInt("getVideoInfoType")?.takeIf { it >= 0 } ?: return@runCatching
             val service = Class.forName("com.liskovsoft.youtubeapi.videoinfo.V2.VideoInfoService").getMethod("instance").invoke(null)
-            val client = Class.forName("com.liskovsoft.youtubeapi.common.helpers.AppClient").enumConstants?.getOrNull(ordinal) ?: return
+            val client = Class.forName("com.liskovsoft.youtubeapi.common.helpers.AppClient").enumConstants?.getOrNull(ordinal) ?: return@runCatching
             val known = service.javaClass.getDeclaredField("VIDEO_INFO_TYPE_LIST").apply { isAccessible = true }.get(null) as? Array<*>
-            if (known?.contains(client) != true) return
-            for (name in listOf("mNextInfoType", "mActualInfoType")) {
-                service.javaClass.getDeclaredField(name).apply { isAccessible = true }.set(service, client)
+            if (known?.contains(client) != true) return@runCatching
+            val fields = listOf("mNextInfoType", "mActualInfoType").map {
+                service.javaClass.getDeclaredField(it).apply { isAccessible = true }
             }
+            fields.forEach { it.set(service, client) }
             Timber.i("SmartTube format client restored: %s", client)
-        }.onFailure { Timber.d(it, "SmartTube format client restore") }
+        }.onSuccess { formatClientRestored = true }
+            .onFailure { Timber.d(it, "SmartTube format client restore") }
     }
 
     private suspend fun loadPlayableFormatInfo(media: Any, videoId: String): Any {
@@ -709,6 +738,8 @@ class SmartTubeEngine @Inject constructor(
         com.ambient.tv.ui.player.logPlaybackStartup("youtube", "format_slot", queuedAt)
         val caller = kotlin.coroutines.coroutineContext
         restoreFormatClientOnce()
+        // Do not overwrite a client selected by an actual format request with an old saved one.
+        formatClientRestored = true
         resolveYouTubeFormatInfo(
             load = { allowInnertube -> loadFormatInfo(media, videoId, allowInnertube) },
             switchClient = {
