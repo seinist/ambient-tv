@@ -69,7 +69,7 @@ on:
       - scripts/test_core_build_policy.py
 
 concurrency:
-  group: cores-${{ github.ref }}-${{ (github.event_name == 'push' || inputs.publish) && 'release' || (github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || 'pr') }}
+  group: cores-${{ github.ref }}-${{ (github.event_name == 'push' || inputs.publish) && 'release' || (inputs.publish_experimental && format('release-experimental-{0}', inputs.profile) || (github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || 'pr')) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -152,6 +152,7 @@ jobs:
           key="$RUNNER_TEMP/ambient-cores-key.pem"
           pub="$RUNNER_TEMP/ambient-cores-public.pem"
           trap 'rm -f "$key" "$pub"' EXIT
+          umask 077
           printf '%s\n' "$SIGNING_KEY" > "$key"
           openssl pkey -in "$key" -pubout -out "$pub"
           cmp -s "$pub" cores/signing-public.pem || {
@@ -345,6 +346,19 @@ jobs:
           set -euo pipefail
           [ -n "$SIGNING_KEY" ] || { echo "::error::CORES_SIGNING_KEY is not set (scripts/cores_signing_key.sh)"; exit 1; }
           [ -f cores/signing-public.pem ] || { echo "::error::cores/signing-public.pem is missing (scripts/cores_signing_key.sh)"; exit 1; }
+          # Reject a stale queued/retried release when main's build inputs changed.
+          # Unrelated application commits do not invalidate a core release.
+          assert_current_recipe() {
+            git fetch --no-tags --depth=1 origin refs/heads/main
+            if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- cores/cores.json cores/signing-public.pem \
+                .github/workflows/cores.yml scripts/core_build_policy.py scripts/core_acceleration_audit.py \
+                scripts/core_link_evidence.py scripts/check_elf_pages.py scripts/core_release_incremental.py \
+                scripts/core_hotpath_patches.py scripts/core_hotpath_remaining.py; then
+              echo "::error::Core release inputs changed on main; dispatch a fresh release"
+              exit 1
+            fi
+          }
+          assert_current_recipe
           # Require every planned artifact, and ensure the profile cannot cross channels.
           if [ "$EXPERIMENT" = true ]; then
             [[ "$PROFILE" != baseline && "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || exit 1
@@ -353,7 +367,7 @@ jobs:
           else
             [ "$PROFILE" = baseline ] || exit 1
             prefix="core-"
-            tag="cores-$(date -u +%Y%m%d)-$GITHUB_RUN_NUMBER"
+            tag="cores-$(date -u +%Y%m%d)-$GITHUB_RUN_NUMBER-$GITHUB_RUN_ATTEMPT"
           fi
           jq -e --arg p "$PROFILE" 'all(.include[]; .profile == $p)' <<< "$EXPECTED_MATRIX" >/dev/null
           mapfile -t expected < <(jq -r '.include[] | "\(.artifact)/\(.core)_libretro_android.so"' <<< "$EXPECTED_MATRIX")
@@ -402,5 +416,11 @@ jobs:
           else
             title="Ambient TV – Libretro Cores (Stable) – $(date -u +%Y-%m-%d)"
           fi
-          gh release create "$tag" release/* --title "$title" "${release_args[@]}" --target "$GITHUB_SHA" \
+          # Publish only after every asset has been uploaded to an invisible draft.
+          gh release create "$tag" release/* --draft --title "$title" "${release_args[@]}" --target "$GITHUB_SHA" \
             --notes "Libretro cores at ${GITHUB_SHA::7} (16 KB pages). Profile $PROFILE; ${#expected[@]} rebuilt, $((count - ${#expected[@]})) verified/reused."
+          gh release view "$tag" --json assets --jq '.assets[].name' | LC_ALL=C sort > "$RUNNER_TEMP/uploaded-assets"
+          find release -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort > "$RUNNER_TEMP/expected-assets"
+          cmp "$RUNNER_TEMP/uploaded-assets" "$RUNNER_TEMP/expected-assets"
+          assert_current_recipe
+          gh release edit "$tag" --draft=false --latest=false

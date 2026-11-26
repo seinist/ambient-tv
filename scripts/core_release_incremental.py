@@ -53,9 +53,8 @@ def signed_history(repo, profile, desired, root=ROOT):
     for release in releases:
         tag = release["tag_name"]
         assets = {a["name"]: a for a in release["assets"]}
-        if latest_keys is not None and profile != "baseline" and not any(
-                f"{abi}--{core}_libretro_android.so.zip" in assets for core, abi in desired - records.keys()):
-            continue
+        if len(assets) != len(release["assets"]):
+            raise ValueError(f"{tag}: duplicate release assets")
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
             gh("release", "download", tag, "--repo", repo, "--dir", tmp,
@@ -80,9 +79,10 @@ def signed_history(repo, profile, desired, root=ROOT):
             # never quietly reuse an older version of that core.
             expected = f"{k[1]}--{k[0]}_libretro_android.so.zip"
             asset = assets.get(expected)
-            if e.get("asset") != expected or not HEX.fullmatch(e.get("sha256", "")):
+            if (e.get("asset") != expected or not HEX.fullmatch(e.get("sha256", ""))
+                    or not isinstance(e.get("size"), int) or e["size"] <= 0):
                 raise ValueError(f"{tag}: invalid signed asset")
-            records[k] = ({"tag": tag, "entry": e} if asset and asset["size"] == e.get("size") else None)
+            records[k] = ({"tag": tag, "entry": e} if asset and asset["size"] == e["size"] else None)
         if profile == "baseline" or desired <= records.keys():
             break
     return records, latest_keys

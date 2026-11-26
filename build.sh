@@ -1379,7 +1379,7 @@ run_cores_command() {
             local rows tag old title profile date run
             rows="$(gh api --paginate "repos/$repo/releases?per_page=100" --jq '.[] | select(.draft == false) | [.tag_name,.name] | @tsv')"
             while IFS=$'\t' read -r tag old; do
-                if [[ "$tag" =~ ^cores-([0-9]{4})([0-9]{2})([0-9]{2})-([0-9]+)$ ]]; then
+                if [[ "$tag" =~ ^cores-([0-9]{4})([0-9]{2})([0-9]{2})-([0-9]+)(-[0-9]+)?$ ]]; then
                     date="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}"
                     title="Ambient TV – Libretro Cores (Stable) – $date"
                 elif [[ "$tag" =~ ^core-experiments-(o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths)--([0-9]{4})([0-9]{2})([0-9]{2})-[0-9]+-[0-9]+$ ]]; then

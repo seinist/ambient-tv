@@ -86,11 +86,14 @@ class GameCoreChannel @Inject constructor() {
             if (cachedAt == 0L || System.currentTimeMillis() - cachedAt !in 0 until CACHE_MS) {
                 val releases = mutableListOf<Release>()
                 // Experiments must not push the production release outside the first page.
-                for (page in 1..5) {
+                // A page of 100 complete core catalogs can exceed the metadata cap.
+                // Never silently fall back because a fixed history window was exhausted.
+                for (page in 1..100) {
                     val batch = json.decodeFromString(ListSerializer(Release.serializer()),
-                        get("https://api.github.com/repos/${BuildConfig.CORES_REPO}/releases?per_page=100&page=$page").decodeToString())
+                        get("https://api.github.com/repos/${BuildConfig.CORES_REPO}/releases?per_page=10&page=$page").decodeToString())
                     releases += batch
-                    if (batch.size < 100) break
+                    if (batch.size < 10) break
+                    if (page == 100) throw IOException("Core release history exceeds supported search limit")
                 }
                 cachedReleases = releases
                 cachedAt = System.currentTimeMillis()
@@ -101,21 +104,26 @@ class GameCoreChannel @Inject constructor() {
                 .sortedByDescending { it.published.orEmpty() }
             for (release in candidates) {
                 val expectedAsset = "$abi--${core.id}_libretro_android.so.zip"
-                // A partial experimental release need not include this core/ABI.
-                if (profile != "baseline" && release.assets.none { it.name == expectedAsset }) continue
+                // Only the signed manifest may establish that a core is absent.
                 val entry = verified[release.tag] ?: run {
                     val assets = release.assets.associate { it.name to it.url }
+                    if (assets.size != release.assets.size) throw GameCoreSignatureException("duplicate release assets")
                     val bytes = get(assets["manifest.json"] ?: throw GameCoreSignatureException("manifest missing"))
                     val signature = get(assets["manifest.json.sig"] ?: throw GameCoreSignatureException("signature missing"))
                     if (!verify(bytes, signature, BuildConfig.CORES_PUBLIC_KEY)) throw GameCoreSignatureException("manifest signature invalid")
-                    val manifest = json.decodeFromString(GameCoreManifest.serializer(), bytes.decodeToString())
+                    val manifest = try {
+                        json.decodeFromString(GameCoreManifest.serializer(), bytes.decodeToString())
+                    } catch (_: kotlinx.serialization.SerializationException) {
+                        throw GameCoreSignatureException("invalid signed manifest")
+                    }
                     if (!matchesManifest(manifest, release.tag, profile)) throw GameCoreSignatureException("manifest channel mismatch")
                     VerifiedRelease(manifest, assets).also { verified[release.tag] = it }
                 }
                 val build = entry.manifest.cores.singleOrNull { it.core == core.id && it.abi == abi }
                 if (build == null) {
                     if (profile == "baseline") return@withContext null
-                    throw GameCoreSignatureException("experimental core missing from signed manifest")
+                    if (expectedAsset in entry.assets) throw GameCoreSignatureException("experimental core missing from signed manifest")
+                    continue
                 }
                 if (build.asset != expectedAsset || !build.sha256.matches(Regex("[0-9a-fA-F]{64}")) || build.size <= 0)
                     throw GameCoreSignatureException("invalid core manifest entry")
