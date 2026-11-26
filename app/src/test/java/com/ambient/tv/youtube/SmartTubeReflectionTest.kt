@@ -24,6 +24,28 @@ class SmartTubeReflectionTest {
         assertNotNull(target.cachedMethod("choose", arrayOf(true), true))
     }
 
+    @Test fun actualInvocationWrappersPreserveContracts() {
+        val target = Fixture()
+        assertTrue(target.hasMethod("getter", 0))
+        assertFalse(target.hasMethod("getter", 1))
+        assertEquals("value", target.call("getter"))
+        assertNull(target.call("missing"))
+        assertFalse(target.invokeDetailed("missing").found)
+        assertTrue(target.invokeDetailed("choose", true).found)
+        assertNotNull(target.invokeDetailed("choose", true).error)
+        assertFalse(target.invokeCompatible("choose", true).invoked)
+        assertTrue(target.invokeCompatible("nullable", null).invoked)
+    }
+
+    @Test fun signatureEvictionPreservesLookup() {
+        val target = Fixture()
+        repeat(600) { index ->
+            assertNull(target.cachedMethod("missing$index", arrayOf(index), false))
+        }
+        assertEquals(7, target.cachedMethod("choose", arrayOf(7), false)!!.invoke(target, 7))
+        assertEquals("value", target.call("getter"))
+    }
+
     @Test fun concurrentResolutionPreservesResults() {
         val target = Fixture()
         val pool = Executors.newFixedThreadPool(4)
