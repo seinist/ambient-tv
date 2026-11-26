@@ -33,7 +33,7 @@ internal class HlsRelayRoutes(
 
     /** Only the configured server receives the stream headers. No arbitrary localhost proxy. */
     @Synchronized fun register(url: HttpUrl, playlist: Boolean): String {
-        if (!vlcRelayOriginAllowed(origin, url) || url.username.isNotEmpty() || url.password.isNotEmpty())
+        if (!vlcRelayResourceAllowed(origin, url))
             throw IOException("Foreign or credential-bearing manifest resource refused")
         val key = Resource(url, playlist || vlcHlsPath(url) || vlcDashPath(url))
         entries[key]?.let { return it }
@@ -56,7 +56,7 @@ internal class HlsRelayRoutes(
     /** A template capability authorizes only the numeric substitutions declared in the MPD. */
     @Synchronized fun registerTemplate(template: DashRelayTemplate): String {
         val sample = template.resolve(List(template.slots.size) { "0" }) ?: throw IOException("Invalid DASH template")
-        if (!vlcRelayOriginAllowed(origin, sample) || sample.username.isNotEmpty() || sample.password.isNotEmpty())
+        if (!vlcRelayResourceAllowed(origin, sample))
             throw IOException("Foreign DASH template refused")
         if (template.slots.isEmpty()) return register(sample, false)
         val prefix = templates[template] ?: run {
@@ -86,7 +86,7 @@ internal class HlsRelayRoutes(
             val template = templatePaths["$rootPath/${tail.first()}"] ?: return null
             templates[template]
             val url = template.resolve(tail.drop(1)) ?: return null
-            if (!vlcRelayOriginAllowed(origin, url)) return null
+            if (!vlcRelayResourceAllowed(origin, url)) return null
             return Resource(url)
         }
         if (path != rootPath) entries[resource] // LRU on actual segment access
