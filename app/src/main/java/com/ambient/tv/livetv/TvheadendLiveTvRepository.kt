@@ -14,6 +14,12 @@ class TvheadendLiveTvRepository(
     override val cacheFallbackMarker: Long get() = delegate.cacheFallbacks
     override fun servedCacheSince(marker: Long): Boolean = delegate.cacheFallbacks != marker
     override fun authHeaders(): Map<String, String> { checkSource(); return delegate.authHeaders() }
+
+    internal val hbbtvChanges get() = delegate.hbbtvChanges
+    internal fun hbbtvPending() = delegate.hbbtvPending()
+    internal suspend fun restoreCachedHbbtv() { checkSource(); delegate.restoreCachedHbbtv() }
+    internal fun enrichHbbtvChannels(channels: List<LiveTvChannel>) = delegate.enrichHbbtvChannels(channels)
+    internal fun requestHbbtvRefresh(force: Boolean = false) { checkSource(); delegate.requestHbbtvRefresh(force) }
     override suspend fun cachedChannels(): List<LiveTvChannel>? {
         checkSource(); return delegate.cachedChannels()?.map { it.copy(sourceId = source.id) }
     }
@@ -73,7 +79,7 @@ class TvheadendLiveTvRepository(
     override suspend fun dashboard(force: Boolean, prefetch: LiveTvDashboardPrefetch?): LiveTvDashboard {
         checkSource()
         return delegate.dashboard(force, prefetch?.channels, infoPrepared = prefetch != null).let { d -> d.copy(
-            channels = d.channels.map { it.copy(sourceId = source.id) },
+            channels = delegate.enrichHbbtvChannels(d.channels).map { it.copy(sourceId = source.id) },
             events = d.events.map { it.copy(sourceId = source.id) },
             recordings = d.recordings.map { it.copy(sourceId = source.id) },
             upcoming = d.upcoming.map { it.copy(sourceId = source.id) },

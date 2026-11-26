@@ -322,6 +322,18 @@ class TvheadendPlayerViewModel @Inject constructor(
         if (kind == "channel") com.ambient.tv.livetv.LiveTvReturnFocus.watched(repository.source.id, initialId)
         load()
         viewModelScope.launch { playbackAvailability.changes.collect { cancelStaleRecovery() } }
+        (repository as? TvheadendLiveTvRepository)?.let { hbbtv ->
+            viewModelScope.launch {
+                suspendResult { hbbtv.restoreCachedHbbtv() }
+                hbbtv.hbbtvChanges.collect {
+                    if (registry.displayCacheIdentity(repository) == null) return@collect
+                    channels = hbbtv.enrichHbbtvChannels(channels)
+                    val ready = _uiState.value as? TvheadendPlayerState.Ready ?: return@collect
+                    val enriched = withHbbtvMetadata(ready)
+                    if (enriched !== ready) _uiState.value = enriched
+                }
+            }
+        }
         viewModelScope.launch {
             BackgroundPlaybackSession.snapshot.map { Triple(it.generation, it.replacingSource, it.metadata) }
                 .distinctUntilChanged().collect { (generation, replacing, metadata) ->
@@ -727,7 +739,16 @@ class TvheadendPlayerViewModel @Inject constructor(
     }
 
     /** Resolve art without changing the active stream, seek position or OSD focus identity. */
-    private fun withProgrammeArtwork(state: TvheadendPlayerState.Ready): TvheadendPlayerState.Ready {
+    private fun withHbbtvMetadata(state: TvheadendPlayerState.Ready): TvheadendPlayerState.Ready {
+        val hbbtv = repository as? TvheadendLiveTvRepository ?: return state
+        val channel = state.channel ?: return state
+        if (registry.displayCacheIdentity(repository) == null) return state
+        val enriched = hbbtv.enrichHbbtvChannels(listOf(channel)).single()
+        return if (enriched === channel) state else state.copy(channel = enriched)
+    }
+
+    private fun withProgrammeArtwork(original: TvheadendPlayerState.Ready): TvheadendPlayerState.Ready {
+        val state = withHbbtvMetadata(original)
         val entry = state.recordingArtSource
         val programmeArt = when {
             entry != null -> liveTvRecordingArt(entry, emptyList(), emptyList(), artwork.titleArt.value)

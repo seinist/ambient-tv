@@ -3,6 +3,8 @@ package com.ambient.tv.tvheadend.data
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.io.FilterInputStream
+import java.net.SocketTimeoutException
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.security.MessageDigest
@@ -14,18 +16,36 @@ import java.security.MessageDigest
  * HTSP viewers. No stream subscription is opened; failures must never affect Live TV.
  */
 internal object TvheadendHtspHbbtv {
-    fun discover(host: String, port: Int, username: String, password: String, timeoutMs: Int = 1_500): Map<String, List<TvhHbbtvApplication>> {
+    fun discover(host: String, port: Int, username: String, password: String, timeoutMs: Int = 1_500,
+        shouldContinue: () -> Boolean = { true }): Map<String, List<TvhHbbtvApplication>> {
+        val deadline = System.nanoTime() + 8_000_000_000L
         Socket().use { socket ->
-            socket.connect(InetSocketAddress(host, port), timeoutMs)
-            socket.soTimeout = 3_000
-            val input = DataInputStream(socket.getInputStream().buffered())
+            check(shouldContinue()) { "HTSP metadata deferred" }
+            socket.connect(InetSocketAddress(host, port), timeoutMs.coerceIn(1, 1500))
+            // Bound the whole handshake + initial sync, even with partial/trickled frames.
+            val input = DataInputStream(object : FilterInputStream(socket.getInputStream()) {
+                private fun prepareRead() {
+                    check(shouldContinue()) { "HTSP metadata deferred" }
+                    val left = (deadline - System.nanoTime()) / 1_000_000L
+                    if (left <= 0L) throw SocketTimeoutException("HTSP initial metadata timed out")
+                    socket.soTimeout = left.coerceIn(1, 3_000).toInt()
+                }
+                override fun read(): Int { prepareRead(); return super.read() }
+                override fun read(b: ByteArray, off: Int, len: Int): Int { prepareRead(); return super.read(b, off, len) }
+            }.buffered())
             val output = DataOutputStream(socket.getOutputStream().buffered())
+            fun checkDeadline() {
+                check(shouldContinue()) { "HTSP metadata deferred" }
+                if (System.nanoTime() >= deadline) throw SocketTimeoutException("HTSP initial metadata timed out")
+            }
             fun send(seq: Long, method: String, extra: Map<String, Any> = emptyMap()) {
+                checkDeadline()
                 output.write(tvhHtspEncode(mapOf("seq" to seq, "method" to method) + extra))
                 output.flush()
             }
             fun reply(seq: Long): Map<String, Any> {
                 repeat(16) {
+                    checkDeadline()
                     val response = tvhHtspDecode(input)
                     if (response["seq"] == seq) return response
                 }
@@ -43,18 +63,19 @@ internal object TvheadendHtspHbbtv {
                 mapOf("username" to username, "digest" to sha1.digest())
             } else emptyMap()
             send(2, "authenticate", credentials)
-            check(reply(2)["noaccess"] != 1L) { "HTSP user has no access" }
+            val auth = reply(2)
+            check(auth["noaccess"] != 1L && auth["noaccess"] != true && auth["error"] == null) { "HTSP user has no access" }
             send(3, "enableAsyncMetadata", mapOf("epg" to 0L))
             val appsByChannel = linkedMapOf<String, List<TvhHbbtvApplication>>()
-            val deadline = System.nanoTime() + 8_000_000_000L
             repeat(20_000) {
+                check(shouldContinue()) { "HTSP metadata deferred" }
                 check(System.nanoTime() < deadline) { "HTSP initial metadata timed out" }
                 val message = tvhHtspDecode(input)
                 when (message["method"]) {
                     "channelAdd", "channelUpdate" -> {
                         val id = (message["channelIdStr"] as? String)?.takeIf(String::isNotBlank) ?: return@repeat
-                        val applications = tvhHtspChannelApps(message)
-                        if (applications.isNotEmpty()) appsByChannel[id] = applications
+                        // Updates without a services field are not an authoritative empty list.
+                        if (message["services"] is List<*>) appsByChannel[id] = tvhHtspChannelApps(message)
                     }
                     "channelDelete" -> (message["channelIdStr"] as? String)?.let(appsByChannel::remove)
                     "initialSyncCompleted" -> return appsByChannel
