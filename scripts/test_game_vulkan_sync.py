@@ -140,6 +140,12 @@ def main():
             "-o", str(access_binary)], check=True)
         subprocess.run([str(access_binary)], check=True, timeout=20)
 
+        budget_binary = work / "vulkan-color-budget-test"
+        subprocess.run(command + ["-I", str(native / "vulkan"),
+            str(root / "scripts/native_game_vulkan_color_budget_test.cpp"),
+            "-o", str(budget_binary)], check=True)
+        subprocess.run([str(budget_binary)], check=True, timeout=20)
+
         format_binary = work / "vulkan-format-cache-test"
         subprocess.run(command + [str(root / "scripts/native_game_vulkan_format_cache_test.cpp"),
             "-o", str(format_binary)], check=True)

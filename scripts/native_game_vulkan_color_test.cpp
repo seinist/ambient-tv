@@ -541,6 +541,49 @@ static void testAlternateNormalizationCache(Device& d, const std::vector<uint8_t
     counts(3, 3, 2, 2);
 }
 
+static void testSharedNormalizationBudget(Device& d) {
+    // Use the actual driver allocation size for this exact image geometry.
+    d.color.release();
+    cacheCalls = {};
+    VulkanColorCopy::Source source {};
+    source.viewFormat = VK_FORMAT_R8G8B8A8_UNORM;
+    source.width = 4;
+    source.height = 1;
+    const auto format = VK_FORMAT_R8G8B8A8_UNORM;
+    require(d.color.initialize(d.instance, d.physical, d.device, trackedGetInstanceProcAddr), d.color.error());
+    require(d.color.prepare(source, format, 8, 3), d.color.error());
+    require(cacheCalls.allocated == 1 && cacheCalls.lastBytes > 0, "expected a driver-sized cache allocation");
+    libretrodroid::VulkanColorAllocationBudget budget(cacheCalls.lastBytes), other;
+    d.color.release();
+    cacheCalls = {};
+    VulkanColorCopy first, second;
+    for (auto* copy : {&first, &second}) {
+        require(copy->initialize(d.instance, d.physical, d.device, trackedGetInstanceProcAddr), copy->error());
+        require(copy->bindAllocationBudget(budget), copy->error());
+    }
+    require(first.prepare(source, format, 8, 3), first.error());
+    require(budget.available() == 0 && budget.used() == cacheCalls.lastBytes, "driver bytes not charged");
+    require(first.bindAllocationBudget(budget), "same owner must remain valid");
+    require(!first.bindAllocationBudget(other), "live cache changed accounting owner");
+    require(!second.prepare(source, format, 8, 3), "two slots exceeded shared budget");
+    require(second.preparedImage(VK_NULL_HANDLE).image == VK_NULL_HANDLE && cacheCalls.allocated == 1,
+            "budget rejection allocated memory or published stale image");
+    // The direct bridge needs no normalization allocation, even at full capacity.
+    require(second.prepare(source, format, 4, 1) && !second.usesCache(), second.error());
+    require(budget.available() == 0 && cacheCalls.allocated == 1, "direct path changed shared usage");
+    first.release();
+    require(budget.used() == 0 && cacheCalls.freed == 1, "first slot did not return its reservation");
+    cacheCalls.failNextAllocation = true;
+    require(!second.prepare(source, format, 8, 3), "injected allocation failure unexpectedly succeeded");
+    require(budget.used() == 0 && cacheCalls.allocated == 1, "failed allocation leaked reservation");
+    require(second.prepare(source, format, 8, 3), second.error());
+    require(budget.available() == 0 && cacheCalls.allocated == 2, "retry did not reserve available capacity");
+    second.release();
+    second.release();
+    require(budget.used() == 0 && cacheCalls.freed == 2 && cacheCalls.created == cacheCalls.destroyed,
+            "shared cache leaked resources or charged bytes");
+}
+
 int main() {
     try {
         testRetentionPolicy();
@@ -623,6 +666,7 @@ int main() {
         testFormatFeatureCache(d);
         testWarmNormalizationCache(d, rgba);
         testAlternateNormalizationCache(d, rgba);
+        testSharedNormalizationBudget(d);
         std::cout << "PASS " << d.cases << " GPU color cases; " << d.unsupportedCases
                   << " optional device format cases safely rejected; cache lifecycle and unsupported-input guards\n";
         return 0;
