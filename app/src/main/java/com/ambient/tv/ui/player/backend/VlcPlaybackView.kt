@@ -230,13 +230,18 @@ class VlcPlaybackController(
         private set
     internal var trackAccess = VlcTrackAccess(player)
         private set
-    // libVLC has no option for HTTP credentials (`:http-user`/`:http-pwd` are silently ignored)
-    // and writes every MRL to its log, so they must never reach it. An authenticated TVHeadend
-    // stream is opened through a loopback relay that adds the header inside the app instead.
+    // libVLC exposes only a small native HTTP-header subset. For direct streams relay
+    // arbitrary supplied headers (including Basic/Bearer auth) without exposing credentials
+    // in the native MRL. A one-URL relay cannot resolve child HLS/DASH requests.
+    private val needsHeaderRelay = url.startsWith("http", ignoreCase = true) &&
+        headers.keys.any { key -> key.lowercase(java.util.Locale.ROOT) !in setOf("user-agent", "referer", "cookie") }
+    private val relaySupported = audioSlaveUrl == null &&
+        url.substringBefore('?').substringBefore('#').lowercase(java.util.Locale.ROOT).let {
+            !it.endsWith(".m3u8") && !it.endsWith(".mpd")
+        }
     private val authProxy: AuthenticatedStreamProxy? =
-        if (url.startsWith("http", ignoreCase = true) &&
-            headers.entries.firstOrNull { it.key.equals("Authorization", true) }?.value?.startsWith("Basic ", ignoreCase = true) == true
-        ) runCatching { AuthenticatedStreamProxy(url, headers) }.getOrNull() else null
+        if (needsHeaderRelay && relaySupported)
+            runCatching { AuthenticatedStreamProxy(url, headers.toMap()) }.getOrNull() else null
     var errorMessage by mutableStateOf<String?>(null)
         private set
     var ended by mutableStateOf(false)
@@ -1095,6 +1100,13 @@ class VlcPlaybackController(
         val keepTimeshiftMs = pendingTimeshiftKeepMs.also { pendingTimeshiftKeepMs = null }
         val playbackUrl = keepTimeshiftMs?.let { com.ambient.tv.livetv.LiveTimeshift.playbackUrlKeepingPosition(url, it, "vlc-audio")?.first }
             ?: com.ambient.tv.livetv.LiveTimeshift.playbackUrl(url, reopening || reopeningTimeshift)
+        if (playbackUrl == url && needsHeaderRelay && authProxy == null) {
+            // Do not open an unauthenticated stream or drop mandatory headers silently.
+            errorMessage = context.getString(R.string.vlc_playback_error)
+            prepared = false
+            reattach?.let(::attach)
+            return
+        }
         val media = Media(libVlc, Uri.parse(if (playbackUrl == url) authProxy?.url ?: url else playbackUrl))
         if (!preferOriginalAudio) media.addOption(":audio-language=" + com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(
             videoImagePreferences(context).playbackAudioLanguage).joinToString(","))
