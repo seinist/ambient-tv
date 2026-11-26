@@ -175,24 +175,40 @@ class SmartTubeDeprecationPatchesTest(unittest.TestCase):
     def test_okhttp_manager_initialization_is_thread_safe(self) -> None:
         path = self.write(
             "OkHttpManager.java",
-            "private static OkHttpManager sInstance;\n"
-            "private OkHttpClient mClient;\n"
-            "public static OkHttpManager instance() {\n"
-            "public static OkHttpManager instance(boolean enableProfiler) {\n"
-            "public static void unhold() {\n"
-            "public OkHttpClient getClient() {\n",
+            """private static OkHttpManager sInstance;
+private OkHttpClient mClient;
+public static void unhold() { sInstance = null; }
+public static OkHttpManager instance(boolean enableProfiler) {
+        if (sInstance == null) {
+            sInstance = new OkHttpManager(enableProfiler);
+        }
+
+        return sInstance;
+    }
+public OkHttpClient getClient() {
+        if (mClient == null) {
+            OkHttpCommons.enableProfiler = mEnableProfiler;
+            mClient = OkHttpCommons.setupBuilder(new OkHttpClient.Builder()).build();
+        }
+
+        return mClient;
+    }
+""",
         )
+        with self.assertRaises(SystemExit):
+            patcher.patch_okhttp_manager_thread_safety(path, check=True)
         self.assertTrue(patcher.patch_okhttp_manager_thread_safety(path, check=False))
         patched = path.read_text()
         for expected in (
             "private static volatile OkHttpManager sInstance;",
             "private volatile OkHttpClient mClient;",
-            "public static synchronized OkHttpManager instance()",
-            "public static synchronized OkHttpManager instance(boolean enableProfiler)",
             "public static synchronized void unhold()",
-            "public synchronized OkHttpClient getClient()",
+            "OkHttpManager current = sInstance;",
+            "OkHttpClient current = mClient;",
+            "if (current != null) return current;",
         ):
             self.assertIn(expected, patched)
+        self.assertEqual(2, patched.count("synchronized (OkHttpManager.class)"))
         self.assertFalse(patcher.patch_okhttp_manager_thread_safety(path, check=True))
         self.assertFalse(patcher.patch_okhttp_manager_thread_safety(path, check=False))
 
