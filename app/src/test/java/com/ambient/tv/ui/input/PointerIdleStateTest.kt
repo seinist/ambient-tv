@@ -24,6 +24,24 @@ class PointerIdleStateTest {
         assertTrue(state.visible)
     }
 
+    @Test fun repeatedNonPointerInputRequiresNoVisibilityOrDeadlinePublication() {
+        val state = PointerIdleState()
+        repeat(1_000) { assertFalse(state.onNonPointerInput()) }
+        assertTrue(state.pointer(1, 10f, PointerIdleAction.MOVE))
+        assertTrue(state.onNonPointerInput())
+        repeat(1_000) { assertFalse(state.onNonPointerInput()) }
+        assertFalse(state.visible)
+        assertNull(state.deadlineMs)
+        assertTrue(state.pointer(2, 20f, PointerIdleAction.BUTTON_PRESS))
+        assertFalse(state.onNonPointerInput())
+        assertTrue(state.visible)
+        state.pointer(3, 20f, PointerIdleAction.BUTTON_RELEASE)
+        assertTrue(state.onNonPointerInput())
+        state.setTimeoutMillis(0, 4)
+        assertFalse(state.onNonPointerInput())
+        assertTrue(state.visible)
+    }
+
     @Test fun newerActivityMakesAnAlreadyQueuedTimeoutHarmless() {
         val state = PointerIdleState()
         state.pointer(100, 10f, PointerIdleAction.MOVE)
