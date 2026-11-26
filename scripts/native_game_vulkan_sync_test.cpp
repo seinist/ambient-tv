@@ -32,6 +32,7 @@ struct Driver {
     VkResult reset = VK_SUCCESS, commandReset = VK_SUCCESS, begin = VK_SUCCESS,
              end = VK_SUCCESS, submit = VK_SUCCESS, present = VK_SUCCESS;
     bool pending = false;
+    bool slangRecordAccepted = true;
     std::vector<VkCommandBuffer> submittedCommands;
     std::vector<VkSemaphore> submittedWaits, submittedSignals;
     std::vector<VkPipelineStageFlags> submittedStages;
@@ -79,7 +80,7 @@ bool VulkanSlangPipeline::ensure(VkInstance, VkPhysicalDevice, VkDevice, VkQueue
 }
 bool VulkanSlangPipeline::record(VkCommandBuffer, uint64_t, VkImage, VkFormat, uint32_t, uint32_t,
     VkImage, VkFormat, uint32_t, uint32_t, float, float, uint32_t, uint32_t, float, double) {
-    return true;
+    return driver.slangRecordAccepted;
 }
 bool VulkanColorCopy::validSubresource(const Source&) { return true; }
 bool VulkanColorCopy::initialize(VkInstance, VkPhysicalDevice, VkDevice, PFN_vkGetInstanceProcAddr) {
@@ -259,8 +260,15 @@ void setup(VulkanBackend& backend) {
     vk.acquireNextImage = [](VkDevice, VkSwapchainKHR, uint64_t, VkSemaphore, VkFence, uint32_t* index) {
         *index = 0; return VK_SUCCESS;
     };
-    vk.queuePresent = [](VkQueue, const VkPresentInfoKHR*) {
-        assert(!driver.pending); ++driver.presents; return driver.present;
+    vk.queuePresent = [](VkQueue, const VkPresentInfoKHR* info) {
+        // WSI consumes the submitted per-image semaphore before displaying,
+        // so host fence completion need not precede queuing presentation.
+        assert(driver.pending && info && info->waitSemaphoreCount == 1 &&
+               info->swapchainCount == 1 && info->pImageIndices);
+        assert(std::find(driver.submittedSignals.begin(), driver.submittedSignals.end(),
+                         *info->pWaitSemaphores) != driver.submittedSignals.end());
+        ++driver.presents;
+        return driver.present;
     };
 }
 
@@ -388,6 +396,7 @@ void resetAndSubmitFailures() {
         for (unsigned phase = 0; phase != 5; ++phase) {
             VulkanBackend backend;
             setup(backend); window(backend);
+            backend.nativePresentation.setFullscreenActive(true);
             const VkResult failure = VK_ERROR_OUT_OF_HOST_MEMORY;
             if (phase == 0) driver.commandReset = failure;
             if (phase == 1) driver.begin = failure;
@@ -397,7 +406,10 @@ void resetAndSubmitFailures() {
             const bool result = clear ? backend.clearFrameImage() :
                 backend.presentFrame(256,224,4.0F/3.0F,true);
             assert(!result && backend.getFatalError() == failure);
-            assert(driver.presents == 0);
+            // Fence reset failure can occur after WSI was queued; it must
+            // still invalidate the frontend gate and retain unretired work.
+            assert(driver.presents == (!clear && phase == 4 ? 1u : 0u));
+            assert(backend.primaryDraw(false, true) != libretrodroid::NativePresentationGate::PrimaryDraw::Skip);
             assert(driver.submits == (phase >= 3 ? 1u : 0u));
             assert(driver.resets == (phase == 4 ? 1u : 0u));
             assert(backend.frameInFlight == (phase == 4));
@@ -498,7 +510,50 @@ void nativeSurfacePolicyAndSuccess() {
         assert(!backend.presentFrame(256,224,4.0F/3.0F,true));
         assert(backend.getFatalError() == VK_ERROR_DEVICE_LOST);
     }
-    std::puts("PASS raw/filtered WSI requires opaque identity surfaces; only completed frames present");
+    std::puts("PASS raw/filtered WSI requires opaque identity surfaces; confirmation requires completed work");
+}
+
+void earlyNativePresentContracts() {
+    for (bool filtered : {false, true}) {
+        for (VkResult outcome : {VK_SUCCESS, VK_SUBOPTIMAL_KHR, VK_ERROR_OUT_OF_DATE_KHR, VK_ERROR_DEVICE_LOST}) {
+            for (bool waitFails : {false, true}) {
+                VulkanBackend backend;
+                setup(backend); window(backend);
+                if (filtered) backend.nativeSlang.setPresetPath("preset");
+                backend.nativePresentation.setFullscreenActive(true);
+                driver.present = outcome;
+                driver.waits = {waitFails ? VK_ERROR_OUT_OF_HOST_MEMORY : VK_SUCCESS};
+                const bool result = backend.presentFrame(256,224,4.0F/3.0F,true);
+                const bool fatal = outcome == VK_ERROR_DEVICE_LOST || waitFails;
+                assert(driver.submits == 1 && driver.presents == 1);
+                assert(driver.waitCalls == (outcome == VK_ERROR_DEVICE_LOST ? 0u : 1u));
+                assert(result == !fatal && backend.hasFatalError() == fatal);
+                const bool confirmed = !fatal && (outcome == VK_SUCCESS || outcome == VK_SUBOPTIMAL_KHR);
+                assert((backend.primaryDraw(false,true) == libretrodroid::NativePresentationGate::PrimaryDraw::Skip) == confirmed);
+                if (fatal) {
+                    assert(backend.frameInFlight && driver.swapchainFrees == 0 && driver.cacheReleases == 0);
+                    assert(!backend.presentFrame(256,224,4.0F/3.0F,true) && driver.submits == 1);
+                } else {
+                    assert(!backend.frameInFlight);
+                    if (outcome == VK_ERROR_OUT_OF_DATE_KHR) assert(driver.swapchainFrees == 1);
+                }
+                backend.shutdown();
+            }
+        }
+    }
+    {
+        VulkanBackend backend;
+        setup(backend); window(backend);
+        backend.nativeSlang.setPresetPath("preset");
+        backend.nativePresentation.setFullscreenActive(true);
+        driver.slangRecordAccepted = false;
+        assert(backend.presentFrame(256,224,4.0F/3.0F,true));
+        assert(driver.submits == 1 && driver.presents == 0 && driver.waitCalls == 1);
+        assert(driver.swapchainFrees == 1 && !backend.frameInFlight);
+        assert(backend.primaryDraw(false,true) != libretrodroid::NativePresentationGate::PrimaryDraw::Skip);
+        backend.shutdown();
+    }
+    std::puts("PASS WSI queues before host fence, confirms after completion, and safely handles failures");
 }
 
 void filteredPresetSwitchRetainsSwapchain() {
@@ -944,6 +999,7 @@ int main() {
     resetAndSubmitFailures();
     safeCallbackAndTeardown();
     nativeSurfacePolicyAndSuccess();
+    earlyNativePresentContracts();
     filteredPresetSwitchRetainsSwapchain();
     reusableSubmitStorage();
     readFenceQueueContracts();
