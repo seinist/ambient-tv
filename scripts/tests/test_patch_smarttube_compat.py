@@ -164,7 +164,12 @@ class SmartTubeDeprecationPatchesTest(unittest.TestCase):
         manager = shared / "sharedutils/src/main/java/com/liskovsoft/sharedutils/cronet/CronetManager.kt"
         manager.parent.mkdir(parents=True)
         manager.write_text("object CronetManager")
-        self.assertEqual([manager, helper], patcher.patch_disable_unused_cronet(msc, shared, check=False))
+        wrapper = manager.with_name("CronetEngineWrapper.java")
+        wrapper.write_text("class CronetEngineWrapper {}")
+        with self.assertRaises(SystemExit):
+            patcher.patch_disable_unused_cronet(msc, shared, check=True)
+        self.assertEqual([manager, wrapper, helper], patcher.patch_disable_unused_cronet(msc, shared, check=False))
+        self.assertFalse(wrapper.exists())
         self.assertFalse(manager.exists())
         patched = helper.read_text()
         self.assertNotIn("Cronet", patched)

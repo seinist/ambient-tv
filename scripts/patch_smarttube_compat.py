@@ -1060,9 +1060,10 @@ def patch_disable_unused_cronet(msc: Path, shared: Path, check: bool) -> list[Pa
     """Remove SmartTube's dormant embedded-Cronet adapter; Ambient TV uses Media3's GMS Cronet."""
     changed: list[Path] = []
     manager = shared / "sharedutils/src/main/java/com/liskovsoft/sharedutils/cronet/CronetManager.kt"
-    if manager.exists():
-        if check:
-            die(f"unused embedded Cronet manager must not be compiled: {manager}")
+    wrapper = manager.with_name("CronetEngineWrapper.java")
+    dormant = [path for path in (manager, wrapper) if path.exists()]
+    if check and dormant:
+        die(f"unused embedded Cronet sources must not be compiled: {dormant}")
 
     helper = msc / "youtubeapi/src/main/java/com/liskovsoft/googlecommon/common/helpers/RetrofitOkHttpHelper.kt"
     if not helper.is_file():
@@ -1107,14 +1108,21 @@ def patch_disable_unused_cronet(msc: Path, shared: Path, check: bool) -> list[Pa
         finally:
             tmp.unlink(missing_ok=True)
 
+    backups = [(path, path.read_bytes(), stat.S_IMODE(path.stat().st_mode)) for path in dormant]
+    removed = []
     if text != original:
         replace_helper(text.replace("\n", newline).encode("utf-8"))
         changed.append(helper)
     try:
-        if manager.exists():
-            manager.unlink()
-            changed.insert(0, manager)
+        for path in dormant:
+            path.unlink()
+            removed.append(path)
+        changed[0:0] = removed
     except OSError:
+        for path, data, mode in backups:
+            if path in removed:
+                path.write_bytes(data)
+                path.chmod(mode)
         if helper in changed:
             replace_helper(original_bytes)
         raise
