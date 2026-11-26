@@ -24,6 +24,27 @@ class GameLocalDataTest {
         sourceName = "NAS", entry = FileEntry("src", "test.sfc", "test.sfc", false),
     )
 
+    @Test fun experimentalStatesAndSramDoNotOverwriteProduction() {
+        val experimental = game.copy(experimentalProfile = "core-hotpaths")
+        val other = game.copy(experimentalProfile = "thinlto")
+        try {
+            storage.write(storage.sramFile(game), byteArrayOf(1))
+            storage.write(storage.sramFile(experimental), byteArrayOf(2))
+            states.save(game, GameStateKind.AUTO, byteArrayOf(3), null, "stable", now = 1)
+            states.save(experimental, GameStateKind.AUTO, byteArrayOf(4), null, "candidate", now = 2)
+            assertEquals(1, storage.read(storage.sramFile(game))!!.single().toInt())
+            assertEquals(2, storage.read(storage.sramFile(experimental))!!.single().toInt())
+            assertEquals("stable", states.list(game).single().coreStamp)
+            assertEquals("candidate", states.list(experimental).single().coreStamp)
+            assertTrue(states.list(other).isEmpty())
+        } finally {
+            listOf(game, experimental, other).forEach {
+                storage.statesDirectory(it).deleteRecursively()
+                storage.sramFile(it).delete()
+            }
+        }
+    }
+
     @Test fun biosFilesAreKnownByNameAndNotOfferedAsGames() {
         assertTrue(GameSystems.isBios("SCPH5501.BIN"))
         assertEquals("psx", GameSystems.bios("scph5501.bin").single().first.id)

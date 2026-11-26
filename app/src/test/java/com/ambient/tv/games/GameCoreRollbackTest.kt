@@ -69,6 +69,29 @@ class GameCoreRollbackTest {
             manager.remove(core)
         }
     }
+    @Test fun experimentalCoresKeepSeparateRollbackAndStableFiles() = runBlocking {
+        val manager = GameCoreManager(ApplicationProvider.getApplicationContext<Context>(), GameCoreChannel())
+        val core = GameCore("profile_fixture", "Profile fixture", "MIT")
+        val profile = GameCoreSource.HOTPATHS
+        try {
+            val stable = elf(1, manager.abi)
+            val candidate = elf(2, manager.abi)
+            manager.install(core, stable.inputStream(), false, "stable")
+            manager.install(core, candidate.inputStream(), false, "candidate", profile)
+            manager.install(core, elf(3, manager.abi).inputStream(), false, "new", profile)
+            assertTrue(manager.rollback(core, profile))
+            assertArrayEquals(candidate, manager.installed(core, profile)!!.readBytes())
+            assertArrayEquals(stable, manager.installed(core)!!.readBytes())
+            assertFalse(manager.canRollback(core))
+            manager.remove(core, profile)
+            assertTrue(manager.installed(core, profile) == null)
+            assertArrayEquals(stable, manager.installed(core)!!.readBytes())
+        } finally {
+            manager.remove(core, profile)
+            manager.remove(core)
+        }
+    }
+
     @Test fun failedAtomicRollbackPreservesThePreviousCore() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val manager = GameCoreManager(context, GameCoreChannel())

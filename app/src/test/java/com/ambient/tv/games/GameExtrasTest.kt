@@ -128,6 +128,19 @@ class GameExtrasTest {
 }
 
 class GameCoreChannelTest {
+    @Test fun experimentalReleaseCannotEnterStableChannel() {
+        val tag = "core-experiments-core-hotpaths--20261126-1-1"
+        org.junit.Assert.assertTrue(GameCoreChannel.matchesChannel(tag, true, "core-hotpaths"))
+        org.junit.Assert.assertFalse(GameCoreChannel.matchesChannel(tag, true, "baseline"))
+        org.junit.Assert.assertFalse(GameCoreChannel.matchesChannel(tag, false, "core-hotpaths"))
+        org.junit.Assert.assertFalse(GameCoreChannel.matchesChannel("cores-1", false, "core-hotpaths"))
+        val manifest = GameCoreManifest(tag = tag, profile = "core-hotpaths")
+        org.junit.Assert.assertTrue(GameCoreChannel.matchesManifest(manifest, tag, "core-hotpaths"))
+        org.junit.Assert.assertFalse(GameCoreChannel.matchesManifest(manifest, tag, "baseline"))
+        org.junit.Assert.assertFalse(GameCoreChannel.matchesManifest(manifest, "other", "core-hotpaths"))
+        assertEquals(GameCoreSource.HOTPATHS, GameSettingsState().withCoreSource(GameCoreSource.HOTPATHS).coreSource)
+    }
+
     @Test fun signedManifestsVerifyAndTamperedOnesDoNot() {
         val pair = java.security.KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair()
         val manifest = """{"version":1,"tag":"cores-1","cores":[]}""".toByteArray()

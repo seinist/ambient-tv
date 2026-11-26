@@ -368,4 +368,7 @@
     <string name="game_performance_low_overhead">Geringer Zusatzaufwand</string>
     <string name="game_performance_low_overhead_hint">Deaktiviert Zurückspulen und den Ambient-Hintergrund auf dem Handy, solange das Profil aktiv ist. Beim Zurückwechseln gelten deine bisherigen Einstellungen; der Rückspulverlauf beginnt neu.</string>
     <string name="game_performance_rewind_suspended">Durch das Profil Geringer Zusatzaufwand deaktiviert. Deine gespeicherte Rückspuleinstellung bleibt erhalten.</string>
+    <string name="games_core_source_experimental">Ambient TV experimentell – %1$s</string>
+    <string name="games_core_experimental_hint">Experimentelle Builds sind nicht auf Geräten validiert. Cores und Spielstände bleiben getrennt; RomM-Spielstände werden nicht synchronisiert. Zum normalen Build einfach die Quelle wechseln.</string>
+    <string name="games_core_from_experiment">Experimentell: %1$s · %2$s</string>
 </resources>

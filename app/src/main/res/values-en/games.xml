@@ -368,4 +368,7 @@
     <string name="game_performance_low_overhead">Low overhead</string>
     <string name="game_performance_low_overhead_hint">Turns off rewind and the handheld ambient background while active. Switching back restores your choices; rewind history starts fresh.</string>
     <string name="game_performance_rewind_suspended">Suspended by the Low overhead profile. Your saved rewind setting is preserved.</string>
+    <string name="games_core_source_experimental">Ambient TV experimental – %1$s</string>
+    <string name="games_core_experimental_hint">Experimental builds are not device-validated. Core files and saves are separate; RomM saves are not synced. Switch source to return to the normal build.</string>
+    <string name="games_core_from_experiment">Experimental: %1$s · %2$s</string>
 </resources>
