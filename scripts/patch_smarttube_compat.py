@@ -1071,31 +1071,61 @@ def patch_disable_unused_cronet(msc: Path, shared: Path, check: bool) -> list[Pa
 
 
 def patch_okhttp_manager_thread_safety(path: Path, check: bool) -> bool:
-    """Serialize SmartTube OkHttp singleton/client initialization and invalidation."""
+    """Publish initialized clients safely; serialize cold paths and reset on the class monitor."""
     if not path.is_file():
         die(f"SmartTube OkHttp manager moved or disappeared: {path}")
     text = path.read_text()
+    original = text
     replacements = [
         ("private static OkHttpManager sInstance;", "private static volatile OkHttpManager sInstance;"),
         ("private OkHttpClient mClient;", "private volatile OkHttpClient mClient;"),
-        ("public static OkHttpManager instance()", "public static synchronized OkHttpManager instance()"),
-        ("public static OkHttpManager instance(boolean enableProfiler)", "public static synchronized OkHttpManager instance(boolean enableProfiler)"),
         ("public static void unhold()", "public static synchronized void unhold()"),
-        ("public OkHttpClient getClient()", "public synchronized OkHttpClient getClient()"),
+        ("""public static OkHttpManager instance(boolean enableProfiler) {
+        if (sInstance == null) {
+            sInstance = new OkHttpManager(enableProfiler);
+        }
+
+        return sInstance;
+    }""", """public static OkHttpManager instance(boolean enableProfiler) {
+        OkHttpManager current = sInstance;
+        if (current != null) return current;
+        synchronized (OkHttpManager.class) {
+            if (sInstance == null) {
+                sInstance = new OkHttpManager(enableProfiler);
+            }
+            return sInstance;
+        }
+    }"""),
+        ("""public OkHttpClient getClient() {
+        if (mClient == null) {
+            OkHttpCommons.enableProfiler = mEnableProfiler;
+            mClient = OkHttpCommons.setupBuilder(new OkHttpClient.Builder()).build();
+        }
+
+        return mClient;
+    }""", """public OkHttpClient getClient() {
+        OkHttpClient current = mClient;
+        if (current != null) return current;
+        synchronized (OkHttpManager.class) {
+            if (mClient == null) {
+                OkHttpCommons.enableProfiler = mEnableProfiler;
+                mClient = OkHttpCommons.setupBuilder(new OkHttpClient.Builder()).build();
+            }
+            return mClient;
+        }
+    }"""),
     ]
-    if check:
-        missing = [old for old, new in replacements if old in text or new not in text]
-        if missing:
-            die(f"OkHttp singleton thread-safety patch is incomplete in {path}: {missing[0]}")
-        return False
-    changed = False
     for old, new in replacements:
-        if old in text:
-            text = text.replace(old, new, 1)
-            changed = True
-    if changed:
+        if new in text:
+            continue
+        if check or old not in text:
+            die(f"Unsupported or unpatched OkHttp manager layout: {path}: {old.splitlines()[0]}")
+        text = text.replace(old, new, 1)
+    if text != original:
         path.write_text(text)
-    return changed
+        return True
+    return False
+
 
 def main() -> int:
     ap = argparse.ArgumentParser()
