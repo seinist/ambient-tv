@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 from core_acceleration_audit import AUDITED, audit_acceleration, compiler_commands, compile_source
 from core_link_evidence import target_commands
+from core_hotpath_patches import prepare_hotpaths, SUPPORTED as HOTPATH_CORES
 import subprocess
 import struct
 import sys
@@ -18,6 +19,7 @@ PROFILES = {
     "tune-a57": (("-mtune=cortex-a57",), ()),
     "picodrive-sh2": ((), ()),
     "snes9x2010-threaded": ((), ()),
+    "core-hotpaths": ((), ()),
 }
 ABIS = {"arm64-v8a", "armeabi-v7a", "x86_64", "x86"}
 REQUIRED_EXPORTS = {
@@ -78,6 +80,10 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
             raise ValueError("PicoDrive SH2 candidate is artifact-only")
         cores = cores or "picodrive"
         abis = abis or "arm64-v8a"
+    if profile == "core-hotpaths":
+        if event != "workflow_dispatch" or publish:
+            raise ValueError("Source hotpath candidates are artifact-only")
+        cores = cores or ",".join(sorted(HOTPATH_CORES))
     if profile == "snes9x2010-threaded":
         if event != "workflow_dispatch" or publish:
             raise ValueError("Snes9x2010 threaded renderer candidate is artifact-only")
@@ -88,6 +94,8 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
     chosen_abis = selection(abis, declared_abis, "ABI")
     if profile == "picodrive-sh2" and (chosen_cores != ["picodrive"] or chosen_abis != ["arm64-v8a"]):
         raise ValueError("PicoDrive SH2 candidate requires PicoDrive on arm64-v8a")
+    if profile == "core-hotpaths" and not set(chosen_cores) <= HOTPATH_CORES:
+        raise ValueError("No reviewed source hotpath patch for selected core")
     if profile == "snes9x2010-threaded" and chosen_cores != ["snes9x2010"]:
         raise ValueError("Threaded renderer candidate requires Snes9x2010")
     if profile == "tune-a57" and chosen_abis != ["arm64-v8a"]:
@@ -116,6 +124,8 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
                  for variant in ("o3", "o3-thinlto")]
         jobs += [(core, "arm64-v8a", "baseline")
                  for core in ("parallel_n64", "mednafen_psx_hw", "swanstation")]
+        jobs += [(core, "arm64-v8a", variant) for core in sorted(HOTPATH_CORES)
+                 for variant in ("baseline", "core-hotpaths")]
         jobs += [("pcsx_rearmed", "x86_64", "baseline"),
                  ("gpsp", "x86", "baseline"),
                  ("snes9x2010", "arm64-v8a", "baseline"),
@@ -332,6 +342,9 @@ def main():
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--core", required=True)
     p.add_argument("--profile", choices=PROFILES, required=True)
+    p = sub.add_parser("prepare-hotpaths")
+    p.add_argument("--root", type=Path, required=True)
+    p.add_argument("--core", required=True)
     p = sub.add_parser("prepare-ndk")
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--core", required=True)
@@ -364,6 +377,8 @@ def main():
                          separators=(",", ":")))
     elif args.action == "prepare-cmake":
         prepare_cmake(args.root, args.core, args.profile)
+    elif args.action == "prepare-hotpaths":
+        prepare_hotpaths(args.root, args.core)
     elif args.action == "prepare-ndk":
         prepare_ndk(args.root, args.core, args.profile)
     elif args.action == "ndk-flags":
