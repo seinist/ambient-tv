@@ -5,6 +5,8 @@
 // target-image sharing and explicit synchronization before they can be enabled.
 #include <libplacebo/vulkan.h>
 #include <libplacebo/renderer.h>
+#include <vulkan/vulkan_android.h>
+#include <string.h>
 
 static inline bool ambient_pl_single_queue(pl_vulkan vk, VkDevice device, uint32_t family)
 {
@@ -12,6 +14,40 @@ static inline bool ambient_pl_single_queue(pl_vulkan vk, VkDevice device, uint32
            vk->queue_graphics.index == family && vk->queue_graphics.count == 1 &&
            vk->queues && vk->queues[0].index == family && vk->queues[0].count == 1 &&
            vk->lock_queue && vk->unlock_queue;
+}
+
+// A physical-device probe is not evidence that these extensions/features
+// were enabled on the logical device that owns the swapchain.
+static inline bool ambient_pl_extension_enabled(pl_vulkan vk, const char *name)
+{
+    if (!vk || !name || !vk->extensions) return false;
+    for (int i = 0; i < vk->num_extensions; ++i)
+        if (vk->extensions[i] && strcmp(vk->extensions[i], name) == 0)
+            return true;
+    return false;
+}
+
+static inline bool ambient_pl_ycbcr_enabled(pl_vulkan vk)
+{
+    if (!vk || !vk->features) return false;
+    const VkBaseInStructure *feature = (const VkBaseInStructure *)vk->features->pNext;
+    for (; feature; feature = feature->pNext) {
+        if (feature->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES)
+            return ((const VkPhysicalDeviceSamplerYcbcrConversionFeatures *)feature)->samplerYcbcrConversion;
+        if (feature->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES)
+            return ((const VkPhysicalDeviceVulkan11Features *)feature)->samplerYcbcrConversion;
+    }
+    return false;
+}
+
+static inline bool ambient_pl_ahb_device_enabled(pl_vulkan vk)
+{
+    return vk && vk->api_version >= VK_API_VERSION_1_1 &&
+        ambient_pl_single_queue(vk, vk->device, vk->queue_graphics.index) &&
+        ambient_pl_extension_enabled(vk, VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME) &&
+        ambient_pl_extension_enabled(vk, VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME) &&
+        ambient_pl_extension_enabled(vk, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME) &&
+        ambient_pl_ycbcr_enabled(vk);
 }
 
 // Call only after the external submission fence has actually signaled. Its
