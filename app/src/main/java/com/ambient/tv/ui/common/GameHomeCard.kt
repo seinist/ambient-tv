@@ -41,7 +41,8 @@ import com.ambient.tv.ui.theme.screenGutter
 import kotlinx.coroutines.delay
 
 internal fun isGameHomeTile(item: MediaItem): Boolean =
-    item.ratingKey.startsWith(com.ambient.tv.ui.home.GAME_HOME_ITEM_PREFIX)
+    item.ratingKey.startsWith(com.ambient.tv.ui.home.GAME_HOME_ITEM_PREFIX) ||
+        item.ratingKey.startsWith(com.ambient.tv.ui.home.MOONLIGHT_HOME_ITEM_PREFIX)
 
 /** Title, then system and year, as on the game library's cards. */
 internal fun gameHomeCardMeta(item: MediaItem): String =
@@ -128,14 +129,16 @@ internal fun GameHomeCard(
                         .clip(BrowseCardArtworkShape)
                         .testTag("game-home-cover:${item.ratingKey}"),
                 ) {
+                    val moonlight = com.ambient.tv.ui.home.parseMoonlightHomeKey(item.ratingKey)
                     GameCoverArtwork(
                         cover = mediaTileImageUrl(item, MediaTileStyle.POSTER),
                         title = item.title,
                         systemId = item.ratingKey.substringAfterLast('|', ""),
                         modifier = Modifier.fillMaxSize(),
                         focused = focused,
-                        fileId = Uri.decode(item.ratingKey.removePrefix(com.ambient.tv.ui.home.GAME_HOME_ITEM_PREFIX)
+                        fileId = moonlight?.let { "moonlight:${it.first}:${it.second}" } ?: Uri.decode(item.ratingKey.removePrefix(com.ambient.tv.ui.home.GAME_HOME_ITEM_PREFIX)
                             .substringBeforeLast('|')),
+                        systemIcon = if (moonlight != null) com.ambient.tv.R.drawable.system_moonlight else null,
                     )
                 }
                 if (!heroRow) {

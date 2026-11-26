@@ -54,7 +54,8 @@ fun MoonlightLibraryScreen(
     val rowsState = rememberLazyListState()
     val requests = remember { mutableMapOf<String, FocusRequester>() }
     val artworkPriority = remember { GameArtworkPriority() }
-    val currentGames by rememberUpdatedState(games.associateBy { it.key })
+    val gameIndex = remember(games) { games.associateBy { it.key } }
+    val currentGames by rememberUpdatedState(gameIndex)
     LaunchedEffect(initialSection) { model.section(selectedSection) }
     MoonlightRefreshWhileVisible(model)
     ReportSidebarContentReady(state.ready)
@@ -76,7 +77,7 @@ fun MoonlightLibraryScreen(
     val sections = remember(state.hosts) { listOf("all", "favorites", "recent") + hostBySection.keys }
     val section = state.sections
     val sectionHosts = state.hosts.filter { !section.startsWith("host:") || "host:" + it.id == section }
-    val offline = sectionHosts.filter { it.id in state.pairedHosts && it.id !in state.onlineHosts && state.errors[it.id] == "offline" }
+    val offline = sectionHosts.filter { it.id in state.pairedHosts && it.id !in state.onlineHosts && (it.id in state.offlineHosts || state.errors[it.id] == "offline") }
     val offlineStatus = offlineSourcesStatusForMoonlight(offline.map { it.name.ifBlank { it.host } })
     val library = GameLibraryUiState(section = section, query = state.query, view = state.view,
         gridColumns = state.gridColumns, listRows = state.listRows, sortKey = state.sortKey,
@@ -111,7 +112,7 @@ fun MoonlightLibraryScreen(
             if (state.errors.values.any { it == "identity" }) Text(stringResource(R.string.moonlight_identity_changed),
                 color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             when {
-                !state.localLoaded -> Text(stringResource(R.string.player_loading))
+                !state.ready -> Text(stringResource(R.string.player_loading))
                 sectionHosts.isEmpty() -> {
                     Text(stringResource(R.string.moonlight_library_unconfigured))
                     TvActionButton(stringResource(R.string.moonlight_open_settings), onOpenSettings)

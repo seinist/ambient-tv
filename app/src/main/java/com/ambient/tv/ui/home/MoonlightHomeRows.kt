@@ -55,14 +55,15 @@ internal fun moonlightHomeRows(
             ContentRowData(
                 id = "moonlight." + row.contentKey,
                 title = row.displayTitle(context),
-                style = MediaTileStyle.LANDSCAPE,
+                style = MediaTileStyle.POSTER,
                 items = games.map { (host, app, _) ->
+                    val artwork = store.artworkInfo(host.id, app.id)
                     MediaItem(
                         ratingKey = moonlightHomeKey(host.id, app.id),
                         title = app.title,
                         type = "game",
                         index = null,
-                        thumbUrl = store.artworkFile(host.id, app.id)?.let {
+                        thumbUrl = artwork?.file?.let {
                             Uri.fromFile(it).toString()
                         },
                         artUrl = null,
@@ -78,6 +79,7 @@ internal fun moonlightHomeRows(
                         contentRating = null,
                         rating = null,
                         studio = "Moonlight",
+                        gameCoverAspectRatio = artwork?.aspectRatio ?: 2f / 3f,
                     )
                 },
             )

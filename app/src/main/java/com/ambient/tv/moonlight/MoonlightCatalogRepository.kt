@@ -28,6 +28,26 @@ class MoonlightCatalogRepository @Inject constructor(
     private val slots = Semaphore(2)
     private val hostLocks = Array(32) { kotlinx.coroutines.sync.Mutex() }
 
+    suspend fun artwork(host: MoonlightHost, appId: Int, priority: BrowseLoadPriority): MoonlightArtwork? = withContext(Dispatchers.IO) {
+        val identity = store.peerIdentity(host.id) ?: return@withContext null
+        fun current() = prefs.moonlightEnabled && prefs.moonlightHosts.any { it == host } &&
+            store.peerIdentity(host.id) == identity
+        if (!current()) return@withContext null
+        if (store.isRecentlyOnline(host.id) && store.shouldLoadArtwork(host.id, appId, identity)) {
+            browse.request("moonlight", "art:${host.id}:$appId:$identity", priority) {
+                if (current() && store.isRecentlyOnline(host.id) && store.shouldLoadArtwork(host.id, appId, identity)) {
+                    try {
+                        val bytes = transport.artwork(host.id, appId)
+                        if (current() && store.saveArtwork(host.id, appId, bytes, identity) == null)
+                            store.artworkUnavailable(host.id, appId, identity)
+                    } catch (cancel: CancellationException) { throw cancel }
+                    catch (_: Exception) { if (current()) store.artworkUnavailable(host.id, appId, identity) }
+                }
+            }
+        }
+        if (current()) store.artworkInfo(host.id, appId) else null
+    }
+
     suspend fun refresh(host: MoonlightHost, priority: BrowseLoadPriority, forceCatalog: Boolean = false): MoonlightHostCatalog {
         val identity = withContext(Dispatchers.IO) { store.peerIdentity(host.id) }
             ?: throw SecurityException("Moonlight host not paired")

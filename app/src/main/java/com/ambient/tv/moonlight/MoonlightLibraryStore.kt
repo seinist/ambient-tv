@@ -72,6 +72,13 @@ class MoonlightLibraryStore @Inject constructor(
     private val mutableArtworkRevisions = MutableStateFlow(0L)
     val artworkRevisions = mutableArtworkRevisions.asStateFlow()
     private val online = mutableMapOf<String, Pair<String, Long>>()
+    private val offlineIdentities = mutableMapOf<String, String>()
+    val trustRevisions get() = trust.revisions
+
+    fun isKnownOffline(hostId: String): Boolean = synchronized(lock) {
+        val identity = trust.identity(hostId) ?: return@synchronized false
+        offlineIdentities[hostId] == identity && !isRecentlyOnline(hostId)
+    }
     private fun changed(metadata: Boolean = true) {
         mutableRevisions.value += 1L
         if (metadata) mutableMetadataRevisions.value += 1L
@@ -93,20 +100,25 @@ class MoonlightLibraryStore @Inject constructor(
         if (!isCurrent(request)) return@synchronized false
         val wasOnline = isRecentlyOnline(request.hostId)
         online[request.hostId] = request.identity to android.os.SystemClock.elapsedRealtime()
-        if (!wasOnline) mutableAvailability.value++
+        val wasOffline = offlineIdentities.remove(request.hostId) != null
+        if (!wasOnline || wasOffline) mutableAvailability.value++
         true
     }
 
     fun markOffline(hostId: String, request: Request? = null) = synchronized(lock) {
         if (request != null && !isCurrent(request)) return@synchronized
         requestIds[hostId] = ++sequence
-        if (online.remove(hostId) != null) mutableAvailability.value++
+        val previous = offlineIdentities[hostId]
+        if (request == null) offlineIdentities.remove(hostId) else offlineIdentities[hostId] = request.identity
+        val removed = online.remove(hostId) != null
+        if (removed || previous != offlineIdentities[hostId]) mutableAvailability.value++
     }
 
     fun invalidateCatalog(hostId: String, request: Request? = null) = synchronized(lock) {
         if (request != null && !isCurrent(request)) return@synchronized
         requestIds[hostId] = ++sequence
-        if (online.remove(hostId) != null) mutableAvailability.value++
+        val wasOffline = offlineIdentities.remove(hostId) != null
+        if (online.remove(hostId) != null || wasOffline) mutableAvailability.value++
         val removed = catalogs.remove(hostId) != null
         if (prefs.contains("catalog:$hostId")) {
             prefs.edit().remove("catalog:$hostId").apply()
@@ -146,7 +158,8 @@ class MoonlightLibraryStore @Inject constructor(
         catalogs[hostId] = Cached(identity, cached)
         val wasOnline = isRecentlyOnline(hostId)
         online[hostId] = identity to android.os.SystemClock.elapsedRealtime()
-        if (!wasOnline) mutableAvailability.value++
+        val wasOffline = offlineIdentities.remove(hostId) != null
+        if (!wasOnline || wasOffline) mutableAvailability.value++
         if (old?.apps != apps) changed()
         true
     }
@@ -278,7 +291,8 @@ class MoonlightLibraryStore @Inject constructor(
         synchronized(lock) {
             requestIds[hostId] = ++sequence
             catalogs.remove(hostId)
-            if (online.remove(hostId) != null) mutableAvailability.value++
+            val wasOffline = offlineIdentities.remove(hostId) != null
+            if (online.remove(hostId) != null || wasOffline) mutableAvailability.value++
             prefs.edit().remove("catalog:$hostId").putStringSet(
                 "favorites", favorites().filterNot { it.startsWith("$hostId:") }.toSet(),
             ).putString("recent", recent().filterNot { it.startsWith("$hostId:") }.joinToString("|")).apply()
