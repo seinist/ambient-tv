@@ -1031,6 +1031,13 @@ class VlcPlaybackController(
             desiredPlayWhenReady = resumePlaying
             return
         }
+        // Only the real, currently attached native window can validate Vulkan output.
+        if (vulkanOutput && !vulkanSurfaceChecked && !audioOnly) {
+            pendingRestorePositionMs = resumePositionMs.takeUnless { liveStream }
+            desiredPlayWhenReady = resumePlaying
+            attachedView?.let(::restoreVideoTrackWhenSurfaceIsReady)
+            return
+        }
         if (BackgroundPlaybackSession.owns(this)) com.ambient.tv.ui.player.PlaybackOutputTransition.begin(context)
         val prepareToken = ++deferredPrepareGeneration
         if (hdrOutput.ownsSurface) {
