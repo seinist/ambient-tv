@@ -2,7 +2,7 @@
 from pathlib import Path
 
 
-SUPPORTED = {"bsnes", "mesen", "sameboy"}
+SUPPORTED = {"bsnes", "mesen", "sameboy", "mednafen_pce_fast", "mednafen_supergrafx", "mednafen_ngp"}
 
 
 def replace_once(source, old, new, label):
@@ -115,6 +115,42 @@ SAMEBOY_NEW = """            const unsigned width = GB_get_screen_width(&gameboy
             video_cb(frame_buf_copy, width * devices, height, pitch * sizeof(uint32_t));"""
 
 
+PCE_OLD = "if (input_state_cb(j, RETRO_DEVICE_JOYPAD, 0, map[i]))"
+PCE_NEW = """if (libretro_supports_bitmasks ?
+                   (joy_bits[j] & (1u << map[i])) != 0 :
+                   input_state_cb(j, RETRO_DEVICE_JOYPAD, 0, map[i]) != 0)"""
+
+NGP_OLD = """      if (update_video)
+      {
+         memset(&system_av_info, 0, sizeof(system_av_info));
+         environ_cb(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &system_av_info);
+      }
+
+      retro_get_system_av_info(&system_av_info);"""
+NGP_NEW = """      /* Publish only the fully initialized geometry and timing. */
+      retro_get_system_av_info(&system_av_info);"""
+
+SGX_OLD = """         // select
+         if (input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT))
+            button_state |= BIT(2);
+
+         // start
+         if (input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START) ||
+             input_state_cb(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_MIDDLE))
+            button_state |= BIT(3);"""
+SGX_NEW = """         // Sample both digital mouse-mapped buttons together if supported.
+         const unsigned pad = r_input.use_bitmasks ?
+            (uint16_t)input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK) : 0;
+         if (r_input.use_bitmasks ? (pad & BIT(RETRO_DEVICE_ID_JOYPAD_SELECT)) != 0 :
+             input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT) != 0)
+            button_state |= BIT(2);
+
+         if ((r_input.use_bitmasks ? (pad & BIT(RETRO_DEVICE_ID_JOYPAD_START)) != 0 :
+             input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START) != 0) ||
+             input_state_cb(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_MIDDLE))
+            button_state |= BIT(3);"""
+
+
 def prepare_hotpaths(root, core):
     if core == "bsnes":
         prepare_bsnes(root)
@@ -126,5 +162,14 @@ def prepare_hotpaths(root, core):
         path = root / "libretro/libretro.c"
         source = path.read_bytes().decode("utf-8")
         path.write_bytes(replace_once(source, SAMEBOY_OLD, SAMEBOY_NEW, "SameBoy dual-screen blit").encode("utf-8"))
+    elif core in {"mednafen_pce_fast", "mednafen_supergrafx", "mednafen_ngp"}:
+        relative, old, new = {
+            "mednafen_pce_fast": ("libretro.c", PCE_OLD, PCE_NEW),
+            "mednafen_supergrafx": ("libretro.cpp", SGX_OLD, SGX_NEW),
+            "mednafen_ngp": ("libretro.c", NGP_OLD, NGP_NEW),
+        }[core]
+        path = root / relative
+        source = path.read_bytes().decode("utf-8")
+        path.write_bytes(replace_once(source, old, new, core).encode("utf-8"))
     else:
         raise ValueError(f"No reviewed source-level hotpath patch for {core}")
