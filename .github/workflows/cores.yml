@@ -165,6 +165,7 @@ jobs:
           read -r -a extra_env <<< "$EXTRA_ENV"
           read -r -a makevars <<< "$MAKEVARS"
           if [ "$BUILD_KIND" = "cmake" ]; then
+            python3 scripts/core_build_policy.py prepare-cmake --root src --core "$CORE" --profile "$PROFILE"
             flags=()
             if [ -n "$CFLAGS_EXTRA" ]; then
               flags+=("-DCMAKE_C_FLAGS=$CFLAGS_EXTRA" "-DCMAKE_CXX_FLAGS=$CFLAGS_EXTRA")
@@ -178,8 +179,9 @@ jobs:
               -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON \
               "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384 $LDFLAGS_EXTRA" \
               "-DCMAKE_MODULE_LINKER_FLAGS=-Wl,-z,max-page-size=16384 $LDFLAGS_EXTRA" \
-              -DCMAKE_BUILD_TYPE=Release "${args[@]}" "${flags[@]}"
+              -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON "${args[@]}" "${flags[@]}"
             build_cwd="$PWD/build"
+            cp build/compile_commands.json reports/compile_commands.json
             # GNU Make must buffer each target; otherwise concurrent diagnostics can
             # splice into a verbose compiler/link command and corrupt the flag audit.
             cmake --build build --verbose -j"$(nproc)" -- --output-sync=target 2>&1 | tee reports/build.log
