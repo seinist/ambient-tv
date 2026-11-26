@@ -16,7 +16,7 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbac
 +    bool isFp16Frame() const { return frameSlot.bridgeImage.fp16; }
      // Actual frame transport, read atomically from the UI: Vulkan, FP16, requested, fallback.
      uint32_t getFrameStatus() const { return frameStatus.load(std::memory_order_acquire); }
-@@ -133,4 +134,4 @@
+@@ -133,8 +134,8 @@
      bool ensureFrameBuffer(unsigned width, unsigned height);
 -    AHardwareBuffer* getFrameBuffer() const { return frameBuffer; }
 -    unsigned getFrameBufferWidth() const { return frameWidth; }
@@ -24,6 +24,10 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbac
 +    AHardwareBuffer* getFrameBuffer() const { return frameSlot.bridgeImage.buffer; }
 +    unsigned getFrameBufferWidth() const { return frameSlot.bridgeImage.width; }
 +    unsigned getFrameBufferHeight() const { return frameSlot.bridgeImage.height; }
+ 
+     // No export proof is different from Vulkan's already-signaled SYNC_FD (-1).
+     static constexpr int NoBridgeWriteFence = -2;
+     // On accepted frames: >=0 transfers an owned FD, -1 proves completion,
 @@ -273,83 +274,87 @@
      struct FrameSlot {
          VkCommandPool pool = VK_NULL_HANDLE;
@@ -499,10 +503,14 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
      auto& colorCopyRejected = frameSlot.colorCopyRejected;
      if (writeFd) *writeFd = NoBridgeWriteFence;
      nativePresentation.invalidateFrame();
-@@ -1885,2 +1898,2 @@
+@@ -1885,6 +1898,6 @@
          // prepareForShutdown already established idle or device loss.
 -        destroyFrameBuffer();
 +        if (!destroyFrameBuffer()) return;
+         if (!frameSlot.retire(vk, device)) {
+             checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "retire frame slot");
+             return; // retain the device rather than discard unretired ownership
+         }
 diff --git a/src/main/cpp/vulkan/vulkanbridgeimage.h b/src/main/cpp/vulkan/vulkanbridgeimage.h
 new file mode 100644
 --- /dev/null
