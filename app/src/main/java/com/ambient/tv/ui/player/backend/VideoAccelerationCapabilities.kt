@@ -33,6 +33,7 @@ object VideoAccelerationRuntime {
     private val mutableEvidence = MutableStateFlow<Map<String, VulkanPlaybackEvidence>>(emptyMap())
     val playbackEvidence = mutableEvidence.asStateFlow()
     private val lock = Mutex()
+    private val startupProbeScheduled = java.util.concurrent.atomic.AtomicBoolean(false)
     private val json = Json { ignoreUnknownKeys = true }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -43,9 +44,11 @@ object VideoAccelerationRuntime {
      */
     fun current(context: Context): VideoAccelerationCapabilities {
         val value = mutable.value
-        if (!value.checked && !mutableChecking.value) {
+        if (!value.checked && !mutableChecking.value && startupProbeScheduled.compareAndSet(false, true)) {
             val app = context.applicationContext
-            scope.launch { refresh(app) }
+            scope.launch {
+                try { refresh(app) } finally { startupProbeScheduled.set(false) }
+            }
         }
         return value
     }
