@@ -1,0 +1,47 @@
+diff --git a/src/RtpVideoQueue.c b/src/RtpVideoQueue.c
+--- a/src/RtpVideoQueue.c
++++ b/src/RtpVideoQueue.c
+@@ -258,9 +258,14 @@
+         return -1;
+     }
+ 
+-    reed_solomon* rs = NULL;
+-    unsigned char** packets = calloc(totalPackets, sizeof(unsigned char*));
+-    unsigned char* marks = calloc(totalPackets, sizeof(unsigned char));
++    reed_solomon* rs = NULL;
++    // Typical FEC blocks fit in bounded stack scratch space. Preserve the heap
++    // fallback for larger blocks; recovered packet ownership is unchanged.
++    unsigned char* packetScratch[256];
++    unsigned char markScratch[256];
++    bool heapScratch = totalPackets > sizeof(markScratch);
++    unsigned char** packets = heapScratch ? calloc(totalPackets, sizeof(*packets)) : packetScratch;
++    unsigned char* marks = heapScratch ? malloc(totalPackets) : markScratch;
+     if (packets == NULL || marks == NULL) {
+         ret = -2;
+         goto cleanup;
+@@ -276,7 +281,8 @@
+         goto cleanup;
+     }
+ 
+-    memset(marks, 1, sizeof(char) * (totalPackets));
++    if (!heapScratch) memset(packets, 0, totalPackets * sizeof(*packets));
++    memset(marks, 1, totalPackets);
+ 
+     int receiveSize = StreamConfig.packetSize + MAX_RTP_HEADER_SIZE;
+     int packetBufferSize = receiveSize + sizeof(RTPV_QUEUE_ENTRY);
+@@ -454,11 +460,10 @@
+ cleanup:
+     reed_solomon_release(rs);
+ 
+-    if (packets != NULL)
+-        free(packets);
+-
+-    if (marks != NULL)
+-        free(marks);
++    if (heapScratch) {
++        free(packets);
++        free(marks);
++    }
+ 
+     return ret;
+ }
