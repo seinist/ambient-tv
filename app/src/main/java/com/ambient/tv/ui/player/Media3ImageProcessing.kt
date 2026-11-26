@@ -111,7 +111,7 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
     private val outputHeight: Int get() = renderGeometry.confirmedSurface?.second ?: 0
     /** Scaler key the chain really upscales with; null while the display path scales. */
     private var scalerInChain: String? = null
-    private var applied: Triple<Media3ImageOptions, Int, Int>? = null
+    private var applied: Media3EffectiveChainKey? = null
     private var updatePosted = false
     /** Set by a settings change (user or Sparsam); format and surface changes leave it false. */
     private var userChangePending = false
@@ -312,7 +312,6 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
 
     fun refreshPerformanceOverrides() {
         reducedEffects = reducedVideoEffects(appContext)
-        applied = null
         userChangePending = true
         scheduleUpdate()
     }
@@ -320,7 +319,6 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
     internal fun updatePerformancePolicy(reduced: Boolean) {
         if (reducedEffects == reduced) return
         reducedEffects = reduced
-        applied = null
         userChangePending = true
         scheduleUpdate()
     }
@@ -375,7 +373,6 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         // Player release clears the playlist. Never revive a stopped/released session.
         if (player.mediaItemCount == 0 || player.playbackState == Player.STATE_IDLE) return
         val effective = if (enabled) gated else Media3ImageOptions()
-        val signature = Triple(effective, outputWidth, outputHeight)
         // Scalers only run while the fitted picture is larger than the source: never past the display.
         val upscaling = enabled && format?.let { source ->
             media3NeedsUpscaling(source.width, source.height, outputWidth, outputHeight,
@@ -445,12 +442,17 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
             colorTransfer = format?.colorInfo?.colorTransfer)
         val userChange = userChangePending
         userChangePending = false
-        if (signature == applied && stages == appliedStages) return
-        val scaler = stages.firstNotNullOfOrNull { (it as? Media3Stage.Scale)?.scaler }
-        val effects = media3FusedStages(stages).map { media3Effect(it.stage, outputWidth, outputHeight, it.gamma) }
-        // Programs are created on the GL thread after setVideoEffects; they read this flag then.
+        val fused = media3FusedStages(stages)
         val profile = performanceProfile(appContext)
-        Media3ChainPrecision.halfFloatPasses = media3HalfFloatPasses(effects.size, profile.lowEndDevice, profile.reducedPlayback)
+        val halfFloat = media3HalfFloatPasses(fused.size, profile.lowEndDevice, profile.reducedPlayback)
+        val signature = media3EffectiveChainKey(stages, outputWidth, outputHeight, halfFloat)
+        // Changes to dormant filter options or a surface resize with no scaling stage need
+        // not recreate shaders, pools or decoder output. Stats/budget still update above.
+        if (signature == applied) return
+        val scaler = stages.firstNotNullOfOrNull { (it as? Media3Stage.Scale)?.scaler }
+        val effects = fused.map { media3Effect(it.stage, outputWidth, outputHeight, it.gamma) }
+        // Programs are created on the GL thread after setVideoEffects; they read this flag then.
+        Media3ChainPrecision.halfFloatPasses = halfFloat
         applied = signature
         appliedStages = stages
         when (media3ChainTransition(prevActive = effectsActive, nextEmpty = effects.isEmpty(),
@@ -486,7 +488,7 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
             "Media3 effects failed (${appliedStages.joinToString { media3StageSummary(it) }}); continuing without them", error)
         effectsFailed = true
         rendererScalingRequested = false
-        applied = Triple(Media3ImageOptions(), outputWidth, outputHeight)
+        applied = media3EffectiveChainKey(emptyList(), outputWidth, outputHeight, false)
         appliedStages = emptyList()
         Media3ChainPrecision.halfFloatPasses = false
         restartWithEffects(player, emptyList())
@@ -642,4 +644,20 @@ internal fun media3ChainTransition(
     !gpuInitialized -> if (nextEmpty) Media3ChainTransition.NONE else Media3ChainTransition.RESTART
     prevActive && nextEmpty && userChange -> Media3ChainTransition.RESTART
     else -> Media3ChainTransition.UPDATE
+}
+
+/** Only active stages and parameters that affect their generated GL programs form the chain key. */
+internal data class Media3EffectiveChainKey(
+    val stages: List<Media3Stage>,
+    val width: Int,
+    val height: Int,
+    val halfFloat: Boolean,
+)
+
+internal fun media3EffectiveChainKey(
+    stages: List<Media3Stage>, outputWidth: Int, outputHeight: Int, halfFloat: Boolean,
+): Media3EffectiveChainKey {
+    val hasScale = stages.any { it is Media3Stage.Scale || it is Media3Stage.Downscale }
+    return Media3EffectiveChainKey(stages, if (hasScale) outputWidth else 0,
+        if (hasScale) outputHeight else 0, halfFloat && stages.isNotEmpty())
 }
