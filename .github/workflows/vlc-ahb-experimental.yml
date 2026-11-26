@@ -5,6 +5,7 @@ on:
       - 'native/vlc-aar/experimental/**'
       - 'scripts/test_vlc_ahb_import.sh'
       - 'scripts/prepare_vlc_ahb_experimental.sh'
+      - 'scripts/build_vlc_vulkan.sh'
       - '.github/workflows/vlc-ahb-experimental.yml'
   workflow_dispatch:
 permissions:
@@ -50,4 +51,9 @@ jobs:
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
           export LIBPLACEBO_SOURCE="$GITHUB_WORKSPACE/.ci/libplacebo"
+          export VLC_SOURCE="$GITHUB_WORKSPACE/.ci/vlc"
+          bash -n scripts/build_vlc_vulkan.sh scripts/prepare_vlc_ahb_experimental.sh
+          normal_hash="$(bash scripts/build_vlc_vulkan.sh --hash)"
+          experimental_hash="$(VLC_EXPERIMENTAL_AHB=1 bash scripts/build_vlc_vulkan.sh --hash)"
+          [[ "$normal_hash" != "$experimental_hash" ]]
           bash scripts/test_vlc_ahb_import.sh
