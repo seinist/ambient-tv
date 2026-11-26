@@ -24,19 +24,28 @@ object BrowseWorkBudget {
     fun recentlyInteracting(quietMs: Long = 600L): Boolean =
         scrolling.get() > 0 || SystemClock.elapsedRealtime() - lastInputMs < quietMs
 
+    // Capture before starting optional work and carry through network, parsing and storage.
+    // A game that started and ended between two checks still invalidates the old work.
+    fun gameEpoch(): Long = com.ambient.tv.ui.gamepad.GameInputRouting.gameStartEpoch.value
+
+    fun gameFreeSince(epoch: Long): Boolean =
+        !com.ambient.tv.ui.gamepad.GameInputRouting.active && gameEpoch() == epoch
+
+    fun idleSince(epoch: Long): Boolean = idle() && gameFreeSince(epoch)
+
     /** Observe the start epoch, not just a Boolean: a very short game session still
      * invalidates older speculative work. Cancel blocking calls on IO, not the UI thread. */
     suspend fun <T> interruptOnGameStart(cancel: () -> Unit, block: suspend () -> T): T = coroutineScope {
         val routing = com.ambient.tv.ui.gamepad.GameInputRouting
-        val epoch = routing.gameStartEpoch.value
-        check(!routing.active) { "Game owns foreground" }
+        val epoch = gameEpoch()
+        check(gameFreeSince(epoch)) { "Game owns foreground" }
         val watcher = launch(Dispatchers.IO) {
             routing.gameStartEpoch.first { it != epoch }
             cancel()
         }
         try {
             val result = block()
-            check(!routing.active && routing.gameStartEpoch.value == epoch) { "Game interrupted speculative work" }
+            check(gameFreeSince(epoch)) { "Game interrupted speculative work" }
             result
         } finally {
             watcher.cancel()
