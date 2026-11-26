@@ -79,7 +79,7 @@ diff --git a/src/AudioStream.c b/src/AudioStream.c
 +                    queuedPacket->header.size = length;
 +                    queuedPacket->header.pooled = false;
  
-                     if ((AudioCallbacks.capabilities & CAPABILITY_DIRECT_SUBMIT) == 0) {
+                     if (!directSubmit) {
 @@ -378,7 +413,7 @@
      }
  
