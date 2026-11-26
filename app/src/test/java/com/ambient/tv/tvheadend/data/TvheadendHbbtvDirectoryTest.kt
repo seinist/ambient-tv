@@ -65,4 +65,28 @@ class TvheadendHbbtvDirectoryTest {
         assertFalse(hbbtvRefreshDue(now, 1000L, now, 2000L, true))
         assertTrue(hbbtvRefreshDue(now + 1000, null, now, 1000, false))
     }
+
+    @Test fun missingRowsInOptionalResponsesRetainPreviouslyKnownApplications() {
+        val before = directory().withHttp(mapOf("service" to listOf(raw)), 100)
+            .withHtsp(mapOf("channel" to listOf(htsp)), 200)
+        assertEquals(listOf(raw, htsp), before.withHttp(emptyMap(), 300).withHtsp(emptyMap(), 400).apps("channel"))
+    }
+
+    @Test fun legacyAppsSurviveOneEmptyTransportUntilBothConfirmAbsence() {
+        val old = channel.copy(hbbtvApps = listOf(raw), hbbtvUrl = raw.url)
+        val migrated = TvheadendHbbtvDirectory.fromLegacy(9982, listOf(old)).withTopology(topology)
+        val onlyHttp = migrated.withHttp(mapOf("service" to emptyList()), 100)
+        assertEquals(listOf(raw), onlyHttp.apps("channel"))
+        assertTrue(onlyHttp.withHtsp(mapOf("channel" to emptyList()), 200).apps("channel").isEmpty())
+    }
+
+    @Test fun changingHtspPortKeepsIndependentHttpMetadataAndInvalidatesHtsp() {
+        val before = directory().withHttp(mapOf("service" to listOf(raw)), 100)
+            .withHtsp(mapOf("channel" to listOf(htsp)), 200)
+        val changed = before.withHtspPort(9983)
+        assertEquals(listOf(raw), changed.apps("channel"))
+        assertEquals(100L, changed.httpLoadedAt)
+        assertEquals(0L, changed.htspLoadedAt)
+        assertEquals(topology, changed.servicesByChannel)
+    }
 }

@@ -214,6 +214,8 @@ class TvheadendViewModel @Inject constructor(
         val requested = repository as? TvheadendLiveTvRepository ?: return
         hbbtvObserver = viewModelScope.launch {
             suspendResult { requested.restoreCachedHbbtv() }
+            if (repository === requested && registry.displayCacheIdentity(requested) != null)
+                requested.requestHbbtvRefresh()
             requested.hbbtvChanges.collect {
                 if (repository !== requested || registry.displayCacheIdentity(requested) == null) return@collect
                 browseState.updateChannelMetadata(requested::enrichHbbtvChannels)

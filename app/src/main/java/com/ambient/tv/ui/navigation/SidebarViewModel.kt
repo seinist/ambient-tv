@@ -278,6 +278,9 @@ class SidebarViewModel @Inject constructor(
         appPreferences.isEmbyConfigured,
         appPreferences.isTvheadendConfigured,
         appPreferences.hasTvheadendEndpoint,
+        appPreferences.tvheadendHistoryScope,
+        appPreferences.tvheadendUseHttps,
+        appPreferences.tvheadendHtspPort,
         appPreferences.youtubeEnabled,
         appPreferences.spotifyEnabled,
         appPreferences.radioEnabled,
@@ -443,14 +446,12 @@ class SidebarViewModel @Inject constructor(
                     _uiState.update { it.copy(youtubeFeedKeys = keys, youtubeStartFeedKey = start) }
                 }
                 "tvheadend" -> if (appPreferences.isTvheadendConfigured) {
-                    val channels = suspendResult {
-                        loadCoordinator.request("tvheadend", "sidebar-channels", BrowseLoadPriority.VISIBLE) {
-                            tvheadendRepository.channels()
+                    suspendResult {
+                        loadCoordinator.request("tvheadend", "sidebar-hbbtv", BrowseLoadPriority.VISIBLE) {
+                            tvheadendRepository.prepareHbbtvDiscovery()
                         }
-                    }.getOrNull()
-                    if (channels != null) _uiState.update { it.copy(
-                        tvheadendHbbtvAvailable = tvheadendRepository.hasCachedHbbtvApps(),
-                    ) }
+                    }
+                    _uiState.update { it.copy(tvheadendHbbtvAvailable = tvheadendRepository.hasCachedHbbtvApps()) }
                 }
                 "romm" -> if (rommAccounts.account() != null) {
                     // Opening RomM is a request for its menu: read the server again when the copy is old.
@@ -535,14 +536,12 @@ class SidebarViewModel @Inject constructor(
                 _uiState.update { it.copy(liveTvSources = com.ambient.tv.livetv.reconcileSidebarLiveTvSources(sources, liveTv.sidebarSnapshot())) }
             }
             if (forceLiveTv && appPreferences.isTvheadendConfigured) launch {
-                val channels = com.ambient.tv.util.suspendResult {
-                    loadCoordinator.request("tvheadend", "sidebar-channels:force", BrowseLoadPriority.HOME) {
-                        tvheadendRepository.channels(force = true)
+                suspendResult {
+                    loadCoordinator.request("tvheadend", "sidebar-hbbtv", BrowseLoadPriority.HOME) {
+                        tvheadendRepository.prepareHbbtvDiscovery()
                     }
-                }.getOrNull()
-                if (channels != null) _uiState.update { it.copy(
-                    tvheadendHbbtvAvailable = tvheadendRepository.hasCachedHbbtvApps()
-                ) }
+                }
+                _uiState.update { it.copy(tvheadendHbbtvAvailable = tvheadendRepository.hasCachedHbbtvApps()) }
             }
             val youtubeOn = _uiState.value.youtubeEnabled
             if (forceLiveTv && youtubeOn) launch {

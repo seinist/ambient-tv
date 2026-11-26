@@ -31,24 +31,41 @@ internal data class TvheadendHbbtvDirectory(
         )
     }
 
+    fun withHtspPort(port: Int): TvheadendHbbtvDirectory =
+        if (port == htspPort) this else copy(htspPort = port, htspByChannel = emptyMap(),
+            htspLoadedAt = 0, legacyByChannel = emptyMap())
+
     fun withHttp(result: Map<String, List<LiveTvHbbtvApp>>, now: Long): TvheadendHbbtvDirectory {
         val services = servicesByChannel.values.flatten().toHashSet()
+        // Missing rows can mean permission-filtered service metadata. Only a returned
+        // service (including an explicit empty application list) replaces its previous value.
+        val updated = (httpByService + result).filterKeys { it in services }
         return copy(
-            httpByService = result.filterKeys { it in services },
+            httpByService = updated,
             httpLoadedAt = now,
             legacyByChannel = legacyByChannel.filterKeys { id ->
                 val mapped = servicesByChannel[id].orEmpty()
-                mapped.isEmpty() || !mapped.all { it in result }
+                val covered = mapped.isNotEmpty() && mapped.all { it in result }
+                val positive = mapped.any { result[it].orEmpty().isNotEmpty() }
+                !positive && !(covered && id in htspByChannel)
             },
         )
     }
 
     fun withHtsp(result: Map<String, List<LiveTvHbbtvApp>>, now: Long): TvheadendHbbtvDirectory =
-        copy(htspByChannel = result.filterKeys { it in servicesByChannel },
-            htspLoadedAt = now, legacyByChannel = legacyByChannel.filterKeys { it !in result })
+        copy(htspByChannel = (htspByChannel + result).filterKeys { it in servicesByChannel },
+            htspLoadedAt = now, legacyByChannel = legacyByChannel.filterKeys { id ->
+                val mapped = servicesByChannel[id].orEmpty()
+                val httpCovered = mapped.isNotEmpty() && mapped.all { it in httpByService }
+                result[id].orEmpty().isEmpty() && !(id in result && httpCovered)
+            })
 
-    fun apps(channelId: String): List<LiveTvHbbtvApp> {
-        if (channelId !in servicesByChannel) return emptyList()
+    @kotlinx.serialization.Transient
+    private val resolvedApps = servicesByChannel.keys.associateWith(::resolveApps)
+
+    fun apps(channelId: String): List<LiveTvHbbtvApp> = resolvedApps[channelId].orEmpty()
+
+    private fun resolveApps(channelId: String): List<LiveTvHbbtvApp> {
         return (servicesByChannel[channelId].orEmpty().flatMap { httpByService[it].orEmpty() } +
             htspByChannel[channelId].orEmpty() + legacyByChannel[channelId].orEmpty())
             .filter { it.visibility != "none" }
@@ -69,9 +86,10 @@ internal data class TvheadendHbbtvDirectory(
         return if (changed) result else channels
     }
 
-    fun hasMenuApps(): Boolean = servicesByChannel.keys.any { id ->
-        apps(id).any { it.visibility == "all" || it.visibility == "apps" }
-    }
+    @kotlinx.serialization.Transient
+    private val menuApps = resolvedApps.values.any { apps -> apps.any { it.visibility == "all" || it.visibility == "apps" } }
+
+    fun hasMenuApps(): Boolean = menuApps
 
     companion object {
         /** Upgrade the old combined channel cache without a network round trip. Its origin is

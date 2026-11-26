@@ -34,12 +34,18 @@ internal object TvheadendHtspHbbtv {
                 override fun read(b: ByteArray, off: Int, len: Int): Int { prepareRead(); return super.read(b, off, len) }
             }.buffered())
             val output = DataOutputStream(socket.getOutputStream().buffered())
+            fun checkDeadline() {
+                check(shouldContinue()) { "HTSP metadata deferred" }
+                if (System.nanoTime() >= deadline) throw SocketTimeoutException("HTSP initial metadata timed out")
+            }
             fun send(seq: Long, method: String, extra: Map<String, Any> = emptyMap()) {
+                checkDeadline()
                 output.write(tvhHtspEncode(mapOf("seq" to seq, "method" to method) + extra))
                 output.flush()
             }
             fun reply(seq: Long): Map<String, Any> {
                 repeat(16) {
+                    checkDeadline()
                     val response = tvhHtspDecode(input)
                     if (response["seq"] == seq) return response
                 }
@@ -57,7 +63,8 @@ internal object TvheadendHtspHbbtv {
                 mapOf("username" to username, "digest" to sha1.digest())
             } else emptyMap()
             send(2, "authenticate", credentials)
-            check(reply(2)["noaccess"] != 1L) { "HTSP user has no access" }
+            val auth = reply(2)
+            check(auth["noaccess"] != 1L && auth["noaccess"] != true && auth["error"] == null) { "HTSP user has no access" }
             send(3, "enableAsyncMetadata", mapOf("epg" to 0L))
             val appsByChannel = linkedMapOf<String, List<TvhHbbtvApplication>>()
             repeat(20_000) {
