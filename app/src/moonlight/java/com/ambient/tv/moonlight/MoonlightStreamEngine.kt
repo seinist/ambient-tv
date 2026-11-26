@@ -141,7 +141,7 @@ class MoonlightStreamEngine @Inject constructor(
                     fail(session, text, retryable = rejected == 0 || remaining != 0,
                         rejectedVideoFormat = if (remaining != 0) rejected else 0)
                 }
-                val audio = MoonlightAudioTrackRenderer { text -> fail(session, text) }
+                val audio = MoonlightAudioTrackRenderer(valid.pacing) { text -> fail(session, text, retryable = true) }
                 val audioConfig = when (valid.audioChannels) {
                     6 -> MoonBridge.AUDIO_CONFIGURATION_51_SURROUND
                     8 -> MoonBridge.AUDIO_CONFIGURATION_71_SURROUND

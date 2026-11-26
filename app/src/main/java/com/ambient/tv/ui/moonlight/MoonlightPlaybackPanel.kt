@@ -184,7 +184,9 @@ internal fun BoxScope.MoonlightPlaybackPanel(
                         audio.droppedSamples))
                     audio.estimatedQueuedMs?.let {
                         RightPanelInfoRow(stringResource(R.string.moonlight_stats_audio_queue, it))
+                        RightPanelInfoRow(stringResource(R.string.moonlight_stats_audio_native_queue, audio.nativeQueuedMs))
                     }
+                    if (audio.recovering) RightPanelInfoRow(stringResource(R.string.moonlight_stats_audio_recovering))
                 }
                 MoonlightPlaybackPage.QUIT -> {
                     Text(stringResource(R.string.moonlight_quit_confirm_hint),

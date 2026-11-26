@@ -31,6 +31,8 @@ data class MoonlightAudioMetrics(
     val channels: Int = 0, val rate: Int = 0, val bufferFrames: Int = 0,
     val underruns: Int = 0, val droppedSamples: Long = 0,
     val estimatedQueuedMs: Double? = null,
+    val nativeQueuedMs: Int = 0,
+    val recovering: Boolean = false,
 )
 data class MoonlightStreamMetrics(
     val video: MoonlightVideoMetrics = MoonlightVideoMetrics(),
