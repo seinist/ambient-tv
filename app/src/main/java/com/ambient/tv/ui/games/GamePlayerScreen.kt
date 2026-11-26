@@ -1147,7 +1147,10 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     if (nativeSdrStatus != direct) nativeSdrStatus = direct
                 }
             }
-            if (event == GLRetroView.GLRetroEvents.SurfaceCreated) coreReady = true
+            // The independent readiness and frame streams can be delivered in either order.
+            // A completed native frame also proves that surface/core initialisation succeeded.
+            if (event == GLRetroView.GLRetroEvents.SurfaceCreated ||
+                event == GLRetroView.GLRetroEvents.FrameRendered) coreReady = true
             if (event == GLRetroView.GLRetroEvents.FrameRendered && !loaded) {
                 loaded = true
                 lastInitializationPollMs = now
