@@ -262,11 +262,16 @@ class TvheadendViewModel @Inject constructor(
             val savedAt = snapshots.read<Long>(namespace, "updated_at")
             if (!stillCurrent()) { load(force = false); return@launch }
             val savedCapabilities = snapshots.read<LiveTvCapabilities>(namespace, "capabilities")
-            val savedDashboard = snapshots.read<LiveTvDashboard>(namespace, "dashboard")
-                ?: snapshots.read<List<LiveTvChannel>>(namespace, "channels")?.let { channels ->
+            val rawDashboard = snapshots.read<LiveTvDashboard>(namespace, "dashboard")
+                ?: (snapshots.read<List<LiveTvChannel>>(namespace, "channels") ?: requestedRepository.cachedChannels())?.let { channels ->
                     LiveTvDashboard(LiveTvServerInfo(requestedRepository.source.name, null, null),
                         channels, emptyList(), emptyList(), emptyList())
                 }
+            val savedDashboard = rawDashboard?.let { dashboard ->
+                val start = System.currentTimeMillis() / 1000L - 3600L
+                val guide = requestedRepository.cachedGuideEvents(start, 12)
+                if (guide != null) dashboard.copy(events = guide) else dashboard
+            }
             savedDashboard?.let { cached ->
                 if (!stillCurrent()) { load(force = false); return@launch }
                 if (_uiState.value.dashboard == null) _uiState.update { it.copy(dashboard = cached, offline = offlineNow(), canWake = offlineNow() && canWake(),
@@ -323,6 +328,7 @@ class TvheadendViewModel @Inject constructor(
                     val updatedAt = if (!servedCache) System.currentTimeMillis() else _uiState.value.lastUpdatedEpochMillis
                     if (fresh.warnings.isEmpty() && !servedCache) {
                         snapshots.write(owner, namespace, "dashboard", dashboard.copy(
+                        events = if (isTvheadend) emptyList() else dashboard.events,
                         recordings = dashboard.recordings.map { it.copy(url = null) },
                         upcoming = dashboard.upcoming.map { it.copy(url = null) },
                         failedRecordings = dashboard.failedRecordings.map { it.copy(url = null) },

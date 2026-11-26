@@ -14,6 +14,12 @@ class TvheadendLiveTvRepository(
     override val cacheFallbackMarker: Long get() = delegate.cacheFallbacks
     override fun servedCacheSince(marker: Long): Boolean = delegate.cacheFallbacks != marker
     override fun authHeaders(): Map<String, String> { checkSource(); return delegate.authHeaders() }
+    override suspend fun cachedChannels(): List<LiveTvChannel>? {
+        checkSource(); return delegate.cachedChannels()?.map { it.copy(sourceId = source.id) }
+    }
+    override suspend fun cachedGuideEvents(start: Long, hours: Int): List<LiveTvProgramme>? {
+        checkSource(); return delegate.cachedGuideEvents(start, hours)?.map { it.copy(sourceId = source.id) }
+    }
     override suspend fun capabilities(force: Boolean): LiveTvCapabilities {
         checkSource()
         delegate.serverInfo(force)

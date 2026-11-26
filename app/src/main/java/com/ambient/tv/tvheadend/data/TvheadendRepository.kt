@@ -28,6 +28,7 @@ import java.net.Socket
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.async
@@ -91,6 +92,8 @@ class TvheadendRepository @Inject constructor(
     private val cacheMutex = Mutex()
     /** Serialize legacy migration and fresh-window merges from parallel per-channel loads. */
     private val epgPersistMutex = Mutex()
+    private val guideFetchMutex = Mutex()
+    private var guideSyncJob: kotlinx.coroutines.Job? = null
     private val cache = mutableMapOf<String, CacheValue<*>>()
     private var cacheScope: List<String>? = null
     private var cacheGeneration = 0L
@@ -358,23 +361,91 @@ class TvheadendRepository @Inject constructor(
         channelId: String? = null,
     ): List<TvhEpgEvent> {
         val stop = startEpochSeconds + windowHours.coerceIn(1, 72) * 3600L
-        val key = "epg:$channelId:${startEpochSeconds / 300}:$windowHours"
-        return cached(key, 10 * 60_000, force,
-            stale = { scope ->
-                indexedEpg(scope, startEpochSeconds, stop, channelId)
-            },
-            persist = { scope, events -> epgPersistMutex.withLock {
-                val now = System.currentTimeMillis() / 1000L
-                migrateGuideIfNeeded(scope)
-                guideIndex.mergeWindow(EPG_INDEX_OWNER, scope, events, now, valid = { currentGuideScope(scope) })
-            } },
+        val from = Math.floorDiv(startEpochSeconds, 1800L) * 1800L
+        val to = Math.floorDiv(stop + 1799L, 1800L) * 1800L
+        val scope = diskScope()
+        if (!force && guideIndex.coversFreshWindow(EPG_INDEX_OWNER, scope, startEpochSeconds, stop, 15 * 60_000L)) {
+            indexedEpg(scope, startEpochSeconds, stop, channelId)?.let { return it }
+        }
+        val key = "epg:$channelId:$from:$to"
+        return cached(key, 15 * 60_000L, force,
+            stale = { storedScope -> indexedEpg(storedScope, from, to, channelId) },
         ) {
-            loadTvhEpgPages(startEpochSeconds, stop, channelId) { params -> getJson("api/epg/events/grid", params) }
-                .mapNotNull(::mapEvent).filter { it.stopEpochSeconds >= startEpochSeconds && it.startEpochSeconds <= stop }
+            syncGuideWindow(scope, from, to, channelId, wake = true, force = force)
+        }.filter { it.stopEpochSeconds >= startEpochSeconds && it.startEpochSeconds <= stop }
+    }
+
+    suspend fun cachedGuideEvents(start: Long, hours: Int): List<TvhEpgEvent>? =
+        indexedEpg(diskScope(), start, start + hours * 3600L)
+
+    suspend fun cachedChannels(): List<TvhChannel>? {
+        val scope = diskScope()
+        return diskCache.read(scope, TvheadendDiskCache.CHANNELS, CHANNEL_LIST)?.takeIf { currentGuideScope(scope) }
+    }
+
+    private suspend fun syncGuideWindow(scope: String, from: Long, to: Long, channelId: String?,
+        wake: Boolean, force: Boolean = false, maxAgeMs: Long = 15 * 60_000L): List<TvhEpgEvent> = guideFetchMutex.withLock {
+        check(currentGuideScope(scope)) { "TVHeadend source changed" }
+        if (!force && guideIndex.coversFreshWindow(EPG_INDEX_OWNER, scope, from, to, maxAgeMs)) {
+            indexedEpg(scope, from, to, channelId)?.let { return@withLock it }
+        }
+        val rows = loadTvhEpgPages(from, to, channelId) { params ->
+            currentCoroutineContext().ensureActive()
+            check(currentGuideScope(scope)) { "TVHeadend source changed" }
+            getJson("api/epg/events/grid", params, wake = wake)
+        }
+        // A malformed response is not authoritative. Do not remove previously cached programmes.
+        val events = rows.map { mapEvent(it) ?: error("Invalid TVHeadend programme") }
+            .filter { it.stopEpochSeconds >= from && it.startEpochSeconds <= to }
+        epgPersistMutex.withLock {
+            migrateGuideIfNeeded(scope)
+            guideIndex.reconcileWindow(EPG_INDEX_OWNER, scope, events, from, to,
+                System.currentTimeMillis() / 1000L, channelId, valid = { currentGuideScope(scope) })
+        }
+        events
+    }
+
+    /** Idle, foreground-only synchronization. Never wake a sleeping server for speculative EPG. */
+    @Synchronized fun startGuideSync() {
+        if (guideSyncJob?.isActive == true) return
+        guideSyncJob = background.launch {
+            kotlinx.coroutines.delay(3000)
+            while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+                if (preferences.isTvheadendConfigured && com.ambient.tv.data.browse.BrowseWorkBudget.idle()) {
+                    suspendResult {
+                        val scope = diskScope()
+                        val now = System.currentTimeMillis() / 1000L
+                        guideIndex.trimExpired(EPG_INDEX_OWNER, scope, now) { currentGuideScope(scope) }
+                        if (!availability.hasNetwork() || !serverLikelyReachable()) return@suspendResult
+                        // Six-hour aligned windows are bounded; fill the nearest missing window first.
+                        val start = Math.floorDiv(now, 21600L) * 21600L
+                        for (slot in 0 until 29) {
+                            if (!com.ambient.tv.data.browse.BrowseWorkBudget.idle() || !currentGuideScope(scope)) break
+                            val from = start + slot * 21600L
+                            val to = minOf(from + 21600L, now + 7 * 86400L)
+                            if (to <= from) break
+                            val ttl = when (slot) { 0, 1 -> 15 * 60_000L; in 2..3 -> 60 * 60_000L
+                                in 4..11 -> 3 * 3600_000L; else -> 6 * 3600_000L }
+                            if (!guideIndex.coversFreshWindow(EPG_INDEX_OWNER, scope, from, to, ttl)) {
+                                syncGuideWindow(scope, from, to, null, wake = false, maxAgeMs = ttl)
+                                // Yield between windows and re-evaluate foreground work.
+                                kotlinx.coroutines.delay(750)
+                            }
+                        }
+                    }.onFailure { Timber.d(it, "TVHeadend idle programme sync deferred") }
+                }
+                kotlinx.coroutines.delay(60_000)
+            }
         }
     }
 
-    suspend fun nowEvents(force: Boolean = false): List<TvhEpgEvent> = cached("epg:now", 60_000, force,
+    suspend fun nowEvents(force: Boolean = false): List<TvhEpgEvent> {
+        val now = System.currentTimeMillis() / 1000L
+        val scope = diskScope()
+        if (!force && guideIndex.coversFreshWindow(EPG_INDEX_OWNER, scope, now, now + 1, 15 * 60_000L)) {
+            indexedEpg(scope, now, now + 1, inclusiveBounds = false)?.let { return it.filter { event -> event.isLive(now) } }
+        }
+        return cached("epg:now", 60_000, force,
         stale = { scope ->
             val now = System.currentTimeMillis() / 1000L
             val stored = diskCache.read(scope, TvheadendDiskCache.NOW, EVENT_LIST)
@@ -390,6 +461,7 @@ class TvheadendRepository @Inject constructor(
                 mapOf("mode" to "now", "limit" to "9999"),
             ),
         ).mapNotNull(::mapEvent)
+    }
     }
 
     private fun currentGuideScope(scope: String): Boolean = preferences.tvheadendEnabled &&
