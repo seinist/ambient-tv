@@ -212,8 +212,8 @@ void auditAlpha(Audit& audit) {
 }
 
 void auditSoftwareUpload(Audit& audit) {
-    const std::vector<int> formats=audit.version==2 ? std::vector<int>{RETRO_PIXEL_FORMAT_XRGB8888,
-        RETRO_PIXEL_FORMAT_HDR10_2101010,RETRO_PIXEL_FORMAT_0RGB1555} : std::vector<int>{RETRO_PIXEL_FORMAT_0RGB1555};
+    const std::vector<int> formats={RETRO_PIXEL_FORMAT_XRGB8888,
+        RETRO_PIXEL_FORMAT_HDR10_2101010,RETRO_PIXEL_FORMAT_0RGB1555,RETRO_PIXEL_FORMAT_RGB565};
     for(int format:formats) {
         audit.run("source-upload","format/"+std::to_string(format),[&] {
             std::unique_ptr<Renderer> renderer=audit.version==2 ? std::unique_ptr<Renderer>(new ImageRendererES2()) :
@@ -221,8 +221,8 @@ void auditSoftwareUpload(Audit& audit) {
             renderer->setPixelFormat(format);renderer->setShaders(ShaderManager::getShader(pixel()));
             for(unsigned width:{1u,32u,33u,7u,64u}) {
                 const unsigned height=width==1 ? 1:17;
-                const size_t bpp=format==RETRO_PIXEL_FORMAT_0RGB1555 ? 2:4;
-                for(size_t padding:{0u,7u}) {
+                const size_t bpp=(format==RETRO_PIXEL_FORMAT_0RGB1555 || format==RETRO_PIXEL_FORMAT_RGB565) ? 2:4;
+                for(size_t padding:{0u,7u,8u}) {
                     const size_t pitch=width*bpp+padding;
                     // No padding after the last row, and an intentionally unaligned base.
                     std::vector<uint8_t> frame(1+(height-1)*pitch+width*bpp,0xa5);
@@ -237,6 +237,12 @@ void auditSoftwareUpload(Audit& audit) {
                             packed=(r<<20)|(g<<10)|b;
                             color={static_cast<unsigned char>((r*255+511)/1023),
                                 static_cast<unsigned char>((g*255+511)/1023),static_cast<unsigned char>((b*255+511)/1023),255};
+                        } else if(format==RETRO_PIXEL_FORMAT_RGB565) {
+                            const unsigned r=color[0]>>3,g=color[1]>>2,b=color[2]>>3;
+                            packed=(r<<11)|(g<<5)|b;
+                            color={static_cast<unsigned char>(std::lround(r*255.0/31.0)),
+                                static_cast<unsigned char>(std::lround(g*255.0/63.0)),
+                                static_cast<unsigned char>(std::lround(b*255.0/31.0)),255};
                         } else if(format==RETRO_PIXEL_FORMAT_0RGB1555) {
                             const unsigned r=color[0]>>3,g=color[1]>>3,b=color[2]>>3;
                             packed=(r<<10)|(g<<5)|b;
@@ -244,13 +250,22 @@ void auditSoftwareUpload(Audit& audit) {
                                 static_cast<unsigned char>(std::lround(std::lround(g*63.0/31.0)*255.0/63.0)),
                                 static_cast<unsigned char>(std::lround(b*255.0/31.0)),255};
                         }
+                        if(audit.version==3 && bpp==4) {
+                            // FBO readback sees raw storage, not the texture's sampling swizzle.
+                            // Set the ignored X bits opaque for this raw-storage comparison.
+                            packed |= format==RETRO_PIXEL_FORMAT_HDR10_2101010 ? 0xc0000000u : 0xff000000u;
+                            std::swap(color[0],color[2]);
+                        }
                         std::memcpy(frame.data()+1+y*pitch+x*bpp,&packed,bpp);expected[y*width+x]=color;
                     }
                     for(int repeat=0;repeat<3;++repeat) {
                     if(repeat==2) {
                         // A core may redraw only the final pixel and reuse every other byte.
-                        uint32_t white=format==RETRO_PIXEL_FORMAT_0RGB1555 ? 0x7fffu :
+                        uint32_t white=format==RETRO_PIXEL_FORMAT_RGB565 ? 0xffffu :
+                            format==RETRO_PIXEL_FORMAT_0RGB1555 ? 0x7fffu :
                             format==RETRO_PIXEL_FORMAT_HDR10_2101010 ? 0x3fffffffu : 0x00ffffffu;
+                        if(audit.version==3 && bpp==4)
+                            white |= format==RETRO_PIXEL_FORMAT_HDR10_2101010 ? 0xc0000000u : 0xff000000u;
                         std::memcpy(frame.data()+1+(height-1)*pitch+(width-1)*bpp,&white,bpp);
                         expected.back()={255,255,255,255};
                     }
@@ -273,6 +288,59 @@ void auditSoftwareUpload(Audit& audit) {
             }
         });
     }
+    audit.run("source-upload","same-size-format-and-sampler-switch",[&] {
+        std::unique_ptr<Renderer> renderer=audit.version==2 ? std::unique_ptr<Renderer>(new ImageRendererES2()) :
+            std::unique_ptr<Renderer>(new ImageRendererES3());
+        const uint16_t rgb565[4]={0xf800,0x07e0,0x001f,0xffff};
+        const uint16_t rgb1555[4]={0x7c00,0x03e0,0x001f,0x7fff};
+        const uint32_t xrgb[4]={0xffff0000,0xff00ff00,0xff0000ff,0xffffffff};
+        const uint32_t hdr10[4]={0xfff00000,0xc00ffc00,0xc00003ff,0xffffffff};
+        const Image expected={{255,0,0,255},{0,255,0,255},{0,0,255,255},{255,255,255,255}};
+        auto chain=ShaderManager::getShader(pixel());
+        for (int format:{RETRO_PIXEL_FORMAT_RGB565,RETRO_PIXEL_FORMAT_XRGB8888,
+                         RETRO_PIXEL_FORMAT_HDR10_2101010,RETRO_PIXEL_FORMAT_XRGB8888,
+                         RETRO_PIXEL_FORMAT_0RGB1555,RETRO_PIXEL_FORMAT_RGB565}) {
+            renderer->setPixelFormat(format);
+            const bool wide=format==RETRO_PIXEL_FORMAT_XRGB8888 || format==RETRO_PIXEL_FORMAT_HDR10_2101010;
+            const void* data=format==RETRO_PIXEL_FORMAT_XRGB8888 ? static_cast<const void*>(xrgb) :
+                format==RETRO_PIXEL_FORMAT_HDR10_2101010 ? static_cast<const void*>(hdr10) :
+                format==RETRO_PIXEL_FORMAT_0RGB1555 ? static_cast<const void*>(rgb1555) :
+                static_cast<const void*>(rgb565);
+            chain.linearTexture=wide;
+            renderer->setShaders(chain);
+            for(int repeat=0;repeat<2;++repeat) {
+                renderer->onNewFrame(data,2,2,wide?8:4);
+                renderer->prepareShaderPasses();
+                glBindTexture(GL_TEXTURE_2D,renderer->getTexture());
+                GLint minFilter=0,magFilter=0;
+                glGetTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,&minFilter);
+                glGetTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,&magFilter);
+                require(minFilter==(wide?GL_LINEAR:GL_NEAREST)&&magFilter==minFilter,"sampler not updated");
+                Image expectedStorage=expected;
+                if(audit.version==3) {
+                    GLint red=0,blue=0;
+                    glGetTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_SWIZZLE_R,&red);
+                    glGetTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_SWIZZLE_B,&blue);
+                    require(red==(wide?GL_BLUE:GL_RED)&&blue==(wide?GL_RED:GL_BLUE),"format swizzle not updated");
+                    if(wide) for(auto& color:expectedStorage) std::swap(color[0],color[2]);
+                }
+                glBindTexture(GL_TEXTURE_2D,0);
+                GLuint framebuffer=0;glGenFramebuffers(1,&framebuffer);glBindFramebuffer(GL_FRAMEBUFFER,framebuffer);
+                glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,renderer->getTexture(),0);
+                require(glCheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE,"format switch texture incomplete");
+                Image actual(4);glReadPixels(0,0,2,2,GL_RGBA,GL_UNSIGNED_BYTE,actual.data());
+                glBindFramebuffer(GL_FRAMEBUFFER,0);glDeleteFramebuffers(1,&framebuffer);
+                require(glGetError()==GL_NO_ERROR,"format switch GL error");
+                require(actual==expectedStorage,"same-size format switch corrupted source colors");
+            }
+        }
+        // A paused filter switch must update the existing texture without a core frame.
+        chain.linearTexture=true;renderer->setShaders(chain);renderer->prepareShaderPasses();
+        glBindTexture(GL_TEXTURE_2D,renderer->getTexture());
+        GLint filter=0;glGetTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,&filter);
+        glBindTexture(GL_TEXTURE_2D,0);
+        require(filter==GL_LINEAR && glGetError()==GL_NO_ERROR,"paused sampler switch failed");
+    });
     std::printf("AUDIT: GLES%d immutable/reused/partially redrawn source, final texel, pitched rows and buffer growth complete\n",audit.version);
 }
 

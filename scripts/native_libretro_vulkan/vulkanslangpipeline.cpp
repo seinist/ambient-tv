@@ -13,31 +13,6 @@ namespace libretrodroid {
 
 namespace {
     constexpr const char* TAG = "AmbientLibretroSlang";
-    constexpr uint32_t MAX_SOURCE_DIMENSION = 8192;
-    constexpr uint64_t MAX_RENDER_PIXELS = 4096ull * 2160ull;
-    // Bound the actual preset intermediates as well as the presentation image.
-    constexpr uint64_t MAX_INTERMEDIATE_BYTES = 128ull * 1024ull * 1024ull;
-    bool endsWith(const std::string& path, const char* suffix) {
-        const size_t count = std::strlen(suffix);
-        return path.size() >= count && path.compare(path.size() - count, count, suffix) == 0;
-    }
-    bool withinIntermediateBudget(const std::string& path, uint32_t width, uint32_t height,
-                                  uint32_t viewportHeight, uint32_t deviceLimit) {
-        const uint64_t pixels = uint64_t(width) * height;
-        if (endsWith(path, "/scalefx/scalefx.slangp")) {
-            // Original, two float metric buffers, classification, 3x output;
-            // include a second set for runtimes retaining prior targets.
-            return uint64_t(width) * 3 <= deviceLimit && uint64_t(height) * 3 <= deviceLimit &&
-                pixels * 160 <= MAX_INTERMEDIATE_BYTES;
-        }
-        if (endsWith(path, "/xsal/2xsal.slangp") || endsWith(path, "/eagle/super-2xsai.slangp") ||
-            endsWith(path, "/scalehq/2xScaleHQ.slangp")) {
-            // 2x scaler image and the separable bicubic presentation intermediate.
-            return uint64_t(width) * 2 <= deviceLimit && uint64_t(height) * 2 <= deviceLimit &&
-                pixels * 32 + uint64_t(width) * viewportHeight * 16 <= MAX_INTERMEDIATE_BYTES;
-        }
-        return true;
-    }
     constexpr size_t MAX_PRESET_PATH_BYTES = 4096;
     bool isRegular(const std::string& path) {
         struct stat info {};
@@ -58,6 +33,7 @@ void VulkanSlangPipeline::setPresetPath(const std::string& path) {
     if (presetPath == path) return;
     releaseGpu();
     presetPath = path;
+    geometryBudget = SlangGeometryPolicy::classify(presetPath);
     errorForThisPreset = false;
 }
 
@@ -110,11 +86,12 @@ bool VulkanSlangPipeline::loadLibrary() {
 }
 
 bool VulkanSlangPipeline::ensure(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device,
-                                 VkQueue graphicsQueue, PFN_vkGetInstanceProcAddr getInstanceProcAddr) {
-    if (chain != nullptr) return true;
+                                 VkQueue graphicsQueue, PFN_vkGetInstanceProcAddr getInstanceProcAddr,
+                                 const SlangFrameGeometry* geometry) {
+    if (chain != nullptr) return !geometry ||
+        SlangGeometryPolicy::allows(geometryBudget, *geometry, maxImageDimension);
     if (!requested() || errorForThisPreset) return false;
-    if (!isRegular(presetPath) || !loadLibrary() || instance == VK_NULL_HANDLE ||
-        physicalDevice == VK_NULL_HANDLE || device == VK_NULL_HANDLE ||
+    if (instance == VK_NULL_HANDLE || physicalDevice == VK_NULL_HANDLE || device == VK_NULL_HANDLE ||
         graphicsQueue == VK_NULL_HANDLE || getInstanceProcAddr == nullptr) {
         errorForThisPreset = true;
         return false;
@@ -127,7 +104,14 @@ bool VulkanSlangPipeline::ensure(VkInstance instance, VkPhysicalDevice physicalD
     }
     VkPhysicalDeviceProperties properties {};
     getProperties(physicalDevice, &properties);
-    maxImageDimension = std::min(MAX_SOURCE_DIMENSION, properties.limits.maxImageDimension2D);
+    maxImageDimension = std::min(SlangGeometryPolicy::maxDimension, properties.limits.maxImageDimension2D);
+    // Reject a known oversized or invalid frame before parsing, loading or
+    // compiling its filter chain. Geometry rejection is not a preset failure.
+    if (geometry && !SlangGeometryPolicy::allows(geometryBudget, *geometry, maxImageDimension)) return false;
+    if (!isRegular(presetPath) || !loadLibrary()) {
+        errorForThisPreset = true;
+        return false;
+    }
     libra_shader_preset_t preset = nullptr;
     libra_preset_opt_t parseOptions {};
     parseOptions.version = LIBRASHADER_CURRENT_VERSION;
@@ -152,7 +136,9 @@ bool VulkanSlangPipeline::ensure(VkInstance instance, VkPhysicalDevice physicalD
     }
     filter_chain_vk_opt_t options {};
     options.version = LIBRASHADER_CURRENT_VERSION;
-    options.frames_in_flight = 1;    // backend waits the previous frame fence
+    // Keep one temporal chain across both bridge slots. The backend's history
+    // ownership ledger waits the last shader submission before recording again.
+    options.frames_in_flight = 1;
     options.force_no_mipmaps = false;
     options.use_dynamic_rendering = false;  // Vulkan 1.0 renderpass-compatible devices
     options.disable_cache = true;           // no writable executable shader cache
@@ -177,14 +163,11 @@ bool VulkanSlangPipeline::record(VkCommandBuffer commands, uint64_t frameCount,
                                   float viewportX, float viewportY,
                                   uint32_t viewportWidth, uint32_t viewportHeight,
                                   float sourceAspect, double coreFps) {
+    const SlangFrameGeometry geometry {sourceWidth, sourceHeight, targetWidth, targetHeight,
+        viewportX, viewportY, viewportWidth, viewportHeight};
     if (chain == nullptr || errorForThisPreset || commands == VK_NULL_HANDLE ||
         input == VK_NULL_HANDLE || target == VK_NULL_HANDLE ||
-        sourceWidth == 0 || sourceHeight == 0 || targetWidth == 0 || targetHeight == 0 ||
-        sourceWidth > maxImageDimension || sourceHeight > maxImageDimension ||
-        !withinIntermediateBudget(presetPath, sourceWidth, sourceHeight, viewportHeight, maxImageDimension) ||
-        uint64_t(targetWidth) * targetHeight > MAX_RENDER_PIXELS ||
-        viewportWidth == 0 || viewportHeight == 0 ||
-        uint64_t(viewportWidth) * viewportHeight > MAX_RENDER_PIXELS) return false;
+        !SlangGeometryPolicy::allows(geometryBudget, geometry, maxImageDimension)) return false;
 
     libra_image_vk_t source { input, inputFormat, sourceWidth, sourceHeight };
     libra_image_vk_t output { target, targetFormat, targetWidth, targetHeight };

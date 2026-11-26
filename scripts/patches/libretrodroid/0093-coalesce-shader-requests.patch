@@ -1,0 +1,34 @@
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+@@ -146,15 +146,22 @@
+         LibretroDroid.setRotation(value)
+     }
+ 
+-    var shader: ShaderConfig by Delegates.observable(data.shader) { _, _, value ->
+-        queueEvent {
+-            catchExceptions {
+-                LibretroDroid.setShaderConfig(buildShader(value))
+-                prepareShaderAndUpdateSensors()
+-            }
+-        }
+-    }
++    private val shaderRequests = LatestRenderRequest<ShaderConfig>(
++        enqueue = { task -> queueEvent { task() } },
++        apply = { value ->
++            catchExceptions {
++                LibretroDroid.setShaderConfig(buildShader(value))
++                prepareShaderAndUpdateSensors()
++            }
++        },
++    )
++
++    var shader: ShaderConfig by Delegates.observable(data.shader) { _, old, value ->
++        // Identical settings need no native work; a burst of slider changes compiles
++        // only the latest not-yet-started shader, at its original FIFO position.
++        if (old != value) shaderRequests.submit(value)
++    }
+ 
+     var filterMode: Int by Delegates.observable(-1) { _, _, value ->
+         queueEvent {
+             catchExceptions {

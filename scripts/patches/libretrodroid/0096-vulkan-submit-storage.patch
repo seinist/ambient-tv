@@ -1,0 +1,74 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -1480,27 +1480,36 @@
+     if (!checkFrameResult(vk.endCommandBuffer(commandBuffer), "end frame command buffer")) return false;
+ 
+-    std::vector<VkCommandBuffer> submitted = pendingCommandBuffers;
++    // Host submit descriptors are consumed by vkQueueSubmit, not by the GPU.
++    // Reuse their storage on this render thread without changing GPU ownership.
++    auto& submitted = submitCommands;
++    submitted.resize(pendingCommandBuffers.size());
++    std::copy(pendingCommandBuffers.begin(), pendingCommandBuffers.end(), submitted.begin());
+     submitted.push_back(commandBuffer);
+     const bool useSemaphores = pendingCommandBuffers.empty();
+-    std::vector<VkSemaphore> waits;
+-    if (useSemaphores) waits = pendingImage.waitSemaphores;
++    auto& waits = submitWaits;
++    waits.resize(useSemaphores ? pendingImage.waitSemaphores.size() : 0u);
++    if (useSemaphores) std::copy(pendingImage.waitSemaphores.begin(),
++                                 pendingImage.waitSemaphores.end(), waits.begin());
+     if (useDirect) waits.push_back(nativeSdrAcquire);
+-    std::vector<VkPipelineStageFlags> waitStages(waits.size(), VK_PIPELINE_STAGE_TRANSFER_BIT);
+-    std::vector<VkSemaphore> signals;
+-    if (pendingSignalSemaphore != VK_NULL_HANDLE) signals.push_back(pendingSignalSemaphore);
+-    if (useDirect) signals.push_back(nativeSdrComplete[sdrIndex]);
++    auto& waitStages = submitWaitStages;
++    waitStages.resize(waits.size(), VK_PIPELINE_STAGE_TRANSFER_BIT);
++    // At most two signals: the core's optional semaphore and the WSI image.
++    VkSemaphore signals[2] {};
++    uint32_t signalCount = 0;
++    if (pendingSignalSemaphore != VK_NULL_HANDLE) signals[signalCount++] = pendingSignalSemaphore;
++    if (useDirect) signals[signalCount++] = nativeSdrComplete[sdrIndex];
+ 
+     VkSubmitInfo submit { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+     if (!waits.empty()) {
+         submit.waitSemaphoreCount = static_cast<uint32_t>(waits.size());
+         submit.pWaitSemaphores = waits.data();
+         submit.pWaitDstStageMask = waitStages.data();
+     }
+     submit.commandBufferCount = static_cast<uint32_t>(submitted.size());
+     submit.pCommandBuffers = submitted.data();
+-    if (!signals.empty()) {
+-        submit.signalSemaphoreCount = static_cast<uint32_t>(signals.size());
+-        submit.pSignalSemaphores = signals.data();
++    if (signalCount != 0) {
++        submit.signalSemaphoreCount = signalCount;
++        submit.pSignalSemaphores = signals;
+     }
+ 
+     VkResult result;
+@@ -1654,6 +1664,10 @@
+     coreSourceFormat.store(0u, std::memory_order_release);
+     pendingCommandBuffers.clear();
+     pendingSignalSemaphore = VK_NULL_HANDLE;
++    // Release per-session high-water storage after successful safe teardown.
++    std::vector<VkCommandBuffer>().swap(submitCommands);
++    std::vector<VkSemaphore>().swap(submitWaits);
++    std::vector<VkPipelineStageFlags>().swap(submitWaitStages);
+     renderInterface = {};
+ }
+ 
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -269,5 +269,9 @@
+     VulkanColorCopy colorCopy;
+     bool colorCopyRejected = false;
++    // Render-thread-owned host descriptor storage, not GPU frame slots.
++    std::vector<VkCommandBuffer> submitCommands;
++    std::vector<VkSemaphore> submitWaits;
++    std::vector<VkPipelineStageFlags> submitWaitStages;
+     PendingImage pendingImage;
+     std::vector<VkCommandBuffer> pendingCommandBuffers;
+     VkSemaphore pendingSignalSemaphore = VK_NULL_HANDLE;

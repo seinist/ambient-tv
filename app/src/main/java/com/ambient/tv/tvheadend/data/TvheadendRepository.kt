@@ -424,26 +424,30 @@ class TvheadendRepository @Inject constructor(
             fun stillCurrent() = synchronized(hbbtvLock) {
                 validHbbtv(state) && state.directory?.servicesByChannel == topology
             }
-            fun canProbe() = owner?.isActive == true && stillCurrent() && BrowseWorkBudget.idle() &&
+            var probeEpoch: Long? = null
+            fun canProbe() = owner?.isActive == true && stillCurrent() &&
+                (probeEpoch?.let(BrowseWorkBudget::idleSince) ?: BrowseWorkBudget.idle()) &&
                 availability.hasNetwork() && hosts.health("tvheadend") != HostHealth.OFFLINE
             try {
                 // Bounded idle wait, not a browse permit. No queue can keep a player waiting.
                 val until = android.os.SystemClock.elapsedRealtime() + 30_000L
                 while (stillCurrent() && !canProbe() && android.os.SystemClock.elapsedRealtime() < until) delay(250)
+                val epoch = BrowseWorkBudget.gameEpoch()
+                probeEpoch = epoch
                 if (http && canProbe()) {
                     synchronized(hbbtvLock) { state.lastHttpAttempt = android.os.SystemClock.elapsedRealtime() }
-                    val result = optionalHbbtvServiceMetadata(topology.values.flatten().toHashSet(), ::canProbe)
+                    val result = optionalHbbtvServiceMetadata(topology.values.flatten().toHashSet(), epoch, ::canProbe)
                     synchronized(hbbtvLock) {
-                        if (result != null && stillCurrent()) state.directory?.let {
+                        if (result != null && canProbe()) state.directory?.let {
                             publishHbbtv(state, it.withHttp(result, System.currentTimeMillis()))
                         } else if (stillCurrent() && !canProbe()) state.lastHttpAttempt = null
                     }
                 }
                 if (htsp && canProbe()) {
                     synchronized(hbbtvLock) { state.lastHtspAttempt = android.os.SystemClock.elapsedRealtime() }
-                    val result = optionalHtspHbbtvMetadata(::canProbe)
+                    val result = optionalHtspHbbtvMetadata(epoch, ::canProbe)
                     synchronized(hbbtvLock) {
-                        if (result != null && stillCurrent()) state.directory?.let {
+                        if (result != null && canProbe()) state.directory?.let {
                             publishHbbtv(state, it.withHtsp(result, System.currentTimeMillis()))
                         } else if (stillCurrent() && !canProbe()) state.lastHtspAttempt = null
                     }
@@ -482,7 +486,7 @@ class TvheadendRepository @Inject constructor(
             .callTimeout(4, TimeUnit.SECONDS).build()
     }
 
-    private suspend fun optionalHbbtvServiceMetadata(serviceIds: Set<String>, shouldContinue: () -> Boolean): Map<String, List<LiveTvHbbtvApp>>? =
+    private suspend fun optionalHbbtvServiceMetadata(serviceIds: Set<String>, epoch: Long, shouldContinue: () -> Boolean): Map<String, List<LiveTvHbbtvApp>>? =
         withContext(Dispatchers.IO) {
             suspendResult {
                 ensureConfiguredAndAllowed()
@@ -490,15 +494,17 @@ class TvheadendRepository @Inject constructor(
                 val request = Request.Builder()
                     .url(buildUrl("api/raw/export", mapOf("class" to "mpegts_service"))).get().build()
                 check(shouldContinue()) { "HbbTV source changed" }
-                hbbtvHttpClient.newCall(request)
-                    .execute().use { response ->
+                val call = hbbtvHttpClient.newCall(request)
+                BrowseWorkBudget.interruptOnGameStart(call::cancel, epoch) {
+                    call.execute().use { response ->
                         check(response.isSuccessful) { "TVHeadend raw metadata HTTP ${response.code}" }
                         val raw = json.parseToJsonElement(response.body.string()) as? JsonArray
                             ?: error("Invalid TVHeadend raw metadata")
-                        raw.mapNotNull { element ->
+                        raw.mapIndexedNotNull { index, element ->
+                            if (index % 128 == 0) check(shouldContinue()) { "HbbTV source changed" }
                             val row = element as? JsonObject ?: error("Invalid TVHeadend service")
-                            val id = row.string("uuid") ?: return@mapNotNull null
-                            if (id !in serviceIds) return@mapNotNull null
+                            val id = row.string("uuid") ?: return@mapIndexedNotNull null
+                            if (id !in serviceIds) return@mapIndexedNotNull null
                             val ait = row["hbbtv"]
                             check(ait == null || ait is JsonObject || ait is JsonArray || ait == kotlinx.serialization.json.JsonNull) {
                                 "Invalid TVHeadend AIT metadata"
@@ -506,10 +512,11 @@ class TvheadendRepository @Inject constructor(
                             id to tvhHbbtvApplications(row).map { LiveTvHbbtvApp(it.url, it.name, it.visibility) }
                         }.toMap()
                     }
+                }
             }.onFailure { Timber.d(it, "TVHeadend HbbTV raw export unavailable") }.getOrNull()
         }
 
-    private suspend fun optionalHtspHbbtvMetadata(shouldContinue: () -> Boolean): Map<String, List<LiveTvHbbtvApp>>? =
+    private suspend fun optionalHtspHbbtvMetadata(epoch: Long, shouldContinue: () -> Boolean): Map<String, List<LiveTvHbbtvApp>>? =
         withContext(Dispatchers.IO) {
             suspendResult {
                 ensureConfiguredAndAllowed()
@@ -519,9 +526,18 @@ class TvheadendRepository @Inject constructor(
                 val username = preferences.tvheadendUsername
                 val password = tokenStore.tvheadendPassword.orEmpty()
                 check(shouldContinue()) { "HTSP source changed" }
-                TvheadendHtspHbbtv.discover(host, port, username,
-                    password, shouldContinue = shouldContinue)
-                    .mapValues { (_, apps) -> apps.map { LiveTvHbbtvApp(it.url, it.name, it.visibility) } }
+                Socket().use { socket ->
+                    // The watcher owns cancellation of this exact probe, including a
+                    // blocked connect/read/write. The ordinary HTSP path remains unchanged.
+                    BrowseWorkBudget.interruptOnGameStart({ runCatching { socket.close() }; Unit }, epoch) {
+                        TvheadendHtspHbbtv.discover(socket, host, port, username,
+                            password, shouldContinue = shouldContinue)
+                            .mapValues { (_, apps) ->
+                                check(shouldContinue()) { "HTSP source changed" }
+                                apps.map { LiveTvHbbtvApp(it.url, it.name, it.visibility) }
+                            }
+                    }
+                }
             }.onFailure { Timber.d(it, "TVHeadend HTSP HbbTV metadata unavailable or deferred") }.getOrNull()
         }
 
@@ -574,37 +590,45 @@ class TvheadendRepository @Inject constructor(
     }
 
     private suspend fun syncGuideWindow(scope: String, from: Long, to: Long, channelId: String?,
-        wake: Boolean, force: Boolean = false, maxAgeMs: Long = 15 * 60_000L): List<TvhEpgEvent> = guideFetchMutex.withLock {
+        wake: Boolean, force: Boolean = false, maxAgeMs: Long = 15 * 60_000L,
+        expectedGameEpoch: Long = BrowseWorkBudget.gameEpoch()): List<TvhEpgEvent> = guideFetchMutex.withLock {
         val epoch = guideEpoch.get()
+        val gameEpoch = expectedGameEpoch
         fun valid() = epoch == guideEpoch.get() && currentGuideScope(scope)
-        check(valid()) { "TVHeadend source changed" }
+        fun canPersist() = valid() && (wake || BrowseWorkBudget.idleSince(gameEpoch))
+        check(canPersist()) { "TVHeadend source changed or idle work interrupted" }
         if (!force && freshGuideWindow(scope, from, to, maxAgeMs)) {
-            indexedEpg(scope, from, to, channelId)?.let { if (valid()) return@withLock it }
+            indexedEpg(scope, from, to, channelId)?.let { if (canPersist()) return@withLock it }
         }
         val rows = loadTvhEpgPages(from, to, channelId) { params ->
             currentCoroutineContext().ensureActive()
-            check(valid()) { "TVHeadend source changed" }
-            check(wake || com.ambient.tv.data.browse.BrowseWorkBudget.idle()) { "Foreground browse work resumed" }
-            getJson("api/epg/events/grid", params, wake = wake)
+            check(canPersist()) { "TVHeadend source changed or idle work interrupted" }
+            getJson("api/epg/events/grid", params, wake = wake, expectedGameEpoch = gameEpoch)
         }
-        check(valid()) { "TVHeadend source changed" }
-        check(wake || com.ambient.tv.data.browse.BrowseWorkBudget.idle()) { "Foreground browse work resumed" }
+        check(canPersist()) { "TVHeadend source changed or idle work interrupted" }
         // A malformed response is not authoritative. Do not remove previously cached programmes.
-        val events = rows.map { mapEvent(it) ?: error("Invalid TVHeadend programme") }
+        val events = rows.mapIndexed { index, row ->
+            if (index % 128 == 0) {
+                currentCoroutineContext().ensureActive()
+                check(canPersist()) { "TVHeadend source changed or idle work interrupted" }
+            }
+            mapEvent(row) ?: error("Invalid TVHeadend programme")
+        }
             .filter { it.stopEpochSeconds >= from && it.startEpochSeconds <= to }
         require(events.all { it.stopEpochSeconds > it.startEpochSeconds && (channelId == null || it.channelUuid == channelId) })
         require(events.map { it.eventId }.toSet().size == events.size)
         val persisted = suspendResult {
             epgPersistMutex.withLock {
-                check(valid()) { "TVHeadend source changed" }
+                check(canPersist()) { "TVHeadend source changed or idle work interrupted" }
                 migrateGuideIfNeeded(scope)
+                check(canPersist()) { "TVHeadend source changed or idle work interrupted" }
                 if (guideFreshnessBlocked) guideIndex.expireSyncWindows(EPG_INDEX_OWNER, scope)
                 guideIndex.reconcileWindow(EPG_INDEX_OWNER, scope, events, from, to,
-                    System.currentTimeMillis() / 1000L, channelId, valid = ::valid)
-                if (valid()) guideFreshnessBlocked = false
+                    System.currentTimeMillis() / 1000L, channelId, valid = ::canPersist)
+                if (canPersist()) guideFreshnessBlocked = false
             }
         }
-        check(valid()) { "TVHeadend source changed" }
+        check(canPersist()) { "TVHeadend source changed or idle work interrupted" }
         // Storage is optional for a live read; even a full/corrupt index must not hide a valid
         // server response. Idle prefetch stops this pass on a persistence failure.
         persisted.exceptionOrNull()?.let {
@@ -624,13 +648,17 @@ class TvheadendRepository @Inject constructor(
                     com.ambient.tv.data.browse.BrowseWorkBudget.idle()) {
                     suspendResult {
                         val scope = diskScope()
+                        val gameEpoch = BrowseWorkBudget.gameEpoch()
                         val now = System.currentTimeMillis() / 1000L
-                        guideIndex.trimExpired(EPG_INDEX_OWNER, scope, now) { currentGuideScope(scope) }
-                        if (!availability.hasNetwork() || !serverLikelyReachable()) return@suspendResult
+                        guideIndex.trimExpired(EPG_INDEX_OWNER, scope, now) {
+                            currentGuideScope(scope) && BrowseWorkBudget.idleSince(gameEpoch)
+                        }
+                        if (!BrowseWorkBudget.idleSince(gameEpoch) ||
+                            !availability.hasNetwork() || !serverLikelyReachable()) return@suspendResult
                         // Six-hour aligned windows are bounded; fill the nearest missing window first.
                         val start = Math.floorDiv(now, 21600L) * 21600L
                         for (slot in 0 until 28) {
-                            if (!com.ambient.tv.data.browse.BrowseWorkBudget.idle() || !currentGuideScope(scope)) break
+                            if (!BrowseWorkBudget.idleSince(gameEpoch) || !currentGuideScope(scope)) break
                             val windowStart = start + slot * 21600L
                             val from = maxOf(windowStart, Math.floorDiv(now - 3600L, 1800L) * 1800L)
                             val to = windowStart + 21600L
@@ -638,7 +666,8 @@ class TvheadendRepository @Inject constructor(
                             val ttl = when (slot) { 0, 1 -> 15 * 60_000L; in 2..3 -> 60 * 60_000L
                                 in 4..11 -> 3 * 3600_000L; else -> 6 * 3600_000L }
                             if (!freshGuideWindow(scope, from, to, ttl)) {
-                                syncGuideWindow(scope, from, to, null, wake = false, maxAgeMs = ttl)
+                                syncGuideWindow(scope, from, to, null, wake = false, maxAgeMs = ttl,
+                                    expectedGameEpoch = gameEpoch)
                                 // Yield between windows and re-evaluate foreground work.
                                 kotlinx.coroutines.delay(750)
                             }
@@ -1087,16 +1116,22 @@ class TvheadendRepository @Inject constructor(
         )
     }
 
-    private suspend fun getJson(path: String, params: Map<String, String> = emptyMap(), wake: Boolean = true): JsonElement {
+    private suspend fun getJson(path: String, params: Map<String, String> = emptyMap(), wake: Boolean = true,
+        expectedGameEpoch: Long = BrowseWorkBudget.gameEpoch()): JsonElement {
         val accessScope = browseScopes.forProvider("tvheadend")
         ensureConfiguredAndAllowed()
         if (wake) ensureAwakeIfNeeded()
         return try { withContext(Dispatchers.IO) {
             val url = buildUrl(path, params)
             val request = Request.Builder().url(url).get().build()
-            val requestClient = if (!wake && path == "api/epg/events/grid")
-                client.newBuilder().callTimeout(5, TimeUnit.SECONDS).build() else client
-            requestClient.newCall(request).execute().use { response ->
+            val speculative = !wake && path == "api/epg/events/grid"
+            // Cancelling optional work must not be mistaken for a failed server connection.
+            val requestClient = if (speculative)
+                client.newBuilder().apply { interceptors().remove(hostConnectivityInterceptor) }
+                    .callTimeout(5, TimeUnit.SECONDS).build() else client
+            val call = requestClient.newCall(request)
+            suspend fun decode(response: okhttp3.Response): JsonElement {
+                if (speculative) check(BrowseWorkBudget.idleSince(expectedGameEpoch)) { "Idle guide work interrupted" }
                 if (!response.isSuccessful) {
                     timber.log.Timber.w("TVHeadend API %s returned HTTP %d", path, response.code)
                     // A 401 alone does not hide TVHeadend: right after a wake the port opens before
@@ -1112,13 +1147,26 @@ class TvheadendRepository @Inject constructor(
                     }
                     throw TvheadendHttpException(response.code, "TVHeadend HTTP ${response.code} ${response.message}")
                 }
-                loginRejection.onSuccess()
-                _servingCachedData.value = false
-                preferences.tvheadendLoginState = com.ambient.tv.data.local.TvheadendLoginState.VERIFIED
-                lastReachableAtMs = System.currentTimeMillis()
+                // Optional EPG prefetch is deliberately not an authority for the
+                // foreground login, cached-data or reachability state. A game can
+                // invalidate its result even after an otherwise successful response.
+                if (!speculative) {
+                    loginRejection.onSuccess()
+                    _servingCachedData.value = false
+                    preferences.tvheadendLoginState = com.ambient.tv.data.local.TvheadendLoginState.VERIFIED
+                    lastReachableAtMs = System.currentTimeMillis()
+                }
                 val body = response.body.string().orEmpty()
-                if (body.isBlank()) JsonObject(emptyMap()) else json.parseToJsonElement(body)
+                if (speculative) check(BrowseWorkBudget.idleSince(expectedGameEpoch)) { "Idle guide work interrupted" }
+                val decoded = if (body.isBlank()) JsonObject(emptyMap()) else json.parseToJsonElement(body)
+                if (speculative) check(BrowseWorkBudget.idleSince(expectedGameEpoch)) { "Idle guide work interrupted" }
+                return decoded
             }
+            if (speculative) {
+                BrowseWorkBudget.interruptOnGameStart(call::cancel, expectedGameEpoch) {
+                    call.execute().use { decode(it) }
+                }
+            } else call.execute().use { decode(it) }
         } } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
         catch (error: Exception) {
             // An optional/admin-only API error must not revoke working channel access: a recording

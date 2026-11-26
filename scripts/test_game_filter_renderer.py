@@ -40,7 +40,10 @@ def main():
         work = Path(temporary)
         android = work / "android"
         android.mkdir()
-        (android / "hardware_buffer.h").write_text("#pragma once\nstruct AHardwareBuffer;\n")
+        (android / "hardware_buffer.h").write_text(
+            "#pragma once\nstruct AHardwareBuffer;\n"
+            "inline void AHardwareBuffer_acquire(AHardwareBuffer*) {}\n"
+            "inline void AHardwareBuffer_release(AHardwareBuffer*) {}\n")
         (android / "log.h").write_text(r'''#pragma once
 #include <cstdarg>
 #include <cstdio>
@@ -93,7 +96,10 @@ inline int __android_log_print(int priority,const char*,const char* format,...) 
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         command += [str(native / source) for source in sources]
         command += [str(args.test_source),
-                    "-Wl,--wrap=glTexStorage2D",
+                    "-Wl,--wrap=glTexStorage2D", "-Wl,--wrap=glUniform1i",
+                    "-Wl,--wrap=glUniform2f", "-Wl,--wrap=glUniform1f",
+                    "-Wl,--wrap=glLinkProgram", "-Wl,--wrap=glBufferData",
+                    "-Wl,--wrap=glVertexAttribPointer", "-Wl,--wrap=glInvalidateFramebuffer",
                     "-l" + args.egl_library, "-l" + args.gl_library, "-o", str(binary)]
         subprocess.run(command, check=True)
         environment = dict(os.environ, LIBGL_ALWAYS_SOFTWARE="1", EGL_PLATFORM="surfaceless")

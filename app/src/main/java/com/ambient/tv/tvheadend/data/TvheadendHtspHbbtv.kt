@@ -17,9 +17,14 @@ import java.security.MessageDigest
  */
 internal object TvheadendHtspHbbtv {
     fun discover(host: String, port: Int, username: String, password: String, timeoutMs: Int = 1_500,
-        shouldContinue: () -> Boolean = { true }): Map<String, List<TvhHbbtvApplication>> {
+        shouldContinue: () -> Boolean = { true }): Map<String, List<TvhHbbtvApplication>> =
+        discover(Socket(), host, port, username, password, timeoutMs, shouldContinue)
+
+    /** The caller can close the supplied socket from an independent cancellation watcher. */
+    fun discover(connection: Socket, host: String, port: Int, username: String, password: String,
+        timeoutMs: Int = 1_500, shouldContinue: () -> Boolean = { true }): Map<String, List<TvhHbbtvApplication>> {
         val deadline = System.nanoTime() + 8_000_000_000L
-        Socket().use { socket ->
+        connection.use { socket ->
             check(shouldContinue()) { "HTSP metadata deferred" }
             socket.connect(InetSocketAddress(host, port), timeoutMs.coerceIn(1, 1500))
             // Bound the whole handshake + initial sync, even with partial/trickled frames.

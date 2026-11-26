@@ -53,6 +53,11 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="ambient-vulkan-slang-") as temporary:
         scratch = Path(temporary)
         executable = scratch / "vulkan-slang-test"
+        geometry_test = scratch / "slang-geometry-test"
+        subprocess.run([compiler, "-std=c++17", "-O1", "-Wall", "-Wextra", "-Werror",
+                        "-I", str(production), str(root / "scripts/native_game_vulkan_slang_geometry_test.cpp"),
+                        "-o", str(geometry_test)], check=True, cwd=root)
+        subprocess.run([str(geometry_test)], check=True, timeout=20)
         command = [compiler, "-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
                    "-Wno-missing-field-initializers", "-I", str(production),
                    "-I", str(root / "scripts/host_vulkan_stubs")]

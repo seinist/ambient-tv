@@ -1,0 +1,85 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -367,7 +367,10 @@
+             return true;
+         }
+     };
++    // Explicit slot helpers; the legacy public path still uses frameSlot.
++    bool waitForSlotFrame(FrameSlot& slot);
++    bool clearSlotImage(FrameSlot& slot);
+     // All frame slots share the original aggregate normalization limit.
+     VulkanColorAllocationBudget normalizationBudget;
+     FrameSlot frameSlot;
+     VkResult fatalFrameError = VK_SUCCESS;
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -1234,10 +1234,20 @@
+ bool VulkanBackend::clearFrameImage() {
+-    if (shutdownReady || !waitForFrame()) return false;
++    return clearSlotImage(frameSlot);
++}
++
++bool VulkanBackend::clearSlotImage(FrameSlot& slot) {
++    // Initial clear of a newly allocated bridge, not a recycled EGL image.
++    // The same slot owns the command buffer, image, submission and wait.
++    if (shutdownReady || !waitForSlotFrame(slot)) return false;
++    if (!device || !queue || !slot.command || !slot.fence || !slot.bridgeImage.image ||
++            !vk.resetCommandBuffer || !vk.beginCommandBuffer || !vk.cmdPipelineBarrier ||
++            !vk.cmdClearColorImage || !vk.endCommandBuffer || !vk.queueSubmit)
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "missing slot clear resources or dispatch");
+ 
+-    const VkImage frameImage = frameSlot.bridgeImage.image;
+-    const VkCommandBuffer commandBuffer = frameSlot.command;
+-    const VkFence frameFence = frameSlot.fence;
++    const VkImage frameImage = slot.bridgeImage.image;
++    const VkCommandBuffer commandBuffer = slot.command;
++    const VkFence frameFence = slot.fence;
+     if (!checkFrameResult(vk.resetCommandBuffer(commandBuffer, 0), "reset clear command buffer")) return false;
+     VkCommandBufferBeginInfo begin { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+     if (!checkFrameResult(vk.beginCommandBuffer(commandBuffer, &begin), "begin clear command buffer")) return false;
+@@ -1282,8 +1292,8 @@
+         result = vk.queueSubmit(queue, 1, &submit, frameFence);
+     }
+     if (!checkFrameResult(result, "submit shared frame clear")) return false;
+-    frameSlot.inFlight = true;
+-    return waitForFrame();
++    slot.inFlight = true;
++    return waitForSlotFrame(slot);
+ }
+ 
+ bool VulkanBackend::checkFrameResult(VkResult result, const char* operation) {
+@@ -1302,21 +1312,27 @@
+ bool VulkanBackend::waitForFrame() {
++    return waitForSlotFrame(frameSlot);
++}
++
++bool VulkanBackend::waitForSlotFrame(FrameSlot& slot) {
+     if (hasFatalError() || shutdownReady) return false;
+-    if (!frameSlot.inFlight) return true;
++    if (!slot.inFlight) return true;
++    if (!device || !slot.fence || !vk.waitForFences || !vk.resetFences)
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "missing slot fence or dispatch");
+     GameTraceScope trace("AmbientGame Vulkan fence wait");
+     bool warned = false;
+     for (;;) {
+-        const VkResult result = vk.waitForFences(device, 1, &frameSlot.fence, VK_TRUE, FENCE_TIMEOUT_NS);
++        const VkResult result = vk.waitForFences(device, 1, &slot.fence, VK_TRUE, FENCE_TIMEOUT_NS);
+         if (result == VK_TIMEOUT) {
+             // A timeout says nothing about completion. Never reset/reuse the
+             // fence, command buffer, AHB or core image while work is pending.
+             if (!warned) LOGW("Vulkan frame is still pending; waiting for its completion");
+             warned = true;
+             continue;
+         }
+         if (!checkFrameResult(result, "wait for frame fence")) return false;
+         break;
+     }
+-    if (!checkFrameResult(vk.resetFences(device, 1, &frameSlot.fence), "reset frame fence")) return false;
+-    frameSlot.inFlight = false;
++    if (!checkFrameResult(vk.resetFences(device, 1, &slot.fence), "reset frame fence")) return false;
++    slot.inFlight = false;
+     return true;
+ }

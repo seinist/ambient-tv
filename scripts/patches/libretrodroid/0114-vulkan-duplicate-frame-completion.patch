@@ -1,0 +1,61 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -1680,5 +1680,37 @@
+     return copied && !hasFatalError();
+ }
+ 
++bool VulkanBackend::completeDuplicateFrame() {
++    if (!isStarted() || !waitForFrame()) return false;
++
++    // Libretro Vulkan v5: duplicates do not consume set_image waits, but
++    // set_command_buffers and set_signal_semaphore are consumed exactly once.
++    // No bridge write, image layout transition, GLES drain or WSI acquire.
++    pendingImage.waitSemaphores.clear();
++    if (pendingCommandBuffers.empty() && pendingSignalSemaphore == VK_NULL_HANDLE) return true;
++
++    VkSubmitInfo submit { VK_STRUCTURE_TYPE_SUBMIT_INFO };
++    if (!pendingCommandBuffers.empty()) {
++        submit.commandBufferCount = static_cast<uint32_t>(pendingCommandBuffers.size());
++        submit.pCommandBuffers = pendingCommandBuffers.data();
++    }
++    const VkSemaphore signal = pendingSignalSemaphore;
++    if (signal != VK_NULL_HANDLE) {
++        submit.signalSemaphoreCount = 1;
++        submit.pSignalSemaphores = &signal;
++    }
++    VkResult result;
++    {
++        GameTraceScope trace("AmbientGame Vulkan duplicate submit");
++        std::lock_guard<std::mutex> lock(queueMutex);
++        result = vk.queueSubmit(queue, 1, &submit, frameFence);
++    }
++    pendingCommandBuffers.clear();
++    pendingSignalSemaphore = VK_NULL_HANDLE;
++    if (!checkFrameResult(result, "submit duplicate frame")) return false;
++    frameInFlight = true;
++    return waitForFrame();
++}
++
+ void VulkanBackend::callbackSetImage(void* handle, const retro_vulkan_image* image, uint32_t numSemaphores,
+                                      const VkSemaphore* semaphores, uint32_t srcQueueFamily) {
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -141,3 +141,5 @@
+     bool presentFrame(unsigned width, unsigned height, float resolvedAspect, bool pictureCompatible);
++    // Complete core-provided work/signals for a duplicate without copying an image.
++    bool completeDuplicateFrame();
+ 
+     // Must succeed before the core may destroy images/command pools or unload.
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -1518,4 +1518,7 @@
+         }
+ 
++        if (data == nullptr && video->presentsExternalFrames() &&
++            !VulkanBackend::getInstance().completeDuplicateFrame()) return;
++
+         if (data != nullptr) video->setSourceTransfer(nextSourceTransfer);
+         traceGameCall("AmbientGame source upload", [&] { video->onNewFrame(data, width, height, pitch); });

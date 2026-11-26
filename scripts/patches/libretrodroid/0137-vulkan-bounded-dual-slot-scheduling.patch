@@ -1,0 +1,524 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -1241,10 +1241,17 @@
+         return false;
+     }
+ 
+-    // Publish a stable mask for the entire context lifetime. Normal-frame
+-    // transport and EGL publication must support both indices before opening
+-    // a two-index production session.
+-    if (!coreSync.open(1)) {
++    // Opt in before exposing the core interface. The mask remains unchanged
++    // across resize, budget pressure, failed optional import and EGL recreation.
++    // With no second bridge, all indices conservatively share slot zero.
++    unsigned syncCount = 1;
++#if defined(__ANDROID__)
++    char dualSlots[PROP_VALUE_MAX] {};
++    if (__system_property_get("debug.ambient.game_dual_slots", dualSlots) > 0 &&
++            std::strcmp(dualSlots, "1") == 0 && bridgeFenceEnabled && bridgeWriteFenceEnabled)
++        syncCount = 2;
++#endif
++    if (!coreSync.open(syncCount)) {
+         checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "open core sync-index session");
+         shutdown();
+         return false;
+@@ -1329,6 +1336,9 @@
+ }
+ 
+ bool VulkanBackend::releaseSpareFrameBuffer() {
++    // Stop new selection before retiring any resources. The caller has drained
++    // the EGL leases or is replacing a dead EGL generation.
++    spareFrameImported = false;
+     auto& spare = spareFrameSlot;
+     if (!spareFramePrepared && !spare.inFlight && !spare.pool && !spare.command && !spare.fence &&
+             spare.bridgeImage.empty() && spare.bridgeSync.empty()) return true;
+@@ -1618,14 +1628,15 @@
+ }
+ 
+ bool VulkanBackend::importBridgeReadFence(int fd) {
+-    if (!canImportBridgeReadFence() || !waitForFrame()) {
++    auto& slot = submissionSlotIndex() ? spareFrameSlot : frameSlot;
++    if (!canImportBridgeReadFence() || !waitForSlotFrame(slot)) {
+         if (fd >= 0) close(fd);
+         return false;
+     }
+-    auto& bridge = frameSlot.bridgeSync;
++    auto& bridge = slot.bridgeSync;
+     // An earlier presentFrame may have returned before queue submission (e.g.
+     // no source image). Its temporary payload was never consumed. Retire it
+-    // rather than overwriting it; waitForFrame above rules out in-flight use.
++    // rather than overwriting it; waitForSlotFrame above rules out in-flight use.
+     if (bridge.readPending) {
+         vk.destroySemaphore(device, bridge.readSemaphore, nullptr);
+         bridge.readSemaphore = VK_NULL_HANDLE;
+@@ -1672,8 +1683,9 @@
+ }
+ 
+ bool VulkanBackend::prepareBridgeWriteFence() {
+-    if (!canExportBridgeWriteFence() || frameSlot.inFlight) return false;
+-    auto& semaphore = frameSlot.bridgeSync.writeSemaphore;
++    auto& slot = submissionSlotIndex() ? spareFrameSlot : frameSlot;
++    if (!canExportBridgeWriteFence() || slot.inFlight) return false;
++    auto& semaphore = slot.bridgeSync.writeSemaphore;
+     if (semaphore != VK_NULL_HANDLE) return true;
+     VkExportSemaphoreCreateInfo external { VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO };
+     external.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
+@@ -1693,7 +1705,7 @@
+     // SYNC_FD copy transference consumes the signal payload. The CPU frame fence
+     // still proves submission completion before any reuse or retirement.
+     VkSemaphoreGetFdInfoKHR info { VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR };
+-    info.semaphore = frameSlot.bridgeSync.writeSemaphore;
++    info.semaphore = (submissionSlotIndex() ? spareFrameSlot : frameSlot).bridgeSync.writeSemaphore;
+     info.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
+     int fd = NoBridgeWriteFence;
+     const VkResult result = vk.getSemaphoreFd(device, &info, &fd);
+@@ -1796,26 +1808,37 @@
+ bool VulkanBackend::presentFrame(unsigned width, unsigned height, float resolvedAspect,
+                                   bool pictureCompatible, int* writeFd) {
+     GameTraceScope trace("AmbientGame Vulkan frame");
+-    const VkCommandBuffer commandBuffer = frameSlot.command;
+-    const VkFence frameFence = frameSlot.fence;
+-    const auto& bridge = frameSlot.bridgeImage;
++    const auto slotIndex = submissionSlotIndex();
++    auto& slot = slotIndex ? spareFrameSlot : frameSlot;
++    const VkCommandBuffer commandBuffer = slot.command;
++    const VkFence frameFence = slot.fence;
++    const auto& bridge = slot.bridgeImage;
+     const VkImage frameImage = bridge.image;
+     const unsigned frameWidth = bridge.width, frameHeight = bridge.height;
+     const bool fp16Frame = bridge.fp16;
+-    auto& colorCopy = frameSlot.colorCopy;
+-    auto& colorCopyRejected = frameSlot.colorCopyRejected;
++    auto& colorCopy = slot.colorCopy;
++    auto& colorCopyRejected = slot.colorCopyRejected;
+     if (writeFd) *writeFd = NoBridgeWriteFence;
+     nativePresentation.invalidateFrame();
+     if (hasFatalError() || shutdownReady || !isStarted() || frameImage == VK_NULL_HANDLE ||
+         pendingImage.image == VK_NULL_HANDLE) return false;
+ 
+-    if (!waitForFrame() || !waitForNativeSlangFrame()) return false;
++    if (!commandBuffer || !frameFence || (wantsSpareFrame() && pendingImageIndex != coreSync.index()))
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "invalid normal-frame slot or source index");
++    if (!waitForSlotFrame(slot) || !waitForNativeSlangFrame()) return false;
+ 
+     const VulkanColorCopy::Source colorSource {
+         pendingImage.format, pendingImage.components, pendingImage.viewType,
+         pendingImage.range, width, height
+     };
+-    const bool sourceRangeValid = VulkanColorCopy::validSubresource(colorSource) &&
++    const bool foreignSource = pendingImage.srcQueueFamily != VK_QUEUE_FAMILY_IGNORED &&
++                               pendingImage.srcQueueFamily != queueFamily;
++    // v5 ownership transfer is authorized only by this set_image call's
++    // actual semaphore wait. Repeated callbacks and set_command_buffers do
++    // not acquire a foreign-owned image a second time.
++    const bool sourceOwnershipReady = !foreignSource ||
++        (pendingCommandBuffers.empty() && !pendingImage.waitSemaphores.empty());
++    const bool sourceRangeValid = sourceOwnershipReady && VulkanColorCopy::validSubresource(colorSource) &&
+         pendingImage.layout != VK_IMAGE_LAYOUT_UNDEFINED &&
+         pendingImage.layout != VK_IMAGE_LAYOUT_PREINITIALIZED;
+     const bool copied = sourceRangeValid &&
+@@ -1826,7 +1849,8 @@
+     if (!copied) {
+         if (!colorCopyRejected) {
+             LOGE("Vulkan frame rejected: %s (view format=%d components=%d,%d,%d,%d extent=%ux%u)",
+-                 sourceRangeValid ? colorCopy.error() : "invalid view subresource or layout",
++                 sourceRangeValid ? colorCopy.error() :
++                     (!sourceOwnershipReady ? "missing foreign image ownership wait" : "invalid view subresource or layout"),
+                  pendingImage.format, pendingImage.components.r, pendingImage.components.g,
+                  pendingImage.components.b, pendingImage.components.a, width, height);
+         }
+@@ -1883,13 +1907,16 @@
+         } else if (nativeSlang.requested() &&
+                    !nativeSlang.ensure(instance, gpu, device, queue, vk.getInstanceProcAddr, &geometry)) {
+             disableNativeSdrSwapchain("librashader unavailable, preset failed or geometry exceeds budget; GLES retained");
++        } else if (slotIndex != 0 && !ensureNativeAcquireSemaphore(slotIndex)) {
++            if (hasFatalError()) return false;
++            disableNativeSdrSwapchain("optional WSI acquire slot unavailable; GLES retained");
+         } else {
+-            if (!nativeAcquireState.ready(0) || !nativeSdrAcquireSlots.get(0))
++            if (!nativeAcquireState.ready(slotIndex) || !nativeSdrAcquireSlots.get(slotIndex))
+                 return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "WSI acquire slot not reusable");
+             const VkResult acquired = vk.acquireNextImage(
+-                device, nativeSdrSwapchain, 0, nativeSdrAcquireSlots.get(0), VK_NULL_HANDLE, &sdrIndex);
++                device, nativeSdrSwapchain, 0, nativeSdrAcquireSlots.get(slotIndex), VK_NULL_HANDLE, &sdrIndex);
+             if (acquired == VK_SUCCESS || acquired == VK_SUBOPTIMAL_KHR) {
+-                if (!nativeAcquireState.markAcquired(0))
++                if (!nativeAcquireState.markAcquired(slotIndex))
+                     return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "duplicate WSI acquire");
+                 useDirect = sdrIndex < nativeSdrImages.size() &&
+                             sdrIndex < nativeSdrComplete.size();
+@@ -1910,8 +1937,7 @@
+     const uint32_t copyHeight = height;
+     const bool generalLayout = pendingImage.layout == VK_IMAGE_LAYOUT_GENERAL;
+     const VkImageLayout sourceLayout = generalLayout ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+-    const bool transferOwnership = pendingImage.srcQueueFamily != VK_QUEUE_FAMILY_IGNORED &&
+-                                   pendingImage.srcQueueFamily != queueFamily;
++    const bool transferOwnership = foreignSource;
+ 
+     if (!checkFrameResult(vk.resetCommandBuffer(commandBuffer, 0), "reset frame command buffer")) return false;
+     VkCommandBufferBeginInfo begin { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+@@ -2024,7 +2050,7 @@
+                                   0, 0, nullptr, 0, nullptr, 1, &colorBarrier);
+             // Even a failed FFI record may have changed the chain's history
+             // or created objects referenced by the partially recorded commands.
+-            if (!nativeSlangUse.begin(0))
++            if (!nativeSlangUse.begin(slotIndex))
+                 return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "overlapping Slang history");
+             shaderRecorded = nativeSlang.record(commandBuffer, nativeSlangFrame++,
+                 normalized.image, normalized.format, normalized.width, normalized.height,
+@@ -2098,11 +2124,11 @@
+     waits.resize(useSemaphores ? pendingImage.waitSemaphores.size() : 0u);
+     if (useSemaphores) std::copy(pendingImage.waitSemaphores.begin(),
+                                  pendingImage.waitSemaphores.end(), waits.begin());
+-    if (useDirect) waits.push_back(nativeSdrAcquireSlots.get(0));
++    if (useDirect) waits.push_back(nativeSdrAcquireSlots.get(slotIndex));
+     auto& waitStages = submitWaitStages;
+     waitStages.resize(waits.size(), VK_PIPELINE_STAGE_TRANSFER_BIT);
+-    if (frameSlot.bridgeSync.readPending) {
+-        waits.push_back(frameSlot.bridgeSync.readSemaphore);
++    if (slot.bridgeSync.readPending) {
++        waits.push_back(slot.bridgeSync.readSemaphore);
+         // Includes the foreign queue-family acquire, not just the image copy.
+         // Retain all existing core and WSI waits and their stage masks.
+         waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+@@ -2112,7 +2138,7 @@
+     uint32_t signalCount = 0;
+     if (pendingSignalSemaphore != VK_NULL_HANDLE) signals[signalCount++] = pendingSignalSemaphore;
+     if (useDirect) signals[signalCount++] = nativeSdrComplete[sdrIndex];
+-    if (exportWrite) signals[signalCount++] = frameSlot.bridgeSync.writeSemaphore;
++    if (exportWrite) signals[signalCount++] = slot.bridgeSync.writeSemaphore;
+ 
+     VkSubmitInfo submit { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+     if (!waits.empty()) {
+@@ -2139,14 +2165,15 @@
+     pendingSignalSemaphore = VK_NULL_HANDLE;
+ 
+     if (useDirect) {
+-        if (result == VK_SUCCESS) nativeAcquireState.markSubmitted(0);
++        if (result == VK_SUCCESS) nativeAcquireState.markSubmitted(slotIndex);
+         else if (result != VK_ERROR_OUT_OF_HOST_MEMORY && result != VK_ERROR_OUT_OF_DEVICE_MEMORY &&
+-                 result != VK_ERROR_DEVICE_LOST) nativeAcquireState.markUncertain(0);
++                 result != VK_ERROR_DEVICE_LOST) nativeAcquireState.markUncertain(slotIndex);
+     }
+     if (!checkFrameResult(result, "submit frame")) return false;
+-    frameSlot.bridgeSync.readPending = false; // this submit consumes the temporary payload
+-    frameSlot.inFlight = true;
+-    if (!nativeSlangUse.idle() && !nativeSlangUse.markSubmitted(0))
++    slot.bridgeSync.readPending = false; // this submit consumes the temporary payload
++    slot.inFlight = true;
++    coreFrameSubmitted = true;
++    if (!nativeSlangUse.idle() && !nativeSlangUse.markSubmitted(slotIndex))
+         return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "mismatched Slang owner submission");
+     const int exportedFd = exportWrite ? exportBridgeWriteFence() : NoBridgeWriteFence;
+     // WSI already waits for the submitted per-image completion semaphore.
+@@ -2182,7 +2209,13 @@
+             checkFrameResult(presentResult, "present frame");
+         }
+     }
+-    if (!waitForFrame()) {
++    // Defer the host fence only on the non-WSI bridge path with a real write
++    // proof and both imported slots. The next core index can run while this
++    // submission completes; EGL must queue its wait before selecting the image.
++    // Native WSI and temporal Slang remain on the existing synchronous path.
++    const bool deferHostWait = useSpareFrame() && !useDirect && !shaderFailed &&
++        copied && writeFd && exportedFd >= -1 && !hasFatalError();
++    if (!deferHostWait && !waitForSlotFrame(slot)) {
+         if (exportedFd >= 0) close(exportedFd);
+         return false;
+     }
+@@ -2202,6 +2235,18 @@
+             disableNativeSdrSwapchain("frame presentation failed; GLES retained");
+         }
+     }
++    // An optional second normalizer may exhaust the shared memory budget or
++    // fail a format allocation. Retire its GPU cache only after both slot
++    // fences; keep the stable core mask and any displayed EGL lease. Future
++    // runs use the primary bridge conservatively until the next resize.
++    if (!copied && sourceRangeValid && useSpareFrame() && !hasFatalError()) {
++        if (!waitForSlotFrame(frameSlot) || !waitForSlotFrame(spareFrameSlot) ||
++                !waitForNativeSlangFrame()) return false;
++        spareFrameImported = false;
++        spareFrameSlot.colorCopy.release();
++        spareFrameSlot.colorCopyRejected = false;
++        LOGW("Optional dual bridge normalization failed; retaining single-slot transport");
++    }
+     const bool accepted = copied && !hasFatalError();
+     // Preserve the already-signaled sentinel only on an accepted frame.
+     // Neither a rejected frame nor a failed/omitted export is a GPU proof.
+@@ -2211,17 +2256,19 @@
+ }
+ 
+ bool VulkanBackend::waitForCoreSyncIndex() {
+-    if (coreSync.mask() == 1u) {
+-        // Legacy index zero covers every slot. No extra wait when idle.
++    if (!useSpareFrame()) {
++        // Stable mask 3 can fall back to the primary bridge. All former indices
++        // must then be retired before a core can reuse resources.
+         return waitForFrame() && (!spareFrameSlot.inFlight || waitForSlotFrame(spareFrameSlot));
+     }
+-    return waitForSlotFrame(coreSync.index() == 0u ? frameSlot : spareFrameSlot);
++    return waitForSubmissionFrame();
+ }
+ 
+ bool VulkanBackend::beginCoreFrame() {
+     if (hasFatalError() || shutdownReady)
+         return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "begin core frame after failure or shutdown");
+     if (!isStarted()) return true; // software/GLES core: no Vulkan index to reserve
++    coreFrameSubmitted = false;
+     if (!coreSync.begin())
+         return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "reserve core sync index");
+     if (waitForCoreSyncIndex()) return true;
+@@ -2231,13 +2278,16 @@
+ 
+ bool VulkanBackend::completeDuplicateFrame() {
+     if (!isStarted() || !waitForCoreSyncIndex()) return false;
+-    auto& slot = coreSync.index() == 0u ? frameSlot : spareFrameSlot;
++    auto& slot = submissionSlotIndex() ? spareFrameSlot : frameSlot;
+ 
+     // Libretro Vulkan v5: duplicates do not consume set_image waits, but
+     // set_command_buffers and set_signal_semaphore are consumed exactly once.
+     // No bridge write, image layout transition, GLES drain or WSI acquire.
+     pendingImage.waitSemaphores.clear();
+-    if (pendingCommandBuffers.empty() && pendingSignalSemaphore == VK_NULL_HANDLE) return true;
++    if (pendingCommandBuffers.empty() && pendingSignalSemaphore == VK_NULL_HANDLE) {
++        coreFrameSubmitted = true;
++        return true;
++    }
+ 
+     if (!slot.fence || !vk.queueSubmit)
+         return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "missing duplicate slot submission resources");
+@@ -2261,12 +2311,14 @@
+     pendingSignalSemaphore = VK_NULL_HANDLE;
+     if (!checkFrameResult(result, "submit duplicate frame")) return false;
+     slot.inFlight = true;
++    coreFrameSubmitted = true;
+     return waitForSlotFrame(slot);
+ }
+ 
+ void VulkanBackend::callbackSetImage(void* handle, const retro_vulkan_image* image, uint32_t numSemaphores,
+                                      const VkSemaphore* semaphores, uint32_t srcQueueFamily) {
+     auto* self = static_cast<VulkanBackend*>(handle);
++    self->pendingImageIndex = self->coreSync.index();
+     self->pendingImage.image = image->create_info.image;
+     self->pendingImage.format = image->create_info.format;
+     self->pendingImage.components = image->create_info.components;
+@@ -2364,6 +2416,9 @@
+     surfaceExtensionsEnabled = false;
+ 
+     coreSync.resetAfterShutdown();
++    spareFrameImported = false;
++    coreFrameSubmitted = false;
++    pendingImageIndex = 0;
+     fatalFrameError = VK_SUCCESS;
+     shutdownReady = false;
+     bridgeFenceEnabled = false;
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -97,7 +97,25 @@
+     bool start();
+     // Reserve the libretro sync index before every retro_run invocation.
+     bool beginCoreFrame();
+-    void endCoreFrame() noexcept { coreSync.finish(); }
++    void endCoreFrame() noexcept {
++        // Commands and signal semaphores are consumed by video_refresh, not by
++        // retro_run itself. Keep their owning index on runs without a callback.
++        if (coreFrameSubmitted && pendingCommandBuffers.empty() &&
++                pendingSignalSemaphore == VK_NULL_HANDLE && pendingImage.waitSemaphores.empty())
++            coreSync.finish();
++        else coreSync.cancel();
++        coreFrameSubmitted = false;
++    }
++    bool wantsSpareFrame() const noexcept { return coreSync.mask() == 3u; }
++    bool useSpareFrame() const noexcept { return wantsSpareFrame() && spareFramePrepared && spareFrameImported; }
++    void setSpareFrameImported(bool imported) noexcept { spareFrameImported = imported && spareFramePrepared; }
++    std::size_t submissionSlotIndex() const noexcept { return useSpareFrame() ? coreSync.index() : 0u; }
++    AHardwareBuffer* getSubmissionFrameBuffer() const { return submissionSlotIndex() ? getSpareFrameBuffer() : getFrameBuffer(); }
++    std::uint64_t getSubmissionAllocationBytes() const {
++        return submissionSlotIndex() ? getSpareFrameBufferAllocationBytes() : getFrameBufferAllocationBytes();
++    }
++    // Called if EGL cannot import a write fence. No publication until it succeeds.
++    bool waitForSubmissionFrame() { return waitForSlotFrame(submissionSlotIndex() ? spareFrameSlot : frameSlot); }
+     bool isStarted() const { return device != VK_NULL_HANDLE; }
+     // Callback code latches errors; only the frontend's post-retro_run boundary
+     // translates them into managed errors. Never unwind through a core C callback.
+@@ -178,7 +196,9 @@
+     static constexpr int NoBridgeWriteFence = -2;
+     // On accepted frames: >=0 transfers an owned FD, -1 proves completion,
+     // NoBridgeWriteFence means the diagnostic export supplied no proof.
+-    // The regular CPU completion fence is still required in every case.
++    // Without a write proof, completion is synchronous. In an opted-in dual
++    // bridge session the frontend may queue an EGL wait instead; CPU completion
++    // is still required before any reuse, retirement, or failed EGL import.
+     bool presentFrame(unsigned width, unsigned height, float resolvedAspect, bool pictureCompatible,
+                       int* writeFd = nullptr);
+     // Complete core-provided work/signals for a duplicate without copying an image.
+@@ -431,6 +451,9 @@
+     // No GPU allocation until the optional preparation entry point is called.
+     FrameSlot spareFrameSlot;
+     bool spareFramePrepared = false;
++    bool spareFrameImported = false;
++    bool coreFrameSubmitted = false;
++    uint32_t pendingImageIndex = 0;
+     VulkanCoreSyncIndices coreSync;
+     VkResult fatalFrameError = VK_SUCCESS;
+     bool shutdownReady = false;
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -475,17 +475,21 @@
+     if (!traceGameCall("AmbientGame GLES bridge resize finish", [&] {
+             // Retire the unselected optional EGL lease before any primary
+             // resize/precision change can retire its Vulkan-side allocation.
+-            return video->finishExternalFrameUse(true) && video->releaseSpareExternalFrame();
++            return video->prepareExternalFrameResize();
+         })) {
+         backend.rejectBridgeImport();
+         return;
+     }
++    backend.setSpareFrameImported(false);
+     if (!backend.ensureFrameBuffer(width, height)) {
+         backend.rejectBridgeImport();
+         return;
+     }
+     if (video->attachExternalFrame(backend.getFrameBuffer(), backend.getFrameBufferWidth(),
+-                                   backend.getFrameBufferHeight(), backend.getFrameBufferAllocationBytes())) return;
++                                   backend.getFrameBufferHeight(), backend.getFrameBufferAllocationBytes())) {
++        if (backend.wantsSpareFrame()) backend.setSpareFrameImported(prepareSpareVulkanFrame());
++        return;
++    }
+     if (backend.isFp16Frame()) {
+         // Driver accepted the FP16 AHardwareBuffer in Vulkan but GLES could not import it.
+         // Try RGBA8 for the entire remaining session, including later resizes.
+@@ -493,7 +497,10 @@
+         backend.disableFp16Frame();
+         if (!backend.hasFatalError() && backend.ensureFrameBuffer(width, height) &&
+             video->attachExternalFrame(backend.getFrameBuffer(), backend.getFrameBufferWidth(),
+-                                       backend.getFrameBufferHeight(), backend.getFrameBufferAllocationBytes())) return;
++                                       backend.getFrameBufferHeight(), backend.getFrameBufferAllocationBytes())) {
++            if (backend.wantsSpareFrame()) backend.setSpareFrameImported(prepareSpareVulkanFrame());
++            return;
++        }
+     }
+     backend.rejectBridgeImport();
+ }
+@@ -1676,9 +1683,11 @@
+             // Both the native-fence path and the CPU fallback must protect the
+             // allocation Vulkan is about to write, not merely any selected EGL
+             // texture. Fail before exporting/importing a mismatched read fence.
+-            if (!video->matchesPrimaryExternalFrame(backend.getFrameBuffer(),
+-                    backend.getFrameBufferWidth(), backend.getFrameBufferHeight(),
+-                    backend.getFrameBufferAllocationBytes())) {
++            const auto slotIndex = backend.submissionSlotIndex();
++            auto* const buffer = backend.getSubmissionFrameBuffer();
++            const auto bytes = backend.getSubmissionAllocationBytes();
++            const auto bridgeWidth = backend.getFrameBufferWidth(), bridgeHeight = backend.getFrameBufferHeight();
++            if (!video->matchesExternalFrameSlot(slotIndex, buffer, bridgeWidth, bridgeHeight, bytes)) {
+                 backend.rejectBridgeImport();
+                 return;
+             }
+@@ -1690,7 +1699,7 @@
+                 if (backend.hasFatalError()) return;
+             }
+             if (!queuedReadWait && !traceGameCall("AmbientGame GLES bridge finish", [&] {
+-                    return video->finishExternalFrameUse();
++                    return video->finishExternalFrameSlotUse(slotIndex);
+                 })) {
+                 // Do not treat a missing/foreign context as a completed read.
+                 backend.rejectBridgeImport();
+@@ -1706,11 +1715,17 @@
+                 // true when the bridge copy succeeded and must accept the new source.
+                 return;
+             }
+-            // The CPU fence is still complete at this boundary. Failure of the
+-            // optional EGL server wait cannot expose an unfinished bridge image.
++            // In dual-slot bridge mode a successful export can replace the
++            // immediate CPU wait, but only if EGL queues the wait before
++            // publication. Import consumes the FD even when it fails.
+             if (writeFd >= 0 && !video->importExternalWriteFence(writeFd)) {
+-                LOGW("Cannot queue Vulkan write fence in EGL; retaining CPU completion");
++                LOGW("Cannot queue Vulkan write fence in EGL; waiting for the owning slot");
++                if (!backend.waitForSubmissionFrame()) return;
+             }
++            if (!video->publishExternalFrame(slotIndex, buffer, bridgeWidth, bridgeHeight, bytes)) {
++                backend.rejectBridgeImport();
++                return;
++            }
+         }
+ 
+         if (data == nullptr && video->presentsExternalFrames() &&
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -1184,8 +1184,8 @@
+             const bool destroyed = destroyWriteSync(display, sync) == EGL_TRUE;
+             if (queued && destroyed) return true;
+         }
+-        // The caller has already waited on its Vulkan CPU fence. Disable the
+-        // optional server wait on failure, retaining the proven fallback.
++        // The caller must wait on its Vulkan CPU fence on failure before
++        // publishing a new image. Disable the optional server wait.
+         waitWriteSync = nullptr;
+         return false;
+     }
+@@ -1203,13 +1203,35 @@
+ 
+ bool Video::matchesPrimaryExternalFrame(AHardwareBuffer* buffer, unsigned width, unsigned height,
+                                         std::uint64_t allocationBytes) const {
+-    const auto* slot = externalFrame.get(0);
+-    return externalFrames && width && height && allocationBytes && externalFrame.selected() == 0 &&
+-        slot && slot->texture == hwRenderTexture &&
+-        slot->lease.matches(buffer, eglGetCurrentDisplay(), eglGetCurrentContext(), hwRenderTexture) &&
++    return externalFrame.selected() == 0 && matchesExternalFrameSlot(0, buffer, width, height, allocationBytes);
++}
++
++bool Video::matchesExternalFrameSlot(std::size_t index, AHardwareBuffer* buffer, unsigned width, unsigned height,
++                                      std::uint64_t allocationBytes) const {
++    const auto* slot = externalFrame.get(index);
++    return externalFrames && width && height && allocationBytes && slot &&
++        (externalFrame.selected() != index || slot->texture == hwRenderTexture) &&
++        slot->lease.matches(buffer, eglGetCurrentDisplay(), eglGetCurrentContext(), slot->texture) &&
+         slot->width == width && slot->height == height && slot->allocationBytes == allocationBytes;
+ }
+ 
++bool Video::finishExternalFrameSlotUse(std::size_t index) {
++    if (!externalFrames) return false;
++    ExternalFrameOps ops;
++    return externalFrame.finishSlotUse(index, eglGetCurrentDisplay(), eglGetCurrentContext(), ops);
++}
++
++bool Video::prepareExternalFrameResize() {
++    // Drain the last published slot first. The primary allocation is retained
++    // until the replacement attaches; stop borrowing the spare before release.
++    if (!finishExternalFrameUse(true)) return false;
++    if (externalFrame.selected() == 1) {
++        if (!externalFrame.select(0, eglGetCurrentDisplay(), eglGetCurrentContext(), hwRenderTexture) ||
++                !finishExternalFrameUse()) return false;
++    }
++    return releaseSpareExternalFrame();
++}
++
+ bool Video::prepareSpareExternalFrame(AHardwareBuffer* buffer, unsigned width, unsigned height,
+                                      std::uint64_t allocationBytes) {
+     // Preparation may bind a new texture but must not change the renderer's
+diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
+--- a/src/main/cpp/video.h
++++ b/src/main/cpp/video.h
+@@ -171,6 +171,16 @@
+                                    std::uint64_t allocationBytes);
+     // Refuse release of the selected or foreign-context import.
+     bool releaseSpareExternalFrame();
++    // Validate a nonselected import as well as the currently borrowed texture.
++    bool matchesExternalFrameSlot(std::size_t index, AHardwareBuffer* buffer, unsigned width, unsigned height,
++                                  std::uint64_t allocationBytes) const;
++    bool finishExternalFrameSlotUse(std::size_t index);
++    bool prepareExternalFrameResize();
++    // Caller has proved Vulkan write completion or queued its EGL server wait.
++    bool publishExternalFrame(std::size_t index, AHardwareBuffer* buffer, unsigned width, unsigned height,
++                              std::uint64_t allocationBytes) {
++        return selectExternalFrameSlot(index, buffer, width, height, allocationBytes);
++    }
+     // Render-thread-only accounting; Vulkan-owned identities are counted by the backend.
+     std::uint64_t retainedExternalFrameBytesExcept(AHardwareBuffer* first = nullptr,
+                                                     AHardwareBuffer* second = nullptr) const noexcept {

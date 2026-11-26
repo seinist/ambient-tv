@@ -1,7 +1,20 @@
 package com.ambient.tv.ui.gamepad
 
 import android.view.KeyEvent
+import com.ambient.tv.data.browse.BrowseWorkBudget
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import com.ambient.tv.ui.keyboard.KeyAction
+import com.ambient.tv.tvheadend.data.TvheadendHtspHbbtv
+import java.io.DataInputStream
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test
@@ -67,6 +80,54 @@ class GameInputRoutingTest {
         } finally { GameInputRouting.removeObserver(token) }
     }
 
+    @Test fun gameEpochInvalidatesOldWorkEvenAfterAnEntireShortSession() {
+        val previous = BrowseWorkBudget.gameEpoch()
+        assertTrue(BrowseWorkBudget.gameFreeSince(previous))
+        val oldJob = BrowseWorkBudget.speculativeJob
+        val job = Job()
+        BrowseWorkBudget.speculativeJob = job
+        try {
+            GameInputRouting.attach(first, GameInputMode.MENU, {})
+            val started = BrowseWorkBudget.gameEpoch()
+            assertEquals(previous + 1, started)
+            assertTrue(job.isCancelled)
+            assertFalse(BrowseWorkBudget.gameFreeSince(started))
+            GameInputRouting.update(first, GameInputMode.RUNNING)
+            GameInputRouting.attach(second, GameInputMode.RUNNING, {})
+            GameInputRouting.detach(first)
+            assertEquals(started, BrowseWorkBudget.gameEpoch())
+            assertFalse(BrowseWorkBudget.gameFreeSince(previous))
+            GameInputRouting.detach(second)
+            assertFalse(BrowseWorkBudget.gameFreeSince(previous))
+            assertTrue(BrowseWorkBudget.gameFreeSince(started))
+        } finally {
+            BrowseWorkBudget.speculativeJob = oldJob
+            job.cancel()
+        }
+    }
+
+    @Test fun shortGameStartCancelsInFlightOptionalWorkAndDiscardsItsResult() = runBlocking {
+        withTimeout(5_000L) {
+            val cancelled = CompletableDeferred<Unit>()
+            val work = async(start = CoroutineStart.UNDISPATCHED) {
+                runCatching {
+                    BrowseWorkBudget.interruptOnGameStart({ cancelled.complete(Unit) }) {
+                        cancelled.await()
+                        "obsolete result"
+                    }
+                }
+            }
+            GameInputRouting.attach(first, GameInputMode.RUNNING, {})
+            GameInputRouting.detach(first)
+            cancelled.await()
+            assertTrue(work.await().isFailure)
+        }
+    }
+
+    @Test fun optionalWorkCompletesNormallyWithoutGameEntry() = runBlocking {
+        assertEquals(42, BrowseWorkBudget.interruptOnGameStart({ fail("Unexpected cancellation") }) { 42 })
+    }
+
     @Test fun menuMappingKeepsConfirmSideButCannotNavigateToAppPages() {
         assertEquals(GamepadCommand.Key(GamepadKeyCommand.CONFIRM), gameMenuCommand(GamepadButton.A, false, false))
         assertEquals(GamepadCommand.Key(GamepadKeyCommand.CONFIRM), gameMenuCommand(GamepadButton.B, false, true))
@@ -103,4 +164,43 @@ class GameInputRoutingTest {
         assertTrue(gameTracksKey(KeyEvent.KEYCODE_BUTTON_MODE))
         assertTrue(gameTracksKey(KeyEvent.KEYCODE_DPAD_CENTER))
     }
+
+    @Test fun oldEpochCannotStartNewNetworkWorkAfterShortGame() = runBlocking {
+        val epoch = BrowseWorkBudget.gameEpoch()
+        GameInputRouting.attach(first, GameInputMode.RUNNING, {})
+        GameInputRouting.detach(first)
+        var started = false
+        val result = runCatching {
+            BrowseWorkBudget.interruptOnGameStart({}, epoch) { started = true }
+        }
+        assertTrue(result.isFailure)
+        assertFalse(started)
+    }
+
+    @Test fun startingGameActivelyClosesBlockedHtspProbe() = runBlocking {
+        ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { server ->
+            server.soTimeout = 5_000
+            Socket().use { socket ->
+                val epoch = BrowseWorkBudget.gameEpoch()
+                val work = async(Dispatchers.IO) {
+                    runCatching {
+                        BrowseWorkBudget.interruptOnGameStart({ socket.close() }, epoch) {
+                            TvheadendHtspHbbtv.discover(socket, "127.0.0.1", server.localPort, "", "")
+                        }
+                    }
+                }
+                server.accept().use { peer ->
+                    peer.soTimeout = 5_000
+                    // Receive the hello frame header but deliberately never reply:
+                    // the probe is waiting for input until its exact socket is closed.
+                    assertTrue(DataInputStream(peer.getInputStream()).readInt() > 0)
+                    GameInputRouting.attach(first, GameInputMode.RUNNING, {})
+                    GameInputRouting.detach(first)
+                    assertTrue(withTimeout(2_000) { work.await() }.isFailure)
+                    assertTrue(socket.isClosed)
+                }
+            }
+        }
+    }
+
 }
