@@ -172,6 +172,30 @@ class SmartTubeDeprecationPatchesTest(unittest.TestCase):
             patcher.patch_disable_unused_cronet(msc, shared, check=True)
         self.assertIn("CronetManager", helper.read_text())
 
+    def test_active_cronet_adapter_is_not_modified(self) -> None:
+        root = Path(self.temporary.name)
+        msc = root / "MediaServiceCore"
+        shared = root / "SharedModules"
+        helper = msc / "youtubeapi/src/main/java/com/liskovsoft/googlecommon/common/helpers/RetrofitOkHttpHelper.kt"
+        manager = shared / "sharedutils/src/main/java/com/liskovsoft/sharedutils/cronet/CronetManager.kt"
+        for path in (helper, manager):
+            path.parent.mkdir(parents=True, exist_ok=True)
+        helper.write_text("        addCronetInterceptor(builder)\n")
+        manager.write_text("object CronetManager")
+        before = (helper.read_bytes(), manager.read_bytes())
+        with self.assertRaises(SystemExit):
+            patcher.patch_disable_unused_cronet(msc, shared, check=False)
+        self.assertEqual(before, (helper.read_bytes(), manager.read_bytes()))
+
+    def test_legacy_tls_bypass_is_disabled(self) -> None:
+        path = self.write("OkHttpCommons.java", "        configureToIgnoreCertificate(okBuilder);\n")
+        with self.assertRaises(SystemExit):
+            patcher.patch_disable_legacy_tls_bypass(path, check=True)
+        self.assertTrue(patcher.patch_disable_legacy_tls_bypass(path, check=False))
+        self.assertNotIn("configureToIgnoreCertificate(okBuilder);", path.read_text())
+        self.assertFalse(patcher.patch_disable_legacy_tls_bypass(path, check=True))
+        self.assertFalse(patcher.patch_disable_legacy_tls_bypass(path, check=False))
+
     def test_okhttp_manager_initialization_is_thread_safe(self) -> None:
         path = self.write(
             "OkHttpManager.java",
