@@ -2275,8 +2275,12 @@ class SettingsViewModel @Inject constructor(
     }
     fun onMpvSdrCurveChanged(value: String) = _uiState.update { it.copy(mpvSdrCurveKey = value) }
     /** A runtime lock, not a draft setting: cleared at once so the next playback tries zero-copy. */
-    fun mpvZeroCopyLocked(): Boolean = appPreferences.mpvZeroCopyFailed
-    fun resetMpvZeroCopyLock() { appPreferences.mpvZeroCopyFailed = false }
+    fun mpvZeroCopyLocked(): Boolean = appPreferences.mpvZeroCopyFailed ||
+        com.ambient.tv.ui.player.backend.mpvZeroCopyFailures.any()
+    fun resetMpvZeroCopyLock() {
+        appPreferences.mpvZeroCopyFailed = false
+        com.ambient.tv.ui.player.backend.mpvZeroCopyFailures.clear()
+    }
     fun onAllowThreeTwoPulldownChanged(value: Boolean) = _uiState.update { it.copy(allowThreeTwoPulldown = value) }
     fun onSyncPlaybackToDisplayChanged(value: Boolean) = _uiState.update { it.copy(syncPlaybackToDisplay = value) }
     fun onDisplaySwitchPauseChanged(value: Int) = _uiState.update { it.copy(displaySwitchPauseMs = AppPreferences.normalizeDisplaySwitchPauseMs(value)) }
