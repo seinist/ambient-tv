@@ -901,6 +901,14 @@ class VlcPlaybackController(
                         }
                         return
                     }
+                    // surfaceCreated may have arrived while native stop owned the player.
+                    // Rebind after it settles before preparing or re-enabling video.
+                    if (!player.vlcVout.areViewsAttached()) {
+                        player.vlcVout.setVideoView(view)
+                        player.vlcVout.attachViews()
+                        val frame = view.holder.surfaceFrame
+                        reportWindowSize(frame.width(), frame.height())
+                    }
                     if (!prepared) prepare()
                     if (restartStopFailed || headerRelayFailed || restartStop != null || dvRetirementPending ||
                         previousReleaseOutcome == PreviousReleaseOutcome.BLOCKED ||
@@ -1017,6 +1025,13 @@ class VlcPlaybackController(
                 val nextView = pendingAttachView
                 pendingAttachView = null
                 nextView?.let(::attach)
+                val view = attachedView
+                if (view != null && view.holder.surface.isValid && !player.vlcVout.areViewsAttached()) {
+                    player.vlcVout.setVideoView(view)
+                    player.vlcVout.attachViews()
+                    val frame = view.holder.surfaceFrame
+                    reportWindowSize(frame.width(), frame.height())
+                }
                 if (!prepared) prepare(pendingRestorePositionMs ?: position, desiredPlayWhenReady)
                 attachedView?.let(::restoreVideoTrackWhenSurfaceIsReady)
             }
