@@ -79,13 +79,12 @@ internal object MoonlightHardwareVideo {
             for (codec in codecInfos) {
                 if (codec.isEncoder || !codec.isHardwareAccelerated ||
                     codec.supportedTypes.none { it.equals(mime, ignoreCase = true) }) continue
-                val candidate = runCatching {
+                val candidate: Pair<MediaCodecInfo, Int>? = try {
                     // Keep the framework capability object for both filtering and ranking.
                     // getCapabilitiesForType() can cross into vendor codec services, so avoid
                     // querying it twice for every decoder during stream startup.
                     val capabilities = codec.getCapabilitiesForType(mime)
-                    val video = capabilities.videoCapabilities ?: return@runCatching null
-                    if (!video.areSizeAndRateSupported(width, height, fps.toDouble())) return@runCatching null
+                    val video = capabilities.videoCapabilities
                     val hdrProfile = !hdr10 || capabilities.profileLevels.any { profile ->
                         when (mime) {
                             MediaFormat.MIMETYPE_VIDEO_HEVC ->
@@ -101,9 +100,12 @@ internal object MoonlightHardwareVideo {
                             else -> false
                         }
                     }
-                    if (!hdrProfile) return@runCatching null
-                    codec to performanceRank(codec, capabilities, mime, width, height, fps)
-                }.getOrNull() ?: continue
+                    if (video != null && video.areSizeAndRateSupported(width, height, fps.toDouble()) && hdrProfile)
+                        codec to performanceRank(codec, capabilities, mime, width, height, fps)
+                    else null
+                } catch (_: Exception) {
+                    null
+                } ?: continue
                 ranked += candidate
             }
             ranked.sortedByDescending { it.second }.map { it.first }
