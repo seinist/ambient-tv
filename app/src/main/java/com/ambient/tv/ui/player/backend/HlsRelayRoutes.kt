@@ -136,7 +136,7 @@ internal fun vlcRelayOriginAllowed(origin: HttpUrl, hop: HttpUrl): Boolean =
  * HLS attribute values can contain commas and literal URI= text inside quoted strings.
  * Scan actual attribute boundaries rather than matching URI= anywhere in the line.
  */
-private fun rewriteHlsUriAttributes(line: String, rewrite: (String) -> String): String {
+private fun rewriteHlsUriAttributes(line: String, allowUri: Boolean, rewrite: (String) -> String): String {
     val colon = line.indexOf(':')
     if (colon < 0) return line
     var index = colon + 1
@@ -148,7 +148,16 @@ private fun rewriteHlsUriAttributes(line: String, rewrite: (String) -> String): 
     fun attribute(end: Int) {
         val raw = line.substring(start, end)
         val eq = raw.indexOf('=')
-        if (eq < 0 || raw.substring(0, eq).trim() != "URI") return
+        if (eq < 0) return
+        val name = raw.substring(0, eq).trim()
+        // Interstitials and vendor extensions can contain independent URL references.
+        // Passing them through would let the native demuxer bypass relay capabilities.
+        if (name != "URI") {
+            if (name.endsWith("-URI") || name.endsWith("-URL") || name == "URL" || name == "X-ASSET-LIST")
+                throw IOException("Unsupported HLS external resource attribute")
+            return
+        }
+        if (!allowUri) throw IOException("Unsupported HLS URI-bearing tag")
         if (seenUri) throw IOException("Duplicate HLS URI attribute")
         seenUri = true
         val value = raw.substring(eq + 1).trim()
@@ -278,8 +287,11 @@ internal fun rewriteVlcHlsManifest(
                         trimmed.startsWith("#EXT-X-RENDITION-REPORT:") ||
                         trimmed.startsWith("#EXT-X-IMAGE-STREAM-INF:")
                     // EXTINF titles and ordinary comments are not attribute lists.
-                    append(if (trimmed.substringBefore(':') in hlsUriTags)
-                        rewriteHlsUriAttributes(line) { map(it, playlist) } else line)
+                    val tag = trimmed.substringBefore(':')
+                    // EXT-X tags with attribute lists may introduce new external-resource
+                    // fields. Scan their actual boundaries, never EXTINF or free-form comments.
+                    append(if (tag.startsWith("#EXT-X-") && ':' in trimmed)
+                        rewriteHlsUriAttributes(line, tag in hlsUriTags) { map(it, playlist) } else line)
                     if (trimmed.startsWith("#EXT-X-STREAM-INF:")) nextPlaylist = true
                 }
                 trimmed.isNotEmpty() -> {
