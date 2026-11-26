@@ -108,28 +108,31 @@ internal class AuthenticatedStreamProxy(
             call.execute().use { response ->
                 if (!response.isSuccessful && response.code != 416) { status(output, response.code, response.message.ifBlank { "Error" }); return }
                 val contentType = response.header("Content-Type")
-                val dash = response.request.url.encodedPath.endsWith(".mpd", ignoreCase = true) ||
-                    contentType?.substringBefore(';')?.trim()?.equals("application/dash+xml", true) == true
-                if (dash) { status(output, 501, "DASH manifest relay unsupported"); return }
+                val dash = vlcDashPath(response.request.url) || vlcDashContentType(contentType)
                 val playlist = resource.playlist || vlcHlsPath(response.request.url) || vlcHlsContentType(contentType)
-                if (playlist) {
+                if (dash || playlist) {
+                    val manifestType = if (dash) "application/dash+xml" else "application/vnd.apple.mpegurl"
                     if (response.code != 200) { status(output, 502, "Partial playlist unsupported"); return }
                     if (request[1].substringBefore('?') == "/$token") routes.markRootPlaylist()
                     if (headOnly) {
-                        output.write("HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nConnection: close\r\n\r\n".toByteArray(Charsets.ISO_8859_1))
+                        output.write("HTTP/1.1 200 OK\r\nContent-Type: $manifestType\r\nConnection: close\r\n\r\n".toByteArray(Charsets.ISO_8859_1))
                         output.flush()
                         return
                     }
                     val rewritten = try {
                         val manifest = readManifest(response.body.byteStream())
-                        rewriteVlcHlsManifest(manifest, response.request.url) { child, isPlaylist ->
+                        val localUri: (okhttp3.HttpUrl, Boolean) -> String = { child, isPlaylist ->
                             localOrigin + routes.register(child, isPlaylist)
-                        }.toByteArray(Charsets.UTF_8)
+                        }
+                        val rewrittenText = if (dash) rewriteVlcDashManifest(manifest, response.request.url,
+                            localUri, { localOrigin + routes.registerTemplate(it) })
+                        else rewriteVlcHlsManifest(manifest, response.request.url, localUri)
+                        rewrittenText.toByteArray(Charsets.UTF_8)
                     } catch (_: IOException) {
                         status(output, 502, "Unsupported playlist")
                         return
                     }
-                    output.write("HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: ${rewritten.size}\r\nConnection: close\r\n\r\n".toByteArray(Charsets.ISO_8859_1))
+                    output.write("HTTP/1.1 200 OK\r\nContent-Type: $manifestType\r\nContent-Length: ${rewritten.size}\r\nConnection: close\r\n\r\n".toByteArray(Charsets.ISO_8859_1))
                     output.write(rewritten)
                     output.flush()
                     return
@@ -213,8 +216,7 @@ internal class AuthenticatedStreamProxy(
 }
 
 internal fun vlcHttpRelaySupported(url: String): Boolean {
-    val parsed = url.toHttpUrlOrNull() ?: return false
-    return !parsed.encodedPath.endsWith(".mpd", ignoreCase = true)
+    return url.toHttpUrlOrNull() != null
 }
 
 internal fun vlcDirectHttpRelaySupported(url: String): Boolean {
