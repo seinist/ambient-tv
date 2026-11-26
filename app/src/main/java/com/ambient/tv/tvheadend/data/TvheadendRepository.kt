@@ -3,6 +3,9 @@ package com.ambient.tv.tvheadend.data
 import com.ambient.tv.notifications.*
 
 import com.ambient.tv.util.suspendResult
+import com.ambient.tv.data.browse.BrowseWorkBudget
+import com.ambient.tv.livetv.LiveTvHbbtvApp
+import com.ambient.tv.connectivity.HostHealth
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import android.content.Context
@@ -93,6 +96,18 @@ class TvheadendRepository @Inject constructor(
     /** Serialize legacy migration and fresh-window merges from parallel per-channel loads. */
     private val epgPersistMutex = Mutex()
     private val guideFetchMutex = Mutex()
+    private data class HbbtvKey(val scope: String, val htspPort: Int)
+    private class HbbtvState(val key: HbbtvKey) {
+        var directory: TvheadendHbbtvDirectory? = null
+        var job: kotlinx.coroutines.Job? = null
+        var lastHttpAttempt: Long? = null
+        var lastHtspAttempt: Long? = null
+    }
+    private val hbbtvLock = Any()
+    private val hbbtvRestoreMutex = Mutex()
+    private var hbbtvState: HbbtvState? = null
+    private val _hbbtvChanges = kotlinx.coroutines.flow.MutableStateFlow(0L)
+    internal val hbbtvChanges: kotlinx.coroutines.flow.StateFlow<Long> = _hbbtvChanges
     private val guideEpoch = java.util.concurrent.atomic.AtomicLong()
     @Volatile private var guideFreshnessBlocked = false
 
@@ -262,52 +277,165 @@ class TvheadendRepository @Inject constructor(
         )
     }
 
-    suspend fun channels(force: Boolean = false): List<TvhChannel> = cached("channels", 5 * 60_000, force,
-        stale = { scope -> diskCache.read(scope, TvheadendDiskCache.CHANNELS, CHANNEL_LIST) },
-        persist = { scope, value -> diskCache.write(scope, TvheadendDiskCache.CHANNELS, CHANNEL_LIST, value) },
-    ) { coroutineScope {
-        val channelRows = entries(getJson("api/channel/grid", mapOf("limit" to "9999")))
-        // Optional metadata must not make channels unavailable to non-admin accounts.
-        val tagNames = async { optionalChannelMetadata("api/channeltag/list").let(::tvhTagNames) }
-        val services = async {
-            optionalChannelMetadata("api/mpegts/service/grid").mapNotNull { row -> row.string("uuid")?.let { it to row } }.toMap()
+    /** The required channel read never waits for either optional HbbTV transport. */
+    suspend fun channels(force: Boolean = false): List<TvhChannel> {
+        val state = restoreHbbtv()
+        var topology: Map<String, List<String>>? = null
+        val base = cached("channels", 5 * 60_000, force,
+            stale = { scope -> diskCache.read(scope, TvheadendDiskCache.CHANNELS, CHANNEL_LIST) },
+            persist = { scope, value -> diskCache.write(scope, TvheadendDiskCache.CHANNELS, CHANNEL_LIST, value) },
+        ) { coroutineScope {
+            val channelRows = entries(getJson("api/channel/grid", mapOf("limit" to "9999")))
+            val tagNames = async { optionalChannelMetadata("api/channeltag/list").let(::tvhTagNames) }
+            val services = async {
+                optionalChannelMetadata("api/mpegts/service/grid").mapNotNull { row -> row.string("uuid")?.let { it to row } }.toMap()
+            }
+            val logoMap = suspendResult { channelLogoMap() }
+                .onFailure { Timber.w(it, "TVHeadend channel logo playlist unavailable; falling back to channel icon field") }
+                .getOrDefault(emptyMap())
+            val names = tagNames.await()
+            val serviceRows = services.await()
+            val mapping = linkedMapOf<String, List<String>>()
+            val channels = channelRows.mapNotNull { obj ->
+                val uuid = obj.string("uuid") ?: return@mapNotNull null
+                if (obj.boolean("enabled") == false) return@mapNotNull null
+                val name = obj.string("name") ?: uuid
+                val metadata = tvhChannelMetadata(obj, names, serviceRows)
+                mapping[uuid] = obj.arrayStrings("services").distinct().sorted()
+                TvhChannel(uuid = uuid, name = name, number = obj.numberAsInt("number"),
+                    iconUrl = resolveChannelIconUrl(obj, logoMap, uuid, name),
+                    tags = metadata.tags, kind = metadata.kind, access = metadata.access)
+            }.distinctBy { it.uuid }.sortedWith(compareBy<TvhChannel> { it.number ?: Int.MAX_VALUE }.thenBy { it.name.lowercase() })
+            topology = mapping
+            channels
+        } }
+        if (state != null) synchronized(hbbtvLock) {
+            if (validHbbtv(state)) {
+                val old = state.directory
+                val newTopology = topology
+                if (old != null && newTopology != null) {
+                    val next = old.withTopology(newTopology)
+                    if (next != old) publishHbbtv(state, next)
+                }
+            }
         }
-        // TVHeadend already parses and persists HbbTV AIT metadata per MPEG-TS service. Fetch the
-        // raw service records once so playback can fall back to them when a stream profile strips
-        // AIT/PMT signalling. Permission-filtered by TVHeadend; unavailable metadata is optional.
-        val hbbtvServices = async { optionalHbbtvServiceMetadata() }
-        val htspHbbtv = async { optionalHtspHbbtvMetadata() }
-        val logoMap = suspendResult { channelLogoMap() }
-            .onFailure { Timber.w(it, "TVHeadend channel logo playlist unavailable; falling back to channel icon field") }
-            .getOrDefault(emptyMap())
+        requestHbbtvRefresh()
+        return enrichHbbtvChannels(base)
+    }
 
-        val names = tagNames.await()
-        val serviceRows = services.await()
-        val hbbtvRows = hbbtvServices.await()
-        val htspAppsByChannel = htspHbbtv.await()
-        channelRows.mapNotNull { obj ->
-            val uuid = obj.string("uuid") ?: return@mapNotNull null
-            if (obj.boolean("enabled") == false) return@mapNotNull null
-            val name = obj.string("name") ?: uuid
-            val metadata = tvhChannelMetadata(obj, names, serviceRows, hbbtvRows,
-                htspAppsByChannel[uuid].orEmpty())
-            TvhChannel(
-                uuid = uuid,
-                name = name,
-                number = obj.numberAsInt("number"),
-                // Prefer TVHeadend's own playlist-generated logo URL. TVHeadend resolves local
-                // picon/file paths through /imagecache/<id> here; the raw API `icon` value often
-                // points at the server filesystem and cannot be loaded by an Android client.
-                iconUrl = resolveChannelIconUrl(obj, logoMap, uuid, name),
-                tags = metadata.tags,
-                kind = metadata.kind,
-                access = metadata.access,
-                hbbtvUrl = metadata.hbbtvUrl,
-                hbbtvName = metadata.hbbtvName,
-                hbbtvApps = metadata.hbbtvApps,
-            )
-        }.distinctBy { it.uuid }.sortedWith(compareBy<TvhChannel> { it.number ?: Int.MAX_VALUE }.thenBy { it.name.lowercase() })
-    } }
+    private fun hbbtvKey(): HbbtvKey? = if (preferences.isTvheadendConfigured && !preferences.tvheadendLoginRejected)
+        HbbtvKey(diskScope(), preferences.tvheadendHtspPort) else null
+
+    /** All directory publication and scope retirement are serialized, never across network I/O. */
+    private fun validHbbtv(state: HbbtvState): Boolean =
+        hbbtvState === state && hbbtvKey() == state.key
+
+    private fun hbbtvChanged() { _hbbtvChanges.value = _hbbtvChanges.value + 1 }
+
+    private suspend fun restoreHbbtv(): HbbtvState? = withContext(Dispatchers.IO) {
+        hbbtvRestoreMutex.withLock {
+            val key = hbbtvKey() ?: return@withLock null
+            val state = synchronized(hbbtvLock) {
+                hbbtvState?.takeIf { it.key == key } ?: HbbtvState(key).also {
+                    hbbtvState?.job?.cancel()
+                    hbbtvState = it
+                    hbbtvChanged()
+                }
+            }
+            if (state.directory != null) return@withLock state
+            val saved = suspendResult {
+                diskCache.read(key.scope, "hbbtv-directory-v1", TvheadendHbbtvDirectory.serializer())
+            }.getOrNull()
+            val directory = if (saved != null) {
+                saved.takeIf { it.htspPort == key.htspPort } ?: TvheadendHbbtvDirectory(key.htspPort)
+            } else {
+                val legacy = suspendResult { diskCache.read(key.scope, TvheadendDiskCache.CHANNELS, CHANNEL_LIST) }.getOrNull()
+                TvheadendHbbtvDirectory.fromLegacy(key.htspPort, legacy.orEmpty())
+            }
+            synchronized(hbbtvLock) {
+                if (!validHbbtv(state)) return@withLock null
+                publishHbbtv(state, directory)
+            }
+            state
+        }
+    }
+
+    /** Read-only restore for a cold sidebar/guide. No endpoint contact or WOL. */
+    internal suspend fun restoreCachedHbbtv() { restoreHbbtv() }
+
+    internal fun enrichHbbtvChannels(channels: List<TvhChannel>): List<TvhChannel> = synchronized(hbbtvLock) {
+        hbbtvState?.takeIf(::validHbbtv)?.directory?.enrich(channels) ?: channels
+    }
+
+    internal fun hasCachedHbbtvApps(): Boolean = synchronized(hbbtvLock) {
+        hbbtvState?.takeIf(::validHbbtv)?.directory?.hasMenuApps() == true
+    }
+
+    internal fun hbbtvPending(): Boolean = synchronized(hbbtvLock) {
+        hbbtvState?.takeIf(::validHbbtv)?.job?.isActive == true
+    }
+
+    private fun publishHbbtv(state: HbbtvState, directory: TvheadendHbbtvDirectory) {
+        if (!validHbbtv(state) || state.directory == directory) return
+        state.directory = directory
+        // Separate key: a new ticketed logo/channel snapshot cannot overwrite HbbTV results.
+        runCatching { diskCache.write(state.key.scope, "hbbtv-directory-v1",
+            TvheadendHbbtvDirectory.serializer(), directory) }
+            .onFailure { Timber.d(it, "TVHeadend HbbTV cache write deferred") }
+        hbbtvChanged()
+    }
+
+    /** Single flight per endpoint/account. The caller does not join the optional work. */
+    internal fun requestHbbtvRefresh(force: Boolean = false) = synchronized(hbbtvLock) {
+        val state = hbbtvState?.takeIf(::validHbbtv) ?: return@synchronized
+        val directory = state.directory ?: return@synchronized
+        if (directory.servicesByChannel.isEmpty() || state.job?.isActive == true ||
+            !availability.hasNetwork() || hosts.health("tvheadend") == HostHealth.OFFLINE) return@synchronized
+        fun due(loaded: Long, attempt: Long?) = hbbtvRefreshDue(loaded, attempt,
+            System.currentTimeMillis(), android.os.SystemClock.elapsedRealtime(), force)
+        val http = directory.servicesByChannel.values.any { it.isNotEmpty() } && due(directory.httpLoadedAt, state.lastHttpAttempt)
+        val htsp = due(directory.htspLoadedAt, state.lastHtspAttempt)
+        if (!http && !htsp) return@synchronized
+        val topology = directory.servicesByChannel
+        val job = background.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+            val owner = currentCoroutineContext()[kotlinx.coroutines.Job]
+            fun stillCurrent() = synchronized(hbbtvLock) {
+                validHbbtv(state) && state.directory?.servicesByChannel == topology
+            }
+            fun canProbe() = owner?.isActive == true && stillCurrent() && BrowseWorkBudget.idle() &&
+                availability.hasNetwork() && hosts.health("tvheadend") != HostHealth.OFFLINE
+            try {
+                // Bounded idle wait, not a browse permit. No queue can keep a player waiting.
+                val until = android.os.SystemClock.elapsedRealtime() + 30_000L
+                while (stillCurrent() && !canProbe() && android.os.SystemClock.elapsedRealtime() < until) delay(250)
+                if (http && canProbe()) {
+                    synchronized(hbbtvLock) { state.lastHttpAttempt = android.os.SystemClock.elapsedRealtime() }
+                    val result = optionalHbbtvServiceMetadata(topology.values.flatten().toHashSet())
+                    synchronized(hbbtvLock) {
+                        if (result != null && stillCurrent()) state.directory?.let {
+                            publishHbbtv(state, it.withHttp(result, System.currentTimeMillis()))
+                        }
+                    }
+                }
+                if (htsp && canProbe()) {
+                    synchronized(hbbtvLock) { state.lastHtspAttempt = android.os.SystemClock.elapsedRealtime() }
+                    val result = optionalHtspHbbtvMetadata(::canProbe)
+                    synchronized(hbbtvLock) {
+                        if (result != null && stillCurrent()) state.directory?.let {
+                            publishHbbtv(state, it.withHtsp(result, System.currentTimeMillis()))
+                        }
+                    }
+                }
+            } finally {
+                synchronized(hbbtvLock) {
+                    if (hbbtvState === state) { state.job = null; hbbtvChanged() }
+                }
+            }
+        }
+        state.job = job
+        job.start()
+        hbbtvChanged()
+    }
 
     private suspend fun optionalChannelMetadata(path: String): List<JsonObject> =
         withContext(Dispatchers.IO) {
@@ -326,7 +454,7 @@ class TvheadendRepository @Inject constructor(
      * The HTTP raw export is administrator-only on many installations. HTSP's channelAdd
      * publishes the same AIT data to normal channel viewers; both sources are optional.
      */
-    private suspend fun optionalHbbtvServiceMetadata(): Map<String, JsonObject> =
+    private suspend fun optionalHbbtvServiceMetadata(serviceIds: Set<String>): Map<String, List<LiveTvHbbtvApp>>? =
         withContext(Dispatchers.IO) {
             suspendResult {
                 ensureConfiguredAndAllowed()
@@ -334,30 +462,30 @@ class TvheadendRepository @Inject constructor(
                     .url(buildUrl("api/raw/export", mapOf("class" to "mpegts_service"))).get().build()
                 client.newBuilder().callTimeout(4, TimeUnit.SECONDS).build().newCall(request)
                     .execute().use { response ->
-                        if (!response.isSuccessful) {
-                            Timber.d("TVHeadend HbbTV raw export returned HTTP %d; trying HTSP", response.code)
-                            emptyMap()
-                        } else {
-                            val raw = json.parseToJsonElement(response.body.string().orEmpty())
-                            (raw as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
-                                .filter { it["hbbtv"] != null }
-                                .mapNotNull { row -> row.string("uuid")?.let { it to row } }.toMap()
-                        }
+                        check(response.isSuccessful) { "TVHeadend raw metadata HTTP ${response.code}" }
+                        val raw = json.parseToJsonElement(response.body.string()) as? JsonArray
+                            ?: error("Invalid TVHeadend raw metadata")
+                        raw.mapNotNull { element ->
+                            val row = element as? JsonObject ?: error("Invalid TVHeadend service")
+                            val id = row.string("uuid") ?: return@mapNotNull null
+                            if (id !in serviceIds) return@mapNotNull null
+                            id to tvhHbbtvApplications(row).map { LiveTvHbbtvApp(it.url, it.name, it.visibility) }
+                        }.toMap()
                     }
-            }.onFailure { Timber.w(it, "TVHeadend HbbTV raw service metadata unavailable") }
-                .getOrDefault(emptyMap())
+            }.onFailure { Timber.d(it, "TVHeadend HbbTV raw export unavailable") }.getOrNull()
         }
 
-    private suspend fun optionalHtspHbbtvMetadata(): Map<String, List<TvhHbbtvApplication>> =
+    private suspend fun optionalHtspHbbtvMetadata(shouldContinue: () -> Boolean): Map<String, List<LiveTvHbbtvApp>>? =
         withContext(Dispatchers.IO) {
             suspendResult {
                 ensureConfiguredAndAllowed()
+                check(shouldContinue()) { "HTSP browse work deferred" }
                 val host = configuredTvheadendEndpoint().host
                 val port = preferences.tvheadendHtspPort
-                TvheadendHtspHbbtv.discover(host, port,
-                    preferences.tvheadendUsername, tokenStore.tvheadendPassword.orEmpty())
-            }.onFailure { Timber.d(it, "TVHeadend HTSP HbbTV metadata unavailable; HTTP fallback remains active") }
-                .getOrDefault(emptyMap())
+                TvheadendHtspHbbtv.discover(host, port, preferences.tvheadendUsername,
+                    tokenStore.tvheadendPassword.orEmpty(), shouldContinue = shouldContinue)
+                    .mapValues { (_, apps) -> apps.map { LiveTvHbbtvApp(it.url, it.name, it.visibility) } }
+            }.onFailure { Timber.d(it, "TVHeadend HTSP HbbTV metadata unavailable or deferred") }.getOrNull()
         }
 
     suspend fun epgEvents(
@@ -403,7 +531,9 @@ class TvheadendRepository @Inject constructor(
 
     suspend fun cachedChannels(): List<TvhChannel>? {
         val scope = diskScope()
-        return diskCache.read(scope, TvheadendDiskCache.CHANNELS, CHANNEL_LIST)?.takeIf { currentGuideScope(scope) }
+        restoreHbbtv()
+        return diskCache.read(scope, TvheadendDiskCache.CHANNELS, CHANNEL_LIST)
+            ?.takeIf { currentGuideScope(scope) }?.let(::enrichHbbtvChannels)
     }
 
     private suspend fun syncGuideWindow(scope: String, from: Long, to: Long, channelId: String?,
@@ -818,7 +948,12 @@ class TvheadendRepository @Inject constructor(
     fun clearPersistentCache() {
         val epoch = guideEpoch.incrementAndGet()
         guideFreshnessBlocked = true
-        val scopesToClear = diskCache.clear(runCatching { diskScope() }.getOrNull())
+        val scopesToClear = synchronized(hbbtvLock) {
+            hbbtvState?.job?.cancel()
+            hbbtvState = null
+            hbbtvChanged()
+            diskCache.clear(runCatching { diskScope() }.getOrNull())
+        }
         _servingCachedData.value = false
         background.launch {
             suspendResult {
