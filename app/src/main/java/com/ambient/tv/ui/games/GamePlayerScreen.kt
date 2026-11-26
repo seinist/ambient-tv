@@ -298,7 +298,7 @@ private suspend fun GLRetroView.preview(
     input: GameHdrToneMap,
     verifiedHdrSource: Boolean,
 ): Bitmap? = withContext(Dispatchers.Default) {
-    val frame = runCatching { captureRawFrame() }.getOrNull() ?: return@withContext null
+    val frame = runCatching { captureRawFrame(maxWidth = 480) }.getOrNull() ?: return@withContext null
     val scaled = if (frame.width <= 480) frame else {
         val height = (frame.height * 480 / frame.width.toFloat()).roundToInt().coerceAtLeast(1)
         Bitmap.createScaledBitmap(frame, 480, height, true).also { if (it !== frame) frame.recycle() }

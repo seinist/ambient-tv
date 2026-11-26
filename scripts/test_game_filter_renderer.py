@@ -98,7 +98,8 @@ inline int __android_log_print(int priority,const char*,const char* format,...) 
         command += [str(args.test_source),
                     "-Wl,--wrap=glTexStorage2D", "-Wl,--wrap=glUniform1i",
                     "-Wl,--wrap=glUniform2f", "-Wl,--wrap=glUniform1f",
-                    "-Wl,--wrap=glLinkProgram",
+                    "-Wl,--wrap=glLinkProgram", "-Wl,--wrap=glBufferData",
+                    "-Wl,--wrap=glVertexAttribPointer", "-Wl,--wrap=glInvalidateFramebuffer",
                     "-l" + args.egl_library, "-l" + args.gl_library, "-o", str(binary)]
         subprocess.run(command, check=True)
         environment = dict(os.environ, LIBGL_ALWAYS_SOFTWARE="1", EGL_PLATFORM="surfaceless")
