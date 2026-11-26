@@ -1,0 +1,75 @@
+Ambient TV: retime the native game clock and audio on confirmed physical display changes.
+
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -1078,6 +1078,24 @@
+     audioEnabled = enabled;
+ }
+ 
++// Called on the owning GL thread after Android confirms its actual display mode.
++// Use software timing for an opted-in game: a 59.73 Hz core on a 60 Hz panel
++// must not run at a different emulation speed just to satisfy HDMI cadence.
++void LibretroDroid::setGameDisplayTiming(float refreshRate, bool strictTiming) {
++    if (!gameLoaded || !fpsSync || !audio || !std::isfinite(refreshRate) || refreshRate <= 0.0f) return;
++    if (std::abs(screenRefreshRate - refreshRate) < 0.001f && forceSoftwareTiming == strictTiming) return;
++    const double fps = Environment::getInstance().getGameTimingFps();
++    const double sampleRate = Environment::getInstance().getGameTimingSampleRate();
++    if (!std::isfinite(fps) || fps <= 0.0 || !std::isfinite(sampleRate) || sampleRate <= 0.0) return;
++    screenRefreshRate = refreshRate;
++    forceSoftwareTiming = strictTiming;
++    fpsSync = std::make_unique<FPSSync>(fps, screenRefreshRate, forceSoftwareTiming);
++    if (bfiEnabled) fpsSync->setExternalTimingControl(true);
++    audio->updateTiming(static_cast<int32_t>(std::lround(sampleRate * fpsSync->getTimeStretchFactor())), fps);
++    audio->resetBufferState();
++    updateAudioSampleRateMultiplier();
++}
++
+ void LibretroDroid::setPitchPreservationEnabled(bool enabled) {
+     pitchPreservationEnabled = enabled;
+     if (audio) {
+diff --git a/src/main/cpp/libretrodroid.h b/src/main/cpp/libretrodroid.h
+--- a/src/main/cpp/libretrodroid.h
++++ b/src/main/cpp/libretrodroid.h
+@@ -170,4 +170,5 @@
++    void setGameDisplayTiming(float refreshRate, bool strictTiming);
+     void setAudioEnabled(bool enabled);
+     void setPitchPreservationEnabled(bool enabled);
+     void setAudioVolume(float volume);
+     void setAudioLatency(int32_t latencyMs);
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -819,6 +819,12 @@
+     LibretroDroid::getInstance().setAudioEnabled(enabled);
+ }
+ 
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setGameDisplayTiming(
++    JNIEnv* env, jclass obj, jfloat refreshRate, jboolean strictTiming
++) {
++    LibretroDroid::getInstance().setGameDisplayTiming(refreshRate, strictTiming);
++}
++
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setPitchPreservationEnabled(
+     JNIEnv* env,
+     jclass obj,
+diff --git a/src/main/cpp/libretrodroidjni.h b/src/main/cpp/libretrodroidjni.h
+--- a/src/main/cpp/libretrodroidjni.h
++++ b/src/main/cpp/libretrodroidjni.h
+@@ -55,4 +55,5 @@
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setFrameSpeed(JNIEnv* env, jclass obj, jint speed);
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setGameDisplayTiming(JNIEnv* env, jclass obj, jfloat refreshRate, jboolean strictTiming);
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setAudioEnabled(JNIEnv* env, jclass obj, jboolean enabled);
+ JNIEXPORT jbyteArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getMemoryData(JNIEnv* env, jclass obj, jint memoryType);
+ JNIEXPORT jint JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getMemorySize(JNIEnv* env, jclass obj, jint memoryType);
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -133,5 +133,7 @@
+     public static native void setFrameSpeed(int speed);
+     public static native void setAudioEnabled(boolean enabled);
++    /** Update the actual display clock on the owning GL thread. Strict mode keeps core speed native. */
++    public static native void setGameDisplayTiming(float refreshRate, boolean strictTiming);
+     public static native void setPitchPreservationEnabled(boolean enabled);
+     public static native void setAudioVolume(float volume);
+     public static native void setAudioLatency(int latencyMs);

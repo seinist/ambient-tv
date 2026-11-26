@@ -28,8 +28,13 @@
     <string name="game_controls_port_auto">Automatic</string>
     <string name="game_controls_port_player">Player %1$d</string>
     <string name="game_controls_port_off">Does not play</string>
-    <string name="game_controls_start_select">Start + Select opens the game menu</string>
-    <string name="game_controls_start_select_hint">On controllers, pressing both together pauses the game and shows its menu.</string>
+    <string name="game_controls_combo">Game menu button combination</string>
+    <string name="game_controls_combo_hint">Press the buttons together on the same controller. Works even when Android reserves Home for its launcher.</string>
+    <string name="game_controls_combo_start_select">Start + Select</string>
+    <string name="game_controls_combo_l3_r3">L3 + R3</string>
+    <string name="game_controls_combo_l1_r1">L1 + R1</string>
+    <string name="game_controls_combo_l1_r1_start">L1 + R1 + Start</string>
+    <string name="game_controls_combo_off">Off</string>
     <string name="game_controls_dpad_stick">D-pad also moves the left stick</string>
     <string name="game_controls_dpad_stick_hint">For 3D games with a remote or keyboard, which have no stick.</string>
     <string name="game_controls_menu">Open game menu</string>

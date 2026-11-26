@@ -22,6 +22,7 @@ object BrowseWorkBudget {
 
     fun idle(): Boolean = foreground && !recentlyInteracting(1_500L) &&
         foregroundRequests.get() == 0 && !musicPlaying &&
+        !com.ambient.tv.ui.gamepad.GameInputRouting.active &&
         !com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.value.active
 }
 

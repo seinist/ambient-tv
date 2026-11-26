@@ -219,6 +219,22 @@ static void contentAspectConcurrentObservers() {
     assert(snapshot.get() == 0.0F);
 }
 
+static void contentFrameSizeSnapshot() {
+    libretrodroid::ContentAspectSnapshot snapshot;
+    assert(snapshot.getFrame() == 0U);
+    snapshot.publishFrame(240, 160);
+    assert((snapshot.getFrame() >> 32U) == 240U);
+    assert((snapshot.getFrame() & 0xFFFFFFFFULL) == 160U);
+    // A missing dimension is unknown, never a degenerate whole-number base.
+    snapshot.publishFrame(240, 0);
+    assert(snapshot.getFrame() == 0U);
+    snapshot.publishFrame(256, 224);
+    snapshot.publish(4.0F / 3.0F, false);
+    snapshot.reset(); // unload clears the size together with the aspect.
+    assert(snapshot.getFrame() == 0U);
+    assert(snapshot.get() == 0.0F);
+}
+
 int main() {
     fractionalAndDigitalInput();
     fastTapAndIndependentPorts();
@@ -228,5 +244,6 @@ int main() {
     descriptorOwnershipAndBounds();
     contentAspectGeometryAndRotation();
     contentAspectConcurrentObservers();
-    std::cout << "8 native input/display contract groups passed (including concurrent snapshots)\n";
+    contentFrameSizeSnapshot();
+    std::cout << "9 native input/display contract groups passed (including concurrent snapshots)\n";
 }

@@ -4,6 +4,8 @@
     <string name="game_rewind">Zurückspulen</string>
     <string name="game_rewind_buffer_seconds">≈ %1$.1f s</string>
     <string name="game_rewind_hold">Zum Zurückspulen halten</string>
+    <string name="game_rewind_timeline_live">Jetzt</string>
+    <string name="game_rewind_timeline_back">%1$.1f s zurück</string>
     <string name="game_reset_failed">Das Spiel konnte nicht neu gestartet werden</string>
     <string name="game_netplay_synchronizing">Spielstand wird synchronisiert…</string>
 </resources>

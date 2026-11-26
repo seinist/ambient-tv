@@ -2,18 +2,19 @@ package com.ambient.tv.ui.games
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.unit.IntRect
 import com.ambient.tv.games.GameTouchMode
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
 import com.ambient.tv.ui.gamepad.retro.TouchControlStyle
 import kotlin.math.ceil
 import kotlin.math.floor
+import kotlin.math.roundToInt
 
 /** Local play reserves side space; the separate Companion pad keeps its existing layout. */
 internal data class GamePlayerLandscapeLayout(
     val surface: Rect,
     val controls: GameTouchLayout,
     val menu: Rect,
-    val rewind: Rect,
     val showTouch: Rect,
 )
 
@@ -24,9 +25,79 @@ internal fun gamePictureBounds(width: Float, height: Float, aspect: Float): Rect
     return Rect((width - w) / 2f, (height - h) / 2f, (width + w) / 2f, (height + h) / 2f)
 }
 
+/** Drawn source pixels of the core's picture (after a quarter-turn swap), the base of whole-number scaling. */
+internal data class GameContentFrame(val width: Int, val height: Int) {
+    companion object {
+        /** LibretroDroid.getContentFrameSize(): width in the high, height in the low 32 bits. */
+        fun unpack(packed: Long): GameContentFrame? {
+            val width = (packed ushr 32).toInt()
+            val height = (packed and 0xFFFFFFFFL).toInt()
+            return if (width > 0 && height > 0) GameContentFrame(width, height) else null
+        }
+    }
+}
+
+/**
+ * A changed source size is applied once two polls agree, so a core that mixes resolutions
+ * frame by frame does not resize the native surface on every poll. Unknown keeps the last size.
+ */
+internal class GameContentFrameFilter(private var applied: GameContentFrame? = null) {
+    private var candidate: GameContentFrame? = null
+
+    /** The size to apply now, or null when nothing changes. */
+    fun observe(frame: GameContentFrame?): GameContentFrame? {
+        if (frame == null || frame == applied) {
+            candidate = null
+            return null
+        }
+        if (applied != null && frame != candidate) {
+            candidate = frame
+            return null
+        }
+        applied = frame
+        candidate = null
+        return frame
+    }
+}
+
+/** In automatic mode whole-number scaling keeps at least this share of the fitted size (native rule). */
+internal const val GAME_INTEGER_SCALING_AUTO_MIN_FILL = 0.9f
+
+/**
+ * The renderer's whole-number factor for [frame] in an area of [width] x [height] pixels, or 0
+ * when it fits the picture normally instead (integerscaling.h in the LibretroDroid patches).
+ */
+internal fun gameIntegerScale(width: Int, height: Int, frame: GameContentFrame, automatic: Boolean): Int {
+    if (width <= 0 || height <= 0 || frame.width <= 0 || frame.height <= 0) return 0
+    val fit = minOf(width.toFloat() / frame.width, height.toFloat() / frame.height)
+    val whole = floor(fit).toInt()
+    if (whole < 1) return 0
+    if (automatic && whole / fit < GAME_INTEGER_SCALING_AUTO_MIN_FILL) return 0
+    return whole
+}
+
+/**
+ * Exact pixel bounds of the picture the renderer draws in [area]: the whole-number picture, or
+ * the aspect fit when it falls back. A surface of exactly this size draws the same picture
+ * without a black border of its own, so everything beside it belongs to the ambient backdrop.
+ */
+internal fun gameIntegerPictureBounds(area: IntRect, frame: GameContentFrame, automatic: Boolean, aspect: Float): IntRect {
+    val scale = gameIntegerScale(area.width, area.height, frame, automatic)
+    if (scale >= 1) {
+        val w = frame.width * scale
+        val h = frame.height * scale
+        val left = area.left + (area.width - w) / 2
+        val top = area.top + (area.height - h) / 2
+        return IntRect(left, top, left + w, top + h)
+    }
+    val fitted = gamePictureBounds(area.width.toFloat(), area.height.toFloat(), aspect)
+    return IntRect(area.left + fitted.left.roundToInt(), area.top + fitted.top.roundToInt(),
+        area.left + fitted.right.roundToInt(), area.top + fitted.bottom.roundToInt())
+}
+
 /**
  * Maximise the picture height, then fit the requested pad size in the available side space.
- * Menu/rewind slots always exist, so opening the OSD or hiding the pad never resizes the core.
+ * Menu and restore-pad positions stay stable when the OSD opens or the pad is hidden.
  */
 internal fun gamePlayerLandscapeLayout(
     mode: GameTouchMode,
@@ -46,7 +117,7 @@ internal fun gamePlayerLandscapeLayout(
         .filter { touchEnabled && it in utility }
     val right = listOf(RetroPadButton.R2, RetroPadButton.R, RetroPadButton.R3, RetroPadButton.START)
         .filter { touchEnabled && it in utility }
-    val slots = maxOf(left.size, right.size) + 1
+    val slots = maxOf(left.size + 1, right.size, 1)
     val requested = if (touchEnabled)
         minOf(safeStyle.scalePercent / 100f, width / 568f, height / 212f).coerceAtLeast(1f) else 1f
     data class Choice(val columns: Int, val scale: Float, val gutter: Float, val picture: Rect, val fits: Boolean)
@@ -86,19 +157,19 @@ internal fun gamePlayerLandscapeLayout(
         return Rect(x, y, x + w, y + h)
     }
     val menu = slot(0, 0, 48f, 48f)
-    val rewind = slot(1, 0, 56f, 48f)
-    val showTouch = slot(1, 1, 48f, 48f)
+    // Only visible while the pad is hidden; it can reuse the first right utility position.
+    val showTouch = slot(1, 0, 48f, 48f)
     val scaled = if (compact) compactLandscapeThumbs(mode, width, height, choice.scale, presentation)
         else gameTouchLayout(mode, width, height, false,
             safeStyle.copy(scalePercent = (choice.scale * 100f).toInt(), landscapePosition = 100), presentation)
     val buttons = scaled.buttons.filterKeys { it in scaled.faces }.toMutableMap()
     left.forEachIndexed { index, button -> buttons[button] = slot(0, index + 1) }
-    right.forEachIndexed { index, button -> buttons[button] = slot(1, index + 1) }
+    right.forEachIndexed { index, button -> buttons[button] = slot(1, index) }
     var controls = scaled.copy(buttons = buttons)
     // Position tuning can lift thumb areas only through genuinely empty space.
     // The face cluster also receives the gaps between its visible buttons for rolling chords.
     val moving = listOfNotNull(controls.dpad, controls.leftStick, controls.rightStick, controls.faceButtonsBounds)
-    val stationary = controls.buttons.filterKeys { it !in controls.faces }.values + menu + rewind
+    val stationary = controls.buttons.filterKeys { it !in controls.faces }.values + menu
     val lift = moving.minOfOrNull { area ->
         var free = (area.top - 8f).coerceAtLeast(0f)
         stationary.forEach { fixed ->
@@ -117,7 +188,7 @@ internal fun gamePlayerLandscapeLayout(
     // aspect ratio which can differ from the source resolution (e.g. SNES high resolution).
     val surface = if (fitSurface) choice.picture
         else Rect(choice.gutter, 0f, width - choice.gutter, height)
-    return GamePlayerLandscapeLayout(surface, controls, menu, rewind, showTouch)
+    return GamePlayerLandscapeLayout(surface, controls, menu, showTouch)
 }
 
 /** Only used when the usual thumb clusters cannot fit below the side utility grid. */

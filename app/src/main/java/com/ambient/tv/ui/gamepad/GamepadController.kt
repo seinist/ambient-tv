@@ -47,8 +47,8 @@ class GamepadController(
      * True when the key has been handled: recorded by Settings, taken by a game in front (any key:
      * controllers, keyboards and remotes all play), or a translated controller button.
      */
-    fun handleKey(event: KeyEvent): Boolean {
-        com.ambient.tv.ui.input.PointerVisibility.onKeyEvent(event)
+    fun handleKey(event: KeyEvent, observePointer: Boolean = true): Boolean {
+        if (observePointer) com.ambient.tv.ui.input.PointerVisibility.onKeyEvent(event)
         notifyGameInputChanged()
         val blocked = transitions.key(event)
         capture()?.let { sink -> if (sink(event)) return true }

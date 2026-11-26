@@ -14,7 +14,7 @@ class GamePlayerLandscapeLayoutTest {
             touchEnabled = true, presentation = gameTouchPresentation("snes"))
         assertEquals(Rect(160f, 0f, 640f, 360f), plan.surface)
         val controls = listOfNotNull(plan.controls.dpad, plan.controls.faceButtonsBounds) +
-            plan.controls.buttons.filterKeys { it !in plan.controls.faces }.values + plan.menu + plan.rewind
+            plan.controls.buttons.filterKeys { it !in plan.controls.faces }.values + plan.menu
         controls.forEach { assertFalse("The native surface hides a side control's ambient background: $it",
             it.overlaps(plan.surface)) }
     }
@@ -29,7 +29,6 @@ class GamePlayerLandscapeLayoutTest {
                 assertEquals(200f, plan.surface.center.y, .001f)
                 assertEquals(400f, plan.surface.height, .001f)
                 assertFalse(plan.menu.overlaps(plan.surface))
-                assertFalse(plan.rewind.overlaps(plan.surface))
             }
         }
         assertEquals(gamePictureBounds(640f, 360f, 4f / 3f), gamePictureBounds(640f, 360f, Float.NaN))
@@ -82,16 +81,15 @@ class GamePlayerLandscapeLayoutTest {
         // the chosen display aspect is 4:3. The UI must not narrow that fit to 480 pixels.
         assertEquals(1, minOf(integer.surface.width / 640f, integer.surface.height / 224f).toInt())
         assertFalse(integer.menu.overlaps(integer.surface))
-        assertFalse(integer.rewind.overlaps(integer.surface))
     }
 
     private fun assertUsable(plan: GamePlayerLandscapeLayout, width: Float, height: Float, label: String) {
         assertTrue("$label has no picture", plan.surface.width > 0f && plan.surface.height > 0f)
         assertTrue("$label picture is clipped", inside(plan.surface, width, height))
         val pad = plan.controls
-        val utilities = pad.buttons.filterKeys { it !in pad.faces }.values + plan.menu + plan.rewind
+        val utilities = pad.buttons.filterKeys { it !in pad.faces }.values + plan.menu
         utilities.forEach { assertFalse("$label utility $it covers the picture", it.overlaps(plan.surface)) }
-        val targets = listOfNotNull(pad.dpad, pad.leftStick, pad.rightStick) + pad.buttons.values + plan.menu + plan.rewind
+        val targets = listOfNotNull(pad.dpad, pad.leftStick, pad.rightStick) + pad.buttons.values + plan.menu
         targets.forEach {
             assertTrue("$label target $it is clipped", inside(it, width, height))
             assertTrue("$label lost a 48 dp target: $it", it.width >= 47.999f && it.height >= 47.999f)
@@ -104,7 +102,6 @@ class GamePlayerLandscapeLayoutTest {
         assertTrue("$label restore control is clipped", inside(plan.showTouch, width, height))
         assertFalse("$label restore control covers picture", plan.showTouch.overlaps(plan.surface))
         assertFalse("$label restore control covers menu", plan.showTouch.overlaps(plan.menu))
-        assertFalse("$label restore control covers rewind", plan.showTouch.overlaps(plan.rewind))
     }
 
     private fun inside(rect: Rect, width: Float, height: Float) = rect.left >= -.001f &&

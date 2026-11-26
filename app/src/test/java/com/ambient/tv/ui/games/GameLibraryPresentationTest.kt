@@ -97,7 +97,7 @@ class GameLibraryPresentationTest {
                             onRequester = { actions.requester = it }, onDisposed = {})
                         else GameTile(game(), artworkSlotAspectRatio = 1.5f,
                             onPlay = { actions.selections++ }, onInfo = { actions.details++ },
-                            onFavorite = { actions.favorites++ }, onFocus = {},
+                            onFocus = {},
                             onRequester = { actions.requester = it }, onDisposed = {})
                     }
                 }
@@ -123,20 +123,32 @@ class GameLibraryPresentationTest {
         }
     }
 
-    @Test fun phoneGridHandlesRealTapsAndLongPressWithoutFavoriteLaunching() {
+    @Test fun phoneGridHandlesRealTapsAndLongPressWithoutAFavoriteButton() {
         val actions = mountItem(handheld = true)
+        // Like Radio Browser's cards: no heart button on a card; list and detail change it.
+        rule.onAllNodesWithTag("game-favorite:snes-game").assertCountEquals(0)
         rule.onNodeWithTag("game-select:snes-game").performTouchInput { click() }
         rule.runOnIdle { assertEquals(1, actions.selections) }
-        rule.onNodeWithTag("game-favorite:snes-game").performTouchInput { click() }
-        rule.runOnIdle {
-            assertEquals(1, actions.selections)
-            assertEquals(1, actions.favorites)
-        }
         rule.onNodeWithTag("game-select:snes-game").performTouchInput { longClick() }
         rule.runOnIdle {
             assertEquals(1, actions.selections)
             assertEquals(1, actions.details)
         }
+    }
+
+    @Test fun favoriteCardShowsOnlyAStatusBadge() {
+        rule.setContent {
+            CompositionLocalProvider(LocalHandheldUi provides true) {
+                AmbientTvTheme {
+                    Box(Modifier.width(240.dp)) {
+                        GameTile(game().copy(favorite = true), artworkSlotAspectRatio = 1.5f,
+                            onPlay = {}, onInfo = {}, onFocus = {}, onRequester = {}, onDisposed = {})
+                    }
+                }
+            }
+        }
+        rule.onNodeWithTag("game-favorite-badge:snes-game", useUnmergedTree = true).assertIsDisplayed()
+        rule.onAllNodesWithTag("game-favorite:snes-game").assertCountEquals(0)
     }
 
     @Test fun listHasOneMainTargetAndFavoriteIsIndependentOnRemote() {
@@ -176,7 +188,7 @@ class GameLibraryPresentationTest {
                 Row {
                     for (entry in listOf(landscape, portrait)) GameTile(entry,
                         modifier = Modifier.width(220.dp), artworkSlotAspectRatio = .6f,
-                        onPlay = {}, onInfo = {}, onFavorite = {}, onFocus = {}, onRequester = {}, onDisposed = {})
+                        onPlay = {}, onInfo = {}, onFocus = {}, onRequester = {}, onDisposed = {})
                 }
             }
         }
@@ -239,7 +251,7 @@ class GameLibraryPresentationTest {
                                 modifier = Modifier.testTag("games-sort-bar"))
                             Box(Modifier.fillMaxWidth().pageContentUp(controls.focusChain).focusGroup()) {
                                 GameTile(game(), Modifier.width(220.dp), artworkSlotAspectRatio = 1.5f,
-                                    onPlay = {}, onInfo = {}, onFavorite = {}, onFocus = {},
+                                    onPlay = {}, onInfo = {}, onFocus = {},
                                     onRequester = { fixture.content = it }, onDisposed = {})
                             }
                         }

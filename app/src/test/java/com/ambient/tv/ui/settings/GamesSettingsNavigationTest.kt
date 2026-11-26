@@ -29,11 +29,14 @@ class GamesSettingsNavigationTest {
         assertEquals(GamesSettingsPage.ACHIEVEMENTS, gamesSettingsPageForSearch("RetroAchievements"))
         assertEquals("systems", settingsShortcutGamesTarget("games:systems"))
         assertEquals("home", settingsShortcutGamesTarget("games:home"))
+        assertEquals("library", settingsShortcutGamesTarget("games:library"))
+        assertEquals(GamesSettingsPage.LIBRARY, gamesSettingsPageForSearch("library"))
+        assertEquals(GamesSettingsPage.LIBRARY, gamesSettingsPageForSearch("Spielebibliothek"))
         assertEquals(null, settingsShortcutGamesTarget("games:not-a-page"))
     }
 
     @Test fun categoriesReturnToGamesOverview() {
-        for (page in listOf(GamesSettingsPage.SYSTEMS, GamesSettingsPage.METADATA,
+        for (page in listOf(GamesSettingsPage.LIBRARY, GamesSettingsPage.SYSTEMS, GamesSettingsPage.METADATA,
                 GamesSettingsPage.CONTROLS, GamesSettingsPage.PLAY, GamesSettingsPage.STORAGE)) {
             assertEquals(GamesSettingsPage.HOME, gamesSettingsParent(page))
         }

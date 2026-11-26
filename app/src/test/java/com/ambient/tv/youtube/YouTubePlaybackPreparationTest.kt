@@ -339,4 +339,15 @@ class YouTubePlaybackPreparationTest {
         assertNull(youtubeVlcVideoMimeType(adaptive.copy(isLive = true, progressiveUri = null)))
     }
 
+
+    @Test fun nativeDashPreparationOnlyStartsWhenMedia3AwaitsIt() = runBlocking {
+        val calls = java.util.concurrent.atomic.AtomicInteger()
+        val deferred = youtubeDeferredDash { calls.incrementAndGet(); "file:///lazy.mpd" }
+        assertFalse(deferred.isActive)
+        assertEquals(0, calls.get())
+        assertEquals("file:///lazy.mpd", deferred.await())
+        assertEquals("file:///lazy.mpd", deferred.await())
+        assertEquals(1, calls.get())
+    }
+
 }

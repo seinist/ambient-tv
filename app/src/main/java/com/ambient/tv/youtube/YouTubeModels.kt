@@ -119,7 +119,7 @@ data class YouTubePlayback(
     val adaptiveAudioUri: String? = null,
     /** All adaptive formats, for the quality and language choices in the player panel. */
     val adaptiveFormats: List<YouTubeAdaptiveFormat> = emptyList(),
-    /** Generated MPD still being built for VLC/MPV sessions; Media3 waits for it before opening. */
+    /** Lazy MPD for native sessions; only Media3 starts and awaits it before opening. */
     val deferredDash: kotlinx.coroutines.Deferred<String?>? = null,
     /** Caption tracks; VLC and MPV load them as external subtitles (Media3 reads them from the MPD). */
     val captions: List<YouTubeCaption> = emptyList(),
@@ -137,6 +137,8 @@ data class YouTubePlayback(
     val publishedDate: String? = null,
     /** A known absolute publication instant; null for missing or invalid provider timestamps. */
     val publishedAtMs: Long? = null,
+    /** Monotonic launch time for diagnostics; zero for a reused background session. */
+    val startupStartedNs: Long = 0L,
 )
 
 /**

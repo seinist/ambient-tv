@@ -88,7 +88,7 @@ sealed interface TvheadendPlayerState {
 class TvheadendPlayerViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     savedStateHandle: SavedStateHandle,
-    registry: LiveTvRegistry,
+    private val registry: LiveTvRegistry,
     private val preferences: AppPreferences,
     private val companionMapper: com.ambient.tv.companion.CompanionMediaMapper,
     private val playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability,
@@ -130,6 +130,12 @@ class TvheadendPlayerViewModel @Inject constructor(
     val expectedChannelUuid: String get() = currentChannelUuid
     /** The channel being tuned (or playing), for the OSD while its stream is acquired. */
     val expectedChannel: TvhChannel? get() = channels.firstOrNull { it.uuid == currentChannelUuid }
+    internal fun knownProgramme(channelId: String): Pair<TvhEpgEvent?, TvhEpgEvent?> =
+        pendingProgramme?.takeIf { it.first == channelId }?.second
+            ?: registry.browseState(repository).programmePair(channelId, System.currentTimeMillis() / 1000L)
+    internal fun knownArtwork(event: TvhEpgEvent, channel: TvhChannel): LiveTvArt? =
+        liveTvProgrammeArt(event, listOf(channel), artwork.titleArt.value)
+    private var pendingProgramme: Pair<String, Pair<TvhEpgEvent?, TvhEpgEvent?>>? = null
     private var channels: List<TvhChannel> = emptyList()
     /** Started from Live TV or the Guide: zapping stays within that view's filtered channels. */
     private var zapOrder: List<String>? = if (kind != "channel") null else {
@@ -144,6 +150,64 @@ class TvheadendPlayerViewModel @Inject constructor(
     private var fallbackAttempted = false
     private val localFallbackBackends = mutableSetOf<String>()
     private var videoFailureConfirmed = false
+    private val liveSyncWatch = com.ambient.tv.ui.player.LiveSyncWatch()
+    private var liveSyncRoute: String? = null
+    private var liveSyncHandle: com.ambient.tv.ui.player.PlaybackHandle? = null
+    private var liveSyncSeekVersion = -1
+
+    /** One cheap observation per second, only while the live player is visible. Never refreshes
+     * channel/guide caches, marks a host offline or changes the chosen renderer for reception faults. */
+    internal fun pollLiveStreamRecovery() {
+        val ready = _uiState.value as? TvheadendPlayerState.Ready
+        val snapshot = BackgroundPlaybackSession.snapshot.value
+        val handle = BackgroundPlaybackSession.activeHandle()
+        val route = ready?.let { Destinations.tvhPlayer(kind, it.channel?.uuid ?: initialId, sourceId) }
+        if (route != liveSyncRoute) {
+            liveSyncWatch.resetSession()
+            liveSyncRoute = route
+        }
+        val seekVersion = BackgroundPlaybackSession.externalSeekVersion
+        if (handle !== liveSyncHandle || seekVersion != liveSyncSeekVersion) {
+            liveSyncHandle = handle
+            liveSyncSeekVersion = seekVersion
+            liveSyncWatch.resetObservation()
+        }
+        if (ready == null || sourceSystem != "tvheadend" || kind != "channel" || ready.playingRecording != null ||
+            ready.channel?.kind == LiveTvChannelKind.RADIO || !ready.source.isLive ||
+            route == null || snapshot.metadata?.route != route ||
+            snapshot.metadata?.sourceAccessIdentity != sourceIdentity || snapshot.replacingSource ||
+            changingChannel || seekJob?.isActive == true || recoveryJob?.isActive == true ||
+            fallbackJob?.isActive == true || handle == null || !snapshot.wantsToPlay ||
+            !handle.requestedPlayIntent() || com.ambient.tv.ui.player.playbackProfileAudio(handle)?.audioOnly == true ||
+            com.ambient.tv.ui.player.DisplayPlaybackStartup.isWaiting(handle) ||
+            com.ambient.tv.ui.player.PlaybackOutputTransition.active()) {
+            liveSyncWatch.resetObservation()
+            return
+        }
+        val sample = runCatching {
+            when (handle) {
+                is com.ambient.tv.ui.player.Media3PlaybackHandle -> handle.liveSyncSample()
+                is com.ambient.tv.ui.player.backend.VlcPlaybackController -> handle.liveSyncSample()
+                is com.ambient.tv.ui.player.backend.MpvPlaybackController -> handle.liveSyncSample()
+                else -> null
+            }
+        }.getOrNull()?.takeIf { android.os.SystemClock.elapsedRealtime() - it.atMs in 0L..2500L }
+        val delayMs = com.ambient.tv.ui.player.playbackProfileAudio(handle)?.options?.delayMs ?: 0
+        val fault = liveSyncWatch.observe(sample, delayMs) ?: return
+        if (sourceIdentity != playbackAvailability.routeIdentity(route) ||
+            handle !== BackgroundPlaybackSession.activeHandle()) return
+        val reopened = runCatching {
+            when (handle) {
+                is com.ambient.tv.ui.player.Media3PlaybackHandle -> handle.reopenForLiveSync()
+                is com.ambient.tv.ui.player.backend.VlcPlaybackController -> handle.reopenForLiveSync()
+                is com.ambient.tv.ui.player.backend.MpvPlaybackController -> handle.reopenForLiveSync(requireNotNull(sample).generation)
+                else -> false
+            }
+        }.onFailure { timber.log.Timber.w(it, "Live TV resync failed") }.getOrDefault(false)
+        if (reopened) timber.log.Timber.w("Live TV resync backend=%s reason=%s", snapshot.backend, fault)
+    }
+
+    internal fun resetLiveStreamObservation() { liveSyncWatch.resetObservation() }
     fun metadata(state: TvheadendPlayerState.Ready) = PlaybackMetadata(
         route = Destinations.tvhPlayer(kind, state.channel?.uuid ?: initialId, sourceId),
         sourceAccessIdentity = sourceIdentity,
@@ -258,6 +322,18 @@ class TvheadendPlayerViewModel @Inject constructor(
         if (kind == "channel") com.ambient.tv.livetv.LiveTvReturnFocus.watched(repository.source.id, initialId)
         load()
         viewModelScope.launch { playbackAvailability.changes.collect { cancelStaleRecovery() } }
+        (repository as? TvheadendLiveTvRepository)?.let { hbbtv ->
+            viewModelScope.launch {
+                suspendResult { hbbtv.restoreCachedHbbtv() }
+                hbbtv.hbbtvChanges.collect {
+                    if (registry.displayCacheIdentity(repository) == null) return@collect
+                    channels = hbbtv.enrichHbbtvChannels(channels)
+                    val ready = _uiState.value as? TvheadendPlayerState.Ready ?: return@collect
+                    val enriched = withHbbtvMetadata(ready)
+                    if (enriched !== ready) _uiState.value = enriched
+                }
+            }
+        }
         viewModelScope.launch {
             BackgroundPlaybackSession.snapshot.map { Triple(it.generation, it.replacingSource, it.metadata) }
                 .distinctUntilChanged().collect { (generation, replacing, metadata) ->
@@ -421,6 +497,8 @@ class TvheadendPlayerViewModel @Inject constructor(
                             kind = TvheadendPlaybackErrorKind.RECORDING_UNAVAILABLE,
                         )
                     } else {
+                        this@TvheadendPlayerViewModel.artwork.restoreCachedTitleArt(entry.title)
+                        if (!current()) return
                         val artwork = tvhPanelArtwork(entry.fanartUrl, entry.imageUrl)
                         val source = acquireStream(recovery = recovery, onReplacement = { expectedOwner = it },
                             open = { repository.recordingStream(entry) })
@@ -459,6 +537,8 @@ class TvheadendPlayerViewModel @Inject constructor(
                             kind = TvheadendPlaybackErrorKind.CHANNEL_NOT_FOUND,
                         )
                     } else {
+                        val (nowEvent, nextEvent) = cachedProgramInfo(channel.uuid)
+                        if (!current()) return
                         val artwork = tvhPanelArtwork(null, channel.iconUrl)
                         val source = timeshifted(acquireStream(recovery = recovery, onReplacement = { expectedOwner = it },
                             open = { repository.liveStream(channel) }), channel.uuid)
@@ -466,6 +546,8 @@ class TvheadendPlayerViewModel @Inject constructor(
                         _uiState.value = TvheadendPlayerState.Ready(
                             source = source,
                             channel = channel,
+                            nowEvent = nowEvent,
+                            nextEvent = nextEvent,
                             artworkUrl = artwork.first,
                             artworkFallbackUrls = artwork.second,
                             playbackBackendKey = preferences.tvheadendPlaybackBackendKey,
@@ -475,7 +557,7 @@ class TvheadendPlayerViewModel @Inject constructor(
                             projectmTransitionSeconds = preferences.projectmTransitionSeconds,
                             projectmQualityKey = preferences.projectmQualityKey,
                             projectmPresetCategoryKey = preferences.projectmPresetCategoryKey,
-                        ).withSelectedRenderer(restorePosition = false)
+                        ).withSelectedRenderer(restorePosition = false).let(::withProgrammeArtwork)
                     }
                 }
             }
@@ -605,7 +687,7 @@ class TvheadendPlayerViewModel @Inject constructor(
                         val source = timeshifted(acquireStream(open = { repository.liveStream(channel) }), channel.uuid)
                         val (now, next) = loadProgramInfo(channel.uuid)
                         if (!stillCurrent()) return@launch
-                        _uiState.value = ready.copy(source = source, playingRecording = null, nowEvent = now, nextEvent = next)
+                        _uiState.value = withProgrammeArtwork(ready.copy(source = source, playingRecording = null, nowEvent = now, nextEvent = next))
                         applied = true
                     } catch (error: CancellationException) { throw error }
                     catch (error: Exception) {
@@ -657,7 +739,16 @@ class TvheadendPlayerViewModel @Inject constructor(
     }
 
     /** Resolve art without changing the active stream, seek position or OSD focus identity. */
-    private fun withProgrammeArtwork(state: TvheadendPlayerState.Ready): TvheadendPlayerState.Ready {
+    private fun withHbbtvMetadata(state: TvheadendPlayerState.Ready): TvheadendPlayerState.Ready {
+        val hbbtv = repository as? TvheadendLiveTvRepository ?: return state
+        val channel = state.channel ?: return state
+        if (registry.displayCacheIdentity(repository) == null) return state
+        val enriched = hbbtv.enrichHbbtvChannels(listOf(channel)).single()
+        return if (enriched === channel) state else state.copy(channel = enriched)
+    }
+
+    private fun withProgrammeArtwork(original: TvheadendPlayerState.Ready): TvheadendPlayerState.Ready {
+        val state = withHbbtvMetadata(original)
         val entry = state.recordingArtSource
         val programmeArt = when {
             entry != null -> liveTvRecordingArt(entry, emptyList(), emptyList(), artwork.titleArt.value)
@@ -670,15 +761,30 @@ class TvheadendPlayerViewModel @Inject constructor(
         return state.copy(artworkUrl = urls.firstOrNull(), artworkFallbackUrls = urls.drop(1))
     }
 
+    private suspend fun cachedProgramInfo(channelUuid: String): Pair<TvhEpgEvent?, TvhEpgEvent?> {
+        val now = System.currentTimeMillis() / 1000L
+        val memory = registry.browseState(repository).programmePair(channelUuid, now)
+        val local = if (memory.first != null) memory else {
+            val events = suspendResult { repository.cachedChannelGuideEvents(channelUuid, now - 60L, 8) }
+                .getOrNull().orEmpty()
+            liveTvProgrammePair(events, channelUuid, now)
+        }
+        artwork.restoreCachedTitleArt(local.first?.title)
+        return local
+    }
+
     private suspend fun loadProgramInfo(channelUuid: String): Pair<TvhEpgEvent?, TvhEpgEvent?> {
         val now = System.currentTimeMillis() / 1000L
-        val events = suspendResult { repository.channelEpgEvents(channelUuid, startEpochSeconds = now - 60L, windowHours = 8) }
-            .getOrDefault(emptyList())
-            .filter { it.channelUuid == channelUuid }
-            .sortedBy { it.startEpochSeconds }
-        val current = events.firstOrNull { it.startEpochSeconds <= now && it.stopEpochSeconds > now }
-        val next = events.firstOrNull { it.startEpochSeconds >= (current?.stopEpochSeconds ?: now) }
-        return current to next
+        val result = suspendResult { repository.channelEpgEvents(channelUuid, startEpochSeconds = now - 60L, windowHours = 8) }
+        if (result.isFailure) {
+            val ready = _uiState.value as? TvheadendPlayerState.Ready
+            if (ready?.channel?.uuid == channelUuid && ready.nowEvent?.isLive(now) == true)
+                return ready.nowEvent to ready.nextEvent
+            return cachedProgramInfo(channelUuid)
+        }
+        val pair = liveTvProgrammePair(result.getOrThrow(), channelUuid, now)
+        artwork.restoreCachedTitleArt(pair.first?.title)
+        return pair
     }
 
     fun retry() {
@@ -1073,6 +1179,9 @@ class TvheadendPlayerViewModel @Inject constructor(
                 }
                 // Retain the OSD while acquireStream serially retires the upstream session.
                 // PlaybackSessionContent suppresses EOF during the replacement.
+                val (nowEvent, nextEvent) = cachedProgramInfo(channel.uuid)
+                if (!current()) return@launch
+                pendingProgramme = channel.uuid to (nowEvent to nextEvent)
                 currentChannelUuid = channel.uuid
                 serverUnreachableRetryAttempted = false
                 fallbackAttempted = false
@@ -1081,14 +1190,15 @@ class TvheadendPlayerViewModel @Inject constructor(
                 com.ambient.tv.ui.player.AudioCodecRejects.clear()
                 // Replace global metadata *before* acquiring the new stream. Otherwise
                 // mini-player, external controls and notifications still show the old channel.
+                val pendingArt = nowEvent?.let { liveTvProgrammeArt(it, listOf(channel), artwork.titleArt.value) }
                 val pendingMetadata = PlaybackMetadata(
                     route = Destinations.tvhPlayer(kind, channel.uuid, sourceId),
-                    title = channel.name,
+                    title = nowEvent?.title ?: channel.name,
                     source = sourceSystem,
                     mediaId = channel.uuid,
-                    artworkUrl = channel.iconUrl,
+                    artworkUrl = pendingArt?.url ?: channel.iconUrl,
                     artworkHeaders = repository.authHeaders(),
-                    artworkAspectRatio = 1f,
+                    artworkAspectRatio = if (pendingArt != null && !pendingArt.logo) 16f / 9f else 1f,
                     isLive = true,
                     hasVideo = channel.kind != LiveTvChannelKind.RADIO,
                     liveTvSourceId = sourceId,
@@ -1107,6 +1217,8 @@ class TvheadendPlayerViewModel @Inject constructor(
                 _uiState.value = TvheadendPlayerState.Ready(
                     source = source,
                     channel = channel,
+                    nowEvent = nowEvent,
+                    nextEvent = nextEvent,
                     artworkUrl = artwork.first,
                     artworkFallbackUrls = artwork.second,
                     playbackBackendKey = preferences.tvheadendPlaybackBackendKey,
@@ -1117,7 +1229,8 @@ class TvheadendPlayerViewModel @Inject constructor(
                     projectmQualityKey = preferences.projectmQualityKey,
                     projectmPresetCategoryKey = preferences.projectmPresetCategoryKey,
                     channelOrder = zapOrder,
-                ).withSelectedRenderer(restorePosition = false)
+                ).withSelectedRenderer(restorePosition = false).let(::withProgrammeArtwork)
+                pendingProgramme = null
                 // Live TV and the Guide focus this channel when the player is left.
                 com.ambient.tv.livetv.LiveTvReturnFocus.watched(repository.source.id, channel.uuid)
             } catch (error: Throwable) {
@@ -1129,10 +1242,17 @@ class TvheadendPlayerViewModel @Inject constructor(
                     channelName = channelName,
                 )
             } finally {
+                pendingProgramme = null
                 changingChannel = false
             }
         }
     }
+}
+
+internal fun liveTvProgrammePair(events: List<TvhEpgEvent>, channelId: String, now: Long): Pair<TvhEpgEvent?, TvhEpgEvent?> {
+    val channelEvents = events.filter { it.channelUuid == channelId }.sortedBy { it.startEpochSeconds }
+    val current = channelEvents.firstOrNull { it.isLive(now) }
+    return current to channelEvents.firstOrNull { it.startEpochSeconds >= (current?.stopEpochSeconds ?: now) }
 }
 
 /** The channels to zap through: [order] (the filtered view) where it still matches, else all. */

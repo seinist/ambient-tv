@@ -162,6 +162,27 @@ class Media3PlaybackHandle(
         ended = player.playbackState == Player.STATE_ENDED,
         error = outputError ?: player.playerError?.localizedMessage,
     )
+    internal fun liveSyncSample(): LiveSyncSample? {
+        if (released || waitingForPreviousRelease || !player.isPlaying || player.playbackState != Player.STATE_READY ||
+            surfaceView?.holder?.surface?.isValid != true ||
+            player.playerError != null || !player.currentTracks.isTypeSelected(C.TRACK_TYPE_VIDEO) ||
+            !player.currentTracks.isTypeSelected(C.TRACK_TYPE_AUDIO)) return null
+        val counters = player.videoDecoderCounters ?: return null
+        counters.ensureUpdated()
+        return LiveSyncSample(android.os.SystemClock.elapsedRealtime(), player.currentPosition,
+            frameDropSampleGeneration(), renderedFrames = counters.renderedOutputBufferCount.toLong())
+    }
+
+    /** Reprepare the same source, flushing both decoders. A local buffer keeps its wall-clock position. */
+    internal fun reopenForLiveSync(): Boolean {
+        if (liveSyncSample() == null) return false
+        val item = player.currentMediaItem ?: return false
+        if (!player.reopenTimeshiftKeepingPosition("media3-live-resync")) player.setMediaItem(item)
+        player.prepare()
+        player.playWhenReady = true
+        return true
+    }
+
     override fun wantsToPlay(): Boolean = player.playWhenReady && player.playbackState != Player.STATE_ENDED
     override fun canSeekNow(): Boolean = player.isCurrentMediaItemSeekable
     override fun play() {

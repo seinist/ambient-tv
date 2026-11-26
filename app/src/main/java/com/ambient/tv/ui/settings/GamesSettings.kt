@@ -92,6 +92,7 @@ internal fun gamesEntryPoint(): GamesSettingsEntryPoint {
 internal fun GamesPlay(includeRumble: Boolean = true) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsHint(stringResource(R.string.games_settings_explanation))
+        com.ambient.tv.ui.games.GamesGlobalDisplaySettings()
         TvSettingRow(
             title = stringResource(R.string.game_settings_rewind),
             body = stringResource(R.string.game_settings_rewind_hint),

@@ -24,6 +24,7 @@ internal fun youtubePlayableFormatScore(
     formats: List<YouTubeAdaptiveFormat>,
     preferLiveHls: Boolean = true,
     allowOtf: Boolean = false,
+    requestedMaxHeight: Int = 0,
     hasProgressive: () -> Boolean,
 ): Int {
     if (unplayable) return 0
@@ -38,7 +39,10 @@ internal fun youtubePlayableFormatScore(
         }
         // Unknown sizes may already be high quality; don't delay them. A known low-only DASH
         // response is playable (score 3) but gets exactly one quality upgrade attempt.
-        return if (playableVideos.isNotEmpty() && playableVideos.all { it.qualityHeight() in 1..480 }) 3 else 4
+        val lowOnly = playableVideos.isNotEmpty() && playableVideos.all { it.qualityHeight() in 1..480 }
+        val meetsExplicitCap = requestedMaxHeight in 1..480 &&
+            playableVideos.any { it.qualityHeight() == requestedMaxHeight }
+        return if (lowOnly && !meetsExplicitCap) 3 else 4
     }
     if (hasProgressive()) return 2
     return if (hasHls) 1 else 0

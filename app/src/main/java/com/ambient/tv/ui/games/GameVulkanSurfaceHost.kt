@@ -8,6 +8,9 @@ import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.widget.FrameLayout
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.swordfish.libretrodroid.GLRetroView
 import com.swordfish.libretrodroid.LibretroDroid
 
@@ -102,8 +105,14 @@ internal class GameVulkanSurfaceHost(
         tryProbe()
     }
 
+    /**
+     * The surface that currently shows the game, as Compose state: handheld ambient fill must
+     * follow a switch to native Vulkan WSI, where GLES may skip drawing its own surface.
+     */
+    private var presentation by mutableStateOf<SurfaceView>(retro)
+
     /** Sample the actual presentation for handheld ambient fill, including native Vulkan WSI. */
-    fun presentationSurface(): SurfaceView = if (fullscreenVisible) probeSurface else retro
+    fun presentationSurface(): SurfaceView = presentation
 
     fun updateDisplayHdr(info: GameHdrDisplayCapabilities) {
         if (disposed || displayHdr == info) return
@@ -225,6 +234,7 @@ internal class GameVulkanSurfaceHost(
         fullscreenSurfaceReady = false
         generation++
         fullscreenVisible = true
+        presentation = probeSurface
         val attempt = ++fullscreenAttempt
         // Trigger a real Surface resize and Vulkan swapchain recreation.
         // Compose overlays remain visible; GLRetroView still receives input.
@@ -250,6 +260,7 @@ internal class GameVulkanSurfaceHost(
         fullscreenSurfaceReady = false
         if (!fullscreenVisible) return
         fullscreenVisible = false
+        presentation = retro
         generation++
         fullscreenAttempt++
         probeSurface.holder.setFixedSize(16, 16)

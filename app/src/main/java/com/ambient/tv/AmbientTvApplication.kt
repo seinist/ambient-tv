@@ -43,6 +43,7 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
     @Inject lateinit var onlineServiceAvailability: com.ambient.tv.data.browse.OnlineServiceAvailability
     @Inject lateinit var hostConnectivity: com.ambient.tv.connectivity.HostConnectivity
     @Inject lateinit var preferences: AppPreferences
+    @Inject lateinit var tvheadendGuideRepository: Provider<com.ambient.tv.tvheadend.data.TvheadendRepository>
     @Inject lateinit var spotifyRepository: Provider<SpotifyRepository>
     @Inject lateinit var filesPhotoSource: Provider<com.ambient.tv.data.photos.FilesPhotoSource>
     @Inject lateinit var telegramRepository: Provider<com.ambient.tv.data.telegram.TelegramRepository>
@@ -137,6 +138,10 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
                 add(com.ambient.tv.data.photos.FileImageFetcher.Factory { filesPhotoSource.get() })
                 // Monogram cards: the post's real thumbnail, loaded only for visible cards.
                 add(com.ambient.tv.data.telegram.MonogramThumbFetcher.Factory { telegramRepository.get() })
+                // Game covers on cards: a small disk-cached copy instead of the stored original.
+                add(com.ambient.tv.games.metadata.GameArtworkThumbInterceptor())
+                add(com.ambient.tv.games.metadata.GameArtworkThumbKeyer())
+                add(com.ambient.tv.games.metadata.GameArtworkThumbFetcher.Factory())
             }
             .build()
     }
@@ -210,6 +215,11 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
         }
         onlineServiceAvailability.start()
         resumeConnectivityMonitor.start()
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            while (!preferences.isTvheadendConfigured || !com.ambient.tv.data.browse.BrowseWorkBudget.idle())
+                kotlinx.coroutines.delay(2000)
+            tvheadendGuideRepository.get().startGuideSync()
+        }
         // Video pauses and then stops, live TV stops when the app leaves the screen.
         com.ambient.tv.ui.player.BackgroundPlaybackGuard.install(this)
         val processStartWallMs = System.currentTimeMillis()

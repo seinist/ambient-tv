@@ -665,28 +665,29 @@ class GameLibraryRepository @Inject constructor(
         }
 
     /** Stable pages for enrichment; a 100,000-ROM folder does not become one in-memory job. */
-    fun folderGames(folderId: String, afterFileId: String? = null, limit: Int = 128): List<LibraryGame> =
+    fun folderGames(folderId: String, afterFileId: String? = null, limit: Int = 128, systemId: String? = null): List<LibraryGame> =
         synchronized(queryLock) {
             val folder = folders().firstOrNull { it.id == folderId } ?: return@synchronized emptyList()
-            games(GameLibraryQuery(section = if (folder.systemId == "auto") "all" else folder.systemId,
+            games(GameLibraryQuery(section = systemId ?: if (folder.systemId == "auto") "all" else folder.systemId,
                 folderId = folderId, afterFileId = afterFileId, limit = limit.coerceIn(1, 512)))
         }
 
     /** Promote one visible game without reading a catalog page or touching its ROM source. */
-    fun folderGame(folderId: String, fileId: String, afterFileId: String? = null): LibraryGame? =
+    fun folderGame(folderId: String, fileId: String, afterFileId: String? = null, systemId: String? = null): LibraryGame? =
         synchronized(queryLock) {
             val folder = folders().firstOrNull { it.id == folderId } ?: return@synchronized null
             // Membership comes from game_entries, not the winning display row's folderId:
             // parent and child folder assignments can legitimately share the same ROM.
-            games(GameLibraryQuery(section = if (folder.systemId == "auto") "all" else folder.systemId,
+            games(GameLibraryQuery(section = systemId ?: if (folder.systemId == "auto") "all" else folder.systemId,
                 folderId = folderId, fileId = fileId, afterFileId = afterFileId, limit = 1)).firstOrNull()
         }
 
-    fun folderGameCount(folderId: String): Int = synchronized(queryLock) {
+    fun folderGameCount(folderId: String, systemId: String? = null): Int = synchronized(queryLock) {
         ensureQueryIndex()
         val folder = folders().firstOrNull { it.id == folderId } ?: return@synchronized 0
-        val system = if (folder.systemId == "auto") "" else " AND q.system_id=?"
-        val args = if (folder.systemId == "auto") arrayOf(folderId) else arrayOf(folderId, folder.systemId)
+        val wanted = systemId ?: folder.systemId.takeUnless { it == "auto" }
+        val system = if (wanted == null) "" else " AND q.system_id=?"
+        val args = if (wanted == null) arrayOf(folderId) else arrayOf(folderId, wanted)
         db.readableDatabase.rawQuery("""SELECT COUNT(*) FROM game_query q WHERE EXISTS(
             SELECT 1 FROM game_entries g WHERE g.folder_id=? AND g.file_id=q.file_id)$system""", args).use {
             if (it.moveToFirst()) it.getInt(0) else 0
@@ -1271,13 +1272,23 @@ class GameLibraryRepository @Inject constructor(
     suspend fun scan(
         folderId: String,
         onProgress: (processed: Int, discovered: Int) -> Unit = { _, _ -> },
+    ): Int = scan(folderId, null, onProgress)
+
+    /** Scoped scan of an auto-detected folder: preserve all other console entries and artwork. */
+    suspend fun scan(
+        folderId: String,
+        systemId: String?,
+        onProgress: (processed: Int, discovered: Int) -> Unit = { _, _ -> },
     ): Int = scanLock.withLock {
         withContext(Dispatchers.IO) {
             val folder = folders().firstOrNull { it.id == folderId } ?: return@withContext 0
+            if (systemId != null && folder.systemId != "auto" && folder.systemId != systemId) return@withContext 0
             val folderRevision = synchronized(queryLock) { folderFingerprint(folder) }
             val assigned = GameSystems.byId(folder.systemId)
+            val previous = existing(folder.id)
             fun candidate(entry: FileEntry): Boolean {
                 if (entry.directory) return false
+                if (systemId != null && previous[entry.id]?.systemId?.let { it != systemId } == true) return false
                 return if (assigned == null) entry.game else GameSystems.acceptsFile(assigned, entry.name) ||
                     (GameSystems.extension(entry.name) in GameSystems.archiveExtensions && entry.game)
             }
@@ -1285,7 +1296,6 @@ class GameLibraryRepository @Inject constructor(
                 ?: throw IOException("Source was removed")
             // Only explicit scans wake a NAS. All workers reuse its prepared VPN/WOL route.
             access.prepare(source)
-            val previous = existing(folder.id)
             val datVersions = catalogVersions()
             val discovered = java.util.concurrent.atomic.AtomicInteger()
             val processed = java.util.concurrent.atomic.AtomicInteger()
@@ -1392,7 +1402,7 @@ class GameLibraryRepository @Inject constructor(
                                     }
                                     else -> classify(entry, reader(), folder.systemId)
                                 }
-                                if (system != null) {
+                                if (system != null && (systemId == null || system.id == systemId)) {
                                     val internal = if (cachedProbe) last.internalTitle
                                         else archive?.internalTitle ?: if (ext in GameSystems.archiveExtensions)
                                             null else extractTitle(entry, reader(), system.id)
@@ -1449,8 +1459,10 @@ class GameLibraryRepository @Inject constructor(
                 val writable = db.writableDatabase
                 writable.beginTransaction()
                 try {
-                    val affected = writable.rawQuery("SELECT file_id FROM game_entries WHERE folder_id=?",
-                        arrayOf(folder.id)).use { rows -> buildSet { while (rows.moveToNext()) add(rows.getString(0)) } } +
+                    val folderWhere = if (systemId == null) "folder_id=?" else "folder_id=? AND system_id=?"
+                    val folderArgs = if (systemId == null) arrayOf(folder.id) else arrayOf(folder.id, systemId)
+                    val affected = writable.rawQuery("SELECT file_id FROM game_entries WHERE $folderWhere",
+                        folderArgs).use { rows -> buildSet { while (rows.moveToNext()) add(rows.getString(0)) } } +
                         selected.map { it.entry.id }
                     val generation = System.nanoTime()
                     for (game in selected) {
@@ -1484,10 +1496,10 @@ class GameLibraryRepository @Inject constructor(
                             if (GameMetadataStorage.read(writable, e.id) == null) GameMetadataStorage.write(writable, e.id, portable)
                         }
                     }
-                    removedChoices = existingChoices(writable, "folder_id=? AND seen!=?",
-                        arrayOf(folder.id, generation.toString()), configuration)
-                    writable.delete("game_entries", "folder_id=? AND seen!=?",
-                        arrayOf(folder.id, generation.toString()))
+                    removedChoices = existingChoices(writable, "$folderWhere AND seen!=?",
+                        folderArgs + generation.toString(), configuration)
+                    writable.delete("game_entries", "$folderWhere AND seen!=?",
+                        folderArgs + generation.toString())
                     refreshQueryFiles(affected, configuration, updateVerifiedMetadata = true)
                     abandoned = pruneOrphanedMetadata(writable)
                     writable.setTransactionSuccessful()

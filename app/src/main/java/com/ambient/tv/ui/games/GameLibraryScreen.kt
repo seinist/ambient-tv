@@ -26,7 +26,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.background
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.testTag
@@ -107,9 +106,12 @@ fun GameLibraryScreen(
     startManaging: Boolean = false,
     onBack: () -> Unit,
     model: GameLibraryViewModel = hiltViewModel(),
+    embeddedManager: Boolean = false,
+    modifier: Modifier = Modifier,
+    focusSettingsContent: () -> Unit = {},
 ) {
     val state by model.state.collectAsState()
-    var managing by rememberSaveable(startManaging) { mutableStateOf(startManaging) }
+    val managing = startManaging || embeddedManager
     var choosingSystem by rememberSaveable { mutableStateOf(false) }
     var networkEditor by remember { mutableStateOf<FileSource?>(null) }
     var removing by remember { mutableStateOf<GameLibraryFolder?>(null) }
@@ -123,7 +125,7 @@ fun GameLibraryScreen(
     val handheld = LocalHandheldUi.current
     val metadataSettingsFocus = remember { FocusRequester() }
     var restoreMetadataFocus by remember { mutableStateOf(false) }
-    var showSearch by remember { mutableStateOf(false) }
+    var showSearch by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val gridState = rememberLazyGridState()
@@ -132,11 +134,16 @@ fun GameLibraryScreen(
     var focusedId by rememberSaveable { mutableStateOf<String?>(null) }
     var searchText by rememberSaveable { mutableStateOf("") }
 
-    LaunchedEffect(initialSection) { model.section(initialSection) }
-    LaunchedEffect(searchText) { model.query(searchText) }
-    ReportSidebarContentReady(state.ready)
+    // The route is an initial entry point, not the currently selected chip. Navigation
+    // Compose saves this selection with the back stack entry while the player is open.
+    var selectedSection by rememberSaveable(initialSection) { mutableStateOf(initialSection) }
+    LaunchedEffect(initialSection, managing) {
+        if (managing) model.openManager() else model.section(selectedSection)
+    }
+    LaunchedEffect(searchText, managing) { if (!managing) model.query(searchText) }
+    if (!embeddedManager) ReportSidebarContentReady(state.ready)
 
-    BackHandler {
+    fun handleBack() {
         when {
             removing != null -> removing = null
             metadataSettingsOpen -> { metadataSettingsOpen = false; restoreMetadataFocus = true }
@@ -146,17 +153,24 @@ fun GameLibraryScreen(
             choosingSystem -> choosingSystem = false
             state.selectedSource != null -> if (!model.folderUp()) model.closePicker()
             managerPage != GameLibraryManagerPage.HOME -> { managerPage = GameLibraryManagerPage.HOME; selectedFolderId = null }
-            managing -> if (startManaging) onBack() else managing = false
             else -> onBack()
         }
     }
+    val settingsBack = com.ambient.tv.ui.settings.LocalSettingsNestedBack.current
+    if (embeddedManager) {
+        SideEffect { settingsBack?.onBack = ::handleBack }
+        DisposableEffect(settingsBack) { onDispose { settingsBack?.onBack = null } }
+        LaunchedEffect(managerPage, choosingSystem, choosingDatSystem, choosingNameDatabase,
+            state.selectedSource?.id, state.browsedPaths.lastOrNull()?.first) {
+            if (!handheld) { withFrameNanos { }; focusSettingsContent() }
+        }
+    } else BackHandler { handleBack() }
     val sourcesById = remember(state.sources) { state.sources.associateBy { it.id } }
     // The repository returns just this section/search in final order, off the UI thread.
     val games = state.games
-    val gameIds = remember(games) { games.map { it.fileId } }
     // Like the other libraries: entering from the sidebar or changing section, view or sort lands
     // on the remembered or first game, not on the header chips.
-    com.ambient.tv.ui.common.BrowseFocusContentIdentity(
+    if (!managing) com.ambient.tv.ui.common.BrowseFocusContentIdentity(
         listOf(state.section, state.view, state.sortKey, state.sortDescending), restoreInitialTarget = true,
     )
     val initialGame = games.firstOrNull { it.fileId == focusedId } ?: games.firstOrNull()
@@ -190,26 +204,21 @@ fun GameLibraryScreen(
         }
     }
     Column(
-        Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(),
-            top = pageHeaderTop(screenGutter()), bottom = screenGutter()),
+        if (embeddedManager) modifier.fillMaxSize() else modifier.fillMaxSize().padding(
+            start = screenGutter(), end = screenGutter(), top = pageHeaderTop(screenGutter()), bottom = screenGutter()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        GameLibraryHeader(state, managing, showSearch, controls,
-            onManage = {
-                if (managing && startManaging) onBack()
-                else {
-                    managing = !managing
-                    choosingSystem = false
-                    choosingDatSystem = false
-                    choosingNameDatabase = false
-                    managerPage = GameLibraryManagerPage.HOME
-                    selectedFolderId = null
-                    if (!managing) model.closePicker()
-                }
-            },
-            onSearch = { showSearch = !showSearch }, onRefresh = model::scanAll)
+        if (!embeddedManager) GameLibraryHeader(state, managing, showSearch, controls,
+            onManage = { if (managing) onBack() else onOpenGameSettings("library") },
+            onSearch = { showSearch = !showSearch }, onRefresh = model::refreshSection)
+        if (embeddedManager && managerPage == GameLibraryManagerPage.HOME && !choosingSystem &&
+            !choosingDatSystem && !choosingNameDatabase && state.selectedSource == null) {
+            com.ambient.tv.ui.settings.SettingsSubheader(
+                stringResource(R.string.games_settings_library_heading), firstInContent = true)
+        }
         if (!managing) {
             GameLibrarySections(sections, state.section, controls) {
+                selectedSection = it
                 model.section(it)
                 focusedId = null
             }
@@ -244,7 +253,7 @@ fun GameLibraryScreen(
                     Text(stringResource(R.string.game_library_empty),
                         style = MaterialTheme.typography.bodyMedium)
                     TvActionButton(stringResource(R.string.game_library_add_folder),
-                        { managing = true }, icon = Icons.Filled.CreateNewFolder)
+                        { onOpenGameSettings("library") }, icon = Icons.Filled.CreateNewFolder)
                 }
             } else if (games.isEmpty()) {
                 Text(if (state.busy) stringResource(R.string.player_loading)
@@ -256,11 +265,23 @@ fun GameLibraryScreen(
                     gridColumns = state.gridColumns, listRows = state.listRows, controls = controls,
                     focusedId = focusedId, onFocused = { focusedId = it }, itemRequests = itemRequests,
                     listState = listState, gridState = gridState, rowsState = rowsState,
-                    onSelect = onSelect, onOpenDetails = onOpenDetails, onFavorite = model::favorite,
+                    onSelect = { focusedId = it.fileId; onSelect(it) },
+                    onOpenDetails = { focusedId = it.fileId; onOpenDetails(it) }, onFavorite = model::favorite,
                 )
             }
         } else {
-            Column(Modifier.weight(1f).fillMaxWidth().pageContentUp(controls.focusChain).focusGroup()) {
+            val managerModifier = Modifier.weight(1f).fillMaxWidth()
+            Column(if (embeddedManager) managerModifier else managerModifier.pageContentUp(controls.focusChain).focusGroup()) {
+                if (state.scanning && !choosingNameDatabase &&
+                    (managerPage != GameLibraryManagerPage.FOLDER || state.activeScanFolderId != selectedFolderId)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(gameLibraryProgressMessage(androidx.compose.ui.platform.LocalContext.current, state),
+                            modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                        TvChip(text = stringResource(R.string.game_library_scan_cancel), icon = Icons.Filled.Close,
+                            iconOnly = true, onClick = { model.cancelScan() })
+                    }
+                }
                 if (choosingDatSystem) {
                     com.ambient.tv.ui.settings.SettingsSubheader(stringResource(R.string.game_library_dat_system), firstInContent = true)
                     TvLazyColumn(modifier = Modifier.fillMaxSize(), allowUpExit = true,
@@ -285,7 +306,11 @@ fun GameLibraryScreen(
                         onSelectSource = model::selectSource,
                         onEnter = model::enterFolder,
                         onAdd = { system ->
-                            if (model.assign(system)) { choosingSystem = false; managing = false }
+                            if (model.assign(system)) {
+                                choosingSystem = false
+                                managerPage = GameLibraryManagerPage.HOME
+                                selectedFolderId = null
+                            }
                         },
                         onRemove = { removing = it },
                         onScan = model::scanFolder,
@@ -354,7 +379,7 @@ fun GameLibraryScreen(
             onSave = model::saveNewNetworkSource,
         )
     }
-    GameLibraryViewOptionsPanel(state, controls,
+    if (!managing) GameLibraryViewOptionsPanel(state, controls,
         onView = model::view, onGridColumns = model::gridColumns, onListRows = model::listRows,
         onSort = model::sort, onSortDescending = model::sortDescending, onTitleStyle = model::titleStyle)
 }
@@ -492,7 +517,6 @@ internal fun GameLibraryGames(
                                     showSystem = false,
                                     onPlay = { onSelect(game) },
                                     onInfo = { onOpenDetails(game) },
-                                    onFavorite = { onFavorite(game) },
                                     onFocus = { onFocused(game.fileId) },
                                     onRequester = { itemRequests[game.fileId] = it },
                                     onDisposed = { itemRequests.remove(game.fileId) },
@@ -519,7 +543,6 @@ internal fun GameLibraryGames(
                             artworkSlotAspectRatio = gridSlotRatio,
                             showSystem = showSystem,
                             onPlay = { onSelect(game) }, onInfo = { onOpenDetails(game) },
-                            onFavorite = { onFavorite(game) },
                             onFocus = { onFocused(game.fileId) },
                             onRequester = { itemRequests[game.fileId] = it },
                             onDisposed = { itemRequests.remove(game.fileId) },
@@ -897,9 +920,9 @@ internal fun GameLibraryCoverRow(
 /**
  * A library card like the SmartTube/YouTube cards: one flat card holds the cover, title and
  * system, and the whole card takes focus (scale, accent fill and outline). Covers keep their
- * own shape inside it; a game without one shows the shared missing-artwork face. On a TV the
- * favorite is a badge (Info/Menu or the detail page toggles it); touch screens keep a separate
- * heart button.
+ * own shape inside it; a game without one shows the shared missing-artwork face. Like Radio
+ * Browser, the card shows a favorite only as a corner badge; the list row's heart and the detail
+ * page change it.
  */
 @Composable
 internal fun GameTile(
@@ -910,7 +933,6 @@ internal fun GameTile(
     showSystem: Boolean = true,
     onPlay: () -> Unit,
     onInfo: () -> Unit,
-    onFavorite: () -> Unit,
     onFocus: () -> Unit,
     onRequester: (FocusRequester) -> Unit,
     onDisposed: () -> Unit,
@@ -918,7 +940,6 @@ internal fun GameTile(
     var focused by remember(game.fileId) { mutableStateOf(false) }
     val requester = remember(game.fileId) { FocusRequester() }
     DisposableEffect(requester) { onRequester(requester); onDispose(onDisposed) }
-    val handheld = LocalHandheldUi.current
     val shape = com.ambient.tv.ui.common.BrowseCardShape
     val artworkShape = com.ambient.tv.ui.common.BrowseCardArtworkShape
     val activate = rememberUiSoundAction(onClick = onPlay)
@@ -956,12 +977,12 @@ internal fun GameTile(
                     ) {
                         GameCoverArtwork(game.coverModel, game.title, game.systemId,
                             modifier = Modifier.fillMaxSize(), focused = focused, fileId = game.fileId)
-                        if (game.favorite && !handheld) androidx.tv.material3.Icon(
-                            Icons.Filled.Favorite,
-                            contentDescription = stringResource(R.string.radio_remove_favorite),
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(20.dp)
-                                .background(Color.Black.copy(alpha = .55f), CircleShape).padding(3.dp)
+                        // Status only, like Radio Browser's station cards: the list's heart, the
+                        // detail page and Info/long press change it, never a button on the card.
+                        if (game.favorite) com.ambient.tv.ui.common.ArtworkCornerIconBadge(
+                            icon = Icons.Filled.Favorite,
+                            contentDescription = stringResource(R.string.radio_favorites),
+                            modifier = Modifier.align(Alignment.TopEnd).padding(7.dp)
                                 .testTag("game-favorite-badge:${game.fileId}"),
                         )
                     }
@@ -975,8 +996,6 @@ internal fun GameTile(
                     textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
             }
         }
-        // Touch only: a heart inside the card is no D-pad target of its own on a TV.
-        if (handheld) GameFavoriteButton(game, onFavorite, Modifier.align(Alignment.TopEnd).padding(6.dp))
     }
 }
 

@@ -1,0 +1,283 @@
+Ambient TV: seek the paused rewind history like a timeshift timeline, without consuming it until play continues.
+
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+index df12014..121fa50 100644
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -192,11 +192,16 @@ void LibretroDroid::setControllerType(unsigned int port, unsigned int type) {
+ }
+ 
+ bool LibretroDroid::unserializeState(int8_t *data, size_t size) {
+-    return unserializeStateWithPolicy(data, size, StateLoadPolicy::StrictSize);
++    const bool loaded = unserializeStateWithPolicy(data, size, StateLoadPolicy::StrictSize);
++    // A loaded state replaces both the paused seek and its live point.
++    if (loaded) endRewindPreview();
++    return loaded;
+ }
+ 
+ bool LibretroDroid::unserializePersistedState(int8_t *data, size_t size) {
+-    return unserializeStateWithPolicy(data, size, StateLoadPolicy::CoreValidated);
++    const bool loaded = unserializeStateWithPolicy(data, size, StateLoadPolicy::CoreValidated);
++    if (loaded) endRewindPreview();
++    return loaded;
+ }
+ 
+ bool LibretroDroid::unserializeStateWithPolicy(
+@@ -784,6 +789,8 @@ void LibretroDroid::pause() {
+ 
+ void LibretroDroid::step() {
+     checkVulkanFrameError();
++    // Continuing from a paused seek keeps the shown point; newer history is gone.
++    if (rewindPreview.active) commitRewindPreview();
+     VulkanBackend::getInstance().invalidateNativeFrame();
+     if (rewinding && rewindBuffer) {
+         bool hadAudio = audioEnabled;
+@@ -1050,6 +1057,115 @@ void LibretroDroid::setRewinding(bool active) {
+     rewinding = active;
+ }
+ 
++uint64_t LibretroDroid::rewindPreviewDistance(size_t steps) const {
++    // A restored state is shown after one emulated frame, like a rewind step.
++    const uint64_t pending = rewindTimeline.pendingFrames();
++    uint64_t distance = pending > 0 ? pending - 1 : 0;
++    for (size_t index = 0; index < steps; ++index) distance += rewindBuffer->recordFrames(index);
++    return distance;
++}
++
++bool LibretroDroid::showRewindState(const uint8_t* data, size_t size) {
++    if (!core->retro_unserialize(data, size)) return false;
++    const bool hadAudio = audioEnabled;
++    audioEnabled = false;
++    VulkanBackend::getInstance().invalidateNativeFrame();
++    if (video && video->isHWAccelerated()) video->bindHWContext();
++    core->retro_run();
++    checkVulkanFrameError();
++    if (video && video->isHWAccelerated()) video->bindMainContext();
++    audioEnabled = hadAudio;
++    publishContentFrameSize();
++    return true;
++}
++
++void LibretroDroid::endRewindPreview() {
++    rewindPreview.active = false;
++    rewindPreview.steps = 0;
++    rewindPreview.scratchValid = false;
++    rewindPreview.scratchSteps = 0;
++    rewindPreview.scratchSize = 0;
++    rewindPreview.live.reset();
++    rewindPreview.liveSize = 0;
++}
++
++int64_t LibretroDroid::previewRewind(uint64_t framesBack) {
++    if (!core || !rewindEnabled || !rewindBuffer || !rewindTempBuffer ||
++        rewindBuffer->getValidCount() == 0) return -1;
++    ScopedSignalStackGuard signalStackGuard;
++    if (!rewindPreview.active) {
++        if (framesBack == 0) return 0;
++        // Keep the live point, so the bar can return to it until play continues.
++        const size_t size = core->retro_serialize_size();
++        if (size == 0 || size > rewindBuffer->getMaxStateSize()) return -1;
++        try {
++            rewindPreview.live.reset(new uint8_t[size]);
++        } catch (const std::bad_alloc&) {
++            LOGW("Rewind seek unavailable: no memory for the live state");
++            return -1;
++        }
++        if (!core->retro_serialize(rewindPreview.live.get(), size)) {
++            rewindPreview.live.reset();
++            return -1;
++        }
++        rewindPreview.liveSize = size;
++        rewindPreview.active = true;
++        rewindPreview.scratchValid = false;
++    }
++    if (framesBack == 0) {
++        const bool shown = showRewindState(rewindPreview.live.get(), rewindPreview.liveSize);
++        endRewindPreview();
++        return shown ? 0 : -1;
++    }
++    // The newest stored state at or before the request; the oldest when it is further back.
++    const size_t records = rewindBuffer->getValidCount() - 1;
++    size_t steps = 0;
++    uint64_t distance = rewindPreviewDistance(0);
++    while (steps < records && distance < framesBack) {
++        distance += rewindBuffer->recordFrames(steps);
++        ++steps;
++    }
++    // Going further back continues the previous reconstruction instead of starting over.
++    uint8_t* scratch = rewindTempBuffer.get();
++    size_t size = rewindPreview.scratchSize;
++    const bool decoded = rewindPreview.scratchValid && steps >= rewindPreview.scratchSteps
++        ? rewindBuffer->peekFurther(rewindPreview.scratchSteps, steps, scratch, &size)
++        : rewindBuffer->peek(steps, scratch, &size);
++    rewindPreview.scratchValid = decoded;
++    if (!decoded) return -1;
++    rewindPreview.scratchSteps = steps;
++    rewindPreview.scratchSize = size;
++    if (!showRewindState(scratch, size)) {
++        // The core refused a stored state: return to live and offer no further history.
++        showRewindState(rewindPreview.live.get(), rewindPreview.liveSize);
++        LOGW("Rewind seek disabled: core rejected a stored state");
++        clearRewindBuffer();
++        rewindEnabled = false;
++        publishRewindSnapshot();
++        return -1;
++    }
++    rewindPreview.steps = steps;
++    return static_cast<int64_t>(distance);
++}
++
++bool LibretroDroid::commitRewindPreview() {
++    if (!rewindPreview.active) return false;
++    const size_t steps = rewindPreview.steps;
++    bool kept = rewindBuffer && rewindBuffer->getValidCount() > steps;
++    // The core already shows the chosen state plus one frame. Consume history exactly as
++    // a rewind pop of that state would, so the timeline keeps honest distances.
++    for (size_t index = 0; kept && index < steps; ++index) kept = rewindBuffer->discard();
++    if (kept) {
++        const uint64_t historyBefore = rewindBuffer->getHistoryFrames();
++        kept = rewindBuffer->discard();
++        if (kept) rewindTimeline.restored(*rewindBuffer, historyBefore - rewindBuffer->getHistoryFrames());
++    }
++    endRewindPreview();
++    if (!kept) clearRewindBuffer();
++    if (rewindBuffer) publishRewindSnapshot();
++    return kept;
++}
++
+ void LibretroDroid::setRewindSpeed(unsigned int speed) {
+     rewindSpeed = speed;
+ }
+@@ -1106,6 +1222,7 @@ void LibretroDroid::initRewindBuffer(int maxSlots, jlong budgetBytes) {
+ }
+ 
+ void LibretroDroid::destroyRewindBuffer() {
++    endRewindPreview();
+     rewindEnabled = false;
+     rewinding = false;
+     rewindValidCount.store(0, std::memory_order_relaxed);
+@@ -1117,6 +1234,7 @@ void LibretroDroid::destroyRewindBuffer() {
+ }
+ 
+ void LibretroDroid::clearRewindBuffer() {
++    endRewindPreview();
+     if (rewindBuffer) {
+         rewindBuffer->clear();
+     }
+@@ -1446,6 +1564,7 @@ uintptr_t LibretroDroid::handleGetCurrentFrameBuffer() {
+ 
+ void LibretroDroid::reset() {
+     ScopedSignalStackGuard signalStackGuard;
++    endRewindPreview();
+     core->retro_reset();
+ }
+ 
+diff --git a/src/main/cpp/libretrodroid.h b/src/main/cpp/libretrodroid.h
+index 534fc3c..2f727d8 100644
+--- a/src/main/cpp/libretrodroid.h
++++ b/src/main/cpp/libretrodroid.h
+@@ -174,6 +174,13 @@ public:
+ 
+     void setRewindEnabled(bool enabled);
+     void setRewinding(bool rewinding);
++    /**
++     * Paused timeline seek: show the stored state closest to [framesBack] emulated frames
++     * before live (0 returns to live) without consuming history. Returns the shown distance,
++     * or -1. The next emulated step keeps the shown point and drops the newer history.
++     */
++    int64_t previewRewind(uint64_t framesBack);
++    bool commitRewindPreview();
+     void setRewindSpeed(unsigned int speed);
+     void initRewindBuffer(int maxSlots, jlong budgetBytes);
+     void destroyRewindBuffer();
+@@ -280,6 +287,20 @@ private:
+     std::unique_ptr<uint8_t[]> rewindTempBuffer;
+     RewindTimeline rewindTimeline;
+     void publishRewindSnapshot();
++    /** A paused seek: the live state to return to, and the shown stored state. */
++    struct RewindPreview {
++        bool active = false;
++        size_t steps = 0;
++        bool scratchValid = false;
++        size_t scratchSteps = 0;
++        size_t scratchSize = 0;
++        std::unique_ptr<uint8_t[]> live;
++        size_t liveSize = 0;
++    };
++    RewindPreview rewindPreview;
++    void endRewindPreview();
++    uint64_t rewindPreviewDistance(size_t steps) const;
++    bool showRewindState(const uint8_t* data, size_t size);
+     std::atomic<bool> rewindEnabled{false};
+     std::atomic<bool> rewinding{false};
+     std::atomic<unsigned int> rewindSpeed{1};
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+index 3c8ba4a..0f0282a 100644
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -1346,6 +1346,30 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setRewindE
+     LibretroDroid::getInstance().setRewindEnabled(enabled);
+ }
+ 
++JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_previewRewind(
++    JNIEnv* env,
++    jclass obj,
++    jlong framesBack
++) {
++    if (framesBack < 0) return -1;
++    try {
++        return static_cast<jlong>(LibretroDroid::getInstance().previewRewind(static_cast<uint64_t>(framesBack)));
++    } catch (...) {
++        return -1;
++    }
++}
++
++JNIEXPORT jboolean JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_commitRewindPreview(
++    JNIEnv* env,
++    jclass obj
++) {
++    try {
++        return LibretroDroid::getInstance().commitRewindPreview() ? JNI_TRUE : JNI_FALSE;
++    } catch (...) {
++        return JNI_FALSE;
++    }
++}
++
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setRewinding(
+     JNIEnv* env,
+     jclass obj,
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+index e5c7fbd..eccd7e2 100644
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+@@ -626,6 +626,11 @@ class GLRetroView(
+         LibretroDroid.setRewindSpeed(value)
+     }
+ 
++    /** Paused timeline seek; see [LibretroDroid.previewRewind]. Blocks for the GL thread. */
++    fun previewRewind(framesBack: Long): Long = runOnGLThread { LibretroDroid.previewRewind(framesBack) }
++
++    fun commitRewindPreview(): Boolean = runOnGLThread { LibretroDroid.commitRewindPreview() }
++
+     fun initRewindBuffer(maxSlots: Int, budgetBytes: Long) = runOnGLThread {
+         LibretroDroid.initRewindBuffer(maxSlots, budgetBytes)
+     }
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+index 46de0e5..aa74e48 100644
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -287,6 +287,14 @@ public class LibretroDroid {
+ 
+     public static native void setRewindEnabled(boolean enabled);
+     public static native void setRewinding(boolean active);
++    /**
++     * GL thread, paused: show the stored state closest to framesBack emulated frames before
++     * live (0 = live) without consuming history. Returns the shown distance or -1. The next
++     * emulated frame keeps that point and drops newer history.
++     */
++    public static native long previewRewind(long framesBack);
++    /** Keep a paused seek now instead of at the next emulated frame. */
++    public static native boolean commitRewindPreview();
+     public static native void setRewindSpeed(int speed);
+     public static native double getContentFps();
+ 

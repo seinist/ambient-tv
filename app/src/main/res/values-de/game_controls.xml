@@ -28,8 +28,13 @@
     <string name="game_controls_port_auto">Automatisch</string>
     <string name="game_controls_port_player">Spieler %1$d</string>
     <string name="game_controls_port_off">Spielt nicht mit</string>
-    <string name="game_controls_start_select">Start + Select öffnet das Spielmenü</string>
-    <string name="game_controls_start_select_hint">Am Controller beide zusammen drücken: Das Spiel pausiert und zeigt sein Menü.</string>
+    <string name="game_controls_combo">Spielmenü-Tastenkombination</string>
+    <string name="game_controls_combo_hint">Tasten am selben Controller gleichzeitig drücken. Funktioniert auch, wenn Android die Home-Taste für den Launcher reserviert.</string>
+    <string name="game_controls_combo_start_select">Start + Select</string>
+    <string name="game_controls_combo_l3_r3">L3 + R3</string>
+    <string name="game_controls_combo_l1_r1">L1 + R1</string>
+    <string name="game_controls_combo_l1_r1_start">L1 + R1 + Start</string>
+    <string name="game_controls_combo_off">Aus</string>
     <string name="game_controls_dpad_stick">Steuerkreuz bewegt auch den linken Stick</string>
     <string name="game_controls_dpad_stick_hint">Für 3D-Spiele mit Fernbedienung oder Tastatur, die keinen Stick haben.</string>
     <string name="game_controls_menu">Spielmenü öffnen</string>

@@ -87,6 +87,28 @@ class RetroPadInputTest {
         assertFalse(input.hasActiveGamepad(3))
     }
 
+    @Test fun rumbleTargetsOnlyPhysicalGamepadsOnTheRequestedPort() {
+        config = config.withPort("dev-1", 0).withPort("dev-2", 1)
+        press(1, KeyEvent.KEYCODE_BUTTON_A)
+        press(2, KeyEvent.KEYCODE_BUTTON_A)
+        press(3, KeyEvent.KEYCODE_Z)
+        press(4, KeyEvent.KEYCODE_DPAD_CENTER)
+        input.touchButton(RetroPadButton.A, true)
+        input.reserveRemotePort(2, true)
+        input.remoteState(2, RetroPadButton.A.mask, 0f, 0f, 0f, 0f)
+
+        assertEquals(listOf(1), input.rumbleDeviceIds(0))
+        assertEquals(listOf(2), input.rumbleDeviceIds(1))
+        assertTrue(input.rumbleDeviceIds(2).isEmpty())
+
+        input.releaseAll()
+        assertEquals(listOf(1), input.rumbleDeviceIds(0))
+        config = config.withPort("dev-1", RetroPorts.OFF)
+        assertTrue(input.rumbleDeviceIds(0).isEmpty())
+        input.deviceRemoved(2)
+        assertTrue(input.rumbleDeviceIds(1).isEmpty())
+    }
+
     @Test fun defaultsFollowPositions() {
         val pad = defaultRetroProfile(RetroInputKind.GAMEPAD)
         assertEquals(RetroPadButton.B, pad.button(KeyEvent.KEYCODE_BUTTON_A))
@@ -143,7 +165,7 @@ class RetroPadInputTest {
     @Test fun configRoundTrips() {
         val remote = defaultRetroProfile(RetroInputKind.REMOTE)
             .assign(RetroInputTarget.Menu(RetroMenuTrigger.PRESS), KeyEvent.KEYCODE_GUIDE)
-        val value = RetroInputConfig(startSelectMenu = false, dpadAsStick = true)
+        val value = RetroInputConfig(menuCombo = RetroMenuCombo.OFF, dpadAsStick = true)
             .withProfile(RetroInputKind.REMOTE, remote)
             .withPort("pad", 2).withPort("tv-remote", RetroPorts.OFF)
         assertEquals(value, RetroInputConfig.decode(value.encode()))
@@ -229,11 +251,97 @@ class RetroPadInputTest {
         assertTrue(release(1, KeyEvent.KEYCODE_BUTTON_SELECT))
         assertEquals(0, input.buttons(0))
 
-        config = config.copy(startSelectMenu = false)
+        config = config.copy(menuCombo = RetroMenuCombo.OFF)
         press(1, KeyEvent.KEYCODE_BUTTON_START)
         press(1, KeyEvent.KEYCODE_BUTTON_SELECT)
         assertEquals(2, menus)
         assertEquals(RetroPadButton.START.mask or RetroPadButton.SELECT.mask, input.buttons(0))
+    }
+
+    @Test fun menuComboSettingsMigrateAndRoundTripEveryChoice() {
+        assertEquals(RetroMenuCombo.START_SELECT, RetroInputConfig.decode(emptyMap()).menuCombo)
+        assertEquals(RetroMenuCombo.START_SELECT, RetroInputConfig.decode(mapOf("start_select_menu" to "1")).menuCombo)
+        assertEquals(RetroMenuCombo.OFF, RetroInputConfig.decode(mapOf("start_select_menu" to "0")).menuCombo)
+        assertEquals(RetroMenuCombo.OFF, RetroInputConfig.decode(
+            mapOf("menu_combo" to "future_unknown", "start_select_menu" to "0")).menuCombo)
+        for (combo in RetroMenuCombo.entries) {
+            val chosen = RetroInputConfig(menuCombo = combo)
+            assertEquals(chosen, RetroInputConfig.decode(chosen.encode()))
+            assertEquals(if (combo == RetroMenuCombo.START_SELECT) "1" else "0",
+                chosen.encode()["start_select_menu"])
+        }
+    }
+
+    @Test fun selectableMenuCombosNeverDelaySingleButtonsOrPublishTheCompletedChord() {
+        val choices = mapOf(
+            RetroMenuCombo.START_SELECT to listOf(KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_BUTTON_SELECT),
+            RetroMenuCombo.L3_R3 to listOf(KeyEvent.KEYCODE_BUTTON_THUMBL, KeyEvent.KEYCODE_BUTTON_THUMBR),
+            RetroMenuCombo.L1_R1 to listOf(KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_BUTTON_R1),
+            RetroMenuCombo.L1_R1_START to listOf(KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_BUTTON_START),
+        )
+        val snapshots = mutableListOf<Int>()
+        input.onChanged = { snapshots += input.buttons(0) }
+        for ((combo, keys) in choices) {
+            config = config.copy(menuCombo = combo)
+            val previous = menus
+            snapshots.clear()
+            press(1, keys.first())
+            assertTrue(input.buttons(0) != 0)
+            assertEquals(previous, menus)
+            for (code in keys.drop(1)) press(1, code)
+            assertEquals(previous + 1, menus)
+            assertTrue(snapshots.none { combo.matches(it) })
+            assertEquals(0, input.buttons(0))
+            for (code in keys) assertTrue(release(1, code))
+            assertEquals(0, input.buttons(0))
+            input.releaseAll()
+        }
+    }
+
+    @Test fun menuCombosDoNotCombineDevicesAndOffKeepsDirectGuideMenu() {
+        config = config.copy(menuCombo = RetroMenuCombo.L3_R3)
+        press(1, KeyEvent.KEYCODE_BUTTON_THUMBL)
+        press(2, KeyEvent.KEYCODE_BUTTON_THUMBR)
+        assertEquals(0, menus)
+        release(1, KeyEvent.KEYCODE_BUTTON_THUMBL)
+        release(2, KeyEvent.KEYCODE_BUTTON_THUMBR)
+        // Start + Select is ordinary gameplay when another shortcut is selected.
+        press(1, KeyEvent.KEYCODE_BUTTON_START)
+        press(1, KeyEvent.KEYCODE_BUTTON_SELECT)
+        assertEquals(0, menus)
+        release(1, KeyEvent.KEYCODE_BUTTON_START)
+        release(1, KeyEvent.KEYCODE_BUTTON_SELECT)
+        config = config.copy(menuCombo = RetroMenuCombo.OFF)
+        press(1, KeyEvent.KEYCODE_BUTTON_THUMBL)
+        press(1, KeyEvent.KEYCODE_BUTTON_THUMBR)
+        assertEquals(0, menus)
+        assertEquals(RetroPadButton.L3.mask or RetroPadButton.R3.mask, input.buttons(0))
+        press(1, KeyEvent.KEYCODE_BUTTON_MODE)
+        assertEquals(1, menus)
+        assertEquals(0, input.buttons(0))
+    }
+
+    @Test fun pairedControllerMenuComboSuppressesHeldKeysUntilRelease() {
+        config = config.copy(menuCombo = RetroMenuCombo.L3_R3)
+        input.reserveRemotePort(1, true, companionControllerDescriptor("menu-combo"))
+        val combo = RetroMenuCombo.L3_R3.mask
+        fun send(mask: Int) = input.remoteState(1, mask, 0f, 0f, 0f, 0f)
+        send(RetroPadButton.L3.mask)
+        assertEquals(RetroPadButton.L3.mask, input.buttons(1))
+        send(combo)
+        assertEquals(1, menus)
+        assertEquals(0, input.buttons(1))
+        repeat(5) { send(combo) }
+        assertEquals(1, menus)
+        send(0)
+        send(combo)
+        assertEquals(2, menus)
+        assertEquals(0, input.buttons(1))
+        send(0)
+        config = config.copy(menuCombo = RetroMenuCombo.OFF)
+        send(combo)
+        assertEquals(2, menus)
+        assertEquals(combo, input.buttons(1))
     }
 
     @Test fun sticksHatAndTriggersReachTheCore() {

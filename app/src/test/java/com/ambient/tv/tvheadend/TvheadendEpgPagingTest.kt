@@ -30,4 +30,17 @@ class TvheadendEpgPagingTest {
         }
         assertTrue(result.exceptionOrNull() is IllegalStateException)
     }
+
+    @Test fun changingTotalCannotBecomeAnAuthoritativeWindow() = runBlocking {
+        val result = runCatching {
+            loadTvhEpgPages(0, 100, null) { params ->
+                val offset = params.getValue("start").toInt()
+                buildJsonObject {
+                    put("totalCount", if (offset == 0) 2 else 1)
+                    putJsonArray("entries") { addJsonObject { put("eventId", offset) } }
+                }
+            }
+        }
+        assertTrue(result.isFailure)
+    }
 }

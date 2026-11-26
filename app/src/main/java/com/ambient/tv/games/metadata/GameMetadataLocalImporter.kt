@@ -32,7 +32,7 @@ class GameMetadataLocalImporter @Inject constructor(
     private val files: FileStore,
     private val access: FileAccess,
 ) {
-    suspend fun importFolder(folderId: String, onProgress: () -> Unit = {}) {
+    suspend fun importFolder(folderId: String, systemId: String? = null, onProgress: () -> Unit = {}) {
         val folder = library.folders().firstOrNull { it.id == folderId } ?: return
         val source = files.sources().firstOrNull { it.id == folder.sourceId } ?: return
         val originToken = library.folderToken(folderId) ?: return
@@ -54,6 +54,7 @@ class GameMetadataLocalImporter @Inject constructor(
                             ?: gameSidecarFilenameFallback(relative, source.kind == "local")
                                 ?.let { library.folderGameByUniqueFilename(folderId, it) }
                             ?: return@parse
+                        if (systemId != null && game.systemId != systemId) return@parse
                         if (files.sources().none { it.id == source.id && it.sameLocation(source) }) return@parse
                         val ticket = library.metadataTicket(game.fileId, folderId, originToken) ?: return@parse
                         val previous = library.metadata(game.fileId)
@@ -72,7 +73,7 @@ class GameMetadataLocalImporter @Inject constructor(
                 while (true) {
                     currentCoroutineContext().ensureActive()
                     if (library.folderToken(folderId) != originToken) break
-                    val page = library.folderGames(folderId, after, 256)
+                    val page = library.folderGames(folderId, after, 256, systemId)
                     if (page.isEmpty()) break
                     for (game in page) {
                         currentCoroutineContext().ensureActive()

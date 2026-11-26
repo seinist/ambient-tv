@@ -70,7 +70,8 @@ fun RommLibraryScreen(
     val itemRequests = remember { mutableMapOf<String, FocusRequester>() }
     var focusedId by rememberSaveable { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(initialSection) { model.section(initialSection) }
+    var selectedSection by rememberSaveable(initialSection) { mutableStateOf(initialSection) }
+    LaunchedEffect(initialSection) { model.section(selectedSection) }
     LaunchedEffect(searchText) { model.query(searchText) }
     ReportSidebarContentReady(library.ready)
     BackHandler { if (controls.showOptions) controls.closeOptions() else onBack() }
@@ -100,6 +101,7 @@ fun RommLibraryScreen(
             title = platformsBySection[library.section]?.title ?: rommName, system = MediaSystem.ROMM)
         GameLibrarySections(sections, library.section, controls,
             platform = { key -> platformsBySection[key]?.let { it.title to it.systemId } }) {
+            selectedSection = it
             model.section(it)
             focusedId = null
         }
@@ -132,7 +134,8 @@ fun RommLibraryScreen(
                 gridColumns = library.gridColumns, listRows = library.listRows, controls = controls,
                 focusedId = focusedId, onFocused = { focusedId = it }, itemRequests = itemRequests,
                 listState = listState, gridState = gridState, rowsState = rowsState,
-                onSelect = onSelect, onOpenDetails = onOpenDetails, onFavorite = model::favorite,
+                onSelect = { focusedId = it.fileId; onSelect(it) },
+                onOpenDetails = { focusedId = it.fileId; onOpenDetails(it) }, onFavorite = model::favorite,
                 rowKey = ::rommRowKey, rowTitle = { it },
                 showSystem = library.section !in platformsBySection,
             )

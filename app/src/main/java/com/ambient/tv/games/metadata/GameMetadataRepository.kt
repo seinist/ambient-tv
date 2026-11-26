@@ -386,6 +386,7 @@ class GameMetadataRepository @Inject constructor(
     /** Explicit folder work feeds this bounded queue; visible cards only reorder an active batch. */
     suspend fun enrichFolder(folderId: String, automatic: Boolean = false,
                              prioritizedFileIds: () -> List<String> = SharedGameArtworkPriority::prioritizedFileIds,
+                             systemId: String? = null,
                              onProgress: (Int, Int) -> Unit = { _, _ -> }): Unit =
         withContext(Dispatchers.IO) {
             coroutineScope {
@@ -401,15 +402,15 @@ class GameMetadataRepository @Inject constructor(
                         return@coroutineScope
                     }
                     if (automatic && !options.automatic) return@coroutineScope
-                    val total = library.folderGameCount(folderId)
+                    val total = library.folderGameCount(folderId, systemId)
                     var completed = 0
                     var failed = 0
                     var firstFailure: IOException? = null
                     val queue = GameMetadataBatchQueue(
                         fileId = LibraryGame::fileId,
                         prioritizedFileIds = prioritizedFileIds,
-                        page = { after, limit -> library.folderGames(folderId, after, limit) },
-                        find = { id, after -> library.folderGame(folderId, id, after) },
+                        page = { after, limit -> library.folderGames(folderId, after, limit, systemId) },
+                        find = { id, after -> library.folderGame(folderId, id, after, systemId) },
                     )
                     var lastPulse = System.nanoTime()
                     onProgress(0, total)
@@ -444,12 +445,12 @@ class GameMetadataRepository @Inject constructor(
         }
 
     /** Called only after an explicit ROM-folder scan; local sidecars have precedence over downloads. */
-    suspend fun importLocalFolder(folderId: String) = withContext(Dispatchers.IO) {
+    suspend fun importLocalFolder(folderId: String, systemId: String? = null) = withContext(Dispatchers.IO) {
         val job = currentCoroutineContext().job
         register(folderId, job)
         library.beginMetadataBatch()
         var lastPulse = System.nanoTime()
-        try { localImport.importFolder(folderId) {
+        try { localImport.importFolder(folderId, systemId = systemId) {
             if (System.nanoTime() - lastPulse >= BATCH_PULSE_NS) {
                 library.flushMetadataBatch()
                 lastPulse = System.nanoTime()

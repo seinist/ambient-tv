@@ -214,6 +214,7 @@ void setup(VulkanBackend& backend) {
     };
     vk.createSwapchain = [](VkDevice, const VkSwapchainCreateInfoKHR* info, const VkAllocationCallbacks*,
         VkSwapchainKHR* swapchain) {
+        assert(info->minImageCount == 2); // Request no extra FIFO image beyond driver minimum.
         ++driver.swapchainCreates; driver.chosenAlpha = info->compositeAlpha;
         driver.chosenTransform = info->preTransform;
         *swapchain = object<VkSwapchainKHR>(14); return VK_SUCCESS;

@@ -492,6 +492,77 @@ static void snesTwentySecondHistoryWithinBudget() {
               << " ms per capture including fixture mutations (host measurement)\n";
 }
 
+static bool peek(const RewindBuffer& buffer, size_t steps, uint8_t* data, size_t* size) {
+    bool result;
+    {
+        AllocationScope probe;
+        result = buffer.peek(steps, data, size);
+        CHECK(allocation_probe::calls == 0);
+    }
+    return result;
+}
+
+/** Seeking in the paused timeline reads any stored state without consuming history. */
+static void nonDestructivePeekAndIncrementalSeek() {
+    constexpr size_t budget = 256 * 1024;
+    RewindBuffer buffer(96, 1031, budget, 0);
+    std::deque<Bytes> expected;
+    std::deque<uint64_t> spans;
+    Bytes output(1031);
+    for (unsigned frame = 0; frame < 300; ++frame) {
+        Bytes state = expected.empty() ? randomState(1031, 77) : expected.back();
+        // Mostly small changes (compressed records), sometimes a whole new state (raw records)
+        // and a different size, so peeks cross raw, compressed and size-changing records.
+        if (frame % 41 == 40) state = randomState(1031, 9000 + frame);
+        else for (unsigned i = 0; i < 9; ++i) state[(frame * 131 + i * 17) % state.size()] ^= 0x5a;
+        if (frame % 53 == 52) state.resize(1031 - frame % 7);
+        const uint64_t span = 1 + frame % 4;
+        CHECK(push(buffer, state, span));
+        expected.push_back(state);
+        if (expected.size() > 1) spans.push_back(span);
+        while (expected.size() > buffer.getValidCount()) { expected.pop_front(); spans.pop_front(); }
+        checkMetrics(buffer, budget);
+    }
+    const size_t records = buffer.getValidCount() - 1;
+    const uint64_t history = buffer.getHistoryFrames();
+    CHECK(records > 20);
+    // Every depth matches the state pushed that many records earlier.
+    for (size_t steps = 0; steps <= records; ++steps) {
+        size_t size = output.size();
+        CHECK(peek(buffer, steps, output.data(), &size));
+        const Bytes& want = expected[expected.size() - 1 - steps];
+        CHECK(size == want.size());
+        CHECK(std::equal(want.begin(), want.end(), output.begin()));
+        if (steps < records) CHECK(buffer.recordFrames(steps) == spans[spans.size() - 1 - steps]);
+    }
+    CHECK(buffer.recordFrames(records) == 0);
+    size_t ignored = output.size();
+    CHECK(!peek(buffer, records + 1, output.data(), &ignored));
+    // Nothing was consumed.
+    CHECK(buffer.getValidCount() == records + 1);
+    CHECK(buffer.getHistoryFrames() == history);
+    // Continuing a peek further back equals a fresh peek; a step forward is rejected.
+    size_t size = output.size();
+    CHECK(peek(buffer, 3, output.data(), &size));
+    size_t from = 3;
+    for (size_t to : {3u, 7u, 8u, 20u, static_cast<unsigned>(records)}) {
+        CHECK(buffer.peekFurther(from, to, output.data(), &size));
+        const Bytes& want = expected[expected.size() - 1 - to];
+        CHECK(size == want.size());
+        CHECK(std::equal(want.begin(), want.end(), output.begin()));
+        from = to;
+    }
+    CHECK(!buffer.peekFurther(records, 2, output.data(), &size));
+    // The destructive path still returns the same states afterwards.
+    while (!expected.empty()) {
+        popEquals(buffer, expected.back(), output);
+        expected.pop_back();
+    }
+    CHECK(buffer.getValidCount() == 0);
+    size = output.size();
+    CHECK(!peek(buffer, 0, output.data(), &size));
+}
+
 int main() {
     const struct { const char* name; void (*test)(); } tests[] = {
         {"empty and invalid operations", emptyAndInvalidOperations},
@@ -503,6 +574,7 @@ int main() {
         {"mixed compressed ring wrap", mixedCompressedRingWrap},
         {"changing sizes and long runs", changingSnapshotSizesAndLongRuns},
         {"SNES twenty-second bounded history", snesTwentySecondHistoryWithinBudget},
+        {"non-destructive peek and incremental seek", nonDestructivePeekAndIncrementalSeek},
     };
     for (const auto& test : tests) {
         test.test();

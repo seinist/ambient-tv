@@ -13,9 +13,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.hapticfeedback.HapticFeedback
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
@@ -57,11 +54,10 @@ class GameTouchInputUiTest {
         var aspect by mutableStateOf(4f / 3f)
         var fitSurface by mutableStateOf(true)
         var hiddenForGamepad by mutableStateOf(false)
-        var rewindSeconds by mutableStateOf<Float?>(null)
         var osdTaps = 0
         val held = mutableSetOf<RetroPadButton>()
         val aTransitions = mutableListOf<Boolean>()
-        val feedback = mutableListOf<HapticFeedbackType>()
+        val feedback = mutableListOf<Unit>()
         fun button(button: RetroPadButton, down: Boolean) {
             if (down) held.add(button) else held.remove(button)
             if (button == RetroPadButton.A) aTransitions += down
@@ -70,16 +66,11 @@ class GameTouchInputUiTest {
 
     private fun mount(lifecycleOwner: LifecycleOwner? = null): Fixture {
         val fixture = Fixture()
-        val haptics = object : HapticFeedback {
-            override fun performHapticFeedback(hapticFeedbackType: HapticFeedbackType) {
-                fixture.feedback += hapticFeedbackType
-            }
-        }
         rule.setContent {
             CompositionLocalProvider(
                 LocalHandheldUi provides true,
                 LocalLifecycleOwner provides (lifecycleOwner ?: LocalLifecycleOwner.current),
-                LocalHapticFeedback provides haptics,
+                LocalGameButtonHaptic provides { fixture.feedback += Unit },
             ) {
                 AmbientTvTheme {
                     // Ancestor tap handling reproduces the player/interop failure if the
@@ -94,7 +85,6 @@ class GameTouchInputUiTest {
                             presentation = fixture.presentation, contentAspectRatio = fixture.aspect,
                             fitSurface = fixture.fitSurface,
                             onShowTouch = { fixture.hiddenForGamepad = false },
-                            rewindSeconds = fixture.rewindSeconds,
                         )
                     }
                 }
@@ -116,7 +106,7 @@ class GameTouchInputUiTest {
             up(0)
         }
         rule.runOnIdle {
-            assertEquals(listOf(HapticFeedbackType.TextHandleMove), fixture.feedback)
+            assertEquals(1, fixture.feedback.size)
             fixture.mode = GameTouchMode.HYBRID
         }
         rule.onNodeWithTag("game-touch-dpad", useUnmergedTree = true).performTouchInput {
@@ -310,10 +300,11 @@ class GameTouchInputUiTest {
         } }
     }
 
-    @Test fun portraitMenuRewindAndPadControlsStayOutsideThePicture() {
+    @Test fun portraitMenuAndPadControlsStayOutsideThePictureWithoutRewindOverlay() {
         val fixture = mount()
-        rule.runOnIdle { fixture.mode = GameTouchMode.DUAL; fixture.rewindSeconds = 20f }
-        assertControlsOutsidePicture(listOf("game-player-menu", "game-player-rewind") +
+        rule.runOnIdle { fixture.mode = GameTouchMode.DUAL }
+        rule.onNodeWithTag("game-player-rewind", useUnmergedTree = true).assertDoesNotExist()
+        assertControlsOutsidePicture(listOf("game-player-menu") +
             listOf("a", "b", "x", "y", "l", "l2", "r", "r2", "l3", "r3", "select", "start")
                 .map { "game-touch-$it" })
     }
@@ -322,13 +313,14 @@ class GameTouchInputUiTest {
     @Config(qualifiers = "w800dp-h360dp-land-mdpi")
     fun landscapeSnesUsesFullHeightAndKeepsUtilitiesInAmbientSideSpace() {
         val fixture = mount()
-        rule.runOnIdle { fixture.presentation = gameTouchPresentation("snes"); fixture.rewindSeconds = 20f }
+        rule.runOnIdle { fixture.presentation = gameTouchPresentation("snes") }
         val root = rule.onNodeWithTag("game-touch-root").getBoundsInRoot()
         val surface = rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot()
         assertEquals(root.top, surface.top)
         assertEquals(root.bottom, surface.bottom)
         assertEquals(4f / 3f, (surface.right - surface.left).value / (surface.bottom - surface.top).value, .01f)
-        assertControlsOutsidePicture(listOf("game-player-menu", "game-player-rewind") +
+        rule.onNodeWithTag("game-player-rewind", useUnmergedTree = true).assertDoesNotExist()
+        assertControlsOutsidePicture(listOf("game-player-menu") +
             listOf("l", "r", "select", "start").map { "game-touch-$it" })
         rule.runOnIdle { fixture.menuVisible = true }
         assertEquals(surface, rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot())
@@ -342,16 +334,15 @@ class GameTouchInputUiTest {
         for (fit in listOf(true, false)) for (scale in listOf(100, 125, 140)) {
             rule.runOnIdle { fixture.style = fixture.style.copy(scalePercent = scale); fixture.fitSurface = fit }
             val surface = rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot()
-            rule.runOnIdle { fixture.rewindSeconds = 20f }
-            assertEquals(surface, rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot())
-            assertControlsOutsidePicture(listOf("game-player-menu", "game-player-rewind") +
+            rule.onNodeWithTag("game-player-rewind", useUnmergedTree = true).assertDoesNotExist()
+            assertControlsOutsidePicture(listOf("game-player-menu") +
                 listOf("l", "l2", "r", "r2", "l3", "r3", "select", "start").map { "game-touch-$it" })
             rule.runOnIdle { fixture.menuVisible = true }
             assertEquals(surface, rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot())
             rule.runOnIdle { fixture.menuVisible = false; fixture.hiddenForGamepad = true }
             assertEquals(surface, rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot())
-            assertControlsOutsidePicture(listOf("game-player-menu", "game-player-rewind", "game-touch-show"))
-            rule.runOnIdle { fixture.hiddenForGamepad = false; fixture.rewindSeconds = null }
+            assertControlsOutsidePicture(listOf("game-player-menu", "game-touch-show"))
+            rule.runOnIdle { fixture.hiddenForGamepad = false }
         }
     }
 

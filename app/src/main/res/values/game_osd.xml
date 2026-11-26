@@ -4,6 +4,8 @@
     <string name="game_rewind">Rewind</string>
     <string name="game_rewind_buffer_seconds">≈ %1$.1f s</string>
     <string name="game_rewind_hold">Hold to rewind</string>
+    <string name="game_rewind_timeline_live">Now</string>
+    <string name="game_rewind_timeline_back">%1$.1f s back</string>
     <string name="game_reset_failed">The game could not be restarted</string>
     <string name="game_netplay_synchronizing">Synchronizing game state…</string>
 </resources>

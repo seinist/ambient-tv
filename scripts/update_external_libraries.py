@@ -14,6 +14,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from maven_dependency import version_key as maven_version_key
 import svp_dependency as svp
 import update_monogram_pin as monogram
 
@@ -186,12 +187,21 @@ def libvlc_latest_stable(current_version: str | None = None) -> str:
     root = ET.fromstring(xml)
     versions = [v.text or "" for v in root.findall("./versioning/versions/version")]
     stable = [v for v in versions if re.fullmatch(r"\d+\.\d+\.\d+", v)]
-    if current_version and re.fullmatch(r"\d+\.\d+\.\d+", current_version):
-        current_major = current_version.split(".", 1)[0]
-        stable = [v for v in stable if v.split(".", 1)[0] == current_major]
+    current_key = maven_version_key(current_version) if current_version else None
+    if current_version and current_key is None:
+        raise RuntimeError(f"Unsupported current libVLC pin {current_version!r}; review manually")
+    if current_key is not None:
+        stable = [v for v in stable if maven_version_key(v)[0] == current_key[0]]
     if not stable:
+        if current_version:
+            return current_version
         raise RuntimeError("No stable libVLC versions found in Maven metadata")
-    return max(stable, key=lambda v: tuple(int(p) for p in v.split(".")))
+    newest = max(stable, key=maven_version_key)
+    # Both update commands share this catalog pin. A stable-only check must not
+    # undo a newer explicit prerelease pin or downgrade after stale metadata.
+    if current_key is not None and maven_version_key(newest) <= current_key:
+        return current_version
+    return newest
 
 
 def github_repo(url: str) -> str:
@@ -208,7 +218,35 @@ def libretrodroid_latest(current: dict[str, str]) -> dict[str, str]:
     commits = github(f"/repos/{repo}/commits?path=libretrodroid&per_page=1")
     if not commits:
         raise RuntimeError(f"No commits touching libretrodroid/ in {repo}")
-    return {"LIBRETRODROID_COMMIT": commits[0]["sha"]}
+    sha = commits[0]["sha"]
+    # About shows rcheevos; fetch_libretrodroid.sh requires its pin to match the gitlink.
+    rcheevos = github(f"/repos/{repo}/contents/{RCHEEVOS_PATH}?ref={sha}")
+    if not isinstance(rcheevos, dict) or rcheevos.get("type") != "submodule":
+        raise RuntimeError(f"{RCHEEVOS_PATH} is no submodule at {sha}")
+    rcheevos_sha = rcheevos["sha"]
+    return {
+        "LIBRETRODROID_COMMIT": sha,
+        "LIBRETRODROID_RCHEEVOS_COMMIT": rcheevos_sha,
+        "LIBRETRODROID_RCHEEVOS_VERSION": git_tag_for(RCHEEVOS_REPO, rcheevos_sha) or rcheevos_sha[:9],
+    }
+
+
+RCHEEVOS_PATH = "libretrodroid/src/main/cpp/rcheevos"
+RCHEEVOS_REPO = "https://github.com/RetroAchievements/rcheevos"
+LIBRETRODROID_KEYS = ("LIBRETRODROID_COMMIT", "LIBRETRODROID_RCHEEVOS_COMMIT", "LIBRETRODROID_RCHEEVOS_VERSION")
+
+
+def git_tag_for(repo: str, sha: str) -> str:
+    """The release tag that points at sha (peeled for annotated tags), or empty."""
+    out = subprocess.run(["git", "ls-remote", "--tags", repo], capture_output=True, text=True, timeout=120,
+                         env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+    if out.returncode != 0:
+        return ""
+    for line in out.stdout.splitlines():
+        commit, _, ref = line.partition("\t")
+        if commit == sha and ref.startswith("refs/tags/"):
+            return ref.removeprefix("refs/tags/").removesuffix("^{}")
+    return ""
 
 
 MOONLIGHT_TAG = re.compile(r"v\d+\.\d+(?:\.\d+)?")
@@ -363,6 +401,8 @@ def main() -> int:
         ("Monogram mono-rs", "MONOGRAM_MONO_RS_REF"),
         ("Monogram rustls", "MONOGRAM_RUSTLS_PLATFORM_VERIFIER_VERSION"),
         ("LibretroDroid", "LIBRETRODROID_COMMIT"),
+        ("LibretroDroid rcheevos", "LIBRETRODROID_RCHEEVOS_VERSION"),
+        ("rcheevos commit", "LIBRETRODROID_RCHEEVOS_COMMIT"),
         ("Moonlight Android", "MOONLIGHT_ANDROID_TAG"),
         ("Moonlight commit", "MOONLIGHT_ANDROID_REF"),
     ]
@@ -417,6 +457,7 @@ def main() -> int:
         if "SPOTIFY_RUSTY_REF" in safe_latest:
             safe_latest["SPOTIFY_RUSTY_REF"] = current.get("SPOTIFY_RUSTY_REF", safe_latest["SPOTIFY_RUSTY_REF"])
         old_libretrodroid = current.get("LIBRETRODROID_COMMIT", "")
+        old_libretrodroid_pins = {key: current.get(key, "") for key in LIBRETRODROID_KEYS}
         old_moonlight = {key: current.get(key, "") for key in ("MOONLIGHT_ANDROID_TAG", "MOONLIGHT_ANDROID_REF")}
         updates = {}
         if cores_changed:
@@ -434,7 +475,7 @@ def main() -> int:
             # the new pin, otherwise the next build would stop at a patch error.
             print("\nPreparing LibretroDroid at the new pin to check scripts/patches/libretrodroid...")
             if not prepare_libretrodroid():
-                current["LIBRETRODROID_COMMIT"] = old_libretrodroid
+                current.update(old_libretrodroid_pins)
                 svp.apply_files({PROPS: render_props(current).encode()})
                 prepare_libretrodroid()
                 print(f"WARNING: LibretroDroid kept at {old_libretrodroid}: a patch does not apply to "

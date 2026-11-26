@@ -132,6 +132,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
         val refreshGeneration = liveRefreshGeneration
         val videoId = videoId
         val requestToken = transitionToken
+        val launchStarted = System.nanoTime()
         loadJob?.cancel()
         // Recomposition (late SponsorBlock/metadata) can re-register the same video/audio URLs;
         // only a genuinely new resolution clears a terminal HTTP status from that stream.
@@ -150,7 +151,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                 }
                 // Keep even rapid retries serialized until cancelled blocking calls finish.
                 val result = loadMutex.withLock {
-                    suspendResult { cached ?: if (fresh) engine.refreshLivePlayback(videoId) else engine.playback(videoId) }
+                    suspendResult { cached ?: if (fresh) engine.refreshLivePlayback(videoId, isTrailer, launchStarted) else engine.playback(videoId, isTrailer, launchStarted) }
                 }
                 ready = result.getOrNull()
                 if (ready != null) {
@@ -171,7 +172,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                     return@launch
                 }
             }
-            val playback = checkNotNull(ready)
+            val playback = checkNotNull(ready).copy(startupStartedNs = if (reusedSession) 0L else launchStarted)
             if (videoId != this@YouTubePlayerViewModel.videoId) return@launch
             if (requestToken != null && !BackgroundPlaybackSession.isSourceReplacement(requestToken)) return@launch
             val revisitingVideo = playbackNavigation.startsAtBeginning(videoId)
@@ -205,6 +206,8 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                 successorsLoading = !isTrailer && fromBrowse && nextInSource == null,
                 liveRefreshGeneration = refreshGeneration,
             )
+            com.ambient.tv.ui.player.logPlaybackStartup("youtube", "source_published", launchStarted,
+                "reused=$reusedSession trailer=$isTrailer")
             // Next Up uses only the originating feed/row, including continuation pages.
             // Never substitute Home or account recommendations at the end of the source.
             if (fromBrowse && nextInSource == null) {

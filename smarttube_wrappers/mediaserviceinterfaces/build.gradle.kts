@@ -28,9 +28,9 @@ android {
 dependencies {
     implementation(fileTree(mapOf("dir" to upstream.resolve("libs"), "include" to listOf("*.jar"))))
     implementation(project(":sharedutils"))
-    implementation("io.reactivex.rxjava2:rxandroid:2.1.1")
-    implementation("io.reactivex.rxjava2:rxjava:2.2.21")
-    implementation("androidx.annotation:annotation:1.11.0")
+    implementation(libs.rxandroid2)
+    implementation(libs.rxjava2)
+    implementation(libs.androidx.annotation)
 }
 
 

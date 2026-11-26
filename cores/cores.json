@@ -38,7 +38,7 @@
     {
       "core": "genesis_plus_gx",
       "repo": "https://github.com/libretro/Genesis-Plus-GX",
-      "commit": "099c962e7374eb84cae9bba180c9e0e49e767b40",
+      "commit": "51348f65738b0c75f4b8b4488fbc67645e3769af",
       "build": "ndk",
       "jni": "libretro"
     },
@@ -109,7 +109,7 @@
     {
       "core": "mesen",
       "repo": "https://github.com/libretro/Mesen",
-      "commit": "0102910c39ad1a62bc3f784466f3f67ca9eae335",
+      "commit": "db07fcfce64cb09e95b4c61bff39d94c457eeddb",
       "build": "ndk",
       "jni": "Libretro"
     },
@@ -173,7 +173,7 @@
     {
       "core": "parallel_n64",
       "repo": "https://github.com/libretro/parallel-n64",
-      "commit": "f22579881cffbb0e771f24f8d24bdb9b50ef72ee",
+      "commit": "11bdf5e68e3c4448382db499b9499c74aab26ff1",
       "build": "ndk",
       "jni": "."
     },

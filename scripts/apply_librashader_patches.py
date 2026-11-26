@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 from pathlib import Path
 import subprocess
+import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +36,24 @@ def fingerprint(files: list[Path]) -> str:
     return digest.hexdigest()
 
 
+def stack_is_applied(source: Path, pin: str, files: list[Path]) -> bool:
+    # Later patches can change earlier patches' hunks. Use a separate index to
+    # reconstruct the final diff from the pin without touching the checkout.
+    with tempfile.TemporaryDirectory(prefix="librashader-index-") as folder:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(folder) / "index")}
+        subprocess.run(["git", "read-tree", pin], cwd=source, env=env, check=True)
+        for patch in files:
+            subprocess.run(["git", "apply", "--cached", str(patch)],
+                           cwd=source, env=env, check=True)
+        diff = subprocess.check_output(
+            ["git", "diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv", pin, "--"],
+            cwd=source, env=env,
+        )
+    return bool(diff) and subprocess.run(
+        ["git", "apply", "--reverse", "--check"], cwd=source, input=diff, capture_output=True,
+    ).returncode == 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source_dir", nargs="?", type=Path)
@@ -53,6 +73,10 @@ def main() -> None:
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
     if head != pin:
         raise SystemExit(f"librashader checkout is {head}, expected pinned {pin}")
+    if stack_is_applied(source, pin, files):
+        for patch in files:
+            print(f"Verified librashader patch: {patch.name}")
+        return
     for patch in files:
         check = subprocess.run(["git", "apply", "--check", str(patch)], cwd=source,
                                text=True, capture_output=True)

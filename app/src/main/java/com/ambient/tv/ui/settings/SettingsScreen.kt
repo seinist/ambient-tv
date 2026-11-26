@@ -126,7 +126,6 @@ fun SettingsScreen(
     onVisibleBackgroundVideoPlaybackPreview: (Boolean, Int) -> Unit = { _, _ -> },
     onUiLanguageSaved: () -> Unit = {},
     onOpenFiles: () -> Unit = {},
-    onOpenGames: () -> Unit = {},
     onOpenDlna: () -> Unit = {},
     onTestScreensaver: (SettingsUiState) -> Unit = {},
     onExitApp: () -> Unit = {},
@@ -361,7 +360,6 @@ fun SettingsScreen(
             if (selectedCategory == SettingsCategory.GAMES) {
                 val openPage = LocalOpenSettingsPage.current
                 GamesSettingsScreen(
-                    onOpenLibrary = onOpenGames,
                     onOpenFiles = onOpenFiles,
                     onOpenControls = { openPage(SettingsCategory.GAME_CONTROLS, "") },
                     focusContent = focusContent,
@@ -1705,6 +1703,13 @@ fun SettingsScreen(
                             items(aboutServiceComponents(), key = { "about-service-${it.name}" }) { component ->
                                 AboutComponentCard(component)
                             }
+                            val gameComponents = aboutGameComponents()
+                            if (gameComponents.isNotEmpty()) {
+                                item { SettingsSubheader(stringResource(R.string.settings_about_games)) }
+                                items(gameComponents, key = { "about-games-${it.name}" }) { component ->
+                                    AboutComponentCard(component)
+                                }
+                            }
                             item { SettingsSubheader(stringResource(R.string.settings_about_artwork)) }
                             item { AboutGameIconsCard() }
                             item { AboutInputControllerArtworkCard() }
@@ -1798,13 +1803,42 @@ private data class AboutComponent(
 
 private fun String.shortRef(): String = takeIf { it.isNotBlank() }?.take(9).orEmpty()
 
-private fun aboutPlaybackComponents() = listOf(
+/**
+ * Whether this APK really ships lib<name>.so for the running ABI, extracted or not: About lists
+ * a bundled native component only when this build actually contains it.
+ */
+private fun shipsNativeLibrary(name: String): Boolean = shippedNativeLibraries.getOrPut(name) {
+    runCatching {
+        (AboutComponent::class.java.classLoader as? dalvik.system.BaseDexClassLoader)?.findLibrary(name) != null
+    }.getOrDefault(false)
+}
+
+private val shippedNativeLibraries = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+private fun aboutPlaybackComponents() = listOfNotNull(
     AboutComponent("VLC", "libVLC", BuildConfig.LIBVLC_VERSION, R.string.settings_about_role_video_engine, "VideoLAN / Maven Central"),
     AboutComponent("mpv", "mpv-android", BuildConfig.MPV_ANDROID_VERSION, R.string.settings_about_role_video_engine, "mpv-android / GitHub", BuildConfig.MPV_ANDROID_REF.shortRef()),
     AboutComponent("M3", "AndroidX Media3", BuildConfig.MEDIA3_VERSION, R.string.settings_about_role_android_player, "AndroidX / Google"),
     AboutComponent("pM", "projectM", BuildConfig.PROJECTM_VERSION, R.string.settings_about_role_visualizer, "projectM-visualizer / GitHub"),
     AboutComponent("SVP", "Open-SVPFlow", BuildConfig.SVPFLOW_VERSION, R.string.settings_about_role_motion, "Z1xus/open-svpflow / GitHub", BuildConfig.SVPFLOW_REF.shortRef()),
+    // Built with mpv-android; the decoders every mpv playback goes through.
+    AboutComponent("FF", "FFmpeg", BuildConfig.FFMPEG_VERSION, R.string.settings_about_role_ffmpeg,
+        "FFmpeg / mpv-android build", BuildConfig.FFMPEG_REF.shortRef()).takeIf { shipsNativeLibrary("avcodec") },
 )
+
+private fun aboutGameComponents(): List<AboutComponent> {
+    // rcheevos is compiled into the LibretroDroid library.
+    val libretro = shipsNativeLibrary("libretrodroid")
+    return listOfNotNull(
+        AboutComponent("LR", "LibretroDroid", BuildConfig.LIBRETRODROID_REF.shortRef(), R.string.settings_about_role_libretro,
+            "rommapp/argosy-launcher / GitHub", BuildConfig.LIBRETRODROID_REF.shortRef()).takeIf { libretro },
+        AboutComponent("RA", "rcheevos", BuildConfig.RCHEEVOS_VERSION, R.string.settings_about_role_achievements,
+            "RetroAchievements / GitHub", BuildConfig.RCHEEVOS_REF.shortRef()).takeIf { libretro },
+        AboutComponent("SL", "librashader", BuildConfig.LIBRASHADER_VERSION, R.string.settings_about_role_librashader,
+            "SnowflakePowered/librashader / GitHub", BuildConfig.LIBRASHADER_REF.shortRef())
+            .takeIf { BuildConfig.LIBRASHADER_NATIVE && shipsNativeLibrary("librashader_capi") },
+    )
+}
 
 private fun aboutServiceComponents() = listOf(
     AboutComponent("ST", "SmartTube", BuildConfig.SMARTTUBE_VERSION, R.string.settings_about_role_youtube, "yuliskov / GitHub", BuildConfig.SMARTTUBE_REF.shortRef()),

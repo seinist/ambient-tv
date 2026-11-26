@@ -39,6 +39,8 @@ object YouTubeStreamRelay {
      */
     @Volatile var renewer: ((videoId: String, expiredUrl: String) -> String?)? = null
 
+    internal fun warmup() = relay.warmup()
+
     /** Relay URL for a googlevideo [upstream]; with [videoId] an expired link is renewed in place. */
     fun url(upstream: String, headers: Map<String, String>, videoId: String? = null): String {
         return relay.register(

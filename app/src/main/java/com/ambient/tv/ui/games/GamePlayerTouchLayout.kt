@@ -9,17 +9,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.tv.material3.Icon
-import androidx.tv.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -29,14 +25,18 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import com.ambient.tv.R
 import com.ambient.tv.games.GameTouchMode
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
 import com.ambient.tv.ui.gamepad.retro.TouchControlStyle
-import com.ambient.tv.ui.common.holdAction
 
 /** Layout stays stable when the OSD opens, so pausing never resizes/recreates the native surface. */
 @Composable
@@ -56,10 +56,11 @@ internal fun GamePlayerTouchLayout(
     coreActions: Map<RetroPadButton, String> = emptyMap(),
     hiddenForGamepad: Boolean = false,
     onShowTouch: () -> Unit = {},
-    rewindSeconds: Float? = null,
-    onRewind: (Boolean) -> Unit = {},
     contentAspectRatio: Float = 4f / 3f,
     fitSurface: Boolean = true,
+    /** Known source size while whole-number scaling owns the fit ([fitSurface] false). */
+    integerFrame: GameContentFrame? = null,
+    integerScalingAuto: Boolean = false,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize().then(if (handheld) Modifier.safeDrawingPadding() else Modifier)) {
         val landscape = handheld && maxWidth >= maxHeight
@@ -79,8 +80,16 @@ internal fun GamePlayerTouchLayout(
                 .translate(Offset(0f, toolbarHeight.value))
             else Rect(0f, toolbarHeight.value, maxWidth.value, toolbarHeight.value + viewportHeight.value)
         fun Rect.position() = Modifier.offset(left.dp, top.dp).size(width.dp, height.dp)
+        // Whole-number scaling with a known source size: the surface takes the exact picture in
+        // pixels (dp rounding could lose a whole factor), so the ambient fill meets its edge.
+        val density = LocalDensity.current
+        val integerPicture = if (handheld && !fitSurface && integerFrame != null) with(density) {
+            val area = IntRect(surfaceBounds.left.dp.roundToPx(), surfaceBounds.top.dp.roundToPx(),
+                surfaceBounds.right.dp.roundToPx(), surfaceBounds.bottom.dp.roundToPx())
+            gameIntegerPictureBounds(area, integerFrame, integerScalingAuto, contentAspectRatio)
+        } else null
         surface(
-            surfaceBounds.position()
+            (integerPicture?.pixelPosition() ?: surfaceBounds.position())
                 .testTag("game-player-surface")
                 // With a gamepad shown, only the dedicated menu button opens the OSD.
                 // Pointer systems continue to receive untouched native DS/3DS/Wii input.
@@ -127,19 +136,13 @@ internal fun GamePlayerTouchLayout(
                     tint = Color.White, modifier = Modifier.size(24.dp))
             }
         }
-        if (handheld && playing && !menuVisible && rewindSeconds != null) {
-            Box((sideLayout?.rewind?.position() ?: Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
-                .size(width = 56.dp, height = 48.dp)).testTag("game-player-rewind").clip(RoundedCornerShape(12.dp))
-                    .background(Color.Black.copy(alpha = .58f)).holdAction(onHold = onRewind),
-                contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Filled.FastRewind, stringResource(R.string.game_rewind_hold),
-                        tint = Color.White, modifier = Modifier.size(20.dp))
-                    Text(stringResource(R.string.game_rewind_buffer_seconds, rewindSeconds),
-                        color = Color.White, style = androidx.tv.material3.MaterialTheme.typography.labelSmall,
-                        maxLines = 1)
-                }
-            }
-        }
     }
 }
+
+/** Exact pixel placement; the native renderer's whole-number factor depends on every pixel. */
+private fun IntRect.pixelPosition(): Modifier = Modifier
+    .offset { IntOffset(left, top) }
+    .layout { measurable, _ ->
+        val placeable = measurable.measure(Constraints.fixed(width, height))
+        layout(width, height) { placeable.place(0, 0) }
+    }

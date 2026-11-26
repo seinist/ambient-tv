@@ -22,7 +22,10 @@ internal fun rememberYouTubeMedia3Playback(playback: YouTubePlayback): State<You
                     null
                 }
                 if (mpd != null) playback.copy(uri = mpd, mimeType = "application/dash+xml", deferredDash = null)
-                else playback.copy(deferredDash = null)
+                else if (playback.uri == playback.adaptiveVideoUri) {
+                    // The native fallback is a video-only stream, not a Media3 source.
+                    playback.copy(uri = playback.progressiveUri.orEmpty(), mimeType = null, deferredDash = null)
+                } else playback.copy(deferredDash = null)
             } ?: playback
         }
     }

@@ -95,7 +95,6 @@ class RetroPadInput(
     /** Buttons held while an OSD opens must be physically released before playing again. */
     private val remoteSuppressed = IntArray(RetroPorts.COUNT)
     private val remoteRewindHeld = BooleanArray(RetroPorts.COUNT)
-    private val remoteMenuCombo = BooleanArray(RetroPorts.COUNT)
     private val remotePulseButtons = IntArray(RetroPorts.COUNT)
     private val remoteHoldTimers = mutableMapOf<Pair<Int, RetroPadButton>, () -> Unit>()
     private val remoteHoldOpened = mutableSetOf<Pair<Int, RetroPadButton>>()
@@ -174,7 +173,6 @@ class RetroPadInput(
         remoteHoldOpened.removeAll { it.first == port }
         remoteRawButtons[port] = 0
         remotePulseButtons[port] = 0
-        remoteMenuCombo[port] = false
         val wasRewinding = remoteRewindHeld[port]
         remoteRewindHeld[port] = false
         remoteButtons[port] = 0
@@ -278,18 +276,17 @@ class RetroPadInput(
         var nextButtons = if (profile != null) companionMappedButtons(sourceButtons, profile)
             else sourceButtons
         if (profile != null) RetroPadButton.entries.forEach { source ->
-            if (profile.holdOpensMenu(companionControllerKey(source)) && sourceButtons and source.mask != 0)
-                profile.button(companionControllerKey(source))?.let { nextButtons = nextButtons and it.mask.inv() }
+            val code = companionControllerKey(source)
+            if (sourceButtons and source.mask != 0 &&
+                (profile.opensMenu(code) || profile.holdOpensMenu(code) ||
+                    profile.rewinds(code) || profile.fastForwards(code)))
+                profile.button(code)?.let { nextButtons = nextButtons and it.mask.inv() }
         }
-        if (profile != null && config().startSelectMenu) {
-            val combo = RetroPadButton.START.mask or RetroPadButton.SELECT.mask
-            val together = nextButtons and combo == combo
-            if (together && !remoteMenuCombo[port]) {
-                remoteMenuCombo[port] = true
-                openMenu()
-                return
-            }
-            if (!together) remoteMenuCombo[port] = false
+        // A full chord must come from this one paired controller, not a heartbeat,
+        // a previously suppressed key or buttons held on another player's device.
+        if (profile != null && sourceButtons != previousRaw && config().menuCombo.matches(nextButtons)) {
+            openMenu()
+            return
         }
         var nextLeft = 0
         var nextRight = 0
@@ -425,14 +422,23 @@ class RetroPadInput(
         }
         val button = profile.button(code) ?: return
         state.keys[code] = button
-        update(state)
-        val held = state.buttons()
-        val combo = RetroPadButton.START.mask or RetroPadButton.SELECT.mask
-        if (state.info.kind == RetroInputKind.GAMEPAD && config().startSelectMenu && held and combo == combo) {
-            // Both releases belong to the menu shortcut, not to the game.
-            state.menuKeys += state.keys.filterValues { it == RetroPadButton.START || it == RetroPadButton.SELECT }.keys
-            openMenu()
+        if (state.info.kind == RetroInputKind.GAMEPAD) {
+            val combo = config().menuCombo
+            // Only real simultaneous key holds on this device count. Never combine
+            // players, stick axes or synthetic short-press pulses into a menu chord.
+            if (button.mask and combo.mask != 0) {
+                var held = 0
+                for (pressed in state.keys.values) held = held or pressed.mask
+                if (combo.matches(held)) {
+                    // Consume the completing key before publishing a full chord to
+                    // the core. Do not delay ordinary single-button gameplay.
+                    state.menuKeys += state.keys.filterValues { it.mask and combo.mask != 0 }.keys
+                    openMenu()
+                    return
+                }
+            }
         }
+        update(state)
     }
 
     private fun keyUp(state: DeviceState, profile: RetroInputProfile, code: Int, canceled: Boolean) {
@@ -501,8 +507,10 @@ class RetroPadInput(
 
     private fun rewinding(): Int = devices.values.sumOf { it.rewindKeys.size }
 
-    /** Devices playing as player [port] right now (for vibration). */
-    fun deviceIds(port: Int): List<Int> = devices.filter { (_, state) -> port(state.info) == port }.keys.toList()
+    /** Physical gamepads assigned to [port], even after pause releases their held input. */
+    fun rumbleDeviceIds(port: Int): List<Int> = observedDevices.values
+        .filter { it.kind == RetroInputKind.GAMEPAD && port(it) == port }
+        .map { it.id }
 
     /** Lets go of everything (game paused, menu opened, focus lost). */
     fun releaseAll() {

@@ -15,7 +15,7 @@ internal fun TvheadendUiState.tabHasContent(): Boolean {
 }
 
 internal fun TvheadendUiState.awaitingInitialContent(): Boolean =
-    !tabHasContent() && (loading || refreshing || !initialDashboardSettled)
+    !tabHasContent() && (loading || refreshing || !initialDashboardSettled || (tab == TvheadendTab.HBBTV && hbbtvPending))
 
 internal fun TvheadendUiState.emptyContentHasError(): Boolean =
     !tabHasContent() && error != null && !loading && !refreshing

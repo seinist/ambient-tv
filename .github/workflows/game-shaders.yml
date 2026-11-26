@@ -1,5 +1,12 @@
 name: Publish optional game shaders
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'shader_packs/**'
+      - 'scripts/build_game_shader_pack.py'
+      - 'cores/signing-public.pem'
+      - '.github/workflows/game-shaders.yml'
   workflow_dispatch:
     inputs:
       tag:
@@ -10,6 +17,10 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  group: game-shader-publish-${{ inputs.tag || github.sha }}
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -27,11 +38,21 @@ jobs:
       - name: Sign bounded pack and publish
         env:
           SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ inputs.tag || format('shader-packs-{0}', github.sha) }}
+          EVENT_NAME: ${{ github.event_name }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^shader-packs-[a-zA-Z0-9._-]+$ ]] || exit 1
+          [[ "$RELEASE_TAG" =~ ^shader-packs-[a-zA-Z0-9._-]{1,70}$ ]] || exit 1
+          # Automatic runs are idempotent; never replace an immutable published asset.
+          if [[ "$EVENT_NAME" == push ]] && existing="$(gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,assets)"; then
+            if jq -e '(.isDraft == false) and (.isPrerelease == false) and ([.assets[] | select(.name == "shader-pack.zip" and .size > 0)] | length == 1)' <<< "$existing" >/dev/null; then
+              echo "Shader pack already published for this commit."
+              exit 0
+            fi
+            echo "::error::Existing shader release is incomplete; refusing to overwrite"
+            exit 1
+          fi
           test -n "$SIGNING_KEY" || { echo "::error::CORES_SIGNING_KEY unavailable"; exit 1; }
           umask 077
           key="$RUNNER_TEMP/shader-signing.pem"
@@ -47,6 +68,6 @@ jobs:
           openssl dgst -sha256 -verify cores/signing-public.pem \
             -signature "$RUNNER_TEMP/shader-manifest.sig" "$RUNNER_TEMP/shader-manifest.json"
           # New tags only. Keep Android app builds as the normal latest release.
-          gh release create "$RELEASE_TAG" dist/shader-pack.zip --latest=false \
+          gh release create "$RELEASE_TAG" dist/shader-pack.zip --target "$GITHUB_SHA" --latest=false \
             --title "Optional game shaders $RELEASE_TAG" \
             --notes "Signed optional GLSL ES 100 presets. No native code. CC0."

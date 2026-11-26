@@ -210,7 +210,11 @@ PRIVATE_KEYS=1 ./build.sh release
 ./build.sh x86
 ./build.sh x86_64
 
-# Check / update pinned engines
+# Check / update Gradle Maven dependencies (stable releases)
+./build.sh check-deps
+./build.sh update-deps
+./build.sh update-deps media3  # optional single pin
+# Check / update pinned external engines
 ./build.sh libs-check
 ./build.sh libs-update
 ```

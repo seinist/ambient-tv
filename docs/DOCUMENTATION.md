@@ -1060,6 +1060,9 @@ Under **App & data › Diagnostics** (error log for release builds):
 ./build.sh x86_64         # x86_64 (emulator)
 ./build.sh all            # all Android artifacts
 ./build.sh mpv            # native MPV libraries only
+./build.sh check-deps     # check Maven catalog pins (stable releases)
+./build.sh update-deps    # update Maven catalog pins only
+./build.sh update-deps media3 # optional single pin
 ./build.sh libs-check     # check updates for pinned engines
 ./build.sh libs-update    # update pins (no build)
 ./build.sh gen-keystore   # create keystore/release.jks

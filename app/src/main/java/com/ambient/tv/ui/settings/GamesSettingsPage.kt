@@ -40,7 +40,7 @@ import com.ambient.tv.ui.theme.LocalUiTokens
 
 /** Settings/Games is a small destination hub, not one long list of every installed core. */
 internal enum class GamesSettingsPage {
-    HOME, METADATA, SYSTEMS, SYSTEM, CORE, ALL_CORES, CONTROLS, PLAY, ACHIEVEMENTS,
+    HOME, LIBRARY, METADATA, SYSTEMS, SYSTEM, CORE, ALL_CORES, CONTROLS, PLAY, ACHIEVEMENTS,
     STORAGE, SHADERS, SYSTEM_FILES, CACHE,
 }
 
@@ -49,6 +49,7 @@ internal fun gamesSettingsPageForSearch(query: String): GamesSettingsPage? {
     val q = query.lowercase()
     return when {
         q == "home" -> GamesSettingsPage.HOME
+        q == "library" || listOf("spielebibliothek", "spieleordner", "game library", "game folder", "rom folder").any { it in q } -> GamesSettingsPage.LIBRARY
         q == "systems" -> GamesSettingsPage.SYSTEMS
         q == "metadata" -> GamesSettingsPage.METADATA
         q == "controls" -> GamesSettingsPage.CONTROLS
@@ -78,7 +79,6 @@ internal fun gamesSettingsParent(page: GamesSettingsPage, fromSystem: Boolean = 
 
 @Composable
 internal fun GamesSettingsScreen(
-    onOpenLibrary: () -> Unit,
     onOpenFiles: () -> Unit,
     onOpenControls: () -> Unit,
     focusContent: () -> Unit,
@@ -90,6 +90,7 @@ internal fun GamesSettingsScreen(
     val landingQuery = LocalSettingsSearchLanding.current
     val savedPages = rememberSaveableStateHolder()
     var page by rememberSaveable { mutableStateOf(GamesSettingsPage.HOME) }
+    var libraryParent by rememberSaveable { mutableStateOf(GamesSettingsPage.HOME) }
     var selectedSystemId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedCoreId by rememberSaveable { mutableStateOf<String?>(null) }
     var showOtherSystems by rememberSaveable { mutableStateOf(false) }
@@ -109,18 +110,23 @@ internal fun GamesSettingsScreen(
     }
 
     fun back() {
-        page = gamesSettingsParent(page, selectedSystemId != null)
+        page = if (page == GamesSettingsPage.LIBRARY) libraryParent
+            else gamesSettingsParent(page, selectedSystemId != null)
         if (page == GamesSettingsPage.SYSTEMS) selectedSystemId = null
         if (page != GamesSettingsPage.CORE) selectedCoreId = null
     }
     fun openRoot(target: GamesSettingsPage) {
         selectedSystemId = null
         selectedCoreId = null
+        if (target == GamesSettingsPage.LIBRARY) libraryParent = page
         page = target
     }
     // The normal Settings header, remote Back and phone system Back all use the same parent
     // navigation. Do not introduce a second BackHandler that could close the wrong page.
-    SideEffect { parentBack?.onBack = if (page == GamesSettingsPage.HOME) null else { { back() } } }
+    // The embedded folder manager owns the nested Back callback while it is visible.
+    SideEffect { if (page != GamesSettingsPage.LIBRARY) {
+        parentBack?.onBack = if (page == GamesSettingsPage.HOME) null else { { back() } }
+    } }
     DisposableEffect(parentBack) { onDispose { parentBack?.onBack = null } }
 
     val assignedIds = remember(page, indexedSystemIds) {
@@ -135,6 +141,20 @@ internal fun GamesSettingsScreen(
     val selectedCore = selectedCoreId?.let { id -> GameSystems.cores.firstOrNull { it.id == id } }
 
     savedPages.SaveableStateProvider(page.name + ":" + selectedSystemId.orEmpty() + ":" + selectedCoreId.orEmpty()) {
+        if (page == GamesSettingsPage.LIBRARY) {
+            com.ambient.tv.ui.games.GameLibraryScreen(
+                initialSection = "all",
+                onSelect = {}, onOpenDetails = {},
+                onOpenGameSettings = { target ->
+                    openRoot(gamesSettingsPageForSearch(target.orEmpty()) ?: GamesSettingsPage.HOME)
+                },
+                onBack = ::back,
+                embeddedManager = true,
+                modifier = modifier,
+                focusSettingsContent = focusContent,
+            )
+            return@SaveableStateProvider
+        }
         val listState = rememberLazyListState()
         LaunchedEffect(page, selectedSystemId, selectedCoreId) {
             // Preserve the previously visited list's saved scroll state. The focused item may have
@@ -164,19 +184,21 @@ internal fun GamesSettingsScreen(
                     GamesSettingsPage.SHADERS -> stringResource(R.string.games_shader_packs_title)
                     GamesSettingsPage.SYSTEM_FILES -> stringResource(R.string.games_system_files)
                     GamesSettingsPage.CACHE -> stringResource(R.string.games_cache)
+                    GamesSettingsPage.LIBRARY -> stringResource(R.string.games_settings_library_heading)
                     GamesSettingsPage.HOME -> ""
                 }
                 SettingsSubheader(title, firstInContent = true)
             }
 
             when (page) {
+                GamesSettingsPage.LIBRARY -> Unit // rendered above, without nesting two lazy lists
                 GamesSettingsPage.HOME -> {
                     item(key = "games-library") {
                         SettingsNavigationRow(
                             title = stringResource(R.string.games_settings_library_heading),
                             summary = stringResource(R.string.games_settings_library_summary),
                             icon = Icons.Filled.Folder,
-                            onClick = onOpenLibrary,
+                            onClick = { openRoot(GamesSettingsPage.LIBRARY) },
                         )
                     }
                     item(key = "games-metadata") {
@@ -240,7 +262,7 @@ internal fun GamesSettingsScreen(
                         SettingsNavigationRow(
                             title = stringResource(R.string.games_settings_detect_title),
                             summary = stringResource(R.string.games_settings_detect_hint),
-                            onClick = onOpenLibrary,
+                            onClick = { openRoot(GamesSettingsPage.LIBRARY) },
                         )
                     }
                 }

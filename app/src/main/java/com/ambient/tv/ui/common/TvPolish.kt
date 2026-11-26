@@ -447,6 +447,16 @@ private class ArtworkRequestContinuity {
 
 /** Recent memory-cache keys per artwork model, one index per loader; see [ArtworkMemoryKeyIndex]. */
 private val CardArtworkKeys = ArtworkMemoryKeyIndex()
+
+/** An OSD card is small enough to reuse the guide's already-decoded TMDb landscape. */
+internal fun preferCachedTmdbCardVariant(context: android.content.Context, url: String?): String? {
+    val prefix = "https://image.tmdb.org/t/p/w780/"
+    if (url == null || !url.startsWith(prefix)) return url
+    val thumb = "https://image.tmdb.org/t/p/w300/" + url.removePrefix(prefix)
+    val cache = coil3.SingletonImageLoader.get(context).memoryCache ?: return url
+    fun present(model: String) = CardArtworkKeys.cachedKey(model) { cache[it] != null } != null
+    return if (!present(url) && present(thumb)) thumb else url
+}
 private val BackdropArtworkKeys = ArtworkMemoryKeyIndex(maxModels = 64)
 
 /** Only the edited URLs restart their requests; ordinary frames/progress never emit here. */
@@ -497,8 +507,8 @@ fun ArtworkImage(
      * weighs as much as dozens of cards and must not push them out of the card cache.
      */
     backdrop: Boolean = focusCrop,
-    /** Coil fades the real bitmap in only after load; opt in for changing Live TV backdrops. */
-    crossfadeOnLoad: Boolean = false,
+    /** Fade new loaded artwork in; Coil and our memory index keep cached tiles instantaneous. */
+    crossfadeOnLoad: Boolean = true,
     /** Locked detail previews may display cached bytes, but must not fetch remote artwork. */
     cacheOnly: Boolean = false,
     /** A caller can defer offscreen requests; memory hits and already-admitted work remain usable. */
@@ -598,8 +608,14 @@ fun ArtworkImage(
         mutableStateOf<com.ambient.tv.network.ArtworkNetworkState?>(null)
     }
     val requestNetwork = successfulNetwork ?: network
-    val request = remember(currentModel, context, headers, constrainDecode, cardSize, crossfadeOnLoad, refreshRevision, address?.imageKey, headerKey, requestNetwork, cacheOnly) {
-        ImageRequest.Builder(context).data(currentModel).crossfade(crossfadeOnLoad)
+    val fadeMillis = artworkLoadFadeMillis(
+        requested = crossfadeOnLoad,
+        reducedEffects = LocalPerformanceProfile.current.reducedEffects,
+        cachedInMemory = shownFromMemory,
+    )
+    val request = remember(currentModel, context, headers, constrainDecode, cardSize, fadeMillis, refreshRevision, address?.imageKey, headerKey, requestNetwork, cacheOnly) {
+        ImageRequest.Builder(context).data(currentModel)
+            .apply { if (fadeMillis > 0) crossfade(fadeMillis) else crossfade(false) }
             .placeholderMemoryCacheKey(cachedKey)
             .apply {
                 // Only reuse a full cache key inside the same composable/card. That guarantees
@@ -622,6 +638,15 @@ fun ArtworkImage(
             .build()
     }
     var loading by remember(currentModel) { mutableStateOf(hasModel && !shownFromMemory) }
+    // Keep the existing pulse *behind* the newly decoded image while Coil fades it in.
+    // Otherwise dismissing the pulse on success exposes a dark frame at fade alpha = 0.
+    var fadeBackground by remember(currentModel, refreshRevision, address?.imageKey, headerKey) { mutableStateOf(false) }
+    if (fadeBackground) {
+        LaunchedEffect(currentModel, fadeMillis) {
+            delay(fadeMillis.toLong())
+            fadeBackground = false
+        }
+    }
     var failed by remember(candidates) { mutableStateOf(false) }
     var visibleFraction by remember(currentModel, headers, refreshRevision, address?.imageKey) { mutableStateOf<Float?>(null) }
     var focusRevision by remember(currentModel, headers, refreshRevision, address?.imageKey) { mutableStateOf<String?>(null) }
@@ -630,6 +655,7 @@ fun ArtworkImage(
     val hdrFilter = com.ambient.tv.ui.display.rememberUiHdrBitmapColorFilter()
     Box(modifier = if (focusCrop) modifier.onSizeChanged { containerSize = it } else modifier) {
         if (hasModel) {
+            if (loadAdmitted && placeholder && (loading || fadeBackground)) PulsingArtworkPlaceholder()
             if (loadAdmitted) AsyncImage(
                 model = request,
                 contentDescription = title,
@@ -638,14 +664,16 @@ fun ArtworkImage(
                 alignment = focus?.alignment ?: alignment,
                 colorFilter = hdrFilter,
                 modifier = Modifier.fillMaxSize().then(cardSize?.modifier() ?: Modifier),
-                onLoading = { loading = !shownFromMemory; failed = false },
+                onLoading = { loading = !shownFromMemory; fadeBackground = false; failed = false },
                 onSuccess = {
+                    val source = it.result.dataSource
+                    fadeBackground = placeholder && fadeMillis > 0 &&
+                        source != coil3.decode.DataSource.MEMORY_CACHE && source != coil3.decode.DataSource.MEMORY
                     loading = false
                     failed = false
                     successfulNetwork = requestNetwork
                     val key = it.result.memoryCacheKey
                     // Diagnostics: why a picture that was loaded before had to load again.
-                    val source = it.result.dataSource
                     // Without the query: signed thumbnail URLs differ only there between two fetches.
                     val pictureIdentity = (currentModel as? String)?.substringBefore('?') ?: requestIdentity
                     if (!backdrop && source != coil3.decode.DataSource.MEMORY_CACHE &&
@@ -678,6 +706,7 @@ fun ArtworkImage(
                 },
                 onError = {
                     loading = false
+                    fadeBackground = false
                     successfulNetwork = null
                     if (candidateIndex < candidates.lastIndex) {
                         candidateIndex += 1
@@ -686,7 +715,6 @@ fun ArtworkImage(
                     }
                 },
             )
-            if (loading && placeholder) PulsingArtworkPlaceholder()
         }
         if (placeholder && (!hasModel || failed)) {
             when {

@@ -201,7 +201,7 @@ diff --git a/src/main/cpp/renderers/es3/imagerendereres3.cpp b/src/main/cpp/rend
  void ImageRendererES3::onNewFrame(const void *data, unsigned width, unsigned height, size_t pitch) {
      if (pixelFormat == RETRO_PIXEL_FORMAT_0RGB1555) {
 +        const auto maximum = std::numeric_limits<size_t>::max();
-+        if (!data || width == 0 || height == 0 || width > maximum / sizeof(uint16_t)) return;
++        if (!data || width == 0 || height == 0 || size_t(width) > maximum / sizeof(uint16_t)) return;
 +        const size_t rowBytes = size_t(width) * sizeof(uint16_t);
 +        if (pitch < rowBytes || height > maximum / rowBytes ||
 +            size_t(height - 1) > (maximum - rowBytes) / pitch) return;
