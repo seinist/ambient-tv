@@ -38,4 +38,40 @@ class Media3FrameTimelineTest {
         history.pending(-1L)
         assertNull(history.neighbor(300_000, true))
     }
+
+    @Test fun subMillisecondNeighborsDoNotCauseRepeatedIdenticalSeeks() {
+        val history = Media3FrameTimeline()
+        history.presented(20_100)
+        history.presented(20_800)
+        history.presented(40_200)
+        history.pending(40_900)
+        assertEquals(40_200L, history.neighbor(20_100, true))
+        assertEquals(20_800L, history.neighbor(40_200, false))
+        assertNull(history.neighbor(40_200, true))
+    }
+
+    @Test fun frameStepNeverTargetsLogicalVodEnd() {
+        assertEquals(Media3FrameStepPlan(999L, 999_000L),
+            media3FrameStepPlan(980_000L, null, 1000L, true, 25f, false))
+        assertEquals(1000L, media3FrameStepPlan(980_000L, null, 1000L, true, 25f, true).targetMs)
+        assertEquals(0L, media3FrameStepPlan(10_000L, null, 1000L, false, 25f, false).targetMs)
+    }
+
+    @Test fun nominalFractionalCadenceDoesNotAccumulateMillisecondRounding() {
+        var cursor = 0L
+        repeat(24) {
+            cursor = media3FrameStepPlan(cursor, null, 0L, true, 24f, false).cursorUs
+        }
+        assertEquals(999_984L, cursor)
+        repeat(24) {
+            cursor = media3FrameStepPlan(cursor, null, 0L, false, 24f, false).cursorUs
+        }
+        assertEquals(0L, cursor)
+    }
+
+    @Test fun realPtsOverridesNominalCadenceButNeverReversesDirection() {
+        assertEquals(Media3FrameStepPlan(95L, 95_600L),
+            media3FrameStepPlan(20_000L, 95_600L, 1000L, true, 25f, false))
+        assertEquals(60L, media3FrameStepPlan(20_000L, 10_000L, 1000L, true, 25f, false).targetMs)
+    }
 }
