@@ -49,11 +49,20 @@ class AudioSpectrumAnalyzer : TeeAudioProcessor.AudioBufferSink {
     private var pcmTapSize = 0
     private val spectrumConsumers = java.util.concurrent.atomic.AtomicInteger(0)
 
-    fun addPcmSink(sink: AudioPcmSink) { pcmSinks += sink }
+    fun addPcmSink(sink: AudioPcmSink) {
+        synchronized(lock) {
+            if (pcmSinks.isEmpty()) pcmTapSize = 0
+            pcmSinks += sink
+        }
+    }
     fun removePcmSink(sink: AudioPcmSink) { pcmSinks -= sink }
 
     /** Spectrum UI acquires while visible so FFT/tap work is skipped when hidden. */
-    fun addSpectrumConsumer() { spectrumConsumers.incrementAndGet() }
+    fun addSpectrumConsumer() {
+        synchronized(lock) {
+            if (spectrumConsumers.getAndIncrement() == 0) accumulatorSize = 0
+        }
+    }
     fun removeSpectrumConsumer() { spectrumConsumers.updateAndGet { (it - 1).coerceAtLeast(0) } }
 
     private fun hasActiveConsumers(): Boolean =
@@ -73,19 +82,21 @@ class AudioSpectrumAnalyzer : TeeAudioProcessor.AudioBufferSink {
     }
 
     private fun pushMonoSample(mono: Float) {
-        accumulator[accumulatorSize++] = mono
-        pcmTap[pcmTapSize++] = mono
-        if (pcmTapSize == pcmTap.size) {
-            if (pcmSinks.isNotEmpty()) {
+        // A PCM-only consumer (e.g. visualization input) does not need our spectrum FFT.
+        if (pcmSinks.isNotEmpty()) {
+            pcmTap[pcmTapSize++] = mono
+            if (pcmTapSize == pcmTap.size) {
                 val frame = pcmTap.copyOf()
                 pcmSinks.forEach { sink -> runCatching { sink.onPcm(frame) } }
+                pcmTapSize = 0
             }
-            pcmTapSize = 0
         }
-        if (accumulatorSize == FFT_SIZE) {
-            val frame = accumulator.copyOf()
-            accumulatorSize = 0
-            submit(frame, sampleRate)
+        if (spectrumConsumers.get() > 0) {
+            accumulator[accumulatorSize++] = mono
+            if (accumulatorSize == FFT_SIZE) {
+                accumulatorSize = 0
+                submit(accumulator, sampleRate)
+            }
         }
     }
 
@@ -95,6 +106,7 @@ class AudioSpectrumAnalyzer : TeeAudioProcessor.AudioBufferSink {
             this.channelCount = channelCount.coerceAtLeast(1)
             this.encoding = encoding
             accumulatorSize = 0
+            pcmTapSize = 0
         }
     }
 
@@ -138,9 +150,11 @@ class AudioSpectrumAnalyzer : TeeAudioProcessor.AudioBufferSink {
 
     private fun submit(frame: FloatArray, rate: Int) {
         if (!pending.compareAndSet(false, true)) return
+        // Copy only work accepted by the executor, not every discarded FFT window.
+        val snapshot = frame.copyOf()
         executor.execute {
             try {
-                latest.set(analyse(frame, rate))
+                latest.set(analyse(snapshot, rate))
             } finally {
                 pending.set(false)
             }
