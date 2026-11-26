@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -63,57 +64,8 @@ private const val CAPTURE_INTERVAL_MS = 500L
 /** Below 97 % of the player width the side bars are wide enough to be worth filling. */
 private const val PILLARBOX_THRESHOLD = 0.97f
 private const val CAPTURE_WIDTH = 32
-/** Time constant of the glide: a scene cut has settled after about three of these. */
-internal const val AMBIENT_GLIDE_TAU_MS = 700f
 /** About 30 colour updates per second are plenty for a 32 px, heavily blurred picture. */
 private const val GLIDE_FRAME_MS = 33L
-
-/**
- * The shown ambient colours, per pixel and channel, easing exponentially towards the latest
- * capture. Unlike a cross-fade there is no pause between snapshots and no mid-fade dip where two
- * half-transparent layers let the black show through; a cut glides over in about two seconds.
- */
-internal class AmbientGlide {
-    var width = 0
-        private set
-    var height = 0
-        private set
-    private var current = FloatArray(0)
-    private var target = FloatArray(0)
-
-    /** New capture as ARGB pixels; a size change (rotation, new video) starts again from black. */
-    fun setTarget(pixels: IntArray, width: Int, height: Int) {
-        if (width != this.width || height != this.height || current.size != pixels.size * 3) {
-            this.width = width
-            this.height = height
-            current = FloatArray(pixels.size * 3)
-        }
-        target = FloatArray(pixels.size * 3) { i ->
-            val p = pixels[i / 3]
-            when (i % 3) { 0 -> (p shr 16 and 0xFF).toFloat(); 1 -> (p shr 8 and 0xFF).toFloat(); else -> (p and 0xFF).toFloat() }
-        }
-    }
-
-    /** Moves [elapsedMs] closer to the target; false once nothing visibly changes any more. */
-    fun step(elapsedMs: Float): Boolean {
-        if (target.size != current.size || current.isEmpty()) return false
-        val k = 1f - kotlin.math.exp(-elapsedMs.coerceAtLeast(0f) / AMBIENT_GLIDE_TAU_MS)
-        var moving = false
-        for (i in current.indices) {
-            val delta = target[i] - current[i]
-            if (kotlin.math.abs(delta) > 0.5f) moving = true
-            current[i] += delta * k
-        }
-        return moving
-    }
-
-    fun pixels(): IntArray = IntArray(current.size / 3) { i ->
-        val r = current[i * 3].roundToInt().coerceIn(0, 255)
-        val g = current[i * 3 + 1].roundToInt().coerceIn(0, 255)
-        val b = current[i * 3 + 2].roundToInt().coerceIn(0, 255)
-        (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-    }
-}
 
 @Composable
 internal fun AmbientVideoBackdropLayer(modifier: Modifier = Modifier) {
@@ -154,7 +106,12 @@ internal fun AmbientSurfaceBackdropLayer(
         surface ?: return@LaunchedEffect
         val handler = Handler(Looper.getMainLooper())
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            // Conflation is only a wake-up, not a frame queue: capture and draw
+            // share the UI dispatcher and the glide always reads the latest target.
+            val changed = Channel<Unit>(Channel.CONFLATED)
+            changed.trySend(Unit) // Resume a partially settled glide after lifecycle restart.
             launch {
+                var capturePixels = IntArray(0)
                 while (true) {
                     // Widescreen in landscape keeps its black top/bottom bars.
                     if (followVideoPillarbox) AmbientVideoBackdrop.pillarbox =
@@ -163,29 +120,39 @@ internal fun AmbientSurfaceBackdropLayer(
                     // Nothing to fill (widescreen in landscape): no frame copies.
                     val captureActive = if (followVideoPillarbox) AmbientVideoBackdrop.active else currentActive
                     if (currentEnabled && captureActive && currentSampling) captureFrame(surface, handler)?.let { captured ->
-                        val pixels = IntArray(captured.width * captured.height)
-                        captured.getPixels(pixels, 0, captured.width, 0, 0, captured.width, captured.height)
-                        glide.setTarget(pixels, captured.width, captured.height)
-                        captured.recycle()
+                        try {
+                            val count = captured.width * captured.height
+                            if (capturePixels.size != count) capturePixels = IntArray(count)
+                            captured.getPixels(capturePixels, 0, captured.width, 0, 0, captured.width, captured.height)
+                            if (glide.setTarget(capturePixels, captured.width, captured.height)) changed.trySend(Unit)
+                        } finally {
+                            captured.recycle()
+                        }
                     }
                     delay(if (reducedEffects) CAPTURE_INTERVAL_MS * 3 else CAPTURE_INTERVAL_MS)
                 }
             }
-            var last = android.os.SystemClock.uptimeMillis()
             while (true) {
-                delay(if (reducedEffects) CAPTURE_INTERVAL_MS * 3 else GLIDE_FRAME_MS)
-                val now = android.os.SystemClock.uptimeMillis()
-                if (glide.step(if (reducedEffects) Float.MAX_VALUE else (now - last).toFloat()) || shown == null) {
+                // No 30 Hz wake-ups when the colour target is settled (including paused games).
+                changed.receive()
+                var last = android.os.SystemClock.uptimeMillis()
+                var moving: Boolean
+                do {
+                    delay(if (reducedEffects) CAPTURE_INTERVAL_MS * 3 else GLIDE_FRAME_MS)
+                    val now = android.os.SystemClock.uptimeMillis()
+                    moving = glide.step(if (reducedEffects) Float.MAX_VALUE else (now - last).toFloat())
                     val width = glide.width
                     val height = glide.height
-                    if (width > 0 && height > 0) {
+                    if (width > 0 && height > 0 &&
+                        (moving || shown?.width != width || shown?.height != height)) {
                         val bitmap = shown?.takeIf { it.width == width && it.height == height }
                             ?: Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { shown = it }
+                        // setPixels consumes the scratch synchronously; PixelCopy never owns it.
                         bitmap.setPixels(glide.pixels(), 0, width, 0, 0, width, height)
                         version++
                     }
-                }
-                last = now
+                    last = now
+                } while (moving)
             }
         }
     }
