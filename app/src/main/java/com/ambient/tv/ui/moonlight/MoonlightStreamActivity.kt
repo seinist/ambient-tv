@@ -54,6 +54,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.layout.ContentScale
+import com.ambient.tv.ui.mobile.deviceDp
+import com.ambient.tv.ui.mobile.DeviceActionRow
+import com.ambient.tv.ui.common.MediaSystem
+import com.ambient.tv.ui.common.systemName
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.tv.material3.MaterialTheme
 import androidx.compose.material.icons.Icons
@@ -91,6 +97,7 @@ class MoonlightStreamActivity : ComponentActivity() {
     @Inject lateinit var preferences: AppPreferences
     @Inject lateinit var companion: MoonlightCompanionLink
     @Inject lateinit var moonlightTransport: MoonlightSystemTransport
+    @Inject lateinit var libraryStore: com.ambient.tv.moonlight.MoonlightLibraryStore
 
     private val streamOwner = Any()
     private var inputProfile: com.ambient.tv.ui.gamepad.retro.RetroInputProfileContext? = null
@@ -179,6 +186,8 @@ class MoonlightStreamActivity : ComponentActivity() {
                 pointer = pointer,
                 hostId = hostId,
                 appId = appId,
+                libraryStore = libraryStore,
+                hostLabel = preferences.moonlightHosts.firstOrNull { it.id == hostId }?.let { it.name.ifBlank { it.host } }.orEmpty(),
                 streamProfile = qualityProfile,
                 sessionProfile = sessionProfile,
                 displayReady = displayReady,
@@ -373,6 +382,8 @@ private fun MoonlightStreamContent(
     pointer: MoonlightPointerRouter,
     hostId: String,
     appId: Int,
+    libraryStore: com.ambient.tv.moonlight.MoonlightLibraryStore,
+    hostLabel: String,
     streamProfile: MoonlightStreamProfile,
     sessionProfile: MoonlightStreamProfile,
     displayReady: Boolean,
@@ -391,6 +402,11 @@ private fun MoonlightStreamContent(
     onStarted: () -> Unit,
     onManualRetry: () -> Unit,
 ) {
+    val artworkRevision by libraryStore.artworkChanges.collectAsState()
+    val trustRevision by libraryStore.trustRevisions.collectAsState()
+    val artwork by produceState<com.ambient.tv.moonlight.MoonlightArtwork?>(null, hostId, appId, trustRevision, artworkRevision["$hostId:$appId"] ?: 0L) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { libraryStore.artworkInfo(hostId, appId) }
+    }
     val globalStatus by engine.status.collectAsState()
     val status = if (globalStatus.owner === owner) globalStatus else com.ambient.tv.moonlight.MoonlightStreamStatus()
     // Surface identity is separate from the mutable next-connection profile. No decoder or
@@ -516,16 +532,18 @@ private fun MoonlightStreamContent(
         }
         if (!displayReady || controlsShown || status.phase != MoonlightStreamPhase.STREAMING || startFailed) {
             ReferencePlayerOverlayBackground()
-            ReferencePlayerClock(Modifier.align(Alignment.TopEnd).padding(top = 32.dp, end = 48.dp))
+            ReferencePlayerClock(Modifier.align(Alignment.TopEnd).padding(top = deviceDp(32.dp, 12.dp), end = deviceDp(48.dp, 16.dp)))
             Column(
                 Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                    .padding(start = 58.dp, end = 58.dp, bottom = 32.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                    .padding(start = deviceDp(58.dp, 16.dp), end = deviceDp(58.dp, 16.dp), bottom = deviceDp(32.dp, 12.dp)),
+                verticalArrangement = Arrangement.spacedBy(deviceDp(12.dp, 6.dp)),
             ) {
                 ReferencePlayerHeader(
                     title = status.title.ifBlank { stringResource(R.string.moonlight_title) },
-                    artworkUrl = null,
-                    contextLine = "Moonlight · GameStream",
+                    artworkUrl = artwork?.file?.let { android.net.Uri.fromFile(it).toString() },
+                    artworkAspectRatio = artwork?.aspectRatio ?: 2f / 3f,
+                    artworkContentScale = ContentScale.Fit,
+                    contextLine = listOf(systemName(MediaSystem.MOONLIGHT), hostLabel).filter { it.isNotBlank() }.joinToString(" · "),
                     subtitle = if (!displayReady) stringResource(R.string.moonlight_display_switching)
                     else if (startFailed) stringResource(R.string.moonlight_stream_failed)
                     else status.error ?: stringResource(when (status.phase) {
@@ -536,10 +554,9 @@ private fun MoonlightStreamContent(
                     }),
                 )
                 // As in the regular video/game OSD: primary action at left, options at right.
-                Row(
+                DeviceActionRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (startFailed || status.phase in setOf(MoonlightStreamPhase.FAILED, MoonlightStreamPhase.ENDED)) {
@@ -557,7 +574,7 @@ private fun MoonlightStreamContent(
                                 icon = Icons.Filled.PlayArrow)
                         }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (status.phase == MoonlightStreamPhase.STREAMING) {
                             TvActionButton(stringResource(R.string.moonlight_player_input_short),
                                 {

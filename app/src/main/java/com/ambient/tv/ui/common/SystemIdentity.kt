@@ -234,6 +234,10 @@ fun SystemWordmark(system: MediaSystem?, fallback: String, modifier: Modifier = 
                     color = system.brandColor ?: MaterialTheme.colorScheme.onSurface,
                 )
             }
+        system == MediaSystem.MOONLIGHT -> Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SystemLogo(system, size = height)
+            Text(fallback, style = MaterialTheme.typography.titleMedium)
+        }
         else -> Text(fallback, style = MaterialTheme.typography.titleMedium, modifier = modifier)
     }
 }

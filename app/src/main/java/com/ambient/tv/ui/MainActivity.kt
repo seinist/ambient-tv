@@ -3709,7 +3709,6 @@ private fun AmbientTvApp(
                                         ?.takeIf(String::isNotBlank) ?: "all",
                                     onBack = ::focusSidebar,
                                     onOpenSettings = { openSystemSettings("moonlight") },
-                                    onSectionSelected = { section -> navigateSidebar(Destinations.moonlightSection(section)) },
                                     onDetails = { hostId, appId ->
                                         beginMediaSelection()
                                         navController.navigate(Destinations.moonlightDetail(hostId, appId)) {

@@ -18,6 +18,7 @@ import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.moonlight.MoonlightStreamProfile
 import com.ambient.tv.ui.common.SettingsActionRow
+import com.ambient.tv.ui.common.PlayerDropUpSelector
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvTextField
 import com.ambient.tv.ui.settings.SettingsGroup
@@ -35,55 +36,44 @@ fun MoonlightStreamSettingsSection(
     SettingsSubheader(stringResource(R.string.moonlight_quality_title))
     SettingsGroup(card = true) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(stringResource(R.string.moonlight_quality_resolution),
-                style = MaterialTheme.typography.titleSmall)
-            SettingsActionRow {
-                listOf(1280 to 720, 1920 to 1080, 2560 to 1440, 3840 to 2160).forEach { (w, h) ->
-                    TvActionButton("$w×$h", { update(profile.copy(width = w, height = h)) },
-                        selected = profile.width == w && profile.height == h)
-                }
+            val resolution = "${profile.width}×${profile.height}"
+            val resolutions = (listOf("1280×720", "1920×1080", "2560×1440", "3840×2160") + resolution).distinct()
+            PlayerDropUpSelector(label = stringResource(R.string.moonlight_quality_resolution),
+                value = resolution, options = resolutions.map { it to it }, selectedKey = resolution,
+                dropUp = false, selectorKey = "moonlight-resolution", onSelected = { value ->
+                    val parts = value.split('×')
+                    update(profile.copy(width = parts[0].toInt(), height = parts[1].toInt()))
+                })
+            val fps = (listOf(30, 60, 90, 120) + profile.fps).distinct().sorted().map { it.toString() to "$it FPS" }
+            PlayerDropUpSelector(label = stringResource(R.string.moonlight_quality_fps),
+                value = "${profile.fps} FPS", options = fps, selectedKey = profile.fps.toString(),
+                dropUp = false, selectorKey = "moonlight-fps", onSelected = { update(profile.copy(fps = it.toInt())) })
+            val codecs = listOf("auto", "h264", "hevc", "av1").map {
+                it to if (it == "auto") stringResource(R.string.moonlight_quality_auto) else it.uppercase()
             }
-            Text(stringResource(R.string.moonlight_quality_fps),
-                style = MaterialTheme.typography.titleSmall)
-            SettingsActionRow {
-                listOf(30, 60, 90, 120).forEach { fps ->
-                    TvActionButton("$fps FPS", { update(profile.copy(fps = fps)) },
-                        selected = profile.fps == fps)
-                }
+            PlayerDropUpSelector(label = stringResource(R.string.moonlight_quality_codec),
+                value = codecs.firstOrNull { it.first == profile.codec }?.second ?: profile.codec,
+                options = codecs, selectedKey = profile.codec, dropUp = false,
+                selectorKey = "moonlight-codec", onSelected = { update(profile.copy(codec = it)) })
+            val hdr = listOf("auto", "on", "off").map {
+                it to stringResource(when (it) {
+                    "on" -> R.string.moonlight_quality_hdr_on
+                    "off" -> R.string.moonlight_quality_hdr_off
+                    else -> R.string.moonlight_quality_auto
+                })
             }
-            Text(stringResource(R.string.moonlight_quality_codec),
-                style = MaterialTheme.typography.titleSmall)
-            SettingsActionRow {
-                listOf("auto", "h264", "hevc", "av1").forEach { codec ->
-                    val label = if (codec == "auto") stringResource(R.string.moonlight_quality_auto) else codec.uppercase()
-                    TvActionButton(label, { update(profile.copy(codec = codec)) },
-                        selected = profile.codec == codec)
-                }
-            }
-            Text(stringResource(R.string.moonlight_quality_hdr),
-                style = MaterialTheme.typography.titleSmall)
-            SettingsActionRow {
-                listOf("auto", "on", "off").forEach { mode ->
-                    val label = stringResource(when (mode) {
-                        "on" -> R.string.moonlight_quality_hdr_on
-                        "off" -> R.string.moonlight_quality_hdr_off
-                        else -> R.string.moonlight_quality_auto
-                    })
-                    TvActionButton(label, { update(profile.copy(hdrMode = mode)) },
-                        selected = profile.hdrMode == mode)
-                }
-            }
+            PlayerDropUpSelector(label = stringResource(R.string.moonlight_quality_hdr),
+                value = hdr.firstOrNull { it.first == profile.hdrMode }?.second ?: profile.hdrMode,
+                options = hdr, selectedKey = profile.hdrMode, dropUp = false,
+                selectorKey = "moonlight-hdr", onSelected = { update(profile.copy(hdrMode = it)) })
             Text(stringResource(R.string.moonlight_quality_hdr_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(stringResource(R.string.moonlight_quality_audio),
-                style = MaterialTheme.typography.titleSmall)
-            SettingsActionRow {
-                listOf(2 to "Stereo", 6 to "5.1", 8 to "7.1").forEach { (channels, label) ->
-                    TvActionButton(label, { update(profile.copy(audioChannels = channels)) },
-                        selected = profile.audioChannels == channels)
-                }
-            }
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val audio = listOf("2" to "Stereo", "6" to "5.1", "8" to "7.1")
+            val audioKey = profile.audioChannels.toString()
+            PlayerDropUpSelector(label = stringResource(R.string.moonlight_quality_audio),
+                value = audio.firstOrNull { it.first == audioKey }?.second ?: audioKey,
+                options = audio, selectedKey = audioKey, dropUp = false,
+                selectorKey = "moonlight-audio", onSelected = { update(profile.copy(audioChannels = it.toInt())) })
             TvTextField(
                 bitrate,
                 { bitrate = it.filter(Char::isDigit).take(6) },
