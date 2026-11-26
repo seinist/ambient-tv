@@ -82,7 +82,9 @@ internal object PointerVisibility {
     }
 
     fun onNonPointerInput() {
-        idle.onNonPointerInput()
+        // Gameplay stick events can arrive hundreds of times per second. Once hidden,
+        // there is no UI snapshot or timer work to repeat until actual pointer activity.
+        if (!idle.onNonPointerInput()) return
         publish()
         scheduleExpiry()
     }

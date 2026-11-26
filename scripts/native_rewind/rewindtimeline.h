@@ -38,6 +38,7 @@ public:
         workInterval = 1;
         averageWorkNs = 0;
         averageCaptureNs = 0;
+        peakCaptureNs = 0;
     }
 
     /** Call only when at least one forward frame will actually run. */
@@ -82,11 +83,14 @@ public:
         if (captureNs > 0) {
             const uint64_t sample = std::min(cap, captureNs);
             averageCaptureNs = averageCaptureNs == 0 ? sample : (averageCaptureNs * 7 + sample) / 8;
+            // Keep a costly serialization sample until later real captures demonstrate recovery.
+            peakCaptureNs = std::max(sample, peakCaptureNs * 7 / 8);
         }
         if (!averageCaptureNs) return;
-        const uint64_t slack = frameBudgetNs > averageWorkNs ? frameBudgetNs - averageWorkNs : 0;
+        const uint64_t observedWork = std::max(averageWorkNs, baseline);
+        const uint64_t slack = frameBudgetNs > observedWork ? frameBudgetNs - observedWork : 0;
         const uint64_t allowed = std::max<uint64_t>(1, std::min(frameBudgetNs / 8, slack / 2));
-        const uint64_t cost = std::max(averageCaptureNs, std::min(cap, captureNs));
+        const uint64_t cost = std::max(averageCaptureNs, peakCaptureNs);
         const uint64_t desired = cost / allowed + (cost % allowed != 0 ? 1 : 0);
         workInterval = std::max<uint64_t>(1, std::min(maximumInterval, desired));
     }
@@ -128,6 +132,7 @@ private:
     uint64_t workInterval = 1;
     uint64_t averageWorkNs = 0;
     uint64_t averageCaptureNs = 0;
+    uint64_t peakCaptureNs = 0;
 };
 
 } // namespace libretrodroid

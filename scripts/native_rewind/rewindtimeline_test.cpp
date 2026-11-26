@@ -276,6 +276,11 @@ static void expensiveCapturesYieldToFrameBudget() {
     CHECK(timeline.captureInterval() == 1);
     timeline.observeFrameWork(13000000, 8000000, 16666666);
     CHECK(timeline.captureInterval() >= 4);
+    // Skipped captures provide no evidence that the expensive serialization recovered.
+    for (int i = 0; i < 128; ++i) timeline.observeFrameWork(3000000, 0, 16666666);
+    CHECK(timeline.captureInterval() >= 4);
+    timeline.observeFrameWork(3500000, 500000, 16666666);
+    CHECK(timeline.captureInterval() >= 4);
     for (int i = 0; i < 64; ++i) timeline.observeFrameWork(17000000, 0, 16666666);
     CHECK(timeline.captureInterval() == 15);
     for (int i = 0; i < 128; ++i) timeline.observeFrameWork(3000000, 500000, 16666666);

@@ -1,0 +1,66 @@
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+@@ -300,16 +300,10 @@
+     private var previewModeEnabled = false
+ 
+-    // UI status is sampled, never a per-frame work queue. The first notification
+-    // is retained for initialisation; a slow collector sees the newest event.
+-    private val retroGLEventsSubject = MutableSharedFlow<GLRetroEvents>(
+-        replay = 1, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+-    )
+-    private var lastFrameEventNs = 0L
+-
+-    private fun emitFrameRendered() {
+-        val now = System.nanoTime()
+-        if (lastFrameEventNs != 0L && now - lastFrameEventNs < 100_000_000L) return
+-        lastFrameEventNs = now
+-        retroGLEventsSubject.tryEmit(GLRetroEvents.FrameRendered)
+-    }
++    // Readiness is not a sampled frame statistic and must have its own replay slot.
++    private val renderEvents = GameRenderEvents<GLRetroEvents>(
++        GLRetroEvents.SurfaceCreated, GLRetroEvents.FrameRendered,
++    )
++    private val retroGLEventsSubject = renderEvents.events
++
++    private fun emitFrameRendered() = renderEvents.frameRendered(System.nanoTime())
+     private val retroGLIssuesErrors = MutableSharedFlow<Int>(1)
+@@ -822,4 +816,3 @@
+             lastSensorState = null
+-            lastFrameEventNs = 0L
+-            retroGLEventsSubject.tryEmit(GLRetroEvents.SurfaceCreated)
++            renderEvents.surfaceCreated()
+         }
+diff --git a/src/main/java/com/swordfish/libretrodroid/GameRenderEvents.kt b/src/main/java/com/swordfish/libretrodroid/GameRenderEvents.kt
+new file mode 100644
+--- /dev/null
++++ b/src/main/java/com/swordfish/libretrodroid/GameRenderEvents.kt
+@@ -0,0 +1,28 @@
++package com.swordfish.libretrodroid
++
++import kotlinx.coroutines.ExperimentalCoroutinesApi
++import kotlinx.coroutines.channels.BufferOverflow
++import kotlinx.coroutines.flow.MutableSharedFlow
++import kotlinx.coroutines.flow.merge
++import kotlinx.coroutines.flow.buffer
++
++/** GL-thread producer; independent sticky readiness and sampled status streams. */
++class GameRenderEvents<T>(private val surface: T, private val frame: T) {
++    private val surfaceEvents = MutableSharedFlow<T>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
++    private val frameEvents = MutableSharedFlow<T>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
++    @OptIn(ExperimentalCoroutinesApi::class)
++    val events = merge(surfaceEvents, frameEvents).buffer(0)
++    private var lastFrameNs: Long? = null
++
++    fun surfaceCreated() {
++        lastFrameNs = null
++        surfaceEvents.tryEmit(surface)
++    }
++
++    fun frameRendered(nowNs: Long) {
++        val previous = lastFrameNs
++        if (previous != null && nowNs - previous < 100_000_000L) return
++        lastFrameNs = nowNs
++        frameEvents.tryEmit(frame)
++    }
++}

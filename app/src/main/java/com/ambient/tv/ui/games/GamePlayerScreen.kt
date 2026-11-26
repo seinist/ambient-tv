@@ -1212,7 +1212,10 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     if (nativeSdrStatus != direct) nativeSdrStatus = direct
                 }
             }
-            if (event == GLRetroView.GLRetroEvents.SurfaceCreated) coreReady = true
+            // Readiness and sampled frame notifications are independent. A completed
+            // frame also proves that native initialization succeeded.
+            if (event == GLRetroView.GLRetroEvents.SurfaceCreated ||
+                event == GLRetroView.GLRetroEvents.FrameRendered) coreReady = true
             if (event == GLRetroView.GLRetroEvents.FrameRendered && !loaded) {
                 loaded = true
                 lastInitializationPollMs = now
