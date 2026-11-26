@@ -4,6 +4,7 @@
 // Caller owns the VkDevice, enabled extensions/features and all GPU synchronization.
 #include <android/hardware_buffer.h>
 #include <vulkan/vulkan.h>
+#include <vulkan/vulkan_android.h>
 
 namespace ambient::vlc_ahb {
 
