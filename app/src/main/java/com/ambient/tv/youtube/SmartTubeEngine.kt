@@ -1622,25 +1622,41 @@ private data class ReflectionMethodKey(
     val allowArityFallback: Boolean,
 )
 private data class CachedReflectionMethod(val method: Method?)
+
+/** FIFO on misses only; cache hits do not acquire a monitor or update recency. */
+internal class BoundedReflectionCache<K : Any, V : Any>(private val capacity: Int) {
+    init { require(capacity > 0) }
+    private val values = ConcurrentHashMap<K, V>()
+    private val insertionOrder = java.util.ArrayDeque<K>()
+
+    val size: Int get() = values.size
+
+    fun getOrPut(key: K, create: () -> V): V =
+        values[key] ?: synchronized(insertionOrder) {
+            values[key] ?: create().also { value ->
+                if (values.size >= capacity) {
+                    values.remove(insertionOrder.removeFirst())
+                }
+                values[key] = value
+                insertionOrder.addLast(key)
+            }
+        }
+}
+
+private const val MAX_REFLECTION_CLASSES = 256
+private const val MAX_REFLECTION_SIGNATURES = 256
 private class ReflectionClassIndex(type: Class<*>) {
     val methods = type.methods.groupBy { ReflectionNameKey(it.name, it.parameterCount) }
     val zeroArgumentMethods = methods.filterKeys { it.arity == 0 }
         .mapKeys { it.key.name }.mapValues { it.value.first() }
-    val resolved = ConcurrentHashMap<ReflectionMethodKey, CachedReflectionMethod>()
+    val resolved = BoundedReflectionCache<ReflectionMethodKey, CachedReflectionMethod>(MAX_REFLECTION_SIGNATURES)
 }
-private val reflectionIndexes = ConcurrentHashMap<Class<*>, ReflectionClassIndex>()
-private const val MAX_REFLECTION_CLASSES = 256
-private const val MAX_REFLECTION_SIGNATURES = 256
+private val reflectionIndexes = BoundedReflectionCache<Class<*>, ReflectionClassIndex>(MAX_REFLECTION_CLASSES)
+
+internal fun reflectionClassCacheSize(): Int = reflectionIndexes.size
 
 private fun reflectionIndex(type: Class<*>): ReflectionClassIndex =
-    reflectionIndexes[type] ?: synchronized(reflectionIndexes) {
-        reflectionIndexes[type] ?: ReflectionClassIndex(type).also { index ->
-            if (reflectionIndexes.size >= MAX_REFLECTION_CLASSES) {
-                reflectionIndexes.keys.firstOrNull()?.let { reflectionIndexes.remove(it) }
-            }
-            reflectionIndexes[type] = index
-        }
-    }
+    reflectionIndexes.getOrPut(type) { ReflectionClassIndex(type) }
 
 private fun wrap(c: Class<*>) = when (c) {
     Int::class.javaPrimitiveType -> Int::class.javaObjectType
@@ -1663,14 +1679,7 @@ internal fun Any.cachedMethod(name: String, args: Array<out Any?>, allowArityFal
         }
         return CachedReflectionMethod(compatible ?: if (allowArityFallback) candidates.firstOrNull() else null)
     }
-    return (index.resolved[key] ?: synchronized(index.resolved) {
-        index.resolved[key] ?: resolve().also { resolved ->
-            if (index.resolved.size >= MAX_REFLECTION_SIGNATURES) {
-                index.resolved.keys.firstOrNull()?.let { index.resolved.remove(it) }
-            }
-            index.resolved[key] = resolved
-        }
-    }).method
+    return index.resolved.getOrPut(key) { resolve() }.method
 }
 
 internal fun Any.call(name: String, vararg args: Any?): Any? {
