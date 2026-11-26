@@ -370,6 +370,7 @@ class VlcPlaybackController(
     private var restartDurationMs = 0L
     private var forceOutputRebuild = false
     private var restartStopFailed = false
+    private var headerRelayFailed = false
     private var dvRetirementPending = false
     private val previousAudioRelease = nativeAudioReleases.snapshot()
     private val createdAt = android.os.SystemClock.elapsedRealtime()
@@ -874,6 +875,7 @@ class VlcPlaybackController(
                         }
                     }
                     if (!prepared) prepare()
+                    if (restartStopFailed || headerRelayFailed || restartStop != null || dvRetirementPending) return
                     val available = videoTracks().map { it.first }.filter { it >= 0 }
                     val preferred = detachedVideoTrack?.takeIf { it in available }
                     if (preferred != null) trackAccess.setVideoTrack(preferred) else {
@@ -973,7 +975,7 @@ class VlcPlaybackController(
     }
 
     private fun prepare(resumePositionMs: Long = pendingRestorePositionMs ?: startPositionMs, resumePlaying: Boolean = desiredPlayWhenReady) {
-        if (released || restartStopFailed || restartStop != null || dvRetirementPending) return
+        if (released || restartStopFailed || headerRelayFailed || restartStop != null || dvRetirementPending) return
         frameDropSamples.prepare()
         if (previousReleaseOutcome == null && previousAudioRelease.isDone) {
             // Nothing to wait for: open in this call, not one main-thread round trip later.
@@ -1102,6 +1104,7 @@ class VlcPlaybackController(
             ?: com.ambient.tv.livetv.LiveTimeshift.playbackUrl(url, reopening || reopeningTimeshift)
         if (playbackUrl == url && needsHeaderRelay && authProxy == null) {
             // Do not open an unauthenticated stream or drop mandatory headers silently.
+            headerRelayFailed = true
             errorMessage = context.getString(R.string.vlc_playback_error)
             prepared = false
             reattach?.let(::attach)
@@ -1142,9 +1145,11 @@ class VlcPlaybackController(
             media.addOption(":effect-width=1280")
             media.addOption(":effect-height=720")
         }
-        headers.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value?.takeIf { it.isNotBlank() }?.let { media.addOption(":http-user-agent=$it") }
-        headers.entries.firstOrNull { it.key.equals("Referer", true) }?.value?.takeIf { it.isNotBlank() }?.let { media.addOption(":http-referrer=$it") }
-        headers.entries.firstOrNull { it.key.equals("Cookie", true) }?.value?.takeIf { it.isNotBlank() }?.let { media.addOption(":http-cookie=$it") }
+        if (authProxy == null || playbackUrl != url) {
+            headers.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value?.takeIf { it.isNotBlank() }?.let { media.addOption(":http-user-agent=$it") }
+            headers.entries.firstOrNull { it.key.equals("Referer", true) }?.value?.takeIf { it.isNotBlank() }?.let { media.addOption(":http-referrer=$it") }
+            headers.entries.firstOrNull { it.key.equals("Cookie", true) }?.value?.takeIf { it.isNotBlank() }?.let { media.addOption(":http-cookie=$it") }
+        }
         // Reconnect at the current offset when an HTTP stream breaks off (all sources, not only YouTube).
         if (url.startsWith("http", ignoreCase = true)) media.addOption(":http-reconnect")
         // Live TV: tolerate clock jitter instead of resetting the clock; more cache on the
@@ -1945,16 +1950,20 @@ class VlcPlaybackController(
         pendingSeekTask = null
         renderCheckTask?.let(renderCheckHandler::removeCallbacks)
         renderCheckTask = null
-        audioSession.release()
-        detachVideoOutput()
-        hdrOutput.release()
-        nightProcessing.release()
+        val audioRelease = nativeAudioReleases.beginRelease()
+        fun cleanup(action: () -> Unit) {
+            runCatching(action).onFailure { Timber.w(it, "VLC ancillary release failed") }
+        }
+        cleanup { audioSession.release() }
+        cleanup { detachVideoOutput() }
+        cleanup { hdrOutput.release() }
+        cleanup { nightProcessing.release() }
         released = true
-        player.setEventListener(null)
-        player.vlcVout.removeCallback(surfaceCallback)
+        cleanup { player.setEventListener(null) }
+        cleanup { player.vlcVout.removeCallback(surfaceCallback) }
         // Drop the upstream connection first: a renderer hand-off must not leave the old live
         // subscription open while the next engine connects.
-        authProxy?.close()
+        cleanup { authProxy?.close() }
         val retiringPlayer = player
         val retiringLibVlc = libVlc
         val inFlightStop = restartStop
@@ -1962,7 +1971,6 @@ class VlcPlaybackController(
         // VLC 4's Java stop waits for native Stopped. A blocked network/decoder
         // must not freeze Back or a renderer handoff on the application thread.
         // Surface detachment and listener removal have already happened above.
-        val audioRelease = nativeAudioReleases.beginRelease()
         kotlin.concurrent.thread(name = "vlc-stop", isDaemon = true) {
             val started = android.os.SystemClock.elapsedRealtime()
             // A Back/renderer switch can arrive while a same-player reopen is stopping.
@@ -1971,10 +1979,10 @@ class VlcPlaybackController(
             if (!alreadyStopped) runCatching { retiringPlayer.stop() }
                 .onFailure { Timber.w(it, "VLC native stop failed") }
             android.os.Handler(android.os.Looper.getMainLooper()).post {
-                runCatching { retiringPlayer.release() }
-                    .onSuccess { audioRelease.complete(Unit) }
-                    .onFailure { audioRelease.completeExceptionally(it) }
+                val closed = runCatching { retiringPlayer.release() }
                 libVlcRelease.releaseWhenIdle(retiringLibVlc)
+                closed.onSuccess { audioRelease.complete(Unit) }
+                    .onFailure { audioRelease.completeExceptionally(it) }
                 com.ambient.tv.diagnostics.CrashBreadcrumbs.add("vlc", "native release done")
                 Timber.i("VLC native release completed in %d ms", android.os.SystemClock.elapsedRealtime() - started)
             }
