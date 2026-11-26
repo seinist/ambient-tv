@@ -255,7 +255,7 @@ class Media3PlaybackHandle(
         val plan = media3FrameStepPlan(anchor, candidate, duration, forward, fps, player.isCurrentMediaItemLive)
         // Do not issue a redundant decoder flush at the first/last picture or for
         // timestamps that the millisecond seek API cannot distinguish.
-        if (plan.targetMs == anchor / 1000L) return
+        if (forward && plan.targetMs <= anchor / 1000L || !forward && plan.targetMs >= anchor / 1000L) return
         frameStepCursorUs = plan.cursorUs
         frameTimeline.pending(-1L)
         if (!Media3ResumePrimer.retarget(player, plan.targetMs)) {
