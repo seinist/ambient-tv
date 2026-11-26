@@ -50,11 +50,9 @@ static inline bool ambient_pl_ahb_device_enabled(pl_vulkan vk)
         ambient_pl_ycbcr_enabled(vk);
 }
 
-// Call only after the external submission fence has actually signaled. Its
-// render pass has transitioned the RGB target to SHADER_READ_ONLY_OPTIMAL.
-// No cross-device handle import and no CPU download. Use exactly the same queue
-// (index zero) for conversion submissions and libplacebo. Do not wrap twice.
-static inline pl_tex ambient_pl_wrap_completed_rgb(pl_gpu gpu, VkDevice device,
+// Wrap exactly once while held by the external owner. No cross-device
+// handle import or CPU download. Both sides use graphics queue index zero.
+static inline pl_tex ambient_pl_wrap_rgb_held(pl_gpu gpu, VkDevice device,
                                                    uint32_t family, VkImage image,
                                                    VkFormat format, int width, int height,
                                                    VkImageUsageFlags usage)
@@ -74,12 +72,32 @@ static inline pl_tex ambient_pl_wrap_completed_rgb(pl_gpu gpu, VkDevice device,
     wrap.format = format;
     wrap.usage = usage;
     pl_tex texture = pl_vulkan_wrap(gpu, &wrap);
-    if (!texture) return NULL;
+    if (texture && !texture->params.sampleable)
+        pl_tex_destroy(gpu, &texture);
+    return texture;
+}
+
+// Signal may be pending: libplacebo waits before the first texture use.
+// Retain this binary semaphore until the consumer hold has completed.
+static inline void ambient_pl_release_rgb(pl_gpu gpu, pl_tex texture, uint32_t family,
+                                          VkSemaphore conversion_ready)
+{
     struct pl_vulkan_release_params release = {0};
     release.tex = texture;
     release.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     release.qf = family;
+    release.semaphore.sem = conversion_ready;
     pl_vulkan_release_ex(gpu, &release);
+}
+
+// Synchronous fallback for a caller that has already proved conversion completion.
+static inline pl_tex ambient_pl_wrap_completed_rgb(pl_gpu gpu, VkDevice device,
+                                                   uint32_t family, VkImage image,
+                                                   VkFormat format, int width, int height,
+                                                   VkImageUsageFlags usage)
+{
+    pl_tex texture = ambient_pl_wrap_rgb_held(gpu, device, family, image, format, width, height, usage);
+    if (texture) ambient_pl_release_rgb(gpu, texture, family, VK_NULL_HANDLE);
     return texture;
 }
 
