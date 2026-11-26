@@ -115,6 +115,23 @@ struct Probe {
             features.pNext = &timeline;
             fn<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(device, &features);
             if (!timeline.timelineSemaphore) { unsupported = failure("timeline_semaphore"); continue; }
+
+            // AHB import is only a prerequisite for native MediaCodec interop. Report
+            // independently from renderer support; neither VLC nor libplacebo enables it here.
+            bool ahbImport = has(ext, VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME);
+            bool foreignQueue = has(ext, VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME);
+            VkPhysicalDeviceSamplerYcbcrConversionFeatures ycbcr{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES};
+            VkPhysicalDeviceFeatures2 interopFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+            interopFeatures.pNext = &ycbcr;
+            fn<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(device, &interopFeatures);
+            VkPhysicalDeviceExternalSemaphoreInfo externalSemaphore{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO};
+            externalSemaphore.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
+            VkExternalSemaphoreProperties semaphoreProperties{VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES};
+            auto getSemaphore = fn<PFN_vkGetPhysicalDeviceExternalSemaphoreProperties>("vkGetPhysicalDeviceExternalSemaphoreProperties");
+            if (getSemaphore && has(ext, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME))
+                getSemaphore(device, &externalSemaphore, &semaphoreProperties);
+            const auto requiredSemaphore = VK_EXTERNAL_SEMAPHORE_FEATURE_IMPORTABLE_BIT | VK_EXTERNAL_SEMAPHORE_FEATURE_EXPORTABLE_BIT;
+            bool syncFd = (semaphoreProperties.externalSemaphoreFeatures & requiredSemaphore) == requiredSemaphore;
             // Startup already verified logical-device creation on this exact device/version.
             // A surface recheck only needs actual presentation support and formats.
             if (!validatedDevice) {
@@ -140,7 +157,11 @@ struct Probe {
                 surfaceFormats.resize(formats);
             }
             std::ostringstream out;
-            out << "{\"render\":true,\"reason\":\"\",\"hostQueryReset\":" << (hostReset.hostQueryReset ? "true" : "false") << ",\"device\":" << quote(props.deviceName) << ",\"version\":" << props.apiVersion << ",\"profiles\":[";
+            out << "{\"render\":true,\"reason\":\"\",\"hostQueryReset\":" << (hostReset.hostQueryReset ? "true" : "false") << ",\"device\":" << quote(props.deviceName) << ",\"version\":" << props.apiVersion << ",\"androidHardwareBufferImport\":" << (ahbImport ? "true" : "false")
+                << ",\"foreignQueueFamily\":" << (foreignQueue ? "true" : "false")
+                << ",\"samplerYcbcrConversion\":" << (ycbcr.samplerYcbcrConversion ? "true" : "false")
+                << ",\"syncFdImportExport\":" << (syncFd ? "true" : "false")
+                << ",\"profiles\":[";
             bool first = true;
             auto capsFn = fn<PFN_vkGetPhysicalDeviceVideoCapabilitiesKHR>("vkGetPhysicalDeviceVideoCapabilitiesKHR");
             auto formatsFn = fn<PFN_vkGetPhysicalDeviceVideoFormatPropertiesKHR>("vkGetPhysicalDeviceVideoFormatPropertiesKHR");
