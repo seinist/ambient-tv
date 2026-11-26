@@ -1061,6 +1061,10 @@ def patch_disable_unused_cronet(msc: Path, shared: Path, check: bool) -> list[Pa
         die(f"SmartTube Retrofit helper moved or disappeared: {helper}")
     text = helper.read_text()
     original = text
+    if check:
+        if any(token in text for token in ("CronetInterceptor", "CronetManager", "addCronetInterceptor")):
+            die(f"dormant SmartTube Cronet adapter remains in {helper}")
+        return changed
     for line in (
         "import com.google.net.cronet.okhttptransport.CronetInterceptor\n",
         "import com.liskovsoft.sharedutils.cronet.CronetManager\n",
@@ -1074,10 +1078,8 @@ def patch_disable_unused_cronet(msc: Path, shared: Path, check: bool) -> list[Pa
         count=1,
         flags=re.DOTALL,
     )
-    if check:
-        if "CronetInterceptor" in text or "CronetManager" in text or "addCronetInterceptor" in text:
-            die(f"dormant SmartTube Cronet adapter remains in {helper}")
-        return changed
+    if any(token in text for token in ("CronetInterceptor", "CronetManager", "addCronetInterceptor")):
+        die(f"unsupported SmartTube Cronet adapter layout in {helper}")
     if text != original:
         helper.write_text(text)
         changed.append(helper)
