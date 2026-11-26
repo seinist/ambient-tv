@@ -210,11 +210,9 @@ Java_com_ambient_tv_ui_player_backend_MpvNativeBridge_nativeCreate(JNIEnv *env, 
     ctx->mpv = mpv_create();
     if (!ctx->mpv) { free(ctx); return 0; }
     int fds[2];
-    if (pipe(fds) == 0) {
-        for (int i = 0; i < 2; ++i) {
-            fcntl(fds[i], F_SETFL, fcntl(fds[i], F_GETFL) | O_NONBLOCK);
-            fcntl(fds[i], F_SETFD, FD_CLOEXEC);
-        }
+    // Atomic nonblocking/CLOEXEC creation: the wakeup callback must never block, even
+    // when a flag-setting operation would have failed on a separately created pipe.
+    if (pipe2(fds, O_NONBLOCK | O_CLOEXEC) == 0) {
         ctx->wakeup_pipe[0] = fds[0];
         ctx->wakeup_pipe[1] = fds[1];
         mpv_set_wakeup_callback(ctx->mpv, on_mpv_wakeup, ctx);
@@ -242,7 +240,7 @@ Java_com_ambient_tv_ui_player_backend_MpvNativeBridge_nativeDestroy(JNIEnv *env,
         mpv_set_wakeup_callback(ctx->mpv, NULL, NULL);
         mpv_terminate_destroy(ctx->mpv);
     }
-    // The Java waiter polls this fd directly (never ctx), so closing it ends its wait safely.
+    // The Java owner joins the waiter before this call; do not close a still-polled fd.
     close_wakeup_pipe(ctx);
     if (ctx->surface) {
         (*env)->DeleteGlobalRef(env, ctx->surface);
@@ -321,9 +319,15 @@ Java_com_ambient_tv_ui_player_backend_MpvNativeBridge_nativeCommand(JNIEnv *env,
     ambient_mpv_context *ctx = ctx_from(handle);
     if (!ctx || !ctx->mpv || !args) return MPV_ERROR_INVALID_PARAMETER;
     jsize count = (*env)->GetArrayLength(env, args);
-    const char **argv = calloc((size_t)count + 1, sizeof(char *));
-    jstring *refs = calloc((size_t)count, sizeof(jstring));
-    if (!argv || !refs) { free(argv); free(refs); return MPV_ERROR_NOMEM; }
+    // Typical playback commands have only a handful of arguments. Avoid two heap
+    // allocations per JNI command while retaining a bounded stack and arbitrary long commands.
+    enum { LOCAL_ARGS = 16 };
+    const char *local_argv[LOCAL_ARGS + 1] = {0};
+    jstring local_refs[LOCAL_ARGS] = {0};
+    const bool heap = count > LOCAL_ARGS;
+    const char **argv = heap ? calloc((size_t)count + 1, sizeof(char *)) : local_argv;
+    jstring *refs = heap ? calloc((size_t)count, sizeof(jstring)) : local_refs;
+    if (!argv || !refs) { if (heap) { free(argv); free(refs); } return MPV_ERROR_NOMEM; }
     int result = 0;
     jsize filled = 0;
     for (; filled < count; ++filled) {
@@ -349,7 +353,7 @@ Java_com_ambient_tv_ui_player_backend_MpvNativeBridge_nativeCommand(JNIEnv *env,
             (*env)->DeleteLocalRef(env, refs[i]);
         }
     }
-    free(argv); free(refs);
+    if (heap) { free(argv); free(refs); }
     return result;
 }
 
@@ -449,9 +453,13 @@ Java_com_ambient_tv_ui_player_backend_MpvNativeBridge_nativeWaitWakeup(JNIEnv *e
     int ready = poll(&pfd, 1, timeout_ms);
     if (ready < 0) return errno == EINTR ? 0 : -1;
     if (ready == 0) return 0;
-    if (pfd.revents & (POLLNVAL | POLLERR)) return -1;
-    char buffer[64];
-    while (read(fd, buffer, sizeof(buffer)) > 0) { }
+    if (pfd.revents & (POLLNVAL | POLLERR | POLLHUP)) return -1;
+    // Bound a drain even under an event flood; Java must regain control to observe stop.
+    char buffer[256];
+    for (int i = 0; i < 16; ++i) {
+        ssize_t n = read(fd, buffer, sizeof(buffer));
+        if (n <= 0) break;
+    }
     return 1;
 }
 
