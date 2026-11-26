@@ -40,3 +40,16 @@ diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
      if (input) {
          input->flushPendingReleases();
      }
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -1000,7 +1000,9 @@
+     audioEnabled = false;
+     VulkanBackend::getInstance().invalidateNativeFrame();
+     if (video && video->isHWAccelerated()) video->bindHWContext();
++    ATrace_beginSection("AmbientTV:Libretro/rewind_seek");
+     core->retro_run();
++    ATrace_endSection();
+     checkVulkanFrameError();
+     if (video && video->isHWAccelerated()) video->bindMainContext();
+     audioEnabled = hadAudio;
