@@ -9,6 +9,11 @@ import java.util.Locale
 internal fun vlcHlsPath(url: HttpUrl): Boolean =
     url.encodedPath.lowercase(Locale.ROOT).let { it.endsWith(".m3u8") || it.endsWith(".m3u") }
 
+internal fun vlcDashPath(url: HttpUrl): Boolean = url.encodedPath.endsWith(".mpd", ignoreCase = true)
+
+internal fun vlcDashContentType(value: String?): Boolean =
+    value?.substringBefore(';')?.trim()?.equals("application/dash+xml", true) == true
+
 internal fun vlcHlsContentType(value: String?): Boolean = value?.substringBefore(';')?.trim()?.lowercase(Locale.ROOT) in
     setOf("application/vnd.apple.mpegurl", "application/x-mpegurl", "application/mpegurl", "audio/mpegurl", "audio/x-mpegurl")
 
@@ -19,19 +24,25 @@ internal class HlsRelayRoutes(
     private val capacity: Int = 8192,
 ) {
     internal data class Resource(val url: HttpUrl, val playlist: Boolean = false)
-    private var root = Resource(origin, vlcHlsPath(origin))
+    private var root = Resource(origin, vlcHlsPath(origin) || vlcDashPath(origin))
     private var nextId = 0L
     private val entries = LinkedHashMap<Resource, String>(16, 0.75f, true)
     private val paths = HashMap<String, Resource>()
+    private val templates = LinkedHashMap<DashRelayTemplate, String>(16, 0.75f, true)
+    private val templatePaths = HashMap<String, DashRelayTemplate>()
 
     /** Only the configured server receives the stream headers. No arbitrary localhost proxy. */
     @Synchronized fun register(url: HttpUrl, playlist: Boolean): String {
         if (!vlcRelayOriginAllowed(origin, url) || url.username.isNotEmpty() || url.password.isNotEmpty())
             throw IOException("Foreign or credential-bearing manifest resource refused")
-        val key = Resource(url, playlist || vlcHlsPath(url))
+        val key = Resource(url, playlist || vlcHlsPath(url) || vlcDashPath(url))
         entries[key]?.let { return it }
         if (nextId == Long.MAX_VALUE) throw IOException("Manifest capability exhausted")
-        val path = "$rootPath/${++nextId}" + if (key.playlist) ".m3u8" else ""
+        val path = "$rootPath/${++nextId}" + when {
+            vlcDashPath(url) -> ".mpd"
+            key.playlist -> ".m3u8"
+            else -> ""
+        }
         entries[key] = path
         paths[path] = key
         while (entries.size > capacity) {
@@ -42,12 +53,42 @@ internal class HlsRelayRoutes(
         return path
     }
 
+    /** A template capability authorizes only the numeric substitutions declared in the MPD. */
+    @Synchronized fun registerTemplate(template: DashRelayTemplate): String {
+        val sample = template.resolve(List(template.slots.size) { "0" }) ?: throw IOException("Invalid DASH template")
+        if (!vlcRelayOriginAllowed(origin, sample) || sample.username.isNotEmpty() || sample.password.isNotEmpty())
+            throw IOException("Foreign DASH template refused")
+        if (template.slots.isEmpty()) return register(sample, false)
+        val prefix = templates[template] ?: run {
+            if (nextId == Long.MAX_VALUE) throw IOException("Manifest capability exhausted")
+            val path = "$rootPath/t${++nextId}"
+            templates[template] = path
+            templatePaths[path] = template
+            while (templates.size > capacity) {
+                val first = templates.entries.iterator().next()
+                templatePaths.remove(first.value)
+                templates.remove(first.key)
+            }
+            path
+        }
+        return prefix + "/" + template.suffix()
+    }
+
     /** Root content type may only become known after a successful HTTP response. */
     @Synchronized fun markRootPlaylist() { root = root.copy(playlist = true) }
 
     @Synchronized fun resolve(target: String): Resource? {
         val path = target.substringBefore('?')
-        val resource = if (path == rootPath) root else paths[path] ?: return null
+        val resource = if (path == rootPath) root else paths[path] ?: run {
+            if ('?' in target || !path.startsWith("$rootPath/t")) return null
+            val tail = path.removePrefix("$rootPath/").split('/')
+            if (tail.size < 2) return null
+            val template = templatePaths["$rootPath/${tail.first()}"] ?: return null
+            templates[template]
+            val url = template.resolve(tail.drop(1)) ?: return null
+            if (!vlcRelayOriginAllowed(origin, url)) return null
+            return Resource(url)
+        }
         if (path != rootPath) entries[resource] // LRU on actual segment access
         if ('?' !in target) return resource
         if (!resource.playlist) return null
