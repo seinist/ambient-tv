@@ -27,6 +27,13 @@ class MoonlightInputRoutingTest {
         assertEquals(0, frames.size - 2)
     }
 
+    @Test fun hardwareDeadzoneIsContinuousAndBounded() {
+        assertEquals(0f, moonlightDeadzone(.03f, .04f), .0001f)
+        assertEquals(.5f, moonlightDeadzone(.55f, .10f), .0001f)
+        assertEquals(-1f, moonlightDeadzone(-2f, .04f), .0001f)
+        assertEquals(0f, moonlightDeadzone(Float.NaN, .10f), .0001f)
+    }
+
     @Test fun gameStreamStickAxesAndButtonPositions() {
         assertEquals(32767, moonlightStick(1f).toInt())
         assertEquals(-32767, moonlightStick(-1f).toInt())

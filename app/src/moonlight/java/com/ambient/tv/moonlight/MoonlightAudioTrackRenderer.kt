@@ -277,8 +277,11 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
     }
 
     private fun publishSnapshot(t: AudioTrack) {
-        snapshot = MoonlightAudioMetrics(outputChannels, rate, t.bufferSizeInFrames,
-            t.underrunCount, lostSamples.get(), localQueuedMs, nativeQueuedMs, recovering)
+        // A failed metrics query is not an audio device failure or a reason to abort recovery.
+        runCatching {
+            snapshot = MoonlightAudioMetrics(outputChannels, rate, t.bufferSizeInFrames,
+                t.underrunCount, lostSamples.get(), localQueuedMs, nativeQueuedMs, recovering)
+        }
     }
 
     // No AudioTrack/native calls or callback lock contention on the telemetry worker.

@@ -39,6 +39,7 @@ internal class MoonlightControllerRouter(
         val deviceId: Int,
         val layout: GamepadAxisLayout,
         val capabilities: MoonlightPadCapabilities,
+        val stickDeadZones: FloatArray,
         val keys: MutableMap<Int, RetroPadButton> = mutableMapOf(),
         val suppressed: MutableSet<Int> = mutableSetOf(),
         var hat: Int = 0,
@@ -59,13 +60,13 @@ internal class MoonlightControllerRouter(
     private val pads = LinkedHashMap<Int, Pad>()
     private val devices = HashMap<Int, RetroInputDevice>()
     private val profiles = HashMap<Int, RetroInputProfile>()
-    private fun device(id: Int) = devices.getOrPut(id) { retroInputDevice(id) }
+    private fun cachedDevice(id: Int) = devices.getOrPut(id) { retroInputDevice(id) }
     private val handler = Handler(Looper.getMainLooper())
     private var lastConfig = RetroInputSettings.config
     private var lastContext = profileContext()
 
     private fun profile(deviceId: Int): RetroInputProfile = profiles.getOrPut(deviceId) {
-        val info = device(deviceId)
+        val info = cachedDevice(deviceId)
         lastContext?.let { lastConfig.profile(info.kind, it, deviceDescriptor = info.descriptor) }
             ?: lastConfig.deviceProfile(info.kind, info.descriptor)
     }
@@ -89,7 +90,7 @@ internal class MoonlightControllerRouter(
     }
 
     private fun button(deviceId: Int, key: Int): RetroPadButton? {
-        val info = device(deviceId)
+        val info = cachedDevice(deviceId)
         if (info.kind == RetroInputKind.GAMEPAD) {
             val profile = profile(deviceId)
             return profile.button(key)
@@ -104,18 +105,20 @@ internal class MoonlightControllerRouter(
     }
 
     fun onKey(event: KeyEvent): Boolean {
-        if (event.action !in setOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) return false
+        if (event.action != KeyEvent.ACTION_DOWN && event.action != KeyEvent.ACTION_UP) return false
         refreshAssignments()
         if (event.device?.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC) return false
         if (!isController(event.source) && event.keyCode !in DPAD_CODES) return false
-        val info = device(event.deviceId)
+        val info = cachedDevice(event.deviceId)
         val profile = profile(event.deviceId)
         if (info.kind == RetroInputKind.GAMEPAD && profile.opensMenu(event.keyCode)) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) onMenu()
             return true
         }
         val mapped = button(event.deviceId, event.keyCode)
-        val holdMenu = info.kind == RetroInputKind.GAMEPAD && profile.holdOpensMenu(event.keyCode)
+        // A gameplay button must not wait for a 500ms menu decision. Dedicated hold-menu
+        // keys remain available; ambiguous imported mappings prioritize gameplay.
+        val holdMenu = mapped == null && info.kind == RetroInputKind.GAMEPAD && profile.holdOpensMenu(event.keyCode)
         val pad = pads[event.deviceId] ?: if (mapped != null || holdMenu) getPad(event.deviceId) else null
         if (pad == null) return false
         if (holdMenu) {
@@ -130,14 +133,8 @@ internal class MoonlightControllerRouter(
                 pad.pendingMenu.put(key, task)?.let(handler::removeCallbacks)
                 handler.postDelayed(task, 500)
             } else if (event.action == KeyEvent.ACTION_UP) {
-                val pending = pad.pendingMenu.remove(event.keyCode)
-                pending?.let(handler::removeCallbacks)
-                if (pending != null && mapped != null && !pad.suppressed.remove(event.keyCode)) {
-                    pad.keys[event.keyCode] = mapped
-                    send(pad)
-                    pad.keys.remove(event.keyCode)
-                    send(pad)
-                }
+                pad.pendingMenu.remove(event.keyCode)?.let(handler::removeCallbacks)
+                pad.suppressed.remove(event.keyCode)
             }
             return true
         }
@@ -165,11 +162,10 @@ internal class MoonlightControllerRouter(
         refreshAssignments()
         val pad = getPad(event.deviceId) ?: return false
         fun axis(id: Int): Float = event.getAxisValue(id).takeIf { it.isFinite() }?.coerceIn(-1f, 1f) ?: 0f
-        fun deadzone(value: Float) = if (!value.isFinite() || abs(value) < 0.10f) 0f else value.coerceIn(-1f, 1f)
-        pad.lx = deadzone(axis(MotionEvent.AXIS_X))
-        pad.ly = deadzone(axis(MotionEvent.AXIS_Y))
-        pad.rx = deadzone(pad.layout.rightStickX(event))
-        pad.ry = deadzone(pad.layout.rightStickY(event))
+        pad.lx = moonlightDeadzone(axis(MotionEvent.AXIS_X), pad.stickDeadZones[0])
+        pad.ly = moonlightDeadzone(axis(MotionEvent.AXIS_Y), pad.stickDeadZones[1])
+        pad.rx = moonlightDeadzone(pad.layout.rightStickX(event), pad.stickDeadZones[2])
+        pad.ry = moonlightDeadzone(pad.layout.rightStickY(event), pad.stickDeadZones[3])
         val left = pad.layout.leftTriggerValue(event).takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0f
         val right = pad.layout.rightTriggerValue(event).takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0f
         pad.rawLeftTrigger = pad.rawLeftTrigger || left > .01f
@@ -193,7 +189,7 @@ internal class MoonlightControllerRouter(
         if (axis(MotionEvent.AXIS_HAT_Y) > 0.5f) add(KeyEvent.KEYCODE_DPAD_DOWN)
         pad.hat = hat
         if (pad.suppressMotion) {
-            if (maxOf(abs(pad.lx), abs(pad.ly), abs(pad.rx), abs(pad.ry), left, right) < .12f && hat == 0)
+            if (pad.lx == 0f && pad.ly == 0f && pad.rx == 0f && pad.ry == 0f && left < .01f && right < .01f && hat == 0)
                 pad.suppressMotion = false
             else {
                 pad.lx = 0f; pad.ly = 0f; pad.rx = 0f; pad.ry = 0f
@@ -207,7 +203,7 @@ internal class MoonlightControllerRouter(
     fun registerAttachedDevices() {
         InputDevice.getDeviceIds().forEach { id ->
             val device = InputDevice.getDevice(id) ?: return@forEach
-            if (!device.isVirtual && device(id).kind == RetroInputKind.GAMEPAD) getPad(id)
+            if (!device.isVirtual && cachedDevice(id).kind == RetroInputKind.GAMEPAD) getPad(id)
         }
     }
     fun localUsedPorts(): Set<Int> = pads.values.mapTo(HashSet()) { it.port }
@@ -244,7 +240,7 @@ internal class MoonlightControllerRouter(
 
     private fun getPad(id: Int): Pad? {
         pads[id]?.let { return it }
-        val info = device(id)
+        val info = cachedDevice(id)
         val config = lastConfig
         val assignment = config.ports[info.descriptor] ?: RetroPorts.AUTO
         if (assignment == RetroPorts.OFF) return null
@@ -255,7 +251,13 @@ internal class MoonlightControllerRouter(
         return port?.let {
             val inputDevice = InputDevice.getDevice(id)
             val caps = MoonlightPadCapabilities(rumble = runCatching { inputDevice?.vibrator?.hasVibrator() == true }.getOrDefault(false))
-            Pad(it, id, GamepadAxisLayout.of(inputDevice), caps).also { pad -> pads[id] = pad }
+            val layout = GamepadAxisLayout.of(inputDevice)
+            val deadZones = intArrayOf(MotionEvent.AXIS_X, MotionEvent.AXIS_Y, layout.rightX, layout.rightY)
+                .map { axis ->
+                    inputDevice?.getMotionRange(axis, InputDevice.SOURCE_JOYSTICK)?.flat
+                        ?.takeIf { it.isFinite() && it >= 0f }?.coerceIn(.02f, .20f) ?: .10f
+                }.toFloatArray()
+            Pad(it, id, layout, caps, deadZones).also { pad -> pads[id] = pad }
         }
     }
 
@@ -286,6 +288,15 @@ internal class MoonlightControllerRouter(
         private val DPAD_CODES = setOf(KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT)
     }
+}
+
+internal fun moonlightDeadzone(value: Float, flat: Float): Float {
+    if (!value.isFinite()) return 0f
+    val zone = flat.takeIf { it.isFinite() }?.coerceIn(.02f, .20f) ?: .10f
+    val magnitude = abs(value).coerceAtMost(1f)
+    if (magnitude <= zone) return 0f
+    val scaled = (magnitude - zone) / (1f - zone)
+    return if (value < 0f) -scaled else scaled
 }
 
 internal fun moonlightStick(v: Float): Short =

@@ -117,7 +117,7 @@ internal class MoonlightCompanionSink(
         }
         for (source in RetroPadButton.entries) {
             val key = companionControllerKey(source)
-            if (profile.opensMenu(key) || profile.holdOpensMenu(key))
+            if (profile.opensMenu(key))
                 profile.button(key)?.let { mappedButtons = mappedButtons and it.mask.inv() }
         }
         val mapped = moonlightRetroButtonFlags(mappedButtons)
