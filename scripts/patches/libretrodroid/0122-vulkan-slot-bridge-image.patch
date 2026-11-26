@@ -175,20 +175,21 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbac
      };
      FrameSlot frameSlot;
      VkResult fatalFrameError = VK_SUCCESS;
-@@ -363,12 +368,6 @@
+@@ -363,14 +368,8 @@
      // Higher precision is opt-in for manually selected PQ/HLG content, never for SDR.
      bool preferFp16Frame = false;
      bool forceRgba8Frame = false;
 -    bool fp16Frame = false;
--    std::atomic<uint32_t> frameStatus { 0 };
+     std::atomic<uint32_t> frameStatus { 0 };
+     std::atomic<uint32_t> coreSourceFormat { 0 };
 -    AHardwareBuffer* frameBuffer = nullptr;
 -    VkImage frameImage = VK_NULL_HANDLE;
 -    VkDeviceMemory frameMemory = VK_NULL_HANDLE;
 -    unsigned frameWidth = 0;
 -    unsigned frameHeight = 0;
-+    std::atomic<uint32_t> frameStatus { 0 };
  
      // Render-thread-owned host descriptor storage, not GPU frame slots.
+     std::vector<VkCommandBuffer> submitCommands;
 diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
 --- a/src/main/cpp/vulkan/vulkanbackend.cpp
 +++ b/src/main/cpp/vulkan/vulkanbackend.cpp
