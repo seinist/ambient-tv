@@ -53,6 +53,7 @@ class MpvPlaybackController(
     private var engine: MpvPlaybackEngine? = null // owner thread only
     private var ownedSurface: Surface? = null // independent Surface reference; owner thread only
     private var surfaceIdentity: Surface? = null // UI's SurfaceHolder identity
+    private var retiringSurfaceIdentity: Surface? = null // last requested detach, UI thread only
     @Volatile private var surfaceGeneration = 0L // main writes, owner validates before attaching
     private val surfaceGate = MpvSurfaceDetachGate()
     @Volatile private var released = false
@@ -487,29 +488,45 @@ class MpvPlaybackController(
             val player = engine
             if (player == null || !copy.isValid || generation != surfaceGeneration || released) copy.release()
             else {
-                player.detachSurface()
-                ownedSurface?.release()
-                ownedSurface = copy
-                surfaceGate.attaching()
-                player.attachSurface(copy, width, height)
-                sample()
+                // Until ownership is transferred, the new reference must be released even
+                // if retiring the old VO throws. After transfer, retain it until confirmed detach.
+                var transferred = false
+                try {
+                    player.detachSurface()
+                    ownedSurface?.release()
+                    // Detach may have blocked while a new Surface generation was requested.
+                    if (generation != surfaceGeneration || released || !copy.isValid) {
+                        ownedSurface = null
+                        return@submit
+                    }
+                    ownedSurface = copy
+                    transferred = true
+                    surfaceGate.attaching()
+                    player.attachSurface(copy, width, height)
+                    sample()
+                } finally {
+                    if (!transferred) copy.release()
+                }
             }
         }
         if (!accepted && surfaceIdentity === surface) surfaceIdentity = null
     }
     fun detachSurface(surface: Surface? = null) {
         if (surface != null && surfaceIdentity !== surface) return
+        if (surfaceIdentity != null) retiringSurfaceIdentity = surfaceIdentity
         surfaceIdentity = null
         surfaceGeneration++
         // Kept across close(): Stop's release() must not drop the detach queued just before it.
         if (!released) {
             val ticket = surfaceGate.requestDetach()
             mailbox.submit("surface-detach", keepOnClose = true) {
-                try {
-                    engine?.detachSurface()
-                    ownedSurface?.release()
-                    ownedSurface = null
-                } finally { surfaceGate.detached(ticket) }
+                engine?.detachSurface()
+                // An exception is not evidence that the VO has stopped. Only acknowledge
+                // the detach after the native operation succeeds; release can settle it later.
+                surfaceGate.detached(ticket)
+                val previous = ownedSurface
+                ownedSurface = null
+                previous?.release()
                 sample()
             }
         }
@@ -521,8 +538,11 @@ class MpvPlaybackController(
      */
     fun detachSurfaceAndWait(surface: Surface, timeoutMs: Long = SURFACE_DETACH_WAIT_MS) {
         val owner = surfaceIdentity === surface
-        detachSurface(surface)
-        if (!owner && !released) return
+        val retiring = surfaceIdentity == null && retiringSurfaceIdentity === surface
+        if (!owner && !retiring && !released) return
+        if (owner) detachSurface(surface)
+        // ON_STOP or detachVideoOutput may already have enqueued retirement. A later
+        // surfaceDestroyed must still wait for that operation rather than return early.
         if (!ownerReady.isDone || Looper.myLooper() === thread.looper) return
         val started = SystemClock.elapsedRealtime()
         val detached = surfaceGate.await(timeoutMs)
@@ -550,14 +570,16 @@ class MpvPlaybackController(
             try {
                 engine?.release()
                 engine = null
-                ownedSurface?.release()
+                surfaceGate.closed()
+                // The native handle is gone; a Java Surface cleanup failure is ancillary.
+                val previous = ownedSurface
                 ownedSurface = null
+                runCatching { previous?.release() }.onFailure { Timber.w(it, "MPV Surface release failed") }
                 audioRelease.complete(Unit)
             } catch (error: Throwable) {
                 audioRelease.completeExceptionally(NativeOutputReleaseUncertain(error))
                 throw error
             } finally {
-                surfaceGate.closed()
                 thread.quitSafely()
             }
         }
