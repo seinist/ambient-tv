@@ -95,4 +95,5 @@
     <string name="moonlight_stats_video_queue">Native Video-Warteschlange: %1$d Frames</string>
     <string name="moonlight_stats_latency_p95">P95 Empfang–Queue / Decoder–Surface / Decoder–Render-Callback: %1$s / %2$s / %3$s ms</string>
     <string name="moonlight_stats_network_poor">Streaming-Verbindung beeinträchtigt</string>
+    <string name="moonlight_stats_input_queue">Eingabeverarbeitung P95: %1$d ms · Warteschlange: %2$d</string>
 </resources>

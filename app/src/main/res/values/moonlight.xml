@@ -95,4 +95,5 @@
     <string name="moonlight_stats_video_queue">Native video queue: %1$d frames</string>
     <string name="moonlight_stats_latency_p95">P95 receive-to-enqueue / submit-to-surface / submit-to-render callback: %1$s / %2$s / %3$s ms</string>
     <string name="moonlight_stats_network_poor">Streaming connection degraded</string>
+    <string name="moonlight_stats_input_queue">Input dispatch P95: %1$d ms · Queue: %2$d</string>
 </resources>

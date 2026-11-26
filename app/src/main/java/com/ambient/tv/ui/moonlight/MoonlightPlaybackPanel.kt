@@ -175,6 +175,9 @@ internal fun BoxScope.MoonlightPlaybackPanel(
                         RightPanelInfoRow(stringResource(R.string.moonlight_stats_network,
                             metrics.rttMs, metrics.rttVarianceMs))
                     if (metrics.networkPoor) RightPanelInfoRow(stringResource(R.string.moonlight_stats_network_poor))
+                    metrics.inputDispatchP95Ms?.let {
+                        RightPanelInfoRow(stringResource(R.string.moonlight_stats_input_queue, it, metrics.pendingInputs))
+                    }
                     val audio = metrics.audio
                     if (audio.rate > 0) RightPanelInfoRow(stringResource(R.string.moonlight_stats_audio,
                         audio.channels, audio.bufferFrames * 1000.0 / audio.rate, audio.underruns,

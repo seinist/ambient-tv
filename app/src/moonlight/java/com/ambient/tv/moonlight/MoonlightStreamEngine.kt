@@ -68,10 +68,18 @@ class MoonlightStreamEngine @Inject constructor(
         var audioFocus: AudioFocusRequest? = null,
         var metricsJob: Job? = null,
         var trustJob: Job? = null,
+        val inputMailbox: MoonlightInputMailbox = MoonlightInputMailbox(),
+        val inputLatency: MoonlightLatencyHistogram = MoonlightLatencyHistogram(),
     )
 
     private val lock = Any()
     private val inputGate = Any()
+    private val inputExecutor = java.util.concurrent.ThreadPoolExecutor(0, 1, 15L,
+        java.util.concurrent.TimeUnit.SECONDS, java.util.concurrent.LinkedBlockingQueue<Runnable>(),
+        java.util.concurrent.ThreadFactory { task -> Thread({
+            runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_DISPLAY) }
+            task.run()
+        }, "moonlight-input").apply { isDaemon = true } })
     private val inputOwnership = MoonlightInputOwnership()
     private val motionRequests = mutableMapOf<Pair<Int, Byte>, Pair<Int, Long>>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -214,6 +222,7 @@ class MoonlightStreamEngine @Inject constructor(
         synchronized(lock) {
             if (active !== session || session.stopIssued) return
             session.cancelled = true
+            session.inputMailbox.close()
             session.stopIssued = true
             session.metricsJob?.cancel()
             session.trustJob?.cancel()
@@ -260,6 +269,37 @@ class MoonlightStreamEngine @Inject constructor(
 
     private fun isOwned(session: Active): Boolean = synchronized(lock) {
         active === session && !session.cancelled
+    }
+
+    /**
+     * Keep UI callbacks independent of JNI and its locks. A session-local bounded mailbox
+     * preserves discrete edges and reservations; only equivalent adjacent analog updates
+     * can replace each other. Overflow ends the session rather than losing a release.
+     */
+    private fun enqueueInput(owner: Any, key: Any? = null, operation: () -> Unit) {
+        val session = synchronized(lock) { active?.takeIf { it.owner === owner && !it.cancelled } } ?: return
+        val offeredAt = System.nanoTime()
+        val offer = session.inputMailbox.offer(key) {
+            synchronized(inputGate) {
+                if (isOwned(session)) {
+                    session.inputLatency.recordUs((System.nanoTime() - offeredAt) / 1000L)
+                    operation()
+                }
+            }
+        }
+        when (offer) {
+            MoonlightInputMailbox.Offer.START -> inputExecutor.execute {
+                while (true) {
+                    val task = session.inputMailbox.take() ?: break
+                    if (runCatching { task() }.isFailure) {
+                        fail(session, "Moonlight input dispatch failed", retryable = true)
+                        break
+                    }
+                }
+            }
+            MoonlightInputMailbox.Offer.OVERFLOW -> fail(session, "Moonlight input queue overflow", retryable = true)
+            else -> Unit
+        }
     }
 
     /** Hotplug-capable GameStream controller mask, shared with authenticated Companion phones. */
@@ -312,8 +352,8 @@ class MoonlightStreamEngine @Inject constructor(
         lx: Short, ly: Short, rx: Short, ry: Short,
         capabilities: MoonlightPadCapabilities = MoonlightPadCapabilities(),
     ) {
-        synchronized(inputGate) {
-            if (port.toInt() !in 0..3) return
+        enqueueInput(owner, MoonlightPadUpdateKey(false, port.toInt(), mask.toInt(), buttons, lt, rt, lx, ly, rx, ry, capabilities)) {
+            if (port.toInt() !in 0..3) return@enqueueInput
             val frame = padFrame(owner) {
                 localControllerMask = mask.toInt() and 0xF
                 if (localControllerMask and (1 shl port.toInt()) != 0) {
@@ -334,8 +374,8 @@ class MoonlightStreamEngine @Inject constructor(
     }
 
     fun setRemotePortActive(owner: Any, port: Int, enabled: Boolean) {
-        synchronized(inputGate) {
-            if (port !in 0..3) return
+        enqueueInput(owner) {
+            if (port !in 0..3) return@enqueueInput
             val frame = padFrame(owner) {
                 if (enabled) {
                     remoteControllerPorts.add(port)
@@ -358,8 +398,8 @@ class MoonlightStreamEngine @Inject constructor(
         port: Int, buttons: Int, lt: Byte, rt: Byte,
         lx: Short, ly: Short, rx: Short, ry: Short,
     ) {
-        synchronized(inputGate) {
-            if (port !in remoteReservedPorts(owner)) return
+        enqueueInput(owner, MoonlightPadUpdateKey(true, port, 0, buttons, lt, rt, lx, ly, rx, ry, null)) {
+            if (port !in remoteReservedPorts(owner)) return@enqueueInput
             val frame = padFrame(owner) {}
             sendArrivals(frame)
             runCatching {
@@ -370,8 +410,8 @@ class MoonlightStreamEngine @Inject constructor(
     }
 
     fun setRemoteMotionCapabilities(owner: Any, port: Int, mask: Int) {
-        synchronized(inputGate) {
-            if (port !in remoteReservedPorts(owner)) return
+        enqueueInput(owner) {
+            if (port !in remoteReservedPorts(owner)) return@enqueueInput
             val frame = padFrame(owner) {
                 val old = remoteCaps[port] ?: MoonlightPadCapabilities()
                 val next = old.copy(accelerometer = old.accelerometer || mask and 1 != 0,
@@ -396,7 +436,7 @@ class MoonlightStreamEngine @Inject constructor(
         remoteControllerPorts.fold(0) { mask, port -> mask or (1 shl port) }
 
     fun sendKeyboard(owner: Any, virtualKey: Short, pressed: Boolean, modifiers: Byte) {
-        synchronized(inputGate) {
+        enqueueInput(owner) {
             val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
             val direction = if (pressed) KeyboardPacket.KEY_DOWN else KeyboardPacket.KEY_UP
             runCatching { conn?.sendKeyboardInput(virtualKey, direction, modifiers, 0) }
@@ -404,8 +444,8 @@ class MoonlightStreamEngine @Inject constructor(
     }
 
     fun sendMousePosition(owner: Any, x: Int, y: Int, width: Int, height: Int) {
-        synchronized(inputGate) {
-            if (width !in 1..32767 || height !in 1..32767) return
+        enqueueInput(owner, Triple("position", width, height)) {
+            if (width !in 1..32767 || height !in 1..32767) return@enqueueInput
             val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
             runCatching {
                 conn?.sendMousePosition(x.coerceIn(0, width).toShort(), y.coerceIn(0, height).toShort(),
@@ -415,10 +455,10 @@ class MoonlightStreamEngine @Inject constructor(
     }
 
     fun sendMouseButton(owner: Any, pressed: Boolean, button: Int = 1, source: Int = 0) {
-        synchronized(inputGate) {
+        enqueueInput(owner) {
             val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
-            if (conn == null) return
-            val transition = inputOwnership.mouse(button, source, pressed) ?: return
+            if (conn == null) return@enqueueInput
+            val transition = inputOwnership.mouse(button, source, pressed) ?: return@enqueueInput
             runCatching {
                 if (transition) conn.sendMouseButtonDown(button.toByte())
                 else conn.sendMouseButtonUp(button.toByte())
@@ -427,7 +467,7 @@ class MoonlightStreamEngine @Inject constructor(
     }
 
     fun sendMouseScroll(owner: Any, clicks: Int) {
-        synchronized(inputGate) {
+        enqueueInput(owner) {
             val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
             runCatching { conn?.sendMouseScroll(clicks.coerceIn(-8, 8).toByte()) }
         }
@@ -454,11 +494,11 @@ class MoonlightStreamEngine @Inject constructor(
 
     /** Controller gyroscope and acceleration, from the authenticated Companion stream. */
     fun sendMotion(owner: Any, port: Int, type: Byte, x: Float, y: Float, z: Float) {
-        synchronized(inputGate) {
-            if (port !in remoteReservedPorts(owner) || !x.isFinite() || !y.isFinite() || !z.isFinite()) return
+        enqueueInput(owner, Triple("motion", port, type)) {
+            if (port !in remoteReservedPorts(owner) || !x.isFinite() || !y.isFinite() || !z.isFinite()) return@enqueueInput
             val now = System.nanoTime()
-            val request = motionRequests[port to type] ?: return
-            if (request.first <= 0 || now - request.second < 1_000_000_000L / request.first) return
+            val request = motionRequests[port to type] ?: return@enqueueInput
+            if (request.first <= 0 || now - request.second < 1_000_000_000L / request.first) return@enqueueInput
             motionRequests[port to type] = request.first to now
             val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
             runCatching { conn?.sendControllerMotionEvent(port.toByte(), type,
@@ -467,7 +507,7 @@ class MoonlightStreamEngine @Inject constructor(
     }
 
     fun sendMouseMove(owner: Any, dx: Int, dy: Int) {
-        synchronized(inputGate) {
+        enqueueInput(owner) {
             val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
             runCatching {
                 conn?.sendMouseMove(dx.coerceIn(-32767, 32767).toShort(),
@@ -478,10 +518,10 @@ class MoonlightStreamEngine @Inject constructor(
 
     /** Remote text entry is explicit, short and independent of Android system-key controls. */
     fun sendText(owner: Any, text: String) {
-        synchronized(inputGate) {
+        enqueueInput(owner) {
             val clean = text.filter { !it.isISOControl() || it == '\n' || it == '\t' }
                 .take(512)
-            if (clean.isEmpty()) return
+            if (clean.isEmpty()) return@enqueueInput
             val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
             runCatching { conn?.sendUtf8Text(clean) }
         }
@@ -505,7 +545,7 @@ class MoonlightStreamEngine @Inject constructor(
             }
             if (wasCancelled) stopSession(session)
             else scope.launch {
-                synchronized(inputGate) { sendArrivals(padFrame(session.owner) {}) }
+                enqueueInput(session.owner) { if (isOwned(session)) sendArrivals(padFrame(session.owner) {}) }
                 startMetrics(session)
             }
         }
@@ -540,11 +580,9 @@ class MoonlightStreamEngine @Inject constructor(
         override fun setMotionEventState(controllerNumber: Short, motionType: Byte, reportRateHz: Short) {
             val port = controllerNumber.toInt()
             if (port !in 0..3 || motionType !in setOf(MoonBridge.LI_MOTION_TYPE_ACCEL, MoonBridge.LI_MOTION_TYPE_GYRO)) return
-            scope.launch {
-                synchronized(inputGate) {
-                    if (isOwned(session)) motionRequests[port to motionType] =
-                        (reportRateHz.toInt() and 0xffff).coerceIn(0, 60) to 0L
-                }
+            enqueueInput(session.owner) {
+                if (isOwned(session)) motionRequests[port to motionType] =
+                    (reportRateHz.toInt() and 0xffff).coerceIn(0, 120) to 0L
             }
         }
         override fun setControllerLED(controllerNumber: Short, r: Byte, g: Byte, b: Byte) = Unit
@@ -598,7 +636,8 @@ class MoonlightStreamEngine @Inject constructor(
                             mutable.value = mutable.value.copy(metrics = MoonlightStreamMetrics(
                                 video, audio, rtt?.let { (it shr 32).toInt().takeIf { n -> n >= 0 } },
                                 rtt?.let { it.toInt().takeIf { n -> n >= 0 } }, fps.coerceAtLeast(0.0),
-                                presentedFps.coerceAtLeast(0.0), pendingVideo.coerceAtLeast(0), session.networkPoor))
+                                presentedFps.coerceAtLeast(0.0), pendingVideo.coerceAtLeast(0), session.networkPoor,
+                                session.inputLatency.p95Ms(), session.inputMailbox.depth()))
                     }
                 }
             }

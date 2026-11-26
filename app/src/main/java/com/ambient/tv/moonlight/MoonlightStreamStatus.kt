@@ -40,4 +40,6 @@ data class MoonlightStreamMetrics(
     val presentedFps: Double = 0.0,
     val pendingVideoFrames: Int = 0,
     val networkPoor: Boolean = false,
+    val inputDispatchP95Ms: Int? = null,
+    val pendingInputs: Int = 0,
 )
