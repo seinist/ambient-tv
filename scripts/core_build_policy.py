@@ -17,6 +17,7 @@ PROFILES = {
     "o3-thinlto": (("-O3", "-flto=thin"), ("-flto=thin",)),
     "tune-a57": (("-mtune=cortex-a57",), ()),
     "picodrive-sh2": ((), ()),
+    "snes9x2010-threaded": ((), ()),
 }
 ABIS = {"arm64-v8a", "armeabi-v7a", "x86_64", "x86"}
 REQUIRED_EXPORTS = {
@@ -77,12 +78,18 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
             raise ValueError("PicoDrive SH2 candidate is artifact-only")
         cores = cores or "picodrive"
         abis = abis or "arm64-v8a"
+    if profile == "snes9x2010-threaded":
+        if event != "workflow_dispatch" or publish:
+            raise ValueError("Snes9x2010 threaded renderer candidate is artifact-only")
+        cores = cores or "snes9x2010"
     if profile == "tune-a57":
         abis = abis or "arm64-v8a"
     chosen_cores = selection(cores, ids, "core")
     chosen_abis = selection(abis, declared_abis, "ABI")
     if profile == "picodrive-sh2" and (chosen_cores != ["picodrive"] or chosen_abis != ["arm64-v8a"]):
         raise ValueError("PicoDrive SH2 candidate requires PicoDrive on arm64-v8a")
+    if profile == "snes9x2010-threaded" and chosen_cores != ["snes9x2010"]:
+        raise ValueError("Threaded renderer candidate requires Snes9x2010")
     if profile == "tune-a57" and chosen_abis != ["arm64-v8a"]:
         raise ValueError("Cortex-A57 tuning is initially restricted to arm64-v8a")
     if event == "push" or publish:
@@ -110,7 +117,9 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
         jobs += [(core, "arm64-v8a", "baseline")
                  for core in ("parallel_n64", "mednafen_psx_hw", "swanstation")]
         jobs += [("pcsx_rearmed", "x86_64", "baseline"),
-                 ("gpsp", "x86", "baseline")]
+                 ("gpsp", "x86", "baseline"),
+                 ("snes9x2010", "arm64-v8a", "baseline"),
+                 ("snes9x2010", "arm64-v8a", "snes9x2010-threaded")]
     elif comparison != "none":
         variants = ("baseline", "thinlto") if comparison == "baseline-thinlto" else ("o3", "o3-thinlto")
         jobs = [(core, abi, variant) for core in chosen_cores for abi in chosen_abis for variant in variants]
@@ -272,6 +281,29 @@ def prepare_cmake(root, core, profile):
     path.write_text(source)
 
 
+def prepare_ndk(root, core, profile):
+    if profile != "snes9x2010-threaded":
+        return
+    if core != "snes9x2010":
+        raise ValueError("Threaded renderer recipe requires Snes9x2010")
+    path = root / "jni" / "Android.mk"
+    source = path.read_text()
+    marker = "include $(CORE_DIR)/build/Makefile.common"
+    flags = "LOCAL_CFLAGS   := $(COREFLAGS)"
+    common = (root / "build" / "Makefile.common").read_text()
+    if (source.count(marker) != 1 or source.count(flags) != 1
+            or "rthreads/retro_eventcount.c" not in common
+            or "rthreads/rthreads.c" not in common
+            or "ifneq ($(HAVE_THREADS),0)" not in common):
+        raise ValueError("Snes9x2010 threading recipe changed; inspect pinned source")
+    # The upstream common recipe adds HAVE_THREADS to CFLAGS, but Android.mk
+    # assigns COREFLAGS to LOCAL_CFLAGS and never forwards that define.
+    # Explicitly build the upstream opt-in renderer; its core option stays off.
+    source = source.replace(marker, "HAVE_THREADS := 1\n" + marker)
+    source = source.replace(flags, flags + " -DHAVE_THREADS")
+    path.write_text(source)
+
+
 def ndk_flags(path, profile, cppflags):
     # Keep upstream flags; append rather than replace APP_LDFLAGS from Application.mk.
     cflags, ldflags = PROFILES[profile]
@@ -297,6 +329,10 @@ def main():
     p.add_argument("--profile", choices=PROFILES, default="baseline")
     p.add_argument("--comparison", choices=("none", "baseline-thinlto", "o3-o3-thinlto"), default="none")
     p = sub.add_parser("prepare-cmake")
+    p.add_argument("--root", type=Path, required=True)
+    p.add_argument("--core", required=True)
+    p.add_argument("--profile", choices=PROFILES, required=True)
+    p = sub.add_parser("prepare-ndk")
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--core", required=True)
     p.add_argument("--profile", choices=PROFILES, required=True)
@@ -328,6 +364,8 @@ def main():
                          separators=(",", ":")))
     elif args.action == "prepare-cmake":
         prepare_cmake(args.root, args.core, args.profile)
+    elif args.action == "prepare-ndk":
+        prepare_ndk(args.root, args.core, args.profile)
     elif args.action == "ndk-flags":
         ndk_flags(args.application, args.profile, args.cppflags)
     elif args.action == "select":
