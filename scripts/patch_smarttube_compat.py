@@ -312,22 +312,6 @@ def patch_ytcfg_json_parser(path: Path, check: bool) -> bool:
     return True
 
 
-def patch_cronet_experimental_import(path: Path, check: bool) -> bool:
-    """Drop the unused ExperimentalCronetEngine import (the call sites are commented out)."""
-    if not path.is_file():
-        return False
-    text = path.read_text()
-    legacy = "import org.chromium.net.ExperimentalCronetEngine\n"
-    if check:
-        if legacy in text:
-            die(f"unused ExperimentalCronetEngine import remains in {path}")
-        return False
-    if legacy not in text:
-        return False
-    path.write_text(text.replace(legacy, "", 1))
-    return True
-
-
 def patch_okhttp_manager_request_body(path: Path, check: bool) -> bool:
     """Swap RequestBody.create(mediaType, body) to the non-deprecated (body, mediaType) overload."""
     if not path.is_file():
@@ -1071,7 +1055,7 @@ def patch_disable_unused_cronet(msc: Path, shared: Path, check: bool) -> list[Pa
         "        //addCronetInterceptor(builder)\n",
     ):
         text = text.replace(line, "")
-    text, count = re.subn(
+    text, _ = re.subn(
         r"\n    private fun addCronetInterceptor\(builder: OkHttpClient\.Builder\) \{.*?\n    \}\n(?=\})",
         "",
         text,
