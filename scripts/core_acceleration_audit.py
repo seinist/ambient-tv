@@ -6,7 +6,8 @@ import shlex
 DRIVER = re.compile(r"(?:[\w.-]+-)?clang(?:\+\+)?(?:-\d+)?")
 COMPILER_COMMAND = re.compile(r"^\s*(?:\d{4}-\d{2}-\d{2}T[^ ]+Z\s+)?(?:\S*/)?(?:[\w.-]+-)?clang(?:\+\+)?(?:-\d+)?(?:\s|$)")
 SOURCE = re.compile(r"\.(?:c|cc|cpp|cxx|C|s|S|asm)$")
-AUDITED = {"gpsp", "pcsx_rearmed", "mupen64plus_next_gles3", "picodrive", "parallel_n64", "mednafen_psx_hw", "swanstation"}
+AUDITED = {"gpsp", "pcsx_rearmed", "mupen64plus_next_gles3", "picodrive", "parallel_n64", "mednafen_psx_hw", "swanstation", "gambatte", "genesis_plus_gx",
+           "mednafen_pce_fast", "mednafen_ngp", "mednafen_wswan", "mednafen_supergrafx"}
 
 
 def expand_response(tokens, cwd, root, depth=0):
@@ -126,6 +127,21 @@ def evidence(commands, source, required=()):
 def requirements(core, abi, profile):
     arm = abi in {"arm64-v8a", "armeabi-v7a"}
     arm64 = abi == "arm64-v8a"
+    if core == "gambatte":
+        return {"rgb565_renderer": ("video_libretro.cpp", (("VIDEO_RGB565", "1"),)),
+                "resampler_config": ("libretro/libretro.cpp", (("CC_RESAMPLER_NO_HIGHPASS", "1"),))}
+    if core == "genesis_plus_gx":
+        flags = (("USE_16BPP_RENDERING", "1"), ("FRONTEND_SUPPORTS_RGB565", "1"))
+        if abi == "armeabi-v7a":
+            flags += (("_ARM_ASSEM_", "1"),)
+        return {"native_pixel_path": ("libretro/libretro.c", flags)}
+    if core in {"mednafen_pce_fast", "mednafen_supergrafx"}:
+        source = "libretro.cpp" if core == "mednafen_supergrafx" else "libretro.c"
+        return {"pce_fast_renderer": (source, (("WANT_PCE_FAST_EMU", "1"), ("FRONTEND_SUPPORTS_RGB565", "1")))}
+    if core == "mednafen_ngp":
+        return {"memory_loader_and_rgb565": ("libretro.c", (("LOAD_FROM_MEMORY", "1"), ("FRONTEND_SUPPORTS_RGB565", "1")))}
+    if core == "mednafen_wswan":
+        return {"fixed_point_rgb565": ("libretro.c", (("MPC_FIXED_POINT", "1"), ("FRONTEND_SUPPORTS_RGB565", "1")))}
     if core == "gpsp":
         stub = "arm/arm64_stub.S" if arm64 else "arm/arm_stub.S" if arm else "x86/x86_stub.S"
         return {"dynarec": ("cpu_threaded.c", (("HAVE_DYNAREC", "1"), ("MMAP_JIT_CACHE", "1"))),
