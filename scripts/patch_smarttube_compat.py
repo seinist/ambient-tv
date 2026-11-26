@@ -1030,6 +1030,22 @@ def patch_upcoming_streams(msc: Path, check: bool) -> list[Path]:
 
 
 
+def patch_disable_legacy_tls_bypass(path: Path, check: bool) -> bool:
+    if not path.is_file():
+        die(f"SmartTube OkHttp commons missing: {path}")
+    text = path.read_text()
+    legacy = "        configureToIgnoreCertificate(okBuilder);"
+    replacement = "        // Ambient TV requires normal TLS certificate validation."
+    if legacy not in text:
+        if replacement not in text:
+            die(f"Unsupported SmartTube TLS setup: {path}")
+        return False
+    if check:
+        die(f"Legacy TLS bypass still enabled: {path}")
+    path.write_text(text.replace(legacy, replacement))
+    return True
+
+
 def patch_disable_unused_cronet(msc: Path, shared: Path, check: bool) -> list[Path]:
     """Remove SmartTube's dormant embedded-Cronet adapter; Ambient TV uses Media3's GMS Cronet."""
     changed: list[Path] = []
@@ -1047,6 +1063,9 @@ def patch_disable_unused_cronet(msc: Path, shared: Path, check: bool) -> list[Pa
         if any(token in text for token in ("CronetInterceptor", "CronetManager", "addCronetInterceptor")):
             die(f"dormant SmartTube Cronet adapter remains in {helper}")
         return changed
+    # Never remove an adapter that upstream has activated.
+    if re.search(r"(?m)^\s*addCronetInterceptor\s*\(", text):
+        die(f"active SmartTube Cronet adapter in {helper}")
     for line in (
         "import com.google.net.cronet.okhttptransport.CronetInterceptor\n",
         "import com.liskovsoft.sharedutils.cronet.CronetManager\n",
@@ -1154,6 +1173,8 @@ def main() -> int:
         changed.append(doh)
 
     okhttp_commons = shared / "sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/OkHttpCommons.java"
+    if patch_disable_legacy_tls_bypass(okhttp_commons, args.check):
+        changed.append(okhttp_commons)
     if patch_okhttp_debug_dump(okhttp_commons, args.check):
         changed.append(okhttp_commons)
 
