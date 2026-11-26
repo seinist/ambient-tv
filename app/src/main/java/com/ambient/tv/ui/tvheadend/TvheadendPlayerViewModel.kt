@@ -172,7 +172,7 @@ class TvheadendPlayerViewModel @Inject constructor(
             liveSyncSeekVersion = seekVersion
             liveSyncWatch.resetObservation()
         }
-        if (ready == null || kind != "channel" || ready.playingRecording != null ||
+        if (ready == null || sourceSystem != "tvheadend" || kind != "channel" || ready.playingRecording != null ||
             ready.channel?.kind == LiveTvChannelKind.RADIO || !ready.source.isLive ||
             route == null || snapshot.metadata?.route != route ||
             snapshot.metadata?.sourceAccessIdentity != sourceIdentity || snapshot.replacingSource ||

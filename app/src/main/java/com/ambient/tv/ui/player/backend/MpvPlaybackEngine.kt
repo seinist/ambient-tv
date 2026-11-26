@@ -2635,9 +2635,15 @@ internal class MpvPlaybackEngine(
     internal fun liveSyncSample(): com.ambient.tv.ui.player.LiveSyncSample? {
         if (!liveStream || !attached || !frameDropSampleReady() || !nativePlayWanted ||
             getPropertyString("vid") == "no" || getPropertyString("aid") == "no") return null
-        val sync = avSyncSeconds() ?: return null
+        // avsync describes the last video frame. If video is frozen that value and time-pos
+        // can both stay unchanged, so observe the independent audio playback clock as well.
+        val sync = avSyncSeconds()
+        val audioClock = getPropertyDouble("audio-pts", Double.NaN).takeIf { it.isFinite() }
+        val videoClock = getPropertyDouble("time-pos", Double.NaN).takeIf { it.isFinite() }
+        if (sync == null && (audioClock == null || videoClock == null)) return null
         return com.ambient.tv.ui.player.LiveSyncSample(android.os.SystemClock.elapsedRealtime(),
-            positionMs(), reopenGeneration, avSyncSeconds = sync)
+            audioClock?.let { (it * 1000).toLong() } ?: positionMs(), reopenGeneration,
+            avSyncSeconds = sync, videoPositionMs = videoClock?.takeIf { audioClock != null }?.let { (it * 1000).toLong() })
     }
 
     internal fun reopenForLiveSync(expectedGeneration: Int) {

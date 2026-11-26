@@ -277,13 +277,13 @@ class TvheadendViewModel @Inject constructor(
             if (!stillCurrent()) { load(force = false); return@launch }
             val savedCapabilities = snapshots.read<LiveTvCapabilities>(namespace, "capabilities")
             val rawDashboard = snapshots.read<LiveTvDashboard>(namespace, "dashboard")
-                ?: (snapshots.read<List<LiveTvChannel>>(namespace, "channels") ?: requestedRepository.cachedChannels())?.let { channels ->
+                ?: (snapshots.read<List<LiveTvChannel>>(namespace, "channels") ?: suspendResult { requestedRepository.cachedChannels() }.getOrNull())?.let { channels ->
                     LiveTvDashboard(LiveTvServerInfo(requestedRepository.source.name, null, null),
                         channels, emptyList(), emptyList(), emptyList())
                 }
             val savedDashboard = rawDashboard?.let { dashboard ->
                 val start = System.currentTimeMillis() / 1000L - 3600L
-                val guide = requestedRepository.cachedGuideEvents(start, 12)
+                val guide = suspendResult { requestedRepository.cachedGuideEvents(start, 12) }.getOrNull()
                 if (guide != null) dashboard.copy(events = guide) else dashboard
             }
             savedDashboard?.let { cached ->

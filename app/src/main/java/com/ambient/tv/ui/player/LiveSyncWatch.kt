@@ -10,6 +10,8 @@ internal data class LiveSyncSample(
     val renderedFrames: Long? = null,
     val audioBuffers: Long? = null,
     val avSyncSeconds: Double? = null,
+    /** MPV's video-related time-pos can stop while audio-pts continues. */
+    val videoPositionMs: Long? = null,
 )
 
 internal enum class LiveSyncFault { VIDEO_STALLED, CLOCK_DRIFT }
@@ -54,7 +56,10 @@ internal class LiveSyncWatch {
         val clockMoves = sample.positionMs - before.positionMs >= 150
         // Some backends do not expose presentation counters (permanent zero). Require evidence
         // that pictures were produced at least once before interpreting zero progress as a stall.
-        val videoFrozen = (sample.renderedFrames ?: 0) > 0 && before.renderedFrames == sample.renderedFrames
+        val videoClockFrozen = sample.videoPositionMs != null && before.videoPositionMs != null &&
+            kotlin.math.abs(sample.videoPositionMs - before.videoPositionMs) < 50L
+        val videoFrozen = ((sample.renderedFrames ?: 0) > 0 && before.renderedFrames == sample.renderedFrames) ||
+            videoClockFrozen
         if (videoFrozen && clockMoves) {
             if (frozenFrom == null) frozenFrom = before
         } else frozenFrom = null
@@ -73,7 +78,7 @@ internal class LiveSyncWatch {
             else -> null
         }
         val healthy = clockMoves && !videoFrozen && !drift &&
-            ((sample.renderedFrames ?: 0) > 0 || sample.avSyncSeconds != null)
+            ((sample.renderedFrames ?: 0) > 0 || sample.avSyncSeconds != null || sample.videoPositionMs != null)
         if (healthy) {
             if (healthyFrom == null) healthyFrom = before.atMs
             if (sample.atMs - requireNotNull(healthyFrom) >= 30_000L) attempts = 0

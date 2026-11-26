@@ -56,4 +56,20 @@ class LiveSyncWatchTest {
         val watch = LiveSyncWatch()
         repeat(90) { assertNull(watch.observe(sample(it, frames = 0))) }
     }
+
+    @Test fun mpvFrozenVideoClockWithMovingAudioClockTriggersWithoutChangingAvsync() {
+        val watch = LiveSyncWatch()
+        repeat(4) { i ->
+            assertNull(watch.observe(sample(i, frames = null, sync = 0.0).copy(videoPositionMs = 1000L)))
+        }
+        assertEquals(LiveSyncFault.VIDEO_STALLED,
+            watch.observe(sample(4, frames = null, sync = 0.0).copy(videoPositionMs = 1000L)))
+    }
+
+    @Test fun mpvVideoAndAudioClocksAdvancingTogetherDoNotTrigger() {
+        val watch = LiveSyncWatch()
+        repeat(60) { i ->
+            assertNull(watch.observe(sample(i, frames = null, sync = 0.0).copy(videoPositionMs = i * 1000L)))
+        }
+    }
 }
