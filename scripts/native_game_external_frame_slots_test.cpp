@@ -37,16 +37,30 @@ int main() {
         auto& a = *slots.get(0);
         auto& b = *slots.get(1);
         assert(slots.canImport(0, 3));
-        a.lease.adopt(3, 1, 2, 5, 99); a.texture = 7; a.width = 320; a.height = 240;
+        a.lease.adopt(3, 1, 2, 5, 99); a.texture = 7; a.width = 320; a.height = 240; a.allocationBytes = 4096;
         assert(slots.select(0, 1, 2, borrowed) && borrowed == 7);
         assert(!slots.canImport(1, 3) && slots.canImport(1, 4));
-        b.lease.adopt(4, 1, 2, 6, 99); b.texture = 8; b.width = 640; b.height = 480;
+        b.lease.adopt(4, 1, 2, 6, 99); b.texture = 8; b.width = 640; b.height = 480; b.allocationBytes = 8192;
         assert(borrowed == 7 && slots.selected() == 0);
         assert(slots.finishSlotUse(1, 1, 2, driver) && driver.finishes == 1);
         assert(slots.finishSlotUse(1, 1, 2, driver) && driver.finishes == 1);
         assert(slots.finishUse(borrowed, 1, 2, driver) && driver.finishes == 2);
         assert(!slots.select(1, 1, 3, borrowed) && borrowed == 7);
-        assert(slots.select(1, 1, 2, borrowed) && borrowed == 8);
+        // Reject a different AHB, geometry, allocation size, context or index
+        // without changing the selected slot or borrowed texture.
+        for (unsigned bits = 0; bits < 64; ++bits) {
+            const bool matches = slots.selectMatching((bits & 1) ? 2 : 1,
+                (bits & 2) ? 3 : 4, (bits & 4) ? 0 : 640, (bits & 8) ? 479 : 480,
+                (bits & 16) ? 4096 : 8192, 1, (bits & 32) ? 3 : 2, borrowed);
+            assert(matches == (bits == 0));
+            if (matches) {
+                assert(borrowed == 8 && slots.selected() == 1);
+                assert(slots.selectMatching(0, 3, 320, 240, 4096, 1, 2, borrowed));
+            }
+            assert(borrowed == 7 && slots.selected() == 0);
+        }
+        assert(!slots.selectMatching(1, 4, 640, 480, 0, 1, 2, borrowed));
+        assert(slots.selectMatching(1, 4, 640, 480, 8192, 1, 2, borrowed) && borrowed == 8);
         assert(!slots.markUse(7, 1, 2) && slots.markUse(borrowed, 1, 2));
         assert(slots.finishSlotUse(0, 1, 2, driver) && driver.finishes == 2);
         assert(slots.finishUse(borrowed, 1, 2, driver) && driver.finishes == 3);
@@ -60,6 +74,7 @@ int main() {
         assert(!slots.ownsContext(1, 2) && !slots.markUse(borrowed, 1, 2));
         assert(!slots.finishSlotUse(0, 1, 2, driver, true));
         assert(!slots.select(0, 1, 2, borrowed) && borrowed == 8);
+        assert(!slots.selectMatching(1, 4, 640, 480, 8192, 1, 2, borrowed) && borrowed == 8);
         slots.release(borrowed, 1, 2, driver);
         assert(!borrowed && slots.selected() == 0 && driver.finishes == 4);
         assert((driver.deleted == std::vector<unsigned>{7}));

@@ -286,6 +286,25 @@ void readFenceHandoffContracts() {
     std::puts("PASS production GLES read fence handoff and CPU fallback (5 cases)");
 }
 
+void bridgeIdentityContracts() {
+    for (bool fenceSupported : {false, true}) {
+        auto& backend = VulkanBackend::getInstance();
+        backend = {};
+        backend.frameConfirmed = true;
+        backend.readFenceSupported = fenceSupported;
+        backend.readFenceAccepted = true;
+        Video video;
+        video.primaryMatches = false;
+        LibretroDroid host {&video};
+        const unsigned before = glFinishes;
+        host.handleVideoRefresh(RETRO_HW_FRAME_BUFFER_VALID, 256, 224, 1024);
+        assert(backend.fatal && backend.rejections == 1 && !backend.frameConfirmed);
+        assert(!video.fenceExports && !backend.fenceImports && !backend.submissions);
+        assert(!video.frameCalls && !video.transferUpdates && glFinishes == before);
+    }
+    std::puts("PASS bridge identity preflight precedes fence export and CPU fallback");
+}
+
 void bridgeAccessContracts() {
     for (bool resize : {false, true}) {
         auto& backend = VulkanBackend::getInstance();
@@ -403,6 +422,7 @@ int main() {
     writeFenceHandoffContracts();
     bridgeImportContracts();
     readFenceHandoffContracts();
+    bridgeIdentityContracts();
     bridgeAccessContracts();
     enum class Input { Vulkan, Software, Duplicate, GlesHardware };
     struct Case {

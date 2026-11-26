@@ -1,0 +1,86 @@
+diff --git a/src/main/cpp/externalframeslots.h b/src/main/cpp/externalframeslots.h
+--- a/src/main/cpp/externalframeslots.h
++++ b/src/main/cpp/externalframeslots.h
+@@ -49,6 +49,17 @@
+         return true;
+     }
+ 
++    bool selectMatching(std::size_t index, Buffer buffer, unsigned width, unsigned height,
++                        std::uint64_t allocationBytes, Display display, Context context,
++                        Texture& borrowed) noexcept {
++        const auto* slot = get(index);
++        if (!slot || !width || !height || !allocationBytes ||
++                !slot->lease.matches(buffer, display, context, slot->texture) ||
++                slot->width != width || slot->height != height ||
++                slot->allocationBytes != allocationBytes) return false;
++        return select(index, display, context, borrowed);
++    }
++
+     bool select(std::size_t index, Display display, Context context, Texture& borrowed) noexcept {
+         const auto* slot = get(index);
+         if (!slot || !slot->texture || !slot->width || !slot->height ||
+diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
+--- a/src/main/cpp/video.h
++++ b/src/main/cpp/video.h
+@@ -257,5 +257,6 @@
+     bool prepareExternalFrameSlot(std::size_t index, AHardwareBuffer* buffer, unsigned width, unsigned height,
+                                   std::uint64_t allocationBytes);
+-    bool selectExternalFrameSlot(std::size_t index);
++    bool selectExternalFrameSlot(std::size_t index, AHardwareBuffer* buffer, unsigned width, unsigned height,
++                                 std::uint64_t allocationBytes);
+     void releaseExternalFrame();
+ };
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -850,13 +850,15 @@
+ bool Video::attachExternalFrame(AHardwareBuffer* buffer, unsigned int width, unsigned int height,
+                                 std::uint64_t allocationBytes) {
+     // The ordinary playback path continues to publish only the primary slot.
+-    return prepareExternalFrameSlot(0, buffer, width, height, allocationBytes) && selectExternalFrameSlot(0);
++    return prepareExternalFrameSlot(0, buffer, width, height, allocationBytes) &&
++        selectExternalFrameSlot(0, buffer, width, height, allocationBytes);
+ }
+ 
+ bool Video::matchesPrimaryExternalFrame(AHardwareBuffer* buffer, unsigned width, unsigned height,
+                                         std::uint64_t allocationBytes) const {
+     const auto* slot = externalFrame.get(0);
+-    return externalFrames && externalFrame.selected() == 0 && slot && slot->texture == hwRenderTexture &&
++    return externalFrames && width && height && allocationBytes && externalFrame.selected() == 0 &&
++        slot && slot->texture == hwRenderTexture &&
+         slot->lease.matches(buffer, eglGetCurrentDisplay(), eglGetCurrentContext(), hwRenderTexture) &&
+         slot->width == width && slot->height == height && slot->allocationBytes == allocationBytes;
+ }
+@@ -958,8 +960,12 @@
+-bool Video::selectExternalFrameSlot(std::size_t index) {
++bool Video::selectExternalFrameSlot(std::size_t index, AHardwareBuffer* buffer, unsigned width, unsigned height,
++                                    std::uint64_t allocationBytes) {
+     if (!externalFrames) return false;
+     const auto previous = externalFrame.selected();
+     const auto previousTexture = hwRenderTexture;
+-    if (!externalFrame.select(index, eglGetCurrentDisplay(), eglGetCurrentContext(), hwRenderTexture)) return false;
++    // Publication must name the precise imported allocation. This checks identity,
++    // not GPU completion; the caller still owns the write-completion proof.
++    if (!externalFrame.selectMatching(index, buffer, width, height, allocationBytes,
++            eglGetCurrentDisplay(), eglGetCurrentContext(), hwRenderTexture)) return false;
+     const auto& slot = *externalFrame.get(index);
+     if (previous == index && previousTexture == hwRenderTexture &&
+             hwFBOWidth == slot.width && hwFBOHeight == slot.height) return true;
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -1540,5 +1540,14 @@
+                 if (backend.hasFatalError()) return;
+             }
++            // Both the native-fence path and the CPU fallback must protect the
++            // allocation Vulkan is about to write, not merely any selected EGL
++            // texture. Fail before exporting/importing a mismatched read fence.
++            if (!video->matchesPrimaryExternalFrame(backend.getFrameBuffer(),
++                    backend.getFrameBufferWidth(), backend.getFrameBufferHeight(),
++                    backend.getFrameBufferAllocationBytes())) {
++                backend.rejectBridgeImport();
++                return;
++            }
+             bool queuedReadWait = false;
+             if (backend.canImportBridgeReadFence()) {
+                 queuedReadWait = traceGameCall("AmbientGame GLES read fence import", [&] {
