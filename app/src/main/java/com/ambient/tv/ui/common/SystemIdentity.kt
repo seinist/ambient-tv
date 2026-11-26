@@ -236,7 +236,7 @@ fun SystemWordmark(system: MediaSystem?, fallback: String, modifier: Modifier = 
             }
         system == MediaSystem.MOONLIGHT -> Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SystemLogo(system, size = height)
-            Text(fallback, style = MaterialTheme.typography.titleMedium)
+            Text(fallback, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         else -> Text(fallback, style = MaterialTheme.typography.titleMedium, modifier = modifier)
     }

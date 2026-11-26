@@ -945,6 +945,7 @@ internal fun GameTile(
     val activate = rememberUiSoundAction(onClick = onPlay)
     val showInfo = rememberUiSoundAction(onClick = onInfo)
     val uiSounds = LocalUiSoundPlayer.current
+    val artwork = gameArtworkPresentation(game)
     val infoLabel = stringResource(R.string.game_detail_title)
     Box(modifier.fillMaxWidth()) {
         Surface(onClick = activate,
@@ -970,12 +971,12 @@ internal fun GameTile(
                 // visible cover frame itself follows its native shape, including the fallback.
                 BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(artworkSlotAspectRatio)
                     .testTag("game-cover-slot:${game.fileId}"), contentAlignment = Alignment.BottomCenter) {
-                    val size = gameCoverFrameSize(maxWidth, maxHeight, game.coverAspectRatio)
+                    val size = gameCoverFrameSize(maxWidth, maxHeight, artwork.aspectRatio)
                     Box(
                         Modifier.size(size.width, size.height).clip(artworkShape)
                             .testTag("game-cover:${game.fileId}"),
                     ) {
-                        GameCoverArtwork(game.coverModel, game.title, game.systemId,
+                        GameCoverArtwork(artwork.cover, game.title, game.systemId,
                             modifier = Modifier.fillMaxSize(), focused = focused, fileId = game.fileId, systemIcon = game.artworkIcon)
                         // Status only, like Radio Browser's station cards: the list's heart, the
                         // detail page and Info/long press change it, never a button on the card.
@@ -1018,6 +1019,7 @@ internal fun GameListEntry(
     val activate = rememberUiSoundAction(onClick = onPlay)
     val showInfo = rememberUiSoundAction(onClick = onInfo)
     val uiSounds = LocalUiSoundPlayer.current
+    val artwork = gameArtworkPresentation(game)
     val infoLabel = stringResource(R.string.game_detail_title)
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1043,8 +1045,8 @@ internal fun GameListEntry(
                 val coverHeight = 46.dp * density
                 Box(Modifier.size(coverHeight * 1.5f, coverHeight).testTag("game-list-cover:${game.fileId}"),
                     contentAlignment = Alignment.Center) {
-                    val ratio = game.coverAspectRatio.coerceIn(.55f, 1.5f)
-                    GameCoverArtwork(game.coverModel, game.title, game.systemId,
+                    val ratio = artwork.aspectRatio.coerceIn(.55f, 1.5f)
+                    GameCoverArtwork(artwork.cover, game.title, game.systemId,
                         modifier = Modifier.size(coverHeight * ratio, coverHeight).clip(RoundedCornerShape(4.dp)),
                         focused = focused, fileId = game.fileId, systemIcon = game.artworkIcon)
                 }

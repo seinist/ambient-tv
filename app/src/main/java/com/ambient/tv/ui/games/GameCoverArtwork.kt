@@ -1,6 +1,9 @@
 package com.ambient.tv.ui.games
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import com.ambient.tv.domain.model.GameBrowseItem
+import kotlinx.coroutines.flow.Flow
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -26,6 +29,23 @@ import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.isActiveNavigationDestination
 
 internal val LocalGameArtworkPriority = staticCompositionLocalOf<GameArtworkPriority> { SharedGameArtworkPriority }
+
+/** A stable library list may publish image changes independently for each composed card. */
+internal data class GameArtworkPresentation(val cover: Any?, val aspectRatio: Float)
+internal fun interface GameArtworkSource {
+    fun artwork(fileId: String): Flow<GameArtworkPresentation?>
+}
+internal val LocalGameArtworkSource = staticCompositionLocalOf<GameArtworkSource?> { null }
+
+@Composable
+internal fun gameArtworkPresentation(game: GameBrowseItem): GameArtworkPresentation {
+    val source = LocalGameArtworkSource.current
+    val live = if (source != null) {
+        val flow = remember(source, game.fileId) { source.artwork(game.fileId) }
+        flow.collectAsState(initial = null).value
+    } else null
+    return live ?: GameArtworkPresentation(game.coverModel, game.coverAspectRatio)
+}
 
 /** The caller reserves the cover's geometry before loading. Neither success nor fallback changes it. */
 @Composable

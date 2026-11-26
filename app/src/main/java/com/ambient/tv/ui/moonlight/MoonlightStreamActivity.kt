@@ -552,6 +552,7 @@ private fun MoonlightStreamContent(
                     artworkAspectRatio = artwork?.aspectRatio ?: 2f / 3f,
                     artworkContentScale = ContentScale.Fit,
                     contextLine = listOf(systemName(MediaSystem.MOONLIGHT), hostLabel).filter { it.isNotBlank() }.joinToString(" · "),
+                    contextSystem = MediaSystem.MOONLIGHT,
                     subtitle = if (!displayReady) stringResource(R.string.moonlight_display_switching)
                     else if (startFailed) stringResource(R.string.moonlight_stream_failed)
                     else status.error ?: stringResource(when (status.phase) {

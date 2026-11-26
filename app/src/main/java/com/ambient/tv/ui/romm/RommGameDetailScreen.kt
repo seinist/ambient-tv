@@ -114,34 +114,18 @@ fun RommGameDetailScreen(
             else -> TvLazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize().overlayLazyScrollbar(listState),
-                contentPadding = PaddingValues(start = screenGutter(), end = screenGutter(), top = 94.dp, bottom = 24.dp),
+                contentPadding = com.ambient.tv.ui.games.gameDetailContentPadding(),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
                 wrapVerticalFocus = false,
             ) {
                 item("hero") {
-                    BoxWithConstraints(Modifier.fillMaxWidth()) {
-                        val compact = maxWidth < 600.dp
-                        val coverSize = com.ambient.tv.ui.games.gameCoverFrameSize(
-                            if (compact) minOf(maxWidth, 340.dp) else minOf(maxWidth * .42f, 440.dp),
-                            if (compact) 220.dp else 315.dp,
-                            game.coverAspectRatio,
-                        )
-                        val cover: @Composable () -> Unit = {
-                            GameCoverArtwork(cover = game.coverModel, title = game.title, systemId = game.systemId,
-                                modifier = Modifier.size(coverSize))
-                        }
-                        val information: @Composable () -> Unit = {
+                    com.ambient.tv.ui.games.GameDetailHero(
+                        cover = game.coverModel, title = game.title, systemId = game.systemId,
+                        aspectRatio = game.coverAspectRatio,
+                    ) {
                             RommGameInformation(game, state.rom, state.platform, state.busy,
                                 onPlay = { onPlay(game) }, onPlayFresh = { confirmFresh = true },
                                 onFavorite = model::favorite, onRefresh = model::refresh, primaryFocus = primaryFocus)
-                        }
-                        if (compact) Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { cover() }
-                            information()
-                        } else Row(horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.Top) {
-                            cover()
-                            Column(Modifier.weight(1f)) { information() }
-                        }
                     }
                 }
                 state.error?.let { error -> item("error") {

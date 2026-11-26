@@ -55,6 +55,7 @@ fun MoonlightLibraryScreen(
     val rowsState = rememberLazyListState()
     val requests = remember { mutableMapOf<String, FocusRequester>() }
     val artworkPriority = remember { GameArtworkPriority() }
+    val artworkSource = remember(model) { GameArtworkSource(model::artworkPresentation) }
     val gameIndex = remember(games) { games.associateBy { it.key } }
     val currentGames by rememberUpdatedState(gameIndex)
     LaunchedEffect(initialSection) { model.section(selectedSection) }
@@ -99,7 +100,7 @@ fun MoonlightLibraryScreen(
     if (initial != null) BrowseFocusInitialTarget(initial.key, row = initial.host.id.takeIf { state.view == "rows" })
     val name = systemName(MediaSystem.MOONLIGHT)
     fun open(game: MoonlightBrowseGame) { focusedId = game.key; onDetails(game.host.id, game.app.id) }
-    CompositionLocalProvider(LocalPageOfflineStatus provides offlineStatus, LocalGameArtworkPriority provides artworkPriority) {
+    CompositionLocalProvider(LocalPageOfflineStatus provides offlineStatus, LocalGameArtworkPriority provides artworkPriority, LocalGameArtworkSource provides artworkSource) {
         Column(
             Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(),
                 top = pageHeaderTop(screenGutter()), bottom = screenGutter()),

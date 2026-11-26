@@ -77,23 +77,15 @@ fun MoonlightGameDetailScreen(
             else -> TvLazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize().overlayLazyScrollbar(listState),
-                contentPadding = PaddingValues(start = screenGutter(), end = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(screenGutter()), bottom = screenGutter()),
+                contentPadding = com.ambient.tv.ui.games.gameDetailContentPadding(),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
                 wrapVerticalFocus = false,
             ) {
                 item("hero") {
-                    BoxWithConstraints(Modifier.fillMaxWidth()) {
-                        val compact = maxWidth < 600.dp
-                        val size = gameCoverFrameSize(
-                            if (compact) minOf(maxWidth, 340.dp) else minOf(maxWidth * .42f, 440.dp),
-                            if (compact) 220.dp else 315.dp,
-                            artwork?.aspectRatio ?: game.coverAspectRatio,
-                        )
-                        val cover: @Composable () -> Unit = {
-                            GameCoverArtwork(cover = artwork?.file, title = game.title, systemId = game.systemId,
-                                modifier = Modifier.size(size), systemIcon = game.artworkIcon)
-                        }
-                        val information: @Composable () -> Unit = {
+                    com.ambient.tv.ui.games.GameDetailHero(
+                        cover = artwork?.file, title = game.title, systemId = game.systemId,
+                        aspectRatio = artwork?.aspectRatio ?: game.coverAspectRatio, systemIcon = game.artworkIcon,
+                    ) {
                             Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
                                 DetailEyebrow(systemName(MediaSystem.MOONLIGHT) + " · " + game.systemLabel)
                                 DetailTitleRow(game.title, logoUrl = null, system = null)
@@ -121,14 +113,6 @@ fun MoonlightGameDetailScreen(
                                 if (isRunning) TvActionButton(stringResource(R.string.moonlight_quit_remote),
                                     { showQuitConfirmation = true }, loading = hostId in state.quittingHosts)
                             }
-                        }
-                        if (compact) Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { cover() }
-                            information()
-                        } else Row(horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.Top) {
-                            cover()
-                            Column(Modifier.weight(1f)) { information() }
-                        }
                     }
                 }
                 if (state.errors[hostId] == "quit_failed") item("error") {

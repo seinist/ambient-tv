@@ -132,11 +132,11 @@ class MoonlightLibraryViewModel @Inject constructor(
         loadingHosts = emptySet(), offlineHosts = emptySet(), errors = emptyMap(), artwork = emptyMap(), artworkVersion = 0,
         artworkRevisions = emptyMap(), wakingHosts = emptySet(), quittingHosts = emptySet(), localLoaded = false, initialRefreshComplete = false) }
         .distinctUntilChanged().mapLatest { withContext(Dispatchers.Default) { it.games } }
-    val games = combine(sortedGames, mutable.map { it.artwork }.distinctUntilChanged()) { sorted, artwork ->
-        withContext(Dispatchers.Default) {
-            sorted.map { game -> artwork[game.key]?.let { game.copy(artworkPath = it.file.absolutePath, artworkRatio = it.aspectRatio) } ?: game }
-        }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val games = sortedGames.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    internal fun artworkPresentation(fileId: String) = state.map { snapshot ->
+        snapshot.artwork[fileId]?.let { com.ambient.tv.ui.games.GameArtworkPresentation(it.file, it.aspectRatio) }
+    }.distinctUntilChanged()
     private val inflightArtwork = HashSet<Pair<String, Boolean>>()
     private val hostSlots = Semaphore(2)
     private var fetch: Job? = null
