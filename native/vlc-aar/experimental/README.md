@@ -27,6 +27,17 @@ part of the VLC patch glob or packaged APK. It must not be used to remove
   Equivalent source and assertions passed locally with ASan/UBSan; Android
   AImage/Vulkan headers and real GPU calls remain untested.
 
+- Paired foreign-queue ownership barriers bracket fragment sampling of the
+  imported image (GENERAL externally, shader-read layout internally).
+- Submission creates dedicated binary producer/consumer semaphores and a fence,
+  imports a duplicate producer fd, submits once, exports the consumer fence and
+  polls completion without blocking the renderer. Actual renderer queue locking
+  and resource retention are required at integration.
+- `bash scripts/test_vlc_ahb_import.sh` runs the two host sanitizer tests and
+  compiles a translation unit against each of the four Android NDK ABIs.
+  The copied frame-lease source/test was executed again successfully with
+  ASan/UBSan. NDK syntax checks have not run here (no NDK installed).
+
 ## Required integration before activation
 
 1. Build these headers against the pinned Android NDK and supported Vulkan ABIs.
@@ -38,8 +49,10 @@ part of the VLC patch glob or packaged APK. It must not be used to remove
    proven). AHardwareBuffer reference ownership alone does not stop decoder reuse.
 3. Enable and verify AHB import, sampler YCbCr conversion, foreign queue family
    and external semaphore fd on the **same logical device as the renderer**.
-   Acquire foreign ownership after the decoder fence, render using an immutable
-   conversion sampler, then release ownership and export a release fence.
+   Wire the provided acquire/release and submission primitives into the real
+   command recording path; render using an immutable conversion sampler.
+   Verify the external image layout and ownership contract with actual decoder
+   buffers. Retain all submitted resources, including the lease, until poll succeeds.
    Never destroy an imported resource while a GPU submission references it.
 4. Integrate with libplacebo 5 on its rendering device. Its pinned import API
    does not expose Android opaque external formats; an integration patch must
