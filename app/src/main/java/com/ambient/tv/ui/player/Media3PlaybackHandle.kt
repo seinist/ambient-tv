@@ -238,7 +238,9 @@ class Media3PlaybackHandle(
     override fun pause() = player.pause()
     /** Use known presentation timestamps for VFR; unknown frames use the nominal cadence. */
     override fun stepFrame(forward: Boolean) {
-        if (released || waitingForPreviousRelease || !player.isCurrentMediaItemSeekable) return
+        // Ad positions are not content positions. ExoPlayer may ignore seeks in an ad;
+        // retaining an advanced frame cursor in that case would corrupt the next content step.
+        if (released || waitingForPreviousRelease || !player.isCurrentMediaItemSeekable || player.isPlayingAd) return
         player.pause()
         val fps = player.videoFormat?.frameRate?.takeIf { it.isFinite() && it > 1f } ?: (1000f / DEFAULT_FRAME_MS)
         val duration = player.duration.takeIf { it != C.TIME_UNSET } ?: 0L
