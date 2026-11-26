@@ -719,6 +719,118 @@ void readFenceQueueContracts() {
     std::puts("PASS Vulkan SYNC_FD ownership, queue wait order, reuse, fallback and safe teardown");
 }
 
+void writeFenceQueueContracts() {
+    const auto semaphore = object<VkSemaphore>(950);
+    static unsigned creates, exports, destroys;
+    static int lastFd;
+    static VkResult createResult, exportResult;
+    static bool alreadySignaled;
+    for (bool direct : {false, true}) {
+        VulkanBackend backend;
+        setup(backend);
+        if (direct) {
+            window(backend);
+            backend.nativePresentation.setFullscreenActive(true);
+            assert(backend.ensureNativeSdrSwapchain());
+        }
+        creates = exports = destroys = 0;
+        lastFd = -1;
+        alreadySignaled = false;
+        createResult = exportResult = VK_SUCCESS;
+        backend.vk.createSemaphore = [](VkDevice, const VkSemaphoreCreateInfo* info,
+                                       const VkAllocationCallbacks*, VkSemaphore* out) {
+            assert(!driver.pending && info->sType == VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO);
+            const auto* external = static_cast<const VkExportSemaphoreCreateInfo*>(info->pNext);
+            assert(external && external->sType == VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO &&
+                   external->handleTypes == VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT);
+            ++creates;
+            if (createResult == VK_SUCCESS) *out = object<VkSemaphore>(950);
+            return createResult;
+        };
+        backend.vk.destroySemaphore = [](VkDevice, VkSemaphore handle, const VkAllocationCallbacks*) {
+            assert(!driver.pending);
+            if (handle == object<VkSemaphore>(950)) ++destroys;
+        };
+        backend.vk.getSemaphoreFd = [](VkDevice, const VkSemaphoreGetFdInfoKHR* info, int* fd) {
+            assert(driver.pending && info->sType == VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR &&
+                   info->semaphore == object<VkSemaphore>(950) &&
+                   info->handleType == VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT);
+            assert(!driver.submittedSignals.empty() && driver.submittedSignals.back() == info->semaphore);
+            ++exports;
+            if (exportResult == VK_SUCCESS) {
+                if (alreadySignaled) {
+                    *fd = -1;
+                } else {
+                    int fds[2] {};
+                    assert(pipe(fds) == 0 && close(fds[1]) == 0);
+                    *fd = lastFd = fds[0];
+                }
+            }
+            return exportResult;
+        };
+        int fd = 99;
+        assert(backend.presentFrame(256, 224, 4.0F/3.0F, true, &fd) && fd == -1);
+        assert(!creates && !exports);
+        backend.bridgeWriteFenceEnabled = true;
+        assert(backend.canExportBridgeWriteFence());
+        assert(backend.presentFrame(256, 224, 4.0F/3.0F, true));
+        assert(!creates && !exports);
+        const auto signal = object<VkSemaphore>(951);
+        for (unsigned i = 0; i < 3; ++i) {
+            backend.pendingSignalSemaphore = signal;
+            alreadySignaled = i == 1;
+            assert(backend.presentFrame(256, 224, 4.0F/3.0F, true, &fd));
+            assert(creates == 1 && exports == i + 1 && !driver.pending && !backend.frameInFlight);
+            assert(driver.submittedSignals.front() == signal && driver.submittedSignals.back() == semaphore);
+            assert(driver.submittedSignals.size() == (direct ? 3u : 2u));
+            if (alreadySignaled) assert(fd == -1);
+            else assert(fd == lastFd && fd >= 0 && close(fd) == 0);
+        }
+        // Failed export may leave a signalled binary semaphore. Do not signal it again.
+        exportResult = VK_ERROR_OUT_OF_HOST_MEMORY;
+        assert(backend.presentFrame(256, 224, 4.0F/3.0F, true, &fd) && fd == -1);
+        assert(!backend.canExportBridgeWriteFence() && !backend.hasFatalError());
+        assert(backend.presentFrame(256, 224, 4.0F/3.0F, true, &fd) && exports == 4);
+        assert(std::find(driver.submittedSignals.begin(), driver.submittedSignals.end(), semaphore) ==
+               driver.submittedSignals.end());
+        backend.shutdown();
+        assert(destroys == 1 && backend.bridgeWriteSemaphore == VK_NULL_HANDLE &&
+               !backend.bridgeWriteFenceEnabled);
+
+        VulkanBackend failed;
+        setup(failed);
+        creates = exports = destroys = 0;
+        failed.bridgeWriteFenceEnabled = true;
+        failed.vk.createSemaphore = [](VkDevice, const VkSemaphoreCreateInfo* info,
+                                       const VkAllocationCallbacks*, VkSemaphore* out) {
+            assert(info->pNext && !driver.pending);
+            ++creates;
+            *out = object<VkSemaphore>(950);
+            return VK_SUCCESS;
+        };
+        failed.vk.destroySemaphore = [](VkDevice, VkSemaphore handle, const VkAllocationCallbacks*) {
+            assert(!driver.pending);
+            if (handle == object<VkSemaphore>(950)) ++destroys;
+        };
+        failed.vk.getSemaphoreFd = [](VkDevice, const VkSemaphoreGetFdInfoKHR*, int* out) {
+            assert(driver.pending);
+            int fds[2] {};
+            assert(pipe(fds) == 0 && close(fds[1]) == 0);
+            *out = lastFd = fds[0];
+            ++exports;
+            return VK_SUCCESS;
+        };
+        driver.waits = {VK_ERROR_OUT_OF_DEVICE_MEMORY};
+        assert(!failed.presentFrame(256, 224, 4.0F/3.0F, true, &fd) && fd == -1);
+        errno = 0;
+        assert(lastFd >= 0 && fcntl(lastFd, F_GETFD) == -1 && errno == EBADF);
+        assert(failed.hasFatalError() && failed.frameInFlight && destroys == 0);
+        failed.shutdown();
+        assert(destroys == 1);
+    }
+    std::puts("PASS reverse Vulkan SYNC_FD signal ordering, export, CPU fallback and error retirement");
+}
+
 void duplicateFrameContracts() {
     for (bool commands : {false, true}) {
         for (bool signal : {false, true}) {
@@ -835,6 +947,7 @@ int main() {
     filteredPresetSwitchRetainsSwapchain();
     reusableSubmitStorage();
     readFenceQueueContracts();
+    writeFenceQueueContracts();
     duplicateFrameContracts();
     managedBoundary();
     std::puts("PASS production Vulkan synchronization and presentation fault regression");

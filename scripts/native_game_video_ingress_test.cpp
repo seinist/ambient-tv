@@ -32,6 +32,8 @@ struct VulkanBackend {
     bool fp16 = false, allocationAccepted = true, fallbackAllocationAccepted = true;
     bool disableFails = false;
     bool readFenceSupported = false, readFenceAccepted = false, readFenceFatal = false;
+    bool writeFenceSupported = false;
+    unsigned writeExports = 0;
     unsigned drains = 0, allocations = 0, disables = 0, rejections = 0, fenceImports = 0, duplicates = 0;
     static VulkanBackend& getInstance() { static VulkanBackend value; return value; }
     unsigned getCoreSourceFormat() const { return format; }
@@ -66,10 +68,16 @@ struct VulkanBackend {
         ++duplicates;
         return !fatal;
     }
-    bool presentFrame(unsigned, unsigned, float aspect, bool compatible) {
+    bool canExportBridgeWriteFence() const { return writeFenceSupported; }
+    bool presentFrame(unsigned, unsigned, float aspect, bool compatible, int* writeFd = nullptr) {
         assert(!fatal && aspect == 4.0F / 3.0F && compatible);
         ++submissions;
         frameConfirmed = false;
+        if (writeFd) {
+            assert(writeFenceSupported);
+            *writeFd = bridgeAccepted ? 43 : -1;
+            if (bridgeAccepted) ++writeExports;
+        }
         return bridgeAccepted;
     }
 };
@@ -80,6 +88,14 @@ struct Video {
     bool fp16ImportAccepted = true, rgbaImportAccepted = true;
     unsigned imports = 0, fenceExports = 0;
     int fenceFd = 42;
+    bool writeFenceSupported = false, writeFenceAccepted = true;
+    unsigned writeImports = 0;
+    bool canImportExternalWriteFence() const { return writeFenceSupported; }
+    bool importExternalWriteFence(int fd) {
+        assert(fd == 43 && VulkanBackend::getInstance().writeExports > writeImports);
+        ++writeImports;
+        return writeFenceAccepted;
+    }
     bool drainAccepted = true, pendingUse = true;
     bool presentsExternalFrames() const { return external; }
     int exportExternalReadFence() { ++fenceExports; return fenceFd; }
@@ -245,7 +261,34 @@ void bridgeAccessContracts() {
     std::puts("PASS bridge access: wrong context, native-only, and resumed GLES reads (3 cases)");
 }
 
+void writeFenceHandoffContracts() {
+    for (bool exportSupported : {false, true}) {
+        for (bool importSupported : {false, true}) {
+            for (bool bridgeAccepted : {false, true}) {
+                for (bool importAccepted : {false, true}) {
+                    auto& backend = VulkanBackend::getInstance();
+                    backend = {};
+                    backend.writeFenceSupported = exportSupported;
+                    backend.bridgeAccepted = bridgeAccepted;
+                    Video video;
+                    video.writeFenceSupported = importSupported;
+                    video.writeFenceAccepted = importAccepted;
+                    LibretroDroid host {&video};
+                    host.handleVideoRefresh(RETRO_HW_FRAME_BUFFER_VALID, 256, 224, 1024);
+                    assert(backend.submissions == 1);
+                    const unsigned expected = exportSupported && importSupported && bridgeAccepted ? 1u : 0u;
+                    assert(backend.writeExports == expected && video.writeImports == expected);
+                    assert(video.frameCalls == (bridgeAccepted ? 1u : 0u));
+                    assert(!backend.fatal);
+                }
+            }
+        }
+    }
+    std::puts("PASS reverse fence ingress: both capability gates, rejected bridge and CPU fallback");
+}
+
 int main() {
+    writeFenceHandoffContracts();
     bridgeImportContracts();
     readFenceHandoffContracts();
     bridgeAccessContracts();
@@ -302,7 +345,7 @@ int main() {
         assert(video.frameCalls == test.expectedFrames);
         const bool vulkan = test.input == Input::Vulkan && !test.fatal;
         assert(backend.submissions == (vulkan ? 1u : 0u));
-        assert(backend.duplicates == (test.input == Input::Duplicate ? 1u : 0u));
+        assert(backend.duplicates == (test.input == Input::Duplicate && !test.fatal ? 1u : 0u));
         if (test.input == Input::Duplicate) {
             assert(!backend.drains && !backend.allocations && !backend.fenceImports);
             assert(video.width == 32 && video.height == 24);

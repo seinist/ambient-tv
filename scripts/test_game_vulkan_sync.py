@@ -29,6 +29,9 @@ def main():
         "bool VulkanBackend::waitForFrame(",
         "bool VulkanBackend::canImportBridgeReadFence(",
         "bool VulkanBackend::importBridgeReadFence(",
+        "bool VulkanBackend::canExportBridgeWriteFence(",
+        "bool VulkanBackend::prepareBridgeWriteFence(",
+        "int VulkanBackend::exportBridgeWriteFence(",
         "bool VulkanBackend::waitForDeviceIdle(",
         "bool VulkanBackend::prepareForShutdown(",
         "bool VulkanBackend::clearFrameImage(",
@@ -112,6 +115,14 @@ def main():
         subprocess.run(command + [str(root / "scripts/native_game_external_fence_export_test.cpp"),
             "-o", str(fence_binary)], check=True)
         subprocess.run([str(fence_binary)], check=True, timeout=20)
+
+        (work / "write_fence_methods.h").write_text("\n\n".join(cpp_function(
+            (native / "video.cpp").read_text(), signature) for signature in (
+                "bool Video::canImportExternalWriteFence(", "bool Video::importExternalWriteFence(")))
+        write_fence_binary = work / "external-write-fence-test"
+        subprocess.run(command + [str(root / "scripts/native_game_external_write_fence_test.cpp"),
+            "-o", str(write_fence_binary)], check=True)
+        subprocess.run([str(write_fence_binary)], check=True, timeout=20)
 
         external_binary = work / "external-frame-lease-test"
         subprocess.run(command + [str(root / "scripts/native_game_external_frame_test.cpp"),
