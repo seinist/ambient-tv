@@ -51,28 +51,28 @@ dependencies {
     implementation(fileTree(mapOf("dir" to upstream.resolve("libs"), "include" to listOf("*.jar"))))
     implementation(libs.commons.io)
 
-    implementation("androidx.appcompat:appcompat:1.2.0")
-    implementation("androidx.preference:preference:1.1.0")
-    implementation("androidx.core:core-ktx:1.12.0")
+    implementation(libs.smarttube.appcompat)
+    implementation(libs.smarttube.preference)
+    implementation(libs.smarttube.core.ktx)
 
-    implementation("com.squareup.okhttp3:okhttp:5.5.0")
-    implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:5.5.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:5.5.0")
-    implementation("com.squareup.okhttp3:okhttp-brotli:5.5.0")
-    implementation("com.localebro:okhttpprofiler:1.0.8") {
+    implementation(libs.okhttp.core)
+    implementation(libs.okhttp.dns.over.https)
+    implementation(libs.okhttp.logging.interceptor)
+    implementation(libs.okhttp.brotli)
+    implementation(libs.okhttp.profiler) {
         exclude(group = "com.squareup.okhttp3", module = "okhttp")
     }
 
-    implementation("org.chromium.net:cronet-api:143.7445.0")
-    implementation("org.chromium.net:cronet-embedded:143.7445.0")
-    implementation("com.google.code.gson:gson:2.11.0")
-    implementation("io.reactivex.rxjava2:rxandroid:2.1.1")
-    implementation("io.reactivex.rxjava2:rxjava:2.2.21")
-    implementation("com.jakewharton:disklrucache:2.0.2")
-    implementation("info.guardianproject.netcipher:netcipher:2.1.0")
-    implementation("dnsjava:dnsjava:2.1.9")
+    implementation(libs.chromium.cronet.api)
+    implementation(libs.chromium.cronet.embedded)
+    implementation(libs.gson)
+    implementation(libs.rxandroid2)
+    implementation(libs.rxjava2)
+    implementation(libs.disklrucache)
+    implementation(libs.netcipher)
+    implementation(libs.smarttube.dnsjava)
     // Android-safe SLF4J 1.x binding required by dnsjava during R8.
-    implementation("org.slf4j:slf4j-nop:1.7.36")
+    implementation(libs.smarttube.slf4j)
 }
 
 
