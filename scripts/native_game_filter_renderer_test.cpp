@@ -19,6 +19,8 @@ namespace {
 bool rejectShaderTargetStorage = false;
 unsigned rejectedShaderTargets = 0;
 unsigned validIntegerUniformWrites = 0;
+unsigned validPairUniformWrites = 0;
+unsigned validFloatUniformWrites = 0;
 }
 extern "C" void __real_glTexStorage2D(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
 extern "C" void __wrap_glTexStorage2D(GLenum target, GLsizei levels, GLenum format,
@@ -36,6 +38,16 @@ extern "C" void __real_glUniform1i(GLint, GLint);
 extern "C" void __wrap_glUniform1i(GLint location, GLint value) {
     if (location >= 0) ++validIntegerUniformWrites;
     __real_glUniform1i(location, value);
+}
+extern "C" void __real_glUniform2f(GLint, GLfloat, GLfloat);
+extern "C" void __wrap_glUniform2f(GLint location, GLfloat x, GLfloat y) {
+    if (location >= 0) ++validPairUniformWrites;
+    __real_glUniform2f(location, x, y);
+}
+extern "C" void __real_glUniform1f(GLint, GLfloat);
+extern "C" void __wrap_glUniform1f(GLint location, GLfloat value) {
+    if (location >= 0) ++validFloatUniformWrites;
+    __real_glUniform1f(location, value);
 }
 using namespace libretrodroid;
 namespace {
@@ -208,6 +220,53 @@ void verifySamplerBindings(int version) {
     require(validIntegerUniformWrites-first>=4,"relinked programs must initialise sampler units");
     std::puts("PASS: software sampler assignment reuse, source resize, program relink");
 }
+void verifyGeometryUniforms(int version) {
+    Video video(options(version),pixel(),false,0,false,false,Rect(0,0,1,1),{});
+    setLayout(video);upload(video);
+    const std::string geometry=R"(precision highp float;
+        uniform highp vec2 TextureSize, OrigTextureSize, OrigInputSize, InputSize, OutputSize;
+        uniform highp vec2 PassPrev2TextureSize, PassPrev2InputSize;
+        uniform highp float screenDensity;
+        bool same(vec2 a,vec2 b){return all(lessThan(abs(a-b),vec2(0.01)));}
+        void main(){
+            bool valid = same(TextureSize,OrigTextureSize) && same(OrigTextureSize,OrigInputSize)
+                && same(InputSize,OrigInputSize) && same(PassPrev2TextureSize,2.0*OrigInputSize)
+                && same(PassPrev2InputSize,PassPrev2TextureSize) && same(OutputSize,vec2(OutputSize.x));
+            gl_FragColor=vec4(valid?1.0:0.0,OutputSize.x/255.0,screenDensity*32.0/255.0,1.0);
+        })";
+    auto doubled=copyPass();doubled.scale=2.0f;
+    const auto chain=custom({doubled,copyPass(),{VERTEX,geometry,false,1.0f}});
+    auto pairs=validPairUniformWrites, scalars=validFloatUniformWrites;
+    switchPaused(video,chain,"initial geometry uniforms",{255,64,64,255});
+    require(validPairUniformWrites-pairs==7 && validFloatUniformWrites-scalars==1,
+            "all active geometry uniforms must be initialized");
+    pairs=validPairUniformWrites;scalars=validFloatUniformWrites;
+    for(int redraw=0;redraw<4;++redraw) {
+        video.renderFrame(true);expect(at(48,32),{255,64,64,255},"stable geometry draw");
+    }
+    require(validPairUniformWrites==pairs && validFloatUniformWrites==scalars,
+            "unchanged software geometry rewrote uniforms");
+    upload(video,16,16);video.renderFrame(true);
+    expect(at(48,32),{255,64,128,255},"source and intermediate target resize");
+    require(validPairUniformWrites-pairs==6 && validFloatUniformWrites-scalars==1,
+            "source resize must update six changed pairs and density, not stable output size");
+    pairs=validPairUniformWrites;scalars=validFloatUniformWrites;
+    video.updateScreenSize(WIDTH,48);video.renderFrame(true);
+    expect(at(48,24),{255,48,96,255},"paused screen resize");
+    require(validPairUniformWrites-pairs==1 && validFloatUniformWrites-scalars==1,
+            "screen resize must update output size and density only");
+    pairs=validPairUniformWrites;scalars=validFloatUniformWrites;
+    video.renderFrame(true);
+    require(validPairUniformWrites==pairs && validFloatUniformWrites==scalars,
+            "resized geometry should settle after one draw");
+    setLayout(video);
+    switchPaused(video,pixel(),"switch away from geometry chain",{255,0,0,255});
+    pairs=validPairUniformWrites;scalars=validFloatUniformWrites;
+    switchPaused(video,chain,"relinked geometry uniforms",{255,64,128,255});
+    require(validPairUniformWrites-pairs==7 && validFloatUniformWrites-scalars==1,
+            "a new linked program must initialize all active geometry uniforms");
+    std::puts("PASS: software geometry uniform reuse, intermediate target/source/screen resize and relink");
+}
 void verifyPresets(int version) {
     Video video(options(version),pixel(),false,0,false,false,Rect(0,0,1,1),{});
     setLayout(video);upload(video);
@@ -241,6 +300,17 @@ void verifyPaddedHardware() {
     video.renderFrame(true);
     require(validIntegerUniformWrites>beforeRedraw,"shared hardware path must restore sampler bindings");
     expectBorders("hardware sampler redraw");expect(at(40,8),top,"hardware sampler redraw source");
+    const std::string dimensions=R"(precision highp float; varying highp vec2 uv;
+        uniform highp sampler2D Texture; uniform highp vec2 TextureSize;
+        uniform highp float screenDensity;
+        void main(){gl_FragColor=TextureSize.x>0.0 && screenDensity>0.0
+            ? vec4(texture2D(Texture,uv).rgb,1.0) : vec4(0,1,0,1);})";
+    video.updateShaderType(custom({{VERTEX,dimensions,false,1.0f}}));video.renderFrame(true);
+    const auto pairsBefore=validPairUniformWrites, floatsBefore=validFloatUniformWrites;
+    video.renderFrame(true);
+    require(validPairUniformWrites>pairsBefore && validFloatUniformWrites>floatsBefore,
+            "shared hardware path must restore geometry uniforms");
+    expectBorders("hardware geometry redraw");expect(at(40,8),top,"hardware geometry redraw source");
     std::puts("PASS: padded hardware source, edge clamping, vertical origin, paused changes");
 }
 void verifyHardwareAllocationFallback() {
@@ -299,7 +369,7 @@ int main(int argc,char** argv) {
     const int version=argc>1 && std::string(argv[1])=="--gles2" ? 2:3;
     try {
         Context context(version);
-        verifySwitches(version);verifyFallbacks(version);verifyFloatAndAliases(version);verifySamplerBindings(version);verifyPresets(version);
+        verifySwitches(version);verifyFallbacks(version);verifyFloatAndAliases(version);verifySamplerBindings(version);verifyGeometryUniforms(version);verifyPresets(version);
         if(version==3) { verifyPaddedHardware(); verifyHardwareAllocationFallback(); }
         std::printf("PASS: GLES%d production renderer regression\n",version);return 0;
     } catch(const std::exception& error) {
