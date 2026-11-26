@@ -18,6 +18,7 @@ int ambientShaderFallbacks = 0;
 namespace {
 bool rejectShaderTargetStorage = false;
 unsigned rejectedShaderTargets = 0;
+unsigned validIntegerUniformWrites = 0;
 }
 extern "C" void __real_glTexStorage2D(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
 extern "C" void __wrap_glTexStorage2D(GLenum target, GLsizei levels, GLenum format,
@@ -30,6 +31,11 @@ extern "C" void __wrap_glTexStorage2D(GLenum target, GLsizei levels, GLenum form
         return;
     }
     __real_glTexStorage2D(target, levels, format, width, height);
+}
+extern "C" void __real_glUniform1i(GLint, GLint);
+extern "C" void __wrap_glUniform1i(GLint location, GLint value) {
+    if (location >= 0) ++validIntegerUniformWrites;
+    __real_glUniform1i(location, value);
 }
 using namespace libretrodroid;
 namespace {
@@ -174,6 +180,34 @@ void verifyFloatAndAliases(int version) {
     switchPaused(video,prefix,"PassPrev5 behind required prepass",{0,255,255,255});
     std::puts("PASS: float storage, previous-pass sampler and size bindings, prefix offsets");
 }
+void verifySamplerBindings(int version) {
+    Video video(options(version),pixel(),false,0,false,false,Rect(0,0,1,1),{});
+    setLayout(video);upload(video);
+    // Distinct colors verify that the nonzero previous-pass unit still points
+    // at pass zero, not the immediately preceding (inverted) input.
+    const std::string aliases=R"(precision highp float; varying highp vec2 uv;
+        uniform highp sampler2D Texture; uniform highp sampler2D PassPrev2Texture;
+        void main(){gl_FragColor=vec4(texture2D(Texture,uv).g,
+            texture2D(PassPrev2Texture,uv).r,0,1);})";
+    const auto chain=custom({copyPass(),{VERTEX,INVERT,false,1.0f},{VERTEX,aliases,false,1.0f}});
+    auto first=validIntegerUniformWrites;
+    switchPaused(video,chain,"initial sampler assignments",{255,255,0,255});
+    require(validIntegerUniformWrites-first>=4,"initial assignments must reach all active sampler uniforms");
+    const auto cached=validIntegerUniformWrites;
+    video.renderFrame(true);expectBorders("cached samplers");
+    expect(at(48,32),{255,255,0,255},"cached previous-pass sampling");
+    require(validIntegerUniformWrites==cached,"unchanged software draw rewrote sampler uniforms");
+    std::vector<uint32_t> blue(16*24,0xff0000ff);
+    video.onNewFrame(blue.data(),16,24,16*sizeof(uint32_t));video.renderFrame(true);
+    expectBorders("cached samplers after source resize");
+    expect(at(48,32),{255,0,0,255},"samplers must bind new source and resized targets");
+    require(validIntegerUniformWrites==cached,"source resize invalidated immutable sampler units");
+    switchPaused(video,pixel(),"switch away from cached chain",{0,0,255,255});
+    first=validIntegerUniformWrites;
+    switchPaused(video,chain,"relinked sampler assignments",{255,0,0,255});
+    require(validIntegerUniformWrites-first>=4,"relinked programs must initialise sampler units");
+    std::puts("PASS: software sampler assignment reuse, source resize, program relink");
+}
 void verifyPresets(int version) {
     Video video(options(version),pixel(),false,0,false,false,Rect(0,0,1,1),{});
     setLayout(video);upload(video);
@@ -202,6 +236,11 @@ void verifyPaddedHardware() {
         expect(at(40,56),bottom,preset.name+" lower source crop");
         expect(at(18,8),top,preset.name+" left source edge");expect(at(77,56),bottom,preset.name+" right source edge");
     }
+    video.updateShaderType(custom({copyPass()}));video.renderFrame(true);
+    const auto beforeRedraw=validIntegerUniformWrites;
+    video.renderFrame(true);
+    require(validIntegerUniformWrites>beforeRedraw,"shared hardware path must restore sampler bindings");
+    expectBorders("hardware sampler redraw");expect(at(40,8),top,"hardware sampler redraw source");
     std::puts("PASS: padded hardware source, edge clamping, vertical origin, paused changes");
 }
 void verifyHardwareAllocationFallback() {
@@ -260,7 +299,7 @@ int main(int argc,char** argv) {
     const int version=argc>1 && std::string(argv[1])=="--gles2" ? 2:3;
     try {
         Context context(version);
-        verifySwitches(version);verifyFallbacks(version);verifyFloatAndAliases(version);verifyPresets(version);
+        verifySwitches(version);verifyFallbacks(version);verifyFloatAndAliases(version);verifySamplerBindings(version);verifyPresets(version);
         if(version==3) { verifyPaddedHardware(); verifyHardwareAllocationFallback(); }
         std::printf("PASS: GLES%d production renderer regression\n",version);return 0;
     } catch(const std::exception& error) {

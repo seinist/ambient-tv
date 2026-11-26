@@ -1,0 +1,135 @@
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -300,18 +300,18 @@
+         );
+     }
+ 
+     float originalTextureWidth = hwRenderTexture != 0 ? hwFBOWidth : getTextureWidth();
+     float originalTextureHeight = hwRenderTexture != 0 ? hwFBOHeight : getTextureHeight();
+     for (int i = 0; i < shadersChain.size(); ++i) {
+-        const auto& shader = shadersChain[i];
++        auto& shader = shadersChain[i];
+         auto passData = renderer->getPassData(i);
+         auto isLastPass = i == shadersChain.size() - 1;
+ 
+         // Only the final pass may draw to the window and its letterbox bars.
+         if (!isLastPass && !passData.framebuffer.has_value())
+             throw std::runtime_error("Missing intermediate shader framebuffer");
+         glBindFramebuffer(GL_FRAMEBUFFER, passData.framebuffer.value_or(0));
+         if (!isLastPass) glClear(GL_COLOR_BUFFER_BIT);
+ 
+         glViewport(
+             0,
+@@ -323,83 +323,93 @@
+         glUseProgram(shader.gProgram);
+ 
+         auto vertices = isLastPass ? videoLayout.getForegroundVertices() : videoLayout.getFramebufferVertices();
+         if (shader.gvPositionHandle != -1) {
+             glVertexAttribPointer(shader.gvPositionHandle, 2, GL_FLOAT, GL_FALSE, 0, vertices.data());
+             glEnableVertexAttribArray(shader.gvPositionHandle);
+         }
+ 
+         auto coordinates = i == 0
+             ? videoLayout.getTextureCoordinates()
+             : videoLayout.getFramebufferTextureCoordinates();
+         if (shader.gvCoordinateHandle != -1) {
+             glVertexAttribPointer(shader.gvCoordinateHandle, 2, GL_FLOAT, GL_FALSE, 0, coordinates.data());
+             glEnableVertexAttribArray(shader.gvCoordinateHandle);
+         }
+ 
+         const GLuint immediateTexture = (i > 0 && passData.texture.has_value())
+             ? passData.texture.value() : sourceTexture;
+         GLuint pictureOriginal = sourceTexture;
+         float pictureTextureWidth = originalTextureWidth, pictureTextureHeight = originalTextureHeight;
+         float pictureInputWidth = getTextureWidth(), pictureInputHeight = getTextureHeight();
+         if (normalizedOriginalPass >= 0 && i > normalizedOriginalPass) {
+             const auto originalOutput = renderer->getPassData(normalizedOriginalPass);
+             pictureOriginal = renderer->getPassData(normalizedOriginalPass + 1).texture.value_or(sourceTexture);
+             pictureTextureWidth = originalOutput.width.value_or(static_cast<unsigned>(getTextureWidth()));
+             pictureTextureHeight = originalOutput.height.value_or(static_cast<unsigned>(getTextureHeight()));
+             pictureInputWidth = pictureTextureWidth;
+             pictureInputHeight = pictureTextureHeight;
+         }
+         // Legacy CUT2/3 sample colors from texture and classification from
+         // previousPass. Generic GLSL uses Texture for its immediately prior pass.
+         const bool legacyPrevious = shader.gPreviousPassTextureHandle != -1;
+         const GLuint mainTexture = legacyPrevious ? pictureOriginal : immediateTexture;
+         glActiveTexture(GL_TEXTURE0);
+         glBindTexture(GL_TEXTURE_2D, mainTexture);
+         if (i == 0 && hwRenderTexture != 0) {
+             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, sourceLinearTexture ? GL_LINEAR : GL_NEAREST);
+             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, sourceLinearTexture ? GL_LINEAR : GL_NEAREST);
+         }
+-        glUniform1i(shader.gTextureHandle, 0);
++        // Sampler units belong to a linked frontend program, not the texture
++        // objects. Keep rebinding images every frame; only cache the immutable
++        // unit assignment for software cores (never a shared hardware context).
++        const bool cacheSamplerBindings = !hwAccelerated && !externalFrames && hwRenderTexture == 0;
++        const bool writeSamplerBindings = !cacheSamplerBindings || !shader.samplerBindingsInitialized;
++        if (writeSamplerBindings) glUniform1i(shader.gTextureHandle, 0);
+ 
+         int nextTextureUnit = 1;
+         if (legacyPrevious) {
+             glActiveTexture(GL_TEXTURE0 + nextTextureUnit);
+             glBindTexture(GL_TEXTURE_2D, immediateTexture);
+-            glUniform1i(shader.gPreviousPassTextureHandle, nextTextureUnit++);
++            if (writeSamplerBindings) glUniform1i(shader.gPreviousPassTextureHandle, nextTextureUnit);
++            ++nextTextureUnit;
+         }
+         if (shader.gOrigTextureHandle != -1) {
+             glActiveTexture(GL_TEXTURE0 + nextTextureUnit);
+             glBindTexture(GL_TEXTURE_2D, pictureOriginal);
+-            glUniform1i(shader.gOrigTextureHandle, nextTextureUnit++);
++            if (writeSamplerBindings) glUniform1i(shader.gOrigTextureHandle, nextTextureUnit);
++            ++nextTextureUnit;
+         }
+ 
+         // RetroArch PassPrev1 is the current input, PassPrev2 the preceding
+         // input, etc. Prefix passes naturally become the scaler's original input.
+         for (size_t n = 0; n < shader.gPassPrevTextureHandles.size(); ++n) {
+             if (shader.gPassPrevTextureHandles[n] == -1 && shader.gPassPrevTextureSizeHandles[n] == -1 &&
+                 shader.gPassPrevInputSizeHandles[n] == -1) continue;
+             const int previousOutput = i - static_cast<int>(n) - 1;
+             GLuint previousTexture = sourceTexture;
+             float previousWidth = originalTextureWidth, previousHeight = originalTextureHeight;
+             float previousInputWidth = getTextureWidth(), previousInputHeight = getTextureHeight();
+             if (previousOutput >= 0) {
+                 auto output = renderer->getPassData(previousOutput);
+                 auto next = renderer->getPassData(previousOutput + 1);
+                 previousTexture = next.texture.value_or(sourceTexture);
+                 previousWidth = output.width.value_or(static_cast<unsigned>(getTextureWidth()));
+                 previousHeight = output.height.value_or(static_cast<unsigned>(getTextureHeight()));
+                 previousInputWidth = previousWidth;
+                 previousInputHeight = previousHeight;
+             }
+             if (shader.gPassPrevTextureHandles[n] != -1) {
+                 glActiveTexture(GL_TEXTURE0 + nextTextureUnit);
+                 glBindTexture(GL_TEXTURE_2D, previousTexture);
+-                glUniform1i(shader.gPassPrevTextureHandles[n], nextTextureUnit++);
++                if (writeSamplerBindings) glUniform1i(shader.gPassPrevTextureHandles[n], nextTextureUnit);
++                ++nextTextureUnit;
+             }
+             if (shader.gPassPrevTextureSizeHandles[n] != -1)
+                 glUniform2f(shader.gPassPrevTextureSizeHandles[n], previousWidth, previousHeight);
+             if (shader.gPassPrevInputSizeHandles[n] != -1)
+                 glUniform2f(shader.gPassPrevInputSizeHandles[n], previousInputWidth, previousInputHeight);
+         }
+ 
++        shader.samplerBindingsInitialized = cacheSamplerBindings;
++
+         // Input size: for pass 0 use original, for subsequent passes use previous output size
+diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
+--- a/src/main/cpp/video.h
++++ b/src/main/cpp/video.h
+@@ -71,9 +71,10 @@
+         GLint gGyroscopeHandle = -1;
+         GLint gAccelerometerHandle = -1;
+         GLint gAccelerometerRestHandle = -1;
+         std::array<GLint, 8> gPassPrevTextureHandles;
+         std::array<GLint, 8> gPassPrevTextureSizeHandles;
+         std::array<GLint, 8> gPassPrevInputSizeHandles;
++        bool samplerBindingsInitialized = false;
+     };
+ 
+     Video(
