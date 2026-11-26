@@ -80,6 +80,7 @@ import com.ambient.tv.moonlight.MoonlightSystemTransport
 import com.ambient.tv.moonlight.MoonlightStreamPhase
 import com.ambient.tv.moonlight.MoonlightStreamProfile
 import com.ambient.tv.data.local.AppPreferences
+import com.ambient.tv.ui.common.PlayerIconButton
 import com.ambient.tv.ui.common.TvActionButton
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -560,45 +561,40 @@ private fun MoonlightStreamContent(
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (startFailed || status.phase in setOf(MoonlightStreamPhase.FAILED, MoonlightStreamPhase.ENDED)) {
-                            TvActionButton(stringResource(R.string.moonlight_retry_connection), {
+                            PlayerIconButton(Icons.Filled.PlayArrow, stringResource(R.string.moonlight_retry_connection), {
                                 autoRetries = 0
                                 excludedVideoFormats = 0
                                 resumeOnly = status.retryable || resumeOnly
                                 onManualRetry()
                                 retryRevision++
-                            }, icon = Icons.Filled.PlayArrow)
+                            }, primary = true)
                         }
                         if (status.phase == MoonlightStreamPhase.STREAMING && controlsShown) {
-                            TvActionButton(stringResource(R.string.moonlight_stream_resume),
-                                closeControls, modifier = Modifier.focusRequester(resumeFocus),
-                                icon = Icons.Filled.PlayArrow)
+                            PlayerIconButton(Icons.Filled.PlayArrow, stringResource(R.string.moonlight_stream_resume),
+                                closeControls, modifier = Modifier.focusRequester(resumeFocus), primary = true)
                         }
                     }
                     DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (status.phase == MoonlightStreamPhase.STREAMING) {
-                            TvActionButton(stringResource(R.string.moonlight_player_input_short),
+                            PlayerIconButton(Icons.Filled.Keyboard, stringResource(R.string.moonlight_player_input_short),
                                 {
                                     panelOrigin = MoonlightPlaybackPage.TEXT
                                     panel = MoonlightPlaybackPage.TEXT
-                                }, modifier = Modifier.focusRequester(textFocus),
-                                icon = Icons.Filled.Keyboard)
+                                }, modifier = Modifier.focusRequester(textFocus))
                         }
-                        TvActionButton(stringResource(R.string.moonlight_player_info_short),
+                        PlayerIconButton(Icons.Filled.Info, stringResource(R.string.moonlight_player_info_short),
                             {
                                 panelOrigin = MoonlightPlaybackPage.INFO
                                 panel = MoonlightPlaybackPage.INFO
-                            }, modifier = Modifier.focusRequester(infoFocus),
-                            icon = Icons.Filled.Info)
-                        TvActionButton(stringResource(R.string.moonlight_player_options),
+                            }, modifier = Modifier.focusRequester(infoFocus))
+                        PlayerIconButton(Icons.Filled.Settings, stringResource(R.string.moonlight_player_options),
                             {
                                 panelOrigin = MoonlightPlaybackPage.ROOT
                                 panel = MoonlightPlaybackPage.ROOT
                             },
-                            modifier = Modifier.focusRequester(settingsFocus),
-                            icon = Icons.Filled.Settings)
-                        TvActionButton(stringResource(R.string.moonlight_stream_disconnect),
-                            disconnect, modifier = Modifier.focusRequester(disconnectFocus),
-                            icon = Icons.Filled.Stop)
+                            modifier = Modifier.focusRequester(settingsFocus))
+                        PlayerIconButton(Icons.Filled.Stop, stringResource(R.string.moonlight_stream_disconnect),
+                            disconnect, modifier = Modifier.focusRequester(disconnectFocus))
                     }
                 }
             }

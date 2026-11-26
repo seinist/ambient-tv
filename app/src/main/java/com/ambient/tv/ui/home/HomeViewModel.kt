@@ -596,8 +596,8 @@ class HomeViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            combine(moonlightStore.metadataRevisions, appPreferences.changes().onStart { emit(Unit) }) { revision, _ ->
-                Triple(revision, appPreferences.moonlightEnabled to appPreferences.moonlightHosts,
+            combine(moonlightStore.metadataRevisions, moonlightStore.trustRevisions, appPreferences.changes().onStart { emit(Unit) }) { revision, trustRevision, _ ->
+                Triple(revision to trustRevision, appPreferences.moonlightEnabled to appPreferences.moonlightHosts,
                     appPreferences.homeRows.filter { it.enabled &&
                         it.system == HomeRowDefinition.SYSTEM_MOONLIGHT })
             }.distinctUntilChanged().drop(1).collectLatest {
@@ -2158,13 +2158,13 @@ class HomeViewModel @Inject constructor(
 
     /** Low-priority catalog prefetch does not delay Home or trigger WOL. */
     private fun prefetchMoonlightCatalogs(force: Boolean) {
-        if (!com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE || !appPreferences.hasMoonlightHosts) return
+        if (!com.ambient.tv.moonlight.MoonlightFeature.configured(appPreferences)) return
         moonlightPrefetchJob?.cancel()
         moonlightPrefetchJob = viewModelScope.launch {
             kotlinx.coroutines.coroutineScope {
                 appPreferences.moonlightHosts.forEach { host -> launch {
                     try {
-                        if (moonlightStore.peerIdentity(host.id) != null && (force || !moonlightStore.isCatalogFresh(host.id)))
+                        if (moonlightStore.peerIdentity(host.id) != null && (force || !moonlightStore.isCatalogFresh(host.id) || !moonlightStore.isRecentlyOnline(host.id)))
                             moonlightCatalog.refresh(host, com.ambient.tv.data.browse.BrowseLoadPriority.HOME, forceCatalog = force)
                     } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
                     catch (_: Exception) { /* Cached rows remain usable offline. */ }
@@ -2181,7 +2181,7 @@ class HomeViewModel @Inject constructor(
             it.enabled && it.system == HomeRowDefinition.SYSTEM_MOONLIGHT
         }
         if (plexOnly || jellyfinOnly || embyOnly || definitions.isEmpty() ||
-            !com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE || !appPreferences.hasMoonlightHosts) {
+            !com.ambient.tv.moonlight.MoonlightFeature.configured(appPreferences)) {
             val changed = moonlightRows.isNotEmpty()
             moonlightRows = emptyList()
             if (changed && !_uiState.value.isFailurePage())
@@ -2954,7 +2954,7 @@ class HomeViewModel @Inject constructor(
         radioReady = appPreferences.radioEnabled,
         gamesReady = gameLibrary.hasConfiguredFolders(),
         rommReady = appPreferences.isRommConfigured,
-        moonlightReady = com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE && appPreferences.hasMoonlightHosts,
+        moonlightReady = com.ambient.tv.moonlight.MoonlightFeature.configured(appPreferences),
         telegramReady = appPreferences.telegramEnabled && telegramRepository.available,
         embyReady = embyOnly || appPreferences.isEmbyConfigured,
         photosReady = photoRepository.hasAnyPhotoSource(),

@@ -99,7 +99,7 @@ enum class MediaSystem(
             PLEX, JELLYFIN, EMBY, DLNA, ROMM, MOONLIGHT, TVHEADEND, IPTV, YOUTUBE, TELEGRAM, SPOTIFY, RADIO, TRAILERS, FILES,
         ).filter { it != TELEGRAM || com.ambient.tv.BuildConfig.MONOGRAM_NATIVE }
             .filter { it != SPOTIFY || com.ambient.tv.BuildConfig.SPOTIFY_ENABLED }
-            .filter { it != MOONLIGHT || com.ambient.tv.BuildConfig.MOONLIGHT_EXPERIMENTAL }
+            .filter { it != MOONLIGHT || com.ambient.tv.moonlight.MoonlightFeature.setupAvailable }
 
         fun fromKey(key: String?): MediaSystem? = when (key?.lowercase()) {
             "tv", "tvh", "live_tv" -> TVHEADEND

@@ -216,7 +216,7 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
         }
         onlineServiceAvailability.start()
         resumeConnectivityMonitor.start()
-        if (BuildConfig.MOONLIGHT_NATIVE) moonlightPreloader.get().start()
+        if (com.ambient.tv.moonlight.MoonlightFeature.nativeAvailable) moonlightPreloader.get().start()
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             while (!preferences.isTvheadendConfigured || !com.ambient.tv.data.browse.BrowseWorkBudget.idle())
                 kotlinx.coroutines.delay(2000)

@@ -166,7 +166,7 @@ class SearchViewModel @Inject constructor(
             addAll(liveTvRegistry.configured().map { it.source.system })
             if (preferences.trailersEnabled && trailerRepository.configured) add("trailers")
             if (preferences.isRommConfigured) add("romm")
-            if (com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE && preferences.hasMoonlightHosts) add("moonlight")
+            if (com.ambient.tv.moonlight.MoonlightFeature.configured(preferences)) add("moonlight")
             if (preferences.youtubeEnabled) add("youtube")
             if (preferences.spotifyEnabled) add("spotify")
             if (preferences.radioEnabled) add("radio")
@@ -180,7 +180,7 @@ class SearchViewModel @Inject constructor(
             if (preferences.isEmbyConfigured) add(SearchSource.EMBY)
             if (liveTvRegistry.configured().any { liveTvSearchSource(it.source.system) == SearchSource.LIVE_TV }) add(SearchSource.LIVE_TV)
             if (preferences.isRommConfigured) add(SearchSource.ROMM)
-            if (com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE && preferences.hasMoonlightHosts)
+            if (com.ambient.tv.moonlight.MoonlightFeature.configured(preferences))
                 add(SearchSource.MOONLIGHT)
             if (preferences.trailersEnabled && trailerRepository.configured) add(SearchSource.TRAILERS)
             if (com.ambient.tv.data.telegram.telegramSearchAvailable(com.ambient.tv.BuildConfig.MONOGRAM_NATIVE,

@@ -97,7 +97,7 @@ data class MoonlightLibraryUiState(
                 sections == "recent" && game.recentPosition != Int.MAX_VALUE ||
                 sections == "host:" + game.host.id) &&
             (query.isBlank() || game.app.title.contains(query, ignoreCase = true) ||
-                game.host.name.contains(query, ignoreCase = true))
+                game.systemLabel.contains(query, ignoreCase = true))
         }
         val comparator = when {
             sections == "recent" || sortKey == "recent" -> compareBy<MoonlightBrowseGame> { it.recentPosition }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.title }
@@ -230,7 +230,10 @@ class MoonlightLibraryViewModel @Inject constructor(
     fun artwork(game: MoonlightBrowseGame): File? = store.artworkFile(game.host.id, game.app.id)
     fun artworkInfo(game: MoonlightBrowseGame) = store.artworkInfo(game.host.id, game.app.id)
 
-    fun enter() { visible = true; load() }
+    fun enter() {
+        visible = true
+        if (transport.available) load() else mutable.update { it.copy(initialRefreshComplete = true) }
+    }
     fun leave() {
         visible = false
         fetch?.cancel()

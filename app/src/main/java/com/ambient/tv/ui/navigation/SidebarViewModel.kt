@@ -135,7 +135,7 @@ class SidebarViewModel @Inject constructor(
             youtubeStartFeedKey = appPreferences.youtubeStartFeedKey,
             spotifyEnabled = appPreferences.spotifyEnabled,
             radioEnabled = appPreferences.radioEnabled,
-            moonlightEnabled = com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE && appPreferences.hasMoonlightHosts,
+            moonlightEnabled = com.ambient.tv.moonlight.MoonlightFeature.configured(appPreferences),
             moonlightHosts = if (com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE)
                 appPreferences.moonlightHosts else emptyList(),
             weatherEnabled = appPreferences.weatherSettings.let { it.enabled && it.showInSidebar },
@@ -226,7 +226,7 @@ class SidebarViewModel @Inject constructor(
             if (gameLibrary.hasConfiguredFolders()) add("games")
             if (dlnaStore.servers().isNotEmpty()) add("dlna")
             if (appPreferences.isRommConfigured) add("romm")
-            if (com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE && appPreferences.hasMoonlightHosts) add("moonlight")
+            if (com.ambient.tv.moonlight.MoonlightFeature.configured(appPreferences)) add("moonlight")
         }
 
     init {
@@ -363,7 +363,7 @@ class SidebarViewModel @Inject constructor(
             if (appPreferences.isEmbyConfigured) add("emby")
             if (appPreferences.hasTvheadendEndpoint) add("tvheadend")
             if (appPreferences.isRommConfigured) add("romm")
-            if (com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE && appPreferences.hasMoonlightHosts)
+            if (com.ambient.tv.moonlight.MoonlightFeature.configured(appPreferences))
                 addAll(appPreferences.moonlightHosts.map { "moonlight:" + it.id })
             if (appPreferences.filesEnabled) addAll(networkFileSourcesFromStore().map { "files:${it.id}" })
             addAll(dlnaStore.servers().map { "dlna:${it.id}" })
@@ -511,7 +511,7 @@ class SidebarViewModel @Inject constructor(
                 youtubeStartFeedKey = appPreferences.youtubeStartFeedKey,
                 spotifyEnabled = appPreferences.spotifyEnabled,
                 radioEnabled = appPreferences.radioEnabled,
-                moonlightEnabled = com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE && appPreferences.hasMoonlightHosts,
+                moonlightEnabled = com.ambient.tv.moonlight.MoonlightFeature.configured(appPreferences),
                 moonlightHosts = if (com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE)
                     appPreferences.moonlightHosts else emptyList(),
                 weatherEnabled = appPreferences.weatherSettings.let { it.enabled && it.showInSidebar },
