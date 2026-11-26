@@ -1,6 +1,9 @@
 import sys
+import shutil
+import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -187,6 +190,30 @@ class SmartTubeDeprecationPatchesTest(unittest.TestCase):
             patcher.patch_disable_unused_cronet(msc, shared, check=False)
         self.assertEqual(before, (helper.read_bytes(), manager.read_bytes()))
 
+    def test_cronet_manager_delete_failure_rolls_back_helper(self) -> None:
+        root = Path(self.temporary.name)
+        msc = root / "MediaServiceCore"
+        shared = root / "SharedModules"
+        helper = msc / "youtubeapi/src/main/java/com/liskovsoft/googlecommon/common/helpers/RetrofitOkHttpHelper.kt"
+        manager = shared / "sharedutils/src/main/java/com/liskovsoft/sharedutils/cronet/CronetManager.kt"
+        for path in (helper, manager):
+            path.parent.mkdir(parents=True, exist_ok=True)
+        helper.write_bytes(b"import com.liskovsoft.sharedutils.cronet.CronetManager\r\n")
+        manager.write_text("object CronetManager")
+        before = (helper.read_bytes(), manager.read_bytes())
+        original_unlink = Path.unlink
+
+        def fail_manager(path, *args, **kwargs):
+            if path == manager:
+                raise PermissionError("injected manager deletion failure")
+            return original_unlink(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", fail_manager):
+            with self.assertRaises(PermissionError):
+                patcher.patch_disable_unused_cronet(msc, shared, check=False)
+        self.assertEqual(before, (helper.read_bytes(), manager.read_bytes()))
+        self.assertFalse(list(helper.parent.glob(".ambient-cronet-*")))
+
     def test_legacy_tls_bypass_is_disabled(self) -> None:
         path = self.write("OkHttpCommons.java", "        configureToIgnoreCertificate(okBuilder);\n")
         with self.assertRaises(SystemExit):
@@ -235,6 +262,89 @@ public OkHttpClient getClient() {
         self.assertEqual(2, patched.count("synchronized (OkHttpManager.class)"))
         self.assertFalse(patcher.patch_okhttp_manager_thread_safety(path, check=True))
         self.assertFalse(patcher.patch_okhttp_manager_thread_safety(path, check=False))
+
+    @unittest.skipUnless(shutil.which("javac") and shutil.which("java"), "JDK required")
+    def test_patched_okhttp_manager_concurrent_lifecycle(self) -> None:
+        path = self.write("OkHttpManager.java", """public class OkHttpManager {
+    private static OkHttpManager sInstance;
+    private OkHttpClient mClient;
+    private final boolean mEnableProfiler;
+    private OkHttpManager(boolean profiler) { mEnableProfiler = profiler; }
+    public static void unhold() { sInstance = null; }
+    public static OkHttpManager instance(boolean enableProfiler) {
+        if (sInstance == null) {
+            sInstance = new OkHttpManager(enableProfiler);
+        }
+
+        return sInstance;
+    }
+    public OkHttpClient getClient() {
+        if (mClient == null) {
+            OkHttpCommons.enableProfiler = mEnableProfiler;
+            mClient = OkHttpCommons.setupBuilder(new OkHttpClient.Builder()).build();
+        }
+
+        return mClient;
+    }
+}
+class OkHttpClient {
+    static final java.util.concurrent.atomic.AtomicInteger builds =
+        new java.util.concurrent.atomic.AtomicInteger();
+    static class Builder {
+        OkHttpClient build() {
+            builds.incrementAndGet();
+            return new OkHttpClient();
+        }
+    }
+}
+class OkHttpCommons {
+    static boolean enableProfiler = true;
+    static OkHttpClient.Builder setupBuilder(OkHttpClient.Builder builder) { return builder; }
+}
+""")
+        patcher.patch_okhttp_manager_thread_safety(path, check=False)
+        runner = self.write("ManagerHarness.java", """import java.util.concurrent.*;
+public class ManagerHarness {
+    public static void main(String[] args) throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(8);
+        try {
+            for (int generation = 0; generation < 20; generation++) {
+                OkHttpManager.unhold();
+                CountDownLatch start = new CountDownLatch(1);
+                java.util.List<Future<OkHttpManager>> tasks = new java.util.ArrayList<>();
+                for (int i = 0; i < 32; i++) {
+                    final boolean profiler = i % 2 == 0;
+                    tasks.add(pool.submit(() -> {
+                        start.await();
+                        OkHttpManager manager = OkHttpManager.instance(profiler);
+                        manager.getClient();
+                        return manager;
+                    }));
+                }
+                start.countDown();
+                OkHttpManager first = tasks.get(0).get(5, TimeUnit.SECONDS);
+                for (Future<OkHttpManager> future : tasks) {
+                    if (first != future.get(5, TimeUnit.SECONDS))
+                        throw new AssertionError("multiple managers");
+                }
+                if (OkHttpClient.builds.get() != generation + 1)
+                    throw new AssertionError("multiple clients");
+                if (!OkHttpCommons.enableProfiler)
+                    throw new AssertionError("global profiler changed");
+                OkHttpManager.unhold();
+                if (first == OkHttpManager.instance(false))
+                    throw new AssertionError("reset did not replace manager");
+                if (first.getClient() == null)
+                    throw new AssertionError("stale manager lost its client");
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+}
+""")
+        subprocess.run(["javac", str(path), str(runner)], cwd=path.parent, check=True, timeout=30)
+        subprocess.run(["java", "-cp", str(path.parent), "ManagerHarness"], check=True, timeout=30)
 
     def test_okhttp_manager_swaps_create_args(self) -> None:
         path = self.write(
