@@ -86,6 +86,43 @@ class SmartTubeReflectionTest {
         }
     }
 
+    // Diagnostic only: do not make CI correctness depend on machine speed.
+    @Test fun compareCachedAndUncachedReflectionThroughput() {
+        val target = Fixture()
+        val iterations = 20000
+        fun uncached(): Int {
+            val method = target.javaClass.methods.first { it.name == "choose" &&
+                it.parameterCount == 1 && it.parameterTypes[0] == Int::class.javaPrimitiveType }
+            return method.invoke(target, 7) as Int
+        }
+        fun cached(): Int = target.cachedMethod("choose", arrayOf(7), false)!!.invoke(target, 7) as Int
+        repeat(2000) { uncached(); cached() }
+        var baselineChecksum = 0
+        var cachedChecksum = 0
+        val baseline = LongArray(5)
+        val optimized = LongArray(5)
+        for (round in baseline.indices) {
+            fun measureBaseline() = kotlin.system.measureNanoTime {
+                repeat(iterations) { baselineChecksum += uncached() }
+            }
+            fun measureCached() = kotlin.system.measureNanoTime {
+                repeat(iterations) { cachedChecksum += cached() }
+            }
+            if (round % 2 == 0) {
+                baseline[round] = measureBaseline()
+                optimized[round] = measureCached()
+            } else {
+                optimized[round] = measureCached()
+                baseline[round] = measureBaseline()
+            }
+        }
+        assertEquals(baselineChecksum, cachedChecksum)
+        assertEquals(iterations * 5 * 7, cachedChecksum)
+        println("SmartTube reflection diagnostic: uncached median ns/op=" +
+            baseline.sorted()[2] / iterations + ", cached median ns/op=" +
+            optimized.sorted()[2] / iterations)
+    }
+
     @Test fun concurrentResolutionPreservesResults() {
         val target = Fixture()
         val pool = Executors.newFixedThreadPool(4)
