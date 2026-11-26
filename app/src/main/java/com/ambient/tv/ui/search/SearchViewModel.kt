@@ -30,6 +30,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 enum class SearchViewMode { ROWS, LIST }
@@ -211,6 +213,47 @@ class SearchViewModel @Inject constructor(
         (if (preferences.hasMoonlightHosts) preferences.moonlightHosts.map {
             "moonlight:${it.id}:${it.host}:${it.port}:${moonlightStore.peerIdentity(it.id)}"
         } else emptyList())
+
+    init {
+        viewModelScope.launch {
+            combine(moonlightStore.metadataRevisions, moonlightStore.artworkRevisions, moonlightStore.trustRevisions) { _, _, _ -> Unit }
+                .collectLatest {
+                    val snapshot = _uiState.value
+                    if (!snapshot.hasSearched || SearchSource.MOONLIGHT !in snapshot.selectedSources) return@collectLatest
+                    if (currentSourceIdentity() != resultSourceIdentity) {
+                        startSearch(preserveResults = false)
+                    } else {
+                        val query = snapshot.query.trim()
+                        val revision = searchRevision
+                        val result = suspendResult { cachedMoonlightResults(query) }
+                        updateForQuery(query, revision) { state ->
+                            result.fold(
+                                onSuccess = { state.copy(moonlightResults = it, moonlightState = SearchSourceState.READY) },
+                                onFailure = { state.copy(moonlightState = SearchSourceState.ERROR) },
+                            )
+                        }
+                    }
+                }
+        }
+    }
+
+    private suspend fun cachedMoonlightResults(query: String) =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val favorites = moonlightStore.favorites()
+            val recent = moonlightStore.recent().withIndex().associate { it.value to it.index }
+            preferences.moonlightHosts.flatMap { host ->
+                moonlightStore.catalog(host.id)?.apps.orEmpty()
+                    .filter { it.title.contains(query, ignoreCase = true) }
+                    .map { app ->
+                        val key = host.id + ":" + app.id
+                        com.ambient.tv.ui.moonlight.MoonlightBrowseGame(host, app, key in favorites,
+                            recent[key] ?: Int.MAX_VALUE)
+                    }
+            }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.app.title }).take(60).map { game ->
+                val artwork = moonlightStore.artworkInfo(game.host.id, game.app.id)
+                game.copy(artworkPath = artwork?.file?.absolutePath, artworkRatio = artwork?.aspectRatio ?: 2f / 3f)
+            }
+        }
 
     fun refreshSources() = refreshSources(preserveResults = false)
 
@@ -401,25 +444,7 @@ class SearchViewModel @Inject constructor(
             // Search the locally authenticated catalog only; no Sunshine login/network
             // request on each keystroke. A title can be discovered while its PC is offline.
             if (moonlightEnabled) launch {
-                val result = suspendResult {
-                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        val favorites = moonlightStore.favorites()
-                        val recent = moonlightStore.recent().withIndex()
-                            .associate { it.value to it.index }
-                        preferences.moonlightHosts.flatMap { host ->
-                            moonlightStore.catalog(host.id)?.apps.orEmpty()
-                                .filter { it.title.contains(query, ignoreCase = true) }
-                                .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title }).take(60).map { app ->
-                                    val key = host.id + ":" + app.id
-                                    com.ambient.tv.ui.moonlight.MoonlightBrowseGame(
-                                        host, app, key in favorites,
-                                        recent[key] ?: Int.MAX_VALUE,
-                                        moonlightStore.artworkFile(host.id, app.id)?.absolutePath,
-                                    )
-                                }
-                        }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.app.title }).take(60)
-                    }
-                }
+                val result = suspendResult { cachedMoonlightResults(query) }
                 updateForQuery(query, revision) { state ->
                     result.fold(
                         onSuccess = { state.copy(moonlightResults = it, moonlightState = SearchSourceState.READY) },

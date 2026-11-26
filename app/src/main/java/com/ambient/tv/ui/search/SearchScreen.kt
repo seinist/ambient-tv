@@ -398,31 +398,17 @@ private fun MoonlightSearchCard(
     modifier: Modifier = Modifier,
 ) {
     val focused = LocalSearchResultFocused.current
-    Column(Modifier.width(deviceDp(238.dp, 174.dp)),
-        verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        val file = game.artworkPath?.let(::File)?.takeIf { it.isFile }
-        Box(
-            Modifier.fillMaxWidth().aspectRatio(16f / 9f)
-                .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (file != null) {
-                AsyncImage(model = file, contentDescription = game.app.title,
-                    contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-            } else {
-                Text(stringResource(R.string.moonlight_title),
-                    style = MaterialTheme.typography.titleSmall)
-            }
+    val presentation = remember(game) {
+        object : com.ambient.tv.domain.model.GameBrowseItem by game {
+            override val fileId = "search:moonlight:" + game.key
         }
-        TvActionButton(game.app.title, onClick, modifier = modifier.onFocusChanged {
-            if (it.isFocused) focused("search:moonlight:" + game.key)
-        }, fillWidth = true)
-        Text(game.host.name.ifBlank { game.host.host },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
+    com.ambient.tv.ui.games.GameTile(presentation,
+        modifier = modifier.width(deviceDp(238.dp, 174.dp)),
+        artworkSlotAspectRatio = 1f,
+        onPlay = onClick, onInfo = onClick,
+        onFocus = { focused(presentation.fileId) }, onRequester = {}, onDisposed = {},
+    )
 }
 
 @Composable
@@ -1410,6 +1396,7 @@ private fun SearchList(
                     subtitle = game.host.name.ifBlank { game.host.host },
                     onClick = { onMoonlightClick(game.host.id, game.app.id) },
                     focusKey = "search:moonlight:" + game.key,
+                    gameCover = game,
                     requestInitialFocus = requestInitialResultFocus &&
                         firstExternalGroup == "moonlight" &&
                         game == state.moonlightResults.firstOrNull(),
@@ -1640,6 +1627,7 @@ private fun ExternalSearchListItem(
     onClick: () -> Unit,
     requestInitialFocus: Boolean = false,
     focusKey: String,
+    gameCover: MoonlightBrowseGame? = null,
 ) {
     var focused by remember(title, imageUrl) { mutableStateOf(false) }
     val onResultFocused = LocalSearchResultFocused.current
@@ -1668,7 +1656,13 @@ private fun ExternalSearchListItem(
             horizontalArrangement = Arrangement.spacedBy(18.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ArtworkImage(
+            if (gameCover != null) {
+                com.ambient.tv.ui.games.GameCoverArtwork(
+                    cover = gameCover.coverModel, title = title, systemId = gameCover.systemId,
+                    modifier = Modifier.width(76.dp).aspectRatio(1f).clip(RoundedCornerShape(9.dp)),
+                    focused = focused, fileId = focusKey, systemIcon = gameCover.artworkIcon,
+                )
+            } else ArtworkImage(
                 model = imageUrl,
                 title = title,
                 headers = imageHeaders,

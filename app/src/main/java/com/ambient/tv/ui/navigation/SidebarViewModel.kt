@@ -110,6 +110,7 @@ class SidebarViewModel @Inject constructor(
     private val photoRepository: com.ambient.tv.data.photos.PhotoRepository,
     private val unreachableServers: UnreachableServerGate,
     private val hosts: HostConnectivity,
+    private val moonlightStore: com.ambient.tv.moonlight.MoonlightLibraryStore,
     private val onlineServices: com.ambient.tv.data.browse.OnlineServiceAvailability,
     private val loadCoordinator: BrowseLoadCoordinator,
     private val rommLibrary: com.ambient.tv.romm.RommLibrary,
@@ -250,6 +251,8 @@ class SidebarViewModel @Inject constructor(
                 appPreferences.changes(),
                 fileStore.revision,
                 dlnaStore.serverRevision,
+                moonlightStore.availabilityRevisions,
+                moonlightStore.trustRevisions,
                 com.ambient.tv.data.local.LoginStateSignal.generation,
                 snapshot = ::currentOfflineSources,
             ).collect { offline -> _uiState.update { it.copy(offlineSystems = offline) } }
@@ -373,9 +376,14 @@ class SidebarViewModel @Inject constructor(
             if (appPreferences.trailersEnabled && !tokens.tmdbApiKey.isNullOrBlank()) add("trailers")
             if (appPreferences.spotifyEnabled) add("spotify")
         }
-        val offline = sidebarOfflineSources(configured, hosts::health) +
-            onlineServices.state.value.unavailableServices(remote)
+        val offline = (sidebarOfflineSources(configured, hosts::health) +
+            onlineServices.state.value.unavailableServices(remote)).toMutableSet()
         val moonlight = configured.filter { it.startsWith("moonlight:") }
+        moonlight.forEach { key ->
+            val id = key.removePrefix("moonlight:")
+            if (moonlightStore.isRecentlyOnline(id)) offline.remove(key)
+            else if (moonlightStore.isKnownOffline(id)) offline.add(key)
+        }
         return if (moonlight.isNotEmpty() && moonlight.all { it in offline }) offline + "moonlight" else offline
     }
 
