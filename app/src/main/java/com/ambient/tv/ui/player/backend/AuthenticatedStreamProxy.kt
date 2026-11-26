@@ -13,6 +13,7 @@ import kotlin.concurrent.thread
 import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * libVLC cannot send an Authorization header, and credentials placed in the MRL end up in its
@@ -87,7 +88,8 @@ internal class AuthenticatedStreamProxy(
         if (request[1].removePrefix("/") != token) { status(output, 404, "Not Found"); return }
         val headOnly = request[0] == "HEAD"
 
-        val upstream = Request.Builder().url(upstreamUrl).apply {
+        val origin = upstreamUrl.toHttpUrlOrNull() ?: return
+        val upstream = Request.Builder().url(origin).tag(RelayOrigin::class.java, RelayOrigin(origin)).apply {
             upstreamHeaders.forEach { (name, value) -> header(name, value) }
             // Keep Content-Length/Content-Range byte-exact for seekable recordings.
             header("Accept-Encoding", "identity")
@@ -139,6 +141,8 @@ internal class AuthenticatedStreamProxy(
         sockets.forEach { runCatching { it.close() } }
     }
 
+    private data class RelayOrigin(val url: okhttp3.HttpUrl)
+
     private companion object {
         val RELAYED_HEADERS = listOf("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges")
 
@@ -150,7 +154,29 @@ internal class AuthenticatedStreamProxy(
                 .readTimeout(20, TimeUnit.SECONDS)
                 // The upstream headers carry server credentials: never to a redirect elsewhere.
                 .let(com.ambient.tv.network.CredentialRedirectGuard::install)
+                // A custom caller header or cookie can also be a credential. Never pass any
+                // supplied header across an origin boundary via a redirect.
+                .addNetworkInterceptor { chain ->
+                    val request = chain.request()
+                    val original = request.tag(RelayOrigin::class.java)?.url
+                    if (original != null && !com.ambient.tv.network.CredentialRedirectGuard.keeps(original, request.url))
+                        throw java.io.IOException("Cross-origin media relay redirect refused")
+                    chain.proceed(request)
+                }
                 .build()
         }
     }
+}
+
+internal fun vlcDirectHttpRelaySupported(url: String): Boolean {
+    val parsed = url.toHttpUrlOrNull() ?: return false
+    val path = parsed.encodedPath.lowercase(java.util.Locale.ROOT)
+    return !path.endsWith(".m3u8") && !path.endsWith(".mpd") && !path.endsWith(".m3u")
+}
+
+/** Do not forward arbitrary primary-stream headers to another host or port. */
+internal fun vlcSameHttpOrigin(first: String, second: String): Boolean {
+    val a = first.toHttpUrlOrNull() ?: return false
+    val b = second.toHttpUrlOrNull() ?: return false
+    return a.scheme == b.scheme && a.host == b.host && a.port == b.port
 }
