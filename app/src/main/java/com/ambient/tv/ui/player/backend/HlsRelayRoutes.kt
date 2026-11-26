@@ -23,19 +23,28 @@ internal class HlsRelayRoutes(
     private val rootPath: String,
     private val capacity: Int = 8192,
 ) {
-    internal data class Resource(val url: HttpUrl, val playlist: Boolean = false)
+    internal data class Resource(
+        val url: HttpUrl,
+        val playlist: Boolean = false,
+        val credentialed: Boolean = true,
+        val variables: Map<String, String> = emptyMap(),
+    )
+    private data class TemplateResource(val template: DashRelayTemplate, val credentialed: Boolean)
     private var root = Resource(origin, vlcHlsPath(origin) || vlcDashPath(origin))
     private var nextId = 0L
     private val entries = LinkedHashMap<Resource, String>(16, 0.75f, true)
     private val paths = HashMap<String, Resource>()
-    private val templates = LinkedHashMap<DashRelayTemplate, String>(16, 0.75f, true)
-    private val templatePaths = HashMap<String, DashRelayTemplate>()
+    private val templates = LinkedHashMap<TemplateResource, String>(16, 0.75f, true)
+    private val templatePaths = HashMap<String, TemplateResource>()
 
     /** Only the configured server receives the stream headers. No arbitrary localhost proxy. */
-    @Synchronized fun register(url: HttpUrl, playlist: Boolean): String {
-        if (!vlcRelayResourceAllowed(origin, url))
+    @Synchronized fun register(url: HttpUrl, playlist: Boolean, parentCredentialed: Boolean = true,
+        variables: Map<String, String> = emptyMap()): String {
+        val credentialed = parentCredentialed && vlcRelayOriginAllowed(origin, url)
+        if (!vlcRelayResourceAllowed(origin, url) || !credentialed && !vlcRelayCdnUrlAllowed(url))
             throw IOException("Foreign or credential-bearing manifest resource refused")
-        val key = Resource(url, playlist || vlcHlsPath(url) || vlcDashPath(url))
+        val isManifest = playlist || vlcHlsPath(url) || vlcDashPath(url)
+        val key = Resource(url, isManifest, credentialed, if (isManifest) variables.toMap() else emptyMap())
         entries[key]?.let { return it }
         if (nextId == Long.MAX_VALUE) throw IOException("Manifest capability exhausted")
         val path = "$rootPath/${++nextId}" + when {
@@ -54,16 +63,18 @@ internal class HlsRelayRoutes(
     }
 
     /** A template capability authorizes only the numeric substitutions declared in the MPD. */
-    @Synchronized fun registerTemplate(template: DashRelayTemplate): String {
+    @Synchronized fun registerTemplate(template: DashRelayTemplate, parentCredentialed: Boolean = true): String {
         val sample = template.resolve(List(template.slots.size) { "0" }) ?: throw IOException("Invalid DASH template")
-        if (!vlcRelayResourceAllowed(origin, sample))
+        val credentialed = parentCredentialed && vlcRelayOriginAllowed(origin, sample)
+        if (!vlcRelayResourceAllowed(origin, sample) || !credentialed && !vlcRelayCdnUrlAllowed(sample))
             throw IOException("Foreign DASH template refused")
-        if (template.slots.isEmpty()) return register(sample, false)
-        val prefix = templates[template] ?: run {
+        if (template.slots.isEmpty()) return register(sample, false, parentCredentialed)
+        val key = TemplateResource(template, credentialed)
+        val prefix = templates[key] ?: run {
             if (nextId == Long.MAX_VALUE) throw IOException("Manifest capability exhausted")
             val path = "$rootPath/t${++nextId}"
-            templates[template] = path
-            templatePaths[path] = template
+            templates[key] = path
+            templatePaths[path] = key
             while (templates.size > capacity) {
                 val first = templates.entries.iterator().next()
                 templatePaths.remove(first.value)
@@ -83,11 +94,11 @@ internal class HlsRelayRoutes(
             if ('?' in target || !path.startsWith("$rootPath/t")) return null
             val tail = path.removePrefix("$rootPath/").split('/')
             if (tail.size < 2) return null
-            val template = templatePaths["$rootPath/${tail.first()}"] ?: return null
-            templates[template]
-            val url = template.resolve(tail.drop(1)) ?: return null
-            if (!vlcRelayResourceAllowed(origin, url)) return null
-            return Resource(url)
+            val key = templatePaths["$rootPath/${tail.first()}"] ?: return null
+            templates[key]
+            val url = key.template.resolve(tail.drop(1)) ?: return null
+            if (!vlcRelayResourceAllowed(origin, url) || !key.credentialed && !vlcRelayCdnUrlAllowed(url)) return null
+            return Resource(url, credentialed = key.credentialed)
         }
         if (path != rootPath) entries[resource] // LRU on actual segment access
         if ('?' !in target) return resource
