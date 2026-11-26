@@ -138,7 +138,7 @@ struct Video {
         VulkanBackend::getInstance().eglWaitQueued = writeFenceAccepted;
         return writeFenceAccepted;
     }
-    bool drainAccepted = true, pendingUse = true;
+    bool drainAccepted = true, pendingUse = true, sparePendingUse = true;
     bool presentsExternalFrames() const { return external; }
     int exportExternalReadFence() { ++fenceExports; return fenceFd; }
     bool finishExternalFrameUse(bool allowEmpty = false) {
@@ -161,7 +161,18 @@ struct Video {
     bool finishExternalFrameSlotUse(unsigned index) {
         assert(index == VulkanBackend::getInstance().submissionSlotIndex());
         ++slotDrains;
-        return finishExternalFrameUse();
+        if (!index) return finishExternalFrameUse();
+        if (!drainAccepted) return false;
+        if (sparePendingUse) glFinish();
+        sparePendingUse = false;
+        return true;
+    }
+    bool externalFrameSlotNeedsReadWait(unsigned index) const {
+        return index ? sparePendingUse : pendingUse;
+    }
+    void externalFrameSlotReadWaitSubmitted(unsigned index) {
+        if (index) sparePendingUse = false;
+        else pendingUse = false;
     }
     bool matchesExternalFrameSlot(unsigned index, void* buffer, unsigned w, unsigned h, uint64_t bytes) {
         auto& backend = VulkanBackend::getInstance();
@@ -335,7 +346,23 @@ void readFenceHandoffContracts() {
         assert(video.frameCalls == backend.submissions && video.transferUpdates == backend.submissions);
         assert(video.transfer == (test.fatal ? 2u : 1u));
     }
-    std::puts("PASS production GLES read fence handoff and CPU fallback (5 cases)");
+    for (bool accepted : {false, true}) {
+        auto& backend = VulkanBackend::getInstance();
+        backend = {};
+        backend.readFenceSupported = backend.readFenceAccepted = true;
+        backend.bridgeAccepted = accepted;
+        Video video;
+        LibretroDroid host {&video};
+        host.handleVideoRefresh(RETRO_HW_FRAME_BUFFER_VALID, 256, 224, 1024);
+        assert(video.fenceExports == 1 && video.pendingUse != accepted);
+        backend.bridgeAccepted = true;
+        host.handleVideoRefresh(RETRO_HW_FRAME_BUFFER_VALID, 256, 224, 1024);
+        assert(video.fenceExports == (accepted ? 1u : 2u) && !video.pendingUse);
+        video.pendingUse = true; // a new primary/secondary/capture read
+        host.handleVideoRefresh(RETRO_HW_FRAME_BUFFER_VALID, 256, 224, 1024);
+        assert(video.fenceExports == (accepted ? 2u : 3u) && !video.pendingUse);
+    }
+    std::puts("PASS production GLES read fence handoff, CPU fallback, and consumed slot proof");
 }
 
 void bridgeIdentityContracts() {

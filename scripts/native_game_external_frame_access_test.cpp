@@ -47,8 +47,16 @@ int main() {
         assert(lease.finishUse(texture, 1, 2, driver, true));
         assert(driver.finishes == 2); // resize may skip already completed work
         assert(lease.markUse(texture, 1, 2));
+        assert(lease.needsUseCompletion(texture, 1, 2));
+        assert(!lease.markWaitSubmitted(texture, 1, 9));
+        assert(lease.needsUseCompletion(texture, 1, 2));
+        assert(lease.markWaitSubmitted(texture, 1, 2));
+        assert(!lease.needsUseCompletion(texture, 1, 2));
+        assert(lease.needsUseCompletion(texture, 1, 9));
+        assert(lease.finishUse(texture, 1, 2, driver) && driver.finishes == 2);
+        assert(lease.markUse(texture, 1, 2));
         assert(lease.finishUse(texture, 1, 2, driver, true));
-        assert(driver.finishes == 3); // resize after sampling still drains
+        assert(driver.finishes == 3); // new read after consumed wait still drains
         lease.release(texture, 1, 2, driver);
         assert(texture == 0 && driver.finishes == 4 && driver.deletes == 1 &&
                driver.destroys == 1 && driver.releases == 1);
@@ -58,6 +66,8 @@ int main() {
         assert(driver.finishes == 5); // new import never inherits a clean state
         assert(lease.markUse(texture, 1, 2));
         lease.invalidateContext();
+        assert(!lease.markWaitSubmitted(texture, 1, 2));
+        assert(lease.needsUseCompletion(texture, 1, 2));
         assert(!lease.markUse(texture, 1, 2));
         assert(!lease.finishUse(texture, 1, 2, driver, true));
         assert(!lease.finishUse(texture, 1, 0, driver));

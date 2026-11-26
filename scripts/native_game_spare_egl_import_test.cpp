@@ -14,6 +14,15 @@ unsigned eglGetCurrentContext() { return context; }
 struct Lease {
     AHardwareBuffer* buffer = nullptr;
     unsigned d = 0, c = 0;
+    bool pending = true;
+    bool needsUseCompletion(unsigned texture, unsigned a, unsigned b) const {
+        return !texture || !ownsContext(a, b) || pending;
+    }
+    bool markWaitSubmitted(unsigned texture, unsigned a, unsigned b) {
+        if (!texture || !ownsContext(a, b)) return false;
+        pending = false;
+        return true;
+    }
     bool retainsBuffer() const { return buffer != nullptr; }
     bool ownsContext(unsigned a, unsigned b) const {
         return buffer && a && b && a == d && b == c;
@@ -43,7 +52,15 @@ struct Bank {
         ++finished;
         return true;
     }
+    Slot* get(std::size_t i) { return i < 2 ? &slots[i] : nullptr; }
     const Slot* get(std::size_t i) const { return i < 2 ? &slots[i] : nullptr; }
+    bool selectMatching(std::size_t i, AHardwareBuffer* b, unsigned w, unsigned h, uint64_t bytes,
+                        unsigned d, unsigned c, unsigned& borrowed) {
+        const auto* slot = get(i);
+        if (!slot || !w || !h || !bytes || !slot->lease.matches(b, d, c, slot->texture) ||
+                slot->width != w || slot->height != h || slot->allocationBytes != bytes) return false;
+        return select(i, d, c, borrowed);
+    }
     std::size_t selected() const { return current; }
     bool ownsContext(unsigned d, unsigned c) const {
         return slots[current].texture && slots[current].lease.ownsContext(d, c);
@@ -58,7 +75,12 @@ struct Bank {
 };
 struct Video {
     bool externalFrames = true;
-    unsigned hwRenderTexture = 11;
+    unsigned hwRenderTexture = 11, hwFBOWidth = 32, hwFBOHeight = 24;
+    struct Renderer {
+        unsigned updates = 0;
+        void updateRenderedResolution(unsigned, unsigned) { ++updates; }
+    };
+    Renderer* renderer = nullptr;
     Bank externalFrame;
     unsigned prepares = 0;
     bool prepareOK = true;
@@ -67,6 +89,9 @@ struct Video {
     bool matchesExternalFrameSlot(std::size_t, AHardwareBuffer*, unsigned, unsigned, uint64_t) const;
     bool finishExternalFrameSlotUse(std::size_t);
     bool prepareExternalFrameResize();
+    bool externalFrameSlotNeedsReadWait(std::size_t) const;
+    void externalFrameSlotReadWaitSubmitted(std::size_t);
+    bool selectExternalFrameSlot(std::size_t, AHardwareBuffer*, unsigned, unsigned, uint64_t);
     bool finishExternalFrameUse(bool allowEmpty = false) {
         if (!externalFrames) return false;
         const auto* slot = externalFrame.get(externalFrame.selected());
@@ -136,5 +161,33 @@ int main() {
         if (valid) assert(v.externalFrame.current == 0 && v.hwRenderTexture == 11 &&
                           v.externalFrame.released == 1 && !v.externalFrame.slots[1].lease.buffer);
     }
-    std::printf("PASS %u video slot coordination cases plus resize and indexed matching\n", count);
+    // Publication rotates only the borrowed texture. Same geometry must
+    // not force renderer reconfiguration; new geometry/first import must.
+    {
+        display = 1; context = 2;
+        Video v;
+        Video::Renderer renderer;
+        v.renderer = &renderer;
+        v.externalFrame.slots[0] = {{&a, 1, 2}, 11, 32, 24, 4096};
+        v.externalFrame.slots[1] = {{&b, 1, 2}, 12, 32, 24, 4096};
+        assert(v.externalFrameSlotNeedsReadWait(0) && v.externalFrameSlotNeedsReadWait(1));
+        v.externalFrameSlotReadWaitSubmitted(1);
+        assert(v.externalFrameSlotNeedsReadWait(0) && !v.externalFrameSlotNeedsReadWait(1));
+        context = 3;
+        v.externalFrameSlotReadWaitSubmitted(0);
+        assert(v.externalFrameSlotNeedsReadWait(1));
+        context = 2;
+        assert(v.externalFrameSlotNeedsReadWait(0));
+        for (unsigned j = 0; j < 1000; ++j) {
+            assert(v.selectExternalFrameSlot(1, &b, 32, 24, 4096) && v.hwRenderTexture == 12);
+            assert(v.selectExternalFrameSlot(0, &a, 32, 24, 4096) && v.hwRenderTexture == 11);
+        }
+        assert(renderer.updates == 0);
+        v.hwRenderTexture = 0;
+        assert(v.selectExternalFrameSlot(0, &a, 32, 24, 4096) && renderer.updates == 1);
+        v.externalFrame.slots[1].width = 64;
+        assert(v.selectExternalFrameSlot(1, &b, 64, 24, 4096) && renderer.updates == 2);
+        assert(!v.selectExternalFrameSlot(1, &a, 64, 24, 4096) && renderer.updates == 2);
+    }
+    std::printf("PASS %u video slot coordination cases plus resize, read proof and stable geometry\n", count);
 }

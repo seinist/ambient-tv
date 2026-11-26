@@ -2049,6 +2049,104 @@ void dualNormalFrameContracts() {
     std::puts("PASS bounded dual-slot normal submission, selected retirement, fallback, WSI and source ownership");
 }
 
+void dualNativePresentOverlapContracts() {
+#if defined(VK_EXT_swapchain_maintenance1)
+    static bool pendingPresent[2];
+    static unsigned presentFencesCreated, presentFencesWaited;
+    for (unsigned mode = 0; mode < 8; ++mode) {
+        VulkanBackend b;
+        setup(b);
+        assert(b.coreSync.open(2));
+        auto& spare = b.spareFrameSlot;
+        spare.pool = object<VkCommandPool>(210);
+        spare.command = object<VkCommandBuffer>(211);
+        spare.fence = object<VkFence>(212);
+        spare.bridgeImage.image = object<VkImage>(213);
+        spare.bridgeImage.memory = object<VkDeviceMemory>(214);
+        spare.bridgeImage.buffer = object<AHardwareBuffer*>(215);
+        spare.bridgeImage.width = b.frameSlot.bridgeImage.width;
+        spare.bridgeImage.height = b.frameSlot.bridgeImage.height;
+        spare.bridgeImage.allocationBytes = b.frameSlot.bridgeImage.allocationBytes;
+        b.spareFramePrepared = true;
+        b.setSpareFrameImported(true);
+        b.bridgeWriteFenceEnabled = true;
+        const bool temporal = mode & 1;
+        const bool presentProof = (mode & 2) == 0;
+        const bool invalidated = (mode & 4) != 0;
+        b.nativePresentFencesEnabled = presentProof;
+        if (temporal) b.nativeSlang.setPresetPath("temporal");
+        window(b);
+        b.nativePresentation.setFullscreenActive(true);
+        pendingPresent[0] = pendingPresent[1] = false;
+        presentFencesCreated = presentFencesWaited = 0;
+        b.vk.createFence = [](VkDevice, const VkFenceCreateInfo*, const VkAllocationCallbacks*, VkFence* out) {
+            *out = object<VkFence>(601 + presentFencesCreated++);
+            return VK_SUCCESS;
+        };
+        b.vk.acquireNextImage = [](VkDevice, VkSwapchainKHR, uint64_t, VkSemaphore, VkFence, uint32_t* image) {
+            *image = driver.presents % 2;
+            return VK_SUCCESS;
+        };
+        b.vk.queuePresent = [](VkQueue, const VkPresentInfoKHR* p) {
+            assert(driver.pending && p->pImageIndices && *p->pImageIndices < 2);
+            const unsigned i = *p->pImageIndices;
+            if (p->pNext) {
+                const auto* info = static_cast<const VkSwapchainPresentFenceInfoEXT*>(p->pNext);
+                assert(!pendingPresent[i] && *info->pFences == object<VkFence>(601 + i));
+                pendingPresent[i] = true;
+            }
+            ++driver.presents;
+            return driver.present;
+        };
+        b.vk.waitForFences = [](VkDevice, uint32_t n, const VkFence* f, VkBool32, uint64_t) {
+            assert(n == 1);
+            if (*f == object<VkFence>(6) || *f == object<VkFence>(212)) {
+                assert(driver.pending);
+                ++driver.waitCalls;
+                driver.pending = false;
+            } else {
+                const unsigned i = *f == object<VkFence>(602) ? 1u : 0u;
+                assert(*f == object<VkFence>(601 + i) && pendingPresent[i]);
+                pendingPresent[i] = false;
+                ++presentFencesWaited;
+            }
+            return VK_SUCCESS;
+        };
+        b.vk.getSemaphoreFd = [](VkDevice, const VkSemaphoreGetFdInfoKHR* info, int* fd) {
+            assert(driver.pending && driver.submittedSignals.back() == info->semaphore);
+            *fd = -1;
+            return VK_SUCCESS;
+        };
+        int fd = 99;
+        assert(b.beginCoreFrame() && b.submissionSlotIndex() == 0);
+        assert(b.presentFrame(256, 224, 4.0F/3.0F, true, &fd) && fd == -1);
+        assert(driver.waitCalls == 1 && !b.frameSlot.inFlight && b.nativeSlangUse.idle());
+        assert(b.nativePresentation.hasPresentedFrame());
+        b.endCoreFrame();
+        if (invalidated) b.nativePresentation.invalidateFrame();
+        assert(b.beginCoreFrame() && b.submissionSlotIndex() == 1);
+        b.pendingImageIndex = 1;
+        assert(b.presentFrame(256, 224, 4.0F/3.0F, true, &fd) && fd == -1);
+        const bool overlap = presentProof && !invalidated;
+        assert(b.spareFrameSlot.inFlight == overlap && driver.pending == overlap);
+        assert(driver.waitCalls == (overlap ? 1u : 2u));
+        assert(b.nativeSlangUse.submitted() == (overlap && temporal));
+        assert(b.nativePresentation.hasPresentedFrame());
+        // The next shader recording must wait its owning render fence, not
+        // the other slot's fence or a present-completion fence.
+        if (overlap && temporal) assert(b.waitForNativeSlangFrame());
+        else if (overlap) assert(b.waitForSubmissionFrame());
+        assert(!b.spareFrameSlot.inFlight && !driver.pending && b.nativeSlangUse.idle());
+        assert(driver.waitCalls == 2 && presentFencesWaited == 0);
+        b.endCoreFrame();
+        b.shutdown();
+        assert(!b.device && !pendingPresent[0] && !pendingPresent[1]);
+        assert(presentFencesWaited == (presentProof ? 2u : 0u));
+    }
+    std::puts("PASS dual native/Slang overlap requires previous confirmation and explicit present completion");
+#endif
+}
+
 void managedBoundary() {
     auto& backend = VulkanBackend::getInstance();
     libretrodroid::Video video;
@@ -2124,6 +2222,7 @@ int main() {
     duplicateFrameContracts();
     coreSyncIndexContracts();
     dualNormalFrameContracts();
+    dualNativePresentOverlapContracts();
     managedBoundary();
     std::puts("PASS production Vulkan synchronization and presentation fault regression");
 }
