@@ -98,8 +98,12 @@ class CompanionLiveInputQueueTest {
         assertFalse(q.offerGamepad(CompanionFrame(type = "gamepad_release"), critical = true))
         assertEquals(1, overflows)
         assertFalse(q.offerGamepad(pad(1), critical = true))
+        assertFalse(q.offerGamepad(pad(0, 0.8f), critical = false))
+        assertFalse(q.offerRemote(move(0.5f)))
         assertEquals(1, overflows)
         q.close()
+        assertFalse(q.offerGamepad(pad(0), critical = false))
+        assertFalse(q.offerRemote(move(0.1f)))
     }
 
     @Test fun wakeupCanSelectANewInputBeforeOutstandingReplyArrives() = runBlocking {

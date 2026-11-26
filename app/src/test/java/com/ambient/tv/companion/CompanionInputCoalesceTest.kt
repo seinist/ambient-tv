@@ -2,6 +2,9 @@ package com.ambient.tv.companion
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class CompanionInputCoalesceTest {
@@ -52,6 +55,59 @@ class CompanionInputCoalesceTest {
         val click = second.copy(gamepadState = second.gamepadState!!.copy(
             pointer = second.gamepadState.pointer!!.copy(buttons = 1)))
         assertNull(coalesceCompanionInput(first, click))
+    }
+
+    @Test
+    fun `absolute samples reuse state while preserving oldest queued timestamp`() {
+        val first = CompanionFrame(type = "gamepad_input", gamepadState = CompanionGamepadState(leftX = 0.1f),
+            gamepadQueuedAtMs = 10L)
+        val next = first.copy(gamepadState = CompanionGamepadState(leftX = 0.9f), gamepadQueuedAtMs = 20L)
+        val merged = coalesceCompanionInput(first, next)!!
+        assertSame(next.gamepadState, merged.gamepadState)
+        assertEquals(10L, merged.gamepadQueuedAtMs)
+        assertSame(next, coalesceCompanionInput(first.copy(gamepadQueuedAtMs = 0L), next))
+    }
+
+    @Test
+    fun `trigger edges and ordered contacts use the same predicate as the sender`() {
+        fun frame(state: CompanionGamepadState) = CompanionFrame(type = "gamepad_input", gamepadState = state)
+        val neutral = CompanionGamepadState()
+        val pressed = neutral.copy(leftTrigger = 0.2f)
+        assertNull(coalesceCompanionInput(frame(neutral), frame(pressed)))
+        assertNull(coalesceCompanionInput(frame(pressed), frame(neutral)))
+        val pressure = pressed.copy(leftTrigger = 0.8f)
+        assertSame(frame(pressure).gamepadState, coalesceCompanionInput(frame(pressed), frame(pressure))!!.gamepadState)
+
+        val a = CompanionPointerContact(0, 0.1f, 0.2f)
+        val b = CompanionPointerContact(1, 0.3f, 0.4f)
+        val off = CompanionPointerContact(2, 0f, 0f, pressed = false)
+        fun state(vararg contacts: CompanionPointerContact) =
+            neutral.copy(pointer = CompanionPointerState(contacts = contacts.toList()))
+        val original = state(a, b)
+        val moved = state(off, a.copy(x = 0.8f), b)
+        assertFalse(companionGamepadCriticalEdge(original, moved))
+        assertSame(moved, coalesceCompanionInput(frame(original), frame(moved))!!.gamepadState)
+        assertTrue(companionGamepadCriticalEdge(original, state(b, a)))
+        assertNull(coalesceCompanionInput(frame(original), frame(state(b, a))))
+        assertNull(coalesceCompanionInput(frame(original), frame(state(a))))
+    }
+
+    @Test
+    fun `validation retains axis bounds and rejects duplicate or invalid contacts`() {
+        val good = CompanionGamepadState(leftX = -1f, rightY = 1f,
+            motion = CompanionMotionState(mask = 3, ax = -16f, gz = 100f),
+            pointer = CompanionPointerState(contacts = (0..3).map { CompanionPointerContact(it, 0f, 1f) }))
+        good.validate()
+        fun invalid(state: CompanionGamepadState) {
+            assertTrue(runCatching { state.validate() }.exceptionOrNull() is IllegalArgumentException)
+        }
+        invalid(good.copy(leftX = Float.NaN))
+        invalid(good.copy(rightY = Float.POSITIVE_INFINITY))
+        invalid(good.copy(motion = CompanionMotionState(ax = 16.01f)))
+        invalid(good.copy(motion = CompanionMotionState(gz = -100.01f)))
+        invalid(good.copy(pointer = CompanionPointerState(contacts = listOf(
+            CompanionPointerContact(0, 0f, 0f), CompanionPointerContact(0, 1f, 1f)))))
+        invalid(good.copy(pointer = CompanionPointerState(contacts = listOf(CompanionPointerContact(32, 0f, 0f)))))
     }
 
     @Test

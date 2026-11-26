@@ -36,9 +36,13 @@ internal class CompanionLiveInputQueue(
     private var remoteMotion: CompanionFrame? = null
 
     fun offerGamepad(frame: CompanionFrame, critical: Boolean): Boolean {
-        require(frame.type in setOf("gamepad_claim", "gamepad_input", "gamepad_menu", "gamepad_command", "gamepad_release"))
+        require(when (frame.type) {
+            "gamepad_claim", "gamepad_input", "gamepad_menu", "gamepad_command", "gamepad_release" -> true
+            else -> false
+        })
         if (critical || frame.type != "gamepad_input") {
             synchronized(this) {
+                if (overflowed) return false
                 // Relative mouse deltas are movements, not replaceable absolute positions:
                 // send the outstanding movement BEFORE the next click/press/mode change.
                 gamepadMotion?.takeIf { it.gamepadState?.pointer?.kind == "mouse" &&
@@ -49,6 +53,7 @@ internal class CompanionLiveInputQueue(
             }
         }
         synchronized(this) {
+            if (overflowed) return false
             val previous = gamepadMotion
             if (previous != null) {
                 // Relative mouse movements are deltas: merge rather than replace them.
@@ -71,7 +76,8 @@ internal class CompanionLiveInputQueue(
         require(frame.type == "input")
         val input = requireNotNull(frame.input)
         synchronized(this) {
-            if (input.action in setOf("move", "scroll")) {
+            if (overflowed) return false
+            if (input.action == "move" || input.action == "scroll") {
                 val old = remoteMotion
                 if (old != null) {
                     val merged = coalesceCompanionInput(old, frame)
