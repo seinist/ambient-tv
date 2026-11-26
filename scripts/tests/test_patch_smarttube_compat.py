@@ -167,6 +167,10 @@ class SmartTubeDeprecationPatchesTest(unittest.TestCase):
         self.assertNotIn("Cronet", patched)
         self.assertNotIn("addCronetInterceptor", patched)
         self.assertEqual([], patcher.patch_disable_unused_cronet(msc, shared, check=True))
+        helper.write_text(patched + "\nimport com.liskovsoft.sharedutils.cronet.CronetManager\n")
+        with self.assertRaises(SystemExit):
+            patcher.patch_disable_unused_cronet(msc, shared, check=True)
+        self.assertIn("CronetManager", helper.read_text())
 
     def test_okhttp_manager_initialization_is_thread_safe(self) -> None:
         path = self.write(
@@ -191,17 +195,6 @@ class SmartTubeDeprecationPatchesTest(unittest.TestCase):
             self.assertIn(expected, patched)
         self.assertFalse(patcher.patch_okhttp_manager_thread_safety(path, check=True))
         self.assertFalse(patcher.patch_okhttp_manager_thread_safety(path, check=False))
-
-    def test_cronet_drops_experimental_import(self) -> None:
-        path = self.write(
-            "CronetManager.kt",
-            "import org.chromium.net.CronetEngine\n"
-            "import org.chromium.net.ExperimentalCronetEngine\n"
-            "import org.chromium.net.impl.NativeCronetProvider\n",
-        )
-        self.assertTrue(patcher.patch_cronet_experimental_import(path, check=False))
-        self.assertNotIn("ExperimentalCronetEngine", path.read_text())
-        patcher.patch_cronet_experimental_import(path, check=True)
 
     def test_okhttp_manager_swaps_create_args(self) -> None:
         path = self.write(
