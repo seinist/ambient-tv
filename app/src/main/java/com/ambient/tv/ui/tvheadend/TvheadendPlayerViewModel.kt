@@ -150,6 +150,60 @@ class TvheadendPlayerViewModel @Inject constructor(
     private var fallbackAttempted = false
     private val localFallbackBackends = mutableSetOf<String>()
     private var videoFailureConfirmed = false
+    private val liveSyncWatch = com.ambient.tv.ui.player.LiveSyncWatch()
+    private var liveSyncRoute: String? = null
+    private var liveSyncHandle: com.ambient.tv.ui.player.PlaybackHandle? = null
+    private var liveSyncSeekVersion = -1
+
+    /** One cheap observation per second, only while the live player is visible. Never refreshes
+     * channel/guide caches, marks a host offline or changes the chosen renderer for reception faults. */
+    internal fun pollLiveStreamRecovery() {
+        val ready = _uiState.value as? TvheadendPlayerState.Ready
+        val snapshot = BackgroundPlaybackSession.snapshot.value
+        val handle = BackgroundPlaybackSession.activeHandle()
+        val route = ready?.let { metadata(it).route }
+        if (route != liveSyncRoute) {
+            liveSyncWatch.resetSession()
+            liveSyncRoute = route
+        }
+        val seekVersion = BackgroundPlaybackSession.externalSeekVersion
+        if (handle !== liveSyncHandle || seekVersion != liveSyncSeekVersion) {
+            liveSyncHandle = handle
+            liveSyncSeekVersion = seekVersion
+            liveSyncWatch.resetObservation()
+        }
+        if (ready == null || kind != "channel" || ready.playingRecording != null ||
+            ready.channel?.kind == LiveTvChannelKind.RADIO || !ready.source.isLive ||
+            route == null || snapshot.metadata?.route != route ||
+            snapshot.metadata?.sourceAccessIdentity != sourceIdentity || snapshot.replacingSource ||
+            changingChannel || seekJob?.isActive == true || recoveryJob?.isActive == true ||
+            fallbackJob?.isActive == true || handle == null || !snapshot.wantsToPlay ||
+            !handle.requestedPlayIntent() || com.ambient.tv.ui.player.playbackProfileAudio(handle)?.audioOnly == true ||
+            com.ambient.tv.ui.player.DisplayPlaybackStartup.isWaiting(handle) ||
+            com.ambient.tv.ui.player.PlaybackOutputTransition.active()) {
+            liveSyncWatch.resetObservation()
+            return
+        }
+        val sample = when (handle) {
+            is com.ambient.tv.ui.player.Media3PlaybackHandle -> handle.liveSyncSample()
+            is com.ambient.tv.ui.player.backend.VlcPlaybackController -> handle.liveSyncSample()
+            is com.ambient.tv.ui.player.backend.MpvPlaybackController -> handle.liveSyncSample()
+            else -> null
+        }
+        val delayMs = com.ambient.tv.ui.player.playbackProfileAudio(handle)?.options?.delayMs ?: 0
+        val fault = liveSyncWatch.observe(sample, delayMs) ?: return
+        if (sourceIdentity != playbackAvailability.routeIdentity(route) ||
+            handle !== BackgroundPlaybackSession.activeHandle()) return
+        val reopened = when (handle) {
+            is com.ambient.tv.ui.player.Media3PlaybackHandle -> handle.reopenForLiveSync()
+            is com.ambient.tv.ui.player.backend.VlcPlaybackController -> handle.reopenForLiveSync()
+            is com.ambient.tv.ui.player.backend.MpvPlaybackController -> handle.reopenForLiveSync(requireNotNull(sample).generation)
+            else -> false
+        }
+        if (reopened) timber.log.Timber.w("Live TV resync backend=%s reason=%s", snapshot.backend, fault)
+    }
+
+    internal fun resetLiveStreamObservation() { liveSyncWatch.resetObservation() }
     fun metadata(state: TvheadendPlayerState.Ready) = PlaybackMetadata(
         route = Destinations.tvhPlayer(kind, state.channel?.uuid ?: initialId, sourceId),
         sourceAccessIdentity = sourceIdentity,

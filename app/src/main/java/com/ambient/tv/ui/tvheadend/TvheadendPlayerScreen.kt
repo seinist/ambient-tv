@@ -2,6 +2,8 @@
 
 package com.ambient.tv.ui.tvheadend
 
+import androidx.lifecycle.repeatOnLifecycle
+
 import com.ambient.tv.ui.theme.appOsdControlSurface
 import com.ambient.tv.ui.player.PlayerPanelVisibility
 import com.ambient.tv.ui.theme.appControlSurface
@@ -174,6 +176,16 @@ fun TvheadendPlayerScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(viewModel, lifecycle) {
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            try {
+                while (true) {
+                    delay(1000L)
+                    viewModel.pollLiveStreamRecovery()
+                }
+            } finally { viewModel.resetLiveStreamObservation() }
+        }
+    }
     DisposableEffect(viewModel, lifecycle) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) viewModel.onPlaybackScreenDisposed()
