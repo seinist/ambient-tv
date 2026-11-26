@@ -150,4 +150,29 @@ class VideoAccelerationPolicyTest {
         assertEquals("software", effectiveMpvDecoder("software", hardwareDecoder = false))
         assertEquals("mediacodec", effectiveMpvDecoder("mediacodec", hardwareDecoder = true))
     }
+
+    @Test fun validatedSurfaceRetainsDeviceFeaturesButReplacesSurfaceEvidence() {
+        val device = full.device.copy(androidHardwareBufferImport = true, foreignQueueFamily = true,
+            samplerYcbcrConversion = true, syncFdImportExport = true,
+            surfaceColorSpaces = listOf(1000104008), surfaceFormats = listOf(VulkanSurfaceFormat(64, 1000104008)))
+        val surface = VulkanDeviceCapabilities(render = true, device = device.device, version = device.version,
+            reason = "", surfaceColorSpaces = listOf(0), surfaceFormats = listOf(VulkanSurfaceFormat(44, 0)))
+        val merged = mergeValidatedVulkanSurface(device, surface)
+        assertTrue(merged.render)
+        assertTrue(merged.hostQueryReset)
+        assertTrue(merged.androidInteropPrerequisites)
+        assertEquals(device.profiles, merged.profiles)
+        assertEquals(surface.surfaceFormats, merged.surfaceFormats)
+        assertEquals(false, merged.hdr10SurfaceSupported)
+    }
+
+    @Test fun surfaceFailureOrDifferentDeviceCannotInheritSuccessfulEvidence() {
+        val device = full.device
+        val changed = device.copy(version = device.version + 1)
+        val rejected = mergeValidatedVulkanSurface(device, changed)
+        assertFalse(rejected.render)
+        assertEquals("device_changed", rejected.reason)
+        val failed = VulkanDeviceCapabilities(reason = "present_queue")
+        assertEquals(failed, mergeValidatedVulkanSurface(device, failed))
+    }
 }
