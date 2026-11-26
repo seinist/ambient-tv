@@ -6,7 +6,7 @@ import kotlinx.serialization.Serializable
 /** Metadata accepted only after pinned, authenticated HTTPS. */
 @Serializable
 data class MoonlightApp(val id: Int, val title: String, val hdrSupported: Boolean)
-data class MoonlightAppCatalog(val apps: List<MoonlightApp>)
+data class MoonlightAppCatalog(val apps: List<MoonlightApp>, val peerIdentity: String? = null)
 
 fun parseMoonlightAppList(xml: ByteArray): MoonlightAppCatalog {
     val result = LinkedHashMap<Int, MoonlightApp>()

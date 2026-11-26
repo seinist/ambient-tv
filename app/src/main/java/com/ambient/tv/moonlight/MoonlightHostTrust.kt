@@ -21,6 +21,11 @@ enum class MoonlightTrustResult { NOT_PAIRED, MATCHED, IDENTITY_CHANGED }
 class MoonlightHostTrust @Inject constructor(@EncryptedPrefs private val prefs: SharedPreferences) {
     fun isPaired(hostId: String): Boolean = read(hostId) != null
     fun trustedServerId(hostId: String): String? = read(hostId)?.first
+    /** A device-local cache key includes both authenticated UUID and exact certificate. */
+    fun identity(hostId: String): String? = read(hostId)?.let { (id, cert) ->
+        MessageDigest.getInstance("SHA-256").digest(id.toByteArray(Charsets.UTF_8) + byteArrayOf(0) + cert)
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    }
 
     fun check(hostId: String, candidate: MoonlightVerifiedPeer): MoonlightTrustResult {
         val trusted = read(hostId) ?: return MoonlightTrustResult.NOT_PAIRED

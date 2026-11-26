@@ -23,10 +23,11 @@ class MoonlightDiscovery @Inject constructor(@ApplicationContext context: Contex
     fun browse(): Flow<MoonlightDiscoveredHost> = callbackFlow {
         val pending = ArrayDeque<NsdServiceInfo>()
         var resolving = false
+        var closed = false
 
         fun next() {
             val target = synchronized(pending) {
-                if (resolving) null else pending.removeFirstOrNull()?.also { resolving = true }
+                if (closed || resolving) null else pending.removeFirstOrNull()?.also { resolving = true }
             } ?: return
             val resolution = runCatching {
                 manager.resolveService(target, object : NsdManager.ResolveListener {
@@ -60,7 +61,7 @@ class MoonlightDiscovery @Inject constructor(@ApplicationContext context: Contex
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
                 if (!serviceInfo.serviceType.trimEnd('.').equals("_nvstream._tcp", ignoreCase = true)) return
                 synchronized(pending) {
-                    if (pending.size < 64) pending.addLast(serviceInfo)
+                    if (!closed && pending.size < 64) pending.addLast(serviceInfo)
                 }
                 next()
             }
@@ -70,6 +71,9 @@ class MoonlightDiscovery @Inject constructor(@ApplicationContext context: Contex
         } catch (error: Exception) {
             close(error)
         }
-        awaitClose { runCatching { manager.stopServiceDiscovery(listener) } }
+        awaitClose {
+            synchronized(pending) { closed = true; pending.clear() }
+            runCatching { manager.stopServiceDiscovery(listener) }
+        }
     }
 }

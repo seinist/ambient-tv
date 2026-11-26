@@ -162,7 +162,7 @@ class MoonlightStreamActivity : ComponentActivity() {
                     qualityProfile = validated
                 },
                 onSendText = { engine.sendText(streamOwner, it) },
-                onQuitRemote = { quitRemoteGame(hostId) },
+                onQuitRemote = { quitRemoteGame(hostId, appId) },
                 remoteQuitBusy = remoteQuitBusy,
                 remoteQuitError = remoteQuitError,
                 controlsShown = osdVisible,
@@ -261,13 +261,13 @@ class MoonlightStreamActivity : ComponentActivity() {
     }
 
     /** Explicit host-side termination; never a side effect of Back or stream disconnect. */
-    private fun quitRemoteGame(hostId: String) {
+    private fun quitRemoteGame(hostId: String, appId: Int) {
         if (!engine.owns(streamOwner) || remoteQuitBusy || engine.status.value.phase != MoonlightStreamPhase.STREAMING) return
         remoteQuitBusy = true
         remoteQuitError = false
         lifecycleScope.launch {
             try {
-                if (moonlightTransport.quitRemoteApp(hostId)) disconnectAndFinish()
+                if (moonlightTransport.quitRemoteApp(hostId, appId)) disconnectAndFinish()
                 else remoteQuitError = true
             } catch (cancel: CancellationException) {
                 throw cancel

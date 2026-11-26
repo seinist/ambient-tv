@@ -329,6 +329,8 @@ class SettingsBackupManager @Inject constructor(
     private val smartTube: com.ambient.tv.youtube.SmartTubeEngine? = null,
     /** Live TV reminders keep their lead time in their own preferences file (read by the alarm receiver). */
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context? = null,
+    private val moonlightTrust: com.ambient.tv.moonlight.MoonlightHostTrust? = null,
+    private val moonlightStore: com.ambient.tv.moonlight.MoonlightLibraryStore? = null,
 ) {
     /** Kept for pure preference tests and small tools that do not install Hilt. */
     constructor(preferences: AppPreferences, tokenStore: TokenStore) : this(preferences, tokenStore, null)
@@ -1246,9 +1248,19 @@ class SettingsBackupManager @Inject constructor(
             }
             connections.rommEnabled?.let { preferences.rommEnabled = it }
             connections.moonlightHosts?.let { profiles ->
-                // Only addresses and display names travel. Restored hosts are still unpaired.
-                preferences.moonlightHosts = profiles.map { it.validated() }
-                    .distinctBy { it.host to it.port }.take(16)
+                val restored = profiles.map { it.validated() }.distinctBy { it.host to it.port }.take(16)
+                val old = preferences.moonlightHosts.associateBy { it.id }
+                val next = restored.associateBy { it.id }
+                // Never carry trust across a removed, newly restored or redirected host ID.
+                (old.keys + next.keys).forEach { id ->
+                    val before = old[id]
+                    val after = next[id]
+                    if (before == null || after == null || before.host != after.host || before.port != after.port) {
+                        moonlightTrust?.clear(id)
+                        moonlightStore?.clearHost(id)
+                    }
+                }
+                preferences.moonlightHosts = restored
             }
             connections.moonlightEnabled?.let { preferences.moonlightEnabled = it }
         }

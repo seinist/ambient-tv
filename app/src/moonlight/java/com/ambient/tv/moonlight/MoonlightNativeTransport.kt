@@ -7,7 +7,14 @@ import com.limelight.nvstream.http.PairingManager
 import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlinx.coroutines.CancellationException
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -38,79 +45,123 @@ class MoonlightNativeTransport @Inject constructor(
         require(pin.matches(Regex("[0-9]{4}"))) { "Invalid GameStream PIN" }
         val host = requireHost(hostId)
         if (trust.isPaired(hostId)) return@withLock MoonlightPairResult.AlreadyPaired
-        withContext(Dispatchers.IO) {
-            val http = makeHttp(host, null)
+        val result = withHttp(host, null) { http ->
             val raw = http.getServerInfo(false)
             val server = parseMoonlightServerInfo(raw.toByteArray())
             val state = http.pairingManager.pair(raw, pin)
-            when (state) {
-                PairingManager.PairState.PAIRED -> {
-                    val certificate = http.pairingManager.pairedCert
-                        ?: throw IOException("Pairing succeeded without a server certificate")
-                    // Native PairingManager verified the server's signature and PIN response.
-                    // The host key remains immutable until the user explicitly unpairs.
-                    trust.commitVerifiedPairing(host.id, MoonlightVerifiedPeer(server.uniqueId, certificate))
-                    MoonlightPairResult.Paired(host.id)
+            val cert = if (state == PairingManager.PairState.PAIRED)
+                http.pairingManager.pairedCert ?: throw IOException("Pairing did not return a certificate")
+                else null
+            Triple(state, server.uniqueId, cert)
+        }
+        when (result.first) {
+            PairingManager.PairState.PAIRED -> {
+                val certificate = requireNotNull(result.third)
+                val authenticated = withHttp(host, certificate) { http ->
+                    parseMoonlightServerInfo(http.getServerInfo(true).toByteArray())
                 }
-                PairingManager.PairState.PIN_WRONG -> MoonlightPairResult.IncorrectPin
-                PairingManager.PairState.ALREADY_IN_PROGRESS -> MoonlightPairResult.Busy
-                else -> MoonlightPairResult.Rejected
+                if (authenticated.uniqueId != result.second)
+                    throw SecurityException("Moonlight identity changed during pairing")
+                currentCoroutineContext().ensureActive()
+                if (requireHost(hostId) != host)
+                    throw SecurityException("Moonlight host changed during pairing")
+                trust.commitVerifiedPairing(hostId, MoonlightVerifiedPeer(authenticated.uniqueId, certificate))
+                MoonlightPairResult.Paired(hostId)
             }
+            PairingManager.PairState.PIN_WRONG -> MoonlightPairResult.IncorrectPin
+            PairingManager.PairState.ALREADY_IN_PROGRESS -> MoonlightPairResult.Busy
+            else -> MoonlightPairResult.Rejected
         }
     }
 
     /** The app list is HTTPS-only and never accepted from an unpaired or identity-swapped host. */
-    suspend fun loadApplications(hostId: String): MoonlightAppCatalog = withContext(Dispatchers.IO) {
-        val host = requireHost(hostId)
-        val serverId = trust.trustedServerId(host.id) ?: throw SecurityException("Moonlight host not paired")
-        val pinned = trust.pinnedCertificate(host.id) ?: throw SecurityException("Moonlight host certificate missing")
-        val http = makeHttp(host, pinned)
-        // Reviewed patch prevents falling back to HTTP if an authenticated serverinfo fails.
-        val info = parseMoonlightServerInfo(http.getServerInfo(true).toByteArray())
-        if (info.uniqueId != serverId) throw SecurityException("Moonlight host identity changed")
-        parseMoonlightAppList(http.appListRaw.toByteArray())
+    suspend fun loadApplications(hostId: String): MoonlightAppCatalog {
+        val target = verifiedHost(hostId)
+        val catalog = withHttp(target.profile, target.pinnedCertificate, target.httpsPort) { http ->
+            parseMoonlightAppList(http.appListRaw.toByteArray())
+        }
+        if (trust.identity(hostId) != target.identity || requireHost(hostId) != target.profile)
+            throw SecurityException("Moonlight host identity changed")
+        return catalog.copy(peerIdentity = target.identity)
     }
 
-    /**
-     * The player must obtain its HTTPS port and host identity over pinned, mutually
-     * authenticated HTTPS, not from public discovery. A changed identity fails closed.
-     */
-    internal suspend fun verifiedHost(hostId: String): MoonlightVerifiedHost = withContext(Dispatchers.IO) {
+    internal suspend fun verifiedHost(hostId: String): MoonlightVerifiedHost {
         val host = requireHost(hostId)
         val serverId = trust.trustedServerId(host.id)
             ?: throw SecurityException("Moonlight host not paired")
+        val identity = trust.identity(host.id)
+            ?: throw SecurityException("Moonlight host identity missing")
         val pinned = trust.pinnedCertificate(host.id)
             ?: throw SecurityException("Moonlight host certificate missing")
-        val http = makeHttp(host, pinned)
-        val info = parseMoonlightServerInfo(http.getServerInfo(true).toByteArray())
-        if (info.uniqueId != serverId) throw SecurityException("Moonlight host identity changed")
-        MoonlightVerifiedHost(host, info.httpsPort, pinned)
+        val info = withHttp(host, pinned) { http ->
+            parseMoonlightServerInfo(http.getServerInfo(true).toByteArray())
+        }
+        if (info.uniqueId != serverId || trust.identity(hostId) != identity || requireHost(hostId) != host)
+            throw SecurityException("Moonlight host identity changed")
+        return MoonlightVerifiedHost(host, info.httpsPort, pinned, identity)
     }
 
-    /** Authenticated cover-art asset; do not expose the self-signed host URL to normal image loaders. */
-    suspend fun loadArtwork(hostId: String, appId: Int): ByteArray = withContext(Dispatchers.IO) {
+    /** Only pinned and size-limited art; decoding dimensions are checked by the cache. */
+    suspend fun loadArtwork(hostId: String, appId: Int): ByteArray {
         require(appId > 0)
         val host = verifiedHost(hostId)
-        val http = makeHttp(host.profile, host.pinnedCertificate)
-        http.getBoxArt(com.limelight.nvstream.http.NvApp("Moonlight", appId, false)).use { stream ->
-            val output = java.io.ByteArrayOutputStream(16 * 1024)
-            val chunk = ByteArray(8192)
-            while (true) {
-                val length = stream.read(chunk)
-                if (length < 0) break
-                if (output.size() + length > 3 * 1024 * 1024)
-                    throw IOException("Moonlight artwork exceeds 3 MiB")
-                output.write(chunk, 0, length)
+        val data = withHttp(host.profile, host.pinnedCertificate, host.httpsPort) { http ->
+            http.getBoxArt(com.limelight.nvstream.http.NvApp("Moonlight", appId, false)).use { stream ->
+                val output = java.io.ByteArrayOutputStream(16 * 1024)
+                val chunk = ByteArray(8192)
+                while (true) {
+                    val length = stream.read(chunk)
+                    if (length < 0) break
+                    if (output.size() + length > 3 * 1024 * 1024)
+                        throw IOException("Moonlight artwork exceeds 3 MiB")
+                    output.write(chunk, 0, length)
+                }
+                output.toByteArray().takeIf { it.isNotEmpty() }
+                    ?: throw IOException("Sunshine has no artwork for this app")
             }
-            output.toByteArray().takeIf { it.isNotEmpty() }
-                ?: throw IOException("Sunshine has no artwork for this app")
+        }
+        if (trust.identity(hostId) != host.identity || requireHost(hostId) != host.profile)
+            throw SecurityException("Moonlight host changed")
+        return data
+    }
+
+    /** Check the currently running remote app immediately before the explicit cancel. */
+    suspend fun quitRemoteApp(hostId: String, expectedAppId: Int): Boolean {
+        require(expectedAppId > 0)
+        val host = verifiedHost(hostId)
+        return withHttp(host.profile, host.pinnedCertificate, host.httpsPort) { http ->
+            val raw = http.getServerInfo(true)
+            if (parseMoonlightServerInfo(raw.toByteArray()).uniqueId != trust.trustedServerId(hostId) ||
+                trust.identity(hostId) != host.identity || requireHost(hostId) != host.profile ||
+                http.getCurrentGame(raw) != expectedAppId) false
+            else http.quitApp()
         }
     }
 
-    /** Explicit remote quit, separate from disconnect. Never invoked automatically on Back. */
-    suspend fun quitRemoteApp(hostId: String): Boolean = withContext(Dispatchers.IO) {
-        val host = verifiedHost(hostId)
-        makeHttp(host.profile, host.pinnedCertificate).quitApp()
+    private suspend fun <T> withHttp(
+        host: MoonlightHost, certificate: java.security.cert.X509Certificate?, httpsPort: Int = 0,
+        action: (NvHTTP) -> T,
+    ): T = coroutineScope {
+        suspendCancellableCoroutine { continuation ->
+            val current = AtomicReference<NvHTTP?>()
+            val job = launch(Dispatchers.IO) {
+                try {
+                    val http = makeHttp(host, certificate, httpsPort)
+                    current.set(http)
+                    if (!continuation.isActive) {
+                        http.cancelPendingRequests()
+                        return@launch
+                    }
+                    continuation.resume(action(http))
+                } catch (error: Exception) {
+                    continuation.resumeWithException(error)
+                }
+            }
+            continuation.invokeOnCancellation {
+                current.get()?.cancelPendingRequests()
+                job.cancel()
+            }
+        }
     }
 
     /** Device-local forget. Does NOT terminate the active game or send remote unpair commands. */
@@ -120,8 +171,8 @@ class MoonlightNativeTransport @Inject constructor(
         prefs.moonlightHosts.firstOrNull { it.id == hostId }
             ?: throw IllegalArgumentException("Unknown Moonlight host")
 
-    private fun makeHttp(host: MoonlightHost, certificate: java.security.cert.X509Certificate?): NvHTTP =
-        NvHTTP(ComputerDetails.AddressTuple(host.host, host.port), 0,
+    private fun makeHttp(host: MoonlightHost, certificate: java.security.cert.X509Certificate?, httpsPort: Int): NvHTTP =
+        NvHTTP(ComputerDetails.AddressTuple(host.host, host.port), httpsPort,
             prefs.moonlightDeviceId, certificate, clientIdentity)
 }
 
@@ -131,4 +182,5 @@ internal data class MoonlightVerifiedHost(
     val profile: MoonlightHost,
     val httpsPort: Int,
     val pinnedCertificate: java.security.cert.X509Certificate,
+    val identity: String,
 )

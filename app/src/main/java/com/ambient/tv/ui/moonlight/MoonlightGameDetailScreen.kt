@@ -118,7 +118,7 @@ fun MoonlightGameDetailScreen(
                 TvActionButton(stringResource(R.string.files_cancel), { showQuitConfirmation = false })
                 TvActionButton(stringResource(R.string.moonlight_quit_remote), {
                     showQuitConfirmation = false
-                    model.quitRemote(hostId)
+                    model.quitRemote(hostId, appId)
                 })
             },
             content = null,

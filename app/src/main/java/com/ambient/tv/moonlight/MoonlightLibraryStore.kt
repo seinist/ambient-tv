@@ -16,6 +16,7 @@ data class MoonlightHostCatalog(
     val serverId: String,
     val updatedEpochMs: Long,
     val apps: List<MoonlightApp>,
+    val peerIdentity: String? = null,
 )
 
 /**
@@ -41,18 +42,21 @@ class MoonlightLibraryStore @Inject constructor(
     fun catalog(hostId: String): MoonlightHostCatalog? = synchronized(lock) {
         if (!prefix.matches(hostId)) return null
         val pinned = trust.trustedServerId(hostId) ?: return null
+        val identity = trust.identity(hostId) ?: return null
         val text = prefs.getString("catalog:$hostId", null)?.takeIf { it.length <= 384 * 1024 } ?: return null
         val cached = runCatching { json.decodeFromString<MoonlightHostCatalog>(text) }.getOrNull()
-        cached?.takeIf { it.serverId == pinned && it.apps.size <= 4096 }
+        cached?.takeIf { it.serverId == pinned && it.peerIdentity == identity && it.apps.size <= 4096 }
     }
 
     fun putCatalog(hostId: String, catalog: MoonlightAppCatalog) = synchronized(lock) {
         require(prefix.matches(hostId))
         val serverId = trust.trustedServerId(hostId)
             ?: throw SecurityException("Cannot cache applications for an unpaired host")
+        val identity = trust.identity(hostId) ?: throw SecurityException("Missing Moonlight identity")
+        if (catalog.peerIdentity != identity) throw SecurityException("Moonlight catalog identity changed")
         val apps = catalog.apps.filter { it.id > 0 && it.title.isNotBlank() }.take(4096)
         val value = json.encodeToString(MoonlightHostCatalog(
-            serverId, System.currentTimeMillis(), apps,
+            serverId, System.currentTimeMillis(), apps, identity,
         ))
         require(value.length <= 384 * 1024)
         prefs.edit().putString("catalog:$hostId", value).apply()
@@ -85,17 +89,24 @@ class MoonlightLibraryStore @Inject constructor(
         changed()
     }
 
+    fun peerIdentity(hostId: String): String? = trust.identity(hostId)
+
     fun artworkFile(hostId: String, appId: Int): File? {
-        if (!prefix.matches(hostId) || appId <= 0 || trust.trustedServerId(hostId) == null) return null
-        return File(artworkDir, "$hostId-$appId.img").takeIf { it.isFile && it.length() in 1..MAX_IMAGE_BYTES.toLong() }
+        if (!prefix.matches(hostId) || appId <= 0) return null
+        val identity = trust.identity(hostId) ?: return null
+        return File(artworkDir, "$hostId-$identity-$appId.img").takeIf { it.isFile && it.length() in 1..MAX_IMAGE_BYTES.toLong() }
     }
 
     /** Caller has already fetched image bytes over mutually authenticated, pinned HTTPS. */
-    fun saveArtwork(hostId: String, appId: Int, bytes: ByteArray): File? = synchronized(lock) {
-        if (!prefix.matches(hostId) || appId <= 0 || trust.trustedServerId(hostId) == null ||
+    fun saveArtwork(hostId: String, appId: Int, bytes: ByteArray, expectedIdentity: String): File? = synchronized(lock) {
+        if (!prefix.matches(hostId) || appId <= 0 || trust.identity(hostId) != expectedIdentity ||
             bytes.size !in 1..MAX_IMAGE_BYTES) return null
-        val target = File(artworkDir, "$hostId-$appId.img")
-        val temporary = File(artworkDir, "$hostId-$appId.part")
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth !in 1..4096 || bounds.outHeight !in 1..4096 ||
+            bounds.outWidth.toLong() * bounds.outHeight > 8_388_608L) return null
+        val target = File(artworkDir, "$hostId-$expectedIdentity-$appId.img")
+        val temporary = File(artworkDir, "$hostId-$expectedIdentity-$appId.part")
         try {
             temporary.writeBytes(bytes)
             if (!temporary.renameTo(target)) {

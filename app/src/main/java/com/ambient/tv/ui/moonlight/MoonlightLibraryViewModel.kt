@@ -181,8 +181,11 @@ class MoonlightLibraryViewModel @Inject constructor(
             try {
                 artworkSlots.withPermit {
                     if (store.artworkFile(game.host.id, game.app.id) == null) {
+                        val identity = store.peerIdentity(game.host.id) ?: return@withPermit
                         val data = transport.artwork(game.host.id, game.app.id)
-                        if (store.saveArtwork(game.host.id, game.app.id, data) != null) {
+                        if (kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            store.saveArtwork(game.host.id, game.app.id, data, identity)
+                        } != null) {
                             mutable.update { it.copy(artworkVersion = it.artworkVersion + 1) }
                         }
                     }
@@ -210,11 +213,12 @@ class MoonlightLibraryViewModel @Inject constructor(
         ))
     }
 
-    fun quitRemote(hostId: String) {
+    fun quitRemote(hostId: String, appId: Int) {
         if (hostId !in mutable.value.onlineHosts || hostId !in mutable.value.pairedHosts) return
         viewModelScope.launch {
             try {
-                if (transport.quitRemoteApp(hostId)) load()
+                if (transport.quitRemoteApp(hostId, appId)) load()
+                else mutable.update { it.copy(errors = it.errors + (hostId to "quit_failed")) }
             } catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) {
                 mutable.update { it.copy(errors = it.errors + (hostId to "quit_failed")) }

@@ -109,8 +109,10 @@ grep -q 'readTimeout(120, TimeUnit.SECONDS)' "$NVHTTP" || die "bounded PIN wait 
 grep -q 'max-page-size=16384' "$WORK/app/src/main/jni/moonlight-core/Android.mk" || die "16-KiB ELF alignment patch did not apply"
 grep -q 'nativeSlotHeld.compareAndSet(true, false)' "$WORK/app/src/main/java/com/limelight/nvstream/NvConnection.java" ||
     die "safe native stream stop patch did not apply"
-grep -q 'Moonlight-core start and stop are serialized here' "$WORK/app/src/main/java/com/limelight/nvstream/NvConnection.java" ||
+grep -q 'worker.join();' "$WORK/app/src/main/java/com/limelight/nvstream/NvConnection.java" ||
     die "serialized native stream stop patch did not apply"
+grep -q 'cancelPendingRequests()' "$NVHTTP" || die "cancellable HTTP patch did not apply"
+grep -q 'Moonlight response exceeds limit' "$NVHTTP" || die "bounded HTTP patch did not apply"
 grep -q 'context.connListener.displayMessage(AMBIENT_OTHER_APP_RUNNING);' "$WORK/app/src/main/java/com/limelight/nvstream/NvConnection.java" ||
     die "no-implicit-remote-quit patch did not apply"
 
