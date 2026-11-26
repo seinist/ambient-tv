@@ -128,4 +128,33 @@ class AudioOutputReleaseGateTest {
         assertEquals(PreviousReleaseOutcome.READY, previousReleaseOutcome(true, false, 20_000L))
         assertEquals(PreviousReleaseOutcome.READY_AFTER_FAILURE, previousReleaseOutcome(true, true, 0L))
     }
+    @Test fun unknownNativeOwnershipBlocksEverySubsequentOwner() {
+        val gate = AudioOutputReleaseGate()
+        val nativeFailure = NativeOutputReleaseUncertain(IllegalStateException("destroy failed"))
+        gate.beginRelease().completeExceptionally(nativeFailure)
+        repeat(3) {
+            val previous = gate.snapshot()
+            assertTrue(previous.blocked)
+            var result: PreviousReleaseOutcome? = null
+            previous.whenSettled(delay = Timers().delay) { result = it }
+            assertEquals(PreviousReleaseOutcome.BLOCKED, result)
+            gate.beginRelease().complete(Unit)
+        }
+        assertTrue(gate.snapshot().blocked)
+    }
+
+    @Test fun uncertainLateCompletionDoesNotPermitAWaitingOwner() {
+        val gate = AudioOutputReleaseGate()
+        val release = gate.beginRelease()
+        val previous = gate.snapshot()
+        val timers = Timers()
+        val outcomes = mutableListOf<PreviousReleaseOutcome>()
+        previous.whenSettled(delay = timers.delay) { outcomes += it }
+        timers.fire()
+        release.completeExceptionally(NativeOutputReleaseUncertain(IllegalStateException()))
+        assertEquals(listOf(PreviousReleaseOutcome.TIMED_OUT), outcomes)
+        assertTrue(previous.blocked)
+        assertTrue(gate.snapshot().blocked)
+    }
+
 }
