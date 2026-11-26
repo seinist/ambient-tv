@@ -1,12 +1,13 @@
 import json
 from pathlib import Path
 import tempfile
+import struct
 import unittest
 from core_acceleration_audit import audit_acceleration, compiler_commands, defines
 from unittest.mock import patch
 
 from core_build_policy import (REQUIRED_EXPORTS, audit_commands, ndk_flags, plan,
-                               select_library)
+                               select_library, verify_elf_abi)
 
 
 class CoreBuildPolicyTest(unittest.TestCase):
@@ -137,6 +138,27 @@ class CoreBuildPolicyTest(unittest.TestCase):
             self.assertIn("APP_CPPFLAGS += -Wno-invalid-specialization", result)
             self.assertIn("APP_CFLAGS += -flto=thin", result)
             self.assertIn("APP_LDFLAGS += -Wl,-z,max-page-size=16384 -flto=thin", result)
+
+    def test_elf_abi_identity(self):
+        for abi, machine, elfclass in (("arm64-v8a", 183, 2), ("armeabi-v7a", 40, 1),
+                                       ("x86_64", 62, 2), ("x86", 3, 1)):
+            with self.subTest(abi=abi), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "core.so"
+                header = bytearray(64 if elfclass == 2 else 52)
+                header[:7] = b"\x7fELF" + bytes((elfclass, 1, 1))
+                struct.pack_into("<HHI", header, 16, 3, machine, 1)
+                path.write_bytes(header)
+                self.assertEqual(verify_elf_abi(path, abi),
+                                 {"elf_class": elfclass * 32, "elf_machine": machine})
+                for offset, value in ((4, 3 - elfclass), (5, 2), (16, 2), (18, 0), (20, 0)):
+                    bad = bytearray(header)
+                    bad[offset] = value
+                    path.write_bytes(bad)
+                    with self.assertRaises(ValueError):
+                        verify_elf_abi(path, abi)
+                path.write_bytes(header[:20])
+                with self.assertRaises(ValueError):
+                    verify_elf_abi(path, abi)
 
     def test_select_by_exports_not_filename_order(self):
         with tempfile.TemporaryDirectory() as directory:
