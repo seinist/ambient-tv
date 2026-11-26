@@ -73,7 +73,8 @@ struct Environment {
 VulkanSlangPipeline::~VulkanSlangPipeline() = default;
 void VulkanSlangPipeline::releaseGpu() { assert(!driver.pending); ++driver.slangReleases; }
 void VulkanSlangPipeline::setPresetPath(const std::string& value) { presetPath = value; }
-bool VulkanSlangPipeline::ensure(VkInstance, VkPhysicalDevice, VkDevice, VkQueue, PFN_vkGetInstanceProcAddr) {
+bool VulkanSlangPipeline::ensure(VkInstance, VkPhysicalDevice, VkDevice, VkQueue, PFN_vkGetInstanceProcAddr,
+                                 const SlangFrameGeometry*) {
     return true;
 }
 bool VulkanSlangPipeline::record(VkCommandBuffer, uint64_t, VkImage, VkFormat, uint32_t, uint32_t,

@@ -4,6 +4,7 @@
 
 #define LIBRA_RUNTIME_VULKAN
 #include "librashader.h"
+#include "vulkanslanggeometry.h"
 #include <cstdint>
 #include <chrono>
 #include <string>
@@ -26,7 +27,8 @@ public:
 
     // Called only after a real Vulkan VkDevice and presentation queue exist, outside recording.
     bool ensure(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device,
-                VkQueue graphicsQueue, PFN_vkGetInstanceProcAddr getInstanceProcAddr);
+                VkQueue graphicsQueue, PFN_vkGetInstanceProcAddr getInstanceProcAddr,
+                const SlangFrameGeometry* geometry = nullptr);
     bool record(VkCommandBuffer commands, uint64_t frameCount,
                 VkImage input, VkFormat inputFormat, uint32_t sourceWidth, uint32_t sourceHeight,
                 VkImage target, VkFormat targetFormat, uint32_t targetWidth, uint32_t targetHeight,
@@ -40,6 +42,7 @@ private:
     void releaseLibrary();
 
     std::string presetPath;
+    SlangGeometryPolicy::Budget geometryBudget = SlangGeometryPolicy::Budget::Ordinary;
     void* dynamicLibrary = nullptr;
     libra_vk_filter_chain_t chain = nullptr;
     bool errorForThisPreset = false;
