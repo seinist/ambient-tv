@@ -1,3 +1,6 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include <jni.h>
 #include <stdint.h>
 #include <stdlib.h>
