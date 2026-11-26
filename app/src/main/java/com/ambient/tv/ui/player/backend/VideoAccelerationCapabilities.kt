@@ -83,6 +83,9 @@ object VideoAccelerationRuntime {
                         "mpvEglHdrSurface=%s dataSpaceReadable=%s nativeFeatures=%s",
                         device.device, device.render, device.profiles, mpv, vlc, device.reason, eglPq,
                         eglSurfacePatch, VulkanNativeProbe.available, MpvNativeFeatures.current.sorted())
+                    Timber.i("VULKAN MediaCodec interop prerequisites AHB=%s foreignQueue=%s ycbcr=%s syncFd=%s (not an enabled renderer)",
+                        device.androidHardwareBufferImport, device.foreignQueueFamily,
+                        device.samplerYcbcrConversion, device.syncFdImportExport)
                 }
             } finally { mutableChecking.value = false }
         }
