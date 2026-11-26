@@ -109,6 +109,62 @@ class RetroPadInputTest {
         assertTrue(input.rumbleDeviceIds(1).isEmpty())
     }
 
+    @Test fun rumbleRoutesReuseSnapshotsAndFollowReservationHotplugAndConfig() {
+        assertTrue(input.rumbleDeviceIds(0).isEmpty())
+        press(1, KeyEvent.KEYCODE_BUTTON_A)
+        press(2, KeyEvent.KEYCODE_BUTTON_A)
+        val first = input.rumbleDeviceIds(0)
+        assertEquals(listOf(1), first)
+        assertTrue(first === input.rumbleDeviceIds(0))
+        assertEquals(listOf(2), input.rumbleDeviceIds(1))
+        input.releaseAll()
+        assertTrue(first === input.rumbleDeviceIds(0))
+
+        input.reserveRemotePort(0, true)
+        assertTrue(input.rumbleDeviceIds(0).isEmpty())
+        assertEquals(listOf(2), input.rumbleDeviceIds(1))
+        assertEquals(listOf(1), input.rumbleDeviceIds(2))
+        input.reserveRemotePort(0, false)
+        assertEquals(listOf(1), input.rumbleDeviceIds(2))
+        config = config.withPort("dev-1", 1).withPort("dev-2", RetroPorts.OFF)
+        // A normal input path may notice the changed config before rumble does.
+        press(1, KeyEvent.KEYCODE_BUTTON_B)
+        assertEquals(listOf(1), input.rumbleDeviceIds(1))
+        assertTrue(input.rumbleDeviceIds(2).isEmpty())
+        input.deviceRemoved(1)
+        assertTrue(input.rumbleDeviceIds(1).isEmpty())
+        assertEquals(listOf(1), first) // published snapshots are never mutated
+        press(1, KeyEvent.KEYCODE_BUTTON_A)
+        assertEquals(listOf(1), input.rumbleDeviceIds(1))
+    }
+
+    @Test fun aggregatePublicationKeepsAllChannelsAndOnlyNotifiesChanges() {
+        val ports = mutableListOf<Int>()
+        input.onPortChanged = { ports += it }
+        input.reserveRemotePort(1, true)
+        input.remoteState(1, RetroPadButton.A.mask, .5f, -.5f, .25f, -.25f, .4f, .8f)
+        assertEquals(listOf(1), ports)
+        assertEquals(RetroPadButton.A.mask, input.buttons(1))
+        assertEquals(16384, input.analog(1, 0, 0))
+        assertEquals(-16383, input.analog(1, 0, 1))
+        assertEquals(8192, input.analog(1, 1, 0))
+        assertEquals(-8192, input.analog(1, 1, 1))
+        assertEquals(13107, input.trigger(1, 0))
+        assertEquals(26214, input.trigger(1, 1))
+        repeat(100) {
+            input.remoteState(1, RetroPadButton.A.mask, .5f, -.5f, .25f, -.25f, .4f, .8f)
+        }
+        assertEquals(listOf(1), ports)
+        input.clearRemotePort(1)
+        assertEquals(listOf(1, 1), ports)
+        assertEquals(0, input.buttons(1))
+        for (index in 0..1) {
+            assertEquals(0, input.analog(1, index, 0))
+            assertEquals(0, input.analog(1, index, 1))
+            assertEquals(0, input.trigger(1, index))
+        }
+    }
+
     @Test fun defaultsFollowPositions() {
         val pad = defaultRetroProfile(RetroInputKind.GAMEPAD)
         assertEquals(RetroPadButton.B, pad.button(KeyEvent.KEYCODE_BUTTON_A))
