@@ -59,6 +59,7 @@ def main():
         "bool VulkanBackend::ensureNativeSdrSwapchain(",
         "bool VulkanBackend::presentFrame(",
         "bool VulkanBackend::beginCoreFrame(",
+        "bool VulkanBackend::prepareCoreStateAccess(",
         "bool VulkanBackend::waitForCoreSyncIndex(",
         "bool VulkanBackend::completeDuplicateFrame(",
         "uint32_t VulkanBackend::callbackGetSyncIndex(",
@@ -94,6 +95,24 @@ def main():
         frontend = (native / "libretrodroid.cpp").read_text()
         if frontend.count("core->retro_run();") != 1:
             raise RuntimeError("Every core run must pass through the sync-index reservation boundary")
+        # Verify the actual integration call sites, not only the isolated gate.
+        for signature in ("void LibretroDroid::step(", "void LibretroDroid::stepForNetplay("):
+            body = cpp_function(frontend, signature)
+            if "beginNativeStep();" not in body:
+                raise RuntimeError("Normal emulation must preserve confirmed WSI generation")
+        for signature, call, mutation in (
+            ("bool LibretroDroid::unserializeStateWithPolicy(", "attemptStateLoad(", True),
+            ("bool LibretroDroid::showRewindState(", "core->retro_unserialize(", True),
+            ("void LibretroDroid::reset(", "core->retro_reset(", True),
+            ("void LibretroDroid::step(", "core->retro_unserialize(", True),
+            ("void LibretroDroid::step(", "core->retro_serialize(", False),
+            ("int64_t LibretroDroid::previewRewind(", "core->retro_serialize(", False),
+            ("std::pair<int8_t*, size_t> LibretroDroid::serializeState(", "core->retro_serialize(", False),
+        ):
+            body = cpp_function(frontend, signature)
+            guard = f"prepareCoreStateAccess({str(mutation).lower()})"
+            if guard not in body or body.index(guard) > body.index(call):
+                raise RuntimeError(f"Missing core state barrier before {call} in {signature}")
         (work / "vulkan_error_boundary_under_test.h").write_text("\n".join(
             cpp_function(frontend, signature) for signature in (
                 "void LibretroDroid::runCoreFrame(",

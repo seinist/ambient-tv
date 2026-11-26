@@ -817,7 +817,20 @@ void timeoutsPreserveWork() {
     assert(!backend.frameSlot.inFlight && !backend.hasFatalError());
     assert(driver.commandResets == 0 && driver.imageFrees == 0);
     assert(backend.waitForFrame() && driver.waitCalls == 3);
-    std::puts("PASS Vulkan repeated timeout preserves ownership until actual completion");
+    VulkanBackend stalled;
+    setup(stalled); pendingFrame(stalled);
+    driver.waits = {VK_TIMEOUT, VK_TIMEOUT, VK_TIMEOUT, VK_SUCCESS};
+    assert(!stalled.waitForFrame());
+    assert(driver.waitCalls == 3 && driver.resets == 0 && stalled.frameSlot.inFlight &&
+           stalled.getFatalError() == VK_TIMEOUT && driver.pending);
+    assert(!stalled.waitForFrame() && driver.waitCalls == 3 && !driver.imageFrees);
+    driver.idles = {VK_ERROR_UNKNOWN};
+    stalled.shutdown();
+    assert(stalled.device && stalled.frameSlot.inFlight && !driver.imageFrees);
+    driver.idles = {VK_SUCCESS};
+    stalled.shutdown();
+    assert(!stalled.device && driver.imageFrees == 1 && !stalled.frameSlot.inFlight);
+    std::puts("PASS Vulkan bounded returned timeouts preserve pending resources; safe retirement on retry");
 }
 
 void errorsStopWorkAndResize() {
@@ -2124,6 +2137,9 @@ void dualNativePresentOverlapContracts() {
         assert(b.nativePresentation.hasPresentedFrame());
         b.endCoreFrame();
         if (invalidated) b.nativePresentation.invalidateFrame();
+        b.beginNativeStep(); // the real step()/stepForNetplay() boundary
+        assert(!b.nativePresentation.hasPresentedFrame() &&
+               b.nativePresentation.hasConfirmedGeneration() == !invalidated);
         assert(b.beginCoreFrame() && b.submissionSlotIndex() == 1);
         b.pendingImageIndex = 1;
         assert(b.presentFrame(256, 224, 4.0F/3.0F, true, &fd) && fd == -1);
@@ -2145,6 +2161,66 @@ void dualNativePresentOverlapContracts() {
     }
     std::puts("PASS dual native/Slang overlap requires previous confirmation and explicit present completion");
 #endif
+}
+
+void coreStateAccessContracts() {
+    VulkanBackend notStarted;
+    assert(notStarted.prepareCoreStateAccess(false) && notStarted.prepareCoreStateAccess(true));
+    for (bool changing : {false, true}) {
+        VulkanBackend b;
+        setup(b);
+        assert(b.coreSync.open(2));
+        b.spareFrameSlot.fence = object<VkFence>(712);
+        b.frameSlot.inFlight = b.spareFrameSlot.inFlight = true;
+        driver.pending = true;
+        b.nativePresentation.didPresentFrame();
+        const auto previous = b.pendingImage.image;
+        b.coreSourceFormat.store(static_cast<uint32_t>(VK_FORMAT_R8G8B8A8_UNORM));
+        static unsigned slotWaits;
+        slotWaits = 0;
+        b.vk.waitForFences = [](VkDevice, uint32_t n, const VkFence* f, VkBool32, uint64_t) {
+            assert(n == 1);
+            assert(*f == object<VkFence>(slotWaits == 0 ? 6 : 712));
+            ++slotWaits;
+            driver.pending = false;
+            return VK_SUCCESS;
+        };
+        assert(b.prepareCoreStateAccess(changing));
+        assert(slotWaits == 2 && driver.resets == 2 && b.coreSync.mask() == 3);
+        assert(!b.frameSlot.inFlight && !b.spareFrameSlot.inFlight);
+        assert(b.pendingImage.image == (changing ? VK_NULL_HANDLE : previous));
+        assert(b.nativePresentation.hasConfirmedGeneration() != changing);
+        assert(b.coreSourceFormat.load() == (changing ? 0u : uint32_t(VK_FORMAT_R8G8B8A8_UNORM)));
+        // No unsubmitted command/semaphore may be consumed or invalidated by
+        // an out-of-run state change.
+        b.pendingCommandBuffers = {object<VkCommandBuffer>(713)};
+        b.pendingSignalSemaphore = object<VkSemaphore>(714);
+        b.pendingImage.waitSemaphores = {object<VkSemaphore>(715)};
+        assert(!b.prepareCoreStateAccess(true));
+        assert(b.pendingCommandBuffers.size() == 1 && b.pendingSignalSemaphore &&
+               b.pendingImage.waitSemaphores.size() == 1);
+        assert(b.prepareCoreStateAccess(false) && !driver.submits && slotWaits == 2);
+        b.pendingCommandBuffers.clear();
+        b.pendingSignalSemaphore = VK_NULL_HANDLE;
+        b.pendingImage.waitSemaphores.clear();
+        b.spareFrameSlot.fence = VK_NULL_HANDLE;
+        b.shutdown();
+    }
+    for (bool spare : {false, true}) {
+        VulkanBackend b;
+        setup(b);
+        b.spareFrameSlot.fence = object<VkFence>(712);
+        auto& slot = spare ? b.spareFrameSlot : b.frameSlot;
+        slot.inFlight = true;
+        driver.pending = true;
+        driver.waits = {VK_ERROR_OUT_OF_HOST_MEMORY};
+        const auto source = b.pendingImage.image;
+        assert(!b.prepareCoreStateAccess(true));
+        assert(slot.inFlight && b.pendingImage.image == source &&
+               b.hasFatalError() && !driver.resets && !driver.imageFrees);
+        b.shutdown();
+    }
+    std::puts("PASS out-of-run state access drains both slots; staged and failed work retained");
 }
 
 void managedBoundary() {
@@ -2223,6 +2299,7 @@ int main() {
     coreSyncIndexContracts();
     dualNormalFrameContracts();
     dualNativePresentOverlapContracts();
+    coreStateAccessContracts();
     managedBoundary();
     std::puts("PASS production Vulkan synchronization and presentation fault regression");
 }
