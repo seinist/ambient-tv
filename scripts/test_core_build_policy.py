@@ -30,9 +30,9 @@ class CoreBuildPolicyTest(unittest.TestCase):
 
     def test_pr_comparison(self):
         matrix = plan(self.catalog, "pull_request", "refs/pull/1/merge", False)["include"]
-        self.assertEqual(len(matrix), 27)
+        self.assertEqual(len(matrix), 29)
         self.assertEqual({item["profile"] for item in matrix},
-                         {"baseline", "thinlto", "picodrive-sh2", "tune-a57", "o3", "o3-thinlto", "snes9x2010-threaded"})
+                         {"baseline", "thinlto", "picodrive-sh2", "tune-a57", "o3", "o3-thinlto", "snes9x2010-threaded", "core-hotpaths"})
         self.assertEqual(len({item["artifact"] for item in matrix}), len(matrix))
         self.assertEqual([item["makevars"] for item in matrix if item["profile"] == "picodrive-sh2"], ["use_sh2drc=1"])
 
@@ -282,6 +282,18 @@ class CoreBuildPolicyTest(unittest.TestCase):
                     self.assertTrue(all(audit_acceleration(commands, core, abi, "baseline").values()))
                     with self.assertRaises(ValueError):
                         audit_acceleration([], core, abi, "baseline")
+
+    def test_source_hotpath_candidates(self):
+        matrix = plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False,
+                      profile="core-hotpaths")["include"]
+        self.assertEqual({item["core"] for item in matrix}, {"bsnes"})
+        self.assertEqual(len(matrix), len(self.catalog["abis"]))
+        self.assertTrue(all(item["artifact"].startswith("candidate-core-hotpaths-") for item in matrix))
+        with self.assertRaises(ValueError):
+            plan(self.catalog, "workflow_dispatch", "refs/heads/main", True, profile="core-hotpaths")
+        with self.assertRaises(ValueError):
+            plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False,
+                 cores="mgba", profile="core-hotpaths")
 
     def test_select_by_exports_not_filename_order(self):
         with tempfile.TemporaryDirectory() as directory:
