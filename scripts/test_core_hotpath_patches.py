@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from core_hotpath_patches import (BSNES_INPUT, MESEN_OLD, MESEN_NEW, SAMEBOY_OLD, SAMEBOY_NEW,
+                                  PCE_OLD, PCE_NEW, SGX_OLD, SGX_NEW, NGP_OLD, NGP_NEW,
                                   prepare_hotpaths)
 
 
@@ -38,7 +39,10 @@ class CoreHotpathTests(unittest.TestCase):
     def test_other_pinned_anchors(self):
         for core, relative, old, new in (
                 ("mesen", "Libretro/libretro.cpp", MESEN_OLD, MESEN_NEW),
-                ("sameboy", "libretro/libretro.c", SAMEBOY_OLD, SAMEBOY_NEW)):
+                ("sameboy", "libretro/libretro.c", SAMEBOY_OLD, SAMEBOY_NEW),
+                ("mednafen_pce_fast", "libretro.c", PCE_OLD, PCE_NEW),
+                ("mednafen_supergrafx", "libretro.cpp", SGX_OLD, SGX_NEW),
+                ("mednafen_ngp", "libretro.c", NGP_OLD, NGP_NEW)):
             with self.subTest(core=core), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 path = root / relative
@@ -48,6 +52,98 @@ class CoreHotpathTests(unittest.TestCase):
                 self.assertEqual(path.read_text(), "before\n" + new + "\nafter")
                 with self.assertRaises(ValueError):
                     prepare_hotpaths(root, core)
+
+    def test_pce_input_snapshot(self):
+        source = """
+#include <stdint.h>
+#include <stdbool.h>
+#include <assert.h>
+enum { RETRO_DEVICE_JOYPAD = 1 };
+static unsigned calls;
+static uint16_t mask;
+static int16_t input_state_cb(unsigned port, unsigned device, unsigned index, unsigned id) {
+    assert(port == 0 && device == 1 && index == 0);
+    ++calls;
+    return (mask >> id) & 1;
+}
+static bool original(unsigned i, int16_t* joy_bits, bool libretro_supports_bitmasks) {
+    (void)joy_bits; (void)libretro_supports_bitmasks;
+    const unsigned j = 0;
+    const unsigned map[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+""" + PCE_OLD + """ return true;
+    return false;
+}
+static bool candidate(unsigned i, int16_t* joy_bits, bool libretro_supports_bitmasks) {
+    const unsigned j = 0;
+    const unsigned map[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+""" + PCE_NEW + """ return true;
+    return false;
+}
+int main(void) {
+    for (unsigned m = 0; m <= 65535; ++m) {
+        mask = m;
+        int16_t sample = (int16_t)m;
+        for (unsigned i = 0; i < 16; ++i) {
+            bool old = original(i, &sample, true);
+            calls = 0;
+            assert(candidate(i, &sample, true) == old && calls == 0);
+            assert(candidate(i, &sample, false) == old && calls == 1);
+        }
+    }
+}
+"""
+        self.compile_and_run(source, "cc", "c99", "c")
+
+    def test_sgx_mouse_button_equivalence(self):
+        source = """
+#include <stdint.h>
+#include <stdbool.h>
+#include <assert.h>
+#define BIT(x) (1u << (x))
+enum { RETRO_DEVICE_JOYPAD = 1, RETRO_DEVICE_MOUSE = 2,
+       RETRO_DEVICE_ID_JOYPAD_SELECT = 2, RETRO_DEVICE_ID_JOYPAD_START = 3,
+       RETRO_DEVICE_ID_JOYPAD_MASK = 256, RETRO_DEVICE_ID_MOUSE_MIDDLE = 6 };
+static struct { bool use_bitmasks; } r_input;
+static unsigned digital_calls, mouse_calls;
+static uint16_t mask;
+static bool middle;
+static int16_t input_state_cb(unsigned port, unsigned device, unsigned index, unsigned id) {
+    assert(port == 0 && index == 0);
+    if (device == RETRO_DEVICE_JOYPAD) {
+        ++digital_calls;
+        return id == RETRO_DEVICE_ID_JOYPAD_MASK ? (int16_t)mask : (mask >> id) & 1;
+    }
+    assert(device == RETRO_DEVICE_MOUSE && id == RETRO_DEVICE_ID_MOUSE_MIDDLE);
+    ++mouse_calls;
+    return middle;
+}
+static unsigned original() {
+    unsigned port = 0, button_state = 0;
+""" + SGX_OLD + """
+    return button_state;
+}
+static unsigned candidate() {
+    unsigned port = 0, button_state = 0;
+""" + SGX_NEW + """
+    return button_state;
+}
+int main() {
+    for (unsigned m = 0; m <= 65535; ++m)
+        for (unsigned mid = 0; mid < 2; ++mid) {
+            mask = m; middle = mid;
+            digital_calls = mouse_calls = 0;
+            unsigned old = original();
+            unsigned old_mouse_calls = mouse_calls;
+            for (unsigned supported = 0; supported < 2; ++supported) {
+                r_input.use_bitmasks = supported;
+                digital_calls = mouse_calls = 0;
+                assert(candidate() == old && mouse_calls == old_mouse_calls);
+                assert(digital_calls == (supported ? 1u : 2u));
+            }
+        }
+}
+"""
+        self.compile_and_run(source, "c++", "c++11", "cpp")
 
     def test_mesen_save_buffer_equivalence(self):
         source = """
