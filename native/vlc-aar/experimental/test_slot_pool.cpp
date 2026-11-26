@@ -18,6 +18,24 @@ int main() {
         assert(!cached.cancel(first));
         assert(cached.cancel(reused) && cached.cancel(second) && cached.drained());
     }
+    {
+        Pool async;
+        auto t = async.acquire(async.epoch());
+        assert(async.submitted(t));
+        assert(async.begin_render_waiting_conversion(t));
+        assert(async.begin_reclaim(t));
+        // A consumer handoff alone cannot free the slot or release a decoder.
+        assert(!async.reclaimed(t));
+        assert(async.advance_epoch());
+        assert(async.converted(t));
+        assert(!async.converted(t));
+        assert(async.reclaimed(t) && async.drained());
+        auto stale = async.acquire(async.epoch());
+        assert(async.submitted(stale));
+        assert(async.advance_epoch());
+        assert(!async.begin_render_waiting_conversion(stale));
+        assert(async.converted(stale) && async.drained());
+    }
     Pool p;
     auto epoch = p.epoch();
     auto a = p.acquire(epoch);
