@@ -57,7 +57,10 @@ object VideoAccelerationRuntime {
         lock.withLock {
             if (mutable.value.checked && !force) return@withLock mutable.value
             // "Erneut prüfen": HDR über GPU verdicts from before the re-check no longer apply.
-            if (force) MpvHdrGpuSession.clear()
+            if (force) {
+                MpvHdrGpuSession.clear()
+                mpvZeroCopyFailures.clear()
+            }
             mutableChecking.value = true
             try {
                 val device = probeDevice()
