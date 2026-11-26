@@ -284,8 +284,10 @@ struct ambient_ahb_owner {
         { QueueLock lock(c); result = commands.idle(queue); }
         if (result != VK_SUCCESS) return false;
         for (auto &s : slots) {
-            if (s.submission && !s.submission->drain_after_idle(true)) return false;
+            // Destroy the wrapper and its deferred dependencies before the
+            // conversion semaphore it may still reference on a failed hold.
             clear_texture(s);
+            if (s.submission && !s.submission->drain_after_idle(true)) return false;
             clear_reclaim(s);
             s.submission.reset();
             s.lease.reset();
