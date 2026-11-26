@@ -58,7 +58,11 @@ def main():
         "void VulkanBackend::disableNativeSdrSwapchain(",
         "bool VulkanBackend::ensureNativeSdrSwapchain(",
         "bool VulkanBackend::presentFrame(",
+        "bool VulkanBackend::beginCoreFrame(",
+        "bool VulkanBackend::waitForCoreSyncIndex(",
         "bool VulkanBackend::completeDuplicateFrame(",
+        "uint32_t VulkanBackend::callbackGetSyncIndex(",
+        "uint32_t VulkanBackend::callbackGetSyncIndexMask(",
         "void VulkanBackend::callbackWaitSyncIndex(",
         "void VulkanBackend::destroyCoreDevice(",
         "void VulkanBackend::shutdown(",
@@ -87,8 +91,14 @@ def main():
         (work / "android/log.h").write_text("#pragma once\n")
         (work / "vulkan_sync_under_test.h").write_text("\n".join(
             cpp_function(source, signature) for signature in methods))
-        (work / "vulkan_error_boundary_under_test.h").write_text(cpp_function(
-            (native / "libretrodroid.cpp").read_text(), "void LibretroDroid::checkVulkanFrameError("))
+        frontend = (native / "libretrodroid.cpp").read_text()
+        if frontend.count("core->retro_run();") != 1:
+            raise RuntimeError("Every core run must pass through the sync-index reservation boundary")
+        (work / "vulkan_error_boundary_under_test.h").write_text("\n".join(
+            cpp_function(frontend, signature) for signature in (
+                "void LibretroDroid::runCoreFrame(",
+                "void LibretroDroid::checkVulkanFrameError(",
+            )))
         # Preserve the actual C++ include scope. Including the exception header
         # inside namespace libretrodroid creates a different nested type even
         # when changing the catch spelling would make that JNI unit compile.
@@ -218,6 +228,12 @@ def main():
             str(root / "scripts/native_game_vulkan_slang_history_use_test.cpp"),
             "-o", str(slang_history_binary)], check=True)
         subprocess.run([str(slang_history_binary)], check=True, timeout=20)
+
+        core_sync_binary = work / "vulkan-core-sync-indices-test"
+        subprocess.run(command + ["-I", str(native / "vulkan"),
+            str(root / "scripts/native_game_vulkan_core_sync_indices_test.cpp"),
+            "-o", str(core_sync_binary)], check=True)
+        subprocess.run([str(core_sync_binary)], check=True, timeout=20)
 
         alternate_binary = work / "vulkan-alternate-policy-test"
         subprocess.run(command + [str(root / "scripts/native_game_vulkan_alternate_policy_test.cpp"),

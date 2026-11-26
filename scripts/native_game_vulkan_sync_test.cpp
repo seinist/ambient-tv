@@ -132,8 +132,21 @@ struct Video {
     bool isHWAccelerated() const { return true; }
     void bindMainContext() { ++mainBinds; }
 };
+struct TestCore {
+    unsigned calls = 0;
+    uint32_t index = 0, mask = 0;
+    void retro_run() {
+        ++calls;
+        auto& backend = VulkanBackend::getInstance();
+        index = VulkanBackend::callbackGetSyncIndex(&backend);
+        mask = VulkanBackend::callbackGetSyncIndexMask(&backend);
+        assert(VulkanBackend::callbackGetSyncIndex(&backend) == index);
+    }
+};
 struct LibretroDroid {
     Video* video;
+    TestCore* core = nullptr;
+    void runCoreFrame();
     void checkVulkanFrameError();
 };
 int ERROR_GENERIC = -1;
@@ -1783,6 +1796,91 @@ void duplicateFrameContracts() {
     std::puts("PASS duplicate frames consume command buffers and core signals once, without image or WSI work");
 }
 
+void coreSyncIndexContracts() {
+    // Exercise the actual wrapper, including software cores and a failed
+    // pre-run wait, with the same singleton used by the managed boundary.
+    {
+        auto& backend = VulkanBackend::getInstance();
+        libretrodroid::Video video;
+        libretrodroid::TestCore core;
+        libretrodroid::LibretroDroid host {&video, &core};
+        assert(!backend.isStarted());
+        host.runCoreFrame();
+        assert(core.calls == 1 && core.index == 0 && core.mask == 1);
+        setup(backend);
+        assert(backend.coreSync.open(1));
+        pendingFrame(backend);
+        host.runCoreFrame();
+        assert(core.calls == 2 && core.index == 0 && core.mask == 1 && driver.waitCalls == 1);
+        pendingFrame(backend);
+        driver.waits = {VK_ERROR_OUT_OF_HOST_MEMORY};
+        bool caught = false;
+        try { host.runCoreFrame(); }
+        catch (libretrodroid::LibretroDroidError&) { caught = true; }
+        assert(caught && core.calls == 2 && video.mainBinds == 1 && backend.hasFatalError());
+        backend.shutdown();
+        assert(!backend.device && !backend.hasFatalError() && backend.coreSync.mask() == 1);
+    }
+    // Two-index policy is exercised here only. Production still opens one
+    // index until normal-frame routing and EGL publication are complete.
+    {
+        VulkanBackend backend;
+        setup(backend);
+        assert(backend.coreSync.open(2));
+        auto& spare = backend.spareFrameSlot;
+        spare.fence = object<VkFence>(702);
+        assert(backend.beginCoreFrame() && VulkanBackend::callbackGetSyncIndex(&backend) == 0);
+        backend.endCoreFrame();
+        assert(VulkanBackend::callbackGetSyncIndex(&backend) == 0);
+        assert(VulkanBackend::callbackGetSyncIndexMask(&backend) == 3);
+        static VkFence expected;
+        expected = spare.fence;
+        backend.vk.waitForFences = [](VkDevice, uint32_t count, const VkFence* fence, VkBool32, uint64_t) {
+            assert(count == 1 && *fence == expected);
+            ++driver.waitCalls;
+            driver.pending = false;
+            return VK_SUCCESS;
+        };
+        backend.vk.resetFences = [](VkDevice, uint32_t count, const VkFence* fence) {
+            assert(count == 1 && *fence == expected && !driver.pending);
+            ++driver.resets;
+            return VK_SUCCESS;
+        };
+        backend.frameSlot.inFlight = spare.inFlight = true;
+        driver.pending = true;
+        assert(backend.beginCoreFrame() && VulkanBackend::callbackGetSyncIndex(&backend) == 1);
+        assert(!spare.inFlight && backend.frameSlot.inFlight && driver.waitCalls == 1);
+        VulkanBackend::callbackWaitSyncIndex(&backend);
+        assert(driver.waitCalls == 1 && backend.frameSlot.inFlight);
+        backend.pendingCommandBuffers = {object<VkCommandBuffer>(703)};
+        backend.pendingSignalSemaphore = object<VkSemaphore>(704);
+        backend.pendingImage.waitSemaphores = {object<VkSemaphore>(705)};
+        backend.vk.queueSubmit = [](VkQueue, uint32_t count, const VkSubmitInfo* info, VkFence fence) {
+            assert(count == 1 && fence == expected && !driver.pending);
+            assert(info->waitSemaphoreCount == 0 && info->commandBufferCount == 1 &&
+                   *info->pCommandBuffers == object<VkCommandBuffer>(703));
+            assert(info->signalSemaphoreCount == 1 && *info->pSignalSemaphores == object<VkSemaphore>(704));
+            ++driver.submits;
+            driver.pending = true;
+            return VK_SUCCESS;
+        };
+        assert(backend.completeDuplicateFrame() && backend.completeDuplicateFrame());
+        assert(driver.submits == 1 && driver.waitCalls == 2 && !spare.inFlight &&
+               backend.frameSlot.inFlight && VulkanBackend::callbackGetSyncIndex(&backend) == 1);
+        assert(backend.pendingImage.waitSemaphores.empty() && backend.pendingCommandBuffers.empty() &&
+               !backend.pendingSignalSemaphore);
+        backend.endCoreFrame();
+        expected = backend.frameSlot.fence;
+        assert(backend.beginCoreFrame() && VulkanBackend::callbackGetSyncIndex(&backend) == 0);
+        assert(!backend.frameSlot.inFlight && driver.waitCalls == 3);
+        backend.endCoreFrame();
+        backend.shutdown();
+        assert(!backend.device && VulkanBackend::callbackGetSyncIndexMask(&backend) == 1 &&
+               VulkanBackend::callbackGetSyncIndex(&backend) == 0);
+    }
+    std::puts("PASS core run boundary, stable sync indices, selected fence and duplicate submission");
+}
+
 void managedBoundary() {
     auto& backend = VulkanBackend::getInstance();
     libretrodroid::Video video;
@@ -1856,6 +1954,7 @@ int main() {
     readFenceQueueContracts();
     writeFenceQueueContracts();
     duplicateFrameContracts();
+    coreSyncIndexContracts();
     managedBoundary();
     std::puts("PASS production Vulkan synchronization and presentation fault regression");
 }
