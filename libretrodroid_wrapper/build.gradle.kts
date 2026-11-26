@@ -14,6 +14,9 @@ val nativeProfile = providers.gradleProperty("LIBRETRO_NATIVE_PROFILE")
     .get()
 val nativeProfiles = setOf("baseline", "o3", "thinlto", "o3-thinlto")
 require(nativeProfile in nativeProfiles) { "Unknown LIBRETRO_NATIVE_PROFILE: $nativeProfile" }
+require(nativeProfile == "baseline" || providers.gradleProperty("LIBRETRO_NATIVE_EXPERIMENT").orNull == "true") {
+    "Native performance candidates require -PLIBRETRO_NATIVE_EXPERIMENT=true"
+}
 
 // Same ABI selection as :app (APK_ABI); one ABI keeps CI and single-ABI builds short.
 val apkAbiMode = providers.gradleProperty("APK_ABI")
@@ -64,6 +67,7 @@ android {
                     val lto = if (nativeProfile.endsWith("thinlto")) " -flto=thin" else ""
                     arguments += "-DCMAKE_SHARED_LINKER_FLAGS_RELWITHDEBINFO=-Wl,--strip-debug$lto"
                     if (nativeProfile != "baseline") {
+                        arguments += "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
                         for (language in listOf("C", "CXX")) {
                             arguments += "-DCMAKE_${language}_FLAGS_RELWITHDEBINFO=$optimize -g -DNDEBUG$lto"
                             arguments += "-DCMAKE_${language}_FLAGS_RELEASE=$optimize -DNDEBUG$lto"
