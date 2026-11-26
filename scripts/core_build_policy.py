@@ -185,6 +185,9 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None):
     opt_levels = {}
     thin_compiles = 0
     thin_links = 0
+    compile_lto_modes = {}
+    link_lto_modes = {}
+    shared_outputs = []
     commands = list(compiler_commands(log, cwd, root, strict=profile != "baseline" or core in AUDITED))
     tuning_count = 0
     codegen_flags = {}
@@ -201,12 +204,18 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None):
             opt_levels[level] = opt_levels.get(level, 0) + 1
             lto = [token for token in args if token.startswith("-flto") or token == "-fno-lto"]
             thin_compiles += bool(lto and lto[-1] == "-flto=thin")
+            mode = lto[-1] if lto else "(implicit)"
+            compile_lto_modes[mode] = compile_lto_modes.get(mode, 0) + 1
             tune = [token for token in args if token.startswith("-mtune=")]
             tuning_count += bool(tune and tune[-1] == "-mtune=cortex-a57")
         elif "-shared" in args:
             link_count += 1
             lto = [token for token in args if token.startswith("-flto") or token == "-fno-lto"]
             thin_links += bool(lto and lto[-1] == "-flto=thin")
+            mode = lto[-1] if lto else "(implicit)"
+            link_lto_modes[mode] = link_lto_modes.get(mode, 0) + 1
+            output = args[args.index("-o") + 1] if "-o" in args and args.index("-o") + 1 < len(args) else None
+            shared_outputs.append({"output": output, "lto": mode})
     if profile != "baseline" and (not compile_count or not link_count):
         raise ValueError("Candidate lacks auditable C/C++ compile or shared link commands")
     if "o3" in profile and opt_levels != {"-O3": compile_count}:
@@ -219,7 +228,23 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None):
     return {"compile_commands": compile_count, "shared_link_commands": link_count,
             "optimization_levels": opt_levels, "codegen_flag_occurrences": codegen_flags, "thinlto_compiles": thin_compiles,
             "thinlto_links": thin_links, "cortex_a57_compiles": tuning_count,
-            "acceleration": acceleration}
+            "compile_lto_modes": compile_lto_modes, "link_lto_modes": link_lto_modes,
+            "shared_link_outputs": shared_outputs, "acceleration": acceleration}
+
+
+def prepare_cmake(root, core, profile):
+    # SwanStation's pin sets IPO unconditionally for Release, overriding cache flags.
+    # Preserve the upstream baseline. In explicit candidates disable only the
+    # automatic IPO block; the workflow supplies the requested LTO mode itself.
+    if core != "swanstation" or profile == "baseline":
+        return
+    path = root / "CMakeLists.txt"
+    source = path.read_text()
+    marker = '# Enable LTO/LTCG on Release builds.\nif(CMAKE_BUILD_TYPE MATCHES "Release")'
+    if source.count(marker) != 1 or source.count("set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)") != 1:
+        raise ValueError("SwanStation IPO recipe changed; inspect the pinned CMakeLists.txt")
+    source = source.replace(marker, '# Explicit Ambient TV experiment: flags are provided by the build policy.\nif(FALSE)')
+    path.write_text(source)
 
 
 def ndk_flags(path, profile, cppflags):
@@ -246,6 +271,10 @@ def main():
     p.add_argument("--abis", default="")
     p.add_argument("--profile", choices=PROFILES, default="baseline")
     p.add_argument("--comparison", choices=("none", "baseline-thinlto", "o3-o3-thinlto"), default="none")
+    p = sub.add_parser("prepare-cmake")
+    p.add_argument("--root", type=Path, required=True)
+    p.add_argument("--core", required=True)
+    p.add_argument("--profile", choices=PROFILES, required=True)
     p = sub.add_parser("ndk-flags")
     p.add_argument("--application", type=Path, required=True)
     p.add_argument("--profile", choices=PROFILES, required=True)
@@ -270,6 +299,8 @@ def main():
         print(json.dumps(plan(json.loads(args.catalog.read_text()), args.event, args.ref,
                               args.publish == "true", args.cores, args.abis, args.profile, args.comparison),
                          separators=(",", ":")))
+    elif args.action == "prepare-cmake":
+        prepare_cmake(args.root, args.core, args.profile)
     elif args.action == "ndk-flags":
         ndk_flags(args.application, args.profile, args.cppflags)
     elif args.action == "select":
