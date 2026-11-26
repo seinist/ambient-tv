@@ -226,6 +226,26 @@ class StopCrashGuardsTest {
         } finally { resume.countDown(); executor.shutdownNow() }
     }
 
+    @Test fun mpvJniSurfaceOwnershipIsTransactional() {
+        val shim = listOf(File("../native/ambientmpv/ambientmpv.c"), File("native/ambientmpv/ambientmpv.c"))
+            .first { it.isFile }.readText()
+        val attach = shim.substring(shim.indexOf("MpvNativeBridge_nativeAttachSurface"),
+            shim.indexOf("MpvNativeBridge_nativeDetachSurface"))
+        assertTrue(attach.contains("|| ctx->surface"))
+        assertTrue(attach.contains("if (!next)"))
+        assertTrue(attach.contains("mpv_set_option(ctx->mpv, \"wid\", MPV_FORMAT_INT64, &wid) < 0"))
+        assertTrue(attach.indexOf("mpv_set_option") < attach.indexOf("ctx->surface = next"))
+        assertTrue(attach.contains("DeleteGlobalRef(env, next)"))
+        val detach = shim.substring(shim.indexOf("MpvNativeBridge_nativeDetachSurface"),
+            shim.indexOf("MpvNativeBridge_nativePollEvent"))
+        assertTrue(detach.contains("mpv_set_property_string(ctx->mpv, \"vo\", \"null\") < 0"))
+        assertTrue(detach.indexOf("mpv_set_option") < detach.indexOf("DeleteGlobalRef"))
+        assertTrue(detach.contains("surface_failure(env"))
+        val engine = source("ui/player/backend/MpvPlaybackEngine.kt")
+        val bind = engine.substring(engine.indexOf("MpvNativeBridge.nativeAttachSurface(handle, surface)"))
+        assertTrue(bind.indexOf("attachedSurface = surface") < bind.indexOf("setProperty(\"android-surface-size\""))
+    }
+
     @Test fun failedDetachDoesNotWakeWaitersBeforeConfirmedClose() {
         val gate = MpvSurfaceDetachGate()
         val scheduled = ArrayDeque<() -> Unit>()
