@@ -28,7 +28,7 @@ class CoreTracingTest(unittest.TestCase):
     def test_all_paths(self):
         result = instrument(SOURCE)
         for label in ("rewind", "retro_run", "netplay", "rewind_seek"):
-            self.assertEqual(result.count(f"AmbientTV:Libretro/{label}"), 1)
+            self.assertEqual(result.count(f'"AmbientTV:Libretro/{label}"'), 1)
         self.assertEqual(result.count("core->retro_run();"), 4)
         self.assertEqual(result.count("ATrace_isEnabled()"), 4)
         self.assertEqual(result.count("checkVulkanFrameError();"), 2)
@@ -42,6 +42,8 @@ class CoreTracingTest(unittest.TestCase):
             main = main.replace("core->retro_run();", f'traceGameCall("{label}", [&] {{ CORE_CALL }});', 1)
         main = main.replace("CORE_CALL", "core->retro_run();")
         self.assertEqual(instrument(main), main)
+        multiline = main.replace('[&] { core->retro_run(); }', '[&] {\n            core->retro_run();\n        }')
+        self.assertEqual(instrument(multiline), multiline)
         for changed in (
             main.replace("AmbientGame core run", "wrong label"),
             main.replace("traceGameCall", "untracedCall", 1),

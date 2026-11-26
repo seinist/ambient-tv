@@ -48,7 +48,7 @@ class CoreHotpathTests(unittest.TestCase):
             with self.subTest(core=core), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 path = root / relative
-                path.parent.mkdir(parents=True)
+                path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("before\n" + old + "\nafter")
                 prepare_hotpaths(root, core)
                 self.assertEqual(path.read_text(), "before\n" + new + "\nafter")
@@ -359,7 +359,7 @@ int main() {
         masks[port] = static_cast<uint16_t>(mask);
         unsigned previous = calls;
         for (unsigned id = 0; id < 16; ++id)
-            assert(snapshot.state(input, port, 1, 0, id) == ((mask >> id) & 1));
+            assert(snapshot.state(input, port, 1, 0, id) == static_cast<int16_t>((mask >> id) & 1));
         assert(calls == previous + 1);
     }
     assert(maskCalls == 65536);

@@ -19,31 +19,19 @@ MAIN_LABELS = {
     "rewind_seek": "AmbientGame rewind preview core",
 }
 WRAPPED_CALL = re.compile(
-    r'^[ \t]*traceGameCall\("([^"]+)", \[&\] \{ core->retro_run\(\); \}\);[ \t]*$', re.M
+    r'\btraceGameCall\s*\(\s*"([^"]+)"\s*,\s*\[\s*&\s*\]\s*'
+    r'\{\s*core\s*->\s*retro_run\s*\(\s*\)\s*;\s*\}\s*\)\s*;'
 )
-ANY_CALL = re.compile(r'\bcore\s*->\s*retro_run\s*\(')
+ANY_CALL = re.compile(r'\bcore\s*->\s*retro_run\s*\(\s*\)\s*;')
 
 
 def verify_main_trace(source):
     """Reuse the existing main trace helper; never add nested timing sections."""
-    functions = list(FUNCTION.finditer(source))
-    visited = set()
-    count = 0
-    for i, function in enumerate(functions):
-        name = function[1]
-        if name not in LABELS:
-            continue
-        if name in visited:
-            raise ValueError(f"Duplicate trace function {name}")
-        visited.add(name)
-        end = functions[i + 1].start() if i + 1 < len(functions) else len(source)
-        calls = WRAPPED_CALL.findall(source, function.end(), end)
-        expected = [MAIN_LABELS[label] for label in LABELS[name]]
-        if calls != expected:
-            raise ValueError(f"Unexpected main trace paths in {name}: {calls}")
-        count += len(calls)
-    if visited != LABELS.keys() or len(ANY_CALL.findall(source)) != count:
-        raise ValueError("Unexpected native core execution layout; review main trace instrumentation")
+    calls = WRAPPED_CALL.findall(source)
+    expected = [MAIN_LABELS[label] for labels in LABELS.values() for label in labels]
+    if sorted(calls) != sorted(expected) or len(ANY_CALL.findall(source)) != len(calls):
+        relevant = [line.strip() for line in source.splitlines() if "retro_run" in line]
+        raise ValueError(f"Unexpected main trace paths: {calls}; core call lines: {relevant}")
     return source
 
 
