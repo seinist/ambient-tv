@@ -90,6 +90,7 @@ internal fun initialMpvAccelerationPlan(
     nativeHdrPreferred: Boolean,
     hdrGpuPassthrough: Boolean,
     toneMappingRequired: Boolean,
+    zeroCopyScope: String? = null,
 ): MpvAccelerationPlan {
     val reduced = reducedVideoEffects(context)
     val svp = svpAllowed(context)
@@ -100,7 +101,8 @@ internal fun initialMpvAccelerationPlan(
         gpuProcessing = mpvUserImageProcessing(initialImageOptions, reduced, svp),
         nativeHdrPreferred = nativeHdrPreferred,
         hdrPassthrough = hdrGpuPassthrough, toneMappingRequired = toneMappingRequired,
-        zeroCopy = !videoImagePreferences(context).mpvZeroCopyFailed && !mpvStartupRequiresCopyBack(effective))
+        zeroCopy = !videoImagePreferences(context).mpvZeroCopyFailed &&
+            !mpvZeroCopyFailures.contains(zeroCopyScope) && !mpvStartupRequiresCopyBack(effective))
 }
 
 internal class MpvPlaybackEngine(
@@ -129,6 +131,7 @@ internal class MpvPlaybackEngine(
     private val broadcastSource: Boolean = liveStream,
     /** Names the running native step for the stall log ([MpvOwnerStep]); never read back here. */
     private val ownerStep: MpvOwnerStep? = null,
+    private val zeroCopyScope: String? = null,
 ) : PlaybackHandle, VideoPresentationTarget, com.ambient.tv.ui.player.SubtitleDelayTarget {
     init { check(android.os.Looper.myLooper() === workerHandler.looper) }
 
@@ -144,7 +147,7 @@ internal class MpvPlaybackEngine(
     private fun needsHdrToSdr(source: HdrStandard?): Boolean = source != null &&
         !com.ambient.tv.ui.player.nativeHdrSurfacePreferred(source, displayHdrStandards)
     private var acceleration = initialMpvAccelerationPlan(context, videoOutputMode, decoderMode, initialImageOptions,
-        nativeHdrPreferred, hdrGpuPassthrough, needsHdrToSdr(declaredHdr))
+        nativeHdrPreferred, hdrGpuPassthrough, needsHdrToSdr(declaredHdr), zeroCopyScope)
     /** One copy-back reopen per engine after zero-copy failed at runtime. */
     private var zeroCopyRetried = false
     private var zeroCopyFrameCheckSinceNs = 0L
@@ -2707,7 +2710,7 @@ internal class MpvPlaybackEngine(
         val current = getPropertyString("hwdec-current")
         if (mpvZeroCopyInteropFailed(acceleration, current)) {
             Timber.w("%s MPV zero-copy unavailable (hwdec-current=%s); copy-back from now on", HDR_AUDIT_TAG, current)
-            videoImagePreferences(context).mpvZeroCopyFailed = true
+            rememberZeroCopyFailure()
             acceleration = acceleration.copy(zeroCopy = false)
             return false
         }
@@ -2737,10 +2740,16 @@ internal class MpvPlaybackEngine(
      * Reopen this file on mediacodec-copy (once per engine). [remember] records a real failure
      * for this app version; a planned switch (HDR→SDR found at runtime) does not lock zero-copy.
      */
+    private fun rememberZeroCopyFailure() {
+        val scope = zeroCopyScope
+        if (scope != null) mpvZeroCopyFailures.record(scope)
+        else videoImagePreferences(context).mpvZeroCopyFailed = true
+    }
+
     private fun failZeroCopy(reason: String, remember: Boolean = true) {
         Timber.w("%s MPV zero-copy %s (%s); reopening with mediacodec-copy", HDR_AUDIT_TAG,
             if (remember) "failed" else "not used", reason)
-        if (remember) videoImagePreferences(context).mpvZeroCopyFailed = true
+        if (remember) rememberZeroCopyFailure()
         zeroCopyRetried = true
         zeroCopyFrameCheckSinceNs = 0L
         zeroCopyFrameWatch.reset()
