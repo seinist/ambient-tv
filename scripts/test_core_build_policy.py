@@ -29,9 +29,9 @@ class CoreBuildPolicyTest(unittest.TestCase):
 
     def test_pr_comparison(self):
         matrix = plan(self.catalog, "pull_request", "refs/pull/1/merge", False)["include"]
-        self.assertEqual(len(matrix), 16 + 2 * len(self.catalog["cores"]) - 8)
+        self.assertEqual(len(matrix), 2 * len(self.catalog["cores"]) * len(self.catalog["abis"]) + 2)
         for core in self.catalog["cores"]:
-            self.assertTrue(all(any(item["core"] == core["core"] and item["abi"] == "arm64-v8a" and item["profile"] == variant for item in matrix) for variant in ("baseline", "thinlto")))
+            self.assertTrue(all(any(item["core"] == core["core"] and item["abi"] == abi and item["profile"] == variant for item in matrix) for abi in self.catalog["abis"] for variant in ("baseline", "thinlto")))
         self.assertEqual({item["profile"] for item in matrix}, {"baseline", "thinlto", "picodrive-sh2", "tune-a57"})
         self.assertEqual(len({item["artifact"] for item in matrix}), len(matrix))
         self.assertEqual([item["makevars"] for item in matrix if item["profile"] == "picodrive-sh2"], ["use_sh2drc=1"])
