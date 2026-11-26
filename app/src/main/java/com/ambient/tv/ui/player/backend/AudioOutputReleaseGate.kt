@@ -17,8 +17,7 @@ internal enum class PreviousReleaseOutcome {
     /** Its teardown failed: logged once by this start, which opens anyway. */
     READY_AFTER_FAILURE,
     /**
-     * Still closing after [PREVIOUS_RELEASE_LIMIT_MS]: MPV and VLC do not open and report an error;
-     * Media3 opens anyway (see PlaybackEngineFactory.prepareAfterPreviousRelease).
+     * Still closing after [PREVIOUS_RELEASE_LIMIT_MS]: report the timeout without transferring ownership.
      */
     TIMED_OUT,
 }
@@ -50,19 +49,14 @@ internal class AudioOutputReleaseGate {
     @Synchronized fun snapshot(): PreviousRelease {
         val entries = pending.toList()
         pending.removeAll { it.isDone }
-        return PreviousRelease(this, entries)
-    }
-
-    /** A teardown that outlived [PREVIOUS_RELEASE_LIMIT_MS] no longer holds back later starts. */
-    @Synchronized internal fun abandon(entries: List<CompletableFuture<Unit>>) {
-        pending.removeAll { entry -> entries.any { it === entry } }
+        return PreviousRelease(entries)
     }
 
     @Synchronized internal fun pendingCount(): Int = pending.size
 }
 
 /** The previous owners' teardown as seen by one starting owner. */
-internal class PreviousRelease(private val gate: AudioOutputReleaseGate, private val entries: List<CompletableFuture<Unit>>) {
+internal class PreviousRelease(private val entries: List<CompletableFuture<Unit>>) {
     val future: CompletableFuture<Void> = CompletableFuture.allOf(*entries.toTypedArray())
     val isDone: Boolean get() = future.isDone
     val failed: Boolean get() = entries.any { it.isCompletedExceptionally }
@@ -87,7 +81,7 @@ internal class PreviousRelease(private val gate: AudioOutputReleaseGate, private
         if (fired.get()) return
         delay(limitMs) {
             if (!isDone && fired.compareAndSet(false, true)) {
-                gate.abandon(entries)
+                // A timeout is not a release. Subsequent owners must still wait.
                 onSettled(PreviousReleaseOutcome.TIMED_OUT)
             }
         }
