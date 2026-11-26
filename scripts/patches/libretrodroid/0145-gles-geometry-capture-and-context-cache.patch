@@ -210,12 +210,17 @@ new file mode 100644
 diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
 --- a/src/main/cpp/video.h
 +++ b/src/main/cpp/video.h
-@@ -83,2 +83,4 @@
+@@ -81,6 +81,8 @@
+         std::array<GLint, 8> gPassPrevTextureSizeHandles;
+         std::array<GLint, 8> gPassPrevInputSizeHandles;
          bool samplerBindingsInitialized = false;
 +        bool trustedFullCoverage = false;
 +        ShaderUniformValue<1> coreTransferValue;
          // Each entry owns a newly linked program. These caches die with it.
-@@ -136,5 +138,7 @@
+         ShaderUniformValue<2> textureSizeValue, origTextureSizeValue, origInputSizeValue;
+         ShaderUniformValue<2> inputSizeValue, outputSizeValue;
+@@ -135,7 +137,9 @@
+ 
      void onNewFrame(const void *data, unsigned width, unsigned height, size_t pitch);
  
 -    std::vector<uint8_t> captureRawFrame(int& outWidth, int& outHeight);
@@ -224,15 +229,18 @@ diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
 +    void abandonFrontendResources() noexcept;
  
      uintptr_t getCurrentFramebuffer() {
-@@ -206,3 +210,6 @@
+         if (hwRenderFBO != 0) return hwRenderFBO;
+@@ -205,6 +209,9 @@
+ 
  private:
      void updateProgram();
 +    bool prepareFrontendGeometry();
 +    bool bindFrontendGeometry(std::size_t pass, GLint position, GLint coordinate, bool first, bool last);
 +    void releaseFrontendGeometry() noexcept;
      bool tryBuildShaderChain(const ShaderManager::Chain& shaders, std::vector<ShaderChainEntry>& outChain);
-@@ -238,5 +245,24 @@
-     unsigned int frameCount = 0;
+ 
+     float getScreenDensity();
+@@ -239,6 +246,25 @@
  
      std::vector<ShaderChainEntry> shadersChain;
  
@@ -256,24 +264,35 @@ diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
 +    } rawCapture;
 +
      bool immersiveModeEnabled = false;
+     bool backgroundFrameBehind = false;
+     ImmersiveMode immersiveMode;
 diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
 --- a/src/main/cpp/video.cpp
 +++ b/src/main/cpp/video.cpp
-@@ -29,3 +29,6 @@
+@@ -30,7 +30,10 @@
+ 
  #include "video.h"
  #include "softwareframelayout.h"
--#include "sdrtohdr.h"
 +#include "ambientgametrace.h"
 +#include "trustedcompactcoverage.h"
-+#include "sdrtohdr.h"
+ #include "sdrtohdr.h"
 +#include <algorithm>
-@@ -160,3 +163,5 @@
+ #include <cstring>
+ #include <unistd.h>
+ #include "renderers/es3/framebufferrenderer.h"
+@@ -155,6 +158,8 @@
+ 
+         shader.gScreenDensityHandle = glGetUniformLocation(shader.gProgram, "screenDensity");
          shader.ambientIntensity = ShaderManager::Pass::normalizedIntensity(item.ambientIntensity);
 +        shader.trustedFullCoverage = shader.ambientIntensity > 0.0f &&
 +            trustedCompactCoverage(item.vertex, item.fragment);
          if (shader.ambientIntensity > 0.0f)
              shader.gAmbientIntensityHandle = glGetUniformLocation(shader.gProgram, "ambientFilterIntensity");
-@@ -310,2 +315,106 @@
+ 
+@@ -307,6 +312,110 @@
+     return shaderSensorUsage;
+ }
+ 
 +void Video::RawCaptureCache::release() noexcept {
 +    if (context != EGL_NO_CONTEXT && context == eglGetCurrentContext()) {
 +        if (copyProgram) glDeleteProgram(copyProgram);
@@ -380,14 +399,20 @@ diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
 +
  void Video::renderFrame(bool force) {
      bool shaderPending = !loadedShaderType.has_value() || !(loadedShaderType.value() == requestedShaderConfig);
-@@ -368,3 +477,6 @@
+     if (!force && skipDuplicateFrames && !bfiEnabled && !isDirty && !shaderPending) {
+@@ -365,6 +474,9 @@
+         );
+     }
+ 
 +    const bool cachedGeometry = prepareFrontendGeometry();
 +    const bool canDiscardIntermediate = openGLESVersion >= 3 && !hwAccelerated &&
 +        !externalFrames && hwRenderTexture == 0 && !frameDrawsBehind && !immersiveModeEnabled;
      float originalTextureWidth = hwRenderTexture != 0 ? hwFBOWidth : getTextureWidth();
      float originalTextureHeight = hwRenderTexture != 0 ? hwFBOHeight : getTextureHeight();
      for (int i = 0; i < shadersChain.size(); ++i) {
-@@ -377,4 +489,12 @@
+@@ -376,7 +488,15 @@
+         if (!isLastPass && !passData.framebuffer.has_value())
+             throw std::runtime_error("Missing intermediate shader framebuffer");
          glBindFramebuffer(GL_FRAMEBUFFER, passData.framebuffer.value_or(0));
 -        if (!isLastPass) glClear(GL_COLOR_BUFFER_BIT);
 +        if (!isLastPass) {
@@ -401,7 +426,9 @@ diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
 +        }
  
          glViewport(
-@@ -388,17 +508,21 @@
+             0,
+@@ -387,18 +507,22 @@
+ 
          glUseProgram(shader.gProgram);
  
 -        auto vertices = isLastPass ? videoLayout.getForegroundVertices() : videoLayout.getFramebufferVertices();
@@ -435,20 +462,30 @@ diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
          }
  
          const GLuint immediateTexture = (i > 0 && passData.texture.has_value())
-@@ -542,5 +666,6 @@
+@@ -539,9 +663,10 @@
+         if (shader.gFrameCountHandle != -1)
+             glUniform1i(shader.gFrameCountHandle, static_cast<GLint>(frameCount));
+ 
 -        if (shader.gFrameDirectionHandle != -1)
--            glUniform1i(shader.gFrameDirectionHandle, 1);
--        if (shader.gCoreTransferHandle != -1)
 +        if (shader.gFrameDirectionHandle != -1 && writeSamplerBindings)
-+            glUniform1i(shader.gFrameDirectionHandle, 1);
+             glUniform1i(shader.gFrameDirectionHandle, 1);
+-        if (shader.gCoreTransferHandle != -1)
 +        if (shader.gCoreTransferHandle != -1 &&
 +            shader.coreTransferValue.needsWrite(cacheSamplerBindings, {static_cast<float>(sourceTransfer)}))
              glUniform1i(shader.gCoreTransferHandle, static_cast<GLint>(sourceTransfer));
          if (shader.gGyroscopeHandle != -1)
-@@ -552,1 +677,1 @@
+             glUniform3fv(shader.gGyroscopeHandle, 1, shaderSensorState.data());
+@@ -550,7 +675,7 @@
+         if (shader.gAccelerometerRestHandle != -1)
+             glUniform3fv(shader.gAccelerometerRestHandle, 1, shaderSensorState.data() + 6);
+ 
 -        if (shader.gMVPMatrixHandle != -1) {
 +        if (shader.gMVPMatrixHandle != -1 && writeSamplerBindings) {
-@@ -565,6 +690,10 @@
+             static const GLfloat identity[16] = {
+                 1, 0, 0, 0,
+                 0, 1, 0, 0,
+@@ -562,8 +687,12 @@
+ 
          glDrawArrays(GL_TRIANGLES, 0, 6);
  
 -        if (shader.gvPositionHandle != -1) glDisableVertexAttribArray(shader.gvPositionHandle);
@@ -461,19 +498,27 @@ diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
 +        }
  
          for (int unit = 1; unit < nextTextureUnit; ++unit) {
-@@ -607,2 +736,2 @@
+             glActiveTexture(GL_TEXTURE0 + unit);
+@@ -604,7 +733,7 @@
+     return renderer->lastFrameSize.second;
+ }
+ 
 -std::vector<uint8_t> Video::captureRawFrame(int& outWidth, int& outHeight) {
 +std::vector<uint8_t> Video::captureRawFrame(int& outWidth, int& outHeight, unsigned maxWidth) {
      constexpr size_t maxCapturePixels = 128u * 1024u * 1024u / 4u;
-@@ -651,5 +780,13 @@
+     {
+         std::lock_guard<std::mutex> lock(frameMutex);
+@@ -648,9 +777,17 @@
+         }
+     }
+ 
 -    outWidth = (int)getTextureWidth();
 -    outHeight = (int)getTextureHeight();
--    if (outWidth <= 0 || outHeight <= 0) return {};
 +    const int sourceWidth = (int)getTextureWidth();
 +    const int sourceHeight = (int)getTextureHeight();
 +    outWidth = sourceWidth;
 +    outHeight = sourceHeight;
-+    if (outWidth <= 0 || outHeight <= 0) return {};
+     if (outWidth <= 0 || outHeight <= 0) return {};
 +    const bool downscale = maxWidth > 0 && static_cast<unsigned>(sourceWidth) > maxWidth;
 +    if (downscale) {
 +        outWidth = static_cast<int>(maxWidth);
@@ -482,7 +527,8 @@ diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
 +    }
      if (static_cast<size_t>(outWidth) > maxCapturePixels / static_cast<size_t>(outHeight)) return {};
      const size_t pixelCount = static_cast<size_t>(outWidth) * static_cast<size_t>(outHeight);
-@@ -660,4 +797,13 @@
+     // Raw capture samples the same imported texture outside the normal draw.
+@@ -660,6 +797,15 @@
      // FP16 AHBs are sampleable but need not be renderable/readable as RGBA/UBYTE.
      // Resolve raw source code values to an ordinary RGBA8 target first. This
      // deliberately bypasses picture filters and the window's PQ output wrapper.
@@ -496,14 +542,22 @@ diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
 +    if (resources.context != context) resources.release();
 +    resources.context = context;
      struct CaptureTarget {
-@@ -673,3 +819,5 @@
+         GLint framebuffer = 0, program = 0, activeTexture = GL_TEXTURE0;
+         GLint texture = 0, arrayBuffer = 0, packAlignment = 4, viewport[4] {};
+@@ -671,14 +817,20 @@
+         GLboolean colorMask[4] {};
+         const GLenum caps[5] { GL_BLEND, GL_DEPTH_TEST, GL_SCISSOR_TEST, GL_CULL_FACE, GL_STENCIL_TEST };
          GLboolean enabled[5] {};
 -        GLuint target = 0, fbo = 0, copyProgram = 0, copyVao = 0, copyBuffer = 0;
 +        RawCaptureCache& resources;
 +        bool retain;
 +        GLuint &target, &fbo, &copyProgram, &copyVao, &copyBuffer;
          GLuint source = 0;
-@@ -681,2 +829,6 @@
+         GLint minFilter = GL_NEAREST, magFilter = GL_NEAREST;
+         struct Attribute {
+             GLint index = -1, enabled = 0, size = 4, type = GL_FLOAT, normalized = 0, stride = 0, buffer = 0;
+             void* pointer = nullptr;
+         } attributes[2];
 -        explicit CaptureTarget(GLuint sourceTexture, bool supportsEs3) : source(sourceTexture) {
 +        explicit CaptureTarget(GLuint sourceTexture, bool supportsEs3, bool linear,
 +                               RawCaptureCache& cache, bool keep)
@@ -511,12 +565,20 @@ diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
 +              copyProgram(cache.copyProgram), copyVao(cache.copyVao), copyBuffer(cache.copyBuffer),
 +              source(sourceTexture) {
              es3 = supportsEs3;
-@@ -704,3 +856,3 @@
+             glGetIntegerv(GL_FRAMEBUFFER_BINDING, &framebuffer);
+             glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+@@ -702,7 +854,7 @@
+                 glGetIntegerv(GL_SAMPLER_BINDING, &sampler);
+                 glBindSampler(0, 0);
                  glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
 -                glGenVertexArrays(1, &copyVao);
 +                if (!copyVao) glGenVertexArrays(1, &copyVao);
                  glBindVertexArray(copyVao);
-@@ -713,5 +865,5 @@
+                 rasterizerDiscard = glIsEnabled(GL_RASTERIZER_DISCARD);
+                 glDisable(GL_RASTERIZER_DISCARD);
+@@ -711,8 +863,8 @@
+             glBindTexture(GL_TEXTURE_2D, source);
+             glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, &minFilter);
              glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, &magFilter);
 -            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 -            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -524,14 +586,18 @@ diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
 +            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, linear ? GL_LINEAR : GL_NEAREST);
          }
          void saveAttribute(size_t slot, GLint index) {
-@@ -757,21 +909,32 @@
+             if (es3) return; // private VAO owns every changed attribute on ES3
+@@ -754,24 +906,35 @@
+             glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+             glColorMask(colorMask[0], colorMask[1], colorMask[2], colorMask[3]);
              for (size_t i = 0; i < 5; ++i) if (enabled[i]) glEnable(caps[i]);
 -            if (copyProgram) glDeleteProgram(copyProgram);
 -            if (fbo) glDeleteFramebuffers(1, &fbo);
 -            if (target) glDeleteTextures(1, &target);
 -            if (copyVao) glDeleteVertexArrays(1, &copyVao);
 -            if (copyBuffer) glDeleteBuffers(1, &copyBuffer);
--        }
++            if (!retain) resources.release();
+         }
 -    } capture(hwRenderTexture != 0 ? hwRenderTexture : renderer->getTexture(), openGLESVersion >= 3);
 -    glGenTextures(1, &capture.target);
 -    glBindTexture(GL_TEXTURE_2D, capture.target);
@@ -541,11 +607,6 @@ diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
 -    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 -    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, outWidth, outHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 -    glGenFramebuffers(1, &capture.fbo);
--    glBindFramebuffer(GL_FRAMEBUFFER, capture.fbo);
--    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, capture.target, 0);
--    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) return {};
-+            if (!retain) resources.release();
-+        }
 +    } capture(hwRenderTexture != 0 ? hwRenderTexture : renderer->getTexture(),
 +              openGLESVersion >= 3, downscale, resources, retain);
 +    if (openGLESVersion >= 3 && !capture.copyVao) return {};
@@ -565,8 +626,9 @@ diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
 +        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, outWidth, outHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 +    if (!capture.fbo) glGenFramebuffers(1, &capture.fbo);
 +    if (!capture.fbo) return {};
-+    glBindFramebuffer(GL_FRAMEBUFFER, capture.fbo);
-+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, capture.target, 0);
+     glBindFramebuffer(GL_FRAMEBUFFER, capture.fbo);
+     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, capture.target, 0);
+-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) return {};
 +    const bool complete = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
 +    if (!complete || glGetError() != GL_NO_ERROR) {
 +        resources.width = resources.height = 0;
@@ -575,7 +637,11 @@ diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
 +    resources.width = outWidth; resources.height = outHeight;
  
      const char* rawVertex =
-@@ -784,4 +947,9 @@
+         "#ifdef GL_FRAGMENT_PRECISION_HIGH\n#define CAPTURE_P highp\n#else\n#define CAPTURE_P mediump\n#endif\n"
+@@ -781,25 +944,31 @@
+         "#ifdef GL_FRAGMENT_PRECISION_HIGH\n#define CAPTURE_P highp\n#else\n#define CAPTURE_P mediump\n#endif\n"
+         "precision CAPTURE_P float; uniform CAPTURE_P sampler2D texture; varying CAPTURE_P vec2 coords;\n"
+         "void main() { gl_FragColor = vec4(texture2D(texture, coords).rgb, 1.0); }\n";
 -    capture.copyProgram = createProgram(rawVertex, rawFragment);
 -    if (!capture.copyProgram) return {};
 +    if (!capture.copyProgram) {
@@ -587,56 +653,55 @@ diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
 +    }
      glUseProgram(capture.copyProgram);
      glViewport(0, 0, outWidth, outHeight);
-@@ -790,6 +958,6 @@
+     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
      glBindTexture(GL_TEXTURE_2D, capture.source);
 -    glUniform1i(glGetUniformLocation(capture.copyProgram, "texture"), 0);
--    const float u = hwRenderTexture != 0 && hwFBOWidth > 0
--        ? std::min(1.f, static_cast<float>(outWidth) / hwFBOWidth) : 1.f;
--    const float v = hwRenderTexture != 0 && hwFBOHeight > 0
--        ? std::min(1.f, static_cast<float>(outHeight) / hwFBOHeight) : 1.f;
 +    glUniform1i(resources.textureUniform, 0);
-+    const float u = hwRenderTexture != 0 && hwFBOWidth > 0
+     const float u = hwRenderTexture != 0 && hwFBOWidth > 0
+-        ? std::min(1.f, static_cast<float>(outWidth) / hwFBOWidth) : 1.f;
 +        ? std::min(1.f, static_cast<float>(sourceWidth) / hwFBOWidth) : 1.f;
-+    const float v = hwRenderTexture != 0 && hwFBOHeight > 0
+     const float v = hwRenderTexture != 0 && hwFBOHeight > 0
+-        ? std::min(1.f, static_cast<float>(outHeight) / hwFBOHeight) : 1.f;
 +        ? std::min(1.f, static_cast<float>(sourceHeight) / hwFBOHeight) : 1.f;
-@@ -798,7 +966,8 @@
+     const GLfloat vertices[] { -1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1 };
+     const GLfloat coordinates[] { 0,0, u,0, 0,v, 0,v, u,0, u,v };
 -    const GLint position = glGetAttribLocation(capture.copyProgram, "vPosition");
 -    const GLint coordinate = glGetAttribLocation(capture.copyProgram, "vCoordinate");
--    if (position < 0 || coordinate < 0) return {};
--    capture.saveAttribute(0, position);
--    capture.saveAttribute(1, coordinate);
--    glGenBuffers(1, &capture.copyBuffer);
 +    const GLint position = resources.position;
 +    const GLint coordinate = resources.coordinate;
-+    if (position < 0 || coordinate < 0) return {};
-+    capture.saveAttribute(0, position);
-+    capture.saveAttribute(1, coordinate);
+     if (position < 0 || coordinate < 0) return {};
+     capture.saveAttribute(0, position);
+     capture.saveAttribute(1, coordinate);
+-    glGenBuffers(1, &capture.copyBuffer);
 +    if (!capture.copyBuffer) glGenBuffers(1, &capture.copyBuffer);
 +    if (!capture.copyBuffer) return {};
      glBindBuffer(GL_ARRAY_BUFFER, capture.copyBuffer);
-@@ -910,2 +1079,4 @@
+     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices) + sizeof(coordinates), nullptr, GL_STREAM_DRAW);
+     glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
+@@ -940,6 +1109,8 @@
+ }
+ 
  Video::~Video() {
 +    rawCapture.release();
 +    releaseFrontendGeometry();
      for (auto& entry : shadersChain) {
-@@ -1000,11 +1171,17 @@
+         if (entry.gProgram) glDeleteProgram(entry.gProgram);
+     }
+@@ -1055,13 +1226,19 @@
+ }
+ 
  void Video::bindHWContext() {
 -    if (hwCtx != EGL_NO_CONTEXT) {
--        eglMakeCurrent(eglDisplay, eglSurface, eglSurface, hwCtx);
--    }
--}
--
--void Video::bindMainContext() {
--    if (mainCtx != EGL_NO_CONTEXT) {
 +    if (hwCtx != EGL_NO_CONTEXT &&
 +        (eglGetCurrentContext() != hwCtx || eglGetCurrentDisplay() != eglDisplay ||
 +         eglGetCurrentSurface(EGL_DRAW) != eglSurface || eglGetCurrentSurface(EGL_READ) != eglSurface)) {
 +        GameTraceScope trace("AmbientGame EGL core context");
-+        eglMakeCurrent(eglDisplay, eglSurface, eglSurface, hwCtx);
-+    }
-+}
-+
-+void Video::bindMainContext() {
+         eglMakeCurrent(eglDisplay, eglSurface, eglSurface, hwCtx);
+     }
+ }
+ 
+ void Video::bindMainContext() {
+-    if (mainCtx != EGL_NO_CONTEXT) {
 +    if (mainCtx != EGL_NO_CONTEXT &&
 +        (eglGetCurrentContext() != mainCtx || eglGetCurrentDisplay() != eglDisplay ||
 +         eglGetCurrentSurface(EGL_DRAW) != eglSurface || eglGetCurrentSurface(EGL_READ) != eglSurface)) {
@@ -745,7 +810,7 @@ diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main
 -    fun getMemorySize(memoryType: Int): Int = runOnGLThread {
 +    fun getMemorySize(memoryType: Int): Int = runOnGLThread(wakePresentation = false) {
          LibretroDroid.getMemorySize(memoryType)
-     } ?: 0
+     }
 @@ -551,3 +551,4 @@
 -    fun captureRawFrame(): Bitmap? = runOnGLThread {
 -        val data = LibretroDroid.captureRawFrame()
