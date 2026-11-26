@@ -35,9 +35,10 @@ object BrowseWorkBudget {
 
     /** Observe the start epoch, not just a Boolean: a very short game session still
      * invalidates older speculative work. Cancel blocking calls on IO, not the UI thread. */
-    suspend fun <T> interruptOnGameStart(cancel: () -> Unit, block: suspend () -> T): T = coroutineScope {
+    suspend fun <T> interruptOnGameStart(
+        cancel: () -> Unit, epoch: Long = gameEpoch(), block: suspend () -> T,
+    ): T = coroutineScope {
         val routing = com.ambient.tv.ui.gamepad.GameInputRouting
-        val epoch = gameEpoch()
         check(gameFreeSince(epoch)) { "Game owns foreground" }
         val watcher = launch(Dispatchers.IO) {
             routing.gameStartEpoch.first { it != epoch }

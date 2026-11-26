@@ -4,11 +4,17 @@ import android.view.KeyEvent
 import com.ambient.tv.data.browse.BrowseWorkBudget
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import com.ambient.tv.ui.keyboard.KeyAction
+import com.ambient.tv.tvheadend.data.TvheadendHtspHbbtv
+import java.io.DataInputStream
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test
@@ -158,4 +164,43 @@ class GameInputRoutingTest {
         assertTrue(gameTracksKey(KeyEvent.KEYCODE_BUTTON_MODE))
         assertTrue(gameTracksKey(KeyEvent.KEYCODE_DPAD_CENTER))
     }
+
+    @Test fun oldEpochCannotStartNewNetworkWorkAfterShortGame() = runBlocking {
+        val epoch = BrowseWorkBudget.gameEpoch()
+        GameInputRouting.attach(first, GameInputMode.RUNNING, {})
+        GameInputRouting.detach(first)
+        var started = false
+        val result = runCatching {
+            BrowseWorkBudget.interruptOnGameStart({}, epoch) { started = true }
+        }
+        assertTrue(result.isFailure)
+        assertFalse(started)
+    }
+
+    @Test fun startingGameActivelyClosesBlockedHtspProbe() = runBlocking {
+        ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { server ->
+            server.soTimeout = 5_000
+            Socket().use { socket ->
+                val epoch = BrowseWorkBudget.gameEpoch()
+                val work = async(Dispatchers.IO) {
+                    runCatching {
+                        BrowseWorkBudget.interruptOnGameStart({ socket.close() }, epoch) {
+                            TvheadendHtspHbbtv.discover(socket, "127.0.0.1", server.localPort, "", "")
+                        }
+                    }
+                }
+                server.accept().use { peer ->
+                    peer.soTimeout = 5_000
+                    // Receive the hello frame header but deliberately never reply:
+                    // the probe is waiting for input until its exact socket is closed.
+                    assertTrue(DataInputStream(peer.getInputStream()).readInt() > 0)
+                    GameInputRouting.attach(first, GameInputMode.RUNNING, {})
+                    GameInputRouting.detach(first)
+                    assertTrue(withTimeout(2_000) { work.await() }.isFailure)
+                    assertTrue(socket.isClosed)
+                }
+            }
+        }
+    }
+
 }

@@ -1,7 +1,9 @@
 package com.ambient.tv.ui.games
 
 import com.swordfish.libretrodroid.GameRenderEvents
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -46,4 +48,43 @@ class GameRenderEventsTest {
         assertEquals(2, seen.count { it == "surface" })
         assertEquals(2, seen.count { it == "frame" })
     }
+
+    @Test fun newSurfaceDoesNotReplayFrameFromPreviousGeneration() = runTest {
+        val stream = GameRenderEvents("surface", "frame")
+        stream.surfaceCreated()
+        stream.frameRendered(0)
+        stream.surfaceCreated()
+        val seen = mutableListOf<String>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            stream.events.toList(seen)
+        }
+        runCurrent()
+        assertEquals(listOf("surface"), seen)
+        stream.frameRendered(1)
+        runCurrent()
+        assertEquals(listOf("surface", "frame"), seen)
+    }
+
+    @Test fun replacementWhileCollectorIsSuspendedDiscardsOldFrame() = runTest {
+        val stream = GameRenderEvents("surface", "frame")
+        stream.surfaceCreated()
+        stream.frameRendered(0)
+        val resume = CompletableDeferred<Unit>()
+        val seen = mutableListOf<String>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            stream.events.collect { event ->
+                seen += event
+                if (seen.size == 1) resume.await()
+            }
+        }
+        runCurrent()
+        stream.surfaceCreated()
+        resume.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("surface", "surface"), seen)
+        stream.frameRendered(1)
+        runCurrent()
+        assertEquals(listOf("surface", "surface", "frame"), seen)
+    }
+
 }

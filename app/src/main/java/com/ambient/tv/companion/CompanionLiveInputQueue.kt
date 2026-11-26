@@ -3,8 +3,9 @@ package com.ambient.tv.companion
 import java.util.ArrayDeque
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.selects.onTimeout
 import kotlinx.coroutines.selects.select
-import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * A bounded-latency input mailbox shared by the phone gamepad and the ordinary TV touchpad.
@@ -120,9 +121,6 @@ internal class CompanionLiveInputQueue(
         return sendEdge(frame)
     }
 
-    @Synchronized private fun hasPendingInput(): Boolean =
-        !overflowed && (edges.isNotEmpty() || gamepadMotion != null || remoteMotion != null)
-
     private fun takeContinuousLocked(): CompanionFrame? {
         gamepadMotion?.let { gamepadMotion = null; return it }
         remoteMotion?.let { remoteMotion = null; return it }
@@ -139,6 +137,7 @@ internal class CompanionLiveInputQueue(
 
     private sealed interface Wake {
         data object Input : Wake
+        data object Timeout : Wake
         data class Normal(val frame: CompanionFrame) : Wake
     }
 
@@ -146,24 +145,24 @@ internal class CompanionLiveInputQueue(
      * The normal command stream is never delayed if gamepad control is idle. The wake-up channel
      * is conflated: one pending notification is enough however fast the phone sensor samples.
      */
+    @OptIn(ExperimentalCoroutinesApi::class)
     suspend fun receive(normal: Channel<CompanionFrame>, timeoutMs: Long): CompanionFrame? {
         poll(normal)?.let { return it }
-        // A deadline may cancel this select. Consume only a notification
-        // within the timeout; dequeue actual input after it has completed.
-        val wake = withTimeoutOrNull(timeoutMs) {
-            var next: Wake? = null
-            while (next == null) {
-                next = select<Wake?> {
-                    signal.onReceive { if (hasPendingInput()) Wake.Input else null }
-                    normal.onReceive { Wake.Normal(it) }
-                }
+        val start = System.nanoTime()
+        while (true) {
+            val remaining = timeoutMs.coerceAtLeast(0) - (System.nanoTime() - start) / 1_000_000L
+            if (remaining <= 0L) return null
+            // Timeout is a competing select clause, not a coroutine cancellation.
+            // Once a normal receive wins, a timer cannot discard the accepted command.
+            when (val wake = select<Wake> {
+                signal.onReceive { Wake.Input }
+                normal.onReceive { Wake.Normal(it) }
+                onTimeout(remaining) { Wake.Timeout }
+            }) {
+                Wake.Input -> poll(normal)?.let { return it }
+                is Wake.Normal -> return wake.frame
+                Wake.Timeout -> return null
             }
-            next
-        }
-        return when (wake) {
-            Wake.Input -> poll(normal)
-            is Wake.Normal -> wake.frame
-            null -> null
         }
     }
 

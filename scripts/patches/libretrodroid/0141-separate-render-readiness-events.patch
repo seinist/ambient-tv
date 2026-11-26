@@ -35,32 +35,49 @@ diff --git a/src/main/java/com/swordfish/libretrodroid/GameRenderEvents.kt b/src
 new file mode 100644
 --- /dev/null
 +++ b/src/main/java/com/swordfish/libretrodroid/GameRenderEvents.kt
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,45 @@
 +package com.swordfish.libretrodroid
 +
-+import kotlinx.coroutines.ExperimentalCoroutinesApi
-+import kotlinx.coroutines.channels.BufferOverflow
-+import kotlinx.coroutines.flow.MutableSharedFlow
-+import kotlinx.coroutines.flow.merge
-+import kotlinx.coroutines.flow.buffer
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.collect
++import kotlinx.coroutines.flow.flow
 +
-+/** GL-thread producer; independent sticky readiness and sampled status streams. */
++/** GL-thread producer; readiness and sampled frame status share one generation snapshot. */
 +class GameRenderEvents<T>(private val surface: T, private val frame: T) {
-+    private val surfaceEvents = MutableSharedFlow<T>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-+    private val frameEvents = MutableSharedFlow<T>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-+    @OptIn(ExperimentalCoroutinesApi::class)
-+    val events = merge(surfaceEvents, frameEvents).buffer(0)
++    private data class Snapshot(val generation: Long = 0, val frames: Long = 0)
++    private val state = MutableStateFlow(Snapshot())
 +    private var lastFrameNs: Long? = null
++
++    // A new collector gets the current surface, then only a frame belonging
++    // to that generation. StateFlow conflates progress without queuing old frames.
++    val events = flow {
++        var seenGeneration = 0L
++        var seenFrame = 0L
++        state.collect { snapshot ->
++            if (snapshot.generation != seenGeneration) {
++                seenGeneration = snapshot.generation
++                seenFrame = 0
++                emit(surface)
++            }
++            // Emitting readiness can suspend. Recheck before delivering its frame
++            // so a surface replaced during that suspension cannot replay old evidence.
++            if (snapshot.frames != seenFrame && state.value.generation == snapshot.generation) {
++                seenFrame = snapshot.frames
++                emit(frame)
++            }
++        }
++    }
 +
 +    fun surfaceCreated() {
 +        lastFrameNs = null
-+        surfaceEvents.tryEmit(surface)
++        state.value = Snapshot(generation = state.value.generation + 1)
 +    }
 +
 +    fun frameRendered(nowNs: Long) {
 +        val previous = lastFrameNs
 +        if (previous != null && nowNs - previous < 100_000_000L) return
 +        lastFrameNs = nowNs
-+        frameEvents.tryEmit(frame)
++        val current = state.value
++        state.value = current.copy(frames = current.frames + 1)
 +    }
 +}

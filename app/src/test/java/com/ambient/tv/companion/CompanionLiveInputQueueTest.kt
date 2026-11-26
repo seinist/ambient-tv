@@ -8,6 +8,10 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -185,4 +189,40 @@ class CompanionLiveInputQueueTest {
         assertEquals(7L, state.sequence)
         q.close()
     }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test fun normalCommandAtReceiveDeadlineIsReturnedOrRemainsQueuedExactlyOnce() = runTest {
+        val q = CompanionLiveInputQueue()
+        val normal = Channel<CompanionFrame>(1)
+        val command = CompanionFrame(type = "start")
+        var received: CompanionFrame? = null
+        val consumer = launch(start = CoroutineStart.UNDISPATCHED) {
+            received = q.receive(normal, 100)
+        }
+        advanceTimeBy(100) // The receive and the timer are both eligible at this instant.
+        assertTrue(normal.trySend(command).isSuccess)
+        runCurrent()
+        consumer.join()
+        assertEquals(command, received ?: q.poll(normal))
+        assertNull(q.poll(normal))
+        q.close()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test fun expiredReceiveDoesNotConsumeLaterNormalCommand() = runTest {
+        val q = CompanionLiveInputQueue()
+        val normal = Channel<CompanionFrame>(1)
+        val command = CompanionFrame(type = "status")
+        val consumer = launch(start = CoroutineStart.UNDISPATCHED) {
+            assertNull(q.receive(normal, 100))
+        }
+        advanceTimeBy(100)
+        runCurrent()
+        consumer.join()
+        assertTrue(normal.trySend(command).isSuccess)
+        assertEquals(command, q.poll(normal))
+        assertNull(q.poll(normal))
+        q.close()
+    }
+
 }
