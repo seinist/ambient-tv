@@ -277,12 +277,13 @@ class PlaybackAvailability @Inject constructor(
         if (!moonlight.get().locallyPaired(hostId)) return answer(false, true)
         suspend fun verify(): PlaybackAccessResult {
             if (!current()) return answer(false)
+            val token = moonlightStore.get().beginRequest(hostId) ?: return answer(false, true)
             val check = hosts.begin(system)
             val result = withTimeoutOrNull(25_000L) {
                 withContext(Dispatchers.IO) {
                     suspendResult {
                         val catalog = moonlight.get().applications(hostId)
-                        if (current()) moonlightStore.get().putCatalog(hostId, catalog)
+                        if (current()) moonlightStore.get().putCatalog(hostId, catalog, token)
                         catalog.apps.any { it.id == appId }
                     }
                 }
@@ -293,7 +294,8 @@ class PlaybackAvailability @Inject constructor(
                 hosts.online(check)
                 return answer(result.getOrNull() == true)
             }
-            moonlightStore.get().markOffline(hostId)
+            if (authenticationFailure(result?.exceptionOrNull())) moonlightStore.get().invalidateCatalog(hostId, token)
+            else moonlightStore.get().markOffline(hostId, token)
             return answer(false, authenticationFailure(result?.exceptionOrNull()))
         }
         val first = verify()

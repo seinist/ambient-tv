@@ -30,6 +30,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import androidx.tv.material3.Surface
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -212,10 +213,16 @@ internal fun MoonlightRefreshWhileVisible(model: MoonlightLibraryViewModel) {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(lifecycle, model) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            while (isActive) {
-                model.load()
-                delay(30_000)
-            }
+            model.enter()
+            try {
+                kotlinx.coroutines.coroutineScope {
+                    launch { model.observeRecovery() }
+                    while (isActive) {
+                        delay(30_000)
+                        model.load()
+                    }
+                }
+            } finally { model.leave() }
         }
     }
 }

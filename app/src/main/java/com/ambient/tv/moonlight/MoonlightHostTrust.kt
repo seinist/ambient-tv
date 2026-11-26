@@ -26,16 +26,25 @@ class MoonlightHostTrust @Inject constructor(@EncryptedPrefs private val prefs: 
     private val changes = MutableStateFlow(0L)
     val revisions = changes.asStateFlow()
     private val epochs = mutableMapOf<String, Long>()
+    private val identityMemo = mutableMapOf<String, Pair<String, String>>()
     @Synchronized fun epoch(hostId: String): Long = epochs[hostId] ?: 0L
     @Synchronized fun httpsPort(hostId: String): Int = prefs.getInt("moonlight_https_port_$hostId", 0).takeIf { it in 1..65535 } ?: 0
     fun isPaired(hostId: String): Boolean = read(hostId) != null
     fun trustedServerId(hostId: String): String? = read(hostId)?.first
     /** A device-local cache key includes both authenticated UUID and exact certificate. */
-    @Synchronized fun identity(hostId: String): String? = read(hostId)?.let { (id, cert) ->
+    @Synchronized fun identity(hostId: String): String? {
+        if (!validHostId(hostId)) return null
+        val raw = prefs.getString(key(hostId), null) ?: return null
         val nonce = prefs.getString("moonlight_peer_nonce_$hostId", "").orEmpty()
+        val lookup = raw + ":" + nonce
+        identityMemo[hostId]?.takeIf { it.first == lookup }?.let { return it.second }
+        val (id, cert) = read(hostId) ?: return null
         val material = id.toByteArray(Charsets.UTF_8) + byteArrayOf(0) + cert
-        MessageDigest.getInstance("SHA-256").digest(if (nonce.isEmpty()) material else material + nonce.toByteArray())
+        val identity = MessageDigest.getInstance("SHA-256")
+            .digest(if (nonce.isEmpty()) material else material + nonce.toByteArray())
             .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        identityMemo[hostId] = lookup to identity
+        return identity
     }
 
     fun check(hostId: String, candidate: MoonlightVerifiedPeer): MoonlightTrustResult {
@@ -69,6 +78,7 @@ class MoonlightHostTrust @Inject constructor(@EncryptedPrefs private val prefs: 
     @Synchronized fun clear(hostId: String) {
         if (!validHostId(hostId)) return
         epochs[hostId] = epoch(hostId) + 1
+        identityMemo.remove(hostId)
         prefs.edit().remove(key(hostId)).remove("moonlight_peer_nonce_$hostId")
             .remove("moonlight_https_port_$hostId").apply()
         changes.value++

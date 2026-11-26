@@ -181,14 +181,19 @@ class MoonlightSettingsViewModel @Inject constructor(
         }
     }
 
+    fun cancelPairing() { pairJob?.cancel() }
+
     /** The application catalog comes exclusively from pinned mutually authenticated HTTPS. */
     fun loadApplications(hostId: String) {
         if (!transport.available || !transport.locallyPaired(hostId) || mutable.value.loadingAppsId != null) return
         viewModelScope.launch {
             mutable.update { it.copy(loadingAppsId = hostId, error = null) }
             try {
+                val token = libraryStore.beginRequest(hostId) ?: throw SecurityException("Moonlight host not paired")
                 val catalog = transport.applications(hostId)
-                mutable.update { it.copy(appLists = it.appLists + (hostId to catalog.apps)) }
+                if (kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    libraryStore.putCatalog(hostId, catalog, token)
+                }) mutable.update { it.copy(appLists = it.appLists + (hostId to catalog.apps)) }
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (_: SecurityException) {

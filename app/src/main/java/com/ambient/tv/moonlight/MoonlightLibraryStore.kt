@@ -10,6 +10,10 @@ import kotlinx.serialization.encodeToString
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 @Serializable
 data class MoonlightHostCatalog(
@@ -34,6 +38,29 @@ class MoonlightLibraryStore @Inject constructor(
     private val artworkDir = File(context.filesDir, "moonlight_artwork").apply { mkdirs() }
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val lock = Any()
+    private val artworkLock = Any()
+    private val io = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private data class Cached(val identity: String, val value: MoonlightHostCatalog)
+    private val catalogs = mutableMapOf<String, Cached>()
+    private val requestIds = mutableMapOf<String, Long>()
+    private var sequence = 0L
+    private var artworkBytes = -1L
+    private val negativeArtwork = LinkedHashMap<String, Long>()
+    private val mutableAvailability = MutableStateFlow(0L)
+    val availabilityRevisions = mutableAvailability.asStateFlow()
+    private val mutableArtworkChanges = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val artworkChanges = mutableArtworkChanges.asStateFlow()
+
+    data class Request internal constructor(val hostId: String, val identity: String, val revision: Long)
+    fun beginRequest(hostId: String): Request? = synchronized(lock) {
+        val identity = trust.identity(hostId) ?: return null
+        val revision = ++sequence
+        requestIds[hostId] = revision
+        Request(hostId, identity, revision)
+    }
+    fun isCurrent(request: Request): Boolean = synchronized(lock) {
+        requestIds[request.hostId] == request.revision && trust.identity(request.hostId) == request.identity
+    }
     private val mutableRevisions = MutableStateFlow(0L)
     val revisions = mutableRevisions.asStateFlow()
     private val mutableMetadataRevisions = MutableStateFlow(0L)
@@ -53,10 +80,17 @@ class MoonlightLibraryStore @Inject constructor(
         moonlightProbeFresh(identity, probe.first, probe.second, android.os.SystemClock.elapsedRealtime())
     }
 
-    fun markOffline(hostId: String) = synchronized(lock) { online.remove(hostId); Unit }
+    fun markOffline(hostId: String, request: Request? = null) = synchronized(lock) {
+        if (request != null && !isCurrent(request)) return@synchronized
+        requestIds[hostId] = ++sequence
+        if (online.remove(hostId) != null) mutableAvailability.value++
+    }
 
-    fun invalidateCatalog(hostId: String) = synchronized(lock) {
-        online.remove(hostId)
+    fun invalidateCatalog(hostId: String, request: Request? = null) = synchronized(lock) {
+        if (request != null && !isCurrent(request)) return@synchronized
+        requestIds[hostId] = ++sequence
+        if (online.remove(hostId) != null) mutableAvailability.value++
+        catalogs.remove(hostId)
         if (prefs.contains("catalog:$hostId")) {
             prefs.edit().remove("catalog:$hostId").apply()
             changed()
@@ -68,12 +102,15 @@ class MoonlightLibraryStore @Inject constructor(
         if (!prefix.matches(hostId)) return null
         val pinned = trust.trustedServerId(hostId) ?: return null
         val identity = trust.identity(hostId) ?: return null
-        val text = prefs.getString("catalog:$hostId", null)?.takeIf { it.length <= 384 * 1024 } ?: return null
+        catalogs[hostId]?.takeIf { it.identity == identity }?.let { return it.value }
+        val text = prefs.getString("catalog:$hostId", null)?.takeIf { it.length <= MAX_CATALOG_CHARS } ?: return null
         val cached = runCatching { json.decodeFromString<MoonlightHostCatalog>(text) }.getOrNull()
-        cached?.takeIf { it.serverId == pinned && it.peerIdentity == identity && it.apps.size <= 4096 }
+            ?.takeIf { it.serverId == pinned && it.peerIdentity == identity && it.apps.size <= 4096 }
+        cached?.also { catalogs[hostId] = Cached(identity, it) }
     }
 
-    fun putCatalog(hostId: String, catalog: MoonlightAppCatalog) = synchronized(lock) {
+    fun putCatalog(hostId: String, catalog: MoonlightAppCatalog, request: Request? = null): Boolean = synchronized(lock) {
+        if (request != null && !isCurrent(request)) return false
         require(prefix.matches(hostId))
         val serverId = trust.trustedServerId(hostId)
             ?: throw SecurityException("Cannot cache applications for an unpaired host")
@@ -81,13 +118,17 @@ class MoonlightLibraryStore @Inject constructor(
         if (catalog.peerIdentity != identity) throw SecurityException("Moonlight catalog identity changed")
         val apps = catalog.apps.filter { it.id > 0 && it.title.isNotBlank() }.take(4096)
         val old = catalog(hostId)
-        val value = json.encodeToString(MoonlightHostCatalog(
-            serverId, System.currentTimeMillis(), apps, identity,
-        ))
-        require(value.length <= 384 * 1024)
-        prefs.edit().putString("catalog:$hostId", value).apply()
+        val cached = MoonlightHostCatalog(serverId, System.currentTimeMillis(), apps, identity)
+        // The XML parser permits 1 MiB and up to 4096 apps; escaped JSON can be larger.
+        // A valid live catalog remains usable even if persistence is unavailable.
+        val value = json.encodeToString(cached)
+        if (value.length <= MAX_CATALOG_CHARS) prefs.edit().putString("catalog:$hostId", value).apply()
+        catalogs[hostId] = Cached(identity, cached)
+        val wasOnline = isRecentlyOnline(hostId)
         online[hostId] = identity to android.os.SystemClock.elapsedRealtime()
+        if (!wasOnline) mutableAvailability.value++
         if (old?.apps != apps) changed()
+        true
     }
 
     fun favorites(): Set<String> = synchronized(lock) {
@@ -121,54 +162,101 @@ class MoonlightLibraryStore @Inject constructor(
     fun peerIdentity(hostId: String): String? = trust.identity(hostId)
 
     fun artworkFile(hostId: String, appId: Int): File? {
-        if (!prefix.matches(hostId) || appId <= 0) return null
+        if (!validMoonlightHostId(hostId) || appId <= 0) return null
         val identity = trust.identity(hostId) ?: return null
-        return File(artworkDir, "$hostId-$identity-$appId.img").takeIf { it.isFile && it.length() in 1..MAX_IMAGE_BYTES.toLong() }
+        val target = File(artworkDir, "$hostId/$identity/$appId.img")
+        return target.takeIf { it.isFile && it.length() in 1..MAX_IMAGE_BYTES.toLong() }
+            ?: File(artworkDir, "$hostId-$identity-$appId.img")
+                .takeIf { it.isFile && it.length() in 1..MAX_IMAGE_BYTES.toLong() }
+    }
+
+    private fun artworkKey(hostId: String, appId: Int, identity: String) = "$hostId:$identity:$appId"
+
+    fun shouldLoadArtwork(hostId: String, appId: Int, identity: String): Boolean {
+        if (trust.identity(hostId) != identity) return false
+        val now = android.os.SystemClock.elapsedRealtime()
+        val file = artworkFile(hostId, appId)
+        val fresh = file?.let { System.currentTimeMillis() - it.lastModified() in 0 until 86_400_000L } == true
+        if (fresh) return false
+        return synchronized(artworkLock) { (negativeArtwork[artworkKey(hostId, appId, identity)] ?: 0L) <= now }
+    }
+
+    fun artworkUnavailable(hostId: String, appId: Int, identity: String) = synchronized(artworkLock) {
+        negativeArtwork[artworkKey(hostId, appId, identity)] = android.os.SystemClock.elapsedRealtime() + 120_000L
+        while (negativeArtwork.size > 2048) negativeArtwork.remove(negativeArtwork.keys.first())
     }
 
     /** Caller has already fetched image bytes over mutually authenticated, pinned HTTPS. */
-    fun saveArtwork(hostId: String, appId: Int, bytes: ByteArray, expectedIdentity: String): File? = synchronized(lock) {
-        if (!prefix.matches(hostId) || appId <= 0 || trust.identity(hostId) != expectedIdentity ||
+    fun saveArtwork(hostId: String, appId: Int, bytes: ByteArray, expectedIdentity: String): File? {
+        if (!validMoonlightHostId(hostId) || appId <= 0 || trust.identity(hostId) != expectedIdentity ||
             bytes.size !in 1..MAX_IMAGE_BYTES) return null
         val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
         android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         if (bounds.outWidth !in 1..4096 || bounds.outHeight !in 1..4096 ||
             bounds.outWidth.toLong() * bounds.outHeight > 8_388_608L) return null
-        val target = File(artworkDir, "$hostId-$expectedIdentity-$appId.img")
-        val temporary = File(artworkDir, "$hostId-$expectedIdentity-$appId.part")
-        try {
-            temporary.writeBytes(bytes)
-            if (!temporary.renameTo(target)) {
+        return synchronized(artworkLock) {
+            if (trust.identity(hostId) != expectedIdentity) return@synchronized null
+            val directory = File(artworkDir, "$hostId/$expectedIdentity").apply { mkdirs() }
+            val target = File(directory, "$appId.img")
+            val temporary = File(directory, "$appId.part")
+            try {
+                if (artworkBytes < 0) artworkBytes = artworkDir.walkTopDown().filter { it.isFile && it.extension == "img" }.sumOf(File::length)
+                val previousLength = target.length()
+                temporary.writeBytes(bytes)
+                if (!temporary.renameTo(target)) { temporary.delete(); return@synchronized null }
+                artworkBytes += bytes.size - previousLength
+                negativeArtwork.remove(artworkKey(hostId, appId, expectedIdentity))
+                trimArtwork()
+                val revision = mutableArtworkRevisions.value + 1
+                val changes = LinkedHashMap(mutableArtworkChanges.value)
+                val item = "$hostId:$appId"
+                changes.remove(item)
+                changes[item] = revision
+                while (changes.size > 1024) changes.remove(changes.keys.first())
+                mutableArtworkChanges.value = changes
+                synchronized(lock) { changed(metadata = false) }
+                target
+            } catch (_: Exception) {
                 temporary.delete()
-                return null
+                null
             }
-            trimArtwork()
-            changed(metadata = false)
-            target
-        } catch (_: Exception) {
-            temporary.delete()
-            null
         }
     }
 
-    fun clearHost(hostId: String) = synchronized(lock) {
-        if (!prefix.matches(hostId)) return
-        online.remove(hostId)
-        prefs.edit().remove("catalog:$hostId").putStringSet(
-            "favorites", favorites().filterNot { it.startsWith("$hostId:") }.toSet(),
-        ).putString("recent", recent().filterNot { it.startsWith("$hostId:") }.joinToString("|")).apply()
-        artworkDir.listFiles()?.filter { it.name.startsWith("$hostId-") }?.forEach(File::delete)
-        changed()
+    fun clearHost(hostId: String) {
+        if (!validMoonlightHostId(hostId)) return
+        synchronized(lock) {
+            requestIds[hostId] = ++sequence
+            catalogs.remove(hostId)
+            if (online.remove(hostId) != null) mutableAvailability.value++
+            prefs.edit().remove("catalog:$hostId").putStringSet(
+                "favorites", favorites().filterNot { it.startsWith("$hostId:") }.toSet(),
+            ).putString("recent", recent().filterNot { it.startsWith("$hostId:") }.joinToString("|")).apply()
+            changed()
+        }
+        // Do not hold the metadata lock across disk I/O or delete a new pairing's artwork.
+        io.launch {
+            synchronized(artworkLock) {
+                val current = trust.identity(hostId)
+                File(artworkDir, hostId).listFiles()?.filter { it.name != current }?.forEach { it.deleteRecursively() }
+                // Older experimental flat filenames are harmless but use exact host-id matching.
+                val legacy = Regex(Regex.escape(hostId) + "-[a-f0-9]{64}-[0-9]+\\.(img|part)")
+                artworkDir.listFiles()?.filter { it.isFile && legacy.matches(it.name) &&
+                    (current == null || !it.name.startsWith("$hostId-$current-")) }?.forEach(File::delete)
+                negativeArtwork.keys.removeAll { it.startsWith("$hostId:") }
+                artworkBytes = -1L
+            }
+        }
     }
 
     private fun trimArtwork() {
-        val images = artworkDir.listFiles()?.filter { it.isFile && it.name.endsWith(".img") } ?: return
-        var total = images.sumOf(File::length)
-        if (total <= MAX_CACHE_BYTES) return
-        for (file in images.sortedBy(File::lastModified)) {
-            if (total <= MAX_CACHE_BYTES) break
+        if (artworkBytes <= MAX_CACHE_BYTES) return
+        val images = artworkDir.walkTopDown().filter { it.isFile && it.extension == "img" }
+            .sortedBy(File::lastModified).toList()
+        for (file in images) {
+            if (artworkBytes <= MAX_CACHE_BYTES * 9 / 10) break
             val length = file.length()
-            if (file.delete()) total -= length
+            if (file.delete()) artworkBytes -= length
         }
     }
 
@@ -183,6 +271,7 @@ class MoonlightLibraryStore @Inject constructor(
     }
 
     private companion object {
+        const val MAX_CATALOG_CHARS = 2 * 1024 * 1024
         const val MAX_IMAGE_BYTES = 3 * 1024 * 1024
         const val MAX_CACHE_BYTES = 120L * 1024 * 1024
     }

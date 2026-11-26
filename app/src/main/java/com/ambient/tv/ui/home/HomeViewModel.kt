@@ -594,13 +594,28 @@ class HomeViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            combine(moonlightStore.revisions, appPreferences.changes().onStart { emit(Unit) }) { revision, _ ->
+            combine(moonlightStore.metadataRevisions, appPreferences.changes().onStart { emit(Unit) }) { revision, _ ->
                 Triple(revision, appPreferences.moonlightEnabled to appPreferences.moonlightHosts,
                     appPreferences.homeRows.filter { it.enabled &&
                         it.system == HomeRowDefinition.SYSTEM_MOONLIGHT })
             }.distinctUntilChanged().drop(1).collectLatest {
                 delay(150)
                 if (hasEntered && !plexOnly && !jellyfinOnly && !embyOnly) loadMoonlightRows()
+            }
+        }
+    }
+
+    init {
+        viewModelScope.launch {
+            var seen = moonlightStore.artworkRevisions.value
+            moonlightStore.artworkChanges.collectLatest { changes ->
+                val changedKeys = changes.filterValues { it > seen }.keys
+                if (changedKeys.isEmpty()) return@collectLatest
+                delay(200)
+                val displayed = moonlightRows.flatMap { row -> row.items.mapNotNull { parseMoonlightHomeKey(it.ratingKey) } }
+                    .map { (host, app) -> "$host:$app" }.toSet()
+                if (hasEntered && displayed.any { it in changedKeys }) loadMoonlightRows()
+                seen = changes.values.maxOrNull() ?: seen
             }
         }
     }

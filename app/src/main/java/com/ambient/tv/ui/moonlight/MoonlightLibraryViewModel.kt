@@ -8,6 +8,9 @@ import com.ambient.tv.data.browse.BrowseLoadPriority
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.collect
 import com.ambient.tv.moonlight.MoonlightApp
 import com.ambient.tv.moonlight.MoonlightHost
@@ -91,22 +94,32 @@ class MoonlightLibraryViewModel @Inject constructor(
     private val store: MoonlightLibraryStore,
     private val machineWake: com.ambient.tv.wol.MachineWake,
     private val browse: BrowseLoadCoordinator,
+    private val reconnects: com.ambient.tv.data.browse.BrowseReconnects,
+    private val connectivity: com.ambient.tv.connectivity.HostConnectivity,
 ) : ViewModel() {
     private val mutable = MutableStateFlow(MoonlightLibraryUiState(view = prefs.moonlightLibraryView))
     val state: StateFlow<MoonlightLibraryUiState> = mutable.asStateFlow()
     private val inflightArtwork = HashSet<Pair<String, Boolean>>()
     private val hostSlots = Semaphore(2)
     private var fetch: Job? = null
+    private var visible = false
+    private var localRevision = 0L
+    private val artworkJobs = mutableSetOf<Job>()
 
     init {
-        viewModelScope.launch { store.metadataRevisions.collectLatest { reloadLocal() } }
+        viewModelScope.launch {
+            combine(store.metadataRevisions, store.availabilityRevisions,
+                prefs.changes().onStart { emit(Unit) }) { metadata, online, _ ->
+                Triple(metadata, online, prefs.moonlightEnabled to prefs.moonlightHosts)
+            }.distinctUntilChanged().collectLatest { reloadLocal() }
+        }
         viewModelScope.launch { store.artworkRevisions.collect { version ->
             mutable.update { it.copy(artworkVersion = version) }
         } }
-        viewModelScope.launch { prefs.changes().collectLatest { reloadLocal() } }
     }
 
     private suspend fun reloadLocal() {
+        val revision = ++localRevision
         val snapshot = withContext(Dispatchers.IO) {
             val hosts = if (prefs.moonlightEnabled && transport.available) prefs.moonlightHosts else emptyList()
             MoonlightLibraryUiState(
@@ -117,6 +130,7 @@ class MoonlightLibraryViewModel @Inject constructor(
                 favorites = store.favorites(), recent = store.recent(),
             )
         }
+        if (revision != localRevision) return
         mutable.update { current ->
             current.copy(hosts = snapshot.hosts, catalogs = snapshot.catalogs,
                 onlineHosts = snapshot.onlineHosts, pairedHosts = snapshot.pairedHosts,
@@ -153,50 +167,76 @@ class MoonlightLibraryViewModel @Inject constructor(
 
     fun artwork(game: MoonlightBrowseGame): File? = store.artworkFile(game.host.id, game.app.id)
 
-    fun load(force: Boolean = false) {
-        if (!transport.available || fetch?.isActive == true) return
+    fun enter() { visible = true; load() }
+    fun leave() {
+        visible = false
+        fetch?.cancel()
+        fetch = null
+        artworkJobs.toList().forEach { it.cancel() }
+    }
+
+    suspend fun observeRecovery() {
+        var seen = com.ambient.tv.data.browse.browseReconnectVersion(reconnects.revisions.value, setOf("moonlight"))
+        reconnects.revisions.collect {
+            val next = com.ambient.tv.data.browse.browseReconnectVersion(it, setOf("moonlight"))
+            if (next > seen) { seen = next; load(force = true) }
+        }
+    }
+
+    fun load(force: Boolean = false, onlyHost: String? = null) {
+        if (!visible || !transport.available) return
+        val previous = fetch
+        if (previous?.isActive == true && !force) return
+        if (force) previous?.cancel()
         fetch = viewModelScope.launch {
+            previous?.join()
             reloadLocal()
             val snapshot = mutable.value
-            val paired = snapshot.hosts.filter { it.id in snapshot.pairedHosts &&
-                (force || it.id !in snapshot.onlineHosts) }
+            val paired = snapshot.hosts.filter { (onlyHost == null || it.id == onlyHost) &&
+                it.id in snapshot.pairedHosts && (force || it.id !in snapshot.onlineHosts) }
             coroutineScope {
                 paired.map { host ->
                     async {
                         hostSlots.withPermit {
                             mutable.update { it.copy(loadingHosts = it.loadingHosts + host.id) }
+                            val identity = store.peerIdentity(host.id)
                             try {
-                                val identity = store.peerIdentity(host.id)
-                                    ?: throw SecurityException("Moonlight host not paired")
-                                val catalog = browse.request("moonlight", "catalog:${host.id}:$identity",
+                                if (identity == null) throw SecurityException("Moonlight host not paired")
+                                // Single-flight owns one request token, even with two browse consumers.
+                                browse.request("moonlight", "catalog:${host.id}:$identity:${host.host}:${host.port}",
                                     BrowseLoadPriority.VISIBLE) {
-                                    transport.applications(host.id).also { store.putCatalog(host.id, it) }
+                                    val token = store.beginRequest(host.id) ?: throw SecurityException("Moonlight host not paired")
+                                    val check = connectivity.begin("moonlight:" + host.id)
+                                    try {
+                                        val catalog = transport.applications(host.id)
+                                        if (prefs.moonlightHosts.any { it == host } && store.putCatalog(host.id, catalog, token))
+                                            connectivity.online(check)
+                                    } catch (error: SecurityException) {
+                                        store.invalidateCatalog(host.id, token)
+                                        throw error
+                                    } catch (cancel: CancellationException) { throw cancel }
+                                    catch (error: Exception) {
+                                        store.markOffline(host.id, token)
+                                        throw error
+                                    }
                                 }
-                                if (store.peerIdentity(host.id) != identity ||
-                                    prefs.moonlightHosts.none { it == host }) return@withPermit
-                                mutable.update { state ->
-                                    if (state.hosts.none { it.id == host.id }) state
-                                    else state.copy(
-                                        catalogs = state.catalogs + (host.id to catalog.apps),
-                                        onlineHosts = state.onlineHosts + host.id,
-                                        errors = state.errors - host.id,
-                                    )
+                                if (store.peerIdentity(host.id) == identity && prefs.moonlightHosts.any { it == host }) {
+                                    reloadLocal()
+                                    mutable.update { it.copy(errors = it.errors - host.id) }
                                 }
                             } catch (cancel: CancellationException) {
                                 throw cancel
                             } catch (_: SecurityException) {
-                                withContext(Dispatchers.IO) { store.invalidateCatalog(host.id) }
-                                mutable.update { it.copy(
-                                    catalogs = it.catalogs - host.id, onlineHosts = it.onlineHosts - host.id,
-                                    errors = it.errors + (host.id to "identity"),
-                                ) }
+                                if (store.peerIdentity(host.id) == identity && prefs.moonlightHosts.any { it == host }) {
+                                    reloadLocal()
+                                    mutable.update { it.copy(errors = it.errors + (host.id to "identity")) }
+                                }
                             } catch (_: Exception) {
                                 // Previously authenticated cached titles remain browseable, but not playable.
-                                store.markOffline(host.id)
-                                mutable.update { it.copy(
-                                    onlineHosts = it.onlineHosts - host.id,
-                                    errors = it.errors + (host.id to "offline"),
-                                ) }
+                                if (store.peerIdentity(host.id) == identity && prefs.moonlightHosts.any { it == host }) {
+                                    reloadLocal()
+                                    mutable.update { it.copy(errors = it.errors + (host.id to "offline")) }
+                                }
                             } finally {
                                 mutable.update { it.copy(loadingHosts = it.loadingHosts - host.id) }
                             }
@@ -208,29 +248,40 @@ class MoonlightLibraryViewModel @Inject constructor(
     }
 
     fun prioritizeArtwork(game: MoonlightBrowseGame, visible: Boolean = true) {
-        if (game.host.id !in mutable.value.onlineHosts) return
+        if (!visible || game.host.id !in mutable.value.onlineHosts) return
         val key = game.key to visible
         synchronized(inflightArtwork) {
             if ((!visible && (game.key to true) in inflightArtwork) || !inflightArtwork.add(key)) return
         }
-        viewModelScope.launch {
+        val job = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
                 val identity = withContext(Dispatchers.IO) {
-                    if (store.artworkFile(game.host.id, game.app.id) != null) null
-                    else store.peerIdentity(game.host.id)
+                    store.peerIdentity(game.host.id)?.takeIf {
+                        store.shouldLoadArtwork(game.host.id, game.app.id, it)
+                    }
                 } ?: return@launch
                 // The same key allows a new focus request to promote queued background work.
                 browse.request("moonlight", "art:${game.key}:$identity",
                     if (visible) BrowseLoadPriority.VISIBLE else BrowseLoadPriority.BACKGROUND) {
-                    if (store.artworkFile(game.host.id, game.app.id) == null) {
-                        val data = transport.artwork(game.host.id, game.app.id)
-                        store.saveArtwork(game.host.id, game.app.id, data, identity)
+                    if (store.shouldLoadArtwork(game.host.id, game.app.id, identity)) {
+                        try {
+                            val data = transport.artwork(game.host.id, game.app.id)
+                            if (store.saveArtwork(game.host.id, game.app.id, data, identity) == null)
+                                store.artworkUnavailable(game.host.id, game.app.id, identity)
+                        } catch (cancel: CancellationException) { throw cancel }
+                        catch (error: Exception) {
+                            store.artworkUnavailable(game.host.id, game.app.id, identity)
+                            throw error
+                        }
                     }
                 }
             } catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) { /* No cover is a valid Sunshine catalog case. */ }
             finally { synchronized(inflightArtwork) { inflightArtwork.remove(key) } }
         }
+        artworkJobs.add(job)
+        job.invokeOnCompletion { viewModelScope.launch { artworkJobs.remove(job) } }
+        job.start()
     }
 
     /**
@@ -254,10 +305,10 @@ class MoonlightLibraryViewModel @Inject constructor(
             try {
                 val result = machineWake.wakeAndAwait(request,
                     stillCurrent = { prefs.moonlightHosts.any { it == host } },
-                    alreadyAwake = { false })
+                    alreadyAwake = { connectivity.verifySystem("moonlight:" + host.id) })
                 if (result == com.ambient.tv.wol.ManualWakeCoordinator.Outcome.AWAKE) {
                     fetch?.join()
-                    load(force = true)
+                    load(force = true, onlyHost = host.id)
                 }
             } finally {
                 mutable.update { it.copy(wakingHosts = it.wakingHosts - host.id) }
