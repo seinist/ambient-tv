@@ -76,6 +76,18 @@ fun quotedBuildConfigString(value: String): String =
 
 // Rewrites only the text between version markers in both READMEs (idempotent; no commit).
 // versionName: -PversionName (release builds pass the tag without "v") or VERSION_NAME from version.properties.
+// Explicit native performance experiments must never overwrite the production app.
+val libretroNativeProfile = providers.gradleProperty("LIBRETRO_NATIVE_PROFILE")
+    .orElse(providers.environmentVariable("LIBRETRO_NATIVE_PROFILE"))
+    .orElse("baseline").get()
+val libretroNativeExperiment = libretroNativeProfile != "baseline"
+require(libretroNativeProfile in setOf("baseline", "o3", "thinlto", "o3-thinlto")) {
+    "Unknown LIBRETRO_NATIVE_PROFILE: $libretroNativeProfile"
+}
+require(!libretroNativeExperiment || providers.gradleProperty("LIBRETRO_NATIVE_EXPERIMENT").orNull == "true") {
+    "Native performance candidates require -PLIBRETRO_NATIVE_EXPERIMENT=true; production builds use baseline."
+}
+
 val appVersionName: String = (project.findProperty("versionName") as? String)?.trim()?.takeIf(String::isNotEmpty)
     ?: loadProjectProperties("version.properties").getProperty("VERSION_NAME", "").trim().takeIf(String::isNotEmpty)
     ?: error("version.properties must contain VERSION_NAME")
@@ -339,6 +351,11 @@ android {
             applicationIdSuffix = providers.gradleProperty("AUDIT_APP_SUFFIX").orNull
         }
         release {
+            if (libretroNativeExperiment) {
+                applicationIdSuffix = ".nativeperf." + libretroNativeProfile.replace("-", "")
+                versionNameSuffix = "-nativeperf-$libretroNativeProfile"
+                signingConfig = signingConfigs.getByName("debug")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -351,7 +368,7 @@ android {
             isMinifyEnabled = false
             isShrinkResources = false
             isDebuggable = false
-            applicationIdSuffix = ".profilecapture"
+            applicationIdSuffix = if (libretroNativeExperiment) ".profilecapture.nativeperf." + libretroNativeProfile.replace("-", "") else ".profilecapture"
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release")
         }
