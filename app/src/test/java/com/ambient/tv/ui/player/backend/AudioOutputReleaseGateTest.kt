@@ -102,7 +102,7 @@ class AudioOutputReleaseGateTest {
         assertEquals(listOf(PreviousReleaseOutcome.READY_AFTER_FAILURE), outcomes)
     }
 
-    @Test fun hungTeardownTimesOutOnceAndNoLongerBlocksLaterStarts() {
+    @Test fun hungTeardownTimesOutOnceButRetainsOwnershipUntilCompletion() {
         val gate = AudioOutputReleaseGate()
         val hung = gate.beginRelease()
         val timers = Timers()
@@ -110,8 +110,13 @@ class AudioOutputReleaseGateTest {
         gate.snapshot().whenSettled(delay = timers.delay) { outcomes += it }
         timers.fire()
         assertEquals(listOf(PreviousReleaseOutcome.TIMED_OUT), outcomes)
+        assertEquals(1, gate.pendingCount())
+        val next = gate.snapshot()
+        assertFalse(next.isDone)
         // Finishing late does not report a second time.
         hung.complete(Unit)
+        assertTrue(next.isDone)
+        gate.snapshot()
         assertEquals(1, outcomes.size)
         assertEquals(0, gate.pendingCount())
         assertTrue(gate.snapshot().isDone)
