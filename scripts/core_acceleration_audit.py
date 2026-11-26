@@ -6,7 +6,7 @@ import shlex
 DRIVER = re.compile(r"(?:[\w.-]+-)?clang(?:\+\+)?(?:-\d+)?")
 COMPILER_COMMAND = re.compile(r"^\s*(?:\d{4}-\d{2}-\d{2}T[^ ]+Z\s+)?(?:\S*/)?(?:[\w.-]+-)?clang(?:\+\+)?(?:-\d+)?(?:\s|$)")
 SOURCE = re.compile(r"\.(?:c|cc|cpp|cxx|C|s|S|asm)$")
-AUDITED = {"gpsp", "pcsx_rearmed", "mupen64plus_next_gles3", "picodrive"}
+AUDITED = {"gpsp", "pcsx_rearmed", "mupen64plus_next_gles3", "picodrive", "parallel_n64", "mednafen_psx_hw", "swanstation"}
 
 
 def expand_response(tokens, cwd, root, depth=0):
@@ -118,6 +118,21 @@ def requirements(core, abi, profile):
             result["parallel_rsp"] = ("parallel.cpp", (("HAVE_PARALLEL_RSP", "1"),))
             result["parallel_rdp"] = ("new_dynarec/new_dynarec.c", (("HAVE_PARALLEL_RDP", "1"),))
         return result
+    if core == "parallel_n64":
+        result = {"parallel_rsp": ("mupen64plus-rsp-paraLLEl/parallel.cpp", (("HAVE_PARALLEL_RSP", "1"),)),
+                  "parallel_rdp": ("mupen64plus-video-paraLLEl/parallel.c", (("HAVE_PARALLEL", "1"),))}
+        if arm:
+            result["dynarec"] = ("new_dynarec/new_dynarec.c", (("DYNAREC", "1"), ("NEW_DYNAREC", "4" if arm64 else "3")))
+        return result
+    if core == "mednafen_psx_hw":
+        return {"lightrec": ("lightrec/lightrec.c", (("HAVE_LIGHTREC", "1"),)),
+                "threaded_recompiler": ("lightrec/recompiler.c", (("ENABLE_THREADED_COMPILER", "1"), ("HAVE_VULKAN", "1")))}
+    if core == "swanstation" and abi != "x86":
+        arch = {"arm64-v8a": "aarch64", "armeabi-v7a": "aarch32", "x86_64": "x64"}[abi]
+        macros = (("WITH_RECOMPILER", "1"),)
+        if abi in {"arm64-v8a", "x86_64"}:
+            macros += (("WITH_MMAP_FASTMEM", "1"),)
+        return {"dynarec": ("cpu_recompiler_code_generator_" + arch + ".cpp", macros)}
     if core == "picodrive" and (abi == "armeabi-v7a" or profile == "picodrive-sh2"):
         return {"sh2_dynarec": ("cpu/sh2/compiler.c", (("DRC_SH2", "1"),))}
     return {}
