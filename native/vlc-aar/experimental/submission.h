@@ -29,7 +29,7 @@ public:
     Submission(VkDevice device, QueueDispatch dispatch) : device_(device), d_(dispatch) {}
     Submission(const Submission &) = delete;
     Submission &operator=(const Submission &) = delete;
-    ~Submission() { if (!submitted_ || completed_) destroy(); }
+    ~Submission() { if (!submitted_ || (completed_ && !handed_off_)) destroy(); }
 
     // cmd must have recorded paired foreign acquire/release barriers around all
     // sampling, and be executable. No caller-owned semaphores are consumed.
@@ -75,7 +75,7 @@ public:
     }
 
     VkResult return_decoder_image() {
-        if (!accepted_ || completed_ || !lease_ || !lease_->has_decoder_image() || !lease_->allows_early_return() || export_attempted_)
+        if (!accepted_ || completed_ || handed_off_ || !lease_ || !lease_->has_decoder_image() || !lease_->allows_early_return() || export_attempted_)
             return VK_ERROR_INITIALIZATION_FAILED;
         export_attempted_ = true;
         UniqueFd release_fd;
@@ -83,6 +83,35 @@ public:
         if (result != VK_SUCCESS) return result;
         return lease_->return_with_fence(release_fd, true)
             ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED;
+    }
+
+    // Transfer the conversion-complete binary semaphore to the libplacebo
+    // consumer. Unlike sync-fd export, this keeps the Vulkan semaphore alive
+    // until the consumer's own hold/reclaim submission has completed.
+    VkSemaphore handoff_ready_semaphore() {
+        if (!accepted_ || completed_ || handed_off_ || export_attempted_)
+            return VK_NULL_HANDLE;
+        handed_off_ = true;
+        return release_;
+    }
+
+    bool retire_after_consumer(bool consumer_done) {
+        if (!consumer_done || !completed_ || !handed_off_) return false;
+        handed_off_ = false;
+        destroy();
+        return true;
+    }
+
+    // Shutdown only: caller has proven that all producer AND consumer work
+    // on the shared queue completed, including an uncertain submit.
+    bool drain_after_idle(bool queue_idle) {
+        if (!queue_idle) return false;
+        if (lease_ && !lease_->complete(true, true)) return false;
+        lease_ = nullptr;
+        completed_ = true;
+        handed_off_ = false;
+        destroy();
+        return true;
     }
 
     // Nonblocking retirement. Even if the decoder already received its fence,
@@ -95,11 +124,11 @@ public:
         if (!lease_->complete(true, true)) return VK_ERROR_INITIALIZATION_FAILED;
         completed_ = true;
         lease_ = nullptr;
-        destroy();
+        if (!handed_off_) destroy();
         return VK_SUCCESS;
     }
 
-    bool can_retire() const { return !submitted_ || completed_; }
+    bool can_retire() const { return !submitted_ || (completed_ && !handed_off_); }
     bool uncertain() const { return submitted_ && !accepted_; }
 
 private:
@@ -121,5 +150,6 @@ private:
     bool accepted_ = false;
     bool completed_ = false;
     bool export_attempted_ = false;
+    bool handed_off_ = false;
 };
 } // namespace ambient::vlc_ahb
