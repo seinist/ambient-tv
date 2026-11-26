@@ -2996,10 +2996,13 @@ internal class MpvPlaybackEngine(
             runCatching { MpvNativeBridge.nativeCommand(handle, arrayOf("async", "stop")) }
                 .onFailure { Timber.w(it, "MPV async stop before destroy failed") }
         }
-        finishDvPrime()
-        sdrToHdr.reset()
-        imageScope.cancel()
-        detachVideoOutput()
+        fun cleanup(action: () -> Unit) {
+            runCatching(action).onFailure { Timber.w(it, "MPV ancillary release failed") }
+        }
+        cleanup { finishDvPrime() }
+        cleanup { sdrToHdr.reset() }
+        cleanup { imageScope.cancel() }
+        cleanup { detachVideoOutput() }
         released = true
         stopEventPump()
         MpvNativeBridge.nativeDestroy(handle)
