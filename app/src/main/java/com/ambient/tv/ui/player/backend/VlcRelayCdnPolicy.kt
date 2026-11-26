@@ -12,6 +12,11 @@ import java.net.UnknownHostException
  */
 internal fun vlcRelayCdnUrlAllowed(url: HttpUrl): Boolean {
     val host = url.host.lowercase(java.util.Locale.ROOT).trimEnd('.')
+    // Some HTTP stacks do not invoke DNS for an IP literal. Reject private literal
+    // addresses here too; do not resolve ordinary DNS names in the manifest parser.
+    if (':' in host || host.all { it in '0'..'9' || it == '.' }) {
+        if (!runCatching { vlcRelayPublicAddress(InetAddress.getByName(host)) }.getOrDefault(false)) return false
+    }
     return url.scheme == "https" && url.port == 443 &&
         url.username.isEmpty() && url.password.isEmpty() &&
         ('.' in host || ':' in host) &&
