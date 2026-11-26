@@ -365,7 +365,7 @@
     <string name="settings_mpv_hdr_gpu_direct_hint">HDR runs through the graphics once a filter is selected. Direct in the player sends HDR to the TV.</string>
     <string name="image_mpv_hdr_shader_hint">With HDR, only sharpening, deband and some scalers apply.</string>
     <string name="player_output_hdr_gpu_surface_unverifiable">GPU path not available, HDR goes straight to the TV.</string>
-    <string name="settings_mpv_zero_copy_locked">An earlier playback failed with this. MPV uses the safer picture path until the app is updated.</string>
+    <string name="settings_mpv_zero_copy_locked">An earlier playback failed with this. MPV uses the safer picture path for affected sources until retry or reset.</string>
     <string name="settings_mpv_zero_copy_reset">Clear the lock</string>
     <string name="settings_mpv_zero_copy_reset_done">The faster picture path is tried again on the next playback.</string>
 </resources>
