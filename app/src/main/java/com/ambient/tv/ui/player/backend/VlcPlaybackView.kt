@@ -242,9 +242,8 @@ class VlcPlaybackController(
     // Separate audio has an independent upstream and capability. Never forward the primary
     // video's credentials to a different origin; both URLs must be explicit HTTP media files.
     private val audioAuthProxy: AuthenticatedStreamProxy? =
-        if (needsHeaderRelay && audioSlaveUrl != null && vlcDirectHttpRelaySupported(audioSlaveUrl) &&
-            vlcSameHttpOrigin(url, audioSlaveUrl))
-            runCatching { AuthenticatedStreamProxy(audioSlaveUrl, headers.toMap()) }.getOrNull() else null
+        audioSlaveUrl?.takeIf { needsHeaderRelay && vlcDirectHttpRelaySupported(it) && vlcSameHttpOrigin(url, it) }
+            ?.let { audioUrl -> runCatching { AuthenticatedStreamProxy(audioUrl, headers.toMap()) }.getOrNull() }
     var errorMessage by mutableStateOf<String?>(null)
         private set
     var ended by mutableStateOf(false)
