@@ -1,5 +1,6 @@
 package com.ambient.tv.companion
 
+import java.util.ArrayDeque
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.selects.select
@@ -20,18 +21,29 @@ internal class CompanionLiveInputQueue(
     private val onOverflow: () -> Unit = {},
     private val edgeCapacity: Int = 64,
 ) {
-    private val edges = Channel<CompanionFrame>(edgeCapacity)
+    init { require(edgeCapacity > 0) }
+    // One monitor protects both the discrete FIFO and the replaceable samples.
+    // The signal is a wake-up only; select must never dequeue from a second,
+    // independently synchronized queue.
+    private val edges = ArrayDeque<CompanionFrame>(edgeCapacity)
+    private val signal = Channel<Unit>(Channel.CONFLATED)
     private var overflowed = false
 
-    /** A full FIFO is a broken transport, not an excuse to discard UP/release and stick keys. */
+    /** Caller holds this monitor. A full FIFO must close the TLS session. */
     private fun sendEdge(frame: CompanionFrame): Boolean {
         if (overflowed) return false
-        if (edges.trySend(frame).isSuccess) return true
+        if (edges.size < edgeCapacity) {
+            edges.addLast(frame)
+            signal.trySend(Unit)
+            return true
+        }
         overflowed = true
+        edges.clear()
+        gamepadMotion = null
+        remoteMotion = null
         onOverflow() // The owner closes this TLS connection so the TV clears all held input.
         return false
     }
-    private val signal = Channel<Unit>(Channel.CONFLATED)
     private var gamepadMotion: CompanionFrame? = null
     private var remoteMotion: CompanionFrame? = null
 
@@ -99,14 +111,36 @@ internal class CompanionLiveInputQueue(
         }
     }
 
-    @Synchronized private fun takeContinuous(): CompanionFrame? {
+    /** A remote lease release must follow all queued input, never stale motion after release. */
+    @Synchronized fun offerRemoteRelease(frame: CompanionFrame): Boolean {
+        require(frame.type == "input_release")
+        if (overflowed) return false
+        remoteMotion?.let { if (!sendEdge(it)) return false }
+        remoteMotion = null
+        return sendEdge(frame)
+    }
+
+    @Synchronized private fun hasPendingInput(): Boolean =
+        !overflowed && (edges.isNotEmpty() || gamepadMotion != null || remoteMotion != null)
+
+    private fun takeContinuousLocked(): CompanionFrame? {
         gamepadMotion?.let { gamepadMotion = null; return it }
         remoteMotion?.let { remoteMotion = null; return it }
         return null
     }
 
-    fun poll(normal: Channel<CompanionFrame>): CompanionFrame? =
-        edges.tryReceive().getOrNull() ?: normal.tryReceive().getOrNull() ?: takeContinuous()
+    // Checking the edge FIFO and taking a motion snapshot are one operation.
+    // Otherwise a producer can insert DOWN followed by held-axis motion
+    // between those two actions and the consumer sends the held state first.
+    @Synchronized fun poll(normal: Channel<CompanionFrame>): CompanionFrame? {
+        if (overflowed) return null
+        return edges.pollFirst() ?: normal.tryReceive().getOrNull() ?: takeContinuousLocked()
+    }
+
+    private sealed interface Wake {
+        data object Input : Wake
+        data class Normal(val frame: CompanionFrame) : Wake
+    }
 
     /**
      * The normal command stream is never delayed if gamepad control is idle. The wake-up channel
@@ -114,16 +148,22 @@ internal class CompanionLiveInputQueue(
      */
     suspend fun receive(normal: Channel<CompanionFrame>, timeoutMs: Long): CompanionFrame? {
         poll(normal)?.let { return it }
-        return withTimeoutOrNull(timeoutMs) {
-            var next: CompanionFrame? = null
+        // A deadline may cancel this select. Consume only a notification
+        // within the timeout; dequeue actual input after it has completed.
+        val wake = withTimeoutOrNull(timeoutMs) {
+            var next: Wake? = null
             while (next == null) {
-                next = select {
-                    edges.onReceive { it }
-                    normal.onReceive { it }
-                    signal.onReceive { takeContinuous() }
+                next = select<Wake?> {
+                    signal.onReceive { if (hasPendingInput()) Wake.Input else null }
+                    normal.onReceive { Wake.Normal(it) }
                 }
             }
             next
+        }
+        return when (wake) {
+            Wake.Input -> poll(normal)
+            is Wake.Normal -> wake.frame
+            null -> null
         }
     }
 
@@ -137,9 +177,8 @@ internal class CompanionLiveInputQueue(
         while (true) {
             val result = select<Pair<CompanionFrame?, Boolean>> {
                 replies.onReceive { it to true }
-                edges.onReceive { it to false }
+                signal.onReceive { poll(normal) to false }
                 normal.onReceive { it to false }
-                signal.onReceive { takeContinuous() to false }
             }
             result.first?.let { return it to result.second }
         }
@@ -148,10 +187,10 @@ internal class CompanionLiveInputQueue(
     fun close() {
         synchronized(this) {
             overflowed = true
+            edges.clear()
             gamepadMotion = null
             remoteMotion = null
         }
-        edges.close()
         signal.close()
     }
 }

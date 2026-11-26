@@ -375,7 +375,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         // Another picture choice, scope change or settings reload wins over stale IO.
         if (pendingPackChoice !== request) return@LaunchedEffect
         pendingPackChoice = null
-        if (verified != null && GameSettings.state == request.previousSettings) {
+        if (verified != null && request.stillApplies(GameSettings.state, system, game.saveKey)) {
             resolvedPack = GameShaderPackResolution(request.selection, verified)
             GameSettings.update {
                 it.withPackShader(system, game.saveKey.takeIf { request.forGame }, request.selection)

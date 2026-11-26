@@ -1,5 +1,10 @@
 package com.ambient.tv.companion
 
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.concurrent.thread
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -104,6 +109,63 @@ class CompanionLiveInputQueueTest {
         q.close()
         assertFalse(q.offerGamepad(pad(0), critical = false))
         assertFalse(q.offerRemote(move(0.1f)))
+    }
+
+    @Test fun producerCannotInsertAnEdgeBetweenEmptyCheckAndMotionDequeue() {
+        val q = CompanionLiveInputQueue()
+        val normal = Channel<CompanionFrame>(1)
+        val started = CountDownLatch(1)
+        val received = AtomicReference<CompanionFrame?>()
+        val consumer = thread(start = false, isDaemon = true) {
+            started.countDown()
+            received.set(q.poll(normal))
+        }
+        synchronized(q) {
+            consumer.start()
+            assertTrue(started.await(2, TimeUnit.SECONDS))
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+            while (consumer.state != Thread.State.BLOCKED && System.nanoTime() < deadline)
+                Thread.yield()
+            assertEquals(Thread.State.BLOCKED, consumer.state)
+            assertTrue(q.offerGamepad(pad(1), critical = true))
+            assertTrue(q.offerGamepad(pad(1, 0.5f), critical = false))
+        }
+        consumer.join(2000)
+        assertFalse(consumer.isAlive)
+        assertEquals(pad(1), received.get())
+        assertEquals(pad(1, 0.5f), q.poll(normal))
+        q.close()
+    }
+
+    @Test fun suspendedReceiverRechecksEdgesBeforeTakingMotion() = runBlocking {
+        val q = CompanionLiveInputQueue()
+        val normal = Channel<CompanionFrame>(1)
+        var first: CompanionFrame? = null
+        val consumer = launch(start = CoroutineStart.UNDISPATCHED) {
+            first = q.receive(normal, 1000)
+        }
+        q.offerGamepad(pad(0, 0.25f), critical = false)
+        q.offerGamepad(pad(1), critical = true)
+        q.offerGamepad(pad(1, 0.75f), critical = false)
+        consumer.join()
+        assertEquals(pad(1), first)
+        assertEquals(pad(1, 0.75f), q.poll(normal))
+        q.close()
+    }
+
+    @Test fun remoteReleaseFollowsMotionAndDiscreteKeys() {
+        val q = CompanionLiveInputQueue()
+        val normal = Channel<CompanionFrame>(1)
+        val key = CompanionFrame(type = "input", input = CompanionInput("click"))
+        val release = CompanionFrame(type = "input_release")
+        assertTrue(q.offerRemote(key))
+        assertTrue(q.offerRemote(move(0.4f)))
+        assertTrue(q.offerRemoteRelease(release))
+        assertEquals(key, q.poll(normal))
+        assertEquals(move(0.4f), q.poll(normal))
+        assertEquals(release, q.poll(normal))
+        assertNull(q.poll(normal))
+        q.close()
     }
 
     @Test fun wakeupCanSelectANewInputBeforeOutstandingReplyArrives() = runBlocking {
