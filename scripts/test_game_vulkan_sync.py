@@ -27,6 +27,8 @@ def main():
     methods = [
         "bool VulkanBackend::createFrameResources(",
         "bool VulkanBackend::allocateBridgeImage(",
+        "bool VulkanBackend::ensureSpareFrameBuffer(",
+        "bool VulkanBackend::releaseSpareFrameBuffer(",
         "bool VulkanBackend::checkFrameResult(",
         "bool VulkanBackend::waitForFrame(",
         "bool VulkanBackend::waitForSlotFrame(",

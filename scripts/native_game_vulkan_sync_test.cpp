@@ -479,6 +479,36 @@ void slotFenceAndClearContracts() {
     std::puts("PASS explicit slot clear/wait uses only the target command, image and fence");
 }
 
+void configureBridgeAllocationMocks(VulkanBackend& backend) {
+    auto& vk = backend.vk;
+    vk.getAndroidHardwareBufferProperties = [](VkDevice, const AHardwareBuffer* buffer,
+            VkAndroidHardwareBufferPropertiesANDROID* props) {
+        assert(buffer == object<AHardwareBuffer*>(101));
+        ++bridgeAllocation.propertyQueries;
+        props->allocationSize = bridgeAllocation.allocationBytes;
+        props->memoryTypeBits = bridgeAllocation.failure == 3 ? 0 : 1;
+        if (bridgeAllocation.failure == 9) return VK_ERROR_DEVICE_LOST;
+        return bridgeAllocation.failure == 2 ? VK_ERROR_OUT_OF_DEVICE_MEMORY : VK_SUCCESS;
+    };
+    vk.createImage = [](VkDevice, const VkImageCreateInfo*, const VkAllocationCallbacks*, VkImage* image) {
+        ++bridgeAllocation.imageCreates;
+        *image = object<VkImage>(102);
+        return bridgeAllocation.failure == 4 ? VK_ERROR_OUT_OF_DEVICE_MEMORY : VK_SUCCESS;
+    };
+    vk.allocateMemory = [](VkDevice, const VkMemoryAllocateInfo* info,
+            const VkAllocationCallbacks*, VkDeviceMemory* memory) {
+        assert(info->allocationSize == bridgeAllocation.allocationBytes);
+        ++bridgeAllocation.memoryAllocations;
+        *memory = object<VkDeviceMemory>(103);
+        return bridgeAllocation.failure == 5 ? VK_ERROR_OUT_OF_DEVICE_MEMORY : VK_SUCCESS;
+    };
+    vk.bindImageMemory = [](VkDevice, VkImage image, VkDeviceMemory memory, VkDeviceSize offset) {
+        assert(image == object<VkImage>(102) && memory == object<VkDeviceMemory>(103) && offset == 0);
+        ++bridgeAllocation.binds;
+        return bridgeAllocation.failure == 6 ? VK_ERROR_OUT_OF_DEVICE_MEMORY : VK_SUCCESS;
+    };
+}
+
 void bridgeBudgetAdmissionContracts() {
     using Budget = libretrodroid::VulkanBridgeAllocationBudget;
     for (unsigned failure = 0; failure <= 8; ++failure) {
@@ -488,32 +518,8 @@ void bridgeBudgetAdmissionContracts() {
         bridgeAllocation.failure = failure;
         if (failure == 7) bridgeAllocation.allocationBytes = 4097;
         if (failure == 8) bridgeAllocation.allocationBytes = 0;
+        configureBridgeAllocationMocks(backend);
         auto& vk = backend.vk;
-        vk.getAndroidHardwareBufferProperties = [](VkDevice, const AHardwareBuffer* buffer,
-                VkAndroidHardwareBufferPropertiesANDROID* props) {
-            assert(buffer == object<AHardwareBuffer*>(101));
-            ++bridgeAllocation.propertyQueries;
-            props->allocationSize = bridgeAllocation.allocationBytes;
-            props->memoryTypeBits = bridgeAllocation.failure == 3 ? 0 : 1;
-            return bridgeAllocation.failure == 2 ? VK_ERROR_OUT_OF_DEVICE_MEMORY : VK_SUCCESS;
-        };
-        vk.createImage = [](VkDevice, const VkImageCreateInfo*, const VkAllocationCallbacks*, VkImage* image) {
-            ++bridgeAllocation.imageCreates;
-            *image = object<VkImage>(102);
-            return bridgeAllocation.failure == 4 ? VK_ERROR_OUT_OF_DEVICE_MEMORY : VK_SUCCESS;
-        };
-        vk.allocateMemory = [](VkDevice, const VkMemoryAllocateInfo* info,
-                const VkAllocationCallbacks*, VkDeviceMemory* memory) {
-            assert(info->allocationSize == bridgeAllocation.allocationBytes);
-            ++bridgeAllocation.memoryAllocations;
-            *memory = object<VkDeviceMemory>(103);
-            return bridgeAllocation.failure == 5 ? VK_ERROR_OUT_OF_DEVICE_MEMORY : VK_SUCCESS;
-        };
-        vk.bindImageMemory = [](VkDevice, VkImage image, VkDeviceMemory memory, VkDeviceSize offset) {
-            assert(image == object<VkImage>(102) && memory == object<VkDeviceMemory>(103) && offset == 0);
-            ++bridgeAllocation.binds;
-            return bridgeAllocation.failure == 6 ? VK_ERROR_OUT_OF_DEVICE_MEMORY : VK_SUCCESS;
-        };
         const auto primaryBytes = backend.getFrameBufferAllocationBytes();
         const auto primary = backend.getFrameBuffer();
         const auto status = backend.getFrameStatus();
@@ -546,6 +552,94 @@ void bridgeBudgetAdmissionContracts() {
         }
     }
     std::puts("PASS production optional bridge budget admission and isolated rollback");
+}
+
+void lazySpareAllocationContracts() {
+    using Budget = libretrodroid::VulkanBridgeAllocationBudget;
+    static unsigned commandAllocations, commandFailure;
+    for (unsigned mode = 0; mode < 10; ++mode) {
+        VulkanBackend backend;
+        setup(backend);
+        bridgeAllocation = {};
+        commandAllocations = commandFailure = 0;
+        backend.frameSlot.bridgeImage.width = backend.frameSlot.bridgeImage.height = 32;
+        backend.frameSlot.bridgeImage.allocationBytes = 4096;
+        const auto primary = backend.getFrameBuffer();
+        const auto status = backend.getFrameStatus();
+        auto& vk = backend.vk;
+        configureBridgeAllocationMocks(backend);
+        vk.createCommandPool = [](VkDevice, const VkCommandPoolCreateInfo* info,
+                const VkAllocationCallbacks*, VkCommandPool* out) {
+            assert(info->flags == VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+            ++commandAllocations;
+            *out = object<VkCommandPool>(201);
+            return commandFailure == 1 ? VK_ERROR_OUT_OF_HOST_MEMORY : VK_SUCCESS;
+        };
+        vk.allocateCommandBuffers = [](VkDevice, const VkCommandBufferAllocateInfo* info,
+                VkCommandBuffer* out) {
+            assert(info->commandPool == object<VkCommandPool>(201) && info->commandBufferCount == 1);
+            ++commandAllocations;
+            *out = object<VkCommandBuffer>(202);
+            return commandFailure == 2 ? VK_ERROR_OUT_OF_HOST_MEMORY : VK_SUCCESS;
+        };
+        vk.createFence = [](VkDevice, const VkFenceCreateInfo* info, const VkAllocationCallbacks*, VkFence* out) {
+            assert(info->flags == 0);
+            ++commandAllocations;
+            *out = object<VkFence>(203);
+            return commandFailure == 3 ? VK_ERROR_OUT_OF_HOST_MEMORY : VK_SUCCESS;
+        };
+        if (mode == 1) commandFailure = 1;
+        if (mode == 2) commandFailure = 2;
+        if (mode == 3) commandFailure = 3;
+        if (mode == 4) bridgeAllocation.failure = 5;
+        if (mode == 5) bridgeAllocation.allocationBytes = 4097;
+        if (mode == 6) driver.submit = VK_ERROR_DEVICE_LOST;
+        if (mode == 7) driver.waits = {VK_ERROR_OUT_OF_HOST_MEMORY};
+        if (mode == 9) bridgeAllocation.failure = 9;
+        const auto retained = Budget::maximum - 8192;
+        assert(backend.ensureSpareFrameBuffer(mode == 8 ? std::numeric_limits<uint64_t>::max() : retained) == (mode == 0));
+        assert(backend.getFrameBuffer() == primary && backend.getFrameBufferAllocationBytes() == 4096 &&
+               backend.getFrameStatus() == status && backend.frameSlot.pool == object<VkCommandPool>(7));
+        auto& spare = backend.spareFrameSlot;
+        if (mode == 0) {
+            assert(backend.spareFramePrepared && !spare.inFlight && backend.getSpareFrameBuffer() != primary &&
+                   backend.getSpareFrameBufferAllocationBytes() == 4096);
+            assert(commandAllocations == 3 && bridgeAllocation.ahbAllocations == 1 &&
+                   driver.submits == 1 && driver.waitCalls == 1 && driver.resets == 1);
+            assert(backend.ensureSpareFrameBuffer(retained));
+            assert(!backend.ensureSpareFrameBuffer(retained + 1));
+            assert(commandAllocations == 3 && bridgeAllocation.ahbAllocations == 1 && driver.submits == 1);
+            backend.frameSlot.bridgeImage.width = 64;
+            assert(!backend.ensureSpareFrameBuffer(retained));
+            backend.frameSlot.bridgeImage.width = 32;
+            assert(backend.releaseSpareFrameBuffer() && backend.releaseSpareFrameBuffer());
+            assert(!backend.spareFramePrepared && spare.bridgeImage.empty() && !spare.pool);
+            assert(driver.imageFrees == 1 && driver.fenceFrees == 1 && driver.commandPoolFrees == 1);
+            // A resize/format/context-generation change retires the prepared
+            // spare before replacing the primary, without allocating another.
+            assert(backend.ensureSpareFrameBuffer(retained));
+            assert(backend.destroyFrameBuffer());
+            assert(!backend.spareFramePrepared && spare.bridgeImage.empty() && !spare.pool &&
+                   backend.frameSlot.bridgeImage.empty());
+            assert(driver.imageFrees == 3 && driver.bufferFrees == 3 && driver.fenceFrees == 2);
+        } else if (mode == 6 || mode == 7 || mode == 9) {
+            assert(backend.hasFatalError() && !backend.spareFramePrepared && spare.pool);
+            assert(!backend.releaseSpareFrameBuffer());
+            assert(driver.commandPoolFrees == 0 && driver.fenceFrees == 0);
+            if (mode == 7) assert(spare.inFlight && driver.pending);
+            if (mode == 9) assert(backend.getFatalError() == VK_ERROR_DEVICE_LOST && spare.bridgeImage.empty());
+            driver.idles = {VK_ERROR_DEVICE_LOST};
+            backend.shutdown();
+            assert(!backend.device && !backend.spareFramePrepared && spare.bridgeImage.empty() && !spare.pool);
+        } else {
+            assert(!backend.hasFatalError() && !backend.spareFramePrepared && !spare.pool &&
+                   !spare.command && !spare.fence && spare.bridgeImage.empty());
+            assert(driver.submits == 0 && driver.waitCalls == 0);
+            if (mode == 8) assert(commandAllocations == 0 && bridgeAllocation.ahbAllocations == 0);
+            if (mode == 4 || mode == 5) assert(driver.commandPoolFrees == 1 && driver.fenceFrees == 1);
+        }
+    }
+    std::puts("PASS lazy spare allocation, bounded reuse, rollback, resize retirement and fatal retention");
 }
 
 void frameSlotAllocationContracts() {
@@ -1423,6 +1517,7 @@ int main() {
     bridgeBudgetAdmissionContracts();
     slotFenceAndClearContracts();
     dualSlotRetirementContracts();
+    lazySpareAllocationContracts();
     slotRetirementPreflightContracts();
     timeoutsPreserveWork();
     errorsStopWorkAndResize();

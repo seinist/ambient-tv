@@ -1,0 +1,320 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -140,9 +140,20 @@
+-    // The frontend supplies EGL-retained bytes excluding the primary identity.
+-    // Optional allocations use this snapshot only on the render thread.
+-    VulkanBridgeAllocationBudget additionalBridgeAllocationBudget(std::uint64_t eglOnlyBytes) const noexcept {
+-        const auto& bridge = frameSlot.bridgeImage;
+-        return VulkanBridgeAllocationBudget::additional(
+-            bridge.buffer && bridge.image && bridge.memory ? bridge.allocationBytes : 0, eglOnlyBytes);
+-    }
++    // The frontend supplies EGL-retained bytes excluding both Vulkan identities.
++    // Optional allocations use this snapshot only on the render thread.
++    VulkanBridgeAllocationBudget additionalBridgeAllocationBudget(std::uint64_t eglOnlyBytes) const noexcept {
++        const auto& bridge = frameSlot.bridgeImage;
++        return VulkanBridgeAllocationBudget::additional(
++            bridge.buffer && bridge.image && bridge.memory ? bridge.allocationBytes : 0, eglOnlyBytes);
++    }
++
++    // Borrowed identity for budget deduplication; sampling/import is permitted
++    // only after ensureSpareFrameBuffer succeeds for the current primary geometry.
++    AHardwareBuffer* getSpareFrameBuffer() const { return spareFrameSlot.bridgeImage.buffer; }
++    std::uint64_t getSpareFrameBufferAllocationBytes() const { return spareFrameSlot.bridgeImage.allocationBytes; }
++    // Render-thread-only, caller supplies a fresh EGL-only byte count. No
++    // automatic second frame scheduling or change in core synchronization.
++    bool ensureSpareFrameBuffer(std::uint64_t eglOnlyBytes);
++    // Caller must stop selecting the spare in EGL before retirement. A retained
++    // EGL lease owns its own AHB reference, which remains counted separately.
++    bool releaseSpareFrameBuffer();
+ 
+     // No export proof is different from Vulkan's already-signaled SYNC_FD (-1).
+@@ -382,4 +393,5 @@
+     FrameSlot frameSlot;
+-    // Dormant until explicit allocation, EGL selection and scheduling are ready.
+-    FrameSlot spareFrameSlot;
++    // No GPU allocation until the optional preparation entry point is called.
++    FrameSlot spareFrameSlot;
++    bool spareFramePrepared = false;
+     VkResult fatalFrameError = VK_SUCCESS;
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -1050,15 +1050,63 @@
+ bool VulkanBackend::destroyFrameBuffer() {
+     if (device != VK_NULL_HANDLE && !shutdownReady && !waitForFrame()) return false;
+-    auto& bridge = frameSlot.bridgeImage;
+-    if (!bridge.retire(frameSlot.inFlight, device != VK_NULL_HANDLE,
+-            vk.destroyImage != nullptr, vk.freeMemory != nullptr,
+-            [&](VkImage image) { vk.destroyImage(device, image, nullptr); },
+-            [&](VkDeviceMemory memory) { vk.freeMemory(device, memory, nullptr); },
+-            [](AHardwareBuffer* buffer) { AHardwareBuffer_release(buffer); }))
+-        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "retire bridge image");
+-    frameStatus.store(0, std::memory_order_release);
++    // Resize, precision fallback and EGL-generation replacement retire the
++    // spare too, before a new primary allocation can change the budget.
++    if (!releaseSpareFrameBuffer()) return false;
++    auto& bridge = frameSlot.bridgeImage;
++    if (!bridge.retire(frameSlot.inFlight, device != VK_NULL_HANDLE,
++            vk.destroyImage != nullptr, vk.freeMemory != nullptr,
++            [&](VkImage image) { vk.destroyImage(device, image, nullptr); },
++            [&](VkDeviceMemory memory) { vk.freeMemory(device, memory, nullptr); },
++            [](AHardwareBuffer* buffer) { AHardwareBuffer_release(buffer); }))
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "retire bridge image");
++    frameStatus.store(0, std::memory_order_release);
++    return true;
++}
++
++bool VulkanBackend::ensureSpareFrameBuffer(std::uint64_t eglOnlyBytes) {
++    auto& spare = spareFrameSlot;
++    const auto& primary = frameSlot.bridgeImage;
++    // Optional setup must not stall an outstanding frame, change precision,
++    // or replace an allocation still imported by EGL.
++    if (hasFatalError() || shutdownReady || !isStarted() || frameSlot.inFlight || spare.inFlight ||
++            !primary.buffer || !primary.image || !primary.memory || !primary.width || !primary.height ||
++            !canRetireFrameSlots()) return false;
++    const auto budget = additionalBridgeAllocationBudget(eglOnlyBytes);
++    if (spareFramePrepared) {
++        const auto& bridge = spare.bridgeImage;
++        return spare.pool && spare.command && spare.fence && bridge.buffer && bridge.image && bridge.memory &&
++            bridge.width == primary.width && bridge.height == primary.height && bridge.fp16 == primary.fp16 &&
++            budget.permitsAllocation(bridge.allocationBytes);
++    }
++    if (!budget.permitsRequest(primary.width, primary.height, primary.fp16) ||
++            !spare.create(vk, device, queueFamily)) return false;
++    if (!canRetireFrameSlots())
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "aliased spare command resources");
++    if (!allocateBridgeImage(spare.bridgeImage, primary.width, primary.height, primary.fp16, budget)) {
++        // No submit has occurred. Roll back only the new slot, unless a fatal
++        // error requires the global device-idle/loss retirement path.
++        if (!hasFatalError() && !releaseSpareFrameBuffer())
++            checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "retire failed spare allocation");
++        return false;
++    }
++    if (!canRetireFrameSlots())
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "aliased spare bridge resources");
++    // A failed submit/wait is sticky and preserves ownership for shutdown.
++    if (!clearSlotImage(spare)) return false;
++    spareFramePrepared = true;
++    return true;
++}
++
++bool VulkanBackend::releaseSpareFrameBuffer() {
++    auto& spare = spareFrameSlot;
++    if (!spareFramePrepared && !spare.inFlight && !spare.pool && !spare.command && !spare.fence &&
++            spare.bridgeImage.empty() && spare.bridgeSync.empty()) return true;
++    if (hasFatalError() || shutdownReady || frameSlot.inFlight || !waitForSlotFrame(spare)) return false;
++    if (!canRetireFrameSlots() || !retireFrameSlot(spare))
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "retire spare frame slot");
++    spareFramePrepared = false;
+     return true;
+ }
+ 
+ bool VulkanBackend::ensureFrameBuffer(unsigned width, unsigned height) {
+     if (hasFatalError() || shutdownReady || !isStarted() || width == 0 || height == 0) return false;
+@@ -1094,126 +1143,134 @@
+ 
+ bool VulkanBackend::createFrameBuffer(unsigned width, unsigned height, bool fp16) {
+     if (frameSlot.inFlight || !allocateBridgeImage(frameSlot.bridgeImage, width, height, fp16,
+             VulkanBridgeAllocationBudget::primary())) return false;
+     if (!clearFrameImage()) return false;
+     LOGI("Vulkan shared frame buffer ready: %ux%u (%s)", width, height, fp16 ? "FP16" : "RGBA8");
+     return true;
+ }
+ 
+ bool VulkanBackend::allocateBridgeImage(
+         VulkanBridgeImage<AHardwareBuffer*, VkImage, VkDeviceMemory>& bridge,
+         unsigned width, unsigned height, bool fp16, VulkanBridgeAllocationBudget budget) {
+     // No GPU work is submitted here. Only this empty target may be changed;
+     // allocation failure cannot retire another slot or clear published status.
+     if (!bridge.empty() || !device || !vk.destroyImage || !vk.freeMemory ||
+             !vk.getAndroidHardwareBufferProperties || !vk.createImage || !vk.allocateMemory ||
+             !vk.bindImageMemory || !budget.permitsRequest(width, height, fp16)) return false;
+     const auto discard = [&] {
+         if (!bridge.retire(false, device != VK_NULL_HANDLE,
+                 vk.destroyImage != nullptr, vk.freeMemory != nullptr,
+                 [&](VkImage image) { vk.destroyImage(device, image, nullptr); },
+                 [&](VkDeviceMemory memory) { vk.freeMemory(device, memory, nullptr); },
+                 [](AHardwareBuffer* buffer) { AHardwareBuffer_release(buffer); }))
+             checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "retire unsubmitted bridge image");
+     };
+ 
+     AHardwareBuffer_Desc desc {};
+     desc.width = width;
+     desc.height = height;
+     desc.layers = 1;
+     const VkFormat format = fp16 ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+     if (fp16) {
+         if (vk.getPhysicalDeviceFormatProperties == nullptr) return false;
+         VkFormatProperties properties {};
+         vk.getPhysicalDeviceFormatProperties(gpu, format, &properties);
+         if ((properties.optimalTilingFeatures &
+              (VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) !=
+             (VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) {
+             LOGW("Vulkan GPU does not support FP16 framebuffer blit + sampling");
+             return false;
+         }
+     }
+     desc.format = fp16 ? AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT
+                        : AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
+     desc.usage = AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE | AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT;
+     AHardwareBuffer* newBuffer = nullptr;
+     if (AHardwareBuffer_allocate(&desc, &newBuffer) != 0) {
+         LOGW("AHardwareBuffer allocation failed for %ux%u (fp16=%d)", width, height, fp16);
+         return false;
+     }
+     bridge.buffer = newBuffer;
+ 
+     VkAndroidHardwareBufferPropertiesANDROID properties { VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_PROPERTIES_ANDROID };
+-    if (vk.getAndroidHardwareBufferProperties(device, bridge.buffer, &properties) != VK_SUCCESS) {
+-        LOGE("vkGetAndroidHardwareBufferPropertiesANDROID failed");
+-        discard();
+-        return false;
+-    }
+-
+-    // AHB allocation is needed to query the driver's size. Retire an
+-    // over-budget candidate before creating/importing Vulkan image memory.
+-    if (!budget.permitsAllocation(properties.allocationSize)) {
+-        LOGW("Vulkan bridge allocation exceeds available budget");
+-        discard();
+-        return false;
+-    }
+-
+-    VkExternalMemoryImageCreateInfo externalInfo { VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO };
+-    externalInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
+-
+-    VkImageCreateInfo imageInfo { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+-    imageInfo.pNext = &externalInfo;
+-    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+-    imageInfo.format = format;
+-    imageInfo.extent = { width, height, 1 };
+-    imageInfo.mipLevels = 1;
+-    imageInfo.arrayLayers = 1;
+-    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+-    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+-    imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+-                      VK_IMAGE_USAGE_SAMPLED_BIT;
+-    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+-    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+-    VkImage newImage = VK_NULL_HANDLE;
+-    if (vk.createImage(device, &imageInfo, nullptr, &newImage) != VK_SUCCESS) {
+-        LOGE("vkCreateImage failed for the shared frame image");
+-        discard();
+-        return false;
+-    }
+-
+-    bridge.image = newImage;
+-
+-    VkImportAndroidHardwareBufferInfoANDROID importInfo { VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID };
+-    importInfo.buffer = bridge.buffer;
+-    VkMemoryDedicatedAllocateInfo dedicatedInfo { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO };
+-    dedicatedInfo.pNext = &importInfo;
+-    dedicatedInfo.image = bridge.image;
+-
+-    VkMemoryAllocateInfo allocInfo { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+-    allocInfo.pNext = &dedicatedInfo;
+-    allocInfo.allocationSize = properties.allocationSize;
+-    if (properties.memoryTypeBits == 0) {
+-        LOGW("AHardwareBuffer has no compatible Vulkan memory type (fp16=%d)", fp16);
+-        discard();
+-        return false;
+-    }
+-    allocInfo.memoryTypeIndex = static_cast<uint32_t>(__builtin_ctz(properties.memoryTypeBits));
+-    VkDeviceMemory newMemory = VK_NULL_HANDLE;
+-    if (vk.allocateMemory(device, &allocInfo, nullptr, &newMemory) != VK_SUCCESS) {
+-        LOGE("Importing the shared frame buffer into Vulkan failed");
+-        discard();
+-        return false;
+-    }
+-    bridge.memory = newMemory;
+-    bridge.allocationBytes = properties.allocationSize;
+-    if (vk.bindImageMemory(device, bridge.image, bridge.memory, 0) != VK_SUCCESS) {
++    const VkResult propertiesResult = vk.getAndroidHardwareBufferProperties(device, bridge.buffer, &properties);
++    if (propertiesResult != VK_SUCCESS) {
++        if (propertiesResult == VK_ERROR_DEVICE_LOST) checkFrameResult(propertiesResult, "allocate bridge image");
++        LOGE("vkGetAndroidHardwareBufferPropertiesANDROID failed");
++        discard();
++        return false;
++    }
++
++    // AHB allocation is needed to query the driver's size. Retire an
++    // over-budget candidate before creating/importing Vulkan image memory.
++    if (!budget.permitsAllocation(properties.allocationSize)) {
++        LOGW("Vulkan bridge allocation exceeds available budget");
++        discard();
++        return false;
++    }
++
++    VkExternalMemoryImageCreateInfo externalInfo { VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO };
++    externalInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
++
++    VkImageCreateInfo imageInfo { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
++    imageInfo.pNext = &externalInfo;
++    imageInfo.imageType = VK_IMAGE_TYPE_2D;
++    imageInfo.format = format;
++    imageInfo.extent = { width, height, 1 };
++    imageInfo.mipLevels = 1;
++    imageInfo.arrayLayers = 1;
++    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
++    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
++    imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
++                      VK_IMAGE_USAGE_SAMPLED_BIT;
++    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
++    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
++    VkImage newImage = VK_NULL_HANDLE;
++    const VkResult imageResult = vk.createImage(device, &imageInfo, nullptr, &newImage);
++    if (imageResult != VK_SUCCESS) {
++        if (imageResult == VK_ERROR_DEVICE_LOST) checkFrameResult(imageResult, "allocate bridge image");
++        LOGE("vkCreateImage failed for the shared frame image");
++        discard();
++        return false;
++    }
++
++    bridge.image = newImage;
++
++    VkImportAndroidHardwareBufferInfoANDROID importInfo { VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID };
++    importInfo.buffer = bridge.buffer;
++    VkMemoryDedicatedAllocateInfo dedicatedInfo { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO };
++    dedicatedInfo.pNext = &importInfo;
++    dedicatedInfo.image = bridge.image;
++
++    VkMemoryAllocateInfo allocInfo { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
++    allocInfo.pNext = &dedicatedInfo;
++    allocInfo.allocationSize = properties.allocationSize;
++    if (properties.memoryTypeBits == 0) {
++        LOGW("AHardwareBuffer has no compatible Vulkan memory type (fp16=%d)", fp16);
++        discard();
++        return false;
++    }
++    allocInfo.memoryTypeIndex = static_cast<uint32_t>(__builtin_ctz(properties.memoryTypeBits));
++    VkDeviceMemory newMemory = VK_NULL_HANDLE;
++    const VkResult memoryResult = vk.allocateMemory(device, &allocInfo, nullptr, &newMemory);
++    if (memoryResult != VK_SUCCESS) {
++        if (memoryResult == VK_ERROR_DEVICE_LOST) checkFrameResult(memoryResult, "allocate bridge image");
++        LOGE("Importing the shared frame buffer into Vulkan failed");
++        discard();
++        return false;
++    }
++    bridge.memory = newMemory;
++    bridge.allocationBytes = properties.allocationSize;
++    const VkResult bindResult = vk.bindImageMemory(device, bridge.image, bridge.memory, 0);
++    if (bindResult != VK_SUCCESS) {
++        if (bindResult == VK_ERROR_DEVICE_LOST) checkFrameResult(bindResult, "allocate bridge image");
+         LOGE("Binding the shared frame buffer into Vulkan failed");
+         discard();
+         return false;
+     }
+ 
+     bridge.width = width;
+     bridge.height = height;
+     bridge.fp16 = fp16;
+     return true;
+ }
+@@ -1980,6 +2037,7 @@
+     if (!retireFrameSlot(frameSlot) || !retireFrameSlot(spareFrameSlot)) {
+         checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "retire frame slots");
+         return; // retain the device rather than discard unretired ownership
+     }
++    spareFramePrepared = false;
+     frameStatus.store(0, std::memory_order_release);
+     if (device != VK_NULL_HANDLE) {
