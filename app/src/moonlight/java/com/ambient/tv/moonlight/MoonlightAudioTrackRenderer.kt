@@ -147,8 +147,11 @@ class MoonlightAudioTrackRenderer(private val pacing: String, private val onErro
             }
             try {
                 val now = System.nanoTime()
-                nativeQueuedMs = MoonBridge.getPendingAudioDuration().coerceAtLeast(0)
-                if (now - lastQueueSample >= 20_000_000L) {
+                // The native queue is a slow-moving latency estimate, not a per-packet
+                // requirement. Sample it at the same 20 ms cadence as the local playback
+                // head instead of taking a JNI/native lock for every decoded PCM callback.
+                if (lastQueueSample == 0L || now - lastQueueSample >= 20_000_000L) {
+                    nativeQueuedMs = MoonBridge.getPendingAudioDuration().coerceAtLeast(0)
                     val head = t.playbackHeadPosition.toLong() and 0xffffffffL
                     if (head < lastHead && lastHead - head > 0x80000000L) headEpoch += 0x100000000L
                     lastHead = head
