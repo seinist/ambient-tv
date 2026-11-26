@@ -215,14 +215,28 @@ internal fun rewriteVlcHlsManifest(
     inherited: Map<String, String>,
     localUri: (HttpUrl, Boolean, Map<String, String>) -> String,
 ): String {
-    val lines = text.removePrefix("\uFEFF").lineSequence().toList()
-    if (lines.firstOrNull()?.trim() != "#EXTM3U") throw IOException("Invalid HLS playlist")
+    val lines = text.removePrefix("\uFEFF").lineSequence()
+    val iterator = lines.iterator()
+    if (!iterator.hasNext() || iterator.next().trim() != "#EXTM3U") throw IOException("Invalid HLS playlist")
     var nextPlaylist = false
     var references = 0
     var variables: Map<String, String> = emptyMap()
     fun expand(raw: String): String {
-        val result = hlsVariable.replace(raw) { variables[it.groupValues[1]] ?: throw IOException("Undefined HLS variable") }
-        if (result.contains("{\$") || result.length > 16_384) throw IOException("Unsupported HLS variable expansion")
+        if (raw.length > 16_384) throw IOException("HLS line too large")
+        val result = buildString {
+            var offset = 0
+            for (match in hlsVariable.findAll(raw)) {
+                val value = variables[match.groupValues[1]] ?: throw IOException("Undefined HLS variable")
+                if (length + match.range.first - offset + value.length > 16_384)
+                    throw IOException("HLS variable expansion too large")
+                append(raw, offset, match.range.first)
+                append(value)
+                offset = match.range.last + 1
+            }
+            if (length + raw.length - offset > 16_384) throw IOException("HLS variable expansion too large")
+            append(raw, offset, raw.length)
+        }
+        if (result.contains("{\$")) throw IOException("Unsupported HLS variable expansion")
         return result
     }
     fun define(raw: String) {
@@ -244,7 +258,10 @@ internal fun rewriteVlcHlsManifest(
         return localUri(resolved, playlist, if (playlist) variables else emptyMap())
     }
     return buildString {
-        for (original in lines) {
+        append("#EXTM3U\n")
+        while (iterator.hasNext()) {
+            val original = iterator.next()
+            if (original.length > 16_384) throw IOException("HLS line too large")
             val originalTrimmed = original.trim()
             if (originalTrimmed.startsWith("#EXT-X-DEFINE:")) {
                 define(originalTrimmed.substringAfter(':'))
@@ -272,6 +289,8 @@ internal fun rewriteVlcHlsManifest(
                 else -> append(line)
             }
             append('\n')
+            // Bound the aggregate rewritten manifest as well as each expanded line.
+            if (length > 4 * 1024 * 1024) throw IOException("Rewritten HLS manifest too large")
         }
     }
 }
