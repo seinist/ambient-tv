@@ -1177,6 +1177,76 @@ void nativePresentFenceContracts() {
 #endif
 }
 
+void nativeSlangHistoryContracts() {
+    // A submitted shader frame is tied to the correct fence. A raw slot's
+    // completion must not advance the single temporal chain's ownership.
+    {
+        VulkanBackend backend;
+        setup(backend);
+        auto& spare = backend.spareFrameSlot;
+        spare.fence = object<VkFence>(700);
+        assert(backend.nativeSlangUse.begin(1) && backend.nativeSlangUse.markSubmitted(1));
+        spare.inFlight = true;
+        static VkFence expectedFence;
+        expectedFence = spare.fence;
+        backend.vk.waitForFences = [](VkDevice, uint32_t count, const VkFence* fence, VkBool32, uint64_t) {
+            assert(count == 1 && *fence == expectedFence);
+            ++driver.waitCalls;
+            return VK_SUCCESS;
+        };
+        backend.vk.resetFences = [](VkDevice, uint32_t count, const VkFence* fence) {
+            assert(count == 1 && *fence == expectedFence);
+            ++driver.resets;
+            return VK_SUCCESS;
+        };
+        assert(backend.waitForFrame() && !backend.nativeSlangUse.idle() && driver.waitCalls == 0);
+        assert(backend.waitForNativeSlangFrame());
+        assert(backend.nativeSlangUse.idle() && !spare.inFlight && driver.waitCalls == 1 && driver.resets == 1);
+        assert(backend.waitForNativeSlangFrame() && driver.waitCalls == 1);
+        // Mock ownership was attached only for this isolated wait test.
+        spare.fence = VK_NULL_HANDLE;
+    }
+    // A partially recorded but unsubmitted shader cannot be mistaken for a
+    // completed frame, even if another slot's fence has already retired.
+    for (bool deviceLost : {false, true}) {
+        VulkanBackend backend;
+        setup(backend);
+        assert(backend.nativeSlangUse.begin(0));
+        assert(!backend.waitForNativeSlangFrame() && backend.hasFatalError());
+        assert(!backend.canRetireFrameSlots() && driver.waitCalls == 0);
+        driver.idles = {VK_ERROR_OUT_OF_HOST_MEMORY, deviceLost ? VK_ERROR_DEVICE_LOST : VK_SUCCESS};
+        assert(!backend.waitForDeviceIdle() && !backend.nativeSlangUse.idle());
+        assert(backend.waitForDeviceIdle() && backend.nativeSlangUse.idle());
+        assert(backend.hasFatalError());
+    }
+    // Drive actual present/record/submit failure paths with a live mock chain.
+    for (unsigned mode = 0; mode < 4; ++mode) {
+        VulkanBackend backend;
+        setup(backend);
+        window(backend);
+        backend.nativeSlang.setPresetPath("preset");
+        backend.nativePresentation.setFullscreenActive(true);
+        if (mode == 1) driver.end = VK_ERROR_OUT_OF_HOST_MEMORY;
+        if (mode == 2) driver.submit = VK_ERROR_OUT_OF_HOST_MEMORY;
+        if (mode == 3) driver.waits = {VK_ERROR_OUT_OF_HOST_MEMORY};
+        assert(backend.presentFrame(256, 224, 4.0F / 3.0F, true) == (mode == 0));
+        assert(backend.nativeSlangUse.idle() == (mode == 0));
+        if (mode != 0) {
+            assert(backend.nativeSlangUse.owner() == 0);
+            assert(backend.nativeSlangUse.submitted() == (mode == 3));
+            assert(backend.hasFatalError());
+            assert(!backend.presentFrame(256, 224, 4.0F / 3.0F, true));
+            driver.submit = VK_SUCCESS; // permit abandoned WSI acquire recovery
+            driver.idles = {VK_ERROR_OUT_OF_HOST_MEMORY};
+            backend.shutdown();
+            assert(backend.device && !backend.nativeSlangUse.idle() && driver.slangReleases == 0);
+        }
+        backend.shutdown();
+        assert(!backend.device && backend.nativeSlangUse.idle() && driver.slangReleases == 1);
+    }
+    std::puts("PASS Slang history owner fence, failed recording, idle proof and teardown");
+}
+
 void abandonedWsiAcquireContracts() {
     static VkSemaphore expected;
     static unsigned drains;
@@ -1780,6 +1850,7 @@ int main() {
     wsiAcquireSlotContracts();
     abandonedWsiAcquireContracts();
     nativePresentFenceContracts();
+    nativeSlangHistoryContracts();
     filteredPresetSwitchRetainsSwapchain();
     reusableSubmitStorage();
     readFenceQueueContracts();

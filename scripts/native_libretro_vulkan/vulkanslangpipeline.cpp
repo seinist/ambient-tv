@@ -136,7 +136,9 @@ bool VulkanSlangPipeline::ensure(VkInstance instance, VkPhysicalDevice physicalD
     }
     filter_chain_vk_opt_t options {};
     options.version = LIBRASHADER_CURRENT_VERSION;
-    options.frames_in_flight = 1;    // backend waits the previous frame fence
+    // Keep one temporal chain across both bridge slots. The backend's history
+    // ownership ledger waits the last shader submission before recording again.
+    options.frames_in_flight = 1;
     options.force_no_mipmaps = false;
     options.use_dynamic_rendering = false;  // Vulkan 1.0 renderpass-compatible devices
     options.disable_cache = true;           // no writable executable shader cache

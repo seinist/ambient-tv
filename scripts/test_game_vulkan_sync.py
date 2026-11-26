@@ -32,6 +32,7 @@ def main():
         "bool VulkanBackend::checkFrameResult(",
         "bool VulkanBackend::waitForFrame(",
         "bool VulkanBackend::waitForSlotFrame(",
+        "bool VulkanBackend::waitForNativeSlangFrame(",
         "bool VulkanBackend::canImportBridgeReadFence(",
         "bool VulkanBackend::importBridgeReadFence(",
         "bool VulkanBackend::canExportBridgeWriteFence(",
@@ -211,6 +212,12 @@ def main():
             str(root / "scripts/native_game_vulkan_present_fences_test.cpp"),
             "-o", str(present_fence_binary)], check=True)
         subprocess.run([str(present_fence_binary)], check=True, timeout=20)
+
+        slang_history_binary = work / "vulkan-slang-history-use-test"
+        subprocess.run(command + ["-I", str(native / "vulkan"),
+            str(root / "scripts/native_game_vulkan_slang_history_use_test.cpp"),
+            "-o", str(slang_history_binary)], check=True)
+        subprocess.run([str(slang_history_binary)], check=True, timeout=20)
 
         alternate_binary = work / "vulkan-alternate-policy-test"
         subprocess.run(command + [str(root / "scripts/native_game_vulkan_alternate_policy_test.cpp"),
