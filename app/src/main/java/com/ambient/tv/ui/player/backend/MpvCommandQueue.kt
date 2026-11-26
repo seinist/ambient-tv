@@ -22,7 +22,10 @@ internal class MpvCommandQueue(
         var obsolete: Work? = null
         var start = false
         val accepted = synchronized(lock) {
-            if (closed || (key !in pending && pending.size >= capacity)) false
+            // Two fixed lifecycle slots remain available even under a saturated command backlog.
+            // Replacements still coalesce, so the queue remains bounded by capacity + 2.
+            val lifecycle = key == "surface-attach" || key == "surface-detach"
+            if (closed || (!lifecycle && key !in pending && pending.size >= capacity)) false
             else {
                 obsolete = pending.remove(key)
                 pending[key] = Work(action, discard, keepOnClose)
