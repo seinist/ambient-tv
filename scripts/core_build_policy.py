@@ -135,6 +135,8 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
         jobs = [(core, abi, variant) for core in chosen_cores for abi in chosen_abis for variant in variants]
     else:
         jobs = [(core, abi, profile) for core in chosen_cores for abi in chosen_abis]
+    # A baseline may already be included in the targeted smoke matrix.
+    jobs = list(dict.fromkeys(jobs))
     by_id = {entry["core"]: entry for entry in entries}
     matrix = []
     for core, abi, variant in jobs:
