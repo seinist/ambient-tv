@@ -13,6 +13,7 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 import maven_dependency as maven
 import update_maven_dependencies as cli
+import update_external_libraries as external
 
 FIXTURE = """[versions]
 media3 = "1.11.1" # keep comment
@@ -41,6 +42,16 @@ def metadata(*versions):
     return f"<metadata><versioning><versions>{entries}</versions></versioning></metadata>".encode()
 
 
+def pom(url):
+    from urllib.parse import urlsplit
+    artifact = urlsplit(url).path.split("/")[-3]
+    return f'<project xmlns="http://maven.apache.org/POM/4.0.0"><artifactId>{artifact}</artifactId></project>'.encode()
+
+
+def repository(*versions):
+    return lambda url: pom(url) if url.endswith(".pom") else metadata(*versions)
+
+
 class MavenUpdatesTest(unittest.TestCase):
     def test_numeric_and_release_stage_order(self):
         versions = ["1.12.0-rc01", "1.11.1", "1.12.0-beta10", "1.12.0-beta2",
@@ -51,6 +62,9 @@ class MavenUpdatesTest(unittest.TestCase):
         ])
         self.assertIsNone(maven.version_key("1.12.0-SNAPSHOT"))
         self.assertIsNone(maven.version_key("4.0.0-eap1"))
+        self.assertEqual(maven.version_key("1.12.0.Final"), maven.version_key("1.12.0"))
+        self.assertGreater(maven.version_key("1.12.0-M1"), maven.version_key("1.12.0-beta99"))
+        self.assertGreater(maven.version_key("1.12.0-rc01"), maven.version_key("1.12.0-M1"))
         self.assertGreater(maven.version_key("2026.10.00"), maven.version_key("2026.09.00"))
 
     def test_shared_pins_and_bom(self):
@@ -64,6 +78,8 @@ class MavenUpdatesTest(unittest.TestCase):
 
     def test_media3_release_channel_and_partial_publication(self):
         def download(url):
+            if url.endswith(".pom"):
+                return pom(url)
             if "media3-exoplayer/" in url:
                 return metadata("1.11.1", "1.12.0-rc01", "1.12.0")
             if "media3-session/" in url:
@@ -73,8 +89,36 @@ class MavenUpdatesTest(unittest.TestCase):
         self.assertEqual((stable.candidate, stable.status), ("1.11.1", "ok"))
         preview, = maven.plan(FIXTURE, download, key="media3", media3_channel="prerelease")
         self.assertEqual((preview.candidate, preview.status), ("1.12.0-rc01", "UPDATE"))
-        stable, = maven.plan(FIXTURE, lambda _: metadata("1.11.1", "1.12.0-rc01", "1.12.0"), key="media3")
+        stable, = maven.plan(FIXTURE, repository("1.11.1", "1.12.0-rc01", "1.12.0"), key="media3")
         self.assertEqual((stable.candidate, stable.status), ("1.12.0", "UPDATE"))
+
+    def test_metadata_without_all_release_poms_never_updates(self):
+        def download(url):
+            if url.endswith(".pom"):
+                if "media3-session/" in url:
+                    raise urllib.error.HTTPError(url, 404, "not published", None, None)
+                return pom(url)
+            return metadata("1.11.1", "1.12.0")
+        result, = maven.plan(FIXTURE, download, key="media3")
+        self.assertEqual(result.status, "UNAVAILABLE")
+        self.assertIn("media3-session", result.reason)
+        self.assertEqual(maven.render_catalog(FIXTURE, [result]), FIXTURE)
+
+    def test_wrong_pom_aborts_update(self):
+        def download(url):
+            if url.endswith(".pom"):
+                return b"<project><artifactId>wrong</artifactId></project>"
+            return metadata("1.11.1", "1.12.0")
+        with self.assertRaisesRegex(ValueError, "Mismatched Maven POM"):
+            maven.plan(FIXTURE, download, key="media3")
+
+    def test_legacy_libvlc_updater_respects_shared_catalog_pin(self):
+        with mock.patch.object(external, "get_bytes", return_value=metadata("3.7.8", "4.0.0")):
+            self.assertEqual(external.libvlc_latest_stable("3.8.0-rc01"), "3.8.0-rc01")
+            self.assertEqual(external.libvlc_latest_stable("3.7.9"), "3.7.9")
+            self.assertEqual(external.libvlc_latest_stable("3.7.7"), "3.7.8")
+        with mock.patch.object(external, "get_bytes", return_value=metadata("3.8.0", "4.0.0")):
+            self.assertEqual(external.libvlc_latest_stable("3.8.0-rc01"), "3.8.0")
 
     def test_no_downgrade_and_manual_toolchain(self):
         pins = maven.catalog_pins(FIXTURE)
@@ -119,7 +163,7 @@ class MavenUpdatesTest(unittest.TestCase):
             catalog.write_text(FIXTURE, encoding="utf-8")
             with mock.patch.object(cli, "CATALOG", catalog), \
                  mock.patch.dict(os.environ, {"MAVEN_CHANNEL": "stable", "MAVEN_ALLOW_MAJOR": "0"}, clear=True), \
-                 mock.patch.object(cli, "get_bytes", return_value=metadata("1.11.1", "1.12.0", "1.13.0-beta01")), \
+                 mock.patch.object(cli, "get_bytes", side_effect=repository("1.11.1", "1.12.0", "1.13.0-beta01")), \
                  contextlib.redirect_stdout(io.StringIO()):
                 with mock.patch.object(sys, "argv", ["updater", "--check", "media3"]):
                     self.assertEqual(cli.main(), 0)
