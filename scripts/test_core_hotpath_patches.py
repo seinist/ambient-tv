@@ -4,7 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core_hotpath_patches import BSNES_INPUT, prepare_hotpaths
+from core_hotpath_patches import (BSNES_INPUT, MESEN_OLD, MESEN_NEW, SAMEBOY_OLD, SAMEBOY_NEW,
+                                  prepare_hotpaths)
 
 
 class CoreHotpathTests(unittest.TestCase):
@@ -33,6 +34,100 @@ class CoreHotpathTests(unittest.TestCase):
                 prepare_hotpaths(root, "bsnes")
             with self.assertRaises(ValueError):
                 prepare_hotpaths(root, "unknown")
+
+    def test_other_pinned_anchors(self):
+        for core, relative, old, new in (
+                ("mesen", "Libretro/libretro.cpp", MESEN_OLD, MESEN_NEW),
+                ("sameboy", "libretro/libretro.c", SAMEBOY_OLD, SAMEBOY_NEW)):
+            with self.subTest(core=core), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                path = root / relative
+                path.parent.mkdir(parents=True)
+                path.write_text("before\n" + old + "\nafter")
+                prepare_hotpaths(root, core)
+                self.assertEqual(path.read_text(), "before\n" + new + "\nafter")
+                with self.assertRaises(ValueError):
+                    prepare_hotpaths(root, core)
+
+    def test_mesen_save_buffer_equivalence(self):
+        source = """
+#include <algorithm>
+#include <cassert>
+#include <cstring>
+#include <sstream>
+#include <string>
+#include <vector>
+using std::string;
+static void original(void* data, size_t size, std::stringstream& ss) {
+""" + MESEN_OLD + """
+}
+static void candidate(void* data, size_t size, std::stringstream& ss) {
+""" + MESEN_NEW + """
+}
+int main() {
+    for (size_t length = 0; length < 64; ++length)
+        for (size_t size = 0; size < 128; ++size) {
+            std::stringstream input;
+            for (size_t i = 0; i < length; ++i) input.put(static_cast<char>(i * 13));
+            std::vector<char> a(size + 16, 0x55), b = a;
+            original(a.data(), size, input);
+            candidate(b.data(), size, input);
+            assert(a == b);
+        }
+}
+"""
+        self.compile_and_run(source, "c++", "c++11", "cpp")
+
+    def test_sameboy_dual_screen_equivalence(self):
+        source = """
+#include <assert.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+static unsigned w, h, calls;
+static unsigned emulated_devices = 2;
+static int gameboy[2];
+static uint32_t src[2 * 256 * 224], original_out[2 * 256 * 224], candidate_out[2 * 256 * 224];
+static uint32_t *frame_buf = src, *frame_buf_copy;
+static unsigned GB_get_screen_width(int *gb) { (void)gb; ++calls; return w; }
+static unsigned GB_get_screen_height(int *gb) { (void)gb; ++calls; return h; }
+static void video_cb(uint32_t *data, unsigned width, unsigned height, size_t pitch) {
+    assert(data == frame_buf_copy && width == w * emulated_devices && height == h);
+    assert(pitch == width * sizeof(uint32_t));
+}
+static void original(void) {
+""" + SAMEBOY_OLD + """
+}
+static void candidate(void) {
+""" + SAMEBOY_NEW + """
+}
+int main(void) {
+    const unsigned widths[] = {160, 256};
+    const unsigned heights[] = {144, 224};
+    for (unsigned n = 0; n < 2; ++n) {
+        w = widths[n]; h = heights[n];
+        for (unsigned i = 0; i < w*h*2; ++i) src[i] = i * 0xabc123u;
+        frame_buf_copy = original_out; calls = 0; original();
+        unsigned old_calls = calls;
+        frame_buf_copy = candidate_out; calls = 0; candidate();
+        assert(memcmp(original_out, candidate_out, w*h*2*sizeof(uint32_t)) == 0);
+        assert(calls == 2 && old_calls > calls);
+    }
+}
+"""
+        self.compile_and_run(source, "cc", "c99", "c", extra=["-Wno-sign-compare"])
+
+    def compile_and_run(self, source, executable, standard, suffix, extra=()):
+        compiler = shutil.which(executable)
+        self.assertIsNotNone(compiler, f"{executable} is required")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / ("test." + suffix)
+            binary = root / "test"
+            path.write_text(source)
+            subprocess.run([compiler, "-std=" + standard, "-Wall", "-Wextra", "-Werror",
+                            "-fsanitize=undefined", *extra, str(path), "-o", str(binary)], check=True)
+            subprocess.run([str(binary)], check=True)
 
     def test_bsnes_snapshot_equivalence(self):
         compiler = shutil.which("c++")
