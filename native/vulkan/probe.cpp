@@ -32,10 +32,59 @@ struct Probe {
     ANativeWindow *window = nullptr;
     template<class T> T fn(const char *name) { return reinterpret_cast<T>(get(instance, name)); }
     ~Probe() {
-        if (surface) fn<PFN_vkDestroySurfaceKHR>("vkDestroySurfaceKHR")(instance, surface, nullptr);
-        if (instance) fn<PFN_vkDestroyInstance>("vkDestroyInstance")(instance, nullptr);
+        if (surface) {
+            auto destroy = fn<PFN_vkDestroySurfaceKHR>("vkDestroySurfaceKHR");
+            if (destroy) destroy(instance, surface, nullptr);
+        }
+        if (instance) {
+            auto destroy = fn<PFN_vkDestroyInstance>("vkDestroyInstance");
+            if (destroy) destroy(instance, nullptr);
+        }
         if (window) ANativeWindow_release(window);
         if (lib) dlclose(lib);
+    }
+    // Surface recreation does not change the device's decoder profiles or external-memory
+    // features. Recheck only the actual graphics/presentation queue and surface formats.
+    std::string validatedSurface(VkPhysicalDevice device, const VkPhysicalDeviceProperties &props) {
+        auto failure = [&](const char *why) { return "{\"device\":" + quote(props.deviceName) + ",\"version\":" +
+            std::to_string(props.apiVersion) + ",\"reason\":" + quote(why) + "}"; };
+        if (!surface) return failure("surface_create");
+        auto queues = fn<PFN_vkGetPhysicalDeviceQueueFamilyProperties>("vkGetPhysicalDeviceQueueFamilyProperties");
+        auto present = fn<PFN_vkGetPhysicalDeviceSurfaceSupportKHR>("vkGetPhysicalDeviceSurfaceSupportKHR");
+        auto formats = fn<PFN_vkGetPhysicalDeviceSurfaceFormatsKHR>("vkGetPhysicalDeviceSurfaceFormatsKHR");
+        if (!queues || !present || !formats) return failure("surface_functions");
+        uint32_t count = 0;
+        queues(device, &count, nullptr);
+        if (!count) return failure("present_queue");
+        std::vector<VkQueueFamilyProperties> families(count);
+        queues(device, &count, families.data());
+        bool supported = false;
+        for (uint32_t i = 0; i < count; ++i) {
+            if (!families[i].queueCount || !(families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)) continue;
+            VkBool32 yes = VK_FALSE;
+            if (present(device, i, surface, &yes) == VK_SUCCESS && yes) { supported = true; break; }
+        }
+        if (!supported) return failure("present_queue");
+        count = 0;
+        if (formats(device, surface, &count, nullptr) != VK_SUCCESS || !count) return failure("surface_formats");
+        std::vector<VkSurfaceFormatKHR> values(count);
+        if (formats(device, surface, &count, values.data()) != VK_SUCCESS || !count) return failure("surface_formats");
+        values.resize(count);
+        std::ostringstream out;
+        out << "{\"render\":true,\"reason\":\"\",\"device\":" << quote(props.deviceName)
+            << ",\"version\":" << props.apiVersion << ",\"surfaceColorSpaces\":[";
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (i) out << ',';
+            out << static_cast<int>(values[i].colorSpace);
+        }
+        out << "],\"surfaceFormats\":[";
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (i) out << ',';
+            out << "{\"format\":" << static_cast<int>(values[i].format)
+                << ",\"colorSpace\":" << static_cast<int>(values[i].colorSpace) << '}';
+        }
+        out << "]}";
+        return out.str();
     }
     std::string run(JNIEnv *env, jobject javaSurface, const char *validatedDevice = nullptr, uint32_t validatedVersion = 0) {
         if (!get) return "{\"reason\":\"loader\"}";
@@ -44,6 +93,7 @@ struct Probe {
         if (enumerate(nullptr, &count, nullptr) != VK_SUCCESS) return "{}";
         std::vector<VkExtensionProperties> ext(count);
         if (enumerate(nullptr, &count, ext.data()) != VK_SUCCESS) return "{}";
+        ext.resize(count);
         if (!has(ext, VK_KHR_SURFACE_EXTENSION_NAME) || !has(ext, VK_KHR_ANDROID_SURFACE_EXTENSION_NAME))
             return "{\"reason\":\"android_surface\"}";
         uint32_t version = VK_API_VERSION_1_0;
@@ -72,6 +122,7 @@ struct Probe {
         if (devices(instance, &count, nullptr) != VK_SUCCESS) return "{}";
         std::vector<VkPhysicalDevice> physical(count);
         if (devices(instance, &count, physical.data()) != VK_SUCCESS) return "{}";
+        physical.resize(count);
         std::string unsupported = "{\"reason\":\"device\"}";
         for (auto device : physical) {
             VkPhysicalDeviceProperties props;
@@ -80,10 +131,13 @@ struct Probe {
             if (validatedDevice && (strcmp(props.deviceName, validatedDevice) || props.apiVersion != validatedVersion)) continue;
             unsupported = failure("device_features");
             if (props.apiVersion < VK_API_VERSION_1_1 || props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU) continue;
+            if (validatedDevice) return validatedSurface(device, props);
             auto devExt = fn<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
             if (devExt(device, nullptr, &count, nullptr) != VK_SUCCESS) continue;
             ext.resize(count);
-            if (devExt(device, nullptr, &count, ext.data()) != VK_SUCCESS || !has(ext, VK_KHR_SWAPCHAIN_EXTENSION_NAME)) continue;
+            if (devExt(device, nullptr, &count, ext.data()) != VK_SUCCESS) continue;
+            ext.resize(count);
+            if (!has(ext, VK_KHR_SWAPCHAIN_EXTENSION_NAME)) continue;
             if (props.apiVersion < VK_API_VERSION_1_2 && !has(ext, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME)) {
                 unsupported = failure("timeline_semaphore"); continue;
             }
@@ -134,7 +188,6 @@ struct Probe {
             bool syncFd = (semaphoreProperties.externalSemaphoreFeatures & requiredSemaphore) == requiredSemaphore;
             // Startup already verified logical-device creation on this exact device/version.
             // A surface recheck only needs actual presentation support and formats.
-            if (!validatedDevice) {
             const float priority = 1.0f;
             VkDeviceQueueCreateInfo qi{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
             qi.queueFamilyIndex = graphics; qi.queueCount = 1; qi.pQueuePriorities = &priority;
@@ -146,7 +199,6 @@ struct Probe {
             VkDevice logical;
             if (fn<PFN_vkCreateDevice>("vkCreateDevice")(device, &di, nullptr, &logical) != VK_SUCCESS) { unsupported = failure("logical_device"); continue; }
             fn<PFN_vkDestroyDevice>("vkDestroyDevice")(logical, nullptr);
-            }
             std::vector<VkSurfaceFormatKHR> surfaceFormats;
             if (surface) {
                 uint32_t formats = 0;
@@ -166,7 +218,7 @@ struct Probe {
             auto capsFn = fn<PFN_vkGetPhysicalDeviceVideoCapabilitiesKHR>("vkGetPhysicalDeviceVideoCapabilitiesKHR");
             auto formatsFn = fn<PFN_vkGetPhysicalDeviceVideoFormatPropertiesKHR>("vkGetPhysicalDeviceVideoFormatPropertiesKHR");
             auto profile = [&](const char *codec, const char *extension, VkVideoCodecOperationFlagBitsKHR op, int bits, void *codecProfile, void *codecCaps) {
-                if (validatedDevice || !videoQueue || !capsFn || !formatsFn || !(operations & op) || !has(ext, extension)) return;
+                if (!videoQueue || !capsFn || !formatsFn || !(operations & op) || !has(ext, extension)) return;
                 VkVideoProfileInfoKHR p{VK_STRUCTURE_TYPE_VIDEO_PROFILE_INFO_KHR};
                 p.pNext = codecProfile; p.videoCodecOperation = op; p.chromaSubsampling = VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR;
                 p.lumaBitDepth = p.chromaBitDepth = bits == 10 ? VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR : VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR;
