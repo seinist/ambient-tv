@@ -20,6 +20,7 @@ import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -88,7 +89,7 @@ fun RefreshOnReconnect(sources: Set<String>, onRefresh: () -> Unit) {
 
 /** Live TV owns its freshness policy. A navigation entry is not a network recovery. */
 @Composable
-internal fun LiveTvRefreshOnEntry(sources: Set<String>, onEntry: (Long) -> Unit) {
+internal fun LiveTvRefreshOnEntry(sources: Set<String>, onEntry: (Long) -> Unit, onIdle: () -> Unit) {
     val context = LocalContext.current
     val reconnects = remember(context) {
         EntryPointAccessors.fromApplication(context.applicationContext, BrowseReconnectEntryPoint::class.java).browseReconnects()
@@ -96,16 +97,25 @@ internal fun LiveTvRefreshOnEntry(sources: Set<String>, onEntry: (Long) -> Unit)
     val owner = LocalLifecycleOwner.current
     val watched = rememberUpdatedState(sources.toSet())
     val callback = rememberUpdatedState(onEntry)
+    val idleCallback = rememberUpdatedState(onIdle)
     LaunchedEffect(reconnects, owner) {
         owner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             val entry = watched.value
             val revisions = reconnects.revisions.value
             val observation = BrowseRefreshObservation(entry, revisions)
             callback.value(browseReconnectVersion(revisions, entry))
-            combine(snapshotFlow { watched.value }, reconnects.revisions) { sources, versions -> sources to versions }
-                .collect { (sources, versions) ->
-                    if (observation.changed(sources, versions)) callback.value(browseReconnectVersion(versions, sources))
+            kotlinx.coroutines.coroutineScope {
+                launch {
+                    while (true) {
+                        kotlinx.coroutines.delay(60_000)
+                        idleCallback.value()
+                    }
                 }
+                combine(snapshotFlow { watched.value }, reconnects.revisions) { sources, versions -> sources to versions }
+                    .collect { (sources, versions) ->
+                        if (observation.changed(sources, versions)) callback.value(browseReconnectVersion(versions, sources))
+                    }
+            }
         }
     }
 }

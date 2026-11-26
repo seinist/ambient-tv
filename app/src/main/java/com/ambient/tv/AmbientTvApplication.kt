@@ -215,7 +215,11 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
         }
         onlineServiceAvailability.start()
         resumeConnectivityMonitor.start()
-        tvheadendGuideRepository.get().startGuideSync()
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            while (!preferences.isTvheadendConfigured || !com.ambient.tv.data.browse.BrowseWorkBudget.idle())
+                kotlinx.coroutines.delay(2000)
+            tvheadendGuideRepository.get().startGuideSync()
+        }
         // Video pauses and then stops, live TV stops when the app leaves the screen.
         com.ambient.tv.ui.player.BackgroundPlaybackGuard.install(this)
         val processStartWallMs = System.currentTimeMillis()

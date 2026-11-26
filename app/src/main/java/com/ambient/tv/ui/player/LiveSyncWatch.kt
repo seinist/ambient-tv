@@ -58,7 +58,7 @@ internal class LiveSyncWatch {
         } else frozenFrom = null
         val drift = sample.avSyncSeconds?.let { it.isFinite() && abs(it) >= 0.65 + abs(intentionalDelayMs / 1000.0) } == true
         if (drift && clockMoves) {
-            if (driftFrom == null) driftFrom = before.atMs
+            if (driftFrom == null) driftFrom = sample.atMs
         } else driftFrom = null
         val stall = frozenFrom?.let { start ->
             val audioAdvanced = sample.audioBuffers == null || start.audioBuffers == null || sample.audioBuffers > start.audioBuffers

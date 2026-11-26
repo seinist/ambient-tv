@@ -161,7 +161,7 @@ class TvheadendPlayerViewModel @Inject constructor(
         val ready = _uiState.value as? TvheadendPlayerState.Ready
         val snapshot = BackgroundPlaybackSession.snapshot.value
         val handle = BackgroundPlaybackSession.activeHandle()
-        val route = ready?.let { metadata(it).route }
+        val route = ready?.let { Destinations.tvhPlayer(kind, it.channel?.uuid ?: initialId, sourceId) }
         if (route != liveSyncRoute) {
             liveSyncWatch.resetSession()
             liveSyncRoute = route
@@ -184,22 +184,26 @@ class TvheadendPlayerViewModel @Inject constructor(
             liveSyncWatch.resetObservation()
             return
         }
-        val sample = when (handle) {
-            is com.ambient.tv.ui.player.Media3PlaybackHandle -> handle.liveSyncSample()
-            is com.ambient.tv.ui.player.backend.VlcPlaybackController -> handle.liveSyncSample()
-            is com.ambient.tv.ui.player.backend.MpvPlaybackController -> handle.liveSyncSample()
-            else -> null
-        }
+        val sample = runCatching {
+            when (handle) {
+                is com.ambient.tv.ui.player.Media3PlaybackHandle -> handle.liveSyncSample()
+                is com.ambient.tv.ui.player.backend.VlcPlaybackController -> handle.liveSyncSample()
+                is com.ambient.tv.ui.player.backend.MpvPlaybackController -> handle.liveSyncSample()
+                else -> null
+            }
+        }.getOrNull()?.takeIf { android.os.SystemClock.elapsedRealtime() - it.atMs in 0L..2500L }
         val delayMs = com.ambient.tv.ui.player.playbackProfileAudio(handle)?.options?.delayMs ?: 0
         val fault = liveSyncWatch.observe(sample, delayMs) ?: return
         if (sourceIdentity != playbackAvailability.routeIdentity(route) ||
             handle !== BackgroundPlaybackSession.activeHandle()) return
-        val reopened = when (handle) {
-            is com.ambient.tv.ui.player.Media3PlaybackHandle -> handle.reopenForLiveSync()
-            is com.ambient.tv.ui.player.backend.VlcPlaybackController -> handle.reopenForLiveSync()
-            is com.ambient.tv.ui.player.backend.MpvPlaybackController -> handle.reopenForLiveSync(requireNotNull(sample).generation)
-            else -> false
-        }
+        val reopened = runCatching {
+            when (handle) {
+                is com.ambient.tv.ui.player.Media3PlaybackHandle -> handle.reopenForLiveSync()
+                is com.ambient.tv.ui.player.backend.VlcPlaybackController -> handle.reopenForLiveSync()
+                is com.ambient.tv.ui.player.backend.MpvPlaybackController -> handle.reopenForLiveSync(requireNotNull(sample).generation)
+                else -> false
+            }
+        }.onFailure { timber.log.Timber.w(it, "Live TV resync failed") }.getOrDefault(false)
         if (reopened) timber.log.Timber.w("Live TV resync backend=%s reason=%s", snapshot.backend, fault)
     }
 
@@ -481,6 +485,8 @@ class TvheadendPlayerViewModel @Inject constructor(
                             kind = TvheadendPlaybackErrorKind.RECORDING_UNAVAILABLE,
                         )
                     } else {
+                        this@TvheadendPlayerViewModel.artwork.restoreCachedTitleArt(entry.title)
+                        if (!current()) return
                         val artwork = tvhPanelArtwork(entry.fanartUrl, entry.imageUrl)
                         val source = acquireStream(recovery = recovery, onReplacement = { expectedOwner = it },
                             open = { repository.recordingStream(entry) })

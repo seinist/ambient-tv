@@ -405,8 +405,10 @@ class TvheadendRepository @Inject constructor(
         val rows = loadTvhEpgPages(from, to, channelId) { params ->
             currentCoroutineContext().ensureActive()
             check(currentGuideScope(scope)) { "TVHeadend source changed" }
+            check(wake || com.ambient.tv.data.browse.BrowseWorkBudget.idle()) { "Foreground browse work resumed" }
             getJson("api/epg/events/grid", params, wake = wake)
         }
+        check(wake || com.ambient.tv.data.browse.BrowseWorkBudget.idle()) { "Foreground browse work resumed" }
         // A malformed response is not authoritative. Do not remove previously cached programmes.
         val events = rows.map { mapEvent(it) ?: error("Invalid TVHeadend programme") }
             .filter { it.stopEpochSeconds >= from && it.startEpochSeconds <= to }
@@ -432,10 +434,11 @@ class TvheadendRepository @Inject constructor(
                         if (!availability.hasNetwork() || !serverLikelyReachable()) return@suspendResult
                         // Six-hour aligned windows are bounded; fill the nearest missing window first.
                         val start = Math.floorDiv(now, 21600L) * 21600L
-                        for (slot in 0 until 29) {
+                        for (slot in 0 until 28) {
                             if (!com.ambient.tv.data.browse.BrowseWorkBudget.idle() || !currentGuideScope(scope)) break
-                            val from = start + slot * 21600L
-                            val to = minOf(from + 21600L, now + 7 * 86400L)
+                            val windowStart = start + slot * 21600L
+                            val from = maxOf(windowStart, Math.floorDiv(now - 3600L, 1800L) * 1800L)
+                            val to = windowStart + 21600L
                             if (to <= from) break
                             val ttl = when (slot) { 0, 1 -> 15 * 60_000L; in 2..3 -> 60 * 60_000L
                                 in 4..11 -> 3 * 3600_000L; else -> 6 * 3600_000L }

@@ -105,7 +105,7 @@ class TvheadendViewModel @Inject constructor(
         offline = offlineNow(), canWake = offlineNow() && canWake(),
         guideOptions = preferences.guideOptions(repository.source.id),
         dashboard = browseState.dashboard, capabilities = browseState.capabilities,
-        savedView = browseState.savedView, initialDashboardSettled = browseState.dashboard != null,
+        savedView = browseState.dashboard == null || browseState.savedView, initialDashboardSettled = browseState.dashboard != null,
         loading = browseState.dashboard == null,
         tab = TvheadendTab.entries.firstOrNull {
             it.name.equals(savedStateHandle.get<String>("tab"), ignoreCase = true)
@@ -221,9 +221,23 @@ class TvheadendViewModel @Inject constructor(
         val recovered = browseState.observeRecovery(revision)
         if (recovered) refreshPolicy.reconnected()
         if (!recovered && refreshJob?.isActive == true) return
+        if (!_uiState.value.actionInProgress && refreshJob?.isActive != true) {
+            val shared = browseState.dashboard
+            if (shared != null && shared !== _uiState.value.dashboard) {
+                _uiState.update { it.copy(dashboard = shared, capabilities = browseState.capabilities,
+                    savedView = browseState.savedView, loading = false, initialDashboardSettled = true) }
+            }
+        }
         if (!recovered && !refreshPolicy.recoveryPending && !refreshNeedsRetry &&
             !connectionRequiredNow() && !browseState.needsRefresh() && _uiState.value.dashboard != null) return
         load(force = false)
+    }
+
+    /** The visible guide catches up with the rolling index without a navigation or forced reload. */
+    fun refreshVisibleIfIdle() {
+        if (com.ambient.tv.data.browse.BrowseWorkBudget.idle() && !connectionRequiredNow() &&
+            !_uiState.value.actionInProgress && refreshJob?.isActive != true &&
+            connectionJob?.isActive != true && browseState.needsRefresh()) load(force = false)
     }
 
     private fun load(force: Boolean, announceSuccess: Boolean = force) {

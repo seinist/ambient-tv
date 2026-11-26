@@ -233,7 +233,8 @@ class ProgrammeGuideIndex internal constructor(
                     writer.checkValid()
                     val existing = active(db, owner, scope)?.first
                     if (existing == null) {
-                        if (channelId == null) recordWindow(db, writer.owner, writer.generation, from, to)
+                        if (channelId == null && maxOf(from, keepFrom) < minOf(to, keepTo))
+                            recordWindow(db, writer.owner, writer.generation, maxOf(from, keepFrom), minOf(to, keepTo))
                         publish(writer, false, valid, operation::ensureActive)
                     } else transaction(db) {
                         operation.ensureActive()
@@ -255,7 +256,8 @@ class ProgrammeGuideIndex internal constructor(
                             AND o.series_link IS n.series_link AND o.dvr_id IS n.dvr_id AND o.source_id IS n.source_id)""",
                             arrayOf(existing, owner, writer.generation, existing))
                         trimWindow(db, owner, existing, keepFrom, keepTo)
-                        if (channelId == null) recordWindow(db, owner, existing, from, to)
+                        if (channelId == null && maxOf(from, keepFrom) < minOf(to, keepTo))
+                            recordWindow(db, owner, existing, maxOf(from, keepFrom), minOf(to, keepTo))
                         db.execSQL("""UPDATE guide_versions SET from_epoch=?,to_epoch=?,loaded_at=?,fallback=0
                             WHERE owner=? AND generation=?""", arrayOf<Any>(keepFrom, keepTo, clock(), owner, existing))
                         db.rawQuery("SELECT entries,bytes FROM guide_versions WHERE owner=? AND generation=?", arrayOf(owner, existing)).use {

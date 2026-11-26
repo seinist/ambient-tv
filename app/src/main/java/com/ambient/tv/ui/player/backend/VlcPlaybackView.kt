@@ -1331,7 +1331,7 @@ class VlcPlaybackController(
         val frames = stats.displayedPictures?.toLong() ?: return null
         return com.ambient.tv.ui.player.LiveSyncSample(android.os.SystemClock.elapsedRealtime(),
             player.time.coerceAtLeast(0L), frameDropSampleGeneration(), renderedFrames = frames,
-            audioBuffers = stats.playedAudioBuffers?.toLong())
+            audioBuffers = stats.playedAudioBuffers?.toLong()?.takeIf { it > 0 })
     }
 
     internal fun reopenForLiveSync(): Boolean {

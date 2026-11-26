@@ -421,12 +421,13 @@ fun TvheadendPlayerScreen(
                             PlayerBufferingSpinner(visible = true)
                         }
                     }
+                    val handoverProgramme = tuneTarget?.takeIf { pendingChannelUi }?.let { viewModel.knownProgramme(it.uuid) }
                     val handoverOsd = liveOsdHandover(
                         zapChrome?.osdModel?.value,
                         tuneTarget,
-                        tuneTarget?.let { viewModel.knownProgramme(it.uuid) },
+                        handoverProgramme,
                         tuneTarget?.let { target ->
-                            viewModel.knownProgramme(target.uuid).first?.let { viewModel.knownArtwork(it, target) }
+                            handoverProgramme?.first?.let { viewModel.knownArtwork(it, target) }
                         },
                     )
                     com.ambient.tv.ui.player.PersistentPlayerOverlays(

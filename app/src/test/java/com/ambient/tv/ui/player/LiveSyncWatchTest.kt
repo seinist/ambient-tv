@@ -43,8 +43,8 @@ class LiveSyncWatchTest {
         repeat(90) { if (watch.observe(sample(it)) != null) restarts++ }
         assertEquals(2, restarts)
         repeat(35) { assertNull(watch.observe(sample(it + 90, frames = 101L + it))) }
-        repeat(4) { assertNull(watch.observe(sample(it + 125, frames = 135L))) }
-        assertEquals(LiveSyncFault.VIDEO_STALLED, watch.observe(sample(129, frames = 135L)))
+        repeat(3) { assertNull(watch.observe(sample(it + 125, frames = 135L))) }
+        assertEquals(LiveSyncFault.VIDEO_STALLED, watch.observe(sample(128, frames = 135L)))
     }
 
     @Test fun audioMustActuallyAdvanceWhenRendererReportsAudioCounters() {
