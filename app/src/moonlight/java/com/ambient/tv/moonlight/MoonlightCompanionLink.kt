@@ -41,6 +41,7 @@ class MoonlightCompanionLink @Inject constructor(
 
     fun interaction(playing: Boolean, menu: Boolean) {
         val current = sink ?: return
+        if (playing && !menu) current.republishReservations()
         CompanionGamepadSession.setMoonlightInteraction(current, when {
             menu -> CompanionGamepadInteraction.MENU
             playing -> CompanionGamepadInteraction.PLAYING
@@ -84,9 +85,7 @@ class MoonlightCompanionLink @Inject constructor(
         }
         if (pointerOwner != null && pointerOwner != port) return
         pointerOwner = port
-        val profile = preferences.moonlightStreamProfile
-        val width = profile.width
-        val height = profile.height
+        val (width, height) = engine.activeSize(owner ?: return) ?: return
         when (next.kind) {
             "mouse" -> {
                 if (touches.isNotEmpty()) clearTouchOnly()
@@ -146,6 +145,7 @@ class MoonlightCompanionLink @Inject constructor(
 
     private fun motion(port: Int, state: CompanionMotionState?) {
         val data = state ?: return
+        engine.setRemoteMotionCapabilities(owner ?: return, port, data.mask)
         if (data.mask and 1 != 0)
             engine.sendMotion(owner ?: return, port, MoonBridge.LI_MOTION_TYPE_ACCEL, data.ax, data.ay, data.az)
         if (data.mask and 2 != 0)

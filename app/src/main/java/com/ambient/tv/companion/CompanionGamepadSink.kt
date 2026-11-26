@@ -8,6 +8,7 @@ import com.ambient.tv.ui.gamepad.retro.RetroPadInput
  * stay exactly the same for Libretro and Moonlight. The receiver controls which game owns input.
  */
 internal interface CompanionGamepadSink {
+    val allowSharedLocalPort: Boolean get() = true
     fun localUsedPorts(): Set<Int>
     fun reserveRemotePort(port: Int, reserved: Boolean, descriptor: String? = null)
     fun clearRemotePort(port: Int, suppressHeld: Boolean = false)

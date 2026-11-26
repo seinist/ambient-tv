@@ -23,7 +23,15 @@ class MoonlightInputRoutingTest {
         assertNotEquals(0, frames.last().second)
         router.releaseAll()
         assertEquals(0, frames.last().second)
+        assertEquals(1, frames.last().first) // OSD release keeps player assignment
         assertEquals(0, frames.size - 2)
+    }
+
+    @Test fun gameStreamStickAxesAndButtonPositions() {
+        assertEquals(32767, moonlightStick(1f).toInt())
+        assertEquals(-32767, moonlightStick(-1f).toInt())
+        assertEquals(0, moonlightStick(Float.NaN).toInt())
+        assertEquals(0x1000, moonlightRetroButtonFlags(com.ambient.tv.ui.gamepad.retro.RetroPadButton.B.mask))
     }
 
     @Test fun keyboardKeysAndReleaseAllUseWindowsVirtualKeyCodes() {

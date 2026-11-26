@@ -15,7 +15,9 @@ internal class MoonlightCompanionSink(
 ) : CompanionGamepadSink {
     private val reserved = mutableSetOf<Int>()
     fun reservedPorts(): Set<Int> = reserved.toSet()
+    fun republishReservations() { reserved.forEach { engine.setRemotePortActive(owner, it, true) } }
     override fun localUsedPorts(): Set<Int> = localPorts()
+    override val allowSharedLocalPort: Boolean get() = false
 
     override fun reserveRemotePort(port: Int, reserved: Boolean, descriptor: String?) {
         if (port !in 0..3) return
@@ -63,7 +65,7 @@ internal class MoonlightCompanionSink(
         engine.sendRemoteGamepad(owner, 
             port, mapped, trigger(leftTrigger, RetroPadButton.L2),
             trigger(rightTrigger, RetroPadButton.R2),
-            short(leftX), short(leftY), short(rightX), short(rightY),
+            short(leftX), short(-leftY), short(rightX), short(-rightY),
         )
     }
 
@@ -75,23 +77,3 @@ internal class MoonlightCompanionSink(
     }
 }
 
-/** Shared, pure conversion used by unit tests and Companion deadman release. */
-internal fun moonlightRetroButtonFlags(bits: Int): Int {
-    fun held(button: RetroPadButton) = bits and button.mask != 0
-    var out = 0
-    if (held(RetroPadButton.B)) out = out or 0x1000 // Xbox A
-    if (held(RetroPadButton.A)) out = out or 0x2000 // Xbox B
-    if (held(RetroPadButton.Y)) out = out or 0x4000 // Xbox X
-    if (held(RetroPadButton.X)) out = out or 0x8000 // Xbox Y
-    if (held(RetroPadButton.UP)) out = out or 0x0001
-    if (held(RetroPadButton.DOWN)) out = out or 0x0002
-    if (held(RetroPadButton.LEFT)) out = out or 0x0004
-    if (held(RetroPadButton.RIGHT)) out = out or 0x0008
-    if (held(RetroPadButton.L)) out = out or 0x0100
-    if (held(RetroPadButton.R)) out = out or 0x0200
-    if (held(RetroPadButton.START)) out = out or 0x0010
-    if (held(RetroPadButton.SELECT)) out = out or 0x0020
-    if (held(RetroPadButton.L3)) out = out or 0x0040
-    if (held(RetroPadButton.R3)) out = out or 0x0080
-    return out
-}

@@ -495,7 +495,8 @@ object CompanionGamepadSession {
         }
         val occupiedPhones = ports.values.toSet()
         val port = if (configured in 0 until RetroPorts.COUNT) {
-            configured.takeUnless { it in occupiedPhones } ?: return -1
+            configured.takeUnless { it in occupiedPhones ||
+                (!game.input.allowSharedLocalPort && it in game.input.localUsedPorts()) } ?: return -1
         } else {
             val reserved = com.ambient.tv.ui.gamepad.retro.RetroInputSettings.config.ports.values
                 .filter { it in 0 until RetroPorts.COUNT }.toSet()

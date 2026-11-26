@@ -51,8 +51,9 @@ class MoonlightStreamEngine @Inject constructor(
         val owner: Any,
         val hostId: String,
         val appId: Int,
+        val profile: MoonlightStreamProfile,
         var connection: NvConnection? = null,
-        var advertisedControllerMask: Int = 1,
+        var advertisedControllerMask: Int = 0,
         var video: MoonlightMediaCodecRenderer? = null,
         var audio: MoonlightAudioTrackRenderer? = null,
         var started: Boolean = false,
@@ -75,6 +76,8 @@ class MoonlightStreamEngine @Inject constructor(
     private var active: Active? = null
     private var localControllerMask = 0
     private val remoteControllerPorts = mutableSetOf<Int>()
+    private val localCaps = mutableMapOf<Int, MoonlightPadCapabilities>()
+    private val remoteCaps = mutableMapOf<Int, MoonlightPadCapabilities>()
 
     /** All calls are non-blocking for the Compose UI, including HTTPS launch negotiation. */
     fun start(owner: Any, hostId: String, appId: Int, surface: Surface, profile: MoonlightStreamProfile,
@@ -83,7 +86,7 @@ class MoonlightStreamEngine @Inject constructor(
         val valid = runCatching { profile.validated() }.getOrNull() ?: return false
         val session = synchronized(lock) {
             if (active != null) return false
-            Active(revision.incrementAndGet(), owner, hostId, appId).also {
+            Active(revision.incrementAndGet(), owner, hostId, appId, valid).also {
                 active = it
                 mutable.value = MoonlightStreamStatus(MoonlightStreamPhase.CONNECTING)
             }
@@ -113,7 +116,7 @@ class MoonlightStreamEngine @Inject constructor(
                     8 -> MoonBridge.AUDIO_CONFIGURATION_71_SURROUND
                     else -> MoonBridge.AUDIO_CONFIGURATION_STEREO
                 }
-                val initialMask = synchronized(lock) { 1 or localControllerMask or remoteMask() }
+                val initialMask = synchronized(lock) { localControllerMask or remoteMask() }
                 val config = StreamConfiguration.Builder()
                     .setApp(NvApp(app.title, app.id, app.hdrSupported))
                     .setResolution(valid.width, valid.height)
@@ -137,7 +140,7 @@ class MoonlightStreamEngine @Inject constructor(
                 val stillOwned = synchronized(lock) {
                     if (active !== session || session.cancelled) false else {
                         session.connection = connection
-                        session.advertisedControllerMask = initialMask
+                        session.advertisedControllerMask = 0
                         session.video = video
                         session.audio = audio
                         mutable.value = MoonlightStreamStatus(
@@ -214,7 +217,7 @@ class MoonlightStreamEngine @Inject constructor(
     private data class PadFrame(
         val connection: NvConnection?,
         val mask: Short,
-        val arrivals: List<Int>,
+        val arrivals: List<Pair<Int, MoonlightPadCapabilities>>,
     )
 
     private fun padFrame(owner: Any, change: () -> Unit): PadFrame = synchronized(lock) {
@@ -227,33 +230,38 @@ class MoonlightStreamEngine @Inject constructor(
             nextMask and (1 shl port) != 0 &&
                 session.advertisedControllerMask and (1 shl port) == 0
         }
-        if (session != null) session.advertisedControllerMask =
-            session.advertisedControllerMask or nextMask
-        PadFrame(session?.connection, nextMask.toShort(), newPorts)
+        if (session != null) session.advertisedControllerMask = nextMask
+        PadFrame(session?.connection, nextMask.toShort(), newPorts.map { port ->
+            port to (if (port in remoteControllerPorts) remoteCaps[port] else localCaps[port]
+                ?: MoonlightPadCapabilities())
+        }.map { (port, caps) -> port to (caps ?: MoonlightPadCapabilities()) })
     }
 
     private fun sendArrivals(frame: PadFrame) {
         val connection = frame.connection ?: return
-        for (port in frame.arrivals) {
-            runCatching {
-                connection.sendControllerArrivalEvent(
-                    port.toByte(), frame.mask, MoonBridge.LI_CTYPE_XBOX,
-                    0xFFFF, (MoonBridge.LI_CCAP_ANALOG_TRIGGERS.toInt() or
-                        MoonBridge.LI_CCAP_RUMBLE.toInt() or
-                        MoonBridge.LI_CCAP_ACCEL.toInt() or
-                        MoonBridge.LI_CCAP_GYRO.toInt()).toShort(),
-                )
-            }
+        for ((port, caps) in frame.arrivals) {
+            var flags = 0
+            if (caps.analogTriggers) flags = flags or MoonBridge.LI_CCAP_ANALOG_TRIGGERS.toInt()
+            if (caps.rumble) flags = flags or MoonBridge.LI_CCAP_RUMBLE.toInt()
+            if (caps.accelerometer) flags = flags or MoonBridge.LI_CCAP_ACCEL.toInt()
+            if (caps.gyroscope) flags = flags or MoonBridge.LI_CCAP_GYRO.toInt()
+            runCatching { connection.sendControllerArrivalEvent(port.toByte(), frame.mask,
+                MoonBridge.LI_CTYPE_XBOX, caps.buttons, flags.toShort()) }
         }
     }
 
     fun sendGamepad(owner: Any,
         port: Short, mask: Short, buttons: Int, lt: Byte, rt: Byte,
         lx: Short, ly: Short, rx: Short, ry: Short,
+        capabilities: MoonlightPadCapabilities = MoonlightPadCapabilities(),
     ) {
         synchronized(inputGate) {
             if (port.toInt() !in 0..3) return
-            val frame = padFrame(owner) { localControllerMask = mask.toInt() and 0xF }
+            val frame = padFrame(owner) {
+                localControllerMask = mask.toInt() and 0xF
+                if (localControllerMask and (1 shl port.toInt()) != 0) localCaps[port.toInt()] = capabilities
+                else localCaps.remove(port.toInt())
+            }
             sendArrivals(frame)
             runCatching {
                 frame.connection?.sendControllerInput(port, frame.mask, buttons, lt, rt, lx, ly, rx, ry)
@@ -270,7 +278,10 @@ class MoonlightStreamEngine @Inject constructor(
         synchronized(inputGate) {
             if (port !in 0..3) return
             val frame = padFrame(owner) {
-                if (enabled) remoteControllerPorts.add(port) else remoteControllerPorts.remove(port)
+                if (enabled) {
+                    remoteControllerPorts.add(port)
+                    remoteCaps.putIfAbsent(port, MoonlightPadCapabilities())
+                } else { remoteControllerPorts.remove(port); remoteCaps.remove(port) }
             }
             sendArrivals(frame)
             if (!enabled) runCatching {
@@ -293,6 +304,29 @@ class MoonlightStreamEngine @Inject constructor(
                     lt, rt, lx, ly, rx, ry)
             }
         }
+    }
+
+    fun setRemoteMotionCapabilities(owner: Any, port: Int, mask: Int) {
+        synchronized(inputGate) {
+            if (port !in remoteReservedPorts(owner)) return
+            val frame = padFrame(owner) {
+                val old = remoteCaps[port] ?: MoonlightPadCapabilities()
+                val next = old.copy(accelerometer = old.accelerometer || mask and 1 != 0,
+                    gyroscope = old.gyroscope || mask and 2 != 0)
+                if (old != next) {
+                    remoteCaps[port] = next
+                    active?.let { it.advertisedControllerMask = it.advertisedControllerMask and (1 shl port).inv() }
+                }
+            }
+            sendArrivals(frame)
+        }
+    }
+
+    fun activeSize(owner: Any): Pair<Int, Int>? = synchronized(lock) {
+        val session = active?.takeIf { it.owner === owner && !it.cancelled } ?: return@synchronized null
+        val video = session.video?.metrics()
+        if (video != null && video.width > 0 && video.height > 0) video.width to video.height
+        else session.profile.width to session.profile.height
     }
 
     private fun remoteMask(): Int =
@@ -504,6 +538,7 @@ class MoonlightStreamEngine @Inject constructor(
             if (active !== session) return
             localControllerMask = 0
             remoteControllerPorts.clear()
+            localCaps.clear(); remoteCaps.clear()
             active = null
             mutable.value = mutable.value.copy(
                 phase = if (mutable.value.phase == MoonlightStreamPhase.FAILED)

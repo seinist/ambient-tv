@@ -106,8 +106,8 @@ class MoonlightStreamActivity : ComponentActivity() {
     }
     private val feedback by lazy { MoonlightDeviceFeedback(input) }
     private val deviceListener = object : InputManager.InputDeviceListener {
-        override fun onInputDeviceAdded(deviceId: Int) = Unit
-        override fun onInputDeviceChanged(deviceId: Int) { input.removeDevice(deviceId) }
+        override fun onInputDeviceAdded(deviceId: Int) { input.registerAttachedDevices(); input.republish() }
+        override fun onInputDeviceChanged(deviceId: Int) { input.removeDevice(deviceId); input.registerAttachedDevices(); input.republish() }
         override fun onInputDeviceRemoved(deviceId: Int) { input.removeDevice(deviceId) }
     }
     private val keyboard by lazy {
@@ -115,12 +115,13 @@ class MoonlightStreamActivity : ComponentActivity() {
             engine.sendKeyboard(streamOwner, virtualKey, pressed, modifiers)
         }
     }
-    private val input by lazy {
+    private val input: MoonlightControllerRouter by lazy {
         MoonlightControllerRouter(
             output = { port, mask, buttons, lt, rt, lx, ly, rx, ry ->
-                engine.sendGamepad(streamOwner, port, mask, buttons, lt, rt, lx, ly, rx, ry)
+                engine.sendGamepad(streamOwner, port, mask, buttons, lt, rt, lx, ly, rx, ry, input.capabilities(port.toInt()))
             },
             reservedPorts = { companion.reservedPorts() },
+            onMenu = { showOsd(true) },
         )
     }
 
@@ -170,6 +171,7 @@ class MoonlightStreamActivity : ComponentActivity() {
                 disconnect = ::disconnectAndFinish,
                 closeControls = { showOsd(false) },
                 onCompanionMode = { phase, menu ->
+                    if (phase == MoonlightStreamPhase.STREAMING && !menu) input.republish()
                     companion.interaction(playing = hasWindowFocus() && engine.owns(streamOwner) &&
                         phase == MoonlightStreamPhase.STREAMING, menu = menu && hasWindowFocus())
                 },
@@ -195,6 +197,7 @@ class MoonlightStreamActivity : ComponentActivity() {
             }
             displayReady = true
         }
+        input.registerAttachedDevices()
         inputManager.registerInputDeviceListener(deviceListener, null)
         companion.attach(
             owner = streamOwner,

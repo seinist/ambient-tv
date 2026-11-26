@@ -35,5 +35,7 @@ class MoonlightStreamEngine @Inject constructor() {
     fun sendGamepad(owner: Any,
         port: Short, mask: Short, buttons: Int, lt: Byte, rt: Byte,
         lx: Short, ly: Short, rx: Short, ry: Short,
+        capabilities: MoonlightPadCapabilities = MoonlightPadCapabilities(),
     ) = Unit
+    fun activeSize(owner: Any): Pair<Int, Int>? = null
 }
