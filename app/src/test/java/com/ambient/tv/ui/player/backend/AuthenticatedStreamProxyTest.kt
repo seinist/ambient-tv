@@ -76,4 +76,38 @@ class AuthenticatedStreamProxyTest {
         }
         get(url = proxy.url.substringBeforeLast('/') + "/unknown").use { assertEquals(404, it.code) }
     }
+    @Test fun splitStreamsRequireSameOriginAndDirectMedia() {
+        assertTrue(vlcDirectHttpRelaySupported("https://media.example/video.mp4?ticket=1"))
+        assertFalse(vlcDirectHttpRelaySupported("https://media.example/live.M3U8?ticket=1"))
+        assertFalse(vlcDirectHttpRelaySupported("https://media.example/live.mpd"))
+        assertFalse(vlcDirectHttpRelaySupported("file:///sdcard/video.mp4"))
+        assertTrue(vlcSameHttpOrigin("https://media.example/video", "https://media.example/audio"))
+        assertFalse(vlcSameHttpOrigin("https://media.example/video", "https://other.example/audio"))
+        assertFalse(vlcSameHttpOrigin("https://media.example/video", "https://media.example:8443/audio"))
+        assertFalse(vlcSameHttpOrigin("https://media.example/video", "http://media.example/audio"))
+    }
+
+    @Test fun redirectNeverForwardsCustomCredentialsToAnotherOrigin() {
+        val other = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val received = java.util.concurrent.atomic.AtomicBoolean(false)
+        other.createContext("/") { exchange ->
+            received.set(true)
+            exchange.sendResponseHeaders(200, -1)
+            exchange.close()
+        }
+        other.start()
+        server.createContext("/redirect") { exchange ->
+            exchange.responseHeaders.add("Location", "http://127.0.0.1:${other.address.port}/")
+            exchange.sendResponseHeaders(302, -1)
+            exchange.close()
+        }
+        try {
+            AuthenticatedStreamProxy("http://127.0.0.1:${server.address.port}/redirect",
+                mapOf("X-Custom-Token" to "test-only", "Cookie" to "session=test-only")).use { relay ->
+                runCatching { get(url = relay.url).use { it.body.bytes() } }
+                assertFalse(received.get())
+            }
+        } finally { other.stop(0) }
+    }
+
 }
