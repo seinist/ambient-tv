@@ -27,7 +27,14 @@ data class VulkanDeviceCapabilities(
     // Present only in newer probes; absence must not be mistaken for a negative result.
     val surfaceColorSpaces: List<Int>? = null,
     val surfaceFormats: List<VulkanSurfaceFormat>? = null,
+    val androidHardwareBufferImport: Boolean? = null,
+    val foreignQueueFamily: Boolean? = null,
+    val samplerYcbcrConversion: Boolean? = null,
+    val syncFdImportExport: Boolean? = null,
 ) {
+    /** Hardware prerequisites only, not a claim that the loaded vout implements interop. */
+    val androidInteropPrerequisites: Boolean get() = render && androidHardwareBufferImport == true &&
+        foreignQueueFamily == true && samplerYcbcrConversion == true && syncFdImportExport == true
     val hdr10SurfaceSupported: Boolean? get() = surfaceColorSpaces?.contains(1000104008)
 }
 
