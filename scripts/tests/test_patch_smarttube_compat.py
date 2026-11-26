@@ -145,18 +145,18 @@ class SmartTubeDeprecationPatchesTest(unittest.TestCase):
         helper = msc / "youtubeapi/src/main/java/com/liskovsoft/googlecommon/common/helpers/RetrofitOkHttpHelper.kt"
         helper.parent.mkdir(parents=True)
         helper.write_text(
-            "import com.google.net.cronet.okhttptransport.CronetInterceptor\\n"
-            "import com.liskovsoft.sharedutils.cronet.CronetManager\\n"
-            "    private fun createClient(): OkHttpClient {\\n"
-            "        val builder = OkHttpManager.instance().client.newBuilder()\\n"
-            "        //addCronetInterceptor(builder)\\n"
-            "        return builder.build()\\n"
-            "    }\\n"
-            "    private fun addCronetInterceptor(builder: OkHttpClient.Builder) {\\n"
-            "        val engine = CronetManager.getEngine(AppService.instance().context)\\n"
-            "        if (engine != null) builder.addInterceptor(CronetInterceptor.newBuilder(engine).build())\\n"
-            "    }\\n"
-            "}\\n"
+            "import com.google.net.cronet.okhttptransport.CronetInterceptor\n"
+            "import com.liskovsoft.sharedutils.cronet.CronetManager\n"
+            "    private fun createClient(): OkHttpClient {\n"
+            "        val builder = OkHttpManager.instance().client.newBuilder()\n"
+            "        //addCronetInterceptor(builder)\n"
+            "        return builder.build()\n"
+            "    }\n"
+            "    private fun addCronetInterceptor(builder: OkHttpClient.Builder) {\n"
+            "        val engine = CronetManager.getEngine(AppService.instance().context)\n"
+            "        if (engine != null) builder.addInterceptor(CronetInterceptor.newBuilder(engine).build())\n"
+            "    }\n"
+            "}\n"
         )
         manager = shared / "sharedutils/src/main/java/com/liskovsoft/sharedutils/cronet/CronetManager.kt"
         manager.parent.mkdir(parents=True)
@@ -171,12 +171,12 @@ class SmartTubeDeprecationPatchesTest(unittest.TestCase):
     def test_okhttp_manager_initialization_is_thread_safe(self) -> None:
         path = self.write(
             "OkHttpManager.java",
-            "private static OkHttpManager sInstance;\\n"
-            "private OkHttpClient mClient;\\n"
-            "public static OkHttpManager instance() {\\n"
-            "public static OkHttpManager instance(boolean enableProfiler) {\\n"
-            "public static void unhold() {\\n"
-            "public OkHttpClient getClient() {\\n",
+            "private static OkHttpManager sInstance;\n"
+            "private OkHttpClient mClient;\n"
+            "public static OkHttpManager instance() {\n"
+            "public static OkHttpManager instance(boolean enableProfiler) {\n"
+            "public static void unhold() {\n"
+            "public OkHttpClient getClient() {\n",
         )
         self.assertTrue(patcher.patch_okhttp_manager_thread_safety(path, check=False))
         patched = path.read_text()
