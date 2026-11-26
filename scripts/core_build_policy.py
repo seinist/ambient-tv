@@ -41,7 +41,7 @@ def selection(raw, available, label):
     return values
 
 
-def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline"):
+def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", comparison="none"):
     if profile not in PROFILES:
         raise ValueError("Unknown build profile")
     declared_abis = catalog["abis"]
@@ -66,6 +66,10 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline"):
                 raise ValueError("Unsafe JNI path")
     if event not in {"push", "pull_request", "workflow_dispatch"}:
         raise ValueError("Unsupported build event")
+    if comparison not in {"none", "baseline-thinlto", "o3-o3-thinlto"}:
+        raise ValueError("Unknown comparison matrix")
+    if comparison != "none" and (event != "workflow_dispatch" or publish or profile != "baseline"):
+        raise ValueError("Paired comparisons require an artifact-only manual dispatch and baseline profile")
     # Narrow specialized experiments instead of silently applying them to unrelated cores.
     if profile == "picodrive-sh2":
         if event != "workflow_dispatch" or publish:
@@ -98,15 +102,17 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline"):
                  ("picodrive", "arm64-v8a", "baseline"),
                  ("picodrive", "arm64-v8a", "picodrive-sh2"),
                  ("snes9x", "arm64-v8a", "tune-a57")]
-        # ARM64 O3 candidates isolate optimization level from link-time optimization.
-        jobs += [(core, "arm64-v8a", "o3") for core in ids]
-        # Cover every supported ABI with paired baseline and ThinLTO builds.
-        for core in ids:
-            for abi in declared_abis:
-                for variant in ("baseline", "thinlto"):
-                    job = (core, abi, variant)
-                    if job not in jobs:
-                        jobs.append(job)
+        # Fast PR gate: exercise both toolchains and all audited Android backends.
+        jobs += [(core, "arm64-v8a", variant)
+                 for core in ("snes9x", "mgba")
+                 for variant in ("o3", "o3-thinlto")]
+        jobs += [(core, "arm64-v8a", "baseline")
+                 for core in ("parallel_n64", "mednafen_psx_hw", "swanstation")]
+        jobs += [("pcsx_rearmed", "x86_64", "baseline"),
+                 ("gpsp", "x86", "baseline")]
+    elif comparison != "none":
+        variants = ("baseline", "thinlto") if comparison == "baseline-thinlto" else ("o3", "o3-thinlto")
+        jobs = [(core, abi, variant) for core in chosen_cores for abi in chosen_abis for variant in variants]
     else:
         jobs = [(core, abi, profile) for core in chosen_cores for abi in chosen_abis]
     by_id = {entry["core"]: entry for entry in entries}
@@ -239,6 +245,7 @@ def main():
     p.add_argument("--cores", default="")
     p.add_argument("--abis", default="")
     p.add_argument("--profile", choices=PROFILES, default="baseline")
+    p.add_argument("--comparison", choices=("none", "baseline-thinlto", "o3-o3-thinlto"), default="none")
     p = sub.add_parser("ndk-flags")
     p.add_argument("--application", type=Path, required=True)
     p.add_argument("--profile", choices=PROFILES, required=True)
@@ -261,7 +268,7 @@ def main():
     args = parser.parse_args()
     if args.action == "plan":
         print(json.dumps(plan(json.loads(args.catalog.read_text()), args.event, args.ref,
-                              args.publish == "true", args.cores, args.abis, args.profile),
+                              args.publish == "true", args.cores, args.abis, args.profile, args.comparison),
                          separators=(",", ":")))
     elif args.action == "ndk-flags":
         ndk_flags(args.application, args.profile, args.cppflags)
