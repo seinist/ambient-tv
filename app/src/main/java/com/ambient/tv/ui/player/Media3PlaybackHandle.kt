@@ -115,6 +115,7 @@ class Media3PlaybackHandle(
             frameTimeline.clear()
         }
         override fun onIsPlayingChanged(isPlaying: Boolean) {
+            if (isPlaying) frameStepCursorUs = null
             frameDropGeneration++
             hdrOutput.discontinuity()
         }
