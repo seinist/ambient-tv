@@ -36,6 +36,7 @@ internal class DisplayStartupLease internal constructor(
     internal val player: PlaybackHandle,
     internal val route: String,
 ) {
+    internal val startedNs = System.nanoTime()
     internal var interrupted = false
     internal var settling = false
 }
@@ -78,6 +79,7 @@ internal object DisplayPlaybackStartup {
         timeout = fallback
         handler.postDelayed(fallback, FORMAT_TIMEOUT_MS)
         Timber.i("DisplayStartup awaiting first source format route=%s", metadata.route)
+        logPlaybackStartup("display", "hold_started", held.startedNs)
     }
 
     /** The physical mode may be the current one; no HDMI wait is needed in that case. */
@@ -113,6 +115,7 @@ internal object DisplayPlaybackStartup {
         if (lease !== held) return
         val shouldResume = resume && owns(held)
         clear()
+        logPlaybackStartup("display", "hold_finished", held.startedNs, "resume=$shouldResume")
         if (shouldResume) held.player.play()
     }
 

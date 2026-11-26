@@ -137,6 +137,8 @@ data class YouTubePlayback(
     val publishedDate: String? = null,
     /** A known absolute publication instant; null for missing or invalid provider timestamps. */
     val publishedAtMs: Long? = null,
+    /** Monotonic launch time for diagnostics; zero for a reused background session. */
+    val startupStartedNs: Long = 0L,
 )
 
 /**

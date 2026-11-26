@@ -41,7 +41,7 @@ internal fun youtubePlayableFormatScore(
         // response is playable (score 3) but gets exactly one quality upgrade attempt.
         val lowOnly = playableVideos.isNotEmpty() && playableVideos.all { it.qualityHeight() in 1..480 }
         val meetsExplicitCap = requestedMaxHeight in 1..480 &&
-            playableVideos.any { it.qualityHeight() >= requestedMaxHeight }
+            playableVideos.any { it.qualityHeight() == requestedMaxHeight }
         return if (lowOnly && !meetsExplicitCap) 3 else 4
     }
     if (hasProgressive()) return 2

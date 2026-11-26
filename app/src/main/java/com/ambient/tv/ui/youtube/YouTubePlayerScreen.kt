@@ -234,7 +234,7 @@ fun YouTubePlayerScreen(
                 switchPauseMs = prefs.displaySwitchPauseMs,
             )
             val route = if (isTrailer) Destinations.trailerPlayer(playback.videoId) else Destinations.youtubePlayer(playback.videoId)
-            val initialFormat = playback.adaptiveFormats.firstOrNull { it.url == playback.adaptiveVideoUri }
+            val initialFormat = playback.adaptiveVideoUri?.let { url -> playback.adaptiveFormats.firstOrNull { it.url == url } }
             val profileMetadata = PlaybackMetadata(route, playback.title, source = "youtube", mediaId = playback.videoId,
                 sourceWidth = initialFormat?.width, sourceHeight = initialFormat?.height,
                 isLive = playback.isLive, isTrailer = isTrailer)
@@ -488,7 +488,7 @@ fun YouTubePlayerScreen(
                             val snapshot = BackgroundPlaybackSession.snapshot.value
                             if (snapshot.replacingSource && viewModel.ownsCompanionMedia(snapshot.metadata?.companionMedia)) {
                                 BackgroundPlaybackSession.failSourceReplacement(snapshot.generation, message)
-                            }
+                            } else if (snapshot.metadata?.route == route) BackgroundPlaybackSession.pause()
                         }
                         Column(Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.9f)).padding(24.dp)) {
                             Text(message)
@@ -780,6 +780,7 @@ private fun YouTubeMedia3Playback(
                 centerYouTubeCaptions = true,
                 streamTuning = streamTuning,
                 liveStream = playback.isLive,
+                startupTraceNs = playback.startupStartedNs,
                 streamUrlRenewer = { expired ->
                     val host = android.net.Uri.parse(expired).host.orEmpty()
                     if (host == "googlevideo.com" || host.endsWith(".googlevideo.com"))
@@ -1335,7 +1336,25 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
     val panelOpen = panelNavigation.panel != UnifiedPlayerPanel.NONE
     val snapshot = rememberVlcPlaybackSnapshot(controller, controller.audioSession.performanceHint || controller.audioSession.showFpsOverlay)
     var playbackStarted by remember(controller) { mutableStateOf(false) }
-    LaunchedEffect(snapshot.isPlaying) { if (snapshot.isPlaying) playbackStarted = true }
+    LaunchedEffect(snapshot.isPlaying) {
+        if (snapshot.isPlaying && !playbackStarted) {
+            playbackStarted = true
+            com.ambient.tv.ui.player.logPlaybackStartup("youtube-vlc", "playing_observed", playback.startupStartedNs)
+        }
+    }
+    // Diagnostic-only polling; a Playing event alone does not prove a picture was displayed.
+    LaunchedEffect(controller, playback.startupStartedNs) {
+        if (playback.startupStartedNs == 0L || (!com.ambient.tv.BuildConfig.DEBUG &&
+                !com.ambient.tv.diagnostics.DiagnosticLog.enabled)) return@LaunchedEffect
+        repeat(200) {
+            if (!BackgroundPlaybackSession.owns(controller)) return@LaunchedEffect
+            if ((controller.runtimeStats()?.displayedPictures ?: 0) > 0) {
+                com.ambient.tv.ui.player.logPlaybackStartup("youtube-vlc", "first_picture_observed", playback.startupStartedNs)
+                return@LaunchedEffect
+            }
+            kotlinx.coroutines.delay(100)
+        }
+    }
     val liveDvrWindow = youtubeLiveDvrWindow(playback.isLive, controller.canSeekNow(), snapshot.durationMs)
     // A failure the VLC controller could not recover from itself: continue in Media3 at the
     // same position instead of leaving a black picture (YouTube always plays there).
@@ -1696,7 +1715,12 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     val panelOpen = panelNavigation.panel != UnifiedPlayerPanel.NONE
     val snapshot = rememberMpvPlaybackSnapshot(controller, controller.audioSession.performanceHint || controller.audioSession.showFpsOverlay)
     var playbackStarted by remember(controller) { mutableStateOf(false) }
-    LaunchedEffect(snapshot.isPlaying) { if (snapshot.isPlaying) playbackStarted = true }
+    LaunchedEffect(snapshot.isPlaying) {
+        if (snapshot.isPlaying && !playbackStarted) {
+            playbackStarted = true
+            com.ambient.tv.ui.player.logPlaybackStartup("youtube-mpv", "playing_observed", playback.startupStartedNs)
+        }
+    }
     // mpv reports no duration for many live HLS playlists although it can seek inside them.
     // The played clock is then the known right edge: everything behind it stays reachable.
     val liveDvrWindow = youtubeLiveDvrWindow(playback.isLive, controller.canSeekNow(),
