@@ -105,8 +105,7 @@ object VideoAccelerationRuntime {
                 json.decodeFromString<VulkanDeviceCapabilities>(
                     VulkanNativeProbe.probeValidatedSurface(surface, validated.device, validated.version),
                 ).let { result ->
-                    // Device profiles were established by the full startup probe.
-                    if (result.render) result.copy(profiles = validated.profiles) else result
+                    mergeValidatedVulkanSurface(validated, result)
                 }
             } catch (_: UnsatisfiedLinkError) {
                 // Older packaged native runtime: retain the original full probe.
