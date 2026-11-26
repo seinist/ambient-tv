@@ -37,6 +37,15 @@ def main():
         subprocess.run(command, check=True)
         subprocess.run([str(controls)], check=True)
 
+        gate = Path(temporary) / "audio-processing-gate"
+        command = [os.environ.get("CXX", "c++"), "-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-Werror", "-pthread",
+                   "-I", str(native), str(Path(__file__).with_name("native_game_audio_gate_test.cpp")),
+                   "-o", str(gate)]
+        if args.sanitize:
+            command[1:1] = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+        subprocess.run(command, check=True)
+        subprocess.run([str(gate)], check=True, timeout=30)
+
 
 if __name__ == "__main__":
     main()

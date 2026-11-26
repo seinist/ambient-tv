@@ -1,0 +1,136 @@
+diff --git a/src/main/cpp/audio.cpp b/src/main/cpp/audio.cpp
+--- a/src/main/cpp/audio.cpp
++++ b/src/main/cpp/audio.cpp
+@@ -152,8 +152,9 @@
+     callbackControls.setVolume(volume);
+ }
+ 
+-void Audio::resetBufferState() {
+-    errorIntegral = 0.0;
++void Audio::resetBufferState() {
++    AudioProcessingGate::ControlScope control(processingGate);
++    errorIntegral = 0.0;
+     framesToSubmit = 0.0;
+     if (fifoBuffer) {
+         fifoBuffer->setReadCounter(fifoBuffer->getWriteCounter());
+@@ -164,8 +165,9 @@
+     }
+ }
+ 
+-void Audio::updateTiming(int32_t newSampleRate, double newRefreshRate) {
+-    LOGI("Audio timing update: sampleRate %d -> %d, refreshRate %f -> %f",
++void Audio::updateTiming(int32_t newSampleRate, double newRefreshRate) {
++    AudioProcessingGate::ControlScope control(processingGate);
++    LOGI("Audio timing update: sampleRate %d -> %d, refreshRate %f -> %f",
+          inputSampleRate, newSampleRate, contentRefreshRate, newRefreshRate);
+     inputSampleRate = newSampleRate;
+     contentRefreshRate = newRefreshRate;
+@@ -199,8 +201,16 @@
+     }
+ }
+ 
+-oboe::DataCallbackResult Audio::onAudioReady(oboe::AudioStream *oboeStream, void *audioData, int32_t numFrames) {
+-    const auto controls = callbackControls.snapshot();
++oboe::DataCallbackResult Audio::onAudioReady(oboe::AudioStream *oboeStream, void *audioData, int32_t numFrames) {
++    if (numFrames <= 0) return oboe::DataCallbackResult::Continue;
++    AudioProcessingGate::CallbackScope processing(processingGate);
++    if (!processing) {
++        // A reset/retime owns the FIFO cursor and DSP state. Do not wait, read,
++        // tune or consume post-reset samples until that operation completes.
++        std::fill_n(static_cast<int16_t*>(audioData), static_cast<size_t>(numFrames) * 2, int16_t{0});
++        return oboe::DataCallbackResult::Continue;
++    }
++    const auto controls = callbackControls.snapshot();
+     const double playbackSpeed = controls.speed;
+     double dynamicBufferFactor = computeDynamicBufferConversionFactor(0.001 * numFrames);
+     const bool stretchActive = controls.preservePitch && timeStretcher != nullptr &&
+diff --git a/src/main/cpp/audio.h b/src/main/cpp/audio.h
+--- a/src/main/cpp/audio.h
++++ b/src/main/cpp/audio.h
+@@ -23,8 +23,9 @@
+ #include <oboe/Oboe.h>
+ #include <oboe/FifoBuffer.h>
+ 
+-#include "audiocallbackcontrols.h"
+-#include "resamplers/linearresampler.h"
++#include "audiocallbackcontrols.h"
++#include "audioprocessinggate.h"
++#include "resamplers/linearresampler.h"
+ #include "SoundTouch.h"
+ 
+ namespace libretrodroid {
+@@ -94,7 +95,8 @@
+     double framesToSubmit = 0.0;
+     double errorIntegral = 0.0;
+ 
+-    AudioCallbackControls callbackControls;
++    AudioCallbackControls callbackControls;
++    AudioProcessingGate processingGate;
+ 
+     std::unique_ptr<AudioLatencySettings> audioLatencySettings;
+ 
+diff --git a/src/main/cpp/audioprocessinggate.h b/src/main/cpp/audioprocessinggate.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/audioprocessinggate.h
+@@ -0,0 +1,60 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++
++#include <atomic>
++#include <chrono>
++#include <cstdint>
++#include <thread>
++
++namespace libretrodroid {
++
++// One render/control owner, one audio consumer. Stream creation and retirement
++// must still be serialized by the caller. The audio callback never waits: a
++// rare control operation gets exclusive access after the in-flight block ends.
++class AudioProcessingGate {
++    static_assert(std::atomic<uint32_t>::is_always_lock_free,
++                  "Audio processing gate must be lock-free on the callback");
++    static constexpr uint32_t callbackBit = 1;
++    static constexpr uint32_t controlBit = 2;
++    std::atomic<uint32_t> state{0};
++
++public:
++    class CallbackScope {
++    public:
++        explicit CallbackScope(AudioProcessingGate& gate) noexcept : gate(gate) {
++            uint32_t expected = 0;
++            entered = gate.state.compare_exchange_strong(expected, callbackBit,
++                    std::memory_order_acquire, std::memory_order_relaxed);
++        }
++        ~CallbackScope() {
++            if (entered) gate.state.fetch_and(~callbackBit, std::memory_order_release);
++        }
++        CallbackScope(const CallbackScope&) = delete;
++        CallbackScope& operator=(const CallbackScope&) = delete;
++        explicit operator bool() const noexcept { return entered; }
++
++    private:
++        AudioProcessingGate& gate;
++        bool entered = false;
++    };
++
++    class ControlScope {
++    public:
++        explicit ControlScope(AudioProcessingGate& gate) : gate(gate) {
++            gate.state.fetch_or(controlBit, std::memory_order_acq_rel);
++            // No new callback can enter. Only the non-realtime owner waits,
++            // and it does not hold a lock needed by the callback.
++            while (gate.state.load(std::memory_order_acquire) & callbackBit) {
++                std::this_thread::sleep_for(std::chrono::microseconds(50));
++            }
++        }
++        ~ControlScope() { gate.state.store(0, std::memory_order_release); }
++        ControlScope(const ControlScope&) = delete;
++        ControlScope& operator=(const ControlScope&) = delete;
++
++    private:
++        AudioProcessingGate& gate;
++    };
++};
++
++} // namespace libretrodroid
