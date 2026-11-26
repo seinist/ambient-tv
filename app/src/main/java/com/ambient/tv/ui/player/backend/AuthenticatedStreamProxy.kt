@@ -123,10 +123,10 @@ internal class AuthenticatedStreamProxy(
                     val rewritten = try {
                         val manifest = readManifest(response.body.byteStream())
                         val localUri: (okhttp3.HttpUrl, Boolean) -> String = { child, isPlaylist ->
-                            localOrigin + routes.register(child, isPlaylist)
+                            localOrigin + routes.register(child, isPlaylist, opened.credentialed)
                         }
                         val rewrittenText = if (dash) rewriteVlcDashManifest(manifest, response.request.url,
-                            localUri, { localOrigin + routes.registerTemplate(it) })
+                            localUri, { localOrigin + routes.registerTemplate(it, opened.credentialed) })
                         else rewriteVlcHlsManifest(manifest, response.request.url, localUri)
                         rewrittenText.toByteArray(Charsets.UTF_8)
                     } catch (_: IOException) {
@@ -165,7 +165,7 @@ internal class AuthenticatedStreamProxy(
         }
     }
 
-    private data class Opened(val call: Call, val response: okhttp3.Response)
+    private data class Opened(val call: Call, val response: okhttp3.Response, val credentialed: Boolean)
 
     /**
      * Redirects are explicit, bounded and never restore credentials after leaving the origin.
@@ -173,7 +173,7 @@ internal class AuthenticatedStreamProxy(
      */
     private fun openUpstream(resource: HlsRelayRoutes.Resource, range: String?, headOnly: Boolean): Opened {
         var url = resource.url
-        var sendCredentials = vlcRelayOriginAllowed(origin, url)
+        var sendCredentials = resource.credentialed && vlcRelayOriginAllowed(origin, url)
         repeat(6) {
             if (closed.get()) throw IOException("Media relay closed")
             if (!vlcRelayResourceAllowed(origin, url) || !sendCredentials && !vlcRelayCdnUrlAllowed(url))
@@ -194,7 +194,7 @@ internal class AuthenticatedStreamProxy(
                 calls.remove(call)
                 throw error
             }
-            if (response.code !in REDIRECTS) return Opened(call, response)
+            if (response.code !in REDIRECTS) return Opened(call, response, sendCredentials)
             val target = response.header("Location")?.let(url::resolve)
             response.close()
             calls.remove(call)
