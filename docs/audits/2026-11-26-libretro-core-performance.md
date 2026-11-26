@@ -326,3 +326,17 @@ the draft PR as non-mergeable, with no fresh PR workflow runs returned for
 the tested head. The execution container cannot resolve github.com for a
 checkout. Resolve integration conflicts and obtain fresh CI before promoting
 any candidate; no production profile was changed or merged.
+
+## Stage 9 — integration with main
+
+Merged main at 695b1a38907258d56f8099fe528b7d46c8f13423 into the candidate
+branch. Both CI paths and the Vulkan geometry / rewind capture helper copies
+and cache inputs are preserved. Main's 0094 patch already traces all four
+core-call boundaries using the AmbientGame trace helper. The post-patch
+validator checks those labels and refuses unknown calls instead of adding
+nested instrumentation. The trace analyzer accepts both historical and main
+labels. For current captures export CSV with:
+
+    SELECT name, ts, dur FROM slice WHERE name IN ('AmbientGame core run', 'AmbientGame netplay core', 'AmbientGame rewind core', 'AmbientGame rewind preview core');
+
+Fresh CI and device performance evidence remain required.

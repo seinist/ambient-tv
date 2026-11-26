@@ -8,6 +8,12 @@ from pathlib import Path
 
 PREFIX = "AmbientTV:Libretro/"
 PATHS = ("retro_run", "netplay", "rewind", "rewind_seek")
+MAIN_LABELS = {
+    "AmbientGame core run": "retro_run",
+    "AmbientGame netplay core": "netplay",
+    "AmbientGame rewind core": "rewind",
+    "AmbientGame rewind preview core": "rewind_seek",
+}
 
 
 def percentile(values, p):
@@ -30,13 +36,14 @@ def summarize(rows, fps, thermal=(), max_thermal_age_ns=5_000_000_000):
     ignored_incomplete = 0
     for row in rows:
         name = row["name"]
-        if not name.startswith(PREFIX) or name[len(PREFIX):] not in groups:
+        path = MAIN_LABELS.get(name, name[len(PREFIX):] if name.startswith(PREFIX) else None)
+        if path not in groups:
             continue
         ts, dur = int(row["ts"]), int(row["dur"])
         if dur < 0:
             ignored_incomplete += 1
             continue
-        groups[name[len(PREFIX):]].append((ts, dur))
+        groups[path].append((ts, dur))
 
     def stats(items, frame_budget):
         durations = sorted(dur for _, dur in items)

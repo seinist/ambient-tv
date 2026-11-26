@@ -43,6 +43,15 @@ class CorePerformanceToolsTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 verify(changed, "o3-thinlto", root, root)
 
+    def test_main_trace_labels(self):
+        rows = [{"name": name, "ts": "0", "dur": "1000000"} for name in (
+            "AmbientGame core run", "AmbientGame netplay core",
+            "AmbientGame rewind core", "AmbientGame rewind preview core",
+            "AmbientGame pacing wait",
+        )]
+        report = summarize(rows, 60)
+        self.assertTrue(all(path["samples"] == 1 for path in report["paths"].values()))
+
     def test_trace_summary(self):
         rows = [{"name": "AmbientTV:Libretro/retro_run", "ts": str(i * 1_000_000_000),
                  "dur": str(ms * 1_000_000)} for i, ms in enumerate((5, 10, 20, 30))]

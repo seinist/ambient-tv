@@ -35,6 +35,21 @@ class CoreTracingTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             instrument(result)
 
+    def test_existing_main_trace_is_reused(self):
+        main = SOURCE.replace('#include <android/trace.h>', '#include "ambientgametrace.h"')
+        for label in ("AmbientGame rewind core", "AmbientGame core run",
+                      "AmbientGame netplay core", "AmbientGame rewind preview core"):
+            main = main.replace("core->retro_run();", f'traceGameCall("{label}", [&] {{ CORE_CALL }});', 1)
+        main = main.replace("CORE_CALL", "core->retro_run();")
+        self.assertEqual(instrument(main), main)
+        for changed in (
+            main.replace("AmbientGame core run", "wrong label"),
+            main.replace("traceGameCall", "untracedCall", 1),
+            main + "\nvoid LibretroDroid::other() { core->retro_run(); }\n",
+        ):
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                instrument(changed)
+
     def test_context_drift(self):
         changed = SOURCE.replace("checkVulkanFrameError();", "publishContentFrameSize();")
         self.assertEqual(instrument(changed).count("ATrace_beginSection("), 4)
