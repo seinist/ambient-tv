@@ -4,6 +4,7 @@ on:
     paths:
       - 'native/vlc-aar/experimental/**'
       - 'scripts/test_vlc_ahb_import.sh'
+      - 'scripts/prepare_vlc_ahb_experimental.sh'
       - '.github/workflows/vlc-ahb-experimental.yml'
   workflow_dispatch:
 permissions:
@@ -28,7 +29,7 @@ jobs:
           persist-credentials: false
       - name: Check experimental patch against pinned VLC
         run: |
-          git -C .ci/vlc apply --check "$GITHUB_WORKSPACE/native/vlc-aar/experimental/vlc-patches/instance-vulkan-ahb-device.patch"
+          git -C .ci/vlc apply --check "$GITHUB_WORKSPACE"/native/vlc-aar/experimental/vlc-patches/*.patch
       - name: Install pinned Android NDK and shader compiler
         run: |
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
@@ -38,6 +39,13 @@ jobs:
           "$sdkmanager" "ndk;30.0.16248370" || "$sdkmanager" --channel=3 "ndk;30.0.16248370"
           sudo apt-get update
           sudo apt-get install -y glslc libvulkan-dev
+      - name: Stage experimental display module and embedded shaders
+        run: |
+          touch .ci/vlc/.ambient-ahb-experimental
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
+          bash scripts/prepare_vlc_ahb_experimental.sh .ci/vlc
+          bash scripts/prepare_vlc_ahb_experimental.sh .ci/vlc
+          git -C .ci/vlc diff --check
       - name: Host sanitizer regressions, GLSL and Android ABI checks
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
