@@ -527,6 +527,19 @@ class AppPreferences @Inject constructor(
         get() = prefs.getString("moonlight_library_view", "grid")?.takeIf { it in setOf("grid", "list", "rows") } ?: "grid"
         set(value) { if (value in setOf("grid", "list", "rows")) prefs.edit { putString("moonlight_library_view", value) } }
 
+    var moonlightGridColumns: Int
+        get() = prefs.getInt("moonlight_grid_columns", 8).coerceIn(4, 12)
+        set(value) = prefs.edit { putInt("moonlight_grid_columns", value.coerceIn(4, 12)) }
+    var moonlightListRows: Int
+        get() = prefs.getInt("moonlight_list_rows", 7).coerceIn(4, 10)
+        set(value) = prefs.edit { putInt("moonlight_list_rows", value.coerceIn(4, 10)) }
+    var moonlightSortKey: String
+        get() = prefs.getString("moonlight_sort", "name")?.takeIf { it in setOf("name", "recent", "system") } ?: "name"
+        set(value) { if (value in setOf("name", "recent", "system")) prefs.edit { putString("moonlight_sort", value) } }
+    var moonlightSortDescending: Boolean
+        get() = prefs.getBoolean("moonlight_sort_descending", false)
+        set(value) = prefs.edit { putBoolean("moonlight_sort_descending", value) }
+
     val hasMoonlightHosts: Boolean get() = moonlightEnabled && moonlightHosts.isNotEmpty()
 
     /** Per-install GameStream client ID; never replicated to other TVs/phones. */

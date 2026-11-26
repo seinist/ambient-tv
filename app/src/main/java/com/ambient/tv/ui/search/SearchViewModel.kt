@@ -216,7 +216,7 @@ class SearchViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            combine(moonlightStore.metadataRevisions, moonlightStore.artworkRevisions, moonlightStore.trustRevisions) { _, _, _ -> Unit }
+            combine(moonlightStore.metadataRevisions, moonlightStore.trustRevisions) { metadata, trust -> metadata to trust }
                 .collectLatest {
                     val snapshot = _uiState.value
                     if (!snapshot.hasSearched || SearchSource.MOONLIGHT !in snapshot.selectedSources) return@collectLatest
@@ -234,6 +234,30 @@ class SearchViewModel @Inject constructor(
                         }
                     }
                 }
+        }
+    }
+
+    init {
+        viewModelScope.launch {
+            var seen = moonlightStore.artworkChanges.value.values.maxOrNull() ?: 0L
+            moonlightStore.artworkChanges.collectLatest { changes ->
+                val keys = changes.filterValues { it > seen }.keys
+                val snapshot = _uiState.value
+                if (keys.isEmpty() || !snapshot.hasSearched || SearchSource.MOONLIGHT !in snapshot.selectedSources) return@collectLatest
+                val revision = searchRevision
+                val query = snapshot.query.trim()
+                val replacements = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    snapshot.moonlightResults.filter { it.key in keys }.associate { game ->
+                        val art = moonlightStore.artworkInfo(game.host.id, game.app.id)
+                        game.key to game.copy(artworkPath = art?.file?.absolutePath, artworkRatio = art?.aspectRatio ?: 2f / 3f)
+                    }
+                }
+                updateForQuery(query, revision) { state ->
+                    if (state.moonlightResults !== snapshot.moonlightResults) state
+                    else state.copy(moonlightResults = state.moonlightResults.map { replacements[it.key] ?: it })
+                }
+                seen = changes.values.maxOrNull() ?: seen
+            }
         }
     }
 

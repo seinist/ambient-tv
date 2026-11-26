@@ -45,6 +45,7 @@ fun MoonlightGameDetailScreen(
     val primaryFocus = remember { FocusRequester() }
     val handheld = LocalHandheldUi.current
     val listState = rememberLazyListState()
+    LaunchedEffect(hostId) { model.section("host:$hostId") }
     MoonlightRefreshWhileVisible(model)
     LaunchedEffect(game?.key, state.onlineHosts) { game?.let { model.prioritizeArtwork(it) } }
     BackHandler { if (showQuitConfirmation) showQuitConfirmation = false else onBack() }
@@ -53,8 +54,8 @@ fun MoonlightGameDetailScreen(
         state.hostIdentities[hostId], state.artworkRevisions["$hostId:$appId"] ?: 0L) {
         value = withContext(Dispatchers.IO) { game?.let(model::artworkInfo) }
     }
-    LaunchedEffect(game?.key, handheld) {
-        if (game != null && !handheld) repeat(4) {
+    LaunchedEffect(game?.key, handheld, online, showQuitConfirmation) {
+        if (game != null && !handheld && !showQuitConfirmation) repeat(4) {
             withFrameNanos { }
             if (runCatching { primaryFocus.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
         }
@@ -72,7 +73,7 @@ fun MoonlightGameDetailScreen(
             else -> TvLazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize().overlayLazyScrollbar(listState),
-                contentPadding = PaddingValues(start = screenGutter(), end = screenGutter(), top = 94.dp, bottom = 24.dp),
+                contentPadding = PaddingValues(start = screenGutter(), end = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(screenGutter()), bottom = screenGutter()),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
                 wrapVerticalFocus = false,
             ) {

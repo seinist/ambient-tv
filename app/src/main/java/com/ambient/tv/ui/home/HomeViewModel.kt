@@ -616,7 +616,27 @@ class HomeViewModel @Inject constructor(
                 delay(200)
                 val displayed = moonlightRows.flatMap { row -> row.items.mapNotNull { parseMoonlightHomeKey(it.ratingKey) } }
                     .map { (host, app) -> "$host:$app" }.toSet()
-                if (hasEntered && displayed.any { it in changedKeys }) loadMoonlightRows()
+                if (hasEntered && displayed.any { it in changedKeys }) {
+                    val snapshot = moonlightRows
+                    val updated = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        snapshot.map { row ->
+                            val items = row.items.map { item ->
+                                val key = parseMoonlightHomeKey(item.ratingKey)
+                                if (key == null || "${key.first}:${key.second}" !in changedKeys) item
+                                else {
+                                    val art = moonlightStore.artworkInfo(key.first, key.second)
+                                    item.copy(thumbUrl = art?.file?.let { android.net.Uri.fromFile(it).toString() },
+                                        gameCoverAspectRatio = art?.aspectRatio ?: 2f / 3f)
+                                }
+                            }
+                            if (items == row.items) row else row.copy(items = items)
+                        }
+                    }
+                    if (moonlightRows === snapshot && updated != snapshot) {
+                        moonlightRows = updated
+                        if (!_uiState.value.isFailurePage()) publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+                    }
+                }
                 seen = changes.values.maxOrNull() ?: seen
             }
         }

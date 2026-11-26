@@ -122,7 +122,6 @@ class MoonlightLibraryViewModel @Inject constructor(
     private val reconnects: com.ambient.tv.data.browse.BrowseReconnects,
     private val connectivity: com.ambient.tv.connectivity.HostConnectivity,
     private val catalogRepository: com.ambient.tv.moonlight.MoonlightCatalogRepository,
-    private val gameLibrary: com.ambient.tv.games.library.GameLibraryRepository,
 ) : ViewModel() {
     private val mutable = MutableStateFlow(MoonlightLibraryUiState(view = prefs.moonlightLibraryView))
     val state: StateFlow<MoonlightLibraryUiState> = mutable.asStateFlow()
@@ -147,8 +146,9 @@ class MoonlightLibraryViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             combine(store.metadataRevisions, store.availabilityRevisions,
-                prefs.changes().onStart { emit(Unit) }, gameLibrary.revisions, store.trustRevisions) { metadata, online, _, options, trust ->
-                listOf(metadata, online, prefs.moonlightEnabled, prefs.moonlightHosts, prefs.moonlightLibraryView, options, trust)
+                prefs.changes().onStart { emit(Unit) }, store.trustRevisions) { metadata, online, _, trust ->
+                listOf(metadata, online, prefs.moonlightEnabled, prefs.moonlightHosts, prefs.moonlightLibraryView,
+                    prefs.moonlightGridColumns, prefs.moonlightListRows, prefs.moonlightSortKey, prefs.moonlightSortDescending, trust)
             }.distinctUntilChanged().collectLatest { reloadLocal() }
         }
         viewModelScope.launch { store.artworkChanges.collect { revisions ->
@@ -185,8 +185,8 @@ class MoonlightLibraryViewModel @Inject constructor(
                 offlineHosts = snapshot.offlineHosts, hostIdentities = snapshot.hostIdentities,
                 favorites = snapshot.favorites, recent = snapshot.recent,
                 view = prefs.moonlightLibraryView, localLoaded = true,
-                gridColumns = gameLibrary.gridColumns(), listRows = gameLibrary.listRows(),
-                sortKey = gameLibrary.sortKey(), sortDescending = gameLibrary.sortDescending(),
+                gridColumns = prefs.moonlightGridColumns, listRows = prefs.moonlightListRows,
+                sortKey = prefs.moonlightSortKey, sortDescending = prefs.moonlightSortDescending,
                 artwork = current.artwork.filterKeys { key ->
                     val id = key.substringBefore(':')
                     snapshot.hostIdentities[id] != null && snapshot.hostIdentities[id] == current.hostIdentities[id]
@@ -196,7 +196,9 @@ class MoonlightLibraryViewModel @Inject constructor(
     }
 
     fun section(value: String) {
+        if (mutable.value.sections == value) return
         mutable.update { it.copy(sections = value) }
+        if (visible) { fetch?.cancel(); fetch = null; load() }
     }
 
     fun search(value: String) {
@@ -209,10 +211,10 @@ class MoonlightLibraryViewModel @Inject constructor(
         mutable.update { it.copy(view = value) }
     }
 
-    fun gridColumns(value: Int) = gameLibrary.setGridColumns(value)
-    fun listRows(value: Int) = gameLibrary.setListRows(value)
-    fun sort(value: String) = gameLibrary.setSortKey(value)
-    fun sortDescending(value: Boolean) = gameLibrary.setSortDescending(value)
+    fun gridColumns(value: Int) { prefs.moonlightGridColumns = value; mutable.update { it.copy(gridColumns = prefs.moonlightGridColumns) } }
+    fun listRows(value: Int) { prefs.moonlightListRows = value; mutable.update { it.copy(listRows = prefs.moonlightListRows) } }
+    fun sort(value: String) { prefs.moonlightSortKey = value; mutable.update { it.copy(sortKey = prefs.moonlightSortKey) } }
+    fun sortDescending(value: Boolean) { prefs.moonlightSortDescending = value; mutable.update { it.copy(sortDescending = prefs.moonlightSortDescending) } }
 
     fun favorite(game: MoonlightBrowseGame) {
         store.toggleFavorite(game.host.id, game.app.id)
@@ -258,7 +260,8 @@ class MoonlightLibraryViewModel @Inject constructor(
             previous?.join()
             reloadLocal()
             val snapshot = mutable.value
-            val paired = snapshot.hosts.filter { (onlyHost == null || it.id == onlyHost) &&
+            val selectedHost = onlyHost ?: snapshot.sections.takeIf { it.startsWith("host:") }?.removePrefix("host:")
+            val paired = snapshot.hosts.filter { (selectedHost == null || it.id == selectedHost) &&
                 it.id in snapshot.pairedHosts && (force || it.id !in snapshot.onlineHosts || !store.isCatalogFresh(it.id)) }
             coroutineScope {
                 paired.map { host ->

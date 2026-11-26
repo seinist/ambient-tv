@@ -417,6 +417,10 @@ private fun MoonlightStreamContent(
     var retryRevision by remember { mutableStateOf(0) }
     var autoRetries by remember { mutableStateOf(0) }
     var resumeOnly by remember { mutableStateOf(false) }
+    // A successfully started remote app must not be relaunched on surface recreation.
+    LaunchedEffect(status.phase) {
+        if (status.phase == MoonlightStreamPhase.STREAMING) resumeOnly = true
+    }
     var excludedVideoFormats by remember { mutableStateOf(0) }
     LaunchedEffect(engine, hostId, appId, binding, displayReady, sessionProfile, retryRevision) {
         startFailed = false
@@ -464,12 +468,13 @@ private fun MoonlightStreamContent(
             status.phase != MoonlightStreamPhase.STREAMING || startFailed)
     }
     val resumeFocus = remember { FocusRequester() }
+    val retryFocus = remember { FocusRequester() }
     val textFocus = remember { FocusRequester() }
     val infoFocus = remember { FocusRequester() }
     val settingsFocus = remember { FocusRequester() }
     val disconnectFocus = remember { FocusRequester() }
-    LaunchedEffect(controlsShown, status.phase, panel) {
-        if ((controlsShown || status.phase != MoonlightStreamPhase.STREAMING) &&
+    LaunchedEffect(controlsShown, status.phase, panel, startFailed) {
+        if ((controlsShown || status.phase != MoonlightStreamPhase.STREAMING || startFailed) &&
             panel == MoonlightPlaybackPage.NONE) {
             withFrameNanos { }
             runCatching {
@@ -478,6 +483,7 @@ private fun MoonlightStreamContent(
                     controlsShown && panelOrigin == MoonlightPlaybackPage.INFO -> infoFocus
                     controlsShown && panelOrigin != MoonlightPlaybackPage.NONE -> settingsFocus
                     controlsShown && status.phase == MoonlightStreamPhase.STREAMING -> resumeFocus
+                    startFailed || status.phase in setOf(MoonlightStreamPhase.FAILED, MoonlightStreamPhase.ENDED) -> retryFocus
                     else -> disconnectFocus
                 }
                 target.requestFocus()
@@ -567,7 +573,7 @@ private fun MoonlightStreamContent(
                                 resumeOnly = status.retryable || resumeOnly
                                 onManualRetry()
                                 retryRevision++
-                            }, primary = true)
+                            }, modifier = Modifier.focusRequester(retryFocus), primary = true)
                         }
                         if (status.phase == MoonlightStreamPhase.STREAMING && controlsShown) {
                             PlayerIconButton(Icons.Filled.PlayArrow, stringResource(R.string.moonlight_stream_resume),

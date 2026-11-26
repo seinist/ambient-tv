@@ -49,6 +49,8 @@ class MoonlightLibraryStore @Inject constructor(
     private val requestIds = mutableMapOf<String, Long>()
     private var sequence = 0L
     private var artworkBytes = -1L
+    // Access time is separate from download freshness (lastModified).
+    private val artworkAccess = object : android.util.LruCache<String, Long>(4096) {}
     private val negativeArtwork = LinkedHashMap<String, Long>()
     private val mutableAvailability = MutableStateFlow(0L)
     val availabilityRevisions = mutableAvailability.asStateFlow()
@@ -72,6 +74,30 @@ class MoonlightLibraryStore @Inject constructor(
     private val mutableArtworkRevisions = MutableStateFlow(0L)
     val artworkRevisions = mutableArtworkRevisions.asStateFlow()
     private val online = mutableMapOf<String, Pair<String, Long>>()
+    private val expiryJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
+
+    // A live proof expires even if no browse screen is open. Renewing a proof replaces its timer.
+    private fun renewOnline(hostId: String, identity: String) {
+        val stamp = android.os.SystemClock.elapsedRealtime()
+        val proof = identity to stamp
+        online[hostId] = proof
+        expiryJobs.remove(hostId)?.cancel()
+        expiryJobs[hostId] = io.launch {
+            kotlinx.coroutines.delay(MOONLIGHT_PROBE_TTL_MS)
+            synchronized(lock) {
+                if (online[hostId] == proof && !isRecentlyOnline(hostId)) {
+                    online.remove(hostId)
+                    expiryJobs.remove(hostId)
+                    mutableAvailability.value++
+                }
+            }
+        }
+    }
+
+    private fun removeOnline(hostId: String): Boolean {
+        expiryJobs.remove(hostId)?.cancel()
+        return online.remove(hostId) != null
+    }
     private val offlineIdentities = mutableMapOf<String, String>()
     val trustRevisions get() = trust.revisions
 
@@ -99,7 +125,7 @@ class MoonlightLibraryStore @Inject constructor(
     fun markOnline(request: Request): Boolean = synchronized(lock) {
         if (!isCurrent(request)) return@synchronized false
         val wasOnline = isRecentlyOnline(request.hostId)
-        online[request.hostId] = request.identity to android.os.SystemClock.elapsedRealtime()
+        renewOnline(request.hostId, request.identity)
         val wasOffline = offlineIdentities.remove(request.hostId) != null
         if (!wasOnline || wasOffline) mutableAvailability.value++
         true
@@ -110,7 +136,7 @@ class MoonlightLibraryStore @Inject constructor(
         requestIds[hostId] = ++sequence
         val previous = offlineIdentities[hostId]
         if (request == null) offlineIdentities.remove(hostId) else offlineIdentities[hostId] = request.identity
-        val removed = online.remove(hostId) != null
+        val removed = removeOnline(hostId)
         if (removed || previous != offlineIdentities[hostId]) mutableAvailability.value++
     }
 
@@ -118,7 +144,7 @@ class MoonlightLibraryStore @Inject constructor(
         if (request != null && !isCurrent(request)) return@synchronized
         requestIds[hostId] = ++sequence
         val wasOffline = offlineIdentities.remove(hostId) != null
-        if (online.remove(hostId) != null || wasOffline) mutableAvailability.value++
+        if (removeOnline(hostId) || wasOffline) mutableAvailability.value++
         val removed = catalogs.remove(hostId) != null
         if (prefs.contains("catalog:$hostId")) {
             prefs.edit().remove("catalog:$hostId").apply()
@@ -157,7 +183,7 @@ class MoonlightLibraryStore @Inject constructor(
         }.apply()
         catalogs[hostId] = Cached(identity, cached)
         val wasOnline = isRecentlyOnline(hostId)
-        online[hostId] = identity to android.os.SystemClock.elapsedRealtime()
+        renewOnline(hostId, identity)
         val wasOffline = offlineIdentities.remove(hostId) != null
         if (!wasOnline || wasOffline) mutableAvailability.value++
         if (old?.apps != apps) changed()
@@ -210,6 +236,7 @@ class MoonlightLibraryStore @Inject constructor(
 
     fun artworkInfo(hostId: String, appId: Int): MoonlightArtwork? {
         val file = artworkFile(hostId, appId) ?: return null
+        artworkAccess.put(file.absolutePath, System.currentTimeMillis())
         artworkBounds.get(file.absolutePath)?.let { return it }
         val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
         android.graphics.BitmapFactory.decodeFile(file.absolutePath, bounds)
@@ -292,7 +319,7 @@ class MoonlightLibraryStore @Inject constructor(
             requestIds[hostId] = ++sequence
             catalogs.remove(hostId)
             val wasOffline = offlineIdentities.remove(hostId) != null
-            if (online.remove(hostId) != null || wasOffline) mutableAvailability.value++
+            if (removeOnline(hostId) || wasOffline) mutableAvailability.value++
             prefs.edit().remove("catalog:$hostId").putStringSet(
                 "favorites", favorites().filterNot { it.startsWith("$hostId:") }.toSet(),
             ).putString("recent", recent().filterNot { it.startsWith("$hostId:") }.joinToString("|")).apply()
@@ -316,11 +343,15 @@ class MoonlightLibraryStore @Inject constructor(
     private fun trimArtwork() {
         if (artworkBytes <= MAX_CACHE_BYTES) return
         val images = artworkDir.walkTopDown().filter { it.isFile && it.extension == "img" }
-            .sortedBy(File::lastModified).toList()
+            .sortedBy { artworkAccess.get(it.absolutePath) ?: it.lastModified() }.toList()
         for (file in images) {
             if (artworkBytes <= MAX_CACHE_BYTES * 9 / 10) break
             val length = file.length()
-            if (file.delete()) artworkBytes -= length
+            if (file.delete()) {
+                artworkBytes -= length
+                artworkAccess.remove(file.absolutePath)
+                artworkBounds.remove(file.absolutePath)
+            }
         }
     }
 
@@ -341,6 +372,8 @@ class MoonlightLibraryStore @Inject constructor(
     }
 }
 
+internal const val MOONLIGHT_PROBE_TTL_MS = 60_000L
+
 /** A persisted catalog never carries a live online proof across a process restart. */
 internal fun moonlightProbeFresh(expected: String?, actual: String, probeAt: Long, now: Long): Boolean =
-    expected != null && expected == actual && probeAt >= 0L && now >= probeAt && now - probeAt < 60_000L
+    expected != null && expected == actual && probeAt >= 0L && now >= probeAt && now - probeAt < MOONLIGHT_PROBE_TTL_MS

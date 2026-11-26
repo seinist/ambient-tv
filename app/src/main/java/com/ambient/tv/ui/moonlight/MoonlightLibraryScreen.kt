@@ -47,6 +47,7 @@ fun MoonlightLibraryScreen(
     val games by model.games.collectAsState()
     val controls = rememberGameLibraryBrowseControls()
     var searchVisible by rememberSaveable { mutableStateOf(false) }
+    var searchText by rememberSaveable { mutableStateOf("") }
     var selectedSection by rememberSaveable(initialSection) { mutableStateOf(initialSection) }
     var focusedId by rememberSaveable { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
@@ -57,12 +58,13 @@ fun MoonlightLibraryScreen(
     val gameIndex = remember(games) { games.associateBy { it.key } }
     val currentGames by rememberUpdatedState(gameIndex)
     LaunchedEffect(initialSection) { model.section(selectedSection) }
+    LaunchedEffect(searchText) { model.search(searchText) }
     MoonlightRefreshWhileVisible(model)
     ReportSidebarContentReady(state.ready)
     BackHandler {
         when {
             controls.showOptions -> controls.closeOptions()
-            searchVisible -> { searchVisible = false; model.search("") }
+            searchVisible -> { searchVisible = false; searchText = "" }
             else -> onBack()
         }
     }
@@ -94,7 +96,7 @@ fun MoonlightLibraryScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             GameLibraryHeader(library, managing = false, searchShown = searchVisible, controls = controls,
-                onManage = null, onSearch = { searchVisible = !searchVisible; if (!searchVisible) model.search("") },
+                onManage = null, onSearch = { searchVisible = !searchVisible; if (!searchVisible) searchText = "" },
                 onRefresh = { model.load(force = true, onlyHost = hostBySection[section]?.id) },
                 title = hostBySection[section]?.let { it.name.ifBlank { it.host } } ?: name,
                 system = MediaSystem.MOONLIGHT, itemCount = games.size, onSettings = onOpenSettings)
@@ -106,7 +108,7 @@ fun MoonlightLibraryScreen(
                 model.section(value)
                 onSectionSelected?.invoke(value)
             }
-            if (searchVisible) TvTextField(state.query, model::search, stringResource(R.string.action_search),
+            if (searchVisible) TvTextField(searchText, { searchText = it.take(150) }, stringResource(R.string.action_search),
                 Modifier.fillMaxWidth().pageFocusStage(controls.focusChain, PageFocusLevel.SEARCH_LOWER, controls.searchFocus))
             GameLibrarySortBar(library, controls, model::sort, model::sortDescending)
             if (state.errors.values.any { it == "identity" }) Text(stringResource(R.string.moonlight_identity_changed),

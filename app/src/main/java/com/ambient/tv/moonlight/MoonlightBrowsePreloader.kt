@@ -32,14 +32,19 @@ class MoonlightBrowsePreloader @Inject constructor(
                     store.peerIdentity(host.id)?.let { host to it }
                 } else emptyList()
             }.distinctUntilChanged().collectLatest { hosts ->
-                coroutineScope {
-                    hosts.forEach { (host, _) ->
-                        launch {
-                            try { repository.refresh(host, BrowseLoadPriority.BACKGROUND) }
-                            catch (cancel: CancellationException) { throw cancel }
-                            catch (_: Exception) { /* Keep any identity-bound local cache. */ }
+                if (hosts.isEmpty()) return@collectLatest
+                // Keep paired hosts fresh without discovery, WOL or VPN side effects.
+                while (true) {
+                    coroutineScope {
+                        hosts.forEach { (host, _) ->
+                            launch {
+                                try { repository.refresh(host, BrowseLoadPriority.BACKGROUND) }
+                                catch (cancel: CancellationException) { throw cancel }
+                                catch (_: Exception) { /* Keep any identity-bound local cache. */ }
+                            }
                         }
                     }
+                    kotlinx.coroutines.delay(45_000L)
                 }
             }
         }
