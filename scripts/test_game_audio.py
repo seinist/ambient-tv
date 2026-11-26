@@ -28,6 +28,15 @@ def main():
         subprocess.run(command, check=True)
         subprocess.run([str(binary)], check=True)
 
+        controls = Path(temporary) / "audio-controls"
+        command = [os.environ.get("CXX", "c++"), "-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-Werror", "-pthread",
+                   "-I", str(native), str(Path(__file__).with_name("native_game_audio_controls_test.cpp")),
+                   "-o", str(controls)]
+        if args.sanitize:
+            command[1:1] = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+        subprocess.run(command, check=True)
+        subprocess.run([str(controls)], check=True)
+
 
 if __name__ == "__main__":
     main()

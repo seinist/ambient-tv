@@ -1,0 +1,146 @@
+diff --git a/src/main/cpp/audio.cpp b/src/main/cpp/audio.cpp
+--- a/src/main/cpp/audio.cpp
++++ b/src/main/cpp/audio.cpp
+@@ -138,18 +138,18 @@
+ }
+ 
+ void Audio::setPlaybackSpeed(const double newPlaybackSpeed) {
+-    playbackSpeed = newPlaybackSpeed;
++    callbackControls.setSpeed(newPlaybackSpeed);
+ }
+ 
+ void Audio::setPitchPreservation(bool enabled) {
+     // Just flip the flag. The audio-callback thread owns the SoundTouch state and
+     // will pick up the new setting on the next onAudioReady. Calling clear() or
+     // setTempo() here would race with putSamples/receiveSamples.
+-    pitchPreservationEnabled = enabled;
++    callbackControls.setPreservePitch(enabled);
+ }
+ 
+ void Audio::setOutputVolume(float volume) {
+-    outputVolume = volume;
++    callbackControls.setVolume(volume);
+ }
+ 
+ void Audio::resetBufferState() {
+@@ -200,8 +200,10 @@
+ }
+ 
+ oboe::DataCallbackResult Audio::onAudioReady(oboe::AudioStream *oboeStream, void *audioData, int32_t numFrames) {
++    const auto controls = callbackControls.snapshot();
++    const double playbackSpeed = controls.speed;
+     double dynamicBufferFactor = computeDynamicBufferConversionFactor(0.001 * numFrames);
+-    const bool stretchActive = pitchPreservationEnabled && timeStretcher != nullptr &&
++    const bool stretchActive = controls.preservePitch && timeStretcher != nullptr &&
+         std::abs(playbackSpeed - 1.0) > kStretchBypassEpsilon;
+ 
+     // FIFO read rate covers sample-rate conversion, PI-controller buffer balancing, and
+@@ -261,15 +263,7 @@
+ 
+     resampler.resample(temporaryAudioBuffer.get(), currentFramesToSubmit, outputArray, numFrames);
+ 
+-    if (outputVolume != 1.0f) {
+-        const int32_t totalSamples = numFrames * 2;
+-        for (int32_t i = 0; i < totalSamples; ++i) {
+-            float s = outputArray[i] * outputVolume;
+-            if (s > 32767.0f) s = 32767.0f;
+-            else if (s < -32768.0f) s = -32768.0f;
+-            outputArray[i] = (int16_t) std::lrintf(s);
+-        }
+-    }
++    applyAudioCallbackVolume(outputArray, numFrames, controls.volume);
+ 
+     latencyTuner->tune();
+ 
+diff --git a/src/main/cpp/audio.h b/src/main/cpp/audio.h
+--- a/src/main/cpp/audio.h
++++ b/src/main/cpp/audio.h
+@@ -23,6 +23,7 @@
+ #include <oboe/Oboe.h>
+ #include <oboe/FifoBuffer.h>
+ 
++#include "audiocallbackcontrols.h"
+ #include "resamplers/linearresampler.h"
+ #include "SoundTouch.h"
+ 
+@@ -93,9 +94,7 @@
+     double framesToSubmit = 0.0;
+     double errorIntegral = 0.0;
+ 
+-    double playbackSpeed = 1.0;
+-
+-    float outputVolume = 1.0f;
++    AudioCallbackControls callbackControls;
+ 
+     std::unique_ptr<AudioLatencySettings> audioLatencySettings;
+ 
+@@ -106,7 +105,6 @@
+     std::unique_ptr<float[]> stretchInputBuffer;
+     std::unique_ptr<float[]> stretchOutputBuffer;
+     int32_t stretchBufferFrameCapacity = 0;
+-    bool pitchPreservationEnabled = false;
+     double lastStretchTempo = 1.0;
+ };
+ 
+diff --git a/src/main/cpp/audiocallbackcontrols.h b/src/main/cpp/audiocallbackcontrols.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/audiocallbackcontrols.h
+@@ -0,0 +1,57 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++
++#include <algorithm>
++#include <atomic>
++#include <cmath>
++#include <cstddef>
++#include <cstdint>
++
++namespace libretrodroid {
++
++// The emulation thread publishes independent scalar controls. The audio callback
++// reads each exactly once per block; no lock, allocation or retry is needed.
++struct AudioCallbackControls {
++    static_assert(std::atomic<double>::is_always_lock_free, "Audio speed must be lock-free");
++    static_assert(std::atomic<float>::is_always_lock_free, "Audio volume must be lock-free");
++    static_assert(std::atomic<bool>::is_always_lock_free, "Audio pitch flag must be lock-free");
++
++    struct Snapshot {
++        double speed;
++        float volume;
++        bool preservePitch;
++    };
++
++    void setSpeed(double value) noexcept { speed.store(value, std::memory_order_relaxed); }
++    void setVolume(float value) noexcept { volume.store(value, std::memory_order_relaxed); }
++    void setPreservePitch(bool value) noexcept { preservePitch.store(value, std::memory_order_relaxed); }
++
++    Snapshot snapshot() const noexcept {
++        return {speed.load(std::memory_order_relaxed), volume.load(std::memory_order_relaxed),
++                preservePitch.load(std::memory_order_relaxed)};
++    }
++
++private:
++    std::atomic<double> speed{1.0};
++    std::atomic<float> volume{1.0f};
++    std::atomic<bool> preservePitch{false};
++};
++
++// Apply a single callback's volume after resampling. Muting still consumes the
++// same audio and preserves the timing controller and time-stretcher state.
++inline void applyAudioCallbackVolume(int16_t* output, int32_t frames, float volume) {
++    if (frames <= 0 || volume == 1.0f) return;
++    const auto samples = static_cast<std::size_t>(frames) * 2;
++    if (volume == 0.0f) {
++        std::fill_n(output, samples, int16_t{0});
++        return;
++    }
++    for (std::size_t i = 0; i < samples; ++i) {
++        float s = output[i] * volume;
++        if (s > 32767.0f) s = 32767.0f;
++        else if (s < -32768.0f) s = -32768.0f;
++        output[i] = static_cast<int16_t>(std::lrintf(s));
++    }
++}
++
++} // namespace libretrodroid
