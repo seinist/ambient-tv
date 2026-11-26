@@ -252,7 +252,13 @@ class Media3PlaybackHandle(
         } ?: frameStepTarget(anchor / 1000L, duration, forward, (1000f / fps).toLong().coerceAtLeast(1L))
         frameStepCursorUs = candidate?.takeIf { it / 1000L == target } ?: target * 1000L
         frameTimeline.pending(-1L)
-        if (!Media3ResumePrimer.retarget(player, target)) player.seekToPlaybackPosition(target)
+        if (!Media3ResumePrimer.retarget(player, target)) {
+            // Scrubbing/fast seek parameters must not move this request to a sync sample.
+            val previous = player.seekParameters
+            player.setSeekParameters(androidx.media3.exoplayer.SeekParameters.EXACT)
+            try { player.seekToPlaybackPosition(target) }
+            finally { player.setSeekParameters(previous) }
+        }
     }
     private var outputMuteVolume: Float? = null
     override fun setOutputMuted(muted: Boolean) {
