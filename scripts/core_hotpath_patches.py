@@ -1,8 +1,10 @@
 """Pin-checked, opt-in source-level improvements for individual Libretro cores."""
 from pathlib import Path
+import re
 
 
-SUPPORTED = {"bsnes", "mesen", "sameboy", "mednafen_pce_fast", "mednafen_supergrafx", "mednafen_ngp"}
+SUPPORTED = {"bsnes", "mesen", "sameboy", "mednafen_pce_fast", "mednafen_supergrafx", "mednafen_ngp",
+             "mednafen_wswan", "mednafen_vb", "mednafen_lynx"}
 
 
 def replace_once(source, old, new, label):
@@ -151,6 +153,138 @@ SGX_NEW = """         // Sample both digital mouse-mapped buttons together if su
             button_state |= BIT(3);"""
 
 
+# The ordinary StateMem layout is deliberately unchanged. Existing dynamically
+# allocated state writers continue to use their existing ownership contract.
+# The fixed-buffer operation marks only its own StateMem on this API thread.
+FIXED_STATE_DECL = """static __thread StateMem *ambient_fixed_state;
+static __thread bool ambient_fixed_failed;
+
+"""
+FIXED_WRITE_OLD = """   if ((len + st->loc) > st->malloced)
+   {
+"""
+FIXED_WRITE_NEW = """   if (st->loc > st->malloced || len > st->malloced - st->loc)
+   {
+      /* Never realloc or free the caller-owned libretro buffer. The sticky
+       * flag is checked even when an upstream state action ignores a short
+       * write. Normal successful fixed-buffer writes take the existing path. */
+      if (st == ambient_fixed_state)
+      {
+         ambient_fixed_failed = true;
+         return 0;
+      }
+      if (len > UINT32_MAX - st->loc)
+         return 0;
+"""
+FIXED_GROW_OLD = """      while(newsize < (len + st->loc))
+         newsize *= 2;
+      st->data = (uint8_t *)realloc(st->data, newsize);
+      st->malloced = newsize;"""
+FIXED_GROW_NEW = """      while(newsize < (len + st->loc))
+      {
+         if (newsize > UINT32_MAX / 2)
+         {
+            newsize = len + st->loc;
+            break;
+         }
+         newsize *= 2;
+      }
+      {
+         uint8_t *replacement = (uint8_t *)realloc(st->data, newsize);
+         if (!replacement)
+            return 0;
+         st->data = replacement;
+      }
+      st->malloced = newsize;"""
+
+FIXED_SAVE = """
+/* Direct serialization into frontend-owned storage. A size change is reported
+ * as a failed snapshot, not an allocation, truncated success or out-of-bounds
+ * copy. Zero the optional padding to keep rewind comparisons deterministic. */
+bool AmbientSaveFixed(void *data, uint32_t capacity)
+{
+   StateMem st;
+   bool result;
+   if (!data || capacity < 32 || ambient_fixed_state)
+      return false;
+   memset(&st, 0, sizeof(st));
+   st.data = (uint8_t *)data;
+   st.malloced = capacity;
+   ambient_fixed_state = &st;
+   ambient_fixed_failed = false;
+#ifdef __cplusplus
+   struct Scope
+   {
+      ~Scope() { ambient_fixed_state = NULL; ambient_fixed_failed = false; }
+   } scope;
+#endif
+   result = MDFNSS_SaveSM(&st, 0, 0, NULL, NULL, NULL) &&
+      !ambient_fixed_failed && st.data == data && st.len >= 32 && st.len <= capacity;
+   ambient_fixed_state = NULL;
+   ambient_fixed_failed = false;
+   if (result && st.len < capacity)
+      memset(st.data + st.len, 0, capacity - st.len);
+   return result;
+}
+"""
+
+FIXED_RETRO_OLD = """bool retro_serialize(void *data, size_t size)
+{
+   StateMem st;
+   bool ret          = false;
+   uint8_t *_dat     = (uint8_t*)malloc(size);
+
+   if (!_dat)
+      return false;
+
+   /* Mednafen can realloc the buffer so we need to ensure this is safe. */
+   st.data           = _dat;
+   st.loc            = 0;
+   st.len            = 0;
+   st.malloced       = size;
+   st.initial_malloc = 0;
+
+   ret = MDFNSS_SaveSM(&st, 0, 0, NULL, NULL, NULL);
+
+   memcpy(data, st.data, size);
+   free(st.data);
+
+   return ret;
+}"""
+FIXED_RETRO_NEW = """bool retro_serialize(void *data, size_t size)
+{
+   if ((uint64_t)size > UINT32_MAX)
+      return false;
+   return AmbientSaveFixed(data, (uint32_t)size);
+}"""
+
+
+def prepare_fixed_states(root, core):
+    state = root / ("mednafen/state.cpp" if core == "mednafen_lynx" else "mednafen/state.c")
+    header = root / "mednafen/state.h"
+    entry = root / ("libretro.cpp" if core in {"mednafen_vb", "mednafen_lynx"} else "libretro.c")
+    source = state.read_bytes().decode("utf-8")
+    declarations = header.read_bytes().decode("utf-8")
+    frontend = entry.read_bytes().decode("utf-8")
+    declaration = re.findall(r"^int MDFNSS_SaveSM\([^\n]+\);$", declarations, re.M)
+    if len(declaration) != 1:
+        raise ValueError(f"{core}: unexpected state API declaration")
+    declarations = replace_once(declarations, declaration[0],
+                                declaration[0] + "\nbool AmbientSaveFixed(void *data, uint32_t capacity);",
+                                core + " fixed state declaration")
+    signature = "static int32_t smem_write(StateMem *st, void *buffer, uint32_t len)\n{\n"
+    source = replace_once(source, signature, FIXED_STATE_DECL + signature, core + " fixed state writer")
+    source = replace_once(source, FIXED_WRITE_OLD, FIXED_WRITE_NEW, core + " bounds guard")
+    source = replace_once(source, FIXED_GROW_OLD, FIXED_GROW_NEW, core + " allocation guard")
+    old = FIXED_RETRO_OLD
+    if core == "mednafen_vb":
+        old = old.replace("   st.initial_malloc = 0;\n", "")
+    frontend = replace_once(frontend, old, FIXED_RETRO_NEW, core + " zero-copy serialize")
+    state.write_bytes((source + FIXED_SAVE).encode("utf-8"))
+    header.write_bytes(declarations.encode("utf-8"))
+    entry.write_bytes(frontend.encode("utf-8"))
+
+
 def prepare_hotpaths(root, core):
     if core == "bsnes":
         prepare_bsnes(root)
@@ -171,5 +305,8 @@ def prepare_hotpaths(root, core):
         path = root / relative
         source = path.read_bytes().decode("utf-8")
         path.write_bytes(replace_once(source, old, new, core).encode("utf-8"))
-    else:
+    elif core not in {"mednafen_wswan", "mednafen_vb", "mednafen_lynx"}:
         raise ValueError(f"No reviewed source-level hotpath patch for {core}")
+    if core in {"mednafen_ngp", "mednafen_wswan", "mednafen_vb", "mednafen_lynx"}:
+        prepare_fixed_states(root, core)
+
