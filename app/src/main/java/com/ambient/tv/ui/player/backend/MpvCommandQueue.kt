@@ -63,7 +63,13 @@ internal class MpvCommandQueue(
     private fun runNext() {
         var key: String? = null
         val work = synchronized(lock) {
-            key = pending.keys.firstOrNull()
+            // A dying Surface has a bounded main-thread wait. Prioritize its retirement over
+            // non-lifecycle commands, but keep initialization and attach/detach order intact.
+            key = when {
+                "initialize" in pending -> "initialize"
+                "surface-detach" in pending -> pending.keys.firstOrNull { it == "surface-attach" || it == "surface-detach" }
+                else -> pending.keys.firstOrNull()
+            }
             key?.let { pending.remove(it) } ?: run { scheduled = false; null }
         } ?: return
         running(key)
