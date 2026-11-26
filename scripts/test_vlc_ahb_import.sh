@@ -46,6 +46,20 @@ if [[ -n "${LIBPLACEBO_SOURCE:-}" ]]; then
             -std=c11 -Wall -Wextra -Werror -Wno-missing-field-initializers \
             -I "$TMP/pl-headers" -isystem "$LIBPLACEBO_SOURCE/src/include" \
             -fsyntax-only "$SRC/test_placebo_compile.c"
+        if [[ -n "${VLC_SOURCE:-}" ]]; then
+            # Compile the actual patched C modules with the pinned public VLC
+            # and libplacebo headers. This deliberately does not pretend to be
+            # a configured/autotools link of the full VLC plugin.
+            for module in display instance_vulkan; do
+                "$NDK/toolchains/llvm/prebuilt/$host/bin/${triple}29-clang" \
+                    -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 \
+                    -DMODULE_NAME=libplacebo -DAMBIENT_VLC_AHB_EXPERIMENT \
+                    -Werror=implicit-function-declaration -Werror=incompatible-pointer-types -Werror=int-conversion \
+                    -I "$TMP/pl-headers" -isystem "$LIBPLACEBO_SOURCE/src/include" \
+                    -I "$VLC_SOURCE/include" \
+                    -fsyntax-only "$VLC_SOURCE/modules/video_output/libplacebo/$module.c"
+            done
+        fi
     done
     echo "Pinned libplacebo C API checks passed for four Android ABIs"
 fi
