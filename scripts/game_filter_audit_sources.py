@@ -109,8 +109,9 @@ def write_audit_header(destination):
         lines.append('result.push_back({"' + name + '",{Type::SHADER_CUSTOM,{}, {' +
                      shader_pass(picture["VERTEX"], picture[name]) + '}},false,false,true,true});')
     for name, body, linear in dispatch:
-        fragment = 'std::string(' + raw(retro["HEADER"]) + ')+"\\nconst float INTENSITY = "+std::to_string(intensity)+";\\n"+' + raw(retro[body])
-        pass_source = '{' + raw(retro["VERTEX"]) + ',' + fragment + ',' + str(bool(linear)).lower() + ',1.0f,false}'
+        assert "uniform float ambientFilterIntensity;" in retro["HEADER"]
+        fragment = 'std::string(' + raw(retro["HEADER"]) + ')+' + raw(retro[body])
+        pass_source = '{' + raw(retro["VERTEX"]) + ',' + fragment + ',' + str(bool(linear)).lower() + ',1.0f,false,intensity}'
         neutral = name not in ("CRT_APERTURE", "GAMEBOY_DMG", "GBA_COLOR")
         flat = name in ("SHARP_BILINEAR", "PIXEL_AA", "NTSC_COMPOSITE")
         lines.append('result.push_back({"' + name + '",{Type::SHADER_CUSTOM,{}, {' + pass_source +

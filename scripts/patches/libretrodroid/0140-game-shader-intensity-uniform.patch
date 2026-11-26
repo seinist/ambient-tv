@@ -1,0 +1,255 @@
+diff --git a/src/main/java/com/swordfish/libretrodroid/ShaderConfig.kt b/src/main/java/com/swordfish/libretrodroid/ShaderConfig.kt
+--- a/src/main/java/com/swordfish/libretrodroid/ShaderConfig.kt
++++ b/src/main/java/com/swordfish/libretrodroid/ShaderConfig.kt
+@@ -64,7 +64,9 @@
+             val fragment: String,
+             val linear: Boolean = false,
+             val scale: Float = 1.0f,
+-            val floatFramebuffer: Boolean = false
++            val floatFramebuffer: Boolean = false,
++            /** Zero disables the reserved uniform; compact built-in passes opt in. */
++            val ambientIntensity: Float = 0f,
+         )
+     }
+ 
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroShaderPass.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroShaderPass.kt
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroShaderPass.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroShaderPass.kt
+@@ -5,5 +5,6 @@
+     val fragment: String,
+     val linear: Boolean = false,
+     val scale: Float = 1.0f,
+-    val floatFramebuffer: Boolean = false
++    val floatFramebuffer: Boolean = false,
++    val ambientIntensity: Float = 0f,
+ )
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+@@ -1053,6 +1053,7 @@
+                         linear = config.pass.linear,
+                         scale = config.pass.scale,
+                         floatFramebuffer = config.pass.floatFramebuffer,
++                        ambientIntensity = config.pass.ambientIntensity,
+                     )) + selected.passes,
+                 )
+             }
+@@ -1065,6 +1066,7 @@
+                         linear = pass.linear,
+                         scale = pass.scale,
+                         floatFramebuffer = pass.floatFramebuffer,
++                        ambientIntensity = pass.ambientIntensity,
+                     )
+                 }
+             )
+diff --git a/src/main/cpp/shadermanager.h b/src/main/cpp/shadermanager.h
+--- a/src/main/cpp/shadermanager.h
++++ b/src/main/cpp/shadermanager.h
+@@ -18,6 +18,8 @@
+ #ifndef LIBRETRODROID_SHADERMANAGER_H
+ #define LIBRETRODROID_SHADERMANAGER_H
+ 
++#include <algorithm>
++#include <cmath>
+ #include <string>
+ #include <unordered_map>
+ #include <vector>
+@@ -33,7 +35,12 @@
+         float scale;
+         // Preserve signed/high-precision classification data between authentic scaler passes.
+         bool floatFramebuffer = false;
+-
++        // Explicit per-pass opt-in. Signed external passes default to disabled.
++        float ambientIntensity = 0.0f;
++        static float normalizedIntensity(float value) noexcept {
++            return std::isfinite(value) && value > 0.0f ? std::clamp(value, 0.5f, 1.5f) : 0.0f;
++        }
++        bool sameShaderStructure(const Pass& other) const;
+         bool operator==(const ShaderManager::Pass &other) const;
+     };
+ 
+@@ -63,10 +70,18 @@
+         std::unordered_map<std::string, std::string> params;
+         std::vector<Pass> customPasses;
+ 
+-        inline bool operator==(const Config& other) {
++        inline bool operator==(const Config& other) const {
+             return type == other.type && params == other.params
+                 && customPasses == other.customPasses;
+         }
++
++        bool sameShaderStructure(const Config& other) const {
++            if (type != other.type || params != other.params ||
++                    customPasses.size() != other.customPasses.size()) return false;
++            for (std::size_t i = 0; i < customPasses.size(); ++i)
++                if (!customPasses[i].sameShaderStructure(other.customPasses[i])) return false;
++            return true;
++        }
+     };
+ 
+ private:
+diff --git a/src/main/cpp/shadermanager.cpp b/src/main/cpp/shadermanager.cpp
+--- a/src/main/cpp/shadermanager.cpp
++++ b/src/main/cpp/shadermanager.cpp
+@@ -1679,9 +1679,14 @@
+     return !(*this == other);
+ }
+ 
++bool ShaderManager::Pass::sameShaderStructure(const Pass& other) const {
++    return linear == other.linear && scale == other.scale &&
++           vertex == other.vertex && fragment == other.fragment &&
++           floatFramebuffer == other.floatFramebuffer &&
++           (ambientIntensity > 0.0f) == (other.ambientIntensity > 0.0f);
++}
++
+ bool ShaderManager::Pass::operator==(const ShaderManager::Pass &other) const {
+-    return this->linear == other.linear && this->scale == other.scale &&
+-           this->vertex == other.vertex && this->fragment == other.fragment &&
+-           this->floatFramebuffer == other.floatFramebuffer;
++    return sameShaderStructure(other) && ambientIntensity == other.ambientIntensity;
+ }
+ } //namespace libretrodroid
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -153,6 +153,9 @@
+             shader.gTextureSizeHandle = glGetUniformLocation(shader.gProgram, "TextureSize");
+ 
+         shader.gScreenDensityHandle = glGetUniformLocation(shader.gProgram, "screenDensity");
++        shader.ambientIntensity = ShaderManager::Pass::normalizedIntensity(item.ambientIntensity);
++        if (shader.ambientIntensity > 0.0f)
++            shader.gAmbientIntensityHandle = glGetUniformLocation(shader.gProgram, "ambientFilterIntensity");
+ 
+         shader.gOrigTextureHandle = glGetUniformLocation(shader.gProgram, "OrigTexture");
+         shader.gOrigTextureSizeHandle = glGetUniformLocation(shader.gProgram, "OrigTextureSize");
+@@ -200,8 +203,9 @@
+         }
+     }
+ 
+-    std::vector<ShaderChainEntry> newChain;
+-    auto build = [&](ShaderManager::Chain shaders, bool normalizeHardware = true) {
++    // Use the exact same effective pass ordering for builds and uniform-only
++    // changes, including the implicit hardware crop-normalization prepass.
++    auto configureChain = [&](ShaderManager::Chain shaders, bool normalizeHardware) {
+         if (filterMode == 0) shaders.linearTexture = false;
+         if (filterMode == 1) shaders.linearTexture = true;
+         // The allocation-free last resort must remain nearest even when a
+@@ -220,6 +224,30 @@
+             shaders.linearTexture = false;
+             shaders.originalPass = 0;
+         }
++        return shaders;
++    };
++    if (!targetsFailed && requestedShaderChainLoaded && loadedShaderType.has_value() &&
++            loadedShaderType->sameShaderStructure(requestedShaderConfig)) {
++        const auto configured = configureChain(ShaderManager::getShader(requestedShaderConfig), true);
++        if (configured.passes.size() == shadersChain.size()) {
++            try {
++                renderer->prepareShaderPasses();
++                for (std::size_t i = 0; i < configured.passes.size(); ++i)
++                    shadersChain[i].ambientIntensity = ShaderManager::Pass::normalizedIntensity(
++                        configured.passes[i].ambientIntensity);
++                loadedShaderType = requestedShaderConfig;
++                isDirty = true;
++                return;
++            } catch (const std::exception& error) {
++                LOGW("Shader targets failed during intensity update: %s", error.what());
++                targetsFailed = true;
++            }
++        }
++    }
++
++    std::vector<ShaderChainEntry> newChain;
++    auto build = [&](ShaderManager::Chain shaders, bool normalizeHardware = true) {
++        shaders = configureChain(std::move(shaders), normalizeHardware);
+         if (!tryBuildShaderChain(shaders, newChain)) return false;
+         try {
+             const bool linear = shaders.linearTexture;
+@@ -236,7 +264,8 @@
+             return false;
+         }
+     };
+-    if (targetsFailed || !build(ShaderManager::getShader(requestedShaderConfig))) {
++    const bool requestedBuilt = !targetsFailed && build(ShaderManager::getShader(requestedShaderConfig));
++    if (!requestedBuilt) {
+         LOGW("Requested shader unavailable, keeping a safe picture fallback");
+         ShaderManager::Config safeDefault { ShaderManager::Type::SHADER_DEFAULT };
+         const auto hdrPrefix = requestedShaderConfig.params.find("AMBIENT_PREPEND");
+@@ -259,6 +288,7 @@
+     }
+     for (auto& entry : shadersChain) if (entry.gProgram) glDeleteProgram(entry.gProgram);
+     shadersChain = std::move(newChain);
++    requestedShaderChainLoaded = requestedBuilt;
+     loadedShaderType = requestedShaderConfig;
+     shaderSensorUsage = 0;
+     for (const auto& shader : shadersChain) {
+@@ -479,6 +509,10 @@
+             shader.origInputSizeValue.needsWrite(cacheSamplerBindings, {pictureInputWidth, pictureInputHeight}))
+             glUniform2f(shader.gOrigInputSizeHandle, pictureInputWidth, pictureInputHeight);
+ 
++        if (shader.gAmbientIntensityHandle != -1 &&
++            shader.ambientIntensityValue.needsWrite(cacheSamplerBindings, {shader.ambientIntensity}))
++            glUniform1f(shader.gAmbientIntensityHandle, shader.ambientIntensity);
++
+         if (shader.gScreenDensityHandle != -1) {
+             const float density = getScreenDensity();
+             if (shader.screenDensityValue.needsWrite(cacheSamplerBindings, {density}))
+@@ -923,8 +957,13 @@
+ }
+ 
+ void Video::updateShaderType(ShaderManager::Config shaderConfig) {
++    // Retain linked programs only when all sources, sampling, pass topology
++    // and output-affecting configuration match. A fallback is never eligible.
++    if (loadedShaderType.has_value() &&
++            (!requestedShaderChainLoaded || !loadedShaderType->sameShaderStructure(shaderConfig)))
++        loadedShaderType.reset();
+     requestedShaderConfig = std::move(shaderConfig);
+-    loadedShaderType = std::nullopt;  // Force shader rebuild on next frame
++    isDirty = true;
+ }
+ 
+ void Video::setFilterMode(int mode) {
+diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
+--- a/src/main/cpp/video.h
++++ b/src/main/cpp/video.h
+@@ -61,6 +61,9 @@
+         GLint gTextureHandle = 0;
+         GLint gPreviousPassTextureHandle = 0;
+         GLint gScreenDensityHandle = 0;
++        GLint gAmbientIntensityHandle = -1;
++        float ambientIntensity = 0.0f;
++        ShaderUniformValue<1> ambientIntensityValue;
+         GLint gTextureSizeHandle = 0;
+         GLint gOrigTextureHandle = -1;
+         GLint gOrigTextureSizeHandle = -1;
+@@ -217,6 +220,9 @@
+         ShaderManager::Type::SHADER_DEFAULT
+     };
+     std::optional<ShaderManager::Config> loadedShaderType = std::nullopt;
++    // A fallback may have a different number/order of passes. Never apply
++    // new requested metadata to that chain by index.
++    bool requestedShaderChainLoaded = false;
+ 
+     bool isDirty = false;
+     bool hwAccelerated = false;
+diff --git a/src/main/cpp/utils/javautils.cpp b/src/main/cpp/utils/javautils.cpp
+--- a/src/main/cpp/utils/javautils.cpp
++++ b/src/main/cpp/utils/javautils.cpp
+@@ -115,6 +115,7 @@
+         jfieldID jLinearField = env->GetFieldID(jPassClass, "linear", "Z");
+         jfieldID jScaleField = env->GetFieldID(jPassClass, "scale", "F");
+         jfieldID jFloatField = env->GetFieldID(jPassClass, "floatFramebuffer", "Z");
++        jfieldID jIntensityField = env->GetFieldID(jPassClass, "ambientIntensity", "F");
+ 
+         forEachOnJavaIterable(env, jPasses, [&](jobject jPass) {
+             auto vertex = JniString(env, (jstring) env->GetObjectField(jPass, jVertexField));
+@@ -124,7 +125,8 @@
+ 
+             customPasses.push_back(ShaderManager::Pass {
+                 vertex.stdString(), fragment.stdString(), linear, scale,
+-                env->GetBooleanField(jPass, jFloatField) == JNI_TRUE
++                env->GetBooleanField(jPass, jFloatField) == JNI_TRUE,
++                ShaderManager::Pass::normalizedIntensity(env->GetFloatField(jPass, jIntensityField))
+             });
+         });
+     }

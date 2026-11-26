@@ -21,6 +21,12 @@ unsigned rejectedShaderTargets = 0;
 unsigned validIntegerUniformWrites = 0;
 unsigned validPairUniformWrites = 0;
 unsigned validFloatUniformWrites = 0;
+unsigned linkedPrograms = 0;
+}
+extern "C" void __real_glLinkProgram(GLuint);
+extern "C" void __wrap_glLinkProgram(GLuint program) {
+    ++linkedPrograms;
+    __real_glLinkProgram(program);
 }
 extern "C" void __real_glTexStorage2D(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
 extern "C" void __wrap_glTexStorage2D(GLenum target, GLsizei levels, GLenum format,
@@ -220,6 +226,54 @@ void verifySamplerBindings(int version) {
     require(validIntegerUniformWrites-first>=4,"relinked programs must initialise sampler units");
     std::puts("PASS: software sampler assignment reuse, source resize, program relink");
 }
+void verifyIntensityUniforms(int version) {
+    Video video(options(version),pixel(),false,0,true,false,Rect(0,0,1,1),{});
+    setLayout(video);upload(video);
+    const std::string strength=R"(precision highp float; varying highp vec2 uv;
+        uniform highp sampler2D Texture;
+        uniform highp float ambientFilterIntensity;
+        void main(){gl_FragColor=vec4(texture2D(Texture,uv).r*ambientFilterIntensity,0,0,1);})";
+    const auto pass = [&](float amount) {
+        return ShaderManager::Pass{VERTEX,strength,false,1.0f,false,amount};
+    };
+    auto cfg=custom({pass(0.5f),pass(0.5f)});
+    cfg.params["AMBIENT_PREPEND"]="1";
+    auto changed=cfg;
+    changed.customPasses[1].ambientIntensity=1.5f;
+    require(!(cfg==changed) && cfg.sameShaderStructure(changed),"uniform-only structure comparison");
+    auto different=changed;
+    different.customPasses[1].linear=true;
+    require(!cfg.sameShaderStructure(different),"sampling change must rebuild");
+    auto disabled=changed;
+    disabled.customPasses[1].ambientIntensity=0.0f;
+    require(!cfg.sameShaderStructure(disabled),"uniform opt-in change must rebuild");
+    require(ShaderManager::Pass::normalizedIntensity(100.f)==1.5f &&
+            ShaderManager::Pass::normalizedIntensity(0.f)==0.f &&
+            ShaderManager::Pass::normalizedIntensity(std::nanf(""))==0.f,"bounded intensity metadata");
+
+    const auto fallbacks=ambientShaderFallbacks;
+    video.updateShaderType(cfg);video.renderFrame(true);
+    auto pixel=at(48,32);
+    require(std::abs(int(pixel[0])-64)<=1 && pixel[1]==0 && pixel[2]==0 && pixel[3]==255,
+            "both independent prefix/filter uniform values must be initialized");
+    const auto links=linkedPrograms;
+    video.updateShaderType(changed);
+    video.prepareShaderAndGetSensorUsage();
+    video.renderFrame(false); // duplicate-frame skipping must not hide live parameter changes
+    pixel=at(48,32);
+    require(std::abs(int(pixel[0])-192)<=1 && pixel[1]==0 && pixel[2]==0 && pixel[3]==255,
+            "intensity-only update must change pixels while retaining prefix strength");
+    require(linkedPrograms==links,"intensity-only update must not relink any program");
+    const auto scalars=validFloatUniformWrites;
+    video.renderFrame(true);
+    require(validFloatUniformWrites==scalars,"unchanged software intensity must not re-upload");
+    expectBorders("intensity-only change");
+    video.updateShaderType(different);video.renderFrame(true);
+    require(linkedPrograms>links,"sampling changes must still rebuild");
+    require(ambientShaderFallbacks==fallbacks,"valid intensity must not select fallback");
+    std::puts("PASS: per-pass live intensity, independent prefix, no relink, paused dirty redraw");
+}
+
 void verifyGeometryUniforms(int version) {
     Video video(options(version),pixel(),false,0,false,false,Rect(0,0,1,1),{});
     setLayout(video);upload(video);
@@ -369,7 +423,7 @@ int main(int argc,char** argv) {
     const int version=argc>1 && std::string(argv[1])=="--gles2" ? 2:3;
     try {
         Context context(version);
-        verifySwitches(version);verifyFallbacks(version);verifyFloatAndAliases(version);verifySamplerBindings(version);verifyGeometryUniforms(version);verifyPresets(version);
+        verifySwitches(version);verifyFallbacks(version);verifyFloatAndAliases(version);verifySamplerBindings(version);verifyIntensityUniforms(version);verifyGeometryUniforms(version);verifyPresets(version);
         if(version==3) { verifyPaddedHardware(); verifyHardwareAllocationFallback(); }
         std::printf("PASS: GLES%d production renderer regression\n",version);return 0;
     } catch(const std::exception& error) {

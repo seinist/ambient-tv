@@ -30,6 +30,8 @@ internal object GameRetroShaders {
         uniform vec2 textureSize;
         uniform vec2 OutputSize;
         uniform int FrameCount;
+        uniform float ambientFilterIntensity;
+        #define INTENSITY ambientFilterIntensity
         varying highp vec2 coords;
         float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
         float noise(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -39,8 +41,9 @@ internal object GameRetroShaders {
         val amount = strength.takeIf { it.isFinite() }?.coerceIn(0.5f, 1.5f) ?: 1f
         return ShaderConfig.Custom(listOf(ShaderConfig.Custom.ShaderPass(
             vertex = VERTEX,
-            fragment = HEADER + "\nconst float INTENSITY = " + amount + ";\n" + body,
+            fragment = HEADER + body,
             linear = linear,
+            ambientIntensity = amount,
         )))
     }
 
