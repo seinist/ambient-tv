@@ -19,7 +19,7 @@ CENTRAL = "https://repo.maven.apache.org/maven2"
 PLUGIN_PORTAL = "https://plugins.gradle.org/m2"
 CHANNELS = ("stable", "prerelease")
 VERSION = re.compile(
-    r"(\d+(?:\.\d+){0,3})(?:[-.]?(alpha|beta|rc|milestone|m)[.-]?(\d*))?",
+    r"([0-9]+(?:\.[0-9]+){0,3})(?:[-.]?(alpha|beta|rc|milestone|m)[.-]?([0-9]*)|[-.](final|ga|release))?",
     re.IGNORECASE,
 )
 # These pins are coupled to build.sh, generated Gradle files, native ABI or
@@ -76,9 +76,9 @@ def version_key(version: str) -> tuple[int, ...] | None:
     match = VERSION.fullmatch(version)
     if not match:
         return None
-    numbers, stage, sequence = match.groups()
+    numbers, stage, sequence, _stable_suffix = match.groups()
     parts = tuple(map(int, numbers.split(".")))
-    ranks = {"m": 0, "milestone": 0, "alpha": 1, "beta": 2, "rc": 3, None: 4}
+    ranks = {"alpha": 0, "beta": 1, "m": 2, "milestone": 2, "rc": 3, None: 4}
     return (*parts, *((0,) * (4 - len(parts))),
             ranks[stage.lower() if stage else None], int(sequence or 0))
 
@@ -124,16 +124,20 @@ def catalog_pins(text: str) -> dict[str, Pin]:
     return pins
 
 
-def artifact_versions(artifact: Artifact, get_bytes) -> set[str]:
-    path = f"{artifact.group.replace('.', '/')}/{artifact.name}/maven-metadata.xml"
-    # Match Google's precedence in settings.gradle.kts. For Central artifacts
-    # try Central first to avoid dozens of needless Google 404s. No JitPack
-    # builds or arbitrary repositories are triggered by a library check.
+def artifact_repositories(artifact: Artifact) -> list[str]:
+    # Google-hosted groups are queried there first; for Central libraries this
+    # avoids needless Google 404s. No JitPack builds or arbitrary repositories
+    # are triggered by a dependency check.
     google_first = artifact.group.startswith(("androidx.", "com.android.", "com.google.android."))
     repos = [GOOGLE, CENTRAL] if google_first else [CENTRAL, GOOGLE]
     if artifact.plugin:
         repos.append(PLUGIN_PORTAL)
-    for repo in repos:
+    return repos
+
+
+def artifact_versions(artifact: Artifact, get_bytes) -> set[str]:
+    path = f"{artifact.group.replace('.', '/')}/{artifact.name}/maven-metadata.xml"
+    for repo in artifact_repositories(artifact):
         try:
             root = ET.fromstring(get_bytes(f"{repo}/{path}"))
         except urllib.error.HTTPError as exc:
@@ -145,6 +149,29 @@ def artifact_versions(artifact: Artifact, get_bytes) -> set[str]:
         if versions:
             return versions
     return set()
+
+
+def published_pom(artifact: Artifact, version: str, get_bytes) -> bool:
+    """Confirm the selected release has an actual Maven descriptor, not just a metadata entry."""
+    if version_key(version) is None:
+        raise ValueError(f"Unsupported candidate version: {version}")
+    path = f"{artifact.group.replace('.', '/')}/{artifact.name}/{version}/{artifact.name}-{version}.pom"
+    # Resolve descriptors in the same order as settings.gradle.kts.
+    repos = [GOOGLE, CENTRAL] + ([PLUGIN_PORTAL] if artifact.plugin else [])
+    for repo in repos:
+        try:
+            root = ET.fromstring(get_bytes(f"{repo}/{path}"))
+        except urllib.error.HTTPError as exc:
+            if exc.code in (404, 410):
+                continue
+            raise
+        if root.tag.rsplit("}", 1)[-1] != "project":
+            raise ValueError(f"Invalid Maven POM for {artifact.coordinate}:{version}")
+        artifact_id = next((n.text for n in root if n.tag.rsplit("}", 1)[-1] == "artifactId"), None)
+        if artifact_id != artifact.name:
+            raise ValueError(f"Mismatched Maven POM for {artifact.coordinate}:{version}")
+        return True
+    return False
 
 
 def find_update(pin: Pin, versions: set[str], channel: str, allow_major: bool = False) -> Finding:
@@ -190,7 +217,23 @@ def plan(text: str, get_bytes, *, key: str | None = None, channel: str = "stable
         common = set.intersection(*(versions[a] for a in pin.artifacts))
         selected_channel = (media3_channel or channel) if pin.key == "media3" else channel
         findings.append(find_update(pin, common, selected_channel, allow_major))
-    return sorted(findings, key=lambda finding: finding.pin.key)
+    # A repository may publish metadata before all release POMs appear. Do
+    # not advance a shared pin until every direct descriptor is available.
+    requested = sorted({(artifact, finding.candidate) for finding in findings
+                        if finding.status == "UPDATE" for artifact in finding.pin.artifacts})
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        published = dict(zip(requested, pool.map(
+            lambda item: published_pom(*item, get_bytes), requested)))
+    checked = []
+    for finding in findings:
+        if finding.status == "UPDATE":
+            missing = [a.coordinate for a in finding.pin.artifacts
+                       if not published[a, finding.candidate]]
+            if missing:
+                finding = Finding(finding.pin, finding.candidate, "UNAVAILABLE",
+                                  "release POM not published: " + ", ".join(missing))
+        checked.append(finding)
+    return sorted(checked, key=lambda finding: finding.pin.key)
 
 
 def render_catalog(text: str, findings: list[Finding]) -> str:
