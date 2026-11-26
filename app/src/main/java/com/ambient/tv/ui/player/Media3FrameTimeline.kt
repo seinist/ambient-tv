@@ -13,7 +13,9 @@ internal class Media3FrameTimeline(private val capacity: Int = 120) {
     private var count = 0
     private var cursor = 0
     private var lastPresented = -1L
-    @Volatile private var pending = -1L
+    private var pending = -1L
+
+    init { require(capacity > 0) }
 
     @Synchronized fun presented(ptsUs: Long) {
         if (ptsUs < 0L) return
@@ -26,7 +28,7 @@ internal class Media3FrameTimeline(private val capacity: Int = 120) {
         if (pending == ptsUs) pending = -1L
     }
 
-    fun pending(ptsUs: Long) { pending = ptsUs.coerceAtLeast(-1L) }
+    @Synchronized fun pending(ptsUs: Long) { pending = ptsUs.coerceAtLeast(-1L) }
 
     @Synchronized fun clear() {
         count = 0
@@ -44,12 +46,39 @@ internal class Media3FrameTimeline(private val capacity: Int = 120) {
         var nearest = if (forward) Long.MAX_VALUE else -1L
         for (i in 0 until count) {
             val value = frames[i]
-            if (forward && value > anchorUs && value < nearest) nearest = value
-            if (!forward && value < anchorUs && value > nearest) nearest = value
+            if (forward && value / 1000L > anchorUs / 1000L && value < nearest) nearest = value
+            if (!forward && value / 1000L < anchorUs / 1000L && value > nearest) nearest = value
         }
         val next = pending
-        if (forward && next > anchorUs && next < nearest) nearest = next
+        if (forward && next >= 0L && next / 1000L > anchorUs / 1000L && next < nearest) nearest = next
         // A distant timestamp can belong to an earlier seek or skipped sequence.
         return nearest.takeIf { it >= 0L && it != Long.MAX_VALUE && kotlin.math.abs(it - anchorUs) <= 2_000_000L }
     }
+}
+
+/** A frame step is not an explicit logical EOF seek. Keep its target inside the picture range. */
+internal data class Media3FrameStepPlan(val targetMs: Long, val cursorUs: Long)
+
+internal fun media3FrameStepPlan(
+    anchorUs: Long,
+    candidateUs: Long?,
+    durationMs: Long,
+    forward: Boolean,
+    fps: Float,
+    live: Boolean,
+): Media3FrameStepPlan {
+    val anchor = anchorUs.coerceAtLeast(0L)
+    val periodUs = if (fps.isFinite() && fps > 1f)
+        (1_000_000.0 / fps).toLong().coerceAtLeast(1000L) else 40_000L
+    val known = candidateUs?.takeIf {
+        it >= 0L && if (forward) it / 1000L > anchor / 1000L else it / 1000L < anchor / 1000L
+    }
+    val desired = known ?: if (forward) anchor + periodUs else anchor - periodUs
+    val maxMs = if (durationMs in 1 until Long.MAX_VALUE / 1000L)
+        (durationMs - if (live) 0L else 1L).coerceAtLeast(0L) else Long.MAX_VALUE / 1000L - 1L
+    val target = (desired.coerceAtLeast(0L) / 1000L).coerceAtMost(maxMs)
+    // Keep fractional cadence across repeated fallback steps, but never remember an
+    // unreachable timestamp outside the clamped seek range.
+    val cursor = if (desired >= 0L && desired / 1000L == target) desired else target * 1000L
+    return Media3FrameStepPlan(target, cursor)
 }
