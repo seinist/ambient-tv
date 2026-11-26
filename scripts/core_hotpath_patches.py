@@ -1,10 +1,11 @@
 """Pin-checked, opt-in source-level improvements for individual Libretro cores."""
 from pathlib import Path
 import re
+from core_hotpath_remaining import PATCHES, prepare_remaining
 
 
 SUPPORTED = {"bsnes", "mesen", "sameboy", "mednafen_pce_fast", "mednafen_supergrafx", "mednafen_ngp",
-             "mednafen_wswan", "mednafen_vb", "mednafen_lynx"}
+             "mednafen_wswan", "mednafen_vb", "mednafen_lynx"} | set(PATCHES)
 
 
 def replace_once(source, old, new, label):
@@ -286,6 +287,9 @@ def prepare_fixed_states(root, core):
 
 
 def prepare_hotpaths(root, core):
+    if core in PATCHES:
+        prepare_remaining(root, core, replace_once)
+        return
     if core == "bsnes":
         prepare_bsnes(root)
     elif core == "mesen":
