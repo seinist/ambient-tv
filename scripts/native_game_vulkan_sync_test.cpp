@@ -106,7 +106,7 @@ void VulkanColorCopy::release() { assert(!driver.pending); ++driver.cacheRelease
 bool VulkanBackend::createFrameBuffer(unsigned width, unsigned height, bool fp16) {
     assert(!driver.pending);
     ++driver.allocations;
-    frameWidth = width; frameHeight = height; fp16Frame = fp16;
+    frameSlot.bridgeImage.width = width; frameSlot.bridgeImage.height = height; frameSlot.bridgeImage.fp16 = fp16;
     return true;
 }
 void VulkanBackend::destroyPresentationSurface() { assert(!driver.pending); }
@@ -136,10 +136,11 @@ void setup(VulkanBackend& backend) {
     backend.frameSlot.command = object<VkCommandBuffer>(5);
     backend.frameSlot.fence = object<VkFence>(6);
     backend.frameSlot.pool = object<VkCommandPool>(7);
-    backend.frameImage = object<VkImage>(8);
-    backend.frameMemory = object<VkDeviceMemory>(9);
-    backend.frameBuffer = object<AHardwareBuffer*>(10);
-    backend.frameWidth = 256; backend.frameHeight = 240;
+    backend.frameSlot.bridgeImage.image = object<VkImage>(8);
+    backend.frameSlot.bridgeImage.memory = object<VkDeviceMemory>(9);
+    backend.frameSlot.bridgeImage.buffer = object<AHardwareBuffer*>(10);
+    backend.frameSlot.bridgeImage.width = 256; backend.frameSlot.bridgeImage.height = 240;
+    backend.frameSlot.bridgeImage.allocationBytes = 256 * 240 * 4;
     backend.pendingImage.image = object<VkImage>(11);
     backend.pendingImage.format = VK_FORMAT_R8G8B8A8_UNORM;
     backend.pendingImage.layout = VK_IMAGE_LAYOUT_GENERAL;
@@ -402,7 +403,7 @@ void slotRetirementPreflightContracts() {
     backend.vk.destroyFence = nullptr;
     backend.shutdown();
     assert(backend.getFatalError() == VK_ERROR_INITIALIZATION_FAILED && !backend.shutdownReady);
-    assert(backend.device && backend.nativeSdrSwapchain && backend.frameBuffer && backend.frameSlot.pool);
+    assert(backend.device && backend.nativeSdrSwapchain && backend.frameSlot.bridgeImage.buffer && backend.frameSlot.pool);
     assert(backend.frameSlot.bridgeSync.readSemaphore && backend.frameSlot.bridgeSync.writeSemaphore && backend.frameSlot.colorCopyRejected);
     assert(driver.cacheReleases == 0 && driver.slangReleases == 0 && driver.swapchainFrees == 0 &&
            driver.imageFrees == 0 && driver.bufferFrees == 0 && driver.commandPoolFrees == 0 &&
@@ -414,9 +415,15 @@ void slotRetirementPreflightContracts() {
     assert(backend.device && !backend.shutdownReady && backend.frameSlot.bridgeSync.readPending);
     assert(driver.imageFrees == 0 && driver.swapchainFrees == 0 && semaphoreFrees == 0);
     backend.vk.destroySemaphore = destroySemaphore;
+    const auto destroyImage = backend.vk.destroyImage;
+    backend.vk.destroyImage = nullptr;
+    backend.shutdown();
+    assert(backend.device && !backend.shutdownReady && backend.frameSlot.bridgeImage.allocationBytes == 256 * 240 * 4);
+    assert(driver.imageFrees == 0 && driver.swapchainFrees == 0 && semaphoreFrees == 0);
+    backend.vk.destroyImage = destroyImage;
     backend.shutdown();
     assert(!backend.device && !backend.hasFatalError() && !backend.frameSlot.colorCopyRejected);
-    assert(backend.frameSlot.bridgeSync.empty());
+    assert(backend.frameSlot.bridgeSync.empty() && backend.frameSlot.bridgeImage.empty());
     assert(driver.cacheReleases == 1 && driver.swapchainFrees == 1 && driver.imageFrees == 1 &&
            driver.bufferFrees == 1 && driver.commandPoolFrees == 1 && driver.fenceFrees == 1 &&
            driver.deviceFrees == 1 && semaphoreFrees == 2);
@@ -473,8 +480,8 @@ void bridgeContextReplacementRetires() {
         assert(backend.retireBridgeForContextReplacement());
         assert(driver.waitCalls == 2 && driver.resets == 1 && !driver.pending);
         assert(driver.imageFrees == 1 && driver.memoryFrees == 1 && driver.bufferFrees == 1);
-        assert(!backend.frameBuffer && backend.frameImage == VK_NULL_HANDLE &&
-               backend.frameMemory == VK_NULL_HANDLE && backend.getFrameStatus() == 0);
+        assert(!backend.frameSlot.bridgeImage.buffer && backend.frameSlot.bridgeImage.image == VK_NULL_HANDLE &&
+               backend.frameSlot.bridgeImage.memory == VK_NULL_HANDLE && backend.getFrameStatus() == 0);
         assert(backend.getFrameBufferWidth() == 0 && backend.getFrameBufferHeight() == 0);
         assert(backend.primaryDraw(false, true) != libretrodroid::NativePresentationGate::PrimaryDraw::Skip);
         // Even identical dimensions require a new allocation for the new EGL generation.
@@ -490,8 +497,8 @@ void bridgeContextReplacementRetires() {
         assert(!backend.retireBridgeForContextReplacement());
         assert(backend.getFatalError() == failure && backend.frameSlot.inFlight);
         assert(driver.pending == (failure != VK_ERROR_DEVICE_LOST));
-        assert(backend.frameBuffer && backend.frameImage != VK_NULL_HANDLE &&
-               backend.frameMemory != VK_NULL_HANDLE);
+        assert(backend.frameSlot.bridgeImage.buffer && backend.frameSlot.bridgeImage.image != VK_NULL_HANDLE &&
+               backend.frameSlot.bridgeImage.memory != VK_NULL_HANDLE);
         assert(driver.imageFrees == 0 && driver.memoryFrees == 0 && driver.bufferFrees == 0);
         assert(backend.primaryDraw(false, true) != libretrodroid::NativePresentationGate::PrimaryDraw::Skip);
         assert(!backend.retireBridgeForContextReplacement() && driver.waitCalls == 1);
@@ -592,7 +599,7 @@ void safeCallbackAndTeardown() {
         backend.destroyCoreDevice();
         backend.shutdown();
         assert(driver.idleCalls == 4 && backend.device != VK_NULL_HANDLE &&
-               backend.frameImage != VK_NULL_HANDLE && backend.frameBuffer != nullptr);
+               backend.frameSlot.bridgeImage.image != VK_NULL_HANDLE && backend.frameSlot.bridgeImage.buffer != nullptr);
         assert(driver.imageFrees == 0 && driver.bufferFrees == 0 &&
                driver.cacheReleases == 0 && driver.slangReleases == 0 &&
                driver.deviceFrees == 0 && driver.swapchainFrees == 0);
