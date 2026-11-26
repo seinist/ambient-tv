@@ -58,8 +58,9 @@ data class MoonlightLibraryUiState(
     val artworkRevisions: Map<String, Long> = emptyMap(),
     val wakingHosts: Set<String> = emptySet(),
     val quittingHosts: Set<String> = emptySet(),
+    val localLoaded: Boolean = false,
 ) {
-    val ready: Boolean get() = loadingHosts.isEmpty()
+    val ready: Boolean get() = localLoaded && (catalogs.values.any { it.isNotEmpty() } || loadingHosts.isEmpty())
 
     /** Host selection, global search and favorite/recent filtering happen in memory, not on DPAD focus. */
     val games: List<MoonlightBrowseGame> get() {
@@ -111,7 +112,7 @@ class MoonlightLibraryViewModel @Inject constructor(
         viewModelScope.launch {
             combine(store.metadataRevisions, store.availabilityRevisions,
                 prefs.changes().onStart { emit(Unit) }) { metadata, online, _ ->
-                Triple(metadata, online, prefs.moonlightEnabled to prefs.moonlightHosts)
+                Triple(metadata, online, Triple(prefs.moonlightEnabled, prefs.moonlightHosts, prefs.moonlightLibraryView))
             }.distinctUntilChanged().collectLatest { reloadLocal() }
         }
         viewModelScope.launch { store.artworkChanges.collect { revisions ->
@@ -136,7 +137,9 @@ class MoonlightLibraryViewModel @Inject constructor(
         mutable.update { current ->
             current.copy(hosts = snapshot.hosts, catalogs = snapshot.catalogs,
                 onlineHosts = snapshot.onlineHosts, pairedHosts = snapshot.pairedHosts,
-                favorites = snapshot.favorites, recent = snapshot.recent)
+                favorites = snapshot.favorites, recent = snapshot.recent,
+                view = prefs.moonlightLibraryView, localLoaded = true,
+                sections = current.sections.takeIf { !it.startsWith("host:") || snapshot.hosts.any { host -> "host:" + host.id == it } } ?: "all")
         }
     }
 
@@ -195,7 +198,7 @@ class MoonlightLibraryViewModel @Inject constructor(
             reloadLocal()
             val snapshot = mutable.value
             val paired = snapshot.hosts.filter { (onlyHost == null || it.id == onlyHost) &&
-                it.id in snapshot.pairedHosts && (force || it.id !in snapshot.onlineHosts) }
+                it.id in snapshot.pairedHosts && (force || it.id !in snapshot.onlineHosts || !store.isCatalogFresh(it.id)) }
             coroutineScope {
                 paired.map { host ->
                     async {
@@ -324,7 +327,7 @@ class MoonlightLibraryViewModel @Inject constructor(
         mutable.update { it.copy(quittingHosts = it.quittingHosts + hostId, errors = it.errors - hostId) }
         viewModelScope.launch {
             try {
-                if (transport.quitRemoteApp(hostId, appId)) load(force = true)
+                if (transport.quitRemoteApp(hostId, appId)) load(force = true, onlyHost = hostId)
                 else mutable.update { it.copy(errors = it.errors + (hostId to "quit_failed")) }
             } catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) {

@@ -652,6 +652,7 @@ class SettingsBackupManager @Inject constructor(
                     gameLibraryFolders = preferences.gameLibraryFolders,
                     gameMetadataOptions = preferences.gameMetadataOptions,
                     moonlightStreamProfile = preferences.moonlightStreamProfile,
+                    moonlightLibraryView = preferences.moonlightLibraryView,
                 ),
                 device = DeviceSettingsExtras(
                     imageCacheMb = preferences.imageCacheMb,
@@ -1195,6 +1196,7 @@ class SettingsBackupManager @Inject constructor(
             settings.gameLibraryOptions?.let { preferences.gameLibraryOptions = it }
             settings.gameMetadataOptions?.let { preferences.gameMetadataOptions = it }
             settings.moonlightStreamProfile?.let { preferences.moonlightStreamProfile = it.validated() }
+            settings.moonlightLibraryView?.let { preferences.moonlightLibraryView = it }
             settings.gameLibraryOverrides?.let { preferences.gameLibraryOverrides = it.filter { row ->
                 row.sourceId in preferences.fileSources.map { source -> source.id }
             }.takeLast(5000) }

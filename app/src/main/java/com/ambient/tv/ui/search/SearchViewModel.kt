@@ -164,6 +164,7 @@ class SearchViewModel @Inject constructor(
             addAll(liveTvRegistry.configured().map { it.source.system })
             if (preferences.trailersEnabled && trailerRepository.configured) add("trailers")
             if (preferences.isRommConfigured) add("romm")
+            if (com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE && preferences.hasMoonlightHosts) add("moonlight")
             if (preferences.youtubeEnabled) add("youtube")
             if (preferences.spotifyEnabled) add("spotify")
             if (preferences.radioEnabled) add("radio")
@@ -206,7 +207,10 @@ class SearchViewModel @Inject constructor(
     private var searchRevision = 0L
     private var resultSourceIdentity = currentSourceIdentity()
     private fun currentSourceIdentity(): List<String> = listOf("plex", "jellyfin", "emby").map(browseScopes::forProvider) +
-        liveTvRegistry.configured().map { liveTvRegistry.displayCacheIdentity(it).orEmpty() }
+        liveTvRegistry.configured().map { liveTvRegistry.displayCacheIdentity(it).orEmpty() } +
+        (if (preferences.hasMoonlightHosts) preferences.moonlightHosts.map {
+            "moonlight:${it.id}:${it.host}:${it.port}:${moonlightStore.peerIdentity(it.id)}"
+        } else emptyList())
 
     fun refreshSources() = refreshSources(preserveResults = false)
 

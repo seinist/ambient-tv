@@ -56,6 +56,7 @@ data class PortableSettingsExtras(
     val gameMetadataOptions: com.ambient.tv.games.metadata.GameMetadataOptions? = null,
     /** Portable playback quality; no GameStream certificates or private client keys. */
     val moonlightStreamProfile: com.ambient.tv.moonlight.MoonlightStreamProfile? = null,
+    val moonlightLibraryView: String? = null,
 )
 
 @Serializable

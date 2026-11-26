@@ -101,10 +101,10 @@ fun MoonlightLibraryScreen(
             top = pageHeaderTop(screenGutter()), bottom = screenGutter()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(stringResource(R.string.moonlight_library_title), style = MaterialTheme.typography.headlineMedium)
+        com.ambient.tv.ui.common.SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.MOONLIGHT)
         com.ambient.tv.ui.common.SettingsActionRow {
-            TvActionButton(stringResource(R.string.action_search), { searchVisible = !searchVisible })
-            TvActionButton(stringResource(R.string.moonlight_refresh), { model.load(force = true) }, loading = state.loadingHosts.isNotEmpty())
+            TvActionButton(stringResource(R.string.action_search), { searchVisible = !searchVisible; if (!searchVisible) model.search("") })
+            TvActionButton(stringResource(R.string.moonlight_refresh), { model.load(force = true, onlyHost = section.removePrefix("host:").takeIf { section.startsWith("host:") }) }, loading = state.loadingHosts.isNotEmpty())
             TvActionButton(stringResource(R.string.moonlight_view_toggle), {
                 model.view(if (state.view == "grid") "list" else "grid")
             })

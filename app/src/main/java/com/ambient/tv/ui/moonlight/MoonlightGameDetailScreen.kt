@@ -76,7 +76,7 @@ fun MoonlightGameDetailScreen(
             if (game.app.hdrSupported) " · HDR" else "",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
-        val artwork by produceState<java.io.File?>(null, game.key, state.artworkVersion) {
+        val artwork by produceState<java.io.File?>(null, game.key, state.artworkRevisions[game.key] ?: 0L) {
             value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { model.artwork(game) }
         }
         if (artwork != null) {
@@ -105,7 +105,7 @@ fun MoonlightGameDetailScreen(
             TvActionButton(stringResource(if (state.favorites.contains("$hostId:$appId"))
                 R.string.moonlight_remove_favorite else R.string.moonlight_add_favorite),
                 { model.favorite(game) })
-            TvActionButton(stringResource(R.string.moonlight_refresh), { model.load(force = true) })
+            TvActionButton(stringResource(R.string.moonlight_refresh), { model.load(force = true, onlyHost = hostId) })
             TvActionButton(stringResource(R.string.moonlight_open_settings), onOpenSettings)
         }
         if (state.errors[hostId] == "quit_failed") {

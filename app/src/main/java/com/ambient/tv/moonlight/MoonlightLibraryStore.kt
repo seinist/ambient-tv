@@ -74,6 +74,11 @@ class MoonlightLibraryStore @Inject constructor(
         else mutableArtworkRevisions.value += 1L
     }
 
+    fun isCatalogFresh(hostId: String, maxAgeMs: Long = 5 * 60_000L): Boolean = synchronized(lock) {
+        val age = catalog(hostId)?.let { System.currentTimeMillis() - it.updatedEpochMs }
+        age != null && age in 0 until maxAgeMs
+    }
+
     fun isRecentlyOnline(hostId: String): Boolean = synchronized(lock) {
         val identity = trust.identity(hostId) ?: return false
         val probe = online[hostId] ?: return false
@@ -122,7 +127,10 @@ class MoonlightLibraryStore @Inject constructor(
         // The XML parser permits 1 MiB and up to 4096 apps; escaped JSON can be larger.
         // A valid live catalog remains usable even if persistence is unavailable.
         val value = json.encodeToString(cached)
-        if (value.length <= MAX_CATALOG_CHARS) prefs.edit().putString("catalog:$hostId", value).apply()
+        prefs.edit().apply {
+            if (value.length <= MAX_CATALOG_CHARS) putString("catalog:$hostId", value)
+            else remove("catalog:$hostId") // Never resurrect an obsolete catalog on process restart.
+        }.apply()
         catalogs[hostId] = Cached(identity, cached)
         val wasOnline = isRecentlyOnline(hostId)
         online[hostId] = identity to android.os.SystemClock.elapsedRealtime()

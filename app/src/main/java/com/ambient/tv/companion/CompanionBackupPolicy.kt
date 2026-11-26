@@ -79,7 +79,7 @@ internal object CompanionBackupPolicy {
             "nextUpMinimalEnabled",
             "liveTvReminderAutoSwitch", "autoUpdateCheck", "projectmFavorites", "keyBindings", "gamepadSettings", "retroInputSettings", "gameSettings", "gameLibraryOptions", "gameLibraryOverrides", "gameLibraryFolders",
             "viewTransitionStyleKey", "mousePointerHideSeconds",
-            "gameMetadataOptions", "moonlightStreamProfile",
+            "gameMetadataOptions", "moonlightStreamProfile", "moonlightLibraryView",
         ),
         "device" to setOf("imageCacheMb", "cardImages1080"),
         "connections" to setOf("tvheadendHtspPort", "rommEnabled", "rommServerUrl", "rommUsername",
