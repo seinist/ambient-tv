@@ -38,6 +38,9 @@ public:
         workInterval = 1;
         averageWorkNs = 0;
         averageCaptureNs = 0;
+        peakCaptureNs = 0;
+        deadlineInterval = 1;
+        resetFrameObservation();
     }
 
     /** Call only when at least one forward frame will actually run. */
@@ -66,6 +69,36 @@ public:
         interval = std::max<uint64_t>(1, std::min(maximumInterval, desired));
     }
 
+    /** Start-to-start cadence sees the previous step's renderer tail and EGL swap too.
+     * Only a capture-associated overrun raises the penalty; ordinary vsync waits,
+     * batched catch-up frames and long lifecycle gaps are not charged as CPU work. */
+    void observeFrameStart(uint64_t nowNs) {
+        if (previousStartNs && nowNs > previousStartNs && previousBudgetNs) {
+            const uint64_t elapsed = nowNs - previousStartNs;
+            const bool continuous = elapsed <= previousBudgetNs * 8;
+            const bool late = elapsed > previousBudgetNs + previousBudgetNs / 4;
+            if (continuous && late && previousCaptured) {
+                deadlineInterval = std::min(maximumInterval, deadlineInterval * 2);
+                stableCycles = 0;
+            } else if (continuous && !late && ++stableCycles >= 16) {
+                deadlineInterval = std::max<uint64_t>(1, (deadlineInterval + 1) / 2);
+                stableCycles = 0;
+            } else if (!continuous || late) {
+                stableCycles = 0;
+            }
+        }
+        previousStartNs = nowNs;
+        previousBudgetNs = 0;
+        previousCaptured = false;
+    }
+
+    void resetFrameObservation() {
+        previousStartNs = 0;
+        previousBudgetNs = 0;
+        previousCaptured = false;
+        stableCycles = 0;
+    }
+
     /**
      * Samples on the emulation thread, without counting the pacing sleep. Capture remains
      * on this thread because a libretro core may not be serialized concurrently with retro_run.
@@ -75,6 +108,9 @@ public:
     void observeFrameWork(uint64_t workNs, uint64_t captureNs, uint64_t frameBudgetNs,
                           unsigned frames = 1) {
         if (!frameBudgetNs || !frames) return;
+        // Keep cadence and workload separate: the former includes presentation waits.
+        previousBudgetNs = frames == 1 ? std::min<uint64_t>(frameBudgetNs, 1000000000ULL) : 0;
+        previousCaptured = captureNs > 0;
         // Cap samples before arithmetic, including anomalous stalls or suspended clocks.
         constexpr uint64_t cap = 1000000000ULL;
         const uint64_t baseline = std::min(cap, (workNs > captureNs ? workNs - captureNs : 0) / frames);
@@ -82,11 +118,14 @@ public:
         if (captureNs > 0) {
             const uint64_t sample = std::min(cap, captureNs);
             averageCaptureNs = averageCaptureNs == 0 ? sample : (averageCaptureNs * 7 + sample) / 8;
+            // Decay a capture spike only after subsequent captures, not on skipped frames.
+            peakCaptureNs = std::max(sample, peakCaptureNs * 7 / 8);
         }
         if (!averageCaptureNs) return;
-        const uint64_t slack = frameBudgetNs > averageWorkNs ? frameBudgetNs - averageWorkNs : 0;
+        const uint64_t observedWork = std::max(averageWorkNs, baseline);
+        const uint64_t slack = frameBudgetNs > observedWork ? frameBudgetNs - observedWork : 0;
         const uint64_t allowed = std::max<uint64_t>(1, std::min(frameBudgetNs / 8, slack / 2));
-        const uint64_t cost = std::max(averageCaptureNs, std::min(cap, captureNs));
+        const uint64_t cost = std::max(averageCaptureNs, peakCaptureNs);
         const uint64_t desired = cost / allowed + (cost % allowed != 0 ? 1 : 0);
         workInterval = std::max<uint64_t>(1, std::min(maximumInterval, desired));
     }
@@ -113,7 +152,7 @@ public:
     }
 
     uint64_t pendingFrames() const { return pending; }
-    uint64_t captureInterval() const { return std::max(interval, workInterval); }
+    uint64_t captureInterval() const { return std::max(interval, std::max(workInterval, deadlineInterval)); }
 
 private:
     static uint64_t saturatedAdd(uint64_t a, uint64_t b) {
@@ -128,6 +167,12 @@ private:
     uint64_t workInterval = 1;
     uint64_t averageWorkNs = 0;
     uint64_t averageCaptureNs = 0;
+    uint64_t peakCaptureNs = 0;
+    uint64_t deadlineInterval = 1;
+    uint64_t previousStartNs = 0;
+    uint64_t previousBudgetNs = 0;
+    bool previousCaptured = false;
+    unsigned stableCycles = 0;
 };
 
 } // namespace libretrodroid
