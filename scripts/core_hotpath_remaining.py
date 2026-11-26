@@ -91,6 +91,65 @@ PATCHES = {
       "      for (bi = 0; bi < sizeof(vcd_ids) / sizeof(vcd_ids[0]); bi++)\n         if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, vcd_ids[bi]))\n            vcd_pad |= (uint16_t)(1u << bi);",
       "      if (libretro_supports_bitmasks)\n      {\n         const uint16_t mask = (uint16_t)input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK);\n         for (bi = 0; bi < sizeof(vcd_ids) / sizeof(vcd_ids[0]); bi++)\n            if (mask & (1u << vcd_ids[bi]))\n               vcd_pad |= (uint16_t)(1u << bi);\n      }\n      else\n      {\n         for (bi = 0; bi < sizeof(vcd_ids) / sizeof(vcd_ids[0]); bi++)\n            if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, vcd_ids[bi]))\n               vcd_pad |= (uint16_t)(1u << bi);\n      }"
     ]
+  ],
+  "gambatte": [
+    [
+      "libgambatte/libretro/libretro.cpp",
+      "   gambatte::video_pixel_t *curr = video_buf;\n   gambatte::video_pixel_t *prev = video_buf_prev_1;\n   size_t x, y;\n\n   for (y = 0; y < VIDEO_HEIGHT; y++)\n   {\n      for (x = 0; x < VIDEO_WIDTH; x++)",
+      "   gambatte::video_pixel_t *curr = video_buf;\n   gambatte::video_pixel_t *prev = video_buf_prev_1;\n   size_t x, y;\n\n   for (y = 0; y < VIDEO_HEIGHT; y++)\n   {\n      x = 0;\n#if defined(__aarch64__) && defined(VIDEO_RGB565)\n      const uint16x8_t lsb = vdupq_n_u16(0x0821);\n      const uint16x8_t other = vdupq_n_u16(0xF7DE);\n      for (; x + 8 <= VIDEO_WIDTH; x += 8)\n      {\n         const uint16x8_t a = vld1q_u16(curr + x), b = vld1q_u16(prev + x);\n         const uint16x8_t diff = veorq_u16(a, b);\n         const uint16x8_t result = vaddq_u16(vaddq_u16(vandq_u16(a, b),\n             vshrq_n_u16(vandq_u16(diff, other), 1)), vandq_u16(diff, lsb));\n         vst1q_u16(prev + x, a);\n         vst1q_u16(curr + x, result);\n      }\n#endif\n      for (; x < VIDEO_WIDTH; x++)"
+    ],
+    [
+      "libgambatte/libretro/libretro.cpp",
+      "#include <stdlib.h>",
+      "#include <stdlib.h>\n#if defined(__aarch64__)\n#include <arm_neon.h>\n#endif"
+    ]
+  ],
+  "genesis_plus_gx": [
+    [
+      "core/sound/sound.c",
+      "    if (!audio_hard_disable)\r\n    {\r\n      /* flush FM samples */\r\n      if (config.hq_fm)\r\n      {\r\n        /* high-quality Band-Limited synthesis */\r\n        do\r\n        {\r\n          /* left & right channels */\r\n          l = ((*ptr++ * preamp) / 100);\r\n          r = ((*ptr++ * preamp) / 100);\r\n          blip_add_delta(snd.blips[0], time, l - prev_l, r - prev_r);\r\n          prev_l = l;\r\n          prev_r = r;\r\n\r\n          /* increment time counter */\r\n          time += fm_cycles_ratio;\r\n        } while (time < cycles);\r\n      }\r\n      else\r\n      {\r\n        /* faster Linear Interpolation */\r\n        do\r\n        {\r\n          /* left & right channels */\r\n          l = ((*ptr++ * preamp) / 100);\r\n          r = ((*ptr++ * preamp) / 100);\r\n          blip_add_delta_fast(snd.blips[0], time, l - prev_l, r - prev_r);\r\n          prev_l = l;\r\n          prev_r = r;\r\n\r\n          /* increment time counter */\r\n          time += fm_cycles_ratio;\r\n        } while (time < cycles);\r\n      }\r\n    }",
+      "    if (!audio_hard_disable)\r\n    {\r\n      /* At unity gain the FM samples need no multiply/divide. */\r\n      if (preamp == 100)\r\n      {\r\n        /* flush FM samples */\r\n        if (config.hq_fm)\r\n        {\r\n          /* high-quality Band-Limited synthesis */\r\n          do\r\n          {\r\n            /* left & right channels */\r\n            l = *ptr++;\r\n            r = *ptr++;\r\n            blip_add_delta(snd.blips[0], time, l - prev_l, r - prev_r);\r\n            prev_l = l;\r\n            prev_r = r;\r\n  \r\n            /* increment time counter */\r\n            time += fm_cycles_ratio;\r\n          } while (time < cycles);\r\n        }\r\n        else\r\n        {\r\n          /* faster Linear Interpolation */\r\n          do\r\n          {\r\n            /* left & right channels */\r\n            l = *ptr++;\r\n            r = *ptr++;\r\n            blip_add_delta_fast(snd.blips[0], time, l - prev_l, r - prev_r);\r\n            prev_l = l;\r\n            prev_r = r;\r\n  \r\n            /* increment time counter */\r\n            time += fm_cycles_ratio;\r\n          } while (time < cycles);\r\n        }\r\n      }\r\n      else\r\n      {\r\n        /* flush FM samples */\r\n        if (config.hq_fm)\r\n        {\r\n          /* high-quality Band-Limited synthesis */\r\n          do\r\n          {\r\n            /* left & right channels */\r\n            l = ((*ptr++ * preamp) / 100);\r\n            r = ((*ptr++ * preamp) / 100);\r\n            blip_add_delta(snd.blips[0], time, l - prev_l, r - prev_r);\r\n            prev_l = l;\r\n            prev_r = r;\r\n  \r\n            /* increment time counter */\r\n            time += fm_cycles_ratio;\r\n          } while (time < cycles);\r\n        }\r\n        else\r\n        {\r\n          /* faster Linear Interpolation */\r\n          do\r\n          {\r\n            /* left & right channels */\r\n            l = ((*ptr++ * preamp) / 100);\r\n            r = ((*ptr++ * preamp) / 100);\r\n            blip_add_delta_fast(snd.blips[0], time, l - prev_l, r - prev_r);\r\n            prev_l = l;\r\n            prev_r = r;\r\n  \r\n            /* increment time counter */\r\n            time += fm_cycles_ratio;\r\n          } while (time < cycles);\r\n        }\r\n      }\r\n    }"
+    ]
+  ],
+  "stella2014": [
+    [
+      "libretro.cxx",
+      "    std::string s = state.get();\n    if(size < s.size() + AF_TRAILER_SIZE)\n        return false;\n    memcpy(data, s.data(), s.size());\n\n    uint8_t *trailer = (uint8_t*)data + s.size();",
+      "    const uint32_t state_size = state.size();\n    if (!data || !state_size || size < AF_TRAILER_SIZE ||\n        state_size > size - AF_TRAILER_SIZE)\n        return false;\n    try\n    {\n        state.setPosition(0);\n        state.getByteArray((uint8_t*)data, state_size);\n    }\n    catch (...)\n    {\n        return false;\n    }\n\n    uint8_t *trailer = (uint8_t*)data + state_size;"
+    ]
+  ],
+  "mupen64plus_next_gles3": [
+    [
+      "custom/mupen64plus-core/plugin/emulate_game_controller_via_libretro.c",
+      "   // Convert cartesian coordinate analog stick to polar coordinates\n   radius = sqrt(analogX * analogX + analogY * analogY);\n   angle = atan2(analogY, analogX);\n\n   if (radius > astick_deadzone)\n   {",
+      "   // An idle stick needs neither sqrt nor atan2. Widen before squaring\n   // so the two -32768 inputs cannot overflow a signed 32-bit sum.\n   const double radius_squared = (double)analogX * analogX + (double)analogY * analogY;\n   if (astick_deadzone < 0 || radius_squared > (double)astick_deadzone * astick_deadzone)\n   {\n      radius = sqrt(radius_squared);\n      angle = atan2(analogY, analogX);"
+    ]
+  ],
+  "fceumm": [
+    [
+      "src/drivers/libretro/libretro.c",
+      "               if (input_cb(player, RETRO_DEVICE_JOYPAD, 0, turbomap[i].retro) || input_cb(player, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3))",
+      "               if (libretro_supports_bitmasks ?\n                     (ret & ((1u << turbomap[i].retro) | (1u << RETRO_DEVICE_ID_JOYPAD_R3))) != 0 :\n                     (input_cb(player, RETRO_DEVICE_JOYPAD, 0, turbomap[i].retro) ||\n                      input_cb(player, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3)))"
+    ]
+  ],
+  "gpsp": [
+    [
+      "libretro/libretro.c",
+      "   for (i = 0; i < npx; i++)\n   {\n      uint16_t rgb_curr = src_curr[i];\n      uint16_t rgb_prev = src_prev[i];\n\n      /* Mix colours:",
+      "   i = 0;\n#if defined(__aarch64__)\n   {\n      const uint16x8_t lsb = vdupq_n_u16(0x0821);\n      const uint16x8_t other = vdupq_n_u16(0xF7DE);\n      for (; i + 8 <= npx; i += 8)\n      {\n         const uint16x8_t a = vld1q_u16(src_curr + i), b = vld1q_u16(src_prev + i);\n         const uint16x8_t diff = veorq_u16(a, b);\n         const uint16x8_t mix = vaddq_u16(vaddq_u16(vandq_u16(a, b),\n             vshrq_n_u16(vandq_u16(diff, other), 1)), vandq_u16(diff, lsb));\n         vst1q_u16(dst + i, mix);\n      }\n   }\n#endif\n   for (; i < npx; i++)\n   {\n      uint16_t rgb_curr = src_curr[i];\n      uint16_t rgb_prev = src_prev[i];\n\n      /* Mix colours:"
+    ],
+    [
+      "libretro/libretro.c",
+      "#include <stdio.h>",
+      "#include <stdio.h>\n#if defined(__aarch64__)\n#include <arm_neon.h>\n#endif"
+    ]
+  ],
+  "parallel_n64": [
+    [
+      "mupen64plus-core/src/plugin/emulate_game_controller_via_libretro.c",
+      "   // Integer stick radius (replaces the polar sqrt/atan2 round-trip)\n   radius = analog_isqrt64( (uint64_t)((int64_t)x * x)\n                          + (uint64_t)((int64_t)y * y) );",
+      "   // floor(sqrt(r2)) <= deadzone iff r2 < (deadzone+1)^2.\n   const uint64_t r2 = (uint64_t)((int64_t)x * x) + (uint64_t)((int64_t)y * y);\n   if (astick_deadzone >= 0)\n   {\n      const uint64_t limit = (uint64_t)astick_deadzone + 1;\n      if (r2 < limit * limit)\n      {\n         *outX = 0;\n         *outY = 0;\n         return;\n      }\n   }\n   radius = analog_isqrt64(r2);"
+    ]
   ]
 }
 
