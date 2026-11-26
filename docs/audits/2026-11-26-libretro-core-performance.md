@@ -153,7 +153,7 @@ are considered validated.
 
 ## Stage 5 — corrective audit work (current candidate branch)
 
-- The PR smoke matrix has 25 jobs. The complete comparison matrices are
+- The PR smoke matrix has 27 jobs. The complete comparison matrices are
   explicit, artifact-only dispatches (208 jobs each for 26 cores × 4 ABIs
   × 2 profiles); release publication remains full baseline only.
   `./build.sh cores --comparison baseline-thinlto --ref perf/libretro-core-builds`
@@ -194,3 +194,41 @@ are considered validated.
 All Stage 5 changes require fresh CI. Earlier green runs do not validate
 this new code. No runtime improvement, full catalog completion, or native
 candidate promotion is claimed before measured Android results.
+
+## Stage 6 — full catalog path contracts and optional threaded SNES renderer
+
+All 26 pinned recipes now have core-specific compiled source/macro contracts.
+These are evaluated on the selected ELF's link graph, not unrelated compilation.
+The catalog regression test checks every declared core and ABI; PicoDrive's
+non-SH2 baseline variants and SwanStation's 32-bit x86 interpreter are explicit
+exceptions to a mandatory dynarec contract.
+
+The additional twelve recipes cover:
+- Nestopia: CPU, PPU, APU and video renderer.
+- Snes9x: CPU dispatch/execution and DSP.
+- mGBA: ARM CPU, GB/GBA software rendering and VFS.
+- Handy: Blip/Stereo audio and CRC-enabled ROM loader.
+- Stella2014: M6502, TIA and TIA sound.
+- Beetle VB: V810, GLES2/VR renderer option and Blip audio.
+- FCEUmm: CPU, NTSC filter and sound.
+- Mesen: CPU, PPU, video renderer and Blip audio.
+- bsnes: CPU, fast PPU, DSP and integrated Game Boy.
+- SameBoy: SM83 and internal GB path.
+- RACE: portable CZ80 path and Blip audio.
+- Beetle Lynx: RGB565 option, CRC loader and Blip/Stereo audio.
+
+At Snes9x2010 pin 82904a95e9bab2c3e63395e4b9ece8fdca8b785d,
+build/Makefile.common includes the upstream threaded PPU support but puts
+HAVE_THREADS in CFLAGS; jni/Android.mk forwards COREFLAGS instead.
+The artifact-only snes9x2010-threaded profile explicitly enables the build
+macro and verifies the linked PPU, libretro entry point, rthreads and eventcount
+sources. The upstream option snes9x_2010_threaded_ppu remains disabled by
+default. Upstream drains the renderer before snapshot/reset and joins it on
+unload. The option needs a core reload. Actual timing, determinism and thermal
+behavior must still be compared with the same ROM on hardware.
+Example: `./build.sh cores snes9x2010 --profile snes9x2010-threaded --abis arm64-v8a --ref perf/libretro-core-builds`.
+
+The complete catalog audit does not establish that all cores have received
+new source-level runtime optimizations. Existing fast paths are preserved,
+and optimization candidates remain unpublished pending compile and runtime
+evidence. Fresh CI for Stage 5/6 is required.
