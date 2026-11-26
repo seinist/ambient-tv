@@ -36,7 +36,6 @@ bouncycastle = "1.85.2"
 # Host application and SmartTube wrapper Maven pins (unchanged versions).
 playServicesCronet = "18.1.0"
 chromiumCronet = "143.7445.0"
-smarttubeCronetAdapter = "0.1.0"
 jna = "5.19.1"
 legacySupport = "1.0.0"
 robolectric = "4.17"
@@ -51,6 +50,7 @@ smarttubeWebkit = "1.11.0"
 gson = "2.11.0"
 smarttubeJsonPath = "2.4.0"
 jsonSmart = "2.6.0"
+smarttubeCronetAdapter = "0.1.0"
 smarttubeRegex = "1.1.11"
 nanojson = "1.7"
 okhttpProfiler = "1.0.8"
@@ -131,7 +131,6 @@ junit4 = { group = "junit", name = "junit", version.ref = "junit4" }
 chromium-cronet-api = { module = "org.chromium.net:cronet-api", version.ref = "chromiumCronet" }
 chromium-cronet-common = { module = "org.chromium.net:cronet-common", version.ref = "chromiumCronet" }
 chromium-cronet-embedded = { module = "org.chromium.net:cronet-embedded", version.ref = "chromiumCronet" }
-smarttube-cronet-adapter = { module = "com.google.net.cronet:cronet-okhttp", version.ref = "smarttubeCronetAdapter" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 androidx-legacy-support = { module = "androidx.legacy:legacy-support-v4", version.ref = "legacySupport" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
@@ -147,6 +146,7 @@ retrofit-converter-gson = { module = "com.squareup.retrofit2:converter-gson", ve
 gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
 smarttube-json-path = { module = "com.jayway.jsonpath:json-path", version.ref = "smarttubeJsonPath" }
 json-smart = { module = "net.minidev:json-smart", version.ref = "jsonSmart" }
+smarttube-cronet-adapter = { module = "com.google.net.cronet:cronet-okhttp", version.ref = "smarttubeCronetAdapter" }
 smarttube-regex = { module = "com.github.florianingerl.util:regex", version.ref = "smarttubeRegex" }
 nanojson = { module = "com.grack:nanojson", version.ref = "nanojson" }
 okhttp-dns-over-https = { module = "com.squareup.okhttp3:okhttp-dnsoverhttps", version.ref = "okhttp" }
