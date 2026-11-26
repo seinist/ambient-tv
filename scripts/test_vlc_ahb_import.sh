@@ -10,7 +10,7 @@ case "$(uname -s)" in
 esac
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-for test in test_unique_fd test_frame_lease; do
+for test in test_unique_fd test_frame_lease test_slot_pool; do
     "${CXX:-clang++}" -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
         "$SRC/$test.cpp" -o "$TMP/$test"
     "$TMP/$test"
