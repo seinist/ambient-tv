@@ -313,8 +313,9 @@ object CompanionGamepadSession {
         val delay = gate.nextReleaseDelay(android.os.SystemClock.uptimeMillis()) ?: return
         lateinit var task: Runnable
         task = Runnable { synchronized(CompanionGamepadSession) {
+            if (delayedRelease[session] !== task) return@synchronized
             delayedRelease.remove(session)
-            if (active === game && ports[session] == port) {
+            if (active === game && game.ready && ports[session] == port && buttonGates[session] === gate) {
                 val current = lastState[session]
                 if (current != null) {
                     val mask = gate.settle(android.os.SystemClock.uptimeMillis())
@@ -366,7 +367,8 @@ object CompanionGamepadSession {
         if (deadman.containsKey(session)) return
         lateinit var task: Runnable
         task = Runnable { synchronized(CompanionGamepadSession) {
-            if (active !== game || ports[session] != slot) {
+            if (deadman[session] !== task) return@synchronized
+            if (active !== game || !game.ready || ports[session] != slot) {
                 cancelDeadman(session)
             } else {
                 val remaining = (deadlines[session] ?: 0L) - android.os.SystemClock.uptimeMillis()
