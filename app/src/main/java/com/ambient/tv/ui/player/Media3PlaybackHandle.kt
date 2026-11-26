@@ -107,7 +107,7 @@ class Media3PlaybackHandle(
                 expected == null || kotlin.math.abs(newPosition.positionMs - expected / 1000L) > 1L) {
                 frameStepCursorUs = null
                 frameTimeline.clear()
-            } else frameTimeline.pending(null)
+            } else frameTimeline.pending(-1L)
             hdrOutput.discontinuity()
         }
         override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
@@ -250,7 +250,7 @@ class Media3PlaybackHandle(
             if (duration > 0L) (pts / 1000L).coerceIn(0L, duration) else pts / 1000L
         } ?: frameStepTarget(anchor / 1000L, duration, forward, (1000f / fps).toLong().coerceAtLeast(1L))
         frameStepCursorUs = candidate?.takeIf { it / 1000L == target } ?: target * 1000L
-        frameTimeline.pending(null)
+        frameTimeline.pending(-1L)
         if (!Media3ResumePrimer.retarget(player, target)) player.seekToPlaybackPosition(target)
     }
     private var outputMuteVolume: Float? = null
