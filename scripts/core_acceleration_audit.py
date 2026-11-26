@@ -30,25 +30,37 @@ def compiler_commands(log, cwd=None, root=None, strict=False):
     cwd = Path(cwd or Path.cwd()).resolve()
     root = Path(root or Path.cwd()).resolve()
     for line in log.splitlines():
+        # Accept only actual command starts or recognized CMake/Ninja wrappers.
+        # A diagnostic mentioning clang is not evidence that clang was invoked.
+        line = re.sub(r"^\s*\d{4}-\d{2}-\d{2}T[^ ]+Z\s+", "", line).strip()
+        line = re.sub(r"^\[\d+/\d+\]\s+", "", line)
+        wrapped = line.startswith(("cd ", ": && ", "ccache "))
+        if not COMPILER_COMMAND.match(line) and not wrapped:
+            continue
         try:
             tokens = shlex.split(line)
         except ValueError:
-            if strict and COMPILER_COMMAND.match(line):
+            if strict:
                 raise ValueError("Malformed compiler command in build log")
             continue
-        driver = next((i for i, token in enumerate(tokens)
-                       if DRIVER.fullmatch(Path(token).name)), None)
-        if driver is None:
+        command_cwd = cwd
+        while tokens[:2] == [":", "&&"]:
+            tokens = tokens[2:]
+        if len(tokens) >= 3 and tokens[0] == "cd" and tokens[2] == "&&":
+            command_cwd = (cwd / tokens[1]).resolve()
+            tokens = tokens[3:]
+        if tokens and Path(tokens[0]).name == "ccache":
+            tokens = tokens[1:]
+        if not tokens or not DRIVER.fullmatch(Path(tokens[0]).name):
             continue
+        end = next((i for i, token in enumerate(tokens) if token in {"&&", ";", "||"}), len(tokens))
         try:
-            args = expand_response(tokens[driver + 1:], cwd, root)
+            args = expand_response(tokens[1:end], command_cwd, root)
         except (ValueError, OSError):
             if strict:
                 raise
             continue
-        # Ignore shell segments after the compiler invocation (CMake/Ninja).
-        end = next((i for i, token in enumerate(args) if token in {"&&", ";", "||"}), len(args))
-        yield args[:end]
+        yield args
 
 
 def compile_source(args):
