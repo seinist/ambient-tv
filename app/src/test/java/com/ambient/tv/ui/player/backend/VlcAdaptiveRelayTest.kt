@@ -156,4 +156,17 @@ class VlcAdaptiveRelayTest {
             rewriteVlcHlsManifest(manifest, source) { _, _ -> "/" + "x".repeat(8192) }
         }
     }
+
+    @Test fun httpsUpgradeCannotDowngradeToConfiguredPlaintextOrigin() {
+        val http = "http://media.example.org/live/master.m3u8".toHttpUrl()
+        val https = "https://media.example.org/live/master.m3u8".toHttpUrl()
+        assertTrue(vlcRelayOriginAllowed(http, https))
+        requireVlcRelayTransport(http, https)
+        requireVlcRelayTransport(http, http)
+        requireVlcRelayTransport(https, https)
+        assertThrows(IOException::class.java) { requireVlcRelayTransport(https, http) }
+        assertThrows(IOException::class.java) {
+            requireVlcRelayTransport(https, "http://cdn.example.net/segment.ts".toHttpUrl())
+        }
+    }
 }
