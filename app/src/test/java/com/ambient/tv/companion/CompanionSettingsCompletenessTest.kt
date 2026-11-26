@@ -172,7 +172,9 @@ class CompanionSettingsCompletenessTest {
             val target = preferences().apply { imageCacheMb = 256; tvheadendHtspPort = 10002 }
             val restored = send(incoming, target, device = device)
             assertEquals(portable.copy(gameLibraryOptions = target.gameLibraryOptions, gameLibraryOverrides = emptyList(), gameLibraryFolders = emptyList(), moonlightStreamProfile = target.moonlightStreamProfile,
-                moonlightLibraryView = target.moonlightLibraryView), restored.extras?.portable)
+                moonlightLibraryView = target.moonlightLibraryView,
+                moonlightGridColumns = target.moonlightGridColumns, moonlightListRows = target.moonlightListRows,
+                moonlightSortKey = target.moonlightSortKey, moonlightSortDescending = target.moonlightSortDescending), restored.extras?.portable)
             assertEquals(setOf("jellyfin"), target.allContinueSystems)
             assertFalse(target.filterBarShown)
             assertTrue(target.launcherIntegrationEnabled)
