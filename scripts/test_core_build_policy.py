@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import struct
 import unittest
-from core_acceleration_audit import audit_acceleration, compiler_commands, defines
+from core_acceleration_audit import AUDITED, audit_acceleration, compiler_commands, defines, requirements
 from unittest.mock import patch
 
 from core_build_policy import (REQUIRED_EXPORTS, audit_commands, ndk_flags, plan,
@@ -259,6 +259,29 @@ class CoreBuildPolicyTest(unittest.TestCase):
                                                "snes9x2010-threaded").values()))
         with self.assertRaises(ValueError):
             audit_acceleration(commands[:-1], "snes9x2010", "arm64-v8a", "snes9x2010-threaded")
+
+    def test_every_catalog_core_has_build_contracts(self):
+        self.assertEqual(AUDITED, {core["core"] for core in self.catalog["cores"]})
+        for entry in self.catalog["cores"]:
+            core = entry["core"]
+            for abi in self.catalog["abis"]:
+                with self.subTest(core=core, abi=abi):
+                    rules = requirements(core, abi, "baseline")
+                    # These two recipes intentionally have no acceleration
+                    # requirement for their non-dynarec baseline variants.
+                    if core == "picodrive" and abi != "armeabi-v7a":
+                        continue
+                    if core == "swanstation" and abi == "x86":
+                        continue
+                    self.assertTrue(rules)
+                    commands = [
+                        ["-D" + key + "=" + value for key, value in macros]
+                        + ["-c", "upstream/" + source]
+                        for source, macros in rules.values()
+                    ]
+                    self.assertTrue(all(audit_acceleration(commands, core, abi, "baseline").values()))
+                    with self.assertRaises(ValueError):
+                        audit_acceleration([], core, abi, "baseline")
 
     def test_select_by_exports_not_filename_order(self):
         with tempfile.TemporaryDirectory() as directory:
