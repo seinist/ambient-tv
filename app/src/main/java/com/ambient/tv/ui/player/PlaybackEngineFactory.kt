@@ -116,7 +116,10 @@ object PlaybackEngineFactory {
     ): ExoPlayer {
         if (metadata != null) {
             return BackgroundPlaybackSession.acquire(context, metadata, "media3",
-                listOf(streamUrl, startPositionMs, streamHeaders, audioPassthroughEnabled, mimeType)) {
+                listOf(streamUrl, startPositionMs, streamHeaders.toMap(), audioPassthroughEnabled, mimeType,
+                    subtitleTracks.toList(), maxVideoHeight, preferredVideoMimeType, maxVideoFrameRate,
+                    sourceHdrStandard, preferOriginalAudio, preferredAudioLanguage, audioOnly, mpvAudioAllowed,
+                    centerYouTubeCaptions, liveStream, streamTuning, streamUrlRenewer != null, dataSourceFactory != null)) {
                 // Every Media3 player (Live TV, VOD, YouTube) takes part in the native release gate
                 // like MPV and VLC: it neither opens its stream while the previous player still
                 // holds one nor lets the next player open before its own stream is gone.
@@ -172,7 +175,10 @@ object PlaybackEngineFactory {
 
             val streamClient = if (streamUrlRenewer == null) streamingHttpClient else streamingHttpClient.newBuilder()
                 .addInterceptor(StreamUrlRenewalInterceptor(streamUrlRenewer)).build()
-            val httpDataSourceFactory = media3HttpDataSourceFactory(context, streamTuning?.networkEngine, streamClient)
+            // Renewal must preserve the failed range request and headers. Until every engine
+            // implements that contract, prefer the renewal-capable OkHttp path for signed URLs.
+            val networkEngine = if (streamUrlRenewer != null) MEDIA3_NETWORK_OKHTTP else streamTuning?.networkEngine
+            val httpDataSourceFactory = media3HttpDataSourceFactory(context, networkEngine, streamClient)
                 .setDefaultRequestProperties(streamHeaders)
             val mediaSourceFactory = DefaultMediaSourceFactory(context)
                 .setDataSourceFactory(dataSourceFactory ?: DefaultDataSource.Factory(context, httpDataSourceFactory))
@@ -200,7 +206,7 @@ object PlaybackEngineFactory {
                 "start_buffer_ms=${liveBuffer?.startMs ?: androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS} " +
                     "rebuffer_ms=${liveBuffer?.rebufferMs ?: androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS} " +
                     "target_bytes=$targetBytes max_height=$maxVideoHeight" +
-                    (streamTuning?.let { " network=${it.networkEngine}" } ?: "") + " buffer=$bufferKey")
+                    (networkEngine?.let { " network=$it" } ?: "") + " buffer=$bufferKey")
 
             ExoPlayer.Builder(context, renderersFactory)
                 .setMediaSourceFactory(mediaSourceFactory)
@@ -393,6 +399,8 @@ private fun cronetEngine(context: Context): org.chromium.net.CronetEngine? {
     (cronetEngineCache as? org.chromium.net.CronetEngine)?.let { return it }
     if (cronetEngineCache == false) return null
     return synchronized(cronetExecutor) {
+        (cronetEngineCache as? org.chromium.net.CronetEngine)?.let { return@synchronized it }
+        if (cronetEngineCache == false) return@synchronized null
         val engine = runCatching { androidx.media3.datasource.cronet.CronetUtil.buildCronetEngine(context.applicationContext) }
             .onFailure { Timber.w(it, "Cronet engine failed") }.getOrNull()
         cronetEngineCache = engine ?: false
