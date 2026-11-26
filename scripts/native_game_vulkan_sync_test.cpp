@@ -132,9 +132,9 @@ void setup(VulkanBackend& backend) {
     backend.instance = object<VkInstance>(2);
     backend.gpu = object<VkPhysicalDevice>(3);
     backend.queue = object<VkQueue>(4);
-    backend.commandBuffer = object<VkCommandBuffer>(5);
-    backend.frameFence = object<VkFence>(6);
-    backend.commandPool = object<VkCommandPool>(7);
+    backend.frameSlot.command = object<VkCommandBuffer>(5);
+    backend.frameSlot.fence = object<VkFence>(6);
+    backend.frameSlot.pool = object<VkCommandPool>(7);
     backend.frameImage = object<VkImage>(8);
     backend.frameMemory = object<VkDeviceMemory>(9);
     backend.frameBuffer = object<AHardwareBuffer*>(10);
@@ -273,7 +273,7 @@ void setup(VulkanBackend& backend) {
 }
 
 void pendingFrame(VulkanBackend& backend) {
-    backend.frameInFlight = true;
+    backend.frameSlot.inFlight = true;
     driver.pending = true;
 }
 void window(VulkanBackend& backend) { backend.nativeSdrWindow = object<ANativeWindow*>(18); }
@@ -284,7 +284,7 @@ void timeoutsPreserveWork() {
     driver.waits = {VK_TIMEOUT, VK_TIMEOUT, VK_SUCCESS};
     assert(backend.waitForFrame());
     assert(driver.waitCalls == 3 && driver.warnings == 1 && driver.resets == 1);
-    assert(!backend.frameInFlight && !backend.hasFatalError());
+    assert(!backend.frameSlot.inFlight && !backend.hasFatalError());
     assert(driver.commandResets == 0 && driver.imageFrees == 0);
     assert(backend.waitForFrame() && driver.waitCalls == 3);
     std::puts("PASS Vulkan repeated timeout preserves ownership until actual completion");
@@ -299,7 +299,7 @@ void errorsStopWorkAndResize() {
         backend.nativePresentation.didPresentFrame();
         driver.waits = {failure};
         assert(!backend.waitForFrame());
-        assert(backend.frameInFlight && backend.getFatalError() == failure && driver.resets == 0);
+        assert(backend.frameSlot.inFlight && backend.getFatalError() == failure && driver.resets == 0);
         assert(backend.getNativeSdrStatus() == 9);
         assert(backend.primaryDraw(false, true) != libretrodroid::NativePresentationGate::PrimaryDraw::Skip);
         assert(!backend.waitForFrame() && driver.waitCalls == 1);
@@ -343,7 +343,7 @@ void bridgeContextReplacementRetires() {
         backend.nativePresentation.didPresentFrame();
         driver.waits = {failure};
         assert(!backend.retireBridgeForContextReplacement());
-        assert(backend.getFatalError() == failure && backend.frameInFlight);
+        assert(backend.getFatalError() == failure && backend.frameSlot.inFlight);
         assert(driver.pending == (failure != VK_ERROR_DEVICE_LOST));
         assert(backend.frameBuffer && backend.frameImage != VK_NULL_HANDLE &&
                backend.frameMemory != VK_NULL_HANDLE);
@@ -354,6 +354,8 @@ void bridgeContextReplacementRetires() {
         assert(backend.prepareForShutdown());
         backend.shutdown();
         assert(driver.imageFrees == 1 && driver.bufferFrees == 1 && !driver.pending);
+        assert(backend.frameSlot.pool == VK_NULL_HANDLE && backend.frameSlot.command == VK_NULL_HANDLE &&
+               backend.frameSlot.fence == VK_NULL_HANDLE && !backend.frameSlot.inFlight);
     }
     std::puts("PASS Vulkan context generation retirement requires completion and forces a fresh same-size allocation");
 }
@@ -368,7 +370,7 @@ void bridgeImportFailureLatches() {
     assert(backend.getFatalError() == VK_ERROR_INITIALIZATION_FAILED);
     assert(backend.getFrameStatus() == 0 && backend.getNativeSdrStatus() == 9u);
     assert(backend.primaryDraw(false, true) != libretrodroid::NativePresentationGate::PrimaryDraw::Skip);
-    assert(backend.frameInFlight && driver.pending);
+    assert(backend.frameSlot.inFlight && driver.pending);
     assert(!backend.presentFrame(256, 224, 4.0F / 3.0F, true));
     assert(!backend.ensureFrameBuffer(512, 480));
     assert(driver.submits == 0 && driver.imageFrees == 0 && driver.bufferFrees == 0);
@@ -388,7 +390,7 @@ void resetAndSubmitFailures() {
         driver.waits = {VK_ERROR_OUT_OF_HOST_MEMORY};
         const bool result = operation == 0 ? backend.presentFrame(256,224,4.0F/3.0F,true) :
             operation == 1 ? backend.clearFrameImage() : backend.ensureFrameBuffer(512,480);
-        assert(!result && backend.hasFatalError() && backend.frameInFlight);
+        assert(!result && backend.hasFatalError() && backend.frameSlot.inFlight);
         assert(driver.cachePrepares == 0 && driver.commandResets == 0 &&
                driver.allocations == 0 && driver.imageFrees == 0 && driver.submits == 0);
     }
@@ -412,7 +414,7 @@ void resetAndSubmitFailures() {
             assert(backend.primaryDraw(false, true) != libretrodroid::NativePresentationGate::PrimaryDraw::Skip);
             assert(driver.submits == (phase >= 3 ? 1u : 0u));
             assert(driver.resets == (phase == 4 ? 1u : 0u));
-            assert(backend.frameInFlight == (phase == 4));
+            assert(backend.frameSlot.inFlight == (phase == 4));
             const unsigned previous = driver.commandResets;
             assert(!backend.presentFrame(256,224,4.0F/3.0F,true));
             assert(!backend.clearFrameImage() && driver.commandResets == previous);
@@ -429,7 +431,7 @@ void safeCallbackAndTeardown() {
         driver.idles = {VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_UNKNOWN, completed};
         VulkanBackend::callbackWaitSyncIndex(&backend);
         assert(driver.idleCalls == 3 && driver.resets == 0 && !driver.pending);
-        assert(!backend.frameInFlight && backend.getFatalError() == VK_ERROR_OUT_OF_HOST_MEMORY);
+        assert(!backend.frameSlot.inFlight && backend.getFatalError() == VK_ERROR_OUT_OF_HOST_MEMORY);
         assert(!backend.waitForFrame()); // safe retirement never clears the fatal latch
     }
     {
@@ -531,10 +533,10 @@ void earlyNativePresentContracts() {
                 const bool confirmed = !fatal && (outcome == VK_SUCCESS || outcome == VK_SUBOPTIMAL_KHR);
                 assert((backend.primaryDraw(false,true) == libretrodroid::NativePresentationGate::PrimaryDraw::Skip) == confirmed);
                 if (fatal) {
-                    assert(backend.frameInFlight && driver.swapchainFrees == 0 && driver.cacheReleases == 0);
+                    assert(backend.frameSlot.inFlight && driver.swapchainFrees == 0 && driver.cacheReleases == 0);
                     assert(!backend.presentFrame(256,224,4.0F/3.0F,true) && driver.submits == 1);
                 } else {
-                    assert(!backend.frameInFlight);
+                    assert(!backend.frameSlot.inFlight);
                     if (outcome == VK_ERROR_OUT_OF_DATE_KHR) assert(driver.swapchainFrees == 1);
                 }
                 backend.shutdown();
@@ -549,7 +551,7 @@ void earlyNativePresentContracts() {
         driver.slangRecordAccepted = false;
         assert(backend.presentFrame(256,224,4.0F/3.0F,true));
         assert(driver.submits == 1 && driver.presents == 0 && driver.waitCalls == 1);
-        assert(driver.swapchainFrees == 1 && !backend.frameInFlight);
+        assert(driver.swapchainFrees == 1 && !backend.frameSlot.inFlight);
         assert(backend.primaryDraw(false,true) != libretrodroid::NativePresentationGate::PrimaryDraw::Skip);
         backend.shutdown();
     }
@@ -606,7 +608,7 @@ void reusableSubmitStorage() {
                                                         : std::vector<VkSemaphore>{};
             backend.pendingSignalSemaphore = coreSignal ? signal : VK_NULL_HANDLE;
             auto expectedCommands = backend.pendingCommandBuffers;
-            expectedCommands.push_back(backend.commandBuffer);
+            expectedCommands.push_back(backend.frameSlot.command);
             std::vector<VkSemaphore> expectedWaits, expectedSignals;
             if (!commands && waits) expectedWaits = {waitA, waitB};
             if (direct) expectedWaits.push_back(backend.nativeSdrAcquire);
@@ -620,7 +622,7 @@ void reusableSubmitStorage() {
                 expectedWaits.size(), VK_PIPELINE_STAGE_TRANSFER_BIT));
             assert(backend.pendingCommandBuffers.empty() && backend.pendingImage.waitSemaphores.empty());
             assert(backend.pendingSignalSemaphore == VK_NULL_HANDLE);
-            assert(!driver.pending && !backend.frameInFlight);
+            assert(!driver.pending && !backend.frameSlot.inFlight);
         };
         verify(true, true, true);  // Core command buffers suppress core wait semaphores.
         verify(false, true, true); // Exercise all wait slots, including optional WSI acquire.
@@ -708,7 +710,7 @@ void readFenceQueueContracts() {
             closed(fd);
             assert(backend.bridgeReadPending && creates == 1 && destroys == 0);
             assert(backend.presentFrame(256, 224, 4.0F/3.0F, true));
-            assert(!backend.bridgeReadPending && !backend.frameInFlight && !driver.pending);
+            assert(!backend.bridgeReadPending && !backend.frameSlot.inFlight && !driver.pending);
             std::vector<VkSemaphore> expected;
             if (!coreCommands) expected.push_back(coreWait);
             if (direct) expected.push_back(backend.nativeSdrAcquire);
@@ -836,7 +838,7 @@ void writeFenceQueueContracts() {
             backend.pendingSignalSemaphore = signal;
             alreadySignaled = i == 1;
             assert(backend.presentFrame(256, 224, 4.0F/3.0F, true, &fd));
-            assert(creates == 1 && exports == i + 1 && !driver.pending && !backend.frameInFlight);
+            assert(creates == 1 && exports == i + 1 && !driver.pending && !backend.frameSlot.inFlight);
             assert(driver.submittedSignals.front() == signal && driver.submittedSignals.back() == semaphore);
             assert(driver.submittedSignals.size() == (direct ? 3u : 2u));
             if (alreadySignaled) assert(fd == -1);
@@ -884,7 +886,7 @@ void writeFenceQueueContracts() {
                fd == VulkanBackend::NoBridgeWriteFence);
         errno = 0;
         assert(lastFd >= 0 && fcntl(lastFd, F_GETFD) == -1 && errno == EBADF);
-        assert(failed.hasFatalError() && failed.frameInFlight && destroys == 0);
+        assert(failed.hasFatalError() && failed.frameSlot.inFlight && destroys == 0);
         failed.shutdown();
         assert(destroys == 1);
     }
@@ -909,7 +911,7 @@ void duplicateFrameContracts() {
             else assert(driver.submittedSignals.empty());
             assert(backend.pendingCommandBuffers.empty() && backend.pendingImage.waitSemaphores.empty());
             assert(backend.pendingSignalSemaphore == VK_NULL_HANDLE);
-            assert(backend.pendingImage.image == originalImage && !driver.pending && !backend.frameInFlight);
+            assert(backend.pendingImage.image == originalImage && !driver.pending && !backend.frameSlot.inFlight);
             assert(driver.waitCalls == driver.submits && driver.resets == driver.submits);
             assert(!driver.commandResets && !driver.begins && !driver.presents && !driver.cachePrepares);
             assert(backend.completeDuplicateFrame() && driver.submits == unsigned(commands || signal));
@@ -921,7 +923,7 @@ void duplicateFrameContracts() {
         setup(backend);
         backend.pendingSignalSemaphore = object<VkSemaphore>(905);
         driver.submit = VK_ERROR_DEVICE_LOST;
-        assert(!backend.completeDuplicateFrame() && backend.hasFatalError() && !backend.frameInFlight);
+        assert(!backend.completeDuplicateFrame() && backend.hasFatalError() && !backend.frameSlot.inFlight);
         assert(backend.pendingSignalSemaphore == VK_NULL_HANDLE && driver.submits == 1);
         assert(!backend.completeDuplicateFrame() && driver.submits == 1);
         backend.shutdown();
@@ -932,7 +934,7 @@ void duplicateFrameContracts() {
         backend.pendingSignalSemaphore = object<VkSemaphore>(906);
         driver.waits = {VK_TIMEOUT, VK_SUCCESS};
         assert(backend.completeDuplicateFrame() && driver.waitCalls == 2 && driver.resets == 1);
-        assert(!driver.pending && !backend.frameInFlight);
+        assert(!driver.pending && !backend.frameSlot.inFlight);
         backend.shutdown();
     }
     {
@@ -940,7 +942,7 @@ void duplicateFrameContracts() {
         setup(backend);
         backend.pendingSignalSemaphore = object<VkSemaphore>(907);
         driver.waits = {VK_ERROR_OUT_OF_DEVICE_MEMORY};
-        assert(!backend.completeDuplicateFrame() && backend.hasFatalError() && backend.frameInFlight);
+        assert(!backend.completeDuplicateFrame() && backend.hasFatalError() && backend.frameSlot.inFlight);
         assert(!backend.completeDuplicateFrame() && driver.submits == 1);
         backend.shutdown();
     }
