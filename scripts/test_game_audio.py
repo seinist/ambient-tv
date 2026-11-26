@@ -46,6 +46,15 @@ def main():
         subprocess.run(command, check=True)
         subprocess.run([str(gate)], check=True, timeout=30)
 
+        recovery = Path(temporary) / "audio-stream-recovery"
+        command = [os.environ.get("CXX", "c++"), "-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-Werror", "-pthread",
+                   "-I", str(native), str(Path(__file__).with_name("native_game_audio_recovery_test.cpp")),
+                   "-o", str(recovery)]
+        if args.sanitize:
+            command[1:1] = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+        subprocess.run(command, check=True)
+        subprocess.run([str(recovery)], check=True, timeout=30)
+
 
 if __name__ == "__main__":
     main()

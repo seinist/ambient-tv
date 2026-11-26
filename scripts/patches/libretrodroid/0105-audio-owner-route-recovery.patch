@@ -1,0 +1,406 @@
+diff --git a/src/main/cpp/audio.cpp b/src/main/cpp/audio.cpp
+--- a/src/main/cpp/audio.cpp
++++ b/src/main/cpp/audio.cpp
+@@ -50,8 +50,11 @@
+     builder.setChannelCount(2);
+     builder.setDirection(oboe::Direction::Output);
+     builder.setFormat(oboe::AudioFormat::I16);
+-    builder.setDataCallback(this);
+-    builder.setErrorCallback(this);
++    streamCallback = std::make_shared<StreamCallback>(*this);
++    builder.setDataCallback(streamCallback);
++    // Oboe closes disconnected streams itself. No application error callback:
++    // FilterAudioStream must not install a raw parent pointer on its child.
++    // Only the render/control owner may reopen a stream or replace audio buffers.
+ 
+     if (audioLatencySettings->useLowLatencyStream) {
+         builder.setPerformanceMode(oboe::PerformanceMode::LowLatency);
+@@ -59,35 +62,39 @@
+         builder.setFramesPerCallback(audioBufferSize / 10);
+     }
+ 
+-    oboe::Result result = builder.openManagedStream(stream);
+-    if (result == oboe::Result::OK) {
+-        baseConversionFactor = (double) inputSampleRate / stream->getSampleRate();
+-        fifoBuffer = std::make_unique<oboe::FifoBuffer>(2, audioBufferSize);
+-        temporaryAudioBuffer = std::unique_ptr<int16_t[]>(new int16_t[audioBufferSize]);
+-        latencyTuner = std::make_unique<oboe::LatencyTuner>(*stream);
++    oboe::Result result = builder.openStream(stream);
++    if (result == oboe::Result::OK && stream != nullptr) {
++        try {
++            baseConversionFactor = (double) inputSampleRate / stream->getSampleRate();
++            fifoBuffer = std::make_unique<oboe::FifoBuffer>(2, audioBufferSize);
++            temporaryAudioBuffer = std::unique_ptr<int16_t[]>(new int16_t[audioBufferSize]);
++            latencyTuner = std::make_unique<oboe::LatencyTuner>(*stream);
+ 
+-        // SoundTouch operates in stereo float and is configured for the emulator's
+-        // native sample rate. The final rate conversion to stream->getSampleRate()
+-        // stays in LinearResampler so SoundTouch only does time-stretch.
+-        timeStretcher = std::make_unique<soundtouch::SoundTouch>();
+-        timeStretcher->setChannels(2);
+-        timeStretcher->setSampleRate(inputSampleRate);
+-        timeStretcher->setTempo(1.0);
+-        timeStretcher->setRate(1.0);
+-        timeStretcher->setPitch(1.0);
+-        lastStretchTempo = 1.0;
++            // SoundTouch operates in stereo float and is configured for the emulator's
++            // native sample rate. The final rate conversion to stream->getSampleRate()
++            // stays in LinearResampler so SoundTouch only does time-stretch.
++            timeStretcher = std::make_unique<soundtouch::SoundTouch>();
++            timeStretcher->setChannels(2);
++            timeStretcher->setSampleRate(inputSampleRate);
++            timeStretcher->setTempo(1.0);
++            timeStretcher->setRate(1.0);
++            timeStretcher->setPitch(1.0);
++            lastStretchTempo = 1.0;
+ 
+-        // audioBufferSize is an int16 sample count (stereo interleaved). Reuse the
+-        // same capacity for the float scratch buffers so even worst-case reads at
+-        // max playbackSpeed fit.
+-        stretchBufferFrameCapacity = audioBufferSize / 2;
+-        stretchInputBuffer = std::unique_ptr<float[]>(new float[audioBufferSize]);
+-        stretchOutputBuffer = std::unique_ptr<float[]>(new float[audioBufferSize]);
++            // audioBufferSize is an int16 sample count (stereo interleaved). Reuse the
++            // same capacity for the float scratch buffers so even worst-case reads at
++            // max playbackSpeed fit.
++            stretchBufferFrameCapacity = audioBufferSize / 2;
++            stretchInputBuffer = std::unique_ptr<float[]>(new float[audioBufferSize]);
++            stretchOutputBuffer = std::unique_ptr<float[]>(new float[audioBufferSize]);
++        } catch (...) {
++            closeStream();
++            throw;
++        }
+         return true;
+     } else {
+         LOGE("Failed to create stream. Error: %s", oboe::convertToText(result));
+-        stream = nullptr;
+-        latencyTuner = nullptr;
++        closeStream();
+         return false;
+     }
+ }
+@@ -116,8 +123,8 @@
+ 
+ void Audio::start() {
+     startRequested = true;
+-    if (stream != nullptr)
+-        stream->requestStart();
++    routeRecovery.reset();
++    serviceStream(true);
+ }
+ 
+ void Audio::stop() {
+@@ -127,14 +134,63 @@
+ }
+ 
+ Audio::~Audio() {
++    closeStream();
++}
++
++void Audio::closeStream() {
++    // Reject new data callbacks and drain an active block before changing any
++    // Audio storage. The shared callback object can outlive this Audio owner.
++    if (streamCallback) streamCallback->generation.retire();
+     if (stream != nullptr) {
+         stream->stop();
+         stream->close();
+     }
++    latencyTuner.reset();
++    stream.reset();
++    fifoBuffer.reset();
++    temporaryAudioBuffer.reset();
++    timeStretcher.reset();
++    stretchInputBuffer.reset();
++    stretchOutputBuffer.reset();
++    stretchBufferFrameCapacity = 0;
++    errorIntegral = 0.0;
++    framesToSubmit = 0.0;
+ }
+ 
++void Audio::serviceStream(bool forceStart) {
++    if (!startRequested) return;
++    if (!routeRecovery.shouldProbe(true, AudioRouteRecovery::Clock::now())) return;
++
++    if (stream != nullptr) {
++        const auto state = stream->getState();
++        if (state == oboe::StreamState::Disconnected || state == oboe::StreamState::Closed ||
++            state == oboe::StreamState::Closing) {
++            closeStream();
++        } else if (state == oboe::StreamState::Started || state == oboe::StreamState::Starting ||
++                   (!forceStart && (state == oboe::StreamState::Stopping ||
++                                    state == oboe::StreamState::Pausing ||
++                                    state == oboe::StreamState::Flushing))) {
++            return;
++        }
++    }
++    if (stream == nullptr && !initializeStream()) {
++        routeRecovery.retryLater(AudioRouteRecovery::Clock::now());
++        return;
++    }
++
++    const auto result = stream->requestStart();
++    if (result == oboe::Result::ErrorDisconnected || result == oboe::Result::ErrorClosed) {
++        closeStream();
++        routeRecovery.retryLater(AudioRouteRecovery::Clock::now());
++    } else if (result != oboe::Result::OK && result != oboe::Result::ErrorInvalidState) {
++        routeRecovery.retryLater(AudioRouteRecovery::Clock::now());
++    }
++}
++
+ void Audio::write(const int16_t *data, size_t frames) {
+-    fifoBuffer->write(data, frames * 2);
++    // An unavailable device must not crash the core or reopen a stream from
++    // inside retro_run. Keep emulating until the owner can recover the route.
++    if (fifoBuffer) fifoBuffer->write(data, frames * 2);
+ }
+ 
+ void Audio::setPlaybackSpeed(const double newPlaybackSpeed) {
+@@ -153,7 +209,7 @@
+ }
+ 
+ void Audio::resetBufferState() {
+-    AudioProcessingGate::ControlScope control(processingGate);
++    AudioProcessingGate::ControlScope control(streamCallback->generation.processingGate());
+     errorIntegral = 0.0;
+     framesToSubmit = 0.0;
+     if (fifoBuffer) {
+@@ -166,7 +222,7 @@
+ }
+ 
+ void Audio::updateTiming(int32_t newSampleRate, double newRefreshRate) {
+-    AudioProcessingGate::ControlScope control(processingGate);
++    AudioProcessingGate::ControlScope control(streamCallback->generation.processingGate());
+     LOGI("Audio timing update: sampleRate %d -> %d, refreshRate %f -> %f",
+          inputSampleRate, newSampleRate, contentRefreshRate, newRefreshRate);
+     inputSampleRate = newSampleRate;
+@@ -188,28 +244,29 @@
+     LOGI("Audio latency change: %d -> %d ms", requestedLatencyMs, latencyMs);
+     requestedLatencyMs = latencyMs;
+ 
+-    if (stream != nullptr) {
+-        stream->stop();
+-        stream->close();
+-        stream = nullptr;
++    closeStream();
++    if (!initializeStream()) {
++        routeRecovery.retryLater(AudioRouteRecovery::Clock::now());
++        return;
+     }
+-    errorIntegral = 0.0;
+-    framesToSubmit = 0.0;
+-
+-    if (initializeStream() && startRequested) {
+-        stream->requestStart();
++    if (startRequested) {
++        routeRecovery.reset();
++        serviceStream(true);
+     }
+ }
+ 
+-oboe::DataCallbackResult Audio::onAudioReady(oboe::AudioStream *oboeStream, void *audioData, int32_t numFrames) {
++oboe::DataCallbackResult Audio::StreamCallback::onAudioReady(
++        oboe::AudioStream*, void* audioData, int32_t numFrames) {
+     if (numFrames <= 0) return oboe::DataCallbackResult::Continue;
+-    AudioProcessingGate::CallbackScope processing(processingGate);
+-    if (!processing) {
+-        // A reset/retime owns the FIFO cursor and DSP state. Do not wait, read,
+-        // tune or consume post-reset samples until that operation completes.
++    if (!generation.dispatch([&](Audio& audio) { audio.processAudioBlock(audioData, numFrames); })) {
++        // Retired stream, reset or retime: output silence without touching
++        // current FIFO/DSP state or waiting on the render/control thread.
+         std::fill_n(static_cast<int16_t*>(audioData), static_cast<size_t>(numFrames) * 2, int16_t{0});
+-        return oboe::DataCallbackResult::Continue;
+     }
++    return oboe::DataCallbackResult::Continue;
++}
++
++void Audio::processAudioBlock(void* audioData, int32_t numFrames) {
+     const auto controls = callbackControls.snapshot();
+     const double playbackSpeed = controls.speed;
+     double dynamicBufferFactor = computeDynamicBufferConversionFactor(0.001 * numFrames);
+@@ -276,8 +333,6 @@
+     applyAudioCallbackVolume(outputArray, numFrames, controls.volume);
+ 
+     latencyTuner->tune();
+-
+-    return oboe::DataCallbackResult::Continue;
+ }
+ 
+ // To prevent audio buffer overruns or underruns we set up a PI controller. The idea is to run the
+@@ -310,17 +365,4 @@
+     return (x / 2) * 2;
+ }
+ 
+-void Audio::onErrorAfterClose(oboe::AudioStream* oldStream, oboe::Result result) {
+-    AudioStreamErrorCallback::onErrorAfterClose(oldStream, result);
+-    LOGI("Stream error in oboe::onErrorAfterClose %s", oboe::convertToText(result));
+-
+-    if (result != oboe::Result::ErrorDisconnected)
+-        return;
+-
+-    initializeStream();
+-    if (startRequested) {
+-        start();
+-    }
+-}
+-
+ } //namespace libretrodroid
+diff --git a/src/main/cpp/audio.h b/src/main/cpp/audio.h
+--- a/src/main/cpp/audio.h
++++ b/src/main/cpp/audio.h
+@@ -24,13 +24,13 @@
+ #include <oboe/FifoBuffer.h>
+ 
+ #include "audiocallbackcontrols.h"
+-#include "audioprocessinggate.h"
++#include "audiostreamrecovery.h"
+ #include "resamplers/linearresampler.h"
+ #include "SoundTouch.h"
+ 
+ namespace libretrodroid {
+ 
+-class Audio: public oboe::AudioStreamDataCallback, oboe::AudioStreamErrorCallback {
++class Audio {
+ private:
+     struct AudioLatencySettings {
+         unsigned bufferSizeInVideoFrames;
+@@ -42,18 +42,11 @@
+ 
+ public:
+     Audio(int32_t sampleRate, double refreshRate, bool preferLowLatencyAudio, int32_t audioLatencyMs);
+-    ~Audio() override;
++    ~Audio();
+ 
+     void start();
+     void stop();
+-
+-    oboe::DataCallbackResult onAudioReady(
+-        oboe::AudioStream *oboeStream,
+-        void *audioData,
+-        int32_t numFrames
+-    ) override;
+-
+-    void onErrorAfterClose(oboe::AudioStream *oldStream, oboe::Result result) override;
++    void serviceStream(bool forceStart = false);
+ 
+ public:
+     void write(const int16_t *data, size_t frames);
+@@ -69,6 +62,16 @@
+     double computeDynamicBufferConversionFactor(double dt);
+     int32_t computeAudioBufferSize();
+     bool initializeStream();
++    void closeStream();
++    void processAudioBlock(void* audioData, int32_t numFrames);
++
++    class StreamCallback final : public oboe::AudioStreamDataCallback {
++    public:
++        explicit StreamCallback(Audio& audio) : generation(audio) {}
++        oboe::DataCallbackResult onAudioReady(oboe::AudioStream*, void*, int32_t) override;
++        AudioCallbackGeneration<Audio> generation;
++    };
++
+     std::unique_ptr<Audio::AudioLatencySettings> findBestLatencySettings(bool preferLowLatencyAudio);
+     double computeMaximumLatency() const;
+ 
+@@ -82,7 +85,9 @@
+     std::unique_ptr<oboe::FifoBuffer> fifoBuffer = nullptr;
+     std::unique_ptr<int16_t[]> temporaryAudioBuffer = nullptr;
+ 
+-    oboe::ManagedStream stream = nullptr;
++    std::shared_ptr<oboe::AudioStream> stream;
++    std::shared_ptr<StreamCallback> streamCallback;
++    AudioRouteRecovery routeRecovery;
+     std::unique_ptr<oboe::LatencyTuner> latencyTuner = nullptr;
+ 
+     bool startRequested = false;
+@@ -96,7 +101,6 @@
+     double errorIntegral = 0.0;
+ 
+     AudioCallbackControls callbackControls;
+-    AudioProcessingGate processingGate;
+ 
+     std::unique_ptr<AudioLatencySettings> audioLatencySettings;
+ 
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -792,6 +792,7 @@
+ void LibretroDroid::step() {
+     GameTraceScope trace("AmbientGame step");
+     checkVulkanFrameError();
++    if (audio) audio->serviceStream();
+     // GLSurfaceView swaps AFTER step returns. Wait for the previous deadline
+     // BEFORE running the next frame, not while a finished image is waiting for EGL.
+     // A blocking swap already consumes that wait; the timer is only the backstop.
+@@ -1009,6 +1010,7 @@
+ void LibretroDroid::stepForNetplay() {
+     GameTraceScope trace("AmbientGame netplay step");
+     checkVulkanFrameError();
++    if (audio) audio->serviceStream();
+     // A netplay branch must not retain an offline capture, even if UI teardown is queued.
+     if (rewindBuffer && ((rewindCapture && rewindCapture->pending()) ||
+         rewindValidCount.load(std::memory_order_relaxed) > 0)) clearRewindBuffer();
+diff --git a/src/main/cpp/audiostreamrecovery.h b/src/main/cpp/audiostreamrecovery.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/audiostreamrecovery.h
+@@ -0,0 +1,59 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++
++#include "audioprocessinggate.h"
++#include <chrono>
++#include <utility>
++
++namespace libretrodroid {
++
++// The stream keeps this generation alive. Retiring it detaches the Audio
++// owner before stream close; a stale callback never touches a newer owner.
++template<class Owner>
++class AudioCallbackGeneration {
++public:
++    explicit AudioCallbackGeneration(Owner& owner) noexcept : owner(&owner) {}
++
++    template<class Process>
++    bool dispatch(Process&& process) {
++        AudioProcessingGate::CallbackScope scope(gate);
++        if (!scope || owner == nullptr) return false;
++        std::forward<Process>(process)(*owner);
++        return true;
++    }
++
++    AudioProcessingGate& processingGate() noexcept { return gate; }
++
++    // Only the render/control owner calls this, outside any other gate scope.
++    void retire() {
++        AudioProcessingGate::ControlScope scope(gate);
++        owner = nullptr;
++    }
++
++private:
++    AudioProcessingGate gate;
++    Owner* owner;
++};
++
++// Owner-thread only. Keep getState() and failed stream openings out of the
++// per-audio-packet hot path, and do not retry when playback is stopped.
++class AudioRouteRecovery {
++public:
++    using Clock = std::chrono::steady_clock;
++    using TimePoint = Clock::time_point;
++
++    bool shouldProbe(bool startRequested, TimePoint now) noexcept {
++        if (!startRequested || now < nextProbe) return false;
++        nextProbe = now + std::chrono::milliseconds(250);
++        return true;
++    }
++    void retryLater(TimePoint now) noexcept {
++        nextProbe = now + std::chrono::seconds(1);
++    }
++    void reset() noexcept { nextProbe = TimePoint::min(); }
++
++private:
++    TimePoint nextProbe = TimePoint::min();
++};
++
++} // namespace libretrodroid
