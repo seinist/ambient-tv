@@ -117,6 +117,11 @@ def main():
             "-o", str(external_binary)], check=True)
         subprocess.run([str(external_binary)], check=True, timeout=20)
 
+        access_binary = work / "external-frame-access-test"
+        subprocess.run(command + [str(root / "scripts/native_game_external_frame_access_test.cpp"),
+            "-o", str(access_binary)], check=True)
+        subprocess.run([str(access_binary)], check=True, timeout=20)
+
 
 if __name__ == "__main__":
     main()

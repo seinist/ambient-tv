@@ -76,14 +76,25 @@ struct Video {
     bool fp16ImportAccepted = true, rgbaImportAccepted = true;
     unsigned imports = 0, fenceExports = 0;
     int fenceFd = 42;
+    bool drainAccepted = true, pendingUse = true;
     bool presentsExternalFrames() const { return external; }
     int exportExternalReadFence() { ++fenceExports; return fenceFd; }
-    void finishExternalFrameUse() { ++VulkanBackend::getInstance().drains; }
+    bool finishExternalFrameUse(bool allowEmpty = false) {
+        if (allowEmpty) {
+            ++VulkanBackend::getInstance().drains;
+            return drainAccepted;
+        }
+        if (!drainAccepted) return false;
+        if (pendingUse) glFinish();
+        pendingUse = false;
+        return true;
+    }
     bool attachExternalFrame(void* buffer, unsigned w, unsigned h) {
         auto& backend = VulkanBackend::getInstance();
         assert(buffer == backend.getFrameBuffer() && !backend.fatal);
         assert(w == backend.width && h == backend.height && backend.allocations > imports);
         ++imports;
+        pendingUse = true;
         return backend.fp16 ? fp16ImportAccepted : rgbaImportAccepted;
     }
     void setSourceTransfer(unsigned value) { transfer = value; ++transferUpdates; }
@@ -201,9 +212,39 @@ void readFenceHandoffContracts() {
     std::puts("PASS production GLES read fence handoff and CPU fallback (5 cases)");
 }
 
+void bridgeAccessContracts() {
+    for (bool resize : {false, true}) {
+        auto& backend = VulkanBackend::getInstance();
+        backend = {};
+        backend.frameConfirmed = true;
+        Video video;
+        video.drainAccepted = false;
+        LibretroDroid host {&video};
+        const unsigned before = glFinishes;
+        host.handleVideoRefresh(RETRO_HW_FRAME_BUFFER_VALID, resize ? 512 : 256, 224, 1024);
+        assert(backend.fatal && !backend.frameConfirmed && backend.rejections == 1);
+        assert(!backend.allocations && !backend.submissions && !video.imports &&
+               !video.frameCalls && !video.transferUpdates && glFinishes == before);
+        assert(backend.drains == (resize ? 1u : 0u));
+    }
+    auto& backend = VulkanBackend::getInstance();
+    backend = {};
+    Video video;
+    LibretroDroid host {&video};
+    const unsigned before = glFinishes;
+    host.handleVideoRefresh(RETRO_HW_FRAME_BUFFER_VALID, 256, 224, 1024);
+    host.handleVideoRefresh(RETRO_HW_FRAME_BUFFER_VALID, 256, 224, 1024);
+    assert(glFinishes == before + 1 && backend.submissions == 2);
+    video.pendingUse = true; // forced, secondary or capture read
+    host.handleVideoRefresh(RETRO_HW_FRAME_BUFFER_VALID, 256, 224, 1024);
+    assert(glFinishes == before + 2 && backend.submissions == 3 && video.frameCalls == 3);
+    std::puts("PASS bridge access: wrong context, native-only, and resumed GLES reads (3 cases)");
+}
+
 int main() {
     bridgeImportContracts();
     readFenceHandoffContracts();
+    bridgeAccessContracts();
     enum class Input { Vulkan, Software, Duplicate, GlesHardware };
     struct Case {
         const char* name;
@@ -263,5 +304,5 @@ int main() {
         std::printf("PASS source ingress: %s\n", test.name);
         ++count;
     }
-    std::printf("Production bridge and ingress acceptance: %u cases passed\n", count + 21);
+    std::printf("Production bridge and ingress acceptance: %u cases passed\n", count + 24);
 }
