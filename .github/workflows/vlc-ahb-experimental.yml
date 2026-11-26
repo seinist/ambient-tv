@@ -14,6 +14,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: haasn/libplacebo
+          ref: v5.264.1
+          path: .ci/libplacebo
+          persist-credentials: false
       - name: Install pinned Android NDK and shader compiler
         run: |
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
@@ -22,8 +28,9 @@ jobs:
           yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
           "$sdkmanager" "ndk;30.0.16248370" || "$sdkmanager" --channel=3 "ndk;30.0.16248370"
           sudo apt-get update
-          sudo apt-get install -y glslc
+          sudo apt-get install -y glslc libvulkan-dev
       - name: Host sanitizer regressions, GLSL and Android ABI checks
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
+          export LIBPLACEBO_SOURCE="$GITHUB_WORKSPACE/.ci/libplacebo"
           bash scripts/test_vlc_ahb_import.sh
