@@ -47,22 +47,27 @@ internal object MoonlightHardwareVideo {
     private data class DecoderKey(val mime: String, val width: Int, val height: Int, val fps: Int, val hdr: Boolean)
     private val decoderCache = LinkedHashMap<DecoderKey, List<MediaCodecInfo>>(16, .75f, true)
 
-    private fun performanceRank(codec: MediaCodecInfo, mime: String, width: Int, height: Int, fps: Int): Int =
-        runCatching {
-            val caps = codec.getCapabilitiesForType(mime)
-            val point = MediaCodecInfo.VideoCapabilities.PerformancePoint(width, height, fps)
-            val points = caps.videoCapabilities?.supportedPerformancePoints
-            val guaranteed = if (points.isNullOrEmpty()) 1 else if (points.any { it.covers(point) }) 2 else 0
-            val lowLatency = Build.VERSION.SDK_INT >= 30 &&
-                caps.isFeatureSupported(MediaCodecInfo.CodecCapabilities.FEATURE_LowLatency)
-            val recommended = when (mime) {
-                MediaFormat.MIMETYPE_VIDEO_HEVC -> MediaCodecHelper.decoderIsWhitelistedForHevc(codec)
-                MediaFormat.MIMETYPE_VIDEO_AV1 -> MediaCodecHelper.isDecoderWhitelistedForAv1(codec)
-                else -> !MediaCodecHelper.decoderNeedsBaselineSpsHack(codec.name) &&
-                    !MediaCodecHelper.decoderNeedsSpsBitstreamRestrictions(codec.name)
-            }
-            guaranteed * 4 + (if (lowLatency) 2 else 0) + (if (recommended) 1 else 0)
-        }.getOrDefault(0)
+    private fun performanceRank(
+        codec: MediaCodecInfo,
+        capabilities: MediaCodecInfo.CodecCapabilities,
+        mime: String,
+        width: Int,
+        height: Int,
+        fps: Int,
+    ): Int = runCatching {
+        val point = MediaCodecInfo.VideoCapabilities.PerformancePoint(width, height, fps)
+        val points = capabilities.videoCapabilities?.supportedPerformancePoints
+        val guaranteed = if (points.isNullOrEmpty()) 1 else if (points.any { it.covers(point) }) 2 else 0
+        val lowLatency = Build.VERSION.SDK_INT >= 30 &&
+            capabilities.isFeatureSupported(MediaCodecInfo.CodecCapabilities.FEATURE_LowLatency)
+        val recommended = when (mime) {
+            MediaFormat.MIMETYPE_VIDEO_HEVC -> MediaCodecHelper.decoderIsWhitelistedForHevc(codec)
+            MediaFormat.MIMETYPE_VIDEO_AV1 -> MediaCodecHelper.isDecoderWhitelistedForAv1(codec)
+            else -> !MediaCodecHelper.decoderNeedsBaselineSpsHack(codec.name) &&
+                !MediaCodecHelper.decoderNeedsSpsBitstreamRestrictions(codec.name)
+        }
+        guaranteed * 4 + (if (lowLatency) 2 else 0) + (if (recommended) 1 else 0)
+    }.getOrDefault(0)
 
     @Synchronized internal fun decoders(
         mime: String, width: Int, height: Int, fps: Int, hdr10: Boolean = false,
@@ -70,31 +75,39 @@ internal object MoonlightHardwareVideo {
         val key = DecoderKey(mime, width, height, fps, hdr10)
         decoderCache[key]?.let { return it }
         val result = runCatching {
-        codecInfos.filter { codec ->
-            !codec.isEncoder && codec.isHardwareAccelerated &&
-                codec.supportedTypes.any { it.equals(mime, ignoreCase = true) } &&
-                runCatching {
+            val ranked = ArrayList<Pair<MediaCodecInfo, Int>>()
+            for (codec in codecInfos) {
+                if (codec.isEncoder || !codec.isHardwareAccelerated ||
+                    codec.supportedTypes.none { it.equals(mime, ignoreCase = true) }) continue
+                val candidate = runCatching {
+                    // Keep the framework capability object for both filtering and ranking.
+                    // getCapabilitiesForType() can cross into vendor codec services, so avoid
+                    // querying it twice for every decoder during stream startup.
                     val capabilities = codec.getCapabilitiesForType(mime)
-                    capabilities.videoCapabilities
-                        ?.areSizeAndRateSupported(width, height, fps.toDouble()) == true &&
-                        (!hdr10 || capabilities.profileLevels.any { profile ->
-                            when (mime) {
-                                MediaFormat.MIMETYPE_VIDEO_HEVC ->
-                                    profile.profile in setOf(
-                                        MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10,
-                                        MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10Plus,
-                                    )
-                                MediaFormat.MIMETYPE_VIDEO_AV1 ->
-                                    profile.profile in setOf(
-                                        MediaCodecInfo.CodecProfileLevel.AV1ProfileMain10HDR10,
-                                        MediaCodecInfo.CodecProfileLevel.AV1ProfileMain10HDR10Plus,
-                                    )
-                                else -> false
-                            }
-                        })
-                }.getOrDefault(false)
-        }
-        }.getOrDefault(emptyList()).sortedByDescending { performanceRank(it, mime, width, height, fps) }
+                    val video = capabilities.videoCapabilities ?: return@runCatching null
+                    if (!video.areSizeAndRateSupported(width, height, fps.toDouble())) return@runCatching null
+                    val hdrProfile = !hdr10 || capabilities.profileLevels.any { profile ->
+                        when (mime) {
+                            MediaFormat.MIMETYPE_VIDEO_HEVC ->
+                                profile.profile in setOf(
+                                    MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10,
+                                    MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10Plus,
+                                )
+                            MediaFormat.MIMETYPE_VIDEO_AV1 ->
+                                profile.profile in setOf(
+                                    MediaCodecInfo.CodecProfileLevel.AV1ProfileMain10HDR10,
+                                    MediaCodecInfo.CodecProfileLevel.AV1ProfileMain10HDR10Plus,
+                                )
+                            else -> false
+                        }
+                    }
+                    if (!hdrProfile) return@runCatching null
+                    codec to performanceRank(codec, capabilities, mime, width, height, fps)
+                }.getOrNull() ?: continue
+                ranked += candidate
+            }
+            ranked.sortedByDescending { it.second }.map { it.first }
+        }.getOrDefault(emptyList())
         if (decoderCache.size >= 32) decoderCache.remove(decoderCache.keys.first())
         decoderCache[key] = result
         return result
