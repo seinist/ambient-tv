@@ -16,6 +16,17 @@ part of the VLC patch glob or packaged APK. It must not be used to remove
   `c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined test_unique_fd.cpp -o /tmp/vlc-ahb-fd-test && /tmp/vlc-ahb-fd-test`.
   Passed on host with Clang; this does not execute Vulkan or Android imports.
 
+- Decoder frame lease retains a producer fence for pre-submit cancellation, duplicates
+  the fence for Vulkan import, and separates AImage return from Vulkan resource
+  retirement. An uncertain submission does not return the decoder buffer early;
+  callers must retain the lease and explicitly drain it.
+- Android AImage adapter reads borrowed hardware buffer, crop and timestamp,
+  validates crop bounds, and returns the image through AImage_deleteAsync.
+- Host regression for the frame lease:
+  `clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined test_frame_lease.cpp -o /tmp/vlc-ahb-lease-test && /tmp/vlc-ahb-lease-test`.
+  Equivalent source and assertions passed locally with ASan/UBSan; Android
+  AImage/Vulkan headers and real GPU calls remain untested.
+
 ## Required integration before activation
 
 1. Build these headers against the pinned Android NDK and supported Vulkan ABIs.
@@ -50,3 +61,4 @@ References: Vulkan specification and extension descriptions
 - https://docs.vulkan.org/refpages/latest/refpages/source/vkImportSemaphoreFdKHR.html
 - https://docs.vulkan.org/refpages/latest/refpages/source/vkGetSemaphoreFdKHR.html
 - https://docs.vulkan.org/refpages/latest/refpages/source/VK_EXT_queue_family_foreign.html
+- https://developer.android.com/ndk/reference/group/media
