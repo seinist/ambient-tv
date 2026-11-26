@@ -454,7 +454,7 @@ class MpvPlaybackController(
         surfaceIdentity = surface
         // A queued detach must not be overwritten by a foreground reattach: retire
         // the previous VO before binding the (possibly surviving) SurfaceView again.
-        mailbox.submit("surface-attach", discard = { copy.release() }) {
+        val accepted = mailbox.submit("surface-attach", discard = { copy.release() }) {
             val player = engine
             if (player == null) copy.release()
             else {
@@ -466,6 +466,7 @@ class MpvPlaybackController(
                 sample()
             }
         }
+        if (!accepted && surfaceIdentity === surface) surfaceIdentity = null
     }
     fun detachSurface(surface: Surface? = null) {
         if (surface != null && surfaceIdentity !== surface) return
@@ -517,10 +518,10 @@ class MpvPlaybackController(
             // Never interrupt or destroy a handle concurrently with an in-flight native call.
             try {
                 engine?.release()
-                audioRelease.complete(Unit)
                 engine = null
                 ownedSurface?.release()
                 ownedSurface = null
+                audioRelease.complete(Unit)
             } catch (error: Throwable) {
                 audioRelease.completeExceptionally(error)
                 throw error
