@@ -302,13 +302,14 @@ static void corePerformanceInterface() {
         cb.perf_stop(&value);
         assert(value.call_cnt == 1);
         name[0] = 'X';
-        assert(std::string(records[0].name.data()) == "temporary");
+        const auto* record = findRecord(reinterpret_cast<uintptr_t>(&value));
+        assert(record && std::string(record->name.data()) == "temporary");
         cb.perf_register(&value); // repeated registrations preserve totals.
         assert(value.call_cnt == 1);
     } // Core-owned counter and string cease to exist; logging uses copies.
     cb.perf_log();
     clear();
-    for (const auto& record : records) assert(!record.key);
+    for (const auto& record : records) assert(!record.key.load());
     std::array<retro_perf_counter, 70> many{};
     for (auto& value : many) {
         value.ident = "overflow";
@@ -317,6 +318,26 @@ static void corePerformanceInterface() {
         cb.perf_stop(&value);
         assert(value.registered && value.call_cnt == 1);
     }
+    clear();
+    // Different counter objects on independent workers must never contend on the
+    // metadata mutex during perf_start/perf_stop or corrupt copied totals.
+    retro_perf_counter left{"left", 0, 0, 0, false};
+    retro_perf_counter right{"right", 0, 0, 0, false};
+    cb.perf_register(&left);
+    cb.perf_register(&right);
+    auto work = [&cb](retro_perf_counter& value) {
+        for (int i = 0; i < 10000; ++i) {
+            cb.perf_start(&value);
+            cb.perf_stop(&value);
+        }
+    };
+    std::thread a(work, std::ref(left));
+    std::thread b(work, std::ref(right));
+    a.join();
+    b.join();
+    assert(left.call_cnt == 10000 && right.call_cnt == 10000);
+    assert(findRecord(reinterpret_cast<uintptr_t>(&left))->calls.load() == 10000);
+    assert(findRecord(reinterpret_cast<uintptr_t>(&right))->calls.load() == 10000);
     clear();
 }
 
