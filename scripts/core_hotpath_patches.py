@@ -2,7 +2,7 @@
 from pathlib import Path
 
 
-SUPPORTED = {"bsnes"}
+SUPPORTED = {"bsnes", "mesen", "sameboy"}
 
 
 def replace_once(source, old, new, label):
@@ -77,8 +77,54 @@ def prepare_bsnes(root):
     program.write_bytes(platform.encode("utf-8"))
 
 
+MESEN_OLD = """\t\tstring saveStateData = ss.str();
+\t\tmemset(data, 0, size);
+\t\tmemcpy(data, saveStateData.c_str(), std::min(size, saveStateData.size()));"""
+MESEN_NEW = """\t\tstring saveStateData = ss.str();
+\t\tconst size_t copied = std::min(size, saveStateData.size());
+\t\tif (copied)
+\t\t\tmemcpy(data, saveStateData.c_str(), copied);
+\t\tif (copied < size)
+\t\t\tmemset(static_cast<char*>(data) + copied, 0, size - copied);"""
+
+SAMEBOY_OLD = """            unsigned pitch = GB_get_screen_width(&gameboy[0]) * emulated_devices;
+            unsigned pixels_per_device = GB_get_screen_width(&gameboy[0]) * GB_get_screen_height(&gameboy[0]);
+            for (int y = 0; y < GB_get_screen_height(&gameboy[0]); y++) {
+                for (unsigned i = 0; i < emulated_devices; i++) {
+                    memcpy(frame_buf_copy + y * pitch + GB_get_screen_width(&gameboy[0]) * i,
+                           frame_buf + pixels_per_device * i + y * GB_get_screen_width(&gameboy[0]),
+                           GB_get_screen_width(&gameboy[0]) * sizeof(uint32_t));
+                }
+            }
+
+            video_cb(frame_buf_copy, GB_get_screen_width(&gameboy[0]) * emulated_devices, GB_get_screen_height(&gameboy[0]), GB_get_screen_width(&gameboy[0]) * emulated_devices * sizeof(uint32_t));"""
+SAMEBOY_NEW = """            const unsigned width = GB_get_screen_width(&gameboy[0]);
+            const unsigned height = GB_get_screen_height(&gameboy[0]);
+            const unsigned devices = emulated_devices;
+            const size_t row_bytes = (size_t)width * sizeof(uint32_t);
+            const size_t pitch = (size_t)width * devices;
+            const size_t pixels_per_device = (size_t)width * height;
+            for (unsigned y = 0; y < height; y++) {
+                uint32_t *dst = frame_buf_copy + y * pitch;
+                const uint32_t *src = frame_buf + (size_t)y * width;
+                for (unsigned i = 0; i < devices; i++) {
+                    memcpy(dst + (size_t)i * width, src + (size_t)i * pixels_per_device, row_bytes);
+                }
+            }
+
+            video_cb(frame_buf_copy, width * devices, height, pitch * sizeof(uint32_t));"""
+
+
 def prepare_hotpaths(root, core):
     if core == "bsnes":
         prepare_bsnes(root)
+    elif core == "mesen":
+        path = root / "Libretro/libretro.cpp"
+        source = path.read_bytes().decode("utf-8")
+        path.write_bytes(replace_once(source, MESEN_OLD, MESEN_NEW, "Mesen save-state copy").encode("utf-8"))
+    elif core == "sameboy":
+        path = root / "libretro/libretro.c"
+        source = path.read_bytes().decode("utf-8")
+        path.write_bytes(replace_once(source, SAMEBOY_OLD, SAMEBOY_NEW, "SameBoy dual-screen blit").encode("utf-8"))
     else:
         raise ValueError(f"No reviewed source-level hotpath patch for {core}")
