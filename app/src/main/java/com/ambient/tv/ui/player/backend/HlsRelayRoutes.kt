@@ -26,8 +26,8 @@ internal class HlsRelayRoutes(
 
     /** Only the configured server receives the stream headers. No arbitrary localhost proxy. */
     @Synchronized fun register(url: HttpUrl, playlist: Boolean): String {
-        if (!com.ambient.tv.network.CredentialRedirectGuard.keeps(origin, url))
-            throw IOException("Foreign manifest resource refused")
+        if (!vlcRelayOriginAllowed(origin, url) || url.username.isNotEmpty() || url.password.isNotEmpty())
+            throw IOException("Foreign or credential-bearing manifest resource refused")
         val key = Resource(url, playlist || vlcHlsPath(url))
         entries[key]?.let { return it }
         if (nextId == Long.MAX_VALUE) throw IOException("Manifest capability exhausted")
@@ -72,6 +72,13 @@ internal class HlsRelayRoutes(
         return resource.copy(url = builder.build())
     }
 }
+
+/** Same origin or the canonical HTTP→HTTPS upgrade, never a different service port. */
+internal fun vlcRelayOriginAllowed(origin: HttpUrl, hop: HttpUrl): Boolean =
+    origin.host == hop.host && (
+        origin.scheme == hop.scheme && origin.port == hop.port ||
+        origin.scheme == "http" && origin.port == 80 && hop.scheme == "https" && hop.port == 443
+    )
 
 private val hlsUriAttribute = Regex("""([:,]\s*URI=")([^"]+)(")""")
 
