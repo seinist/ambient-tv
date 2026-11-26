@@ -239,8 +239,8 @@ class VlcPlaybackController(
     internal var trackAccess = VlcTrackAccess(player)
         private set
     // libVLC exposes only a small native HTTP-header subset. Relay arbitrary supplied
-    // headers for direct streams and capability-scoped same-origin HLS without exposing
-    // credentials to the native MRL. DASH templates are not handled by this relay.
+    // headers for direct streams and capability-scoped HLS/DASH without exposing
+    // credentials to the native MRL.
     private val needsHeaderRelay = url.startsWith("http", ignoreCase = true) &&
         headers.keys.any { key -> key.lowercase(java.util.Locale.ROOT) !in setOf("user-agent", "referer", "cookie") }
     private val relaySupported = vlcHttpRelaySupported(url)
