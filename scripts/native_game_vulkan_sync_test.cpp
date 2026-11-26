@@ -301,6 +301,47 @@ void errorsStopWorkAndResize() {
     std::puts("PASS Vulkan wait failures latch once and stop present/clear/resize/filter changes");
 }
 
+void bridgeContextReplacementRetires() {
+    {
+        VulkanBackend backend;
+        setup(backend); pendingFrame(backend); window(backend);
+        backend.frameStatus.store(7u);
+        backend.nativePresentation.setFullscreenActive(true);
+        backend.nativePresentation.didPresentFrame();
+        driver.waits = {VK_TIMEOUT, VK_SUCCESS};
+        assert(backend.retireBridgeForContextReplacement());
+        assert(driver.waitCalls == 2 && driver.resets == 1 && !driver.pending);
+        assert(driver.imageFrees == 1 && driver.memoryFrees == 1 && driver.bufferFrees == 1);
+        assert(!backend.frameBuffer && backend.frameImage == VK_NULL_HANDLE &&
+               backend.frameMemory == VK_NULL_HANDLE && backend.getFrameStatus() == 0);
+        assert(backend.getFrameBufferWidth() == 0 && backend.getFrameBufferHeight() == 0);
+        assert(backend.primaryDraw(false, true) != libretrodroid::NativePresentationGate::PrimaryDraw::Skip);
+        // Even identical dimensions require a new allocation for the new EGL generation.
+        assert(backend.ensureFrameBuffer(256, 240));
+        assert(driver.allocations == 1 && driver.imageFrees == 1 && driver.bufferFrees == 1);
+    }
+    for (VkResult failure : {VK_ERROR_DEVICE_LOST, VK_ERROR_OUT_OF_DEVICE_MEMORY}) {
+        VulkanBackend backend;
+        setup(backend); pendingFrame(backend); window(backend);
+        backend.nativePresentation.setFullscreenActive(true);
+        backend.nativePresentation.didPresentFrame();
+        driver.waits = {failure};
+        assert(!backend.retireBridgeForContextReplacement());
+        assert(backend.getFatalError() == failure && backend.frameInFlight);
+        assert(driver.pending == (failure != VK_ERROR_DEVICE_LOST));
+        assert(backend.frameBuffer && backend.frameImage != VK_NULL_HANDLE &&
+               backend.frameMemory != VK_NULL_HANDLE);
+        assert(driver.imageFrees == 0 && driver.memoryFrees == 0 && driver.bufferFrees == 0);
+        assert(backend.primaryDraw(false, true) != libretrodroid::NativePresentationGate::PrimaryDraw::Skip);
+        assert(!backend.retireBridgeForContextReplacement() && driver.waitCalls == 1);
+        assert(!backend.ensureFrameBuffer(256, 240) && driver.allocations == 0);
+        assert(backend.prepareForShutdown());
+        backend.shutdown();
+        assert(driver.imageFrees == 1 && driver.bufferFrees == 1 && !driver.pending);
+    }
+    std::puts("PASS Vulkan context generation retirement requires completion and forces a fresh same-size allocation");
+}
+
 void bridgeImportFailureLatches() {
     VulkanBackend backend;
     setup(backend); pendingFrame(backend); window(backend);
@@ -590,6 +631,7 @@ int main() {
     traceScopeContracts();
     timeoutsPreserveWork();
     errorsStopWorkAndResize();
+    bridgeContextReplacementRetires();
     bridgeImportFailureLatches();
     resetAndSubmitFailures();
     safeCallbackAndTeardown();

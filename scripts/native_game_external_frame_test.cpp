@@ -74,11 +74,29 @@ int main() {
         assert(driver.releasedBuffer == 21);
         driver.calls.clear();
 
+        // Context recreation is an explicit generation boundary: EGL can reuse
+        // the same numeric display/context/texture handles. The old lease must
+        // retain its reference until release without touching the new context.
+        lease.adopt(41, 42, 43, 44, 45);
+        texture = 46;
+        lease.invalidateContext();
+        assert(!lease.matches(41, 42, 43, texture));
+        assert(!lease.matches(41, 42, 0, texture));
+        lease.finishUse(texture, 42, 43, driver);
+        assert(driver.calls.empty());
+        lease.release(texture, 42, 43, driver);
+        assert((driver.calls == std::vector<Call>{Driver::DestroyImage, Driver::ReleaseBuffer}));
+        assert(texture == 0 && driver.destroyedDisplay == 42 && driver.destroyedImage == 44 &&
+               driver.destroyedDispatch == 45 && driver.releasedBuffer == 41);
+        driver.calls.clear();
+        lease.release(texture, 42, 43, driver);
+        assert(driver.calls.empty());
+
         lease.adopt(31, 32, 33, 34, 35);
         texture = 36;
         lease.release(texture, 0, 0, driver);
         assert((driver.calls == std::vector<Call>{Driver::DestroyImage, Driver::ReleaseBuffer}));
         assert(driver.destroyedDisplay == 32 && driver.releasedBuffer == 31);
     }
-    std::cout << "PASS: 10000 external-frame lease cycles (same-context drain, context replacement, failed import and idempotent release)\n";
+    std::cout << "PASS: 10000 external-frame lease cycles (same-context drain, recycled EGL handles, context replacement, failed import and idempotent release)\n";
 }
