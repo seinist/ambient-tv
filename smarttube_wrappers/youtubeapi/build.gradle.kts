@@ -51,28 +51,28 @@ dependencies {
     implementation(project(":mediaserviceinterfaces"))
     implementation(project(":j2v8"))
 
-    implementation("com.squareup.retrofit2:retrofit:3.0.0")
-    implementation("com.squareup.retrofit2:converter-gson:3.0.0")
-    implementation("com.google.code.gson:gson:2.11.0")
-    implementation("com.jayway.jsonpath:json-path:2.4.0")
+    implementation(libs.retrofit.core)
+    implementation(libs.retrofit.converter.gson)
+    implementation(libs.gson)
+    implementation(libs.smarttube.json.path)
     constraints {
         // json-path 2.4.0 (pinned to match SmartTube upstream) pulls json-smart 2.3, which has
         // known denial-of-service bugs on malformed or deeply nested JSON (e.g. CVE-2023-1370).
         // Raise only json-smart; json-path keeps its upstream version and 2.x API.
-        implementation("net.minidev:json-smart:2.6.0") {
+        implementation(libs.json.smart) {
             because("json-smart 2.3 from json-path 2.4.0 has known DoS vulnerabilities")
         }
     }
-    implementation("com.google.net.cronet:cronet-okhttp:0.1.0")
-    implementation("org.chromium.net:cronet-api:143.7445.0")
-    implementation("io.reactivex.rxjava2:rxandroid:2.1.1")
-    implementation("io.reactivex.rxjava2:rxjava:2.2.21")
-    implementation("androidx.annotation:annotation:1.11.0")
-    implementation("androidx.core:core-ktx:1.12.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
-    implementation("com.github.florianingerl.util:regex:1.1.11")
-    implementation("androidx.webkit:webkit:1.11.0")
-    implementation("com.grack:nanojson:1.7")
+    implementation(libs.smarttube.cronet.adapter)
+    implementation(libs.chromium.cronet.api)
+    implementation(libs.rxandroid2)
+    implementation(libs.rxjava2)
+    implementation(libs.androidx.annotation)
+    implementation(libs.smarttube.core.ktx)
+    implementation(libs.smarttube.coroutines)
+    implementation(libs.smarttube.regex)
+    implementation(libs.smarttube.webkit)
+    implementation(libs.nanojson)
     testImplementation(libs.junit4)
 }
 

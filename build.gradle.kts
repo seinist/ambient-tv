@@ -1,4 +1,4 @@
-// AMBIENT_TV_ROOT_BUILD_V037
+// AMBIENT_TV_ROOT_BUILD_V038
 buildscript {
     dependencies { classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.21") }
 }
@@ -12,12 +12,13 @@ plugins {
     alias(libs.plugins.hilt) apply false
 }
 
+val ambientChromiumCronetVersion = libs.versions.chromiumCronet.get()
 subprojects {
     configurations.configureEach {
         resolutionStrategy.force(
-            "org.chromium.net:cronet-api:143.7445.0",
-            "org.chromium.net:cronet-common:143.7445.0",
-            "org.chromium.net:cronet-embedded:143.7445.0",
+            "org.chromium.net:cronet-api:$ambientChromiumCronetVersion",
+            "org.chromium.net:cronet-common:$ambientChromiumCronetVersion",
+            "org.chromium.net:cronet-embedded:$ambientChromiumCronetVersion",
         )
     }
 }
