@@ -15,9 +15,15 @@ for test in test_unique_fd test_frame_lease; do
         "$SRC/$test.cpp" -o "$TMP/$test"
     "$TMP/$test"
 done
+GLSLC="$NDK/shader-tools/$host/glslc"
+if [[ ! -x "$GLSLC" ]]; then GLSLC="$(command -v glslc || true)"; fi
+[[ -n "$GLSLC" && -x "$GLSLC" ]] || { echo "glslc unavailable" >&2; exit 1; }
+for stage in vert frag; do
+    "$GLSLC" --target-env=vulkan1.1 "$SRC/sample.$stage" -o "$TMP/sample.$stage.spv"
+done
 for triple in aarch64-linux-android armv7a-linux-androideabi i686-linux-android x86_64-linux-android; do
     "$NDK/toolchains/llvm/prebuilt/$host/bin/${triple}29-clang++" \
         -std=c++17 -Wall -Wextra -Werror -Wno-missing-field-initializers \
         -fsyntax-only "$SRC/test_android_compile.cpp"
 done
-echo "AHB host lifetime tests and four Android ABI syntax checks passed (no GPU execution)"
+echo "AHB lifetime tests, shaders and four Android ABI syntax checks passed (no GPU execution)"
