@@ -414,20 +414,25 @@ private fun String.withValidPercentEscapes(): String = replace(INVALID_PERCENT_E
 
 
 def patch_okhttp_debug_dump(path: Path, check: bool) -> bool:
-    """Debug builds must not dump YouTube HTTP traffic (OAuth tokens, cookies) to logcat."""
+    """Fail closed if upstream changes the HTTP logging setup."""
     if not path.is_file():
-        return False
-    text = path.read_text()
+        die(f"SmartTube OkHttp commons missing: {path}")
+    original = path.read_bytes()
+    newline = "\r\n" if b"\r\n" in original else "\n"
+    text = original.decode("utf-8").replace("\r\n", "\n")
     legacy = "    private static void debugSetup(OkHttpClient.Builder okBuilder) {\n        if (BuildConfig.DEBUG) {"
     replacement = "    private static void debugSetup(OkHttpClient.Builder okBuilder) {\n        if (false) { // Ambient TV: no HTTP bodies/headers in logcat"
-    if check:
-        if legacy in text:
+    if legacy in text:
+        if check or text.count(legacy) != 1:
             die(f"HTTP debug dump to logcat is still enabled in {path}")
-        return False
-    if legacy not in text:
-        return False
-    path.write_text(text.replace(legacy, replacement, 1))
-    return True
+        text = text.replace(legacy, replacement, 1)
+    if text.count(replacement) != 1:
+        die(f"Unsupported SmartTube HTTP logging layout: {path}")
+    updated = text.replace("\n", newline).encode("utf-8")
+    if updated != original:
+        path.write_bytes(updated)
+        return True
+    return False
 
 
 def patch_logger_quiet(path: Path, check: bool) -> bool:
@@ -1036,7 +1041,9 @@ def patch_upcoming_streams(msc: Path, check: bool) -> list[Path]:
 def patch_disable_legacy_tls_bypass(path: Path, check: bool) -> bool:
     if not path.is_file():
         die(f"SmartTube OkHttp commons missing: {path}")
-    text = path.read_text()
+    raw = path.read_bytes()
+    newline = "\r\n" if b"\r\n" in raw else "\n"
+    text = raw.decode("utf-8").replace("\r\n", "\n")
     legacy = "        configureToIgnoreCertificate(okBuilder);"
     replacement = "        // Ambient TV requires normal TLS certificate validation."
     if legacy not in text:
@@ -1045,7 +1052,7 @@ def patch_disable_legacy_tls_bypass(path: Path, check: bool) -> bool:
         return False
     if check:
         die(f"Legacy TLS bypass still enabled: {path}")
-    path.write_text(text.replace(legacy, replacement))
+    path.write_bytes(text.replace(legacy, replacement).replace("\n", newline).encode("utf-8"))
     return True
 
 
@@ -1060,7 +1067,9 @@ def patch_disable_unused_cronet(msc: Path, shared: Path, check: bool) -> list[Pa
     helper = msc / "youtubeapi/src/main/java/com/liskovsoft/googlecommon/common/helpers/RetrofitOkHttpHelper.kt"
     if not helper.is_file():
         die(f"SmartTube Retrofit helper moved or disappeared: {helper}")
-    text = helper.read_text()
+    original_bytes = helper.read_bytes()
+    newline = "\r\n" if b"\r\n" in original_bytes else "\n"
+    text = original_bytes.decode("utf-8").replace("\r\n", "\n")
     original = text
     if check:
         if any(token in text for token in ("CronetInterceptor", "CronetManager", "addCronetInterceptor")):
@@ -1087,8 +1096,6 @@ def patch_disable_unused_cronet(msc: Path, shared: Path, check: bool) -> list[Pa
     # Stage the rewrite before touching either source. If deleting the dormant
     # manager fails, restore the original helper. Two independent files cannot
     # be committed as one atomic filesystem transaction.
-    original_bytes = helper.read_bytes()
-
     def replace_helper(data: bytes) -> None:
         fd, tmp_name = tempfile.mkstemp(prefix=".ambient-cronet-", dir=helper.parent)
         tmp = Path(tmp_name)
@@ -1101,7 +1108,7 @@ def patch_disable_unused_cronet(msc: Path, shared: Path, check: bool) -> list[Pa
             tmp.unlink(missing_ok=True)
 
     if text != original:
-        replace_helper(text.encode("utf-8"))
+        replace_helper(text.replace("\n", newline).encode("utf-8"))
         changed.append(helper)
     try:
         if manager.exists():
@@ -1118,7 +1125,9 @@ def patch_okhttp_manager_thread_safety(path: Path, check: bool) -> bool:
     """Publish initialized clients safely; serialize cold paths and reset on the class monitor."""
     if not path.is_file():
         die(f"SmartTube OkHttp manager moved or disappeared: {path}")
-    text = path.read_text()
+    raw = path.read_bytes()
+    newline = "\r\n" if b"\r\n" in raw else "\n"
+    text = raw.decode("utf-8").replace("\r\n", "\n")
     original = text
     replacements = [
         ("private static OkHttpManager sInstance;", "private static volatile OkHttpManager sInstance;"),
@@ -1166,7 +1175,7 @@ def patch_okhttp_manager_thread_safety(path: Path, check: bool) -> bool:
             die(f"Unsupported or unpatched OkHttp manager layout: {path}: {old.splitlines()[0]}")
         text = text.replace(old, new, 1)
     if text != original:
-        path.write_text(text)
+        path.write_bytes(text.replace("\n", newline).encode("utf-8"))
         return True
     return False
 
