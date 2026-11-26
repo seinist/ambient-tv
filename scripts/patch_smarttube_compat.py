@@ -8,6 +8,9 @@ whatever upstream commit is currently checked out.
 from __future__ import annotations
 
 import argparse
+import os
+import stat
+import tempfile
 import re
 import sys
 from pathlib import Path
@@ -1081,12 +1084,33 @@ def patch_disable_unused_cronet(msc: Path, shared: Path, check: bool) -> list[Pa
     )
     if any(token in text for token in ("CronetInterceptor", "CronetManager", "addCronetInterceptor")):
         die(f"unsupported SmartTube Cronet adapter layout in {helper}")
+    # Stage the rewrite before touching either source. If deleting the dormant
+    # manager fails, restore the original helper. Two independent files cannot
+    # be committed as one atomic filesystem transaction.
+    original_bytes = helper.read_bytes()
+
+    def replace_helper(data: bytes) -> None:
+        fd, tmp_name = tempfile.mkstemp(prefix=".ambient-cronet-", dir=helper.parent)
+        tmp = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(data)
+            tmp.chmod(stat.S_IMODE(helper.stat().st_mode))
+            os.replace(tmp, helper)
+        finally:
+            tmp.unlink(missing_ok=True)
+
     if text != original:
-        helper.write_text(text)
+        replace_helper(text.encode("utf-8"))
         changed.append(helper)
-    if manager.exists():
-        manager.unlink()
-        changed.insert(0, manager)
+    try:
+        if manager.exists():
+            manager.unlink()
+            changed.insert(0, manager)
+    except OSError:
+        if helper in changed:
+            replace_helper(original_bytes)
+        raise
     return changed
 
 
