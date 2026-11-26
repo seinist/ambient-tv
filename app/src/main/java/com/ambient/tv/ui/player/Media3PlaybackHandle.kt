@@ -65,6 +65,7 @@ class Media3PlaybackHandle(
     private var released = false
     private var frameDropGeneration = 0
     private var frameDropCounters: DecoderCounters? = null
+    private var audioSyncCounters: DecoderCounters? = null
 
     /** A polling window must not bridge a short seek, pause or decoder replacement. */
     internal fun frameDropSampleGeneration(): Int {
@@ -176,8 +177,16 @@ class Media3PlaybackHandle(
             !player.currentTracks.isTypeSelected(C.TRACK_TYPE_AUDIO)) return null
         val counters = player.videoDecoderCounters ?: return null
         counters.ensureUpdated()
+        val audio = player.audioDecoderCounters
+        if (audio !== audioSyncCounters) {
+            audioSyncCounters = audio
+            frameDropGeneration++
+        }
+        audio?.ensureUpdated()
         return LiveSyncSample(android.os.SystemClock.elapsedRealtime(), player.currentPosition,
-            frameDropSampleGeneration(), renderedFrames = counters.renderedOutputBufferCount.toLong())
+            frameDropSampleGeneration(), renderedFrames = counters.renderedOutputBufferCount.toLong(),
+            // Passthrough/unsupported counters may remain at zero; zero is not evidence.
+            audioBuffers = audio?.renderedOutputBufferCount?.toLong()?.takeIf { it > 0L })
     }
 
     /** Reprepare the same source, flushing both decoders. A local buffer keeps its wall-clock position. */
