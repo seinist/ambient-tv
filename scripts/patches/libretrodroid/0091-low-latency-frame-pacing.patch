@@ -81,12 +81,65 @@ diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
 diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
 --- a/src/main/cpp/vulkan/vulkanbackend.cpp
 +++ b/src/main/cpp/vulkan/vulkanbackend.cpp
-@@ -600,2 +600,4 @@
+@@ -412,2 +412,6 @@
+     nativeSdrWindow = ownedWindow;
+     nativeSdrDisabled = false;
++    nativeSdrExtraImage = false;
++    nativeSdrGrowPending = false;
++    nativeSdrCanGrow = false;
++    nativeSdrMissScore = 0;
+@@ -449,3 +453,11 @@
+ bool VulkanBackend::ensureNativeSdrSwapchain() {
+     if (hasFatalError() || shutdownReady) return false;
++    // Recreate at most once per surface, and only through the existing safe idle
++    // retirement path. No extra image is requested during ordinary low-latency play.
++    if (nativeSdrGrowPending) {
++        if (!destroyNativeSdrSwapchain()) return false;
++        nativeSdrGrowPending = false;
++        nativeSdrExtraImage = true;
++        nativeSdrMissScore = 0;
++    }
+     if (nativeSdrSwapchain != VK_NULL_HANDLE) return true;
+@@ -600,2 +612,6 @@
 -    uint32_t images = caps.minImageCount + 1;
-+    // FIFO must not deliberately request an extra queued presentation image.
-+    // A driver may still allocate more than the advertised minimum.
++    const bool canRequestExtra = caps.minImageCount < UINT32_MAX &&
++        (caps.maxImageCount == 0 || caps.maxImageCount > caps.minImageCount);
 +    uint32_t images = caps.minImageCount;
++    if (nativeSdrExtraImage && canRequestExtra) ++images;
      if (caps.maxImageCount != 0) images = std::min(images, caps.maxImageCount);
++    nativeSdrCanGrow = canRequestExtra && !nativeSdrExtraImage;
+@@ -632,1 +648,4 @@
+     nativeSdrImages.resize(count);
++    // Some drivers already give us more images than requested. Don't churn WSI
++    // in that case; there is no reason to think another request will help.
++    nativeSdrCanGrow = nativeSdrCanGrow && count == images;
+@@ -1280,9 +1299,17 @@
+             if (acquired == VK_SUCCESS || acquired == VK_SUBOPTIMAL_KHR) {
++                if (nativeSdrMissScore > 0) --nativeSdrMissScore;
+                 useDirect = sdrIndex < nativeSdrImages.size() &&
+                             sdrIndex < nativeSdrComplete.size();
+             } else if (acquired == VK_ERROR_DEVICE_LOST) {
+                 checkFrameResult(acquired, "acquire presentation image");
+                 return false;
++            } else if (acquired == VK_NOT_READY || acquired == VK_TIMEOUT) {
++                // Nonblocking acquire: keep the GLES bridge for this frame.
++                // Repeated starvation can justify one additional FIFO image.
++                if (nativeSdrCanGrow && !nativeSdrGrowPending) {
++                    nativeSdrMissScore = std::min(12u, nativeSdrMissScore + 2u);
++                    nativeSdrGrowPending = nativeSdrMissScore >= 12u;
++                }
+             } else if (acquired != VK_NOT_READY && acquired != VK_TIMEOUT) {
+                 disableNativeSdrSwapchain("native SDR swapchain out of date or surface lost");
+             }
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -279,1 +279,5 @@
+     bool nativeSdrDisabled = false;
++    bool nativeSdrExtraImage = false;
++    bool nativeSdrGrowPending = false;
++    bool nativeSdrCanGrow = false;
++    unsigned nativeSdrMissScore = 0;
 diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
 --- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
 +++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
