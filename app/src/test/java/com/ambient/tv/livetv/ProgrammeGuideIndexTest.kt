@@ -290,4 +290,21 @@ class ProgrammeGuideIndexTest {
         index.reconcileWindow(tvh, "other-account", listOf(event("new", "a")), 1000, 3000, 1000, channelId = "a")
         assertFalse(index.coversFreshWindow(tvh, "other-account", 1000, 3000, 900000))
     }
+
+    @Test fun recordingChangeExpiresOnlyFreshnessAndPreservesRows() = runBlocking {
+        val tvh = "tvheadend"
+        index.reconcileWindow(tvh, scope, listOf(event("one")), 1000, 3000, 1000)
+        assertTrue(index.coversFreshWindow(tvh, scope, 1000, 3000, 900000))
+        index.expireSyncWindows(tvh, scope)
+        assertFalse(index.coversFreshWindow(tvh, scope, 1000, 3000, 900000))
+        assertEquals("one", index.query(tvh, scope, 1000, 3000)!!.single().eventId)
+    }
+
+    @Test fun malformedChannelWindowCannotDeleteStoredData() = runBlocking {
+        val tvh = "tvheadend"
+        index.reconcileWindow(tvh, scope, listOf(event("one", "a")), 1000, 3000, 1000)
+        val result = runCatching { index.reconcileWindow(tvh, scope, listOf(event("wrong", "b")), 1000, 3000, 1000, "a") }
+        assertTrue(result.isFailure)
+        assertEquals("one", index.query(tvh, scope, 1000, 3000)!!.single().eventId)
+    }
 }

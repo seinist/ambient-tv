@@ -17,6 +17,7 @@ internal suspend fun loadTvhEpgPages(
     }
     val rows = linkedMapOf<String, JsonObject>()
     var offset = 0
+    var expectedTotal: Int? = null
     while (true) {
         currentCoroutineContext().ensureActive()
         val response = request(buildMap {
@@ -30,9 +31,13 @@ internal suspend fun loadTvhEpgPages(
         page.forEach { rows[it["eventId"]?.jsonPrimitive?.content ?: it.toString()] = it }
         check(rows.size - before == page.size) { "TVHeadend EPG pagination duplicated entries." }
         val total = response["totalCount"]?.jsonPrimitive?.intOrNull
+        check(total == null || total in 0..150_000) { "Invalid or oversized TVHeadend EPG response." }
+        if (offset == 0) expectedTotal = total
+        else check(total == expectedTotal) { "TVHeadend EPG changed during pagination; retry." }
         offset += page.size
-        check(page.isNotEmpty() || total == null || offset >= total) { "TVHeadend EPG pagination ended early." }
-        if (total != null && offset >= total || total == null && page.size < pageSize) break
+        check(offset <= 150_000 && (total == null || offset <= total)) { "Invalid TVHeadend EPG page count." }
+        check(page.isNotEmpty() || total == null || offset == total) { "TVHeadend EPG pagination ended early." }
+        if (total != null && offset == total || total == null && page.size < pageSize) break
     }
     return rows.values.toList()
 }

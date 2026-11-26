@@ -1169,14 +1169,15 @@ class TvheadendPlayerViewModel @Inject constructor(
                 com.ambient.tv.ui.player.AudioCodecRejects.clear()
                 // Replace global metadata *before* acquiring the new stream. Otherwise
                 // mini-player, external controls and notifications still show the old channel.
+                val pendingArt = nowEvent?.let { liveTvProgrammeArt(it, listOf(channel), artwork.titleArt.value) }
                 val pendingMetadata = PlaybackMetadata(
                     route = Destinations.tvhPlayer(kind, channel.uuid, sourceId),
                     title = nowEvent?.title ?: channel.name,
                     source = sourceSystem,
                     mediaId = channel.uuid,
-                    artworkUrl = nowEvent?.let { liveTvProgrammeArt(it, listOf(channel), artwork.titleArt.value)?.url } ?: channel.iconUrl,
+                    artworkUrl = pendingArt?.url ?: channel.iconUrl,
                     artworkHeaders = repository.authHeaders(),
-                    artworkAspectRatio = 1f,
+                    artworkAspectRatio = if (pendingArt != null && !pendingArt.logo) 16f / 9f else 1f,
                     isLive = true,
                     hasVideo = channel.kind != LiveTvChannelKind.RADIO,
                     liveTvSourceId = sourceId,

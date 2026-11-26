@@ -43,7 +43,11 @@ class LiveTvBrowseState(private val now: () -> Long = { System.nanoTime() / 1_00
     fun update(dashboard: LiveTvDashboard, capabilities: LiveTvCapabilities, savedView: Boolean = false) {
         this.dashboard = dashboard
         this.capabilities = capabilities
-        if (!savedView && dashboard.warnings.isEmpty()) homeNowEvents = emptyMap()
+        if (!savedView && dashboard.warnings.isEmpty() && dashboard.events.isNotEmpty()) {
+            // Only replace Home evidence for channels actually covered by this dashboard.
+            val covered = dashboard.events.asSequence().map { it.channelUuid }.toHashSet()
+            homeNowEvents = homeNowEvents.filterKeys { it !in covered }
+        }
         this.savedView = savedView
         loadedAt = if (!savedView && dashboard.warnings.isEmpty()) now() else null
     }

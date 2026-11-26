@@ -1595,8 +1595,8 @@ class HomeViewModel @Inject constructor(
         }
         val previews = repositories.map { repo -> async {
             val previous = HomeTvPreview(
-                tvPreview.live.filter { it.channel.sourceId == repo.source.id }.map { it.copy(event = null) },
-                tvPreview.recent.filter { it.channel.sourceId == repo.source.id }.map { it.copy(event = null) },
+                tvPreview.live.filter { it.channel.sourceId == repo.source.id }.map { it.copy(event = it.event?.takeIf { event -> event.isLive(System.currentTimeMillis() / 1000L) }) },
+                tvPreview.recent.filter { it.channel.sourceId == repo.source.id }.map { it.copy(event = it.event?.takeIf { event -> event.isLive(System.currentTimeMillis() / 1000L) }) },
             )
             suspendResult {
                 val historyScope = if (repo.source.system == "tvheadend") appPreferences.tvheadendHistoryScope else repo.source.id

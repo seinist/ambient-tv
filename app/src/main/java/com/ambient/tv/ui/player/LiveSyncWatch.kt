@@ -52,7 +52,9 @@ internal class LiveSyncWatch {
             return null
         }
         val clockMoves = sample.positionMs - before.positionMs >= 150
-        val videoFrozen = sample.renderedFrames != null && before.renderedFrames == sample.renderedFrames
+        // Some backends do not expose presentation counters (permanent zero). Require evidence
+        // that pictures were produced at least once before interpreting zero progress as a stall.
+        val videoFrozen = (sample.renderedFrames ?: 0) > 0 && before.renderedFrames == sample.renderedFrames
         if (videoFrozen && clockMoves) {
             if (frozenFrom == null) frozenFrom = before
         } else frozenFrom = null
@@ -71,7 +73,7 @@ internal class LiveSyncWatch {
             else -> null
         }
         val healthy = clockMoves && !videoFrozen && !drift &&
-            (sample.renderedFrames != null || sample.avSyncSeconds != null)
+            ((sample.renderedFrames ?: 0) > 0 || sample.avSyncSeconds != null)
         if (healthy) {
             if (healthyFrom == null) healthyFrom = before.atMs
             if (sample.atMs - requireNotNull(healthyFrom) >= 30_000L) attempts = 0

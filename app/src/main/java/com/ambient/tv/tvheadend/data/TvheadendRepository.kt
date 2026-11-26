@@ -93,6 +93,7 @@ class TvheadendRepository @Inject constructor(
     /** Serialize legacy migration and fresh-window merges from parallel per-channel loads. */
     private val epgPersistMutex = Mutex()
     private val guideFetchMutex = Mutex()
+    private val guideEpoch = java.util.concurrent.atomic.AtomicLong()
     private var guideSyncJob: kotlinx.coroutines.Job? = null
     private val cache = mutableMapOf<String, CacheValue<*>>()
     private var cacheScope: List<String>? = null
@@ -364,8 +365,12 @@ class TvheadendRepository @Inject constructor(
         val from = Math.floorDiv(startEpochSeconds, 1800L) * 1800L
         val to = Math.floorDiv(stop + 1799L, 1800L) * 1800L
         val scope = diskScope()
-        if (!force && guideIndex.coversFreshWindow(EPG_INDEX_OWNER, scope, startEpochSeconds, stop, 15 * 60_000L)) {
-            indexedEpg(scope, startEpochSeconds, stop, channelId)?.let { return it }
+        val epoch = guideEpoch.get()
+        if (!force && currentGuideScope(scope) &&
+            guideIndex.coversFreshWindow(EPG_INDEX_OWNER, scope, startEpochSeconds, stop, 15 * 60_000L)) {
+            indexedEpg(scope, startEpochSeconds, stop, channelId)?.let {
+                if (epoch == guideEpoch.get() && currentGuideScope(scope)) return it
+            }
         }
         val key = "epg:$channelId:$from:$to"
         return cached(key, 15 * 60_000L, force,
@@ -398,24 +403,28 @@ class TvheadendRepository @Inject constructor(
 
     private suspend fun syncGuideWindow(scope: String, from: Long, to: Long, channelId: String?,
         wake: Boolean, force: Boolean = false, maxAgeMs: Long = 15 * 60_000L): List<TvhEpgEvent> = guideFetchMutex.withLock {
-        check(currentGuideScope(scope)) { "TVHeadend source changed" }
+        val epoch = guideEpoch.get()
+        fun valid() = epoch == guideEpoch.get() && currentGuideScope(scope)
+        check(valid()) { "TVHeadend source changed" }
         if (!force && guideIndex.coversFreshWindow(EPG_INDEX_OWNER, scope, from, to, maxAgeMs)) {
-            indexedEpg(scope, from, to, channelId)?.let { return@withLock it }
+            indexedEpg(scope, from, to, channelId)?.let { if (valid()) return@withLock it }
         }
         val rows = loadTvhEpgPages(from, to, channelId) { params ->
             currentCoroutineContext().ensureActive()
-            check(currentGuideScope(scope)) { "TVHeadend source changed" }
+            check(valid()) { "TVHeadend source changed" }
             check(wake || com.ambient.tv.data.browse.BrowseWorkBudget.idle()) { "Foreground browse work resumed" }
             getJson("api/epg/events/grid", params, wake = wake)
         }
+        check(valid()) { "TVHeadend source changed" }
         check(wake || com.ambient.tv.data.browse.BrowseWorkBudget.idle()) { "Foreground browse work resumed" }
         // A malformed response is not authoritative. Do not remove previously cached programmes.
         val events = rows.map { mapEvent(it) ?: error("Invalid TVHeadend programme") }
             .filter { it.stopEpochSeconds >= from && it.startEpochSeconds <= to }
         epgPersistMutex.withLock {
+            check(valid()) { "TVHeadend source changed" }
             migrateGuideIfNeeded(scope)
             guideIndex.reconcileWindow(EPG_INDEX_OWNER, scope, events, from, to,
-                System.currentTimeMillis() / 1000L, channelId, valid = { currentGuideScope(scope) })
+                System.currentTimeMillis() / 1000L, channelId, valid = ::valid)
         }
         events
     }
@@ -426,7 +435,8 @@ class TvheadendRepository @Inject constructor(
         guideSyncJob = background.launch {
             kotlinx.coroutines.delay(3000)
             while (kotlinx.coroutines.currentCoroutineContext().isActive) {
-                if (preferences.isTvheadendConfigured && com.ambient.tv.data.browse.BrowseWorkBudget.idle()) {
+                if (preferences.isTvheadendConfigured && !preferences.tvheadendLoginRejected &&
+                    com.ambient.tv.data.browse.BrowseWorkBudget.idle()) {
                     suspendResult {
                         val scope = diskScope()
                         val now = System.currentTimeMillis() / 1000L
@@ -458,8 +468,11 @@ class TvheadendRepository @Inject constructor(
     suspend fun nowEvents(force: Boolean = false): List<TvhEpgEvent> {
         val now = System.currentTimeMillis() / 1000L
         val scope = diskScope()
-        if (!force && guideIndex.coversFreshWindow(EPG_INDEX_OWNER, scope, now, now + 1, 15 * 60_000L)) {
-            indexedEpg(scope, now, now + 1, inclusiveBounds = false)?.let { return it.filter { event -> event.isLive(now) } }
+        val epoch = guideEpoch.get()
+        if (!force && currentGuideScope(scope) && guideIndex.coversFreshWindow(EPG_INDEX_OWNER, scope, now, now + 1, 15 * 60_000L)) {
+            indexedEpg(scope, now, now + 1, inclusiveBounds = false)?.let {
+                if (epoch == guideEpoch.get() && currentGuideScope(scope)) return it.filter { event -> event.isLive(now) }
+            }
         }
         return cached("epg:now", 60_000, force,
         stale = { scope ->
@@ -761,16 +774,24 @@ class TvheadendRepository @Inject constructor(
         lastReachableAtMs = 0L
     }
 
-    private suspend fun invalidateDvrAndEpg() = cacheMutex.withLock {
-        cache.replaceAll { key, value -> if (key.startsWith("dvr:") || key.startsWith("epg:")) value.copy(createdAtMs = 0L) else value }
+    private suspend fun invalidateDvrAndEpg() {
+        // Fence a guide fetch that began before the acknowledged write, including idle prefetch.
+        val scope = diskScope()
+        guideEpoch.incrementAndGet()
+        epgPersistMutex.withLock { guideIndex.expireSyncWindows(EPG_INDEX_OWNER, scope) }
+        cacheMutex.withLock {
+            cache.replaceAll { key, value -> if (key.startsWith("dvr:") || key.startsWith("epg:")) value.copy(createdAtMs = 0L) else value }
+            cacheGeneration++
+        }
     }
 
     /** TVHeadend disabled: the stored server data is deleted, not only expired. */
     fun clearPersistentCache() {
+        guideEpoch.incrementAndGet()
         val scopesToClear = diskCache.clear(runCatching { diskScope() }.getOrNull())
         _servingCachedData.value = false
         background.launch {
-            scopesToClear.forEach { guideIndex.removeScope(EPG_INDEX_OWNER, it) }
+            epgPersistMutex.withLock { scopesToClear.forEach { guideIndex.removeScope(EPG_INDEX_OWNER, it) } }
             cacheMutex.withLock { cache.clear(); cacheGeneration++ }
         }
     }
@@ -863,7 +884,9 @@ class TvheadendRepository @Inject constructor(
         return try { withContext(Dispatchers.IO) {
             val url = buildUrl(path, params)
             val request = Request.Builder().url(url).get().build()
-            client.newCall(request).execute().use { response ->
+            val requestClient = if (!wake && path == "api/epg/events/grid")
+                client.newBuilder().callTimeout(5, TimeUnit.SECONDS).build() else client
+            requestClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     timber.log.Timber.w("TVHeadend API %s returned HTTP %d", path, response.code)
                     // A 401 alone does not hide TVHeadend: right after a wake the port opens before

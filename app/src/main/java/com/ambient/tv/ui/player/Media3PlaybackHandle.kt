@@ -164,6 +164,7 @@ class Media3PlaybackHandle(
     )
     internal fun liveSyncSample(): LiveSyncSample? {
         if (released || waitingForPreviousRelease || !player.isPlaying || player.playbackState != Player.STATE_READY ||
+            surfaceView?.holder?.surface?.isValid != true ||
             player.playerError != null || !player.currentTracks.isTypeSelected(C.TRACK_TYPE_VIDEO) ||
             !player.currentTracks.isTypeSelected(C.TRACK_TYPE_AUDIO)) return null
         val counters = player.videoDecoderCounters ?: return null

@@ -51,4 +51,9 @@ class LiveSyncWatchTest {
         val watch = LiveSyncWatch()
         repeat(30) { assertNull(watch.observe(sample(it, audio = 12))) }
     }
+
+    @Test fun unsupportedZeroFrameCounterDoesNotCauseFalseRecovery() {
+        val watch = LiveSyncWatch()
+        repeat(90) { assertNull(watch.observe(sample(it, frames = 0))) }
+    }
 }

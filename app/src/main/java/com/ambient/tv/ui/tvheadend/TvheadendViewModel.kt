@@ -105,7 +105,7 @@ class TvheadendViewModel @Inject constructor(
         offline = offlineNow(), canWake = offlineNow() && canWake(),
         guideOptions = preferences.guideOptions(repository.source.id),
         dashboard = browseState.dashboard, capabilities = browseState.capabilities,
-        savedView = browseState.dashboard == null || browseState.savedView, initialDashboardSettled = browseState.dashboard != null,
+        savedView = browseState.dashboard == null || browseState.savedView, initialDashboardSettled = browseState.dashboard != null && !browseState.savedView,
         loading = browseState.dashboard == null,
         tab = TvheadendTab.entries.firstOrNull {
             it.name.equals(savedStateHandle.get<String>("tab"), ignoreCase = true)
@@ -225,7 +225,7 @@ class TvheadendViewModel @Inject constructor(
             val shared = browseState.dashboard
             if (shared != null && shared !== _uiState.value.dashboard) {
                 _uiState.update { it.copy(dashboard = shared, capabilities = browseState.capabilities,
-                    savedView = browseState.savedView, loading = false, initialDashboardSettled = true) }
+                    savedView = browseState.savedView, loading = false, initialDashboardSettled = !browseState.savedView) }
             }
         }
         if (!recovered && !refreshPolicy.recoveryPending && !refreshNeedsRetry &&
@@ -293,7 +293,8 @@ class TvheadendViewModel @Inject constructor(
                         guide = isTvheadend || cached.events.isNotEmpty(), recordings = isTvheadend || cached.recordings.isNotEmpty(),
                         timers = isTvheadend || cached.upcoming.isNotEmpty() || cached.autoRecs.isNotEmpty()),
                     lastUpdatedEpochMillis = savedAt, savedView = true, loading = false, refreshing = true) }
-                browseState.update(cached, _uiState.value.capabilities, savedView = true)
+                // A different retained destination may already have completed a network refresh.
+                if (browseState.dashboard == null) browseState.update(cached, _uiState.value.capabilities, savedView = true)
             }
             }
             if (!stillCurrent()) { load(force = false); return@launch }

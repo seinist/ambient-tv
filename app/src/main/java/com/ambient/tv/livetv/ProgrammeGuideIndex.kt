@@ -218,6 +218,11 @@ class ProgrammeGuideIndex internal constructor(
         nowEpochSeconds: Long, channelId: String? = null, valid: () -> Boolean = { true },
     ) = mergeLock.withCoroutineLock {
         withContext(Dispatchers.IO) {
+            require(to > from)
+            // A malformed or mis-scoped page is never authoritative for deletions.
+            require(fresh.all { it.stopEpochSeconds > it.startEpochSeconds &&
+                (channelId == null || it.channelUuid == channelId) })
+            require(fresh.map { it.eventId }.toSet().size == fresh.size)
             val operation = currentCoroutineContext()
             val keepFrom = nowEpochSeconds - 2 * 3600L
             val keepTo = nowEpochSeconds + 7 * 24 * 3600L
@@ -269,6 +274,15 @@ class ProgrammeGuideIndex internal constructor(
                     }
                 }
             } finally { withContext(NonCancellable + Dispatchers.IO) { finish(writer) } }
+        }
+    }
+
+    /** An acknowledged DVR edit changes EPG recording links without invalidating the stored guide. */
+    suspend fun expireSyncWindows(owner: String, scope: String) = withContext(Dispatchers.IO) {
+        lock.withLock {
+            val db = database.writableDatabase
+            val gen = active(db, owner, scope)?.first ?: return@withLock
+            db.delete("guide_sync_windows", "owner=? AND generation=?", arrayOf(owner, gen))
         }
     }
 

@@ -1326,6 +1326,7 @@ class VlcPlaybackController(
 
     internal fun liveSyncSample(): com.ambient.tv.ui.player.LiveSyncSample? {
         if (!liveStream || audioOnly || userVideoDisabled || !frameDropSampleReady() ||
+            attachedView?.holder?.surface?.isValid != true ||
             trackAccess.currentVideoTrack == null || trackAccess.currentAudioTrack == null) return null
         val stats = runtimeStats() ?: return null
         val frames = stats.displayedPictures?.toLong() ?: return null
