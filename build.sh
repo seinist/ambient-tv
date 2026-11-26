@@ -276,7 +276,7 @@ ensure_android_sdk() {
 write_canonical_root_build_kts() {
     local target="$1"
     cat > "$target" <<'EOF_ROOT_BUILD'
-// AMBIENT_TV_ROOT_BUILD_V037
+// AMBIENT_TV_ROOT_BUILD_V038
 buildscript {
     dependencies { classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.21") }
 }
@@ -290,12 +290,13 @@ plugins {
     alias(libs.plugins.hilt) apply false
 }
 
+val ambientChromiumCronetVersion = libs.versions.chromiumCronet.get()
 subprojects {
     configurations.configureEach {
         resolutionStrategy.force(
-            "org.chromium.net:cronet-api:143.7445.0",
-            "org.chromium.net:cronet-common:143.7445.0",
-            "org.chromium.net:cronet-embedded:143.7445.0",
+            "org.chromium.net:cronet-api:$ambientChromiumCronetVersion",
+            "org.chromium.net:cronet-common:$ambientChromiumCronetVersion",
+            "org.chromium.net:cronet-embedded:$ambientChromiumCronetVersion",
         )
     }
 }
@@ -363,12 +364,12 @@ ensure_root_build_kts() {
     local template="$ROOT_DIR/gradle/root.build.compat.gradle.kts"
     local target="$ROOT_DIR/build.gradle.kts"
 
-    if [[ ! -f "$template" ]]         || ! grep -F 'AMBIENT_TV_ROOT_BUILD_V037' "$template" >/dev/null 2>&1         || ! grep -F 'expected host wrapper' "$template" >/dev/null 2>&1; then
+    if [[ ! -f "$template" ]]         || ! grep -F 'AMBIENT_TV_ROOT_BUILD_V038' "$template" >/dev/null 2>&1         || ! grep -F 'expected host wrapper' "$template" >/dev/null 2>&1; then
         log "Repairing canonical root Gradle build preflight"
         write_canonical_root_build_kts "$template"
     fi
 
-    if [[ ! -f "$target" ]]         || ! grep -F 'AMBIENT_TV_ROOT_BUILD_V037' "$target" >/dev/null 2>&1         || grep -F 'expected direct SmartTube module' "$target" >/dev/null 2>&1         || ! grep -F 'expected host wrapper' "$target" >/dev/null 2>&1; then
+    if [[ ! -f "$target" ]]         || ! grep -F 'AMBIENT_TV_ROOT_BUILD_V038' "$target" >/dev/null 2>&1         || grep -F 'expected direct SmartTube module' "$target" >/dev/null 2>&1         || ! grep -F 'expected host wrapper' "$target" >/dev/null 2>&1; then
         log "Restoring canonical root Gradle build preflight"
         cp "$template" "$target"
     fi
