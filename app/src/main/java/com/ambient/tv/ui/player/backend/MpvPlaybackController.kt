@@ -44,6 +44,7 @@ class MpvPlaybackController(
     broadcastSource: Boolean = liveStream,
     /** gpu-next/Vulkan HDR passthrough chosen by [mpvHdrGpuDecision]. */
     val hdrGpuPassthrough: Boolean = false,
+    zeroCopyScope: String? = null,
 ) : PlaybackHandle, VideoPresentationTarget, SubtitleDelayTarget, com.ambient.tv.ui.player.FrameStepTarget {
     val audioSession = AudioSession(videoImagePreferences(context), "mpv", audioPassthroughEnabled, audioOnly = audioOnly)
     private val main = Handler(Looper.getMainLooper())
@@ -75,7 +76,7 @@ class MpvPlaybackController(
     private val expectedGpuFilters = runCatching {
         initialMpvAccelerationPlan(context, videoOutputMode, decoderMode, initialImageOptions, nativeHdrPreferred,
             hdrGpuPassthrough, declaredHdr != null &&
-                !nativeHdrSurfacePreferred(declaredHdr, HdrSupport.displayStandards(context))).gpu
+                !nativeHdrSurfacePreferred(declaredHdr, HdrSupport.displayStandards(context)), zeroCopyScope).gpu
     }.getOrDefault(false)
     private var state by mutableStateOf(MpvEngineState(imageOptions = initialImageOptions.normalized(),
         status = PlaybackStatus(positionMs = initialStartPositionMs), supportsGpuFilters = expectedGpuFilters))
@@ -185,7 +186,7 @@ class MpvPlaybackController(
             engine = MpvPlaybackEngine(context, audioSession, worker, {
                 main.post { if (!released && BackgroundPlaybackSession.owns(this)) PlaybackOutputTransition.begin(context) }
             }, url, initialStartPositionMs, headers, audioPassthroughEnabled, videoOutputMode,
-                initialImageOptions, networkCache, decoderMode, knownAudioCodec, nativeHdrPreferred, hdrGpuPassthrough, liveStream, declaredHdr, audioOnly, preferOriginalAudio, reopeningTimeshift, broadcastSource, ownerStep)
+                initialImageOptions, networkCache, decoderMode, knownAudioCodec, nativeHdrPreferred, hdrGpuPassthrough, liveStream, declaredHdr, audioOnly, preferOriginalAudio, reopeningTimeshift, broadcastSource, ownerStep, zeroCopyScope)
             ownerStep.mark("initialize:first_sample")
             sample()
         }
