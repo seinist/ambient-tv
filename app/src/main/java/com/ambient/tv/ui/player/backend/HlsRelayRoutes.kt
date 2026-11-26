@@ -132,7 +132,53 @@ internal fun vlcRelayOriginAllowed(origin: HttpUrl, hop: HttpUrl): Boolean =
         origin.scheme == "http" && origin.port == 80 && hop.scheme == "https" && hop.port == 443
     )
 
-private val hlsUriAttribute = Regex("""([:,]\s*URI=")([^"]+)(")""")
+/**
+ * HLS attribute values can contain commas and literal URI= text inside quoted strings.
+ * Scan actual attribute boundaries rather than matching URI= anywhere in the line.
+ */
+private fun rewriteHlsUriAttributes(line: String, rewrite: (String) -> String): String {
+    val colon = line.indexOf(':')
+    if (colon < 0) return line
+    var index = colon + 1
+    var quoted = false
+    var start = index
+    var copied = 0
+    var seenUri = false
+    val output = StringBuilder(line.length)
+    fun attribute(end: Int) {
+        val raw = line.substring(start, end)
+        val eq = raw.indexOf('=')
+        if (eq < 0 || raw.substring(0, eq).trim() != "URI") return
+        if (seenUri) throw IOException("Duplicate HLS URI attribute")
+        seenUri = true
+        val value = raw.substring(eq + 1).trim()
+        if (value.length < 3 || value.first() != '"' || value.last() != '"' ||
+            '"' in value.substring(1, value.lastIndex))
+            throw IOException("Invalid HLS URI attribute")
+        val begin = start + eq + 1 + raw.substring(eq + 1).indexOf('"') + 1
+        val finish = start + raw.lastIndexOf('"')
+        output.append(line, copied, begin)
+        output.append(rewrite(value.substring(1, value.lastIndex)))
+        copied = finish
+    }
+    while (index < line.length) {
+        when (line[index]) {
+            '"' -> quoted = !quoted
+            ',' -> if (!quoted) { attribute(index); start = index + 1 }
+        }
+        index++
+    }
+    if (quoted) throw IOException("Unterminated HLS attribute")
+    attribute(line.length)
+    return if (!seenUri) line else output.append(line, copied, line.length).toString()
+}
+
+private val hlsUriTags = setOf(
+    "#EXT-X-KEY", "#EXT-X-SESSION-KEY", "#EXT-X-MAP", "#EXT-X-MEDIA",
+    "#EXT-X-I-FRAME-STREAM-INF", "#EXT-X-IMAGE-STREAM-INF", "#EXT-X-SESSION-DATA",
+    "#EXT-X-PART", "#EXT-X-PRELOAD-HINT", "#EXT-X-RENDITION-REPORT",
+)
+
 private val hlsVariable = Regex("""\{\$([A-Za-z0-9_-]{1,64})\}""")
 private val hlsVariableName = Regex("[A-Za-z0-9_-]{1,64}")
 private val hlsDefineAttribute = Regex("([A-Z0-9-]+)=\"([^\"]*)\"")
@@ -214,9 +260,9 @@ internal fun rewriteVlcHlsManifest(
                         trimmed.startsWith("#EXT-X-I-FRAME-STREAM-INF:") ||
                         trimmed.startsWith("#EXT-X-RENDITION-REPORT:") ||
                         trimmed.startsWith("#EXT-X-IMAGE-STREAM-INF:")
-                    append(hlsUriAttribute.replace(line) { m ->
-                        m.groupValues[1] + map(m.groupValues[2], playlist) + m.groupValues[3]
-                    })
+                    // EXTINF titles and ordinary comments are not attribute lists.
+                    append(if (trimmed.substringBefore(':') in hlsUriTags)
+                        rewriteHlsUriAttributes(line) { map(it, playlist) } else line)
                     if (trimmed.startsWith("#EXT-X-STREAM-INF:")) nextPlaylist = true
                 }
                 trimmed.isNotEmpty() -> {
