@@ -31,7 +31,7 @@ android {
 
 dependencies {
     implementation(fileTree(mapOf("dir" to upstream.resolve("libs"), "include" to listOf("*.jar"))))
-    implementation("androidx.annotation:annotation:1.11.0")
+    implementation(libs.androidx.annotation)
 }
 
 tasks.withType<org.gradle.api.tasks.compile.JavaCompile>().configureEach {

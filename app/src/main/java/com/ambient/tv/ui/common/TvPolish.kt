@@ -447,6 +447,16 @@ private class ArtworkRequestContinuity {
 
 /** Recent memory-cache keys per artwork model, one index per loader; see [ArtworkMemoryKeyIndex]. */
 private val CardArtworkKeys = ArtworkMemoryKeyIndex()
+
+/** An OSD card is small enough to reuse the guide's already-decoded TMDb landscape. */
+internal fun preferCachedTmdbCardVariant(context: android.content.Context, url: String?): String? {
+    val prefix = "https://image.tmdb.org/t/p/w780/"
+    if (url == null || !url.startsWith(prefix)) return url
+    val thumb = "https://image.tmdb.org/t/p/w300/" + url.removePrefix(prefix)
+    val cache = coil3.SingletonImageLoader.get(context).memoryCache ?: return url
+    fun present(model: String) = CardArtworkKeys.cachedKey(model) { cache[it] != null } != null
+    return if (!present(url) && present(thumb)) thumb else url
+}
 private val BackdropArtworkKeys = ArtworkMemoryKeyIndex(maxModels = 64)
 
 /** Only the edited URLs restart their requests; ordinary frames/progress never emit here. */

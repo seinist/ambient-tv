@@ -63,7 +63,7 @@ class ProgrammeGuideIndex internal constructor(
     private val mergeLock = Mutex()
     private val importing = mutableMapOf<String, Int>()
     private val epochs = mutableMapOf<String, Long>()
-    private val database = object : SQLiteOpenHelper(context, DATABASE_NAME, null, 1) {
+    private val database = object : SQLiteOpenHelper(context, DATABASE_NAME, null, 2) {
         override fun onConfigure(db: SQLiteDatabase) { db.setForeignKeyConstraintsEnabled(true) }
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL("""CREATE TABLE guide_versions (
@@ -85,8 +85,18 @@ class ProgrammeGuideIndex internal constructor(
                 FOREIGN KEY(owner,generation) REFERENCES guide_versions(owner,generation) ON DELETE CASCADE)""")
             db.execSQL("CREATE INDEX guide_window ON guide_programmes(owner,generation,start_epoch,ordinal)")
             db.execSQL("CREATE INDEX guide_channel_window ON guide_programmes(owner,generation,channel_id,start_epoch,ordinal)")
+            createSyncWindows(db)
         }
-        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+            if (oldVersion < 2) createSyncWindows(db)
+        }
+        private fun createSyncWindows(db: SQLiteDatabase) {
+            db.execSQL("""CREATE TABLE guide_sync_windows (
+                owner TEXT NOT NULL, generation TEXT NOT NULL, from_epoch INTEGER NOT NULL,
+                to_epoch INTEGER NOT NULL, loaded_at INTEGER NOT NULL,
+                PRIMARY KEY(owner,generation,from_epoch,to_epoch),
+                FOREIGN KEY(owner,generation) REFERENCES guide_versions(owner,generation) ON DELETE CASCADE)""")
+        }
     }.apply { setWriteAheadLoggingEnabled(true) }
 
     suspend fun metadata(owner: String, scope: String): ProgrammeGuideMetadata? = withContext(Dispatchers.IO) {
@@ -176,6 +186,131 @@ class ProgrammeGuideIndex internal constructor(
                 publish(writer, false, valid, operation::ensureActive)
             } finally { withContext(NonCancellable + Dispatchers.IO) { finish(writer) } }
         }
+    }
+
+    /** Freshness belongs to successfully completed all-channel windows, not to the latest partial import. */
+    suspend fun coversFreshWindow(owner: String, scope: String, from: Long, to: Long, maxAgeMs: Long): Boolean =
+        withContext(Dispatchers.IO) {
+            lock.withLock {
+                val db = database.readableDatabase
+                val gen = active(db, owner, scope)?.first ?: return@withLock false
+                val now = clock()
+                var covered = from
+                db.rawQuery("""SELECT from_epoch,to_epoch FROM guide_sync_windows
+                    WHERE owner=? AND generation=? AND loaded_at>? AND loaded_at<=?
+                    AND to_epoch>=? AND from_epoch<=? ORDER BY from_epoch,to_epoch""",
+                    arrayOf(owner, gen, (now - maxAgeMs).toString(), now.toString(), from.toString(), to.toString())
+                ).use { rows ->
+                    while (rows.moveToNext() && rows.getLong(0) <= covered) {
+                        covered = maxOf(covered, rows.getLong(1))
+                        if (covered >= to) return@withLock true
+                    }
+                }
+                false
+            }
+        }
+
+    /** Reconcile only the complete, authoritative response window. A failed/cancelled import never
+     * removes old programmes. Older rows outside the window remain; the index is a rolling store.
+     * Stage in bounded chunks, then atomically apply changed rows to the committed generation. */
+    suspend fun reconcileWindow(
+        owner: String, scope: String, fresh: List<LiveTvProgramme>, from: Long, to: Long,
+        nowEpochSeconds: Long, channelId: String? = null, valid: () -> Boolean = { true },
+    ) = mergeLock.withCoroutineLock {
+        withContext(Dispatchers.IO) {
+            require(to > from)
+            // A malformed or mis-scoped page is never authoritative for deletions.
+            require(fresh.all { it.stopEpochSeconds > it.startEpochSeconds &&
+                (channelId == null || it.channelUuid == channelId) })
+            require(fresh.map { it.eventId }.toSet().size == fresh.size)
+            val operation = currentCoroutineContext()
+            val keepFrom = nowEpochSeconds - 2 * 3600L
+            val keepTo = nowEpochSeconds + 7 * 24 * 3600L
+            val cap = 150_000
+            val writer = begin(owner, scope, keepFrom, keepTo, cap, valid)
+            try {
+                fresh.asSequence().filter { it.stopEpochSeconds > keepFrom && it.startEpochSeconds <= keepTo }
+                    .filter { channelId == null || it.channelUuid == channelId }
+                    .forEach { operation.ensureActive(); writer.append(it) }
+                writer.flush()
+                lock.withLock {
+                    val db = database.writableDatabase
+                    writer.checkValid()
+                    val existing = active(db, owner, scope)?.first
+                    if (existing == null) {
+                        if (channelId == null && maxOf(from, keepFrom) < minOf(to, keepTo))
+                            recordWindow(db, writer.owner, writer.generation, maxOf(from, keepFrom), minOf(to, keepTo))
+                        publish(writer, false, valid, operation::ensureActive)
+                    } else transaction(db) {
+                        operation.ensureActive()
+                        val args = arrayOf(owner, existing, from.toString(), to.toString()) +
+                            (channelId?.let { arrayOf(it) } ?: emptyArray()) + arrayOf(owner, writer.generation)
+                        val channel = if (channelId == null) "" else " AND channel_id=?"
+                        db.execSQL("""DELETE FROM guide_programmes WHERE owner=? AND generation=?
+                            AND stop_epoch>=? AND start_epoch<=?$channel AND event_id NOT IN
+                            (SELECT event_id FROM guide_programmes WHERE owner=? AND generation=?)""", args)
+                        db.execSQL("""INSERT OR REPLACE INTO guide_programmes
+                            SELECT n.owner,?,n.event_id,n.channel_id,n.start_epoch,n.stop_epoch,n.ordinal,
+                            n.channel_name,n.title,n.subtitle,n.summary,n.description,n.image_url,n.series_link,
+                            n.dvr_id,n.source_id,n.bytes FROM guide_programmes n
+                            WHERE n.owner=? AND n.generation=? AND NOT EXISTS (
+                            SELECT 1 FROM guide_programmes o WHERE o.owner=n.owner AND o.generation=? AND o.event_id=n.event_id
+                            AND o.channel_id IS n.channel_id AND o.start_epoch IS n.start_epoch AND o.stop_epoch IS n.stop_epoch
+                            AND o.channel_name IS n.channel_name AND o.title IS n.title AND o.subtitle IS n.subtitle
+                            AND o.summary IS n.summary AND o.description IS n.description AND o.image_url IS n.image_url
+                            AND o.series_link IS n.series_link AND o.dvr_id IS n.dvr_id AND o.source_id IS n.source_id)""",
+                            arrayOf(existing, owner, writer.generation, existing))
+                        trimWindow(db, owner, existing, keepFrom, keepTo)
+                        if (channelId == null && maxOf(from, keepFrom) < minOf(to, keepTo))
+                            recordWindow(db, owner, existing, maxOf(from, keepFrom), minOf(to, keepTo))
+                        db.execSQL("""UPDATE guide_versions SET from_epoch=?,to_epoch=?,loaded_at=?,fallback=0
+                            WHERE owner=? AND generation=?""", arrayOf<Any>(keepFrom, keepTo, clock(), owner, existing))
+                        db.rawQuery("SELECT entries,bytes FROM guide_versions WHERE owner=? AND generation=?", arrayOf(owner, existing)).use {
+                            check(it.moveToFirst())
+                            if (it.getLong(0) > cap || it.getLong(1) > guideByteLimit) throw IOException("Guide index is too large")
+                        }
+                        operation.ensureActive()
+                        writer.checkValid()
+                    }
+                }
+            } finally { withContext(NonCancellable + Dispatchers.IO) { finish(writer) } }
+        }
+    }
+
+    /** An acknowledged DVR edit changes EPG recording links without invalidating the stored guide. */
+    suspend fun expireSyncWindows(owner: String, scope: String) = withContext(Dispatchers.IO) {
+        lock.withLock {
+            val db = database.writableDatabase
+            val gen = active(db, owner, scope)?.first ?: return@withLock
+            db.delete("guide_sync_windows", "owner=? AND generation=?", arrayOf(owner, gen))
+        }
+    }
+
+    /** Called even when the provider is offline. Keep a small history for Timeshift and remove old rows. */
+    suspend fun trimExpired(owner: String, scope: String, nowEpochSeconds: Long, valid: () -> Boolean = { true }) =
+        withContext(Dispatchers.IO) {
+            lock.withLock {
+                if (!valid()) return@withLock
+                val db = database.writableDatabase
+                val gen = active(db, owner, scope)?.first ?: return@withLock
+                transaction(db) { trimWindow(db, owner, gen, nowEpochSeconds - 7200, nowEpochSeconds + 7 * 86400) }
+            }
+        }
+
+    private fun trimWindow(db: SQLiteDatabase, owner: String, gen: String, from: Long, to: Long) {
+        db.delete("guide_programmes", "owner=? AND generation=? AND (stop_epoch<=? OR start_epoch>?)",
+            arrayOf(owner, gen, from.toString(), to.toString()))
+        db.delete("guide_sync_windows", "owner=? AND generation=? AND (to_epoch<? OR loaded_at<?)",
+            arrayOf(owner, gen, from.toString(), (clock() - 24 * 3600_000L).toString()))
+        db.execSQL("""UPDATE guide_versions SET
+            entries=(SELECT COUNT(*) FROM guide_programmes WHERE owner=? AND generation=?),
+            bytes=(SELECT COALESCE(SUM(bytes),0) FROM guide_programmes WHERE owner=? AND generation=?)
+            WHERE owner=? AND generation=?""", arrayOf(owner, gen, owner, gen, owner, gen))
+    }
+
+    private fun recordWindow(db: SQLiteDatabase, owner: String, gen: String, from: Long, to: Long) {
+        db.execSQL("INSERT OR REPLACE INTO guide_sync_windows VALUES(?,?,?,?,?)",
+            arrayOf<Any>(owner, gen, from, to, clock()))
     }
 
     suspend fun removeOwner(owner: String) = withContext(Dispatchers.IO) {

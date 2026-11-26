@@ -384,6 +384,15 @@ class MpvPlaybackController(
     override fun setOutputMuted(muted: Boolean) { command("output-mute") { setOutputMuted(muted) } }
     override fun reopenGeneration() = state.reopenGeneration
     override fun reopenAudioOutput() { command("ao-reload") { reopenAudioOutput() } }
+    internal fun liveSyncSample(): LiveSyncSample? =
+        if (released || backendUnresponsive || !hostRequestedPlay) null
+        else read<LiveSyncSample?>("live-sync-sample", null, 750L) { liveSyncSample() }
+
+    internal fun reopenForLiveSync(expectedGeneration: Int): Boolean {
+        if (released || backendUnresponsive || !hostRequestedPlay || state.reopenGeneration != expectedGeneration) return false
+        command("live-sync-reopen") { reopenForLiveSync(expectedGeneration) }
+        return true
+    }
     fun playPause() { if (wantsToPlay()) pause() else play() }
     override fun seekTo(positionMs: Long) {
         if (released) return

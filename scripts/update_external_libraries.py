@@ -14,6 +14,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from maven_dependency import version_key as maven_version_key
 import svp_dependency as svp
 import update_monogram_pin as monogram
 
@@ -186,12 +187,21 @@ def libvlc_latest_stable(current_version: str | None = None) -> str:
     root = ET.fromstring(xml)
     versions = [v.text or "" for v in root.findall("./versioning/versions/version")]
     stable = [v for v in versions if re.fullmatch(r"\d+\.\d+\.\d+", v)]
-    if current_version and re.fullmatch(r"\d+\.\d+\.\d+", current_version):
-        current_major = current_version.split(".", 1)[0]
-        stable = [v for v in stable if v.split(".", 1)[0] == current_major]
+    current_key = maven_version_key(current_version) if current_version else None
+    if current_version and current_key is None:
+        raise RuntimeError(f"Unsupported current libVLC pin {current_version!r}; review manually")
+    if current_key is not None:
+        stable = [v for v in stable if maven_version_key(v)[0] == current_key[0]]
     if not stable:
+        if current_version:
+            return current_version
         raise RuntimeError("No stable libVLC versions found in Maven metadata")
-    return max(stable, key=lambda v: tuple(int(p) for p in v.split(".")))
+    newest = max(stable, key=maven_version_key)
+    # Both update commands share this catalog pin. A stable-only check must not
+    # undo a newer explicit prerelease pin or downgrade after stale metadata.
+    if current_key is not None and maven_version_key(newest) <= current_key:
+        return current_version
+    return newest
 
 
 def github_repo(url: str) -> str:

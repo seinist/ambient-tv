@@ -264,4 +264,47 @@ class ProgrammeGuideIndexTest {
             }
         }
     }
+
+    @Test fun rollingWindowUpdatesDeletesAndKeepsFutureProgrammes() = runBlocking {
+        val tvh = "tvheadend:rolling"
+        val old = event("removed", start = 11000, stop = 12000)
+        val changed = event("changed", start = 13000, stop = 14000)
+        val future = event("future", start = 50000, stop = 51000)
+        index.reconcileWindow(tvh, scope, listOf(old, changed), 10000, 20000, 10000)
+        index.reconcileWindow(tvh, scope, listOf(future), 40000, 60000, 10000)
+        index.reconcileWindow(tvh, scope, listOf(changed.copy(title = "Corrected")), 10000, 20000, 10000)
+        assertEquals(listOf("changed", "future"), index.query(tvh, scope, 10000, 60000)!!.map { it.eventId })
+        assertEquals("Corrected", index.query(tvh, scope, 10000, 20000)!!.single().title)
+        assertTrue(index.coversFreshWindow(tvh, scope, 10000, 20000, 900000))
+        now += 900001
+        assertFalse(index.coversFreshWindow(tvh, scope, 10000, 20000, 900000))
+        index.trimExpired(tvh, scope, 30000)
+        assertEquals(listOf("future"), index.query(tvh, scope, 0, 60000)!!.map { it.eventId })
+    }
+
+    @Test fun channelReconciliationDoesNotDeleteOtherChannelsOrClaimFullCoverage() = runBlocking {
+        val tvh = "tvheadend:partial"
+        index.reconcileWindow(tvh, scope, listOf(event("a", "a"), event("b", "b")), 1000, 3000, 1000)
+        index.reconcileWindow(tvh, scope, emptyList(), 1000, 3000, 1000, channelId = "a")
+        assertEquals(listOf("b"), index.query(tvh, scope, 1000, 3000)!!.map { it.eventId })
+        index.reconcileWindow(tvh, "other-account", listOf(event("new", "a")), 1000, 3000, 1000, channelId = "a")
+        assertFalse(index.coversFreshWindow(tvh, "other-account", 1000, 3000, 900000))
+    }
+
+    @Test fun recordingChangeExpiresOnlyFreshnessAndPreservesRows() = runBlocking {
+        val tvh = "tvheadend"
+        index.reconcileWindow(tvh, scope, listOf(event("one")), 1000, 3000, 1000)
+        assertTrue(index.coversFreshWindow(tvh, scope, 1000, 3000, 900000))
+        index.expireSyncWindows(tvh, scope)
+        assertFalse(index.coversFreshWindow(tvh, scope, 1000, 3000, 900000))
+        assertEquals("one", index.query(tvh, scope, 1000, 3000)!!.single().eventId)
+    }
+
+    @Test fun malformedChannelWindowCannotDeleteStoredData() = runBlocking {
+        val tvh = "tvheadend"
+        index.reconcileWindow(tvh, scope, listOf(event("one", "a")), 1000, 3000, 1000)
+        val result = runCatching { index.reconcileWindow(tvh, scope, listOf(event("wrong", "b")), 1000, 3000, 1000, "a") }
+        assertTrue(result.isFailure)
+        assertEquals("one", index.query(tvh, scope, 1000, 3000)!!.single().eventId)
+    }
 }
