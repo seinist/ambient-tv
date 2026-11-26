@@ -369,6 +369,7 @@ private fun MoonlightStreamContent(
     var retryRevision by remember { mutableStateOf(0) }
     var autoRetries by remember { mutableStateOf(0) }
     var resumeOnly by remember { mutableStateOf(false) }
+    var excludedVideoFormats by remember { mutableStateOf(0) }
     LaunchedEffect(engine, hostId, appId, binding, displayReady, sessionProfile, retryRevision) {
         startFailed = false
         val target = binding ?: return@LaunchedEffect
@@ -384,7 +385,8 @@ private fun MoonlightStreamContent(
             return@LaunchedEffect
         }
         if (engine.start(owner, hostId, appId, target.surface, sessionProfile,
-                displayResult.mode?.refreshRate, displayResult.hdr10, resumeOnly = resumeOnly)) {
+                displayResult.mode?.refreshRate, displayResult.hdr10, resumeOnly = resumeOnly,
+                excludedVideoFormats = excludedVideoFormats)) {
             val generation = engine.generation(owner)
             onStarted()
             try { awaitCancellation() } finally { if (generation != null) engine.stop(owner, generation) }
@@ -395,6 +397,7 @@ private fun MoonlightStreamContent(
             delay(1000L * (autoRetries + 1))
             autoRetries++
             resumeOnly = true
+            excludedVideoFormats = excludedVideoFormats or status.rejectedVideoFormat
             retryRevision++
         }
     }
@@ -506,6 +509,7 @@ private fun MoonlightStreamContent(
                         if (startFailed || status.phase in setOf(MoonlightStreamPhase.FAILED, MoonlightStreamPhase.ENDED)) {
                             TvActionButton(stringResource(R.string.moonlight_retry_connection), {
                                 autoRetries = 0
+                                excludedVideoFormats = 0
                                 resumeOnly = status.retryable || resumeOnly
                                 onManualRetry()
                                 retryRevision++

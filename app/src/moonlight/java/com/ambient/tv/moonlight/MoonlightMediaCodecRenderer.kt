@@ -1,7 +1,6 @@
 package com.ambient.tv.moonlight
 
 import android.media.MediaCodec
-import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.view.Surface
 import com.limelight.binding.video.MediaCodecHelper
@@ -15,7 +14,7 @@ import kotlin.math.max
 class MoonlightMediaCodecRenderer(
     private val surface: Surface,
     private val requested: MoonlightStreamProfile,
-    private val onError: (String) -> Unit,
+    private val onError: (String, Int) -> Unit,
 ) : VideoDecoderRenderer() {
     private val inputLock = Any()
     private var codec: MediaCodec? = null
@@ -31,6 +30,13 @@ class MoonlightMediaCodecRenderer(
     @Volatile private var decodedHeight = 0
     @Volatile private var decodedFps = 0
     private var negotiatedHdr10 = false
+    @Volatile private var negotiatedFormat = 0
+    @Volatile private var hdrSignal: Boolean? = null
+    private var codecStarted = false
+    private var forceRecovery = false
+    private var recoveryAttempts = 0
+    private val presented = AtomicLong()
+    private var presentationThread: android.os.HandlerThread? = null
     @Volatile private var activeHdr = false
     private var hdrMasteringInfo: ByteArray? = null
     private var hdrReconfigure = false
@@ -51,14 +57,23 @@ class MoonlightMediaCodecRenderer(
         synchronized(inputLock) {
             if (!surface.isValid || closing || codec != null) return@synchronized -1
             val mime = MoonlightHardwareVideo.mimeFor(format) ?: return@synchronized -1
+            negotiatedFormat = format
             negotiatedHdr10 = MoonlightHardwareVideo.isHdr10Format(format)
-            if (requested.hdrMode == "on" && !negotiatedHdr10) return@synchronized -1
-            activeHdr = negotiatedHdr10
+            if (requested.hdrMode == "on" && !negotiatedHdr10) {
+                reportFailure("Moonlight negotiated SDR instead of required HDR", format)
+                return@synchronized -1
+            }
+            // A 10-bit codec alone does not establish PQ. Wait for the native HDR signal.
+            activeHdr = negotiatedHdr10 && hdrSignal == true
             currentMime = mime
             decodedWidth = width
             decodedHeight = height
             decodedFps = redrawRate.takeIf { it in 1..240 } ?: requested.fps
-            codec = newConfiguredDecoder() ?: return@synchronized -1
+            val created = newConfiguredDecoder() ?: run {
+                reportFailure("Moonlight hardware decoder could not be configured or started", format)
+                return@synchronized -1
+            }
+            codec = created
             clearCsd()
             0
         }
@@ -88,10 +103,26 @@ class MoonlightMediaCodecRenderer(
                 val decoder = runCatching { MediaCodec.createByCodecName(info.name) }.getOrNull() ?: break
                 try {
                     decoder.configure(format, surface, null, 0)
+                    decoder.start()
+                    codecStarted = true
                     decoderName = info.name
+                    val handlerThread = presentationThread ?: android.os.HandlerThread("moonlight-frame-presented").also {
+                        it.start()
+                        presentationThread = it
+                    }
+                    runCatching {
+                        decoder.setOnFrameRenderedListener({ _, _, _ -> presented.incrementAndGet() },
+                            android.os.Handler(handlerThread.looper))
+                    }
                     return decoder
                 } catch (_: Exception) {
-                    runCatching { decoder.release() }
+                    if (runCatching { decoder.release() }.isFailure) {
+                        // Keep the handle for explicit teardown. Never open another codec over it.
+                        codec = decoder
+                        reportFailure("Moonlight decoder candidate could not be released")
+                        return null
+                    }
+                    codecStarted = false
                 }
             }
         }
@@ -133,24 +164,24 @@ class MoonlightMediaCodecRenderer(
             reportFailure("Moonlight decoder drain did not stop")
             return false
         }
-        val previous = codec
-        codec = null
-        runCatching { previous?.stop() }
-        runCatching { previous?.release() }
+        if (!releaseCodecLocked()) {
+            reportFailure("Moonlight previous decoder could not be released")
+            return false
+        }
         val next = newConfiguredDecoder() ?: run {
-            reportFailure("Moonlight HDR decoder reconfiguration failed")
+            reportFailure("Moonlight HDR decoder reconfiguration failed", negotiatedFormat)
             return false
         }
         codec = next
         return try {
-            next.start()
             playing = true
             startDrain(next)
             hdrReconfigure = false
+            forceRecovery = false
             clearCsd()
             true
         } catch (_: Exception) {
-            reportFailure("Moonlight HDR decoder restart failed")
+            reportFailure("Moonlight HDR decoder restart failed", negotiatedFormat)
             false
         }
     }
@@ -160,11 +191,11 @@ class MoonlightMediaCodecRenderer(
             val decoder = codec ?: return
             if (playing || closing) return
             try {
-                decoder.start()
+                if (!codecStarted) { decoder.start(); codecStarted = true }
                 playing = true
                 startDrain(decoder)
             } catch (_: Exception) {
-                reportFailure("Could not start hardware Moonlight decoder")
+                reportFailure("Could not start hardware Moonlight decoder", negotiatedFormat)
             }
         }
     }
@@ -178,7 +209,7 @@ class MoonlightMediaCodecRenderer(
             return@synchronized MoonBridge.DR_NEED_IDR
         val idr = frameType == MoonBridge.FRAME_TYPE_IDR
         val newFrame = lastFrame != frameNumber
-        if (hdrReconfigure) {
+        if (hdrReconfigure || forceRecovery) {
             if (!idr || !newFrame) return@synchronized MoonBridge.DR_NEED_IDR
             if (!reconfigureAtIdr()) return@synchronized MoonBridge.DR_NEED_IDR
         }
@@ -264,8 +295,12 @@ class MoonlightMediaCodecRenderer(
                     pts = next.presentationTimeUs
                     size = next.size
                 }
-                decoder.releaseOutputBuffer(index, size > 0 && running.get() && !closing)
-                if (size > 0 && running.get() && !closing) {
+                val render = size > 0 && running.get() && !closing
+                // A real monotonic timestamp lets Surface drop superseded frames in the
+                // same VSync interval, like the upstream low-latency pacing mode.
+                if (render) decoder.releaseOutputBuffer(index, System.nanoTime())
+                else decoder.releaseOutputBuffer(index, false)
+                if (render) {
                     rendered.incrementAndGet()
                     decodeMicros.addAndGet((System.nanoTime() / 1000L - pts).coerceIn(0L, 10_000_000L))
                 }
@@ -279,20 +314,33 @@ class MoonlightMediaCodecRenderer(
     internal fun metrics(): MoonlightVideoMetrics = MoonlightVideoMetrics(
         currentMime, decoderName, decodedWidth, decodedHeight, decodedFps, activeHdr,
         received.get(), missing.get(), rendered.get(), dropped.get(), decodeMicros.get(),
-        hostTenthsMs.get(), hostSamples.get(),
+        hostTenthsMs.get(), hostSamples.get(), presented.get(),
     )
+
+    /** Called from the telemetry worker; next decoder input requests a fresh IDR. */
+    internal fun requestRecovery(): Boolean = synchronized(inputLock) {
+        if (closing || failed.get() || !playing || recoveryAttempts >= 1) return@synchronized false
+        recoveryAttempts++
+        forceRecovery = true
+        true
+    }
 
     override fun getCapabilities(): Int = 0
 
     override fun setHdrMode(enabled: Boolean, hdrMetadata: ByteArray?) {
         synchronized(inputLock) {
             if (closing || failed.get()) return
+            hdrSignal = enabled
+            if (enabled && negotiatedFormat == 0) {
+                hdrMasteringInfo = hdrMetadata?.takeIf { moonlightHdrStaticInfo(it) != null }?.copyOf()
+                return
+            }
             if (enabled && !negotiatedHdr10) {
                 reportFailure("Unexpected HDR request to SDR Moonlight decoder")
                 return
             }
             val validMetadata = hdrMetadata?.takeIf { moonlightHdrStaticInfo(it) != null }
-            val newMetadata = if (enabled) validMetadata else null
+            val newMetadata = if (enabled) validMetadata?.copyOf(24) else null
             val sameMetadata = hdrMasteringInfo?.contentEquals(newMetadata ?: byteArrayOf()) ?: (newMetadata == null)
             if (activeHdr == enabled && sameMetadata) return
             activeHdr = enabled
@@ -305,7 +353,7 @@ class MoonlightMediaCodecRenderer(
         closing = true
         synchronized(inputLock) {
             playing = false
-            if (stopDrain()) runCatching { codec?.stop() }
+            if (stopDrain() && codecStarted && runCatching { codec?.stop() }.isSuccess) codecStarted = false
         }
     }
 
@@ -316,16 +364,24 @@ class MoonlightMediaCodecRenderer(
         synchronized(inputLock) {
             playing = false
             if (!stopDrain()) return false
-            val current = codec ?: return true
-            runCatching { current.stop() }
-            if (runCatching { current.release() }.isFailure) return false
-            codec = null
+            if (!releaseCodecLocked()) return false
+            presentationThread?.quitSafely()
+            presentationThread = null
             return true
         }
     }
 
-    private fun reportFailure(message: String) {
-        if (!closing && failed.compareAndSet(false, true)) onError(message)
+    private fun releaseCodecLocked(): Boolean {
+        val current = codec ?: return true
+        if (codecStarted && runCatching { current.stop() }.isSuccess) codecStarted = false
+        if (runCatching { current.release() }.isFailure) return false
+        codec = null
+        codecStarted = false
+        return true
+    }
+
+    private fun reportFailure(message: String, rejectedFormat: Int = 0) {
+        if (!closing && failed.compareAndSet(false, true)) onError(message, rejectedFormat)
     }
 
     companion object {

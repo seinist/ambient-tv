@@ -87,7 +87,7 @@ class MoonlightStreamEngine @Inject constructor(
     /** All calls are non-blocking for the Compose UI, including HTTPS launch negotiation. */
     fun start(owner: Any, hostId: String, appId: Int, surface: Surface, profile: MoonlightStreamProfile,
               displayRefreshHz: Float? = null, displayHdr10: Boolean? = null,
-              resumeOnly: Boolean = false): Boolean {
+              resumeOnly: Boolean = false, excludedVideoFormats: Int = 0): Boolean {
         if (!surface.isValid || appId <= 0 || !prefs.moonlightEnabled) return false
         val valid = runCatching { profile.validated() }.getOrNull() ?: return false
         val session = synchronized(lock) {
@@ -104,11 +104,12 @@ class MoonlightStreamEngine @Inject constructor(
                 val app = apps.firstOrNull { it.id == appId }
                     ?: throw SecurityException("App is no longer published by this paired host")
                 val videoFormat = withContext(Dispatchers.IO) {
+                    MoonlightHardwareVideo.initialize(context)
                     MoonlightHardwareVideo.supportedFormat(valid,
                         appHdrSupported = app.hdrSupported,
                         displayHdr10 = displayHdr10 ?: MoonlightHardwareVideo.displaySupportsHdr10(context),
                         hostCodecModes = target.hostCodecModes,
-                    )
+                    ) and excludedVideoFormats.inv()
                 }
                 if (videoFormat == 0) throw UnsupportedOperationException("No compatible hardware video decoder")
                 if (!surface.isValid) throw IllegalStateException("Stream surface was destroyed")
@@ -116,8 +117,10 @@ class MoonlightStreamEngine @Inject constructor(
                 if (!transport.current(target)) throw SecurityException("Moonlight host changed")
                 if (!requestAudioFocus(session)) throw IllegalStateException("Audio focus denied")
 
-                val video = MoonlightMediaCodecRenderer(surface, valid) { text ->
-                    fail(session, text)
+                val video = MoonlightMediaCodecRenderer(surface, valid) { text, rejected ->
+                    val remaining = videoFormat and rejected.inv()
+                    fail(session, text, retryable = rejected != 0 && remaining != 0,
+                        rejectedVideoFormat = if (remaining != 0) rejected else 0)
                 }
                 val audio = MoonlightAudioTrackRenderer { text -> fail(session, text) }
                 val audioConfig = when (valid.audioChannels) {
@@ -512,6 +515,9 @@ class MoonlightStreamEngine @Inject constructor(
             if (active !== session || session.cancelled || session.metricsJob != null) return
             session.metricsJob = scope.launch(Dispatchers.IO) {
                 var lastFrames = 0L
+                var lastPresented = 0L
+                var lastReceived = 0L
+                var noOutputSeconds = 0
                 var lastTime = System.nanoTime()
                 while (isOwned(session)) {
                     kotlinx.coroutines.delay(1000)
@@ -521,15 +527,27 @@ class MoonlightStreamEngine @Inject constructor(
                     val rtt = synchronized(inputGate) {
                         if (isOwned(session)) runCatching { MoonBridge.getEstimatedRttInfo() }.getOrNull() else null
                     }
+                    if (video.received > lastReceived && video.rendered == lastFrames) noOutputSeconds++
+                    else if (video.rendered > lastFrames) noOutputSeconds = 0
+                    lastReceived = video.received
+                    if (noOutputSeconds == 3) session.video?.requestRecovery()
+                    if (noOutputSeconds >= 7) {
+                        fail(session, "Moonlight decoder stopped producing frames", retryable = true)
+                        break
+                    }
                     val now = System.nanoTime()
-                    val fps = (video.rendered - lastFrames) * 1e9 / (now - lastTime).coerceAtLeast(1L)
+                    val interval = (now - lastTime).coerceAtLeast(1L)
+                    val fps = (video.rendered - lastFrames) * 1e9 / interval
+                    val presentedFps = (video.presented - lastPresented) * 1e9 / interval
                     lastFrames = video.rendered
+                    lastPresented = video.presented
                     lastTime = now
                     synchronized(lock) {
                         if (active === session && !session.cancelled)
                             mutable.value = mutable.value.copy(metrics = MoonlightStreamMetrics(
                                 video, audio, rtt?.let { (it shr 32).toInt().takeIf { n -> n >= 0 } },
-                                rtt?.let { it.toInt().takeIf { n -> n >= 0 } }, fps.coerceAtLeast(0.0)))
+                                rtt?.let { it.toInt().takeIf { n -> n >= 0 } }, fps.coerceAtLeast(0.0),
+                                presentedFps.coerceAtLeast(0.0)))
                     }
                 }
             }
@@ -564,10 +582,12 @@ class MoonlightStreamEngine @Inject constructor(
         audioManager.abandonAudioFocusRequest(request)
     }
 
-    private fun fail(session: Active, text: String, retryable: Boolean = false) {
+    private fun fail(session: Active, text: String, retryable: Boolean = false,
+                     rejectedVideoFormat: Int = 0) {
         synchronized(lock) {
             if (active !== session || session.cancelled) return
-            mutable.value = mutable.value.copy(phase = MoonlightStreamPhase.FAILED, error = text, retryable = retryable && session.started)
+            mutable.value = mutable.value.copy(phase = MoonlightStreamPhase.FAILED, error = text, retryable = retryable && (session.started || rejectedVideoFormat != 0),
+                rejectedVideoFormat = rejectedVideoFormat)
         }
         stopSession(session)
     }

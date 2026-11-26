@@ -22,4 +22,5 @@
     <string name="moonlight_stats_audio">Audio: %1$d Kanäle · %2$.1f ms Puffer · %3$d Underruns · %4$d verworfene Samples</string>
     <string name="moonlight_stats_hdr">HDR10</string>
     <string name="moonlight_stats_sdr">SDR</string>
+    <string name="moonlight_stats_presented">Anzeigebestätigte Frames: %1$.1f FPS</string>
 </resources>

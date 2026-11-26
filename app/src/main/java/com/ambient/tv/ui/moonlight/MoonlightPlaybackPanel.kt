@@ -116,7 +116,7 @@ internal fun BoxScope.MoonlightPlaybackPanel(
                     )
                     TvActionButton(
                         text = stringResource(R.string.moonlight_player_send_text),
-                        enabled = message.isNotBlank(),
+                        enabled = message.isNotBlank() && status.phase == com.ambient.tv.moonlight.MoonlightStreamPhase.STREAMING,
                         onClick = {
                             onSendText(message)
                             message = ""
@@ -147,6 +147,7 @@ internal fun BoxScope.MoonlightPlaybackPanel(
                             video.width, video.height, video.fps,
                             stringResource(if (video.hdr) R.string.moonlight_stats_hdr else R.string.moonlight_stats_sdr)))
                         RightPanelInfoRow(stringResource(R.string.moonlight_stats_output, metrics.outputFps))
+                        if (video.presented > 0) RightPanelInfoRow(stringResource(R.string.moonlight_stats_presented, metrics.presentedFps))
                         RightPanelInfoRow(stringResource(R.string.moonlight_stats_drops, video.missing, video.dropped))
                         if (video.rendered > 0)
                             RightPanelInfoRow(stringResource(R.string.moonlight_stats_decode,

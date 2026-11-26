@@ -8,6 +8,7 @@ import android.media.MediaFormat
 import android.view.Display
 import android.os.Build
 import com.limelight.nvstream.jni.MoonBridge
+import com.limelight.binding.video.MediaCodecHelper
 
 /**
  * GameStream video codec selection. Do NOT advertise a 10-bit format unless the display
@@ -32,6 +33,15 @@ internal object MoonlightHardwareVideo {
             else display.hdrCapabilities?.supportedHdrTypes ?: intArrayOf()
         Display.HdrCapabilities.HDR_TYPE_HDR10 in types
     }.getOrDefault(false)
+
+    private var helperInitialized = false
+    @Synchronized fun initialize(context: Context) {
+        if (helperInitialized) return
+        // The direct Surface path does not create an EGL context just to query the GPU.
+        // Use the upstream helper's device/vendor logic; unknown GL renderer stays unknown.
+        MediaCodecHelper.initialize(context.applicationContext, "")
+        helperInitialized = true
+    }
 
     private val codecInfos by lazy { MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos }
 

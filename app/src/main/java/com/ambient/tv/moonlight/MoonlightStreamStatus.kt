@@ -9,6 +9,7 @@ data class MoonlightStreamStatus(
     val retryable: Boolean = false,
     val owner: Any? = null,
     val generation: Long = 0L,
+    val rejectedVideoFormat: Int = 0,
 ) {
     val active: Boolean get() = phase in setOf(
         MoonlightStreamPhase.CONNECTING, MoonlightStreamPhase.STREAMING, MoonlightStreamPhase.STOPPING)
@@ -21,6 +22,7 @@ data class MoonlightVideoMetrics(
     val received: Long = 0, val missing: Long = 0, val rendered: Long = 0,
     val dropped: Long = 0, val decodeMicros: Long = 0,
     val hostTenthsMs: Long = 0, val hostSamples: Long = 0,
+    val presented: Long = 0,
 )
 data class MoonlightAudioMetrics(
     val channels: Int = 0, val rate: Int = 0, val bufferFrames: Int = 0,
@@ -31,4 +33,5 @@ data class MoonlightStreamMetrics(
     val audio: MoonlightAudioMetrics = MoonlightAudioMetrics(),
     val rttMs: Int? = null, val rttVarianceMs: Int? = null,
     val outputFps: Double = 0.0,
+    val presentedFps: Double = 0.0,
 )
