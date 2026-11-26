@@ -761,7 +761,7 @@ private fun YouTubeMedia3Playback(
             val appContext = context.applicationContext
             // In the release gate like every player: after MPV/VLC, YouTube opens its stream only
             // once the previous player closed ("Vorheriger Player wird beendet…" on their side).
-            com.ambient.tv.ui.player.PlaybackEngineFactory.gatedMedia3Handle { deferPrepare -> com.ambient.tv.ui.player.PlaybackEngineFactory.create(
+            com.ambient.tv.ui.player.PlaybackEngineFactory.gatedMedia3Handle(appContext) { deferPrepare -> com.ambient.tv.ui.player.PlaybackEngineFactory.create(
                 appContext, playback.uri, if (playback.isLive) 0 else startPositionMs,
                 deferPrepare = deferPrepare,
                 profileMetadata = metadata,
