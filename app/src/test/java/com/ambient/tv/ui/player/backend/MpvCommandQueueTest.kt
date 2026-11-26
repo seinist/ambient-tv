@@ -56,6 +56,18 @@ class MpvCommandQueueTest {
         assertEquals(1, discarded)
     }
 
+    @Test fun surfaceLifecycleCommandsSurviveSaturatedBacklog() {
+        val scheduled = ArrayDeque<() -> Unit>()
+        val order = mutableListOf<String>()
+        val queue = MpvCommandQueue({ scheduled.addLast(it) }, { throw AssertionError(it) }, capacity = 1)
+        assertTrue(queue.submit("filter") { order += "filter" })
+        assertTrue(queue.submit("surface-attach") { order += "attach" })
+        assertTrue(queue.submit("surface-detach", keepOnClose = true) { order += "detach" })
+        assertFalse(queue.submit("other") {})
+        while (scheduled.isNotEmpty()) scheduled.removeFirst()()
+        assertEquals(listOf("filter", "attach", "detach"), order)
+    }
+
     @Test fun failedOperationDoesNotStrandCleanup() {
         val scheduled = ArrayDeque<() -> Unit>()
         val errors = mutableListOf<Throwable>()
