@@ -225,6 +225,7 @@ class SidebarViewModel @Inject constructor(
             if (gameLibrary.hasConfiguredFolders()) add("games")
             if (dlnaStore.servers().isNotEmpty()) add("dlna")
             if (appPreferences.isRommConfigured) add("romm")
+            if (com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE && appPreferences.hasMoonlightHosts) add("moonlight")
         }
 
     init {
@@ -289,6 +290,8 @@ class SidebarViewModel @Inject constructor(
         appPreferences.youtubeEnabled,
         appPreferences.spotifyEnabled,
         appPreferences.radioEnabled,
+        appPreferences.moonlightEnabled,
+        appPreferences.moonlightHosts,
         appPreferences.weatherSettings.let { it.enabled && it.showInSidebar },
         appPreferences.telegramEnabled,
         appPreferences.telegramSubmenuKeys,
@@ -357,6 +360,8 @@ class SidebarViewModel @Inject constructor(
             if (appPreferences.isEmbyConfigured) add("emby")
             if (appPreferences.hasTvheadendEndpoint) add("tvheadend")
             if (appPreferences.isRommConfigured) add("romm")
+            if (com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE && appPreferences.hasMoonlightHosts)
+                addAll(appPreferences.moonlightHosts.map { "moonlight:" + it.id })
             if (appPreferences.filesEnabled) addAll(networkFileSourcesFromStore().map { "files:${it.id}" })
             addAll(dlnaStore.servers().map { "dlna:${it.id}" })
         }
@@ -368,8 +373,10 @@ class SidebarViewModel @Inject constructor(
             if (appPreferences.trailersEnabled && !tokens.tmdbApiKey.isNullOrBlank()) add("trailers")
             if (appPreferences.spotifyEnabled) add("spotify")
         }
-        return sidebarOfflineSources(configured, hosts::health) +
+        val offline = sidebarOfflineSources(configured, hosts::health) +
             onlineServices.state.value.unavailableServices(remote)
+        val moonlight = configured.filter { it.startsWith("moonlight:") }
+        return if (moonlight.isNotEmpty() && moonlight.all { it in offline }) offline + "moonlight" else offline
     }
 
     private fun observeSpotifyAuthorization() {

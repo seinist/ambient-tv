@@ -85,7 +85,7 @@ class HostConnectivity internal constructor(
         if (preferences.jellyfinEnabled && preferences.jellyfinHost.isNotBlank()) addEndpoint("jellyfin", preferences.jellyfinHost, preferences.jellyfinPort, preferences.jellyfinMacAddress)
         if (preferences.embyEnabled && preferences.embyHost.isNotBlank()) addEndpoint("emby", preferences.embyHost, preferences.embyPort, preferences.embyMacAddress)
         if (preferences.hasTvheadendEndpoint) addEndpoint("tvheadend", preferences.tvheadendHost, preferences.tvheadendPort, preferences.tvheadendMacAddress)
-        if (com.ambient.tv.BuildConfig.MOONLIGHT_EXPERIMENTAL && preferences.hasMoonlightHosts) {
+        if (com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE && preferences.hasMoonlightHosts) {
             preferences.moonlightHosts.forEach { moonlight ->
                 addEndpoint("moonlight:" + moonlight.id, moonlight.host, moonlight.port,
                     moonlight.macAddress.ifBlank { null })

@@ -2443,7 +2443,8 @@ private fun AmbientTvApp(
                 Destinations.DLNA_SERVER -> currentDlnaServerId?.let(Destinations::dlnaServer) ?: Destinations.DLNA
                 else -> currentRoute
             }
-            lastSectionKey = if (currentRoute == Destinations.SECTION) currentSectionKey else null
+            lastSectionKey = if (currentRoute in setOf(Destinations.SECTION, Destinations.GAME_LIBRARY_SECTION,
+                Destinations.ROMM_SECTION, Destinations.MOONLIGHT_SECTION)) currentSectionKey else null
         }
     }
 
@@ -2862,7 +2863,8 @@ private fun AmbientTvApp(
                 // focus cannot escape into the sidebar while viewing an item.
                 Sidebar(
                     currentRoute = if (sidebarRoute in SIDEBAR_ROUTES) sidebarRoute else lastTopLevelRoute,
-                    currentSectionKey = if (currentRoute == Destinations.SECTION) currentSectionKey else lastSectionKey,
+                    currentSectionKey = if (currentRoute in setOf(Destinations.SECTION, Destinations.GAME_LIBRARY_SECTION,
+                        Destinations.ROMM_SECTION, Destinations.MOONLIGHT_SECTION)) currentSectionKey else lastSectionKey,
                     currentYouTubeFeedKey = currentFeedKey,
                     currentTrailerFeedKey = currentTrailerFeedKey,
                     currentSpotifySectionKey = currentSpotifySectionKey,
@@ -3153,6 +3155,7 @@ private fun AmbientTvApp(
                                             val route = Destinations.radioSection(section)
                                             if (route == Destinations.RADIO) navigateTopLevel(route) else navigateToSection(route)
                                         }
+                                        HomeRowDefinition.SYSTEM_MOONLIGHT -> navigateSidebar(Destinations.moonlightSection(row.contentKey))
                                         HomeRowDefinition.SYSTEM_TVHEADEND -> navigateToSection(Destinations.liveTvSection(row.contentKey))
                                         else -> if (row.contentKey in setOf("live", "guide", "recordings", "timers")) {
                                             val sourceId = providerNavigationViewModel.uiState.value.liveTvSources
@@ -3216,6 +3219,7 @@ private fun AmbientTvApp(
                                 onYouTubeClick = { videoId -> handleYouTubeSelection(videoId) },
                                 onSpotifyClick = { item -> if (item.type.name == "TRACK") playOnSelectedTarget(Destinations.spotifyPlayer(item.uri)) else navController.navigate(Destinations.spotifyDetail(item.type.name.lowercase(), item.id)) },
                                 onMoonlightClick = { host, app ->
+                                    beginMediaSelection()
                                     navController.navigate(Destinations.moonlightDetail(host, app)) { launchSingleTop = true }
                                 },
                                 onTvheadendChannelClick = { channel -> playOnSelectedTarget(Destinations.tvhPlayer("channel", channel.uuid, channel.sourceId)) },
@@ -3705,7 +3709,9 @@ private fun AmbientTvApp(
                                         ?.takeIf(String::isNotBlank) ?: "all",
                                     onBack = ::focusSidebar,
                                     onOpenSettings = { openSystemSettings("moonlight") },
+                                    onSectionSelected = { section -> navigateSidebar(Destinations.moonlightSection(section)) },
                                     onDetails = { hostId, appId ->
+                                        beginMediaSelection()
                                         navController.navigate(Destinations.moonlightDetail(hostId, appId)) {
                                             launchSingleTop = true
                                         }
@@ -3729,13 +3735,18 @@ private fun AmbientTvApp(
                             onBack = { if (navController.currentBackStackEntry === entry) navigateBack() },
                             onOpenSettings = { openSystemSettings("moonlight") },
                             onPlay = {
-                                localContext.startActivity(
-                                    android.content.Intent(localContext,
-                                        com.ambient.tv.ui.moonlight.MoonlightStreamActivity::class.java).apply {
-                                        putExtra(com.ambient.tv.ui.moonlight.MoonlightStreamActivity.EXTRA_HOST_ID, hostId)
-                                        putExtra(com.ambient.tv.ui.moonlight.MoonlightStreamActivity.EXTRA_APP_ID, appId)
-                                    },
-                                )
+                                beginMediaSelection()
+                                requestPlaybackStart("moonlight:$hostId:$appId", "",
+                                    identity = { playbackAvailability.moonlightIdentity(hostId, appId) },
+                                    check = { retry -> playbackAvailability.checkMoonlight(hostId, appId, retry) },
+                                    start = {
+                                        localContext.startActivity(
+                                            android.content.Intent(localContext,
+                                                com.ambient.tv.ui.moonlight.MoonlightStreamActivity::class.java).apply {
+                                                putExtra(com.ambient.tv.ui.moonlight.MoonlightStreamActivity.EXTRA_HOST_ID, hostId)
+                                                putExtra(com.ambient.tv.ui.moonlight.MoonlightStreamActivity.EXTRA_APP_ID, appId)
+                                            })
+                                    })
                             },
                         )
                     }

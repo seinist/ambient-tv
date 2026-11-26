@@ -88,6 +88,7 @@ fun HandheldNavigationHost(
         spotifyEnabled = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized,
         radioHomeEnabled = sidebarState.radioHomeEnabled,
         telegramHomeEnabled = sidebarState.telegramHomeEnabled && sidebarState.telegramEnabled && sidebarState.telegramAuthorized,
+        moonlightConfigured = sidebarState.moonlightEnabled,
     )
     val showSearch = sidebarShowsGlobalSearch(
         plexConfigured = sidebarState.plexEnabled,
@@ -99,6 +100,7 @@ fun HandheldNavigationHost(
         radioEnabled = sidebarState.radioEnabled,
         telegramCanSearch = com.ambient.tv.data.telegram.telegramSearchAvailable(
             com.ambient.tv.BuildConfig.MONOGRAM_NATIVE, sidebarState.telegramEnabled, sidebarState.telegramAuthorized),
+        moonlightConfigured = sidebarState.moonlightEnabled,
     )
     val companion: com.ambient.tv.companion.CompanionViewModel = hiltViewModel()
     // Phone companion pages (pairing, remote, "Handy & TV") cover the content area, in this priority.
@@ -452,7 +454,9 @@ private fun HandheldSources(
             SourceEntry(it.id, it.label, it.route, icon = it.icon, offline = "romm" in sidebarState.offlineSystems)
         }))
         if (moonlight.isNotEmpty()) add(withSettings(MediaSystem.MOONLIGHT, moonlight.map {
-            SourceEntry(it.id, it.label, it.route, icon = it.icon)
+            SourceEntry(it.id, it.label, it.route, icon = it.icon,
+                offline = if (it.id.startsWith("moonlight:host:")) "moonlight:" + it.id.removePrefix("moonlight:host:") in sidebarState.offlineSystems
+                    else "moonlight" in sidebarState.offlineSystems)
         }))
         if (dlnaServers.isNotEmpty()) add(withSettings(MediaSystem.DLNA,
             dlnaServers.map { SourceEntry(it.id, it.name, Destinations.dlnaServer(it.id), offline = "dlna:${it.id}" in sidebarState.offlineSystems) } +

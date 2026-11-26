@@ -64,6 +64,7 @@ fun MoonlightLibraryScreen(
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onDetails: (String, Int) -> Unit,
+    onSectionSelected: ((String) -> Unit)? = null,
     model: MoonlightLibraryViewModel = hiltViewModel(),
 ) {
     val state by model.state.collectAsState()
@@ -110,7 +111,7 @@ fun MoonlightLibraryScreen(
                 "host:" + host.id to host.name.ifBlank { host.host }
             }
             sections.forEach { (key, label) ->
-                TvActionButton(label, { model.section(key) }, selected = section == key)
+                TvActionButton(label, { if (onSectionSelected != null) onSectionSelected(key) else model.section(key) }, selected = section == key)
             }
         }
         if (state.errors.values.any { it == "identity" }) {

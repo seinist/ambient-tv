@@ -23,8 +23,7 @@ internal fun parseMoonlightHomeKey(key: String): Pair<String, Int>? {
     if (colon <= 0) return null
     val id = Uri.decode(rest.substring(0, colon))
     val app = rest.substring(colon + 1).toIntOrNull() ?: return null
-    return if (id.length in 1..64 &&
-        id.all { it.isLetterOrDigit() || it == '-' || it == '_' } && app > 0) id to app else null
+    return if (com.ambient.tv.moonlight.validMoonlightHostId(id) && app > 0) id to app else null
 }
 
 /** No network/wake on Home. Only the cached catalog identity-validated by MoonlightLibraryStore. */

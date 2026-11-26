@@ -151,6 +151,8 @@ class WakeMachines @Inject constructor(
                 add(WakeEndpoint(it, profile.host, profile.macAddress))
             }
         }
+        if (com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE && preferences.hasMoonlightHosts)
+            preferences.moonlightHosts.forEach { add(WakeEndpoint("moonlight:" + it.id, it.host, it.macAddress)) }
         preferences.fileSources.filter { it.kind != "local" }.forEach { add(WakeEndpoint("files", it.host, it.wolMac)) }
         servers.forEach { add(WakeEndpoint("dlna", dlnaWakeEndpoint(it)?.first, it.wolMac)) }
     }

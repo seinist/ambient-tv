@@ -48,6 +48,8 @@ class PlaybackAvailability @Inject constructor(
     private val recovery: Provider<UnreachableServerGate>,
     private val machineWake: Provider<MachineWake>,
     private val wireGuard: Provider<com.ambient.tv.vpn.WireGuardRouteController>,
+    private val moonlight: Provider<com.ambient.tv.moonlight.MoonlightSystemTransport>,
+    private val moonlightStore: Provider<com.ambient.tv.moonlight.MoonlightLibraryStore>,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val revision = MutableStateFlow(0L)
@@ -258,6 +260,48 @@ class PlaybackAvailability @Inject constructor(
         return verify(true)
     }
 
+    /** A new native stream always needs a protected catalog read, not just a live HTTP port. */
+    fun moonlightIdentity(hostId: String, appId: Int): String {
+        val host = preferences.moonlightHosts.firstOrNull { it.id == hostId && preferences.moonlightEnabled }
+        return listOf(hostId, appId, host?.host, host?.port, moonlightStore.get().peerIdentity(hostId)).joinToString(":")
+    }
+
+    suspend fun checkMoonlight(hostId: String, appId: Int, retry: Boolean = false): PlaybackAccessResult {
+        val host = preferences.moonlightHosts.firstOrNull { it.id == hostId && preferences.moonlightEnabled }
+        val system = "moonlight:$hostId"
+        val name = host?.name?.ifBlank { host.host } ?: "Moonlight"
+        fun answer(ok: Boolean, auth: Boolean = false) = PlaybackAccessResult(ok, system, name, auth)
+        if (!com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE || host == null || appId <= 0) return answer(false)
+        val identity = moonlightIdentity(hostId, appId)
+        fun current() = moonlightIdentity(hostId, appId) == identity
+        if (!moonlight.get().locallyPaired(hostId)) return answer(false, true)
+        suspend fun verify(): PlaybackAccessResult {
+            if (!current()) return answer(false)
+            val check = hosts.begin(system)
+            val result = withTimeoutOrNull(25_000L) {
+                withContext(Dispatchers.IO) {
+                    suspendResult {
+                        val catalog = moonlight.get().applications(hostId)
+                        if (current()) moonlightStore.get().putCatalog(hostId, catalog)
+                        catalog.apps.any { it.id == appId }
+                    }
+                }
+            }
+            currentCoroutineContext().ensureActive()
+            if (!current()) return answer(false)
+            if (result?.isSuccess == true) {
+                hosts.online(check)
+                return answer(result.getOrNull() == true)
+            }
+            moonlightStore.get().markOffline(hostId)
+            return answer(false, authenticationFailure(result?.exceptionOrNull()))
+        }
+        val first = verify()
+        if (!retry || first.allowed || first.authRequired || !current() || host.macAddress.isBlank()) return first
+        if (!recover(system, ::current)) return first
+        return verify()
+    }
+
     private suspend fun ensureTunnel(provider: String, id: String? = null) {
         withTimeoutOrNull(12_500L) {
             when (provider) {
@@ -324,6 +368,9 @@ class PlaybackAvailability @Inject constructor(
             "files" -> preferences.fileSources.firstOrNull { it.id == id && it.kind != "local" }?.let {
                 ManualWakeRequest("files", system, it.name, it.host, it.wolMac, it.port,
                     it.wolBroadcast, it.wolPort, it.host.takeIf { _ -> it.wireGuard })
+            }
+            "moonlight" -> preferences.moonlightHosts.firstOrNull { preferences.moonlightEnabled && it.id == id }?.let {
+                ManualWakeRequest(system, system, it.name.ifBlank { it.host }, it.host, it.macAddress, it.port)
             }
             "dlna" -> dlna.get().server(id)?.let { server -> server.contentDirectoryUrl.toHttpUrlOrNull()?.let {
                 ManualWakeRequest("dlna", system, server.name, it.host, server.wolMac, it.port)
