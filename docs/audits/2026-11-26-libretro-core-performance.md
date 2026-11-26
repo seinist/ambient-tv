@@ -340,3 +340,7 @@ labels. For current captures export CSV with:
     SELECT name, ts, dur FROM slice WHERE name IN ('AmbientGame core run', 'AmbientGame netplay core', 'AmbientGame rewind core', 'AmbientGame rewind preview core');
 
 Fresh CI and device performance evidence remain required.
+
+### CI integration follow-up
+
+Run 45887609371 passed planning and the core builds reported successful on its first jobs page except SwanStation baseline. SwanStation actually linked and passed 16 KiB ELF alignment; the evidence reader lost CMake's per-target working directory and ignored quoted llvm-ar invocations. Added link-script context handling and a regression fixture with a static dependency. Run 45887609366 reached and applied patch 0200, but the trace validator did not recognize the shared runCoreFrame helper introduced by main's patch 0135. The validator now checks the four named call sites and single underlying retro_run call. The main trace spans include Vulkan sync-index reservation and cleanup, unlike the historical direct retro_run spans; do not compare those as identical measurements. Native profile CI now also reacts to changes in the fetch, patch and link-evidence inputs. All fixes need fresh CI.

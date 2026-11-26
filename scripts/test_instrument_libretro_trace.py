@@ -52,6 +52,21 @@ class CoreTracingTest(unittest.TestCase):
             with self.subTest(changed=changed), self.assertRaises(ValueError):
                 instrument(changed)
 
+    def test_shared_core_frame_helper(self):
+        main = SOURCE.replace('#include <android/trace.h>', '#include "ambientgametrace.h"')
+        for label in ("AmbientGame rewind core", "AmbientGame core run",
+                      "AmbientGame netplay core", "AmbientGame rewind preview core"):
+            main = main.replace("core->retro_run();", f'traceGameCall("{label}", [&] {{ runCoreFrame(); }});', 1)
+        main += "\nvoid LibretroDroid::runCoreFrame() {\n    if (!backend.beginCoreFrame()) return;\n    core->retro_run();\n}\n"
+        self.assertEqual(instrument(main), main)
+        for changed in (
+            main.replace("core->retro_run();", "core->retro_run(); core->retro_run();"),
+            main + "\nvoid LibretroDroid::other() { runCoreFrame(); }\n",
+            main.replace("AmbientGame netplay core", "AmbientGame core run"),
+        ):
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                instrument(changed)
+
     def test_context_drift(self):
         changed = SOURCE.replace("checkVulkanFrameError();", "publishContentFrameSize();")
         self.assertEqual(instrument(changed).count("ATrace_beginSection("), 4)

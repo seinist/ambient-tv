@@ -34,11 +34,13 @@ def summarize(rows, fps, thermal=(), max_thermal_age_ns=5_000_000_000):
     sample_times = [ts for ts, _ in samples]
     groups = {name: [] for name in PATHS}
     ignored_incomplete = 0
+    trace_kinds = set()
     for row in rows:
         name = row["name"]
         path = MAIN_LABELS.get(name, name[len(PREFIX):] if name.startswith(PREFIX) else None)
         if path not in groups:
             continue
+        trace_kinds.add("main_core_frame" if name in MAIN_LABELS else "direct_retro_run")
         ts, dur = int(row["ts"]), int(row["dur"])
         if dur < 0:
             ignored_incomplete += 1
@@ -73,7 +75,8 @@ def summarize(rows, fps, thermal=(), max_thermal_age_ns=5_000_000_000):
     return {"content_fps": fps, "core_budget_ms": budget / 1e6,
             "ignored_incomplete_slices": ignored_incomplete,
             "thermal_samples": len(samples),
-            "measurement": "synchronous retro_run only; not end-to-end frame latency",
+            "trace_kinds": sorted(trace_kinds),
+            "measurement": "Main traces include Vulkan core-frame reservation/cleanup; legacy traces measure synchronous retro_run. Neither measures end-to-end frame latency.",
             "paths": report}
 
 

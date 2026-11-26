@@ -32,14 +32,33 @@ def expand_response(tokens, cwd, root, depth=0):
 def build_commands(log, cwd=None, root=None, strict=False):
     cwd = Path(cwd or Path.cwd()).resolve()
     root = Path(root or Path.cwd()).resolve()
+    link_cwd = None
     for line in log.splitlines():
         # Accept only actual command starts or recognized CMake/Ninja wrappers.
         # A diagnostic mentioning clang is not evidence that clang was invoked.
         line = re.sub(r"^\s*\d{4}-\d{2}-\d{2}T[^ ]+Z\s+", "", line).strip()
         line = re.sub(r"^\[\d+/\d+\]\s+", "", line)
+        # GNU Make prints the CMake link-script invocation with its working
+        # directory, then echoes the child compiler/ar commands on separate
+        # lines. --output-sync=target keeps this group contiguous.
+        if re.match(r"^(?:g?make)(?:\[\d+\])?: (?:Entering|Leaving) directory", line):
+            link_cwd = None
+            continue
+        if line.startswith("cd "):
+            link_cwd = None
+        if line.startswith("cd ") and "cmake_link_script" in line:
+            context = shlex.split(line)
+            if (len(context) >= 7 and context[2] == "&&"
+                    and Path(context[3]).name == "cmake"
+                    and context[4:6] == ["-E", "cmake_link_script"]):
+                link_cwd = (cwd / context[1]).resolve()
+                if not link_cwd.is_relative_to(root):
+                    raise ValueError("CMake link script directory is outside the build root")
+                continue
         wrapped = line.startswith(("cd ", ": && ")) or re.match(r"^(?:\S*/)?ccache\s+", line)
         archive_start = re.match(r"^(?:\S*/)?(?:[\w.-]+-)?llvm-ar(?:-\d+)?(?:\s|$)", line)
-        if not COMPILER_COMMAND.match(line) and not wrapped and not archive_start:
+        quoted_driver = re.match(r'^"[^"]*/(?:[\w.-]+-)?(?:clang(?:\+\+)?|llvm-ar)(?:-\d+)?"(?:\s|$)', line)
+        if not COMPILER_COMMAND.match(line) and not wrapped and not archive_start and not quoted_driver:
             continue
         try:
             tokens = shlex.split(line)
@@ -47,7 +66,7 @@ def build_commands(log, cwd=None, root=None, strict=False):
             if strict:
                 raise ValueError("Malformed compiler command in build log")
             continue
-        command_cwd = cwd
+        command_cwd = link_cwd or cwd
         while tokens[:2] == [":", "&&"]:
             tokens = tokens[2:]
         if len(tokens) >= 3 and tokens[0] == "cd" and tokens[2] == "&&":
@@ -110,7 +129,7 @@ def defines(args):
             index += 1
         if token.startswith("-D"):
             key, _, value = token[2:].partition("=")
-            result[key] = value or "1"
+            result[key] = value if _ else "1"
         elif token.startswith("-U"):
             result.pop(token[2:], None)
     return result

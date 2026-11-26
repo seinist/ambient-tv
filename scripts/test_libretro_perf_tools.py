@@ -31,6 +31,27 @@ class CorePerformanceToolsTest(unittest.TestCase):
                                           root, root, root / "libretro.so")
             self.assertEqual(evidence["unresolved_local_inputs"], ["missing.o"])
 
+    def test_cmake_make_link_script_working_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            log = (
+                "cd deps && ccache /ndk/clang -O3 -c dep.c -o dep.o\n"
+                "cd deps && /usr/bin/cmake -E cmake_link_script CMakeFiles/dep.dir/link.txt --verbose=1\n"
+                '"/ndk/llvm-ar" qc libdep.a dep.o\n'
+                "gmake[2]: Leaving directory '/build'\n"
+                "cd frontend && /ndk/clang -O3 -c main.c -o main.o\n"
+                "cd frontend && /usr/bin/cmake -E cmake_link_script CMakeFiles/core.dir/link.txt --verbose=1\n"
+                "/ndk/clang -shared main.o ../deps/libdep.a -o ../libretro.so\n"
+                "gmake[2]: Leaving directory '/build'\n"
+                "clang -O0 -c unrelated.c -o unrelated.o\n"
+            )
+            scoped, evidence = target_commands(log, root, root, root / "libretro.so")
+            self.assertEqual(evidence["linked_compile_commands"], 2)
+            self.assertEqual(evidence["linked_archives"], 1)
+            self.assertEqual(evidence["unrelated_compile_commands"], 1)
+            self.assertEqual(evidence["unresolved_local_inputs"], [])
+            self.assertEqual(audit_commands(log, "o3", scoped_commands=scoped)["compile_commands"], 2)
+
     def test_native_target_flag_gate(self):
         log = ("clang++ -O3 -flto=thin -c libretrodroid.cpp -o frontend.o\n"
                ": && clang++ -flto=thin -shared frontend.o -o liblibretrodroid.so && :\n")

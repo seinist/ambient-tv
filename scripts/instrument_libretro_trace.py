@@ -20,18 +20,33 @@ MAIN_LABELS = {
 }
 WRAPPED_CALL = re.compile(
     r'\btraceGameCall\s*\(\s*"([^"]+)"\s*,\s*\[\s*&\s*\]\s*'
-    r'\{\s*core\s*->\s*retro_run\s*\(\s*\)\s*;\s*\}\s*\)\s*;'
+    r'\{\s*(core\s*->\s*retro_run|runCoreFrame)\s*\(\s*\)\s*;\s*\}\s*\)\s*;'
 )
-ANY_CALL = re.compile(r'\bcore\s*->\s*retro_run\s*\(\s*\)\s*;')
+ANY_CALL = re.compile(r'\bcore\s*->\s*retro_run\s*\(')
+HELPER_CALL = re.compile(r'\brunCoreFrame\s*\(')
 
 
 def verify_main_trace(source):
-    """Reuse the existing main trace helper; never add nested timing sections."""
-    calls = WRAPPED_CALL.findall(source)
+    """Validate both direct traces and main's shared Vulkan reservation helper."""
+    functions = list(FUNCTION.finditer(source))
+    sections = {match[1]: source[match.end():functions[j+1].start() if j+1 < len(functions) else len(source)]
+                for j, match in enumerate(functions)}
     expected = [MAIN_LABELS[label] for labels in LABELS.values() for label in labels]
-    if sorted(calls) != sorted(expected) or len(ANY_CALL.findall(source)) != len(calls):
-        relevant = [line.strip() for line in source.splitlines() if "retro_run" in line]
-        raise ValueError(f"Unexpected main trace paths: {calls}; core call lines: {relevant}")
+    calls = WRAPPED_CALL.findall(source)
+    if sorted(label for label, _ in calls) != sorted(expected):
+        raise ValueError(f"Unexpected main trace paths: {calls}")
+    for name, labels in LABELS.items():
+        actual = [label for label, _ in WRAPPED_CALL.findall(sections.get(name, ""))]
+        if actual != [MAIN_LABELS[label] for label in labels]:
+            raise ValueError(f"Unexpected trace location in {name}: {actual}")
+    if all(call == "runCoreFrame" for _, call in calls):
+        helper = sections.get("runCoreFrame", "")
+        if (len(ANY_CALL.findall(helper)) != 1 or len(ANY_CALL.findall(source)) != 1
+                or len(HELPER_CALL.findall(source)) != len(calls) + 1):
+            raise ValueError("Shared runCoreFrame boundary changed")
+    elif (any(call == "runCoreFrame" for _, call in calls)
+          or len(ANY_CALL.findall(source)) != len(calls)):
+        raise ValueError("Unexpected direct core execution layout")
     return source
 
 
