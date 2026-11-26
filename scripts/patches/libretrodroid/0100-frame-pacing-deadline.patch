@@ -1,0 +1,209 @@
+diff --git a/src/main/cpp/fpssync.cpp b/src/main/cpp/fpssync.cpp
+index 15fa310..6b1d063 100644
+--- a/src/main/cpp/fpssync.cpp
++++ b/src/main/cpp/fpssync.cpp
+@@ -22,41 +22,23 @@
+ namespace libretrodroid {
+ 
+ unsigned FPSSync::advanceFrames() {
+-    if (lastFrame == MIN_TIME) {
+-        start();
++    if (!pacing.armed()) {
++        LOGI("Starting game with fps %f on a screen with refresh rate %f. Using vsync: %d", contentRefreshRate, screenRefreshRate, useVSync);
+     }
+-
+-    if (useVSync) {
+-        // Do not accumulate a catch-up burst after a stall or an HDMI mode change.
+-        const auto now = std::chrono::steady_clock::now();
+-        if (now - lastFrame >= sampleInterval) lastFrame = now;
+-        lastFrame = lastFrame + sampleInterval;
+-        return 1;
+-    }
+-
+-    auto now = std::chrono::steady_clock::now();
+-    auto frames = std::max((now - lastFrame) / sampleInterval, (long long) 1);
+-    lastFrame = lastFrame + sampleInterval * frames;
+-
+-    return frames;
++    return pacing.advance(FramePacingDeadline::Clock::now(), useVSync);
+ }
+ 
+ FPSSync::FPSSync(double contentRefreshRate, double screenRefreshRate, bool forceSoftwareTiming) {
+-    this->contentRefreshRate = contentRefreshRate;
++    this->contentRefreshRate = FramePacingDeadline::validRate(contentRefreshRate) ? contentRefreshRate : 60.0;
+     this->screenRefreshRate = screenRefreshRate;
+     this->forceSoftwareTiming = forceSoftwareTiming;
+-    this->useVSync = !forceSoftwareTiming && std::abs(contentRefreshRate - screenRefreshRate) < FPS_TOLERANCE;
+-    this->sampleInterval = std::chrono::microseconds((long) ((1000000L / contentRefreshRate)));
+-    reset();
+-}
+-
+-void FPSSync::start() {
+-    LOGI("Starting game with fps %f on a screen with refresh rate %f. Using vsync: %d", contentRefreshRate, screenRefreshRate, useVSync);
+-    lastFrame = std::chrono::steady_clock::now();
++    this->useVSync = !forceSoftwareTiming && FramePacingDeadline::validRate(screenRefreshRate) &&
++        std::abs(this->contentRefreshRate - screenRefreshRate) < FPS_TOLERANCE;
++    pacing.setRate(this->contentRefreshRate);
+ }
+ 
+ void FPSSync::reset() {
+-    lastFrame = MIN_TIME;
++    pacing.reset();
+ }
+ 
+ double FPSSync::getTimeStretchFactor() {
+@@ -64,20 +46,19 @@ double FPSSync::getTimeStretchFactor() {
+ }
+ 
+ void FPSSync::wait() {
+-    // A newly started or resumed core must render its first frame immediately.
+-    // This also avoids subtracting from the sentinel time point.
+-    if (lastFrame == MIN_TIME) return;
+-    auto now = std::chrono::steady_clock::now();
+-    auto delta = std::chrono::duration_cast<std::chrono::milliseconds>(lastFrame - now).count();
+-    if (delta > 1000) {
+-        LOGI("FPSSync::wait: lastFrame is %lldms in the future, resetting", (long long)delta);
+-        lastFrame = now;
++    if (!pacing.armed()) return;
++    const auto now = FramePacingDeadline::Clock::now();
++    const auto previous = pacing.target();
++    const auto target = pacing.waitTarget(now);
++    if (pacing.target() != previous) {
++        LOGI("FPSSync::wait: lastFrame is too far in the future, resetting");
+     }
+-    std::this_thread::sleep_until(lastFrame);
++    // A blocking swap or an over-budget frame may already have consumed the wait.
++    if (target > now) std::this_thread::sleep_until(target);
+ }
+ 
+ void FPSSync::setExternalTimingControl(bool enabled) {
+-    if (forceSoftwareTiming) {
++    if (forceSoftwareTiming || !FramePacingDeadline::validRate(screenRefreshRate)) {
+         useVSync = false;
+     } else if (enabled) {
+         useVSync = true;
+@@ -88,11 +69,12 @@ void FPSSync::setExternalTimingControl(bool enabled) {
+ }
+ 
+ void FPSSync::updateContentRefreshRate(double newContentRefreshRate) {
++    if (!FramePacingDeadline::validRate(newContentRefreshRate)) return;
+     LOGI("Updating content refresh rate from %f to %f", contentRefreshRate, newContentRefreshRate);
+     contentRefreshRate = newContentRefreshRate;
+-    sampleInterval = std::chrono::microseconds((long) ((1000000L / contentRefreshRate)));
+-    useVSync = !forceSoftwareTiming && std::abs(contentRefreshRate - screenRefreshRate) < FPS_TOLERANCE;
+-    reset();
++    pacing.setRate(contentRefreshRate);
++    useVSync = !forceSoftwareTiming && FramePacingDeadline::validRate(screenRefreshRate) &&
++        std::abs(contentRefreshRate - screenRefreshRate) < FPS_TOLERANCE;
+ }
+ 
+ } //namespace libretrodroid
+diff --git a/src/main/cpp/fpssync.h b/src/main/cpp/fpssync.h
+index b68adae..cbe41a7 100644
+--- a/src/main/cpp/fpssync.h
++++ b/src/main/cpp/fpssync.h
+@@ -20,11 +20,11 @@
+ 
+ #include <chrono>
+ #include <thread>
++#include "framepacingdeadline.h"
+ 
+ namespace libretrodroid {
+ 
+ typedef std::chrono::steady_clock::time_point TimePoint;
+-typedef std::chrono::duration<long, std::micro> Duration;
+ 
+ class FPSSync {
+ public:
+@@ -45,11 +45,7 @@ private:
+     bool forceSoftwareTiming;
+     const double FPS_TOLERANCE = 5;
+ 
+-    const TimePoint MIN_TIME = TimePoint::min();
+-    void start();
+-
+-    TimePoint lastFrame = MIN_TIME;
+-    Duration sampleInterval;
++    FramePacingDeadline pacing;
+ };
+ 
+ }
+diff --git a/src/main/cpp/framepacingdeadline.h b/src/main/cpp/framepacingdeadline.h
+new file mode 100644
+index 0000000..f438edb
+--- /dev/null
++++ b/src/main/cpp/framepacingdeadline.h
+@@ -0,0 +1,73 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++
++#include <chrono>
++#include <cmath>
++
++namespace libretrodroid {
++
++// Render-thread-owned clock. Explicit time arguments keep the pacing policy
++// testable without wall-clock sleeps or Android display hardware.
++class FramePacingDeadline {
++public:
++    using Clock = std::chrono::steady_clock;
++    using TimePoint = Clock::time_point;
++    using Duration = Clock::duration;
++
++    // The existing one-second future-deadline watchdog cannot pace sub-Hz
++    // content. Reject values that would also round to a zero clock interval.
++    static bool validRate(double fps) noexcept {
++        return std::isfinite(fps) && fps >= 1.0 && fps <= 1000000000.0;
++    }
++
++    void setRate(double fps) noexcept {
++        if (!validRate(fps)) return;
++        const auto nanos = std::chrono::nanoseconds(std::llround(1000000000.0 / fps));
++        period = std::chrono::duration_cast<Duration>(nanos);
++        if (period < Duration{1}) period = Duration{1};
++        reset();
++    }
++
++    bool armed() const noexcept { return started; }
++    void reset() noexcept { started = false; }
++    TimePoint target() const noexcept { return deadline; }
++    Duration interval() const noexcept { return period; }
++
++    unsigned advance(TimePoint now, bool vsync) noexcept {
++        if (!started) {
++            started = true;
++            deadline = now + period;
++            return 1;
++        }
++        if (now < deadline || now - deadline < period) {
++            deadline += period;
++            return 1;
++        }
++        if (vsync) {
++            // Match the existing post-stall reanchor on the vsync path.
++            deadline = now + period;
++            return 1;
++        }
++        const auto late = now - deadline;
++        // Skip elapsed deadlines in O(1), preserving fractional phase. The
++        // frontend already caps forward emulation to two frames per step.
++        // Never narrow a potentially huge elapsed-frame count to unsigned.
++        deadline = now - late % period;
++        return late / period >= 2 ? 2u : 1u;
++    }
++
++    TimePoint waitTarget(TimePoint now) noexcept {
++        if (!started || deadline <= now) return now;
++        if (std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count() > 1000) {
++            deadline = now;
++        }
++        return deadline;
++    }
++
++private:
++    bool started = false;
++    TimePoint deadline{};
++    Duration period = std::chrono::duration_cast<Duration>(std::chrono::nanoseconds(16666667));
++};
++
++} // namespace libretrodroid
