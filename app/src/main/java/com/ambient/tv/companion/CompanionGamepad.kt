@@ -551,7 +551,12 @@ object CompanionGamepadSession {
             releaseInputs(game, port, suppressHeld = true, releaseMenu = false)
             return false
         }
-        val gate = buttonGates.getOrPut(session) { CompanionButtonEdgeGate() }
+        val gate = buttonGates.getOrPut(session) {
+            // Moonlight has an ordered native input transport rather than the Libretro polling gate.
+            // Retain one short tap interval without adding the retro core's 35ms hold / 17ms gap.
+            if (game.info.systemId == "moonlight") CompanionButtonEdgeGate(minPressMs = 17L, minGapMs = 4L)
+            else CompanionButtonEdgeGate()
+        }
         lastState[session] = packet
         val visibleButtons = runCatching {
             gate.update(packet.buttons, android.os.SystemClock.uptimeMillis())

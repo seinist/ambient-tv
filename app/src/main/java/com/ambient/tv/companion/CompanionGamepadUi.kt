@@ -322,18 +322,21 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
         if (state.gamepadPanel && state.online && info != null) manager.claimGamepad()
     }
 
-    // Press edges are sent immediately below. Axis, pointer and gyro snapshots are sampled
-    // at ~60Hz; an idle heartbeat at 500ms keeps TV deadman state and buttons alive.
-    LaunchedEffect(transmitting, info?.sessionId, motionEnabled) {
+    // Button/neutral edges remain immediate. Moonlight may sample continuous inputs at 120 Hz
+    // on high-refresh phones with a healthy ACK path; Libretro retains its 60 Hz cadence.
+    val ackP95 by rememberUpdatedState(state.inputLatencyP95Ms)
+    val sourceRefresh by rememberUpdatedState(view.display?.refreshRate ?: 60f)
+    LaunchedEffect(transmitting, info?.sessionId, info?.systemId, motionEnabled) {
         if (transmitting) {
             var last: CompanionGamepadState? = null
-            var ticks = 0
+            var lastHeartbeat = 0L
             while (true) {
                 val next = padFrame.value.copy(motion = if (motionEnabled) motion.snapshot() else null)
-                if (next != last || ticks >= 30) {
+                val now = android.os.SystemClock.uptimeMillis()
+                if (next != last || now - lastHeartbeat >= 500L) {
                     if (manager.gamepadInput(next)) {
                         last = next
-                        ticks = 0
+                        lastHeartbeat = now
                         // Mouse deltas are relative, not a held position. A successful
                         // enqueue consumes them once, never repeating them on the heartbeat.
                         if (next.pointer?.kind == "mouse" &&
@@ -348,8 +351,9 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                         }
                     }
                 }
-                ticks++
-                delay(16)
+                val fast = info?.systemId == "moonlight" && sourceRefresh >= 100f &&
+                    ackP95?.let { it <= 20L } == true
+                delay(if (fast) 8L else 16L)
             }
         }
     }

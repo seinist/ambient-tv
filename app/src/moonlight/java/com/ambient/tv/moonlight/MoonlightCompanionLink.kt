@@ -25,6 +25,8 @@ class MoonlightCompanionLink @Inject constructor(
     private var mouseDown = false
     private var touchUnsupported = false
     private val touches = LinkedHashMap<Int, CompanionPointerContact>()
+    private val motionMasks = IntArray(4) { -1 }
+    private var motionGeneration: Long? = null
 
     fun attach(owner: Any, title: String, usedPorts: () -> Set<Int>,
         profileContext: com.ambient.tv.ui.gamepad.retro.RetroInputProfileContext? = null, onMenu: () -> Unit) {
@@ -66,6 +68,8 @@ class MoonlightCompanionLink @Inject constructor(
         previous.releaseEverything()
         clearPointer()
         owner = null
+        motionMasks.fill(-1)
+        motionGeneration = null
     }
 
     private fun clearPointer() {
@@ -154,7 +158,17 @@ class MoonlightCompanionLink @Inject constructor(
 
     private fun motion(port: Int, state: CompanionMotionState?) {
         val data = state ?: return
-        engine.setRemoteMotionCapabilities(owner ?: return, port, data.mask)
+        if (port !in 0..3) return
+        val currentOwner = owner ?: return
+        val generation = engine.generation(currentOwner)
+        if (motionGeneration != generation) {
+            motionMasks.fill(-1)
+            motionGeneration = generation
+        }
+        if (motionMasks[port] != data.mask) {
+            motionMasks[port] = data.mask
+            engine.setRemoteMotionCapabilities(currentOwner, port, data.mask)
+        }
         if (data.mask and 1 != 0)
             engine.sendMotion(owner ?: return, port, MoonBridge.LI_MOTION_TYPE_ACCEL, data.ax, data.ay, data.az)
         if (data.mask and 2 != 0)

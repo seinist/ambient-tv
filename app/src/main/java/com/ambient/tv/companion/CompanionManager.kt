@@ -1456,6 +1456,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         }
         try {
             require(admitHandshake(socket.inetAddress))
+            // Avoid Nagle delays for the small authenticated controller and ACK records.
+            socket.tcpNoDelay = true
             socket.soTimeout = 8_000
             socket.startHandshake()
             val input = DataInputStream(socket.inputStream); val output = DataOutputStream(socket.outputStream)
@@ -1806,6 +1808,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                     clientSocket = socket
                 }
                 socket.enabledProtocols = arrayOf("TLSv1.3", "TLSv1.2")
+                socket.tcpNoDelay = true
                 socket.soTimeout = 8_000
                 socket.startHandshake()
                 val serverCertificate = socket.session.peerCertificates.single() as java.security.cert.X509Certificate

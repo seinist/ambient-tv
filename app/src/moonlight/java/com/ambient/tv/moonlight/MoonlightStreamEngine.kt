@@ -63,6 +63,7 @@ class MoonlightStreamEngine @Inject constructor(
         var started: Boolean = false,
         @Volatile var cancelled: Boolean = false,
         @Volatile var networkPoor: Boolean = false,
+        @Volatile var touchSupported: Boolean? = null,
         var stopIssued: Boolean = false,
         var preparation: Job? = null,
         var audioFocus: AudioFocusRequest? = null,
@@ -81,6 +82,7 @@ class MoonlightStreamEngine @Inject constructor(
             task.run()
         }, "moonlight-input").apply { isDaemon = true } })
     private val inputOwnership = MoonlightInputOwnership()
+    private val heldKeyboard = mutableMapOf<Short, Byte>()
     private val motionRequests = mutableMapOf<Pair<Int, Byte>, Pair<Int, Long>>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val revision = AtomicLong(0)
@@ -244,7 +246,27 @@ class MoonlightStreamEngine @Inject constructor(
             preparation?.join()
             val connection = synchronized(lock) { session.connection }
             // No more input can enter after cancellation; drain the previous JNI call.
-            synchronized(inputGate) { inputOwnership.clear(); motionRequests.clear() }
+            synchronized(inputGate) {
+                // A cancelled mailbox must not replay presses. Neutralize inputs already handed
+                // to the host before native stop (which may keep the remote game running).
+                if (connection != null && session.started) {
+                    val mask = synchronized(lock) { desiredControllerMask() }.toShort()
+                    for (port in 0..3) if (mask.toInt() and (1 shl port) != 0)
+                        runCatching { connection.sendControllerInput(port.toShort(), mask, 0, 0, 0, 0, 0, 0, 0) }
+                    heldKeyboard.keys.forEach { key ->
+                        runCatching { connection.sendKeyboardInput(key, KeyboardPacket.KEY_UP, 0, 0) }
+                    }
+                    inputOwnership.pressedMouseButtons().forEach { button ->
+                        runCatching { connection.sendMouseButtonUp(button.toByte()) }
+                    }
+                    inputOwnership.activeTouchIds().forEach { id ->
+                        runCatching { connection.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL, id,
+                            0f, 0f, 0f, 0f, 0f, (-1).toShort()) }
+                    }
+                }
+                heldKeyboard.clear()
+                inputOwnership.clear(); motionRequests.clear()
+            }
             var stopped = false
             repeat(3) {
                 if (!stopped) {
@@ -439,7 +461,9 @@ class MoonlightStreamEngine @Inject constructor(
         enqueueInput(owner) {
             val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
             val direction = if (pressed) KeyboardPacket.KEY_DOWN else KeyboardPacket.KEY_UP
-            runCatching { conn?.sendKeyboardInput(virtualKey, direction, modifiers, 0) }
+            if (conn != null && runCatching { conn.sendKeyboardInput(virtualKey, direction, modifiers, 0) }.isSuccess) {
+                if (pressed) heldKeyboard[virtualKey] = modifiers else heldKeyboard.remove(virtualKey)
+            }
         }
     }
 
@@ -476,12 +500,14 @@ class MoonlightStreamEngine @Inject constructor(
     /** Normalized multi-contact touchscreen events; native GameStream owns remote touch state. */
     fun sendTouchEvent(owner: Any, type: Byte, pointerId: Int, x: Float, y: Float,
                        pressure: Float = 1f, source: Int = 0): Int {
-        synchronized(inputGate) {
-            val id = inputOwnership.touchId(source, pointerId) ?: return MoonBridge.LI_ERR_UNSUPPORTED
-            if (!x.isFinite() || !y.isFinite() || !pressure.isFinite())
-                return MoonBridge.LI_ERR_UNSUPPORTED
-            val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
-                ?: return MoonBridge.LI_ERR_UNSUPPORTED
+        val id = inputOwnership.touchId(source, pointerId) ?: return MoonBridge.LI_ERR_UNSUPPORTED
+        if (!x.isFinite() || !y.isFinite() || !pressure.isFinite()) return MoonBridge.LI_ERR_UNSUPPORTED
+        val session = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled } }
+            ?: return MoonBridge.LI_ERR_UNSUPPORTED
+        if (session.touchSupported == false) return MoonBridge.LI_ERR_UNSUPPORTED
+        fun dispatch(): Int {
+            if (!isOwned(session)) return MoonBridge.LI_ERR_UNSUPPORTED
+            val conn = session.connection ?: return MoonBridge.LI_ERR_UNSUPPORTED
             if (!inputOwnership.acceptsTouch(id, type)) return 0
             val result = runCatching {
                 conn.sendTouchEvent(type, id, x.coerceIn(0f, 1f), y.coerceIn(0f, 1f),
@@ -490,6 +516,22 @@ class MoonlightStreamEngine @Inject constructor(
             if (result == 0) inputOwnership.acceptedTouch(id, type)
             return result
         }
+        // Only the first actual DOWN probes host support synchronously. The result is fixed for
+        // this connection, so later contacts and MOVE events use the ordered worker.
+        if (session.touchSupported == null) synchronized(inputGate) {
+            val result = dispatch()
+            if (type == MoonBridge.LI_TOUCH_EVENT_DOWN) {
+                if (result == 0) session.touchSupported = true
+                else if (result == MoonBridge.LI_ERR_UNSUPPORTED) session.touchSupported = false
+            }
+            return result
+        }
+        enqueueInput(owner, if (type == MoonBridge.LI_TOUCH_EVENT_MOVE) "touch:$id" else null) {
+            val result = dispatch()
+            if (result != 0 && type != MoonBridge.LI_TOUCH_EVENT_MOVE)
+                fail(session, "Moonlight touch input failed", retryable = true)
+        }
+        return 0
     }
 
     /** Controller gyroscope and acceleration, from the authenticated Companion stream. */

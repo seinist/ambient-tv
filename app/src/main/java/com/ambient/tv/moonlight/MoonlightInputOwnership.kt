@@ -27,5 +27,7 @@ internal class MoonlightInputOwnership {
         else if (type.toInt() == 2 || type.toInt() == 4) contacts.remove(id)
     }
 
+    fun pressedMouseButtons(): List<Int> = mouseSources.indices.filter { mouseSources[it].isNotEmpty() }.map { it + 1 }
+    fun activeTouchIds(): List<Int> = contacts.toList()
     fun clear() { mouseSources.forEach { it.clear() }; contacts.clear() }
 }
