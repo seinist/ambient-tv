@@ -27,6 +27,8 @@ internal class MoonlightCompanionSink(
     private val previousButtons = IntArray(4)
     private val suppressedAnalog = BooleanArray(4)
     private val suppressedTriggers = BooleanArray(4)
+    private val profileCache = arrayOfNulls<com.ambient.tv.ui.gamepad.retro.RetroInputProfile>(4)
+    private var cachedConfig = RetroInputSettings.config
     fun reservedPorts(): Set<Int> = reserved.toSet()
     fun republishReservations() { reserved.forEach { engine.setRemotePortActive(owner, it, true) } }
     override fun localUsedPorts(): Set<Int> = localPorts()
@@ -34,7 +36,11 @@ internal class MoonlightCompanionSink(
 
     override fun reserveRemotePort(port: Int, reserved: Boolean, descriptor: String?) {
         if (port !in 0..3) return
-        if (reserved) { this.reserved.add(port); descriptors[port] = descriptor } else {
+        if (reserved) {
+            if (descriptors[port] != descriptor) profileCache[port] = null
+            this.reserved.add(port); descriptors[port] = descriptor
+        } else {
+            profileCache[port] = null
             descriptors[port] = null
             mappedPrevious[port] = 0
             this.reserved.remove(port)
@@ -85,7 +91,7 @@ internal class MoonlightCompanionSink(
         rightX: Float, rightY: Float, leftTrigger: Float?, rightTrigger: Float?,
     ) {
         if (port !in reserved) return
-        engine.setRemotePortActive(owner, port, true)
+        // Reservation is published on claim or session republish, not every input.
         // RetroPad labels are SNES positions: B bottom/A right/Y left/X top.
         // Windows XInput's A/B/X/Y are bottom/right/left/top respectively.
         previousButtons[port] = buttons
@@ -93,8 +99,13 @@ internal class MoonlightCompanionSink(
         val visible = buttons and suppressedButtons[port].inv()
         val config = RetroInputSettings.config
         val descriptor = descriptors[port]
-        val profile = profileContext?.let { config.profile(RetroInputKind.COMPANION, it, deviceDescriptor = descriptor) }
-            ?: descriptor?.let { config.deviceProfile(RetroInputKind.COMPANION, it) } ?: config.profile(RetroInputKind.COMPANION)
+        if (cachedConfig !== config) {
+            cachedConfig = config
+            profileCache.fill(null)
+        }
+        val profile = profileCache[port] ?: (profileContext?.let { config.profile(RetroInputKind.COMPANION, it, deviceDescriptor = descriptor) }
+            ?: descriptor?.let { config.deviceProfile(RetroInputKind.COMPANION, it) } ?: config.profile(RetroInputKind.COMPANION))
+            .also { profileCache[port] = it }
         val rising = visible and mappedPrevious[port].inv()
         mappedPrevious[port] = visible
         var mappedButtons = companionMappedButtons(visible, profile)

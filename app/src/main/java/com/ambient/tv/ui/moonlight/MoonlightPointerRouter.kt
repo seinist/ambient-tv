@@ -10,6 +10,9 @@ import kotlin.math.roundToInt
 internal class MoonlightPointerRouter(private val engine: MoonlightStreamEngine, private val owner: Any) {
     private val contacts = LinkedHashMap<Int, Pair<Float, Float>>()
     private var mouseButtons = 0
+    private var mouseRemainderX = 0f
+    private var mouseRemainderY = 0f
+    private var scrollRemainder = 0f
     private var touchMouse = false
     private var touchFallback = false
     private var view: View? = null
@@ -22,6 +25,7 @@ internal class MoonlightPointerRouter(private val engine: MoonlightStreamEngine,
         touchMouse = false
         touchFallback = false
         updateMouseButtons(0)
+        mouseRemainderX = 0f; mouseRemainderY = 0f; scrollRemainder = 0f
         view?.let { if (it.hasPointerCapture()) it.releasePointerCapture() }
     }
 
@@ -41,8 +45,21 @@ internal class MoonlightPointerRouter(private val engine: MoonlightStreamEngine,
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP, MotionEvent.ACTION_BUTTON_PRESS,
             MotionEvent.ACTION_BUTTON_RELEASE, MotionEvent.ACTION_MOVE, MotionEvent.ACTION_HOVER_MOVE -> {
                 if (captured) {
-                    if (event.actionMasked == MotionEvent.ACTION_MOVE || event.actionMasked == MotionEvent.ACTION_HOVER_MOVE)
-                        engine.sendMouseMove(owner, event.x.roundToInt(), event.y.roundToInt())
+                    if (event.actionMasked == MotionEvent.ACTION_MOVE || event.actionMasked == MotionEvent.ACTION_HOVER_MOVE) {
+                        var dx = mouseRemainderX
+                        var dy = mouseRemainderY
+                        for (i in 0 until event.historySize) {
+                            dx += event.getHistoricalX(i)
+                            dy += event.getHistoricalY(i)
+                        }
+                        dx += event.x; dy += event.y
+                        if (dx.isFinite() && dy.isFinite()) {
+                            val x = dx.roundToInt().coerceIn(-32767, 32767)
+                            val y = dy.roundToInt().coerceIn(-32767, 32767)
+                            mouseRemainderX = dx - x; mouseRemainderY = dy - y
+                            if (x != 0 || y != 0) engine.sendMouseMove(owner, x, y)
+                        }
+                    }
                 } else engine.sendMousePosition(owner, event.x.roundToInt(), event.y.roundToInt(),
                     target.width.coerceAtLeast(1), target.height.coerceAtLeast(1))
                 updateMouseButtons(if (event.actionMasked == MotionEvent.ACTION_UP) 0 else event.buttonState)
@@ -51,7 +68,12 @@ internal class MoonlightPointerRouter(private val engine: MoonlightStreamEngine,
                 return true
             }
             MotionEvent.ACTION_SCROLL -> {
-                engine.sendMouseScroll(owner, event.getAxisValue(MotionEvent.AXIS_VSCROLL).roundToInt())
+                val scroll = scrollRemainder + event.getAxisValue(MotionEvent.AXIS_VSCROLL)
+                if (scroll.isFinite()) {
+                    val steps = scroll.toInt().coerceIn(-8, 8)
+                    scrollRemainder = scroll - steps
+                    if (steps != 0) engine.sendMouseScroll(owner, steps)
+                }
                 return true
             }
             MotionEvent.ACTION_CANCEL -> { updateMouseButtons(0); return true }
