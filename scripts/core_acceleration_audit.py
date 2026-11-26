@@ -7,7 +7,9 @@ DRIVER = re.compile(r"(?:[\w.-]+-)?clang(?:\+\+)?(?:-\d+)?")
 COMPILER_COMMAND = re.compile(r"^\s*(?:\d{4}-\d{2}-\d{2}T[^ ]+Z\s+)?(?:\S*/)?(?:[\w.-]+-)?clang(?:\+\+)?(?:-\d+)?(?:\s|$)")
 SOURCE = re.compile(r"\.(?:c|cc|cpp|cxx|C|s|S|asm)$")
 AUDITED = {"gpsp", "pcsx_rearmed", "mupen64plus_next_gles3", "picodrive", "parallel_n64", "mednafen_psx_hw", "swanstation", "gambatte", "genesis_plus_gx",
-           "mednafen_pce_fast", "mednafen_ngp", "mednafen_wswan", "mednafen_supergrafx", "snes9x2010"}
+           "mednafen_pce_fast", "mednafen_ngp", "mednafen_wswan", "mednafen_supergrafx", "snes9x2010",
+           "nestopia", "snes9x", "mgba", "handy", "stella2014", "mednafen_vb",
+           "fceumm", "mesen", "bsnes", "sameboy", "race", "mednafen_lynx"}
 
 
 def expand_response(tokens, cwd, root, depth=0):
@@ -129,6 +131,60 @@ def evidence(commands, source, required=()):
 def requirements(core, abi, profile):
     arm = abi in {"arm64-v8a", "armeabi-v7a"}
     arm64 = abi == "arm64-v8a"
+    # These are build-path contracts, not claims that a given runtime option
+    # is enabled or a particular function has become faster.
+    if core == "nestopia":
+        return {"cpu": ("source/core/NstCpu.cpp", (("__LIBRETRO__", "1"),)),
+                "ppu": ("source/core/NstPpu.cpp", ()),
+                "audio": ("source/core/NstApu.cpp", ()),
+                "video_renderer": ("source/core/NstVideoRenderer.cpp", ())}
+    if core == "snes9x":
+        return {"cpu_dispatch": ("cpuops.cpp", (("__LIBRETRO__", "1"),)),
+                "cpu_execution": ("cpuexec.cpp", ()),
+                "audio_dsp": ("apu/bapu/dsp/sdsp.cpp", ())}
+    if core == "mgba":
+        return {"arm_cpu": ("src/arm/arm.c", (("__LIBRETRO__", "1"),)),
+                "gba_software_renderer": ("src/gba/renderers/video-software.c", ()),
+                "gb_software_renderer": ("src/gb/renderers/software.c", ()),
+                "libretro_vfs": ("src/platform/libretro/libretro.c", (("ENABLE_VFS", "1"),))}
+    if core == "handy":
+        return {"blip_audio": ("blip/Blip_Buffer.cpp", ()),
+                "stereo_audio": ("blip/Stereo_Buffer.cpp", ()),
+                "crc_rom_loader": ("libretro/libretro.cpp", (("WANT_CRC32", "1"),))}
+    if core == "stella2014":
+        return {"cpu": ("emucore/M6502.cxx", (("__LIBRETRO__", "1"),)),
+                "tia": ("emucore/TIA.cxx", ()),
+                "tia_audio": ("emucore/TIASnd.cxx", ())}
+    if core == "mednafen_vb":
+        return {"v810_cpu": ("hw_cpu/v810/v810_cpu.cpp", (("WANT_VB_EMU", "1"),)),
+                "gles2_renderer_option": ("libretro.cpp", (("HAVE_OPENGLES2", "1"), ("HAVE_VR", "1"))),
+                "blip_audio": ("sound/Blip_Buffer.c", ())}
+    if core == "fceumm":
+        return {"cpu": ("x6502.c", ()),
+                "ntsc_filter": ("ntsc/nes_ntsc.c", (("HAVE_NTSC_FILTER", "1"),)),
+                "audio": ("sound.c", (("PSS_STYLE", "1"),))}
+    if core == "mesen":
+        return {"cpu": ("Core/CPU.cpp", (("LIBRETRO", "1"),)),
+                "ppu": ("Core/PPU.cpp", ()),
+                "video_renderer": ("Core/VideoRenderer.cpp", ()),
+                "blip_audio": ("Utilities/blip_buf.cpp", ())}
+    if core == "bsnes":
+        return {"cpu": ("sfc/cpu/cpu.cpp", (("DISABLE_DEBUGGER", "1"),)),
+                "fast_ppu": ("sfc/ppu-fast/ppu.cpp", ()),
+                "audio_dsp": ("sfc/dsp/dsp.cpp", ()),
+                "integrated_gb": ("gb/Core/sm83_cpu.c", (("GB_INTERNAL", "1"),))}
+    if core == "sameboy":
+        return {"sm83_cpu": ("Core/sm83_cpu.c", (("GB_INTERNAL", "1"),)),
+                "libretro": ("libretro/libretro.c", (("GB_INTERNAL", "1"),))}
+    if core == "race":
+        return {"portable_z80": ("libretro/libretro.c", (("CZ80", "1"),)),
+                "blip_audio": ("deps/blip/Blip_Buffer.c", ()),
+                "audio": ("neopop_blip.c", ())}
+    if core == "mednafen_lynx":
+        return {"rgb565_option": ("libretro.cpp", (("FRONTEND_SUPPORTS_RGB565", "1"),)),
+                "crc_loader": ("scrc32.c", (("WANT_CRC32", "1"),)),
+                "blip_audio": ("sound/Blip_Buffer.cpp", ()),
+                "stereo_audio": ("sound/Stereo_Buffer.cpp", ())}
     if core == "snes9x2010":
         result = {"rgb565_renderer": ("libretro/libretro.c", (("FRONTEND_SUPPORTS_RGB565", "1"),))}
         if profile == "snes9x2010-threaded":
