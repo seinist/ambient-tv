@@ -143,6 +143,37 @@ internal object MoonlightHardwareVideo {
         }
     }
 
+    private val advancedCaps = MoonBridge.CAPABILITY_DIRECT_SUBMIT or
+        MoonBridge.CAPABILITY_REFERENCE_FRAME_INVALIDATION_AVC or
+        MoonBridge.CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC or
+        MoonBridge.CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1
+
+    fun hasAdvancedCapabilities(flags: Int): Boolean = flags and advancedCaps != 0
+
+    /** Re-check the actual negotiated dimensions, format and selected fallback decoder. */
+    fun candidateMatchesCapabilities(info: MediaCodecInfo, mime: String, height: Int, flags: Int): Boolean =
+        runCatching {
+            val directSafe = flags and MoonBridge.CAPABILITY_DIRECT_SUBMIT == 0 ||
+                (mime == MediaFormat.MIMETYPE_VIDEO_AVC && MediaCodecHelper.decoderCanDirectSubmit(info.name) &&
+                    !MediaCodecHelper.decoderNeedsSpsBitstreamRestrictions(info.name) &&
+                    !MediaCodecHelper.decoderNeedsBaselineSpsHack(info.name) &&
+                    !MediaCodecHelper.decoderNeedsConstrainedHighProfile(info.name))
+            directSafe && when (mime) {
+                MediaFormat.MIMETYPE_VIDEO_AVC ->
+                    flags and MoonBridge.CAPABILITY_REFERENCE_FRAME_INVALIDATION_AVC == 0 ||
+                        (MediaCodecHelper.decoderSupportsRefFrameInvalidationAvc(info.name, height) &&
+                            !MediaCodecHelper.decoderNeedsSpsBitstreamRestrictions(info.name) &&
+                            !MediaCodecHelper.decoderNeedsBaselineSpsHack(info.name))
+                MediaFormat.MIMETYPE_VIDEO_HEVC ->
+                    flags and MoonBridge.CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC == 0 ||
+                        MediaCodecHelper.decoderSupportsRefFrameInvalidationHevc(info)
+                MediaFormat.MIMETYPE_VIDEO_AV1 ->
+                    flags and MoonBridge.CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1 == 0 ||
+                        MediaCodecHelper.decoderSupportsRefFrameInvalidationAv1(info)
+                else -> false
+            }
+        }.getOrDefault(false)
+
     /** Negotiate conservative capabilities for every offered format, before setup(). */
     fun rendererCapabilities(profile: MoonlightStreamProfile, offered: Int): Int {
         var flags = 0

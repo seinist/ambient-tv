@@ -100,7 +100,8 @@ class MoonlightStreamEngine @Inject constructor(
     /** All calls are non-blocking for the Compose UI, including HTTPS launch negotiation. */
     fun start(owner: Any, hostId: String, appId: Int, surface: Surface, profile: MoonlightStreamProfile,
               displayRefreshHz: Float? = null, displayHdr10: Boolean? = null,
-              resumeOnly: Boolean = false, excludedVideoFormats: Int = 0): Boolean {
+              resumeOnly: Boolean = false, excludedVideoFormats: Int = 0,
+              safeDecoder: Boolean = false): Boolean {
         if (!surface.isValid || appId <= 0 || !prefs.moonlightEnabled) return false
         val valid = runCatching { profile.validated() }.getOrNull() ?: return false
         val session = synchronized(lock) {
@@ -136,10 +137,18 @@ class MoonlightStreamEngine @Inject constructor(
                 if (!transport.current(target)) throw SecurityException("Moonlight host changed")
                 if (!requestAudioFocus(session)) throw IllegalStateException("Audio focus denied")
 
-                val video = MoonlightMediaCodecRenderer(surface, valid, videoFormat) { text, rejected ->
+                val rendererCaps = withContext(Dispatchers.IO) {
+                    if (safeDecoder) 0 else runCatching {
+                        MoonlightHardwareVideo.rendererCapabilities(valid, videoFormat)
+                    }.getOrDefault(0)
+                }
+                if (!isOwned(session)) return@launch
+                val video = MoonlightMediaCodecRenderer(surface, valid, rendererCaps) { text, rejected ->
                     val remaining = videoFormat and rejected.inv()
-                    fail(session, text, retryable = rejected == 0 || remaining != 0,
-                        rejectedVideoFormat = if (remaining != 0) rejected else 0)
+                    val conservativeRetry = MoonlightHardwareVideo.hasAdvancedCapabilities(rendererCaps)
+                    fail(session, text, retryable = conservativeRetry || rejected == 0 || remaining != 0,
+                        rejectedVideoFormat = if (!conservativeRetry && remaining != 0) rejected else 0,
+                        safeDecoderRetry = conservativeRetry)
                 }
                 val audio = MoonlightAudioTrackRenderer(valid.pacing) { text -> fail(session, text, retryable = true) }
                 val audioConfig = when (valid.audioChannels) {
@@ -739,11 +748,13 @@ class MoonlightStreamEngine @Inject constructor(
     }
 
     private fun fail(session: Active, text: String, retryable: Boolean = false,
-                     rejectedVideoFormat: Int = 0, adaptNetworkQuality: Boolean = false) {
+                     rejectedVideoFormat: Int = 0, adaptNetworkQuality: Boolean = false,
+                     safeDecoderRetry: Boolean = false) {
         synchronized(lock) {
             if (active !== session || session.cancelled) return
-            mutable.value = mutable.value.copy(phase = MoonlightStreamPhase.FAILED, error = text, retryable = retryable && (session.started || rejectedVideoFormat != 0),
-                rejectedVideoFormat = rejectedVideoFormat, adaptNetworkQuality = adaptNetworkQuality)
+            mutable.value = mutable.value.copy(phase = MoonlightStreamPhase.FAILED, error = text, retryable = retryable && (session.started || rejectedVideoFormat != 0 || safeDecoderRetry),
+                rejectedVideoFormat = rejectedVideoFormat, adaptNetworkQuality = adaptNetworkQuality,
+                safeDecoderRetry = safeDecoderRetry)
         }
         stopSession(session)
     }

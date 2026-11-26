@@ -20,7 +20,8 @@ class MoonlightStreamEngine @Inject constructor() {
 
     fun start(owner: Any, hostId: String, appId: Int, surface: Surface, profile: MoonlightStreamProfile,
               displayRefreshHz: Float? = null, displayHdr10: Boolean? = null,
-              resumeOnly: Boolean = false, excludedVideoFormats: Int = 0): Boolean = false
+              resumeOnly: Boolean = false, excludedVideoFormats: Int = 0,
+              safeDecoder: Boolean = false): Boolean = false
     fun isBusy(): Boolean = false
     fun generation(owner: Any): Long? = null
     fun stop(owner: Any, generation: Long? = null) = Unit

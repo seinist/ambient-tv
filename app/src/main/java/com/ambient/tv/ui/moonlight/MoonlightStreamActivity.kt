@@ -466,6 +466,7 @@ private fun MoonlightStreamContent(
         if (status.phase == MoonlightStreamPhase.STREAMING) resumeOnly = true
     }
     var excludedVideoFormats by remember { mutableStateOf(0) }
+    var safeDecoder by remember { mutableStateOf(false) }
     var effectiveProfile by remember(hostId, appId, sessionProfile) { mutableStateOf(sessionProfile) }
     LaunchedEffect(engine, hostId, appId, binding, displayReady, effectiveProfile, retryRevision) {
         startFailed = false
@@ -495,7 +496,7 @@ private fun MoonlightStreamContent(
         }
         if (engine.start(owner, hostId, appId, target.surface, effectiveProfile,
                 displayResult.mode?.refreshRate, displayResult.hdr10, resumeOnly = resumeOnly,
-                excludedVideoFormats = excludedVideoFormats)) {
+                excludedVideoFormats = excludedVideoFormats, safeDecoder = safeDecoder)) {
             val generation = engine.generation(owner)
             onStarted()
             try { awaitCancellation() } finally { if (generation != null) engine.stop(owner, generation) }
@@ -507,6 +508,7 @@ private fun MoonlightStreamContent(
             autoRetries++
             resumeOnly = true
             excludedVideoFormats = excludedVideoFormats or status.rejectedVideoFormat
+            safeDecoder = safeDecoder || status.safeDecoderRetry
             if (status.adaptNetworkQuality) effectiveProfile = effectiveProfile.reducedNetworkBitrate()
             retryRevision++
         }
@@ -627,6 +629,7 @@ private fun MoonlightStreamContent(
                             PlayerIconButton(Icons.Filled.PlayArrow, stringResource(R.string.moonlight_retry_connection), {
                                 autoRetries = 0
                                 excludedVideoFormats = 0
+                                safeDecoder = false
                                 effectiveProfile = sessionProfile
                                 resumeOnly = status.retryable || resumeOnly
                                 onManualRetry()

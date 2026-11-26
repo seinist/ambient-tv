@@ -14,7 +14,7 @@ import kotlin.math.max
 class MoonlightMediaCodecRenderer(
     private val surface: Surface,
     private val requested: MoonlightStreamProfile,
-    private val offeredFormats: Int,
+    private val capabilities: Int,
     private val onError: (String, Int) -> Unit,
 ) : VideoDecoderRenderer() {
     private val inputLock = Any()
@@ -56,7 +56,6 @@ class MoonlightMediaCodecRenderer(
     private val assemblyLatency = MoonlightLatencyHistogram()
     private val releaseLatency = MoonlightLatencyHistogram()
     private val presentationLatency = MoonlightLatencyHistogram()
-    private val capabilities by lazy { MoonlightHardwareVideo.rendererCapabilities(requested, offeredFormats) }
     private val directSubmit get() = capabilities and MoonBridge.CAPABILITY_DIRECT_SUBMIT != 0
 
     override fun setup(format: Int, width: Int, height: Int, redrawRate: Int): Int =
@@ -98,7 +97,9 @@ class MoonlightMediaCodecRenderer(
 
     private fun newConfiguredDecoder(): MediaCodec? {
         val candidates = MoonlightHardwareVideo.decoders(currentMime, decodedWidth, decodedHeight,
-            decodedFps, hdr10 = negotiatedHdr10)
+            decodedFps, hdr10 = negotiatedHdr10).filter {
+                MoonlightHardwareVideo.candidateMatchesCapabilities(it, currentMime, decodedHeight, capabilities)
+            }
         for (info in candidates) {
             // Try reviewed vendor-specific options, then a clean MediaFormat.
             for (attempt in 0..5) {
