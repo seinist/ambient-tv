@@ -192,7 +192,8 @@ internal fun companionGamepadCriticalEdge(
 /**
  * Main-thread bridge between authenticated Companion TLS sessions and the active Libretro core.
  * Independent of TV remote-control leases: up to four paired phones can play together.
- * All entry points run on the main dispatcher (including release on socket teardown).
+ * Control-plane entry points remain on Main. A current Moonlight ticket can deliver continuous
+ * gameplay snapshots on the authenticated socket worker under the same session monitor.
  */
 object CompanionGamepadSession {
     private class Active(
@@ -237,6 +238,7 @@ object CompanionGamepadSession {
     private val buttonGates = mutableMapOf<String, CompanionButtonEdgeGate>()
     private val triggerEdges = mutableMapOf<String, CompanionTriggerEdges>()
     private val lastState = mutableMapOf<String, CompanionGamepadState>()
+    private val acceptedConfig = mutableMapOf<String, com.ambient.tv.ui.gamepad.retro.RetroInputConfig>()
     private val delayedRelease = mutableMapOf<String, Runnable>()
     private var rewindDeadline = 0L
     private var rewindDeadman: Runnable? = null
@@ -252,14 +254,14 @@ object CompanionGamepadSession {
         confirm.deadline = android.os.SystemClock.uptimeMillis() + 1_500L
         if (confirm.watchdog != null) return
         lateinit var task: Runnable
-        task = Runnable {
+        task = Runnable { synchronized(CompanionGamepadSession) {
             if (active !== game || game.confirm !== confirm || confirm.session !in ports) {
                 if (game.confirm === confirm) releaseConfirm(game)
             } else {
                 val remaining = confirm.deadline - android.os.SystemClock.uptimeMillis()
                 if (remaining > 0L) handler.postDelayed(task, remaining) else releaseConfirm(game)
             }
-        }
+        } }
         confirm.watchdog = task
         handler.postDelayed(task, 1_500L)
     }
@@ -283,14 +285,14 @@ object CompanionGamepadSession {
         rewindDeadline = android.os.SystemClock.uptimeMillis() + 1_500L
         if (rewindDeadman != null) return
         lateinit var task: Runnable
-        task = Runnable {
+        task = Runnable { synchronized(CompanionGamepadSession) {
             if (active !== game || game.rewindSession != session || ports[session] != 0) {
                 stopRewind(game)
             } else {
                 val remaining = rewindDeadline - android.os.SystemClock.uptimeMillis()
                 if (remaining > 0L) handler.postDelayed(task, remaining) else stopRewind(game)
             }
-        }
+        } }
         rewindDeadman = task
         handler.postDelayed(task, 1_500L)
     }
@@ -300,6 +302,7 @@ object CompanionGamepadSession {
             buttonGates.remove(session)?.clear()
             triggerEdges.remove(session)
             lastState.remove(session)
+            acceptedConfig.remove(session)
             delayedRelease.remove(session)?.let(handler::removeCallbacks)
         }
     }
@@ -309,7 +312,7 @@ object CompanionGamepadSession {
         val gate = buttonGates[session] ?: return
         val delay = gate.nextReleaseDelay(android.os.SystemClock.uptimeMillis()) ?: return
         lateinit var task: Runnable
-        task = Runnable {
+        task = Runnable { synchronized(CompanionGamepadSession) {
             delayedRelease.remove(session)
             if (active === game && ports[session] == port) {
                 val current = lastState[session]
@@ -323,7 +326,7 @@ object CompanionGamepadSession {
                     scheduleButtonRelease(session, game, port)
                 }
             }
-        }
+        } }
         delayedRelease[session] = task
         handler.postDelayed(task, delay)
     }
@@ -362,7 +365,7 @@ object CompanionGamepadSession {
         deadlines[session] = android.os.SystemClock.uptimeMillis() + 1_500L
         if (deadman.containsKey(session)) return
         lateinit var task: Runnable
-        task = Runnable {
+        task = Runnable { synchronized(CompanionGamepadSession) {
             if (active !== game || ports[session] != slot) {
                 cancelDeadman(session)
             } else {
@@ -374,11 +377,12 @@ object CompanionGamepadSession {
                     releaseInputs(game, slot)
                 }
             }
-        }
+        } }
         deadman[session] = task
         handler.postDelayed(task, 1_500L)
     }
 
+    @Synchronized
     fun attach(input: RetroPadInput, systemId: String, coreId: String, title: String,
                pointerInput: Boolean,
                onPointer: (Int, CompanionPointerState?) -> Unit = { _, _ -> },
@@ -400,6 +404,7 @@ object CompanionGamepadSession {
      * A Sunshine desktop/game can claim the same authenticated phone controller as Libretro.
      * Source and destination switching release all held inputs before changing ownership.
      */
+    @Synchronized
     internal fun attachMoonlight(
         sink: CompanionGamepadSink, title: String,
         onPointer: (Int, CompanionPointerState?) -> Unit = { _, _ -> },
@@ -415,10 +420,12 @@ object CompanionGamepadSession {
         ), onMenu, onPointer, onMotion, onRewind = {})
     }
 
+    @Synchronized
     internal fun setMoonlightInteraction(sink: CompanionGamepadSink, interaction: CompanionGamepadInteraction) {
         setInteractionForOwner(sink, interaction)
     }
 
+    @Synchronized
     internal fun setMoonlightRumble(sink: CompanionGamepadSink, port: Int, low: Int, high: Int) {
         val game = active?.takeIf { it.owner === sink && it.ready } ?: return
         if (port !in ports.values) return
@@ -426,14 +433,17 @@ object CompanionGamepadSession {
         else game.rumble[port] = low.coerceIn(0, 65535) to high.coerceIn(0, 65535)
     }
 
+    @Synchronized
     internal fun detachMoonlight(sink: CompanionGamepadSink) {
         if (active?.owner === sink) detachCurrent()
     }
 
+    @Synchronized
     fun setReady(input: RetroPadInput, ready: Boolean) {
         setInteraction(input, if (ready) CompanionGamepadInteraction.PLAYING else CompanionGamepadInteraction.BUSY)
     }
 
+    @Synchronized
     fun setInteraction(input: RetroPadInput, interaction: CompanionGamepadInteraction, context: Any? = null,
                        canResume: Boolean = true) {
         setInteractionForOwner(input, interaction, context, canResume)
@@ -458,6 +468,7 @@ object CompanionGamepadSession {
     }
 
     /** Cheap status only; the player obtains the actual buffered duration outside this bridge. */
+    @Synchronized
     fun setRewind(input: RetroPadInput, available: Boolean, seconds: Float) {
         val game = active?.takeIf { it.owner === input } ?: return
         val bounded = seconds.takeIf { it.isFinite() }?.coerceIn(0f, 60f) ?: 0f
@@ -468,12 +479,14 @@ object CompanionGamepadSession {
         if (!enabled) stopRewind(game)
     }
 
+    @Synchronized
     fun setInputDescriptions(input: RetroPadInput, descriptions: Map<String, String>) {
         val game = active?.takeIf { it.owner === input } ?: return
         val bounded = GameInputDescriptions.normalized(descriptions)
         if (game.info.inputDescriptions != bounded) game.info = game.info.copy(inputDescriptions = bounded)
     }
 
+    @Synchronized
     fun info(session: String? = null, includeDescriptions: Boolean = true): CompanionGamepadInfo? = active?.let { game ->
         val descriptions = when {
             !includeDescriptions -> null
@@ -487,6 +500,7 @@ object CompanionGamepadSession {
             rewindAvailable = game.ready && game.info.rewindAvailable &&
                 (session == null || ports[session] == 0))
     }
+    @Synchronized
     fun port(session: String): Int = ports[session] ?: -1
 
     /**
@@ -495,6 +509,7 @@ object CompanionGamepadSession {
      * Explicit fixed ports may intentionally share a local physical player's port; two phones
      * never silently share one port. An OFF setting disables this handset completely.
      */
+    @Synchronized
     fun claim(session: String, fingerprint: String = session): Int {
         val game = active ?: return -1
         val descriptor = com.ambient.tv.ui.gamepad.retro.companionControllerDescriptor(fingerprint)
@@ -529,6 +544,7 @@ object CompanionGamepadSession {
         return port
     }
 
+    @Synchronized
     fun input(session: String, packet: CompanionGamepadState): Boolean {
         packet.validate()
         val game = active ?: return false
@@ -551,6 +567,40 @@ object CompanionGamepadSession {
             releaseInputs(game, port, suppressHeld = true, releaseMenu = false)
             return false
         }
+        acceptedConfig[session] = com.ambient.tv.ui.gamepad.retro.RetroInputSettings.config
+        return deliverInput(session, game, port, packet)
+    }
+
+    internal data class MoonlightRealtimeReply(val accepted: Boolean, val info: CompanionGamepadInfo?, val port: Int)
+
+    /**
+     * Fast data plane: do not dispatch steady axis/pointer/motion samples through Compose's
+     * Main looper. A new context, button/contact edge, port/config change, or pending menu
+     * pulse falls back to the existing authenticated Main control plane.
+     */
+    @Synchronized
+    internal fun tryMoonlightContinuousInput(session: String, packet: CompanionGamepadState,
+                                            authorized: () -> Boolean): MoonlightRealtimeReply? {
+        val game = active ?: return null
+        if (game.info.systemId != "moonlight" || !game.ready ||
+            packet.contextRevision == null || packet.contextRevision != game.info.contextRevision ||
+            packet.sessionId != game.info.sessionId) return null
+        val port = ports[session] ?: return null
+        val previous = lastState[session] ?: return null
+        if (companionGamepadCriticalEdge(previous, packet) || session in delayedRelease) return null
+        val config = com.ambient.tv.ui.gamepad.retro.RetroInputSettings.config
+        if (acceptedConfig[session] !== config) return null
+        val fingerprint = deviceFingerprints[session] ?: return null
+        val configured = config.ports[com.ambient.tv.ui.gamepad.retro.companionControllerDescriptor(fingerprint)]
+            ?: RetroPorts.AUTO
+        if (configured == RetroPorts.OFF || configured != lastPortSetting[session]) return null
+        if (!authorized()) return null
+        if (runCatching { packet.validate() }.isFailure) return null
+        val accepted = deliverInput(session, game, port, packet)
+        return MoonlightRealtimeReply(accepted, info(session, includeDescriptions = false), ports[session] ?: -1)
+    }
+
+    private fun deliverInput(session: String, game: Active, port: Int, packet: CompanionGamepadState): Boolean {
         val gate = buttonGates.getOrPut(session) {
             // Moonlight has an ordered native input transport rather than the Libretro polling gate.
             // Retain one short tap interval without adding the retro core's 35ms hold / 17ms gap.
@@ -589,6 +639,7 @@ object CompanionGamepadSession {
         return true
     }
 
+    @Synchronized
     fun menu(session: String): Boolean {
         val game = active ?: return false
         if (!refreshClaim(session) || (!game.ready &&
@@ -600,6 +651,7 @@ object CompanionGamepadSession {
     }
 
     /** Game-controller claims authorize only this game, never the app-wide remote lease. */
+    @Synchronized
     fun command(session: String, command: CompanionGamepadCommand): Boolean = command(session, command,
         navigate = { menuInputReady() && CompanionRemoteInput.dispatch(it) },
         beginConfirm = { port -> if (menuInputReady()) CompanionRemoteInput.beginGameConfirm(-64 - port) else null })
@@ -610,9 +662,11 @@ object CompanionGamepadSession {
         return mode == com.ambient.tv.ui.gamepad.GameInputMode.MENU || mode == com.ambient.tv.ui.gamepad.GameInputMode.DIALOG
     }
 
+    @Synchronized
     internal fun command(session: String, command: CompanionGamepadCommand,
                          navigate: (CompanionInput) -> Boolean): Boolean = command(session, command, { null }, navigate)
 
+    @Synchronized
     internal fun command(session: String, command: CompanionGamepadCommand,
                          beginConfirm: (Int) -> ((Boolean) -> Unit)?,
                          navigate: (CompanionInput) -> Boolean): Boolean {
@@ -669,6 +723,7 @@ object CompanionGamepadSession {
         return session in ports
     }
 
+    @Synchronized
     fun release(session: String) {
         cancelDeadman(session)
         deviceFingerprints.remove(session)
@@ -682,6 +737,7 @@ object CompanionGamepadSession {
         publishPlayerPorts()
     }
 
+    @Synchronized
     fun detach(input: RetroPadInput) {
         if (active?.owner === input) detachCurrent()
     }

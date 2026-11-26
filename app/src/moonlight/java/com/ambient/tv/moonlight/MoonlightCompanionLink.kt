@@ -29,7 +29,7 @@ class MoonlightCompanionLink @Inject constructor(
     private var motionGeneration: Long? = null
 
     fun attach(owner: Any, title: String, usedPorts: () -> Set<Int>,
-        profileContext: com.ambient.tv.ui.gamepad.retro.RetroInputProfileContext? = null, onMenu: () -> Unit) {
+        profileContext: com.ambient.tv.ui.gamepad.retro.RetroInputProfileContext? = null, onMenu: () -> Unit): Unit = synchronized(CompanionGamepadSession) {
         detach()
         this.owner = owner
         val current = MoonlightCompanionSink(engine, owner, usedPorts, profileContext, onMenu)
@@ -42,7 +42,7 @@ class MoonlightCompanionLink @Inject constructor(
         )
     }
 
-    fun interaction(playing: Boolean, menu: Boolean) {
+    fun interaction(playing: Boolean, menu: Boolean): Unit = synchronized(CompanionGamepadSession) {
         val current = sink ?: return
         if (playing && !menu) current.republishReservations()
         CompanionGamepadSession.setMoonlightInteraction(current, when {
@@ -52,16 +52,16 @@ class MoonlightCompanionLink @Inject constructor(
         })
     }
 
-    fun reservedPorts(): Set<Int> = sink?.reservedPorts().orEmpty()
-    fun republishReservations() { sink?.republishReservations() }
+    fun reservedPorts(): Set<Int> = synchronized(CompanionGamepadSession) { sink?.reservedPorts().orEmpty() }
+    fun republishReservations() { synchronized(CompanionGamepadSession) { sink?.republishReservations() } }
 
-    fun rumble(event: MoonlightRumble) {
+    fun rumble(event: MoonlightRumble): Unit = synchronized(CompanionGamepadSession) {
         val current = sink ?: return
         if (event.port in current.reservedPorts())
             CompanionGamepadSession.setMoonlightRumble(current, event.port, event.low, event.high)
     }
 
-    fun detach() {
+    fun detach(): Unit = synchronized(CompanionGamepadSession) {
         val previous = sink ?: return
         sink = null
         CompanionGamepadSession.detachMoonlight(previous)
