@@ -358,6 +358,7 @@ class VlcPlaybackController(
     }
 
     private var prepared = false
+    private var nativeMediaOpened = false
     // Native VLC 4 stop waits for Stopped. All internal reopens share one asynchronous
     // stop, then apply the newest requested position/play state on the main thread.
     private var restartStop: java.util.concurrent.CompletableFuture<Unit>? = null
@@ -796,6 +797,7 @@ class VlcPlaybackController(
             retiring.setEventListener(null)
             retiring.vlcVout.removeCallback(surfaceCallback)
             player = MediaPlayer(libVlc)
+            nativeMediaOpened = false
             // A newly created VLC audio output can report an unset volume (-1).
             // Carry the intended volume into priming instead of reading that sentinel.
             player.setVolume(retiringVolume)
@@ -855,7 +857,7 @@ class VlcPlaybackController(
         val task = object : Runnable {
             override fun run() {
                 if (released || attachedView !== view || userVideoDisabled ||
-                    restartStop != null || dvRetirementPending) return
+                    restartStopFailed || restartStop != null || dvRetirementPending) return
                 // Surface creation and ES discovery are independent. The old one-second
                 // timer could expire while AudioTrack/HDMI or network initialization continued.
                 if (view.holder.surface.isValid) {
@@ -929,7 +931,7 @@ class VlcPlaybackController(
         openingOrRestarting = true
         ended = false
         if (restartStop != null || dvRetirementPending) return
-        if (!prepared) {
+        if (!nativeMediaOpened) {
             prepare(position, playing)
             return
         }
@@ -955,6 +957,7 @@ class VlcPlaybackController(
                     errorMessage = context.getString(R.string.audio_output_release_failed)
                     return@post
                 }
+                nativeMediaOpened = false
                 val nextView = pendingAttachView
                 pendingAttachView = null
                 nextView?.let(::attach)
@@ -1060,10 +1063,11 @@ class VlcPlaybackController(
         val rebuild = forceOutputRebuild || configuredSoftwareProcessing != effectiveImage.softwareProcessing ||
             configuredSvpOptions != effectiveImage.svp || configuredSvpMode != effectiveImage.svpMode || svpTargetChanged(effectiveImage.svpMode, configuredSvpRate, targetRate) ||
             configuredDeinterlaceMode != effectiveDeinterlaceMode || configuredDeinterlaceFilter != effectiveDeinterlace
-        if (rebuild && prepared) {
+        if (rebuild && nativeMediaOpened) {
             restartAfterStop(resumePositionMs, resumePlaying)
             return
         }
+        val surfaceWasValidated = vulkanSurfaceChecked
         val reattach = if (rebuild) {
             forceOutputRebuild = false
             val view = attachedView
@@ -1151,7 +1155,13 @@ class VlcPlaybackController(
         if (dvResumeWorkaround && (pendingRestorePositionMs ?: 0) > 0) beginDvPrime()
         applyAudioLiveOptions()
         // Recreated vout must own the real surface before opening its media.
-        reattach?.let(::attach)
+        reattach?.let { view ->
+            attach(view)
+            // This is the same still-valid SurfaceHolder, not a new native window.
+            if (attachedView === view && view.holder.surface.isValid && surfaceWasValidated)
+                vulkanSurfaceChecked = true
+        }
+        nativeMediaOpened = true
         player.play()
         // Pause on the Playing event, after demux and the pending seek are ready.
         // Pausing immediately can interrupt VLC 4's initial stream probe.
@@ -1352,14 +1362,14 @@ class VlcPlaybackController(
         hdrOutput.discontinuity()
         desiredPlayWhenReady = false
         pauseAfterRestorePositionMs = null
-        if (!released && !dvPrimeActive && restartStop == null && !dvRetirementPending) player.pause()
+        if (!released && !dvPrimeActive && !restartStopFailed && restartStop == null && !dvRetirementPending) player.pause()
     }
 
     override fun wantsToPlay(): Boolean = !released && desiredPlayWhenReady && !ended && errorMessage == null
     override fun requestedPlayIntent(): Boolean = !released && desiredPlayWhenReady && !ended
 
     /** Native playing flag for UI snapshots; false once released (the native player may be gone). */
-    fun isPlayingNow(): Boolean = !released && restartStop == null && !dvRetirementPending && runCatching { player.isPlaying }.getOrDefault(false)
+    fun isPlayingNow(): Boolean = !released && !restartStopFailed && restartStop == null && !dvRetirementPending && runCatching { player.isPlaying }.getOrDefault(false)
 
     /** A transcoded HTTP response may have no VLC seek index despite having a server start offset. */
     override fun canSeekNow(): Boolean = !released && prepared && !openingOrRestarting && player.isSeekable
