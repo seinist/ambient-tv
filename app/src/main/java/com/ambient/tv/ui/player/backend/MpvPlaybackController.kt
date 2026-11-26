@@ -520,8 +520,8 @@ class MpvPlaybackController(
         backendUnresponsive = false
         surfaceIdentity = null
         main.removeCallbacks(tick)
-        audioSession.release()
         val audioRelease = nativeAudioReleases.beginRelease()
+        runCatching { audioSession.release() }.onFailure { Timber.w(it, "MPV audio session release failed") }
         mailbox.close {
             // Never interrupt or destroy a handle concurrently with an in-flight native call.
             try {
