@@ -10,20 +10,22 @@ import kotlin.math.roundToInt
  */
 internal class MoonlightCompanionSink(
     private val engine: MoonlightStreamEngine,
+    private val owner: Any,
     private val localPorts: () -> Set<Int>,
 ) : CompanionGamepadSink {
     private val reserved = mutableSetOf<Int>()
+    fun reservedPorts(): Set<Int> = reserved.toSet()
     override fun localUsedPorts(): Set<Int> = localPorts()
 
     override fun reserveRemotePort(port: Int, reserved: Boolean, descriptor: String?) {
         if (port !in 0..3) return
         if (reserved) this.reserved.add(port) else this.reserved.remove(port)
-        engine.setRemotePortActive(port, reserved)
+        engine.setRemotePortActive(owner, port, reserved)
     }
 
     override fun clearRemotePort(port: Int, suppressHeld: Boolean) {
         if (port !in reserved) return
-        engine.sendRemoteGamepad(port, 0, 0, 0, 0, 0, 0, 0)
+        engine.sendRemoteGamepad(owner, port, 0, 0, 0, 0, 0, 0, 0)
     }
 
     override fun remoteInputDescriptions(port: Int, labels: Map<String, String>): Map<String, String> =
@@ -50,6 +52,7 @@ internal class MoonlightCompanionSink(
         rightX: Float, rightY: Float, leftTrigger: Float?, rightTrigger: Float?,
     ) {
         if (port !in reserved) return
+        engine.setRemotePortActive(owner, port, true)
         // RetroPad labels are SNES positions: B bottom/A right/Y left/X top.
         // Windows XInput's A/B/X/Y are bottom/right/left/top respectively.
         val mapped = moonlightRetroButtonFlags(buttons)
@@ -57,7 +60,7 @@ internal class MoonlightCompanionSink(
         fun trigger(value: Float?, button: RetroPadButton): Byte =
             ((value ?: if ((buttons and button.mask) != 0) 1f else 0f)
                 .coerceIn(0f, 1f) * 255f).roundToInt().toByte()
-        engine.sendRemoteGamepad(
+        engine.sendRemoteGamepad(owner, 
             port, mapped, trigger(leftTrigger, RetroPadButton.L2),
             trigger(rightTrigger, RetroPadButton.R2),
             short(leftX), short(leftY), short(rightX), short(rightY),

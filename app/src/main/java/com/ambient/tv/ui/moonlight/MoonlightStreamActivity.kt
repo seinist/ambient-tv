@@ -90,6 +90,7 @@ class MoonlightStreamActivity : ComponentActivity() {
     @Inject lateinit var companion: MoonlightCompanionLink
     @Inject lateinit var moonlightTransport: MoonlightSystemTransport
 
+    private val streamOwner = Any()
     private var osdVisible by mutableStateOf(false)
     private var qualityProfile by mutableStateOf(MoonlightStreamProfile())
     private var sessionProfile by mutableStateOf(MoonlightStreamProfile())
@@ -111,13 +112,13 @@ class MoonlightStreamActivity : ComponentActivity() {
     }
     private val keyboard by lazy {
         MoonlightKeyboardRouter { virtualKey, pressed, modifiers ->
-            engine.sendKeyboard(virtualKey, pressed, modifiers)
+            engine.sendKeyboard(streamOwner, virtualKey, pressed, modifiers)
         }
     }
     private val input by lazy {
         MoonlightControllerRouter(
             output = { port, mask, buttons, lt, rt, lx, ly, rx, ry ->
-                engine.sendGamepad(port, mask, buttons, lt, rt, lx, ly, rx, ry)
+                engine.sendGamepad(streamOwner, port, mask, buttons, lt, rt, lx, ly, rx, ry)
             },
             reservedPorts = { companion.reservedPorts() },
         )
@@ -141,13 +142,14 @@ class MoonlightStreamActivity : ComponentActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 engine.rumbleEvents.collect { rumble ->
-                    if (!osdVisible) feedback.rumble(rumble)
+                    if (!osdVisible && engine.owns(streamOwner) && hasWindowFocus()) feedback.rumble(rumble)
                 }
             }
         }
         setContent {
             MoonlightStreamContent(
                 engine = engine,
+                owner = streamOwner,
                 hostId = hostId,
                 appId = appId,
                 streamProfile = qualityProfile,
@@ -159,7 +161,7 @@ class MoonlightStreamActivity : ComponentActivity() {
                     preferences.moonlightStreamProfile = validated
                     qualityProfile = validated
                 },
-                onSendText = engine::sendText,
+                onSendText = { engine.sendText(streamOwner, it) },
                 onQuitRemote = { quitRemoteGame(hostId) },
                 remoteQuitBusy = remoteQuitBusy,
                 remoteQuitError = remoteQuitError,
@@ -168,7 +170,8 @@ class MoonlightStreamActivity : ComponentActivity() {
                 disconnect = ::disconnectAndFinish,
                 closeControls = { showOsd(false) },
                 onCompanionMode = { phase, menu ->
-                    companion.interaction(playing = phase == MoonlightStreamPhase.STREAMING, menu = menu)
+                    companion.interaction(playing = hasWindowFocus() && engine.owns(streamOwner) &&
+                        phase == MoonlightStreamPhase.STREAMING, menu = menu && hasWindowFocus())
                 },
             )
         }
@@ -194,6 +197,7 @@ class MoonlightStreamActivity : ComponentActivity() {
         }
         inputManager.registerInputDeviceListener(deviceListener, null)
         companion.attach(
+            owner = streamOwner,
             title = getString(R.string.moonlight_title),
             usedPorts = { input.localUsedPorts() },
             onMenu = { runOnUiThread { showOsd(!osdVisible) } },
@@ -208,12 +212,12 @@ class MoonlightStreamActivity : ComponentActivity() {
             showOsd(!osdVisible)
             return true
         }
-        if (!osdVisible && (input.onKey(event) || keyboard.onKey(event))) return true
+        if (engine.owns(streamOwner) && !osdVisible && (input.onKey(event) || keyboard.onKey(event))) return true
         return super.dispatchKeyEvent(event)
     }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
-        if (!osdVisible && input.onMotion(event)) return true
+        if (engine.owns(streamOwner) && !osdVisible && input.onMotion(event)) return true
         return super.dispatchGenericMotionEvent(event)
     }
 
@@ -230,12 +234,17 @@ class MoonlightStreamActivity : ComponentActivity() {
     private fun releaseRemoteInputs() {
         input.releaseAll()
         keyboard.releaseAll()
-        engine.sendMouseButton(false)
+        engine.sendMouseButton(streamOwner, false)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (!hasFocus) releaseRemoteInputs()
+        if (!hasFocus) {
+            releaseRemoteInputs()
+            feedback.cancelAll()
+            companion.interaction(playing = false, menu = false)
+        } else companion.interaction(playing = engine.owns(streamOwner) &&
+            engine.status.value.phase == MoonlightStreamPhase.STREAMING, menu = osdVisible)
     }
 
     override fun onStop() {
@@ -243,7 +252,7 @@ class MoonlightStreamActivity : ComponentActivity() {
         feedback.cancelAll()
         companion.detach()
         releaseRemoteInputs()
-        engine.stop()
+        engine.stop(streamOwner)
         displayPreparation?.cancel()
         displayPreparation = null
         displayReady = false
@@ -253,7 +262,7 @@ class MoonlightStreamActivity : ComponentActivity() {
 
     /** Explicit host-side termination; never a side effect of Back or stream disconnect. */
     private fun quitRemoteGame(hostId: String) {
-        if (remoteQuitBusy || engine.status.value.phase != MoonlightStreamPhase.STREAMING) return
+        if (!engine.owns(streamOwner) || remoteQuitBusy || engine.status.value.phase != MoonlightStreamPhase.STREAMING) return
         remoteQuitBusy = true
         remoteQuitError = false
         lifecycleScope.launch {
@@ -272,14 +281,14 @@ class MoonlightStreamActivity : ComponentActivity() {
 
     private fun disconnectAndFinish() {
         releaseRemoteInputs()
-        engine.stop()
+        engine.stop(streamOwner)
         finish()
     }
 
     override fun onDestroy() {
         companion.detach()
         releaseRemoteInputs()
-        engine.stop()
+        engine.stop(streamOwner)
         displayPreparation?.cancel()
         if (validLaunch) displaySession.restore()
         super.onDestroy()
@@ -296,6 +305,7 @@ private class MoonlightSurfaceBinding(val surface: Surface)
 @Composable
 private fun MoonlightStreamContent(
     engine: MoonlightStreamEngine,
+    owner: Any,
     hostId: String,
     appId: Int,
     streamProfile: MoonlightStreamProfile,
@@ -332,9 +342,9 @@ private fun MoonlightStreamContent(
             startFailed = true
             return@LaunchedEffect
         }
-        if (engine.start(hostId, appId, target.surface, sessionProfile,
+        if (engine.start(owner, hostId, appId, target.surface, sessionProfile,
                 displayResult.mode?.refreshRate, displayResult.hdr10)) {
-            try { awaitCancellation() } finally { engine.stop() }
+            try { awaitCancellation() } finally { engine.stop(owner) }
         } else startFailed = true
     }
     var panel by remember { mutableStateOf(MoonlightPlaybackPage.NONE) }
@@ -397,16 +407,16 @@ private fun MoonlightStreamContent(
                     val height = v.height.coerceAtLeast(1)
                     when (event.actionMasked) {
                         MotionEvent.ACTION_DOWN -> {
-                            engine.sendMousePosition(event.x.roundToInt(), event.y.roundToInt(), width, height)
-                            engine.sendMouseButton(true)
+                            engine.sendMousePosition(owner, event.x.roundToInt(), event.y.roundToInt(), width, height)
+                            engine.sendMouseButton(owner, true)
                             true
                         }
                         MotionEvent.ACTION_MOVE -> {
-                            engine.sendMousePosition(event.x.roundToInt(), event.y.roundToInt(), width, height)
+                            engine.sendMousePosition(owner, event.x.roundToInt(), event.y.roundToInt(), width, height)
                             true
                         }
                         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                            engine.sendMouseButton(false)
+                            engine.sendMouseButton(owner, false)
                             true
                         }
                         else -> false
@@ -418,12 +428,12 @@ private fun MoonlightStreamContent(
                         return@setOnGenericMotionListener false
                     when (event.actionMasked) {
                         MotionEvent.ACTION_HOVER_MOVE -> {
-                            engine.sendMousePosition(event.x.roundToInt(), event.y.roundToInt(),
+                            engine.sendMousePosition(owner, event.x.roundToInt(), event.y.roundToInt(),
                                 v.width.coerceAtLeast(1), v.height.coerceAtLeast(1))
                             true
                         }
                         MotionEvent.ACTION_SCROLL -> {
-                            engine.sendMouseScroll(event.getAxisValue(MotionEvent.AXIS_VSCROLL).roundToInt())
+                            engine.sendMouseScroll(owner, event.getAxisValue(MotionEvent.AXIS_VSCROLL).roundToInt())
                             true
                         }
                         else -> false
@@ -510,6 +520,6 @@ private fun MoonlightStreamContent(
         )
     }
     DisposableEffect(engine, hostId, appId) {
-        onDispose { engine.stop() }
+        onDispose { engine.stop(owner) }
     }
 }

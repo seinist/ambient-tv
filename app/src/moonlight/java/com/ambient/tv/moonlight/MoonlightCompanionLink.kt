@@ -19,15 +19,17 @@ class MoonlightCompanionLink @Inject constructor(
     private val engine: MoonlightStreamEngine,
     private val preferences: AppPreferences,
 ) {
+    private var owner: Any? = null
     private var sink: MoonlightCompanionSink? = null
     private var pointerOwner: Int? = null
     private var mouseDown = false
     private var touchUnsupported = false
     private val touches = LinkedHashMap<Int, CompanionPointerContact>()
 
-    fun attach(title: String, usedPorts: () -> Set<Int>, onMenu: () -> Unit) {
+    fun attach(owner: Any, title: String, usedPorts: () -> Set<Int>, onMenu: () -> Unit) {
         detach()
-        val current = MoonlightCompanionSink(engine, usedPorts)
+        this.owner = owner
+        val current = MoonlightCompanionSink(engine, owner, usedPorts)
         sink = current
         CompanionGamepadSession.attachMoonlight(
             current, title,
@@ -46,7 +48,7 @@ class MoonlightCompanionLink @Inject constructor(
         })
     }
 
-    fun reservedPorts(): Set<Int> = engine.remoteReservedPorts()
+    fun reservedPorts(): Set<Int> = sink?.reservedPorts().orEmpty()
 
     fun detach() {
         val previous = sink ?: return
@@ -54,15 +56,16 @@ class MoonlightCompanionLink @Inject constructor(
         CompanionGamepadSession.detachMoonlight(previous)
         previous.releaseEverything()
         clearPointer()
+        owner = null
     }
 
     private fun clearPointer() {
         touches.values.toList().forEach { contact ->
-            engine.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_UP,
+            engine.sendTouchEvent(owner ?: return, MoonBridge.LI_TOUCH_EVENT_UP,
                 contact.index, contact.x, contact.y, 0f)
         }
         touches.clear()
-        if (mouseDown) engine.sendMouseButton(false)
+        if (mouseDown) engine.sendMouseButton(owner ?: return, false)
         mouseDown = false
         pointerOwner = null
         touchUnsupported = false
@@ -71,7 +74,7 @@ class MoonlightCompanionLink @Inject constructor(
     private fun mousePressed(down: Boolean) {
         if (down == mouseDown) return
         mouseDown = down
-        engine.sendMouseButton(down)
+        engine.sendMouseButton(owner ?: return, down)
     }
 
     private fun pointer(port: Int, next: CompanionPointerState?) {
@@ -87,14 +90,14 @@ class MoonlightCompanionLink @Inject constructor(
         when (next.kind) {
             "mouse" -> {
                 if (touches.isNotEmpty()) clearTouchOnly()
-                engine.sendMouseMove((next.dx * width).roundToInt(),
+                engine.sendMouseMove(owner ?: return, (next.dx * width).roundToInt(),
                     (next.dy * height).roundToInt())
                 mousePressed((next.buttons and 1) != 0)
             }
             "gun" -> {
                 if (touches.isNotEmpty()) clearTouchOnly()
                 next.contacts.firstOrNull()?.let { contact ->
-                    engine.sendMousePosition((contact.x * width).roundToInt(),
+                    engine.sendMousePosition(owner ?: return, (contact.x * width).roundToInt(),
                         (contact.y * height).roundToInt(), width, height)
                 }
                 mousePressed((next.buttons and 1) != 0 ||
@@ -106,7 +109,7 @@ class MoonlightCompanionLink @Inject constructor(
                 val obsolete = touches.keys - current.keys
                 for (index in obsolete) {
                     touches.remove(index)?.let { old ->
-                        engine.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_UP,
+                        engine.sendTouchEvent(owner ?: return, MoonBridge.LI_TOUCH_EVENT_UP,
                             index, old.x, old.y, 0f)
                     }
                 }
@@ -116,7 +119,7 @@ class MoonlightCompanionLink @Inject constructor(
                         else MoonBridge.LI_TOUCH_EVENT_MOVE
                     if (before == null || before.x != contact.x || before.y != contact.y) {
                         val result = if (touchUnsupported) MoonBridge.LI_ERR_UNSUPPORTED
-                            else engine.sendTouchEvent(kind, index, contact.x, contact.y, 1f)
+                            else engine.sendTouchEvent(owner ?: return, kind, index, contact.x, contact.y, 1f)
                         if (result == MoonBridge.LI_ERR_UNSUPPORTED) touchUnsupported = true
                     }
                     touches[index] = contact
@@ -124,7 +127,7 @@ class MoonlightCompanionLink @Inject constructor(
                 if (touchUnsupported) {
                     // Older Sunshine hosts do not support touch; a single-finger mouse still works.
                     current.values.firstOrNull()?.let { contact ->
-                        engine.sendMousePosition((contact.x * width).roundToInt(),
+                        engine.sendMousePosition(owner ?: return, (contact.x * width).roundToInt(),
                             (contact.y * height).roundToInt(), width, height)
                     }
                     mousePressed(current.isNotEmpty() || (next.buttons and 1) != 0)
@@ -135,7 +138,7 @@ class MoonlightCompanionLink @Inject constructor(
 
     private fun clearTouchOnly() {
         touches.values.toList().forEach { contact ->
-            engine.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_UP,
+            engine.sendTouchEvent(owner ?: return, MoonBridge.LI_TOUCH_EVENT_UP,
                 contact.index, contact.x, contact.y, 0f)
         }
         touches.clear()
@@ -144,8 +147,8 @@ class MoonlightCompanionLink @Inject constructor(
     private fun motion(port: Int, state: CompanionMotionState?) {
         val data = state ?: return
         if (data.mask and 1 != 0)
-            engine.sendMotion(port, MoonBridge.LI_MOTION_TYPE_ACCEL, data.ax, data.ay, data.az)
+            engine.sendMotion(owner ?: return, port, MoonBridge.LI_MOTION_TYPE_ACCEL, data.ax, data.ay, data.az)
         if (data.mask and 2 != 0)
-            engine.sendMotion(port, MoonBridge.LI_MOTION_TYPE_GYRO, data.gx, data.gy, data.gz)
+            engine.sendMotion(owner ?: return, port, MoonBridge.LI_MOTION_TYPE_GYRO, data.gx, data.gy, data.gz)
     }
 }

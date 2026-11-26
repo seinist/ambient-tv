@@ -48,6 +48,7 @@ class MoonlightStreamEngine @Inject constructor(
 ) {
     private data class Active(
         val generation: Long,
+        val owner: Any,
         val hostId: String,
         val appId: Int,
         var connection: NvConnection? = null,
@@ -62,6 +63,7 @@ class MoonlightStreamEngine @Inject constructor(
     )
 
     private val lock = Any()
+    private val inputGate = Any()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val revision = AtomicLong(0)
     private val mutable = MutableStateFlow(MoonlightStreamStatus())
@@ -74,18 +76,18 @@ class MoonlightStreamEngine @Inject constructor(
     private val remoteControllerPorts = mutableSetOf<Int>()
 
     /** All calls are non-blocking for the Compose UI, including HTTPS launch negotiation. */
-    fun start(hostId: String, appId: Int, surface: Surface, profile: MoonlightStreamProfile,
+    fun start(owner: Any, hostId: String, appId: Int, surface: Surface, profile: MoonlightStreamProfile,
               displayRefreshHz: Float? = null, displayHdr10: Boolean? = null): Boolean {
         if (!surface.isValid || appId <= 0 || !prefs.moonlightEnabled) return false
         val valid = runCatching { profile.validated() }.getOrNull() ?: return false
         val session = synchronized(lock) {
             if (active != null) return false
-            Active(revision.incrementAndGet(), hostId, appId).also {
+            Active(revision.incrementAndGet(), owner, hostId, appId).also {
                 active = it
                 mutable.value = MoonlightStreamStatus(MoonlightStreamPhase.CONNECTING)
             }
         }
-        session.preparation = scope.launch {
+        session.preparation = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
                 val target = transport.verifiedHost(hostId)
                 val apps = transport.loadApplications(hostId).apps
@@ -150,42 +152,52 @@ class MoonlightStreamEngine @Inject constructor(
                 // NvConnection spawns its own native start thread; callbacks are generation-gated.
                 connection.start(audio, video, callbacks(session))
             } catch (cancel: CancellationException) {
-                finishStopped(session)
+                stopSession(session)
                 throw cancel
             } catch (error: Exception) {
                 fail(session, error.message ?: "Moonlight streaming could not start")
             }
         }
+        session.preparation?.start()
         return true
     }
 
     /** Failed sessions can still own native teardown even after their public phase changes. */
     fun isBusy(): Boolean = synchronized(lock) { active != null }
 
-    fun stop() {
-        val current = synchronized(lock) { active } ?: return
+    fun stop(owner: Any) {
+        val current = synchronized(lock) { active?.takeIf { it.owner === owner } } ?: return
         stopSession(current)
     }
 
+    fun owns(owner: Any): Boolean = synchronized(lock) {
+        active?.let { it.owner === owner && !it.cancelled } == true
+    }
+
     private fun stopSession(session: Active) {
-        val connection = synchronized(lock) {
+        synchronized(lock) {
             if (active !== session || session.stopIssued) return
             session.cancelled = true
             session.stopIssued = true
             if (mutable.value.phase != MoonlightStreamPhase.FAILED)
                 mutable.value = mutable.value.copy(phase = MoonlightStreamPhase.STOPPING)
-            session.connection
         }
-        // The reviewed upstream NvConnection patch owns its semaphore and permits a safe
-        // stop before connectionStarted, without leaking global native-connection permits.
-        session.preparation?.cancel()
-        if (connection == null) {
-            finishStopped(session)
-        } else {
-            scope.launch(Dispatchers.IO) {
-                runCatching { connection.stop() }
-                finishStopped(session)
+        val preparation = session.preparation
+        preparation?.cancel()
+        scope.launch(Dispatchers.IO) {
+            preparation?.join()
+            val connection = synchronized(lock) { session.connection }
+            // No more input can enter after cancellation; drain the previous JNI call.
+            synchronized(inputGate) { Unit }
+            if (runCatching { connection?.stop() }.isFailure) {
+                synchronized(lock) {
+                    if (active === session) mutable.value = mutable.value.copy(
+                        phase = MoonlightStreamPhase.FAILED, error = "Moonlight teardown failed")
+                }
+                // Do not start a second native connection in an uncertain state.
+                return@launch
             }
+            finishStopped(session)
         }
     }
 
@@ -203,9 +215,11 @@ class MoonlightStreamEngine @Inject constructor(
         val arrivals: List<Int>,
     )
 
-    private fun padFrame(change: () -> Unit): PadFrame = synchronized(lock) {
+    private fun padFrame(owner: Any, change: () -> Unit): PadFrame = synchronized(lock) {
+        val owned = active?.takeIf { it.owner === owner && !it.cancelled }
+            ?: return@synchronized PadFrame(null, 0, emptyList())
         change()
-        val session = active?.takeIf { it.started && !it.cancelled }
+        val session = owned.takeIf { it.started }
         val nextMask = desiredControllerMask()
         val newPorts = if (session == null) emptyList() else (0..3).filter { port ->
             nextMask and (1 shl port) != 0 &&
@@ -231,113 +245,137 @@ class MoonlightStreamEngine @Inject constructor(
         }
     }
 
-    fun sendGamepad(
+    fun sendGamepad(owner: Any,
         port: Short, mask: Short, buttons: Int, lt: Byte, rt: Byte,
         lx: Short, ly: Short, rx: Short, ry: Short,
     ) {
-        if (port.toInt() !in 0..3) return
-        val frame = padFrame { localControllerMask = mask.toInt() and 0xF }
-        sendArrivals(frame)
-        runCatching {
-            frame.connection?.sendControllerInput(port, frame.mask, buttons, lt, rt, lx, ly, rx, ry)
+        synchronized(inputGate) {
+            if (port.toInt() !in 0..3) return
+            val frame = padFrame(owner) { localControllerMask = mask.toInt() and 0xF }
+            sendArrivals(frame)
+            runCatching {
+                frame.connection?.sendControllerInput(port, frame.mask, buttons, lt, rt, lx, ly, rx, ry)
+            }
         }
     }
 
     /** Phone claims and physical devices never silently share a port. */
-    fun remoteReservedPorts(): Set<Int> = synchronized(lock) { remoteControllerPorts.toSet() }
+    fun remoteReservedPorts(owner: Any): Set<Int> = synchronized(lock) {
+        if (active?.owner === owner) remoteControllerPorts.toSet() else emptySet()
+    }
 
-    fun setRemotePortActive(port: Int, enabled: Boolean) {
-        if (port !in 0..3) return
-        val frame = padFrame {
-            if (enabled) remoteControllerPorts.add(port) else remoteControllerPorts.remove(port)
-        }
-        sendArrivals(frame)
-        if (!enabled) runCatching {
-            frame.connection?.sendControllerInput(port.toShort(), frame.mask, 0,
-                0, 0, 0, 0, 0, 0)
+    fun setRemotePortActive(owner: Any, port: Int, enabled: Boolean) {
+        synchronized(inputGate) {
+            if (port !in 0..3) return
+            val frame = padFrame(owner) {
+                if (enabled) remoteControllerPorts.add(port) else remoteControllerPorts.remove(port)
+            }
+            sendArrivals(frame)
+            if (!enabled) runCatching {
+                frame.connection?.sendControllerInput(port.toShort(), frame.mask, 0,
+                    0, 0, 0, 0, 0, 0)
+            }
         }
     }
 
-    fun sendRemoteGamepad(
+    fun sendRemoteGamepad(owner: Any,
         port: Int, buttons: Int, lt: Byte, rt: Byte,
         lx: Short, ly: Short, rx: Short, ry: Short,
     ) {
-        if (port !in remoteReservedPorts()) return
-        val frame = padFrame {}
-        sendArrivals(frame)
-        runCatching {
-            frame.connection?.sendControllerInput(port.toShort(), frame.mask, buttons,
-                lt, rt, lx, ly, rx, ry)
+        synchronized(inputGate) {
+            if (port !in remoteReservedPorts(owner)) return
+            val frame = padFrame(owner) {}
+            sendArrivals(frame)
+            runCatching {
+                frame.connection?.sendControllerInput(port.toShort(), frame.mask, buttons,
+                    lt, rt, lx, ly, rx, ry)
+            }
         }
     }
 
     private fun remoteMask(): Int =
         remoteControllerPorts.fold(0) { mask, port -> mask or (1 shl port) }
 
-    fun sendKeyboard(virtualKey: Short, pressed: Boolean, modifiers: Byte) {
-        val conn = synchronized(lock) { active?.takeIf { it.started && !it.cancelled }?.connection }
-        val direction = if (pressed) KeyboardPacket.KEY_DOWN else KeyboardPacket.KEY_UP
-        runCatching { conn?.sendKeyboardInput(virtualKey, direction, modifiers, 0) }
-    }
-
-    fun sendMousePosition(x: Int, y: Int, width: Int, height: Int) {
-        if (width !in 1..32767 || height !in 1..32767) return
-        val conn = synchronized(lock) { active?.takeIf { it.started && !it.cancelled }?.connection }
-        runCatching {
-            conn?.sendMousePosition(x.coerceIn(0, width).toShort(), y.coerceIn(0, height).toShort(),
-                width.toShort(), height.toShort())
+    fun sendKeyboard(owner: Any, virtualKey: Short, pressed: Boolean, modifiers: Byte) {
+        synchronized(inputGate) {
+            val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
+            val direction = if (pressed) KeyboardPacket.KEY_DOWN else KeyboardPacket.KEY_UP
+            runCatching { conn?.sendKeyboardInput(virtualKey, direction, modifiers, 0) }
         }
     }
 
-    fun sendMouseButton(pressed: Boolean) {
-        val conn = synchronized(lock) { active?.takeIf { it.started && !it.cancelled }?.connection }
-        runCatching {
-            if (pressed) conn?.sendMouseButtonDown(MouseButtonPacket.BUTTON_LEFT)
-            else conn?.sendMouseButtonUp(MouseButtonPacket.BUTTON_LEFT)
+    fun sendMousePosition(owner: Any, x: Int, y: Int, width: Int, height: Int) {
+        synchronized(inputGate) {
+            if (width !in 1..32767 || height !in 1..32767) return
+            val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
+            runCatching {
+                conn?.sendMousePosition(x.coerceIn(0, width).toShort(), y.coerceIn(0, height).toShort(),
+                    width.toShort(), height.toShort())
+            }
         }
     }
 
-    fun sendMouseScroll(clicks: Int) {
-        val conn = synchronized(lock) { active?.takeIf { it.started && !it.cancelled }?.connection }
-        runCatching { conn?.sendMouseScroll(clicks.coerceIn(-8, 8).toByte()) }
+    fun sendMouseButton(owner: Any, pressed: Boolean) {
+        synchronized(inputGate) {
+            val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
+            runCatching {
+                if (pressed) conn?.sendMouseButtonDown(MouseButtonPacket.BUTTON_LEFT)
+                else conn?.sendMouseButtonUp(MouseButtonPacket.BUTTON_LEFT)
+            }
+        }
+    }
+
+    fun sendMouseScroll(owner: Any, clicks: Int) {
+        synchronized(inputGate) {
+            val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
+            runCatching { conn?.sendMouseScroll(clicks.coerceIn(-8, 8).toByte()) }
+        }
     }
 
     /** Normalized multi-contact touchscreen events; native GameStream owns remote touch state. */
-    fun sendTouchEvent(type: Byte, pointerId: Int, x: Float, y: Float,
+    fun sendTouchEvent(owner: Any, type: Byte, pointerId: Int, x: Float, y: Float,
                        pressure: Float = 1f): Int {
-        if (pointerId !in 0..15 || !x.isFinite() || !y.isFinite() || !pressure.isFinite())
-            return MoonBridge.LI_ERR_UNSUPPORTED
-        val conn = synchronized(lock) { active?.takeIf { it.started && !it.cancelled }?.connection }
-            ?: return MoonBridge.LI_ERR_UNSUPPORTED
-        return runCatching {
-            conn.sendTouchEvent(type, pointerId, x.coerceIn(0f, 1f), y.coerceIn(0f, 1f),
-                pressure.coerceIn(0f, 1f), 0f, 0f, 0.toShort())
-        }.getOrDefault(MoonBridge.LI_ERR_UNSUPPORTED)
+        synchronized(inputGate) {
+            if (pointerId !in 0..15 || !x.isFinite() || !y.isFinite() || !pressure.isFinite())
+                return MoonBridge.LI_ERR_UNSUPPORTED
+            val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
+                ?: return MoonBridge.LI_ERR_UNSUPPORTED
+            return runCatching {
+                conn.sendTouchEvent(type, pointerId, x.coerceIn(0f, 1f), y.coerceIn(0f, 1f),
+                    pressure.coerceIn(0f, 1f), 0f, 0f, 0.toShort())
+            }.getOrDefault(MoonBridge.LI_ERR_UNSUPPORTED)
+        }
     }
 
     /** Controller gyroscope and acceleration, from the authenticated Companion stream. */
-    fun sendMotion(port: Int, type: Byte, x: Float, y: Float, z: Float) {
-        if (port !in 0..3 || listOf(x, y, z).any { !it.isFinite() }) return
-        val conn = synchronized(lock) { active?.takeIf { it.started && !it.cancelled }?.connection }
-        runCatching { conn?.sendControllerMotionEvent(port.toByte(), type,
-            x.coerceIn(-100f, 100f), y.coerceIn(-100f, 100f), z.coerceIn(-100f, 100f)) }
+    fun sendMotion(owner: Any, port: Int, type: Byte, x: Float, y: Float, z: Float) {
+        synchronized(inputGate) {
+            if (port !in 0..3 || listOf(x, y, z).any { !it.isFinite() }) return
+            val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
+            runCatching { conn?.sendControllerMotionEvent(port.toByte(), type,
+                x.coerceIn(-100f, 100f), y.coerceIn(-100f, 100f), z.coerceIn(-100f, 100f)) }
+        }
     }
 
-    fun sendMouseMove(dx: Int, dy: Int) {
-        val conn = synchronized(lock) { active?.takeIf { it.started && !it.cancelled }?.connection }
-        runCatching {
-            conn?.sendMouseMove(dx.coerceIn(-32767, 32767).toShort(),
-                dy.coerceIn(-32767, 32767).toShort())
+    fun sendMouseMove(owner: Any, dx: Int, dy: Int) {
+        synchronized(inputGate) {
+            val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
+            runCatching {
+                conn?.sendMouseMove(dx.coerceIn(-32767, 32767).toShort(),
+                    dy.coerceIn(-32767, 32767).toShort())
+            }
         }
     }
 
     /** Remote text entry is explicit, short and independent of Android system-key controls. */
-    fun sendText(text: String) {
-        val clean = text.filter { !it.isISOControl() || it == '\n' || it == '\t' }
-            .take(512)
-        if (clean.isEmpty()) return
-        val conn = synchronized(lock) { active?.takeIf { it.started && !it.cancelled }?.connection }
-        runCatching { conn?.sendUtf8Text(clean) }
+    fun sendText(owner: Any, text: String) {
+        synchronized(inputGate) {
+            val clean = text.filter { !it.isISOControl() || it == '\n' || it == '\t' }
+                .take(512)
+            if (clean.isEmpty()) return
+            val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
+            runCatching { conn?.sendUtf8Text(clean) }
+        }
     }
 
     private fun callbacks(session: Active): NvConnectionListener = object : NvConnectionListener {
@@ -357,7 +395,7 @@ class MoonlightStreamEngine @Inject constructor(
                 session.cancelled
             }
             if (wasCancelled) stopSession(session)
-            else sendArrivals(padFrame {})
+            else scope.launch { synchronized(inputGate) { sendArrivals(padFrame(session.owner) {}) } }
         }
         override fun connectionTerminated(errorCode: Int) {
             if (errorCode != 0 && !session.cancelled)
@@ -413,25 +451,25 @@ class MoonlightStreamEngine @Inject constructor(
 
     private fun fail(session: Active, text: String) {
         synchronized(lock) {
-            if (active !== session) return
+            if (active !== session || session.cancelled) return
             mutable.value = mutable.value.copy(phase = MoonlightStreamPhase.FAILED, error = text)
         }
         stopSession(session)
     }
 
     private fun finishStopped(session: Active) {
+        runCatching { releaseAudioFocus(session) }
+        runCatching { session.video?.cleanup() }
+        runCatching { session.audio?.cleanup() }
         synchronized(lock) {
             if (active !== session) return
+            localControllerMask = 0
+            remoteControllerPorts.clear()
             active = null
             mutable.value = mutable.value.copy(
                 phase = if (mutable.value.phase == MoonlightStreamPhase.FAILED)
                     MoonlightStreamPhase.FAILED else MoonlightStreamPhase.ENDED,
             )
         }
-        releaseAudioFocus(session)
-        // Native connection teardown also owns renderer.stop()/cleanup(); if startup failed
-        // before native setup, these calls are harmless and release no hardware resources.
-        runCatching { session.video?.cleanup() }
-        runCatching { session.audio?.cleanup() }
     }
 }

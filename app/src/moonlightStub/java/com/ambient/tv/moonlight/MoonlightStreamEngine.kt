@@ -18,20 +18,21 @@ class MoonlightStreamEngine @Inject constructor() {
     private val mutableRumble = MutableSharedFlow<MoonlightRumble>()
     val rumbleEvents = mutableRumble.asSharedFlow()
 
-    fun start(hostId: String, appId: Int, surface: Surface, profile: MoonlightStreamProfile,
+    fun start(owner: Any, hostId: String, appId: Int, surface: Surface, profile: MoonlightStreamProfile,
               displayRefreshHz: Float? = null, displayHdr10: Boolean? = null): Boolean = false
     fun isBusy(): Boolean = false
-    fun stop() = Unit
-    fun sendKeyboard(virtualKey: Short, pressed: Boolean, modifiers: Byte) = Unit
-    fun sendMousePosition(x: Int, y: Int, width: Int, height: Int) = Unit
-    fun sendMouseButton(pressed: Boolean) = Unit
-    fun sendMouseScroll(clicks: Int) = Unit
-    fun sendTouchEvent(type: Byte, pointerId: Int, x: Float, y: Float,
+    fun stop(owner: Any) = Unit
+    fun owns(owner: Any): Boolean = false
+    fun sendKeyboard(owner: Any, virtualKey: Short, pressed: Boolean, modifiers: Byte) = Unit
+    fun sendMousePosition(owner: Any, x: Int, y: Int, width: Int, height: Int) = Unit
+    fun sendMouseButton(owner: Any, pressed: Boolean) = Unit
+    fun sendMouseScroll(owner: Any, clicks: Int) = Unit
+    fun sendTouchEvent(owner: Any, type: Byte, pointerId: Int, x: Float, y: Float,
         pressure: Float = 1f): Int = -5501
-    fun sendMotion(port: Int, type: Byte, x: Float, y: Float, z: Float) = Unit
-    fun sendMouseMove(dx: Int, dy: Int) = Unit
-    fun sendText(text: String) = Unit
-    fun sendGamepad(
+    fun sendMotion(owner: Any, port: Int, type: Byte, x: Float, y: Float, z: Float) = Unit
+    fun sendMouseMove(owner: Any, dx: Int, dy: Int) = Unit
+    fun sendText(owner: Any, text: String) = Unit
+    fun sendGamepad(owner: Any,
         port: Short, mask: Short, buttons: Int, lt: Byte, rt: Byte,
         lx: Short, ly: Short, rx: Short, ry: Short,
     ) = Unit
