@@ -22,11 +22,13 @@ diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
 diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
 --- a/src/main/cpp/video.cpp
 +++ b/src/main/cpp/video.cpp
-@@ -30,2 +30,4 @@
+@@ -30,4 +30,6 @@
  #include "video.h"
+ #include "sdrtohdr.h"
 +#include <cstring>
 +#include <unistd.h>
  #include "renderers/es3/framebufferrenderer.h"
+ #include "renderers/es3/imagerendereres3.h"
 @@ -735,7 +737,49 @@
  void Video::releaseExternalFrame() {
      if (!externalFrames) return;
