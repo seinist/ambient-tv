@@ -10,8 +10,8 @@ namespace ambient::vlc_ahb {
 class FrameLease {
 public:
     using Release = void (*)(void *, int);
-    FrameLease(void *image, int acquire_fd, Release release)
-        : image_(image), acquire_(acquire_fd), release_(release) {}
+    FrameLease(void *image, int acquire_fd, Release release, bool allow_early_return = true)
+        : image_(image), acquire_(acquire_fd), release_(release), allow_early_return_(allow_early_return) {}
     FrameLease(const FrameLease &) = delete;
     FrameLease &operator=(const FrameLease &) = delete;
     // Unsubmitted frames can always be returned with their original producer fence.
@@ -45,7 +45,7 @@ public:
     // Only after successful export from a submission containing the foreign
     // ownership release. -1 is valid when export actually succeeded.
     bool return_with_fence(UniqueFd &fence, bool exported) {
-        if (!submitted_ || !image_ || !release_ || !exported || fence.get() < -1) return false;
+        if (!allow_early_return_ || !submitted_ || !image_ || !release_ || !exported || fence.get() < -1) return false;
         acquire_.reset();
         return_image(fence.release());
         return true;
@@ -62,6 +62,7 @@ public:
     }
 
     bool can_destroy_gpu_objects() const { return !submitted_ || completed_; }
+    bool allows_early_return() const { return allow_early_return_; }
     bool has_decoder_image() const { return image_ != nullptr; }
 
 private:
@@ -73,6 +74,7 @@ private:
     void *image_{};
     UniqueFd acquire_;
     Release release_{};
+    bool allow_early_return_ = true;
     bool submitted_ = false;
     bool completed_ = false;
 };
