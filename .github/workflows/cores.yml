@@ -21,7 +21,7 @@ on:
       profile:
         description: Compiler profile (non-baseline is artifact-only)
         type: choice
-        options: [baseline, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2, snes9x2010-threaded]
+        options: [baseline, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2, snes9x2010-threaded, core-hotpaths]
         default: baseline
       comparison:
         description: Paired full-catalog builds (artifact-only; baseline profile required)
@@ -35,6 +35,7 @@ on:
       - scripts/core_build_policy.py
       - scripts/core_acceleration_audit.py
       - scripts/core_link_evidence.py
+      - scripts/core_hotpath_patches.py
       - scripts/test_core_build_policy.py
       - scripts/check_elf_pages.py
   push:
@@ -46,6 +47,7 @@ on:
       - scripts/core_build_policy.py
       - scripts/core_acceleration_audit.py
       - scripts/core_link_evidence.py
+      - scripts/core_hotpath_patches.py
       - scripts/test_core_build_policy.py
 
 concurrency:
@@ -136,7 +138,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/ccache
-          key: core-ccache-v1-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ matrix.core }}-${{ matrix.commit }}-${{ matrix.abi }}-${{ matrix.profile }}-${{ hashFiles('cores/cores.json', '.github/workflows/cores.yml', 'scripts/core_build_policy.py', 'scripts/core_acceleration_audit.py', 'scripts/core_link_evidence.py') }}
+          key: core-ccache-v1-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ matrix.core }}-${{ matrix.commit }}-${{ matrix.abi }}-${{ matrix.profile }}-${{ hashFiles('cores/cores.json', '.github/workflows/cores.yml', 'scripts/core_build_policy.py', 'scripts/core_acceleration_audit.py', 'scripts/core_link_evidence.py', 'scripts/core_hotpath_patches.py') }}
 
       - name: Fetch ${{ matrix.core }} at its pinned commit
         env:
@@ -181,6 +183,9 @@ jobs:
           read -r -a args <<< "$ARGS"
           read -r -a extra_env <<< "$EXTRA_ENV"
           read -r -a makevars <<< "$MAKEVARS"
+          if [ "$PROFILE" = "core-hotpaths" ]; then
+            python3 scripts/core_build_policy.py prepare-hotpaths --root src --core "$CORE"
+          fi
           if [ "$BUILD_KIND" = "cmake" ]; then
             python3 scripts/core_build_policy.py prepare-cmake --root src --core "$CORE" --profile "$PROFILE"
             flags=("-DCMAKE_C_COMPILER_LAUNCHER=ccache" "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache")
