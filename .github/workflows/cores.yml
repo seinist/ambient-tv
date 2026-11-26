@@ -123,6 +123,21 @@ jobs:
           "$sdkmanager" "ndk;${NDK_VERSION}" > /dev/null || "$sdkmanager" --channel=3 "ndk;${NDK_VERSION}" > /dev/null
           echo "NDK=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
 
+      - name: Set up content-checked compiler cache
+        run: |
+          command -v ccache >/dev/null || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ccache
+          }
+          ccache --set-config=compiler_check=content
+          ccache --set-config=max_size=512M
+          ccache --set-config=compression=true
+          echo "CCACHE_BASEDIR=$PWD" >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: core-ccache-v1-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ matrix.core }}-${{ matrix.commit }}-${{ matrix.abi }}-${{ matrix.profile }}-${{ hashFiles('cores/cores.json', '.github/workflows/cores.yml', 'scripts/core_build_policy.py', 'scripts/core_acceleration_audit.py', 'scripts/core_link_evidence.py') }}
+
       - name: Fetch ${{ matrix.core }} at its pinned commit
         env:
           CORE_REPO: ${{ matrix.repo }}
@@ -168,7 +183,7 @@ jobs:
           read -r -a makevars <<< "$MAKEVARS"
           if [ "$BUILD_KIND" = "cmake" ]; then
             python3 scripts/core_build_policy.py prepare-cmake --root src --core "$CORE" --profile "$PROFILE"
-            flags=()
+            flags=("-DCMAKE_C_COMPILER_LAUNCHER=ccache" "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache")
             if [ -n "$CFLAGS_EXTRA" ]; then
               flags+=("-DCMAKE_C_FLAGS=$CFLAGS_EXTRA" "-DCMAKE_CXX_FLAGS=$CFLAGS_EXTRA")
             fi
@@ -193,7 +208,7 @@ jobs:
               --application "src/$JNI/jni/Application.mk" --profile "$PROFILE" --cppflags="$CPPFLAGS_EXTRA"
             build_cwd="$PWD/src/$JNI/jni"
             env "${extra_env[@]}" "${NDK}/ndk-build" --no-print-directory --output-sync=target -j"$(nproc)" -C "src/$JNI/jni" \
-              APP_ABI="$ABI" APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true V=1 "${makevars[@]}" 2>&1 | tee reports/build.log
+              APP_ABI="$ABI" APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true NDK_CCACHE="$(command -v ccache)" V=1 "${makevars[@]}" 2>&1 | tee reports/build.log
             lib=$(python3 scripts/core_build_policy.py select --nm "$bin/llvm-nm" --root "src/$JNI/libs/$ABI" --pattern '*.so')
           fi
           target="out/${CORE}_libretro_android.so"
@@ -204,6 +219,7 @@ jobs:
             --log reports/build.log --profile "$PROFILE" --core "$CORE" --abi "$ABI" \
             --commit "$CORE_COMMIT" --ndk "$NDK_VERSION" --build-cwd "$build_cwd" --output reports/build.json
           cat reports/build.json
+          ccache --show-stats
 
       - uses: actions/upload-artifact@v5
         with:
