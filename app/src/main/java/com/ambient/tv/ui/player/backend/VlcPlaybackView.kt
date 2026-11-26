@@ -140,8 +140,9 @@ class VlcPlaybackController(
         vulkanSurfaceChecked = false
         vulkanProbePending = false
         vulkanProbeGeneration++
+        vulkanOutputWatch.reset()
     }
-    private var vulkanStartedAt = 0L
+    private val vulkanOutputWatch = VlcVulkanOutputWatch()
     var accelerationFallback: String? = if (!audioOnly && videoOutputMode == "vulkan" && !vulkanOutput)
         if (nativeHdrPreferred) "Vulkan → Android: native HDR surface" else "Vulkan → Android: unavailable" else null
         private set
@@ -484,9 +485,12 @@ class VlcPlaybackController(
     }
     private val surfaceCallback = object : IVLCVout.Callback {
         override fun onSurfacesCreated(vout: IVLCVout) {
+            if (released || vout !== player.vlcVout) return
             attachedView?.let(::restoreVideoTrackWhenSurfaceIsReady)
         }
         override fun onSurfacesDestroyed(vout: IVLCVout) {
+            if (released || vout !== player.vlcVout) return
+            invalidateVulkanProbe()
             attachedView?.let { view -> videoRestoreTask?.let(view::removeCallbacks) }
             videoRestoreTask = null
         }
@@ -502,6 +506,7 @@ class VlcPlaybackController(
             if (released || view.holder !== holder) return
             // AWindow detaches itself on surfaceDestroyed (including a buffer-size change).
             // The SurfaceView can survive that event, so Compose will not call attach again.
+            if (restartStop != null || restartStopFailed || dvRetirementPending) return
             if (!player.vlcVout.areViewsAttached()) {
                 player.vlcVout.setVideoView(view)
                 player.vlcVout.attachViews()
@@ -509,8 +514,9 @@ class VlcPlaybackController(
             reportWindowSize(holder.surfaceFrame.width(), holder.surfaceFrame.height())
             restoreVideoTrackWhenSurfaceIsReady(view)
         }
-        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) =
-            reportWindowSize(width, height)
+        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+            if (attachedView?.holder === holder) reportWindowSize(width, height)
+        }
         override fun surfaceDestroyed(holder: SurfaceHolder) {
             if (attachedView?.holder === holder) {
                 renderSurfaceSize = null
@@ -636,7 +642,7 @@ class VlcPlaybackController(
                         streamRetryPlayingSince = android.os.SystemClock.elapsedRealtime()
                     }
                     ended = false
-                    if (vulkanOutput) vulkanStartedAt = android.os.SystemClock.elapsedRealtime()
+                    // Resume does not invalidate already observed output; prepare and surface loss do.
                     attachedView?.let(::restoreVideoTrackWhenSurfaceIsReady)
                     // Seek before audio discovery. refreshSelectedAudioCodec() can restart the
                     // media when the passthrough plan changes; that restart must see the resume
@@ -857,7 +863,7 @@ class VlcPlaybackController(
         // after being recreated while paused. Seek only when the user resumes.
         if (trackAccess.modern && detachedVideoTrack != null && !desiredPlayWhenReady && player.isSeekable)
             resumeVideoSeekMs = player.time.coerceAtLeast(0L)
-        if (vulkanOutput) vulkanStartedAt = android.os.SystemClock.elapsedRealtime()
+        if (vulkanOutput) vulkanOutputWatch.reset()
         player.vlcVout.setVideoView(view)
         player.vlcVout.attachViews()
         view.holder.addCallback(surfaceSizeCallback)
@@ -1246,6 +1252,7 @@ class VlcPlaybackController(
                 vulkanSurfaceChecked = true
         }
         renderSurfaceSize?.let { (width, height) -> reportWindowSize(width, height) }
+        vulkanOutputWatch.reset()
         nativeMediaOpened = true
         player.play()
         // Pause on the Playing event, after demux and the pending seek are ready.
@@ -1259,7 +1266,7 @@ class VlcPlaybackController(
         if (vulkanRequested) VideoAccelerationRuntime.notifyUnavailable()
         vulkanOutput = false // Prevent retry loops before posting the asynchronous restart.
         usesAndroidSurfaceOutput = true
-        vulkanStartedAt = 0L
+        vulkanOutputWatch.reset()
         accelerationFallback = "Vulkan → Android Surface / OpenGL ES: $reason"
         Timber.w("VULKAN VLC fallback: %s", reason)
         val position = vlcRestartPosition(
@@ -1276,11 +1283,21 @@ class VlcPlaybackController(
     }
 
     fun checkVulkanOutput() {
-        if (!vulkanOutput || released || !player.isPlaying || attachedView?.holder?.surface?.isValid != true || vulkanStartedAt == 0L) return
-        if (android.os.SystemClock.elapsedRealtime() - vulkanStartedAt < 8_000L) return
+        if (!vulkanOutput || released || !prepared || !vulkanSurfaceChecked || restartStop != null ||
+            restartStopFailed || dvRetirementPending || userVideoDisabled || audioOnly ||
+            attachedView?.holder?.surface?.isValid != true) return
+        if (!frameDropSampleReady()) {
+            vulkanOutputWatch.suspendObservation()
+            return
+        }
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!vulkanOutputWatch.shouldSample(now)) return
         val stats = runtimeStats()
-        if ((stats?.displayedPictures ?: 0) > 0) VideoAccelerationRuntime.reportOutput("vlc", frames = true)
-        if ((stats?.decodedVideo ?: 0) > 0 && stats?.displayedPictures == 0) fallbackVulkan("no_video_frames")
+        when (vulkanOutputWatch.observe(now, stats?.decodedVideo, stats?.displayedPictures)) {
+            VlcVulkanOutputVerdict.CONFIRMED -> VideoAccelerationRuntime.reportOutput("vlc", frames = true)
+            VlcVulkanOutputVerdict.STALLED -> fallbackVulkan("no_video_frames")
+            null -> Unit
+        }
     }
 
     /**
