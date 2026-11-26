@@ -277,7 +277,7 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
 +    if (exportWrite) signals[signalCount++] = bridgeWriteSemaphore;
  
      VkSubmitInfo submit { VK_STRUCTURE_TYPE_SUBMIT_INFO };
-@@ -1645,4 +1697,8 @@
+@@ -1645,7 +1697,11 @@
      if (!checkFrameResult(result, "submit frame")) return false;
      bridgeReadPending = false; // this submit consumes the temporary payload
      frameInFlight = true;
@@ -287,6 +287,9 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
 +        if (exportedFd >= 0) close(exportedFd);
 +        return false;
 +    }
+     if (shaderFailed) {
+         // Never display an incompletely recorded Slang frame; the GLES output is
+         // still rendering in parallel. The fence has completed, so retire safely.
 @@ -1700,4 +1756,9 @@
 -    return copied && !hasFatalError();
 +    const bool accepted = copied && !hasFatalError();
@@ -313,7 +316,7 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
 diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
 --- a/src/main/cpp/libretrodroid.cpp
 +++ b/src/main/cpp/libretrodroid.cpp
-@@ -1500,4 +1500,7 @@
+@@ -1500,7 +1500,10 @@
                  backend.rejectBridgeImport();
                  return;
              }
@@ -322,6 +325,9 @@ diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
 +            const bool exportWrite = backend.canExportBridgeWriteFence() && video->canImportExternalWriteFence();
 +            if (!backend.presentFrame(width, height, getAspectRatio(), nativePictureCompatible(),
 +                                      exportWrite ? &writeFd : nullptr)) {
+                 // No new bridge image was accepted. Keep the previous frame's transfer
+                 // and dimensions; interpreting it with this rejected frame's HDR metadata
+                 // would corrupt the immediate GLES fallback. WSI-only failures still return
 @@ -1514,4 +1517,9 @@
                  // true when the bridge copy succeeded and must accept the new source.
                  return;
