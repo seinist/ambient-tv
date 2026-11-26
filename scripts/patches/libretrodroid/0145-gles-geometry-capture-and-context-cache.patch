@@ -726,12 +726,15 @@ diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
 +    else if (video->isHWAccelerated()) video->bindMainContext();
 +    return video->captureRawFrame(outWidth, outHeight, maxWidth);
  }
-@@ -365,4 +365,5 @@
- void LibretroDroid::onSurfaceCreated() {
-     LOGD("Performing libretrodroid onSurfaceCreated");
-+    if (video) video->abandonFrontendResources();
- 
+@@ -358,7 +358,8 @@
      struct retro_system_av_info system_av_info {};
+     core->retro_get_system_av_info(&system_av_info);
+ 
++    if (video) video->abandonFrontendResources();
+     // GLSurfaceView calls onSurfaceCreated for a newly created EGL context.
+     // Never reuse the preceding generation's bridge just because its dimensions
+     // match. Keep the old EGL lease alive while retiring the Vulkan import;
+     // invalidating its context also prevents GL deletion on a recycled handle.
 diff --git a/src/main/cpp/libretrodroid.h b/src/main/cpp/libretrodroid.h
 --- a/src/main/cpp/libretrodroid.h
 +++ b/src/main/cpp/libretrodroid.h
