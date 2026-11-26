@@ -103,14 +103,17 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
 +        nativeSdrMissScore = 0;
 +    }
      if (nativeSdrSwapchain != VK_NULL_HANDLE) return true;
-@@ -600,2 +612,6 @@
+@@ -597,5 +609,9 @@
+         disableNativeSdrSwapchain("opaque composition required for native game output");
+         return false;
+     }
 -    uint32_t images = caps.minImageCount + 1;
 +    const bool canRequestExtra = caps.minImageCount < UINT32_MAX &&
 +        (caps.maxImageCount == 0 || caps.maxImageCount > caps.minImageCount);
 +    uint32_t images = caps.minImageCount;
 +    if (nativeSdrExtraImage && canRequestExtra) ++images;
-     if (caps.maxImageCount != 0) images = std::min(images, caps.maxImageCount);
 +    nativeSdrCanGrow = canRequestExtra && !nativeSdrExtraImage;
+     if (caps.maxImageCount != 0) images = std::min(images, caps.maxImageCount);
 @@ -631,3 +647,6 @@
      }
      nativeSdrImages.resize(count);
