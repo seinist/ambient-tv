@@ -301,9 +301,9 @@ def prepare_ndk(root, core, profile):
     path = root / "jni" / "Android.mk"
     source = path.read_text()
     marker = "include $(CORE_DIR)/build/Makefile.common"
-    flags = "LOCAL_CFLAGS   := $(COREFLAGS)"
+    flags = re.compile(r"^LOCAL_CFLAGS[ \t]+:=[ \t]+\$\(COREFLAGS\)[ \t]*$", re.MULTILINE)
     common = (root / "build" / "Makefile.common").read_text()
-    if (source.count(marker) != 1 or source.count(flags) != 1
+    if (source.count(marker) != 1 or len(flags.findall(source)) != 1
             or "rthreads/retro_eventcount.c" not in common
             or "rthreads/rthreads.c" not in common
             or "ifneq ($(HAVE_THREADS),0)" not in common):
@@ -312,7 +312,7 @@ def prepare_ndk(root, core, profile):
     # assigns COREFLAGS to LOCAL_CFLAGS and never forwards that define.
     # Explicitly build the upstream opt-in renderer; its core option stays off.
     source = source.replace(marker, "HAVE_THREADS := 1\n" + marker)
-    source = source.replace(flags, flags + " -DHAVE_THREADS")
+    source = flags.sub(lambda match: match.group(0).rstrip() + " -DHAVE_THREADS", source)
     path.write_text(source)
 
 

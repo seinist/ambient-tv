@@ -241,7 +241,7 @@ class CoreBuildPolicyTest(unittest.TestCase):
             (root / "jni").mkdir()
             (root / "build").mkdir()
             recipe = root / "jni/Android.mk"
-            source = "include $(CORE_DIR)/build/Makefile.common\nLOCAL_CFLAGS   := $(COREFLAGS)\n"
+            source = "include $(CORE_DIR)/build/Makefile.common\nLOCAL_CFLAGS    := $(COREFLAGS)\n"
             recipe.write_text(source)
             (root / "build/Makefile.common").write_text(
                 "ifneq ($(HAVE_THREADS),0)\n"
