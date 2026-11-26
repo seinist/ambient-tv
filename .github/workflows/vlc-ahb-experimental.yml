@@ -16,12 +16,14 @@ jobs:
       - uses: actions/checkout@v5
       - name: Install pinned Android NDK and shader compiler
         run: |
-          sdkmanager "ndk;30.0.16248370"
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          echo "sdkmanager: $sdkmanager"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" "ndk;30.0.16248370" || "$sdkmanager" --channel=3 "ndk;30.0.16248370"
           sudo apt-get update
           sudo apt-get install -y glslc
       - name: Host sanitizer regressions, GLSL and Android ABI checks
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/30.0.16248370
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
           bash scripts/test_vlc_ahb_import.sh
