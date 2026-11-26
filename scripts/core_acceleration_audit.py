@@ -7,7 +7,7 @@ DRIVER = re.compile(r"(?:[\w.-]+-)?clang(?:\+\+)?(?:-\d+)?")
 COMPILER_COMMAND = re.compile(r"^\s*(?:\d{4}-\d{2}-\d{2}T[^ ]+Z\s+)?(?:\S*/)?(?:[\w.-]+-)?clang(?:\+\+)?(?:-\d+)?(?:\s|$)")
 SOURCE = re.compile(r"\.(?:c|cc|cpp|cxx|C|s|S|asm)$")
 AUDITED = {"gpsp", "pcsx_rearmed", "mupen64plus_next_gles3", "picodrive", "parallel_n64", "mednafen_psx_hw", "swanstation", "gambatte", "genesis_plus_gx",
-           "mednafen_pce_fast", "mednafen_ngp", "mednafen_wswan", "mednafen_supergrafx"}
+           "mednafen_pce_fast", "mednafen_ngp", "mednafen_wswan", "mednafen_supergrafx", "snes9x2010"}
 
 
 def expand_response(tokens, cwd, root, depth=0):
@@ -129,6 +129,14 @@ def evidence(commands, source, required=()):
 def requirements(core, abi, profile):
     arm = abi in {"arm64-v8a", "armeabi-v7a"}
     arm64 = abi == "arm64-v8a"
+    if core == "snes9x2010":
+        result = {"rgb565_renderer": ("libretro/libretro.c", (("FRONTEND_SUPPORTS_RGB565", "1"),))}
+        if profile == "snes9x2010-threaded":
+            result["threaded_ppu"] = ("src/ppu.c", (("HAVE_THREADS", "1"),))
+            result["threaded_frontend"] = ("libretro/libretro.c", (("HAVE_THREADS", "1"),))
+            result["eventcount"] = ("rthreads/retro_eventcount.c", ())
+            result["rthreads"] = ("rthreads/rthreads.c", ())
+        return result
     if core == "gambatte":
         return {"rgb565_renderer": ("video_libretro.cpp", (("VIDEO_RGB565", "1"),)),
                 "resampler_config": ("libretro/libretro.cpp", (("CC_RESAMPLER_NO_HIGHPASS", "1"),))}
