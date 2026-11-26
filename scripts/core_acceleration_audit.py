@@ -4,6 +4,7 @@ import re
 import shlex
 
 DRIVER = re.compile(r"(?:[\w.-]+-)?clang(?:\+\+)?(?:-\d+)?")
+COMPILER_COMMAND = re.compile(r"^\s*(?:\d{4}-\d{2}-\d{2}T[^ ]+Z\s+)?(?:\S*/)?(?:[\w.-]+-)?clang(?:\+\+)?(?:-\d+)?(?:\s|$)")
 SOURCE = re.compile(r"\.(?:c|cc|cpp|cxx|C|s|S|asm)$")
 AUDITED = {"gpsp", "pcsx_rearmed", "mupen64plus_next_gles3", "picodrive"}
 
@@ -32,7 +33,7 @@ def compiler_commands(log, cwd=None, root=None, strict=False):
         try:
             tokens = shlex.split(line)
         except ValueError:
-            if strict and re.search(r"\bclang(?:\+\+)?\b", line):
+            if strict and COMPILER_COMMAND.match(line):
                 raise ValueError("Malformed compiler command in build log")
             continue
         driver = next((i for i, token in enumerate(tokens)
