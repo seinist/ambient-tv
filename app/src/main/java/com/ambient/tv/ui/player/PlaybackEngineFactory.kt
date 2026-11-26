@@ -123,7 +123,7 @@ object PlaybackEngineFactory {
                 // Every Media3 player (Live TV, VOD, YouTube) takes part in the native release gate
                 // like MPV and VLC: it neither opens its stream while the previous player still
                 // holds one nor lets the next player open before its own stream is gone.
-                gatedMedia3Handle { deferPrepare ->
+                gatedMedia3Handle(context) { deferPrepare ->
                     create(context.applicationContext, streamUrl, startPositionMs,
                         subtitleTracks, streamHeaders, audioPassthroughEnabled, mimeType = mimeType, maxVideoHeight = maxVideoHeight, preferredVideoMimeType = preferredVideoMimeType, maxVideoFrameRate = maxVideoFrameRate, streamUrlRenewer = streamUrlRenewer, sourceHdrStandard = sourceHdrStandard, preferOriginalAudio = preferOriginalAudio, preferredAudioLanguage = preferredAudioLanguage, audioOnly = audioOnly, mpvAudioAllowed = mpvAudioAllowed, centerYouTubeCaptions = centerYouTubeCaptions,
                         deferPrepare = deferPrepare, liveStream = liveStream, streamTuning = streamTuning,
@@ -291,15 +291,15 @@ object PlaybackEngineFactory {
      * Media3) still closes, [build] gets deferPrepare = true and the player prepares afterwards.
      * Call inside [BackgroundPlaybackSession.acquire]: the outgoing release has begun there.
      */
-    internal fun gatedMedia3Handle(build: (deferPrepare: Boolean) -> ExoPlayer): Media3PlaybackHandle {
+    internal fun gatedMedia3Handle(context: Context, build: (deferPrepare: Boolean) -> ExoPlayer): Media3PlaybackHandle {
         val wait = com.ambient.tv.ui.player.backend.nativeAudioReleases.snapshot().takeIf { !it.isDone }
         val player = build(wait != null)
         return Media3PlaybackHandle(player, joinsReleaseGate = true, waitingForPreviousRelease = wait != null).also { handle ->
-            if (wait != null) prepareAfterPreviousRelease(handle, wait)
+            if (wait != null) prepareAfterPreviousRelease(context.applicationContext, handle, wait)
         }
     }
 
-    private fun prepareAfterPreviousRelease(handle: Media3PlaybackHandle, previous: com.ambient.tv.ui.player.backend.PreviousRelease) {
+    private fun prepareAfterPreviousRelease(context: Context, handle: Media3PlaybackHandle, previous: com.ambient.tv.ui.player.backend.PreviousRelease) {
         val player = handle.player
         val main = android.os.Handler(android.os.Looper.getMainLooper())
         val started = android.os.SystemClock.elapsedRealtime()
@@ -307,14 +307,24 @@ object PlaybackEngineFactory {
             main.post {
                 val waited = android.os.SystemClock.elapsedRealtime() - started
                 com.ambient.tv.diagnostics.CrashBreadcrumbs.add("media3", "previous player $outcome after $waited ms")
-                // Deliberately different from MPV/VLC on TIMED_OUT: Media3 has no start-error path of
-                // its own. Its errors arrive as PlaybackException and trigger renderer fallbacks
-                // (Live TV switches to MPV/VLC), which would open yet another native player next to
-                // the hung one. Media3 plays through Android's AudioTrack, so it starts anyway.
-                if (outcome != com.ambient.tv.ui.player.backend.PreviousReleaseOutcome.READY)
-                    Timber.w(previous.failure, "Media3 start: previous player %s after %d ms; starting anyway", outcome, waited)
-                // Released meanwhile (channel change, Back): nothing to prepare.
-                if (Media3PlaybackHandle.forPlayer(player) != null) handle.previousReleaseSettled()
+                if (Media3PlaybackHandle.forPlayer(player) !== handle) return@post
+                if (outcome == com.ambient.tv.ui.player.backend.PreviousReleaseOutcome.TIMED_OUT) {
+                    Timber.w("Media3 start: previous player still closing after %d ms; keeping prepare deferred", waited)
+                    handle.previousReleaseTimedOut(context.getString(com.ambient.tv.R.string.audio_output_release_failed))
+                    val target = java.lang.ref.WeakReference(handle)
+                    previous.future.whenComplete { _, _ ->
+                        main.post {
+                            target.get()?.let { current ->
+                                if (Media3PlaybackHandle.forPlayer(current.player) === current)
+                                    current.previousReleaseSettled()
+                            }
+                        }
+                    }
+                } else {
+                    if (outcome != com.ambient.tv.ui.player.backend.PreviousReleaseOutcome.READY)
+                        Timber.w(previous.failure, "Media3 start: previous player %s after %d ms", outcome, waited)
+                    handle.previousReleaseSettled()
+                }
             }
         }
     }
