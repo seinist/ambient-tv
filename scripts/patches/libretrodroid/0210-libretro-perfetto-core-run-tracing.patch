@@ -1,7 +1,6 @@
 diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
 --- a/src/main/cpp/libretrodroid.cpp
 +++ b/src/main/cpp/libretrodroid.cpp
-+++ b/src/main/cpp/libretrodroid.cpp
 @@ -17,6 +17,7 @@
  
  #include <jni.h>
