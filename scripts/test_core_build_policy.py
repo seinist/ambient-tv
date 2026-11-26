@@ -79,6 +79,16 @@ class CoreBuildPolicyTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 list(compiler_commands("clang @../outside.rsp", root, root, strict=True))
 
+    def test_compiler_log_diagnostics_do_not_trip_strict_parser(self):
+        # Clang diagnostics can quote source text containing a tool path. That is
+        # not a compiler invocation and must not fail an otherwise valid audit.
+        diagnostic = ('2026-11-26T16:49:47.2705010Z   115 | '
+                      '{ "AXP/usr/local/ndk/bin/clang --target=armv7-none-linux-android29')
+        self.assertEqual(list(compiler_commands(diagnostic, strict=True)), [])
+        malformed = '2026-11-26T16:49:47.2705010Z /ndk/bin/clang "unterminated'
+        with self.assertRaisesRegex(ValueError, "Malformed compiler command"):
+            list(compiler_commands(malformed, strict=True))
+
     def test_fail_closed_publish(self):
         for ref, cores, abis, profile in [
             ("refs/heads/feature", "", "", "baseline"),
