@@ -36,6 +36,7 @@ bouncycastle = "1.85.2"
 # Host application and SmartTube wrapper Maven pins (unchanged versions).
 playServicesCronet = "18.1.0"
 chromiumCronet = "143.7445.0"
+smarttubeCronetAdapter = "0.1.0"
 jna = "5.19.1"
 legacySupport = "1.0.0"
 robolectric = "4.17"
@@ -127,6 +128,10 @@ timber = { group = "com.jakewharton.timber", name = "timber", version.ref = "tim
 junit4 = { group = "junit", name = "junit", version.ref = "junit4" }
 
 # Host application and SmartTube wrapper Maven coordinates.
+chromium-cronet-api = { module = "org.chromium.net:cronet-api", version.ref = "chromiumCronet" }
+chromium-cronet-common = { module = "org.chromium.net:cronet-common", version.ref = "chromiumCronet" }
+chromium-cronet-embedded = { module = "org.chromium.net:cronet-embedded", version.ref = "chromiumCronet" }
+smarttube-cronet-adapter = { module = "com.google.net.cronet:cronet-okhttp", version.ref = "smarttubeCronetAdapter" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 androidx-legacy-support = { module = "androidx.legacy:legacy-support-v4", version.ref = "legacySupport" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
