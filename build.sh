@@ -1310,7 +1310,7 @@ run_cores_command() {
         cores)
             shift
             local -a inputs=(-f publish=false)
-            local selected="" profile="baseline" abis="" comparison="none" core_ref="main" publish_experimental=false
+            local selected="" profile="baseline" abis="" comparison="none" core_ref="main" publish_experimental=false force_rebuild=false
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --profile)
@@ -1321,6 +1321,8 @@ run_cores_command() {
                         abis="$2"; shift 2 ;;
                     --publish-experimental)
                         publish_experimental=true; shift ;;
+                    --force)
+                        force_rebuild=true; shift ;;
                     --comparison)
                         [[ $# -ge 2 ]] || fail "--comparison requires baseline-thinlto or o3-o3-thinlto"
                         comparison="$2"; shift 2 ;;
@@ -1346,6 +1348,9 @@ run_cores_command() {
             if [[ "$publish_experimental" == true ]]; then
                 [[ "$core_ref" == main && "$profile" != baseline && "$comparison" == none ]] || fail "Experimental release requires main, an explicit non-baseline profile and no comparison"
                 inputs+=(-f publish_experimental=true)
+                if [[ "$force_rebuild" == true ]]; then inputs+=(-f force_rebuild=true); fi
+            elif [[ "$force_rebuild" == true ]]; then
+                fail "--force is for publishing; artifact-only runs always rebuild their selection"
             fi
             gh workflow run cores.yml --repo "$repo" --ref "$core_ref" "${inputs[@]}"
             ;;
@@ -1358,14 +1363,16 @@ run_cores_command() {
             bash "$ROOT_DIR/scripts/cores_signing_key.sh" "$repo" "${@:2}"
             ;;
         cores-release)
-            [[ $# -eq 1 ]] || fail "Usage: $0 cores-release"
+            [[ $# -eq 1 || ( $# -eq 2 && "${2:-}" == --force ) ]] || fail "Usage: $0 cores-release [--force]"
             gh api --silent "repos/$repo/contents/cores/signing-public.pem?ref=main" ||
                 fail "The public signing key must be on GitHub main. Run $0 cores-key for initial setup, then commit and push cores/signing-public.pem."
             # Workflow dispatch can be allowed even when listing repository secrets is forbidden.
             if signing_secret="$(gh secret list --repo "$repo" --json name --jq "$secret_query" 2>/dev/null)"; then
                 [[ -n "$signing_secret" ]] || fail "CORES_SIGNING_KEY is missing on GitHub. Set up core signing before publishing."
             fi
-            gh "${workflow[@]}" -f publish=true
+            local -a release_inputs=(-f publish=true)
+            if [[ "${2:-}" == --force ]]; then release_inputs+=(-f force_rebuild=true); fi
+            gh "${workflow[@]}" "${release_inputs[@]}"
             ;;
         cores-rename-releases)
             [[ $# -eq 1 || ( $# -eq 2 && "${2:-}" == --apply ) ]] || fail "Usage: $0 cores-rename-releases [--apply]"
@@ -1415,11 +1422,11 @@ Libraries: libs-check [svp|monogram|libretro], libs-update [svp|monogram|libretr
 
 Libretro cores on GitHub Actions (main):
   cores [id[,id...]] [--profile baseline|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths] [--abis ABI[,ABI...]]
-        [--comparison baseline-thinlto|o3-o3-thinlto] [--ref branch] [--publish-experimental]
+        [--comparison baseline-thinlto|o3-o3-thinlto] [--ref branch] [--publish-experimental [--force]]
                       Build artifacts by default. Explicit --publish-experimental signs a separate prerelease on main.
   cores-key [--manual] Generate signing keys. Upload the secret in the browser if gh is unavailable.
                        Commit and push cores/signing-public.pem and rebuild the app to embed it.
-  cores-release       Build and publish the full signed core catalog (gh).
+  cores-release [--force]  Build changed cores and publish a complete signed catalog; --force rebuilds all.
   cores-status        Show recent Core workflow runs using gh or the public API (Python 3).
   cores-rename-releases [--apply]  Preview or update only core release titles (gh).
   Browser workflow    https://github.com/seinist/ambient-tv/actions/workflows/cores.yml

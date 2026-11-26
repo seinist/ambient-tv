@@ -111,19 +111,24 @@ def select(matrix, records, latest_keys, profile, ndk, force=False, root=ROOT):
 def stage_reuse(repo, reuse, destination):
     destination.mkdir(parents=True, exist_ok=True)
     entries = []
+    groups = {}
     for record in reuse:
         entry = record["entry"]
         name = entry["asset"]
         if name != f"{entry['abi']}--{entry['core']}_libretro_android.so.zip" or Path(name).name != name:
             raise ValueError("Invalid reuse asset")
-        target = destination / name
-        gh("release", "download", record["tag"], "--repo", repo, "--dir", str(destination),
-           "--pattern", name)
-        with target.open("rb") as stream:
-            actual = hashlib.file_digest(stream, "sha256").hexdigest()
-        if actual != entry["sha256"] or target.stat().st_size != entry["size"]:
-            raise ValueError(f"Reused asset failed signature-bound hash/size: {name}")
-        entries.append(entry)
+        groups.setdefault(record["tag"], []).append(entry)
+    for tag, group in groups.items():
+        patterns = [arg for entry in group for arg in ("--pattern", entry["asset"])]
+        gh("release", "download", tag, "--repo", repo, "--dir", str(destination), *patterns)
+        for entry in group:
+            name = entry["asset"]
+            target = destination / name
+            with target.open("rb") as stream:
+                actual = hashlib.file_digest(stream, "sha256").hexdigest()
+            if actual != entry["sha256"] or target.stat().st_size != entry["size"]:
+                raise ValueError(f"Reused asset failed signature-bound hash/size: {name}")
+            entries.append(entry)
     return entries
 
 

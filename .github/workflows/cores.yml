@@ -16,6 +16,10 @@ on:
         description: Publish a separate signed experimental channel (main only)
         type: boolean
         default: false
+      force_rebuild:
+        description: Rebuild all selected cores even if their published fingerprints match
+        type: boolean
+        default: false
       cores:
         description: Core ids to build, comma separated (empty = all)
         default: ""
@@ -23,7 +27,7 @@ on:
         description: Android ABIs, comma separated (empty = all)
         default: ""
       profile:
-        description: Compiler profile (non-baseline is artifact-only)
+        description: Compiler profile (non-baseline requires explicit experimental publication)
         type: choice
         options: [baseline, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2, snes9x2010-threaded, core-hotpaths]
         default: baseline
@@ -37,6 +41,8 @@ on:
       - cores/cores.json
       - .github/workflows/cores.yml
       - scripts/core_build_policy.py
+      - scripts/core_release_incremental.py
+      - scripts/test_core_release_incremental.py
       - scripts/core_acceleration_audit.py
       - scripts/core_link_evidence.py
       - scripts/core_hotpath_patches.py
@@ -52,6 +58,8 @@ on:
       - .github/workflows/cores.yml
       - scripts/check_elf_pages.py
       - scripts/core_build_policy.py
+      - scripts/core_release_incremental.py
+      - scripts/test_core_release_incremental.py
       - scripts/core_acceleration_audit.py
       - scripts/core_link_evidence.py
       - scripts/core_hotpath_patches.py
@@ -75,11 +83,16 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
+      reuse: ${{ steps.plan.outputs.reuse }}
+      publish: ${{ steps.plan.outputs.publish }}
+      count: ${{ steps.plan.outputs.count }}
+      total: ${{ steps.plan.outputs.total }}
     steps:
       - uses: actions/checkout@v5
       - name: Test core build policy
         run: |
           python3 -m unittest discover -s scripts -p test_core_build_policy.py
+          python3 -m unittest discover -s scripts -p test_core_release_incremental.py
           python3 -m unittest discover -s scripts -p test_core_hotpath_patches.py
           python3 -m unittest discover -s scripts -p test_core_hotpath_remaining.py
       - id: plan
@@ -90,6 +103,8 @@ jobs:
           PUBLISH: ${{ inputs.publish }}
           COMPARISON: ${{ inputs.comparison || 'none' }}
           PUBLISH_EXPERIMENTAL: ${{ inputs.publish_experimental }}
+          FORCE_REBUILD: ${{ inputs.force_rebuild }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if [ "$PUBLISH_EXPERIMENTAL" = true ]; then
@@ -100,12 +115,32 @@ jobs:
           matrix=$(python3 scripts/core_build_policy.py plan --catalog cores/cores.json \
             --event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF" --publish "$PUBLISH" \
             --cores "$ONLY" --abis "$ABIS" --profile "$PROFILE" --comparison "$COMPARISON")
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          reuse='[]'
+          publish=false
+          total=$(jq '.include | length' <<< "$matrix")
+          if [[ "$GITHUB_EVENT_NAME" == push || "$PUBLISH" == true || "$PUBLISH_EXPERIMENTAL" == true ]]; then
+            force=()
+            if [[ "$FORCE_REBUILD" == true ]]; then force+=(--force); fi
+            result=$(python3 scripts/core_release_incremental.py plan --repo "$GITHUB_REPOSITORY" \
+              --profile "$PROFILE" --ndk "$NDK_VERSION" --matrix "$matrix" "${force[@]}")
+            matrix=$(jq -c '.matrix' <<< "$result")
+            reuse=$(jq -c '.reuse' <<< "$result")
+            publish=$(jq -r '.publish' <<< "$result")
+          fi
+          count=$(jq '.include | length' <<< "$matrix")
+          {
+            echo "matrix=$matrix"
+            echo "reuse=$reuse"
+            echo "publish=$publish"
+            echo "count=$count"
+            echo "total=$total"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building $count of $total core/ABI combinations."
           echo "$matrix" | jq -r '.include[] | "\(.core) \(.abi) \(.profile)"'
       # Check the secret BEFORE spending 104 core-build jobs on a release that cannot
       # be signed. Never generate a new key or publish unsigned native libraries.
       - name: Check core-release signing key
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.publish || inputs.publish_experimental))
+        if: steps.plan.outputs.publish == 'true'
         env:
           SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}
         run: |
@@ -126,6 +161,7 @@ jobs:
 
   build:
     needs: plan
+    if: needs.plan.outputs.count != '0'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -279,7 +315,9 @@ jobs:
       contents: write
     needs: [plan, build]
     if: >-
-      needs.build.result == 'success' &&
+      always() && needs.plan.result == 'success' &&
+      needs.plan.outputs.publish == 'true' &&
+      (needs.build.result == 'success' || (needs.build.result == 'skipped' && needs.plan.outputs.count == '0')) &&
       github.ref == 'refs/heads/main' &&
       ((github.event_name == 'workflow_dispatch' && inputs.publish && inputs.profile == 'baseline') ||
        (github.event_name == 'workflow_dispatch' && inputs.publish_experimental && !inputs.publish && inputs.profile != 'baseline' && inputs.comparison == 'none') ||
@@ -289,6 +327,7 @@ jobs:
       - uses: actions/checkout@v5
 
       - uses: actions/download-artifact@v5
+        if: needs.plan.outputs.count != '0'
         with:
           pattern: ${{ inputs.publish_experimental && format('candidate-{0}-*', inputs.profile) || 'core-*' }}
           path: artifacts
@@ -298,6 +337,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}
           EXPECTED_MATRIX: ${{ needs.plan.outputs.matrix }}
+          REUSE: ${{ needs.plan.outputs.reuse }}
+          TOTAL: ${{ needs.plan.outputs.total }}
           EXPERIMENT: ${{ inputs.publish_experimental }}
           PROFILE: ${{ inputs.profile || 'baseline' }}
         run: |
@@ -316,7 +357,7 @@ jobs:
           fi
           jq -e --arg p "$PROFILE" 'all(.include[]; .profile == $p)' <<< "$EXPECTED_MATRIX" >/dev/null
           mapfile -t expected < <(jq -r '.include[] | "\(.artifact)/\(.core)_libretro_android.so"' <<< "$EXPECTED_MATRIX")
-          [ "${#expected[@]}" -gt 0 ] || { echo "::error::Empty core build matrix"; exit 1; }
+          mkdir -p artifacts release
           for path in "${expected[@]}"; do
             test -s "artifacts/$path" || { echo "::error::Missing built core artifact: $path"; exit 1; }
           done
@@ -325,8 +366,7 @@ jobs:
             echo "::error::Expected ${#expected[@]} core builds, got $actual"
             exit 1
           }
-          mkdir -p release
-          entries='[]'
+          entries=$(python3 scripts/core_release_incremental.py reuse --repo "$GITHUB_REPOSITORY" --records "$REUSE" --destination release)
           for dir in artifacts/"$prefix"*; do
             name=${dir#artifacts/"$prefix"}
             abi=$(jq -r '.abis[]' cores/cores.json | while read -r a; do case "$name" in *-"$a") echo "$a";; esac; done | awk '{ print length, $0 }' | sort -rn | head -n1 | cut -d' ' -f2)
@@ -337,12 +377,14 @@ jobs:
             (cd "$dir" && zip -q -X "../../release/$asset" "${core}_libretro_android.so")
             entries=$(jq -c --arg core "$core" --arg abi "$abi" --arg asset "$asset" \
               --arg sha "$(sha256sum "release/$asset" | cut -d' ' -f1)" --argjson size "$(stat -c %s "release/$asset")" \
-              --slurpfile pins cores/cores.json \
+              --argjson matrix "$EXPECTED_MATRIX" \
               '. + [{ core: $core, abi: $abi, asset: $asset, sha256: $sha, size: $size,
-                      commit: ($pins[0].cores[] | select(.core == $core) | .commit),
-                      repo: ($pins[0].cores[] | select(.core == $core) | .repo) }]' <<< "$entries")
+                      commit: ($matrix.include[] | select(.core == $core and .abi == $abi) | .commit),
+                      repo: ($matrix.include[] | select(.core == $core and .abi == $abi) | .repo),
+                      fingerprint: ($matrix.include[] | select(.core == $core and .abi == $abi) | .fingerprint) }]' <<< "$entries")
           done
-          jq -e --argjson count "${#expected[@]}" 'length == $count' <<< "$entries" >/dev/null
+          if [ "$EXPERIMENT" = true ]; then count="${#expected[@]}"; else count="$TOTAL"; fi
+          jq -e --argjson count "$count" 'length == $count and ([.[] | [.core,.abi]] | unique | length) == $count and all(.[]; .fingerprint | test("^[0-9a-f]{64}$"))' <<< "$entries" >/dev/null
           jq -n --arg tag "$tag" --arg profile "$PROFILE" --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson cores "$entries" \
             '{ version: 1, tag: $tag, profile: $profile, created: $created, cores: $cores }' > release/manifest.json
           key="$RUNNER_TEMP/ambient-cores-release-key.pem"
@@ -360,5 +402,5 @@ jobs:
           else
             title="Ambient TV – Libretro Cores (Stable) – $(date -u +%Y-%m-%d)"
           fi
-          gh release create "$tag" release/* --title "$title" "${release_args[@]}" \
-            --notes "libretro cores built from cores/cores.json at ${GITHUB_SHA::7} (16 KB pages). Signed manifest for profile $PROFILE."
+          gh release create "$tag" release/* --title "$title" "${release_args[@]}" --target "$GITHUB_SHA" \
+            --notes "Libretro cores at ${GITHUB_SHA::7} (16 KB pages). Profile $PROFILE; ${#expected[@]} rebuilt, $((count - ${#expected[@]})) verified/reused."
