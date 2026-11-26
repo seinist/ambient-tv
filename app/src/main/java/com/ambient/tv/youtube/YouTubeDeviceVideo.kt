@@ -22,7 +22,10 @@ object YouTubeDeviceVideo {
         val tenBit: Set<String>,
     )
 
-    @Volatile private var decoders: List<Decoder>? = null
+    // One codec enumeration for warmup and playback, even if both start together.
+    private val decoders: List<Decoder> by lazy { load() }
+
+    internal fun warmup() { decoders.size }
 
     /** Short side of the current display mode in pixels (TV: the HDMI output mode). */
     fun displayShortSide(context: Context): Int = runCatching {
@@ -72,7 +75,7 @@ object YouTubeDeviceVideo {
      * currently has that HDR type enabled, and a hardware decoder with the 10-bit HDR profile.
      */
     fun decodeCheck(context: Context? = null, allowHdr: Boolean = false): YouTubeDecodeCheck {
-        val list = decoders ?: load().also { decoders = it }
+        val list = decoders
         val display = if (allowHdr && context != null) com.ambient.tv.ui.player.HdrSupport.displayStandards(context) else emptySet()
         return check@{ family, width, height, fps, hdr ->
             if (hdr != null) {

@@ -100,4 +100,22 @@ class YouTubeMedia3PreparationTest {
             assertEquals("Enriched title", prepared?.title)
         }
     }
+
+    @Test fun failedManifestNeverOpensTheNativeVideoOnlyFallback() {
+        val manifest = CompletableDeferred<String?>()
+        val video = "https://video.test/video-only"
+        val source = playback("current").copy(uri = video, adaptiveVideoUri = video,
+            adaptiveAudioUri = "https://video.test/audio-only", deferredDash = manifest)
+        var prepared: YouTubePlayback? = null
+        rule.setContent {
+            val current = rememberYouTubeMedia3Playback(source).value
+            SideEffect { prepared = current }
+        }
+        rule.runOnIdle { manifest.complete(null) }
+        rule.runOnIdle {
+            assertEquals("", prepared?.uri)
+            assertNull(prepared?.deferredDash)
+        }
+    }
+
 }

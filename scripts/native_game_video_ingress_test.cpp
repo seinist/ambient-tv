@@ -144,8 +144,13 @@ void bridgeImportContracts() {
             assert(video.height == (test.accepted ? 480u : 24u));
             if (!test.accepted) {
                 assert(!backend.frameConfirmed);
+                // Surface recreation may call attach directly after a fatal import.
+                // It must not touch the old EGL lease, allocate or try another import.
+                host.attachVulkanFrame(512, 480);
                 host.handleVideoRefresh(RETRO_HW_FRAME_BUFFER_VALID, 512, 480, 2048);
                 assert(backend.submissions == 0 && video.frameCalls == 0 && backend.drains == 1);
+                assert(backend.allocations == test.allocations && video.imports == test.imports);
+                assert(backend.disables == test.disables && backend.rejections == 1);
             }
             std::printf("PASS %s bridge: %s\n", initial ? "initial" : "resize", test.name);
         }

@@ -116,6 +116,12 @@ class ChunkedStreamRelay(
         return "http://127.0.0.1:${server.localPort}/$token"
     }
 
+    /** Open only the loopback listener; do not contact upstream or register a stream. */
+    @Synchronized
+    internal fun warmup() {
+        if (listener?.isClosed != false) start()
+    }
+
     @Synchronized
     private fun lookup(token: String): Entry? = entries[token]
 

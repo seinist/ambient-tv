@@ -53,6 +53,7 @@ private const val MPV_EVENT_SHUTDOWN = 1
 /** Poll timeout of the event waiter; also bounds how long release waits for it. */
 private const val EVENT_PUMP_POLL_MS = 1_000L
 private const val MPV_EVENT_VIDEO_RECONFIG = 17
+private const val MPV_EVENT_PLAYBACK_RESTART = 21
 private const val MPV_EVENT_AUDIO_RECONFIG = 18
 private const val MPV_EVENT_PROPERTY_CHANGE = 22
 
@@ -238,6 +239,7 @@ internal class MpvPlaybackEngine(
     private var hdr10SwapchainSupported: Boolean? = null
     private var detachedVideoSelection: String? = null
     private var startupOpenedAt = 0L
+    private var startupRestartAt = 0L
     private var loaded = false
     private val deferredSeek = MpvDeferredSeek(initialStartPositionMs.takeIf { !liveStream && it > 0 })
     private val dvResumeWorkaround get() = !liveStream && !gpuQualityMode &&
@@ -729,6 +731,7 @@ internal class MpvPlaybackEngine(
             ownerStep?.mark("surface:force_window")
             setProperty("force-window", "yes")
             startupOpenedAt = System.nanoTime()
+            startupRestartAt = startupOpenedAt
             com.ambient.tv.ui.player.logPlaybackStartup("mpv", "initial_load_requested", startupConstructionAt,
                 "cache=$networkCacheEnabled readahead_s=${if (networkCacheEnabled) 20 else 0}")
             val requestedResume = deferredSeek.takeOpenPosition()
@@ -2549,6 +2552,14 @@ internal class MpvPlaybackEngine(
                         refreshImageSource()
                     }
                 }
+                MPV_EVENT_PLAYBACK_RESTART -> {
+                    // Native playback restart is not a display-present callback, but separates
+                    // decoder/cache startup from the earlier FILE_LOADED event.
+                    if (fileReady && startupRestartAt != 0L) {
+                        com.ambient.tv.ui.player.logPlaybackStartup("mpv", "playback_restart_event", startupRestartAt)
+                        startupRestartAt = 0L
+                    }
+                }
                 MPV_EVENT_VIDEO_RECONFIG -> {
                     // SmartTube adaptive format switches and MPV track changes may update the
                     // source dimensions while keeping the same transfer and upscale thresholds.
@@ -2631,6 +2642,7 @@ internal class MpvPlaybackEngine(
         // Same watchdog allowance as the first open while loadfile and the first frames run.
         ownerStep?.reopening("reopen:loadfile")
         startupOpenedAt = System.nanoTime()
+        startupRestartAt = startupOpenedAt
         if (liveStream) command("loadfile", playbackUrlForOpen(), "replace")
         else command("loadfile", playbackUrlForOpen(), "replace", "-1", "start=${com.ambient.tv.ui.player.rendererReopenPositionMs(false, resumePositionMs) / 1000.0}")
     }

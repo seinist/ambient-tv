@@ -111,6 +111,8 @@ object PlaybackEngineFactory {
         streamTuning: Media3StreamTuning? = null,
         /** Optional authenticated source (Telegram MTProto) without exposing file URLs. */
         dataSourceFactory: androidx.media3.datasource.DataSource.Factory? = null,
+        /** Optional source launch correlation, not part of playback identity. */
+        startupTraceNs: Long = 0L,
     ): ExoPlayer {
         if (metadata != null) {
             return BackgroundPlaybackSession.acquire(context, metadata, "media3",
@@ -122,7 +124,7 @@ object PlaybackEngineFactory {
                     create(context.applicationContext, streamUrl, startPositionMs,
                         subtitleTracks, streamHeaders, audioPassthroughEnabled, mimeType = mimeType, maxVideoHeight = maxVideoHeight, preferredVideoMimeType = preferredVideoMimeType, maxVideoFrameRate = maxVideoFrameRate, streamUrlRenewer = streamUrlRenewer, sourceHdrStandard = sourceHdrStandard, preferOriginalAudio = preferOriginalAudio, preferredAudioLanguage = preferredAudioLanguage, audioOnly = audioOnly, mpvAudioAllowed = mpvAudioAllowed, centerYouTubeCaptions = centerYouTubeCaptions,
                         deferPrepare = deferPrepare, liveStream = liveStream, streamTuning = streamTuning,
-                        dataSourceFactory = dataSourceFactory, profileMetadata = profileMetadata)
+                        dataSourceFactory = dataSourceFactory, profileMetadata = profileMetadata, startupTraceNs = startupTraceNs)
                 }
             }.player
         }
@@ -254,6 +256,7 @@ object PlaybackEngineFactory {
                             if (!reportedFrame) {
                                 reportedFrame = true
                                 logPlaybackStartup("media3", "first_frame_callback", started)
+                                logPlaybackStartup("youtube-media3", "first_frame_callback", startupTraceNs)
                             }
                         }
                     })
