@@ -360,30 +360,60 @@ Java_com_ambient_tv_ui_player_backend_MpvNativeBridge_nativeCommand(JNIEnv *env,
     return result;
 }
 
+/* Keep the existing void JNI ABI: failures are Java exceptions, not ignored mpv errors.
+ * Never remove a global reference while the native VO may still use its wid. */
+static void surface_failure(JNIEnv *env, const char *message) {
+    if ((*env)->ExceptionCheck(env)) return;
+    jclass type = (*env)->FindClass(env, "java/lang/IllegalStateException");
+    if (type) {
+        (*env)->ThrowNew(env, type, message);
+        (*env)->DeleteLocalRef(env, type);
+    }
+}
+
 JNIEXPORT void JNICALL
 Java_com_ambient_tv_ui_player_backend_MpvNativeBridge_nativeAttachSurface(JNIEnv *env, jobject thiz, jlong handle, jobject surface) {
     (void) thiz;
     ambient_mpv_context *ctx = ctx_from(handle);
-    if (!ctx || !ctx->mpv || !surface) return;
-    if (ctx->surface) (*env)->DeleteGlobalRef(env, ctx->surface);
-    ctx->surface = (*env)->NewGlobalRef(env, surface);
-    int64_t wid = (int64_t)(intptr_t)ctx->surface;
-    mpv_set_option(ctx->mpv, "wid", MPV_FORMAT_INT64, &wid);
+    if (!ctx || !ctx->mpv || !surface || ctx->surface) {
+        surface_failure(env, "MPV surface attach requires a retired previous surface");
+        return;
+    }
+    jobject next = (*env)->NewGlobalRef(env, surface);
+    if (!next) {
+        surface_failure(env, "MPV surface reference allocation failed");
+        return;
+    }
+    int64_t wid = (int64_t)(intptr_t)next;
+    if (mpv_set_option(ctx->mpv, "wid", MPV_FORMAT_INT64, &wid) < 0) {
+        (*env)->DeleteGlobalRef(env, next);
+        surface_failure(env, "MPV rejected surface window");
+        return;
+    }
+    ctx->surface = next;
 }
 
 JNIEXPORT void JNICALL
 Java_com_ambient_tv_ui_player_backend_MpvNativeBridge_nativeDetachSurface(JNIEnv *env, jobject thiz, jlong handle) {
     (void) thiz;
     ambient_mpv_context *ctx = ctx_from(handle);
-    if (!ctx || !ctx->mpv) return;
-    mpv_set_property_string(ctx->mpv, "force-window", "no");
-    mpv_set_property_string(ctx->mpv, "vo", "null");
-    if (ctx->surface) {
-        (*env)->DeleteGlobalRef(env, ctx->surface);
-        ctx->surface = NULL;
+    if (!ctx || !ctx->mpv) {
+        surface_failure(env, "MPV surface detach has no native owner");
+        return;
+    }
+    if (!ctx->surface) return;
+    if (mpv_set_property_string(ctx->mpv, "force-window", "no") < 0 ||
+        mpv_set_property_string(ctx->mpv, "vo", "null") < 0) {
+        surface_failure(env, "MPV rejected video output retirement");
+        return;
     }
     int64_t wid = 0;
-    mpv_set_option(ctx->mpv, "wid", MPV_FORMAT_INT64, &wid);
+    if (mpv_set_option(ctx->mpv, "wid", MPV_FORMAT_INT64, &wid) < 0) {
+        surface_failure(env, "MPV rejected window reset");
+        return;
+    }
+    (*env)->DeleteGlobalRef(env, ctx->surface);
+    ctx->surface = NULL;
 }
 
 JNIEXPORT jint JNICALL
