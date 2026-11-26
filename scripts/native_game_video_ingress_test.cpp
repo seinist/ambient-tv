@@ -50,6 +50,7 @@ struct VulkanBackend {
         return fd >= 0 && readFenceAccepted && !fatal;
     }
     void* getFrameBuffer() { return this; }
+    uint64_t getFrameBufferAllocationBytes() const { return fp16 ? 8192 : 4096; }
     bool isFp16Frame() const { return fp16; }
     bool ensureFrameBuffer(unsigned w, unsigned h) {
         assert(drains > 0 && !fatal);
@@ -111,10 +112,11 @@ struct Video {
         pendingUse = false;
         return true;
     }
-    bool attachExternalFrame(void* buffer, unsigned w, unsigned h) {
+    bool attachExternalFrame(void* buffer, unsigned w, unsigned h, uint64_t allocationBytes) {
         auto& backend = VulkanBackend::getInstance();
         assert(buffer == backend.getFrameBuffer() && !backend.fatal);
         assert(w == backend.width && h == backend.height && backend.allocations > imports);
+        assert(allocationBytes == backend.getFrameBufferAllocationBytes());
         ++imports;
         pendingUse = true;
         return backend.fp16 ? fp16ImportAccepted : rgbaImportAccepted;

@@ -135,6 +135,11 @@ def main():
             "-o", str(slots_binary)], check=True)
         subprocess.run([str(slots_binary)], check=True, timeout=20)
 
+        accounting_binary = work / "external-frame-accounting-test"
+        subprocess.run(command + [str(root / "scripts/native_game_external_frame_accounting_test.cpp"),
+            "-o", str(accounting_binary)], check=True)
+        subprocess.run([str(accounting_binary)], check=True, timeout=20)
+
         access_binary = work / "external-frame-access-test"
         subprocess.run(command + [str(root / "scripts/native_game_external_frame_access_test.cpp"),
             "-o", str(access_binary)], check=True)
