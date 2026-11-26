@@ -914,7 +914,7 @@ configurations.configureEach {
             val forbidden = resolutionResult.allComponents.mapNotNull { it.moduleVersion }
                 .filter {
                     (it.group == "org.chromium.net" && it.name in setOf("cronet-embedded", "cronet-common")) ||
-                        it.name == "cronet-okhttp"
+                        (it.group == "com.google.net.cronet" && it.name == "cronet-okhttp")
                 }
             check(forbidden.isEmpty()) {
                 "Unexpected embedded SmartTube Cronet dependencies: " + forbidden.joinToString()
