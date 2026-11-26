@@ -18,7 +18,9 @@ also make a game appear to hang during the initial download.
   \`ContentResolver.openFileDescriptor("r")\`, checking it supports \`lseek\`.
 * **SMB/NFS/WebDAV/SFTP:** one \`StorageManager.openProxyFileDescriptor\`
   backed by the existing \`FileAccess.open\` seekable readers, with an isolated
-  I/O callback thread and 4 x 256 KiB LRU windows. No large \`ByteArray\`
+  I/O callback thread and 4 x 256 KiB recycled LRU windows, plus one lazy
+  256 KiB scratch block for short reads (1.25 MiB maximum ROM buffers per proxy).
+  Full reads write directly into the cached window. No large ROM-sized byte array
   or persistent ROM cache is created. This uses Android's kernel FUSE bridge,
   supported from API 26 (Ambient TV min API 29).
 * **LibretroDroid:** the pinned Argosy fork already accepts

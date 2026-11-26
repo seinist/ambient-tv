@@ -40,8 +40,8 @@ class GameDirectContent internal constructor(
 
 /**
  * A bounded random-read window around a seekable media source, used only by a proxy-FD worker.
- * At most 4 * 256 KiB of ROM data is retained, even for multi-gigabyte images. It is intentionally
- * independent from Android so that offsets, boundaries and short network reads can be unit tested.
+ * Retains at most 4 * 256 KiB of cached ROM data plus one lazy short-read scratch block by default.
+ * It is intentionally independent from Android for testing offsets, boundaries and network reads.
  */
 internal class GameReadWindows(
     private val media: SeekableMedia,
@@ -52,10 +52,9 @@ internal class GameReadWindows(
         require(blockBytes in 4096..(1024 * 1024) && maxBlocks in 1..16)
     }
 
-    private val blocks = object : LinkedHashMap<Long, ByteArray>(maxBlocks + 1, .75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, ByteArray>): Boolean =
-            size > maxBlocks
-    }
+    private class Block(val bytes: ByteArray, var length: Int = 0)
+    private val blocks = LinkedHashMap<Long, Block>(maxBlocks + 1, .75f, true)
+    private var shortReadScratch: ByteArray? = null
 
     val size: Long get() = media.size
 
@@ -68,29 +67,43 @@ internal class GameReadWindows(
         while (done < count) {
             val at = offset + done
             val start = at - at % blockBytes
-            val bytes = blocks[start] ?: load(start).also { blocks[start] = it }
+            val block = blocks[start] ?: load(start).also { blocks[start] = it }
             val inside = (at - start).toInt()
-            if (inside >= bytes.size) throw IOException("Unexpected end of ROM at byte $at")
-            val part = minOf(count - done, bytes.size - inside)
-            bytes.copyInto(into, done, inside, inside + part)
+            if (inside >= block.length) throw IOException("Unexpected end of ROM at byte $at")
+            val part = minOf(count - done, block.length - inside)
+            block.bytes.copyInto(into, done, inside, inside + part)
             done += part
         }
         return done
     }
 
-    private fun load(start: Long): ByteArray {
+    private fun load(start: Long): Block {
+        // Remove the old key before overwriting its storage, including if the read throws.
+        val block = if (blocks.size == maxBlocks) {
+            val iterator = blocks.entries.iterator()
+            val eldest = iterator.next().value
+            iterator.remove()
+            eldest
+        } else {
+            Block(ByteArray(blockBytes))
+        }
+        block.length = 0
         val expected = minOf(blockBytes.toLong(), size - start).toInt()
-        val result = ByteArray(expected)
+        // The common full read goes directly into the cache, with no temporary copy.
         var done = 0
         while (done < expected) {
             val remaining = expected - done
-            val chunk = ByteArray(remaining)
-            val n = media.read(start + done, chunk, remaining)
+            val target = if (done == 0) block.bytes else
+                shortReadScratch ?: ByteArray(blockBytes).also { shortReadScratch = it }
+            val n = media.read(start + done, target, remaining)
             if (n <= 0) break
-            chunk.copyInto(result, done, 0, n)
+            if (n > remaining) throw IOException("Invalid ROM read length: $n > $remaining")
+            if (done != 0) target.copyInto(block.bytes, done, 0, n)
             done += n
         }
-        return if (done == expected) result else result.copyOf(done)
+        // A partial tail or premature EOF never exposes bytes from the previous key.
+        block.length = done
+        return block
     }
 }
 
@@ -102,7 +115,7 @@ class GameDirectAccess @Inject constructor(
     /**
      * Opens a seekable descriptor on the original file. SAF documents use their actual provider
      * descriptor, while SMB/NFS/WebDAV/SFTP use a kernel FUSE proxy backed by FileAccess.read().
-     * No content is cached on disk; reads are bounded to <=1 MiB in the proxy callback.
+     * No content is cached on disk; each proxy owns a bounded 1 MiB LRU plus lazy scratch.
      */
     fun open(source: FileSource, path: String, virtualPath: String): GameDirectContent {
         if (source.kind == "local") {
