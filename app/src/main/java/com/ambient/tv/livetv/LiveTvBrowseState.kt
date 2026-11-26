@@ -18,6 +18,22 @@ class LiveTvBrowseState(private val now: () -> Long = { System.nanoTime() / 1_00
         loadedAt = null
         return true
     }
+    // Home and the guide can know the current broadcast before a player exists.
+    @Volatile private var homeNowEvents: Map<String, LiveTvProgramme> = emptyMap()
+
+    fun rememberNowEvents(events: List<LiveTvProgramme>) {
+        homeNowEvents = events.associateBy { it.channelUuid }
+    }
+
+    internal fun programmePair(channelId: String, now: Long): Pair<LiveTvProgramme?, LiveTvProgramme?> {
+        val events = dashboard?.events.orEmpty().asSequence().filter { it.channelUuid == channelId }
+        val home = homeNowEvents[channelId]?.takeIf { it.isLive(now) }
+        val current = home ?: events.firstOrNull { it.isLive(now) }
+        val next = events.filter { it.startEpochSeconds >= (current?.stopEpochSeconds ?: now) }
+            .minByOrNull { it.startEpochSeconds }
+        return current to next
+    }
+
     private val positions = mutableMapOf<String, Position>()
 
     data class Position(val itemId: String, val offset: Int)
@@ -27,6 +43,7 @@ class LiveTvBrowseState(private val now: () -> Long = { System.nanoTime() / 1_00
     fun update(dashboard: LiveTvDashboard, capabilities: LiveTvCapabilities, savedView: Boolean = false) {
         this.dashboard = dashboard
         this.capabilities = capabilities
+        if (!savedView && dashboard.warnings.isEmpty()) homeNowEvents = emptyMap()
         this.savedView = savedView
         loadedAt = if (!savedView && dashboard.warnings.isEmpty()) now() else null
     }

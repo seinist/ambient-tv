@@ -25,6 +25,8 @@ interface LiveTvRepository {
     fun authHeaders(): Map<String, String> = emptyMap()
     suspend fun cachedChannels(): List<LiveTvChannel>? = null
     suspend fun cachedGuideEvents(start: Long, hours: Int): List<LiveTvProgramme>? = null
+    suspend fun cachedChannelGuideEvents(channelId: String, start: Long, hours: Int): List<LiveTvProgramme>? =
+        cachedGuideEvents(start, hours)?.filter { it.channelUuid == channelId }
     suspend fun capabilities(force: Boolean = false): LiveTvCapabilities
     suspend fun channels(force: Boolean = false): List<LiveTvChannel>
     /** Fresh protected API read. Cached dashboard data or server identity cannot grant play access. */

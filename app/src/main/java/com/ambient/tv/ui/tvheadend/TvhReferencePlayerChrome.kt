@@ -115,8 +115,12 @@ fun BoxScope.TvhReferencePlayerChrome(
         if (source.isLive) add(stringResource(if (com.ambient.tv.livetv.LiveTimeshift.current?.recordingId != null) R.string.live_recording_playback else R.string.tvh_live).uppercase())
         source.streamProfile?.takeIf { it.isNotBlank() }?.let(::add)
     }.joinToString("  •  ")
-    val resolvedArtwork = artworkUrl ?: nowEvent?.imageUrl ?: channel?.iconUrl
-    val fallbacks = (artworkFallbackUrls + listOfNotNull(nowEvent?.imageUrl, channel?.iconUrl))
+    val primaryArtwork = artworkUrl ?: nowEvent?.imageUrl ?: channel?.iconUrl
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val resolvedArtwork = androidx.compose.runtime.remember(primaryArtwork, context) {
+        com.ambient.tv.ui.common.preferCachedTmdbCardVariant(context, primaryArtwork)
+    }
+    val fallbacks = (listOfNotNull(primaryArtwork) + artworkFallbackUrls + listOfNotNull(nowEvent?.imageUrl, channel?.iconUrl))
         .filter { it.isNotBlank() && it != resolvedArtwork }
         .distinct()
 
@@ -384,16 +388,18 @@ private fun formatTvhChromeDuration(ms: Long): String = com.ambient.tv.ui.common
 internal fun liveOsdHandover(
     previous: com.ambient.tv.ui.player.PlayerOsdSpec?,
     target: TvhChannel?,
+    programme: Pair<TvhEpgEvent?, TvhEpgEvent?>? = null,
+    art: com.ambient.tv.livetv.LiveTvArt? = null,
 ): LiveOsdModel? {
     val live = previous as? LiveOsdModel ?: return null
     if (target == null || live.channel?.uuid == target.uuid) return null
     return live.copy(
         source = live.source.copy(title = target.name, subtitle = null, description = null),
         channel = target,
-        artworkUrl = null,
-        artworkFallbackUrls = emptyList(),
-        nowEvent = null,
-        nextEvent = null,
+        artworkUrl = art?.url,
+        artworkFallbackUrls = if (art == null && programme == null) emptyList() else listOfNotNull(programme?.first?.imageUrl, target.iconUrl).filter { it != art?.url }.distinct(),
+        nowEvent = programme?.first,
+        nextEvent = programme?.second,
         positionMs = 0L,
         durationMs = 0L,
         playing = false,

@@ -378,6 +378,19 @@ class TvheadendRepository @Inject constructor(
     suspend fun cachedGuideEvents(start: Long, hours: Int): List<TvhEpgEvent>? =
         indexedEpg(diskScope(), start, start + hours * 3600L)
 
+    suspend fun cachedChannelGuideEvents(channelId: String, start: Long, hours: Int): List<TvhEpgEvent>? {
+        val scope = diskScope()
+        val now = System.currentTimeMillis() / 1000L
+        val guide = indexedEpg(scope, start, start + hours * 3600L, channelId)
+        if (!currentGuideScope(scope)) return null
+        if (guide.orEmpty().any { it.isLive(now) }) return guide
+        // Home may have loaded mode=now before the rolling guide has caught up.
+        val current = diskCache.read(scope, TvheadendDiskCache.NOW, EVENT_LIST)
+            ?.firstOrNull { it.channelUuid == channelId && it.isLive(now) }
+        if (!currentGuideScope(scope)) return null
+        return if (current == null) guide else (listOf(current) + guide.orEmpty()).distinctBy { it.eventId }
+    }
+
     suspend fun cachedChannels(): List<TvhChannel>? {
         val scope = diskScope()
         return diskCache.read(scope, TvheadendDiskCache.CHANNELS, CHANNEL_LIST)?.takeIf { currentGuideScope(scope) }

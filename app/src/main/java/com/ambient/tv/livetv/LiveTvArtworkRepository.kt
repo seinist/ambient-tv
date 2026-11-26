@@ -41,6 +41,26 @@ class LiveTvArtworkRepository @Inject constructor(
     private val _titleArt = MutableStateFlow<Map<String, String>>(emptyMap())
     val titleArt: StateFlow<Map<String, String>> = _titleArt.asStateFlow()
 
+    /** No TMDb lookup on the tune path: restore only already-known artwork identities. */
+    suspend fun restoreCachedTitleArt(title: String?) {
+        if (title.isNullOrBlank()) return
+        val language = artworkLanguage()
+        val titleKey = liveTvArtKey(title)
+        synchronized(lock) {
+            if (activeLanguage != language) {
+                activeLanguage = language
+                _titleArt.value = emptyMap()
+            }
+            if (titleKey in _titleArt.value) return
+        }
+        val key = cacheKey(language, titleKey)
+        val cached = kotlinx.coroutines.withContext(Dispatchers.IO) {
+            decodeEntry(prefs.getString(key, null), System.currentTimeMillis())
+        } ?: return
+        if (cached.url == null) synchronized(lock) { missingUntil[key] = cached.expiresAtMillis }
+        else publish(language, titleKey, cached.url)
+    }
+
     fun requestTitleArt(titles: Collection<String>, scope: CoroutineScope) {
         if (!tmdb.configured) return
         val language = artworkLanguage()

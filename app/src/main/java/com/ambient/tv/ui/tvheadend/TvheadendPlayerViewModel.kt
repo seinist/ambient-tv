@@ -88,7 +88,7 @@ sealed interface TvheadendPlayerState {
 class TvheadendPlayerViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     savedStateHandle: SavedStateHandle,
-    registry: LiveTvRegistry,
+    private val registry: LiveTvRegistry,
     private val preferences: AppPreferences,
     private val companionMapper: com.ambient.tv.companion.CompanionMediaMapper,
     private val playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability,
@@ -130,6 +130,12 @@ class TvheadendPlayerViewModel @Inject constructor(
     val expectedChannelUuid: String get() = currentChannelUuid
     /** The channel being tuned (or playing), for the OSD while its stream is acquired. */
     val expectedChannel: TvhChannel? get() = channels.firstOrNull { it.uuid == currentChannelUuid }
+    internal fun knownProgramme(channelId: String): Pair<TvhEpgEvent?, TvhEpgEvent?> =
+        pendingProgramme?.takeIf { it.first == channelId }?.second
+            ?: registry.browseState(repository).programmePair(channelId, System.currentTimeMillis() / 1000L)
+    internal fun knownArtwork(event: TvhEpgEvent, channel: TvhChannel): LiveTvArt? =
+        liveTvProgrammeArt(event, listOf(channel), artwork.titleArt.value)
+    private var pendingProgramme: Pair<String, Pair<TvhEpgEvent?, TvhEpgEvent?>>? = null
     private var channels: List<TvhChannel> = emptyList()
     /** Started from Live TV or the Guide: zapping stays within that view's filtered channels. */
     private var zapOrder: List<String>? = if (kind != "channel") null else {
@@ -459,6 +465,8 @@ class TvheadendPlayerViewModel @Inject constructor(
                             kind = TvheadendPlaybackErrorKind.CHANNEL_NOT_FOUND,
                         )
                     } else {
+                        val (nowEvent, nextEvent) = cachedProgramInfo(channel.uuid)
+                        if (!current()) return
                         val artwork = tvhPanelArtwork(null, channel.iconUrl)
                         val source = timeshifted(acquireStream(recovery = recovery, onReplacement = { expectedOwner = it },
                             open = { repository.liveStream(channel) }), channel.uuid)
@@ -466,6 +474,8 @@ class TvheadendPlayerViewModel @Inject constructor(
                         _uiState.value = TvheadendPlayerState.Ready(
                             source = source,
                             channel = channel,
+                            nowEvent = nowEvent,
+                            nextEvent = nextEvent,
                             artworkUrl = artwork.first,
                             artworkFallbackUrls = artwork.second,
                             playbackBackendKey = preferences.tvheadendPlaybackBackendKey,
@@ -475,7 +485,7 @@ class TvheadendPlayerViewModel @Inject constructor(
                             projectmTransitionSeconds = preferences.projectmTransitionSeconds,
                             projectmQualityKey = preferences.projectmQualityKey,
                             projectmPresetCategoryKey = preferences.projectmPresetCategoryKey,
-                        ).withSelectedRenderer(restorePosition = false)
+                        ).withSelectedRenderer(restorePosition = false).let(::withProgrammeArtwork)
                     }
                 }
             }
@@ -605,7 +615,7 @@ class TvheadendPlayerViewModel @Inject constructor(
                         val source = timeshifted(acquireStream(open = { repository.liveStream(channel) }), channel.uuid)
                         val (now, next) = loadProgramInfo(channel.uuid)
                         if (!stillCurrent()) return@launch
-                        _uiState.value = ready.copy(source = source, playingRecording = null, nowEvent = now, nextEvent = next)
+                        _uiState.value = withProgrammeArtwork(ready.copy(source = source, playingRecording = null, nowEvent = now, nextEvent = next))
                         applied = true
                     } catch (error: CancellationException) { throw error }
                     catch (error: Exception) {
@@ -670,15 +680,30 @@ class TvheadendPlayerViewModel @Inject constructor(
         return state.copy(artworkUrl = urls.firstOrNull(), artworkFallbackUrls = urls.drop(1))
     }
 
+    private suspend fun cachedProgramInfo(channelUuid: String): Pair<TvhEpgEvent?, TvhEpgEvent?> {
+        val now = System.currentTimeMillis() / 1000L
+        val memory = registry.browseState(repository).programmePair(channelUuid, now)
+        val local = if (memory.first != null) memory else {
+            val events = suspendResult { repository.cachedChannelGuideEvents(channelUuid, now - 60L, 8) }
+                .getOrNull().orEmpty()
+            liveTvProgrammePair(events, channelUuid, now)
+        }
+        artwork.restoreCachedTitleArt(local.first?.title)
+        return local
+    }
+
     private suspend fun loadProgramInfo(channelUuid: String): Pair<TvhEpgEvent?, TvhEpgEvent?> {
         val now = System.currentTimeMillis() / 1000L
-        val events = suspendResult { repository.channelEpgEvents(channelUuid, startEpochSeconds = now - 60L, windowHours = 8) }
-            .getOrDefault(emptyList())
-            .filter { it.channelUuid == channelUuid }
-            .sortedBy { it.startEpochSeconds }
-        val current = events.firstOrNull { it.startEpochSeconds <= now && it.stopEpochSeconds > now }
-        val next = events.firstOrNull { it.startEpochSeconds >= (current?.stopEpochSeconds ?: now) }
-        return current to next
+        val result = suspendResult { repository.channelEpgEvents(channelUuid, startEpochSeconds = now - 60L, windowHours = 8) }
+        if (result.isFailure) {
+            val ready = _uiState.value as? TvheadendPlayerState.Ready
+            if (ready?.channel?.uuid == channelUuid && ready.nowEvent?.isLive(now) == true)
+                return ready.nowEvent to ready.nextEvent
+            return cachedProgramInfo(channelUuid)
+        }
+        val pair = liveTvProgrammePair(result.getOrThrow(), channelUuid, now)
+        artwork.restoreCachedTitleArt(pair.first?.title)
+        return pair
     }
 
     fun retry() {
@@ -1073,6 +1098,9 @@ class TvheadendPlayerViewModel @Inject constructor(
                 }
                 // Retain the OSD while acquireStream serially retires the upstream session.
                 // PlaybackSessionContent suppresses EOF during the replacement.
+                val (nowEvent, nextEvent) = cachedProgramInfo(channel.uuid)
+                if (!current()) return@launch
+                pendingProgramme = channel.uuid to (nowEvent to nextEvent)
                 currentChannelUuid = channel.uuid
                 serverUnreachableRetryAttempted = false
                 fallbackAttempted = false
@@ -1083,10 +1111,10 @@ class TvheadendPlayerViewModel @Inject constructor(
                 // mini-player, external controls and notifications still show the old channel.
                 val pendingMetadata = PlaybackMetadata(
                     route = Destinations.tvhPlayer(kind, channel.uuid, sourceId),
-                    title = channel.name,
+                    title = nowEvent?.title ?: channel.name,
                     source = sourceSystem,
                     mediaId = channel.uuid,
-                    artworkUrl = channel.iconUrl,
+                    artworkUrl = nowEvent?.let { liveTvProgrammeArt(it, listOf(channel), artwork.titleArt.value)?.url } ?: channel.iconUrl,
                     artworkHeaders = repository.authHeaders(),
                     artworkAspectRatio = 1f,
                     isLive = true,
@@ -1107,6 +1135,8 @@ class TvheadendPlayerViewModel @Inject constructor(
                 _uiState.value = TvheadendPlayerState.Ready(
                     source = source,
                     channel = channel,
+                    nowEvent = nowEvent,
+                    nextEvent = nextEvent,
                     artworkUrl = artwork.first,
                     artworkFallbackUrls = artwork.second,
                     playbackBackendKey = preferences.tvheadendPlaybackBackendKey,
@@ -1117,7 +1147,8 @@ class TvheadendPlayerViewModel @Inject constructor(
                     projectmQualityKey = preferences.projectmQualityKey,
                     projectmPresetCategoryKey = preferences.projectmPresetCategoryKey,
                     channelOrder = zapOrder,
-                ).withSelectedRenderer(restorePosition = false)
+                ).withSelectedRenderer(restorePosition = false).let(::withProgrammeArtwork)
+                pendingProgramme = null
                 // Live TV and the Guide focus this channel when the player is left.
                 com.ambient.tv.livetv.LiveTvReturnFocus.watched(repository.source.id, channel.uuid)
             } catch (error: Throwable) {
@@ -1129,10 +1160,17 @@ class TvheadendPlayerViewModel @Inject constructor(
                     channelName = channelName,
                 )
             } finally {
+                pendingProgramme = null
                 changingChannel = false
             }
         }
     }
+}
+
+internal fun liveTvProgrammePair(events: List<TvhEpgEvent>, channelId: String, now: Long): Pair<TvhEpgEvent?, TvhEpgEvent?> {
+    val channelEvents = events.filter { it.channelUuid == channelId }.sortedBy { it.startEpochSeconds }
+    val current = channelEvents.firstOrNull { it.isLive(now) }
+    return current to channelEvents.firstOrNull { it.startEpochSeconds >= (current?.stopEpochSeconds ?: now) }
 }
 
 /** The channels to zap through: [order] (the filtered view) where it still matches, else all. */

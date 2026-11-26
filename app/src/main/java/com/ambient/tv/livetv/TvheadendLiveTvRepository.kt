@@ -20,6 +20,9 @@ class TvheadendLiveTvRepository(
     override suspend fun cachedGuideEvents(start: Long, hours: Int): List<LiveTvProgramme>? {
         checkSource(); return delegate.cachedGuideEvents(start, hours)?.map { it.copy(sourceId = source.id) }
     }
+    override suspend fun cachedChannelGuideEvents(channelId: String, start: Long, hours: Int): List<LiveTvProgramme>? {
+        checkSource(); return delegate.cachedChannelGuideEvents(channelId, start, hours)?.map { it.copy(sourceId = source.id) }
+    }
     override suspend fun capabilities(force: Boolean): LiveTvCapabilities {
         checkSource()
         delegate.serverInfo(force)
