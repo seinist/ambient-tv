@@ -103,6 +103,11 @@ def main():
             "-o", str(jni_binary)], check=True)
         subprocess.run([str(jni_binary)], check=True, timeout=20)
 
+        external_binary = work / "external-frame-lease-test"
+        subprocess.run(command + [str(root / "scripts/native_game_external_frame_test.cpp"),
+            "-o", str(external_binary)], check=True)
+        subprocess.run([str(external_binary)], check=True, timeout=20)
+
 
 if __name__ == "__main__":
     main()

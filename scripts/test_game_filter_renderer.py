@@ -40,7 +40,10 @@ def main():
         work = Path(temporary)
         android = work / "android"
         android.mkdir()
-        (android / "hardware_buffer.h").write_text("#pragma once\nstruct AHardwareBuffer;\n")
+        (android / "hardware_buffer.h").write_text(
+            "#pragma once\nstruct AHardwareBuffer;\n"
+            "inline void AHardwareBuffer_acquire(AHardwareBuffer*) {}\n"
+            "inline void AHardwareBuffer_release(AHardwareBuffer*) {}\n")
         (android / "log.h").write_text(r'''#pragma once
 #include <cstdarg>
 #include <cstdio>
