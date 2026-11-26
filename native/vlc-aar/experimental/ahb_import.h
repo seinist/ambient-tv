@@ -138,7 +138,13 @@ public:
         sampler.maxAnisotropy = 1.0f;
         result = d_.create_sampler(device_, &sampler, nullptr, &sampler_);
         if (result != VK_SUCCESS) return fail(result);
+        model_ = format.suggestedYcbcrModel;
+        range_ = format.suggestedYcbcrRange;
         return VK_SUCCESS;
+    }
+
+    bool color_matches(VkSamplerYcbcrModelConversion model, VkSamplerYcbcrRange range) const {
+        return buffer_ && model_ == model && range_ == range;
     }
 
     VkImage image() const { return image_; }
@@ -170,5 +176,7 @@ private:
     VkSamplerYcbcrConversion conversion_{};
     VkImageView view_{};
     VkSampler sampler_{};
+    VkSamplerYcbcrModelConversion model_{};
+    VkSamplerYcbcrRange range_{};
 };
 } // namespace ambient::vlc_ahb
