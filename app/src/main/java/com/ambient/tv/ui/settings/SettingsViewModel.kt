@@ -372,8 +372,10 @@ class SettingsViewModel @Inject constructor(
             appPreferences.changes().collect {
                 val enabled = appPreferences.rommEnabled
                 val configured = appPreferences.rommServerUrl.isNotBlank() && appPreferences.rommAuthMode.isNotBlank()
-                if (_uiState.value.rommEnabled != enabled || _uiState.value.rommConfigured != configured) {
-                    _uiState.update { it.copy(rommEnabled = enabled, rommConfigured = configured) }
+                val moonlight = com.ambient.tv.moonlight.MoonlightFeature.configured(appPreferences)
+                if (_uiState.value.rommEnabled != enabled || _uiState.value.rommConfigured != configured ||
+                    _uiState.value.moonlightConfigured != moonlight) {
+                    _uiState.update { it.copy(rommEnabled = enabled, rommConfigured = configured, moonlightConfigured = moonlight) }
                 }
             }
         }
@@ -451,6 +453,7 @@ class SettingsViewModel @Inject constructor(
         radioEnabled = appPreferences.radioEnabled,
         rommEnabled = appPreferences.rommEnabled,
         rommConfigured = appPreferences.rommServerUrl.isNotBlank() && appPreferences.rommAuthMode.isNotBlank(),
+        moonlightConfigured = com.ambient.tv.moonlight.MoonlightFeature.configured(appPreferences),
         spotifyClientId = appPreferences.spotifyClientId,
         fanartApiKey = tokenStore.fanartApiKey.orEmpty(),
         spotifyWebAuthorized = spotifyRepository.authState.value.authorized,

@@ -17,6 +17,19 @@ class InPlaceSectionSelectionTest {
         assertNull(radioSectionKeyOfRoute(Destinations.HOME))
     }
 
+    @Test fun moonlightRoutesAcceptOnlyValidSections() {
+        assertEquals("all", moonlightSectionKeyOfRoute(Destinations.MOONLIGHT))
+        assertEquals("favorites", moonlightSectionKeyOfRoute("moonlight/favorites"))
+        assertEquals("host:pc-42", moonlightSectionKeyOfRoute("moonlight/host%3Apc-42"))
+        assertNull(moonlightSectionKeyOfRoute("moonlight/host%3A"))
+        assertNull(moonlightSectionKeyOfRoute("moonlight/host%3A..%2Fpc"))
+        assertNull(moonlightSectionKeyOfRoute("moonlight/%zz"))
+        assertNull(moonlightSectionKeyOfRoute("moonlight/unrecognized"))
+        assertNull(moonlightSectionKeyOfRoute(Destinations.HOME))
+        assertTrue(sectionSwitchesInPlace(Destinations.MOONLIGHT_SECTION, MOONLIGHT_SECTION_ROUTES, "all", "host:pc-42"))
+        assertFalse(sectionSwitchesInPlace(Destinations.HOME, MOONLIGHT_SECTION_ROUTES, "all", "host:pc-42"))
+    }
+
     @Test fun switchesInPlaceOnlyOnTheLiveScreenAndForAnotherSection() {
         assertTrue(sectionSwitchesInPlace(Destinations.TELEGRAM, TELEGRAM_SECTION_ROUTES, "recent", "videos"))
         assertTrue(sectionSwitchesInPlace(Destinations.RADIO_SECTION, RADIO_SECTION_ROUTES, "favorites", "popular"))

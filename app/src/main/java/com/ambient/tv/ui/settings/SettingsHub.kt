@@ -1172,8 +1172,8 @@ internal fun sourceConfigured(category: SettingsCategory, state: SettingsUiState
     SettingsCategory.FILES -> state.filesEnabled && state.fileSourceCount > 0
     SettingsCategory.DLNA -> state.dlnaServerCount > 0
     SettingsCategory.ROMM -> state.rommEnabled && state.rommConfigured
-    // Not yet a usable media source until the native GameStream transport and pairing exist.
-    SettingsCategory.MOONLIGHT -> false
+    // Saved native sources remain listed even while a PC is offline or needs pairing.
+    SettingsCategory.MOONLIGHT -> state.moonlightConfigured
     SettingsCategory.IPTV -> state.iptvSourceCount > 0
     SettingsCategory.WIREGUARD -> state.wireGuardSummary.isNotBlank()
     else -> false
@@ -1196,7 +1196,7 @@ internal fun homeRowSourceAddable(system: String, contentKey: String, state: Set
             radioReady = sourceConfigured(SettingsCategory.RADIO, state),
             gamesReady = true,
             rommReady = sourceConfigured(SettingsCategory.ROMM, state),
-            moonlightReady = com.ambient.tv.BuildConfig.MOONLIGHT_NATIVE,
+            moonlightReady = sourceConfigured(SettingsCategory.MOONLIGHT, state),
             telegramReady = sourceConfigured(SettingsCategory.TELEGRAM, state),
             photosReady = sourceConfigured(SettingsCategory.PLEX, state) ||
                 sourceConfigured(SettingsCategory.JELLYFIN, state) || sourceConfigured(SettingsCategory.EMBY, state),

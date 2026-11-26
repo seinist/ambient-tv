@@ -101,7 +101,7 @@ internal val TELEGRAM_SECTION_ROUTES = setOf(Destinations.TELEGRAM, Destinations
 internal val RADIO_SECTION_ROUTES = setOf(Destinations.RADIO, Destinations.RADIO_SECTION)
 internal val MOONLIGHT_SECTION_ROUTES = setOf(Destinations.MOONLIGHT, Destinations.MOONLIGHT_SECTION)
 internal fun moonlightSectionKeyOfRoute(route: String): String? =
-    sectionKeyOfRoute(route, Destinations.MOONLIGHT, "all", "moonlight/")?.takeIf {
+    runCatching { sectionKeyOfRoute(route, Destinations.MOONLIGHT, "all", "moonlight/") }.getOrNull()?.takeIf {
         it in setOf("all", "favorites", "recent") ||
             it.startsWith("host:") && com.ambient.tv.moonlight.validMoonlightHostId(it.removePrefix("host:"))
     }

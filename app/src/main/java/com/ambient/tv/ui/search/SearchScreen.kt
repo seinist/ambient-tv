@@ -1404,6 +1404,7 @@ private fun SearchList(
                     onClick = { onMoonlightClick(game.host.id, game.app.id) },
                     focusKey = "search:moonlight:" + game.key,
                     gameCover = game,
+                    onInfo = { onMoonlightDetails(game.host.id, game.app.id) },
                     requestInitialFocus = requestInitialResultFocus &&
                         firstExternalGroup == "moonlight" &&
                         game == state.moonlightResults.firstOrNull(),
@@ -1635,8 +1636,9 @@ private fun ExternalSearchListItem(
     requestInitialFocus: Boolean = false,
     focusKey: String,
     gameCover: MoonlightBrowseGame? = null,
+    onInfo: (() -> Unit)? = null,
 ) {
-    var focused by remember(title, imageUrl) { mutableStateOf(false) }
+    var focused by remember(focusKey) { mutableStateOf(false) }
     val onResultFocused = LocalSearchResultFocused.current
     val rowShape = RoundedCornerShape(10.dp)
     Surface(
@@ -1644,7 +1646,7 @@ private fun ExternalSearchListItem(
         colors = transparentSurfaceColors(),
         scale = noSurfaceScale(),
         shape = ClickableSurfaceDefaults.shape(shape = rowShape),
-        modifier = initialFocusModifier(requestInitialFocus).fillMaxWidth().browseFocusTarget(focusKey).mediaFocusMotion(focused, focusedScale = 1.012f).activateOnTvKey(onClick = onClick).bringFocusedContextIntoView().onFocusChanged {
+        modifier = initialFocusModifier(requestInitialFocus).fillMaxWidth().browseFocusTarget(focusKey).mediaFocusMotion(focused, focusedScale = 1.012f).activateOnTvKey(onClick = onClick, onLongClick = onInfo ?: onClick).bringFocusedContextIntoView().onFocusChanged {
             focused = it.isFocused
             if (it.isFocused) onResultFocused(focusKey)
         },

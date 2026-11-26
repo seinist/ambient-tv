@@ -30,6 +30,19 @@ class MoonlightBrowsePresentationTest {
         assertEquals(listOf("other:1"), state.copy(query = "Gaming PC").games.map { it.key })
     }
 
+    @Test fun coverAndAvailabilityUpdatesDoNotChangeGameListOrStableKeys() {
+        val before = state.games
+        val after = state.copy(
+            onlineHosts = setOf("pc"),
+            runningApps = mapOf("pc" to 1),
+            artworkVersion = 2,
+            artworkRevisions = mapOf("pc:1" to 2L),
+            offlineHosts = setOf("other"),
+        ).games
+        assertEquals(before, after)
+        assertEquals(before.map { it.key }, after.map { it.key })
+    }
+
     @Test fun readinessWaitsForCacheOrCompletedInitialRefresh() {
         assertFalse(state.ready)
         assertTrue(state.copy(localLoaded = true).ready)

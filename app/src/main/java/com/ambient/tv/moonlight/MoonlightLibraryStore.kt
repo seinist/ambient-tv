@@ -311,16 +311,18 @@ class MoonlightLibraryStore @Inject constructor(
                 if (legacy.delete()) artworkBytes -= legacyLength
                 artworkBounds.put(target.absolutePath, MoonlightArtwork(target, bounds.outWidth, bounds.outHeight))
                 negativeArtwork.remove(artworkKey(hostId, appId, expectedIdentity))
-                trimArtwork()
+                artworkAccess.put(target.absolutePath, System.currentTimeMillis())
+                val evicted = trimArtwork()
                 val revision = mutableArtworkRevisions.value + 1
                 val changes = LinkedHashMap(mutableArtworkChanges.value)
-                val item = "$hostId:$appId"
-                changes.remove(item)
-                changes[item] = revision
+                for (item in evicted + "$hostId:$appId") {
+                    changes.remove(item)
+                    changes[item] = revision
+                }
                 while (changes.size > 1024) changes.remove(changes.keys.first())
                 synchronized(lock) { changed(metadata = false) }
                 mutableArtworkChanges.value = changes
-                target
+                target.takeIf { it.isFile }
             } catch (_: Exception) {
                 temporary.delete()
                 null
@@ -355,8 +357,9 @@ class MoonlightLibraryStore @Inject constructor(
         }
     }
 
-    private fun trimArtwork() {
-        if (artworkBytes <= MAX_CACHE_BYTES) return
+    private fun trimArtwork(): Set<String> {
+        if (artworkBytes <= MAX_CACHE_BYTES) return emptySet()
+        val evicted = mutableSetOf<String>()
         val images = artworkDir.walkTopDown().filter { it.isFile && it.extension == "img" }
             .sortedBy { artworkAccess.get(it.absolutePath) ?: it.lastModified() }.toList()
         for (file in images) {
@@ -366,8 +369,16 @@ class MoonlightLibraryStore @Inject constructor(
                 artworkBytes -= length
                 artworkAccess.remove(file.absolutePath)
                 artworkBounds.remove(file.absolutePath)
+                val parts = file.relativeTo(artworkDir).invariantSeparatorsPath.split('/')
+                val item = when (parts.size) {
+                    4 -> parts[0] + ":" + parts[2]
+                    3 -> parts[0] + ":" + parts[2].removeSuffix(".img")
+                    else -> null
+                }
+                if (item != null && validAppKey(item)) evicted.add(item)
             }
         }
+        return evicted
     }
 
     private fun key(hostId: String, appId: Int): String {
