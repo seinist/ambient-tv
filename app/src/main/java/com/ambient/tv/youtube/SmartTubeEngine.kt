@@ -1615,18 +1615,27 @@ class SmartTubeEngine @Inject constructor(
     }
 }
 
+private data class ReflectionNameKey(val name: String, val arity: Int)
 private data class ReflectionMethodKey(
-    val owner: Class<*>,
     val name: String,
     val argumentTypes: List<Class<*>?>,
     val allowArityFallback: Boolean,
 )
 private data class CachedReflectionMethod(val method: Method?)
-private val reflectionMethodsByClass = ConcurrentHashMap<Class<*>, Array<Method>>()
-private val reflectionMethodCache = ConcurrentHashMap<ReflectionMethodKey, CachedReflectionMethod>()
+private class ReflectionClassIndex(type: Class<*>) {
+    val methods = type.methods.groupBy { ReflectionNameKey(it.name, it.parameterCount) }
+    val zeroArgumentMethods = methods.filterKeys { it.arity == 0 }
+        .mapKeys { it.key.name }.mapValues { it.value.first() }
+    val resolved = ConcurrentHashMap<ReflectionMethodKey, CachedReflectionMethod>()
+}
+private val reflectionIndexes = ConcurrentHashMap<Class<*>, ReflectionClassIndex>()
+private const val MAX_REFLECTION_CLASSES = 256
+private const val MAX_REFLECTION_SIGNATURES = 256
 
-private fun publicMethods(type: Class<*>): Array<Method> =
-    reflectionMethodsByClass.computeIfAbsent(type) { it.methods }
+private fun reflectionIndex(type: Class<*>): ReflectionClassIndex =
+    reflectionIndexes[type] ?: if (reflectionIndexes.size < MAX_REFLECTION_CLASSES) {
+        reflectionIndexes.computeIfAbsent(type) { ReflectionClassIndex(it) }
+    } else ReflectionClassIndex(type)
 
 private fun wrap(c: Class<*>) = when (c) {
     Int::class.javaPrimitiveType -> Int::class.javaObjectType
@@ -1637,21 +1646,21 @@ private fun wrap(c: Class<*>) = when (c) {
     else -> c
 }
 
-/** Resolve each receiver/name/argument signature once; feed mapping otherwise rescans reflection metadata for every card. */
 private fun Any.cachedMethod(name: String, args: Array<out Any?>, allowArityFallback: Boolean): Method? {
-    val key = ReflectionMethodKey(javaClass, name, args.map { it?.javaClass }, allowArityFallback)
-    return reflectionMethodCache.computeIfAbsent(key) {
-        val candidates = publicMethods(javaClass)
+    val index = reflectionIndex(javaClass)
+    if (args.isEmpty()) return index.zeroArgumentMethods[name]
+    val key = ReflectionMethodKey(name, args.map { it?.javaClass }, allowArityFallback)
+    fun resolve(): CachedReflectionMethod {
+        val candidates = index.methods[ReflectionNameKey(name, args.size)].orEmpty()
         val compatible = candidates.firstOrNull { method ->
-            method.name == name && method.parameterTypes.size == args.size &&
-                method.parameterTypes.indices.all { index ->
-                    args[index] == null || wrap(method.parameterTypes[index]).isAssignableFrom(args[index]!!.javaClass)
-                }
+            val types = method.parameterTypes
+            types.indices.all { i -> args[i] == null || wrap(types[i]).isAssignableFrom(args[i]!!.javaClass) }
         }
-        CachedReflectionMethod(compatible ?: if (allowArityFallback) {
-            candidates.firstOrNull { it.name == name && it.parameterTypes.size == args.size }
-        } else null)
-    }.method
+        return CachedReflectionMethod(compatible ?: if (allowArityFallback) candidates.firstOrNull() else null)
+    }
+    return (index.resolved[key] ?: if (index.resolved.size < MAX_REFLECTION_SIGNATURES) {
+        index.resolved.computeIfAbsent(key) { resolve() }
+    } else resolve()).method
 }
 
 private fun Any.call(name: String, vararg args: Any?): Any? {
@@ -1692,7 +1701,8 @@ private fun Any.invokeCompatible(name: String, vararg args: Any?): ReflectionInv
     catch (t: Throwable) { Timber.d(t, "SmartTube reflection: %s", name); ReflectionInvocation(false, null) }
 }
 private fun Any.hasMethod(name: String, arity: Int): Boolean =
-    publicMethods(javaClass).any { it.name == name && it.parameterTypes.size == arity }
+    if (arity == 0) reflectionIndex(javaClass).zeroArgumentMethods.containsKey(name)
+    else reflectionIndex(javaClass).methods.containsKey(ReflectionNameKey(name, arity))
 private fun Any.hasAnyMethod(vararg names: String): Boolean = names.any { hasMethod(it, 0) }
 
 /** Feed/search key whose loads record row continuation handles in [SmartTubeEngine]. */
