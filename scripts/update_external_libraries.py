@@ -260,8 +260,12 @@ def moonlight_latest(current: dict[str, str]) -> dict[str, str]:
     """Newest stable Moonlight Android release (vX.Y[.Z]) and the commit its tag points to."""
     repo = github_repo(current["MOONLIGHT_ANDROID_REPO"])
     try:
-        rel = latest_release(repo, lambda r: MOONLIGHT_TAG.fullmatch(r.get("tag_name", "")) is not None)
-        tag = rel["tag_name"]
+        releases = github(f"/repos/{repo}/releases?per_page=30")
+        tags = [r["tag_name"] for r in releases if not r.get("draft") and not r.get("prerelease")
+                and MOONLIGHT_TAG.fullmatch(r.get("tag_name", ""))]
+        if not tags:
+            raise RuntimeError("No published Moonlight release")
+        tag = max(tags, key=_version_tuple)
         return {"MOONLIGHT_ANDROID_TAG": tag, "MOONLIGHT_ANDROID_REF": resolve_tag_commit(repo, tag)}
     except (RuntimeError, urllib.error.URLError) as exc:
         # The GitHub API can be rate limited or unreachable; the tags themselves are public git refs.
@@ -285,12 +289,18 @@ def moonlight_latest(current: dict[str, str]) -> dict[str, str]:
     if not commits:
         raise RuntimeError("No Moonlight release tags found")
     tag = max(commits, key=_version_tuple)
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", commits[tag]):
+        raise RuntimeError("Invalid Moonlight release commit")
     return {"MOONLIGHT_ANDROID_TAG": tag, "MOONLIGHT_ANDROID_REF": commits[tag]}
 
 
 def prepare_moonlight() -> bool:
     """Fetch the pinned release and apply scripts/patches/moonlight; False when a patch no longer applies."""
-    return subprocess.run(["bash", str(ROOT / "scripts" / "fetch_moonlight_sources.sh")]).returncode == 0
+    try:
+        return subprocess.run(["bash", str(ROOT / "scripts" / "fetch_moonlight_sources.sh")],
+                              timeout=600).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def cores_path() -> Path:
@@ -487,8 +497,15 @@ def main() -> int:
             print("\nPreparing Moonlight Android at the new release to check scripts/patches/moonlight...")
             if not prepare_moonlight():
                 current.update(old_moonlight)
-                svp.apply_files({PROPS: render_props(current).encode()})
-                prepare_moonlight()
+                # Do not overwrite an unrelated concurrent edit during rollback.
+                # Preserve every other successfully applied pin, including manual Rusty.
+                attempted = render_props({**current, **{k: latest[k] for k in old_moonlight}}).encode()
+                # render_props reads current file layout; compare the exact Moonlight attempt.
+                if load_props() != {**current, **{k: latest[k] for k in old_moonlight}}:
+                    raise RuntimeError("Concurrent edit during Moonlight rollback")
+                svp.apply_files({PROPS: render_props(current).encode()}, {PROPS: attempted})
+                if not prepare_moonlight():
+                    raise RuntimeError("Moonlight pins restored, but old sources could not be prepared")
                 print(f"WARNING: Moonlight kept at {old_moonlight['MOONLIGHT_ANDROID_TAG']} "
                       f"({old_moonlight['MOONLIGHT_ANDROID_REF']}): a patch does not apply to "
                       f"{latest['MOONLIGHT_ANDROID_TAG']}. Rebase scripts/patches/moonlight, then set "

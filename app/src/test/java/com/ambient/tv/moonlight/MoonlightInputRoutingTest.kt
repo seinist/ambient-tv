@@ -37,14 +37,20 @@ class MoonlightInputRoutingTest {
     @Test fun keyboardKeysAndReleaseAllUseWindowsVirtualKeyCodes() {
         val events = mutableListOf<Triple<Int, Boolean, Int>>()
         val keyboard = MoonlightKeyboardRouter { code, pressed, modifiers ->
-            events += Triple(code.toInt(), pressed, modifiers.toInt())
+            events += Triple(code.toInt() and 0xffff, pressed, modifiers.toInt())
         }
         assertTrue(keyboard.onKey(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_A).apply {
             source = InputDevice.SOURCE_KEYBOARD
         }))
-        assertEquals(Triple(65, true, 0), events.last())
+        assertEquals(Triple(0x8041, true, 0), events.last())
         keyboard.releaseAll()
-        assertEquals(Triple(65, false, 0), events.last())
+        assertEquals(Triple(0x8041, false, 0), events.last())
         assertFalse(keyboard.onKey(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_HOME)))
+        assertTrue(keyboard.onKey(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_SHIFT_RIGHT).apply {
+            source = InputDevice.SOURCE_KEYBOARD
+        }))
+        assertEquals(0x80A1, events.last().first)
+        keyboard.releaseAll()
+        assertEquals(Triple(0x80A1, false, 0), events.last())
     }
 }
