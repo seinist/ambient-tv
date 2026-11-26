@@ -12,6 +12,10 @@ on:
         description: Publish a signed cores release
         type: boolean
         default: false
+      publish_experimental:
+        description: Publish a separate signed experimental channel (main only)
+        type: boolean
+        default: false
       cores:
         description: Core ids to build, comma separated (empty = all)
         default: ""
@@ -85,8 +89,14 @@ jobs:
           PROFILE: ${{ inputs.profile || 'baseline' }}
           PUBLISH: ${{ inputs.publish }}
           COMPARISON: ${{ inputs.comparison || 'none' }}
+          PUBLISH_EXPERIMENTAL: ${{ inputs.publish_experimental }}
         run: |
           set -euo pipefail
+          if [ "$PUBLISH_EXPERIMENTAL" = true ]; then
+            [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" == refs/heads/main &&
+               "$PUBLISH" != true && "$PROFILE" != baseline && "$COMPARISON" == none ]] ||
+              { echo "::error::Experimental publishing requires main, a non-baseline profile, and no production publish/comparison"; exit 1; }
+          fi
           matrix=$(python3 scripts/core_build_policy.py plan --catalog cores/cores.json \
             --event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF" --publish "$PUBLISH" \
             --cores "$ONLY" --abis "$ABIS" --profile "$PROFILE" --comparison "$COMPARISON")
@@ -95,7 +105,7 @@ jobs:
       # Check the secret BEFORE spending 104 core-build jobs on a release that cannot
       # be signed. Never generate a new key or publish unsigned native libraries.
       - name: Check core-release signing key
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish)
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.publish || inputs.publish_experimental))
         env:
           SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}
         run: |
@@ -271,8 +281,8 @@ jobs:
     if: >-
       needs.build.result == 'success' &&
       github.ref == 'refs/heads/main' &&
-      (inputs.profile == 'baseline' || github.event_name == 'push') &&
-      ((github.event_name == 'workflow_dispatch' && inputs.publish) ||
+      ((github.event_name == 'workflow_dispatch' && inputs.publish && inputs.profile == 'baseline') ||
+       (github.event_name == 'workflow_dispatch' && inputs.publish_experimental && !inputs.publish && inputs.profile != 'baseline' && inputs.comparison == 'none') ||
        (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
     steps:
@@ -280,7 +290,7 @@ jobs:
 
       - uses: actions/download-artifact@v5
         with:
-          pattern: core-*
+          pattern: ${{ inputs.publish_experimental && format('candidate-{0}-*', inputs.profile) || 'core-*' }}
           path: artifacts
 
       - name: Package, sign and release
@@ -288,12 +298,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}
           EXPECTED_MATRIX: ${{ needs.plan.outputs.matrix }}
+          EXPERIMENT: ${{ inputs.publish_experimental }}
+          PROFILE: ${{ inputs.profile || 'baseline' }}
         run: |
           set -euo pipefail
           [ -n "$SIGNING_KEY" ] || { echo "::error::CORES_SIGNING_KEY is not set (scripts/cores_signing_key.sh)"; exit 1; }
           [ -f cores/signing-public.pem ] || { echo "::error::cores/signing-public.pem is missing (scripts/cores_signing_key.sh)"; exit 1; }
-          # Never publish a signed partial release: require every selected core/ABI artifact.
-          mapfile -t expected < <(jq -r '.include[] | "core-\(.core)-\(.abi)/\(.core)_libretro_android.so"' <<< "$EXPECTED_MATRIX")
+          # Require every planned artifact, and ensure the profile cannot cross channels.
+          if [ "$EXPERIMENT" = true ]; then
+            [[ "$PROFILE" != baseline && "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || exit 1
+            prefix="candidate-$PROFILE-"
+            tag="core-experiments-$PROFILE--$(date -u +%Y%m%d)-$GITHUB_RUN_NUMBER-$GITHUB_RUN_ATTEMPT"
+          else
+            [ "$PROFILE" = baseline ] || exit 1
+            prefix="core-"
+            tag="cores-$(date -u +%Y%m%d)-$GITHUB_RUN_NUMBER"
+          fi
+          jq -e --arg p "$PROFILE" 'all(.include[]; .profile == $p)' <<< "$EXPECTED_MATRIX" >/dev/null
+          mapfile -t expected < <(jq -r '.include[] | "\(.artifact)/\(.core)_libretro_android.so"' <<< "$EXPECTED_MATRIX")
           [ "${#expected[@]}" -gt 0 ] || { echo "::error::Empty core build matrix"; exit 1; }
           for path in "${expected[@]}"; do
             test -s "artifacts/$path" || { echo "::error::Missing built core artifact: $path"; exit 1; }
@@ -303,11 +325,10 @@ jobs:
             echo "::error::Expected ${#expected[@]} core builds, got $actual"
             exit 1
           }
-          tag="cores-$(date -u +%Y%m%d)-${GITHUB_RUN_NUMBER}"
           mkdir -p release
           entries='[]'
-          for dir in artifacts/core-*; do
-            name=${dir#artifacts/core-}
+          for dir in artifacts/"$prefix"*; do
+            name=${dir#artifacts/"$prefix"}
             abi=$(jq -r '.abis[]' cores/cores.json | while read -r a; do case "$name" in *-"$a") echo "$a";; esac; done | awk '{ print length, $0 }' | sort -rn | head -n1 | cut -d' ' -f2)
             core=${name%-"$abi"}
             so="$dir/${core}_libretro_android.so"
@@ -321,12 +342,18 @@ jobs:
                       commit: ($pins[0].cores[] | select(.core == $core) | .commit),
                       repo: ($pins[0].cores[] | select(.core == $core) | .repo) }]' <<< "$entries")
           done
-          jq -n --arg tag "$tag" --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson cores "$entries" \
-            '{ version: 1, tag: $tag, created: $created, cores: $cores }' > release/manifest.json
-          printf '%s\n' "$SIGNING_KEY" > key.pem
-          openssl dgst -sha256 -sign key.pem -out release/manifest.json.sig release/manifest.json
-          rm -f key.pem
+          jq -e --argjson count "${#expected[@]}" 'length == $count' <<< "$entries" >/dev/null
+          jq -n --arg tag "$tag" --arg profile "$PROFILE" --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson cores "$entries" \
+            '{ version: 1, tag: $tag, profile: $profile, created: $created, cores: $cores }' > release/manifest.json
+          key="$RUNNER_TEMP/ambient-cores-release-key.pem"
+          trap 'rm -f "$key"' EXIT
+          umask 077
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          openssl dgst -sha256 -sign "$key" -out release/manifest.json.sig release/manifest.json
+          rm -f "$key"
           openssl dgst -sha256 -verify cores/signing-public.pem -signature release/manifest.json.sig release/manifest.json
           jq -r '.cores[] | "\(.core) \(.abi)"' release/manifest.json
-          gh release create "$tag" release/* --title "Cores $(date -u +%Y-%m-%d)" --latest=false \
-            --notes "libretro cores built from cores/cores.json at ${GITHUB_SHA::7} (16 KB pages). Signed manifest for the app's core channel."
+          release_args=(--latest=false)
+          if [ "$EXPERIMENT" = true ]; then release_args+=(--prerelease); fi
+          gh release create "$tag" release/* --title "Cores $PROFILE $(date -u +%Y-%m-%d)" "${release_args[@]}" \
+            --notes "libretro cores built from cores/cores.json at ${GITHUB_SHA::7} (16 KB pages). Signed manifest for profile $PROFILE."
