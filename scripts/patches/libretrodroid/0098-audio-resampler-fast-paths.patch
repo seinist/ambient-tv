@@ -1,0 +1,67 @@
+diff --git a/src/main/cpp/resamplers/linearresampler.cpp b/src/main/cpp/resamplers/linearresampler.cpp
+index 7ab4fca..1e901ee 100644
+--- a/src/main/cpp/resamplers/linearresampler.cpp
++++ b/src/main/cpp/resamplers/linearresampler.cpp
+@@ -15,26 +15,52 @@
+  *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+  */
+ 
+-#include <cmath>
+ #include <algorithm>
++#include <cstddef>
++#include <cstring>
+ #include "linearresampler.h"
+ 
+ namespace libretrodroid {
+ 
+ void LinearResampler::resample(const int16_t *source, int32_t inputFrames, int16_t *sink, int32_t sinkFrames) {
+-    double outputTime = 0;
+-    double outputTimeStep = 1.0 / sinkFrames;
++    if (sinkFrames <= 0) return;
++    const auto samples = static_cast<std::size_t>(sinkFrames) * 2;
++    // A short/empty callback must never interpolate before the input buffer.
++    if (inputFrames <= 0 || source == nullptr) {
++        std::fill_n(sink, samples, int16_t{0});
++        return;
++    }
++    // No rate conversion is needed. Keep the original stereo PCM exactly,
++    // including the full int16 range, instead of rounding via floating point.
++    if (inputFrames == sinkFrames) {
++        std::memmove(sink, source, samples * sizeof(*sink));
++        return;
++    }
++    if (inputFrames == 1) {
++        const int16_t left = source[0], right = source[1];
++        while (sinkFrames-- > 0) {
++            *sink++ = left;
++            *sink++ = right;
++        }
++        return;
++    }
+ 
+-    double floatingPart, integerPart;
++    double outputTime = 0;
++    const double outputTimeStep = 1.0 / sinkFrames;
+ 
+     while (sinkFrames > 0) {
+-        floatingPart = std::modf(outputTime * inputFrames, &integerPart);
+-
+-        int32_t floorFrame = integerPart;
+-        int32_t ceilFrame = std::min(floorFrame + 1, inputFrames - 1);
++        // The phase is nonnegative, so truncation/subtraction is equivalent to
++        // modf. Guard the final index against accumulated floating-point error.
++        const double position = outputTime * inputFrames;
++        const bool pastEnd = position >= inputFrames;
++        const int32_t floorFrame = pastEnd ? inputFrames - 1 : static_cast<int32_t>(position);
++        const int32_t ceilFrame = std::min(floorFrame + 1, inputFrames - 1);
++        const double floatingPart = pastEnd ? 0.0 : position - floorFrame;
++        const auto lo = static_cast<std::size_t>(floorFrame) * 2;
++        const auto hi = static_cast<std::size_t>(ceilFrame) * 2;
+ 
+-        *sink++ = source[ceilFrame * 2] * (floatingPart) + source[floorFrame * 2] * (1.0 - floatingPart);
+-        *sink++ = source[ceilFrame * 2 + 1] * (floatingPart) + source[floorFrame * 2 + 1] * (1.0 - floatingPart);
++        *sink++ = source[hi] * floatingPart + source[lo] * (1.0 - floatingPart);
++        *sink++ = source[hi + 1] * floatingPart + source[lo + 1] * (1.0 - floatingPart);
+         outputTime += outputTimeStep;
+         sinkFrames--;
+     }
