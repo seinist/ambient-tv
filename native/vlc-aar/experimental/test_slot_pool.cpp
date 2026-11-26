@@ -5,6 +5,19 @@ using namespace ambient::vlc_ahb;
 int main() {
     using Pool = SlotPool<2>;
     using State = Pool::State;
+    {
+        Pool cached;
+        auto first = cached.acquire(cached.epoch(), 1);
+        assert(first && first.index == 1);
+        auto second = cached.acquire(cached.epoch(), 1);
+        assert(second && second.index == 0);
+        assert(!cached.acquire(cached.epoch(), 1));
+        assert(cached.cancel(first));
+        auto reused = cached.acquire(cached.epoch(), 1);
+        assert(reused && reused.index == 1 && reused.generation != first.generation);
+        assert(!cached.cancel(first));
+        assert(cached.cancel(reused) && cached.cancel(second) && cached.drained());
+    }
     Pool p;
     auto epoch = p.epoch();
     auto a = p.acquire(epoch);
