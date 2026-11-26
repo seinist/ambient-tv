@@ -34,7 +34,7 @@ def build_commands(log, cwd=None, root=None, strict=False):
         # A diagnostic mentioning clang is not evidence that clang was invoked.
         line = re.sub(r"^\s*\d{4}-\d{2}-\d{2}T[^ ]+Z\s+", "", line).strip()
         line = re.sub(r"^\[\d+/\d+\]\s+", "", line)
-        wrapped = line.startswith(("cd ", ": && ", "ccache "))
+        wrapped = line.startswith(("cd ", ": && ")) or re.match(r"^(?:\S*/)?ccache\s+", line)
         archive_start = re.match(r"^(?:\S*/)?(?:[\w.-]+-)?llvm-ar(?:-\d+)?(?:\s|$)", line)
         if not COMPILER_COMMAND.match(line) and not wrapped and not archive_start:
             continue
