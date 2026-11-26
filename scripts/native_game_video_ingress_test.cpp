@@ -31,12 +31,20 @@ struct VulkanBackend {
     bool bridgeAccepted = true, frameConfirmed = false, fatal = false;
     bool fp16 = false, allocationAccepted = true, fallbackAllocationAccepted = true;
     bool disableFails = false;
-    unsigned drains = 0, allocations = 0, disables = 0, rejections = 0;
+    bool readFenceSupported = false, readFenceAccepted = false, readFenceFatal = false;
+    unsigned drains = 0, allocations = 0, disables = 0, rejections = 0, fenceImports = 0;
     static VulkanBackend& getInstance() { static VulkanBackend value; return value; }
     unsigned getCoreSourceFormat() const { return format; }
     unsigned getFrameBufferWidth() const { return width; }
     unsigned getFrameBufferHeight() const { return height; }
     bool hasFatalError() const { return fatal; }
+    bool canImportBridgeReadFence() const { return readFenceSupported; }
+    bool importBridgeReadFence(int fd) {
+        ++fenceImports;
+        assert(fd == -1 || fd == 42);
+        if (readFenceFatal) fatal = true;
+        return fd >= 0 && readFenceAccepted && !fatal;
+    }
     void* getFrameBuffer() { return this; }
     bool isFp16Frame() const { return fp16; }
     bool ensureFrameBuffer(unsigned w, unsigned h) {
@@ -66,8 +74,10 @@ struct Video {
     unsigned transfer = 2, transferUpdates = 0, frameCalls = 0, width = 32, height = 24;
     bool external = true;
     bool fp16ImportAccepted = true, rgbaImportAccepted = true;
-    unsigned imports = 0;
+    unsigned imports = 0, fenceExports = 0;
+    int fenceFd = 42;
     bool presentsExternalFrames() const { return external; }
+    int exportExternalReadFence() { ++fenceExports; return fenceFd; }
     void finishExternalFrameUse() { ++VulkanBackend::getInstance().drains; }
     bool attachExternalFrame(void* buffer, unsigned w, unsigned h) {
         auto& backend = VulkanBackend::getInstance();
@@ -157,8 +167,43 @@ void bridgeImportContracts() {
     }
 }
 
+void readFenceHandoffContracts() {
+    // Actual production callback: no GLES finish only after accepted fence
+    // import, and no submission or metadata publication after a fatal import.
+    struct Case { bool supported; int fd; bool imported, fatal; };
+    const Case cases[] = {
+        {false, 42, false, false},
+        {true, -1, false, false},
+        {true, 42, false, false},
+        {true, 42, true, false},
+        {true, 42, false, true},
+    };
+    for (const auto& test : cases) {
+        Environment::getInstance() = {3, RETRO_PIXEL_FORMAT_XRGB8888};
+        auto& backend = VulkanBackend::getInstance();
+        backend = {};
+        backend.format = 64;
+        backend.readFenceSupported = test.supported;
+        backend.readFenceAccepted = test.imported;
+        backend.readFenceFatal = test.fatal;
+        Video video;
+        video.fenceFd = test.fd;
+        LibretroDroid host {&video};
+        const unsigned before = glFinishes;
+        host.handleVideoRefresh(RETRO_HW_FRAME_BUFFER_VALID, 256, 224, 1024);
+        assert(video.fenceExports == (test.supported ? 1u : 0u));
+        assert(backend.fenceImports == video.fenceExports);
+        assert(glFinishes - before == (!test.imported && !test.fatal ? 1u : 0u));
+        assert(backend.submissions == (test.fatal ? 0u : 1u));
+        assert(video.frameCalls == backend.submissions && video.transferUpdates == backend.submissions);
+        assert(video.transfer == (test.fatal ? 2u : 1u));
+    }
+    std::puts("PASS production GLES read fence handoff and CPU fallback (5 cases)");
+}
+
 int main() {
     bridgeImportContracts();
+    readFenceHandoffContracts();
     enum class Input { Vulkan, Software, Duplicate, GlesHardware };
     struct Case {
         const char* name;
@@ -218,5 +263,5 @@ int main() {
         std::printf("PASS source ingress: %s\n", test.name);
         ++count;
     }
-    std::printf("Production bridge and ingress acceptance: %u cases passed\n", count + 16);
+    std::printf("Production bridge and ingress acceptance: %u cases passed\n", count + 21);
 }

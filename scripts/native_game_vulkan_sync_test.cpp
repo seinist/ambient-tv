@@ -15,6 +15,9 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <cerrno>
+#include <fcntl.h>
+#include <unistd.h>
 #define private public
 #include "vulkan/vulkanbackend.h"
 #undef private
@@ -579,6 +582,138 @@ void reusableSubmitStorage() {
     std::puts("PASS Vulkan submit storage reuse preserves command/wait/signal ordering and clears stale descriptors");
 }
 
+void readFenceQueueContracts() {
+    constexpr uintptr_t readSemaphoreId = 801;
+    const auto readSemaphore = object<VkSemaphore>(readSemaphoreId);
+    const auto newFd = [] {
+        int fds[2] {};
+        assert(pipe(fds) == 0);
+        assert(close(fds[1]) == 0);
+        return fds[0];
+    };
+    const auto closed = [](int fd) {
+        errno = 0;
+        assert(fcntl(fd, F_GETFD) == -1 && errno == EBADF);
+    };
+    for (bool direct : {false, true}) {
+        VulkanBackend backend;
+        setup(backend);
+        if (direct) {
+            window(backend);
+            backend.nativePresentation.setFullscreenActive(true);
+            assert(backend.ensureNativeSdrSwapchain());
+        }
+        // Fake driver closes on successful import to model transferred ownership.
+        unsigned creates = 0, destroys = 0;
+        // Vulkan dispatch is a C function pointer, so use fixture-owned counters
+        // rather than capturing these local variables.
+        static unsigned* createCount;
+        static unsigned* destroyCount;
+        createCount = &creates;
+        destroyCount = &destroys;
+        static VkResult createResult = VK_SUCCESS, importResult = VK_SUCCESS;
+        createResult = importResult = VK_SUCCESS;
+        backend.vk.createSemaphore = [](VkDevice, const VkSemaphoreCreateInfo* info,
+                                       const VkAllocationCallbacks*, VkSemaphore* semaphore) {
+            assert(!driver.pending && info->sType == VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO);
+            ++*createCount;
+            if (createResult == VK_SUCCESS) *semaphore = object<VkSemaphore>(801);
+            return createResult;
+        };
+        backend.vk.destroySemaphore = [](VkDevice, VkSemaphore semaphore, const VkAllocationCallbacks*) {
+            assert(!driver.pending);
+            if (semaphore == object<VkSemaphore>(801)) ++*destroyCount;
+        };
+        backend.vk.importSemaphoreFd = [](VkDevice, const VkImportSemaphoreFdInfoKHR* info) {
+            assert(!driver.pending && info->semaphore == object<VkSemaphore>(801));
+            assert(info->sType == VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR);
+            assert(info->flags == VK_SEMAPHORE_IMPORT_TEMPORARY_BIT);
+            assert(info->handleType == VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT);
+            assert(fcntl(info->fd, F_GETFD) >= 0);
+            if (importResult == VK_SUCCESS) assert(close(info->fd) == 0);
+            return importResult;
+        };
+        assert(!backend.canImportBridgeReadFence());
+        int fd = newFd();
+        assert(!backend.importBridgeReadFence(fd));
+        closed(fd);
+        backend.bridgeFenceEnabled = true;
+        assert(backend.canImportBridgeReadFence());
+        for (bool coreCommands : {false, true}) {
+            const auto coreWait = object<VkSemaphore>(802);
+            backend.pendingImage.waitSemaphores = {coreWait};
+            if (coreCommands) backend.pendingCommandBuffers = {object<VkCommandBuffer>(803)};
+            fd = newFd();
+            assert(backend.importBridgeReadFence(fd));
+            closed(fd);
+            assert(backend.bridgeReadPending && creates == 1 && destroys == 0);
+            assert(backend.presentFrame(256, 224, 4.0F/3.0F, true));
+            assert(!backend.bridgeReadPending && !backend.frameInFlight && !driver.pending);
+            std::vector<VkSemaphore> expected;
+            if (!coreCommands) expected.push_back(coreWait);
+            if (direct) expected.push_back(backend.nativeSdrAcquire);
+            expected.push_back(readSemaphore);
+            assert(driver.submittedWaits == expected);
+            assert(driver.submittedStages.size() == expected.size());
+            assert(driver.submittedStages.back() == VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+            for (size_t i = 0; i + 1 < expected.size(); ++i)
+                assert(driver.submittedStages[i] == VK_PIPELINE_STAGE_TRANSFER_BIT);
+        }
+        // A rejected frame has not consumed the temporary payload.
+        fd = newFd();
+        assert(backend.importBridgeReadFence(fd));
+        closed(fd);
+        const auto image = backend.pendingImage.image;
+        backend.pendingImage.image = VK_NULL_HANDLE;
+        assert(!backend.presentFrame(256, 224, 4.0F/3.0F, true));
+        assert(backend.bridgeReadPending && destroys == 0);
+        backend.pendingImage.image = image;
+        fd = newFd();
+        assert(backend.importBridgeReadFence(fd));
+        closed(fd);
+        assert(creates == 2 && destroys == 1);
+        // Export failure discards the unsubmitted payload before CPU fallback.
+        assert(!backend.importBridgeReadFence(-1));
+        assert(!backend.bridgeReadPending && !backend.canImportBridgeReadFence() && destroys == 2);
+        assert(backend.presentFrame(256, 224, 4.0F/3.0F, true));
+        assert(std::find(driver.submittedWaits.begin(), driver.submittedWaits.end(), readSemaphore) ==
+               driver.submittedWaits.end());
+        backend.bridgeFenceEnabled = true;
+        createResult = VK_ERROR_OUT_OF_HOST_MEMORY;
+        fd = newFd();
+        assert(!backend.importBridgeReadFence(fd));
+        closed(fd);
+        assert(!backend.hasFatalError() && !backend.canImportBridgeReadFence());
+        assert(backend.bridgeReadSemaphore == VK_NULL_HANDLE && creates == 3);
+        backend.bridgeFenceEnabled = true;
+        createResult = VK_SUCCESS;
+        importResult = VK_ERROR_INVALID_EXTERNAL_HANDLE;
+        fd = newFd();
+        assert(!backend.importBridgeReadFence(fd));
+        closed(fd);
+        assert(!backend.hasFatalError() && !backend.canImportBridgeReadFence() && !backend.bridgeReadPending);
+        // An import failure retains the unused semaphore; a fatal import latches
+        // the first error and does not permit another submit.
+        backend.bridgeFenceEnabled = true;
+        importResult = VK_ERROR_DEVICE_LOST;
+        fd = newFd();
+        assert(!backend.importBridgeReadFence(fd));
+        closed(fd);
+        assert(backend.hasFatalError() && backend.getFatalError() == VK_ERROR_DEVICE_LOST);
+        const unsigned oldSubmits = driver.submits;
+        assert(!backend.presentFrame(256, 224, 4.0F/3.0F, true));
+        assert(driver.submits == oldSubmits && destroys == 2);
+        driver.idles = {VK_ERROR_UNKNOWN};
+        backend.shutdown();
+        assert(destroys == 2 && backend.bridgeReadSemaphore == readSemaphore);
+        driver.idles = {VK_SUCCESS};
+        backend.shutdown();
+        assert(destroys == 3 && backend.bridgeReadSemaphore == VK_NULL_HANDLE);
+        assert(!backend.bridgeFenceEnabled && !backend.bridgeReadPending);
+    }
+    std::puts("PASS Vulkan SYNC_FD ownership, queue wait order, reuse, fallback and safe teardown");
+}
+
 void managedBoundary() {
     auto& backend = VulkanBackend::getInstance();
     libretrodroid::Video video;
@@ -638,6 +773,7 @@ int main() {
     nativeSurfacePolicyAndSuccess();
     filteredPresetSwitchRetainsSwapchain();
     reusableSubmitStorage();
+    readFenceQueueContracts();
     managedBoundary();
     std::puts("PASS production Vulkan synchronization and presentation fault regression");
 }

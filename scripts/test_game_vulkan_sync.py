@@ -27,6 +27,8 @@ def main():
     methods = [
         "bool VulkanBackend::checkFrameResult(",
         "bool VulkanBackend::waitForFrame(",
+        "bool VulkanBackend::canImportBridgeReadFence(",
+        "bool VulkanBackend::importBridgeReadFence(",
         "bool VulkanBackend::waitForDeviceIdle(",
         "bool VulkanBackend::prepareForShutdown(",
         "bool VulkanBackend::clearFrameImage(",
@@ -102,6 +104,13 @@ def main():
             str(thrower), str(native / "utils/libretrodroidexception.cpp"),
             "-o", str(jni_binary)], check=True)
         subprocess.run([str(jni_binary)], check=True, timeout=20)
+
+        (work / "external_fence_export_under_test.h").write_text(cpp_function(
+            (native / "video.cpp").read_text(), "int Video::exportExternalReadFence("))
+        fence_binary = work / "external-fence-export-test"
+        subprocess.run(command + [str(root / "scripts/native_game_external_fence_export_test.cpp"),
+            "-o", str(fence_binary)], check=True)
+        subprocess.run([str(fence_binary)], check=True, timeout=20)
 
         external_binary = work / "external-frame-lease-test"
         subprocess.run(command + [str(root / "scripts/native_game_external_frame_test.cpp"),
