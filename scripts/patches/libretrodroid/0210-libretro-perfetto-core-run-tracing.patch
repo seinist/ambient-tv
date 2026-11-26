@@ -1,0 +1,41 @@
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include <jni.h>
++#include <android/trace.h>
+ 
+ #include <EGL/egl.h>
+ #include <signal.h>
+@@ -758,7 +759,9 @@ void LibretroDroid::step() {
+             if (video && video->isHWAccelerated()) {
+                 video->bindHWContext();
+             }
++            ATrace_beginSection("AmbientTV:Libretro/retro_run");
+             core->retro_run();
++            ATrace_endSection();
+             if (video && video->isHWAccelerated()) {
+                 video->bindMainContext();
+             }
+@@ -782,7 +785,9 @@ void LibretroDroid::step() {
+         }
+ 
+         for (size_t i = 0; i < frames; i++) {
++            ATrace_beginSection("AmbientTV:Libretro/retro_run");
+             core->retro_run();
++            ATrace_endSection();
+ 
+             if (input) {
+                 input->flushPendingReleases();
+@@ -883,7 +888,9 @@ void LibretroDroid::stepForNetplay() {
+         video->bindHWContext();
+     }
+ 
++    ATrace_beginSection("AmbientTV:Libretro/retro_run");
+     core->retro_run();
++    ATrace_endSection();
+ 
+     if (input) {
+         input->flushPendingReleases();
+     }
