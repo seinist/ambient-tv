@@ -848,9 +848,11 @@ internal class MpvPlaybackEngine(
         // deadlock while recreating its buffers against an output being removed.
         setProperty("vid", "no")
         // Disable the VO before releasing its native window; demuxing/audio remain alive.
-        setProperty("vo", "null")
-        setProperty("force-window", "no")
-        runCatching { MpvNativeBridge.nativeDetachSurface(handle) }
+        // On rejection keep the native reference and attached flag for a later retry or
+        // engine destruction. Never tell SurfaceHolder that an unconfirmed VO is retired.
+        check(trySetProperty("force-window", "no")) { "MPV could not disable forced window" }
+        check(trySetProperty("vo", "null")) { "MPV could not retire video output" }
+        MpvNativeBridge.nativeDetachSurface(handle)
         attached = false
         attachedSurface = null
         // A failed passthrough only held the picture; in the background its audio plays on and
