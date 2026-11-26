@@ -337,6 +337,32 @@ public class ManagerHarness {
                 if (first.getClient() == null)
                     throw new AssertionError("stale manager lost its client");
             }
+            // Retain a manager across reset before its client is initialized.
+            OkHttpManager.unhold();
+            OkHttpManager stale = OkHttpManager.instance(false);
+            OkHttpManager.unhold();
+            OkHttpManager fresh = OkHttpManager.instance(true);
+            Future<OkHttpClient> oldClient = pool.submit(stale::getClient);
+            Future<OkHttpClient> newClient = pool.submit(fresh::getClient);
+            if (oldClient.get(5, TimeUnit.SECONDS) == newClient.get(5, TimeUnit.SECONDS))
+                throw new AssertionError("generations shared a client");
+            if (OkHttpManager.instance(false) != fresh || !OkHttpCommons.enableProfiler)
+                throw new AssertionError("stale initialization changed global state");
+
+            // Race resets against first access; each retained manager must still
+            // return a stable, non-null client even if no longer the singleton.
+            java.util.List<Future<?>> races = new java.util.ArrayList<>();
+            for (int i = 0; i < 128; i++) {
+                final int task = i;
+                races.add(pool.submit(() -> {
+                    if (task % 4 == 0) OkHttpManager.unhold();
+                    OkHttpManager manager = OkHttpManager.instance(task % 2 == 0);
+                    OkHttpClient client = manager.getClient();
+                    if (client == null || client != manager.getClient())
+                        throw new AssertionError("unstable client during reset");
+                }));
+            }
+            for (Future<?> race : races) race.get(5, TimeUnit.SECONDS);
         } finally {
             pool.shutdownNow();
         }
