@@ -169,4 +169,21 @@ class VlcAdaptiveRelayTest {
             requireVlcRelayTransport(https, "http://cdn.example.net/segment.ts".toHttpUrl())
         }
     }
+
+    @Test fun unsupportedHlsExternalResourcesNeverBypassTheRelay() {
+        for (tag in listOf(
+            "#EXT-X-DATERANGE:ID=\"ad\",X-ASSET-URI=\"https://example.org/ad.m3u8\"",
+            "#EXT-X-DATERANGE:ID=\"ad\",X-ASSET-LIST=\"https://example.org/list.json\"",
+            "#EXT-X-VENDOR:URI=\"https://example.org/resource\"",
+            "#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\",X-KEY-URL=\"https://example.org/other\"",
+        )) {
+            assertThrows(IOException::class.java) {
+                rewriteVlcHlsManifest("#EXTM3U\n$tag\n", source) { url, playlist -> routes.register(url, playlist) }
+            }
+        }
+        val text = "#EXTM3U\n#EXT-X-DATERANGE:ID=\"id\",X-TITLE=\"text,URI=label\"\n#EXTINF:4,title\nsegment.ts\n"
+        assertTrue(rewriteVlcHlsManifest(text, source) { url, playlist ->
+            routes.register(url, playlist)
+        }.contains("X-TITLE=\"text,URI=label\""))
+    }
 }
