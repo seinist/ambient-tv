@@ -57,6 +57,9 @@ def main():
         (work / "spare_egl_under_test.h").write_text("\n".join(
             cpp_function(video_source, signature) for signature in (
                 "bool Video::matchesPrimaryExternalFrame(",
+                "bool Video::matchesExternalFrameSlot(",
+                "bool Video::finishExternalFrameSlotUse(",
+                "bool Video::prepareExternalFrameResize(",
                 "bool Video::prepareSpareExternalFrame(",
                 "bool Video::releaseSpareExternalFrame(",
             )))

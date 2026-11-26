@@ -30,7 +30,19 @@ struct Bank {
     };
     std::array<Slot, 2> slots{};
     std::size_t current = 0;
-    unsigned released = 0;
+    unsigned released = 0, finished = 0;
+    bool select(std::size_t i, unsigned d, unsigned c, unsigned& borrowed) {
+        if (i >= 2 || !slots[i].texture || !slots[i].lease.ownsContext(d, c)) return false;
+        current = i;
+        borrowed = slots[i].texture;
+        return true;
+    }
+    template<class Ops>
+    bool finishSlotUse(std::size_t i, unsigned d, unsigned c, Ops&) {
+        if (i >= 2 || !slots[i].texture || !slots[i].lease.ownsContext(d, c)) return false;
+        ++finished;
+        return true;
+    }
     const Slot* get(std::size_t i) const { return i < 2 ? &slots[i] : nullptr; }
     std::size_t selected() const { return current; }
     bool ownsContext(unsigned d, unsigned c) const {
@@ -52,6 +64,16 @@ struct Video {
     bool prepareOK = true;
     struct ExternalFrameOps {};
     bool matchesPrimaryExternalFrame(AHardwareBuffer*, unsigned, unsigned, uint64_t) const;
+    bool matchesExternalFrameSlot(std::size_t, AHardwareBuffer*, unsigned, unsigned, uint64_t) const;
+    bool finishExternalFrameSlotUse(std::size_t);
+    bool prepareExternalFrameResize();
+    bool finishExternalFrameUse(bool allowEmpty = false) {
+        if (!externalFrames) return false;
+        const auto* slot = externalFrame.get(externalFrame.selected());
+        if (allowEmpty && slot && !slot->lease.retainsBuffer() && !hwRenderTexture) return true;
+        if (!slot || slot->texture != hwRenderTexture) return false;
+        return finishExternalFrameSlotUse(externalFrame.selected());
+    }
     bool prepareSpareExternalFrame(AHardwareBuffer*, unsigned, unsigned, uint64_t);
     bool releaseSpareExternalFrame();
     bool prepareExternalFrameSlot(std::size_t i, AHardwareBuffer* b, unsigned w, unsigned h, uint64_t n) {
@@ -97,5 +119,22 @@ int main() {
             ++count;
         }
     }
-    std::printf("PASS %u video slot coordination cases\n", count);
+    for (unsigned bits = 0; bits < 16; ++bits) {
+        display = 1; context = 2;
+        Video v;
+        v.externalFrame.slots[0] = {{&a, 1, (bits & 1) ? 3u : 2u}, 11, 32, 24, 4096};
+        v.externalFrame.slots[1] = {{&b, 1, (bits & 2) ? 3u : 2u}, 12, 32, 24, 4096};
+        v.externalFrame.current = (bits & 4) ? 1 : 0;
+        v.hwRenderTexture = (bits & 4) ? 12 : 11;
+        v.externalFrames = !(bits & 8);
+        assert(v.matchesExternalFrameSlot(0, &a, 32, 24, 4096) == (!(bits & 1) && v.externalFrames));
+        assert(v.matchesExternalFrameSlot(1, &b, 32, 24, 4096) == (!(bits & 2) && v.externalFrames));
+        assert(!v.matchesExternalFrameSlot(1, &a, 32, 24, 4096));
+        assert(!v.matchesExternalFrameSlot(2, &a, 32, 24, 4096));
+        const bool valid = (bits & 11) == 0;
+        assert(v.prepareExternalFrameResize() == valid);
+        if (valid) assert(v.externalFrame.current == 0 && v.hwRenderTexture == 11 &&
+                          v.externalFrame.released == 1 && !v.externalFrame.slots[1].lease.buffer);
+    }
+    std::printf("PASS %u video slot coordination cases plus resize and indexed matching\n", count);
 }

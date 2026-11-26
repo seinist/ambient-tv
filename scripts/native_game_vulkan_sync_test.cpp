@@ -1821,15 +1821,20 @@ void coreSyncIndexContracts() {
         backend.shutdown();
         assert(!backend.device && !backend.hasFatalError() && backend.coreSync.mask() == 1);
     }
-    // Two-index policy is exercised here only. Production still opens one
-    // index until normal-frame routing and EGL publication are complete.
+    // The default remains one index. The opt-in session keeps a stable
+    // mask through optional transport fallback and no-video runs.
     {
         VulkanBackend backend;
         setup(backend);
         assert(backend.coreSync.open(2));
         auto& spare = backend.spareFrameSlot;
         spare.fence = object<VkFence>(702);
+        backend.spareFramePrepared = true;
+        backend.setSpareFrameImported(true);
         assert(backend.beginCoreFrame() && VulkanBackend::callbackGetSyncIndex(&backend) == 0);
+        backend.endCoreFrame(); // No video callback: the next run keeps its index.
+        assert(backend.beginCoreFrame() && VulkanBackend::callbackGetSyncIndex(&backend) == 0);
+        assert(backend.completeDuplicateFrame());
         backend.endCoreFrame();
         assert(VulkanBackend::callbackGetSyncIndex(&backend) == 0);
         assert(VulkanBackend::callbackGetSyncIndexMask(&backend) == 3);
@@ -1879,6 +1884,169 @@ void coreSyncIndexContracts() {
                VulkanBackend::callbackGetSyncIndex(&backend) == 0);
     }
     std::puts("PASS core run boundary, stable sync indices, selected fence and duplicate submission");
+}
+
+// Mock per-fence state instead of the single-slot driver's global pending
+// flag; the actual production backend methods select and own every handle.
+void dualNormalFrameContracts() {
+    const auto prepareSpare = [](VulkanBackend& b) {
+        auto& spare = b.spareFrameSlot;
+        spare.pool = object<VkCommandPool>(210);
+        spare.command = object<VkCommandBuffer>(211);
+        spare.fence = object<VkFence>(212);
+        spare.bridgeImage.image = object<VkImage>(213);
+        spare.bridgeImage.memory = object<VkDeviceMemory>(214);
+        spare.bridgeImage.buffer = object<AHardwareBuffer*>(215);
+        spare.bridgeImage.width = b.frameSlot.bridgeImage.width;
+        spare.bridgeImage.height = b.frameSlot.bridgeImage.height;
+        spare.bridgeImage.allocationBytes = b.frameSlot.bridgeImage.allocationBytes;
+        b.spareFramePrepared = true;
+        b.setSpareFrameImported(true);
+    };
+    {
+        VulkanBackend backend;
+        setup(backend);
+        assert(backend.coreSync.open(2));
+        prepareSpare(backend);
+        backend.bridgeWriteFenceEnabled = true;
+        static VkFence fences[2];
+        static VkCommandBuffer commands[2];
+        static VkSemaphore writeSignals[2];
+        static bool pending[2];
+        static unsigned waited[2], submitted[2], lastSlot;
+        static VkResult exportResult;
+        fences[0] = backend.frameSlot.fence; fences[1] = backend.spareFrameSlot.fence;
+        commands[0] = backend.frameSlot.command; commands[1] = backend.spareFrameSlot.command;
+        pending[0] = pending[1] = false;
+        waited[0] = waited[1] = submitted[0] = submitted[1] = 0;
+        writeSignals[0] = writeSignals[1] = VK_NULL_HANDLE;
+        exportResult = VK_SUCCESS;
+        backend.vk.resetCommandBuffer = [](VkCommandBuffer cmd, VkCommandBufferResetFlags) {
+            const unsigned i = cmd == commands[1] ? 1u : 0u;
+            assert(cmd == commands[i] && !pending[i]);
+            return VK_SUCCESS;
+        };
+        backend.vk.queueSubmit = [](VkQueue, uint32_t count, const VkSubmitInfo* info, VkFence fence) {
+            const unsigned i = fence == fences[1] ? 1u : 0u;
+            assert(count == 1 && fence == fences[i] && !pending[i] && info->commandBufferCount);
+            assert(info->pCommandBuffers[info->commandBufferCount - 1] == commands[i]);
+            if (info->signalSemaphoreCount)
+                writeSignals[i] = info->pSignalSemaphores[info->signalSemaphoreCount - 1];
+            ++submitted[i];
+            lastSlot = i;
+            pending[i] = true;
+            return VK_SUCCESS;
+        };
+        backend.vk.getSemaphoreFd = [](VkDevice, const VkSemaphoreGetFdInfoKHR* info, int* fd) {
+            assert(pending[lastSlot] && info->semaphore == writeSignals[lastSlot]);
+            if (exportResult == VK_SUCCESS) *fd = -1;
+            return exportResult;
+        };
+        backend.vk.waitForFences = [](VkDevice, uint32_t count, const VkFence* fence, VkBool32, uint64_t) {
+            const unsigned i = *fence == fences[1] ? 1u : 0u;
+            assert(count == 1 && *fence == fences[i] && pending[i]);
+            ++waited[i];
+            pending[i] = false;
+            return VK_SUCCESS;
+        };
+        backend.vk.resetFences = [](VkDevice, uint32_t count, const VkFence* fence) {
+            const unsigned i = *fence == fences[1] ? 1u : 0u;
+            assert(count == 1 && *fence == fences[i] && !pending[i]);
+            return VK_SUCCESS;
+        };
+        backend.vk.deviceWaitIdle = [](VkDevice) {
+            pending[0] = pending[1] = false;
+            return VK_SUCCESS;
+        };
+        int fd = 99;
+        assert(backend.beginCoreFrame() && backend.submissionSlotIndex() == 0);
+        assert(backend.presentFrame(256, 224, 4.0F/3.0F, true, &fd) && fd == -1);
+        assert(backend.frameSlot.inFlight && pending[0] && !waited[0] && !waited[1]);
+        backend.endCoreFrame();
+        assert(backend.beginCoreFrame() && backend.submissionSlotIndex() == 1);
+        backend.pendingImageIndex = 1;
+        assert(backend.presentFrame(256, 224, 4.0F/3.0F, true, &fd) && fd == -1);
+        assert(backend.frameSlot.inFlight && backend.spareFrameSlot.inFlight && pending[0] && pending[1]);
+        assert(submitted[0] == 1 && submitted[1] == 1 && !waited[0] && !waited[1]);
+        assert(writeSignals[0] && writeSignals[1] && writeSignals[0] != writeSignals[1]);
+        backend.endCoreFrame();
+        assert(backend.beginCoreFrame() && backend.submissionSlotIndex() == 0);
+        assert(!pending[0] && pending[1] && waited[0] == 1 && !waited[1]);
+        backend.endCoreFrame(); // no video, no rotation
+        assert(backend.beginCoreFrame() && backend.submissionSlotIndex() == 0);
+        assert(backend.completeDuplicateFrame());
+        backend.endCoreFrame();
+        assert(backend.beginCoreFrame() && backend.submissionSlotIndex() == 1);
+        assert(!pending[1] && waited[1] == 1);
+        // Export failure must wait this slot synchronously, never expose an
+        // absent write proof, and disable subsequent export attempts.
+        exportResult = VK_ERROR_OUT_OF_HOST_MEMORY;
+        backend.pendingImageIndex = 1;
+        assert(backend.presentFrame(256, 224, 4.0F/3.0F, true, &fd) &&
+               fd == VulkanBackend::NoBridgeWriteFence);
+        assert(!pending[1] && waited[1] == 2 && !backend.bridgeWriteFenceEnabled);
+        backend.endCoreFrame();
+        // A run that submits work but stages a later callback must preserve
+        // that work's owning index instead of rotating.
+        assert(backend.beginCoreFrame() && backend.submissionSlotIndex() == 0);
+        assert(backend.completeDuplicateFrame());
+        backend.pendingImage.waitSemaphores = {object<VkSemaphore>(216)};
+        backend.endCoreFrame();
+        assert(backend.beginCoreFrame() && backend.submissionSlotIndex() == 0);
+        backend.pendingImage.waitSemaphores.clear();
+        backend.endCoreFrame();
+        backend.shutdown();
+        assert(!backend.device && backend.coreSync.mask() == 1);
+    }
+    for (bool imported : {false, true}) {
+        VulkanBackend backend;
+        setup(backend);
+        assert(backend.coreSync.open(2));
+        if (imported) prepareSpare(backend);
+        assert(backend.beginCoreFrame() && backend.completeDuplicateFrame());
+        backend.endCoreFrame();
+        assert(backend.beginCoreFrame() && backend.coreSync.index() == 1);
+        backend.pendingImageIndex = 1;
+        window(backend);
+        backend.nativePresentation.setFullscreenActive(true);
+        assert(backend.presentFrame(256, 224, 4.0F/3.0F, true));
+        assert(driver.submittedCommands.back() == (imported ? backend.spareFrameSlot.command : backend.frameSlot.command));
+        assert(backend.nativeSdrAcquireSlots.get(imported ? 1 : 0));
+        assert(std::find(driver.submittedWaits.begin(), driver.submittedWaits.end(),
+            backend.nativeSdrAcquireSlots.get(imported ? 1 : 0)) != driver.submittedWaits.end());
+        assert(!backend.frameSlot.inFlight && !backend.spareFrameSlot.inFlight &&
+               backend.nativeAcquireState.allIdle());
+        backend.endCoreFrame();
+        assert(backend.coreSync.mask() == 3);
+        backend.shutdown();
+    }
+    {
+        VulkanBackend backend;
+        setup(backend);
+        assert(backend.coreSync.open(2));
+        assert(backend.beginCoreFrame() && backend.completeDuplicateFrame());
+        backend.endCoreFrame();
+        assert(backend.beginCoreFrame() && backend.coreSync.index() == 1);
+        // Old image belonging to index zero cannot cross the sync boundary.
+        assert(!backend.presentFrame(256, 224, 4.0F/3.0F, true));
+        assert(backend.hasFatalError() && driver.submits == 0);
+        backend.endCoreFrame();
+        backend.shutdown();
+    }
+    {
+        VulkanBackend backend;
+        setup(backend);
+        backend.pendingImage.srcQueueFamily = backend.queueFamily + 1;
+        assert(!backend.presentFrame(256, 224, 4.0F/3.0F, true) && !backend.hasFatalError());
+        assert(driver.submits == 1 && !driver.cachePrepares);
+        backend.pendingImage.waitSemaphores = {object<VkSemaphore>(217)};
+        assert(backend.presentFrame(256, 224, 4.0F/3.0F, true));
+        assert(driver.cachePrepares == 1 && backend.pendingImage.waitSemaphores.empty());
+        assert(!backend.presentFrame(256, 224, 4.0F/3.0F, true));
+        assert(driver.cachePrepares == 1 && driver.submits == 3);
+        backend.shutdown();
+    }
+    std::puts("PASS bounded dual-slot normal submission, selected retirement, fallback, WSI and source ownership");
 }
 
 void managedBoundary() {
@@ -1955,6 +2123,7 @@ int main() {
     writeFenceQueueContracts();
     duplicateFrameContracts();
     coreSyncIndexContracts();
+    dualNormalFrameContracts();
     managedBoundary();
     std::puts("PASS production Vulkan synchronization and presentation fault regression");
 }

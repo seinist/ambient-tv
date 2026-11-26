@@ -52,6 +52,22 @@ struct VulkanBackend {
     void* getFrameBuffer() { return this; }
     uint64_t getFrameBufferAllocationBytes() const { return fp16 ? 8192 : 4096; }
     unsigned spareIdentity = 0, spareEnsures = 0, spareReleases = 0;
+    bool dual = false, spareImported = false, writeWaitAccepted = true;
+    unsigned coreIndex = 0, cpuWriteWaits = 0;
+    bool writePending = false, eglWaitQueued = false;
+    bool wantsSpareFrame() const { return dual; }
+    void setSpareFrameImported(bool imported) { spareImported = imported && sparePrepared; }
+    unsigned submissionSlotIndex() const { return dual && spareImported ? coreIndex : 0; }
+    void* getSubmissionFrameBuffer() { return submissionSlotIndex() ? getSpareFrameBuffer() : getFrameBuffer(); }
+    uint64_t getSubmissionAllocationBytes() const {
+        return submissionSlotIndex() ? getSpareFrameBufferAllocationBytes() : getFrameBufferAllocationBytes();
+    }
+    bool waitForSubmissionFrame() {
+        ++cpuWriteWaits;
+        if (!writeWaitAccepted) { fatal = true; return false; }
+        writePending = false;
+        return true;
+    }
     bool sparePrepared = false, spareAdmitted = true, spareRetireAccepted = true;
     uint64_t spareBudgetSeen = 0;
     void* getSpareFrameBuffer() { return sparePrepared ? &spareIdentity : nullptr; }
@@ -94,10 +110,14 @@ struct VulkanBackend {
         assert(!fatal && aspect == 4.0F / 3.0F && compatible);
         ++submissions;
         frameConfirmed = false;
+        eglWaitQueued = false;
         if (writeFd) {
             assert(writeFenceSupported);
             *writeFd = bridgeAccepted ? writeFenceResult : NoBridgeWriteFence;
-            if (bridgeAccepted && writeFenceResult >= -1) ++writeExports;
+            if (bridgeAccepted && writeFenceResult >= -1) {
+                ++writeExports;
+                writePending = dual && spareImported && writeFenceResult >= 0;
+            }
         }
         return bridgeAccepted;
     }
@@ -115,6 +135,7 @@ struct Video {
     bool importExternalWriteFence(int fd) {
         assert(fd == 43 && VulkanBackend::getInstance().writeExports > writeImports);
         ++writeImports;
+        VulkanBackend::getInstance().eglWaitQueued = writeFenceAccepted;
         return writeFenceAccepted;
     }
     bool drainAccepted = true, pendingUse = true;
@@ -130,12 +151,43 @@ struct Video {
         pendingUse = false;
         return true;
     }
+    unsigned selected = 0, publications = 0, slotDrains = 0;
+    bool publishAccepted = true, spareMatches = true;
+    bool prepareExternalFrameResize() {
+        if (!finishExternalFrameUse(true)) return false;
+        selected = 0;
+        return releaseSpareExternalFrame();
+    }
+    bool finishExternalFrameSlotUse(unsigned index) {
+        assert(index == VulkanBackend::getInstance().submissionSlotIndex());
+        ++slotDrains;
+        return finishExternalFrameUse();
+    }
+    bool matchesExternalFrameSlot(unsigned index, void* buffer, unsigned w, unsigned h, uint64_t bytes) {
+        auto& backend = VulkanBackend::getInstance();
+        assert(index == backend.submissionSlotIndex());
+        if (!index) return matchesPrimaryExternalFrame(buffer, w, h, bytes);
+        assert(buffer == backend.getSpareFrameBuffer() && w == backend.width && h == backend.height &&
+               bytes == backend.getSpareFrameBufferAllocationBytes());
+        return external && spareImported && spareMatches;
+    }
+    bool publishExternalFrame(unsigned index, void* buffer, unsigned w, unsigned h, uint64_t bytes) {
+        auto& backend = VulkanBackend::getInstance();
+        assert(index == backend.submissionSlotIndex() && buffer == backend.getSubmissionFrameBuffer() &&
+               bytes == backend.getSubmissionAllocationBytes() && w == backend.width && h == backend.height);
+        assert(!backend.writePending || backend.eglWaitQueued);
+        if (!publishAccepted) return false;
+        ++publications;
+        selected = index;
+        return true;
+    }
     bool attachExternalFrame(void* buffer, unsigned w, unsigned h, uint64_t allocationBytes) {
         auto& backend = VulkanBackend::getInstance();
         assert(buffer == backend.getFrameBuffer() && !backend.fatal);
         assert(w == backend.width && h == backend.height && backend.allocations > imports);
         assert(allocationBytes == backend.getFrameBufferAllocationBytes());
         ++imports;
+        selected = 0;
         pendingUse = true;
         return backend.fp16 ? fp16ImportAccepted : rgbaImportAccepted;
     }
@@ -372,6 +424,51 @@ void writeFenceHandoffContracts() {
     std::puts("PASS reverse fence ingress: both capability gates, rejected bridge and CPU fallback");
 }
 
+void dualSlotIngressContracts() {
+    for (unsigned bits = 0; bits < 32; ++bits) {
+        auto& backend = VulkanBackend::getInstance();
+        backend = {};
+        backend.dual = true;
+        backend.coreIndex = 1;
+        backend.writeFenceSupported = true;
+        backend.writeWaitAccepted = bits & 1;
+        backend.readFenceSupported = bits & 2;
+        backend.readFenceAccepted = true;
+        Video video;
+        video.spareImportAccepted = bits & 4;
+        video.writeFenceSupported = true;
+        video.writeFenceAccepted = bits & 8;
+        video.spareMatches = bits & 16;
+        LibretroDroid host {&video};
+        host.attachVulkanFrame(256, 240);
+        assert(backend.spareImported == video.spareImportAccepted && !backend.fatal);
+        assert(video.selected == 0 && !video.publications);
+        const bool match = !backend.spareImported || video.spareMatches;
+        const bool waitFails = match && !video.writeFenceAccepted && !backend.writeWaitAccepted;
+        host.handleVideoRefresh(RETRO_HW_FRAME_BUFFER_VALID, 256, 224, 1024);
+        assert(backend.submissions == unsigned(match));
+        assert(video.publications == unsigned(match && !waitFails));
+        assert(video.frameCalls == video.publications && video.transferUpdates == video.publications);
+        assert(backend.cpuWriteWaits == unsigned(match && !video.writeFenceAccepted));
+        assert(backend.fatal == (!match || waitFails));
+        if (match && !waitFails) {
+            assert(video.selected == unsigned(backend.spareImported));
+            const auto oldSelected = video.selected;
+            host.handleVideoRefresh(nullptr, 256, 224, 1024);
+            assert(video.selected == oldSelected && video.publications == 1 && backend.duplicates == 1);
+        }
+    }
+    // Refusal to publish a completed frame must not update source metadata.
+    auto& backend = VulkanBackend::getInstance();
+    backend = {};
+    Video video;
+    video.publishAccepted = false;
+    LibretroDroid host {&video};
+    host.handleVideoRefresh(RETRO_HW_FRAME_BUFFER_VALID, 256, 224, 1024);
+    assert(backend.fatal && backend.submissions == 1 && !video.frameCalls && !video.transferUpdates);
+    std::puts("PASS dual-slot ingress, optional fallback, write proof before publication and duplicate selection");
+}
+
 void optionalSpareImportContracts() {
     for (unsigned bits = 0; bits < 256; ++bits) {
         auto& backend = VulkanBackend::getInstance();
@@ -419,6 +516,7 @@ void optionalSpareImportContracts() {
 
 int main() {
     optionalSpareImportContracts();
+    dualSlotIngressContracts();
     writeFenceHandoffContracts();
     bridgeImportContracts();
     readFenceHandoffContracts();
