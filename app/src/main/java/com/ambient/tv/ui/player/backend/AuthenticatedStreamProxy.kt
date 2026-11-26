@@ -1,6 +1,8 @@
 package com.ambient.tv.ui.player.backend
 
 import java.io.Closeable
+import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetAddress
@@ -25,14 +27,17 @@ internal class AuthenticatedStreamProxy(
     private val upstreamUrl: String,
     private val upstreamHeaders: Map<String, String>,
 ) : Closeable {
+    private val origin = requireNotNull(upstreamUrl.toHttpUrlOrNull()) { "Invalid media relay URI" }
     private val token = UUID.randomUUID().toString() + UUID.randomUUID().toString()
+    private val routes = HlsRelayRoutes(origin, "/$token")
     private val listener = ServerSocket(0, 8, InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)))
     private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
     private val capacity = java.util.concurrent.Semaphore(8)
     private val sockets = ConcurrentHashMap.newKeySet<Socket>()
     private val calls = ConcurrentHashMap.newKeySet<Call>()
 
-    val url: String = "http://127.0.0.1:${listener.localPort}/$token"
+    private val localOrigin = "http://127.0.0.1:${listener.localPort}"
+    val url: String = "$localOrigin/$token"
 
     init {
         thread(name = "vlc-auth-listener", isDaemon = true) {
@@ -85,15 +90,15 @@ internal class AuthenticatedStreamProxy(
         }
         if (!done) { status(output, 431, "Request Header Fields Too Large"); return }
         if (request.size != 3 || request[0] !in setOf("GET", "HEAD")) { status(output, 405, "Method Not Allowed"); return }
-        if (request[1].removePrefix("/") != token) { status(output, 404, "Not Found"); return }
+        val resource = routes.resolve(request[1]) ?: run { status(output, 404, "Not Found"); return }
         val headOnly = request[0] == "HEAD"
 
-        val origin = upstreamUrl.toHttpUrlOrNull() ?: return
-        val upstream = Request.Builder().url(origin).tag(RelayOrigin::class.java, RelayOrigin(origin)).apply {
+        val upstream = Request.Builder().url(resource.url).tag(RelayOrigin::class.java, RelayOrigin(origin)).apply {
             upstreamHeaders.forEach { (name, value) -> header(name, value) }
             // Keep Content-Length/Content-Range byte-exact for seekable recordings.
             header("Accept-Encoding", "identity")
-            range?.let { header("Range", it) }
+            // Manifest lengths/offsets change when their URIs are rewritten.
+            if (resource.playlist) removeHeader("Range") else range?.let { header("Range", it) }
             if (headOnly) head()
         }.build()
         val call = client.newCall(upstream)
@@ -102,6 +107,33 @@ internal class AuthenticatedStreamProxy(
         try {
             call.execute().use { response ->
                 if (!response.isSuccessful && response.code != 416) { status(output, response.code, response.message.ifBlank { "Error" }); return }
+                val contentType = response.header("Content-Type")
+                val dash = response.request.url.encodedPath.endsWith(".mpd", ignoreCase = true) ||
+                    contentType?.substringBefore(';')?.trim()?.equals("application/dash+xml", true) == true
+                if (dash) { status(output, 501, "DASH manifest relay unsupported"); return }
+                val playlist = resource.playlist || vlcHlsPath(response.request.url) || vlcHlsContentType(contentType)
+                if (playlist) {
+                    if (response.code != 200) { status(output, 502, "Partial playlist unsupported"); return }
+                    if (request[1].substringBefore('?') == "/$token") routes.markRootPlaylist()
+                    if (headOnly) {
+                        output.write("HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nConnection: close\r\n\r\n".toByteArray(Charsets.ISO_8859_1))
+                        output.flush()
+                        return
+                    }
+                    val rewritten = try {
+                        val manifest = readManifest(response.body.byteStream())
+                        rewriteVlcHlsManifest(manifest, response.request.url) { child, isPlaylist ->
+                            localOrigin + routes.register(child, isPlaylist)
+                        }.toByteArray(Charsets.UTF_8)
+                    } catch (_: IOException) {
+                        status(output, 502, "Unsupported playlist")
+                        return
+                    }
+                    output.write("HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: ${rewritten.size}\r\nConnection: close\r\n\r\n".toByteArray(Charsets.ISO_8859_1))
+                    output.write(rewritten)
+                    output.flush()
+                    return
+                }
                 val head = StringBuilder("HTTP/1.1 ${response.code} ${response.message.ifBlank { "OK" }}\r\nConnection: close\r\n")
                 RELAYED_HEADERS.forEach { name -> response.header(name)?.let { head.append(name).append(": ").append(it).append("\r\n") } }
                 output.write(head.append("\r\n").toString().toByteArray(Charsets.ISO_8859_1))
@@ -127,6 +159,18 @@ internal class AuthenticatedStreamProxy(
         } finally {
             calls.remove(call)
         }
+    }
+
+    private fun readManifest(input: InputStream): String {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            if (output.size() + count > 2 * 1024 * 1024) throw IOException("Manifest too large")
+            output.write(buffer, 0, count)
+        }
+        return output.toString(Charsets.UTF_8.name())
     }
 
     private fun status(output: OutputStream, code: Int, message: String) {
@@ -166,6 +210,11 @@ internal class AuthenticatedStreamProxy(
                 .build()
         }
     }
+}
+
+internal fun vlcHttpRelaySupported(url: String): Boolean {
+    val parsed = url.toHttpUrlOrNull() ?: return false
+    return !parsed.encodedPath.endsWith(".mpd", ignoreCase = true)
 }
 
 internal fun vlcDirectHttpRelaySupported(url: String): Boolean {
