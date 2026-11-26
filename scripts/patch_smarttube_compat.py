@@ -1171,6 +1171,73 @@ def patch_okhttp_manager_thread_safety(path: Path, check: bool) -> bool:
     return False
 
 
+def patch_auth_header_snapshots(msc: Path, check: bool) -> list[Path]:
+    """Publish complete account headers once; every interceptor reads one snapshot."""
+    root = msc / "youtubeapi/src/main/java"
+    helper = root / "com/liskovsoft/googlecommon/common/helpers/RetrofitOkHttpHelper.kt"
+    signin = root / "com/liskovsoft/youtubeapi/service/YouTubeSignInService.java"
+    oauth = root / "com/liskovsoft/googleapi/oauth2/manager/OAuth2AccountManagerBase.java"
+    publish = '        RetrofitOkHttpHelper.replaceAuthHeaders(headers);'
+    edits = {
+        helper: [
+            ('    @JvmStatic\n    val authHeaders = mutableMapOf<String, String>()',
+             '''    @Volatile
+    private var authHeaderSnapshot: Map<String, String> = emptyMap()
+
+    @JvmStatic
+    val authHeaders: Map<String, String>
+        get() = authHeaderSnapshot
+
+    @JvmStatic
+    fun replaceAuthHeaders(headers: Map<String, String>) {
+        authHeaderSnapshot = java.util.Collections.unmodifiableMap(HashMap(headers))
+    }'''),
+            ('                if (authHeaders.isEmpty() || doSkipAuth) {',
+             '                val requestAuthHeaders = authHeaders\n'
+             '                if (requestAuthHeaders.isEmpty() || doSkipAuth) {'),
+            ('                    applyHeaders(authHeaders, headers, requestBuilder)',
+             '                    applyHeaders(requestAuthHeaders, headers, requestBuilder)'),
+        ],
+        signin: [
+            ('        Map<String, String> headers = RetrofitOkHttpHelper.getAuthHeaders();\n        headers.clear();',
+             '        Map<String, String> headers = new java.util.HashMap<>();'),
+            ('        }\n    }\n\n    @Override\n    public void addOnAccountChange',
+             '        }\n' + publish + '\n    }\n\n    @Override\n    public void addOnAccountChange'),
+        ],
+        oauth: [
+            ('        Map<String, String> headers = RetrofitOkHttpHelper.getAuthHeaders();\n        headers.clear();',
+             '        Map<String, String> headers = new java.util.HashMap<>();'),
+            ('        if (mCachedAuthorizationHeader != null && getSelectedAccount() != null) {',
+             '        Account selectedAccount = getSelectedAccount();\n'
+             '        if (mCachedAuthorizationHeader != null && selectedAccount != null) {'),
+            ('String pageIdToken = ((YouTubeAccount) getSelectedAccount()).getPageIdToken();',
+             'String pageIdToken = ((YouTubeAccount) selectedAccount).getPageIdToken();'),
+            ('                headers.put("X-Goog-Pageid", pageIdToken);\n            }\n        }\n    }',
+             '                headers.put("X-Goog-Pageid", pageIdToken);\n            }\n        }\n'
+             + publish + '\n    }'),
+        ],
+    }
+    pending = {}
+    for path, replacements in edits.items():
+        if not path.is_file():
+            die(f"SmartTube auth header source missing: {path}")
+        original = path.read_bytes()
+        newline = "\r\n" if b"\r\n" in original else "\n"
+        text = original.decode("utf-8").replace("\r\n", "\n")
+        for old, new in replacements:
+            if new in text:
+                continue
+            if check or text.count(old) != 1:
+                die(f"Unsupported SmartTube auth header layout: {path}: {old}")
+            text = text.replace(old, new, 1)
+        updated = text.replace("\n", newline).encode("utf-8")
+        if updated != original:
+            pending[path] = updated
+    for path, updated in pending.items():
+        path.write_bytes(updated)
+    return list(pending)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
@@ -1209,6 +1276,7 @@ def main() -> int:
         changed.append(okhttp_manager)
 
     changed.extend(patch_disable_unused_cronet(msc, shared, args.check))
+    changed.extend(patch_auth_header_snapshots(msc, args.check))
 
     v8_utils = shared / "j2v8/src/main/java/com/eclipsesource/v8/utils/V8ObjectUtils.java"
     if patch_v8_object_utils_double(v8_utils, args.check):
