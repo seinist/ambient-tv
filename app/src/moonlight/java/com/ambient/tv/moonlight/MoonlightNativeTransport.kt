@@ -44,6 +44,7 @@ class MoonlightNativeTransport @Inject constructor(
     suspend fun pair(hostId: String, pin: String): MoonlightPairResult = pairingMutex.withLock {
         require(pin.matches(Regex("[0-9]{4}"))) { "Invalid GameStream PIN" }
         val host = requireHost(hostId)
+        val epoch = trust.epoch(hostId)
         if (trust.isPaired(hostId)) return@withLock MoonlightPairResult.AlreadyPaired
         val result = withHttp(host, null) { http ->
             val raw = http.getServerInfo(false)
@@ -52,20 +53,24 @@ class MoonlightNativeTransport @Inject constructor(
             val cert = if (state == PairingManager.PairState.PAIRED)
                 http.pairingManager.pairedCert ?: throw IOException("Pairing did not return a certificate")
                 else null
-            Triple(state, server.uniqueId, cert)
+            Triple(state, server, cert)
         }
         when (result.first) {
             PairingManager.PairState.PAIRED -> {
                 val certificate = requireNotNull(result.third)
-                val authenticated = withHttp(host, certificate) { http ->
-                    parseMoonlightServerInfo(http.getServerInfo(true).toByteArray())
+                val authenticated = withHttp(host, certificate, result.second.httpsPort) { http ->
+                    val raw = http.getServerInfo(true)
+                    if (http.getPairState(raw) != PairingManager.PairState.PAIRED)
+                        throw SecurityException("Moonlight pairing not confirmed")
+                    parseMoonlightServerInfo(raw.toByteArray())
                 }
-                if (authenticated.uniqueId != result.second)
+                if (authenticated.uniqueId != result.second.uniqueId)
                     throw SecurityException("Moonlight identity changed during pairing")
                 currentCoroutineContext().ensureActive()
                 if (requireHost(hostId) != host)
                     throw SecurityException("Moonlight host changed during pairing")
-                trust.commitVerifiedPairing(hostId, MoonlightVerifiedPeer(authenticated.uniqueId, certificate))
+                trust.commitVerifiedPairing(hostId, MoonlightVerifiedPeer(authenticated.uniqueId, certificate),
+                    authenticated.httpsPort, epoch)
                 MoonlightPairResult.Paired(hostId)
             }
             PairingManager.PairState.PIN_WRONG -> MoonlightPairResult.IncorrectPin
@@ -96,14 +101,24 @@ class MoonlightNativeTransport @Inject constructor(
             ?: throw SecurityException("Moonlight host identity missing")
         val pinned = trust.pinnedCertificate(host.id)
             ?: throw SecurityException("Moonlight host certificate missing")
-        val (info, hostCodecModes) = withHttp(host, pinned) { http ->
+        // Prefer the port last verified over pinned HTTPS. Legacy pins may discover it once.
+        val (info, hostCodecModes) = withHttp(host, pinned, trust.httpsPort(hostId)) { http ->
             val raw = http.getServerInfo(true)
+            if (http.getPairState(raw) != PairingManager.PairState.PAIRED)
+                throw SecurityException("Moonlight pairing revoked")
             parseMoonlightServerInfo(raw.toByteArray()) to http.getServerCodecModeSupport(raw)
         }
         if (info.uniqueId != serverId || trust.identity(hostId) != identity || requireHost(hostId) != host)
             throw SecurityException("Moonlight host identity changed")
-        return MoonlightVerifiedHost(host, info.httpsPort, pinned, identity, hostCodecModes)
+        trust.rememberHttpsPort(hostId, identity, info.httpsPort)
+        return MoonlightVerifiedHost(host, info.httpsPort, pinned, identity, hostCodecModes, serverId)
     }
+
+    internal fun current(target: MoonlightVerifiedHost): Boolean =
+        prefs.moonlightEnabled && prefs.moonlightHosts.any { it == target.profile } &&
+            trust.identity(target.profile.id) == target.identity
+
+    internal val trustRevisions get() = trust.revisions
 
     /** Only pinned and size-limited art; decoding dimensions are checked by the cache. */
     suspend fun loadArtwork(hostId: String, appId: Int): ByteArray {
@@ -158,7 +173,17 @@ class MoonlightNativeTransport @Inject constructor(
                     }
                     continuation.resume(action(http))
                 } catch (error: Exception) {
-                    continuation.resumeWithException(error)
+                    val identityFailure = certificate != null &&
+                        (error is javax.net.ssl.SSLHandshakeException ||
+                            error is javax.net.ssl.SSLPeerUnverifiedException ||
+                            error is java.security.cert.CertificateException ||
+                            error is com.limelight.nvstream.http.HostHttpResponseException &&
+                                error.errorCode in setOf(401, 403))
+                    // Do not propagate arbitrary host messages or URLs to a player/diagnostic UI.
+                    continuation.resumeWithException(when {
+                        identityFailure || error is SecurityException -> SecurityException("Moonlight host authentication failed")
+                        else -> IOException("Moonlight request failed")
+                    })
                 }
             }
             continuation.invokeOnCancellation {
@@ -172,8 +197,8 @@ class MoonlightNativeTransport @Inject constructor(
     fun forgetHost(hostId: String) = trust.clear(hostId)
 
     private fun requireHost(hostId: String): MoonlightHost =
-        prefs.moonlightHosts.firstOrNull { it.id == hostId }
-            ?: throw IllegalArgumentException("Unknown Moonlight host")
+        prefs.moonlightHosts.firstOrNull { prefs.moonlightEnabled && it.id == hostId }
+            ?: throw SecurityException("Unknown or disabled Moonlight host")
 
     private fun makeHttp(host: MoonlightHost, certificate: java.security.cert.X509Certificate?, httpsPort: Int): NvHTTP =
         NvHTTP(ComputerDetails.AddressTuple(host.host, host.port), httpsPort,
@@ -188,4 +213,5 @@ internal data class MoonlightVerifiedHost(
     val pinnedCertificate: java.security.cert.X509Certificate,
     val identity: String,
     val hostCodecModes: Long,
+    val serverId: String,
 )

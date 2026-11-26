@@ -7,6 +7,9 @@ import java.security.MessageDigest
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import javax.inject.Inject
+import javax.inject.Singleton
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /** Only the authenticated pairing transport may commit a successful peer identity. */
 data class MoonlightVerifiedPeer(val serverId: String, val certificate: X509Certificate)
@@ -18,12 +21,20 @@ enum class MoonlightTrustResult { NOT_PAIRED, MATCHED, IDENTITY_CHANGED }
  * JSON backup, Companion sync or log messages. The first unauthenticated /serverinfo is
  * discovery only and MUST NOT be passed here as a pairing proof.
  */
+@Singleton
 class MoonlightHostTrust @Inject constructor(@EncryptedPrefs private val prefs: SharedPreferences) {
+    private val changes = MutableStateFlow(0L)
+    val revisions = changes.asStateFlow()
+    private val epochs = mutableMapOf<String, Long>()
+    @Synchronized fun epoch(hostId: String): Long = epochs[hostId] ?: 0L
+    @Synchronized fun httpsPort(hostId: String): Int = prefs.getInt("moonlight_https_port_$hostId", 0).takeIf { it in 1..65535 } ?: 0
     fun isPaired(hostId: String): Boolean = read(hostId) != null
     fun trustedServerId(hostId: String): String? = read(hostId)?.first
     /** A device-local cache key includes both authenticated UUID and exact certificate. */
-    fun identity(hostId: String): String? = read(hostId)?.let { (id, cert) ->
-        MessageDigest.getInstance("SHA-256").digest(id.toByteArray(Charsets.UTF_8) + byteArrayOf(0) + cert)
+    @Synchronized fun identity(hostId: String): String? = read(hostId)?.let { (id, cert) ->
+        val nonce = prefs.getString("moonlight_peer_nonce_$hostId", "").orEmpty()
+        val material = id.toByteArray(Charsets.UTF_8) + byteArrayOf(0) + cert
+        MessageDigest.getInstance("SHA-256").digest(if (nonce.isEmpty()) material else material + nonce.toByteArray())
             .joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
 
@@ -38,19 +49,34 @@ class MoonlightHostTrust @Inject constructor(@EncryptedPrefs private val prefs: 
      * Call ONLY after upstream Moonlight pairing finishes with a verified challenge/signature
      * and authenticates the host's certificate. Existing certificate pins cannot silently rotate.
      */
-    fun commitVerifiedPairing(hostId: String, peer: MoonlightVerifiedPeer) {
+    @Synchronized fun commitVerifiedPairing(hostId: String, peer: MoonlightVerifiedPeer,
+        httpsPort: Int = 0, expectedEpoch: Long = epoch(hostId)) {
         require(validHostId(hostId) && validServerId(peer.serverId))
+        if (epoch(hostId) != expectedEpoch) throw SecurityException("Moonlight pairing was revoked")
         peer.certificate.checkValidity()
         require(peer.certificate.encoded.size in 128..16_384)
         if (check(hostId, peer) == MoonlightTrustResult.IDENTITY_CHANGED)
             throw SecurityException("Moonlight host certificate changed: explicit unpair required")
         val encoded = Base64.encodeToString(peer.certificate.encoded, Base64.NO_WRAP)
-        prefs.edit().putString(key(hostId), peer.serverId + ":" + encoded).apply()
+        val edit = prefs.edit().putString(key(hostId), peer.serverId + ":" + encoded)
+        if (!isPaired(hostId)) edit.putString("moonlight_peer_nonce_$hostId", java.util.UUID.randomUUID().toString())
+        if (httpsPort in 1..65535) edit.putInt("moonlight_https_port_$hostId", httpsPort)
+        edit.apply()
+        changes.value++
     }
 
     /** Unpair explicitly; any cached app catalog must also be cleared by the caller. */
-    fun clear(hostId: String) {
-        if (validHostId(hostId)) prefs.edit().remove(key(hostId)).apply()
+    @Synchronized fun clear(hostId: String) {
+        if (!validHostId(hostId)) return
+        epochs[hostId] = epoch(hostId) + 1
+        prefs.edit().remove(key(hostId)).remove("moonlight_peer_nonce_$hostId")
+            .remove("moonlight_https_port_$hostId").apply()
+        changes.value++
+    }
+
+    @Synchronized fun rememberHttpsPort(hostId: String, expected: String, port: Int) {
+        if (port in 1..65535 && identity(hostId) == expected && httpsPort(hostId) != port)
+            prefs.edit().putInt("moonlight_https_port_$hostId", port).apply()
     }
 
     /** Return the immutable TLS certificate pin only to the paired GameStream HTTPS client. */
@@ -77,8 +103,7 @@ class MoonlightHostTrust @Inject constructor(@EncryptedPrefs private val prefs: 
     }
 
     private fun key(hostId: String) = "moonlight_peer_" + hostId
-    private fun validHostId(id: String) =
-        id.length in 1..64 && id.all { it.isLetterOrDigit() || it == '-' || it == '_' }
+    private fun validHostId(id: String) = validMoonlightHostId(id)
     private fun validServerId(id: String) =
         id.length in 1..128 && id.all { it.isLetterOrDigit() || it == '-' || it == '_' }
 
