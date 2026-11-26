@@ -1673,7 +1673,7 @@ internal fun Any.cachedMethod(name: String, args: Array<out Any?>, allowArityFal
     }).method
 }
 
-private fun Any.call(name: String, vararg args: Any?): Any? {
+internal fun Any.call(name: String, vararg args: Any?): Any? {
     val method = cachedMethod(name, args, allowArityFallback = true) ?: return null
     return runCatching { method.invoke(this, *args) }
         .onFailure { Timber.d(it, "SmartTube reflection: %s", name) }.getOrNull()
@@ -1691,8 +1691,8 @@ private fun Any.callInt(name: String) = (call(name) as? Number)?.toInt()
 private fun Any.callDouble(name: String) = (call(name) as? Number)?.toDouble()
 private fun Any.callBool(name: String) = call(name) as? Boolean
 
-private data class DetailedReflectionInvocation(val found: Boolean, val value: Any?, val error: Throwable?)
-private fun Any.invokeDetailed(name: String, vararg args: Any?): DetailedReflectionInvocation {
+internal data class DetailedReflectionInvocation(val found: Boolean, val value: Any?, val error: Throwable?)
+internal fun Any.invokeDetailed(name: String, vararg args: Any?): DetailedReflectionInvocation {
     val method = cachedMethod(name, args, allowArityFallback = true)
         ?: return DetailedReflectionInvocation(false, null, null)
     return try {
@@ -1703,14 +1703,14 @@ private fun Any.invokeDetailed(name: String, vararg args: Any?): DetailedReflect
     }
 }
 
-private data class ReflectionInvocation(val invoked: Boolean, val value: Any?)
-private fun Any.invokeCompatible(name: String, vararg args: Any?): ReflectionInvocation {
+internal data class ReflectionInvocation(val invoked: Boolean, val value: Any?)
+internal fun Any.invokeCompatible(name: String, vararg args: Any?): ReflectionInvocation {
     val method = cachedMethod(name, args, allowArityFallback = false)
         ?: return ReflectionInvocation(false, null)
     return try { ReflectionInvocation(true, method.invoke(this, *args)) }
     catch (t: Throwable) { Timber.d(t, "SmartTube reflection: %s", name); ReflectionInvocation(false, null) }
 }
-private fun Any.hasMethod(name: String, arity: Int): Boolean =
+internal fun Any.hasMethod(name: String, arity: Int): Boolean =
     if (arity == 0) reflectionIndex(javaClass).zeroArgumentMethods.containsKey(name)
     else reflectionIndex(javaClass).methods.containsKey(ReflectionNameKey(name, arity))
 private fun Any.hasAnyMethod(vararg names: String): Boolean = names.any { hasMethod(it, 0) }
