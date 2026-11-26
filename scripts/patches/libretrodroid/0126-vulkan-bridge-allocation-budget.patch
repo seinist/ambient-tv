@@ -22,8 +22,9 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbac
 +    }
  
      // No export proof is different from Vulkan's already-signaled SYNC_FD (-1).
-@@ -220,5 +228,7 @@
-     bool createDeviceWithoutNegotiation();
+@@ -227,6 +235,8 @@
+     bool prepareBridgeWriteFence();
+     int exportBridgeWriteFence();
      bool createFrameResources();
      bool createFrameBuffer(unsigned width, unsigned height, bool fp16);
 +    bool allocateBridgeImage(VulkanBridgeImage<AHardwareBuffer*, VkImage, VkDeviceMemory>& bridge,

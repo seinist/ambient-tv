@@ -292,6 +292,100 @@ void pendingFrame(VulkanBackend& backend) {
 }
 void window(VulkanBackend& backend) { backend.nativeSdrWindow = object<ANativeWindow*>(18); }
 
+void slotFenceAndClearContracts() {
+    using Slot = VulkanBackend::FrameSlot;
+    static VkFence expectedFence;
+    static VkCommandBuffer expectedCommand;
+    static VkImage expectedImage;
+    static unsigned clears;
+    for (unsigned mode = 0; mode < 7; ++mode) {
+        VulkanBackend backend;
+        setup(backend);
+        Slot second;
+        second.pool = object<VkCommandPool>(201);
+        second.command = expectedCommand = object<VkCommandBuffer>(202);
+        second.fence = expectedFence = object<VkFence>(203);
+        second.bridgeImage.image = expectedImage = object<VkImage>(204);
+        second.bridgeImage.memory = object<VkDeviceMemory>(205);
+        second.bridgeImage.buffer = object<AHardwareBuffer*>(206);
+        second.bridgeImage.width = second.bridgeImage.height = 32;
+        second.bridgeImage.allocationBytes = 4096;
+        const auto primaryFence = backend.frameSlot.fence;
+        const auto primaryImage = backend.frameSlot.bridgeImage.image;
+        auto& vk = backend.vk;
+        clears = 0;
+        vk.waitForFences = [](VkDevice, uint32_t count, const VkFence* fences, VkBool32 all, uint64_t) {
+            assert(count == 1 && *fences == expectedFence && all == VK_TRUE);
+            ++driver.waitCalls;
+            auto result = driver.next(driver.waits);
+            if (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST) driver.pending = false;
+            return result;
+        };
+        vk.resetFences = [](VkDevice, uint32_t count, const VkFence* fences) {
+            assert(!driver.pending && count == 1 && *fences == expectedFence);
+            ++driver.resets;
+            return driver.reset;
+        };
+        vk.resetCommandBuffer = [](VkCommandBuffer command, VkCommandBufferResetFlags) {
+            assert(command == expectedCommand && !driver.pending);
+            ++driver.commandResets;
+            return VK_SUCCESS;
+        };
+        vk.cmdClearColorImage = [](VkCommandBuffer command, VkImage image, VkImageLayout layout,
+                const VkClearColorValue*, uint32_t count, const VkImageSubresourceRange*) {
+            assert(command == expectedCommand && image == expectedImage &&
+                   layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && count == 1);
+            ++clears;
+        };
+        vk.queueSubmit = [](VkQueue, uint32_t count, const VkSubmitInfo* info, VkFence fence) {
+            assert(!driver.pending && count == 1 && fence == expectedFence &&
+                   info->commandBufferCount == 1 && *info->pCommandBuffers == expectedCommand);
+            ++driver.submits;
+            driver.pending = true;
+            return VK_SUCCESS;
+        };
+        if (mode == 0 || mode == 1) {
+            driver.waits = mode == 0 ? std::deque<VkResult>{VK_TIMEOUT, VK_TIMEOUT, VK_SUCCESS}
+                                    : std::deque<VkResult>{VK_ERROR_DEVICE_LOST};
+            assert(backend.clearSlotImage(second) == (mode == 0));
+            assert(clears == 1 && driver.submits == 1 && driver.commandResets == 1);
+            assert(second.inFlight == (mode == 1));
+            assert(driver.waitCalls == (mode == 0 ? 3u : 1u) && driver.resets == (mode == 0 ? 1u : 0u));
+        } else if (mode == 2 || mode == 3 || mode == 4) {
+            // The synthetic primary's flag must not be modified by the other slot's wait.
+            backend.frameSlot.inFlight = true;
+            second.inFlight = true;
+            driver.pending = true;
+            if (mode == 3) driver.reset = VK_ERROR_OUT_OF_HOST_MEMORY;
+            if (mode == 4) second.fence = VK_NULL_HANDLE;
+            assert(backend.waitForSlotFrame(second) == (mode == 2));
+            assert(second.inFlight == (mode != 2) && backend.frameSlot.inFlight);
+            assert(driver.waitCalls == (mode == 4 ? 0u : 1u));
+            assert(driver.resets == (mode == 4 ? 0u : 1u));
+        } else if (mode == 5) {
+            second.bridgeImage.image = VK_NULL_HANDLE;
+            assert(!backend.clearSlotImage(second) && backend.hasFatalError());
+            assert(!second.inFlight && driver.commandResets == 0 && driver.submits == 0);
+        } else {
+            assert(backend.waitForSlotFrame(second));
+            assert(driver.waitCalls == 0 && driver.resets == 0);
+        }
+        assert(backend.frameSlot.fence == primaryFence && backend.frameSlot.bridgeImage.image == primaryImage);
+        assert(backend.frameSlot.inFlight == (mode >= 2 && mode <= 4));
+        assert(driver.imageFrees == 0 && driver.memoryFrees == 0 && driver.bufferFrees == 0);
+        // These are mock handles. Simulate device-idle before retiring the
+        // unowned test slot; production still has only its single frameSlot.
+        driver.pending = false;
+        second.inFlight = false;
+        assert(second.bridgeImage.retire(false, true, true, true,
+            [&](VkImage image) { vk.destroyImage(backend.device, image, nullptr); },
+            [&](VkDeviceMemory memory) { vk.freeMemory(backend.device, memory, nullptr); },
+            [](AHardwareBuffer* buffer) { AHardwareBuffer_release(buffer); }));
+        assert(second.retire(vk, backend.device));
+    }
+    std::puts("PASS explicit slot clear/wait uses only the target command, image and fence");
+}
+
 void bridgeBudgetAdmissionContracts() {
     using Budget = libretrodroid::VulkanBridgeAllocationBudget;
     for (unsigned failure = 0; failure <= 8; ++failure) {
@@ -1234,6 +1328,7 @@ int main() {
     traceScopeContracts();
     frameSlotAllocationContracts();
     bridgeBudgetAdmissionContracts();
+    slotFenceAndClearContracts();
     slotRetirementPreflightContracts();
     timeoutsPreserveWork();
     errorsStopWorkAndResize();
