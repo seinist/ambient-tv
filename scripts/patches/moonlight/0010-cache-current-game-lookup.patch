@@ -1,0 +1,16 @@
+diff --git a/app/src/main/java/com/limelight/nvstream/NvConnection.java b/app/src/main/java/com/limelight/nvstream/NvConnection.java
+--- a/app/src/main/java/com/limelight/nvstream/NvConnection.java
++++ b/app/src/main/java/com/limelight/nvstream/NvConnection.java
+@@ -370,9 +370,10 @@
+ 
+         if (stopping) return false;
+         // If there's a game running, resume it
+-        if (h.getCurrentGame(serverInfo) != 0) {
++        int currentGame = h.getCurrentGame(serverInfo);
++        if (currentGame != 0) {
+             try {
+-                if (h.getCurrentGame(serverInfo) == app.getAppId()) {
++                if (currentGame == app.getAppId()) {
+                     if (stopping || !h.launchApp(context, "resume", app.getAppId(), context.negotiatedHdr)) {
+                         context.connListener.displayMessage("Failed to resume existing session");
+                         return false;
