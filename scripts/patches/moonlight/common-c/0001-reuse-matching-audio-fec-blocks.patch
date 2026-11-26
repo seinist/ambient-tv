@@ -64,5 +64,6 @@ diff --git a/src/RtpAudioQueue.c b/src/RtpAudioQueue.c
 +    }
 +
      uint16_t dataPacketSize = blockSize + sizeof(RTP_PACKET);
-     return malloc(sizeof(*block) + (RTPA_DATA_SHARDS * dataPacketSize) + (RTPA_FEC_SHARDS * blockSize));
+-    return malloc(sizeof(*block) + (RTPA_DATA_SHARDS * dataPacketSize) + (RTPA_FEC_SHARDS * blockSize));
++    return malloc(sizeof(RTPA_FEC_BLOCK) + (RTPA_DATA_SHARDS * dataPacketSize) + (RTPA_FEC_SHARDS * blockSize));
  }
