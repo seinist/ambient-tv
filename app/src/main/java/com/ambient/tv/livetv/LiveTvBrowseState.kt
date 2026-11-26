@@ -52,6 +52,14 @@ class LiveTvBrowseState(private val now: () -> Long = { System.nanoTime() / 1_00
         loadedAt = if (!savedView && dashboard.warnings.isEmpty()) now() else null
     }
 
+    /** Optional channel artwork/service metadata must not change the dashboard's access proof,
+     * freshness, recordings or focus. Retained destinations share this immutable projection. */
+    internal fun updateChannelMetadata(enrich: (List<LiveTvChannel>) -> List<LiveTvChannel>) {
+        val old = dashboard ?: return
+        val channels = enrich(old.channels)
+        if (channels !== old.channels) dashboard = old.copy(channels = channels)
+    }
+
     /** A confirmed mutation must survive navigation even if its follow-up request fails. */
     fun updateAfterMutation(dashboard: LiveTvDashboard) {
         this.dashboard = dashboard

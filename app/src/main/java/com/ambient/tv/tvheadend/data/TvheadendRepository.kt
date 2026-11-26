@@ -342,7 +342,7 @@ class TvheadendRepository @Inject constructor(
                     hbbtvChanged()
                 }
             }
-            if (state.directory != null) return@withLock state
+            if (synchronized(hbbtvLock) { validHbbtv(state) && state.directory != null }) return@withLock state
             val saved = suspendResult {
                 diskCache.read(key.scope, "hbbtv-directory-v1", TvheadendHbbtvDirectory.serializer())
             }.getOrNull()

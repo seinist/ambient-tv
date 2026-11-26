@@ -79,7 +79,7 @@ class TvheadendLiveTvRepository(
     override suspend fun dashboard(force: Boolean, prefetch: LiveTvDashboardPrefetch?): LiveTvDashboard {
         checkSource()
         return delegate.dashboard(force, prefetch?.channels, infoPrepared = prefetch != null).let { d -> d.copy(
-            channels = d.channels.map { it.copy(sourceId = source.id) },
+            channels = delegate.enrichHbbtvChannels(d.channels).map { it.copy(sourceId = source.id) },
             events = d.events.map { it.copy(sourceId = source.id) },
             recordings = d.recordings.map { it.copy(sourceId = source.id) },
             upcoming = d.upcoming.map { it.copy(sourceId = source.id) },

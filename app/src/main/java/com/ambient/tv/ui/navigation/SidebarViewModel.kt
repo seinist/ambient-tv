@@ -224,6 +224,11 @@ class SidebarViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
+            tvheadendRepository.hbbtvChanges.collect {
+                _uiState.update { it.copy(tvheadendHbbtvAvailable = tvheadendRepository.hasCachedHbbtvApps()) }
+            }
+        }
+        viewModelScope.launch {
             combine(rommLibrary.state, rommAccounts.changes, appPreferences.changes().onStart { emit(Unit) }) { _, _, _ -> Unit }
                 .collect { refreshRomm() }
         }
@@ -444,9 +449,7 @@ class SidebarViewModel @Inject constructor(
                         }
                     }.getOrNull()
                     if (channels != null) _uiState.update { it.copy(
-                        tvheadendHbbtvAvailable = channels.any { channel ->
-                            com.ambient.tv.livetv.liveTvHbbtvMenuApps(channel).isNotEmpty()
-                        },
+                        tvheadendHbbtvAvailable = tvheadendRepository.hasCachedHbbtvApps(),
                     ) }
                 }
                 "romm" -> if (rommAccounts.account() != null) {
@@ -496,7 +499,7 @@ class SidebarViewModel @Inject constructor(
                 radioHomeEnabled = appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_RADIO },
                 tvheadendEnabled = appPreferences.hasTvheadendEndpoint,
                 tvheadendLoginRejected = appPreferences.tvheadendLoginRejected,
-                tvheadendHbbtvAvailable = it.tvheadendHbbtvAvailable && appPreferences.isTvheadendConfigured,
+                tvheadendHbbtvAvailable = tvheadendRepository.hasCachedHbbtvApps(),
                 spotifySubmenuKeys = appPreferences.spotifySubmenuKeys,
                 radioSubmenuKeys = appPreferences.radioSubmenuKeys,
                 tvheadendSubmenuKeys = appPreferences.tvheadendSubmenuKeys,
@@ -519,6 +522,11 @@ class SidebarViewModel @Inject constructor(
             // Restore before any intentional Home/intro deferral so menu entries never pop in later.
             val savedSources = liveTv.sidebarSnapshot()
             _uiState.update { it.copy(liveTvSources = savedSources) }
+            if (appPreferences.isTvheadendConfigured) launch {
+                suspendResult { tvheadendRepository.restoreCachedHbbtv() }
+                _uiState.update { it.copy(tvheadendHbbtvAvailable = tvheadendRepository.hasCachedHbbtvApps()) }
+                tvheadendRepository.requestHbbtvRefresh()
+            }
             if (deferExpensiveWorkMs > 0L && forceLiveTv) delay(deferExpensiveWorkMs)
             if (forceLiveTv) launch {
                 val sources = loadCoordinator.request("iptv", "sidebar-capabilities:force", BrowseLoadPriority.HOME) {
@@ -533,7 +541,7 @@ class SidebarViewModel @Inject constructor(
                     }
                 }.getOrNull()
                 if (channels != null) _uiState.update { it.copy(
-                    tvheadendHbbtvAvailable = channels.any { channel -> com.ambient.tv.livetv.liveTvHbbtvMenuApps(channel).isNotEmpty() }
+                    tvheadendHbbtvAvailable = tvheadendRepository.hasCachedHbbtvApps()
                 ) }
             }
             val youtubeOn = _uiState.value.youtubeEnabled

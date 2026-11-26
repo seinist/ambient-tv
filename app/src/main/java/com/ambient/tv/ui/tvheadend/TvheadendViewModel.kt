@@ -65,6 +65,7 @@ data class TvheadendUiState(
     /** Cached or channels-only snapshots do not prove the initial optional sections are empty. */
     val initialDashboardSettled: Boolean = false,
     val playbackReturnRevision: Long = 0L,
+    val hbbtvPending: Boolean = false,
 )
 
 @HiltViewModel
@@ -179,7 +180,10 @@ class TvheadendViewModel @Inject constructor(
         if (_uiState.value.tab != tab) selectTab(tab)
     }
 
-    fun selectTab(tab: TvheadendTab) = _uiState.update { it.copy(tab = tab, selectedEvent = null, selectedRecording = null, editing = null, actionFeedback = null) }
+    fun selectTab(tab: TvheadendTab) {
+        _uiState.update { it.copy(tab = tab, selectedEvent = null, selectedRecording = null, editing = null, actionFeedback = null) }
+        if (tab == TvheadendTab.HBBTV) requestHbbtv()
+    }
     fun setGuideOptions(options: GuideOptions) {
         preferences.setGuideOptions(repository.source.id, options)
         _uiState.update { it.copy(guideOptions = options) }
@@ -201,6 +205,33 @@ class TvheadendViewModel @Inject constructor(
     private var actionJob: Job? = null
     private val refreshPolicy = LiveTvRefreshPolicy()
     private var refreshNeedsRetry = false
+    private var hbbtvObserver: Job? = null
+
+    init { observeHbbtvMetadata() }
+
+    private fun observeHbbtvMetadata() {
+        hbbtvObserver?.cancel()
+        val requested = repository as? TvheadendLiveTvRepository ?: return
+        hbbtvObserver = viewModelScope.launch {
+            suspendResult { requested.restoreCachedHbbtv() }
+            requested.hbbtvChanges.collect {
+                if (repository !== requested || registry.displayCacheIdentity(requested) == null) return@collect
+                browseState.updateChannelMetadata(requested::enrichHbbtvChannels)
+                _uiState.update { state ->
+                    val dashboard = state.dashboard?.let { old ->
+                        val channels = requested.enrichHbbtvChannels(old.channels)
+                        if (channels === old.channels) old else old.copy(channels = channels)
+                    }
+                    state.copy(dashboard = dashboard, hbbtvPending = requested.hbbtvPending())
+                }
+            }
+        }
+    }
+
+    private fun requestHbbtv(force: Boolean = false) {
+        val current = repository as? TvheadendLiveTvRepository ?: return
+        if (registry.displayCacheIdentity(current) != null) current.requestHbbtvRefresh(force)
+    }
 
     fun retryOffline() {
         // connectionRequiredNow() also covers a read pending after a network switch (not shown).
@@ -211,13 +242,17 @@ class TvheadendViewModel @Inject constructor(
 
     fun refresh() {
         if (_uiState.value.actionInProgress) return
-        if (connectionRequiredNow()) retryConnection() else load(force = true)
+        if (connectionRequiredNow()) retryConnection() else {
+            requestHbbtv(force = true)
+            load(force = true)
+        }
     }
 
     /** Navigation reuses the current snapshot. Only a new recovery revision forces a read. */
     fun refreshOnEntry(revision: Long) {
         val current = registry.configured().firstOrNull { it.source.id == repository.source.id }
         if (current !== repository) { load(force = false); return }
+        requestHbbtv()
         val recovered = browseState.observeRecovery(revision)
         if (recovered) refreshPolicy.reconnected()
         if (!recovered && refreshJob?.isActive == true) return
@@ -235,6 +270,7 @@ class TvheadendViewModel @Inject constructor(
 
     /** The visible guide catches up with the rolling index without a navigation or forced reload. */
     fun refreshVisibleIfIdle() {
+        if (com.ambient.tv.data.browse.BrowseWorkBudget.idle()) requestHbbtv()
         if (com.ambient.tv.data.browse.BrowseWorkBudget.idle() && !connectionRequiredNow() &&
             !_uiState.value.actionInProgress && refreshJob?.isActive != true &&
             connectionJob?.isActive != true && browseState.needsRefresh()) load(force = false)
@@ -248,7 +284,8 @@ class TvheadendViewModel @Inject constructor(
             actionJob?.cancel()
             feedback.cancel("recording")
             refreshJob?.cancel()
-            _uiState.update { it.copy(configured = false, dashboard = null, selectedEvent = null,
+            hbbtvObserver?.cancel()
+            _uiState.update { it.copy(configured = false, hbbtvPending = false, dashboard = null, selectedEvent = null,
                 selectedRecording = null, editing = null, actionInProgress = false, waking = false, loading = false, refreshing = false) }
             return
         }
@@ -261,6 +298,7 @@ class TvheadendViewModel @Inject constructor(
             repository = currentRepository
             _uiState.update { TvheadendUiState(configured = true, source = repository.source, tab = it.tab,
                 guideOptions = it.guideOptions, loading = true, capabilities = browseState.capabilities) }
+            observeHbbtvMetadata()
         }
         val request = refreshPolicy.request(force, announceSuccess, _uiState.value.actionInProgress) ?: return
         refreshJob?.cancel()
@@ -273,6 +311,7 @@ class TvheadendViewModel @Inject constructor(
             val namespace = liveTvDisplayNamespace(snapshots, requestedRepository, registry)
                 ?: run { load(force = false); return@launch }
             if (_uiState.value.dashboard == null) {
+            (requestedRepository as? TvheadendLiveTvRepository)?.let { suspendResult { it.restoreCachedHbbtv() } }
             val savedAt = snapshots.read<Long>(namespace, "updated_at")
             if (!stillCurrent()) { load(force = false); return@launch }
             val savedCapabilities = snapshots.read<LiveTvCapabilities>(namespace, "capabilities")
@@ -284,7 +323,9 @@ class TvheadendViewModel @Inject constructor(
             val savedDashboard = rawDashboard?.let { dashboard ->
                 val start = System.currentTimeMillis() / 1000L - 3600L
                 val guide = suspendResult { requestedRepository.cachedGuideEvents(start, 12) }.getOrNull()
-                if (guide != null) dashboard.copy(events = guide) else dashboard
+                val channels = (requestedRepository as? TvheadendLiveTvRepository)?.enrichHbbtvChannels(dashboard.channels)
+                    ?: dashboard.channels
+                dashboard.copy(events = guide ?: dashboard.events, channels = channels)
             }
             savedDashboard?.let { cached ->
                 if (!stillCurrent()) { load(force = false); return@launch }
@@ -332,11 +373,14 @@ class TvheadendViewModel @Inject constructor(
                         failedRecordings = merge.merge(LiveTvDashboardPart.FAILED_RECORDINGS, fresh.failedRecordings, old.failedRecordings),
                         autoRecs = merge.merge(LiveTvDashboardPart.SERIES_TIMERS, fresh.autoRecs, old.autoRecs),
                     )
-                    val dashboard = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    val compared = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                         merged.copy(channels = old?.channels?.takeIf { it == merged.channels } ?: merged.channels,
                             events = old?.events?.takeIf { it == merged.events } ?: merged.events)
                     }
                     if (!stillCurrent()) { load(force = false); return@launch }
+                    val hbbtv = requestedRepository as? TvheadendLiveTvRepository
+                    val enriched = hbbtv?.enrichHbbtvChannels(compared.channels) ?: compared.channels
+                    val dashboard = if (enriched === compared.channels) compared else compared.copy(channels = enriched)
                     val servedCache = requestedRepository.servedCacheSince(cacheMarker)
                     if (forceRead && !servedCache && fresh.warnings.isEmpty())
                         availability.confirmBrowseRead(accessSource, accessGeneration)
@@ -367,6 +411,7 @@ class TvheadendViewModel @Inject constructor(
                     _uiState.update { it.copy(configured = true, offline = offline, canWake = offline && canWake(),
                         savedView = servedCache, lastUpdatedEpochMillis = updatedAt,
                         loading = false, refreshing = false, initialDashboardSettled = true,
+                        hbbtvPending = hbbtv?.hbbtvPending() == true,
                         dashboard = dashboard,
                         selectedEvent = it.selectedEvent?.let { selected ->
                             dashboard.events.firstOrNull { event -> event.eventId == selected.eventId && event.channelUuid == selected.channelUuid }
