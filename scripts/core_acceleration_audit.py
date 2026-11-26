@@ -26,7 +26,7 @@ def expand_response(tokens, cwd, root, depth=0):
     return result
 
 
-def compiler_commands(log, cwd=None, root=None, strict=False):
+def build_commands(log, cwd=None, root=None, strict=False):
     cwd = Path(cwd or Path.cwd()).resolve()
     root = Path(root or Path.cwd()).resolve()
     for line in log.splitlines():
@@ -35,7 +35,8 @@ def compiler_commands(log, cwd=None, root=None, strict=False):
         line = re.sub(r"^\s*\d{4}-\d{2}-\d{2}T[^ ]+Z\s+", "", line).strip()
         line = re.sub(r"^\[\d+/\d+\]\s+", "", line)
         wrapped = line.startswith(("cd ", ": && ", "ccache "))
-        if not COMPILER_COMMAND.match(line) and not wrapped:
+        archive_start = re.match(r"^(?:\S*/)?(?:[\w.-]+-)?llvm-ar(?:-\d+)?(?:\s|$)", line)
+        if not COMPILER_COMMAND.match(line) and not wrapped and not archive_start:
             continue
         try:
             tokens = shlex.split(line)
@@ -51,7 +52,10 @@ def compiler_commands(log, cwd=None, root=None, strict=False):
             tokens = tokens[3:]
         if tokens and Path(tokens[0]).name == "ccache":
             tokens = tokens[1:]
-        if not tokens or not DRIVER.fullmatch(Path(tokens[0]).name):
+        if not tokens:
+            continue
+        driver = Path(tokens[0]).name
+        if not DRIVER.fullmatch(driver) and not re.fullmatch(r"(?:[\w.-]+-)?llvm-ar(?:-\d+)?", driver):
             continue
         end = next((i for i, token in enumerate(tokens) if token in {"&&", ";", "||"}), len(tokens))
         try:
@@ -60,7 +64,14 @@ def compiler_commands(log, cwd=None, root=None, strict=False):
             if strict:
                 raise
             continue
-        yield args
+        yield driver, args, command_cwd
+
+
+
+def compiler_commands(log, cwd=None, root=None, strict=False):
+    for driver, args, _ in build_commands(log, cwd, root, strict):
+        if DRIVER.fullmatch(driver):
+            yield args
 
 
 def compile_source(args):
