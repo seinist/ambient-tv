@@ -93,6 +93,21 @@ class CoreBuildPolicyTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Malformed compiler command"):
             list(compiler_commands(malformed, strict=True))
 
+    def test_command_boundaries_and_working_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            nested = root / "nested"
+            nested.mkdir()
+            (nested / "flags.rsp").write_text("-O3 -c test.c -o test.o")
+            log = ("warning: clang -c diagnostic.c -o diagnostic.o\n"
+                   "cd nested && /ndk/bin/clang @flags.rsp && echo @not-a-response-file\n"
+                   "[12/20] : && clang -shared test.o -o test.so && :\n")
+            commands = list(compiler_commands(log, root, root, strict=True))
+            self.assertEqual(commands, [
+                ["-O3", "-c", "test.c", "-o", "test.o"],
+                ["-shared", "test.o", "-o", "test.so"],
+            ])
+
     def test_fail_closed_publish(self):
         for ref, cores, abis, profile in [
             ("refs/heads/feature", "", "", "baseline"),
