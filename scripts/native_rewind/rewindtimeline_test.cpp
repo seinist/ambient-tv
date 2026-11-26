@@ -286,6 +286,38 @@ static void expensiveCapturesYieldToFrameBudget() {
     CHECK(timeline.captureInterval() == 1);
 }
 
+static void presentationCadenceAndCapturePeaks() {
+    constexpr uint64_t period = 16666666;
+    RewindTimeline timeline;
+    timeline.configure(120, 15);
+    uint64_t now = 1000000000;
+    timeline.observeFrameStart(now);
+    timeline.observeFrameWork(4000000, 1000000, period);
+    CHECK(timeline.captureInterval() == 1);
+    now += period * 2;
+    timeline.observeFrameStart(now);
+    CHECK(timeline.captureInterval() == 2); // missed presentation after a capture
+    timeline.observeFrameWork(3000000, 0, period);
+    now += period * 2;
+    timeline.observeFrameStart(now);
+    CHECK(timeline.captureInterval() == 2); // non-capture miss does not escalate
+    for (int i = 0; i < 32; ++i) {
+        timeline.observeFrameWork(3000000, 0, period);
+        now += period;
+        timeline.observeFrameStart(now);
+    }
+    CHECK(timeline.captureInterval() == 1);
+    timeline.observeFrameWork(13000000, 8000000, period);
+    const uint64_t peak = timeline.captureInterval();
+    for (int i = 0; i < 32; ++i) timeline.observeFrameWork(3000000, 0, period);
+    CHECK(timeline.captureInterval() >= peak); // skipped captures cannot erase measured cost
+    timeline.resetFrameObservation();
+    timeline.observeFrameStart(now + period * 100);
+    CHECK(timeline.captureInterval() >= peak);
+    timeline.reset();
+    CHECK(timeline.captureInterval() == 1);
+}
+
 int main() {
     initialStateAndFastForward();
     firstRewindNeverStepsForwardAndBranchKeepsItsDistance();
@@ -297,5 +329,6 @@ int main() {
     randomizedTimelineMatchesAbsoluteFramePositions();
     saturatingArithmeticCannotWrapTheTimeline();
     expensiveCapturesYieldToFrameBudget();
-    std::cout << "Rewind timeline: 10 integration tests passed (including 25000 randomized transitions).\n";
+    presentationCadenceAndCapturePeaks();
+    std::cout << "Rewind timeline: 11 integration tests passed (including 25000 randomized transitions).\n";
 }
