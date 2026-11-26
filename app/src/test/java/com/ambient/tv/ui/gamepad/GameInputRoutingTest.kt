@@ -1,6 +1,13 @@
 package com.ambient.tv.ui.gamepad
 
 import android.view.KeyEvent
+import com.ambient.tv.data.browse.BrowseWorkBudget
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import com.ambient.tv.ui.keyboard.KeyAction
 import org.junit.After
 import org.junit.Assert.*
@@ -65,6 +72,54 @@ class GameInputRoutingTest {
             GameInputRouting.detach(first)
             assertEquals(listOf(GameInputMode.RUNNING, GameInputMode.MENU, GameInputMode.DIALOG, null), modes)
         } finally { GameInputRouting.removeObserver(token) }
+    }
+
+    @Test fun gameEpochInvalidatesOldWorkEvenAfterAnEntireShortSession() {
+        val previous = BrowseWorkBudget.gameEpoch()
+        assertTrue(BrowseWorkBudget.gameFreeSince(previous))
+        val oldJob = BrowseWorkBudget.speculativeJob
+        val job = Job()
+        BrowseWorkBudget.speculativeJob = job
+        try {
+            GameInputRouting.attach(first, GameInputMode.MENU, {})
+            val started = BrowseWorkBudget.gameEpoch()
+            assertEquals(previous + 1, started)
+            assertTrue(job.isCancelled)
+            assertFalse(BrowseWorkBudget.gameFreeSince(started))
+            GameInputRouting.update(first, GameInputMode.RUNNING)
+            GameInputRouting.attach(second, GameInputMode.RUNNING, {})
+            GameInputRouting.detach(first)
+            assertEquals(started, BrowseWorkBudget.gameEpoch())
+            assertFalse(BrowseWorkBudget.gameFreeSince(previous))
+            GameInputRouting.detach(second)
+            assertFalse(BrowseWorkBudget.gameFreeSince(previous))
+            assertTrue(BrowseWorkBudget.gameFreeSince(started))
+        } finally {
+            BrowseWorkBudget.speculativeJob = oldJob
+            job.cancel()
+        }
+    }
+
+    @Test fun shortGameStartCancelsInFlightOptionalWorkAndDiscardsItsResult() = runBlocking {
+        withTimeout(5_000L) {
+            val cancelled = CompletableDeferred<Unit>()
+            val work = async(start = CoroutineStart.UNDISPATCHED) {
+                runCatching {
+                    BrowseWorkBudget.interruptOnGameStart({ cancelled.complete(Unit) }) {
+                        cancelled.await()
+                        "obsolete result"
+                    }
+                }
+            }
+            GameInputRouting.attach(first, GameInputMode.RUNNING, {})
+            GameInputRouting.detach(first)
+            cancelled.await()
+            assertTrue(work.await().isFailure)
+        }
+    }
+
+    @Test fun optionalWorkCompletesNormallyWithoutGameEntry() = runBlocking {
+        assertEquals(42, BrowseWorkBudget.interruptOnGameStart({ fail("Unexpected cancellation") }) { 42 })
     }
 
     @Test fun menuMappingKeepsConfirmSideButCannotNavigateToAppPages() {
