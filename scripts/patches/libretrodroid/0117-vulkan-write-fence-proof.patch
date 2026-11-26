@@ -1,0 +1,81 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -146,5 +146,8 @@
+-    // Optional output owns an exported write-completion FD on successful return.
+-    // The regular CPU completion fence is still required for this diagnostic path.
++    // No export proof is different from Vulkan's already-signaled SYNC_FD (-1).
++    static constexpr int NoBridgeWriteFence = -2;
++    // On accepted frames: >=0 transfers an owned FD, -1 proves completion,
++    // NoBridgeWriteFence means the diagnostic export supplied no proof.
++    // The regular CPU completion fence is still required in every case.
+     bool presentFrame(unsigned width, unsigned height, float resolvedAspect, bool pictureCompatible,
+                       int* writeFd = nullptr);
+     // Complete core-provided work/signals for a duplicate without copying an image.
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -1359,9 +1359,9 @@
+     VkSemaphoreGetFdInfoKHR info { VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR };
+     info.semaphore = bridgeWriteSemaphore;
+     info.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
+-    int fd = -1;
+-    const VkResult result = vk.getSemaphoreFd(device, &info, &fd);
+-    if (result == VK_SUCCESS) return fd;
++    int fd = NoBridgeWriteFence;
++    const VkResult result = vk.getSemaphoreFd(device, &info, &fd);
++    if (result == VK_SUCCESS && fd >= -1) return fd;
+     bridgeWriteFenceEnabled = false; // do not re-signal a potentially unconsumed payload
+     if (result == VK_ERROR_DEVICE_LOST) checkFrameResult(result, "export bridge write fence");
+     else LOGW("Cannot export bridge write fence; retaining CPU fence");
+@@ -1368,7 +1368,7 @@
+     bridgeWriteFenceEnabled = false; // do not re-signal a potentially unconsumed payload
+     if (result == VK_ERROR_DEVICE_LOST) checkFrameResult(result, "export bridge write fence");
+     else LOGW("Cannot export bridge write fence; retaining CPU fence");
+-    return -1;
++    return NoBridgeWriteFence;
+ }
+ 
+ bool VulkanBackend::waitForDeviceIdle() {
+@@ -1418,5 +1418,5 @@
+ bool VulkanBackend::presentFrame(unsigned width, unsigned height, float resolvedAspect,
+                                   bool pictureCompatible, int* writeFd) {
+     GameTraceScope trace("AmbientGame Vulkan frame");
+-    if (writeFd) *writeFd = -1;
++    if (writeFd) *writeFd = NoBridgeWriteFence;
+     nativePresentation.invalidateFrame();
+@@ -1697,7 +1697,7 @@
+     if (!checkFrameResult(result, "submit frame")) return false;
+     bridgeReadPending = false; // this submit consumes the temporary payload
+     frameInFlight = true;
+-    const int exportedFd = exportWrite ? exportBridgeWriteFence() : -1;
++    const int exportedFd = exportWrite ? exportBridgeWriteFence() : NoBridgeWriteFence;
+     // WSI already waits for the submitted per-image completion semaphore.
+     // Queue presentation now, rather than delaying it until the host fence.
+     // The fence still gates publication and every resource reuse/retirement.
+@@ -1763,9 +1763,9 @@
+     const bool accepted = copied && !hasFatalError();
+-    if (exportedFd >= 0) {
+-        if (accepted && writeFd) *writeFd = exportedFd;
+-        else close(exportedFd);
+-    }
++    // Preserve the already-signaled sentinel only on an accepted frame.
++    // Neither a rejected frame nor a failed/omitted export is a GPU proof.
++    if (accepted && writeFd) *writeFd = exportedFd;
++    else if (exportedFd >= 0) close(exportedFd);
+     return accepted;
+ }
+ 
+ bool VulkanBackend::completeDuplicateFrame() {
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -1510,7 +1510,7 @@
+                 backend.rejectBridgeImport();
+                 return;
+             }
+-            int writeFd = -1;
++            int writeFd = VulkanBackend::NoBridgeWriteFence;
+             const bool exportWrite = backend.canExportBridgeWriteFence() && video->canImportExternalWriteFence();
+             if (!backend.presentFrame(width, height, getAspectRatio(), nativePictureCompatible(),
+                                       exportWrite ? &writeFd : nullptr)) {

@@ -27,12 +27,14 @@ struct Environment {
 };
 
 struct VulkanBackend {
+    static constexpr int NoBridgeWriteFence = -2;
     unsigned format = 0, width = 256, height = 240, submissions = 0;
     bool bridgeAccepted = true, frameConfirmed = false, fatal = false;
     bool fp16 = false, allocationAccepted = true, fallbackAllocationAccepted = true;
     bool disableFails = false;
     bool readFenceSupported = false, readFenceAccepted = false, readFenceFatal = false;
     bool writeFenceSupported = false;
+    int writeFenceResult = 43;
     unsigned writeExports = 0;
     unsigned drains = 0, allocations = 0, disables = 0, rejections = 0, fenceImports = 0, duplicates = 0;
     static VulkanBackend& getInstance() { static VulkanBackend value; return value; }
@@ -75,8 +77,8 @@ struct VulkanBackend {
         frameConfirmed = false;
         if (writeFd) {
             assert(writeFenceSupported);
-            *writeFd = bridgeAccepted ? 43 : -1;
-            if (bridgeAccepted) ++writeExports;
+            *writeFd = bridgeAccepted ? writeFenceResult : NoBridgeWriteFence;
+            if (bridgeAccepted && writeFenceResult >= -1) ++writeExports;
         }
         return bridgeAccepted;
     }
@@ -283,6 +285,18 @@ void writeFenceHandoffContracts() {
                 }
             }
         }
+    }
+    for (int result : {VulkanBackend::NoBridgeWriteFence, -1}) {
+        auto& backend = VulkanBackend::getInstance();
+        backend = {};
+        backend.writeFenceSupported = true;
+        backend.writeFenceResult = result;
+        Video video;
+        video.writeFenceSupported = true;
+        LibretroDroid host {&video};
+        host.handleVideoRefresh(RETRO_HW_FRAME_BUFFER_VALID, 256, 224, 1024);
+        assert(backend.submissions == 1 && video.frameCalls == 1 && !backend.fatal);
+        assert(backend.writeExports == (result == -1 ? 1u : 0u) && !video.writeImports);
     }
     std::puts("PASS reverse fence ingress: both capability gates, rejected bridge and CPU fallback");
 }

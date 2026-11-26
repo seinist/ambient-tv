@@ -824,7 +824,8 @@ void writeFenceQueueContracts() {
             return exportResult;
         };
         int fd = 99;
-        assert(backend.presentFrame(256, 224, 4.0F/3.0F, true, &fd) && fd == -1);
+        assert(backend.presentFrame(256, 224, 4.0F/3.0F, true, &fd) &&
+               fd == VulkanBackend::NoBridgeWriteFence);
         assert(!creates && !exports);
         backend.bridgeWriteFenceEnabled = true;
         assert(backend.canExportBridgeWriteFence());
@@ -843,9 +844,12 @@ void writeFenceQueueContracts() {
         }
         // Failed export may leave a signalled binary semaphore. Do not signal it again.
         exportResult = VK_ERROR_OUT_OF_HOST_MEMORY;
-        assert(backend.presentFrame(256, 224, 4.0F/3.0F, true, &fd) && fd == -1);
+        assert(backend.presentFrame(256, 224, 4.0F/3.0F, true, &fd) &&
+               fd == VulkanBackend::NoBridgeWriteFence);
         assert(!backend.canExportBridgeWriteFence() && !backend.hasFatalError());
-        assert(backend.presentFrame(256, 224, 4.0F/3.0F, true, &fd) && exports == 4);
+        fd = -1; // A previous proof must not leak into a subsequent frame.
+        assert(backend.presentFrame(256, 224, 4.0F/3.0F, true, &fd) && exports == 4 &&
+               fd == VulkanBackend::NoBridgeWriteFence);
         assert(std::find(driver.submittedSignals.begin(), driver.submittedSignals.end(), semaphore) ==
                driver.submittedSignals.end());
         backend.shutdown();
@@ -876,7 +880,8 @@ void writeFenceQueueContracts() {
             return VK_SUCCESS;
         };
         driver.waits = {VK_ERROR_OUT_OF_DEVICE_MEMORY};
-        assert(!failed.presentFrame(256, 224, 4.0F/3.0F, true, &fd) && fd == -1);
+        assert(!failed.presentFrame(256, 224, 4.0F/3.0F, true, &fd) &&
+               fd == VulkanBackend::NoBridgeWriteFence);
         errno = 0;
         assert(lastFd >= 0 && fcntl(lastFd, F_GETFD) == -1 && errno == EBADF);
         assert(failed.hasFatalError() && failed.frameInFlight && destroys == 0);
