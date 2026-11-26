@@ -57,7 +57,7 @@ diff --git a/app/src/main/java/com/limelight/nvstream/NvConnection.java b/app/sr
          String serverInfo = h.getServerInfo(true);
          if (stopping) return false;
 -        
-+        if (expectedServerId != null && !expectedServerId.equals(NvHTTP.getXmlString(serverInfo, "uniqueid", true)))
++        if (expectedServerId != null && !expectedServerId.equals(h.getComputerDetails(serverInfo).uuid))
 +            throw new IOException("Moonlight server identity changed");
 +
          context.serverAppVersion = h.getServerVersion(serverInfo);
