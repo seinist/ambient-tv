@@ -25,17 +25,45 @@ def main():
     source = (native / "vulkan/vulkanbackend.cpp").read_text()
     jni_source = (native / "libretrodroidjni.cpp").read_text()
     methods = [
+        "bool VulkanBackend::createFrameResources(",
+        "bool VulkanBackend::allocateBridgeImage(",
+        "bool VulkanBackend::ensureSpareFrameBuffer(",
+        "bool VulkanBackend::releaseSpareFrameBuffer(",
         "bool VulkanBackend::checkFrameResult(",
         "bool VulkanBackend::waitForFrame(",
+        "bool VulkanBackend::waitForSlotFrame(",
+        "bool VulkanBackend::waitForNativeSlangFrame(",
+        "bool VulkanBackend::canImportBridgeReadFence(",
+        "bool VulkanBackend::importBridgeReadFence(",
+        "bool VulkanBackend::canExportBridgeWriteFence(",
+        "bool VulkanBackend::prepareBridgeWriteFence(",
+        "int VulkanBackend::exportBridgeWriteFence(",
         "bool VulkanBackend::waitForDeviceIdle(",
+        "bool VulkanBackend::canRetireFrameSlots(",
+        "bool VulkanBackend::retireFrameSlot(",
         "bool VulkanBackend::prepareForShutdown(",
         "bool VulkanBackend::clearFrameImage(",
+        "bool VulkanBackend::clearSlotImage(",
         "bool VulkanBackend::destroyFrameBuffer(",
         "bool VulkanBackend::ensureFrameBuffer(",
+        "bool VulkanBackend::createNativePresentFences(",
+        "bool VulkanBackend::waitNativePresentFence(",
+        "bool VulkanBackend::prepareNativePresentFence(",
+        "void VulkanBackend::recordNativePresentResult(",
+        "bool VulkanBackend::completeNativePresentFences(",
+        "bool VulkanBackend::canRetireNativeWsi(",
+        "bool VulkanBackend::ensureNativeAcquireSemaphore(",
+        "bool VulkanBackend::drainNativeAcquireSignals(",
         "bool VulkanBackend::destroyNativeSdrSwapchain(",
         "void VulkanBackend::disableNativeSdrSwapchain(",
         "bool VulkanBackend::ensureNativeSdrSwapchain(",
         "bool VulkanBackend::presentFrame(",
+        "bool VulkanBackend::beginCoreFrame(",
+        "bool VulkanBackend::prepareCoreStateAccess(",
+        "bool VulkanBackend::waitForCoreSyncIndex(",
+        "bool VulkanBackend::completeDuplicateFrame(",
+        "uint32_t VulkanBackend::callbackGetSyncIndex(",
+        "uint32_t VulkanBackend::callbackGetSyncIndexMask(",
         "void VulkanBackend::callbackWaitSyncIndex(",
         "void VulkanBackend::destroyCoreDevice(",
         "void VulkanBackend::shutdown(",
@@ -50,15 +78,46 @@ def main():
         work = Path(temporary)
         (work / "android").mkdir()
         (work / "android/hardware_buffer.h").write_text(
-            "#pragma once\nstruct AHardwareBuffer;\nvoid AHardwareBuffer_release(AHardwareBuffer*);\n")
+            "#pragma once\n#include <cstdint>\nstruct AHardwareBuffer;\n"
+            "struct AHardwareBuffer_Desc { uint32_t width, height, layers, format; uint64_t usage; };\n"
+            "constexpr uint32_t AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT = 0x16;\n"
+            "constexpr uint32_t AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM = 1;\n"
+            "constexpr uint64_t AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE = 1ull << 8;\n"
+            "constexpr uint64_t AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT = 1ull << 9;\n"
+            "int AHardwareBuffer_allocate(const AHardwareBuffer_Desc*, AHardwareBuffer**);\n"
+            "void AHardwareBuffer_release(AHardwareBuffer*);\n")
         (work / "android/native_window.h").write_text(
             "#pragma once\nstruct ANativeWindow;\nvoid ANativeWindow_release(ANativeWindow*);\n"
             "int ANativeWindow_getWidth(ANativeWindow*);\nint ANativeWindow_getHeight(ANativeWindow*);\n")
         (work / "android/log.h").write_text("#pragma once\n")
         (work / "vulkan_sync_under_test.h").write_text("\n".join(
             cpp_function(source, signature) for signature in methods))
-        (work / "vulkan_error_boundary_under_test.h").write_text(cpp_function(
-            (native / "libretrodroid.cpp").read_text(), "void LibretroDroid::checkVulkanFrameError("))
+        frontend = (native / "libretrodroid.cpp").read_text()
+        if frontend.count("core->retro_run();") != 1:
+            raise RuntimeError("Every core run must pass through the sync-index reservation boundary")
+        # Verify the actual integration call sites, not only the isolated gate.
+        for signature in ("void LibretroDroid::step(", "void LibretroDroid::stepForNetplay("):
+            body = cpp_function(frontend, signature)
+            if "beginNativeStep();" not in body:
+                raise RuntimeError("Normal emulation must preserve confirmed WSI generation")
+        for signature, call, mutation in (
+            ("bool LibretroDroid::unserializeStateWithPolicy(", "attemptStateLoad(", True),
+            ("bool LibretroDroid::showRewindState(", "core->retro_unserialize(", True),
+            ("void LibretroDroid::reset(", "core->retro_reset(", True),
+            ("void LibretroDroid::step(", "core->retro_unserialize(", True),
+            ("void LibretroDroid::step(", "core->retro_serialize(", False),
+            ("int64_t LibretroDroid::previewRewind(", "core->retro_serialize(", False),
+            ("std::pair<int8_t*, size_t> LibretroDroid::serializeState(", "core->retro_serialize(", False),
+        ):
+            body = cpp_function(frontend, signature)
+            guard = f"prepareCoreStateAccess({str(mutation).lower()})"
+            if guard not in body or body.index(guard) > body.index(call):
+                raise RuntimeError(f"Missing core state barrier before {call} in {signature}")
+        (work / "vulkan_error_boundary_under_test.h").write_text("\n".join(
+            cpp_function(frontend, signature) for signature in (
+                "void LibretroDroid::runCoreFrame(",
+                "void LibretroDroid::checkVulkanFrameError(",
+            )))
         # Preserve the actual C++ include scope. Including the exception header
         # inside namespace libretrodroid creates a different nested type even
         # when changing the catch spelling would make that JNI unit compile.
@@ -102,6 +161,103 @@ def main():
             str(thrower), str(native / "utils/libretrodroidexception.cpp"),
             "-o", str(jni_binary)], check=True)
         subprocess.run([str(jni_binary)], check=True, timeout=20)
+
+        (work / "external_fence_export_under_test.h").write_text(cpp_function(
+            (native / "video.cpp").read_text(), "int Video::exportExternalReadFence("))
+        fence_binary = work / "external-fence-export-test"
+        subprocess.run(command + [str(root / "scripts/native_game_external_fence_export_test.cpp"),
+            "-o", str(fence_binary)], check=True)
+        subprocess.run([str(fence_binary)], check=True, timeout=20)
+
+        (work / "write_fence_methods.h").write_text("\n\n".join(cpp_function(
+            (native / "video.cpp").read_text(), signature) for signature in (
+                "bool Video::canImportExternalWriteFence(", "bool Video::importExternalWriteFence(")))
+        write_fence_binary = work / "external-write-fence-test"
+        subprocess.run(command + [str(root / "scripts/native_game_external_write_fence_test.cpp"),
+            "-o", str(write_fence_binary)], check=True)
+        subprocess.run([str(write_fence_binary)], check=True, timeout=20)
+
+        external_binary = work / "external-frame-lease-test"
+        subprocess.run(command + [str(root / "scripts/native_game_external_frame_test.cpp"),
+            "-o", str(external_binary)], check=True)
+        subprocess.run([str(external_binary)], check=True, timeout=20)
+
+        slots_binary = work / "external-frame-slots-test"
+        subprocess.run(command + [str(root / "scripts/native_game_external_frame_slots_test.cpp"),
+            "-o", str(slots_binary)], check=True)
+        subprocess.run([str(slots_binary)], check=True, timeout=20)
+
+        accounting_binary = work / "external-frame-accounting-test"
+        subprocess.run(command + [str(root / "scripts/native_game_external_frame_accounting_test.cpp"),
+            "-o", str(accounting_binary)], check=True)
+        subprocess.run([str(accounting_binary)], check=True, timeout=20)
+
+        access_binary = work / "external-frame-access-test"
+        subprocess.run(command + [str(root / "scripts/native_game_external_frame_access_test.cpp"),
+            "-o", str(access_binary)], check=True)
+        subprocess.run([str(access_binary)], check=True, timeout=20)
+
+        budget_binary = work / "vulkan-color-budget-test"
+        subprocess.run(command + ["-I", str(native / "vulkan"),
+            str(root / "scripts/native_game_vulkan_color_budget_test.cpp"),
+            "-o", str(budget_binary)], check=True)
+        subprocess.run([str(budget_binary)], check=True, timeout=20)
+
+        format_binary = work / "vulkan-format-cache-test"
+        subprocess.run(command + [str(root / "scripts/native_game_vulkan_format_cache_test.cpp"),
+            "-o", str(format_binary)], check=True)
+        subprocess.run([str(format_binary)], check=True, timeout=20)
+
+        bridge_sync_binary = work / "vulkan-bridge-sync-state-test"
+        subprocess.run(command + [str(root / "scripts/native_game_vulkan_bridge_sync_state_test.cpp"),
+            "-o", str(bridge_sync_binary)], check=True)
+        subprocess.run([str(bridge_sync_binary)], check=True, timeout=20)
+
+        bridge_image_binary = work / "vulkan-bridge-image-test"
+        subprocess.run(command + [str(root / "scripts/native_game_vulkan_bridge_image_test.cpp"),
+            "-o", str(bridge_image_binary)], check=True)
+        subprocess.run([str(bridge_image_binary)], check=True, timeout=20)
+
+        bridge_budget_binary = work / "vulkan-bridge-budget-test"
+        subprocess.run(command + ["-I", str(native / "vulkan"),
+            str(root / "scripts/native_game_vulkan_bridge_budget_test.cpp"),
+            "-o", str(bridge_budget_binary)], check=True)
+        subprocess.run([str(bridge_budget_binary)], check=True, timeout=20)
+
+        wsi_acquire_binary = work / "vulkan-wsi-acquire-test"
+        subprocess.run(command + ["-I", str(native / "vulkan"),
+            str(root / "scripts/native_game_vulkan_wsi_acquire_test.cpp"),
+            "-o", str(wsi_acquire_binary)], check=True)
+        subprocess.run([str(wsi_acquire_binary)], check=True, timeout=20)
+
+        wsi_state_binary = work / "vulkan-wsi-acquire-state-test"
+        subprocess.run(command + ["-I", str(native / "vulkan"),
+            str(root / "scripts/native_game_vulkan_wsi_acquire_state_test.cpp"),
+            "-o", str(wsi_state_binary)], check=True)
+        subprocess.run([str(wsi_state_binary)], check=True, timeout=20)
+
+        present_fence_binary = work / "vulkan-present-fence-test"
+        subprocess.run(command + ["-I", str(native / "vulkan"),
+            str(root / "scripts/native_game_vulkan_present_fences_test.cpp"),
+            "-o", str(present_fence_binary)], check=True)
+        subprocess.run([str(present_fence_binary)], check=True, timeout=20)
+
+        slang_history_binary = work / "vulkan-slang-history-use-test"
+        subprocess.run(command + ["-I", str(native / "vulkan"),
+            str(root / "scripts/native_game_vulkan_slang_history_use_test.cpp"),
+            "-o", str(slang_history_binary)], check=True)
+        subprocess.run([str(slang_history_binary)], check=True, timeout=20)
+
+        core_sync_binary = work / "vulkan-core-sync-indices-test"
+        subprocess.run(command + ["-I", str(native / "vulkan"),
+            str(root / "scripts/native_game_vulkan_core_sync_indices_test.cpp"),
+            "-o", str(core_sync_binary)], check=True)
+        subprocess.run([str(core_sync_binary)], check=True, timeout=20)
+
+        alternate_binary = work / "vulkan-alternate-policy-test"
+        subprocess.run(command + [str(root / "scripts/native_game_vulkan_alternate_policy_test.cpp"),
+            "-o", str(alternate_binary)], check=True)
+        subprocess.run([str(alternate_binary)], check=True, timeout=20)
 
 
 if __name__ == "__main__":

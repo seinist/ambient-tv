@@ -46,8 +46,26 @@ def main():
         work = Path(temporary)
         (work / "android").mkdir()
         (work / "android/log.h").write_text("#pragma once\n")
-        (work / "game_video_refresh_under_test.h").write_text(cpp_function(
-            (native / "libretrodroid.cpp").read_text(), "void LibretroDroid::handleVideoRefresh("))
+        source = (native / "libretrodroid.cpp").read_text()
+        (work / "game_video_refresh_under_test.h").write_text("\n".join(
+            cpp_function(source, signature) for signature in (
+                "void LibretroDroid::attachVulkanFrame(",
+                "bool LibretroDroid::prepareSpareVulkanFrame(",
+                "void LibretroDroid::handleVideoRefresh(",
+            )))
+        video_source = (native / "video.cpp").read_text()
+        (work / "spare_egl_under_test.h").write_text("\n".join(
+            cpp_function(video_source, signature) for signature in (
+                "bool Video::matchesPrimaryExternalFrame(",
+                "bool Video::matchesExternalFrameSlot(",
+                "bool Video::finishExternalFrameSlotUse(",
+                "bool Video::externalFrameSlotNeedsReadWait(",
+                "void Video::externalFrameSlotReadWaitSubmitted(",
+                "bool Video::selectExternalFrameSlot(",
+                "bool Video::prepareExternalFrameResize(",
+                "bool Video::prepareSpareExternalFrame(",
+                "bool Video::releaseSpareExternalFrame(",
+            )))
         command = shlex.split(os.environ.get("CXX", "c++")) + [
             "-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
             "-Wno-unused-parameter", "-Wno-sign-compare", "-include", "cmath",
@@ -60,6 +78,7 @@ def main():
             "native-presentation": [native / "videolayout.cpp", native / "utils/rect.cpp",
                 root / "scripts/native_game_vulkan_presentation_test.cpp"],
             "video-ingress": [root / "scripts/native_game_video_ingress_test.cpp"],
+            "spare-egl": [root / "scripts/native_game_spare_egl_import_test.cpp"],
         }
         for name, sources in cases.items():
             binary = work / name

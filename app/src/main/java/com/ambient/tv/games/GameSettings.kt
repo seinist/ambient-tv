@@ -296,6 +296,14 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
 
     fun withRewind(on: Boolean): GameSettingsState = set("rewind", "0".takeIf { !on })
 
+    /** Global game profile; overrides only optional overhead, without editing individual choices. */
+    val performanceProfile: GamePerformanceProfile get() = GamePerformanceProfile.fromKey(values["performance.profile"])
+
+    fun withPerformanceProfile(profile: GamePerformanceProfile): GameSettingsState =
+        set("performance.profile", profile.storedKey)
+
+    val rewindForPlayback: Boolean get() = performanceProfile.effectiveRewind(rewind)
+
     /** GPU cores: ask for Vulkan instead of OpenGL ES (used when the device and core can). */
     fun vulkan(core: GameCore): Boolean =
         core.hardware && core.supportsVulkan && (core.requiresVulkan || values["vulkan.${core.id}"] == "1")

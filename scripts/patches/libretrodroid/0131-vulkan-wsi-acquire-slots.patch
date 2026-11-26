@@ -1,0 +1,212 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -41,5 +41,6 @@
+ #include "vulkanbridgeimage.h"
+ #include "vulkanbridgeallocationbudget.h"
++#include "vulkanwsiacquireslots.h"
+ #include "nativepresentation.h"
+ 
+ struct AImageReader;
+@@ -252,4 +253,6 @@
+     bool destroyFrameBuffer();
+     bool ensureNativeSdrSwapchain();
+     bool destroyNativeSdrSwapchain();
++    bool ensureNativeAcquireSemaphore(std::size_t slotIndex);
++    bool canRetireNativeWsi() const noexcept;
+     void disableNativeSdrSwapchain(const char* reason);
+@@ -450,4 +453,6 @@
+     std::vector<VkImage> nativeSdrImages;
+-    VkSemaphore nativeSdrAcquire = VK_NULL_HANDLE;
++    // Acquire belongs to the frame-slot index; completion belongs to the WSI image.
++    // Both remain owned by the swapchain generation, not bridge allocation.
++    VulkanWsiAcquireSlots<VkSemaphore> nativeSdrAcquireSlots;
+     std::vector<VkSemaphore> nativeSdrComplete;
+     bool nativeSdrDisabled = false;
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -370,16 +370,38 @@
+-bool VulkanBackend::destroyNativeSdrSwapchain() {
+-    nativePresentation.invalidateFrame();
+-    // Surface changes and shutdown are synchronized on the GL/emulation thread.
+-    if (device != VK_NULL_HANDLE && nativeSdrSwapchain != VK_NULL_HANDLE &&
+-        !waitForDeviceIdle()) return false;
+-    // The GPU is idle before retiring any pass/history images owned by librashader.
+-    nativeSlang.releaseGpu();
+-    if (device != VK_NULL_HANDLE && vk.destroySemaphore != nullptr) {
+-        if (nativeSdrAcquire != VK_NULL_HANDLE) vk.destroySemaphore(device, nativeSdrAcquire, nullptr);
+-        for (VkSemaphore semaphore : nativeSdrComplete) {
+-            if (semaphore != VK_NULL_HANDLE) vk.destroySemaphore(device, semaphore, nullptr);
+-        }
+-    }
+-    nativeSdrAcquire = VK_NULL_HANDLE;
++bool VulkanBackend::canRetireNativeWsi() const noexcept {
++    return (!nativeSdrSwapchain || (device && vk.destroySwapchain)) &&
++        (!nativeSdrSurface || (instance && vk.destroySurface)) &&
++        nativeSdrAcquireSlots.canRetire(device != VK_NULL_HANDLE,
++            vk.destroySemaphore != nullptr, nativeSdrComplete);
++}
++
++bool VulkanBackend::ensureNativeAcquireSemaphore(std::size_t slotIndex) {
++    if (!device || !nativeSdrSwapchain || hasFatalError() || shutdownReady ||
++            !vk.createSemaphore || !vk.destroySemaphore) return false;
++    return nativeSdrAcquireSlots.ensure(slotIndex, nativeSdrComplete, [&](VkSemaphore& candidate) {
++        VkSemaphoreCreateInfo info { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
++        const auto result = vk.createSemaphore(device, &info, nullptr, &candidate);
++        if (result == VK_ERROR_DEVICE_LOST) checkFrameResult(result, "allocate WSI acquire semaphore");
++        return result == VK_SUCCESS;
++    });
++}
++
++bool VulkanBackend::destroyNativeSdrSwapchain() {
++    nativePresentation.invalidateFrame();
++    // Surface changes and shutdown are synchronized on the GL/emulation thread.
++    if (!canRetireNativeWsi())
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "preflight WSI retirement");
++    if (device != VK_NULL_HANDLE && nativeSdrSwapchain != VK_NULL_HANDLE &&
++        !waitForDeviceIdle()) return false;
++    // The GPU is idle before retiring any pass/history images owned by librashader.
++    if (!nativeSdrAcquireSlots.retire(true, device != VK_NULL_HANDLE,
++            vk.destroySemaphore != nullptr, nativeSdrComplete,
++            [&](VkSemaphore semaphore) { vk.destroySemaphore(device, semaphore, nullptr); }))
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "retire WSI acquire slots");
++    nativeSlang.releaseGpu();
++    if (device != VK_NULL_HANDLE && vk.destroySemaphore != nullptr) {
++        for (VkSemaphore semaphore : nativeSdrComplete) {
++            if (semaphore != VK_NULL_HANDLE) vk.destroySemaphore(device, semaphore, nullptr);
++        }
++    }
+     nativeSdrComplete.clear();
+     nativeSdrImages.clear();
+@@ -620,15 +643,22 @@
+     nativeSdrImages.resize(count);
+-    VkSemaphoreCreateInfo semaphoreInfo { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+-    if (vk.createSemaphore(device, &semaphoreInfo, nullptr, &nativeSdrAcquire) != VK_SUCCESS) {
+-        disableNativeSdrSwapchain("image acquisition semaphore allocation failed");
+-        return false;
+-    }
+-    nativeSdrComplete.assign(count, VK_NULL_HANDLE);
+-    for (auto& semaphore : nativeSdrComplete) {
+-        if (vk.createSemaphore(device, &semaphoreInfo, nullptr, &semaphore) != VK_SUCCESS) {
+-            disableNativeSdrSwapchain("image completion semaphore allocation failed");
+-            return false;
+-        }
++    // Only slot zero is scheduled today. A future second slot allocates its
++    // own acquire semaphore on demand; WSI completion remains image-indexed.
++    if (!ensureNativeAcquireSemaphore(0)) {
++        disableNativeSdrSwapchain("image acquisition semaphore allocation failed");
++        return false;
++    }
++    VkSemaphoreCreateInfo semaphoreInfo { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
++    nativeSdrComplete.assign(count, VK_NULL_HANDLE);
++    for (auto& semaphore : nativeSdrComplete) {
++        VkSemaphore candidate = VK_NULL_HANDLE;
++        const auto result = vk.createSemaphore(device, &semaphoreInfo, nullptr, &candidate);
++        if (result != VK_SUCCESS || !candidate || nativeSdrAcquireSlots.owns(candidate) ||
++                std::find(nativeSdrComplete.begin(), nativeSdrComplete.end(), candidate) != nativeSdrComplete.end()) {
++            if (result == VK_ERROR_DEVICE_LOST) checkFrameResult(result, "allocate WSI completion semaphore");
++            disableNativeSdrSwapchain("image completion semaphore allocation failed");
++            return false;
++        }
++        semaphore = candidate;
+     }
+     nativeSdrExtent = extent;
+     nativeSdrFormat = choice.format;
+@@ -1510,4 +1540,6 @@
+     // A later retry must still own every resource if this preflight fails.
+     if (!canRetireFrameSlots())
+         return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "preflight frame slot retirement");
++    if (!canRetireNativeWsi())
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "preflight WSI retirement");
+     shutdownReady = true;
+@@ -1600,3 +1632,3 @@
+             const VkResult acquired = vk.acquireNextImage(
+-                device, nativeSdrSwapchain, 0, nativeSdrAcquire, VK_NULL_HANDLE, &sdrIndex);
++                device, nativeSdrSwapchain, 0, nativeSdrAcquireSlots.get(0), VK_NULL_HANDLE, &sdrIndex);
+             if (acquired == VK_SUCCESS || acquired == VK_SUBOPTIMAL_KHR) {
+@@ -1800,3 +1832,3 @@
+-    if (useDirect) waits.push_back(nativeSdrAcquire);
++    if (useDirect) waits.push_back(nativeSdrAcquireSlots.get(0));
+     auto& waitStages = submitWaitStages;
+     waitStages.resize(waits.size(), VK_PIPELINE_STAGE_TRANSFER_BIT);
+@@ -2050,4 +2082,4 @@
+     // Retire the real display WSI resources before destroying the core's VkDevice
+     // or its VkInstance, including when a SurfaceView disappears mid-session.
+-    destroyNativeSdrSwapchain();
++    if (!destroyNativeSdrSwapchain()) return;
+     if (nativeSdrWindow != nullptr) ANativeWindow_release(nativeSdrWindow);
+diff --git a/src/main/cpp/vulkan/vulkanwsiacquireslots.h b/src/main/cpp/vulkan/vulkanwsiacquireslots.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/vulkan/vulkanwsiacquireslots.h
+@@ -0,0 +1,69 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++#include <array>
++#include <cstddef>
++#include <vector>
++
++namespace libretrodroid {
++
++// Swapchain-generation ownership: one acquire semaphore per frame slot,
++// completion semaphores per swapchain image. A bridge resize must not retire
++// an acquire semaphore independently of its WSI generation.
++template<class Semaphore, std::size_t Count = 2>
++class VulkanWsiAcquireSlots {
++public:
++    VulkanWsiAcquireSlots() = default;
++    VulkanWsiAcquireSlots(const VulkanWsiAcquireSlots&) = delete;
++    VulkanWsiAcquireSlots& operator=(const VulkanWsiAcquireSlots&) = delete;
++
++    Semaphore get(std::size_t index) const noexcept {
++        return index < Count ? acquire[index] : Semaphore{};
++    }
++    bool owns(Semaphore candidate) const noexcept {
++        if (!candidate) return false;
++        for (auto semaphore : acquire) if (semaphore == candidate) return true;
++        return false;
++    }
++    template<class Create>
++    bool ensure(std::size_t index, const std::vector<Semaphore>& complete, Create create) {
++        if (index >= Count) return false;
++        if (acquire[index]) return true;
++        Semaphore candidate{};
++        // A failed API call need not leave a valid output handle.
++        if (!create(candidate) || !candidate || owns(candidate)) return false;
++        for (auto semaphore : complete) if (semaphore == candidate) return false;
++        acquire[index] = candidate;
++        return true;
++    }
++    bool canRetire(bool hasDevice, bool canDestroy,
++                   const std::vector<Semaphore>& complete) const noexcept {
++        for (std::size_t i = 0; i < Count; ++i) {
++            if (!acquire[i]) continue;
++            if (!hasDevice || !canDestroy) return false;
++            for (std::size_t j = i + 1; j < Count; ++j)
++                if (acquire[i] == acquire[j]) return false;
++        }
++        for (std::size_t i = 0; i < complete.size(); ++i) {
++            if (!complete[i]) continue;
++            if (!hasDevice || !canDestroy || owns(complete[i])) return false;
++            for (std::size_t j = i + 1; j < complete.size(); ++j)
++                if (complete[i] == complete[j]) return false;
++        }
++        return true;
++    }
++    template<class Destroy>
++    bool retire(bool retired, bool hasDevice, bool canDestroy,
++                const std::vector<Semaphore>& complete, Destroy destroy) {
++        // The caller must establish completion for the entire WSI generation.
++        if (!retired || !canRetire(hasDevice, canDestroy, complete)) return false;
++        for (auto& semaphore : acquire) {
++            if (semaphore) destroy(semaphore);
++            semaphore = {};
++        }
++        return true;
++    }
++private:
++    std::array<Semaphore, Count> acquire{};
++};
++
++} // namespace libretrodroid

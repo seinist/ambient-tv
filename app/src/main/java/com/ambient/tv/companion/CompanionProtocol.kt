@@ -359,25 +359,24 @@ internal fun coalesceCompanionInput(first: CompanionFrame, next: CompanionFrame)
         val b = next.gamepadState
         val pa = a.pointer
         val pb = b.pointer
-        if (a.sessionId != b.sessionId || a.contextRevision != b.contextRevision ||
-            a.buttons != b.buttons || pa?.kind != pb?.kind || pa?.buttons != pb?.buttons ||
-            pa?.offscreen != pb?.offscreen || a.motion?.mask != b.motion?.mask ||
-            pa?.contacts?.filter { it.pressed }?.map { it.index } !=
-                pb?.contacts?.filter { it.pressed }?.map { it.index }) return null
+        // Use the sender's edge predicate here too, including analog trigger zero crossings.
+        if (companionGamepadCriticalEdge(a, b)) return null
+        // Report backlog age from the oldest merged event, not the newest sample.
+        val queuedAt = if (first.gamepadQueuedAtMs > 0L) first.gamepadQueuedAtMs else next.gamepadQueuedAtMs
         // The mouse is relative (unlike absolute pointers): preserve the sum of movement.
-        val pointer = if (pa?.kind == "mouse" && pb != null) {
+        if (pa?.kind == "mouse" && pb != null) {
             val dx = pa.dx + pb.dx
             val dy = pa.dy + pb.dy
             if (dx !in -1f..1f || dy !in -1f..1f) return null
-            pb.copy(dx = dx, dy = dy)
-        } else pb
-        return next.copy(gamepadState = b.copy(pointer = pointer),
-            // Report backlog age from the oldest merged event, not the newest sample.
-            gamepadQueuedAtMs = first.gamepadQueuedAtMs.takeIf { it > 0L } ?: next.gamepadQueuedAtMs)
+            return next.copy(gamepadState = b.copy(pointer = pb.copy(dx = dx, dy = dy)),
+                gamepadQueuedAtMs = queuedAt)
+        }
+        // Absolute samples already contain the complete new state; don't clone it.
+        return if (queuedAt == next.gamepadQueuedAtMs) next else next.copy(gamepadQueuedAtMs = queuedAt)
     }
     val a = first.input ?: return null
     val b = next.input ?: return null
-    if (first.type != "input" || next.type != "input" || a.action != b.action || a.action !in setOf("move", "scroll")) return null
+    if (first.type != "input" || next.type != "input" || a.action != b.action || (a.action != "move" && a.action != "scroll")) return null
     val x = a.x + b.x
     val y = a.y + b.y
     if (x !in -1f..1f || y !in -1f..1f) return null

@@ -1,0 +1,218 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -270,7 +270,24 @@
+-    VkCommandPool commandPool = VK_NULL_HANDLE;
+-    VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+-    VkFence frameFence = VK_NULL_HANDLE;
+-    bool frameInFlight = false;
++    // One slot for now. Never copy owning GPU handles when adding more slots.
++    // Bridge, normalization, Slang and WSI resources are still single-in-flight.
++    struct FrameSlot {
++        VkCommandPool pool = VK_NULL_HANDLE;
++        VkCommandBuffer command = VK_NULL_HANDLE;
++        VkFence fence = VK_NULL_HANDLE;
++        bool inFlight = false;
++
++        FrameSlot() = default;
++        FrameSlot(const FrameSlot&) = delete;
++        FrameSlot& operator=(const FrameSlot&) = delete;
++
++        // Only after the backend has proved retirement and destroyed the handles.
++        void clearRetiredHandles() noexcept {
++            pool = VK_NULL_HANDLE;
++            command = VK_NULL_HANDLE;
++            fence = VK_NULL_HANDLE;
++            inFlight = false;
++        }
++    };
++    FrameSlot frameSlot;
+     VkResult fatalFrameError = VK_SUCCESS;
+     bool shutdownReady = false;
+     // One temporary SYNC_FD payload. Reuse only after waitForFrame proved
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -960,17 +960,17 @@
+ bool VulkanBackend::createFrameResources() {
+     VkCommandPoolCreateInfo poolInfo { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+     poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+     poolInfo.queueFamilyIndex = queueFamily;
+-    if (vk.createCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) return false;
+-
+-    VkCommandBufferAllocateInfo allocInfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+-    allocInfo.commandPool = commandPool;
+-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+-    allocInfo.commandBufferCount = 1;
+-    if (vk.allocateCommandBuffers(device, &allocInfo, &commandBuffer) != VK_SUCCESS) return false;
+-
+-    VkFenceCreateInfo fenceInfo { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+-    return vk.createFence(device, &fenceInfo, nullptr, &frameFence) == VK_SUCCESS;
++    if (vk.createCommandPool(device, &poolInfo, nullptr, &frameSlot.pool) != VK_SUCCESS) return false;
++
++    VkCommandBufferAllocateInfo allocInfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
++    allocInfo.commandPool = frameSlot.pool;
++    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
++    allocInfo.commandBufferCount = 1;
++    if (vk.allocateCommandBuffers(device, &allocInfo, &frameSlot.command) != VK_SUCCESS) return false;
++
++    VkFenceCreateInfo fenceInfo { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
++    return vk.createFence(device, &fenceInfo, nullptr, &frameSlot.fence) == VK_SUCCESS;
+ }
+ 
+ bool VulkanBackend::start() {
+@@ -1160,6 +1160,8 @@
+ bool VulkanBackend::clearFrameImage() {
+     if (shutdownReady || !waitForFrame()) return false;
+ 
++    const VkCommandBuffer commandBuffer = frameSlot.command;
++    const VkFence frameFence = frameSlot.fence;
+     if (!checkFrameResult(vk.resetCommandBuffer(commandBuffer, 0), "reset clear command buffer")) return false;
+     VkCommandBufferBeginInfo begin { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+@@ -1205,8 +1207,8 @@
+         result = vk.queueSubmit(queue, 1, &submit, frameFence);
+     }
+     if (!checkFrameResult(result, "submit shared frame clear")) return false;
+-    frameInFlight = true;
++    frameSlot.inFlight = true;
+     return waitForFrame();
+ }
+ 
+ bool VulkanBackend::checkFrameResult(VkResult result, const char* operation) {
+@@ -1225,21 +1227,21 @@
+ bool VulkanBackend::waitForFrame() {
+     if (hasFatalError() || shutdownReady) return false;
+-    if (!frameInFlight) return true;
+-    GameTraceScope trace("AmbientGame Vulkan fence wait");
+-    bool warned = false;
+-    for (;;) {
+-        const VkResult result = vk.waitForFences(device, 1, &frameFence, VK_TRUE, FENCE_TIMEOUT_NS);
+-        if (result == VK_TIMEOUT) {
+-            // A timeout says nothing about completion. Never reset/reuse the
+-            // fence, command buffer, AHB or core image while work is pending.
+-            if (!warned) LOGW("Vulkan frame is still pending; waiting for its completion");
+-            warned = true;
+-            continue;
+-        }
+-        if (!checkFrameResult(result, "wait for frame fence")) return false;
+-        break;
+-    }
+-    if (!checkFrameResult(vk.resetFences(device, 1, &frameFence), "reset frame fence")) return false;
+-    frameInFlight = false;
++    if (!frameSlot.inFlight) return true;
++    GameTraceScope trace("AmbientGame Vulkan fence wait");
++    bool warned = false;
++    for (;;) {
++        const VkResult result = vk.waitForFences(device, 1, &frameSlot.fence, VK_TRUE, FENCE_TIMEOUT_NS);
++        if (result == VK_TIMEOUT) {
++            // A timeout says nothing about completion. Never reset/reuse the
++            // fence, command buffer, AHB or core image while work is pending.
++            if (!warned) LOGW("Vulkan frame is still pending; waiting for its completion");
++            warned = true;
++            continue;
++        }
++        if (!checkFrameResult(result, "wait for frame fence")) return false;
++        break;
++    }
++    if (!checkFrameResult(vk.resetFences(device, 1, &frameSlot.fence), "reset frame fence")) return false;
++    frameSlot.inFlight = false;
+     return true;
+ }
+@@ -1345,5 +1347,5 @@
+ bool VulkanBackend::prepareBridgeWriteFence() {
+-    if (!canExportBridgeWriteFence() || frameInFlight) return false;
++    if (!canExportBridgeWriteFence() || frameSlot.inFlight) return false;
+     if (bridgeWriteSemaphore != VK_NULL_HANDLE) return true;
+     VkExportSemaphoreCreateInfo external { VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO };
+     external.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
+@@ -1400,7 +1402,7 @@
+ bool VulkanBackend::prepareForShutdown() {
+     nativePresentation.invalidateFrame();
+     if (!waitForDeviceIdle()) return false;
+     shutdownReady = true;
+-    frameInFlight = false; // no further submissions; the fence will be destroyed
++    frameSlot.inFlight = false; // no further submissions; the fence will be destroyed
+     return true;
+ }
+@@ -1420,5 +1422,7 @@
+ bool VulkanBackend::presentFrame(unsigned width, unsigned height, float resolvedAspect,
+                                   bool pictureCompatible, int* writeFd) {
+     GameTraceScope trace("AmbientGame Vulkan frame");
++    const VkCommandBuffer commandBuffer = frameSlot.command;
++    const VkFence frameFence = frameSlot.fence;
+     if (writeFd) *writeFd = NoBridgeWriteFence;
+     nativePresentation.invalidateFrame();
+@@ -1697,6 +1701,6 @@
+     if (!checkFrameResult(result, "submit frame")) return false;
+     bridgeReadPending = false; // this submit consumes the temporary payload
+-    frameInFlight = true;
++    frameSlot.inFlight = true;
+     const int exportedFd = exportWrite ? exportBridgeWriteFence() : NoBridgeWriteFence;
+     // WSI already waits for the submitted per-image completion semaphore.
+     // Queue presentation now, rather than delaying it until the host fence.
+@@ -1789,12 +1793,12 @@
+     VkResult result;
+     {
+         GameTraceScope trace("AmbientGame Vulkan duplicate submit");
+         std::lock_guard<std::mutex> lock(queueMutex);
+-        result = vk.queueSubmit(queue, 1, &submit, frameFence);
+-    }
+-    pendingCommandBuffers.clear();
+-    pendingSignalSemaphore = VK_NULL_HANDLE;
+-    if (!checkFrameResult(result, "submit duplicate frame")) return false;
+-    frameInFlight = true;
++        result = vk.queueSubmit(queue, 1, &submit, frameSlot.fence);
++    }
++    pendingCommandBuffers.clear();
++    pendingSignalSemaphore = VK_NULL_HANDLE;
++    if (!checkFrameResult(result, "submit duplicate frame")) return false;
++    frameSlot.inFlight = true;
+     return waitForFrame();
+ }
+@@ -1830,16 +1834,16 @@
+ void VulkanBackend::callbackWaitSyncIndex(void* handle) {
+     auto* self = static_cast<VulkanBackend*>(handle);
+-    if (self->waitForFrame() || !self->frameInFlight) return;
+-    // This void C callback promises that the core may reuse its resources. An
+-    // error cannot be reported through it, nor may an exception unwind through
+-    // the core. Preserve that promise by proving device idle before returning;
+-    // the post-retro_run boundary then reports the sticky failure to Android.
+-    // A completely stuck driver can still block: the API has no safe timeout
+-    // escape which would permit reuse of its outstanding images/command pools.
+-    while (!self->waitForDeviceIdle()) {
+-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+-    }
+-    self->frameInFlight = false;
++    if (self->waitForFrame() || !self->frameSlot.inFlight) return;
++    // This void C callback promises that the core may reuse its resources. An
++    // error cannot be reported through it, nor may an exception unwind through
++    // the core. Preserve that promise by proving device idle before returning;
++    // the post-retro_run boundary then reports the sticky failure to Android.
++    // A completely stuck driver can still block: the API has no safe timeout
++    // escape which would permit reuse of its outstanding images/command pools.
++    while (!self->waitForDeviceIdle()) {
++        std::this_thread::sleep_for(std::chrono::milliseconds(10));
++    }
++    self->frameSlot.inFlight = false;
+ }
+ 
+ void VulkanBackend::callbackLockQueue(void* handle) {
+@@ -1885,6 +1889,6 @@
+         destroyFrameBuffer();
+         colorCopy.release();
+-        if (frameFence != VK_NULL_HANDLE) vk.destroyFence(device, frameFence, nullptr);
+-        if (commandPool != VK_NULL_HANDLE) vk.destroyCommandPool(device, commandPool, nullptr);
++        if (frameSlot.fence != VK_NULL_HANDLE) vk.destroyFence(device, frameSlot.fence, nullptr);
++        if (frameSlot.pool != VK_NULL_HANDLE) vk.destroyCommandPool(device, frameSlot.pool, nullptr);
+         if (vk.destroyDevice != nullptr) vk.destroyDevice(device, nullptr);
+     }
+@@ -1902,7 +1906,4 @@
+-    frameFence = VK_NULL_HANDLE;
+-    commandPool = VK_NULL_HANDLE;
+-    commandBuffer = VK_NULL_HANDLE;
+-    frameInFlight = false;
++    frameSlot.clearRetiredHandles();
+     fatalFrameError = VK_SUCCESS;
+     shutdownReady = false;
+     bridgeFenceEnabled = false;

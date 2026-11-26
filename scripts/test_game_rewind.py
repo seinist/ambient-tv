@@ -20,17 +20,17 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     native = args.native_dir or root / "scripts/native_rewind"
-    required = ("rewindbuffer.h", "rewindbuffer.cpp", "rewindtimeline.h")
+    required = ("rewindbuffer.h", "rewindbuffer.cpp", "rewindtimeline.h", "rewindcapture.h")
     if not all((native / name).is_file() for name in required):
         parser.error(f"Rewind sources are missing from {native}")
     with tempfile.TemporaryDirectory(prefix="ambient-rewind-test-") as temporary:
         compiler = shlex.split(os.environ.get("CXX", "c++")) + [
-            "-std=c++17", "-O2", "-g", "-Wall", "-Wextra", "-Werror", "-pedantic",
+            "-std=c++17", "-O2", "-g", "-Wall", "-Wextra", "-Werror", "-pedantic", "-pthread",
             "-I", str(native), str(native / "rewindbuffer.cpp"),
         ]
         if args.sanitize:
             compiler += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
-        for name in ("rewindbuffer", "rewindtimeline"):
+        for name in ("rewindbuffer", "rewindtimeline", "rewindcapture"):
             binary = Path(temporary) / f"{name}-contracts"
             command = compiler + [
                 str(root / f"scripts/native_rewind/{name}_test.cpp"), "-o", str(binary),

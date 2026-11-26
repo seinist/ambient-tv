@@ -1,0 +1,386 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -38,5 +38,6 @@
+ #include "vulkanslangpipeline.h"
+ #include "vulkancolorcopy.h"
++#include "vulkanbridgesync.h"
+ #include "nativepresentation.h"
+ 
+ struct AImageReader;
+@@ -272,78 +273,83 @@
+     struct FrameSlot {
+         VkCommandPool pool = VK_NULL_HANDLE;
+         VkCommandBuffer command = VK_NULL_HANDLE;
+         VkFence fence = VK_NULL_HANDLE;
+         bool inFlight = false;
+         VulkanColorCopy colorCopy;
+         bool colorCopyRejected = false;
+-
+-        FrameSlot() = default;
+-        FrameSlot(const FrameSlot&) = delete;
+-        FrameSlot& operator=(const FrameSlot&) = delete;
+-
+-        // Publish handles only after all allocations succeed. Failed Vulkan
+-        // calls need not write usable output handles; never adopt those values.
+-        template<class Dispatch>
+-        bool create(const Dispatch& vk, VkDevice device, uint32_t queueFamily) {
+-            if (inFlight || pool || command || fence || !device ||
+-                !vk.createCommandPool || !vk.allocateCommandBuffers || !vk.createFence ||
+-                !vk.destroyCommandPool || !vk.destroyFence) return false;
+-
+-            VkCommandPool newPool = VK_NULL_HANDLE;
+-            VkCommandPoolCreateInfo poolInfo {};
+-            poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+-            poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+-            poolInfo.queueFamilyIndex = queueFamily;
+-            if (vk.createCommandPool(device, &poolInfo, nullptr, &newPool) != VK_SUCCESS) return false;
+-
+-            VkCommandBuffer newCommand = VK_NULL_HANDLE;
+-            VkCommandBufferAllocateInfo allocInfo {};
+-            allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+-            allocInfo.commandPool = newPool;
+-            allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+-            allocInfo.commandBufferCount = 1;
+-            if (vk.allocateCommandBuffers(device, &allocInfo, &newCommand) != VK_SUCCESS) {
+-                vk.destroyCommandPool(device, newPool, nullptr);
+-                return false;
+-            }
+-
+-            VkFence newFence = VK_NULL_HANDLE;
+-            VkFenceCreateInfo fenceInfo {};
+-            fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+-            if (vk.createFence(device, &fenceInfo, nullptr, &newFence) != VK_SUCCESS) {
+-                vk.destroyCommandPool(device, newPool, nullptr);
+-                return false;
+-            }
+-            pool = newPool;
+-            command = newCommand;
+-            fence = newFence;
+-            return true;
+-        }
+-
+-        // Preflight all slots before destroying any session resources.
+-        template<class Dispatch>
+-        bool canRetire(const Dispatch& vk, VkDevice device) const noexcept {
+-            if (inFlight) return false;
+-            if (!pool && !command && !fence) return true;
+-            return device && (!command || pool) &&
+-                (!pool || vk.destroyCommandPool) && (!fence || vk.destroyFence);
+-        }
+-
+-        // Caller must first prove GPU retirement; the slot independently
+-        // refuses destruction while work is marked outstanding.
+-        template<class Dispatch>
+-        bool retire(const Dispatch& vk, VkDevice device) {
+-            if (!canRetire(vk, device)) return false;
++        VulkanBridgeSync<VkSemaphore> bridgeSync;
++
++        FrameSlot() = default;
++        FrameSlot(const FrameSlot&) = delete;
++        FrameSlot& operator=(const FrameSlot&) = delete;
++
++        // Publish handles only after all allocations succeed. Failed Vulkan
++        // calls need not write usable output handles; never adopt those values.
++        template<class Dispatch>
++        bool create(const Dispatch& vk, VkDevice device, uint32_t queueFamily) {
++            if (inFlight || pool || command || fence || !bridgeSync.empty() || !device ||
++                !vk.createCommandPool || !vk.allocateCommandBuffers || !vk.createFence ||
++                !vk.destroyCommandPool || !vk.destroyFence) return false;
++
++            VkCommandPool newPool = VK_NULL_HANDLE;
++            VkCommandPoolCreateInfo poolInfo {};
++            poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
++            poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
++            poolInfo.queueFamilyIndex = queueFamily;
++            if (vk.createCommandPool(device, &poolInfo, nullptr, &newPool) != VK_SUCCESS) return false;
++
++            VkCommandBuffer newCommand = VK_NULL_HANDLE;
++            VkCommandBufferAllocateInfo allocInfo {};
++            allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
++            allocInfo.commandPool = newPool;
++            allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
++            allocInfo.commandBufferCount = 1;
++            if (vk.allocateCommandBuffers(device, &allocInfo, &newCommand) != VK_SUCCESS) {
++                vk.destroyCommandPool(device, newPool, nullptr);
++                return false;
++            }
++
++            VkFence newFence = VK_NULL_HANDLE;
++            VkFenceCreateInfo fenceInfo {};
++            fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
++            if (vk.createFence(device, &fenceInfo, nullptr, &newFence) != VK_SUCCESS) {
++                vk.destroyCommandPool(device, newPool, nullptr);
++                return false;
++            }
++            pool = newPool;
++            command = newCommand;
++            fence = newFence;
++            return true;
++        }
++
++        // Preflight all slots before destroying any session resources.
++        template<class Dispatch>
++        bool canRetire(const Dispatch& vk, VkDevice device) const noexcept {
++            if (!bridgeSync.canRetire(inFlight, device != VK_NULL_HANDLE, vk.destroySemaphore != nullptr))
++                return false;
++            if (!pool && !command && !fence) return true;
++            return device && (!command || pool) &&
++                (!pool || vk.destroyCommandPool) && (!fence || vk.destroyFence);
++        }
++
++        // Caller must first prove GPU retirement; the slot independently
++        // refuses destruction while work is marked outstanding.
++        template<class Dispatch>
++        bool retire(const Dispatch& vk, VkDevice device) {
++            if (!canRetire(vk, device)) return false;
++            if (!bridgeSync.retire(inFlight, device != VK_NULL_HANDLE, vk.destroySemaphore != nullptr,
++                    [&](VkSemaphore semaphore) { vk.destroySemaphore(device, semaphore, nullptr); }))
++                return false;
+             if (!pool && !command && !fence) return true;
+             colorCopy.release();
+             colorCopyRejected = false;
+             if (fence) vk.destroyFence(device, fence, nullptr);
+             if (pool) vk.destroyCommandPool(device, pool, nullptr);
+             pool = VK_NULL_HANDLE;
+             command = VK_NULL_HANDLE;
+             fence = VK_NULL_HANDLE;
+             return true;
+         }
+     };
+     FrameSlot frameSlot;
+     VkResult fatalFrameError = VK_SUCCESS;
+@@ -353,8 +359,4 @@
+     bool bridgeFenceEnabled = false;
+-    bool bridgeReadPending = false;
+-    VkSemaphore bridgeReadSemaphore = VK_NULL_HANDLE;
+-    // Separate exportable binary semaphore; never export the core completion fence.
+-    bool bridgeWriteFenceEnabled = false;
+-    VkSemaphore bridgeWriteSemaphore = VK_NULL_HANDLE;
++    bool bridgeWriteFenceEnabled = false;
+ 
+     // Higher precision is opt-in for manually selected PQ/HLG content, never for SDR.
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -1260,49 +1260,50 @@
+ bool VulkanBackend::importBridgeReadFence(int fd) {
+     if (!canImportBridgeReadFence() || !waitForFrame()) {
+         if (fd >= 0) close(fd);
+         return false;
+     }
+-    // An earlier presentFrame may have returned before queue submission (e.g.
+-    // no source image). Its temporary payload was never consumed. Retire it
+-    // rather than overwriting it; waitForFrame above rules out in-flight use.
+-    if (bridgeReadPending) {
+-        vk.destroySemaphore(device, bridgeReadSemaphore, nullptr);
+-        bridgeReadSemaphore = VK_NULL_HANDLE;
+-        bridgeReadPending = false;
+-    }
+-    if (fd < 0) {
+-        bridgeFenceEnabled = false;
+-        LOGW("EGL SYNC_FD export unavailable; retaining GLES finish for this session");
+-        return false;
+-    }
+-    if (bridgeReadSemaphore == VK_NULL_HANDLE) {
+-        VkSemaphoreCreateInfo info { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+-        const VkResult result = vk.createSemaphore(device, &info, nullptr, &bridgeReadSemaphore);
+-        if (result != VK_SUCCESS) {
+-            bridgeReadSemaphore = VK_NULL_HANDLE;
+-            close(fd);
+-            bridgeFenceEnabled = false;
+-            if (result == VK_ERROR_DEVICE_LOST) checkFrameResult(result, "create GLES read semaphore");
+-            else LOGW("Cannot create GLES read semaphore; retaining GLES finish");
+-            return false;
+-        }
+-    }
+-    VkImportSemaphoreFdInfoKHR info { VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR };
+-    info.semaphore = bridgeReadSemaphore;
+-    info.flags = VK_SEMAPHORE_IMPORT_TEMPORARY_BIT;
+-    info.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
+-    info.fd = fd;
+-    const VkResult result = vk.importSemaphoreFd(device, &info);
+-    if (result != VK_SUCCESS) {
+-        // Vulkan takes FD ownership only on a successful import.
+-        close(fd);
+-        bridgeFenceEnabled = false;
+-        if (result == VK_ERROR_DEVICE_LOST) checkFrameResult(result, "import GLES read fence");
+-        else LOGW("Cannot import GLES SYNC_FD; retaining GLES finish");
+-        return false;
+-    }
+-    bridgeReadPending = true;
++    auto& bridge = frameSlot.bridgeSync;
++    // An earlier presentFrame may have returned before queue submission (e.g.
++    // no source image). Its temporary payload was never consumed. Retire it
++    // rather than overwriting it; waitForFrame above rules out in-flight use.
++    if (bridge.readPending) {
++        vk.destroySemaphore(device, bridge.readSemaphore, nullptr);
++        bridge.readSemaphore = VK_NULL_HANDLE;
++        bridge.readPending = false;
++    }
++    if (fd < 0) {
++        bridgeFenceEnabled = false;
++        LOGW("EGL SYNC_FD export unavailable; retaining GLES finish for this session");
++        return false;
++    }
++    if (bridge.readSemaphore == VK_NULL_HANDLE) {
++        VkSemaphoreCreateInfo info { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
++        const VkResult result = vk.createSemaphore(device, &info, nullptr, &bridge.readSemaphore);
++        if (result != VK_SUCCESS) {
++            bridge.readSemaphore = VK_NULL_HANDLE;
++            close(fd);
++            bridgeFenceEnabled = false;
++            if (result == VK_ERROR_DEVICE_LOST) checkFrameResult(result, "create GLES read semaphore");
++            else LOGW("Cannot create GLES read semaphore; retaining GLES finish");
++            return false;
++        }
++    }
++    VkImportSemaphoreFdInfoKHR info { VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR };
++    info.semaphore = bridge.readSemaphore;
++    info.flags = VK_SEMAPHORE_IMPORT_TEMPORARY_BIT;
++    info.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
++    info.fd = fd;
++    const VkResult result = vk.importSemaphoreFd(device, &info);
++    if (result != VK_SUCCESS) {
++        // Vulkan takes FD ownership only on a successful import.
++        close(fd);
++        bridgeFenceEnabled = false;
++        if (result == VK_ERROR_DEVICE_LOST) checkFrameResult(result, "import GLES read fence");
++        else LOGW("Cannot import GLES SYNC_FD; retaining GLES finish");
++        return false;
++    }
++    bridge.readPending = true;
+     return true; // Vulkan owns fd until the temporary payload is consumed/retired.
+ }
+ 
+ bool VulkanBackend::canExportBridgeWriteFence() const {
+@@ -1350,17 +1351,18 @@
+ bool VulkanBackend::prepareBridgeWriteFence() {
+     if (!canExportBridgeWriteFence() || frameSlot.inFlight) return false;
+-    if (bridgeWriteSemaphore != VK_NULL_HANDLE) return true;
+-    VkExportSemaphoreCreateInfo external { VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO };
+-    external.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
+-    VkSemaphoreCreateInfo info { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+-    info.pNext = &external;
+-    const VkResult result = vk.createSemaphore(device, &info, nullptr, &bridgeWriteSemaphore);
+-    if (result == VK_SUCCESS) return true;
+-    bridgeWriteSemaphore = VK_NULL_HANDLE;
++    auto& semaphore = frameSlot.bridgeSync.writeSemaphore;
++    if (semaphore != VK_NULL_HANDLE) return true;
++    VkExportSemaphoreCreateInfo external { VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO };
++    external.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
++    VkSemaphoreCreateInfo info { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
++    info.pNext = &external;
++    const VkResult result = vk.createSemaphore(device, &info, nullptr, &semaphore);
++    if (result == VK_SUCCESS) return true;
++    semaphore = VK_NULL_HANDLE;
+     bridgeWriteFenceEnabled = false;
+     if (result == VK_ERROR_DEVICE_LOST) checkFrameResult(result, "create bridge write semaphore");
+     else LOGW("Cannot create bridge write semaphore; retaining CPU fence");
+     return false;
+ }
+ 
+ int VulkanBackend::exportBridgeWriteFence() {
+@@ -1370,5 +1372,5 @@
+     VkSemaphoreGetFdInfoKHR info { VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR };
+-    info.semaphore = bridgeWriteSemaphore;
++    info.semaphore = frameSlot.bridgeSync.writeSemaphore;
+     info.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
+     int fd = NoBridgeWriteFence;
+     const VkResult result = vk.getSemaphoreFd(device, &info, &fd);
+@@ -1650,17 +1652,17 @@
+     if (useDirect) waits.push_back(nativeSdrAcquire);
+     auto& waitStages = submitWaitStages;
+     waitStages.resize(waits.size(), VK_PIPELINE_STAGE_TRANSFER_BIT);
+-    if (bridgeReadPending) {
+-        waits.push_back(bridgeReadSemaphore);
+-        // Includes the foreign queue-family acquire, not just the image copy.
+-        // Retain all existing core and WSI waits and their stage masks.
+-        waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+-    }
+-    // Preserve core and WSI signal order; the optional bridge signal is last.
+-    VkSemaphore signals[3] {};
+-    uint32_t signalCount = 0;
+-    if (pendingSignalSemaphore != VK_NULL_HANDLE) signals[signalCount++] = pendingSignalSemaphore;
+-    if (useDirect) signals[signalCount++] = nativeSdrComplete[sdrIndex];
+-    if (exportWrite) signals[signalCount++] = bridgeWriteSemaphore;
++    if (frameSlot.bridgeSync.readPending) {
++        waits.push_back(frameSlot.bridgeSync.readSemaphore);
++        // Includes the foreign queue-family acquire, not just the image copy.
++        // Retain all existing core and WSI waits and their stage masks.
++        waitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
++    }
++    // Preserve core and WSI signal order; the optional bridge signal is last.
++    VkSemaphore signals[3] {};
++    uint32_t signalCount = 0;
++    if (pendingSignalSemaphore != VK_NULL_HANDLE) signals[signalCount++] = pendingSignalSemaphore;
++    if (useDirect) signals[signalCount++] = nativeSdrComplete[sdrIndex];
++    if (exportWrite) signals[signalCount++] = frameSlot.bridgeSync.writeSemaphore;
+ 
+     VkSubmitInfo submit { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+@@ -1700,5 +1702,5 @@
+     if (!checkFrameResult(result, "submit frame")) return false;
+-    bridgeReadPending = false; // this submit consumes the temporary payload
++    frameSlot.bridgeSync.readPending = false; // this submit consumes the temporary payload
+     frameSlot.inFlight = true;
+     const int exportedFd = exportWrite ? exportBridgeWriteFence() : NoBridgeWriteFence;
+     // WSI already waits for the submitted per-image completion semaphore.
+@@ -1883,4 +1885,2 @@
+         // prepareForShutdown already established idle or device loss.
+-        if (bridgeReadSemaphore != VK_NULL_HANDLE) vk.destroySemaphore(device, bridgeReadSemaphore, nullptr);
+-        if (bridgeWriteSemaphore != VK_NULL_HANDLE) vk.destroySemaphore(device, bridgeWriteSemaphore, nullptr);
+         destroyFrameBuffer();
+@@ -1905,6 +1905,3 @@
+     bridgeFenceEnabled = false;
+-    bridgeReadPending = false;
+-    bridgeReadSemaphore = VK_NULL_HANDLE;
+-    bridgeWriteFenceEnabled = false;
+-    bridgeWriteSemaphore = VK_NULL_HANDLE;
++    bridgeWriteFenceEnabled = false;
+     device = VK_NULL_HANDLE;
+diff --git a/src/main/cpp/vulkan/vulkanbridgesync.h b/src/main/cpp/vulkan/vulkanbridgesync.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/vulkan/vulkanbridgesync.h
+@@ -0,0 +1,41 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++
++namespace libretrodroid {
++
++// Slot-local binary semaphore ownership. Capability flags stay device-wide.
++// Callers must prove GPU retirement before invoking retire().
++template<class Semaphore>
++struct VulkanBridgeSync {
++    Semaphore readSemaphore{};
++    Semaphore writeSemaphore{};
++    bool readPending = false;
++
++    VulkanBridgeSync() = default;
++    VulkanBridgeSync(const VulkanBridgeSync&) = delete;
++    VulkanBridgeSync& operator=(const VulkanBridgeSync&) = delete;
++
++    bool empty() const noexcept {
++        return !readSemaphore && !writeSemaphore && !readPending;
++    }
++
++    bool canRetire(bool inFlight, bool hasDevice, bool canDestroy) const noexcept {
++        if (inFlight) return false;
++        if (empty()) return true;
++        return hasDevice && canDestroy && (!readPending || readSemaphore) &&
++               (!readSemaphore || readSemaphore != writeSemaphore);
++    }
++
++    template<class Destroy>
++    bool retire(bool inFlight, bool hasDevice, bool canDestroy, Destroy destroy) {
++        if (!canRetire(inFlight, hasDevice, canDestroy)) return false;
++        if (readSemaphore) destroy(readSemaphore);
++        if (writeSemaphore) destroy(writeSemaphore);
++        readSemaphore = {};
++        writeSemaphore = {};
++        readPending = false;
++        return true;
++    }
++};
++
++} // namespace libretrodroid

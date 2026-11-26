@@ -1,0 +1,102 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -370,7 +370,11 @@
+     // Explicit slot helpers; the legacy public path still uses frameSlot.
+     bool waitForSlotFrame(FrameSlot& slot);
+     bool clearSlotImage(FrameSlot& slot);
++    bool canRetireFrameSlots() const noexcept;
++    bool retireFrameSlot(FrameSlot& slot);
+     // All frame slots share the original aggregate normalization limit.
+     VulkanColorAllocationBudget normalizationBudget;
+     FrameSlot frameSlot;
++    // Dormant until explicit allocation, EGL selection and scheduling are ready.
++    FrameSlot spareFrameSlot;
+     VkResult fatalFrameError = VK_SUCCESS;
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -1430,11 +1430,44 @@
++bool VulkanBackend::canRetireFrameSlots() const noexcept {
++    if ((device && !vk.destroyDevice) || !frameSlot.canRetire(vk, device) ||
++            !spareFrameSlot.canRetire(vk, device)) return false;
++    // Both slots own their handles exclusively. Reject aliased ownership
++    // before any destruction, including cross-role bridge semaphores.
++    const auto aliases = [](auto a, auto b) { return a && a == b; };
++    const auto& a = frameSlot;
++    const auto& b = spareFrameSlot;
++    return !aliases(a.pool, b.pool) && !aliases(a.command, b.command) &&
++        !aliases(a.fence, b.fence) &&
++        !aliases(a.bridgeImage.buffer, b.bridgeImage.buffer) &&
++        !aliases(a.bridgeImage.image, b.bridgeImage.image) &&
++        !aliases(a.bridgeImage.memory, b.bridgeImage.memory) &&
++        !aliases(a.bridgeSync.readSemaphore, b.bridgeSync.readSemaphore) &&
++        !aliases(a.bridgeSync.readSemaphore, b.bridgeSync.writeSemaphore) &&
++        !aliases(a.bridgeSync.writeSemaphore, b.bridgeSync.readSemaphore) &&
++        !aliases(a.bridgeSync.writeSemaphore, b.bridgeSync.writeSemaphore);
++}
++
++bool VulkanBackend::retireFrameSlot(FrameSlot& slot) {
++    if (!slot.canRetire(vk, device)) return false;
++    if (!slot.bridgeImage.retire(slot.inFlight, device != VK_NULL_HANDLE,
++            vk.destroyImage != nullptr, vk.freeMemory != nullptr,
++            [&](VkImage image) { vk.destroyImage(device, image, nullptr); },
++            [&](VkDeviceMemory memory) { vk.freeMemory(device, memory, nullptr); },
++            [](AHardwareBuffer* buffer) { AHardwareBuffer_release(buffer); })) return false;
++    return slot.retire(vk, device);
++}
++
+ bool VulkanBackend::prepareForShutdown() {
+     nativePresentation.invalidateFrame();
++    // A missing device cannot prove completion of outstanding submissions.
++    if (!device && (frameSlot.inFlight || spareFrameSlot.inFlight))
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "missing device for slot retirement");
+     if (!waitForDeviceIdle()) return false;
+     frameSlot.inFlight = false; // device idle or loss proves retirement
+-    // Check before core unload, WSI/AHB release or semaphore destruction.
++    spareFrameSlot.inFlight = false;
++    // Check all slots before core unload, WSI/AHB release or semaphore destruction.
+     // A later retry must still own every resource if this preflight fails.
+-    if (!frameSlot.canRetire(vk, device))
++    if (!canRetireFrameSlots())
+         return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "preflight frame slot retirement");
+     shutdownReady = true;
+     return true;
+ }
+@@ -1850,5 +1885,9 @@
+ void VulkanBackend::callbackWaitSyncIndex(void* handle) {
+     auto* self = static_cast<VulkanBackend*>(handle);
+-    if (self->waitForFrame() || !self->frameSlot.inFlight) return;
++    // Until distinct core sync indices are introduced, index zero covers
++    // every slot. The dormant spare adds no Vulkan wait to the usual path.
++    if (self->waitForFrame() && (!self->spareFrameSlot.inFlight ||
++            self->waitForSlotFrame(self->spareFrameSlot))) return;
++    if (!self->frameSlot.inFlight && !self->spareFrameSlot.inFlight) return;
+     // This void C callback promises that the core may reuse its resources. An
+     // error cannot be reported through it, nor may an exception unwind through
+@@ -1865,6 +1904,7 @@
+     while (!self->waitForDeviceIdle()) {
+         std::this_thread::sleep_for(std::chrono::milliseconds(10));
+     }
+     self->frameSlot.inFlight = false;
++    self->spareFrameSlot.inFlight = false;
+ }
+ 
+@@ -1935,9 +1975,10 @@
+-    if (device != VK_NULL_HANDLE) {
+-        // prepareForShutdown already established idle or device loss.
+-        if (!destroyFrameBuffer()) return;
+-        if (!frameSlot.retire(vk, device)) {
+-            checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "retire frame slot");
+-            return; // retain the device rather than discard unretired ownership
+-        }
++    // prepareForShutdown already established idle or loss and preflighted
++    // both slots. AHB-only ownership can also be retired without a VkDevice.
++    if (!retireFrameSlot(frameSlot) || !retireFrameSlot(spareFrameSlot)) {
++        checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "retire frame slots");
++        return; // retain the device rather than discard unretired ownership
++    }
++    frameStatus.store(0, std::memory_order_release);
++    if (device != VK_NULL_HANDLE) {
+         if (vk.destroyDevice != nullptr) vk.destroyDevice(device, nullptr);
+     }

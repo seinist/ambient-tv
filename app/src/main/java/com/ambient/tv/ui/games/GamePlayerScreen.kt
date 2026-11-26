@@ -162,7 +162,6 @@ import com.ambient.tv.ui.player.ReferencePlayerOverlayBackground
 import com.swordfish.libretrodroid.GLRetroView
 import com.swordfish.libretrodroid.GLRetroViewData
 import com.swordfish.libretrodroid.LibretroDroid
-import com.swordfish.libretrodroid.ShaderConfig
 import com.swordfish.libretrodroid.Variable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -299,7 +298,7 @@ private suspend fun GLRetroView.preview(
     input: GameHdrToneMap,
     verifiedHdrSource: Boolean,
 ): Bitmap? = withContext(Dispatchers.Default) {
-    val frame = runCatching { captureRawFrame() }.getOrNull() ?: return@withContext null
+    val frame = runCatching { captureRawFrame(maxWidth = 480) }.getOrNull() ?: return@withContext null
     val scaled = if (frame.width <= 480) frame else {
         val height = (frame.height * 480 / frame.width.toFloat()).roundToInt().coerceAtLeast(1)
         Bitmap.createScaledBitmap(frame, 480, height, true).also { if (it !== frame) frame.recycle() }
@@ -351,8 +350,38 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     // The extra effect needs the GLES chain and its single prefix; packs and HDR conversion keep theirs.
     val effect = settings.effect(system, game.saveKey)
     val gamePictureScope = settings.gamePictureScope(game.saveKey)
-    val installedShaders = remember(model) { model.shaderPacks.installed() }
-    val selectedPackConfig = remember(selectedPack, model) { model.shaderPacks.config(selectedPack) }
+    var resolvedPack by remember(session) {
+        mutableStateOf(GameShaderPackResolution(session.initialPackSelection, session.initialPackConfig))
+    }
+    val selectedPackPending = selectedPack != null && !resolvedPack.matches(selectedPack)
+    val selectedPackConfig = resolvedPack.configFor(selectedPack)
+    LaunchedEffect(session, selectedPack) {
+        if (resolvedPack.matches(selectedPack)) return@LaunchedEffect
+        // Switching to a built-in filter needs no disk work or intermediate wait.
+        if (selectedPack == null) {
+            resolvedPack = GameShaderPackResolution(null, null)
+            return@LaunchedEffect
+        }
+        val verified = withContext(Dispatchers.IO) { model.shaderPacks.config(selectedPack) }
+        // Cancellation alone cannot interrupt blocking disk IO. Check the live selection too.
+        if (GameSettings.state.packShader(system, game.saveKey) == selectedPack) {
+            resolvedPack = GameShaderPackResolution(selectedPack, verified)
+        }
+    }
+    var pendingPackChoice by remember(session) { mutableStateOf<GameShaderPackChoice?>(null) }
+    LaunchedEffect(session, pendingPackChoice) {
+        val request = pendingPackChoice ?: return@LaunchedEffect
+        val verified = withContext(Dispatchers.IO) { model.shaderPacks.config(request.selection) }
+        // Another picture choice, scope change or settings reload wins over stale IO.
+        if (pendingPackChoice !== request) return@LaunchedEffect
+        pendingPackChoice = null
+        if (verified != null && request.stillApplies(GameSettings.state, system, game.saveKey)) {
+            resolvedPack = GameShaderPackResolution(request.selection, verified)
+            GameSettings.update {
+                it.withPackShader(system, game.saveKey.takeIf { request.forGame }, request.selection)
+            }
+        }
+    }
     // A remembered Vulkan input mode must not suppress GLES SDR-as-HDR output
     // after switching the same core back to OpenGL ES.
     val toneMap = if (session.vulkan) settings.hdrToneMap(core) else GameHdrToneMap.OFF
@@ -368,16 +397,26 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val hideTouchForGamepad by rememberUpdatedState(touchStyle.hideOnGamepadInput)
     // A trusted small Slang preset may opt into the experimental native WSI.
     // Existing GLES filters remain available for all other choices and for HDR.
-    val nativeSlangPath = remember(context, shader, shaderIntensity, selectedPack, nativeTransfer, session.vulkan, effect) {
-        // Original compact effects have an intensity control; their native presets
-        // use the default. Authored upscalers have no such control, so a strength
-        // retained from a previously selected effect must not block their native path.
-        if (BuildConfig.LIBRASHADER_NATIVE && session.vulkan && effect == null &&
+    // Extract and verify only the selected, eligible built-in preset off the UI thread.
+    // Key the result to the request so a previous shader can never be presented as the new one.
+    val nativeSlangRequest = shader.takeIf {
+        BuildConfig.LIBRASHADER_NATIVE && session.vulkan && effect == null &&
             nativeTransfer == GameVulkanTransferMode.SDR &&
-            (!GameRetroShaders.isCustom(shader) || kotlin.math.abs(shaderIntensity - 1f) < 0.0001f))
-            GameVulkanSlangPresets.prepare(context, shader, selectedPack)
-        else null
+            (!GameRetroShaders.isCustom(shader) || kotlin.math.abs(shaderIntensity - 1f) < 0.0001f) &&
+            GameVulkanSlangPresets.supports(shader, selectedPack)
     }
+    var nativeSlangPreparation by remember(context, nativeSlangRequest) {
+        mutableStateOf<Pair<Boolean, String?>>(false to null)
+    }
+    LaunchedEffect(context, nativeSlangRequest) {
+        val requested = nativeSlangRequest ?: return@LaunchedEffect
+        val prepared = withContext(Dispatchers.IO) {
+            GameVulkanSlangPresets.prepare(context.applicationContext, requested, null)
+        }
+        nativeSlangPreparation = true to prepared
+    }
+    val nativeSlangPath = nativeSlangPreparation.second
+    val nativeSlangPending = nativeSlangRequest != null && !nativeSlangPreparation.first
     // SDR as HDR10 is fixed when the view is created (EGL config and PQ surface); a change restarts.
     val sdrToHdrSession = remember(session) {
         settings.sdrToHdr && toneMap == GameHdrToneMap.OFF && GameHdrDisplayProbe.capture(physicalContext).hdr10
@@ -392,6 +431,16 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     var menuOpen by remember { mutableStateOf(false) }
     val gamePanels = rememberGamePanelNavigation(chrome)
     val panel = gamePanels.panel
+    // Do not enumerate and verify every installed pack during normal game startup.
+    // Keep the previous catalog while the picture panel is closed.
+    var installedShaders by remember(model) {
+        mutableStateOf<List<com.ambient.tv.games.InstalledGameShaderPreset>>(emptyList())
+    }
+    LaunchedEffect(model, panel == GamePanel.PICTURE) {
+        if (panel == GamePanel.PICTURE) {
+            installedShaders = withContext(Dispatchers.IO) { model.shaderPacks.installed() }
+        }
+    }
     // A display or refresh-mode change can remove HDR while a Vulkan game is
     // running. Never infer active HDR from these platform capabilities.
     var displayHdr by remember(context) {
@@ -529,7 +578,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     val hardcoreRules = achievements.hardcore || (hardcoreRequested && !achievementsInitialized)
     val rewindPermitted = core.rewind && stateAvailable && serializationPolicy.frameExact &&
-        settings.rewind && !hardcoreRules && !netplay.busy
+        settings.rewindForPlayback && !hardcoreRules && !netplay.busy
     val availability = GameOsdAvailability(
         loaded = loaded && coreReady && activityResumed && !exiting && !destroyed,
         busy = stateBusy || displayHold, stateAvailable = stateAvailable, frameExact = serializationPolicy.frameExact,
@@ -615,6 +664,18 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         }
     }
 
+    // Settings are the sole source of truth for live picture changes. A pending
+    // signed pack keeps the last verified picture until its selection is resolved.
+    LaunchedEffect(retroView, shader, shaderIntensity, selectedPack, selectedPackPending, selectedPackConfig, toneMap, effect) {
+        if (!selectedPackPending && !destroyed && !exiting) {
+            retroView.shader = GameHdrToneMapShader.forConfig(
+                selectedPackConfig ?: shader.config(shaderIntensity),
+                toneMap, session.vulkan, pixel = selectedPack == null && shader == GameShader.PIXEL,
+                effect = effect.takeIf { selectedPackConfig == null },
+            )
+        }
+    }
+
     // Maintain the old GLES renderer unchanged. The extra 1×1 real Android
     // surface exists only for Vulkan WSI probing and never displays game frames.
     val vulkanSurfaceHost = remember(retroView, session.vulkan, nativeTransfer) {
@@ -636,8 +697,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     LaunchedEffect(integerScaling, vulkanSurfaceHost) {
         vulkanSurfaceHost?.updateIntegerScaling(integerScaling)
     }
-    LaunchedEffect(nativeSlangPath, vulkanSurfaceHost) {
-        vulkanSurfaceHost?.updateShaderPreset(nativeSlangPath)
+    LaunchedEffect(nativeSlangPath, nativeSlangPending, vulkanSurfaceHost) {
+        // Disarm fullscreen before replacing the active shader. Do not publish
+        // a transient empty (raw Pixel) preset while an IO request is pending.
+        if (nativeSlangPending) vulkanSurfaceHost?.setFullscreenRequested(false)
+        else vulkanSurfaceHost?.updateShaderPreset(nativeSlangPath)
     }
     LaunchedEffect(coreReady, vulkanSurfaceHost) {
         if (coreReady) vulkanSurfaceHost?.coreReady()
@@ -1038,14 +1102,15 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             }
         }
     }
-    LaunchedEffect(nativePictureSupported, nativeSdrFullscreenRequested, vulkanSurfaceHost) {
+    LaunchedEffect(nativePictureSupported, nativeSlangPending, nativeSdrFullscreenRequested, vulkanSurfaceHost) {
         if (!nativePictureSupported && nativeSdrFullscreenRequested) {
-            nativeSdrFullscreenRequested = false
+            // A pending asynchronous preparation is not a failed/unsupported preset.
+            if (!nativeSlangPending) nativeSdrFullscreenRequested = false
             vulkanSurfaceHost?.setFullscreenRequested(false)
         }
     }
-    LaunchedEffect(nativeSdrFullscreenRequested, running, vulkanSurfaceHost) {
-        if (!nativeSdrFullscreenRequested || !running) {
+    LaunchedEffect(nativeSdrFullscreenRequested, running, nativePictureSupported, nativeSlangPending, vulkanSurfaceHost) {
+        if (!nativeSdrFullscreenRequested || !running || !nativePictureSupported || nativeSlangPending) {
             vulkanSurfaceHost?.setFullscreenRequested(false)
         } else if (running) {
             // Arming from the paused Info panel does not cover the game with a
@@ -1147,9 +1212,14 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     if (nativeSdrStatus != direct) nativeSdrStatus = direct
                 }
             }
-            if (event == GLRetroView.GLRetroEvents.SurfaceCreated) coreReady = true
+            // Readiness and sampled frame notifications are independent. A completed
+            // frame also proves that native initialization succeeded.
+            if (event == GLRetroView.GLRetroEvents.SurfaceCreated ||
+                event == GLRetroView.GLRetroEvents.FrameRendered) coreReady = true
             if (event == GLRetroView.GLRetroEvents.FrameRendered && !loaded) {
                 loaded = true
+                // Do not park the renderer before the core has delivered its first frame.
+                retroView.enablePausedPresentationOnDemand()
                 lastInitializationPollMs = now
                 model.firstFrameRendered(session)
                 refreshStateSupport()
@@ -1439,28 +1509,15 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         }
     }
     DisposableEffect(input, retroView) {
-        val sent = IntArray(RetroPorts.COUNT * 7)
-        input.onChanged = changed@{
+        // The aggregate input already reports exactly which port changed. Publish it
+        // before optional UI observers, without scanning 28 atomic values per event.
+        input.onPortChanged = changed@{ port ->
             if (destroyed) return@changed
-            for (port in 0 until RetroPorts.COUNT) {
-                val buttons = input.buttons(port)
-                val leftX = input.analog(port, 0, 0)
-                val leftY = input.analog(port, 0, 1)
-                val rightX = input.analog(port, 1, 0)
-                val rightY = input.analog(port, 1, 1)
-                val leftTrigger = input.trigger(port, 0)
-                val rightTrigger = input.trigger(port, 1)
-                val at = port * 7
-                if (sent[at] == buttons && sent[at + 1] == leftX && sent[at + 2] == leftY &&
-                    sent[at + 3] == rightX && sent[at + 4] == rightY &&
-                    sent[at + 5] == leftTrigger && sent[at + 6] == rightTrigger) continue
-                sent[at] = buttons; sent[at + 1] = leftX; sent[at + 2] = leftY
-                sent[at + 3] = rightX; sent[at + 4] = rightY
-                sent[at + 5] = leftTrigger; sent[at + 6] = rightTrigger
-                val range = RetroPadInput.ANALOG_MAX.toFloat()
-                LibretroDroid.onInputSnapshot(port, buttons, leftX / range, leftY / range,
-                    rightX / range, rightY / range, leftTrigger / range, rightTrigger / range)
-            }
+            val range = RetroPadInput.ANALOG_MAX.toFloat()
+            LibretroDroid.onInputSnapshot(port, input.buttons(port),
+                input.analog(port, 0, 0) / range, input.analog(port, 0, 1) / range,
+                input.analog(port, 1, 0) / range, input.analog(port, 1, 1) / range,
+                input.trigger(port, 0) / range, input.trigger(port, 1) / range)
         }
         val onRemoved: (Int) -> Unit = { id ->
             input.deviceRemoved(id)
@@ -1468,7 +1525,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         }
         GamepadInput.deviceRemovedSink = onRemoved
         onDispose {
-            input.onChanged = null
+            input.onPortChanged = null
             if (GamepadInput.deviceRemovedSink === onRemoved) GamepadInput.deviceRemovedSink = null
             GameRumble.stopAll()
         }
@@ -1532,14 +1589,15 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         Box(Modifier.fillMaxSize().background(Color.Black)
             .then(if (showGamePointer) Modifier else
                 Modifier.pointerHoverIcon(hiddenComposePointer, overrideDescendants = true))) {
-            if (handheld) AmbientSurfaceBackdropLayer(
+            if (handheld && settings.performanceProfile.handheldBackdrop) AmbientSurfaceBackdropLayer(
                 surface = vulkanSurfaceHost?.presentationSurface() ?: retroView,
                 enabled = true,
                 landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
                     android.content.res.Configuration.ORIENTATION_LANDSCAPE,
                 modifier = Modifier.fillMaxSize(),
                 sampling = running,
-                reducedEffects = LocalPerformanceProfile.current.reducedEffects ||
+                reducedEffects = settings.performanceProfile.reducedBackdropEffects ||
+                    LocalPerformanceProfile.current.reducedEffects ||
                     LocalPerformanceProfile.current.reducedPlayback,
             )
             GamePlayerTouchLayout(
@@ -1893,19 +1951,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     GamePanelText(stringResource(R.string.game_picture_hdr_unconfirmed))
                                 }
                             }
-                            if (selectedPack != null && selectedPackConfig == null) {
+                            if (selectedPack != null && !selectedPackPending && selectedPackConfig == null) {
                                 GamePanelText(stringResource(R.string.games_shader_packs_missing))
                             }
                             /** Shows what [state] chooses for this game, after the scope changed. */
                             fun applyPicture(state: GameSettingsState) {
-                                val pack = state.packShader(system, game.saveKey)
-                                val chosen = state.shader(system, game.saveKey)
-                                val packConfig = model.shaderPacks.config(pack)
-                                retroView.shader = GameHdrToneMapShader.forConfig(
-                                    packConfig ?: chosen.config(state.shaderStrength(system, game.saveKey)),
-                                    toneMap, session.vulkan, pixel = pack == null && chosen == GameShader.PIXEL,
-                                    effect = state.effect(system, game.saveKey).takeIf { packConfig == null },
-                                )
                                 retroView.aspectRatioOverride = state.aspect(system, game.saveKey).ratio ?: -1f
                                 val scaling = state.integerScaling(system, game.saveKey)
                                 retroView.integerScalingAuto = scaling == GameIntegerScaling.AUTO
@@ -1918,6 +1968,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     else stringResource(R.string.game_picture_scope, system.name),
                                 selected = gamePictureScope,
                                 onClick = {
+                                    pendingPackChoice = null
                                     if (gamePictureScope) {
                                         GameSettings.update { it.withoutGamePicture(game.saveKey) }
                                         applyPicture(GameSettings.state)
@@ -1932,20 +1983,16 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 selectedPack = selectedPack,
                                 installedPresets = installedShaders,
                                 onShaderSelected = { choice ->
-                                    retroView.shader = GameHdrToneMapShader.forGame(choice, toneMap, session.vulkan, shaderIntensity, effect)
+                                    pendingPackChoice = null
                                     GameSettings.update {
                                         if (gamePictureScope) it.withGameShader(game.saveKey, choice)
                                         else it.withShader(system, choice)
                                     }
                                 },
                                 onPackSelected = { preset ->
-                                    val verified = model.shaderPacks.config(preset.selection)
-                                    if (verified != null) {
-                                        retroView.shader = GameHdrToneMapShader.forConfig(verified, toneMap, session.vulkan)
-                                        GameSettings.update {
-                                            it.withPackShader(system, game.saveKey.takeIf { gamePictureScope }, preset.selection)
-                                        }
-                                    }
+                                    pendingPackChoice = GameShaderPackChoice(
+                                        preset.selection, gamePictureScope, GameSettings.state,
+                                    )
                                 },
                             )
                             if (selectedPack == null && GameRetroShaders.isCustom(shader)) {
@@ -1958,7 +2005,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     valueLabel = stringResource(R.string.game_shader_strength_value, percent),
                                     onValueChange = { value ->
                                         val next = value / 100f
-                                        retroView.shader = GameHdrToneMapShader.forGame(shader, toneMap, session.vulkan, next, effect)
+                                        pendingPackChoice = null
                                         GameSettings.update {
                                             it.withShaderStrength(system, game.saveKey.takeIf { gamePictureScope }, next)
                                         }
@@ -1980,7 +2027,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     dropUp = false,
                                     onSelected = { key ->
                                         val chosen = GameShader.fromKey(key)?.takeIf { it in GamePictureDefaults.effects }
-                                        retroView.shader = GameHdrToneMapShader.forGame(shader, toneMap, session.vulkan, shaderIntensity, chosen)
+                                        pendingPackChoice = null
                                         GameSettings.update {
                                             if (gamePictureScope) it.withGameEffect(game.saveKey, chosen)
                                             else it.withEffect(system, chosen)

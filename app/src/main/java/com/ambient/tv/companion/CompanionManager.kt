@@ -1084,7 +1084,10 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                 if (!withTimeout(15_000) { ack.await() }) throw CompanionBackupRejected(backupAckError)
             }
             try {
-                if (reverse == null) queue.send(CompanionFrame(type = "input_release"))
+                if (reverse == null) {
+                    check(commands === queue && mutable.value.online)
+                    check(liveInputs.offerRemoteRelease(CompanionFrame(type = "input_release")))
+                }
                 transmit(CompanionFrame(type = "backup_begin", transferId = id, total = bytes.size, digest = fingerprint(bytes), mode = mode, credentials = credentials, sessions = sessions))
                 var index = 0
                 for (offset in bytes.indices step 4096) {
@@ -2103,7 +2106,10 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
             backupStatus = if (it.backupStatus in setOf("pending", "sending")) "failed" else it.backupStatus) }
     }
     @Synchronized fun send(command: CompanionFrame): Boolean {
-        if (!mutable.value.online || !commands.trySend(command).isSuccess) {
+        val accepted = mutable.value.online && if (command.type == "input_release") {
+            liveInputs.offerRemoteRelease(command)
+        } else commands.trySend(command).isSuccess
+        if (!accepted) {
             notice(R.string.companion_connect_failed, error = true); return false
         }
         return true

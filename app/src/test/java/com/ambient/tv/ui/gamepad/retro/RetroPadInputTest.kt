@@ -109,6 +109,62 @@ class RetroPadInputTest {
         assertTrue(input.rumbleDeviceIds(1).isEmpty())
     }
 
+    @Test fun rumbleRoutesReuseSnapshotsAndFollowReservationHotplugAndConfig() {
+        assertTrue(input.rumbleDeviceIds(0).isEmpty())
+        press(1, KeyEvent.KEYCODE_BUTTON_A)
+        press(2, KeyEvent.KEYCODE_BUTTON_A)
+        val first = input.rumbleDeviceIds(0)
+        assertEquals(listOf(1), first)
+        assertTrue(first === input.rumbleDeviceIds(0))
+        assertEquals(listOf(2), input.rumbleDeviceIds(1))
+        input.releaseAll()
+        assertTrue(first === input.rumbleDeviceIds(0))
+
+        input.reserveRemotePort(0, true)
+        assertTrue(input.rumbleDeviceIds(0).isEmpty())
+        assertEquals(listOf(2), input.rumbleDeviceIds(1))
+        assertEquals(listOf(1), input.rumbleDeviceIds(2))
+        input.reserveRemotePort(0, false)
+        assertEquals(listOf(1), input.rumbleDeviceIds(2))
+        config = config.withPort("dev-1", 1).withPort("dev-2", RetroPorts.OFF)
+        // A normal input path may notice the changed config before rumble does.
+        press(1, KeyEvent.KEYCODE_BUTTON_B)
+        assertEquals(listOf(1), input.rumbleDeviceIds(1))
+        assertTrue(input.rumbleDeviceIds(2).isEmpty())
+        input.deviceRemoved(1)
+        assertTrue(input.rumbleDeviceIds(1).isEmpty())
+        assertEquals(listOf(1), first) // published snapshots are never mutated
+        press(1, KeyEvent.KEYCODE_BUTTON_A)
+        assertEquals(listOf(1), input.rumbleDeviceIds(1))
+    }
+
+    @Test fun aggregatePublicationKeepsAllChannelsAndOnlyNotifiesChanges() {
+        val ports = mutableListOf<Int>()
+        input.onPortChanged = { ports += it }
+        input.reserveRemotePort(1, true)
+        input.remoteState(1, RetroPadButton.A.mask, .5f, -.5f, .25f, -.25f, .4f, .8f)
+        assertEquals(listOf(1), ports)
+        assertEquals(RetroPadButton.A.mask, input.buttons(1))
+        assertEquals(16384, input.analog(1, 0, 0))
+        assertEquals(-16383, input.analog(1, 0, 1))
+        assertEquals(8192, input.analog(1, 1, 0))
+        assertEquals(-8192, input.analog(1, 1, 1))
+        assertEquals(13107, input.trigger(1, 0))
+        assertEquals(26214, input.trigger(1, 1))
+        repeat(100) {
+            input.remoteState(1, RetroPadButton.A.mask, .5f, -.5f, .25f, -.25f, .4f, .8f)
+        }
+        assertEquals(listOf(1), ports)
+        input.clearRemotePort(1)
+        assertEquals(listOf(1, 1), ports)
+        assertEquals(0, input.buttons(1))
+        for (index in 0..1) {
+            assertEquals(0, input.analog(1, index, 0))
+            assertEquals(0, input.analog(1, index, 1))
+            assertEquals(0, input.trigger(1, index))
+        }
+    }
+
     @Test fun defaultsFollowPositions() {
         val pad = defaultRetroProfile(RetroInputKind.GAMEPAD)
         assertEquals(RetroPadButton.B, pad.button(KeyEvent.KEYCODE_BUTTON_A))
@@ -150,6 +206,15 @@ class RetroPadInputTest {
         assertTrue(input.hasActiveGamepad(1))
         input.releaseAll()
         assertEquals(0, input.trigger(0, 1))
+    }
+
+    @Test fun portNotificationsAreLocalAndOnlyForChanges() {
+        val ports = mutableListOf<Int>()
+        input.onPortChanged = { ports += it }
+        input.touchButton(RetroPadButton.A, true)
+        input.touchButton(RetroPadButton.A, true)
+        input.touchButton(RetroPadButton.A, false)
+        assertEquals(listOf(0, 0), ports)
     }
 
     @Test fun assigningMovesTheKeyAndTheDefaultNeedsNoStorage() {
@@ -437,6 +502,99 @@ class RetroPadInputTest {
         assertEquals(RetroPadButton.B.mask, input.buttons(2))
         input.reserveRemotePort(2, false)
         assertEquals(0, input.buttons(2))
+    }
+
+    @Test fun companionProjectionKeepsPressureLiveDuringUnchangedButtonAndStickPackets() {
+        val descriptor = companionControllerDescriptor("pressure-cache")
+        config = config.assignDevice(RetroInputKind.COMPANION, descriptor,
+            RetroInputTarget.Button(RetroPadButton.R2), companionControllerKey(RetroPadButton.L2))
+        input.reserveRemotePort(1, true, descriptor)
+        input.reserveRemotePort(2, true)
+        val changed = mutableListOf<Int>()
+        input.onPortChanged = { changed += it }
+        fun send(left: Float, x: Float = 0f) =
+            input.remoteState(1, RetroPadButton.B.mask, x, 0f, 0f, 0f, left, 0f)
+        send(.25f)
+        assertEquals(0, input.trigger(1, 0))
+        assertEquals(8192, input.trigger(1, 1))
+        repeat(10) { send(.25f) }
+        assertEquals(listOf(1), changed)
+        send(.75f, .5f)
+        assertEquals(24575, input.trigger(1, 1))
+        assertEquals(16384, input.analog(1, 0, 0))
+        input.remoteState(2, 0, 0f, 0f, 0f, 0f, .5f, 0f)
+        assertEquals(16384, input.trigger(2, 0))
+        assertEquals(24575, input.trigger(1, 1))
+        config = config.resetDevice(RetroInputKind.COMPANION, descriptor)
+        send(.75f, .5f)
+        assertEquals(24575, input.trigger(1, 0))
+        assertEquals(0, input.trigger(1, 1))
+        input.clearRemotePort(1, suppressHeld = true)
+        send(.75f)
+        assertEquals(0, input.trigger(1, 0))
+        assertEquals(0, input.buttons(1))
+        send(0f)
+        send(.25f)
+        assertEquals(8192, input.trigger(1, 0))
+        input.reserveRemotePort(1, false)
+        input.reserveRemotePort(1, true)
+        send(.75f)
+        assertEquals(24575, input.trigger(1, 0))
+    }
+
+    @Test fun companionProjectionMatchesPreviousMappingForAllButtonMasks() {
+        val code = ::companionControllerKey
+        val profile = RetroInputProfile(
+            buttons = mapOf(
+                RetroPadButton.L2 to listOf(code(RetroPadButton.R2), code(RetroPadButton.A)),
+                RetroPadButton.R2 to listOf(code(RetroPadButton.L2), code(RetroPadButton.B)),
+                RetroPadButton.X to listOf(code(RetroPadButton.X), code(RetroPadButton.Y)),
+            ),
+            menu = mapOf(
+                RetroMenuTrigger.REWIND to listOf(code(RetroPadButton.X)),
+                RetroMenuTrigger.HOLD to listOf(code(RetroPadButton.B)),
+                RetroMenuTrigger.PRESS to listOf(code(RetroPadButton.L)),
+                RetroMenuTrigger.FAST_FORWARD to listOf(code(RetroPadButton.R)),
+            ),
+        )
+        val projection = CompanionInputProjection()
+        fun hotkey(key: Int) = profile.opensMenu(key) || profile.holdOpensMenu(key) ||
+            profile.rewinds(key) || profile.fastForwards(key)
+        for (mask in 0..0xffff) {
+            var expected = companionMappedButtons(mask, profile)
+            var rewind = false
+            var left = 0
+            var right = 0
+            for (source in RetroPadButton.entries) {
+                val key = code(source)
+                val target = profile.button(key)
+                val down = mask and source.mask != 0
+                if (down && profile.rewinds(key)) rewind = true
+                if (hotkey(key)) {
+                    if (down && target != null) expected = expected and target.mask.inv()
+                    continue
+                }
+                val value = when (source) {
+                    RetroPadButton.L2 -> 8192
+                    RetroPadButton.R2 -> 24575
+                    else -> if (down) RetroPadInput.ANALOG_MAX else 0
+                }
+                if (target == RetroPadButton.L2) left = maxOf(left, value)
+                if (target == RetroPadButton.R2) right = maxOf(right, value)
+            }
+            projection.update(profile, mask)
+            assertEquals(expected, projection.buttons)
+            assertEquals(rewind, projection.rewind)
+            assertEquals(left, projection.leftPressure(8192, 24575))
+            assertEquals(right, projection.rightPressure(8192, 24575))
+            projection.update(profile, mask) // cache hit must be identical
+            assertEquals(expected, projection.buttons)
+        }
+        projection.update(null, RetroPadButton.L2.mask)
+        assertEquals(RetroPadButton.L2.mask, projection.buttons)
+        assertFalse(projection.rewind)
+        assertEquals(8192, projection.leftPressure(8192, 24575))
+        assertEquals(24575, projection.rightPressure(8192, 24575))
     }
 
     @Test fun companionProfileHasAnIdentityLayoutAndSurvivesSettingsEncoding() {

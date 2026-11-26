@@ -1,0 +1,170 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -44,3 +44,4 @@
+ #include "vulkanwsiacquirestate.h"
+ #include "vulkanpresentfences.h"
++#include "vulkanslanghistoryuse.h"
+ #include "nativepresentation.h"
+@@ -380,4 +381,5 @@
+     // Explicit slot helpers; the legacy public path still uses frameSlot.
+     bool waitForSlotFrame(FrameSlot& slot);
+     bool clearSlotImage(FrameSlot& slot);
++    bool waitForNativeSlangFrame();
+     bool canRetireFrameSlots() const noexcept;
+@@ -483,4 +485,5 @@
+     VulkanSlangPipeline nativeSlang;
++    VulkanSlangHistoryUse nativeSlangUse;
+     std::string nativeSlangPath;
+     uint64_t nativeSlangFrame = 0;
+     NativePresentationGate nativePresentation;
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -540,4 +540,6 @@
+     if (!drainNativeAcquireSignals()) return false;
+     if (device != VK_NULL_HANDLE && nativeSdrSwapchain != VK_NULL_HANDLE &&
+         !waitForDeviceIdle()) return false;
++    if (!nativeSlangUse.idle())
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "unproven Slang history retirement");
+     if (!nativeAcquireState.allIdle())
+@@ -630,4 +632,8 @@
+     if (keepFilteredSwapchain) {
+         if (!waitForDeviceIdle()) return;
++        if (!nativeSlangUse.idle()) {
++            checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "unproven Slang preset retirement");
++            return;
++        }
+         nativePresentation.invalidateFrame();
+         nativeSlang.releaseGpu();
+@@ -1260,3 +1266,4 @@
+ bool VulkanBackend::destroyFrameBuffer() {
+     if (device != VK_NULL_HANDLE && !shutdownReady && !waitForFrame()) return false;
++    if (!nativeSlangUse.idle() && !waitForNativeSlangFrame()) return false;
+     // Resize, precision fallback and EGL-generation replacement retire the
+@@ -1600,6 +1607,11 @@
+     if (!checkFrameResult(vk.resetFences(device, 1, &slot.fence), "reset frame fence")) return false;
+     slot.inFlight = false;
+-    if (&slot == &frameSlot) nativeAcquireState.completeSubmitted(0);
+-    else if (&slot == &spareFrameSlot) nativeAcquireState.completeSubmitted(1);
++    if (&slot == &frameSlot) {
++        nativeAcquireState.completeSubmitted(0);
++        nativeSlangUse.completeSubmitted(0);
++    } else if (&slot == &spareFrameSlot) {
++        nativeAcquireState.completeSubmitted(1);
++        nativeSlangUse.completeSubmitted(1);
++    }
+     return true;
+ }
+@@ -1680,3 +1692,17 @@
+-bool VulkanBackend::waitForDeviceIdle() {
+-    if (device == VK_NULL_HANDLE || shutdownReady) return true;
++bool VulkanBackend::waitForNativeSlangFrame() {
++    if (nativeSlangUse.idle()) return true;
++    if (!nativeSlangUse.submitted())
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "unsubmitted Slang history");
++    auto& owner = nativeSlangUse.owner() == 0 ? frameSlot : spareFrameSlot;
++    if (!owner.inFlight)
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "missing Slang owner submission");
++    if (!waitForSlotFrame(owner)) return false;
++    return nativeSlangUse.idle() ||
++        checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "unretired Slang history");
++}
++
++bool VulkanBackend::waitForDeviceIdle() {
++    if (device == VK_NULL_HANDLE || shutdownReady)
++        return nativeSlangUse.idle() ||
++            checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "missing Slang idle proof");
+     if (vk.deviceWaitIdle == nullptr) {
+@@ -1698,8 +1724,10 @@
+     if (result == VK_ERROR_DEVICE_LOST) {
+         checkFrameResult(result, "wait for device idle");
+-        return true;
+-    }
+-    if (!checkFrameResult(result, "wait for device idle")) return false;
+-    nativeAcquireState.completeAllSubmitted();
++        nativeSlangUse.retireAfterDeviceIdle();
++        return true;
++    }
++    if (!checkFrameResult(result, "wait for device idle")) return false;
++    nativeAcquireState.completeAllSubmitted();
++    nativeSlangUse.retireAfterDeviceIdle();
+     return true;
+ }
+@@ -1710,3 +1738,3 @@
+ bool VulkanBackend::canRetireFrameSlots() const noexcept {
+-    if ((device && !vk.destroyDevice) || !frameSlot.canRetire(vk, device) ||
++    if (!nativeSlangUse.idle() || (device && !vk.destroyDevice) || !frameSlot.canRetire(vk, device) ||
+             !spareFrameSlot.canRetire(vk, device)) return false;
+@@ -1780,4 +1808,4 @@
+-    if (!waitForFrame()) return false;
++    if (!waitForFrame() || !waitForNativeSlangFrame()) return false;
+ 
+     const VulkanColorCopy::Source colorSource {
+         pendingImage.format, pendingImage.components, pendingImage.viewType,
+@@ -2010,3 +2038,7 @@
+                                   0, 0, nullptr, 0, nullptr, 1, &colorBarrier);
++            // Even a failed FFI record may have changed the chain's history
++            // or created objects referenced by the partially recorded commands.
++            if (!nativeSlangUse.begin(0))
++                return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "overlapping Slang history");
+             shaderRecorded = nativeSlang.record(commandBuffer, nativeSlangFrame++,
+                 normalized.image, normalized.format, normalized.width, normalized.height,
+@@ -2150,4 +2182,6 @@
+     if (!checkFrameResult(result, "submit frame")) return false;
+     frameSlot.bridgeSync.readPending = false; // this submit consumes the temporary payload
+     frameSlot.inFlight = true;
++    if (!nativeSlangUse.idle() && !nativeSlangUse.markSubmitted(0))
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "mismatched Slang owner submission");
+     const int exportedFd = exportWrite ? exportBridgeWriteFence() : NoBridgeWriteFence;
+diff --git a/src/main/cpp/vulkan/vulkanslanghistoryuse.h b/src/main/cpp/vulkan/vulkanslanghistoryuse.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/vulkan/vulkanslanghistoryuse.h
+@@ -0,0 +1,46 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++#include <cstddef>
++
++namespace libretrodroid {
++
++// A single temporal filter chain is shared by all frame slots. Recording may
++// mutate history and allocate GPU resources even when the FFI returns an error.
++// With librashader frames_in_flight=1, neither another record nor destruction
++// may proceed until the owning submission (or the entire device) has retired.
++class VulkanSlangHistoryUse {
++public:
++    enum class Phase { Idle, Recorded, Submitted };
++    static constexpr std::size_t noOwner = 2;
++
++    bool idle() const noexcept { return phase == Phase::Idle; }
++    std::size_t owner() const noexcept { return slot; }
++    bool submitted() const noexcept { return phase == Phase::Submitted; }
++
++    bool begin(std::size_t index) noexcept {
++        if (!idle() || index >= noOwner) return false;
++        slot = index;
++        phase = Phase::Recorded;
++        return true;
++    }
++    bool markSubmitted(std::size_t index) noexcept {
++        if (phase != Phase::Recorded || slot != index) return false;
++        phase = Phase::Submitted;
++        return true;
++    }
++    void completeSubmitted(std::size_t index) noexcept {
++        if (phase == Phase::Submitted && slot == index) retireAfterDeviceIdle();
++    }
++    // Covers failed/abandoned recordings as well as accepted submissions.
++    // The caller must establish device-idle or device-loss proof first.
++    void retireAfterDeviceIdle() noexcept {
++        phase = Phase::Idle;
++        slot = noOwner;
++    }
++
++private:
++    Phase phase = Phase::Idle;
++    std::size_t slot = noOwner;
++};
++
++} // namespace libretrodroid

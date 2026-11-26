@@ -76,6 +76,8 @@ class RetroPadInput(
     private val portTriggers = AtomicIntegerArray(RetroPorts.COUNT * 2)
     private var portSettings: RetroInputConfig? = null
     private val resolvedPorts = mutableMapOf<String, Int>()
+    // Main-thread snapshots: rebuilt only when routing or observed device identity changes.
+    private val rumbleRoutes = arrayOfNulls<List<Int>>(RetroPorts.COUNT)
     /** Virtual handset controls share player 1 with physical inputs; union, never replace, their state. */
     private var touchButtons = 0
     private val touchAnalog = IntArray(4)
@@ -91,6 +93,7 @@ class RetroPadInput(
     /** Profiles are immutable until the settings reference changes: no rebuild on every 60Hz frame. */
     private val remoteProfileSettings = arrayOfNulls<RetroInputConfig>(RetroPorts.COUNT)
     private val remoteProfiles = arrayOfNulls<RetroInputProfile>(RetroPorts.COUNT)
+    private val remoteProjections = Array(RetroPorts.COUNT) { CompanionInputProjection() }
     private val remoteRawButtons = IntArray(RetroPorts.COUNT)
     /** Buttons held while an OSD opens must be physically released before playing again. */
     private val remoteSuppressed = IntArray(RetroPorts.COUNT)
@@ -101,6 +104,8 @@ class RetroPadInput(
 
     /** Called on the main thread only when an aggregate button, stick or pressure changed. */
     var onChanged: (() -> Unit)? = null
+    /** Immediate native hand-off, only for the changed aggregate port. Main thread. */
+    var onPortChanged: ((Int) -> Unit)? = null
 
     /** RETRO_DEVICE_JOYPAD bitmask of [port] (bit = RETRO_DEVICE_ID_JOYPAD_*). Any thread. */
     fun buttons(port: Int): Int = if (port in 0 until RetroPorts.COUNT) portButtons.get(port) else 0
@@ -147,10 +152,11 @@ class RetroPadInput(
         if (port !in 0 until RetroPorts.COUNT) return
         if (!reserved) clearRemotePort(port)
         remoteReserved[port] = reserved
-        resolvedPorts.clear()
+        invalidatePorts()
         remoteDescriptors[port] = if (reserved) descriptor else null
         remoteProfileSettings[port] = null
         remoteProfiles[port] = null
+        remoteProjections[port] = CompanionInputProjection()
         // A physical auto-assignment may have moved when this port was reserved/freed.
         recomputeAll()
     }
@@ -266,43 +272,24 @@ class RetroPadInput(
             }
         }
         remoteRawButtons[port] = sourceButtons
-        val rewind = profile != null && RetroPadButton.entries.any {
-            sourceButtons and it.mask != 0 && profile.rewinds(companionControllerKey(it))
-        }
+        val projection = remoteProjections[port]
+        projection.update(profile, sourceButtons)
+        val rewind = projection.rewind
         if (rewind != remoteRewindHeld[port]) {
             remoteRewindHeld[port] = rewind
             onRewind(rewinding() > 0 || remoteRewindHeld.any { it })
         }
-        var nextButtons = if (profile != null) companionMappedButtons(sourceButtons, profile)
-            else sourceButtons
-        if (profile != null) RetroPadButton.entries.forEach { source ->
-            val code = companionControllerKey(source)
-            if (sourceButtons and source.mask != 0 &&
-                (profile.opensMenu(code) || profile.holdOpensMenu(code) ||
-                    profile.rewinds(code) || profile.fastForwards(code)))
-                profile.button(code)?.let { nextButtons = nextButtons and it.mask.inv() }
-        }
+        val nextButtons = projection.buttons
         // A full chord must come from this one paired controller, not a heartbeat,
         // a previously suppressed key or buttons held on another player's device.
         if (profile != null && sourceButtons != previousRaw && config().menuCombo.matches(nextButtons)) {
             openMenu()
             return
         }
-        var nextLeft = 0
-        var nextRight = 0
-        for (source in RetroPadButton.entries) {
-            val code = companionControllerKey(source)
-            if (profile != null && (profile.opensMenu(code) || profile.holdOpensMenu(code) ||
-                    profile.rewinds(code) || profile.fastForwards(code))) continue
-            val target = if (profile == null) source else profile.button(code) ?: continue
-            val value = when (source) {
-                RetroPadButton.L2 -> if (remoteSuppressedTriggers[triggerAt]) 0 else incomingLeft
-                RetroPadButton.R2 -> if (remoteSuppressedTriggers[triggerAt + 1]) 0 else incomingRight
-                else -> digitalPressure(sourceButtons, source)
-            }
-            if (target == RetroPadButton.L2 && value > nextLeft) nextLeft = value
-            if (target == RetroPadButton.R2 && value > nextRight) nextRight = value
-        }
+        val effectiveLeft = if (remoteSuppressedTriggers[triggerAt]) 0 else incomingLeft
+        val effectiveRight = if (remoteSuppressedTriggers[triggerAt + 1]) 0 else incomingRight
+        val nextLeft = projection.leftPressure(effectiveLeft, effectiveRight)
+        val nextRight = projection.rightPressure(effectiveLeft, effectiveRight)
         val nextX = virtualStick(leftX)
         val nextY = virtualStick(leftY)
         val nextRX = virtualStick(rightX)
@@ -331,11 +318,7 @@ class RetroPadInput(
 
     /** The player [info] plays as right now, or null (off or more than four players). */
     fun port(info: RetroInputDevice): Int? {
-        val settings = config()
-        if (portSettings !== settings) {
-            portSettings = settings
-            resolvedPorts.clear()
-        }
+        val settings = currentPortSettings()
         resolvedPorts[info.descriptor]?.let { return it.takeIf { value -> value >= 0 } }
         val assigned = settings.ports[info.descriptor]
         val result = when {
@@ -360,6 +343,20 @@ class RetroPadInput(
         }
         resolvedPorts[info.descriptor] = result ?: RetroPorts.OFF
         return result
+    }
+
+    private fun invalidatePorts() {
+        resolvedPorts.clear()
+        rumbleRoutes.fill(null)
+    }
+
+    private fun currentPortSettings(): RetroInputConfig {
+        val settings = config()
+        if (portSettings !== settings) {
+            portSettings = settings
+            invalidatePorts()
+        }
+        return settings
     }
 
     private fun profile(state: DeviceState): RetroInputProfile {
@@ -508,9 +505,17 @@ class RetroPadInput(
     private fun rewinding(): Int = devices.values.sumOf { it.rewindKeys.size }
 
     /** Physical gamepads assigned to [port], even after pause releases their held input. */
-    fun rumbleDeviceIds(port: Int): List<Int> = observedDevices.values
-        .filter { it.kind == RetroInputKind.GAMEPAD && port(it) == port }
-        .map { it.id }
+    fun rumbleDeviceIds(port: Int): List<Int> {
+        if (port !in 0 until RetroPorts.COUNT) return emptyList()
+        currentPortSettings()
+        rumbleRoutes[port]?.let { return it }
+        // Preserve observed-device order and the existing automatic assignment rules.
+        return buildList {
+            for (info in observedDevices.values) {
+                if (info.kind == RetroInputKind.GAMEPAD && port(info) == port) add(info.id)
+            }
+        }.also { rumbleRoutes[port] = it }
+    }
 
     /** Lets go of everything (game paused, menu opened, focus lost). */
     fun releaseAll() {
@@ -530,7 +535,7 @@ class RetroPadInput(
         val state = devices.remove(deviceId)
         val info = observedDevices.remove(deviceId) ?: state?.info
         if (info?.kind == RetroInputKind.GAMEPAD) automaticPorts.remove(info.descriptor)
-        resolvedPorts.clear()
+        invalidatePorts()
         state?.holds?.values?.forEach { it() }
         if (state?.rewindKeys?.isNotEmpty() == true && rewinding() == 0) onRewind(false)
         recomputeAll()
@@ -566,7 +571,7 @@ class RetroPadInput(
         }
         val info = device(deviceId)
         if (port(info) == null) return null
-        observedDevices[deviceId] = info
+        if (observedDevices.put(deviceId, info) != info) rumbleRoutes.fill(null)
         return DeviceState(info, axisLayout(deviceId)).also { devices[deviceId] = it }
     }
 
@@ -619,14 +624,25 @@ class RetroPadInput(
             if (leftX == 0) leftX = dpadAxis(buttons, 0)
             if (leftY == 0) leftY = dpadAxis(buttons, 1)
         }
-        var changed = portButtons.getAndSet(port, buttons) != buttons
-        if (portAnalog.getAndSet(at, leftX) != leftX) changed = true
-        if (portAnalog.getAndSet(at + 1, leftY) != leftY) changed = true
-        if (portAnalog.getAndSet(at + 2, rightX) != rightX) changed = true
-        if (portAnalog.getAndSet(at + 3, rightY) != rightY) changed = true
-        if (portTriggers.getAndSet(triggerAt, leftTrigger) != leftTrigger) changed = true
-        if (portTriggers.getAndSet(triggerAt + 1, rightTrigger) != rightTrigger) changed = true
-        if (changed) onChanged?.invoke()
+        var changed = portButtons.publishIfChanged(port, buttons)
+        if (portAnalog.publishIfChanged(at, leftX)) changed = true
+        if (portAnalog.publishIfChanged(at + 1, leftY)) changed = true
+        if (portAnalog.publishIfChanged(at + 2, rightX)) changed = true
+        if (portAnalog.publishIfChanged(at + 3, rightY)) changed = true
+        if (portTriggers.publishIfChanged(triggerAt, leftTrigger)) changed = true
+        if (portTriggers.publishIfChanged(triggerAt + 1, rightTrigger)) changed = true
+        if (changed) {
+            onPortChanged?.invoke(port)
+            onChanged?.invoke()
+        }
+    }
+
+    // All writers are on the main thread. Readers still get volatile atomic values.
+    // Avoid seven read-modify-write operations for unchanged high-rate input events.
+    private fun AtomicIntegerArray.publishIfChanged(index: Int, value: Int): Boolean {
+        if (get(index) == value) return false
+        set(index, value)
+        return true
     }
 
     private fun digitalPressure(buttons: Int, button: RetroPadButton): Int =

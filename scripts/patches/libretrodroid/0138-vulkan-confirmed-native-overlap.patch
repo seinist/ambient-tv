@@ -1,0 +1,153 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -1819,6 +1819,11 @@
+     auto& colorCopy = slot.colorCopy;
+     auto& colorCopyRejected = slot.colorCopyRejected;
+     if (writeFd) *writeFd = NoBridgeWriteFence;
++    // A confirmed frame from this exact WSI generation can remain visible
++    // while a later accepted presentation is pending. First frame and every
++    // visibility/preset/surface transition still require CPU completion.
++    const bool nativeWasConfirmed = nativePresentation.hasPresentedFrame();
++    const VkSwapchainKHR confirmedSwapchain = nativeSdrSwapchain;
+     nativePresentation.invalidateFrame();
+     if (hasFatalError() || shutdownReady || !isStarted() || frameImage == VK_NULL_HANDLE ||
+         pendingImage.image == VK_NULL_HANDLE) return false;
+@@ -2209,12 +2214,19 @@
+             checkFrameResult(presentResult, "present frame");
+         }
+     }
+-    // Defer the host fence only on the non-WSI bridge path with a real write
+-    // proof and both imported slots. The next core index can run while this
+-    // submission completes; EGL must queue its wait before selecting the image.
+-    // Native WSI and temporal Slang remain on the existing synchronous path.
+-    const bool deferHostWait = useSpareFrame() && !useDirect && !shaderFailed &&
+-        copied && writeFd && exportedFd >= -1 && !hasFatalError();
++    // Only the explicitly fenced WSI path may overlap a confirmed native
++    // generation. The per-image present fence owns presentation completion;
++    // the per-slot render fence owns core/normalizer/Slang completion. Slang
++    // still has one temporal chain: the next recording waits its owner.
++    const bool confirmedNativeOverlap = useDirect && nativePresentFencesEnabled &&
++        nativeWasConfirmed && confirmedSwapchain != VK_NULL_HANDLE &&
++        confirmedSwapchain == nativeSdrSwapchain && queueNativePresent &&
++        (presentResult == VK_SUCCESS || presentResult == VK_SUBOPTIMAL_KHR);
++    // The EGL write proof also covers immediate GLES fallback and capture.
++    // No export, initial native frame, rejected present, legacy WSI or failed
++    // shader must defer the host wait.
++    const bool deferHostWait = useSpareFrame() && (!useDirect || confirmedNativeOverlap) &&
++        !shaderFailed && copied && writeFd && exportedFd >= -1 && !hasFatalError();
+     if (!deferHostWait && !waitForSlotFrame(slot)) {
+         if (exportedFd >= 0) close(exportedFd);
+         return false;
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -1692,7 +1692,7 @@
+                 return;
+             }
+             bool queuedReadWait = false;
+-            if (backend.canImportBridgeReadFence()) {
++            if (video->externalFrameSlotNeedsReadWait(slotIndex) && backend.canImportBridgeReadFence()) {
+                 queuedReadWait = traceGameCall("AmbientGame GLES read fence import", [&] {
+                     return backend.importBridgeReadFence(video->exportExternalReadFence());
+                 });
+@@ -1715,6 +1715,10 @@
+                 // true when the bridge copy succeeded and must accept the new source.
+                 return;
+             }
++            // An accepted submission consumed the imported read semaphore.
++            // Its owning slot fence gates reuse; clear only that slot's old
++            // EGL access record. Failed/rejected frames remain conservative.
++            if (queuedReadWait) video->externalFrameSlotReadWaitSubmitted(slotIndex);
+             // In dual-slot bridge mode a successful export can replace the
+             // immediate CPU wait, but only if EGL queues the wait before
+             // publication. Import consumes the FD even when it fails.
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -1221,6 +1221,18 @@
+     return externalFrame.finishSlotUse(index, eglGetCurrentDisplay(), eglGetCurrentContext(), ops);
+ }
+ 
++bool Video::externalFrameSlotNeedsReadWait(std::size_t index) const {
++    const auto* slot = externalFrame.get(index);
++    return !externalFrames || !slot ||
++        slot->lease.needsUseCompletion(slot->texture, eglGetCurrentDisplay(), eglGetCurrentContext());
++}
++
++void Video::externalFrameSlotReadWaitSubmitted(std::size_t index) {
++    auto* slot = externalFrame.get(index);
++    if (externalFrames && slot)
++        slot->lease.markWaitSubmitted(slot->texture, eglGetCurrentDisplay(), eglGetCurrentContext());
++}
++
+ bool Video::prepareExternalFrameResize() {
+     // Drain the last published slot first. The primary allocation is retained
+     // until the replacement attaches; stop borrowing the spare before release.
+@@ -1346,15 +1358,16 @@
+ bool Video::selectExternalFrameSlot(std::size_t index, AHardwareBuffer* buffer, unsigned width, unsigned height,
+                                     std::uint64_t allocationBytes) {
+     if (!externalFrames) return false;
+-    const auto previous = externalFrame.selected();
+     const auto previousTexture = hwRenderTexture;
+     // Publication must name the precise imported allocation. This checks identity,
+     // not GPU completion; the caller still owns the write-completion proof.
+     if (!externalFrame.selectMatching(index, buffer, width, height, allocationBytes,
+             eglGetCurrentDisplay(), eglGetCurrentContext(), hwRenderTexture)) return false;
+     const auto& slot = *externalFrame.get(index);
+-    if (previous == index && previousTexture == hwRenderTexture &&
+-            hwFBOWidth == slot.width && hwFBOHeight == slot.height) return true;
++    // Alternating equally sized AHB textures changes only the borrowed name.
++    // Rebuilding renderer geometry on every slot rotation is unnecessary.
++    // Initial/replacement imports still initialize the renderer.
++    if (previousTexture && hwFBOWidth == slot.width && hwFBOHeight == slot.height) return true;
+     hwFBOWidth = slot.width;
+     hwFBOHeight = slot.height;
+     if (renderer != nullptr) {
+diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
+--- a/src/main/cpp/video.h
++++ b/src/main/cpp/video.h
+@@ -175,6 +175,9 @@
+     bool matchesExternalFrameSlot(std::size_t index, AHardwareBuffer* buffer, unsigned width, unsigned height,
+                                   std::uint64_t allocationBytes) const;
+     bool finishExternalFrameSlotUse(std::size_t index);
++    bool externalFrameSlotNeedsReadWait(std::size_t index) const;
++    // Only after an accepted Vulkan submission consumed the queued read wait.
++    void externalFrameSlotReadWaitSubmitted(std::size_t index);
+     bool prepareExternalFrameResize();
+     // Caller has proved Vulkan write completion or queued its EGL server wait.
+     bool publishExternalFrame(std::size_t index, AHardwareBuffer* buffer, unsigned width, unsigned height,
+diff --git a/src/main/cpp/vulkan/nativepresentation.h b/src/main/cpp/vulkan/nativepresentation.h
+--- a/src/main/cpp/vulkan/nativepresentation.h
++++ b/src/main/cpp/vulkan/nativepresentation.h
+@@ -56,6 +56,7 @@
+     }
+     void invalidateFrame() { framePresented = false; }
+     void didPresentFrame() { framePresented = true; }
++    bool hasPresentedFrame() const noexcept { return framePresented; }
+     void reset() { *this = NativePresentationGate{}; }
+ 
+     PrimaryDraw primaryDraw(bool force, bool canSkip) {
+diff --git a/src/main/cpp/externalframelease.h b/src/main/cpp/externalframelease.h
+--- a/src/main/cpp/externalframelease.h
++++ b/src/main/cpp/externalframelease.h
+@@ -57,6 +57,19 @@
+         return true;
+     }
+ 
++    // A successful Vulkan submit that consumed the exported EGL read wait
++    // transfers this access proof to that slot's GPU completion fence.
++    // Never clear on export/import alone: an aborted frame may not consume it.
++    bool needsUseCompletion(Texture texture, Display currentDisplay, Context currentContext) const noexcept {
++        return !texture || !ownsContext(currentDisplay, currentContext) || pendingUse;
++    }
++
++    bool markWaitSubmitted(Texture texture, Display currentDisplay, Context currentContext) noexcept {
++        if (!texture || !ownsContext(currentDisplay, currentContext)) return false;
++        pendingUse = false;
++        return true;
++    }
++
+     // The next Vulkan write is safe only after the owning context finishes its
+     // outstanding access. Native-only frames never mark the lease, so consecutive
+     // Vulkan writes need not drain unrelated GLES work. Initial allocation may

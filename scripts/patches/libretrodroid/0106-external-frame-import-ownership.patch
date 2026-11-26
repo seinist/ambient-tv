@@ -1,0 +1,322 @@
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -721,70 +721,110 @@
+     eglMakeCurrent(eglDisplay, eglSurface, eglSurface, mainCtx);
+ }
+ 
+-void Video::releaseExternalFrame() {
+-    if (!externalFrames) return;
+-    if (hwRenderTexture != 0) {
+-        glDeleteTextures(1, &hwRenderTexture);
+-        hwRenderTexture = 0;
+-    }
+-    if (externalFrameImage != EGL_NO_IMAGE_KHR) {
+-        auto destroyImage = reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(eglGetProcAddress("eglDestroyImageKHR"));
+-        if (destroyImage != nullptr) destroyImage(eglGetCurrentDisplay(), externalFrameImage);
+-        externalFrameImage = EGL_NO_IMAGE_KHR;
+-    }
+-}
+-
+-bool Video::attachExternalFrame(AHardwareBuffer* buffer, unsigned int width, unsigned int height) {
+-    if (!externalFrames || buffer == nullptr) return false;
+-
+-    auto getClientBuffer = reinterpret_cast<PFNEGLGETNATIVECLIENTBUFFERANDROIDPROC>(
+-        eglGetProcAddress("eglGetNativeClientBufferANDROID"));
+-    auto createImage = reinterpret_cast<PFNEGLCREATEIMAGEKHRPROC>(eglGetProcAddress("eglCreateImageKHR"));
+-    auto targetTexture = reinterpret_cast<PFNGLEGLIMAGETARGETTEXTURE2DOESPROC>(
+-        eglGetProcAddress("glEGLImageTargetTexture2DOES"));
+-    if (getClientBuffer == nullptr || createImage == nullptr || targetTexture == nullptr) {
+-        LOGE("EGL cannot import AHardwareBuffer frames on this device");
+-        return false;
+-    }
+-
+-    releaseExternalFrame();
+-
+-    EGLint attributes[] = { EGL_IMAGE_PRESERVED_KHR, EGL_TRUE, EGL_NONE };
+-    externalFrameImage = createImage(
+-        eglGetCurrentDisplay(), EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_ANDROID, getClientBuffer(buffer), attributes);
+-    if (externalFrameImage == EGL_NO_IMAGE_KHR) {
+-        LOGE("eglCreateImageKHR failed for the Vulkan frame buffer: 0x%x", eglGetError());
+-        return false;
+-    }
+-
+-    glGenTextures(1, &hwRenderTexture);
+-    glBindTexture(GL_TEXTURE_2D, hwRenderTexture);
+-    // AHB allocation/import can succeed while a GLES driver rejects GL_RGBA16F as a
+-    // texture; report that error so the Vulkan bridge can retry with safe RGBA8.
+-    while (glGetError() != GL_NO_ERROR) {}
+-    targetTexture(GL_TEXTURE_2D, static_cast<GLeglImageOES>(externalFrameImage));
+-    const GLenum importError = glGetError();
+-    if (importError != GL_NO_ERROR) {
+-        LOGW("EGLImage to GLES texture import failed: 0x%x", importError);
+-        glBindTexture(GL_TEXTURE_2D, 0);
+-        releaseExternalFrame();
+-        return false;
+-    }
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+-    glBindTexture(GL_TEXTURE_2D, 0);
+-
+-    hwFBOWidth = width;
+-    hwFBOHeight = height;
+-    if (renderer != nullptr) {
+-        renderer->updateRenderedResolution(width, height);
+-    }
+-    LOGI("Vulkan frame buffer imported into GLES: tex=%u %ux%u", hwRenderTexture, width, height);
+-    return true;
+-}
+-
++void Video::ExternalFrameOps::finish() { glFinish(); }
++
++void Video::ExternalFrameOps::deleteTexture(Texture texture) { glDeleteTextures(1, &texture); }
++
++void Video::ExternalFrameOps::destroyImage(Destroy proc, Display display, Image image) {
++    if (proc(display, image) != EGL_TRUE) {
++        LOGW("Destroying imported Vulkan EGLImage failed: 0x%x", eglGetError());
++    }
++}
++
++void Video::ExternalFrameOps::releaseBuffer(Buffer buffer) { AHardwareBuffer_release(buffer); }
++
++void Video::finishExternalFrameUse() {
++    if (!externalFrames) return;
++    ExternalFrameOps ops;
++    externalFrame.finishUse(hwRenderTexture, eglGetCurrentDisplay(), eglGetCurrentContext(), ops);
++}
++
++void Video::releaseExternalFrame() {
++    if (!externalFrames) return;
++    ExternalFrameOps ops;
++    externalFrame.release(hwRenderTexture, eglGetCurrentDisplay(), eglGetCurrentContext(), ops);
++}
++
++bool Video::attachExternalFrame(AHardwareBuffer* buffer, unsigned int width, unsigned int height) {
++    if (!externalFrames || buffer == nullptr) return false;
++    const EGLDisplay display = eglGetCurrentDisplay();
++    const EGLContext context = eglGetCurrentContext();
++    if (display == EGL_NO_DISPLAY || context == EGL_NO_CONTEXT) return false;
++
++    // A buffer and its texture may be reused only within the same EGL context.
++    // The AHB reference prevents recycling its identity while this import lives.
++    if (externalFrame.matches(buffer, display, context, hwRenderTexture)) return true;
++
++    auto getClientBuffer = reinterpret_cast<PFNEGLGETNATIVECLIENTBUFFERANDROIDPROC>(
++        eglGetProcAddress("eglGetNativeClientBufferANDROID"));
++    auto createImage = reinterpret_cast<PFNEGLCREATEIMAGEKHRPROC>(eglGetProcAddress("eglCreateImageKHR"));
++    auto destroyImage = reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(eglGetProcAddress("eglDestroyImageKHR"));
++    auto targetTexture = reinterpret_cast<PFNGLEGLIMAGETARGETTEXTURE2DOESPROC>(
++        eglGetProcAddress("glEGLImageTargetTexture2DOES"));
++    if (getClientBuffer == nullptr || createImage == nullptr || destroyImage == nullptr || targetTexture == nullptr) {
++        LOGE("EGL cannot import AHardwareBuffer frames on this device");
++        return false;
++    }
++    const auto clientBuffer = getClientBuffer(buffer);
++    if (clientBuffer == nullptr) return false;
++
++    releaseExternalFrame();
++
++    AHardwareBuffer_acquire(buffer);
++    EGLint attributes[] = { EGL_IMAGE_PRESERVED_KHR, EGL_TRUE, EGL_NONE };
++    const EGLImageKHR image = createImage(
++        display, EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_ANDROID, clientBuffer, attributes);
++    if (image == EGL_NO_IMAGE_KHR) {
++        LOGE("eglCreateImageKHR failed for the Vulkan frame buffer: 0x%x", eglGetError());
++        AHardwareBuffer_release(buffer);
++        return false;
++    }
++    externalFrame.adopt(buffer, display, context, image, destroyImage);
++
++    // Bound the old-error drain even if the context/driver is broken. Do not
++    // discard errors from creating/binding the new texture itself.
++    GLenum error = GL_NO_ERROR;
++    for (unsigned i = 0; i < 16; ++i) {
++        error = glGetError();
++        if (error == GL_NO_ERROR) break;
++    }
++    if (error != GL_NO_ERROR) {
++        releaseExternalFrame();
++        return false;
++    }
++
++    glGenTextures(1, &hwRenderTexture);
++    glBindTexture(GL_TEXTURE_2D, hwRenderTexture);
++    targetTexture(GL_TEXTURE_2D, static_cast<GLeglImageOES>(image));
++    // A driver can accept FP16 in Vulkan but fail to import/sample it in GLES.
++    const GLenum importError = glGetError();
++    if (hwRenderTexture == 0 || importError != GL_NO_ERROR) {
++        LOGW("EGLImage to GLES texture import failed: 0x%x", importError);
++        glBindTexture(GL_TEXTURE_2D, 0);
++        releaseExternalFrame();
++        return false;
++    }
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    glBindTexture(GL_TEXTURE_2D, 0);
++    const GLenum samplerError = glGetError();
++    if (samplerError != GL_NO_ERROR) {
++        LOGW("Imported Vulkan texture setup failed: 0x%x", samplerError);
++        releaseExternalFrame();
++        return false;
++    }
++
++    hwFBOWidth = width;
++    hwFBOHeight = height;
++    if (renderer != nullptr) {
++        renderer->updateRenderedResolution(width, height);
++    }
++    LOGI("Vulkan frame buffer imported into GLES: tex=%u %ux%u", hwRenderTexture, width, height);
++    return true;
++}
++
+ void Video::resizeHWRenderTarget(unsigned int width, unsigned int height) {
+     if (!hwAccelerated || hwCtx == EGL_NO_CONTEXT) return;
+     if (width == 0 || height == 0) return;
+diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
+--- a/src/main/cpp/video.h
++++ b/src/main/cpp/video.h
+@@ -22,8 +22,9 @@
+ #include <GLES2/gl2ext.h>
+ #include <EGL/egl.h>
+ #include <EGL/eglext.h>
+-#include <android/hardware_buffer.h>
+-#include <optional>
++#include <android/hardware_buffer.h>
++#include "externalframelease.h"
++#include <optional>
+ #include <array>
+ #include <vector>
+ #include <mutex>
+@@ -145,7 +146,9 @@
+      * Samples [buffer] as the hardware frame from now on. Used when the core renders through
+      * Vulkan and hands its frames over in an AHardwareBuffer; replaces any earlier buffer.
+      */
+-    bool attachExternalFrame(AHardwareBuffer* buffer, unsigned int width, unsigned int height);
++    bool attachExternalFrame(AHardwareBuffer* buffer, unsigned int width, unsigned int height);
++    // Finish prior GLES reads before the backend may replace the shared allocation.
++    void finishExternalFrameUse();
+ 
+ private:
+     void updateProgram();
+@@ -207,9 +210,22 @@
+     bool hwUseDepth = false;
+     bool hwUseStencil = false;
+ 
+-    bool externalFrames = false;
+-    EGLImageKHR externalFrameImage = EGL_NO_IMAGE_KHR;
+-    void releaseExternalFrame();
++    struct ExternalFrameOps {
++        using Buffer = AHardwareBuffer*;
++        using Display = EGLDisplay;
++        using Context = EGLContext;
++        using Image = EGLImageKHR;
++        using Texture = GLuint;
++        using Destroy = PFNEGLDESTROYIMAGEKHRPROC;
++        void finish();
++        void deleteTexture(Texture texture);
++        void destroyImage(Destroy proc, Display display, Image image);
++        void releaseBuffer(Buffer buffer);
++    };
++
++    bool externalFrames = false;
++    ExternalFrameLease<ExternalFrameOps> externalFrame;
++    void releaseExternalFrame();
+ };
+ 
+ }
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -426,6 +426,11 @@
+ void LibretroDroid::attachVulkanFrame(unsigned int width, unsigned int height) {
+     auto& backend = VulkanBackend::getInstance();
+-    if (!video || !backend.ensureFrameBuffer(width, height)) return;
++    if (!video) return;
++    // ensureFrameBuffer can destroy the old VkImage/VkDeviceMemory before the
++    // ordinary per-frame bridge finish in handleVideoRefresh. Drain the old
++    // owning GLES context first; retain the existing post-import handoff too.
++    traceGameCall("AmbientGame GLES bridge resize finish", [&] { video->finishExternalFrameUse(); });
++    if (!backend.ensureFrameBuffer(width, height)) return;
+     if (video->attachExternalFrame(backend.getFrameBuffer(), backend.getFrameBufferWidth(),
+                                    backend.getFrameBufferHeight())) return;
+     if (backend.isFp16Frame()) {
+diff --git a/src/main/cpp/externalframelease.h b/src/main/cpp/externalframelease.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/externalframelease.h
+@@ -0,0 +1,71 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++
++namespace libretrodroid {
++
++// The frontend keeps its own AHB reference for as long as an EGL import exists.
++// Ops supplies the actual platform handles and dispatch, or a host test driver.
++// All calls belong to the render thread; this is not a cross-thread GPU fence.
++template<class Ops>
++class ExternalFrameLease {
++public:
++    using Buffer = typename Ops::Buffer;
++    using Display = typename Ops::Display;
++    using Context = typename Ops::Context;
++    using Image = typename Ops::Image;
++    using Texture = typename Ops::Texture;
++    using Destroy = typename Ops::Destroy;
++
++    ExternalFrameLease() = default;
++    ExternalFrameLease(const ExternalFrameLease&) = delete;
++    ExternalFrameLease& operator=(const ExternalFrameLease&) = delete;
++
++    bool matches(Buffer candidate, Display currentDisplay, Context currentContext,
++                 Texture texture) const noexcept {
++        return buffer && candidate == buffer && image && texture &&
++               display == currentDisplay && context == currentContext;
++    }
++
++    void adopt(Buffer acquiredBuffer, Display ownerDisplay, Context ownerContext,
++               Image importedImage, Destroy destroyImage) noexcept {
++        buffer = acquiredBuffer;
++        display = ownerDisplay;
++        context = ownerContext;
++        image = importedImage;
++        destroy = destroyImage;
++    }
++
++    bool ownsContext(Display currentDisplay, Context currentContext) const noexcept {
++        return image && display && context && display == currentDisplay && context == currentContext;
++    }
++
++    void finishUse(Texture texture, Display currentDisplay, Context currentContext, Ops& ops) const {
++        if (texture && ownsContext(currentDisplay, currentContext)) ops.finish();
++    }
++
++    void release(Texture& texture, Display currentDisplay, Context currentContext, Ops& ops) {
++        // Texture names are local to the context/share group. A surface recreation
++        // may already have made an unrelated context current; never delete its name.
++        if (texture && ownsContext(currentDisplay, currentContext)) {
++            ops.finish();
++            ops.deleteTexture(texture);
++        }
++        texture = {};
++        if (image && destroy) ops.destroyImage(destroy, display, image);
++        if (buffer) ops.releaseBuffer(buffer);
++        buffer = {};
++        display = {};
++        context = {};
++        image = {};
++        destroy = {};
++    }
++
++private:
++    Buffer buffer{};
++    Display display{};
++    Context context{};
++    Image image{};
++    Destroy destroy{};
++};
++
++} // namespace libretrodroid

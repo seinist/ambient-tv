@@ -37,6 +37,10 @@ internal class GameVulkanSurfaceHost(
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var activeSurface: Surface? = null
     @Volatile private var generation = 0L
+    // Surface callbacks, unlike settings updates, invalidate actual native window ownership.
+    @Volatile private var surfaceRevision = 0L
+    @Volatile private var probeSerial = 0L
+    private val surfaceWork = GameVulkanSurfaceWork<GameHdrDisplayCapabilities>()
     @Volatile private var disposed = false
     @Volatile private var nativeSdrDiagnostic = false
     @Volatile private var nativeIntegerScaling = false
@@ -72,6 +76,7 @@ internal class GameVulkanSurfaceHost(
                 fullscreenSurfaceReady = false
                 setNativeFullscreenGate(false)
                 activeSurface = holder.surface
+                surfaceRevision++
                 generation++
                 tryProbe()
             }
@@ -82,6 +87,7 @@ internal class GameVulkanSurfaceHost(
                 fullscreenSurfaceReady = fullscreenVisible && width > 16 && height > 16
                 setNativeFullscreenGate(false)
                 activeSurface = holder.surface
+                surfaceRevision++
                 generation++
                 tryProbe()
             }
@@ -90,6 +96,7 @@ internal class GameVulkanSurfaceHost(
                 fullscreenSurfaceReady = false
                 setNativeFullscreenGate(false)
                 activeSurface = null
+                surfaceRevision++
                 generation++
                 detachNativeSdrSurface()
                 onFormats(GameVulkanSurfaceFormats())
@@ -270,8 +277,12 @@ internal class GameVulkanSurfaceHost(
     private fun detachNativeSdrSurface() {
         if (!canProbe) return
         runCatching { retro.queueEvent {
-            LibretroDroid.setNativeVulkanFullscreenActive(false)
-            LibretroDroid.setNativeSdrVulkanSurface(null)
+            try {
+                LibretroDroid.setNativeVulkanFullscreenActive(false)
+                LibretroDroid.setNativeSdrVulkanSurface(null)
+            } finally {
+                surfaceWork.detached()
+            }
         } }
     }
 
@@ -292,15 +303,17 @@ internal class GameVulkanSurfaceHost(
         if (!canProbe || disposed) return
         val surface = activeSurface?.takeIf { it.isValid } ?: return
         val token = generation
+        val revision = surfaceRevision
+        val serial = ++probeSerial
+        val caps = displayHdr
+        fun current() = !disposed && serial == probeSerial && token == generation &&
+            revision == surfaceRevision && activeSurface === surface && surface.isValid
         runCatching {
             retro.queueEvent {
-                // Do not attach an obsolete surface if destroy/recreation occurred
-                // while this task was queued on the GL thread.
-                if (disposed || token != generation || activeSurface !== surface || !surface.isValid)
-                    return@queueEvent
-                LibretroDroid.setNativeVulkanFullscreenActive(false)
-                val bits = runCatching {
-                    val caps = displayHdr
+                // Coalesce superseded probes while preserving the GL FIFO lifecycle boundary.
+                // A real SurfaceChanged is a new revision even if Android reuses its object.
+                if (!current()) return@queueEvent
+                val bits = surfaceWork.cachedFormats(revision, caps) ?: runCatching {
                     val eotfs = if (caps.hdr10 || caps.hlg || caps.hdr10Plus || caps.dolbyVision) {
                         1 or (if (caps.hdr10) 2 else 0) or (if (caps.hlg) 4 else 0)
                     } else 0
@@ -310,31 +323,38 @@ internal class GameVulkanSurfaceHost(
                         caps.minimumNits ?: 0f,
                         eotfs,
                     )
-                    LibretroDroid.probeVulkanSurfaceFormats(surface)
+                    LibretroDroid.probeVulkanSurfaceFormats(surface).also {
+                        surfaceWork.rememberFormats(revision, caps, it)
+                    }
                 }.getOrDefault(0)
-                if (nativeSdrDiagnostic && surface.isValid && token == generation) {
+                if (nativeSdrDiagnostic && current()) {
                     runCatching {
-                        // Set transfer before creating a swapchain: the native
-                        // backend itself also checks VkFormat and WSI colorspace.
-                        // Native hard gate, in addition to the Compose UI gate. The
-                        // backend must reject HDR without a matching core source.
+                        val attach = surfaceWork.needsAttachment(revision)
+                        if (attach) LibretroDroid.setNativeVulkanFullscreenActive(false)
+                        // The setters retain native compatibility/retirement checks. A
+                        // shader, scaling or metadata change is not itself a new window.
                         LibretroDroid.setNativeVulkanCoreSourceTransfer(
                             confirmedCoreTransfer?.nativeCode ?: 0,
                         )
                         LibretroDroid.setNativeVulkanIntegerScalingAuto(nativeIntegerScalingAuto)
                         LibretroDroid.setNativeVulkanIntegerScaling(nativeIntegerScaling)
                         LibretroDroid.setNativeVulkanOutputTransfer(outputTransfer.nativeCode)
-                        // Set the shader before WSI attachment so swapchain image usage
-                        // includes a color attachment. Empty path keeps native raw Pixel.
                         LibretroDroid.setNativeVulkanShaderPreset(nativeShaderPreset)
-                        LibretroDroid.setNativeSdrVulkanSurface(surface)
+                        if (attach && current()) {
+                            LibretroDroid.setNativeSdrVulkanSurface(surface)
+                            // JNI returns void: an absent native window is not an
+                            // accepted attachment. A later probe can retry it.
+                            if (LibretroDroid.getNativeSdrVulkanStatus() and 1 != 0) {
+                                surfaceWork.attached(revision)
+                            }
+                        }
                     }
                 }
                 val status = GameVulkanSdrStatus(runCatching {
                     LibretroDroid.getNativeSdrVulkanStatus()
                 }.getOrDefault(0))
                 main.post {
-                    if (!disposed && token == generation && activeSurface === surface) {
+                    if (current()) {
                         onFormats(GameVulkanSurfaceFormats(bits))
                         onNativeStatus(status)
                     }

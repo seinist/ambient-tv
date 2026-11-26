@@ -276,11 +276,64 @@ static void expensiveCapturesYieldToFrameBudget() {
     CHECK(timeline.captureInterval() == 1);
     timeline.observeFrameWork(13000000, 8000000, 16666666);
     CHECK(timeline.captureInterval() >= 4);
+    // Skipped captures provide no evidence that the expensive serialization recovered.
+    for (int i = 0; i < 128; ++i) timeline.observeFrameWork(3000000, 0, 16666666);
+    CHECK(timeline.captureInterval() >= 4);
+    timeline.observeFrameWork(3500000, 500000, 16666666);
+    CHECK(timeline.captureInterval() >= 4);
     for (int i = 0; i < 64; ++i) timeline.observeFrameWork(17000000, 0, 16666666);
     CHECK(timeline.captureInterval() == 15);
     for (int i = 0; i < 128; ++i) timeline.observeFrameWork(3000000, 500000, 16666666);
     CHECK(timeline.captureInterval() == 1);
     timeline.observeFrameWork(UINT64_MAX, UINT64_MAX, 16666666);
+    CHECK(timeline.captureInterval() == 15);
+    timeline.reset();
+    CHECK(timeline.captureInterval() == 1);
+}
+
+static void captureAssociatedPresentationCadence() {
+    constexpr uint64_t period = 16666666;
+    RewindTimeline timeline;
+    timeline.configure(120, 15);
+    uint64_t now = 1000000000;
+    timeline.observeFrameStart(now, period);
+    timeline.observeFrameWork(4000000, 1000000, period);
+    CHECK(timeline.captureInterval() == 1);
+    now += period * 2;
+    timeline.observeFrameStart(now, period);
+    CHECK(timeline.captureInterval() == 2);
+    timeline.observeFrameWork(3000000, 0, period);
+    now += period * 2;
+    timeline.observeFrameStart(now, period);
+    CHECK(timeline.captureInterval() == 2); // a non-capture miss is not charged
+    for (int i = 0; i < 16; ++i) {
+        timeline.observeFrameWork(3000000, 0, period);
+        now += period;
+        timeline.observeFrameStart(now, period);
+    }
+    CHECK(timeline.captureInterval() == 1);
+    timeline.observeFrameWork(4000000, 1000000, period, 2);
+    now += period * 2;
+    timeline.observeFrameStart(now, period);
+    CHECK(timeline.captureInterval() == 1); // catch-up batch
+    timeline.observeFrameWork(4000000, 1000000, period);
+    now += period * 2;
+    timeline.observeFrameStart(now, period * 2);
+    CHECK(timeline.captureInterval() == 1); // new content rate
+    timeline.observeFrameWork(4000000, 1000000, period);
+    now += period * 100;
+    timeline.observeFrameStart(now, period);
+    CHECK(timeline.captureInterval() == 1); // lifecycle gap
+    timeline.observeFrameWork(4000000, 1000000, period);
+    timeline.resetFrameObservation();
+    now += period * 2;
+    timeline.observeFrameStart(now, period);
+    CHECK(timeline.captureInterval() == 1);
+    for (int i = 0; i < 32; ++i) {
+        timeline.observeFrameWork(4000000, 1000000, period);
+        now += period * 2;
+        timeline.observeFrameStart(now, period);
+    }
     CHECK(timeline.captureInterval() == 15);
     timeline.reset();
     CHECK(timeline.captureInterval() == 1);
@@ -297,5 +350,6 @@ int main() {
     randomizedTimelineMatchesAbsoluteFramePositions();
     saturatingArithmeticCannotWrapTheTimeline();
     expensiveCapturesYieldToFrameBudget();
-    std::cout << "Rewind timeline: 10 integration tests passed (including 25000 randomized transitions).\n";
+    captureAssociatedPresentationCadence();
+    std::cout << "Rewind timeline: 11 integration tests passed (including 25000 randomized transitions).\n";
 }

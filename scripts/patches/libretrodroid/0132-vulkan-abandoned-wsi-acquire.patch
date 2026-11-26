@@ -1,0 +1,206 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -42,5 +42,6 @@
+ #include "vulkanbridgeallocationbudget.h"
+ #include "vulkanwsiacquireslots.h"
++#include "vulkanwsiacquirestate.h"
+ #include "nativepresentation.h"
+ 
+ struct AImageReader;
+@@ -256,3 +257,4 @@
+     bool ensureNativeAcquireSemaphore(std::size_t slotIndex);
+     bool canRetireNativeWsi() const noexcept;
++    bool drainNativeAcquireSignals();
+     void disableNativeSdrSwapchain(const char* reason);
+@@ -456,3 +458,4 @@
+     VulkanWsiAcquireSlots<VkSemaphore> nativeSdrAcquireSlots;
++    VulkanWsiAcquireState<> nativeAcquireState;
+     std::vector<VkSemaphore> nativeSdrComplete;
+     bool nativeSdrDisabled = false;
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -390,12 +390,57 @@
+-bool VulkanBackend::destroyNativeSdrSwapchain() {
+-    nativePresentation.invalidateFrame();
+-    // Surface changes and shutdown are synchronized on the GL/emulation thread.
+-    if (!canRetireNativeWsi())
+-        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "preflight WSI retirement");
+-    if (device != VK_NULL_HANDLE && nativeSdrSwapchain != VK_NULL_HANDLE &&
+-        !waitForDeviceIdle()) return false;
+-    // The GPU is idle before retiring any pass/history images owned by librashader.
+-    if (!nativeSdrAcquireSlots.retire(true, device != VK_NULL_HANDLE,
++bool VulkanBackend::drainNativeAcquireSignals() {
++    if (nativeAcquireState.allIdle()) return true;
++    if (!canRetireNativeWsi() || !device || !nativeSdrSwapchain || !queue || !vk.queueSubmit)
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "missing WSI acquire drain resources");
++    if (shutdownReady)
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "unretired WSI acquire after shutdown preparation");
++
++    // vkAcquireNextImageKHR may have queued a signal without a corresponding
++    // frame wait. Device idle alone does not prove that external signal is done.
++    // Consume each abandoned signal with a wait-only submission. No command,
++    // core semaphore, presentation, allocation or bridge image is involved.
++    for (std::size_t i = 0; i < nativeAcquireState.count; ++i) {
++        if (!nativeAcquireState.acquired(i)) continue;
++        const VkSemaphore semaphore = nativeSdrAcquireSlots.get(i);
++        if (!semaphore)
++            return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "missing abandoned acquire semaphore");
++        const VkPipelineStageFlags stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
++        VkSubmitInfo submit { VK_STRUCTURE_TYPE_SUBMIT_INFO };
++        submit.waitSemaphoreCount = 1;
++        submit.pWaitSemaphores = &semaphore;
++        submit.pWaitDstStageMask = &stage;
++        VkResult result;
++        {
++            std::lock_guard<std::mutex> lock(queueMutex);
++            result = vk.queueSubmit(queue, 1, &submit, VK_NULL_HANDLE);
++        }
++        if (result == VK_SUCCESS) {
++            nativeAcquireState.markSubmitted(i);
++        } else if (result == VK_ERROR_DEVICE_LOST) {
++            checkFrameResult(result, "drain abandoned WSI acquire");
++            return true; // device loss invalidates all pending payloads
++        } else {
++            // Only allocation failures have a guaranteed unchanged submit.
++            // Retain ambiguous payloads rather than enqueue a second wait.
++            if (result != VK_ERROR_OUT_OF_HOST_MEMORY && result != VK_ERROR_OUT_OF_DEVICE_MEMORY)
++                nativeAcquireState.markUncertain(i);
++            return checkFrameResult(result, "drain abandoned WSI acquire");
++        }
++    }
++    // A later successful device-idle call completes submitted waits. A
++    // failed idle call leaves the ledger unchanged, so retries never re-wait.
++    return true;
++}
++
++bool VulkanBackend::destroyNativeSdrSwapchain() {
++    nativePresentation.invalidateFrame();
++    // Surface changes and shutdown are synchronized on the GL/emulation thread.
++    if (!canRetireNativeWsi())
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "preflight WSI retirement");
++    if (!drainNativeAcquireSignals()) return false;
++    if (device != VK_NULL_HANDLE && nativeSdrSwapchain != VK_NULL_HANDLE &&
++        !waitForDeviceIdle()) return false;
++    // The GPU is idle before retiring any pass/history images owned by librashader.
++    if (!nativeSdrAcquireSlots.retire(nativeAcquireState.allIdle(), device != VK_NULL_HANDLE,
+             vk.destroySemaphore != nullptr, nativeSdrComplete,
+             [&](VkSemaphore semaphore) { vk.destroySemaphore(device, semaphore, nullptr); }))
+         return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "retire WSI acquire slots");
+@@ -1340,3 +1386,5 @@
+ bool VulkanBackend::checkFrameResult(VkResult result, const char* operation) {
+     if (result == VK_SUCCESS) return true;
++    // Observe device loss even if an earlier error owns the sticky diagnostic.
++    if (result == VK_ERROR_DEVICE_LOST) nativeAcquireState.abandonAfterDeviceLoss();
+     if (!hasFatalError()) {
+@@ -1390,4 +1438,6 @@
+     if (!checkFrameResult(vk.resetFences(device, 1, &slot.fence), "reset frame fence")) return false;
+     slot.inFlight = false;
++    if (&slot == &frameSlot) nativeAcquireState.completeSubmitted(0);
++    else if (&slot == &spareFrameSlot) nativeAcquireState.completeSubmitted(1);
+     return true;
+ }
+@@ -1510,6 +1560,8 @@
+     if (result == VK_ERROR_DEVICE_LOST) {
+         checkFrameResult(result, "wait for device idle");
+         return true;
+     }
+-    return checkFrameResult(result, "wait for device idle");
++    if (!checkFrameResult(result, "wait for device idle")) return false;
++    nativeAcquireState.completeAllSubmitted();
++    return true;
+ }
+@@ -1540,5 +1592,7 @@
+     if (!device && (frameSlot.inFlight || spareFrameSlot.inFlight))
+         return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "missing device for slot retirement");
+-    if (!waitForDeviceIdle()) return false;
++    if (!drainNativeAcquireSignals() || !waitForDeviceIdle()) return false;
++    if (!nativeAcquireState.allIdle())
++        return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "unproven WSI acquire retirement");
+     frameSlot.inFlight = false; // device idle or loss proves retirement
+     spareFrameSlot.inFlight = false;
+@@ -1632,6 +1686,12 @@
+-            const VkResult acquired = vk.acquireNextImage(
+-                device, nativeSdrSwapchain, 0, nativeSdrAcquireSlots.get(0), VK_NULL_HANDLE, &sdrIndex);
+-            if (acquired == VK_SUCCESS || acquired == VK_SUBOPTIMAL_KHR) {
+-                useDirect = sdrIndex < nativeSdrImages.size() &&
+-                            sdrIndex < nativeSdrComplete.size();
++            if (!nativeAcquireState.ready(0) || !nativeSdrAcquireSlots.get(0))
++                return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "WSI acquire slot not reusable");
++            const VkResult acquired = vk.acquireNextImage(
++                device, nativeSdrSwapchain, 0, nativeSdrAcquireSlots.get(0), VK_NULL_HANDLE, &sdrIndex);
++            if (acquired == VK_SUCCESS || acquired == VK_SUBOPTIMAL_KHR) {
++                if (!nativeAcquireState.markAcquired(0))
++                    return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "duplicate WSI acquire");
++                useDirect = sdrIndex < nativeSdrImages.size() &&
++                            sdrIndex < nativeSdrComplete.size();
++                if (!useDirect)
++                    return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "invalid acquired WSI image index");
+             } else if (acquired == VK_ERROR_DEVICE_LOST) {
+@@ -1870,4 +1930,9 @@
++    if (useDirect) {
++        if (result == VK_SUCCESS) nativeAcquireState.markSubmitted(0);
++        else if (result != VK_ERROR_OUT_OF_HOST_MEMORY && result != VK_ERROR_OUT_OF_DEVICE_MEMORY &&
++                 result != VK_ERROR_DEVICE_LOST) nativeAcquireState.markUncertain(0);
++    }
+     if (!checkFrameResult(result, "submit frame")) return false;
+     frameSlot.bridgeSync.readPending = false; // this submit consumes the temporary payload
+     frameSlot.inFlight = true;
+     const int exportedFd = exportWrite ? exportBridgeWriteFence() : NoBridgeWriteFence;
+diff --git a/src/main/cpp/vulkan/vulkanwsiacquirestate.h b/src/main/cpp/vulkan/vulkanwsiacquirestate.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/vulkan/vulkanwsiacquirestate.h
+@@ -0,0 +1,51 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++#include <array>
++#include <cstddef>
++
++namespace libretrodroid {
++
++// Render-thread ledger for binary acquire semaphore payloads. A successful
++// acquire can signal asynchronously, even when no frame submit follows.
++template<std::size_t Count = 2>
++class VulkanWsiAcquireState {
++public:
++    enum class Phase { Idle, Acquired, Submitted, Uncertain };
++    static constexpr std::size_t count = Count;
++
++    bool ready(std::size_t index) const noexcept {
++        return index < Count && phases[index] == Phase::Idle;
++    }
++    bool acquired(std::size_t index) const noexcept {
++        return index < Count && phases[index] == Phase::Acquired;
++    }
++    bool markAcquired(std::size_t index) noexcept {
++        if (!ready(index)) return false;
++        phases[index] = Phase::Acquired;
++        return true;
++    }
++    void markSubmitted(std::size_t index) noexcept {
++        if (acquired(index)) phases[index] = Phase::Submitted;
++    }
++    void markUncertain(std::size_t index) noexcept {
++        if (acquired(index)) phases[index] = Phase::Uncertain;
++    }
++    void completeSubmitted(std::size_t index) noexcept {
++        if (index < Count && phases[index] == Phase::Submitted) phases[index] = Phase::Idle;
++    }
++    void completeAllSubmitted() noexcept {
++        for (std::size_t i = 0; i < Count; ++i) completeSubmitted(i);
++    }
++    bool allIdle() const noexcept {
++        for (const auto phase : phases) if (phase != Phase::Idle) return false;
++        return true;
++    }
++    // Device loss permits destruction, not reuse. The backend's sticky fatal
++    // latch prevents any subsequent acquire until a new device is created.
++    void abandonAfterDeviceLoss() noexcept { phases.fill(Phase::Idle); }
++
++private:
++    std::array<Phase, Count> phases{};
++};
++
++} // namespace libretrodroid

@@ -44,6 +44,76 @@ class GameDirectContentTest {
         assertEquals(0, windows.read(media.size, ByteArray(12), 12))
     }
 
+    @Test fun sequentialMissesRecycleLruBuffersAndShortReadScratch() {
+        for (shortReads in listOf(false, true)) {
+            val buffers = java.util.IdentityHashMap<ByteArray, Boolean>()
+            var calls = 0
+            val media = object : SeekableMedia {
+                override val size = 12L * 4096 + 17
+                override fun read(position: Long, buffer: ByteArray, count: Int): Int {
+                    calls++
+                    buffers[buffer] = true
+                    val n = minOf(count, if (shortReads) 777 else count)
+                    for (i in 0 until n) buffer[i] = ((position + i) / 257).toByte()
+                    return n
+                }
+                override fun close() {}
+            }
+            val windows = GameReadWindows(media, blockBytes = 4096, maxBlocks = 2)
+            fun checkRead(offset: Long, count: Int) {
+                val bytes = ByteArray(count)
+                assertEquals(count, windows.read(offset, bytes, count))
+                assertArrayEquals(ByteArray(count) { ((offset + it) / 257).toByte() }, bytes)
+            }
+            checkRead(0, 4096)
+            checkRead(4096, 4096)
+            checkRead(0, 1) // Refresh the first block; the second becomes least recently used.
+            checkRead(8192, 4096)
+            val afterThird = calls
+            checkRead(0, 1)
+            assertEquals(afterThird, calls)
+            checkRead(4096, 1)
+            assertTrue(calls > afterThird)
+            for (i in 3..11) checkRead(i * 4096L, 4096)
+            checkRead(media.size - 17, 17)
+            assertEquals(if (shortReads) 3 else 2, buffers.size)
+        }
+    }
+
+    @Test fun recycledWindowNeverPublishesStaleBytesOnFailureOrPrematureEof() {
+        var fail = true
+        val media = object : SeekableMedia {
+            override val size = 3L * 4096
+            override fun read(position: Long, buffer: ByteArray, count: Int): Int {
+                if (position == 4096L && fail) {
+                    buffer[0] = 99
+                    throw java.io.IOException("read failed")
+                }
+                if (position >= 8192 + 5) return -1
+                val n = if (position == 8192L) 5 else count
+                for (i in 0 until n) buffer[i] = (position / 4096 + 1).toByte()
+                return n
+            }
+            override fun close() {}
+        }
+        val windows = GameReadWindows(media, blockBytes = 4096, maxBlocks = 1)
+        val byte = ByteArray(1)
+        assertEquals(1, windows.read(0, byte, 1))
+        assertEquals(1, byte[0].toInt())
+        assertTrue(runCatching { windows.read(4096, byte, 1) }.exceptionOrNull() is java.io.IOException)
+        assertEquals(1, windows.read(0, byte, 1))
+        assertEquals(1, byte[0].toInt())
+        fail = false
+        assertEquals(1, windows.read(4096, byte, 1))
+        assertEquals(2, byte[0].toInt())
+        val tail = ByteArray(5)
+        assertEquals(5, windows.read(8192, tail, 5))
+        assertArrayEquals(ByteArray(5) { 3 }, tail)
+        assertTrue(runCatching { windows.read(8197, byte, 1) }.exceptionOrNull() is java.io.IOException)
+        assertEquals(1, windows.read(4096, byte, 1))
+        assertEquals(2, byte[0].toInt())
+    }
+
     @Test fun originalIsoHeadersAndPathsIdentifyThePlatform() {
         fun iso(wii: Boolean): ByteArray = ByteBuffer.allocate(32).order(ByteOrder.BIG_ENDIAN).run {
             putInt(if (wii) 0x18 else 0x1c, if (wii) 0x5D1C9EA3 else 0xC2339F3DL.toInt())

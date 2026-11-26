@@ -73,7 +73,13 @@ static void verifyPresentationHandoffs() {
     gate.setFullscreenActive(true); // idempotent UI updates keep current evidence
     assert(gate.primaryDraw(false, true) == Draw::Skip);
 
-    gate.invalidateFrame(); // next frame acquired nothing / failed / Surface resized
+    gate.beginStep(); // ordinary step is not a surface-generation transition
+    assert(!gate.hasPresentedFrame() && gate.hasConfirmedGeneration());
+    assert(gate.primaryDraw(false, true) == Draw::Force);
+    gate.didPresentFrame();
+    assert(gate.primaryDraw(false, true) == Draw::Skip);
+    gate.invalidateFrame(); // failed present / surface resize / preset change
+    assert(!gate.hasConfirmedGeneration());
     assert(gate.primaryDraw(false, true) == Draw::Force);
     assert(gate.primaryDraw(false, true) == Draw::Draw);
     gate.didPresentFrame();
@@ -96,7 +102,21 @@ static void verifyPresentationHandoffs() {
     std::puts("Native presentation handoffs: diagnostic/fullscreen/fallback/capture/secondary passed");
 }
 
+static void verifyMaintenancePairs() {
+    using M = NativePresentMaintenance;
+    for (unsigned mask = 0; mask < 4; ++mask) for (unsigned dev = 0; dev < 4; ++dev) {
+        assert(M::surfaceMask((mask & 1) != 0, (mask & 2) != 0) == mask);
+        const auto* selected = M::deviceExtension(mask, (dev & 1) != 0, (dev & 2) != 0);
+        const unsigned matching = mask & dev;
+        if (matching & M::khr) assert(selected == M::khrSwapchain);
+        else if (matching & M::ext) assert(selected == M::extSwapchain);
+        else assert(selected == nullptr);
+    }
+    std::puts("PASS all KHR/EXT surface and device extension pair combinations");
+}
+
 int main() {
     verifyGeometry();
     verifyPresentationHandoffs();
+    verifyMaintenancePairs();
 }

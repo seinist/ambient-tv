@@ -1,0 +1,120 @@
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -432,9 +432,11 @@
+                 if (writeSamplerBindings) glUniform1i(shader.gPassPrevTextureHandles[n], nextTextureUnit);
+                 ++nextTextureUnit;
+             }
+-            if (shader.gPassPrevTextureSizeHandles[n] != -1)
++            if (shader.gPassPrevTextureSizeHandles[n] != -1 &&
++                shader.passPrevTextureSizeValues[n].needsWrite(cacheSamplerBindings, {previousWidth, previousHeight}))
+                 glUniform2f(shader.gPassPrevTextureSizeHandles[n], previousWidth, previousHeight);
+-            if (shader.gPassPrevInputSizeHandles[n] != -1)
++            if (shader.gPassPrevInputSizeHandles[n] != -1 &&
++                shader.passPrevInputSizeValues[n].needsWrite(cacheSamplerBindings, {previousInputWidth, previousInputHeight}))
+                 glUniform2f(shader.gPassPrevInputSizeHandles[n], previousInputWidth, previousInputHeight);
+         }
+ 
+@@ -459,15 +461,26 @@
+             inputWidth = pictureInputWidth;
+             inputHeight = pictureInputHeight;
+         }
+-        glUniform2f(shader.gTextureSizeHandle, textureWidth, textureHeight);
+-        if (shader.gOrigTextureSizeHandle != -1)
++        // Geometry is recomputed from the live pass targets and layout on
++        // every draw. Only the upload of an exactly unchanged value is skipped.
++        if (shader.gTextureSizeHandle != -1 &&
++            shader.textureSizeValue.needsWrite(cacheSamplerBindings, {textureWidth, textureHeight}))
++            glUniform2f(shader.gTextureSizeHandle, textureWidth, textureHeight);
++        if (shader.gOrigTextureSizeHandle != -1 &&
++            shader.origTextureSizeValue.needsWrite(cacheSamplerBindings, {pictureTextureWidth, pictureTextureHeight}))
+             glUniform2f(shader.gOrigTextureSizeHandle, pictureTextureWidth, pictureTextureHeight);
+-        if (shader.gOrigInputSizeHandle != -1)
++        if (shader.gOrigInputSizeHandle != -1 &&
++            shader.origInputSizeValue.needsWrite(cacheSamplerBindings, {pictureInputWidth, pictureInputHeight}))
+             glUniform2f(shader.gOrigInputSizeHandle, pictureInputWidth, pictureInputHeight);
+ 
+-        glUniform1f(shader.gScreenDensityHandle, getScreenDensity());
++        if (shader.gScreenDensityHandle != -1) {
++            const float density = getScreenDensity();
++            if (shader.screenDensityValue.needsWrite(cacheSamplerBindings, {density}))
++                glUniform1f(shader.gScreenDensityHandle, density);
++        }
+ 
+-        if (shader.gInputSizeHandle != -1)
++        if (shader.gInputSizeHandle != -1 &&
++            shader.inputSizeValue.needsWrite(cacheSamplerBindings, {inputWidth, inputHeight}))
+             glUniform2f(shader.gInputSizeHandle, inputWidth, inputHeight);
+ 
+         auto passWidth = static_cast<float>(passData.width.value_or(videoLayout.getScreenWidth()));
+@@ -478,7 +491,8 @@
+             passHeight = static_cast<float>(videoLayout.getScreenHeight()) * (bounds[3] - bounds[1]);
+         }
+ 
+-        if (shader.gOutputSizeHandle != -1)
++        if (shader.gOutputSizeHandle != -1 &&
++            shader.outputSizeValue.needsWrite(cacheSamplerBindings, {passWidth, passHeight}))
+             glUniform2f(shader.gOutputSizeHandle, passWidth, passHeight);
+ 
+         if (shader.gFrameCountHandle != -1)
+diff --git a/src/main/cpp/video.h b/src/main/cpp/video.h
+--- a/src/main/cpp/video.h
++++ b/src/main/cpp/video.h
+@@ -34,6 +34,7 @@
+ #include "immersivemode.h"
+ #include "videolayout.h"
+ #include "backgroundframe.h"
++#include "shaderuniformvalue.h"
+ 
+ namespace libretrodroid {
+ 
+@@ -76,6 +77,11 @@
+         std::array<GLint, 8> gPassPrevTextureSizeHandles;
+         std::array<GLint, 8> gPassPrevInputSizeHandles;
+         bool samplerBindingsInitialized = false;
++        // Each entry owns a newly linked program. These caches die with it.
++        ShaderUniformValue<2> textureSizeValue, origTextureSizeValue, origInputSizeValue;
++        ShaderUniformValue<2> inputSizeValue, outputSizeValue;
++        ShaderUniformValue<1> screenDensityValue;
++        std::array<ShaderUniformValue<2>, 8> passPrevTextureSizeValues, passPrevInputSizeValues;
+     };
+ 
+     Video(
+diff --git a/src/main/cpp/shaderuniformvalue.h b/src/main/cpp/shaderuniformvalue.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/shaderuniformvalue.h
+@@ -0,0 +1,33 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++
++#include <array>
++#include <cstddef>
++#include <cstring>
++
++namespace libretrodroid {
++
++// One value per active uniform in one linked frontend program. The caller
++// must bypass the cache whenever a shared/external hardware context may
++// change program state. No GL queries, heap allocations or tolerance rounding.
++template <std::size_t N>
++class ShaderUniformValue {
++public:
++    bool needsWrite(bool cacheEnabled, const std::array<float, N>& next) noexcept {
++        if (!cacheEnabled) {
++            initialized = false;
++            return true;
++        }
++        if (initialized && std::memcmp(value.data(), next.data(), sizeof(float) * N) == 0)
++            return false;
++        std::memcpy(value.data(), next.data(), sizeof(float) * N);
++        initialized = true;
++        return true;
++    }
++
++private:
++    std::array<float, N> value {};
++    bool initialized = false;
++};
++
++} // namespace libretrodroid

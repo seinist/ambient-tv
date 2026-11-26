@@ -30,6 +30,7 @@ import com.ambient.tv.games.GameBiosState
 import com.ambient.tv.games.GameCoreManager
 import com.ambient.tv.games.GameRomPreparer
 import com.ambient.tv.games.GameSettings
+import com.ambient.tv.games.GamePerformanceProfile
 import com.ambient.tv.games.GameSystems
 import com.ambient.tv.ui.common.SettingsActionRow
 import com.ambient.tv.ui.common.SettingsHint
@@ -88,15 +89,42 @@ internal fun gamesEntryPoint(): GamesSettingsEntryPoint {
     }
 }
 
+private fun GamePerformanceProfile.titleRes(): Int = when (this) {
+    GamePerformanceProfile.STANDARD -> R.string.game_performance_standard
+    GamePerformanceProfile.REDUCED_BACKGROUND -> R.string.game_performance_reduced_background
+    GamePerformanceProfile.LOW_OVERHEAD -> R.string.game_performance_low_overhead
+}
+
+private fun GamePerformanceProfile.hintRes(): Int = when (this) {
+    GamePerformanceProfile.STANDARD -> R.string.game_performance_standard_hint
+    GamePerformanceProfile.REDUCED_BACKGROUND -> R.string.game_performance_reduced_background_hint
+    GamePerformanceProfile.LOW_OVERHEAD -> R.string.game_performance_low_overhead_hint
+}
+
 @Composable
 internal fun GamesPlay(includeRumble: Boolean = true) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsHint(stringResource(R.string.games_settings_explanation))
+        val settings = GameSettings.state
+        val profile = settings.performanceProfile
+        SettingsSelect(
+            label = stringResource(R.string.game_performance_profile),
+            description = stringResource(profile.hintRes()),
+            options = GamePerformanceProfile.entries.map { option ->
+                SettingsSelectOption(
+                    text = stringResource(option.titleRes()),
+                    selected = option == profile,
+                    onClick = { GameSettings.update { it.withPerformanceProfile(option) } },
+                )
+            },
+        )
         com.ambient.tv.ui.games.GamesGlobalDisplaySettings()
         TvSettingRow(
             title = stringResource(R.string.game_settings_rewind),
-            body = stringResource(R.string.game_settings_rewind_hint),
-            checked = GameSettings.state.rewind,
+            body = stringResource(if (profile.allowsRewind) R.string.game_settings_rewind_hint
+                else R.string.game_performance_rewind_suspended),
+            checked = settings.rewindForPlayback,
+            enabled = profile.allowsRewind,
             onCheckedChange = { on -> GameSettings.update { it.withRewind(on) } },
         )
         if (includeRumble) TvSettingRow(

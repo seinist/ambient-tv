@@ -82,11 +82,14 @@ internal class PointerIdleState(
         return deliberate
     }
 
-    fun onNonPointerInput() {
-        if (timeoutMillis == 0L || pressedSources.isNotEmpty()) return
+    /** True only if callers need to publish visibility or update the expiry callback. */
+    fun onNonPointerInput(): Boolean {
+        if (timeoutMillis == 0L || pressedSources.isNotEmpty()) return false
+        val changed = visible || deadlineMs != null
         visible = false
         deadlineMs = null
         lastActivityMs = null
+        return changed
     }
 
     fun onFocusLost() {
