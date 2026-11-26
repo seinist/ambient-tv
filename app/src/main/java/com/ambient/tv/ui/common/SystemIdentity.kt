@@ -70,7 +70,8 @@ enum class MediaSystem(
         "romm", R.string.romm_title, R.drawable.system_romm,
         coloredLogo = R.drawable.system_romm, brand = "RomM", preserveLogoColors = true,
     ),
-    MOONLIGHT("moonlight", R.string.moonlight_title, R.drawable.system_moonlight, brand = "Moonlight"),
+    MOONLIGHT("moonlight", R.string.moonlight_title, R.drawable.system_moonlight,
+        coloredLogo = R.drawable.system_moonlight, brand = "Moonlight", preserveLogoColors = true),
     FILES("files", R.string.files_title, null);
 
     /** A provider mark already names its system, so a text label next to it is a duplicate. */
@@ -128,8 +129,8 @@ fun systemString(system: MediaSystem, @StringRes id: Int): String = system.renam
 /** Informational only: provider marks never add a D-pad focus stop or perform network work. */
 @Composable
 fun SystemLogo(system: MediaSystem, modifier: Modifier = Modifier, size: Dp = 22.dp, tint: Color? = null) {
-    // Theme the monochrome marks. RomM's full-color circular artwork needs its original fills:
-    // tinting its alpha silhouette would hide the controller and leave only a solid disc.
+    // Theme monochrome marks. Multicolor circular artwork (RomM and Moonlight) must
+    // keep its original fills; tinting the alpha silhouette would leave a solid disc.
     if (system.logo != null) {
         Icon(painterResource(system.logo), null, modifier.size(size),
             tint = if (system.preserveLogoColors) Color.Unspecified

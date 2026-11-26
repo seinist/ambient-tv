@@ -85,4 +85,6 @@
     <string name="moonlight_reset_hint">Deletes all local Moonlight pairings and the client key. Saved PCs remain and must be paired again. Disconnect any stream first.</string>
     <string name="moonlight_reset_failed">Could not reset the client identity. Try again.</string>
     <string name="moonlight_app_running">This application is running on the PC.</string>
+    <string name="moonlight_logo_title">Moonlight logo</string>
+    <string name="moonlight_logo_credit">Original artwork by the Moonlight project. Shape and colors preserved in the Android vector.</string>
 </resources>

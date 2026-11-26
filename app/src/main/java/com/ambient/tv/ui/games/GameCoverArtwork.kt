@@ -92,6 +92,9 @@ fun GameCoverArtwork(
                 title = title,
                 icon = painterResource(systemIcon ?: GameSystemIcons.drawable(systemId)),
                 iconModifier = Modifier.testTag("game-cover-fallback"),
+                preserveIconColors = systemIcon != null && com.ambient.tv.ui.common.MediaSystem.entries.any {
+                    it.logo == systemIcon && it.preserveLogoColors
+                },
             )
         },
     )

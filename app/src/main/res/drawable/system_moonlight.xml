@@ -1,13 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Official Moonlight logo from moonlight-stream/moonlight-qt@88864853c2aed541fd1c5d7c40ae38b2ebe79d87,
+     app/res/moonlight.svg (blob b16b1721ce49a38f32dfc74cb5515583d91fc74a).
+     The upstream geometry and colors are preserved. Only the two SVG circles have been
+     converted to equivalent arc paths. Render without tint.
+     Attribution and license: res/raw/moonlight_logo_notice.txt. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="48dp"
     android:height="48dp"
-    android:viewportWidth="48"
-    android:viewportHeight="48">
-    <path android:fillColor="@android:color/transparent"
-        android:strokeColor="#FFFFFFFF" android:strokeWidth="3"
-        android:strokeLineCap="round" android:strokeLineJoin="round"
-        android:pathData="M6,9 L42,9 L42,34 L6,34 Z M18,40 L30,40 M24,34 L24,40"/>
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M28,13 C21,14 18,20 21,25 C24,31 32,31 36,25 C31,27 26,24 26,19 C26,17 27,14 28,13 Z"/>
+    android:viewportWidth="256"
+    android:viewportHeight="256">
+    <path
+        android:fillColor="#FF565C64"
+        android:pathData="M128,0 A128,128 0,1 1,128,256 A128,128 0,1 1,128,0 Z"/>
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M128,32 A96,96 0,1 1,128,224 A96,96 0,1 1,128,32 Z"/>
+    <path
+        android:fillColor="#FF565C64"
+        android:fillType="evenOdd"
+        android:pathData="M 137.66 132 L 224 132 L 224 124 L 137.66 124 L 198.71 62.95 L 193.05 57.29 L 132 118.34 L 132 32 L 124 32 L 124 118.34 L 62.95 57.29 L 57.29 62.95 L 118.34 124 L 32 124 L 32 132 L 118.34 132 L 57.29 193.05 L 62.95 198.71 L 124 137.66 L 124 224 L 132 224 L 132 137.66 L 193.05 198.71 L 198.71 193.05 L 137.66 132 Z"/>
 </vector>

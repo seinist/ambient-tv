@@ -1714,6 +1714,7 @@ fun SettingsScreen(
                             item { AboutGameIconsCard() }
                             item { AboutInputControllerArtworkCard() }
                             item { AboutRommLogoCard() }
+                            item { AboutMoonlightLogoCard() }
                         }
                     }
                 }
