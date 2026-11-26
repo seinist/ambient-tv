@@ -7,7 +7,7 @@ from core_acceleration_audit import audit_acceleration, compiler_commands, defin
 from unittest.mock import patch
 
 from core_build_policy import (REQUIRED_EXPORTS, audit_commands, ndk_flags, plan,
-                               select_library, verify_elf_abi)
+                               select_library, verify_elf_abi, dynamic_dependencies, prepare_cmake)
 
 
 class CoreBuildPolicyTest(unittest.TestCase):
@@ -188,6 +188,38 @@ class CoreBuildPolicyTest(unittest.TestCase):
                 path.write_bytes(header[:20])
                 with self.assertRaises(ValueError):
                     verify_elf_abi(path, abi)
+
+    def test_dynamic_dependencies(self):
+        valid = " 0x00000001 (NEEDED) Shared library: [libc.so]\n"
+        with patch("core_build_policy.subprocess.check_output", return_value=valid):
+            self.assertEqual(dynamic_dependencies("readelf", Path("test.so")), ["libc.so"])
+        for invalid in (
+            " (NEEDED) Shared library: [/tmp/libc.so]",
+            " (NEEDED) Shared library: [libunbundled.so]",
+            " (NEEDED) unknown format",
+            " (RUNPATH) Library runpath: [/tmp]",
+            " (TEXTREL) 0x0",
+        ):
+            with self.subTest(invalid=invalid), patch("core_build_policy.subprocess.check_output", return_value=valid + invalid):
+                with self.assertRaises(ValueError):
+                    dynamic_dependencies("readelf", Path("test.so"))
+
+    def test_swanstation_explicit_ipo_candidates(self):
+        original = ('# Enable LTO/LTCG on Release builds.\n'
+                    'if(CMAKE_BUILD_TYPE MATCHES "Release")\n'
+                    '  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)\nendif()\n')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "CMakeLists.txt"
+            path.write_text(original)
+            prepare_cmake(root, "swanstation", "baseline")
+            self.assertEqual(path.read_text(), original)
+            prepare_cmake(root, "mgba", "o3")
+            self.assertEqual(path.read_text(), original)
+            prepare_cmake(root, "swanstation", "o3")
+            self.assertIn("if(FALSE)", path.read_text())
+            with self.assertRaises(ValueError):
+                prepare_cmake(root, "swanstation", "thinlto")
 
     def test_select_by_exports_not_filename_order(self):
         with tempfile.TemporaryDirectory() as directory:
