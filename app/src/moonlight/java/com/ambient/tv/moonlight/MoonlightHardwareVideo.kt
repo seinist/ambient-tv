@@ -33,10 +33,12 @@ internal object MoonlightHardwareVideo {
         Display.HdrCapabilities.HDR_TYPE_HDR10 in types
     }.getOrDefault(false)
 
-    internal fun decoder(
+    private val codecInfos by lazy { MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos }
+
+    internal fun decoders(
         mime: String, width: Int, height: Int, fps: Int, hdr10: Boolean = false,
-    ): MediaCodecInfo? = runCatching {
-        MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.firstOrNull { codec ->
+    ): List<MediaCodecInfo> = runCatching {
+        codecInfos.filter { codec ->
             !codec.isEncoder && codec.isHardwareAccelerated &&
                 codec.supportedTypes.any { it.equals(mime, ignoreCase = true) } &&
                 runCatching {
@@ -60,7 +62,10 @@ internal object MoonlightHardwareVideo {
                         })
                 }.getOrDefault(false)
         }
-    }.getOrNull()
+    }.getOrDefault(emptyList())
+
+    internal fun decoder(mime: String, width: Int, height: Int, fps: Int, hdr10: Boolean = false) =
+        decoders(mime, width, height, fps, hdr10).firstOrNull()
 
     /**
      * Explicit HDR "on": reject if any peer/display/decoder requirement is absent.
@@ -70,20 +75,36 @@ internal object MoonlightHardwareVideo {
         profile: MoonlightStreamProfile,
         appHdrSupported: Boolean = false,
         displayHdr10: Boolean = false,
+        hostCodecModes: Long = 0L,
     ): Int {
         val valid = profile.validated()
         val choices = if (valid.codec == "auto") codecs else codecs.filter { it.name == valid.codec }
-        if (valid.hdrMode != "off") {
-            if (appHdrSupported && displayHdr10) {
-                choices.firstOrNull { it.hdr10 != 0 &&
-                    decoder(it.mime, valid.width, valid.height, valid.fps, hdr10 = true) != null
-                }?.let { return it.hdr10 }
+        var sdr = 0
+        var hdr = 0
+        for (choice in choices) {
+            val hostSupportsSdr = when (choice.name) {
+                "hevc" -> hostCodecModes == 0L || hostCodecModes and 0x100L != 0L
+                "av1" -> hostCodecModes and 0x10000L != 0L
+                else -> true
             }
-            if (valid.hdrMode == "on") return 0
+            val hostSupportsHdr = when (choice.name) {
+                "hevc" -> hostCodecModes and 0x200L != 0L
+                "av1" -> hostCodecModes and 0x20000L != 0L
+                else -> false
+            }
+            if (hostSupportsSdr && decoder(choice.mime, valid.width, valid.height, valid.fps) != null)
+                sdr = sdr or choice.sdr
+            if (valid.hdrMode != "off" && appHdrSupported && displayHdr10 && hostSupportsHdr &&
+                decoder(choice.mime, valid.width, valid.height, valid.fps, hdr10 = true) != null)
+                hdr = hdr or choice.hdr10
         }
-        return choices.firstOrNull {
-            decoder(it.mime, valid.width, valid.height, valid.fps) != null
-        }?.sdr ?: 0
+        // Common-c negotiates the best mutually supported codec; never advertise a
+        // single preferred codec for Auto and thereby prevent fallback.
+        return when (valid.hdrMode) {
+            "on" -> hdr
+            "off" -> sdr
+            else -> hdr or sdr
+        }
     }
 
     fun isHdr10Format(format: Int): Boolean =

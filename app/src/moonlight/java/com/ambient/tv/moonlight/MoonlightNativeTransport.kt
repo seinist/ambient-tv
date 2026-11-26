@@ -93,12 +93,13 @@ class MoonlightNativeTransport @Inject constructor(
             ?: throw SecurityException("Moonlight host identity missing")
         val pinned = trust.pinnedCertificate(host.id)
             ?: throw SecurityException("Moonlight host certificate missing")
-        val info = withHttp(host, pinned) { http ->
-            parseMoonlightServerInfo(http.getServerInfo(true).toByteArray())
+        val (info, hostCodecModes) = withHttp(host, pinned) { http ->
+            val raw = http.getServerInfo(true)
+            parseMoonlightServerInfo(raw.toByteArray()) to http.getServerCodecModeSupport(raw)
         }
         if (info.uniqueId != serverId || trust.identity(hostId) != identity || requireHost(hostId) != host)
             throw SecurityException("Moonlight host identity changed")
-        return MoonlightVerifiedHost(host, info.httpsPort, pinned, identity)
+        return MoonlightVerifiedHost(host, info.httpsPort, pinned, identity, hostCodecModes)
     }
 
     /** Only pinned and size-limited art; decoding dimensions are checked by the cache. */
@@ -183,4 +184,5 @@ internal data class MoonlightVerifiedHost(
     val httpsPort: Int,
     val pinnedCertificate: java.security.cert.X509Certificate,
     val identity: String,
+    val hostCodecModes: Long,
 )

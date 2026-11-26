@@ -60,6 +60,7 @@ class MoonlightStreamEngine @Inject constructor(
         var stopIssued: Boolean = false,
         var preparation: Job? = null,
         var audioFocus: AudioFocusRequest? = null,
+        var metricsJob: Job? = null,
     )
 
     private val lock = Any()
@@ -96,6 +97,7 @@ class MoonlightStreamEngine @Inject constructor(
                 val videoFormat = MoonlightHardwareVideo.supportedFormat(valid,
                     appHdrSupported = app.hdrSupported,
                     displayHdr10 = displayHdr10 ?: MoonlightHardwareVideo.displaySupportsHdr10(context),
+                    hostCodecModes = target.hostCodecModes,
                 )
                 if (videoFormat == 0) throw UnsupportedOperationException("No compatible hardware video decoder")
                 if (!surface.isValid) throw IllegalStateException("Stream surface was destroyed")
@@ -105,7 +107,7 @@ class MoonlightStreamEngine @Inject constructor(
                 val video = MoonlightMediaCodecRenderer(surface, valid) { text ->
                     fail(session, text)
                 }
-                val audio = MoonlightAudioTrackRenderer()
+                val audio = MoonlightAudioTrackRenderer { text -> fail(session, text) }
                 val audioConfig = when (valid.audioChannels) {
                     6 -> MoonBridge.AUDIO_CONFIGURATION_51_SURROUND
                     8 -> MoonBridge.AUDIO_CONFIGURATION_71_SURROUND
@@ -124,8 +126,7 @@ class MoonlightStreamEngine @Inject constructor(
                     .setAudioConfiguration(audioConfig)
                     .setRemoteConfiguration(StreamConfiguration.STREAM_CFG_AUTO)
                     .setAttachedGamepadMask(initialMask)
-                    .setColorSpace(if (MoonlightHardwareVideo.isHdr10Format(videoFormat))
-                        MoonBridge.COLORSPACE_REC_2020 else MoonBridge.COLORSPACE_REC_709)
+                    .setColorSpace(MoonBridge.COLORSPACE_REC_709)
                     .setColorRange(MoonBridge.COLOR_RANGE_LIMITED)
                     .build()
                 val connection = NvConnection(
@@ -179,6 +180,7 @@ class MoonlightStreamEngine @Inject constructor(
             if (active !== session || session.stopIssued) return
             session.cancelled = true
             session.stopIssued = true
+            session.metricsJob?.cancel()
             if (mutable.value.phase != MoonlightStreamPhase.FAILED)
                 mutable.value = mutable.value.copy(phase = MoonlightStreamPhase.STOPPING)
         }
@@ -395,7 +397,10 @@ class MoonlightStreamEngine @Inject constructor(
                 session.cancelled
             }
             if (wasCancelled) stopSession(session)
-            else scope.launch { synchronized(inputGate) { sendArrivals(padFrame(session.owner) {}) } }
+            else scope.launch {
+                synchronized(inputGate) { sendArrivals(padFrame(session.owner) {}) }
+                startMetrics(session)
+            }
         }
         override fun connectionTerminated(errorCode: Int) {
             if (errorCode != 0 && !session.cancelled)
@@ -420,6 +425,35 @@ class MoonlightStreamEngine @Inject constructor(
         }
         override fun setMotionEventState(controllerNumber: Short, motionType: Byte, reportRateHz: Short) = Unit
         override fun setControllerLED(controllerNumber: Short, r: Byte, g: Byte, b: Byte) = Unit
+    }
+
+    private fun startMetrics(session: Active) {
+        synchronized(lock) {
+            if (active !== session || session.cancelled || session.metricsJob != null) return
+            session.metricsJob = scope.launch(Dispatchers.IO) {
+                var lastFrames = 0L
+                var lastTime = System.nanoTime()
+                while (isOwned(session)) {
+                    kotlinx.coroutines.delay(1000)
+                    if (!isOwned(session)) break
+                    val video = session.video?.metrics() ?: continue
+                    val audio = runCatching { session.audio?.metrics() }.getOrNull() ?: MoonlightAudioMetrics()
+                    val rtt = synchronized(inputGate) {
+                        if (isOwned(session)) runCatching { MoonBridge.getEstimatedRttInfo() }.getOrNull() else null
+                    }
+                    val now = System.nanoTime()
+                    val fps = (video.rendered - lastFrames) * 1e9 / (now - lastTime).coerceAtLeast(1L)
+                    lastFrames = video.rendered
+                    lastTime = now
+                    synchronized(lock) {
+                        if (active === session && !session.cancelled)
+                            mutable.value = mutable.value.copy(metrics = MoonlightStreamMetrics(
+                                video, audio, rtt?.let { (it shr 32).toInt().takeIf { n -> n >= 0 } },
+                                rtt?.let { it.toInt().takeIf { n -> n >= 0 } }, fps.coerceAtLeast(0.0)))
+                    }
+                }
+            }
+        }
     }
 
     private fun requestAudioFocus(session: Active): Boolean {
@@ -459,8 +493,13 @@ class MoonlightStreamEngine @Inject constructor(
 
     private fun finishStopped(session: Active) {
         runCatching { releaseAudioFocus(session) }
-        runCatching { session.video?.cleanup() }
+        val videoReleased = runCatching { session.video?.finishCleanup() != false }.getOrDefault(false)
         runCatching { session.audio?.cleanup() }
+        if (!videoReleased) {
+            synchronized(lock) { if (active === session) mutable.value = mutable.value.copy(
+                phase = MoonlightStreamPhase.FAILED, error = "Moonlight decoder teardown incomplete") }
+            return
+        }
         synchronized(lock) {
             if (active !== session) return
             localControllerMask = 0
