@@ -117,4 +117,18 @@ After merge, examples:
     ./build.sh cores picodrive --profile picodrive-sh2 --abis arm64-v8a
     ./build.sh cores snes9x --profile tune-a57 --abis arm64-v8a
 
-No candidate is publishable through the signed baseline catalog. New CI results pending.
+### Stage 3 CI results — 98f57d492df7b421a9f5d3859b60fc0064665f2b
+
+- [PR checks](https://github.com/seinist/ambient-tv/actions/runs/45861264732): all 10 jobs passed, including unit tests, native Vulkan ABI checks and Slang runtime checks.
+- [Core matrix](https://github.com/seinist/ambient-tv/actions/runs/45861264735): plan and all 16 build jobs passed; publish was skipped as designed.
+- PicoDrive ARM64 candidate compiled `cpu/sh2/compiler.c` with `DRC_SH2` effective and linked successfully. Baseline binary: 1,623,040 bytes (107 compile commands); candidate: 1,738,456 bytes (108 compile commands), +115,416 bytes (+7.11%). This confirms the extra code is built, not that 32X runtime selects or benefits from it.
+- Snes9x ARM64 Cortex-A57 profile passed the audit with `-mtune=cortex-a57` on all 58/58 C/C++ compile commands. Candidate binary: 2,946,912 bytes vs baseline 2,922,320 bytes (+24,592 bytes, +0.84%). The option tunes scheduling and does not authorize A57-only instructions.
+- Neither candidate is promoted. There are no measured frame-time, CPU, thermal, energy, audio-underrun or gameplay results yet. Device testing must compare identical ROM/BIOS, core options, renderer, resolution and frame pacing with repeated warm runs; include 1%/0.1% frame-time percentiles and thermal steady state.
+
+### Stage 4 — runtime evidence required before further promotion
+
+The Libretro performance interface now exposes counters and CPU feature information to cores, but the current frontend records and logs registered core counters only when a core calls its log callback. It is not yet a frontend-owned per-frame profiler. Do not interpret build success or a binary-size delta as a performance win.
+
+Next work should add bounded, low-overhead frontend timing around the serialized `retro_run` boundary (excluding pacing sleep and rewind serialization), report rolling p50/p95/p99 frame execution time and deadline misses, and correlate thermal status. Any Android Performance Hint Manager session must be scoped to the actual emulation worker and target work duration; it should remain optional on unsupported devices and must not be mistaken for a substitute for measuring or fixing slow cores. Keep logging off the hot path and aggregate off-thread. Physical-device validation is required before enabling ADPF or selecting experimental core variants by default.
+
+No candidate is publishable through the signed baseline catalog.
