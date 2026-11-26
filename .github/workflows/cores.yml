@@ -166,7 +166,7 @@ jobs:
             if [[ "$PROFILE" = o3* ]]; then
               flags+=("-DCMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG" "-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG")
             fi
-            cmake -S src -B build \
+            cmake -G "Unix Makefiles" -S src -B build \
               -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
               -DANDROID_ABI="$ABI" -DANDROID_PLATFORM=android-29 \
               -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON \
@@ -174,13 +174,15 @@ jobs:
               "-DCMAKE_MODULE_LINKER_FLAGS=-Wl,-z,max-page-size=16384 $LDFLAGS_EXTRA" \
               -DCMAKE_BUILD_TYPE=Release "${args[@]}" "${flags[@]}"
             build_cwd="$PWD/build"
-            cmake --build build --verbose -j"$(nproc)" 2>&1 | tee reports/build.log
+            # GNU Make must buffer each target; otherwise concurrent diagnostics can
+            # splice into a verbose compiler/link command and corrupt the flag audit.
+            cmake --build build --verbose -j"$(nproc)" -- --output-sync=target 2>&1 | tee reports/build.log
             lib=$(python3 scripts/core_build_policy.py select --nm "$bin/llvm-nm" --root build --pattern '*libretro*.so')
           else
             python3 scripts/core_build_policy.py ndk-flags \
               --application "src/$JNI/jni/Application.mk" --profile "$PROFILE" --cppflags="$CPPFLAGS_EXTRA"
             build_cwd="$PWD/src/$JNI/jni"
-            env "${extra_env[@]}" "$NDK/ndk-build" --no-print-directory -j"$(nproc)" -C "src/$JNI/jni" \
+            env "${extra_env[@]}" "${NDK}/ndk-build" --no-print-directory --output-sync=target -j"$(nproc)" -C "src/$JNI/jni" \
               APP_ABI="$ABI" APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true V=1 "${makevars[@]}" 2>&1 | tee reports/build.log
             lib=$(python3 scripts/core_build_policy.py select --nm "$bin/llvm-nm" --root "src/$JNI/libs/$ABI" --pattern '*.so')
           fi
