@@ -71,14 +71,18 @@ public:
         uint32_t index = memory.memoryTypeCount;
         for (uint32_t i = 0; i < memory.memoryTypeCount && i < VK_MAX_MEMORY_TYPES; ++i) {
             if ((req.memoryTypeBits & (uint32_t{1} << i)) &&
-                (memory.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+                (memory.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) &&
+                !(memory.memoryTypes[i].propertyFlags & (VK_MEMORY_PROPERTY_PROTECTED_BIT | VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT))) {
                 index = i;
                 break;
             }
         }
         if (index >= memory.memoryTypeCount || index >= VK_MAX_MEMORY_TYPES)
             return fail(VK_ERROR_FEATURE_NOT_PRESENT);
+        VkMemoryDedicatedAllocateInfo dedicated{VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO};
+        dedicated.image = image_;
         VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        ai.pNext = &dedicated;
         ai.allocationSize = req.size;
         ai.memoryTypeIndex = index;
         result = d_.allocate_memory(device_, &ai, nullptr, &memory_);
