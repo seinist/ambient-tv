@@ -6,7 +6,10 @@ from pathlib import Path
 
 from core_hotpath_patches import (BSNES_INPUT, MESEN_OLD, MESEN_NEW, SAMEBOY_OLD, SAMEBOY_NEW,
                                   PCE_OLD, PCE_NEW, SGX_OLD, SGX_NEW, NGP_OLD, NGP_NEW,
-                                  prepare_hotpaths)
+                                  FIXED_STATE_DECL, FIXED_WRITE_OLD, FIXED_WRITE_NEW,
+                                  FIXED_GROW_OLD, FIXED_GROW_NEW, FIXED_SAVE,
+                                  FIXED_RETRO_OLD, FIXED_RETRO_NEW, prepare_hotpaths,
+                                  replace_once)
 
 
 class CoreHotpathTests(unittest.TestCase):
@@ -41,8 +44,7 @@ class CoreHotpathTests(unittest.TestCase):
                 ("mesen", "Libretro/libretro.cpp", MESEN_OLD, MESEN_NEW),
                 ("sameboy", "libretro/libretro.c", SAMEBOY_OLD, SAMEBOY_NEW),
                 ("mednafen_pce_fast", "libretro.c", PCE_OLD, PCE_NEW),
-                ("mednafen_supergrafx", "libretro.cpp", SGX_OLD, SGX_NEW),
-                ("mednafen_ngp", "libretro.c", NGP_OLD, NGP_NEW)):
+                ("mednafen_supergrafx", "libretro.cpp", SGX_OLD, SGX_NEW)):
             with self.subTest(core=core), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 path = root / relative
@@ -52,6 +54,102 @@ class CoreHotpathTests(unittest.TestCase):
                 self.assertEqual(path.read_text(), "before\n" + new + "\nafter")
                 with self.assertRaises(ValueError):
                     prepare_hotpaths(root, core)
+
+    def test_fixed_state_source_transform(self):
+        for core in ("mednafen_ngp", "mednafen_wswan", "mednafen_vb", "mednafen_lynx"):
+            with self.subTest(core=core), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "mednafen").mkdir()
+                writer = root / ("mednafen/state.cpp" if core == "mednafen_lynx" else "mednafen/state.c")
+                header = root / "mednafen/state.h"
+                entry = root / ("libretro.cpp" if core in {"mednafen_vb", "mednafen_lynx"} else "libretro.c")
+                header.write_text("int MDFNSS_SaveSM(void *st, int, int, const void*, const void*, const void*);\n")
+                writer.write_text("static int32_t smem_write(StateMem *st, void *buffer, uint32_t len)\n{\n"
+                                  + FIXED_WRITE_OLD + FIXED_GROW_OLD + "\n   }\n}\n")
+                old = FIXED_RETRO_OLD.replace("   st.initial_malloc = 0;\n", "") if core == "mednafen_vb" else FIXED_RETRO_OLD
+                entry.write_text((NGP_OLD + "\n" if core == "mednafen_ngp" else "") + old)
+                prepare_hotpaths(root, core)
+                self.assertIn(FIXED_RETRO_NEW, entry.read_text())
+                self.assertIn(FIXED_WRITE_NEW, writer.read_text())
+                self.assertIn(FIXED_GROW_NEW, writer.read_text())
+                self.assertIn(FIXED_SAVE, writer.read_text())
+                self.assertIn("bool AmbientSaveFixed", header.read_text())
+                if core == "mednafen_ngp":
+                    self.assertIn(NGP_NEW, entry.read_text())
+                with self.assertRaises(ValueError):
+                    prepare_hotpaths(root, core)
+
+    def test_fixed_state_bounds_and_equivalence(self):
+        # Exercise the actual replacement writer and wrapper under UBSan. The
+        # mock upstream serializer intentionally ignores short writes as NGP does.
+        source = """
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
+typedef struct {
+    uint8_t *data;
+    uint32_t loc, len, malloced, initial_malloc;
+} StateMem;
+""" + FIXED_STATE_DECL + """
+static int32_t smem_write(StateMem *st, void *buffer, uint32_t len)
+{
+""" + FIXED_WRITE_NEW + """
+      uint32_t newsize = st->malloced >= 32768 ? st->malloced : 32768;
+""" + FIXED_GROW_NEW + """
+   }
+   memcpy(st->data + st->loc, buffer, len);
+   st->loc += len;
+   if (st->loc > st->len) st->len = st->loc;
+   return len;
+}
+static uint8_t payload[96];
+static uint32_t payload_len = 96;
+static bool force_failure = false;
+static int MDFNSS_SaveSM(void *ptr, int a, int b, const void *c, const void *d, const void *e) {
+    (void)a; (void)b; (void)c; (void)d; (void)e;
+    StateMem *st = (StateMem*)ptr;
+    uint8_t header[32] = {0};
+    memcpy(header, "MDFNSVST", 8);
+    smem_write(st, header, sizeof(header));
+    smem_write(st, payload, payload_len);
+    uint32_t length = st->loc;
+    st->loc = 20;
+    smem_write(st, &length, sizeof(length));
+    return !force_failure;
+}
+""" + FIXED_SAVE + """
+int main(void) {
+    for (unsigned i = 0; i < sizeof(payload); ++i) payload[i] = i * 7;
+    uint8_t data[160], original[128];
+    memset(data, 0x55, sizeof(data));
+    StateMem dynamic;
+    memset(&dynamic, 0, sizeof(dynamic));
+    assert(MDFNSS_SaveSM(&dynamic, 0, 0, NULL, NULL, NULL));
+    assert(dynamic.len == 128);
+    memcpy(original, dynamic.data, 128);
+    free(dynamic.data);
+    for (unsigned cap = 0; cap <= sizeof(data) - 16; ++cap) {
+        memset(data, 0x55, sizeof(data));
+        bool result = AmbientSaveFixed(data, cap);
+        assert(result == (cap >= 128));
+        for (unsigned i = cap; i < sizeof(data); ++i) assert(data[i] == 0x55);
+        if (result) {
+            assert(memcmp(data, original, 128) == 0);
+            for (unsigned i = 128; i < cap; ++i) assert(data[i] == 0);
+        }
+        assert(!ambient_fixed_state && !ambient_fixed_failed);
+    }
+    assert(!AmbientSaveFixed(NULL, 128));
+    force_failure = true;
+    assert(!AmbientSaveFixed(data, 128));
+    force_failure = false;
+    assert(AmbientSaveFixed(data, 128));
+}
+"""
+        self.compile_and_run(source, "cc", "c99", "c")
+        self.compile_and_run(source, "c++", "c++11", "cpp")
 
     def test_pce_input_snapshot(self):
         source = """
