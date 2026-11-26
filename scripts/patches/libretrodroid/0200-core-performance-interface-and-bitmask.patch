@@ -34,11 +34,11 @@ diff --git a/src/main/cpp/input.cpp b/src/main/cpp/input.cpp
 diff --git a/src/main/cpp/environment.cpp b/src/main/cpp/environment.cpp
 --- a/src/main/cpp/environment.cpp
 +++ b/src/main/cpp/environment.cpp
-@@ -31,4 +31,5 @@
+@@ -31,5 +31,6 @@
  #include "environment.h"
--#include "vfs/vfs.h"
+ #include "contentaspect.h"
 +#include "ambientcoreperf.h"
-+#include "vfs/vfs.h"
+ #include "vfs/vfs.h"
  #include "vulkan/vulkanbackend.h"
  #include "microphone/microphoneinterface.h"
 @@ -55,4 +55,5 @@

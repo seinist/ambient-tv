@@ -78,3 +78,24 @@ The existing native host harness now exercises all 65536 button masks,
 legacy motion and pending taps, netplay isolation, feature decoding with
 missing OS support, timing, copied diagnostics and overflow. Full patch
 application, all ABI builds and physical core timing remain CI/device gates.
+
+### Build validation and contextual re-audit
+
+Initial head ce2b702a82632d3e1b3985acf3b02e2acdc7cf59: [Cores run 45858807739](https://github.com/seinist/ambient-tv/actions/runs/45858807739) completed the plan and all eight builds successfully; publishing skipped as intended.
+Each ThinLTO Snes9x build observed 58/58 C/C++ compile commands and one
+shared link with ThinLTO; mGBA observed 246/246 and one link per ABI.
+
+| Core | ABI | Baseline bytes | ThinLTO bytes |
+|---|---|---:|---:|
+| snes9x | arm64-v8a | 2922320 | 2954544 |
+| snes9x | armeabi-v7a | 1734996 | 1719252 |
+| mgba | arm64-v8a | 2073936 | 2117776 |
+| mgba | armeabi-v7a | 1252288 | 1283428 |
+
+These are stripped binary sizes, not gameplay timings. Baseline remains default.
+The exact pinned input.cpp and environment.cpp were reconstructed against the
+known relevant preceding patches. Both input hunks and two environment hunks
+matched uniquely; the include hunk initially missed the contentaspect.h line
+from patch 0035. It has been corrected to the post-0035 include context.
+The complete fresh git apply, native host tests and NDK compilation for this
+new head are still required; no prior green run validates these new changes.
