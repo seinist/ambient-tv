@@ -1298,10 +1298,10 @@ class VlcPlaybackController(
     }
 
     fun checkVulkanOutput() {
-        if (!vulkanOutput || released || !prepared || !vulkanSurfaceChecked || restartStop != null ||
+        if (!vulkanOutput || released) return
+        if (!prepared || !vulkanSurfaceChecked || restartStop != null ||
             restartStopFailed || dvRetirementPending || userVideoDisabled || audioOnly ||
-            attachedView?.holder?.surface?.isValid != true) return
-        if (!frameDropSampleReady()) {
+            attachedView?.holder?.surface?.isValid != true || !frameDropSampleReady()) {
             vulkanOutputWatch.suspendObservation()
             return
         }
