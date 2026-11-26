@@ -82,6 +82,7 @@ class YouTubeDetailViewModel @Inject constructor(savedStateHandle: SavedStateHan
     fun refresh() = load(forceRefresh = true)
 
     private fun load(forceRefresh: Boolean) {
+        if (availability.hasNetwork()) engine.requestPlaybackWarmup()
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             _uiState.value = _uiState.value.copy(loading = _uiState.value.metadata == null, enriching = true, error = null)

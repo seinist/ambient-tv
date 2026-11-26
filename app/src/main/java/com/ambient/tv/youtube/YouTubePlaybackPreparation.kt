@@ -5,6 +5,10 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlin.coroutines.coroutineContext
 
+/** Detached lazy job: native playback never starts it or retains it in a process-wide job. */
+internal fun youtubeDeferredDash(load: suspend () -> String?): kotlinx.coroutines.Deferred<String?> =
+    CoroutineScope(kotlinx.coroutines.Dispatchers.IO).async(start = CoroutineStart.LAZY) { load() }
+
 internal enum class YouTubeVodStreamPolicy {
     DASH_FIRST,
     PROGRESSIVE_FIRST,

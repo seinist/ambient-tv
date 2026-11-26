@@ -1766,6 +1766,8 @@ class HomeViewModel @Inject constructor(
             return
         }
 
+        // Start local preparation before displaying cached SmartTube cards.
+        smartTubeEngine.requestPlaybackWarmup()
         youtubeRowsPending = true
         youtubeJob = viewModelScope.launch {
             try {

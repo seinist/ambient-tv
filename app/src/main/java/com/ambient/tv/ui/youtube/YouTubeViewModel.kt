@@ -838,6 +838,7 @@ class YouTubeViewModel @Inject constructor(
         _uiState.value.rows.takeIf { preserveExtent && displayedContentKey == key }.orEmpty()
 
     private fun beginContentLoad(): Long {
+        engine.requestPlaybackWarmup()
         rowPublisher.cancelPending()
         visibleViewportEnds.clear()
         val generation = ++contentGeneration
