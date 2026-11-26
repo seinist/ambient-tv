@@ -93,11 +93,9 @@ object VideoAccelerationRuntime {
         json.decodeFromString<VulkanDeviceCapabilities>(VulkanNativeProbe.probe(surface))
     }.getOrElse { Timber.w(it, "Vulkan probe failed"); VulkanDeviceCapabilities() }
 
-    /** Check the real Surface before handing it to a Vulkan renderer. */
-    fun surfaceSupported(surface: Surface, backend: String? = null,
-        onCapabilities: (VulkanDeviceCapabilities) -> Unit = {},
-    ): Boolean {
-        if (!surface.isValid) return false
+    /** Query the real window without publishing playback evidence from a stale request. */
+    private fun probeSurface(surface: Surface): VulkanDeviceCapabilities {
+        if (!surface.isValid) return VulkanDeviceCapabilities(reason = "invalid_surface")
         val validated = mutable.value.device
         val probed = if (validated.render && validated.device.isNotBlank()) {
             try {
@@ -115,7 +113,19 @@ object VideoAccelerationRuntime {
                 VulkanDeviceCapabilities()
             }
         } else probeDevice(surface)
+        return probed
+    }
+
+    /** Check the real Surface before handing it to a Vulkan renderer. */
+    fun surfaceSupported(surface: Surface, backend: String? = null,
+        onCapabilities: (VulkanDeviceCapabilities) -> Unit = {},
+    ): Boolean {
+        val probed = probeSurface(surface)
         onCapabilities(probed)
+        return acceptSurfaceProbe(probed, backend)
+    }
+
+    internal fun acceptSurfaceProbe(probed: VulkanDeviceCapabilities, backend: String?): Boolean {
         Timber.i("VULKAN surface device=%s render=%s reason=%s colorSpaces=%s hdr10=%s formats=%s",
             probed.device, probed.render, probed.reason, probed.surfaceColorSpaces, probed.hdr10SurfaceSupported, probed.surfaceFormats)
         val current = mutable.value.device
@@ -125,6 +135,32 @@ object VideoAccelerationRuntime {
             if (supported) null else "surface",
         )) }
         return supported
+    }
+
+    /**
+     * VLC's view lifecycle runs on the main thread. Copy the native window reference and do
+     * only the capability query on IO. The caller must validate its generation before accepting.
+     * No swapchain, decoder or producer is created here.
+     */
+    internal fun probeSurfaceAsync(surface: Surface, result: (VulkanDeviceCapabilities) -> Unit) {
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        val copy = runCatching {
+            val parcel = android.os.Parcel.obtain()
+            try {
+                surface.writeToParcel(parcel, 0)
+                parcel.setDataPosition(0)
+                Surface.CREATOR.createFromParcel(parcel)
+            } finally { parcel.recycle() }
+        }.getOrNull()
+        if (copy == null) {
+            main.post { result(VulkanDeviceCapabilities(reason = "surface_copy")) }
+            return
+        }
+        scope.launch {
+            val probed = try { probeSurface(copy) }
+            finally { copy.release() }
+            main.post { result(probed) }
+        }
     }
 
     fun reportOutput(backend: String, frames: Boolean = false) {
