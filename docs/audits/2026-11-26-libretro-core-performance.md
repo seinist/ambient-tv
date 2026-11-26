@@ -365,3 +365,7 @@ without changing compiler/link/ELF evidence requirements.
 ### Final integration audit follow-up
 
 Fail closed on unresolved local link inputs for baseline as well as candidates. The new native performance callback remains opt-in via experimental native builds; normal builds retain the upstream GET_PERF_INTERFACE=false contract while the direct input-mask optimization stays enabled. Reject mixed legacy/main trace measurements rather than aggregating incomparable samples. Manual artifact builds no longer cancel other selections sharing a profile; releases remain serialized separately. Fresh CI is required.
+
+### Explicit experimental release channel (supersedes artifact-only policy)
+
+User-requested opt-in downloads are available through separate signed prereleases, never via AUTO. Publish from main only with an explicit experimental profile and publish_experimental=true, or ./build.sh cores --profile core-hotpaths --publish-experimental. Partial experimental releases are resolved by core/ABI across matching releases. Stable releases retain their original tag prefix; titles identify Stable or Experimental and the profile. Separate installed binaries, rollback slots, SRAM and savestates per profile protect normal progress; experimental sessions do not mirror saves to RomM. Core SHA-256 compatibility checks remain in effect. New regression tests cover channel separation, rollback and save isolation. Build and device validation still required; no release was published from the PR.

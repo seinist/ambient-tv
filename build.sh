@@ -1309,7 +1309,7 @@ run_cores_command() {
         cores)
             shift
             local -a inputs=(-f publish=false)
-            local selected="" profile="baseline" abis="" comparison="none" core_ref="main"
+            local selected="" profile="baseline" abis="" comparison="none" core_ref="main" publish_experimental=false
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --profile)
@@ -1318,6 +1318,8 @@ run_cores_command() {
                     --abis)
                         [[ $# -ge 2 ]] || fail "--abis requires a comma-separated ABI list"
                         abis="$2"; shift 2 ;;
+                    --publish-experimental)
+                        publish_experimental=true; shift ;;
                     --comparison)
                         [[ $# -ge 2 ]] || fail "--comparison requires baseline-thinlto or o3-o3-thinlto"
                         comparison="$2"; shift 2 ;;
@@ -1339,6 +1341,10 @@ run_cores_command() {
             if [[ "$comparison" != none ]]; then
                 [[ "$profile" == baseline ]] || fail "Paired comparisons require the baseline profile"
                 inputs+=(-f "comparison=$comparison")
+            fi
+            if [[ "$publish_experimental" == true ]]; then
+                [[ "$core_ref" == main && "$profile" != baseline && "$comparison" == none ]] || fail "Experimental release requires main, an explicit non-baseline profile and no comparison"
+                inputs+=(-f publish_experimental=true)
             fi
             gh workflow run cores.yml --repo "$repo" --ref "$core_ref" "${inputs[@]}"
             ;;
@@ -1386,8 +1392,8 @@ Libraries: libs-check [svp|monogram|libretro], libs-update [svp|monogram|libretr
 
 Libretro cores on GitHub Actions (main):
   cores [id[,id...]] [--profile baseline|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths] [--abis ABI[,ABI...]]
-        [--comparison baseline-thinlto|o3-o3-thinlto] [--ref branch]
-                      Build artifacts only. Omit IDs to build all cores (gh).
+        [--comparison baseline-thinlto|o3-o3-thinlto] [--ref branch] [--publish-experimental]
+                      Build artifacts by default. Explicit --publish-experimental signs a separate prerelease on main.
   cores-key [--manual] Generate signing keys. Upload the secret in the browser if gh is unavailable.
                        Commit and push cores/signing-public.pem and rebuild the app to embed it.
   cores-release       Build and publish the full signed core catalog (gh).

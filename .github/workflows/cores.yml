@@ -354,6 +354,11 @@ jobs:
           openssl dgst -sha256 -verify cores/signing-public.pem -signature release/manifest.json.sig release/manifest.json
           jq -r '.cores[] | "\(.core) \(.abi)"' release/manifest.json
           release_args=(--latest=false)
-          if [ "$EXPERIMENT" = true ]; then release_args+=(--prerelease); fi
-          gh release create "$tag" release/* --title "Cores $PROFILE $(date -u +%Y-%m-%d)" "${release_args[@]}" \
+          if [ "$EXPERIMENT" = true ]; then
+            release_args+=(--prerelease)
+            title="Ambient TV – Libretro Cores (Experimental: $PROFILE) – $(date -u +%Y-%m-%d)"
+          else
+            title="Ambient TV – Libretro Cores (Stable) – $(date -u +%Y-%m-%d)"
+          fi
+          gh release create "$tag" release/* --title "$title" "${release_args[@]}" \
             --notes "libretro cores built from cores/cores.json at ${GITHUB_SHA::7} (16 KB pages). Signed manifest for profile $PROFILE."
