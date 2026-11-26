@@ -292,6 +292,99 @@ void pendingFrame(VulkanBackend& backend) {
 }
 void window(VulkanBackend& backend) { backend.nativeSdrWindow = object<ANativeWindow*>(18); }
 
+void dualSlotRetirementContracts() {
+    static unsigned semaphoreFrees;
+    for (unsigned mode = 0; mode < 5; ++mode) {
+        VulkanBackend backend;
+        setup(backend);
+        auto& spare = backend.spareFrameSlot;
+        spare.pool = object<VkCommandPool>(301);
+        spare.command = object<VkCommandBuffer>(302);
+        spare.fence = object<VkFence>(303);
+        spare.bridgeImage.image = object<VkImage>(304);
+        spare.bridgeImage.memory = object<VkDeviceMemory>(305);
+        spare.bridgeImage.buffer = object<AHardwareBuffer*>(306);
+        spare.bridgeImage.width = spare.bridgeImage.height = 32;
+        spare.bridgeImage.allocationBytes = 4096;
+        backend.frameSlot.bridgeSync.readSemaphore = object<VkSemaphore>(307);
+        spare.bridgeSync.writeSemaphore = object<VkSemaphore>(308);
+        semaphoreFrees = 0;
+        backend.vk.destroySemaphore = [](VkDevice, VkSemaphore semaphore, const VkAllocationCallbacks*) {
+            assert(!driver.pending && (semaphore == object<VkSemaphore>(307) ||
+                                       semaphore == object<VkSemaphore>(308)));
+            ++semaphoreFrees;
+        };
+        backend.frameSlot.inFlight = spare.inFlight = driver.pending = true;
+        window(backend);
+        backend.nativeSdrSwapchain = object<VkSwapchainKHR>(19);
+        if (mode == 0) {
+            driver.idles = {VK_ERROR_OUT_OF_HOST_MEMORY};
+            backend.shutdown();
+            assert(backend.frameSlot.inFlight && spare.inFlight && driver.pending);
+        } else if (mode == 1) {
+            spare.bridgeSync.writeSemaphore = backend.frameSlot.bridgeSync.readSemaphore;
+            backend.shutdown();
+            assert(!backend.frameSlot.inFlight && !spare.inFlight && !driver.pending);
+            spare.bridgeSync.writeSemaphore = object<VkSemaphore>(308);
+        } else if (mode == 2) {
+            spare.pool = VK_NULL_HANDLE; // only the spare has an invalid ownership record
+            backend.shutdown();
+            assert(!backend.frameSlot.inFlight && !spare.inFlight);
+            spare.pool = object<VkCommandPool>(301);
+        } else if (mode == 3) {
+            const auto destroyDevice = backend.vk.destroyDevice;
+            backend.vk.destroyDevice = nullptr;
+            backend.shutdown();
+            assert(!backend.frameSlot.inFlight && !spare.inFlight);
+            backend.vk.destroyDevice = destroyDevice;
+        } else {
+            const auto device = backend.device;
+            backend.device = VK_NULL_HANDLE;
+            assert(!backend.prepareForShutdown());
+            assert(backend.frameSlot.inFlight && spare.inFlight && driver.pending);
+            backend.device = device;
+        }
+        assert(backend.device && !backend.shutdownReady && backend.nativeSdrSwapchain);
+        assert(backend.frameSlot.bridgeImage.buffer && spare.bridgeImage.buffer);
+        assert(driver.imageFrees == 0 && driver.memoryFrees == 0 && driver.bufferFrees == 0 &&
+               driver.fenceFrees == 0 && driver.commandPoolFrees == 0 && driver.cacheReleases == 0 &&
+               driver.swapchainFrees == 0 && driver.slangReleases == 0 && driver.deviceFrees == 0 &&
+               semaphoreFrees == 0);
+        driver.idles = {mode == 4 ? VK_ERROR_DEVICE_LOST : VK_SUCCESS};
+        backend.shutdown();
+        assert(!backend.device && !backend.shutdownReady && !backend.hasFatalError());
+        assert(!backend.frameSlot.inFlight && !spare.inFlight);
+        assert(backend.frameSlot.bridgeImage.empty() && spare.bridgeImage.empty());
+        assert(backend.frameSlot.bridgeSync.empty() && spare.bridgeSync.empty());
+        assert(!backend.frameSlot.pool && !spare.pool && !backend.frameSlot.fence && !spare.fence);
+        assert(driver.imageFrees == 2 && driver.memoryFrees == 2 && driver.bufferFrees == 2 &&
+               driver.fenceFrees == 2 && driver.commandPoolFrees == 2 && driver.cacheReleases == 2 &&
+               driver.swapchainFrees == 1 && driver.deviceFrees == 1 && semaphoreFrees == 2);
+    }
+    for (bool failure : {false, true}) {
+        VulkanBackend backend;
+        setup(backend);
+        backend.spareFrameSlot.fence = object<VkFence>(401);
+        backend.spareFrameSlot.inFlight = driver.pending = true;
+        backend.vk.waitForFences = [](VkDevice, uint32_t count, const VkFence* fences, VkBool32, uint64_t) {
+            assert(count == 1 && *fences == object<VkFence>(401));
+            ++driver.waitCalls;
+            auto result = driver.next(driver.waits);
+            if (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST) driver.pending = false;
+            return result;
+        };
+        if (failure) {
+            driver.waits = {VK_ERROR_OUT_OF_HOST_MEMORY};
+            driver.idles = {VK_ERROR_DEVICE_LOST};
+        }
+        VulkanBackend::callbackWaitSyncIndex(&backend);
+        assert(driver.waitCalls == 1 && !backend.spareFrameSlot.inFlight && !driver.pending);
+        assert(backend.hasFatalError() == failure && driver.idleCalls == (failure ? 1u : 0u));
+        assert(driver.resets == (failure ? 0u : 1u));
+    }
+    std::puts("PASS dual-slot shutdown preflight, exact retirement and sync-index-zero drain");
+}
+
 void slotFenceAndClearContracts() {
     using Slot = VulkanBackend::FrameSlot;
     static VkFence expectedFence;
@@ -1329,6 +1422,7 @@ int main() {
     frameSlotAllocationContracts();
     bridgeBudgetAdmissionContracts();
     slotFenceAndClearContracts();
+    dualSlotRetirementContracts();
     slotRetirementPreflightContracts();
     timeoutsPreserveWork();
     errorsStopWorkAndResize();
