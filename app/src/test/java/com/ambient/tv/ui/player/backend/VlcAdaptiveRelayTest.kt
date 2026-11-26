@@ -111,4 +111,34 @@ class VlcAdaptiveRelayTest {
             rewriteVlcHlsManifest(child, source, emptyMap()) { _, _, _ -> error("missing import") }
         }
     }
+
+    @Test fun hlsUriRewritePreservesQuotedCommasAndNonAttributeText() {
+        val manifest = """
+            #EXTM3U
+            #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="News, URI=label",URI="audio.m3u8"
+            #EXTINF:4,title,URI="not-a-resource"
+            # Comment,URI="also-not-a-resource"
+            segment.ts
+        """.trimIndent()
+        val seen = mutableListOf<String>()
+        val rewritten = rewriteVlcHlsManifest(manifest, source) { url, playlist ->
+            seen += url.encodedPath
+            routes.register(url, playlist)
+        }
+        assertEquals(listOf("/live/audio.m3u8", "/live/segment.ts"), seen)
+        assertTrue(rewritten.contains("NAME=\"News, URI=label\""))
+        assertTrue(rewritten.contains("#EXTINF:4,title,URI=\"not-a-resource\""))
+        assertTrue(rewritten.contains("# Comment,URI=\"also-not-a-resource\""))
+        assertFalse(rewritten.contains("URI=\"audio.m3u8\""))
+    }
+
+    @Test fun hlsRejectsMalformedAndDuplicateUriAttributes() {
+        for (attributes in listOf("URI=key.bin", "URI=\"\"", "URI=\"first\",URI=\"second\"", "URI=\"unterminated")) {
+            assertThrows(IOException::class.java) {
+                rewriteVlcHlsManifest("#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,$attributes\n", source) { url, playlist ->
+                    routes.register(url, playlist)
+                }
+            }
+        }
+    }
 }
