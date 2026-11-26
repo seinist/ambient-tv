@@ -1,0 +1,61 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -93,6 +93,12 @@
+     // translates them into managed errors. Never unwind through a core C callback.
+     VkResult getFatalError() const { return fatalFrameError; }
+     bool hasFatalError() const { return fatalFrameError != VK_SUCCESS; }
++    // Allocation alone is not a usable bridge. Fail closed if GLES cannot import
++    // either supported transport; keep the first fatal error and all live resources.
++    void rejectBridgeImport() {
++        frameStatus.store(0u, std::memory_order_release);
++        checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "import Vulkan frame into GLES");
++    }
+     const retro_hw_render_interface_vulkan* getRenderInterface() const;
+ 
+     // Read-only WSI capability probe on a separate, real display ANativeWindow.
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -426,11 +426,14 @@
+ void LibretroDroid::attachVulkanFrame(unsigned int width, unsigned int height) {
+     auto& backend = VulkanBackend::getInstance();
+-    if (!video) return;
++    if (!video || backend.hasFatalError()) return;
+     // ensureFrameBuffer can destroy the old VkImage/VkDeviceMemory before the
+     // ordinary per-frame bridge finish in handleVideoRefresh. Drain the old
+     // owning GLES context first; retain the existing post-import handoff too.
+     traceGameCall("AmbientGame GLES bridge resize finish", [&] { video->finishExternalFrameUse(); });
+-    if (!backend.ensureFrameBuffer(width, height)) return;
++    if (!backend.ensureFrameBuffer(width, height)) {
++        backend.rejectBridgeImport();
++        return;
++    }
+     if (video->attachExternalFrame(backend.getFrameBuffer(), backend.getFrameBufferWidth(),
+                                    backend.getFrameBufferHeight())) return;
+     if (backend.isFp16Frame()) {
+@@ -438,11 +441,11 @@
+         // Try RGBA8 for the entire remaining session, including later resizes.
+         LOGW("FP16 Vulkan image import failed; retrying safely with RGBA8");
+         backend.disableFp16Frame();
+-        if (backend.ensureFrameBuffer(width, height)) {
++        if (!backend.hasFatalError() && backend.ensureFrameBuffer(width, height) &&
+             video->attachExternalFrame(backend.getFrameBuffer(), backend.getFrameBufferWidth(),
+-                                       backend.getFrameBufferHeight());
+-        }
++                                       backend.getFrameBufferHeight())) return;
+     }
++    backend.rejectBridgeImport();
+ }
+ 
+ void LibretroDroid::onMotionEvent(
+@@ -1474,6 +1477,9 @@
+             if (width > backend.getFrameBufferWidth() || height > backend.getFrameBufferHeight()) {
+                 attachVulkanFrame(std::max(width, backend.getFrameBufferWidth()),
+                                   std::max(height, backend.getFrameBufferHeight()));
++                // No EGL import means no usable bridge, even if Vulkan allocation succeeded.
++                // Report at the existing post-core boundary, never unwind the C callback.
++                if (backend.hasFatalError()) return;
+             }
+             traceGameCall("AmbientGame GLES bridge finish", [] { glFinish(); });
+             if (!backend.presentFrame(width, height, getAspectRatio(), nativePictureCompatible())) {

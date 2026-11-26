@@ -46,8 +46,12 @@ def main():
         work = Path(temporary)
         (work / "android").mkdir()
         (work / "android/log.h").write_text("#pragma once\n")
-        (work / "game_video_refresh_under_test.h").write_text(cpp_function(
-            (native / "libretrodroid.cpp").read_text(), "void LibretroDroid::handleVideoRefresh("))
+        source = (native / "libretrodroid.cpp").read_text()
+        (work / "game_video_refresh_under_test.h").write_text("\n".join(
+            cpp_function(source, signature) for signature in (
+                "void LibretroDroid::attachVulkanFrame(",
+                "void LibretroDroid::handleVideoRefresh(",
+            )))
         command = shlex.split(os.environ.get("CXX", "c++")) + [
             "-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
             "-Wno-unused-parameter", "-Wno-sign-compare", "-include", "cmath",

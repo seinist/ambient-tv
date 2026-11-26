@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Execute the unmodified production handleVideoRefresh body against controlled
-// bridge acceptance and source metadata. GPU rendering is tested separately on EGL.
+// Execute the unmodified production attachVulkanFrame and handleVideoRefresh
+// bodies against controlled bridge allocation/import and source metadata.
+// GPU rendering is tested separately on EGL.
 #include "ambientgametrace.h"
 using libretrodroid::traceGameCall;
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <initializer_list>
 #include "libretro/libretro-common/include/libretro.h"
 
 // Vulkan's stable VkFormat numeric ABI; no Vulkan device is used in this API test.
@@ -14,6 +16,7 @@ constexpr uint32_t VK_FORMAT_A2R10G10B10_UNORM_PACK32 = 58;
 constexpr uint32_t VK_FORMAT_A2B10G10R10_UNORM_PACK32 = 64;
 static unsigned glFinishes = 0;
 void glFinish() { ++glFinishes; }
+#define LOGW(...) ((void)0)
 
 struct Environment {
     unsigned handshake = 0;
@@ -26,13 +29,33 @@ struct Environment {
 struct VulkanBackend {
     unsigned format = 0, width = 256, height = 240, submissions = 0;
     bool bridgeAccepted = true, frameConfirmed = false, fatal = false;
+    bool fp16 = false, allocationAccepted = true, fallbackAllocationAccepted = true;
+    bool disableFails = false;
+    unsigned drains = 0, allocations = 0, disables = 0, rejections = 0;
     static VulkanBackend& getInstance() { static VulkanBackend value; return value; }
     unsigned getCoreSourceFormat() const { return format; }
     unsigned getFrameBufferWidth() const { return width; }
     unsigned getFrameBufferHeight() const { return height; }
     bool hasFatalError() const { return fatal; }
+    void* getFrameBuffer() { return this; }
+    bool isFp16Frame() const { return fp16; }
+    bool ensureFrameBuffer(unsigned w, unsigned h) {
+        assert(drains > 0 && !fatal);
+        ++allocations;
+        if (!(allocations == 1 ? allocationAccepted : fallbackAllocationAccepted)) return false;
+        width = w;
+        height = h;
+        return true;
+    }
+    void disableFp16Frame() {
+        assert(fp16 && !fatal);
+        ++disables;
+        if (disableFails) fatal = true;
+        else fp16 = false;
+    }
+    void rejectBridgeImport() { ++rejections; fatal = true; frameConfirmed = false; }
     bool presentFrame(unsigned, unsigned, float aspect, bool compatible) {
-        assert(aspect == 4.0F / 3.0F && compatible);
+        assert(!fatal && aspect == 4.0F / 3.0F && compatible);
         ++submissions;
         frameConfirmed = false;
         return bridgeAccepted;
@@ -42,7 +65,17 @@ struct VulkanBackend {
 struct Video {
     unsigned transfer = 2, transferUpdates = 0, frameCalls = 0, width = 32, height = 24;
     bool external = true;
+    bool fp16ImportAccepted = true, rgbaImportAccepted = true;
+    unsigned imports = 0;
     bool presentsExternalFrames() const { return external; }
+    void finishExternalFrameUse() { ++VulkanBackend::getInstance().drains; }
+    bool attachExternalFrame(void* buffer, unsigned w, unsigned h) {
+        auto& backend = VulkanBackend::getInstance();
+        assert(buffer == backend.getFrameBuffer() && !backend.fatal);
+        assert(w == backend.width && h == backend.height && backend.allocations > imports);
+        ++imports;
+        return backend.fp16 ? fp16ImportAccepted : rgbaImportAccepted;
+    }
     void setSourceTransfer(unsigned value) { transfer = value; ++transferUpdates; }
     void onNewFrame(const void* data, unsigned newWidth, unsigned newHeight, size_t) {
         ++frameCalls;
@@ -55,20 +88,72 @@ struct LibretroDroid {
     Video* video;
     float getAspectRatio() const { return 4.0F / 3.0F; }
     bool nativePictureCompatible() const { return true; }
-    void attachVulkanFrame(unsigned width, unsigned height) {
-        auto& backend = VulkanBackend::getInstance();
-        backend.width = width;
-        backend.height = height;
-    }
+    void attachVulkanFrame(unsigned width, unsigned height);
     void renderPrimaryFrame() {}
     void handleVideoRefresh(const void*, unsigned, unsigned, size_t);
 };
 
 // Written by the runner from the prepared production source, including the
-// original function signature and full body. No rewritten implementation here.
+// original function signatures and full bodies. No rewritten implementation here.
 #include "game_video_refresh_under_test.h"
 
+void bridgeImportContracts() {
+    struct Case {
+        const char* name;
+        bool fp16, allocate, fpImport, rgbaImport, fallbackAllocate, disableFails;
+        bool accepted;
+        unsigned allocations, imports, disables;
+    };
+    const Case cases[] = {
+        {"RGBA8 import", false, true, true, true, true, false, true, 1, 1, 0},
+        {"FP16 import", true, true, true, true, true, false, true, 1, 1, 0},
+        {"allocation failed", false, false, true, true, true, false, false, 1, 0, 0},
+        {"RGBA8 import failed", false, true, true, false, true, false, false, 1, 1, 0},
+        {"FP16 fallback succeeds", true, true, false, true, true, false, true, 2, 2, 1},
+        {"fallback allocation failed", true, true, false, true, false, false, false, 2, 1, 1},
+        {"both imports failed", true, true, false, false, true, false, false, 2, 2, 1},
+        {"FP16 retirement failed", true, true, false, true, true, true, false, 1, 1, 1},
+    };
+    for (bool initial : {false, true}) {
+        for (const auto& test : cases) {
+            Environment::getInstance() = {3, RETRO_PIXEL_FORMAT_XRGB8888};
+            auto& backend = VulkanBackend::getInstance();
+            backend = {};
+            backend.format = 64;
+            backend.fp16 = test.fp16;
+            backend.allocationAccepted = test.allocate;
+            backend.fallbackAllocationAccepted = test.fallbackAllocate;
+            backend.disableFails = test.disableFails;
+            backend.frameConfirmed = true;
+            Video video;
+            video.fp16ImportAccepted = test.fpImport;
+            video.rgbaImportAccepted = test.rgbaImport;
+            LibretroDroid host {&video};
+            const unsigned before = glFinishes;
+            if (initial) host.attachVulkanFrame(512, 480);
+            host.handleVideoRefresh(RETRO_HW_FRAME_BUFFER_VALID, 512, 480, 2048);
+            assert(backend.drains == 1 && backend.allocations == test.allocations);
+            assert(video.imports == test.imports && backend.disables == test.disables);
+            assert(backend.fatal == !test.accepted && backend.rejections == (test.accepted ? 0u : 1u));
+            assert(backend.submissions == (test.accepted ? 1u : 0u));
+            assert(glFinishes - before == (test.accepted ? 1u : 0u));
+            assert(video.transfer == (test.accepted ? 1u : 2u));
+            assert(video.frameCalls == (test.accepted ? 1u : 0u));
+            assert(video.transferUpdates == video.frameCalls);
+            assert(video.width == (test.accepted ? 512u : 32u));
+            assert(video.height == (test.accepted ? 480u : 24u));
+            if (!test.accepted) {
+                assert(!backend.frameConfirmed);
+                host.handleVideoRefresh(RETRO_HW_FRAME_BUFFER_VALID, 512, 480, 2048);
+                assert(backend.submissions == 0 && video.frameCalls == 0 && backend.drains == 1);
+            }
+            std::printf("PASS %s bridge: %s\n", initial ? "initial" : "resize", test.name);
+        }
+    }
+}
+
 int main() {
+    bridgeImportContracts();
     enum class Input { Vulkan, Software, Duplicate, GlesHardware };
     struct Case {
         const char* name;
@@ -128,5 +213,5 @@ int main() {
         std::printf("PASS source ingress: %s\n", test.name);
         ++count;
     }
-    std::printf("Production handleVideoRefresh acceptance: %u cases passed\n", count);
+    std::printf("Production bridge and ingress acceptance: %u cases passed\n", count + 16);
 }

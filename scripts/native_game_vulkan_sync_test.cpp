@@ -301,6 +301,29 @@ void errorsStopWorkAndResize() {
     std::puts("PASS Vulkan wait failures latch once and stop present/clear/resize/filter changes");
 }
 
+void bridgeImportFailureLatches() {
+    VulkanBackend backend;
+    setup(backend); pendingFrame(backend); window(backend);
+    backend.frameStatus.store(7u);
+    backend.nativePresentation.setFullscreenActive(true);
+    backend.nativePresentation.didPresentFrame();
+    backend.rejectBridgeImport();
+    assert(backend.getFatalError() == VK_ERROR_INITIALIZATION_FAILED);
+    assert(backend.getFrameStatus() == 0 && backend.getNativeSdrStatus() == 9u);
+    assert(backend.primaryDraw(false, true) != libretrodroid::NativePresentationGate::PrimaryDraw::Skip);
+    assert(backend.frameInFlight && driver.pending);
+    assert(!backend.presentFrame(256, 224, 4.0F / 3.0F, true));
+    assert(!backend.ensureFrameBuffer(512, 480));
+    assert(driver.submits == 0 && driver.imageFrees == 0 && driver.bufferFrees == 0);
+    backend.fatalFrameError = VK_ERROR_DEVICE_LOST;
+    backend.rejectBridgeImport();
+    assert(backend.getFatalError() == VK_ERROR_DEVICE_LOST);
+    assert(backend.prepareForShutdown());
+    backend.shutdown();
+    assert(driver.imageFrees == 1 && driver.bufferFrees == 1 && !driver.pending);
+    std::puts("PASS production bridge rejection latches first error and retires only after safe idle");
+}
+
 void resetAndSubmitFailures() {
     for (unsigned operation = 0; operation != 3; ++operation) {
         VulkanBackend backend;
@@ -567,6 +590,7 @@ int main() {
     traceScopeContracts();
     timeoutsPreserveWork();
     errorsStopWorkAndResize();
+    bridgeImportFailureLatches();
     resetAndSubmitFailures();
     safeCallbackAndTeardown();
     nativeSurfacePolicyAndSuccess();
