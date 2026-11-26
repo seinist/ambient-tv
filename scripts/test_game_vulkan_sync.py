@@ -25,6 +25,7 @@ def main():
     source = (native / "vulkan/vulkanbackend.cpp").read_text()
     jni_source = (native / "libretrodroidjni.cpp").read_text()
     methods = [
+        "bool VulkanBackend::createFrameResources(",
         "bool VulkanBackend::checkFrameResult(",
         "bool VulkanBackend::waitForFrame(",
         "bool VulkanBackend::canImportBridgeReadFence(",

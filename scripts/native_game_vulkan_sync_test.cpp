@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 #include <cerrno>
 #include <fcntl.h>
@@ -277,6 +278,97 @@ void pendingFrame(VulkanBackend& backend) {
     driver.pending = true;
 }
 void window(VulkanBackend& backend) { backend.nativeSdrWindow = object<ANativeWindow*>(18); }
+
+void frameSlotAllocationContracts() {
+    using Slot = VulkanBackend::FrameSlot;
+    static_assert(!std::is_copy_constructible_v<Slot> && !std::is_copy_assignable_v<Slot>);
+    static unsigned failure, allocations;
+    static std::vector<VkCommandPool> pools;
+    static std::vector<VkFence> fences;
+    VulkanBackend backend;
+    backend.device = object<VkDevice>(1);
+    backend.queueFamily = 7;
+    auto& vk = backend.vk;
+    driver = {};
+    vk.createCommandPool = [](VkDevice device, const VkCommandPoolCreateInfo* info,
+                              const VkAllocationCallbacks*, VkCommandPool* out) {
+        assert(device == object<VkDevice>(1) &&
+               info->sType == VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO &&
+               info->flags == VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT &&
+               info->queueFamilyIndex == 7);
+        ++allocations;
+        *out = object<VkCommandPool>(failure == 1 ? 999 : 100 + allocations);
+        if (failure == 1) return VK_ERROR_OUT_OF_HOST_MEMORY;
+        pools.push_back(*out);
+        return VK_SUCCESS;
+    };
+    vk.allocateCommandBuffers = [](VkDevice device, const VkCommandBufferAllocateInfo* info,
+                                   VkCommandBuffer* out) {
+        assert(device == object<VkDevice>(1) && !pools.empty() &&
+               info->sType == VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO &&
+               info->commandPool == pools.back() &&
+               info->level == VK_COMMAND_BUFFER_LEVEL_PRIMARY && info->commandBufferCount == 1);
+        ++allocations;
+        *out = object<VkCommandBuffer>(failure == 2 ? 999 : 200 + allocations);
+        return failure == 2 ? VK_ERROR_OUT_OF_HOST_MEMORY : VK_SUCCESS;
+    };
+    vk.createFence = [](VkDevice device, const VkFenceCreateInfo* info,
+                         const VkAllocationCallbacks*, VkFence* out) {
+        assert(device == object<VkDevice>(1) && info->sType == VK_STRUCTURE_TYPE_FENCE_CREATE_INFO &&
+               info->flags == 0);
+        ++allocations;
+        *out = object<VkFence>(failure == 3 ? 999 : 300 + allocations);
+        if (failure == 3) return VK_ERROR_OUT_OF_HOST_MEMORY;
+        fences.push_back(*out);
+        return VK_SUCCESS;
+    };
+    vk.destroyCommandPool = [](VkDevice device, VkCommandPool pool, const VkAllocationCallbacks*) {
+        assert(device == object<VkDevice>(1) && !pools.empty() && pool == pools.back());
+        pools.pop_back();
+        ++driver.commandPoolFrees;
+    };
+    vk.destroyFence = [](VkDevice device, VkFence fence, const VkAllocationCallbacks*) {
+        assert(device == object<VkDevice>(1) && !fences.empty() && fence == fences.back());
+        fences.pop_back();
+        ++driver.fenceFrees;
+    };
+    for (failure = 1; failure <= 3; ++failure) {
+        allocations = 0;
+        driver.commandPoolFrees = driver.fenceFrees = 0;
+        assert(!backend.createFrameResources());
+        assert(allocations == failure && driver.commandPoolFrees == (failure == 1 ? 0u : 1u) &&
+               !driver.fenceFrees);
+        assert(!backend.frameSlot.pool && !backend.frameSlot.command &&
+               !backend.frameSlot.fence && !backend.frameSlot.inFlight);
+        assert(pools.empty() && fences.empty() && backend.frameSlot.retire(vk, backend.device));
+    }
+    failure = allocations = 0;
+    driver.commandPoolFrees = driver.fenceFrees = 0;
+    const auto destroyFence = vk.destroyFence;
+    vk.destroyFence = nullptr;
+    assert(!backend.createFrameResources() && !allocations);
+    vk.destroyFence = destroyFence;
+    assert(backend.createFrameResources());
+    Slot second;
+    assert(second.create(vk, backend.device, backend.queueFamily));
+    assert(backend.frameSlot.pool != second.pool && backend.frameSlot.command != second.command &&
+           backend.frameSlot.fence != second.fence && allocations == 6);
+    assert(!backend.createFrameResources() && allocations == 6);
+    second.inFlight = true;
+    assert(!second.retire(vk, backend.device));
+    second.inFlight = false;
+    vk.destroyFence = nullptr;
+    assert(!second.retire(vk, backend.device));
+    vk.destroyFence = destroyFence;
+    assert(!second.retire(vk, VK_NULL_HANDLE));
+    assert(!driver.commandPoolFrees && !driver.fenceFrees);
+    assert(second.retire(vk, backend.device) && second.retire(vk, backend.device));
+    assert(driver.commandPoolFrees == 1 && driver.fenceFrees == 1);
+    assert(backend.frameSlot.pool && backend.frameSlot.command && backend.frameSlot.fence);
+    assert(backend.frameSlot.retire(vk, backend.device));
+    assert(driver.commandPoolFrees == 2 && driver.fenceFrees == 2 && pools.empty() && fences.empty());
+    std::puts("PASS frame-slot transactional creation, independent handles and safe retirement");
+}
 
 void timeoutsPreserveWork() {
     VulkanBackend backend;
@@ -999,6 +1091,7 @@ void traceScopeContracts() {
 
 int main() {
     traceScopeContracts();
+    frameSlotAllocationContracts();
     timeoutsPreserveWork();
     errorsStopWorkAndResize();
     bridgeContextReplacementRetires();
