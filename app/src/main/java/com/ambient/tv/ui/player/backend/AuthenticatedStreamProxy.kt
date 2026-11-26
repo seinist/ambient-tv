@@ -127,8 +127,16 @@ internal class AuthenticatedStreamProxy(
                         }
                         val rewrittenText = if (dash) rewriteVlcDashManifest(manifest, response.request.url,
                             localUri, { localOrigin + routes.registerTemplate(it, opened.credentialed) })
-                        else rewriteVlcHlsManifest(manifest, response.request.url, resource.variables) { child, isPlaylist, vars ->
-                            localOrigin + routes.register(child, isPlaylist, opened.credentialed, vars)
+                        else {
+                            // A foreign CDN playlist must not import variables (possibly a
+                            // signed ticket) supplied by a different parent origin.
+                            val inherited = resource.variables.takeIf {
+                                vlcRelayOriginAllowed(resource.url, response.request.url)
+                            }.orEmpty()
+                            rewriteVlcHlsManifest(manifest, response.request.url, inherited) { child, isPlaylist, vars ->
+                                localOrigin + routes.register(child, isPlaylist, opened.credentialed,
+                                    if (vlcRelayOriginAllowed(response.request.url, child)) vars else emptyMap())
+                            }
                         }
                         rewrittenText.toByteArray(Charsets.UTF_8)
                     } catch (_: IOException) {
