@@ -90,6 +90,10 @@ bool VulkanColorCopy::prepare(const Source& source, VkFormat, uint32_t, uint32_t
     width = source.width; height = source.height;
     return true;
 }
+VkFormatFeatureFlags VulkanColorCopy::optimalFeatures(VkFormat) {
+    return VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT |
+           VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+}
 VulkanColorCopy::Image VulkanColorCopy::preparedImage(VkImage bridge) const {
     return {bridge, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, width, height, true};
 }

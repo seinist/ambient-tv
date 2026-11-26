@@ -122,6 +122,11 @@ def main():
             "-o", str(access_binary)], check=True)
         subprocess.run([str(access_binary)], check=True, timeout=20)
 
+        format_binary = work / "vulkan-format-cache-test"
+        subprocess.run(command + [str(root / "scripts/native_game_vulkan_format_cache_test.cpp"),
+            "-o", str(format_binary)], check=True)
+        subprocess.run([str(format_binary)], check=True, timeout=20)
+
 
 if __name__ == "__main__":
     main()

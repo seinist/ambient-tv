@@ -330,6 +330,7 @@ static void testRetentionPolicy() {
 static struct CacheAllocationCalls {
     unsigned created = 0, destroyed = 0, allocated = 0, freed = 0;
     VkDeviceSize lastBytes = 0;
+    unsigned formatQueries = 0;
 } cacheCalls;
 
 static VKAPI_ATTR VkResult VKAPI_CALL trackedCreateImage(VkDevice device,
@@ -368,10 +369,51 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL trackedGetDeviceProcAddr(VkDevic
         return reinterpret_cast<PFN_vkVoidFunction>(trackedFreeMemory);
     return vkGetDeviceProcAddr(device, name);
 }
+static VKAPI_ATTR void VKAPI_CALL trackedFormatProperties(VkPhysicalDevice gpu, VkFormat format,
+        VkFormatProperties* properties) {
+    ++cacheCalls.formatQueries;
+    vkGetPhysicalDeviceFormatProperties(gpu, format, properties);
+}
 static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL trackedGetInstanceProcAddr(VkInstance instance, const char* name) {
     if (std::strcmp(name, "vkGetDeviceProcAddr") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(trackedGetDeviceProcAddr);
+    if (std::strcmp(name, "vkGetPhysicalDeviceFormatProperties") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(trackedFormatProperties);
     return vkGetInstanceProcAddr(instance, name);
+}
+
+static void testFormatFeatureCache(Device& d) {
+    d.color.release();
+    cacheCalls = {};
+    const std::array<VkFormat, 5> formats { VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM,
+        VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_FORMAT_A2R10G10B10_UNORM_PACK32,
+        VK_FORMAT_R16G16B16A16_SFLOAT };
+    for (unsigned generation = 0; generation < 2; ++generation) {
+        require(d.color.initialize(d.instance, d.physical, d.device, trackedGetInstanceProcAddr), d.color.error());
+        for (unsigned frame = 0; frame < 64; ++frame) {
+            for (auto format : formats) {
+                VkFormatProperties actual {};
+                vkGetPhysicalDeviceFormatProperties(d.physical, format, &actual);
+                require(d.color.optimalFeatures(format) == actual.optimalTilingFeatures, "cached format mask differs");
+            }
+            require(d.color.optimalFeatures(VK_FORMAT_UNDEFINED) == 0, "unknown format was accepted");
+            // initialize is called by the real backend on every frame.
+            require(d.color.initialize(d.instance, d.physical, d.device, trackedGetInstanceProcAddr), d.color.error());
+        }
+        require(cacheCalls.formatQueries == (generation + 1) * formats.size(), "repeated driver format queries");
+        VulkanColorCopy::Source descriptor {};
+        descriptor.viewFormat = VK_FORMAT_R8G8B8A8_UNORM;
+        descriptor.width = 4;
+        descriptor.height = 1;
+        const bool supported = (d.color.optimalFeatures(formats[0]) &
+            (VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT)) ==
+            (VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT);
+        require(d.color.prepare(descriptor, formats[0], 8, 3) == supported,
+                "normalization feature checks changed");
+        require(cacheCalls.formatQueries == (generation + 1) * formats.size(), "normalization bypassed feature cache");
+        d.color.release();
+        require(d.color.optimalFeatures(formats[0]) == 0, "released device exposed stale capabilities");
+    }
 }
 
 static void testWarmNormalizationCache(Device& d, const std::vector<uint8_t>& rgba) {
@@ -520,6 +562,7 @@ int main() {
         require(d.color.initialize(d.instance, d.physical, d.device, vkGetInstanceProcAddr), d.color.error());
         run(d, "reinitialize", VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_B8G8R8A8_UNORM,
             VK_FORMAT_R8G8B8A8_UNORM, rgba, true);
+        testFormatFeatureCache(d);
         testWarmNormalizationCache(d, rgba);
         std::cout << "PASS " << d.cases << " GPU color cases; " << d.unsupportedCases
                   << " optional device format cases safely rejected; cache lifecycle and unsupported-input guards\n";

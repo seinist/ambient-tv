@@ -1,0 +1,117 @@
+diff --git a/src/main/cpp/vulkan/vulkancolorcopy.cpp b/src/main/cpp/vulkan/vulkancolorcopy.cpp
+--- a/src/main/cpp/vulkan/vulkancolorcopy.cpp
++++ b/src/main/cpp/vulkan/vulkancolorcopy.cpp
+@@ -103,6 +103,24 @@
+     failure = "";
+     return true;
+ }
+ 
++VkFormatFeatureFlags VulkanColorCopy::optimalFeatures(VkFormat encoded) {
++    if (!device || !gpu || !vk.formatProperties) return 0;
++    std::size_t index;
++    switch (encoded) {
++        case VK_FORMAT_R8G8B8A8_UNORM: index = 0; break;
++        case VK_FORMAT_B8G8R8A8_UNORM: index = 1; break;
++        case VK_FORMAT_A2B10G10R10_UNORM_PACK32: index = 2; break;
++        case VK_FORMAT_A2R10G10B10_UNORM_PACK32: index = 3; break;
++        case VK_FORMAT_R16G16B16A16_SFLOAT: index = 4; break;
++        default: return 0;
++    }
++    return formatFeatures.get(index, [&] {
++        VkFormatProperties properties {};
++        vk.formatProperties(gpu, encoded, &properties);
++        return properties.optimalTilingFeatures;
++    });
++}
++
+ bool VulkanColorCopy::prepare(const Source& source, VkFormat bridgeFormat,
+                               uint32_t bridgeWidth, uint32_t bridgeHeight) {
+@@ -150,8 +168,7 @@
+-    VkFormatProperties sourceProperties {}, destinationProperties {};
+-    vk.formatProperties(gpu, format, &sourceProperties);
+-    vk.formatProperties(gpu, bridgeFormat, &destinationProperties);
+-    const VkFormatFeatureFlags required = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+-    if ((sourceProperties.optimalTilingFeatures & required) != required ||
+-        !(destinationProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT)) {
++    const auto sourceFeatures = optimalFeatures(format);
++    const auto destinationFeatures = optimalFeatures(bridgeFormat);
++    const VkFormatFeatureFlags required = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
++    if ((sourceFeatures & required) != required ||
++        !(destinationFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT)) {
+         return fail("normalized format conversion unavailable on device");
+     }
+@@ -271,4 +288,5 @@
+ void VulkanColorCopy::release() {
+     destroyCache();
++    formatFeatures.reset();
+     device = VK_NULL_HANDLE;
+     gpu = VK_NULL_HANDLE;
+diff --git a/src/main/cpp/vulkan/vulkancolorcopy.h b/src/main/cpp/vulkan/vulkancolorcopy.h
+--- a/src/main/cpp/vulkan/vulkancolorcopy.h
++++ b/src/main/cpp/vulkan/vulkancolorcopy.h
+@@ -7,4 +7,5 @@
+ #include <cstdint>
+ #include "vulkancolorcachepolicy.h"
++#include "vulkanformatfeaturecache.h"
+ 
+ namespace libretrodroid {
+@@ -53,2 +54,5 @@
+     bool prepare(const Source& source, VkFormat bridgeFormat, uint32_t bridgeWidth, uint32_t bridgeHeight);
++    // Immutable optimal-tiling feature bits for a supported encoded format,
++    // cached for this initialized device generation, including zero results.
++    VkFormatFeatureFlags optimalFeatures(VkFormat encoded);
+     // Source is already TRANSFER_SRC/GENERAL; bridge is already TRANSFER_DST.
+@@ -89,3 +93,4 @@
+     VulkanColorCacheRetention retention;
++    VulkanFormatFeatureCache formatFeatures;
+     VkFormat format = VK_FORMAT_UNDEFINED;
+     uint32_t width = 0;
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -1245,7 +1245,5 @@
+-        VkFormatProperties sourceProps {};
+-        if (supported) vk.getPhysicalDeviceFormatProperties(gpu, normalized.format, &sourceProps);
+-        // AHB transport may be padded or FP16. The normalizer instead provides a
+-        // tightly sized SAMPLED source, so resolution changes retain the preset.
+-        if (!supported || (sourceProps.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) == 0) {
++        // AHB transport may be padded or FP16. The normalizer instead provides a
++        // tightly sized SAMPLED source, so resolution changes retain the preset.
++        if (!supported || (colorCopy.optimalFeatures(normalized.format) & VK_FORMAT_FEATURE_BLIT_SRC_BIT) == 0) {
+             disableNativeSdrSwapchain("normalized source unavailable for native presentation; GLES retained");
+         } else if (nativeSlang.requested() &&
+diff --git a/src/main/cpp/vulkan/vulkanformatfeaturecache.h b/src/main/cpp/vulkan/vulkanformatfeaturecache.h
+new file mode 100644
+--- /dev/null
++++ b/src/main/cpp/vulkan/vulkanformatfeaturecache.h
+@@ -0,0 +1,30 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++
++namespace libretrodroid {
++// One physical-device generation; a zero feature mask is also a valid result.
++// Callers map only the five supported encoded source formats to these slots.
++class VulkanFormatFeatureCache {
++public:
++    static constexpr std::size_t size = 5;
++    template<class Query>
++    std::uint32_t get(std::size_t index, Query query) {
++        if (index >= size) return 0;
++        auto& entry = entries[index];
++        if (!entry.valid) {
++            entry.features = query();
++            entry.valid = true;
++        }
++        return entry.features;
++    }
++    void reset() noexcept { entries = {}; }
++
++private:
++    struct Entry { std::uint32_t features = 0; bool valid = false; };
++    std::array<Entry, size> entries{};
++};
++} // namespace libretrodroid
