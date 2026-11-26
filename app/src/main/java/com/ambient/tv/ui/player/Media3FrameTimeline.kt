@@ -13,7 +13,7 @@ internal class Media3FrameTimeline(private val capacity: Int = 120) {
     private var count = 0
     private var cursor = 0
     private var lastPresented = -1L
-    private var pending = -1L
+    @Volatile private var pending = -1L
 
     @Synchronized fun presented(ptsUs: Long) {
         if (ptsUs < 0L) return
@@ -26,7 +26,7 @@ internal class Media3FrameTimeline(private val capacity: Int = 120) {
         if (pending == ptsUs) pending = -1L
     }
 
-    @Synchronized fun pending(ptsUs: Long?) { pending = ptsUs?.takeIf { it >= 0L } ?: -1L }
+    fun pending(ptsUs: Long) { pending = ptsUs.coerceAtLeast(-1L) }
 
     @Synchronized fun clear() {
         count = 0
@@ -47,7 +47,8 @@ internal class Media3FrameTimeline(private val capacity: Int = 120) {
             if (forward && value > anchorUs && value < nearest) nearest = value
             if (!forward && value < anchorUs && value > nearest) nearest = value
         }
-        if (forward && pending > anchorUs && pending < nearest) nearest = pending
+        val next = pending
+        if (forward && next > anchorUs && next < nearest) nearest = next
         // A distant timestamp can belong to an earlier seek or skipped sequence.
         return nearest.takeIf { it >= 0L && it != Long.MAX_VALUE && kotlin.math.abs(it - anchorUs) <= 2_000_000L }
     }
