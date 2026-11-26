@@ -153,7 +153,7 @@ are considered validated.
 
 ## Stage 5 — corrective audit work (current candidate branch)
 
-- The PR smoke matrix has 27 jobs. The complete comparison matrices are
+- The PR smoke matrix currently has 45 jobs. The complete comparison matrices are
   explicit, artifact-only dispatches (208 jobs each for 26 cores × 4 ABIs
   × 2 profiles); release publication remains full baseline only.
   `./build.sh cores --comparison baseline-thinlto --ref perf/libretro-core-builds`
@@ -232,3 +232,46 @@ The complete catalog audit does not establish that all cores have received
 new source-level runtime optimizations. Existing fast paths are preserved,
 and optimization candidates remain unpublished pending compile and runtime
 evidence. Fresh CI for Stage 5/6 is required.
+
+## Stage 7 — source-level core hotpath candidates
+
+The artifact-only `core-hotpaths` profile builds nine exact-pinned source
+transformations, with baseline/candidate ARM64 smoke builds (45 total PR jobs)
+and manual selection across all four Android ABIs. The source transformations
+require unique upstream anchors and the pinned fetch is verified before
+application. Ordinary baseline builds do not apply these transformations.
+
+- bsnes: negotiate the input bitmask capability and cache each of five
+  digital pads lazily for one retro_run, after the existing input_poll.
+  Preserve scalar fallback, other devices, port mapping and run-ahead scope.
+- Mesen: copy only the actual serialized bytes and zero only the remaining
+  padding, avoiding the redundant first write to the populated part.
+- SameBoy: hoist constant dimensions and row sizes from the horizontal
+  dual-screen copy loop; preserve pixel layout and video callback geometry.
+- Beetle PCE Fast: reuse the already sampled bitmask in the turbo toggle
+  path, preserving the old scalar fallback.
+- Beetle SuperGrafx: combine digital select/start polling in the mouse
+  mapping without changing mouse button short-circuit behavior.
+- Beetle NGP: remove an erroneous all-zero AV reconfiguration before the
+  actual initialized AV info.
+- Beetle NGP, WonderSwan, VB and Lynx: write savestates directly into
+  frontend-owned storage; do not realloc caller memory, report short writes
+  even if upstream ignores them, retain existing state format, zero padding,
+  check capacity and make dynamic writer growth overflow/OOM-safe.
+
+Regression harnesses cover source-anchor drift, exhaustive digital masks,
+save buffer equivalence, dual-screen pixel equality, bounded fixed writes,
+canaries, padding and failure behavior. A standalone reconstruction of the
+fixed-state writer harness passed C99 and C++11 with UBSan (145 capacities
+per language). This is an isolated host test, not a full pinned Android build
+or a real-game state comparison.
+
+Examples:
+    ./build.sh cores --profile core-hotpaths --abis arm64-v8a --ref perf/libretro-core-builds
+    ./build.sh cores bsnes,mesen,sameboy --profile core-hotpaths --ref perf/libretro-core-builds
+
+Actual Android CI and ROM-specific timing and compatibility remain required.
+No source change is claimed for a core merely because it has an audit
+contract or a compiler experiment. Do not equate the nine source-level
+candidates (plus the earlier Snes9x2010 and PicoDrive focused candidates)
+with proven optimization of all 26 core implementations.
