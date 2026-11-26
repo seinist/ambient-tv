@@ -22,6 +22,7 @@
 #   ./build.sh cores-key [--manual]  # configure signing or prepare the key for a browser upload
 #   ./build.sh cores-release      # build and publish all signed Libretro cores
 #   ./build.sh cores-status       # show recent Core workflow runs
+#   ./build.sh cores-rename-releases [--apply] # normalize release titles, never tags/assets
 #   ./build.sh nnedi3-shaders # pre-bundle additional NNEDI3 win8x4/win8x6 assets
 #   ./build.sh clean-mpv      # rebuild native MPV libraries from scratch
 #   ./build.sh gen-keystore   # create keystore/release.jks
@@ -1301,7 +1302,7 @@ run_cores_command() {
     local -a workflow=(workflow run cores.yml --repo "$repo" --ref main)
     local has_gh=0
     if command -v gh >/dev/null 2>&1; then has_gh=1; fi
-    if [[ "$has_gh" == 0 && ( "$1" == cores || "$1" == cores-release ) ]]; then
+    if [[ "$has_gh" == 0 && ( "$1" == cores || "$1" == cores-release || "$1" == cores-rename-releases ) ]]; then
         fail "For terminal access install GitHub CLI (gh), or use https://github.com/$repo/actions/workflows/cores.yml in your browser."
     fi
 
@@ -1366,6 +1367,28 @@ run_cores_command() {
             fi
             gh "${workflow[@]}" -f publish=true
             ;;
+        cores-rename-releases)
+            [[ $# -eq 1 || ( $# -eq 2 && "${2:-}" == --apply ) ]] || fail "Usage: $0 cores-rename-releases [--apply]"
+            local rows tag old title profile date run
+            rows="$(gh api --paginate "repos/$repo/releases?per_page=100" --jq '.[] | select(.draft == false) | [.tag_name,.name] | @tsv')"
+            while IFS=$'\t' read -r tag old; do
+                if [[ "$tag" =~ ^cores-([0-9]{4})([0-9]{2})([0-9]{2})-([0-9]+)$ ]]; then
+                    date="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}"
+                    title="Ambient TV – Libretro Cores (Stable) – $date"
+                elif [[ "$tag" =~ ^core-experiments-(o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths)--([0-9]{4})([0-9]{2})([0-9]{2})-[0-9]+-[0-9]+$ ]]; then
+                    profile="${BASH_REMATCH[1]}"
+                    date="${BASH_REMATCH[2]}-${BASH_REMATCH[3]}-${BASH_REMATCH[4]}"
+                    title="Ambient TV – Libretro Cores (Experimental: $profile) – $date"
+                else
+                    continue
+                fi
+                [[ "$old" != "$title" ]] || continue
+                printf '%s: %s\n' "$tag" "$title"
+                if [[ "${2:-}" == --apply ]]; then
+                    gh release edit "$tag" --repo "$repo" --title "$title" || return 1
+                fi
+            done <<< "$rows"
+            ;;
         cores-status)
             [[ $# -eq 1 ]] || fail "Usage: $0 cores-status"
             if [[ "$has_gh" == 1 ]]; then
@@ -1398,6 +1421,7 @@ Libretro cores on GitHub Actions (main):
                        Commit and push cores/signing-public.pem and rebuild the app to embed it.
   cores-release       Build and publish the full signed core catalog (gh).
   cores-status        Show recent Core workflow runs using gh or the public API (Python 3).
+  cores-rename-releases [--apply]  Preview or update only core release titles (gh).
   Browser workflow    https://github.com/seinist/ambient-tv/actions/workflows/cores.yml
 EOT
 }
@@ -1412,7 +1436,7 @@ case "$MODE" in
         print_usage
         exit 0
         ;;
-    cores|cores-key|cores-release|cores-status)
+    cores|cores-key|cores-release|cores-status|cores-rename-releases)
         run_cores_command "$@"
         exit 0
         ;;
