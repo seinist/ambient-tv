@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 from core_acceleration_audit import AUDITED, audit_acceleration, compiler_commands, compile_source
+from core_link_evidence import target_commands
 import subprocess
 import struct
 import sys
@@ -197,7 +198,7 @@ def file_digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None):
+def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scoped_commands=None):
     """Check actual verbose driver invocations, not only requested CMake/Make settings.
 
     Assembly and non-compiler commands are deliberately ignored. If response files hide
@@ -211,7 +212,8 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None):
     compile_lto_modes = {}
     link_lto_modes = {}
     shared_outputs = []
-    commands = list(compiler_commands(log, cwd, root, strict=profile != "baseline" or core in AUDITED))
+    commands = (list(compiler_commands(log, cwd, root, strict=profile != "baseline" or core in AUDITED))
+                if scoped_commands is None else scoped_commands)
     tuning_count = 0
     codegen_flags = {}
     tracked_flags = {"-funroll-loops", "-fno-unroll-loops", "-ffast-math", "-fno-fast-math", "-fomit-frame-pointer", "-fno-omit-frame-pointer", "-marm", "-mthumb"}
@@ -310,6 +312,7 @@ def main():
     p.add_argument("--nm", required=True)
     p.add_argument("--readelf", required=True)
     p.add_argument("--binary", type=Path, required=True)
+    p.add_argument("--linked-library", type=Path, required=True)
     p.add_argument("--log", type=Path, required=True)
     p.add_argument("--profile", choices=PROFILES, required=True)
     p.add_argument("--core", required=True)
@@ -336,15 +339,19 @@ def main():
             raise ValueError(f"Missing Libretro exports: {sorted(missing)}")
         identity = verify_elf_abi(args.binary, args.abi)
         dependencies = dynamic_dependencies(args.readelf, args.binary)
-        report = {**identity, "needed_libraries": dependencies, "core": args.core, "abi": args.abi, "commit": args.commit,
+        build_log = args.log.read_text(errors="replace")
+        scoped, link_evidence = target_commands(build_log, args.build_cwd, Path.cwd(), args.linked_library)
+        if args.profile != "baseline" and link_evidence["unresolved_local_inputs"]:
+            raise ValueError(f"Candidate has unaudited local linker inputs: {link_evidence['unresolved_local_inputs']}")
+        report = {**identity, **link_evidence, "needed_libraries": dependencies, "core": args.core, "abi": args.abi, "commit": args.commit,
                   "ndk": args.ndk, "profile": args.profile,
                   "requested_cflags": PROFILES[args.profile][0],
                   "requested_ldflags": PROFILES[args.profile][1],
                   "binary_sha256": file_digest(args.binary),
                   "binary_bytes": args.binary.stat().st_size,
                   "export_count": len(symbols),
-                  **audit_commands(args.log.read_text(errors="replace"), args.profile,
-                                   args.build_cwd, Path.cwd(), args.core, args.abi)}
+                  **audit_commands(build_log, args.profile,
+                                   args.build_cwd, Path.cwd(), args.core, args.abi, scoped)}
         args.output.write_text(json.dumps(report, indent=2) + "\n")
 
 
