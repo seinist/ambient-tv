@@ -66,6 +66,19 @@ int main() {
         assert(!lease.has_decoder_image());
     }
     assert(held.returned == 1);
+    // VLC owns the AImage inside picture_t. Hold the picture until GPU completion;
+    // never transfer an early fence to a callback that only releases a reference.
+    Image vlc;
+    {
+        FrameLease lease(&vlc, -1, release, false);
+        assert(!lease.allows_early_return());
+        assert(lease.begin_submit());
+        UniqueFd fence;
+        assert(!lease.return_with_fence(fence, true));
+        assert(vlc.returned == 0);
+        assert(lease.complete(true, true));
+        assert(vlc.returned == 1 && vlc.fence == -1);
+    }
     // Unknown submission: never silently return the potentially in-use image.
     Image uncertain;
     {
