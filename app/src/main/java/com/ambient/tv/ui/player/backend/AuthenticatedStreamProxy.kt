@@ -203,7 +203,7 @@ internal class AuthenticatedStreamProxy(
                 .addNetworkInterceptor { chain ->
                     val request = chain.request()
                     val original = request.tag(RelayOrigin::class.java)?.url
-                    if (original != null && !com.ambient.tv.network.CredentialRedirectGuard.keeps(original, request.url))
+                    if (original != null && !vlcRelayOriginAllowed(original, request.url))
                         throw java.io.IOException("Cross-origin media relay redirect refused")
                     chain.proceed(request)
                 }
