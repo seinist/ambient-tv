@@ -133,37 +133,87 @@ internal fun vlcRelayOriginAllowed(origin: HttpUrl, hop: HttpUrl): Boolean =
     )
 
 private val hlsUriAttribute = Regex("""([:,]\s*URI=")([^"]+)(")""")
+private val hlsVariable = Regex("""\{\$([A-Za-z0-9_-]{1,64})\}""")
+private val hlsVariableName = Regex("[A-Za-z0-9_-]{1,64}")
+private val hlsDefineAttribute = Regex("([A-Z0-9-]+)=\"([^\"]*)\"")
 
-/**
- * Rewrite ordinary HLS variant, rendition, key, initialization and media references.
- * Unsupported variable substitution/content steering is refused instead of forwarding an
- * unresolved URL or leaking credentials to an unrelated server.
- */
+private fun hlsDefineAttributes(line: String): Map<String, String> {
+    val result = linkedMapOf<String, String>()
+    var index = 0
+    while (index < line.length) {
+        val match = hlsDefineAttribute.matchAt(line, index) ?: throw IOException("Invalid HLS definition")
+        if (result.put(match.groupValues[1], match.groupValues[2]) != null)
+            throw IOException("Duplicate HLS definition attribute")
+        index = match.range.last + 1
+        if (index == line.length) break
+        if (line[index++] != ',' || index == line.length) throw IOException("Invalid HLS definition separator")
+    }
+    return result
+}
+
+/** Compatibility overload for callers that do not need inherited playlist variables. */
 internal fun rewriteVlcHlsManifest(
     text: String,
     base: HttpUrl,
     localUri: (HttpUrl, Boolean) -> String,
+): String = rewriteVlcHlsManifest(text, base, emptyMap()) { url, playlist, _ -> localUri(url, playlist) }
+
+/**
+ * Rewrite variants, renditions, keys, initialization and media references. Variables are
+ * expanded before URI validation; imports are scoped to the parent playlist that minted
+ * the capability, not global state. Content steering still requires a separate protocol.
+ */
+internal fun rewriteVlcHlsManifest(
+    text: String,
+    base: HttpUrl,
+    inherited: Map<String, String>,
+    localUri: (HttpUrl, Boolean, Map<String, String>) -> String,
 ): String {
     val lines = text.removePrefix("\uFEFF").lineSequence().toList()
     if (lines.firstOrNull()?.trim() != "#EXTM3U") throw IOException("Invalid HLS playlist")
     var nextPlaylist = false
     var references = 0
+    var variables: Map<String, String> = emptyMap()
+    fun expand(raw: String): String {
+        val result = hlsVariable.replace(raw) { variables[it.groupValues[1]] ?: throw IOException("Undefined HLS variable") }
+        if (result.contains("{\$") || result.length > 16_384) throw IOException("Unsupported HLS variable expansion")
+        return result
+    }
+    fun define(raw: String) {
+        val attrs = hlsDefineAttributes(raw)
+        val (name, value) = when (attrs.keys) {
+            setOf("NAME", "VALUE") -> attrs.getValue("NAME") to expand(attrs.getValue("VALUE"))
+            setOf("IMPORT") -> attrs.getValue("IMPORT").let { it to (inherited[it] ?: throw IOException("Unknown HLS import")) }
+            setOf("QUERYPARAM") -> attrs.getValue("QUERYPARAM").let { it to (base.queryParameter(it) ?: throw IOException("Missing HLS query variable")) }
+            else -> throw IOException("Unsupported HLS definition")
+        }
+        if (!hlsVariableName.matches(name) || name in variables || variables.size >= 32 ||
+            value.length > 2048 || value.any { it == '"' || it == '\r' || it == '\n' || it.code < 32 } || value.contains("{\$"))
+            throw IOException("Invalid HLS variable")
+        variables = variables + (name to value)
+    }
     fun map(raw: String, playlist: Boolean): String {
-        if (++references > 4096 || raw.contains("{\$") || raw.isBlank())
-            throw IOException("Unsupported HLS reference")
+        if (++references > 4096 || raw.isBlank()) throw IOException("Unsupported HLS reference")
         val resolved = base.resolve(raw) ?: throw IOException("Invalid HLS URI")
-        return localUri(resolved, playlist)
+        return localUri(resolved, playlist, if (playlist) variables else emptyMap())
     }
     return buildString {
-        for (line in lines) {
+        for (original in lines) {
+            val originalTrimmed = original.trim()
+            if (originalTrimmed.startsWith("#EXT-X-DEFINE:")) {
+                define(originalTrimmed.substringAfter(':'))
+                continue
+            }
+            if (originalTrimmed.startsWith("#EXT-X-CONTENT-STEERING:"))
+                throw IOException("Unsupported HLS content steering")
+            val line = expand(original)
             val trimmed = line.trim()
-            if (trimmed.startsWith("#EXT-X-DEFINE:") || trimmed.startsWith("#EXT-X-CONTENT-STEERING:"))
-                throw IOException("Unsupported HLS playlist feature")
             when {
                 trimmed.startsWith("#") -> {
                     val playlist = trimmed.startsWith("#EXT-X-MEDIA:") ||
                         trimmed.startsWith("#EXT-X-I-FRAME-STREAM-INF:") ||
-                        trimmed.startsWith("#EXT-X-RENDITION-REPORT:")
+                        trimmed.startsWith("#EXT-X-RENDITION-REPORT:") ||
+                        trimmed.startsWith("#EXT-X-IMAGE-STREAM-INF:")
                     append(hlsUriAttribute.replace(line) { m ->
                         m.groupValues[1] + map(m.groupValues[2], playlist) + m.groupValues[3]
                     })
