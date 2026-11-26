@@ -1,0 +1,160 @@
+diff --git a/src/main/cpp/vulkan/nativepresentation.h b/src/main/cpp/vulkan/nativepresentation.h
+--- a/src/main/cpp/vulkan/nativepresentation.h
++++ b/src/main/cpp/vulkan/nativepresentation.h
+@@ -68,6 +68,44 @@
+     }
+ };
+ 
++// Raw, explicitly present-fenced native WSI may grow once after sustained
++// nonblocking acquire starvation. Never request extra images from the driver
++// by default, for legacy WSI, or for a temporal filter/HDR presentation.
++class AdaptiveNativeWsiDepth {
++public:
++    void reset() noexcept { *this = AdaptiveNativeWsiDepth{}; }
++    bool shouldGrow() const noexcept { return pending; }
++    void cancelPending() noexcept { pending = false; score = 0; }
++    void commitGrowth() noexcept { grew = true; canGrow = false; cancelPending(); }
++    static bool allowsExtra(uint32_t minimum, uint32_t maximum) noexcept {
++        return minimum < std::numeric_limits<uint32_t>::max() &&
++            (maximum == 0 || maximum > minimum);
++    }
++    uint32_t requestedCount(uint32_t minimum, uint32_t maximum, bool eligible) const noexcept {
++        return minimum + (grew && eligible && allowsExtra(minimum, maximum) ? 1u : 0u);
++    }
++    void created(uint32_t minimum, uint32_t maximum, uint32_t requested,
++                 uint32_t actual, bool eligible) noexcept {
++        cancelPending();
++        canGrow = eligible && !grew && allowsExtra(minimum, maximum) &&
++            requested == minimum && actual == requested;
++    }
++    void observe(bool miss, bool success, bool eligible) noexcept {
++        if (!eligible || !canGrow) { cancelPending(); return; }
++        if (pending) return;
++        if (success) { if (score) --score; }
++        else if (miss) {
++            score = std::min(12u, score + 2u);
++            pending = score >= 12u;
++        }
++    }
++private:
++    bool grew = false;
++    bool canGrow = false;
++    bool pending = false;
++    unsigned score = 0;
++};
++
+ /** GL-thread-only: diagnostic presentation never owns the visible primary picture. */
+ class NativePresentationGate {
+ public:
+@@ -76,6 +114,7 @@
+     void beginStep() noexcept { framePresented = false; }
+     void invalidateFrame() noexcept { framePresented = generationConfirmed = false; }
+     void didPresentFrame() noexcept { framePresented = generationConfirmed = true; }
++    bool isFullscreenActive() const noexcept { return fullscreenActive; }
+     bool hasPresentedFrame() const noexcept { return framePresented; }
+     bool hasConfirmedGeneration() const noexcept { return generationConfirmed; }
+     void reset() { *this = NativePresentationGate{}; }
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -493,5 +493,6 @@
+     VulkanPresentFences<VkFence> nativePresentFences;
+     unsigned nativePresentFenceInstance = 0; // actual enabled surface-extension mask
+     bool nativePresentFencesEnabled = false;
++    AdaptiveNativeWsiDepth nativeWsiDepth;
+     bool nativeSdrDisabled = false;
+     uint32_t nativeOutputTransfer = 0; // SDR by default, per-session only
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -610,5 +610,6 @@
+     if (nativeSdrWindow != nullptr) ANativeWindow_release(nativeSdrWindow);
+     nativeSdrWindow = ownedWindow;
+     nativeSdrDisabled = false;
++    nativeWsiDepth.reset();
+     nativeSdrStatus.store(nativeSdrWindow != nullptr ? 1u : 0u, std::memory_order_release);
+ }
+@@ -660,5 +661,18 @@
+ bool VulkanBackend::ensureNativeSdrSwapchain() {
+     if (hasFatalError() || shutdownReady) return false;
++    const bool adaptive = nativePresentFencesEnabled && !nativeSlang.requested() &&
++        nativeOutputTransfer == 0u;
++    if (nativeWsiDepth.shouldGrow()) {
++        if (!adaptive || !nativePresentation.isFullscreenActive() || nativeSdrDisabled ||
++                nativeSdrSwapchain == VK_NULL_HANDLE) {
++            nativeWsiDepth.cancelPending();
++        } else {
++            // Use the existing acquire, render, present and shader retirement proofs.
++            // Do not acquire/submit another image until retirement succeeds.
++            if (!destroyNativeSdrSwapchain()) return false;
++            nativeWsiDepth.commitGrowth();
++        }
++    }
+     if (nativeSdrSwapchain != VK_NULL_HANDLE) return true;
+     // Refuse native HDR without independent source evidence. In particular,
+     // neither a 10-bit VkFormat nor manual PQ/HLG selection is sufficient.
+@@ -770,6 +784,5 @@
+-    // FIFO must not deliberately request an extra queued presentation image.
+-    // A driver may still allocate more than the advertised minimum.
+-    uint32_t images = caps.minImageCount;
++    // Minimum FIFO depth by default; a proven raw WSI generation can grow once.
++    uint32_t images = nativeWsiDepth.requestedCount(caps.minImageCount, caps.maxImageCount, adaptive);
+     if (caps.maxImageCount != 0) images = std::min(images, caps.maxImageCount);
+     VkSwapchainCreateInfoKHR info { VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR };
+     info.surface = nativeSdrSurface;
+@@ -805,6 +818,7 @@
+     if (!createNativePresentFences(count)) {
+         disableNativeSdrSwapchain("presentation fence allocation failed");
+         return false;
+     }
++    nativeWsiDepth.created(caps.minImageCount, caps.maxImageCount, images, count, adaptive);
+     nativeSdrExtent = extent;
+     nativeSdrFormat = choice.format;
+@@ -1831,7 +1845,9 @@
+     // A confirmed frame from this exact WSI generation can remain visible
+     // while a later accepted presentation is pending. First frame and every
+     // visibility/preset/surface transition still require CPU completion.
+-    const bool nativeWasConfirmed = nativePresentation.hasConfirmedGeneration();
++    // A recycled VkSwapchainKHR handle is not proof of the old generation.
++    const bool nativeWasConfirmed = nativePresentation.hasConfirmedGeneration() &&
++        !nativeWsiDepth.shouldGrow();
+     const VkSwapchainKHR confirmedSwapchain = nativeSdrSwapchain;
+     nativePresentation.invalidateFrame();
+     if (hasFatalError() || shutdownReady || !isStarted() || frameImage == VK_NULL_HANDLE ||
+@@ -1920,6 +1936,10 @@
+                 return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "WSI acquire slot not reusable");
+             const VkResult acquired = vk.acquireNextImage(
+                 device, nativeSdrSwapchain, 0, nativeSdrAcquireSlots.get(slotIndex), VK_NULL_HANDLE, &sdrIndex);
++            nativeWsiDepth.observe(acquired == VK_NOT_READY || acquired == VK_TIMEOUT,
++                acquired == VK_SUCCESS || acquired == VK_SUBOPTIMAL_KHR,
++                nativePresentFencesEnabled && !nativeSlang.requested() &&
++                    nativeOutputTransfer == 0u && nativePresentation.isFullscreenActive());
+             if (acquired == VK_SUCCESS || acquired == VK_SUBOPTIMAL_KHR) {
+                 if (!nativeAcquireState.markAcquired(slotIndex))
+                     return checkFrameResult(VK_ERROR_INITIALIZATION_FAILED, "duplicate WSI acquire");
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -840,6 +840,7 @@
+ void LibretroDroid::pause() {
+     LOGD("Performing libretrodroid pause");
+     audio->stop();
+     collectRewindCapture(true);
++    rewindTimeline.resetFrameObservation();
+ 
+     // Pause is queued between core frames; reset also locks out concurrent UI input.
+@@ -855,6 +856,14 @@
+     using WorkClock = std::chrono::steady_clock;
+     const bool trackRewindWork = rewindEnabled && rewindBuffer && !rewinding && frameSpeed <= 1;
+     const auto workStart = trackRewindWork ? WorkClock::now() : WorkClock::time_point{};
++    if (trackRewindWork && !rewindPreview.active && std::isfinite(contentFps) &&
++            contentFps >= 1.0 && contentFps <= 240.0) {
++        rewindTimeline.observeFrameStart(static_cast<uint64_t>(
++            std::chrono::duration_cast<std::chrono::nanoseconds>(workStart.time_since_epoch()).count()),
++            static_cast<uint64_t>(1000000000.0 / contentFps));
++    } else {
++        rewindTimeline.resetFrameObservation();
++    }
+     uint64_t captureNs = 0;
+     unsigned measuredFrames = 0;
+     // A forward frame never waits for compression. Rewind/seek needs exclusive

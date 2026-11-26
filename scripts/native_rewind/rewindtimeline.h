@@ -39,6 +39,8 @@ public:
         averageWorkNs = 0;
         averageCaptureNs = 0;
         peakCaptureNs = 0;
+        deadlineInterval = 1;
+        resetFrameObservation();
     }
 
     /** Call only when at least one forward frame will actually run. */
@@ -67,6 +69,44 @@ public:
         interval = std::max<uint64_t>(1, std::min(maximumInterval, desired));
     }
 
+
+    /** Observe the prior step's full cadence, including the EGL/presentation tail.
+     * Only single-frame, same-rate, capture-associated misses raise the penalty.
+     * No clock or allocation is owned here; the emulation thread supplies time. */
+    void observeFrameStart(uint64_t nowNs, uint64_t frameBudgetNs) {
+        const uint64_t budget = std::min<uint64_t>(frameBudgetNs, 1000000000ULL);
+        if (previousBudgetNs && previousBudgetNs == budget && nowNs > previousStartNs) {
+            const uint64_t elapsed = nowNs - previousStartNs;
+            const bool continuous = elapsed <= budget * 8;
+            const bool late = elapsed > budget + budget / 4;
+            if (continuous && late && previousCaptured) {
+                deadlineInterval = deadlineInterval > maximumInterval / 2
+                    ? maximumInterval : deadlineInterval * 2;
+                stableCycles = 0;
+            } else if (continuous && !late) {
+                if (++stableCycles >= 16) {
+                    deadlineInterval = deadlineInterval / 2 + deadlineInterval % 2;
+                    stableCycles = 0;
+                }
+            } else {
+                stableCycles = 0;
+            }
+        } else {
+            stableCycles = 0;
+        }
+        previousStartNs = nowNs;
+        previousBudgetNs = 0;
+        previousCaptured = false;
+    }
+
+    /** Pause, fast-forward, seek and rate changes cannot turn a lifecycle gap into a miss. */
+    void resetFrameObservation() {
+        previousStartNs = 0;
+        previousBudgetNs = 0;
+        previousCaptured = false;
+        stableCycles = 0;
+    }
+
     /**
      * Samples on the emulation thread, without counting the pacing sleep. Capture remains
      * on this thread because a libretro core may not be serialized concurrently with retro_run.
@@ -75,6 +115,8 @@ public:
      */
     void observeFrameWork(uint64_t workNs, uint64_t captureNs, uint64_t frameBudgetNs,
                           unsigned frames = 1) {
+        previousBudgetNs = frames == 1 ? std::min<uint64_t>(frameBudgetNs, 1000000000ULL) : 0;
+        previousCaptured = previousBudgetNs != 0 && captureNs > 0;
         if (!frameBudgetNs || !frames) return;
         // Cap samples before arithmetic, including anomalous stalls or suspended clocks.
         constexpr uint64_t cap = 1000000000ULL;
@@ -117,7 +159,7 @@ public:
     }
 
     uint64_t pendingFrames() const { return pending; }
-    uint64_t captureInterval() const { return std::max(interval, workInterval); }
+    uint64_t captureInterval() const { return std::max({interval, workInterval, deadlineInterval}); }
 
 private:
     static uint64_t saturatedAdd(uint64_t a, uint64_t b) {
@@ -133,6 +175,11 @@ private:
     uint64_t averageWorkNs = 0;
     uint64_t averageCaptureNs = 0;
     uint64_t peakCaptureNs = 0;
+    uint64_t deadlineInterval = 1;
+    uint64_t previousStartNs = 0;
+    uint64_t previousBudgetNs = 0;
+    bool previousCaptured = false;
+    unsigned stableCycles = 0;
 };
 
 } // namespace libretrodroid

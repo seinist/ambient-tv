@@ -29,7 +29,9 @@ using libretrodroid::VulkanBackend;
 template<class T> T object(uintptr_t value) { return reinterpret_cast<T>(value); }
 
 struct Driver {
-    std::deque<VkResult> waits, idles;
+    std::deque<VkResult> waits, idles, acquires;
+    uint32_t requestedImages = 2, maxImages = 3, driverExtraImages = 0;
+    unsigned adaptiveFencesCreated = 0;
     VkResult reset = VK_SUCCESS, commandReset = VK_SUCCESS, begin = VK_SUCCESS,
              end = VK_SUCCESS, submit = VK_SUCCESS, present = VK_SUCCESS;
     bool pending = false;
@@ -252,7 +254,7 @@ void setup(VulkanBackend& backend) {
         caps->currentTransform = VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR;
         caps->currentExtent = {640,480};
         caps->supportedCompositeAlpha = driver.alpha;
-        caps->minImageCount = 2; caps->maxImageCount = 3;
+        caps->minImageCount = 2; caps->maxImageCount = driver.maxImages;
         return VK_SUCCESS;
     };
     vk.getPhysicalDeviceSurfaceFormats = [](VkPhysicalDevice, VkSurfaceKHR, uint32_t* count,
@@ -268,7 +270,9 @@ void setup(VulkanBackend& backend) {
     };
     vk.createSwapchain = [](VkDevice, const VkSwapchainCreateInfoKHR* info, const VkAllocationCallbacks*,
         VkSwapchainKHR* swapchain) {
-        assert(info->minImageCount == 2); // Request no extra FIFO image beyond driver minimum.
+        assert(info->minImageCount >= 2 && info->minImageCount <= 3);
+        assert(!driver.maxImages || info->minImageCount <= driver.maxImages);
+        driver.requestedImages = info->minImageCount;
         ++driver.swapchainCreates; driver.chosenAlpha = info->compositeAlpha;
         driver.chosenTransform = info->preTransform;
         *swapchain = object<VkSwapchainKHR>(14); return VK_SUCCESS;
@@ -277,8 +281,8 @@ void setup(VulkanBackend& backend) {
         assert(!driver.pending); ++driver.swapchainFrees;
     };
     vk.getSwapchainImages = [](VkDevice, VkSwapchainKHR, uint32_t* count, VkImage* images) {
-        *count = 2;
-        if (images) { images[0] = object<VkImage>(15); images[1] = object<VkImage>(16); }
+        *count = driver.requestedImages + driver.driverExtraImages;
+        if (images) for (uint32_t i = 0; i < *count; ++i) images[i] = object<VkImage>(15 + i);
         return VK_SUCCESS;
     };
     vk.createSemaphore = [](VkDevice, const VkSemaphoreCreateInfo*, const VkAllocationCallbacks*, VkSemaphore* value) {
@@ -288,7 +292,7 @@ void setup(VulkanBackend& backend) {
         assert(!driver.pending); ++driver.wsiSemaphoreFrees;
     };
     vk.acquireNextImage = [](VkDevice, VkSwapchainKHR, uint64_t, VkSemaphore, VkFence, uint32_t* index) {
-        *index = 0; return VK_SUCCESS;
+        *index = 0; return driver.next(driver.acquires);
     };
     vk.queuePresent = [](VkQueue, const VkPresentInfoKHR* info) {
         // WSI consumes the submitted per-image semaphore before displaying,
@@ -1028,6 +1032,7 @@ void nativeSurfacePolicyAndSuccess() {
             assert(backend.ensureNativeSdrSwapchain() == allowed);
             assert(driver.swapchainCreates == (allowed ? 1u : 0u));
             if (allowed) {
+                assert(driver.requestedImages == 2);
                 assert(driver.chosenAlpha == VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR);
                 assert(driver.chosenTransform == VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR);
             }
@@ -1056,6 +1061,74 @@ void nativeSurfacePolicyAndSuccess() {
         assert(backend.getFatalError() == VK_ERROR_DEVICE_LOST);
     }
     std::puts("PASS raw/filtered WSI requires opaque identity surfaces; confirmation requires completed work");
+}
+
+void adaptiveWsiDepthContracts() {
+    using libretrodroid::AdaptiveNativeWsiDepth;
+    for (unsigned mode = 0; mode < 4; ++mode) {
+        AdaptiveNativeWsiDepth policy;
+        const uint32_t maximum = mode == 1 ? 2 : 3;
+        const uint32_t actual = mode == 2 ? 3 : 2;
+        const bool eligible = mode != 3;
+        assert(policy.requestedCount(2, maximum, eligible) == 2);
+        policy.created(2, maximum, 2, actual, eligible);
+        policy.observe(true, false, eligible);
+        policy.observe(false, true, eligible);
+        policy.observe(false, true, eligible);
+        for (int i = 0; i < 5; ++i) policy.observe(true, false, eligible);
+        assert(!policy.shouldGrow());
+        policy.observe(true, false, eligible);
+        assert(policy.shouldGrow() == (mode == 0));
+        if (policy.shouldGrow()) policy.commitGrowth();
+        assert(policy.requestedCount(2, maximum, eligible) == (mode == 0 ? 3u : 2u));
+        for (int i = 0; i < 20; ++i) policy.observe(true, false, eligible);
+        assert(!policy.shouldGrow());
+        policy.reset();
+        assert(policy.requestedCount(2, maximum, eligible) == 2);
+    }
+    assert(!AdaptiveNativeWsiDepth::allowsExtra(UINT32_MAX, 0));
+    assert(AdaptiveNativeWsiDepth::allowsExtra(2, 0));
+#if defined(VK_EXT_swapchain_maintenance1)
+    // Extracted production backend: a raw, fullscreen, explicitly fenced WSI
+    // generation grows once through the real retirement and allocation methods.
+    for (unsigned mode = 0; mode < 5; ++mode) {
+        VulkanBackend b;
+        setup(b); window(b);
+        b.nativePresentFencesEnabled = mode != 3;
+        b.nativePresentation.setFullscreenActive(true);
+        if (mode == 1) driver.maxImages = 2;
+        if (mode == 2) driver.driverExtraImages = 1;
+        b.vk.createFence = [](VkDevice, const VkFenceCreateInfo*, const VkAllocationCallbacks*, VkFence* out) {
+            *out = object<VkFence>(2000 + ++driver.adaptiveFencesCreated);
+            return VK_SUCCESS;
+        };
+        assert(b.ensureNativeSdrSwapchain() && driver.requestedImages == 2);
+        assert(b.presentFrame(256,224,4.0F/3.0F,true));
+        driver.acquires = {VK_NOT_READY, VK_SUCCESS, VK_SUCCESS};
+        for (int i = 0; i < 3; ++i) assert(b.presentFrame(256,224,4.0F/3.0F,true));
+        assert(driver.swapchainCreates == 1);
+        driver.acquires = {VK_NOT_READY,VK_TIMEOUT,VK_NOT_READY,VK_TIMEOUT,VK_NOT_READY,VK_TIMEOUT};
+        for (int i = 0; i < 6; ++i) assert(b.presentFrame(256,224,4.0F/3.0F,true));
+        assert(driver.swapchainCreates == 1);
+        if (mode == 4) {
+            assert(b.nativeWsiDepth.shouldGrow());
+            driver.idles = {VK_ERROR_OUT_OF_HOST_MEMORY};
+            assert(!b.ensureNativeSdrSwapchain() && b.hasFatalError());
+            assert(driver.swapchainCreates == 1 && driver.swapchainFrees == 0 && b.nativeSdrSwapchain);
+            continue;
+        }
+        assert(b.presentFrame(256,224,4.0F/3.0F,true));
+        assert(driver.swapchainCreates == (mode == 0 ? 2u : 1u));
+        assert(driver.requestedImages == (mode == 0 ? 3u : 2u));
+        for (int i = 0; i < 12; ++i) {
+            driver.acquires = {VK_NOT_READY};
+            assert(b.presentFrame(256,224,4.0F/3.0F,true));
+        }
+        assert(driver.swapchainCreates == (mode == 0 ? 2u : 1u));
+        b.shutdown();
+    }
+#endif
+    std::puts("PASS bounded adaptive FIFO depth, capability/driver limits and failed retirement");
 }
 
 void earlyNativePresentContracts() {
@@ -2286,6 +2359,7 @@ int main() {
     resetAndSubmitFailures();
     safeCallbackAndTeardown();
     nativeSurfacePolicyAndSuccess();
+    adaptiveWsiDepthContracts();
     earlyNativePresentContracts();
     wsiAcquireSlotContracts();
     abandonedWsiAcquireContracts();
