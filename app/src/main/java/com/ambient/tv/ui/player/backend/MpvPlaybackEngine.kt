@@ -516,6 +516,7 @@ internal class MpvPlaybackEngine(
         check(MpvBackendAvailability.nativeRuntimeAvailable) { "MPV native runtime is not bundled for this device" }
         handle = MpvNativeBridge.nativeCreate()
         check(handle != 0L) { "mpv_create() failed" }
+        try {
         // Android MediaCodec textures use samplerExternalOES. NVIDIA also exposes desktop
         // OpenGL, whose shader overloads cannot sample these textures. Keep Android on GLES,
         // including a later Vulkan-to-OpenGL recovery.
@@ -619,10 +620,7 @@ internal class MpvPlaybackEngine(
         }
         ownerStep?.mark("initialize:mpv_initialize")
         val init = MpvNativeBridge.nativeInitialize(handle)
-        if (init < 0) {
-            MpvNativeBridge.nativeDestroy(handle)
-            error("mpv_initialize() failed: $init")
-        }
+        check(init >= 0) { "mpv_initialize() failed: $init" }
         if (audioOnly) {
             // Music must open even when no video plane is composed (background/visualizer).
             setProperty("vid", "no")
@@ -636,6 +634,19 @@ internal class MpvPlaybackEngine(
         startEventPump()
         updateImageOptions(imageOptions)
         applyAudioOptions()
+        } catch (failure: Throwable) {
+            // A constructor exception otherwise loses the only reference to the native handle.
+            runCatching { imageScope.cancel() }
+            runCatching {
+                released = true
+                stopEventPump()
+                MpvNativeBridge.nativeDestroy(handle)
+            }.onFailure { destroyFailure ->
+                nativeAudioReleases.beginRelease().completeExceptionally(NativeOutputReleaseUncertain(destroyFailure))
+                if (destroyFailure !== failure) failure.addSuppressed(destroyFailure)
+            }
+            throw failure
+        }
     }
 
     /** [mpvVideoSync] for the current audio plan and SVP state. */
