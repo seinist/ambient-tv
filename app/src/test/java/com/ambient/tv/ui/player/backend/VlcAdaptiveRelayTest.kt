@@ -82,6 +82,9 @@ class VlcAdaptiveRelayTest {
             "2001:db8::1", "2002:7f00:1::1", "::ffff:127.0.0.1")) {
             assertFalse(host, vlcRelayPublicAddress(InetAddress.getByName(host)))
         }
+        assertFalse(vlcRelayCdnUrlAllowed("https://127.0.0.1/private".toHttpUrl()))
+        assertFalse(vlcRelayCdnUrlAllowed("https://[::1]/private".toHttpUrl()))
+        assertFalse(vlcRelayCdnUrlAllowed("https://192.168.1.1/private".toHttpUrl()))
         assertTrue(vlcRelayPublicAddress(InetAddress.getByName("8.8.8.8")))
         assertTrue(vlcRelayPublicAddress(InetAddress.getByName("2606:4700:4700::1111")))
     }
