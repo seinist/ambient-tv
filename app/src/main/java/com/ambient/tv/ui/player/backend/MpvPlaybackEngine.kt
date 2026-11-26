@@ -741,13 +741,14 @@ internal class MpvPlaybackEngine(
         }
         ownerStep?.mark("surface:attach")
         MpvNativeBridge.nativeAttachSurface(handle, surface)
+        // The native reference is now owned even if a subsequent geometry/property call fails.
+        attached = true
+        attachedSurface = surface
         surfaceWidth = width
         surfaceHeight = height
         if (gpuQualityMode && width > 0 && height > 0) {
             setProperty("android-surface-size", "${width}x$height")
         }
-        attached = true
-        attachedSurface = surface
         Timber.i("%s MPV surface attached size=%dx%d valid=%s", HDR_AUDIT_TAG, width, height, surface.isValid)
         if (!loaded) {
             setProperty("vo", configuredVo)
