@@ -238,17 +238,8 @@ fun YouTubePlayerScreen(
             val profileMetadata = PlaybackMetadata(route, playback.title, source = "youtube", mediaId = playback.videoId,
                 sourceWidth = initialFormat?.width, sourceHeight = initialFormat?.height,
                 isLive = playback.isLive, isTrailer = isTrailer)
-            fun preferredRenderer(metadata: PlaybackMetadata): String = com.ambient.tv.ui.player.preferredSourcePlaybackRenderer(
-                source = "youtube",
-                globalDefault = prefs.playbackBackendKey,
-                title = com.ambient.tv.ui.player.TitleVideoSettingsStore.load(context, metadata),
-                // The "all" profile mirrors the global Media3 setting, not an explicit width choice.
-                resolution = com.ambient.tv.ui.player.ResolutionVideoProfileStore
-                    .matchedKey(context, metadata)
-                    ?.let { com.ambient.tv.ui.player.ResolutionVideoProfileStore.load(context, metadata) },
-                mpvAvailable = MpvBackendAvailability.isAvailable,
-                isTrailer = isTrailer,
-            )
+            fun preferredRenderer(metadata: PlaybackMetadata): String =
+                com.ambient.tv.ui.player.preferredYouTubePlaybackRenderer(context, prefs.playbackBackendKey, metadata)
             var rendererKey by remember(route) { mutableStateOf(
                 BackgroundPlaybackSession.snapshot.value.takeIf { it.metadata?.route == route }?.backend
                     ?: preferredRenderer(profileMetadata)) }
@@ -486,11 +477,24 @@ fun YouTubePlayerScreen(
                     }
                 }
                 else -> {
-                    // VLC/MPV sessions build the MPD in the background; Media3 opens it once ready.
+                    // Native sessions only start their deferred MPD if Media3 actually needs it.
                     val media3Playback by rememberYouTubeMedia3Playback(enginePlayback)
                     val media3 = media3Playback
                     if (media3 == null) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { PlayerBufferingSpinner(visible = true) }
+                    } else if (media3.uri.isBlank()) {
+                        val message = stringResource(R.string.youtube_no_compatible_format)
+                        LaunchedEffect(media3.videoId) {
+                            val snapshot = BackgroundPlaybackSession.snapshot.value
+                            if (snapshot.replacingSource && viewModel.ownsCompanionMedia(snapshot.metadata?.companionMedia)) {
+                                BackgroundPlaybackSession.failSourceReplacement(snapshot.generation, message)
+                            }
+                        }
+                        Column(Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.9f)).padding(24.dp)) {
+                            Text(message)
+                            com.ambient.tv.ui.common.TvActionButton(stringResource(R.string.home_retry), viewModel::retry)
+                            com.ambient.tv.ui.common.TvActionButton(stringResource(R.string.back), onBack)
+                        }
                     } else YouTubeMedia3Playback(
                     media3, effectiveResumePosition, rendererKey, prefs.bigSeekJumpSeconds, prefs.youtubeVideoPreset, prefs.youtubeMaxVideoHeight,
                     prefs.mediaAudioPassthroughEnabled,

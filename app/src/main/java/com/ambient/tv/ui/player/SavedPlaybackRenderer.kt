@@ -51,3 +51,19 @@ internal fun preferredSourcePlaybackRenderer(
     val requested = title?.rendererOrDefault(byResolution) ?: byResolution
     return resolveSourceAutoRenderer(source, requested, mpvAvailable, isTrailer)
 }
+
+/** The stream resolver and the YouTube screen must agree on the same title/width/Auto policy. */
+internal fun preferredYouTubePlaybackRenderer(
+    context: android.content.Context,
+    globalDefault: String,
+    metadata: PlaybackMetadata,
+): String = preferredSourcePlaybackRenderer(
+    source = "youtube",
+    globalDefault = globalDefault,
+    title = TitleVideoSettingsStore.load(context, metadata),
+    // The global pseudo-profile is not an explicit width profile.
+    resolution = ResolutionVideoProfileStore.matchedKey(context, metadata)
+        ?.let { ResolutionVideoProfileStore.load(context, metadata) },
+    mpvAvailable = com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable,
+    isTrailer = metadata.isTrailer,
+)

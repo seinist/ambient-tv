@@ -150,7 +150,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                 }
                 // Keep even rapid retries serialized until cancelled blocking calls finish.
                 val result = loadMutex.withLock {
-                    suspendResult { cached ?: if (fresh) engine.refreshLivePlayback(videoId) else engine.playback(videoId) }
+                    suspendResult { cached ?: if (fresh) engine.refreshLivePlayback(videoId, isTrailer) else engine.playback(videoId, isTrailer) }
                 }
                 ready = result.getOrNull()
                 if (ready != null) {

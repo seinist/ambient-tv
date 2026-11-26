@@ -171,4 +171,14 @@ class YouTubeFormatResolutionTest {
             error("Expected failure")
         } catch (error: IOException) { assertEquals("failure-6", error.message) }
     }
+
+    @Test fun explicitLowQualityCapDoesNotNeedAnUpgradeRequest() {
+        val video = YouTubeAdaptiveFormat("video/mp4", "https://g/video", width = 640, height = 360)
+        val audio = YouTubeAdaptiveFormat("audio/mp4", "https://g/audio")
+        val formats = listOf(video, audio)
+        assertEquals(4, youtubePlayableFormatScore(false, false, false, formats, requestedMaxHeight = 360) { false })
+        assertEquals(3, youtubePlayableFormatScore(false, false, false, formats, requestedMaxHeight = 480) { false })
+        assertEquals(3, youtubePlayableFormatScore(false, false, false, formats) { false })
+    }
+
 }
