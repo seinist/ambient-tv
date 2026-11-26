@@ -353,6 +353,14 @@ void frameSlotAllocationContracts() {
     assert(second.create(vk, backend.device, backend.queueFamily));
     assert(backend.frameSlot.pool != second.pool && backend.frameSlot.command != second.command &&
            backend.frameSlot.fence != second.fence && allocations == 6);
+    libretrodroid::VulkanColorCopy::Source firstSource {}, secondSource {};
+    firstSource.width = 320; firstSource.height = 240;
+    secondSource.width = 640; secondSource.height = 480;
+    assert(backend.frameSlot.colorCopy.prepare(firstSource, VK_FORMAT_R8G8B8A8_UNORM, 320, 240));
+    assert(second.colorCopy.prepare(secondSource, VK_FORMAT_R8G8B8A8_UNORM, 640, 480));
+    second.colorCopyRejected = true;
+    assert(backend.frameSlot.colorCopy.preparedImage(VK_NULL_HANDLE).width == 320);
+    assert(second.colorCopy.preparedImage(VK_NULL_HANDLE).width == 640);
     assert(!backend.createFrameResources() && allocations == 6);
     second.inFlight = true;
     assert(!second.retire(vk, backend.device));
@@ -361,13 +369,50 @@ void frameSlotAllocationContracts() {
     assert(!second.retire(vk, backend.device));
     vk.destroyFence = destroyFence;
     assert(!second.retire(vk, VK_NULL_HANDLE));
-    assert(!driver.commandPoolFrees && !driver.fenceFrees);
+    assert(!driver.commandPoolFrees && !driver.fenceFrees && !driver.cacheReleases);
+    assert(second.colorCopyRejected && second.colorCopy.preparedImage(VK_NULL_HANDLE).width == 640);
     assert(second.retire(vk, backend.device) && second.retire(vk, backend.device));
-    assert(driver.commandPoolFrees == 1 && driver.fenceFrees == 1);
+    assert(driver.commandPoolFrees == 1 && driver.fenceFrees == 1 && driver.cacheReleases == 1);
+    assert(!second.colorCopyRejected && backend.frameSlot.colorCopy.preparedImage(VK_NULL_HANDLE).width == 320);
     assert(backend.frameSlot.pool && backend.frameSlot.command && backend.frameSlot.fence);
     assert(backend.frameSlot.retire(vk, backend.device));
-    assert(driver.commandPoolFrees == 2 && driver.fenceFrees == 2 && pools.empty() && fences.empty());
+    assert(driver.commandPoolFrees == 2 && driver.fenceFrees == 2 && driver.cacheReleases == 2 &&
+           pools.empty() && fences.empty());
     std::puts("PASS frame-slot transactional creation, independent handles and safe retirement");
+}
+
+void slotRetirementPreflightContracts() {
+    VulkanBackend backend;
+    setup(backend);
+    assert(backend.presentFrame(256, 224, 4.0F / 3.0F, true));
+    assert(backend.frameSlot.colorCopy.preparedImage(VK_NULL_HANDLE).width == 256);
+    backend.frameSlot.colorCopyRejected = true;
+    window(backend);
+    backend.nativeSdrSwapchain = object<VkSwapchainKHR>(19);
+    backend.bridgeReadSemaphore = object<VkSemaphore>(20);
+    backend.bridgeWriteSemaphore = object<VkSemaphore>(21);
+    static unsigned semaphoreFrees;
+    semaphoreFrees = 0;
+    backend.vk.destroySemaphore = [](VkDevice, VkSemaphore semaphore, const VkAllocationCallbacks*) {
+        assert(semaphore == object<VkSemaphore>(20) || semaphore == object<VkSemaphore>(21));
+        ++semaphoreFrees;
+    };
+    const auto destroyFence = backend.vk.destroyFence;
+    backend.vk.destroyFence = nullptr;
+    backend.shutdown();
+    assert(backend.getFatalError() == VK_ERROR_INITIALIZATION_FAILED && !backend.shutdownReady);
+    assert(backend.device && backend.nativeSdrSwapchain && backend.frameBuffer && backend.frameSlot.pool);
+    assert(backend.bridgeReadSemaphore && backend.bridgeWriteSemaphore && backend.frameSlot.colorCopyRejected);
+    assert(driver.cacheReleases == 0 && driver.slangReleases == 0 && driver.swapchainFrees == 0 &&
+           driver.imageFrees == 0 && driver.bufferFrees == 0 && driver.commandPoolFrees == 0 &&
+           driver.fenceFrees == 0 && driver.deviceFrees == 0 && semaphoreFrees == 0);
+    backend.vk.destroyFence = destroyFence;
+    backend.shutdown();
+    assert(!backend.device && !backend.hasFatalError() && !backend.frameSlot.colorCopyRejected);
+    assert(driver.cacheReleases == 1 && driver.swapchainFrees == 1 && driver.imageFrees == 1 &&
+           driver.bufferFrees == 1 && driver.commandPoolFrees == 1 && driver.fenceFrees == 1 &&
+           driver.deviceFrees == 1 && semaphoreFrees == 2);
+    std::puts("PASS slot retirement preflight retains all resources on failure, retries exactly once");
 }
 
 void timeoutsPreserveWork() {
@@ -1092,6 +1137,7 @@ void traceScopeContracts() {
 int main() {
     traceScopeContracts();
     frameSlotAllocationContracts();
+    slotRetirementPreflightContracts();
     timeoutsPreserveWork();
     errorsStopWorkAndResize();
     bridgeContextReplacementRetires();
