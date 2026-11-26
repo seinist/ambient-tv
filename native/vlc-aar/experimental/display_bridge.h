@@ -87,7 +87,8 @@ static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
                                               picture_t *pic, struct ambient_ahb_output *out)
 {
     if (!owner || !pic || !ambient_display_sdr(&pic->format) ||
-        picture_GetAncillary(pic, VLC_ANCILLARY_ID_HDR10PLUS))
+        (picture_GetAncillary(pic, VLC_ANCILLARY_ID_HDR10PLUS) ||
+         picture_GetAncillary(pic, VLC_ANCILLARY_ID_DOVI)))
         return VK_ERROR_FORMAT_NOT_SUPPORTED;
     struct ambient_vlc_picture held;
     if (!ambient_vlc_hold_picture(pic, &held)) return VK_ERROR_FORMAT_NOT_SUPPORTED;
