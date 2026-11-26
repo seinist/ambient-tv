@@ -34,6 +34,7 @@ public:
             }
             ++s.generation;
             s.epoch = epoch_;
+            s.conversion_done = false;
             s.state = State::Recording;
             next_ = (i + 1) % N;
             return {i, s.generation};
@@ -47,8 +48,12 @@ public:
     // Only on a signaled conversion fence; old-epoch frames are not displayed.
     bool converted(Ticket t) {
         auto *s = lookup(t);
-        if (!s || s->state != State::Converting) return false;
-        s->state = s->epoch == epoch_ ? State::Ready : State::Free;
+        if (!s || s->conversion_done ||
+            (s->state != State::Converting && s->state != State::Rendering &&
+             s->state != State::Reclaiming)) return false;
+        s->conversion_done = true;
+        if (s->state == State::Converting)
+            s->state = s->epoch == epoch_ ? State::Ready : State::Free;
         return true;
     }
 
@@ -56,11 +61,21 @@ public:
         auto *s = lookup(t);
         return s && s->epoch == epoch_ && transition(t, State::Ready, State::Rendering);
     }
+    // The consumer may enqueue work before conversion finishes if its first
+    // use waits on the conversion-complete semaphore. This records ownership,
+    // NOT proof that the producer/decoder has completed.
+    bool begin_render_waiting_conversion(Ticket t) {
+        auto *s = lookup(t);
+        return s && s->epoch == epoch_ && transition(t, State::Converting, State::Rendering);
+    }
     bool drop_ready(Ticket t) { return transition(t, State::Ready, State::Free); }
     bool begin_reclaim(Ticket t) { return transition(t, State::Rendering, State::Reclaiming); }
     // Only after libplacebo's hold semaphore has been consumed and its GPU
     // completion proven. Never use conversion completion for this transition.
-    bool reclaimed(Ticket t) { return transition(t, State::Reclaiming, State::Free); }
+    bool reclaimed(Ticket t) {
+        auto *s = lookup(t);
+        return s && s->conversion_done && transition(t, State::Reclaiming, State::Free);
+    }
 
     bool quarantine(Ticket t) {
         auto *s = lookup(t);
@@ -97,6 +112,7 @@ private:
         State state = State::Free;
         uint64_t generation = 0;
         uint64_t epoch = 0;
+        bool conversion_done = false;
     };
     Slot *lookup(Ticket t) {
         if (!t || slots_[t.index].generation != t.generation) return nullptr;
