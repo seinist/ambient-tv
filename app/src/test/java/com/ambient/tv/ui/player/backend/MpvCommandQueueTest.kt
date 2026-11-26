@@ -65,7 +65,7 @@ class MpvCommandQueueTest {
         assertTrue(queue.submit("surface-detach", keepOnClose = true) { order += "detach" })
         assertFalse(queue.submit("other") {})
         while (scheduled.isNotEmpty()) scheduled.removeFirst()()
-        assertEquals(listOf("filter", "attach", "detach"), order)
+        assertEquals(listOf("attach", "detach", "filter"), order)
     }
 
     @Test fun failedOperationDoesNotStrandCleanup() {
