@@ -490,8 +490,9 @@ class TvheadendRepository @Inject constructor(
                 val request = Request.Builder()
                     .url(buildUrl("api/raw/export", mapOf("class" to "mpegts_service"))).get().build()
                 check(shouldContinue()) { "HbbTV source changed" }
-                hbbtvHttpClient.newCall(request)
-                    .execute().use { response ->
+                val call = hbbtvHttpClient.newCall(request)
+                BrowseWorkBudget.interruptOnGameStart(call::cancel) {
+                    call.execute().use { response ->
                         check(response.isSuccessful) { "TVHeadend raw metadata HTTP ${response.code}" }
                         val raw = json.parseToJsonElement(response.body.string()) as? JsonArray
                             ?: error("Invalid TVHeadend raw metadata")
@@ -506,6 +507,7 @@ class TvheadendRepository @Inject constructor(
                             id to tvhHbbtvApplications(row).map { LiveTvHbbtvApp(it.url, it.name, it.visibility) }
                         }.toMap()
                     }
+                }
             }.onFailure { Timber.d(it, "TVHeadend HbbTV raw export unavailable") }.getOrNull()
         }
 
@@ -577,7 +579,8 @@ class TvheadendRepository @Inject constructor(
         wake: Boolean, force: Boolean = false, maxAgeMs: Long = 15 * 60_000L): List<TvhEpgEvent> = guideFetchMutex.withLock {
         val epoch = guideEpoch.get()
         fun valid() = epoch == guideEpoch.get() && currentGuideScope(scope)
-        check(valid()) { "TVHeadend source changed" }
+        fun canPersist() = valid() && (wake || BrowseWorkBudget.idle())
+        check(canPersist()) { "TVHeadend source changed or idle work interrupted" }
         if (!force && freshGuideWindow(scope, from, to, maxAgeMs)) {
             indexedEpg(scope, from, to, channelId)?.let { if (valid()) return@withLock it }
         }
@@ -596,12 +599,13 @@ class TvheadendRepository @Inject constructor(
         require(events.map { it.eventId }.toSet().size == events.size)
         val persisted = suspendResult {
             epgPersistMutex.withLock {
-                check(valid()) { "TVHeadend source changed" }
+                check(canPersist()) { "TVHeadend source changed or idle work interrupted" }
                 migrateGuideIfNeeded(scope)
+                check(canPersist()) { "TVHeadend source changed or idle work interrupted" }
                 if (guideFreshnessBlocked) guideIndex.expireSyncWindows(EPG_INDEX_OWNER, scope)
                 guideIndex.reconcileWindow(EPG_INDEX_OWNER, scope, events, from, to,
-                    System.currentTimeMillis() / 1000L, channelId, valid = ::valid)
-                if (valid()) guideFreshnessBlocked = false
+                    System.currentTimeMillis() / 1000L, channelId, valid = ::canPersist)
+                if (canPersist()) guideFreshnessBlocked = false
             }
         }
         check(valid()) { "TVHeadend source changed" }
@@ -625,7 +629,7 @@ class TvheadendRepository @Inject constructor(
                     suspendResult {
                         val scope = diskScope()
                         val now = System.currentTimeMillis() / 1000L
-                        guideIndex.trimExpired(EPG_INDEX_OWNER, scope, now) { currentGuideScope(scope) }
+                        guideIndex.trimExpired(EPG_INDEX_OWNER, scope, now) { currentGuideScope(scope) && BrowseWorkBudget.idle() }
                         if (!availability.hasNetwork() || !serverLikelyReachable()) return@suspendResult
                         // Six-hour aligned windows are bounded; fill the nearest missing window first.
                         val start = Math.floorDiv(now, 21600L) * 21600L
@@ -1094,9 +1098,14 @@ class TvheadendRepository @Inject constructor(
         return try { withContext(Dispatchers.IO) {
             val url = buildUrl(path, params)
             val request = Request.Builder().url(url).get().build()
-            val requestClient = if (!wake && path == "api/epg/events/grid")
-                client.newBuilder().callTimeout(5, TimeUnit.SECONDS).build() else client
-            requestClient.newCall(request).execute().use { response ->
+            val speculative = !wake && path == "api/epg/events/grid"
+            // Cancelling optional work must not be mistaken for a failed server connection.
+            val requestClient = if (speculative)
+                client.newBuilder().apply { interceptors().remove(hostConnectivityInterceptor) }
+                    .callTimeout(5, TimeUnit.SECONDS).build() else client
+            val call = requestClient.newCall(request)
+            val decode: (okhttp3.Response) -> JsonElement = { response ->
+                if (speculative) check(BrowseWorkBudget.idle()) { "Idle guide work interrupted" }
                 if (!response.isSuccessful) {
                     timber.log.Timber.w("TVHeadend API %s returned HTTP %d", path, response.code)
                     // A 401 alone does not hide TVHeadend: right after a wake the port opens before
@@ -1119,6 +1128,8 @@ class TvheadendRepository @Inject constructor(
                 val body = response.body.string().orEmpty()
                 if (body.isBlank()) JsonObject(emptyMap()) else json.parseToJsonElement(body)
             }
+            if (speculative) BrowseWorkBudget.interruptOnGameStart(call::cancel) { call.execute().use(decode) }
+            else call.execute().use(decode)
         } } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
         catch (error: Exception) {
             // An optional/admin-only API error must not revoke working channel access: a recording
