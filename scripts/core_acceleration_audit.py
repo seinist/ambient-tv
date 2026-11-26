@@ -50,6 +50,13 @@ def build_commands(log, cwd=None, root=None, strict=False):
         if len(tokens) >= 3 and tokens[0] == "cd" and tokens[2] == "&&":
             command_cwd = (cwd / tokens[1]).resolve()
             tokens = tokens[3:]
+        # Ninja's CMake archive rule removes the old archive before llvm-ar.
+        # Only skip this known prefix, never search arbitrary diagnostics.
+        if tokens and ((Path(tokens[0]).name == "cmake" and tokens[1:4] == ["-E", "rm", "-f"])
+                       or (Path(tokens[0]).name == "rm" and tokens[1:2] == ["-f"])):
+            if "&&" not in tokens:
+                continue
+            tokens = tokens[tokens.index("&&") + 1:]
         if tokens and Path(tokens[0]).name == "ccache":
             tokens = tokens[1:]
         if not tokens:
