@@ -177,7 +177,7 @@ fun TvheadendScreen(
     val guideControls = rememberLiveTvBrowseControls(viewModel.browseState, "guide")
     val browseControls = if (state.tab == TvheadendTab.LIVE) channelControls else guideControls
     val channelListing = rememberLiveTvChannelListing(
-        channels, events, state.guideOptions, sourceId = state.source.id, enabled = channelBrowser,
+        channels, events, state.guideOptions, sourceId = state.source.id, enabled = channelBrowser, browseState = viewModel.browseState,
     )
     val tags = channelListing.tags
     val hasHbbtvCategory = channelListing.hasHbbtvCategory
@@ -194,7 +194,7 @@ fun TvheadendScreen(
         if (state.tab != TvheadendTab.GUIDE) guideControls.leavePage()
     }
     com.ambient.tv.ui.common.RetryOfflineBrowse(setOf(state.source.id), viewModel::retryOffline)
-    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf(state.source.id), viewModel::refreshAfterReconnect)
+    com.ambient.tv.ui.common.LiveTvRefreshOnEntry(setOf(state.source.id), viewModel::refreshOnEntry, viewModel::refreshVisibleIfIdle)
     ReportSidebarContentReady(
         !state.awaitingInitialContent() &&
             (!channelBrowser || !channelListing.building || channelListing.visibleChannels.isNotEmpty()),

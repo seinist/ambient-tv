@@ -147,7 +147,7 @@ internal fun buildLiveTvChannelListing(
 }
 
 /** Inputs are held only until their corresponding worker result has been committed on Main. */
-private data class CompletedLiveTvListing(
+internal data class CompletedLiveTvListing(
     val channels: List<LiveTvChannel>,
     val events: List<LiveTvProgramme>,
     val options: GuideOptions,
@@ -182,27 +182,29 @@ internal fun rememberLiveTvChannelListing(
     options: GuideOptions,
     sourceId: String = "",
     enabled: Boolean = true,
+    browseState: com.ambient.tv.livetv.LiveTvBrowseState? = null,
 ): LiveTvChannelListing {
-    var now by remember { mutableLongStateOf(System.currentTimeMillis() / 1000L) }
+    var now by remember { mutableLongStateOf(System.currentTimeMillis() / 60_000L * 60L) }
     LaunchedEffect(Unit) {
         while (true) {
             delay(60_000)
-            now = System.currentTimeMillis() / 1000L
+            now = System.currentTimeMillis() / 60_000L * 60L
         }
     }
     // Avoid deep equality comparisons of channel/EPG lists in both effects and snapshot writes.
-    var completed by remember(sourceId) {
-        mutableStateOf<CompletedLiveTvListing?>(null, referentialEqualityPolicy())
+    var completed by remember(sourceId, browseState) {
+        mutableStateOf(browseState?.preparedListing, referentialEqualityPolicy())
     }
     val sourceData = LiveTvDataIdentityKey(channels, events)
-    LaunchedEffect(sourceId, sourceData, options, now, enabled) {
+    LaunchedEffect(sourceId, browseState, sourceData, options, now, enabled) {
         if (!enabled) return@LaunchedEffect
+        if (completed?.let { it.channels === channels && it.events === events && it.options == options && it.now == now } == true) return@LaunchedEffect
         // A newer effect cancels its predecessor. No partial background result touches Compose.
         val built = withContext(Dispatchers.Default) {
             val worker = currentCoroutineContext()
             buildLiveTvChannelListing(channels, events, options, now) { worker.ensureActive() }
         }
-        completed = CompletedLiveTvListing(channels, events, options, now, built)
+        completed = CompletedLiveTvListing(channels, events, options, now, built).also { browseState?.preparedListing = it }
     }
     val answer = completed
     val current = answer?.listing ?: LiveTvChannelListing(

@@ -1595,8 +1595,8 @@ class HomeViewModel @Inject constructor(
         }
         val previews = repositories.map { repo -> async {
             val previous = HomeTvPreview(
-                tvPreview.live.filter { it.channel.sourceId == repo.source.id }.map { it.copy(event = null) },
-                tvPreview.recent.filter { it.channel.sourceId == repo.source.id }.map { it.copy(event = null) },
+                tvPreview.live.filter { it.channel.sourceId == repo.source.id }.map { it.copy(event = it.event?.takeIf { event -> event.isLive(System.currentTimeMillis() / 1000L) }) },
+                tvPreview.recent.filter { it.channel.sourceId == repo.source.id }.map { it.copy(event = it.event?.takeIf { event -> event.isLive(System.currentTimeMillis() / 1000L) }) },
             )
             suspendResult {
                 val historyScope = if (repo.source.system == "tvheadend") appPreferences.tvheadendHistoryScope else repo.source.id
@@ -1604,7 +1604,15 @@ class HomeViewModel @Inject constructor(
                 val showLive = hasEnabledRow(repo.source.system, "live")
                 val showRecent = hasEnabledRow(repo.source.system, "recent_channels")
                 val headers = repo.authHeaders()
-                fun item(channel: TvhChannel) = HomeLiveTvItem(channel, null, headers, repo.source.name)
+                val sharedBrowse = liveTvRegistry.browseState(repo)
+                val currentTime = System.currentTimeMillis() / 1000L
+                val cachedEvents = sharedBrowse.dashboard?.events.orEmpty().asSequence()
+                    .filter { it.isLive(currentTime) }.associateBy { it.channelUuid }
+                val previousEvents = (tvPreview.live + tvPreview.recent)
+                    .filter { it.channel.sourceId == repo.source.id && it.event?.isLive(currentTime) == true }
+                    .associate { it.channel.uuid to it.event }
+                fun item(channel: TvhChannel) = HomeLiveTvItem(channel,
+                    previousEvents[channel.uuid] ?: cachedEvents[channel.uuid], headers, repo.source.name)
                 fun preview(channels: List<TvhChannel>) = HomeTvPreview(
                     if (showLive) channels.take(HOME_LIVE_TV_LIMIT).map(::item) else emptyList(),
                     if (showRecent) recent.mapNotNull { id -> channels.firstOrNull { it.uuid == id }?.let(::item) } else emptyList())
@@ -1649,14 +1657,18 @@ class HomeViewModel @Inject constructor(
                 // Publish usable channel cards before waiting for EPG.
                 publish(preview)
                 if (storedChannels) return@suspendResult preview
-                val events = suspendResult {
+                val nowResult = suspendResult {
                     loadCoordinator.request(repo.source.id, "home:now-events", BrowseLoadPriority.HOME) {
                         repo.nowEvents()
                     }
-                }.getOrDefault(emptyList()).associateBy { it.channelUuid }
+                }
                 if (liveTvRegistry.displayCacheIdentity(repo) == null) return@suspendResult HomeTvPreview()
-                HomeTvPreview(preview.live.map { it.copy(event = events[it.channel.uuid].takeUnless { repo.servingCachedData }) },
-                    preview.recent.map { it.copy(event = events[it.channel.uuid].takeUnless { repo.servingCachedData }) })
+                if (nowResult.isFailure || repo.servingCachedData) return@suspendResult preview
+                val freshEvents = nowResult.getOrThrow()
+                sharedBrowse.rememberNowEvents(freshEvents)
+                val events = freshEvents.associateBy { it.channelUuid }
+                HomeTvPreview(preview.live.map { it.copy(event = events[it.channel.uuid]) },
+                    preview.recent.map { it.copy(event = events[it.channel.uuid]) })
             }.getOrElse {
                 if (liveTvRegistry.displayCacheIdentity(repo) != null) {
                     savedTvSourceIds += repo.source.id

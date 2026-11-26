@@ -1324,6 +1324,24 @@ class VlcPlaybackController(
         pendingRestorePositionMs == null && pauseAfterRestorePositionMs == null && !dvPrimeActive &&
         !frameDropSamples.buffering && !ended && errorMessage == null && isPlayingNow()
 
+    internal fun liveSyncSample(): com.ambient.tv.ui.player.LiveSyncSample? {
+        if (!liveStream || audioOnly || userVideoDisabled || !frameDropSampleReady() ||
+            attachedView?.holder?.surface?.isValid != true ||
+            trackAccess.currentVideoTrack == null || trackAccess.currentAudioTrack == null) return null
+        val stats = runtimeStats() ?: return null
+        val frames = stats.displayedPictures?.toLong() ?: return null
+        return com.ambient.tv.ui.player.LiveSyncSample(android.os.SystemClock.elapsedRealtime(),
+            player.time.coerceAtLeast(0L), frameDropSampleGeneration(), renderedFrames = frames,
+            audioBuffers = stats.playedAudioBuffers?.toLong()?.takeIf { it > 0 })
+    }
+
+    internal fun reopenForLiveSync(): Boolean {
+        if (liveSyncSample() == null) return false
+        // The established audio restart path also flushes video and retains local Timeshift.
+        restartAudio()
+        return true
+    }
+
     override fun status(): PlaybackStatus {
         if (released) return PlaybackStatus()
         if (imageOptions.svpMode != "off" || configuredSvpMode != "off") {

@@ -23,7 +23,7 @@ object GameInputRouting {
         val context: Any?,
     )
 
-    private var session: Session? = null
+    @Volatile private var session: Session? = null
     private val observers = linkedMapOf<Any, () -> Unit>()
     val transitions = GameInputTransitions()
     val active: Boolean get() = session != null
