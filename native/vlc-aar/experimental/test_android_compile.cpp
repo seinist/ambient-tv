@@ -4,6 +4,8 @@
 #include "queue_transfer.h"
 #include "submission.h"
 #include "sample_pass.h"
+#include "rgb_target.h"
+#include "slot_pool.h"
 
 using namespace ambient::vlc_ahb;
 
