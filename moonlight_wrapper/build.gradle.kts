@@ -51,6 +51,16 @@ android {
             ndkBuild { arguments += listOf("APP_PLATFORM=android-29", "APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true") }
         }
     }
+    buildTypes {
+        named("release") {
+            // ThinLTO only for the Moonlight native release build, keeping debug diagnostics intact.
+            externalNativeBuild {
+                ndkBuild {
+                    arguments += listOf("APP_CFLAGS+=-flto=thin", "APP_LDFLAGS+=-flto=thin")
+                }
+            }
+        }
+    }
     externalNativeBuild {
         ndkBuild { path = nativeRoot.resolve("Android.mk") }
     }
