@@ -100,7 +100,7 @@ class MpvPlaybackController(
     private var sampledMediaInfoGeneration = -1 // owner thread only
     private val previousAudioRelease = nativeAudioReleases.snapshot()
     private val createdAt = SystemClock.elapsedRealtime()
-    /** Completed once the previous player closed, failed to close, or [PREVIOUS_RELEASE_LIMIT_MS] passed. */
+    /** Completed only once ownership settles or this controller is cancelled. */
     private val ownerReady = java.util.concurrent.CompletableFuture<PreviousReleaseOutcome>()
     /**
      * The previous player (MPV, VLC or live Media3) is still closing its output. Shown as a short
@@ -161,17 +161,35 @@ class MpvPlaybackController(
             // Construction can happen inside remember(). Cross the main queue once so that
             // composition commits before the owner reads AudioSession's Compose state.
             main.post {
+                if (released) return@post
                 waitingForPreviousPlayer = false
-                ownerReady.complete(outcome)
+                if (outcome == PreviousReleaseOutcome.TIMED_OUT) {
+                    failure = context.getString(com.ambient.tv.R.string.audio_output_release_failed)
+                    // Keep the initialization and queued transport commands pending. A late
+                    // release is not a permanent failure of this controller.
+                    val weak = java.lang.ref.WeakReference(this@MpvPlaybackController)
+                    val previous = previousAudioRelease
+                    val handler = main
+                    previous.future.whenComplete { _, _ ->
+                        handler.post {
+                            val target = weak.get() ?: return@post
+                            if (!target.released) {
+                                if (!previous.blocked) target.failure = null
+                                target.ownerReady.complete(requireNotNull(previousReleaseOutcome(true, previous.failed, 0L, blocked = previous.blocked)))
+                            }
+                        }
+                    }
+                } else ownerReady.complete(outcome)
             }
         }
         mailbox.submit("initialize") {
             // Already settled: the mailbox only runs once ownerReady completed. Never blocks.
+            if (released) return@submit
             val outcome = ownerReady.getNow(PreviousReleaseOutcome.TIMED_OUT)
             val waited = SystemClock.elapsedRealtime() - createdAt
             com.ambient.tv.diagnostics.CrashBreadcrumbs.add("mpv", "previous player $outcome after $waited ms")
             when (outcome) {
-                PreviousReleaseOutcome.TIMED_OUT -> {
+                PreviousReleaseOutcome.BLOCKED, PreviousReleaseOutcome.TIMED_OUT -> {
                     Timber.w("MPV start: previous player still closing after %d ms; not starting", waited)
                     main.post { if (!released) failure = context.getString(com.ambient.tv.R.string.audio_output_release_failed) }
                     return@submit
@@ -502,7 +520,7 @@ class MpvPlaybackController(
         val owner = surfaceIdentity === surface
         detachSurface(surface)
         if (!owner && !released) return
-        if (Looper.myLooper() === thread.looper) return
+        if (!ownerReady.isDone || Looper.myLooper() === thread.looper) return
         val started = SystemClock.elapsedRealtime()
         val detached = surfaceGate.await(timeoutMs)
         com.ambient.tv.diagnostics.CrashBreadcrumbs.add("mpv", "surface detach " +
@@ -532,13 +550,16 @@ class MpvPlaybackController(
                 ownedSurface = null
                 audioRelease.complete(Unit)
             } catch (error: Throwable) {
-                audioRelease.completeExceptionally(error)
+                audioRelease.completeExceptionally(NativeOutputReleaseUncertain(error))
                 throw error
             } finally {
                 surfaceGate.closed()
                 thread.quitSafely()
             }
         }
+        // If still waiting for a previous owner, discard initialization and release this
+        // controller immediately. The earlier owner's gate entry remains independent.
+        ownerReady.complete(PreviousReleaseOutcome.TIMED_OUT)
     }
     fun loadedImageShaders(): List<String> = read("loadedImageShaders", emptyList(), 750L) { loadedImageShaders() }
     fun activeBuiltinSharpen(): String? = read("activeBuiltinSharpen", null, 750L) { activeBuiltinSharpen() }
