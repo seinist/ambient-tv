@@ -235,13 +235,16 @@ class VlcPlaybackController(
     // in the native MRL. A one-URL relay cannot resolve child HLS/DASH requests.
     private val needsHeaderRelay = url.startsWith("http", ignoreCase = true) &&
         headers.keys.any { key -> key.lowercase(java.util.Locale.ROOT) !in setOf("user-agent", "referer", "cookie") }
-    private val relaySupported = audioSlaveUrl == null &&
-        url.substringBefore('?').substringBefore('#').lowercase(java.util.Locale.ROOT).let {
-            !it.endsWith(".m3u8") && !it.endsWith(".mpd")
-        }
+    private val relaySupported = vlcDirectHttpRelaySupported(url)
     private val authProxy: AuthenticatedStreamProxy? =
         if (needsHeaderRelay && relaySupported)
             runCatching { AuthenticatedStreamProxy(url, headers.toMap()) }.getOrNull() else null
+    // Separate audio has an independent upstream and capability. Never forward the primary
+    // video's credentials to a different origin; both URLs must be explicit HTTP media files.
+    private val audioAuthProxy: AuthenticatedStreamProxy? =
+        if (needsHeaderRelay && audioSlaveUrl != null && vlcDirectHttpRelaySupported(audioSlaveUrl) &&
+            vlcSameHttpOrigin(url, audioSlaveUrl))
+            runCatching { AuthenticatedStreamProxy(audioSlaveUrl, headers.toMap()) }.getOrNull() else null
     var errorMessage by mutableStateOf<String?>(null)
         private set
     var ended by mutableStateOf(false)
@@ -1109,7 +1112,8 @@ class VlcPlaybackController(
         val keepTimeshiftMs = pendingTimeshiftKeepMs.also { pendingTimeshiftKeepMs = null }
         val playbackUrl = keepTimeshiftMs?.let { com.ambient.tv.livetv.LiveTimeshift.playbackUrlKeepingPosition(url, it, "vlc-audio")?.first }
             ?: com.ambient.tv.livetv.LiveTimeshift.playbackUrl(url, reopening || reopeningTimeshift)
-        if (playbackUrl == url && needsHeaderRelay && authProxy == null) {
+        if (playbackUrl == url && needsHeaderRelay &&
+            (authProxy == null || audioSlaveUrl != null && audioAuthProxy == null)) {
             // Do not open an unauthenticated stream or drop mandatory headers silently.
             headerRelayFailed = true
             errorMessage = context.getString(R.string.vlc_playback_error)
@@ -1128,7 +1132,7 @@ class VlcPlaybackController(
             // paired audio can run seconds ahead and reset the shared clock.
             // avformat demuxes packets and keeps the slave aligned with video.
             media.addOption(":demux=avformat")
-            media.addSlave(org.videolan.libvlc.interfaces.IMedia.Slave(org.videolan.libvlc.interfaces.IMedia.Slave.Type.Audio, 4, it))
+            media.addSlave(org.videolan.libvlc.interfaces.IMedia.Slave(org.videolan.libvlc.interfaces.IMedia.Slave.Type.Audio, 4, audioAuthProxy?.url ?: it))
         }
         // Seek on Playing instead of :start-time. VLC 4 treats start-time as a
         // clipped timeline, which otherwise shifts both duration and later seeks.
@@ -1971,6 +1975,7 @@ class VlcPlaybackController(
         // Drop the upstream connection first: a renderer hand-off must not leave the old live
         // subscription open while the next engine connects.
         cleanup { authProxy?.close() }
+        cleanup { audioAuthProxy?.close() }
         val retiringPlayer = player
         val retiringLibVlc = libVlc
         val inFlightStop = restartStop
