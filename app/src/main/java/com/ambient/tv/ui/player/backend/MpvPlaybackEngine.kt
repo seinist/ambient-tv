@@ -2666,7 +2666,8 @@ internal class MpvPlaybackEngine(
         if (sync == null && (audioClock == null || videoClock == null)) return null
         return com.ambient.tv.ui.player.LiveSyncSample(android.os.SystemClock.elapsedRealtime(),
             audioClock?.let { (it * 1000).toLong() } ?: positionMs(), reopenGeneration,
-            avSyncSeconds = sync, videoPositionMs = videoClock?.takeIf { audioClock != null }?.let { (it * 1000).toLong() })
+            avSyncSeconds = sync, videoPositionMs = videoClock?.takeIf { audioClock != null }?.let { (it * 1000).toLong() },
+            avSyncCompensated = true)
     }
 
     internal fun reopenForLiveSync(expectedGeneration: Int) {
