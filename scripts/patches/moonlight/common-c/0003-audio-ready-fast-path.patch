@@ -1,0 +1,19 @@
+diff --git a/src/RtpAudioQueue.c b/src/RtpAudioQueue.c
+--- a/src/RtpAudioQueue.c
++++ b/src/RtpAudioQueue.c
+@@ -654,7 +654,9 @@
+-    // If we still have nothing ready, see if we should skip the missing packets.
+-    if (!queueHasPacketReady(queue)) {
+-        handleMissingPackets(queue);
+-    }
+-
+-    return queueHasPacketReady(queue) ? RTPQ_RET_PACKET_READY : 0;
++    // Avoid checking the same queue state twice on the ready fast path.
++    if (queueHasPacketReady(queue)) {
++        return RTPQ_RET_PACKET_READY;
++    }
++
++    handleMissingPackets(queue);
++
++    return queueHasPacketReady(queue) ? RTPQ_RET_PACKET_READY : 0;
+ }
