@@ -1633,9 +1633,14 @@ private const val MAX_REFLECTION_CLASSES = 256
 private const val MAX_REFLECTION_SIGNATURES = 256
 
 private fun reflectionIndex(type: Class<*>): ReflectionClassIndex =
-    reflectionIndexes[type] ?: if (reflectionIndexes.size < MAX_REFLECTION_CLASSES) {
-        reflectionIndexes.computeIfAbsent(type) { ReflectionClassIndex(it) }
-    } else ReflectionClassIndex(type)
+    reflectionIndexes[type] ?: synchronized(reflectionIndexes) {
+        reflectionIndexes[type] ?: ReflectionClassIndex(type).also { index ->
+            if (reflectionIndexes.size >= MAX_REFLECTION_CLASSES) {
+                reflectionIndexes.keys.firstOrNull()?.let { reflectionIndexes.remove(it) }
+            }
+            reflectionIndexes[type] = index
+        }
+    }
 
 private fun wrap(c: Class<*>) = when (c) {
     Int::class.javaPrimitiveType -> Int::class.javaObjectType
@@ -1658,9 +1663,14 @@ internal fun Any.cachedMethod(name: String, args: Array<out Any?>, allowArityFal
         }
         return CachedReflectionMethod(compatible ?: if (allowArityFallback) candidates.firstOrNull() else null)
     }
-    return (index.resolved[key] ?: if (index.resolved.size < MAX_REFLECTION_SIGNATURES) {
-        index.resolved.computeIfAbsent(key) { resolve() }
-    } else resolve()).method
+    return (index.resolved[key] ?: synchronized(index.resolved) {
+        index.resolved[key] ?: resolve().also { resolved ->
+            if (index.resolved.size >= MAX_REFLECTION_SIGNATURES) {
+                index.resolved.keys.firstOrNull()?.let { index.resolved.remove(it) }
+            }
+            index.resolved[key] = resolved
+        }
+    }).method
 }
 
 private fun Any.call(name: String, vararg args: Any?): Any? {
