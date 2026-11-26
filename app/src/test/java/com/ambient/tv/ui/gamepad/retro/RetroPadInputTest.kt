@@ -448,6 +448,99 @@ class RetroPadInputTest {
         assertEquals(0, input.buttons(2))
     }
 
+    @Test fun companionProjectionKeepsPressureLiveDuringUnchangedButtonAndStickPackets() {
+        val descriptor = companionControllerDescriptor("pressure-cache")
+        config = config.assignDevice(RetroInputKind.COMPANION, descriptor,
+            RetroInputTarget.Button(RetroPadButton.R2), companionControllerKey(RetroPadButton.L2))
+        input.reserveRemotePort(1, true, descriptor)
+        input.reserveRemotePort(2, true)
+        val changed = mutableListOf<Int>()
+        input.onPortChanged = { changed += it }
+        fun send(left: Float, x: Float = 0f) =
+            input.remoteState(1, RetroPadButton.B.mask, x, 0f, 0f, 0f, left, 0f)
+        send(.25f)
+        assertEquals(0, input.trigger(1, 0))
+        assertEquals(8192, input.trigger(1, 1))
+        repeat(10) { send(.25f) }
+        assertEquals(listOf(1), changed)
+        send(.75f, .5f)
+        assertEquals(24575, input.trigger(1, 1))
+        assertEquals(16384, input.analog(1, 0, 0))
+        input.remoteState(2, 0, 0f, 0f, 0f, 0f, .5f, 0f)
+        assertEquals(16384, input.trigger(2, 0))
+        assertEquals(24575, input.trigger(1, 1))
+        config = config.resetDevice(RetroInputKind.COMPANION, descriptor)
+        send(.75f, .5f)
+        assertEquals(24575, input.trigger(1, 0))
+        assertEquals(0, input.trigger(1, 1))
+        input.clearRemotePort(1, suppressHeld = true)
+        send(.75f)
+        assertEquals(0, input.trigger(1, 0))
+        assertEquals(0, input.buttons(1))
+        send(0f)
+        send(.25f)
+        assertEquals(8192, input.trigger(1, 0))
+        input.reserveRemotePort(1, false)
+        input.reserveRemotePort(1, true)
+        send(.75f)
+        assertEquals(24575, input.trigger(1, 0))
+    }
+
+    @Test fun companionProjectionMatchesPreviousMappingForAllButtonMasks() {
+        val code = ::companionControllerKey
+        val profile = RetroInputProfile(
+            buttons = mapOf(
+                RetroPadButton.L2 to listOf(code(RetroPadButton.R2), code(RetroPadButton.A)),
+                RetroPadButton.R2 to listOf(code(RetroPadButton.L2), code(RetroPadButton.B)),
+                RetroPadButton.X to listOf(code(RetroPadButton.X), code(RetroPadButton.Y)),
+            ),
+            menu = mapOf(
+                RetroMenuTrigger.REWIND to listOf(code(RetroPadButton.X)),
+                RetroMenuTrigger.HOLD to listOf(code(RetroPadButton.B)),
+                RetroMenuTrigger.PRESS to listOf(code(RetroPadButton.L)),
+                RetroMenuTrigger.FAST_FORWARD to listOf(code(RetroPadButton.R)),
+            ),
+        )
+        val projection = CompanionInputProjection()
+        fun hotkey(key: Int) = profile.opensMenu(key) || profile.holdOpensMenu(key) ||
+            profile.rewinds(key) || profile.fastForwards(key)
+        for (mask in 0..0xffff) {
+            var expected = companionMappedButtons(mask, profile)
+            var rewind = false
+            var left = 0
+            var right = 0
+            for (source in RetroPadButton.entries) {
+                val key = code(source)
+                val target = profile.button(key)
+                val down = mask and source.mask != 0
+                if (down && profile.rewinds(key)) rewind = true
+                if (hotkey(key)) {
+                    if (down && target != null) expected = expected and target.mask.inv()
+                    continue
+                }
+                val value = when (source) {
+                    RetroPadButton.L2 -> 8192
+                    RetroPadButton.R2 -> 24575
+                    else -> if (down) RetroPadInput.ANALOG_MAX else 0
+                }
+                if (target == RetroPadButton.L2) left = maxOf(left, value)
+                if (target == RetroPadButton.R2) right = maxOf(right, value)
+            }
+            projection.update(profile, mask)
+            assertEquals(expected, projection.buttons)
+            assertEquals(rewind, projection.rewind)
+            assertEquals(left, projection.leftPressure(8192, 24575))
+            assertEquals(right, projection.rightPressure(8192, 24575))
+            projection.update(profile, mask) // cache hit must be identical
+            assertEquals(expected, projection.buttons)
+        }
+        projection.update(null, RetroPadButton.L2.mask)
+        assertEquals(RetroPadButton.L2.mask, projection.buttons)
+        assertFalse(projection.rewind)
+        assertEquals(8192, projection.leftPressure(8192, 24575))
+        assertEquals(24575, projection.rightPressure(8192, 24575))
+    }
+
     @Test fun companionProfileHasAnIdentityLayoutAndSurvivesSettingsEncoding() {
         val descriptor = companionControllerDescriptor("phone-two")
         val default = defaultRetroProfile(RetroInputKind.COMPANION)

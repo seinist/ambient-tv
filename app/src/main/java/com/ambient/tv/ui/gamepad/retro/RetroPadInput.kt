@@ -91,6 +91,7 @@ class RetroPadInput(
     /** Profiles are immutable until the settings reference changes: no rebuild on every 60Hz frame. */
     private val remoteProfileSettings = arrayOfNulls<RetroInputConfig>(RetroPorts.COUNT)
     private val remoteProfiles = arrayOfNulls<RetroInputProfile>(RetroPorts.COUNT)
+    private val remoteProjections = Array(RetroPorts.COUNT) { CompanionInputProjection() }
     private val remoteRawButtons = IntArray(RetroPorts.COUNT)
     /** Buttons held while an OSD opens must be physically released before playing again. */
     private val remoteSuppressed = IntArray(RetroPorts.COUNT)
@@ -153,6 +154,7 @@ class RetroPadInput(
         remoteDescriptors[port] = if (reserved) descriptor else null
         remoteProfileSettings[port] = null
         remoteProfiles[port] = null
+        remoteProjections[port] = CompanionInputProjection()
         // A physical auto-assignment may have moved when this port was reserved/freed.
         recomputeAll()
     }
@@ -268,43 +270,24 @@ class RetroPadInput(
             }
         }
         remoteRawButtons[port] = sourceButtons
-        val rewind = profile != null && RetroPadButton.entries.any {
-            sourceButtons and it.mask != 0 && profile.rewinds(companionControllerKey(it))
-        }
+        val projection = remoteProjections[port]
+        projection.update(profile, sourceButtons)
+        val rewind = projection.rewind
         if (rewind != remoteRewindHeld[port]) {
             remoteRewindHeld[port] = rewind
             onRewind(rewinding() > 0 || remoteRewindHeld.any { it })
         }
-        var nextButtons = if (profile != null) companionMappedButtons(sourceButtons, profile)
-            else sourceButtons
-        if (profile != null) RetroPadButton.entries.forEach { source ->
-            val code = companionControllerKey(source)
-            if (sourceButtons and source.mask != 0 &&
-                (profile.opensMenu(code) || profile.holdOpensMenu(code) ||
-                    profile.rewinds(code) || profile.fastForwards(code)))
-                profile.button(code)?.let { nextButtons = nextButtons and it.mask.inv() }
-        }
+        val nextButtons = projection.buttons
         // A full chord must come from this one paired controller, not a heartbeat,
         // a previously suppressed key or buttons held on another player's device.
         if (profile != null && sourceButtons != previousRaw && config().menuCombo.matches(nextButtons)) {
             openMenu()
             return
         }
-        var nextLeft = 0
-        var nextRight = 0
-        for (source in RetroPadButton.entries) {
-            val code = companionControllerKey(source)
-            if (profile != null && (profile.opensMenu(code) || profile.holdOpensMenu(code) ||
-                    profile.rewinds(code) || profile.fastForwards(code))) continue
-            val target = if (profile == null) source else profile.button(code) ?: continue
-            val value = when (source) {
-                RetroPadButton.L2 -> if (remoteSuppressedTriggers[triggerAt]) 0 else incomingLeft
-                RetroPadButton.R2 -> if (remoteSuppressedTriggers[triggerAt + 1]) 0 else incomingRight
-                else -> digitalPressure(sourceButtons, source)
-            }
-            if (target == RetroPadButton.L2 && value > nextLeft) nextLeft = value
-            if (target == RetroPadButton.R2 && value > nextRight) nextRight = value
-        }
+        val effectiveLeft = if (remoteSuppressedTriggers[triggerAt]) 0 else incomingLeft
+        val effectiveRight = if (remoteSuppressedTriggers[triggerAt + 1]) 0 else incomingRight
+        val nextLeft = projection.leftPressure(effectiveLeft, effectiveRight)
+        val nextRight = projection.rightPressure(effectiveLeft, effectiveRight)
         val nextX = virtualStick(leftX)
         val nextY = virtualStick(leftY)
         val nextRX = virtualStick(rightX)
