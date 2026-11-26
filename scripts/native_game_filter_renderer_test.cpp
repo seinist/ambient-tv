@@ -428,14 +428,36 @@ void verifyHardwareAllocationFallback() {
         prefix.params["AMBIENT_PREPEND"] = "1";
         video.updateShaderType(prefix); video.renderFrame(true);
         expect(at(48, 32), {0, 255, 255, 255}, "required prefix baseline");
-        bool refusedRawFallback = false;
+        // With compatible existing targets, the mandatory prefix can survive a
+        // failed optional shader even when new storage is unavailable.
+        const unsigned rejectedBeforeReuse = rejectedShaderTargets;
+        const int fallbackBeforeReuse = ambientShaderFallbacks;
         {
             RejectStorage reject;
             prefix.customPasses.back().fragment = "invalid optional fragment";
             video.updateShaderType(prefix);
+            video.renderFrame(true);
+        }
+        require(rejectedShaderTargets == rejectedBeforeReuse,
+                "compatible mandatory prefix targets must be reused");
+        require(ambientShaderFallbacks == fallbackBeforeReuse + 1,
+                "invalid optional shader must select prefix-preserving fallback");
+        expectBorders("reused mandatory prefix targets");
+        expect(at(48, 32), {0, 255, 255, 255}, "reused mandatory prefix remains active");
+
+        // Make the mandatory prefix itself require a differently sized target.
+        // Fault injection must now actually reject storage, not merely be armed.
+        const unsigned rejectedBeforeResize = rejectedShaderTargets;
+        bool refusedRawFallback = false;
+        {
+            RejectStorage reject;
+            prefix.customPasses.front().scale = 2.0f;
+            video.updateShaderType(prefix);
             try { video.renderFrame(true); }
             catch (const std::runtime_error&) { refusedRawFallback = true; }
         }
+        require(rejectedShaderTargets > rejectedBeforeResize,
+                "incompatible mandatory prefix must attempt new target storage");
         require(refusedRawFallback, "failed mandatory prefix must never be dropped for raw fallback");
         switchPaused(video, pixel(), "recovery after hardware target rejection", {255, 0, 0, 255});
     }
