@@ -321,6 +321,10 @@ class MoonlightStreamEngine @Inject constructor(
                 }
             }
         }
+        scheduleInputDrain(session, offer)
+    }
+
+    private fun scheduleInputDrain(session: Active, offer: MoonlightInputMailbox.Offer) {
         when (offer) {
             MoonlightInputMailbox.Offer.START -> inputExecutor.execute {
                 while (true) {
@@ -334,6 +338,25 @@ class MoonlightStreamEngine @Inject constructor(
             MoonlightInputMailbox.Offer.OVERFLOW -> fail(session, "Moonlight input queue overflow", retryable = true)
             else -> Unit
         }
+    }
+
+    private fun enqueueRelative(owner: Any, kind: String, dx: Int, dy: Int, limit: Int,
+                                operation: (NvConnection, Int, Int) -> Unit) {
+        val session = synchronized(lock) { active?.takeIf { it.owner === owner && !it.cancelled } } ?: return
+        val offeredAt = System.nanoTime()
+        val offer = session.inputMailbox.offerRelative(kind, dx.coerceIn(-limit, limit),
+            dy.coerceIn(-limit, limit), limit) { x, y ->
+            synchronized(inputGate) {
+                val conn = synchronized(lock) {
+                    active?.takeIf { it === session && it.started && !it.cancelled }?.connection
+                }
+                if (conn != null) {
+                    session.inputLatency.recordUs((System.nanoTime() - offeredAt) / 1000L)
+                    operation(conn, x, y)
+                }
+            }
+        }
+        scheduleInputDrain(session, offer)
     }
 
     /** Hotplug-capable GameStream controller mask, shared with authenticated Companion phones. */
@@ -503,9 +526,8 @@ class MoonlightStreamEngine @Inject constructor(
     }
 
     fun sendMouseScroll(owner: Any, clicks: Int) {
-        enqueueInput(owner) {
-            val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
-            runCatching { conn?.sendMouseScroll(clicks.coerceIn(-8, 8).toByte()) }
+        enqueueRelative(owner, "scroll", clicks, 0, 8) { conn, x, _ ->
+            conn.sendMouseScroll(x.toByte())
         }
     }
 
@@ -561,12 +583,8 @@ class MoonlightStreamEngine @Inject constructor(
     }
 
     fun sendMouseMove(owner: Any, dx: Int, dy: Int) {
-        enqueueInput(owner) {
-            val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
-            runCatching {
-                conn?.sendMouseMove(dx.coerceIn(-32767, 32767).toShort(),
-                    dy.coerceIn(-32767, 32767).toShort())
-            }
+        enqueueRelative(owner, "mouse", dx, dy, 32767) { conn, x, y ->
+            conn.sendMouseMove(x.toShort(), y.toShort())
         }
     }
 
