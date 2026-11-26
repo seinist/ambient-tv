@@ -38,6 +38,13 @@ data class VulkanDeviceCapabilities(
     val hdr10SurfaceSupported: Boolean? get() = surfaceColorSpaces?.contains(1000104008)
 }
 
+/** Reuse only immutable device evidence for the same validated device. Surface data is fresh. */
+internal fun mergeValidatedVulkanSurface(device: VulkanDeviceCapabilities, surface: VulkanDeviceCapabilities): VulkanDeviceCapabilities {
+    if (!device.render || !surface.render || surface.device != device.device || surface.version != device.version)
+        return surface.copy(render = false, reason = if (surface.render) "device_changed" else surface.reason)
+    return device.copy(surfaceColorSpaces = surface.surfaceColorSpaces, surfaceFormats = surface.surfaceFormats)
+}
+
 data class VideoAccelerationCapabilities(
     val checked: Boolean = false,
     val device: VulkanDeviceCapabilities = VulkanDeviceCapabilities(),
