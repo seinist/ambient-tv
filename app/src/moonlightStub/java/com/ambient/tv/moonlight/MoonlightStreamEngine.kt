@@ -19,9 +19,11 @@ class MoonlightStreamEngine @Inject constructor() {
     val rumbleEvents = mutableRumble.asSharedFlow()
 
     fun start(owner: Any, hostId: String, appId: Int, surface: Surface, profile: MoonlightStreamProfile,
-              displayRefreshHz: Float? = null, displayHdr10: Boolean? = null): Boolean = false
+              displayRefreshHz: Float? = null, displayHdr10: Boolean? = null,
+              resumeOnly: Boolean = false): Boolean = false
     fun isBusy(): Boolean = false
-    fun stop(owner: Any) = Unit
+    fun generation(owner: Any): Long? = null
+    fun stop(owner: Any, generation: Long? = null) = Unit
     fun owns(owner: Any): Boolean = false
     fun sendKeyboard(owner: Any, virtualKey: Short, pressed: Boolean, modifiers: Byte) = Unit
     fun sendMousePosition(owner: Any, x: Int, y: Int, width: Int, height: Int) = Unit

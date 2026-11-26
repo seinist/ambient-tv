@@ -30,6 +30,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.collect
 
 /**
  * One owner for the native Moonlight GameStream connection.
@@ -57,11 +61,12 @@ class MoonlightStreamEngine @Inject constructor(
         var video: MoonlightMediaCodecRenderer? = null,
         var audio: MoonlightAudioTrackRenderer? = null,
         var started: Boolean = false,
-        var cancelled: Boolean = false,
+        @Volatile var cancelled: Boolean = false,
         var stopIssued: Boolean = false,
         var preparation: Job? = null,
         var audioFocus: AudioFocusRequest? = null,
         var metricsJob: Job? = null,
+        var trustJob: Job? = null,
     )
 
     private val lock = Any()
@@ -81,14 +86,15 @@ class MoonlightStreamEngine @Inject constructor(
 
     /** All calls are non-blocking for the Compose UI, including HTTPS launch negotiation. */
     fun start(owner: Any, hostId: String, appId: Int, surface: Surface, profile: MoonlightStreamProfile,
-              displayRefreshHz: Float? = null, displayHdr10: Boolean? = null): Boolean {
+              displayRefreshHz: Float? = null, displayHdr10: Boolean? = null,
+              resumeOnly: Boolean = false): Boolean {
         if (!surface.isValid || appId <= 0 || !prefs.moonlightEnabled) return false
         val valid = runCatching { profile.validated() }.getOrNull() ?: return false
         val session = synchronized(lock) {
             if (active != null) return false
             Active(revision.incrementAndGet(), owner, hostId, appId, valid).also {
                 active = it
-                mutable.value = MoonlightStreamStatus(MoonlightStreamPhase.CONNECTING)
+                mutable.value = MoonlightStreamStatus(MoonlightStreamPhase.CONNECTING, owner = owner, generation = it.generation)
             }
         }
         session.preparation = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
@@ -97,14 +103,17 @@ class MoonlightStreamEngine @Inject constructor(
                 val apps = transport.loadApplications(target).apps
                 val app = apps.firstOrNull { it.id == appId }
                     ?: throw SecurityException("App is no longer published by this paired host")
-                val videoFormat = MoonlightHardwareVideo.supportedFormat(valid,
-                    appHdrSupported = app.hdrSupported,
-                    displayHdr10 = displayHdr10 ?: MoonlightHardwareVideo.displaySupportsHdr10(context),
-                    hostCodecModes = target.hostCodecModes,
-                )
+                val videoFormat = withContext(Dispatchers.IO) {
+                    MoonlightHardwareVideo.supportedFormat(valid,
+                        appHdrSupported = app.hdrSupported,
+                        displayHdr10 = displayHdr10 ?: MoonlightHardwareVideo.displaySupportsHdr10(context),
+                        hostCodecModes = target.hostCodecModes,
+                    )
+                }
                 if (videoFormat == 0) throw UnsupportedOperationException("No compatible hardware video decoder")
                 if (!surface.isValid) throw IllegalStateException("Stream surface was destroyed")
                 if (!isOwned(session)) return@launch
+                if (!transport.current(target)) throw SecurityException("Moonlight host changed")
                 if (!requestAudioFocus(session)) throw IllegalStateException("Audio focus denied")
 
                 val video = MoonlightMediaCodecRenderer(surface, valid) { text ->
@@ -136,7 +145,7 @@ class MoonlightStreamEngine @Inject constructor(
                     context.applicationContext,
                     ComputerDetails.AddressTuple(target.profile.host, target.profile.port),
                     target.httpsPort, prefs.moonlightDeviceId, config, crypto, target.pinnedCertificate,
-                )
+                ).apply { setAmbientStartPolicy(resumeOnly, target.serverId) }
                 val stillOwned = synchronized(lock) {
                     if (active !== session || session.cancelled) false else {
                         session.connection = connection
@@ -145,6 +154,7 @@ class MoonlightStreamEngine @Inject constructor(
                         session.audio = audio
                         mutable.value = MoonlightStreamStatus(
                             MoonlightStreamPhase.CONNECTING, app.title, "Sunshine GameStream",
+                            owner = owner, generation = session.generation,
                         )
                         true
                     }
@@ -153,13 +163,21 @@ class MoonlightStreamEngine @Inject constructor(
                     releaseAudioFocus(session)
                     return@launch
                 }
+                session.trustJob = scope.launch {
+                    combine(prefs.changes().onStart { emit(Unit) }, transport.trustRevisions) { _, _ -> Unit }
+                        .collect {
+                            if (isOwned(session) && !transport.current(target))
+                                fail(session, context.getString(com.ambient.tv.R.string.moonlight_identity_changed))
+                        }
+                }
                 // NvConnection spawns its own native start thread; callbacks are generation-gated.
-                connection.start(audio, video, callbacks(session))
+                if (isOwned(session)) connection.start(audio, video, callbacks(session))
             } catch (cancel: CancellationException) {
                 stopSession(session)
                 throw cancel
             } catch (error: Exception) {
-                fail(session, error.message ?: "Moonlight streaming could not start")
+                fail(session, context.getString(if (error is SecurityException)
+                    com.ambient.tv.R.string.moonlight_identity_changed else com.ambient.tv.R.string.moonlight_stream_failed))
             }
         }
         session.preparation?.start()
@@ -169,8 +187,10 @@ class MoonlightStreamEngine @Inject constructor(
     /** Failed sessions can still own native teardown even after their public phase changes. */
     fun isBusy(): Boolean = synchronized(lock) { active != null }
 
-    fun stop(owner: Any) {
-        val current = synchronized(lock) { active?.takeIf { it.owner === owner } } ?: return
+    fun generation(owner: Any): Long? = synchronized(lock) { active?.takeIf { it.owner === owner }?.generation }
+    fun stop(owner: Any, generation: Long? = null) {
+        val current = synchronized(lock) { active?.takeIf { it.owner === owner &&
+            (generation == null || it.generation == generation) } } ?: return
         stopSession(current)
     }
 
@@ -184,25 +204,45 @@ class MoonlightStreamEngine @Inject constructor(
             session.cancelled = true
             session.stopIssued = true
             session.metricsJob?.cancel()
+            session.trustJob?.cancel()
             if (mutable.value.phase != MoonlightStreamPhase.FAILED)
                 mutable.value = mutable.value.copy(phase = MoonlightStreamPhase.STOPPING)
         }
         val preparation = session.preparation
         preparation?.cancel()
         scope.launch(Dispatchers.IO) {
+            val watchdog = scope.launch {
+                kotlinx.coroutines.delay(6000)
+                synchronized(lock) {
+                    if (active === session) mutable.value = mutable.value.copy(
+                        phase = MoonlightStreamPhase.FAILED, error = "Moonlight teardown is still running",
+                        retryable = false)
+                }
+            }
+            try {
             preparation?.join()
             val connection = synchronized(lock) { session.connection }
             // No more input can enter after cancellation; drain the previous JNI call.
             synchronized(inputGate) { Unit }
-            if (runCatching { connection?.stop() }.isFailure) {
-                synchronized(lock) {
-                    if (active === session) mutable.value = mutable.value.copy(
-                        phase = MoonlightStreamPhase.FAILED, error = "Moonlight teardown failed")
+            var stopped = false
+            repeat(3) {
+                if (!stopped) {
+                    stopped = runCatching { connection?.stop() }.isSuccess
+                    if (!stopped) kotlinx.coroutines.delay(250)
                 }
-                // Do not start a second native connection in an uncertain state.
+            }
+            if (!stopped) {
+                synchronized(lock) {
+                    if (active === session) {
+                        session.stopIssued = false
+                        mutable.value = mutable.value.copy(phase = MoonlightStreamPhase.FAILED,
+                            error = "Moonlight teardown failed; retry or restart the app", retryable = false)
+                    }
+                }
                 return@launch
             }
             finishStopped(session)
+            } finally { watchdog.cancel() }
         }
     }
 
@@ -444,22 +484,24 @@ class MoonlightStreamEngine @Inject constructor(
         }
         override fun connectionStatusUpdate(connectionStatus: Int) = Unit
         override fun displayMessage(message: String) {
-            if (message == NvConnection.AMBIENT_OTHER_APP_RUNNING)
-                fail(session, context.getString(com.ambient.tv.R.string.moonlight_other_app_running))
+            when (message) {
+                NvConnection.AMBIENT_OTHER_APP_RUNNING ->
+                    fail(session, context.getString(com.ambient.tv.R.string.moonlight_other_app_running))
+                "ambient:resume-not-running" ->
+                    fail(session, context.getString(com.ambient.tv.R.string.moonlight_stream_ended))
+            }
         }
         override fun displayTransientMessage(message: String) = Unit
         override fun rumble(controllerNumber: Short, lowFreqMotor: Short, highFreqMotor: Short) {
             if (controllerNumber.toInt() !in 0..3 || !isOwned(session)) return
             mutableRumble.tryEmit(MoonlightRumble(controllerNumber.toInt(),
-                lowFreqMotor.toInt() and 0xffff, highFreqMotor.toInt() and 0xffff))
+                lowFreqMotor.toInt() and 0xffff, highFreqMotor.toInt() and 0xffff, session.generation))
         }
         override fun rumbleTriggers(controllerNumber: Short, leftTrigger: Short, rightTrigger: Short) {
-            if (controllerNumber.toInt() !in 0..3 || !isOwned(session)) return
-            mutableRumble.tryEmit(MoonlightRumble(controllerNumber.toInt(),
-                leftTrigger.toInt() and 0xffff, rightTrigger.toInt() and 0xffff))
+            // Trigger rumble is not advertised; do not map it to the ordinary motors.
         }
         override fun setHdrMode(enabled: Boolean, hdrMetadata: ByteArray?) {
-            session.video?.setHdrMode(enabled, hdrMetadata)
+            if (isOwned(session)) session.video?.setHdrMode(enabled, hdrMetadata)
         }
         override fun setMotionEventState(controllerNumber: Short, motionType: Byte, reportRateHz: Short) = Unit
         override fun setControllerLED(controllerNumber: Short, r: Byte, g: Byte, b: Byte) = Unit
@@ -535,8 +577,11 @@ class MoonlightStreamEngine @Inject constructor(
         val videoReleased = runCatching { session.video?.finishCleanup() != false }.getOrDefault(false)
         runCatching { session.audio?.cleanup() }
         if (!videoReleased) {
-            synchronized(lock) { if (active === session) mutable.value = mutable.value.copy(
-                phase = MoonlightStreamPhase.FAILED, error = "Moonlight decoder teardown incomplete") }
+            synchronized(lock) { if (active === session) {
+                session.stopIssued = false
+                mutable.value = mutable.value.copy(phase = MoonlightStreamPhase.FAILED,
+                    error = "Moonlight decoder teardown incomplete; retry or restart the app", retryable = false)
+            } }
             return
         }
         synchronized(lock) {

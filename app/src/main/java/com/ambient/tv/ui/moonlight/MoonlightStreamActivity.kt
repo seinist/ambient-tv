@@ -95,6 +95,9 @@ class MoonlightStreamActivity : ComponentActivity() {
     private val streamOwner = Any()
     private val pointer by lazy { MoonlightPointerRouter(engine, streamOwner) }
     private var osdVisible by mutableStateOf(false)
+    private var gameplayAllowed = false
+    private var focusRevision by mutableStateOf(0)
+    private var quitJob: Job? = null
     private var qualityProfile by mutableStateOf(MoonlightStreamProfile())
     private var sessionProfile by mutableStateOf(MoonlightStreamProfile())
     private val displaySession by lazy { MoonlightDisplaySession(this) }
@@ -111,7 +114,7 @@ class MoonlightStreamActivity : ComponentActivity() {
     private val deviceListener = object : InputManager.InputDeviceListener {
         override fun onInputDeviceAdded(deviceId: Int) { input.registerAttachedDevices(); input.republish() }
         override fun onInputDeviceChanged(deviceId: Int) { input.removeDevice(deviceId); input.registerAttachedDevices(); input.republish() }
-        override fun onInputDeviceRemoved(deviceId: Int) { input.removeDevice(deviceId) }
+        override fun onInputDeviceRemoved(deviceId: Int) { keyboard.removeDevice(deviceId); input.removeDevice(deviceId) }
     }
     private val keyboard by lazy {
         MoonlightKeyboardRouter { virtualKey, pressed, modifiers ->
@@ -149,7 +152,8 @@ class MoonlightStreamActivity : ComponentActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 engine.rumbleEvents.collect { rumble ->
-                    if (!osdVisible && engine.owns(streamOwner) && hasWindowFocus()) feedback.rumble(rumble)
+                    if (gameplayAllowed && hasWindowFocus() &&
+                        engine.generation(streamOwner) == rumble.generation) feedback.rumble(rumble)
                 }
             }
         }
@@ -174,13 +178,25 @@ class MoonlightStreamActivity : ComponentActivity() {
                 remoteQuitBusy = remoteQuitBusy,
                 remoteQuitError = remoteQuitError,
                 controlsShown = osdVisible,
+                focusRevision = focusRevision,
                 showControls = { showOsd(true) },
                 disconnect = ::disconnectAndFinish,
                 closeControls = { showOsd(false) },
+                onStarted = {
+                    input.releaseAll()
+                    companion.interaction(playing = false, menu = false)
+                },
+                onManualRetry = {
+                    engine.stop(streamOwner)
+                    prepareDisplay()
+                },
                 onCompanionMode = { phase, menu ->
-                    if (phase == MoonlightStreamPhase.STREAMING && !menu && hasWindowFocus() && engine.owns(streamOwner)) input.republish()
-                    companion.interaction(playing = hasWindowFocus() && engine.owns(streamOwner) &&
-                        phase == MoonlightStreamPhase.STREAMING, menu = menu && hasWindowFocus())
+                    val allowed = phase == MoonlightStreamPhase.STREAMING && !menu &&
+                        hasWindowFocus() && engine.owns(streamOwner)
+                    if (!allowed && gameplayAllowed) { releaseRemoteInputs(); feedback.cancelAll() }
+                    gameplayAllowed = allowed
+                    if (allowed) input.republish()
+                    companion.interaction(playing = allowed, menu = menu && hasWindowFocus())
                 },
             )
         }
@@ -189,6 +205,21 @@ class MoonlightStreamActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         if (!validLaunch) return
+        prepareDisplay()
+        input.registerAttachedDevices()
+        inputManager.registerInputDeviceListener(deviceListener, null)
+        companion.attach(
+            owner = streamOwner,
+            title = getString(R.string.moonlight_title),
+            usedPorts = { input.localUsedPorts() },
+            onMenu = { runOnUiThread { showOsd(!osdVisible) } },
+        )
+        companion.interaction(playing = false, menu = false)
+    }
+
+    private fun prepareDisplay() {
+        displayPreparation?.cancel()
+        displaySession.restore()
         sessionProfile = qualityProfile
         displayReady = false
         displayPreparation = lifecycleScope.launch {
@@ -204,35 +235,25 @@ class MoonlightStreamActivity : ComponentActivity() {
             }
             displayReady = true
         }
-        input.registerAttachedDevices()
-        inputManager.registerInputDeviceListener(deviceListener, null)
-        companion.attach(
-            owner = streamOwner,
-            title = getString(R.string.moonlight_title),
-            usedPorts = { input.localUsedPorts() },
-            onMenu = { runOnUiThread { showOsd(!osdVisible) } },
-        )
-        companion.interaction(playing = engine.status.value.phase == MoonlightStreamPhase.STREAMING,
-            menu = osdVisible)
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 &&
-            event.keyCode in setOf(KeyEvent.KEYCODE_BUTTON_MODE, KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_GUIDE)) {
-            showOsd(!osdVisible)
+        if (event.keyCode in setOf(KeyEvent.KEYCODE_BUTTON_MODE, KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_GUIDE)) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) showOsd(!osdVisible)
             return true
         }
-        if (engine.owns(streamOwner) && !osdVisible && (input.onKey(event) || keyboard.onKey(event))) return true
+        if (gameplayAllowed && hasWindowFocus() && engine.owns(streamOwner) && (input.onKey(event) || keyboard.onKey(event))) return true
         return super.dispatchKeyEvent(event)
     }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
-        if (engine.owns(streamOwner) && !osdVisible && input.onMotion(event)) return true
+        if (gameplayAllowed && hasWindowFocus() && engine.owns(streamOwner) && input.onMotion(event)) return true
         return super.dispatchGenericMotionEvent(event)
     }
 
     private fun showOsd(visible: Boolean) {
         if (visible && !osdVisible) {
+            gameplayAllowed = false
             releaseRemoteInputs()
             feedback.cancelAll()
         }
@@ -250,15 +271,17 @@ class MoonlightStreamActivity : ComponentActivity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (!hasFocus) {
+            gameplayAllowed = false
             releaseRemoteInputs()
             feedback.cancelAll()
             companion.interaction(playing = false, menu = false)
-        } else companion.interaction(playing = engine.owns(streamOwner) &&
-            engine.status.value.phase == MoonlightStreamPhase.STREAMING, menu = osdVisible)
+        } else focusRevision++
     }
 
     override fun onStop() {
-        inputManager.unregisterInputDeviceListener(deviceListener)
+        gameplayAllowed = false
+        quitJob?.cancel()
+        if (validLaunch) inputManager.unregisterInputDeviceListener(deviceListener)
         feedback.cancelAll()
         companion.detach()
         releaseRemoteInputs()
@@ -275,7 +298,7 @@ class MoonlightStreamActivity : ComponentActivity() {
         if (!engine.owns(streamOwner) || remoteQuitBusy || engine.status.value.phase != MoonlightStreamPhase.STREAMING) return
         remoteQuitBusy = true
         remoteQuitError = false
-        lifecycleScope.launch {
+        quitJob = lifecycleScope.launch {
             try {
                 if (moonlightTransport.quitRemoteApp(hostId, appId)) disconnectAndFinish()
                 else remoteQuitError = true
@@ -329,18 +352,23 @@ private fun MoonlightStreamContent(
     remoteQuitBusy: Boolean,
     remoteQuitError: Boolean,
     controlsShown: Boolean,
+    focusRevision: Int,
     showControls: () -> Unit,
     closeControls: () -> Unit,
     disconnect: () -> Unit,
     onCompanionMode: (MoonlightStreamPhase, Boolean) -> Unit,
+    onStarted: () -> Unit,
+    onManualRetry: () -> Unit,
 ) {
-    val status by engine.status.collectAsState()
+    val globalStatus by engine.status.collectAsState()
+    val status = if (globalStatus.owner === owner) globalStatus else com.ambient.tv.moonlight.MoonlightStreamStatus()
     // Surface identity is separate from the mutable next-connection profile. No decoder or
     // remote app launch occurs while the physical display is still switching.
     var binding by remember { mutableStateOf<MoonlightSurfaceBinding?>(null) }
     var startFailed by remember { mutableStateOf(false) }
     var retryRevision by remember { mutableStateOf(0) }
     var autoRetries by remember { mutableStateOf(0) }
+    var resumeOnly by remember { mutableStateOf(false) }
     LaunchedEffect(engine, hostId, appId, binding, displayReady, sessionProfile, retryRevision) {
         startFailed = false
         val target = binding ?: return@LaunchedEffect
@@ -356,14 +384,17 @@ private fun MoonlightStreamContent(
             return@LaunchedEffect
         }
         if (engine.start(owner, hostId, appId, target.surface, sessionProfile,
-                displayResult.mode?.refreshRate, displayResult.hdr10)) {
-            try { awaitCancellation() } finally { engine.stop(owner) }
+                displayResult.mode?.refreshRate, displayResult.hdr10, resumeOnly = resumeOnly)) {
+            val generation = engine.generation(owner)
+            onStarted()
+            try { awaitCancellation() } finally { if (generation != null) engine.stop(owner, generation) }
         } else startFailed = true
     }
     LaunchedEffect(status.phase, status.retryable, displayReady) {
         if (displayReady && status.phase == MoonlightStreamPhase.FAILED && status.retryable && autoRetries < 2) {
             delay(1000L * (autoRetries + 1))
             autoRetries++
+            resumeOnly = true
             retryRevision++
         }
     }
@@ -372,8 +403,9 @@ private fun MoonlightStreamContent(
     LaunchedEffect(controlsShown) {
         if (!controlsShown) panel = MoonlightPlaybackPage.NONE
     }
-    LaunchedEffect(status.phase, controlsShown, panel) {
-        onCompanionMode(status.phase, controlsShown || panel != MoonlightPlaybackPage.NONE)
+    LaunchedEffect(status.phase, controlsShown, panel, focusRevision, startFailed) {
+        onCompanionMode(status.phase, controlsShown || panel != MoonlightPlaybackPage.NONE ||
+            status.phase != MoonlightStreamPhase.STREAMING || startFailed)
     }
     val resumeFocus = remember { FocusRequester() }
     val textFocus = remember { FocusRequester() }
@@ -430,7 +462,8 @@ private fun MoonlightStreamContent(
                 }
             },
             update = { view ->
-                val inputEnabled = !controlsShown && status.phase == MoonlightStreamPhase.STREAMING && engine.owns(owner)
+                val inputEnabled = !controlsShown && panel == MoonlightPlaybackPage.NONE &&
+                    status.phase == MoonlightStreamPhase.STREAMING && !startFailed && engine.owns(owner) && view.hasWindowFocus()
                 view.setOnTouchListener { v, event -> inputEnabled && pointer.touch(v, event) }
                 view.setOnGenericMotionListener { v, event -> inputEnabled && pointer.mouse(v, event) }
                 view.setOnCapturedPointerListener { v, event -> inputEnabled && pointer.mouse(v, event, captured = true) }
@@ -472,7 +505,10 @@ private fun MoonlightStreamContent(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (startFailed || status.phase in setOf(MoonlightStreamPhase.FAILED, MoonlightStreamPhase.ENDED)) {
                             TvActionButton(stringResource(R.string.moonlight_retry_connection), {
-                                autoRetries = 0; retryRevision++
+                                autoRetries = 0
+                                resumeOnly = status.retryable || resumeOnly
+                                onManualRetry()
+                                retryRevision++
                             }, icon = Icons.Filled.PlayArrow)
                         }
                         if (status.phase == MoonlightStreamPhase.STREAMING && controlsShown) {
