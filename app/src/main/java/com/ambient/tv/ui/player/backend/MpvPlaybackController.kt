@@ -53,6 +53,7 @@ class MpvPlaybackController(
     private var engine: MpvPlaybackEngine? = null // owner thread only
     private var ownedSurface: Surface? = null // independent Surface reference; owner thread only
     private var surfaceIdentity: Surface? = null // UI's SurfaceHolder identity
+    @Volatile private var surfaceGeneration = 0L // main writes, owner validates before attaching
     private val surfaceGate = MpvSurfaceDetachGate()
     @Volatile private var released = false
     @Volatile private var lastProgress = SystemClock.elapsedRealtime()
@@ -479,11 +480,12 @@ class MpvPlaybackController(
             Surface.CREATOR.createFromParcel(parcel)
         } finally { parcel.recycle() }
         surfaceIdentity = surface
+        val generation = ++surfaceGeneration
         // A queued detach must not be overwritten by a foreground reattach: retire
         // the previous VO before binding the (possibly surviving) SurfaceView again.
         val accepted = mailbox.submit("surface-attach", discard = { copy.release() }) {
             val player = engine
-            if (player == null || !copy.isValid) copy.release()
+            if (player == null || !copy.isValid || generation != surfaceGeneration || released) copy.release()
             else {
                 player.detachSurface()
                 ownedSurface?.release()
@@ -498,6 +500,7 @@ class MpvPlaybackController(
     fun detachSurface(surface: Surface? = null) {
         if (surface != null && surfaceIdentity !== surface) return
         surfaceIdentity = null
+        surfaceGeneration++
         // Kept across close(): Stop's release() must not drop the detach queued just before it.
         if (!released) {
             val ticket = surfaceGate.requestDetach()
@@ -538,6 +541,7 @@ class MpvPlaybackController(
         hostRequestedPlay = false
         backendUnresponsive = false
         surfaceIdentity = null
+        surfaceGeneration++
         main.removeCallbacks(tick)
         val audioRelease = nativeAudioReleases.beginRelease()
         runCatching { audioSession.release() }.onFailure { Timber.w(it, "MPV audio session release failed") }
