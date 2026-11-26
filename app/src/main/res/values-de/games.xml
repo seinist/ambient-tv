@@ -360,4 +360,12 @@
 
     <string name="games_settings_all_title">Alle Spiele-Einstellungen</string>
     <string name="games_settings_all_hint">Vollständige Spiele-Einstellungen öffnen</string>
+    <string name="game_performance_profile">Leistungsprofil</string>
+    <string name="game_performance_standard">Standard</string>
+    <string name="game_performance_standard_hint">Verwendet deine individuellen Spieleinstellungen ohne zusätzliche Einschränkungen.</string>
+    <string name="game_performance_reduced_background">Reduzierter Hintergrund</string>
+    <string name="game_performance_reduced_background_hint">Aktualisiert den Handy-Hintergrund seltener und ohne Weichzeichner-Animation. Zurückspulen und Bildeinstellungen bleiben unverändert.</string>
+    <string name="game_performance_low_overhead">Geringer Zusatzaufwand</string>
+    <string name="game_performance_low_overhead_hint">Deaktiviert Zurückspulen und den Ambient-Hintergrund auf dem Handy, solange das Profil aktiv ist. Beim Zurückwechseln gelten deine bisherigen Einstellungen; der Rückspulverlauf beginnt neu.</string>
+    <string name="game_performance_rewind_suspended">Durch das Profil Geringer Zusatzaufwand deaktiviert. Deine gespeicherte Rückspuleinstellung bleibt erhalten.</string>
 </resources>

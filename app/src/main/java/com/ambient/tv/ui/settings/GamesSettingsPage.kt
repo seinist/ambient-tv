@@ -62,7 +62,7 @@ internal fun gamesSettingsPageForSearch(query: String): GamesSettingsPage? {
         listOf("controller", "gamepad", "belegung", "mapping", "rumble", "vibration", "tasten").any { it in q } -> GamesSettingsPage.CONTROLS
         listOf("metadaten", "metadata", "cover", "artwork", "screenscraper", "thegamesdb", "bildregion", "datenbank", "dat import").any { it in q } -> GamesSettingsPage.METADATA
         listOf("bios", "firmware", "emulator", "libretro", "core", "konsole").any { it in q } -> GamesSettingsPage.SYSTEMS
-        listOf("rewind", "zurückspul", "zurueckspul").any { it in q } -> GamesSettingsPage.PLAY
+        listOf("rewind", "zurückspul", "zurueckspul", "performance profile", "leistungsprofil", "game performance", "spieleleistung").any { it in q } -> GamesSettingsPage.PLAY
         else -> null
     }
 }

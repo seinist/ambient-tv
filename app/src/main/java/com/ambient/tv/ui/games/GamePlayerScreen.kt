@@ -578,7 +578,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     val hardcoreRules = achievements.hardcore || (hardcoreRequested && !achievementsInitialized)
     val rewindPermitted = core.rewind && stateAvailable && serializationPolicy.frameExact &&
-        settings.rewind && !hardcoreRules && !netplay.busy
+        settings.rewindForPlayback && !hardcoreRules && !netplay.busy
     val availability = GameOsdAvailability(
         loaded = loaded && coreReady && activityResumed && !exiting && !destroyed,
         busy = stateBusy || displayHold, stateAvailable = stateAvailable, frameExact = serializationPolicy.frameExact,
@@ -1584,14 +1584,15 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         Box(Modifier.fillMaxSize().background(Color.Black)
             .then(if (showGamePointer) Modifier else
                 Modifier.pointerHoverIcon(hiddenComposePointer, overrideDescendants = true))) {
-            if (handheld) AmbientSurfaceBackdropLayer(
+            if (handheld && settings.performanceProfile.handheldBackdrop) AmbientSurfaceBackdropLayer(
                 surface = vulkanSurfaceHost?.presentationSurface() ?: retroView,
                 enabled = true,
                 landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
                     android.content.res.Configuration.ORIENTATION_LANDSCAPE,
                 modifier = Modifier.fillMaxSize(),
                 sampling = running,
-                reducedEffects = LocalPerformanceProfile.current.reducedEffects ||
+                reducedEffects = settings.performanceProfile.reducedBackdropEffects ||
+                    LocalPerformanceProfile.current.reducedEffects ||
                     LocalPerformanceProfile.current.reducedPlayback,
             )
             GamePlayerTouchLayout(

@@ -15,6 +15,43 @@ import java.nio.ByteOrder
 class GamesTest {
     @get:Rule val folder = TemporaryFolder()
 
+    @Test fun performanceProfilesAreOptInReversibleAndPreserveIndependentChoices() {
+        val snes = GameSystems.byId("snes")!!
+        val stored = GameSettingsState().withShader(snes, GameShader.CRT)
+            .withAspect(snes, GameAspect.EIGHT_SEVEN).withIntegerScaling(snes, GameIntegerScaling.AUTO)
+            .withSdrToHdr(true).withSdrReferenceWhite(300)
+            .withCoreOption(snes.core, "example", "value")
+        assertEquals(GamePerformanceProfile.STANDARD, stored.performanceProfile)
+        assertTrue(stored.rewindForPlayback)
+        assertTrue(stored.performanceProfile.handheldBackdrop)
+        assertFalse(stored.performanceProfile.reducedBackdropEffects)
+        for (profile in GamePerformanceProfile.entries) {
+            for (rewind in listOf(false, true)) {
+                val original = stored.withRewind(rewind)
+                val selected = original.withPerformanceProfile(profile)
+                val restored = GameSettingsState(selected.values.toMap())
+                assertEquals(profile, restored.performanceProfile)
+                assertEquals(rewind, restored.rewind)
+                assertEquals(rewind && profile.allowsRewind, restored.rewindForPlayback)
+                assertEquals(original.values, restored.values - "performance.profile")
+                assertEquals(original, restored.withPerformanceProfile(GamePerformanceProfile.STANDARD))
+            }
+        }
+        val reduced = stored.withPerformanceProfile(GamePerformanceProfile.REDUCED_BACKGROUND)
+        assertTrue(reduced.rewindForPlayback)
+        assertTrue(reduced.performanceProfile.handheldBackdrop)
+        assertTrue(reduced.performanceProfile.reducedBackdropEffects)
+        val low = stored.withPerformanceProfile(GamePerformanceProfile.LOW_OVERHEAD)
+        assertTrue(low.rewind)
+        assertFalse(low.rewindForPlayback)
+        assertFalse(low.performanceProfile.handheldBackdrop)
+        assertEquals(stored, low.withPerformanceProfile(GamePerformanceProfile.STANDARD))
+        val invalid = GameSettingsState(stored.values + ("performance.profile" to "future-unknown"))
+        assertEquals(GamePerformanceProfile.STANDARD, invalid.performanceProfile)
+        assertTrue(invalid.rewindForPlayback)
+        assertEquals(stored, invalid.withPerformanceProfile(GamePerformanceProfile.STANDARD))
+    }
+
     @Test fun systemsAreFoundByExtension() {
         assertEquals("snes", GameSystems.forFile("Zelda.SFC")?.id)
         assertEquals("gba", GameSystems.forFile("a.gba")?.id)
