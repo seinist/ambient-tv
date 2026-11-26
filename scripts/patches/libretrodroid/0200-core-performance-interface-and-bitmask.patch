@@ -61,12 +61,13 @@ diff --git a/src/main/cpp/ambientcoreperf.h b/src/main/cpp/ambientcoreperf.h
 new file mode 100644
 --- /dev/null
 +++ b/src/main/cpp/ambientcoreperf.h
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,225 @@
 +// SPDX-License-Identifier: GPL-3.0-or-later
 +#pragma once
 +
 +#include <libretro.h>
 +#include <array>
++#include <atomic>
 +#include <chrono>
 +#include <cstdint>
 +#include <cstdio>
@@ -175,37 +176,56 @@ new file mode 100644
 +// a core-owned counter or string after the callback returns. Bounded storage
 +// is used only by cores that explicitly opt into the performance counter API.
 +struct Record {
-+    uintptr_t key = 0;
++    std::atomic<uintptr_t> key{0};
 +    std::array<char, 96> name{};
-+    retro_perf_tick_t total = 0;
-+    retro_perf_tick_t calls = 0;
++    std::atomic<retro_perf_tick_t> total{0};
++    std::atomic<retro_perf_tick_t> calls{0};
 +};
 +inline std::array<Record, 64> records{};
 +inline std::mutex recordsMutex;
 +
++// Registration and log metadata are cold paths. Counter stop never acquires
++// the registry mutex or touches strings. Counters themselves belong to the
++// core; like the upstream API, one counter must not span concurrent starts.
++inline size_t recordIndex(uintptr_t key) {
++    return ((key >> 3u) ^ (key >> 10u)) % records.size();
++}
++inline Record* findRecord(uintptr_t key) {
++    const auto first = recordIndex(key);
++    for (size_t i = 0; i < records.size(); ++i) {
++        auto& entry = records[(first + i) % records.size()];
++        const auto existing = entry.key.load(std::memory_order_acquire);
++        if (existing == key) return &entry;
++        if (!existing) return nullptr;
++    }
++    return nullptr;
++}
++
++// Called at environment teardown, after the core has stopped its workers.
 +inline void clear() {
 +    std::lock_guard<std::mutex> lock(recordsMutex);
-+    records = {};
++    for (auto& entry : records) {
++        entry.key.store(0, std::memory_order_release);
++        entry.name.fill(0);
++        entry.total.store(0, std::memory_order_relaxed);
++        entry.calls.store(0, std::memory_order_relaxed);
++    }
 +}
 +
 +inline void RETRO_CALLCONV registerCounter(retro_perf_counter* value) {
 +    if (!value || !value->ident) return;
 +    const auto key = reinterpret_cast<uintptr_t>(value);
 +    std::lock_guard<std::mutex> lock(recordsMutex);
-+    Record* freeRecord = nullptr;
-+    for (auto& entry : records) {
-+        if (entry.key == key) {
-+            freeRecord = &entry;
-+            break;
-+        }
-+        if (!entry.key && !freeRecord) freeRecord = &entry;
-+    }
-+    if (freeRecord) {
-+        *freeRecord = {};
-+        freeRecord->key = key;
-+        std::snprintf(freeRecord->name.data(), freeRecord->name.size(), "%.95s", value->ident);
-+        freeRecord->total = value->total;
-+        freeRecord->calls = value->call_cnt;
++    const auto first = recordIndex(key);
++    for (size_t i = 0; i < records.size(); ++i) {
++        auto& entry = records[(first + i) % records.size()];
++        const auto existing = entry.key.load(std::memory_order_relaxed);
++        if (existing && existing != key) continue;
++        std::snprintf(entry.name.data(), entry.name.size(), "%.95s", value->ident);
++        entry.total.store(value->total, std::memory_order_relaxed);
++        entry.calls.store(value->call_cnt, std::memory_order_relaxed);
++        entry.key.store(key, std::memory_order_release);
++        break;
 +    }
 +    // Overflow still provides correct core-local counters; only the log is bounded.
 +    value->registered = true;
@@ -221,25 +241,31 @@ new file mode 100644
 +    if (!value || !value->registered) return;
 +    const auto end = counter();
 +    if (end >= value->start) value->total += end - value->start;
-+    const auto key = reinterpret_cast<uintptr_t>(value);
-+    std::lock_guard<std::mutex> lock(recordsMutex);
-+    for (auto& entry : records) {
-+        if (entry.key == key) {
-+            entry.total = value->total;
-+            entry.calls = value->call_cnt;
-+            break;
-+        }
++    if (auto* entry = findRecord(reinterpret_cast<uintptr_t>(value))) {
++        entry->total.store(value->total, std::memory_order_relaxed);
++        entry->calls.store(value->call_cnt, std::memory_order_release);
 +    }
 +}
 +
 +inline void RETRO_CALLCONV log() {
-+    std::array<Record, 64> snapshot{};
++    struct Snapshot {
++        std::array<char, 96> name{};
++        retro_perf_tick_t total = 0;
++        retro_perf_tick_t calls = 0;
++    };
++    std::array<Snapshot, 64> snapshot{};
 +    {
 +        std::lock_guard<std::mutex> lock(recordsMutex);
-+        snapshot = records;
++        for (size_t i = 0; i < records.size(); ++i) {
++            const auto& entry = records[i];
++            if (!entry.key.load(std::memory_order_acquire)) continue;
++            snapshot[i].name = entry.name;
++            snapshot[i].calls = entry.calls.load(std::memory_order_acquire);
++            snapshot[i].total = entry.total.load(std::memory_order_relaxed);
++        }
 +    }
 +    for (const auto& entry : snapshot) {
-+        if (!entry.key || !entry.calls) continue;
++        if (!entry.calls) continue;
 +#if defined(__ANDROID__)
 +        __android_log_print(ANDROID_LOG_INFO, "libretrodroid",
 +            "Core perf %s: %llu calls, %llu ns average", entry.name.data(),
