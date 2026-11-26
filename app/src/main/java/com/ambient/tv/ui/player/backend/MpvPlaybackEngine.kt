@@ -2346,19 +2346,30 @@ internal class MpvPlaybackEngine(
     }
 
     /**
-     * Ends the waiter before the native context is destroyed. Returns false when the waiter is
-     * still alive: it polls and drains the wakeup pipe, whose descriptor the destroy closes, so a
-     * late waiter could read from whatever file the system hands that descriptor number next.
+     * Ends the waiter before destroying its native wakeup pipe. This runs on the MPV owner,
+     * never the UI thread. A slow waiter keeps ownership of the release gate until it exits;
+     * freeing a live fd (or permanently leaking a context after one timeout) is unsafe.
      */
-    private fun stopEventPump(): Boolean {
-        if (!pumpRunning.getAndSet(false)) return true
+    private fun stopEventPump() {
+        pumpRunning.set(false)
         eventDriven = false
         runCatching { MpvNativeBridge.nativeInterruptWakeup(handle) }
-        val pump = eventPump
-        // The interrupt wakes it at once; the bound covers one full poll timeout as a fallback.
-        runCatching { pump?.join(EVENT_PUMP_POLL_MS + 500L) }
+        val pump = eventPump ?: return
+        var interrupted = false
+        var warned = false
+        while (pump.isAlive) {
+            try {
+                pump.join(EVENT_PUMP_POLL_MS + 500L)
+            } catch (_: InterruptedException) {
+                interrupted = true
+            }
+            if (pump.isAlive && !warned) {
+                warned = true
+                Timber.w("MPV event waiter still active; deferring native destruction")
+            }
+        }
         eventPump = null
-        return pump?.isAlive != true
+        if (interrupted) Thread.currentThread().interrupt()
     }
 
     private fun recordPropertyChange() {
@@ -2990,10 +3001,8 @@ internal class MpvPlaybackEngine(
         imageScope.cancel()
         detachVideoOutput()
         released = true
-        if (stopEventPump()) MpvNativeBridge.nativeDestroy(handle)
-        // A leaked mpv context costs memory until the process ends; a closed descriptor still in
-        // use by the waiter can corrupt an unrelated stream.
-        else error("MPV event waiter did not stop; audio output is still owned")
+        stopEventPump()
+        MpvNativeBridge.nativeDestroy(handle)
     }
 }
 
