@@ -29,7 +29,7 @@ internal class StreamUrlRenewalPolicy(private val renew: (String) -> String?) {
                 ?.takeIf { it.isNotBlank() && it != failed }
             synchronized(this) {
                 val result = storeReplacement(original, failed, fresh)
-                flight.complete(result)
+                flight.complete(fresh)
                 inFlight.remove(failed)
                 return result
             }
