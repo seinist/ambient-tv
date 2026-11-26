@@ -67,6 +67,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -594,9 +595,11 @@ class HomeViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             combine(moonlightStore.revisions, appPreferences.changes().onStart { emit(Unit) }) { revision, _ ->
-                revision to appPreferences.homeRows.filter { it.enabled &&
-                    it.system == HomeRowDefinition.SYSTEM_MOONLIGHT }
-            }.distinctUntilChanged().drop(1).collect {
+                Triple(revision, appPreferences.moonlightEnabled to appPreferences.moonlightHosts,
+                    appPreferences.homeRows.filter { it.enabled &&
+                        it.system == HomeRowDefinition.SYSTEM_MOONLIGHT })
+            }.distinctUntilChanged().drop(1).collectLatest {
+                delay(150)
                 if (hasEntered && !plexOnly && !jellyfinOnly && !embyOnly) loadMoonlightRows()
             }
         }

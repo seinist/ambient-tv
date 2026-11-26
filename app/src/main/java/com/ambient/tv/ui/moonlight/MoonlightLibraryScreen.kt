@@ -23,6 +23,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import androidx.tv.material3.Surface
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,18 +66,20 @@ fun MoonlightLibraryScreen(
     model: MoonlightLibraryViewModel = hiltViewModel(),
 ) {
     val state by model.state.collectAsState()
-    var searchVisible by remember { mutableStateOf(false) }
+    var searchVisible by rememberSaveable { mutableStateOf(false) }
     val section = state.sections
     LaunchedEffect(initialSection) { model.section(initialSection) }
-    LaunchedEffect(Unit) { model.load() }
+    MoonlightRefreshWhileVisible(model)
     ReportSidebarContentReady(state.ready)
     BackHandler(enabled = !searchVisible) { onBack() }
     BackHandler(enabled = searchVisible) { searchVisible = false; model.search("") }
 
-    val games = state.games
-    // Initial viewport first, focused item always preempts this background prefetch.
-    LaunchedEffect(section, games.take(8).map { it.key }) {
-        games.take(8).forEach(model::prioritizeArtwork)
+    val games = remember(state.hosts, state.catalogs, state.favorites, state.recent, section, state.query) {
+        state.games
+    }
+    // Also retry initial prefetch after the host becomes authenticated and available.
+    LaunchedEffect(section, games.take(8).map { it.key }, state.onlineHosts) {
+        games.take(8).forEach { model.prioritizeArtwork(it, visible = false) }
     }
     Column(
         modifier = Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(),
@@ -81,7 +90,7 @@ fun MoonlightLibraryScreen(
             Text(stringResource(R.string.moonlight_library_title),
                 style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
             TvActionButton(stringResource(R.string.action_search), { searchVisible = !searchVisible })
-            TvActionButton(stringResource(R.string.moonlight_refresh), model::load, loading = state.loadingHosts.isNotEmpty())
+            TvActionButton(stringResource(R.string.moonlight_refresh), { model.load(force = true) }, loading = state.loadingHosts.isNotEmpty())
             TvActionButton(stringResource(R.string.moonlight_view_toggle), {
                 model.view(if (state.view == "grid") "list" else "grid")
             })
@@ -117,7 +126,7 @@ fun MoonlightLibraryScreen(
         } else if (state.view == "list") {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 lazyItems(games, key = { it.key }) { game ->
-                    MoonlightLibraryTile(game, model, true) { onDetails(game.host.id, game.app.id) }
+                    MoonlightLibraryTile(game, model, true, state.artworkVersion) { onDetails(game.host.id, game.app.id) }
                 }
             }
         } else {
@@ -127,7 +136,7 @@ fun MoonlightLibraryScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 gridItems(games, key = { it.key }) { game ->
-                    MoonlightLibraryTile(game, model, false) { onDetails(game.host.id, game.app.id) }
+                    MoonlightLibraryTile(game, model, false, state.artworkVersion) { onDetails(game.host.id, game.app.id) }
                 }
             }
         }
@@ -139,9 +148,10 @@ private fun MoonlightLibraryTile(
     game: MoonlightBrowseGame,
     model: MoonlightLibraryViewModel,
     horizontal: Boolean,
+    artworkVersion: Long,
     onOpen: () -> Unit,
 ) {
-    val cached = model.artwork(game)
+    val cached = remember(game.key, artworkVersion) { model.artwork(game) }
     val image: @Composable () -> Unit = {
         Box(
             Modifier.fillMaxWidth().aspectRatio(16f / 9f)
@@ -173,21 +183,35 @@ private fun MoonlightLibraryTile(
                 overflow = TextOverflow.Ellipsis)
         }
     }
-    // The button is the single DPAD target; image and title don't compete for focus.
-    if (horizontal) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(Modifier.weight(0.8f)) { image() }
-            Box(Modifier.weight(1.2f)) { title() }
-            TvActionButton(stringResource(R.string.moonlight_details), onOpen,
-                modifier = Modifier.onFocusChanged { if (it.isFocused) model.prioritizeArtwork(game) })
+    Surface(
+        onClick = onOpen,
+        modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) model.prioritizeArtwork(game) },
+    ) {
+        if (horizontal) {
+            Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.weight(0.8f)) { image() }
+                Box(Modifier.weight(1.2f)) { title() }
+            }
+        } else {
+            Column(Modifier.padding(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                image()
+                title()
+            }
         }
-    } else {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            image()
-            title()
-            TvActionButton(stringResource(R.string.moonlight_details), onOpen,
-                fillWidth = true,
-                modifier = Modifier.onFocusChanged { if (it.isFocused) model.prioritizeArtwork(game) })
+    }
+}
+
+/** Refresh only while this navigation entry is actually resumed; cached data stays visible. */
+@Composable
+internal fun MoonlightRefreshWhileVisible(model: MoonlightLibraryViewModel) {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle, model) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (isActive) {
+                model.load()
+                delay(30_000)
+            }
         }
     }
 }

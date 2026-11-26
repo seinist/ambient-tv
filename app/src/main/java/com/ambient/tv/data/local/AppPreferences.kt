@@ -523,6 +523,10 @@ class AppPreferences @Inject constructor(
             putString("moonlight_stream_profile", json.encodeToString(value.validated()))
         }
 
+    var moonlightLibraryView: String
+        get() = prefs.getString("moonlight_library_view", "grid")?.takeIf { it in setOf("grid", "list") } ?: "grid"
+        set(value) { if (value in setOf("grid", "list")) prefs.edit { putString("moonlight_library_view", value) } }
+
     val hasMoonlightHosts: Boolean get() = moonlightEnabled && moonlightHosts.isNotEmpty()
 
     /** Per-install GameStream client ID; never replicated to other TVs/phones. */

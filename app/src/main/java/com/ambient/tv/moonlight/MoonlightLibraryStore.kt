@@ -36,7 +36,33 @@ class MoonlightLibraryStore @Inject constructor(
     private val lock = Any()
     private val mutableRevisions = MutableStateFlow(0L)
     val revisions = mutableRevisions.asStateFlow()
-    private fun changed() { mutableRevisions.value += 1L }
+    private val mutableMetadataRevisions = MutableStateFlow(0L)
+    val metadataRevisions = mutableMetadataRevisions.asStateFlow()
+    private val mutableArtworkRevisions = MutableStateFlow(0L)
+    val artworkRevisions = mutableArtworkRevisions.asStateFlow()
+    private val online = mutableMapOf<String, Pair<String, Long>>()
+    private fun changed(metadata: Boolean = true) {
+        mutableRevisions.value += 1L
+        if (metadata) mutableMetadataRevisions.value += 1L
+        else mutableArtworkRevisions.value += 1L
+    }
+
+    fun isRecentlyOnline(hostId: String): Boolean = synchronized(lock) {
+        val identity = trust.identity(hostId) ?: return false
+        val probe = online[hostId] ?: return false
+        probe.first == identity &&
+            android.os.SystemClock.elapsedRealtime() - probe.second in 0 until CATALOG_TTL_MS
+    }
+
+    fun markOffline(hostId: String) = synchronized(lock) { online.remove(hostId); Unit }
+
+    fun invalidateCatalog(hostId: String) = synchronized(lock) {
+        online.remove(hostId)
+        if (prefs.contains("catalog:$hostId")) {
+            prefs.edit().remove("catalog:$hostId").apply()
+            changed()
+        }
+    }
     private val prefix = Regex("[a-zA-Z0-9_-]{1,64}")
 
     fun catalog(hostId: String): MoonlightHostCatalog? = synchronized(lock) {
@@ -55,12 +81,14 @@ class MoonlightLibraryStore @Inject constructor(
         val identity = trust.identity(hostId) ?: throw SecurityException("Missing Moonlight identity")
         if (catalog.peerIdentity != identity) throw SecurityException("Moonlight catalog identity changed")
         val apps = catalog.apps.filter { it.id > 0 && it.title.isNotBlank() }.take(4096)
+        val old = catalog(hostId)
         val value = json.encodeToString(MoonlightHostCatalog(
             serverId, System.currentTimeMillis(), apps, identity,
         ))
         require(value.length <= 384 * 1024)
         prefs.edit().putString("catalog:$hostId", value).apply()
-        changed()
+        online[hostId] = identity to android.os.SystemClock.elapsedRealtime()
+        if (old?.apps != apps) changed()
     }
 
     fun favorites(): Set<String> = synchronized(lock) {
@@ -85,8 +113,10 @@ class MoonlightLibraryStore @Inject constructor(
     fun recordLaunch(hostId: String, appId: Int) = synchronized(lock) {
         val item = key(hostId, appId)
         val ordered = listOf(item) + recent().filterNot { it == item }
-        prefs.edit().putString("recent", ordered.take(128).joinToString("|")).apply()
-        changed()
+        if (ordered.take(128) != recent()) {
+            prefs.edit().putString("recent", ordered.take(128).joinToString("|")).apply()
+            changed()
+        }
     }
 
     fun peerIdentity(hostId: String): String? = trust.identity(hostId)
@@ -114,7 +144,7 @@ class MoonlightLibraryStore @Inject constructor(
                 return null
             }
             trimArtwork()
-            changed()
+            changed(metadata = false)
             target
         } catch (_: Exception) {
             temporary.delete()
@@ -124,6 +154,7 @@ class MoonlightLibraryStore @Inject constructor(
 
     fun clearHost(hostId: String) = synchronized(lock) {
         if (!prefix.matches(hostId)) return
+        online.remove(hostId)
         prefs.edit().remove("catalog:$hostId").putStringSet(
             "favorites", favorites().filterNot { it.startsWith("$hostId:") }.toSet(),
         ).putString("recent", recent().filterNot { it.startsWith("$hostId:") }.joinToString("|")).apply()
@@ -153,6 +184,7 @@ class MoonlightLibraryStore @Inject constructor(
     }
 
     private companion object {
+        const val CATALOG_TTL_MS = 60_000L
         const val MAX_IMAGE_BYTES = 3 * 1024 * 1024
         const val MAX_CACHE_BYTES = 120L * 1024 * 1024
     }

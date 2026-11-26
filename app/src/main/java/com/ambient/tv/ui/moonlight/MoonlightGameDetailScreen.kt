@@ -49,9 +49,9 @@ fun MoonlightGameDetailScreen(
     val state by model.state.collectAsState()
     val game = model.item(hostId, appId)
     var showQuitConfirmation by remember { mutableStateOf(false) }
-    LaunchedEffect(hostId) { model.load() }
-    LaunchedEffect(hostId, appId, state.artworkVersion) {
-        game?.let(model::prioritizeArtwork)
+    MoonlightRefreshWhileVisible(model)
+    LaunchedEffect(hostId, appId, game?.key, state.onlineHosts) {
+        game?.let { model.prioritizeArtwork(it) }
     }
     BackHandler { if (showQuitConfirmation) showQuitConfirmation = false else onBack() }
     val online = hostId in state.onlineHosts && hostId in state.pairedHosts
@@ -90,7 +90,7 @@ fun MoonlightGameDetailScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (game.host.macAddress.isNotBlank()) {
                 TvActionButton(stringResource(R.string.moonlight_wake_pc),
-                    { model.wakeHost(hostId) })
+                    { model.wakeHost(hostId) }, loading = hostId in state.wakingHosts)
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -98,15 +98,18 @@ fun MoonlightGameDetailScreen(
             TvActionButton(stringResource(if (state.favorites.contains("$hostId:$appId"))
                 R.string.moonlight_remove_favorite else R.string.moonlight_add_favorite),
                 { model.favorite(game) })
-            TvActionButton(stringResource(R.string.moonlight_refresh), model::load)
+            TvActionButton(stringResource(R.string.moonlight_refresh), { model.load(force = true) })
             TvActionButton(stringResource(R.string.moonlight_open_settings), onOpenSettings)
+        }
+        if (state.errors[hostId] == "quit_failed") {
+            Text(stringResource(R.string.moonlight_remote_quit_failed), color = MaterialTheme.colorScheme.error)
         }
         // Quitting the game on the host is irreversible; explicit confirmation prevents
         // accidentally killing a running PC process when users merely wanted to disconnect.
         if (online) {
             TvActionButton(stringResource(R.string.moonlight_quit_remote), {
                 showQuitConfirmation = true
-            })
+            }, loading = hostId in state.quittingHosts)
         }
     }
     if (showQuitConfirmation) {

@@ -405,7 +405,7 @@ class SearchViewModel @Inject constructor(
                         preferences.moonlightHosts.flatMap { host ->
                             moonlightStore.catalog(host.id)?.apps.orEmpty()
                                 .filter { it.title.contains(query, ignoreCase = true) }
-                                .take(60).map { app ->
+                                .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title }).take(60).map { app ->
                                     val key = host.id + ":" + app.id
                                     com.ambient.tv.ui.moonlight.MoonlightBrowseGame(
                                         host, app, key in favorites,
@@ -413,7 +413,7 @@ class SearchViewModel @Inject constructor(
                                         moonlightStore.artworkFile(host.id, app.id)?.absolutePath,
                                     )
                                 }
-                        }.take(60)
+                        }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.app.title }).take(60)
                     }
                 }
                 updateForQuery(query, revision) { state ->
