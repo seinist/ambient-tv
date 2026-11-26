@@ -84,9 +84,20 @@ class GamepadController(
         if (!event.isFromSource(InputDevice.SOURCE_JOYSTICK) || event.actionMasked != MotionEvent.ACTION_MOVE) return false
         notifyGameInputChanged()
         val deviceId = event.deviceId
+        val cfg = config()
+        if (gameMode == GameInputMode.RUNNING || gameMode == GameInputMode.BLOCKED) {
+            // Only the neutral/moving decision is needed for the transition quarantine.
+            // Short-circuit on the first active axis instead of decoding a second full
+            // UI-navigation sample before RetroPadInput reads the actual gameplay axes.
+            val moving = gameplayMotionActive(event, cfg.deadzone.release)
+            val blocked = transitions.motion(deviceId, moving)
+            if (!blocked && gameMode == GameInputMode.RUNNING) rawSink()?.invoke(event)
+            // Publish pointer visibility after delivering the real input.
+            if (moving) com.ambient.tv.ui.input.PointerVisibility.onNonPointerInput()
+            return true
+        }
         val time = event.eventTime
         val layout = layouts.getOrPut(deviceId) { axisLayout(deviceId) }
-        val cfg = config()
         val hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X)
         val hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
         val leftX = event.getAxisValue(MotionEvent.AXIS_X)
@@ -101,10 +112,9 @@ class GamepadController(
             leftTrigger >= TRIGGER_RELEASE || rightTrigger >= TRIGGER_RELEASE
         if (moving) com.ambient.tv.ui.input.PointerVisibility.onNonPointerInput()
         if (transitions.motion(deviceId, moving)) return true
-        if (gameMode == null || gameMode == GameInputMode.RUNNING) {
+        if (gameMode == null) {
             rawSink()?.let { sink -> if (sink(event)) return true }
         }
-        if (gameMode == GameInputMode.BLOCKED || gameMode == GameInputMode.RUNNING) return true
         if (!cfg.enabled && gameMode == null) return false
         // Once a controller sends trigger keys, its axes only finish a pull they started.
         if (deviceId !in triggerKeyDevices || (deviceId to GamepadButton.L2) in axisTriggers) trigger(deviceId, GamepadButton.L2,
@@ -116,6 +126,18 @@ class GamepadController(
         ), time)
         // Consumed, so Android does not turn the same movement into arrow keys a second time.
         return true
+    }
+
+    private fun gameplayMotionActive(event: MotionEvent, release: Float): Boolean {
+        if (kotlin.math.abs(event.getAxisValue(MotionEvent.AXIS_HAT_X)) >= 0.5f ||
+            kotlin.math.abs(event.getAxisValue(MotionEvent.AXIS_HAT_Y)) >= 0.5f ||
+            kotlin.math.abs(event.getAxisValue(MotionEvent.AXIS_X)) > release ||
+            kotlin.math.abs(event.getAxisValue(MotionEvent.AXIS_Y)) > release) return true
+        val layout = layouts.getOrPut(event.deviceId) { axisLayout(event.deviceId) }
+        return kotlin.math.abs(layout.rightStickX(event)) > release ||
+            kotlin.math.abs(layout.rightStickY(event)) > release ||
+            layout.leftTriggerValue(event) >= TRIGGER_RELEASE ||
+            layout.rightTriggerValue(event) >= TRIGGER_RELEASE
     }
 
     internal fun trigger(deviceId: Int, button: GamepadButton, value: Float, time: Long) {
