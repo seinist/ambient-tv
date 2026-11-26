@@ -53,6 +53,15 @@ part of the VLC patch glob or packaged APK. It must not be used to remove
   build. Neither shader compilation nor the new Android syntax checks ran here
   (no NDK, glslc or network clone access in the local environment).
 
+- Reusable device-local RGB targets, with dedicated image allocation, format
+  checks and no host staging. Bounded generation-tagged slot pool separates
+  conversion completion from libplacebo completion, prevents stale frames after
+  discontinuities and quarantines uncertain submissions.
+- Three portable sanitizer tests plus shader/NDK checks are now wired to a
+  separate experimental GitHub Actions workflow. The equivalent slot-pool
+  C++ source and assertions passed locally with ASan/UBSan; the actual NDK
+  checks are still pending. The slot pool is not yet wired to VLC.
+
 ## Required integration before activation
 
 1. Build these headers against the pinned Android NDK and supported Vulkan ABIs.
