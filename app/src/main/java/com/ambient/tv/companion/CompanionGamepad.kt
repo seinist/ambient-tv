@@ -480,7 +480,7 @@ object CompanionGamepadSession {
             session == null -> game.info.inputDescriptions
             else -> game.input.remoteInputDescriptions(ports[session] ?: -1, game.info.inputDescriptions.orEmpty())
         }
-        val rumble = if (game.ready && session != null) game.rumble[ports[session]]?.let {
+        val rumble = if (game.ready && session != null) ports[session]?.let(game.rumble::get)?.let {
             CompanionRumble(it.first, it.second, android.os.SystemClock.elapsedRealtime() / 100L)
         } else null
         game.info.copy(ready = game.ready, inputDescriptions = descriptions, rumble = rumble,
@@ -505,8 +505,9 @@ object CompanionGamepadSession {
             return -1
         }
         ports[session]?.let { existing ->
-            if (configured in 0 until RetroPorts.COUNT && configured == existing) return existing
-            if (configured == RetroPorts.AUTO && session !in forceAutoReassignment) return existing
+            val collision = !game.input.allowSharedLocalPort && existing in game.input.localUsedPorts()
+            if (!collision && configured in 0 until RetroPorts.COUNT && configured == existing) return existing
+            if (!collision && configured == RetroPorts.AUTO && session !in forceAutoReassignment) return existing
             release(session) // Changed fixed/automatic assignment takes effect on this claim.
         }
         val occupiedPhones = ports.values.toSet()

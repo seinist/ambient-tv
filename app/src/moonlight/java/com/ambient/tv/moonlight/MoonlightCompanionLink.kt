@@ -26,10 +26,11 @@ class MoonlightCompanionLink @Inject constructor(
     private var touchUnsupported = false
     private val touches = LinkedHashMap<Int, CompanionPointerContact>()
 
-    fun attach(owner: Any, title: String, usedPorts: () -> Set<Int>, onMenu: () -> Unit) {
+    fun attach(owner: Any, title: String, usedPorts: () -> Set<Int>,
+        profileContext: com.ambient.tv.ui.gamepad.retro.RetroInputProfileContext? = null, onMenu: () -> Unit) {
         detach()
         this.owner = owner
-        val current = MoonlightCompanionSink(engine, owner, usedPorts)
+        val current = MoonlightCompanionSink(engine, owner, usedPorts, profileContext, onMenu)
         sink = current
         CompanionGamepadSession.attachMoonlight(
             current, title,

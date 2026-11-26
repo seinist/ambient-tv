@@ -10,6 +10,9 @@ import com.ambient.tv.ui.gamepad.retro.RetroPadButton
 import com.ambient.tv.ui.gamepad.retro.RetroPorts
 import com.ambient.tv.ui.gamepad.retro.retroInputDevice
 import kotlin.math.abs
+import com.ambient.tv.ui.gamepad.retro.RetroInputProfileContext
+import android.os.Handler
+import android.os.Looper
 
 data class MoonlightPadCapabilities(
     val buttons: Int = 0xF3FF,
@@ -27,6 +30,7 @@ internal class MoonlightControllerRouter(
     ) -> Unit,
     private val reservedPorts: () -> Set<Int> = { emptySet() },
     private val onMenu: () -> Unit = {},
+    private val profileContext: () -> RetroInputProfileContext? = { null },
 ) {
     private data class Pad(
         val port: Int,
@@ -35,6 +39,10 @@ internal class MoonlightControllerRouter(
         val keys: MutableMap<Int, RetroPadButton> = mutableMapOf(),
         val suppressed: MutableSet<Int> = mutableSetOf(),
         var hat: Int = 0,
+        var rawLeftTrigger: Boolean = false,
+        var rawRightTrigger: Boolean = false,
+        var suppressMotion: Boolean = false,
+        val pendingMenu: MutableMap<Int, Runnable> = mutableMapOf(),
         var leftTrigger: Float = 0f,
         var rightTrigger: Float = 0f,
         var lx: Float = 0f,
@@ -43,11 +51,38 @@ internal class MoonlightControllerRouter(
         var ry: Float = 0f,
     )
     private val pads = LinkedHashMap<Int, Pad>()
+    private val handler = Handler(Looper.getMainLooper())
+    private var lastConfig = RetroInputSettings.config
+    private var lastContext = profileContext()
+
+    private fun profile(deviceId: Int): com.ambient.tv.ui.gamepad.retro.RetroInputProfile {
+        val info = retroInputDevice(deviceId)
+        val config = RetroInputSettings.config
+        return profileContext()?.let { config.profile(info.kind, it, deviceDescriptor = info.descriptor) }
+            ?: config.deviceProfile(info.kind, info.descriptor)
+    }
+
+    /** A changed port or profile neutralizes old state before reallocating devices. */
+    fun refreshAssignments() {
+        val config = RetroInputSettings.config
+        val context = profileContext()
+        val reserved = reservedPorts()
+        if (lastConfig == config && lastContext == context && pads.values.none { it.port in reserved }) return
+        lastConfig = config
+        lastContext = context
+        val old = pads.values.toList()
+        releaseAll()
+        pads.clear()
+        old.forEach { output(it.port.toShort(), 0, 0, 0, 0, 0, 0, 0, 0) }
+        registerAttachedDevices()
+        pads.values.forEach { it.suppressMotion = true }
+        republish()
+    }
 
     private fun button(deviceId: Int, key: Int): RetroPadButton? {
         val info = retroInputDevice(deviceId)
         if (info.kind == RetroInputKind.GAMEPAD) {
-            val profile = RetroInputSettings.config.deviceProfile(info.kind, info.descriptor)
+            val profile = profile(deviceId)
             return profile.button(key)
         }
         return when (key) {
@@ -61,17 +96,42 @@ internal class MoonlightControllerRouter(
 
     fun onKey(event: KeyEvent): Boolean {
         if (event.action !in setOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) return false
+        refreshAssignments()
         if (event.device?.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC) return false
         if (!isController(event.source) && event.keyCode !in DPAD_CODES) return false
         val info = retroInputDevice(event.deviceId)
-        val profile = RetroInputSettings.config.deviceProfile(info.kind, info.descriptor)
+        val profile = profile(event.deviceId)
         if (info.kind == RetroInputKind.GAMEPAD && profile.opensMenu(event.keyCode)) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) onMenu()
             return true
         }
         val mapped = button(event.deviceId, event.keyCode)
-        val pad = pads[event.deviceId] ?: if (mapped != null) getPad(event.deviceId) else null
+        val holdMenu = info.kind == RetroInputKind.GAMEPAD && profile.holdOpensMenu(event.keyCode)
+        val pad = pads[event.deviceId] ?: if (mapped != null || holdMenu) getPad(event.deviceId) else null
         if (pad == null) return false
+        if (holdMenu) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                val key = event.keyCode
+                val task = Runnable {
+                    if (pad.pendingMenu.remove(key) != null) {
+                        pad.suppressed.add(key)
+                        onMenu()
+                    }
+                }
+                pad.pendingMenu.put(key, task)?.let(handler::removeCallbacks)
+                handler.postDelayed(task, 500)
+            } else if (event.action == KeyEvent.ACTION_UP) {
+                val pending = pad.pendingMenu.remove(event.keyCode)
+                pending?.let(handler::removeCallbacks)
+                if (pending != null && mapped != null && !pad.suppressed.remove(event.keyCode)) {
+                    pad.keys[event.keyCode] = mapped
+                    send(pad)
+                    pad.keys.remove(event.keyCode)
+                    send(pad)
+                }
+            }
+            return true
+        }
         if (event.action == KeyEvent.ACTION_UP) {
             val held = pad.keys.remove(event.keyCode)
             val suppressed = pad.suppressed.remove(event.keyCode)
@@ -81,6 +141,11 @@ internal class MoonlightControllerRouter(
             pad.suppressed.remove(event.keyCode)
             if (mapped == null) return false
             pad.keys[event.keyCode] = mapped
+            if (info.kind == RetroInputKind.GAMEPAD &&
+                RetroInputSettings.config.menuCombo.matches(pad.keys.values.fold(pad.hat) { bits, b -> bits or b.mask })) {
+                onMenu()
+                return true
+            }
         }
         send(pad)
         return true
@@ -88,6 +153,7 @@ internal class MoonlightControllerRouter(
 
     fun onMotion(event: MotionEvent): Boolean {
         if (event.actionMasked != MotionEvent.ACTION_MOVE || !event.isFromSource(InputDevice.SOURCE_JOYSTICK)) return false
+        refreshAssignments()
         val pad = getPad(event.deviceId) ?: return false
         fun axis(id: Int): Float = event.getAxisValue(id).takeIf { it.isFinite() }?.coerceIn(-1f, 1f) ?: 0f
         fun deadzone(value: Float) = if (!value.isFinite() || abs(value) < 0.10f) 0f else value.coerceIn(-1f, 1f)
@@ -95,15 +161,36 @@ internal class MoonlightControllerRouter(
         pad.ly = deadzone(axis(MotionEvent.AXIS_Y))
         pad.rx = deadzone(pad.layout.rightStickX(event))
         pad.ry = deadzone(pad.layout.rightStickY(event))
-        pad.leftTrigger = pad.layout.leftTriggerValue(event).takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0f
-        pad.rightTrigger = pad.layout.rightTriggerValue(event).takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0f
+        val left = pad.layout.leftTriggerValue(event).takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0f
+        val right = pad.layout.rightTriggerValue(event).takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0f
+        pad.rawLeftTrigger = pad.rawLeftTrigger || left > .01f
+        pad.rawRightTrigger = pad.rawRightTrigger || right > .01f
+        pad.leftTrigger = 0f
+        pad.rightTrigger = 0f
         var hat = 0
+        fun mapTrigger(key: Int, pressure: Float) {
+            when (val target = button(event.deviceId, key)) {
+                RetroPadButton.L2 -> pad.leftTrigger = maxOf(pad.leftTrigger, pressure)
+                RetroPadButton.R2 -> pad.rightTrigger = maxOf(pad.rightTrigger, pressure)
+                else -> if (target != null && pressure >= .5f) hat = hat or target.mask
+            }
+        }
+        mapTrigger(KeyEvent.KEYCODE_BUTTON_L2, left)
+        mapTrigger(KeyEvent.KEYCODE_BUTTON_R2, right)
         fun add(key: Int) { button(event.deviceId, key)?.let { hat = hat or it.mask } }
         if (axis(MotionEvent.AXIS_HAT_X) < -0.5f) add(KeyEvent.KEYCODE_DPAD_LEFT)
         if (axis(MotionEvent.AXIS_HAT_X) > 0.5f) add(KeyEvent.KEYCODE_DPAD_RIGHT)
         if (axis(MotionEvent.AXIS_HAT_Y) < -0.5f) add(KeyEvent.KEYCODE_DPAD_UP)
         if (axis(MotionEvent.AXIS_HAT_Y) > 0.5f) add(KeyEvent.KEYCODE_DPAD_DOWN)
         pad.hat = hat
+        if (pad.suppressMotion) {
+            if (maxOf(abs(pad.lx), abs(pad.ly), abs(pad.rx), abs(pad.ry), left, right) < .12f && hat == 0)
+                pad.suppressMotion = false
+            else {
+                pad.lx = 0f; pad.ly = 0f; pad.rx = 0f; pad.ry = 0f
+                pad.leftTrigger = 0f; pad.rightTrigger = 0f; pad.hat = 0
+            }
+        }
         send(pad)
         return true
     }
@@ -125,7 +212,10 @@ internal class MoonlightControllerRouter(
     fun releaseAll() {
         for (pad in pads.values) {
             pad.suppressed.addAll(pad.keys.keys)
+            pad.pendingMenu.values.forEach(handler::removeCallbacks)
+            pad.pendingMenu.clear()
             pad.keys.clear()
+            pad.suppressMotion = true
             pad.hat = 0
             pad.leftTrigger = 0f
             pad.rightTrigger = 0f
@@ -138,6 +228,7 @@ internal class MoonlightControllerRouter(
 
     fun removeDevice(deviceId: Int) {
         val pad = pads.remove(deviceId) ?: return
+        pad.pendingMenu.values.forEach(handler::removeCallbacks)
         output(pad.port.toShort(), activeMask(), 0, 0, 0, 0, 0, 0, 0)
         pads.values.forEach(::send)
     }
@@ -160,7 +251,10 @@ internal class MoonlightControllerRouter(
     private fun trigger(v: Float): Byte = (v.coerceIn(0f, 1f) * 255).toInt().toByte()
 
     private fun send(pad: Pad) {
-        val buttons = pad.keys.values.fold(pad.hat) { mask, button -> mask or button.mask }
+        val buttons = pad.keys.entries.fold(pad.hat) { mask, (key, button) ->
+            if (key == KeyEvent.KEYCODE_BUTTON_L2 && pad.rawLeftTrigger ||
+                key == KeyEvent.KEYCODE_BUTTON_R2 && pad.rawRightTrigger) mask else mask or button.mask
+        }
         val lt = maxOf(pad.leftTrigger, if (buttons and RetroPadButton.L2.mask != 0) 1f else 0f)
         val rt = maxOf(pad.rightTrigger, if (buttons and RetroPadButton.R2.mask != 0) 1f else 0f)
         output(pad.port.toShort(), activeMask(), moonlightRetroButtonFlags(buttons),

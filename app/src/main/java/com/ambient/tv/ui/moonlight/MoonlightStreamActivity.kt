@@ -93,6 +93,7 @@ class MoonlightStreamActivity : ComponentActivity() {
     @Inject lateinit var moonlightTransport: MoonlightSystemTransport
 
     private val streamOwner = Any()
+    private var inputProfile: com.ambient.tv.ui.gamepad.retro.RetroInputProfileContext? = null
     private val pointer by lazy { MoonlightPointerRouter(engine, streamOwner) }
     private var osdVisible by mutableStateOf(false)
     private var gameplayAllowed = false
@@ -128,6 +129,7 @@ class MoonlightStreamActivity : ComponentActivity() {
             },
             reservedPorts = { companion.reservedPorts() },
             onMenu = { showOsd(true) },
+            profileContext = { inputProfile },
         )
     }
 
@@ -139,6 +141,8 @@ class MoonlightStreamActivity : ComponentActivity() {
             finish()
             return
         }
+        inputProfile = com.ambient.tv.ui.gamepad.retro.RetroInputProfileContext("moonlight", "gamestream", "$hostId:$appId")
+        com.ambient.tv.ui.gamepad.retro.RetroInputSettings.lastPlayed.value = inputProfile
         qualityProfile = preferences.moonlightStreamProfile
         sessionProfile = qualityProfile
         validLaunch = true
@@ -199,7 +203,7 @@ class MoonlightStreamActivity : ComponentActivity() {
                         hasWindowFocus() && engine.owns(streamOwner)
                     if (!allowed && gameplayAllowed) { releaseRemoteInputs(); feedback.cancelAll() }
                     gameplayAllowed = allowed
-                    if (allowed) input.republish()
+                    if (allowed) { input.refreshAssignments(); input.republish() }
                     companion.interaction(playing = allowed, menu = menu && hasWindowFocus())
                 },
             )
@@ -216,6 +220,7 @@ class MoonlightStreamActivity : ComponentActivity() {
             owner = streamOwner,
             title = getString(R.string.moonlight_title),
             usedPorts = { input.localUsedPorts() },
+            profileContext = inputProfile,
             onMenu = { runOnUiThread { showOsd(!osdVisible) } },
         )
         companion.interaction(playing = false, menu = false)
@@ -262,8 +267,7 @@ class MoonlightStreamActivity : ComponentActivity() {
             feedback.cancelAll()
         }
         osdVisible = visible
-        companion.interaction(playing = hasWindowFocus() && engine.owns(streamOwner) &&
-            engine.status.value.phase == MoonlightStreamPhase.STREAMING, menu = visible && hasWindowFocus())
+        if (visible) companion.interaction(playing = false, menu = hasWindowFocus())
     }
 
     private fun releaseRemoteInputs() {
@@ -274,12 +278,13 @@ class MoonlightStreamActivity : ComponentActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        focusRevision++
         if (!hasFocus) {
             gameplayAllowed = false
             releaseRemoteInputs()
             feedback.cancelAll()
             companion.interaction(playing = false, menu = false)
-        } else focusRevision++
+        }
     }
 
     override fun onStop() {
@@ -396,7 +401,7 @@ private fun MoonlightStreamContent(
             try { awaitCancellation() } finally { if (generation != null) engine.stop(owner, generation) }
         } else startFailed = true
     }
-    LaunchedEffect(status.phase, status.retryable, displayReady) {
+    LaunchedEffect(status.generation, status.phase, status.retryable, displayReady) {
         if (displayReady && status.phase == MoonlightStreamPhase.FAILED && status.retryable && autoRetries < 2) {
             delay(1000L * (autoRetries + 1))
             autoRetries++
@@ -470,10 +475,10 @@ private fun MoonlightStreamContent(
             },
             update = { view ->
                 val inputEnabled = !controlsShown && panel == MoonlightPlaybackPage.NONE &&
-                    status.phase == MoonlightStreamPhase.STREAMING && !startFailed && engine.owns(owner) && view.hasWindowFocus()
-                view.setOnTouchListener { v, event -> inputEnabled && pointer.touch(v, event) }
-                view.setOnGenericMotionListener { v, event -> inputEnabled && pointer.mouse(v, event) }
-                view.setOnCapturedPointerListener { v, event -> inputEnabled && pointer.mouse(v, event, captured = true) }
+                    status.phase == MoonlightStreamPhase.STREAMING && !startFailed && engine.owns(owner)
+                view.setOnTouchListener { v, event -> inputEnabled && v.hasWindowFocus() && pointer.touch(v, event) }
+                view.setOnGenericMotionListener { v, event -> inputEnabled && v.hasWindowFocus() && pointer.mouse(v, event) }
+                view.setOnCapturedPointerListener { v, event -> inputEnabled && v.hasWindowFocus() && pointer.mouse(v, event, captured = true) }
 
             },
         )
