@@ -23,6 +23,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -151,7 +152,9 @@ private fun MoonlightLibraryTile(
     artworkVersion: Long,
     onOpen: () -> Unit,
 ) {
-    val cached = remember(game.key, artworkVersion) { model.artwork(game) }
+    val cached by produceState<java.io.File?>(null, game.key, artworkVersion) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { model.artwork(game) }
+    }
     val image: @Composable () -> Unit = {
         Box(
             Modifier.fillMaxWidth().aspectRatio(16f / 9f)

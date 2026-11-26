@@ -1850,6 +1850,8 @@ private fun aboutServiceComponents() = listOf(
         "SerafiniJose/rusty / GitHub").takeIf { BuildConfig.SPOTIFY_ENABLED },
     AboutComponent("MG", "Monogram", BuildConfig.MONOGRAM_VERSION, R.string.settings_about_role_telegram,
         "monogram-android / GitHub", BuildConfig.MONOGRAM_REF.shortRef()).takeIf { BuildConfig.MONOGRAM_NATIVE },
+    AboutComponent("ML", "Moonlight", BuildConfig.MOONLIGHT_UPSTREAM_REF.shortRef(), R.string.moonlight_about_role,
+        "moonlight-stream / GitHub · GPL-3.0", BuildConfig.MOONLIGHT_UPSTREAM_REF.shortRef()).takeIf { BuildConfig.MOONLIGHT_NATIVE },
 )
 
 @Composable

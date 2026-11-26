@@ -50,8 +50,7 @@ class MoonlightLibraryStore @Inject constructor(
     fun isRecentlyOnline(hostId: String): Boolean = synchronized(lock) {
         val identity = trust.identity(hostId) ?: return false
         val probe = online[hostId] ?: return false
-        probe.first == identity &&
-            android.os.SystemClock.elapsedRealtime() - probe.second in 0 until CATALOG_TTL_MS
+        moonlightProbeFresh(identity, probe.first, probe.second, android.os.SystemClock.elapsedRealtime())
     }
 
     fun markOffline(hostId: String) = synchronized(lock) { online.remove(hostId); Unit }
@@ -184,8 +183,11 @@ class MoonlightLibraryStore @Inject constructor(
     }
 
     private companion object {
-        const val CATALOG_TTL_MS = 60_000L
         const val MAX_IMAGE_BYTES = 3 * 1024 * 1024
         const val MAX_CACHE_BYTES = 120L * 1024 * 1024
     }
 }
+
+/** A persisted catalog never carries a live online proof across a process restart. */
+internal fun moonlightProbeFresh(expected: String?, actual: String, probeAt: Long, now: Long): Boolean =
+    expected != null && expected == actual && probeAt >= 0L && now >= probeAt && now - probeAt < 60_000L

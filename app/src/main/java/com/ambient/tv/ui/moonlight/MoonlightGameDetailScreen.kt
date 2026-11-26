@@ -16,6 +16,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,7 +72,9 @@ fun MoonlightGameDetailScreen(
             if (game.app.hdrSupported) " · HDR" else "",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
-        val artwork = model.artwork(game)
+        val artwork by produceState<java.io.File?>(null, game.key, state.artworkVersion) {
+            value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { model.artwork(game) }
+        }
         if (artwork != null) {
             AsyncImage(model = artwork, contentDescription = game.app.title,
                 contentScale = ContentScale.Fit,

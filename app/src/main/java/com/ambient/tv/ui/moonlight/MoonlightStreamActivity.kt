@@ -139,6 +139,9 @@ class MoonlightStreamActivity : ComponentActivity() {
         qualityProfile = preferences.moonlightStreamProfile
         sessionProfile = qualityProfile
         validLaunch = true
+        // A dedicated native GameStream activity must not leave Ambient's previous
+        // background audio/video session running underneath it.
+        com.ambient.tv.ui.player.BackgroundPlaybackSession.stop()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or

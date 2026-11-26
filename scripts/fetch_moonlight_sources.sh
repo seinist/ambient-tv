@@ -24,7 +24,7 @@ DEST="$ROOT/third_party/moonlight-android"
 WORK="$ROOT/third_party/.moonlight-download"
 MARKER_NAME=".ambient-moonlight-pins"
 # Bump when the staged file set changes, so existing trees are prepared again.
-STAGING_VERSION=2
+STAGING_VERSION=3
 
 [[ "$UPSTREAM" == "https://github.com/moonlight-stream/moonlight-android.git" ]] || die "unexpected upstream"
 [[ "$REF" =~ ^[[:xdigit:]]{40}$ ]] || die "full pinned commit required"
@@ -47,7 +47,8 @@ if [[ -f "$DEST/$MARKER_NAME" &&
       -f "$DEST/$SUBMODULE/src/Connection.c" &&
       -f "$DEST/$SUBMODULE/enet/include/enet/enet.h" &&
       -f "$DEST/app/protocol-only-src/com/limelight/LimeLog.java" &&
-      -f "$DEST/app/protocol-only-src/com/limelight/binding/video/MediaCodecHelper.java" ]]; then
+      -f "$DEST/app/protocol-only-src/com/limelight/binding/video/MediaCodecHelper.java" &&
+      -s "$DEST/app/protocol-only-assets/moonlight-licenses/moonlight-android-LICENSE.txt" ]]; then
     printf 'Moonlight %s (%s) already prepared\n' "$TAG" "$REF"
     exit 0
 fi
@@ -136,7 +137,29 @@ if grep -E '^import com\.limelight\.' "$PROTOCOL/binding/video/MediaCodecHelper.
     die "MediaCodecHelper depends on further launcher classes; review before staging"
 fi
 
+# Retain upstream license texts and exact source/patch provenance inside the native APK.
+LICENSES="$WORK/app/protocol-only-assets/moonlight-licenses"
+mkdir -p "$LICENSES"
+cp "$WORK/LICENSE.txt" "$LICENSES/moonlight-android-LICENSE.txt"
+cp "$WORK/$SUBMODULE/LICENSE.txt" "$LICENSES/moonlight-common-c-LICENSE.txt"
+for component in enet nanors; do
+    while IFS= read -r -d '' license; do
+        relative="${license#"$WORK/$SUBMODULE/$component/"}"
+        mkdir -p "$LICENSES/$component/$(dirname "$relative")"
+        cp "$license" "$LICENSES/$component/$relative"
+    done < <(find "$WORK/$SUBMODULE/$component" -type f \( -iname 'license*' -o -iname 'copying*' -o -iname 'notice*' \) -print0)
+done
 ENET_SHA="$(git -C "$WORK/$SUBMODULE/enet" rev-parse HEAD)"
+NANORS_SHA="$(git -C "$WORK/$SUBMODULE/nanors" rev-parse HEAD)"
+{
+    printf 'Moonlight Android: %s (%s)\n' "$TAG" "$REF"
+    printf 'moonlight-common-c: %s\nModified ENet: %s\nNanoRS: %s\n' "$GITLINK" "$ENET_SHA" "$NANORS_SHA"
+    printf 'Corresponding integration source: https://github.com/seinist/ambient-tv\n'
+    printf 'Upstream source: %s\n' "$UPSTREAM"
+    printf 'Ambient TV modifications (reviewed through 2026-11-26):\n'
+    for patch in "${PATCHES[@]}"; do basename "$patch"; done
+    printf 'See docs/MOONLIGHT_INTEGRATION.md and scripts/patches/moonlight.\n'
+} > "$LICENSES/SOURCE-NOTICE.txt"
 printf 'android=%s\ntag=%s\ncommon-c=%s\nenet=%s\npatch=%s\n' "$REF" "$TAG" "$GITLINK" "$ENET_SHA" "$PATCH_SHA" > "$WORK/$MARKER_NAME"
 
 # Swap in the prepared tree only after every check passed.

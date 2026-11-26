@@ -1,6 +1,6 @@
 # Moonlight / Sunshine — native Ambient TV integration (experimental)
 
-## Status as of 2026-11-25
+## Status as of 2026-11-26
 
 PR #494 builds a native GameStream client **inside** Ambient TV; it does not
 launch an external Moonlight APK or route game video through Media3/MPV/VLC.
@@ -39,7 +39,8 @@ desktop stream is interactive rather than a seekable video file.
 The OSD's wired actions are:
 - **Resume**: hides the overlay; the remote game continues.
 - **Text**: sends at most 512 characters of UTF-8 to the connected PC.
-- **Info**: displays current stream title, phase and status.
+- **Info**: displays stream status and sampled decoder, audio, frame and
+  network metrics where supported.
 - **Options**: opens the right-side playback settings page, with streaming
   quality, text entry, info and an explicit remote quit subpage.
 - **Disconnect**: stops the client connection and leaves the PC game running.
@@ -74,12 +75,37 @@ authenticated, pinned HTTPS. Disconnect must not terminate the remote process.
 OSD/settings/menu transitions release held buttons, cursor inputs and vibration.
 The libretro engine, video players and Android Auto do not own these resources.
 
-## Implementation-first plan
+## Audit follow-up
 
-Complete remaining code, audits, native builds and unit tests first. Only after
-the technical integration is complete perform practical acceptance against
-Windows/Linux Sunshine on Shield, Philips TV and handsets. Outstanding work
-includes full A/V and HDR frame-pacing/performance audits, resilient reconnect,
-controller capabilities and source/license release audit.
+The audit introduced bounded XML/HTTP parsing and cancellable requests, an
+authenticated post-pairing identity check, owner-scoped streaming and input,
+serialized native start/teardown, explicit remote-app checks before quit,
+codec capability negotiation, decoder and audio recovery safeguards, input
+mapping/capabilities, pointer routing, aspect-ratio layout, bounded reconnect,
+and sampled playback statistics. Catalogs use a 60-second process-local
+authenticated freshness window, remain browseable offline, and are refreshed
+only on visible entry/poll, explicit refresh or completed WOL. Artwork uses
+the shared priority scheduler and certificate-scoped cache. The native feature
+is still opt-in. Cancellation cannot undo a host launch already accepted by
+Sunshine, and the current-game check and remote quit are separate host requests.
 
-**Do not merge until the native feature is complete and verified.**
+## Release and device acceptance gates
+
+- All four native ABIs must compile, pass alignment checks, and appear in the
+  correct verification APK. Run the native-enabled unit tests and R8 check.
+  The CI verification APK intentionally omits unrelated native media builds;
+  it is **not** a distribution artifact and does not replace the full build.sh.
+- Native Android and common-c license texts, available ENet/NanoRS notices,
+  exact source pins and patch list are packaged under assets/moonlight-licenses.
+  The repository's CC0 dedication does not change the GPL-3.0 distribution
+  obligations for the combined APK. Verify complete corresponding source,
+  modification notices, and licenses/source provenance of the prebuilt Opus
+  and OpenSSL libraries before distributing a Moonlight-enabled release.
+- Test against Windows/Linux Sunshine on Shield, Philips TV and phones:
+  pairing/revocation, WOL, cancellation at every handshake stage, hotplug and
+  Companion handoff, stereo/surround, SDR/HDR10, codec negotiation, display
+  mode restoration, frame pacing, latency and long reconnect/stop cycles.
+- Test standard builds with Moonlight disabled and verify no unrelated
+  playback, gaming, settings, backup or Android Auto regression.
+
+**Do not merge or enable Moonlight in normal releases until these gates pass.**

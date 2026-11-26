@@ -1,6 +1,6 @@
 name: Moonlight native verification
 
-# Only native Moonlight files trigger this potentially expensive NDK build.
+# Audit the native protocol and application integration, including shared input and build changes.
 on:
   pull_request:
     paths:
@@ -10,6 +10,18 @@ on:
       - 'app/src/main/java/com/ambient/tv/moonlight/**'
       - 'app/src/main/java/com/ambient/tv/ui/moonlight/**'
       - 'app/src/main/res/values*/moonlight*.xml'
+      - 'app/build.gradle.kts'
+      - 'app/src/main/AndroidManifest.xml'
+      - 'app/src/test/java/com/ambient/tv/moonlight/**'
+      - 'app/src/main/java/com/ambient/tv/companion/**'
+      - 'app/src/main/java/com/ambient/tv/ui/gamepad/**'
+      - 'app/src/main/java/com/ambient/tv/data/local/**'
+      - 'app/src/main/java/com/ambient/tv/data/browse/**'
+      - 'app/src/main/java/com/ambient/tv/ui/MainActivity.kt'
+      - 'app/src/main/java/com/ambient/tv/ui/home/**'
+      - 'app/src/main/java/com/ambient/tv/ui/search/**'
+      - 'app/src/main/java/com/ambient/tv/ui/settings/**'
+      - 'gradle/libs.versions.toml'
       - 'scripts/update_external_libraries.py'
       - 'scripts/fetch_moonlight_sources.sh'
       - 'scripts/patches/moonlight/**'
@@ -28,7 +40,7 @@ concurrency:
 jobs:
   native-game-stream:
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 85
     strategy:
       fail-fast: false
       matrix:
@@ -85,10 +97,47 @@ jobs:
           test "${#libs[@]}" -gt 0 || { echo "::error::Missing Moonlight JNI library"; exit 1; }
           readelf="$ANDROID_HOME/ndk/30.0.16248370/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
           python3 scripts/check_elf_page_alignment.py "$readelf" "${libs[@]}"
-      - name: Compile Ambient TV native Kotlin pairing and application adapter
-        if: matrix.abi == 'arm64-v8a'
+      - name: Compile application with native Moonlight
         env:
-          # This job verifies Moonlight/Kotlin, not the unrelated local FFmpeg decoder.
           SKIP_MPV_NATIVE: "1"
         shell: bash
-        run: ./gradlew :app:compileDebugKotlin -PMOONLIGHT_NATIVE=true -PAPK_ABI=arm64 --no-daemon --stacktrace
+        run: ./gradlew :app:compileDebugKotlin -PMOONLIGHT_NATIVE=true -PAPK_ABI=${{ matrix.build }} --no-daemon --stacktrace
+      - name: Run native-enabled Moonlight JVM tests
+        if: matrix.abi == 'arm64-v8a'
+        env:
+          SKIP_MPV_NATIVE: "1"
+        shell: bash
+        run: ./gradlew :app:testDebugUnitTest --tests 'com.ambient.tv.moonlight.*' -PMOONLIGHT_NATIVE=true -PAPK_ABI=arm64 --no-daemon --stacktrace
+      - name: Build verification-only APK (not for distribution)
+        env:
+          SKIP_MPV_NATIVE: "1"
+        shell: bash
+        # ProjectM, SVP and local mpv are unrelated to this audit. The production
+        # build's native-media verification must remain enabled for published APKs.
+        run: ./gradlew :app:assembleDebug -x :app:verifyAppNativeMediaInputs -PMOONLIGHT_NATIVE=true -PAPK_ABI=${{ matrix.build }} --no-daemon --stacktrace
+      - name: Verify packaged ABI and upstream licenses
+        env:
+          EXPECTED_ABI: ${{ matrix.abi }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import zipfile
+
+          apks = list(pathlib.Path("app/build/outputs/apk/debug").rglob("*.apk"))
+          assert apks, "No debug APK built"
+          expected = "lib/" + os.environ["EXPECTED_ABI"] + "/libmoonlight-core.so"
+          for apk in apks:
+              with zipfile.ZipFile(apk) as package:
+                  names = set(package.namelist())
+                  assert expected in names, f"{apk}: Missing {expected}"
+                  for notice in ("moonlight-android-LICENSE.txt", "moonlight-common-c-LICENSE.txt", "SOURCE-NOTICE.txt"):
+                      assert "assets/moonlight-licenses/" + notice in names, f"{apk}: Missing {notice}"
+                  assert {n for n in names if n.endswith("/libmoonlight-core.so")} == {expected}, f"{apk}: Unexpected Moonlight ABI"
+          PY
+      - name: Check R8 release shrinking and JNI keep rules (no publishing)
+        if: matrix.abi == 'arm64-v8a'
+        env:
+          SKIP_MPV_NATIVE: "1"
+        shell: bash
+        run: ./gradlew :app:minifyReleaseWithR8 -PMOONLIGHT_NATIVE=true -PAPK_ABI=arm64 --no-daemon --stacktrace

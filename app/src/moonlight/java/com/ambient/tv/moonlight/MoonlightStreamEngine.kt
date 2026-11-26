@@ -94,7 +94,7 @@ class MoonlightStreamEngine @Inject constructor(
         session.preparation = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
                 val target = transport.verifiedHost(hostId)
-                val apps = transport.loadApplications(hostId).apps
+                val apps = transport.loadApplications(target).apps
                 val app = apps.firstOrNull { it.id == appId }
                     ?: throw SecurityException("App is no longer published by this paired host")
                 val videoFormat = MoonlightHardwareVideo.supportedFormat(valid,
@@ -502,7 +502,8 @@ class MoonlightStreamEngine @Inject constructor(
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
             .setAudioAttributes(attributes)
             .setOnAudioFocusChangeListener { focus ->
-                if (focus == AudioManager.AUDIOFOCUS_LOSS) stopSession(session)
+                if (focus == AudioManager.AUDIOFOCUS_LOSS || focus == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT ||
+                    focus == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) stopSession(session)
             }.build()
         val granted = audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         if (!granted) return false

@@ -75,8 +75,11 @@ class MoonlightNativeTransport @Inject constructor(
     }
 
     /** The app list is HTTPS-only and never accepted from an unpaired or identity-swapped host. */
-    suspend fun loadApplications(hostId: String): MoonlightAppCatalog {
-        val target = verifiedHost(hostId)
+    suspend fun loadApplications(hostId: String): MoonlightAppCatalog =
+        loadApplications(verifiedHost(hostId))
+
+    internal suspend fun loadApplications(target: MoonlightVerifiedHost): MoonlightAppCatalog {
+        val hostId = target.profile.id
         val catalog = withHttp(target.profile, target.pinnedCertificate, target.httpsPort) { http ->
             parseMoonlightAppList(http.appListRaw.toByteArray())
         }

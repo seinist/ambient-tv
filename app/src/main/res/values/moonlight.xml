@@ -4,7 +4,7 @@
     <string name="moonlight_enable">Enable Moonlight host setup</string>
     <string name="moonlight_settings_hint">Connect to a Sunshine or GameStream host</string>
     <string name="moonlight_experimental_notice">Experimental preparation: host discovery and connection checks only. Pairing and game streaming are not available in this build.</string>
-    <string name="moonlight_native_notice">Native Sunshine pairing and the application catalog are experimental. Games cannot be streamed until the player is integrated.</string>
+    <string name="moonlight_native_notice">Native Sunshine pairing and game streaming are experimental. Device compatibility has not yet been fully verified.</string>
     <string name="moonlight_hosts">Saved PCs</string>
     <string name="moonlight_check">Check connection</string>
     <string name="moonlight_remove">Remove</string>
@@ -76,4 +76,5 @@
     <string name="moonlight_quality_hdr_on">HDR10 (required)</string>
     <string name="moonlight_quality_hdr_off">SDR only</string>
     <string name="moonlight_quality_hdr_hint">Automatic HDR10 needs a Sunshine HDR application, an HDR display and a 10-bit hardware decoder. Otherwise it uses SDR.</string>
+    <string name="moonlight_about_role">Native GameStream client</string>
 </resources>

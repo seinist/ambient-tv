@@ -64,6 +64,7 @@ android {
             // The fetch script stages a protocol-only Java tree. AGP 9's Java source
             // set no longer supports Ant-style include filters here.
             java.directories.add(upstream.resolve("protocol-only-src").path)
+            assets.directories.add(upstream.resolve("protocol-only-assets").path)
         }
     }
     lint { abortOnError = false }
