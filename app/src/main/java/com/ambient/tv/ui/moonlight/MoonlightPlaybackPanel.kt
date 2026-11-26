@@ -140,7 +140,28 @@ internal fun BoxScope.MoonlightPlaybackPanel(
                     RightPanelInfoRow(stringResource(R.string.moonlight_display_actual,
                         displayResult.mode?.label ?: stringResource(R.string.moonlight_display_unknown)))
                     if (displayResult.unavailable) RightPanelInfoRow(stringResource(R.string.moonlight_display_fallback))
-                    RightPanelInfoRow(stringResource(R.string.moonlight_player_no_seek))
+                    val metrics = status.metrics
+                    val video = metrics.video
+                    if (video.width > 0) {
+                        RightPanelInfoRow(stringResource(R.string.moonlight_stats_video, video.mime.substringAfter('/'),
+                            video.width, video.height, video.fps,
+                            stringResource(if (video.hdr) R.string.moonlight_stats_hdr else R.string.moonlight_stats_sdr)))
+                        RightPanelInfoRow(stringResource(R.string.moonlight_stats_output, metrics.outputFps))
+                        RightPanelInfoRow(stringResource(R.string.moonlight_stats_drops, video.missing, video.dropped))
+                        if (video.rendered > 0)
+                            RightPanelInfoRow(stringResource(R.string.moonlight_stats_decode,
+                                video.decodeMicros / video.rendered / 1000.0))
+                        if (video.hostSamples > 0)
+                            RightPanelInfoRow(stringResource(R.string.moonlight_stats_host,
+                                video.hostTenthsMs / video.hostSamples / 10.0))
+                    }
+                    if (metrics.rttMs != null && metrics.rttVarianceMs != null)
+                        RightPanelInfoRow(stringResource(R.string.moonlight_stats_network,
+                            metrics.rttMs, metrics.rttVarianceMs))
+                    val audio = metrics.audio
+                    if (audio.rate > 0) RightPanelInfoRow(stringResource(R.string.moonlight_stats_audio,
+                        audio.channels, audio.bufferFrames * 1000.0 / audio.rate, audio.underruns,
+                        audio.droppedSamples))
                 }
                 MoonlightPlaybackPage.QUIT -> {
                     Text(stringResource(R.string.moonlight_quit_confirm_hint),

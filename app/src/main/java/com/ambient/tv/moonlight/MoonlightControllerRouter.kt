@@ -77,7 +77,8 @@ internal class MoonlightControllerRouter(
             val suppressed = pad.suppressed.remove(event.keyCode)
             if (held == null && !suppressed && mapped == null) return false
         } else {
-            if (event.repeatCount != 0 || event.keyCode in pad.suppressed) return true
+            if (event.repeatCount != 0) return true
+            pad.suppressed.remove(event.keyCode)
             if (mapped == null) return false
             pad.keys[event.keyCode] = mapped
         }

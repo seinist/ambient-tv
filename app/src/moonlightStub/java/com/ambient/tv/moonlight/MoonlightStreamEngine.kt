@@ -25,7 +25,7 @@ class MoonlightStreamEngine @Inject constructor() {
     fun owns(owner: Any): Boolean = false
     fun sendKeyboard(owner: Any, virtualKey: Short, pressed: Boolean, modifiers: Byte) = Unit
     fun sendMousePosition(owner: Any, x: Int, y: Int, width: Int, height: Int) = Unit
-    fun sendMouseButton(owner: Any, pressed: Boolean) = Unit
+    fun sendMouseButton(owner: Any, pressed: Boolean, button: Int = 1) = Unit
     fun sendMouseScroll(owner: Any, clicks: Int) = Unit
     fun sendTouchEvent(owner: Any, type: Byte, pointerId: Int, x: Float, y: Float,
         pressure: Float = 1f): Int = -5501

@@ -27,6 +27,8 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -91,6 +93,7 @@ class MoonlightStreamActivity : ComponentActivity() {
     @Inject lateinit var moonlightTransport: MoonlightSystemTransport
 
     private val streamOwner = Any()
+    private val pointer by lazy { MoonlightPointerRouter(engine, streamOwner) }
     private var osdVisible by mutableStateOf(false)
     private var qualityProfile by mutableStateOf(MoonlightStreamProfile())
     private var sessionProfile by mutableStateOf(MoonlightStreamProfile())
@@ -151,6 +154,7 @@ class MoonlightStreamActivity : ComponentActivity() {
             MoonlightStreamContent(
                 engine = engine,
                 owner = streamOwner,
+                pointer = pointer,
                 hostId = hostId,
                 appId = appId,
                 streamProfile = qualityProfile,
@@ -171,7 +175,7 @@ class MoonlightStreamActivity : ComponentActivity() {
                 disconnect = ::disconnectAndFinish,
                 closeControls = { showOsd(false) },
                 onCompanionMode = { phase, menu ->
-                    if (phase == MoonlightStreamPhase.STREAMING && !menu) input.republish()
+                    if (phase == MoonlightStreamPhase.STREAMING && !menu && hasWindowFocus() && engine.owns(streamOwner)) input.republish()
                     companion.interaction(playing = hasWindowFocus() && engine.owns(streamOwner) &&
                         phase == MoonlightStreamPhase.STREAMING, menu = menu && hasWindowFocus())
                 },
@@ -230,14 +234,14 @@ class MoonlightStreamActivity : ComponentActivity() {
             feedback.cancelAll()
         }
         osdVisible = visible
-        companion.interaction(playing = engine.status.value.phase == MoonlightStreamPhase.STREAMING,
-            menu = visible)
+        companion.interaction(playing = hasWindowFocus() && engine.owns(streamOwner) &&
+            engine.status.value.phase == MoonlightStreamPhase.STREAMING, menu = visible && hasWindowFocus())
     }
 
     private fun releaseRemoteInputs() {
         input.releaseAll()
         keyboard.releaseAll()
-        engine.sendMouseButton(streamOwner, false)
+        pointer.release()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -309,6 +313,7 @@ private class MoonlightSurfaceBinding(val surface: Surface)
 private fun MoonlightStreamContent(
     engine: MoonlightStreamEngine,
     owner: Any,
+    pointer: MoonlightPointerRouter,
     hostId: String,
     appId: Int,
     streamProfile: MoonlightStreamProfile,
@@ -331,7 +336,9 @@ private fun MoonlightStreamContent(
     // remote app launch occurs while the physical display is still switching.
     var binding by remember { mutableStateOf<MoonlightSurfaceBinding?>(null) }
     var startFailed by remember { mutableStateOf(false) }
-    LaunchedEffect(engine, hostId, appId, binding, displayReady, sessionProfile) {
+    var retryRevision by remember { mutableStateOf(0) }
+    var autoRetries by remember { mutableStateOf(0) }
+    LaunchedEffect(engine, hostId, appId, binding, displayReady, sessionProfile, retryRevision) {
         startFailed = false
         val target = binding ?: return@LaunchedEffect
         if (!displayReady || !target.surface.isValid) return@LaunchedEffect
@@ -349,6 +356,13 @@ private fun MoonlightStreamContent(
                 displayResult.mode?.refreshRate, displayResult.hdr10)) {
             try { awaitCancellation() } finally { engine.stop(owner) }
         } else startFailed = true
+    }
+    LaunchedEffect(status.phase, status.retryable, displayReady) {
+        if (displayReady && status.phase == MoonlightStreamPhase.FAILED && status.retryable && autoRetries < 2) {
+            delay(1000L * (autoRetries + 1))
+            autoRetries++
+            retryRevision++
+        }
     }
     var panel by remember { mutableStateOf(MoonlightPlaybackPage.NONE) }
     var panelOrigin by remember { mutableStateOf(MoonlightPlaybackPage.NONE) }
@@ -387,63 +401,44 @@ private fun MoonlightStreamContent(
         panel = if (panel == MoonlightPlaybackPage.ROOT) MoonlightPlaybackPage.NONE
             else MoonlightPlaybackPage.ROOT
     }
-    Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+        val video = status.metrics.video
+        val width = video.width.takeIf { it > 0 } ?: sessionProfile.width
+        val height = video.height.takeIf { it > 0 } ?: sessionProfile.height
+        val aspect = width.toFloat() / height.coerceAtLeast(1)
+        val surfaceWidth = minOf(maxWidth, maxHeight * aspect)
+        val surfaceHeight = surfaceWidth / aspect
         AndroidView(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.size(surfaceWidth, surfaceHeight),
             factory = { context ->
                 SurfaceView(context).apply {
+                    isFocusableInTouchMode = true
+                    pointer.attach(this)
                     holder.addCallback(object : SurfaceHolder.Callback {
                         override fun surfaceCreated(holder: SurfaceHolder) {
                             binding = MoonlightSurfaceBinding(holder.surface)
                         }
                         override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
                         override fun surfaceDestroyed(holder: SurfaceHolder) {
+                            pointer.release()
                             binding = null
                         }
                     })
                 }
             },
             update = { view ->
-                view.setOnTouchListener { v, event ->
-                    if (controlsShown) return@setOnTouchListener false
-                    val width = v.width.coerceAtLeast(1)
-                    val height = v.height.coerceAtLeast(1)
-                    when (event.actionMasked) {
-                        MotionEvent.ACTION_DOWN -> {
-                            engine.sendMousePosition(owner, event.x.roundToInt(), event.y.roundToInt(), width, height)
-                            engine.sendMouseButton(owner, true)
-                            true
-                        }
-                        MotionEvent.ACTION_MOVE -> {
-                            engine.sendMousePosition(owner, event.x.roundToInt(), event.y.roundToInt(), width, height)
-                            true
-                        }
-                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                            engine.sendMouseButton(owner, false)
-                            true
-                        }
-                        else -> false
-                    }
-                }
-                view.setOnGenericMotionListener { v, event ->
-                    if (controlsShown ||
-                        (event.source and InputDevice.SOURCE_MOUSE) != InputDevice.SOURCE_MOUSE)
-                        return@setOnGenericMotionListener false
-                    when (event.actionMasked) {
-                        MotionEvent.ACTION_HOVER_MOVE -> {
-                            engine.sendMousePosition(owner, event.x.roundToInt(), event.y.roundToInt(),
-                                v.width.coerceAtLeast(1), v.height.coerceAtLeast(1))
-                            true
-                        }
-                        MotionEvent.ACTION_SCROLL -> {
-                            engine.sendMouseScroll(owner, event.getAxisValue(MotionEvent.AXIS_VSCROLL).roundToInt())
-                            true
-                        }
-                        else -> false
-                    }
-                }
+                val inputEnabled = !controlsShown && status.phase == MoonlightStreamPhase.STREAMING && engine.owns(owner)
+                view.setOnTouchListener { v, event -> inputEnabled && pointer.touch(v, event) }
+                view.setOnGenericMotionListener { v, event -> inputEnabled && pointer.mouse(v, event) }
+                view.setOnCapturedPointerListener { v, event -> inputEnabled && pointer.mouse(v, event, captured = true) }
+
             },
         )
+        if (!controlsShown && status.phase == MoonlightStreamPhase.STREAMING &&
+            !com.ambient.tv.ui.mobile.isTelevision(LocalContext.current)) {
+            TvActionButton(stringResource(R.string.moonlight_player_options), showControls,
+                modifier = Modifier.align(Alignment.TopEnd).padding(12.dp), icon = Icons.Filled.Settings)
+        }
         if (!displayReady || controlsShown || status.phase != MoonlightStreamPhase.STREAMING || startFailed) {
             ReferencePlayerOverlayBackground()
             ReferencePlayerClock(Modifier.align(Alignment.TopEnd).padding(top = 32.dp, end = 48.dp))
@@ -472,6 +467,11 @@ private fun MoonlightStreamContent(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (startFailed || status.phase in setOf(MoonlightStreamPhase.FAILED, MoonlightStreamPhase.ENDED)) {
+                            TvActionButton(stringResource(R.string.moonlight_retry_connection), {
+                                autoRetries = 0; retryRevision++
+                            }, icon = Icons.Filled.PlayArrow)
+                        }
                         if (status.phase == MoonlightStreamPhase.STREAMING && controlsShown) {
                             TvActionButton(stringResource(R.string.moonlight_stream_resume),
                                 closeControls, modifier = Modifier.focusRequester(resumeFocus),

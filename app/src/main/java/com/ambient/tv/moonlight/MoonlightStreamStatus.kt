@@ -6,6 +6,7 @@ data class MoonlightStreamStatus(
     val detail: String = "",
     val error: String? = null,
     val metrics: MoonlightStreamMetrics = MoonlightStreamMetrics(),
+    val retryable: Boolean = false,
 ) {
     val active: Boolean get() = phase in setOf(
         MoonlightStreamPhase.CONNECTING, MoonlightStreamPhase.STREAMING, MoonlightStreamPhase.STOPPING)

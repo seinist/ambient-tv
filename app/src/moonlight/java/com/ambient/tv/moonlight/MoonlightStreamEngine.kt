@@ -351,12 +351,13 @@ class MoonlightStreamEngine @Inject constructor(
         }
     }
 
-    fun sendMouseButton(owner: Any, pressed: Boolean) {
+    fun sendMouseButton(owner: Any, pressed: Boolean, button: Int = 1) {
         synchronized(inputGate) {
             val conn = synchronized(lock) { active?.takeIf { it.owner === owner && it.started && !it.cancelled }?.connection }
+            if (button !in 1..5) return
             runCatching {
-                if (pressed) conn?.sendMouseButtonDown(MouseButtonPacket.BUTTON_LEFT)
-                else conn?.sendMouseButtonUp(MouseButtonPacket.BUTTON_LEFT)
+                if (pressed) conn?.sendMouseButtonDown(button.toByte())
+                else conn?.sendMouseButtonUp(button.toByte())
             }
         }
     }
@@ -438,11 +439,14 @@ class MoonlightStreamEngine @Inject constructor(
         }
         override fun connectionTerminated(errorCode: Int) {
             if (errorCode != 0 && !session.cancelled)
-                fail(session, "Sunshine stream disconnected ($errorCode)")
+                fail(session, "Sunshine stream disconnected ($errorCode)", retryable = true)
             else stopSession(session)
         }
         override fun connectionStatusUpdate(connectionStatus: Int) = Unit
-        override fun displayMessage(message: String) = Unit
+        override fun displayMessage(message: String) {
+            if (message == NvConnection.AMBIENT_OTHER_APP_RUNNING)
+                fail(session, context.getString(com.ambient.tv.R.string.moonlight_other_app_running))
+        }
         override fun displayTransientMessage(message: String) = Unit
         override fun rumble(controllerNumber: Short, lowFreqMotor: Short, highFreqMotor: Short) {
             if (controllerNumber.toInt() !in 0..3 || !isOwned(session)) return
@@ -517,10 +521,10 @@ class MoonlightStreamEngine @Inject constructor(
         audioManager.abandonAudioFocusRequest(request)
     }
 
-    private fun fail(session: Active, text: String) {
+    private fun fail(session: Active, text: String, retryable: Boolean = false) {
         synchronized(lock) {
             if (active !== session || session.cancelled) return
-            mutable.value = mutable.value.copy(phase = MoonlightStreamPhase.FAILED, error = text)
+            mutable.value = mutable.value.copy(phase = MoonlightStreamPhase.FAILED, error = text, retryable = retryable && session.started)
         }
         stopSession(session)
     }

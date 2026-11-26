@@ -11,4 +11,15 @@
     <string name="moonlight_player_options">Optionen</string>
     <string name="moonlight_player_input_short">Text</string>
     <string name="moonlight_player_info_short">Info</string>
+    <string name="moonlight_retry_connection">Neu verbinden</string>
+    <string name="moonlight_other_app_running">Auf dem PC läuft ein anderes Spiel. Beende es ausdrücklich, bevor du dieses Spiel startest.</string>
+    <string name="moonlight_stats_video">%1$s · %2$dx%3$d · %4$d FPS · %5$s</string>
+    <string name="moonlight_stats_output">Decoder-Ausgabe: %1$.1f FPS</string>
+    <string name="moonlight_stats_drops">Fehlend: %1$d · verworfen: %2$d Frames</string>
+    <string name="moonlight_stats_decode">Mittlere Decoderzeit: %1$.1f ms</string>
+    <string name="moonlight_stats_host">Mittlere Host-Verarbeitung: %1$.1f ms</string>
+    <string name="moonlight_stats_network">RTT: %1$d ms · Varianz: %2$d ms</string>
+    <string name="moonlight_stats_audio">Audio: %1$d Kanäle · %2$.1f ms Puffer · %3$d Underruns · %4$d verworfene Samples</string>
+    <string name="moonlight_stats_hdr">HDR10</string>
+    <string name="moonlight_stats_sdr">SDR</string>
 </resources>
