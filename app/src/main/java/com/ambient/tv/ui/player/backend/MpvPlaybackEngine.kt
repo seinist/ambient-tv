@@ -71,6 +71,9 @@ private val OBSERVED_PROPERTIES: List<Pair<String, Int>> = listOf(
     "video-codec" to MpvNativeBridge.FORMAT_STRING,
     "hwdec-current" to MpvNativeBridge.FORMAT_STRING,
     "track-list/count" to MpvNativeBridge.FORMAT_DOUBLE,
+    "aid" to MpvNativeBridge.FORMAT_STRING,
+    "sid" to MpvNativeBridge.FORMAT_STRING,
+    "speed" to MpvNativeBridge.FORMAT_STRING,
 )
 private const val HDR_AUDIT_TAG = "HDR-AUDIT"
 private const val ZERO_COPY_CONFIRMED = Long.MIN_VALUE
@@ -178,8 +181,16 @@ internal class MpvPlaybackEngine(
     internal var restoredOutputAudioSelection = false
         private set
 
-    internal fun captureOutputRestartState(): List<String?> =
-        fallbackTrackSelection ?: listOf("aid", "sid", "speed").map(::getPropertyString)
+    private var lastOutputRestartState: List<String?> = emptyList()
+    internal fun captureOutputRestartState(): List<String?> {
+        fallbackTrackSelection?.let { return it }
+        val audio = observedString("aid") ?: getPropertyString("aid")
+        val subtitle = observedString("sid") ?: getPropertyString("sid")
+        val speed = observedString("speed") ?: getPropertyString("speed")
+        val previous = lastOutputRestartState
+        if (previous.size == 3 && previous[0] == audio && previous[1] == subtitle && previous[2] == speed) return previous
+        return listOf(audio, subtitle, speed).also { lastOutputRestartState = it }
+    }
 
     internal fun restoreOutputRestartState(selection: List<String?>) {
         fallbackTrackSelection = selection
@@ -2301,6 +2312,7 @@ internal class MpvPlaybackEngine(
 
 
     private fun observedFlag(name: String): Boolean? = if (name in observed) observed[name] as? Boolean else null
+    private fun observedString(name: String): String? = observed[name] as? String
     private fun observedDouble(name: String): Double? = if (name in observed) observed[name] as? Double else null
     private fun isObserved(name: String) = name in observed
 
