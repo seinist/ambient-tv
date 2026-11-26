@@ -6,6 +6,7 @@
 #include "sample_pass.h"
 #include "rgb_target.h"
 #include "slot_pool.h"
+#include "conversion_cache.h"
 
 using namespace ambient::vlc_ahb;
 
@@ -32,4 +33,18 @@ void compile_contract(VkDevice device, Dispatch image_dispatch, QueueDispatch qu
     // from this compile-only function with stack-owned resources.
     (void)queue_dispatch;
     (void)queue;
+}
+
+// Instantiate the exact cached-resource path for every Android ABI. Never submit
+// GPU work from this stack-owned compile-only fixture.
+void compile_cache_contract(VkPhysicalDevice physical, VkDevice device, Dispatch image,
+                            TargetDispatch target, SampleDispatch sample, ShaderCode vert,
+                            ShaderCode frag, AHardwareBuffer *buffer, uint32_t descriptors) {
+    ConversionCacheEntry cache(physical, device, image, target, sample, vert, frag);
+    if (cache.prepare_retired(buffer, 1920, 1080, VK_FORMAT_R8G8B8A8_UNORM, descriptors) != VK_SUCCESS) return;
+    if (!cache.matches(buffer, 1920, 1080, VK_FORMAT_R8G8B8A8_UNORM, descriptors)) return;
+    (void)cache.imported();
+    (void)cache.pass();
+    (void)cache.target();
+    cache.evict_import_retired();
 }
