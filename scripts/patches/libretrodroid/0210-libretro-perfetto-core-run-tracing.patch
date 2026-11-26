@@ -8,6 +8,7 @@ diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
  
  #include <EGL/egl.h>
  #include <signal.h>
+ #include <cerrno>
 @@ -758,7 +759,9 @@ void LibretroDroid::step() {
              if (video && video->isHWAccelerated()) {
                  video->bindHWContext();
