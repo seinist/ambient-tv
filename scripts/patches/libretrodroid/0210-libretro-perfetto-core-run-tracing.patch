@@ -9,19 +9,19 @@ diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
  #include <EGL/egl.h>
  #include <signal.h>
  #include <cerrno>
-@@ -758,7 +759,9 @@ void LibretroDroid::step() {
-             if (video && video->isHWAccelerated()) {
-                 video->bindHWContext();
-             }
-+            ATrace_beginSection("AmbientTV:Libretro/retro_run");
-             core->retro_run();
-+            ATrace_endSection();
-             if (video && video->isHWAccelerated()) {
-                 video->bindMainContext();
-             }
-@@ -782,7 +785,9 @@ void LibretroDroid::step() {
-         }
- 
+@@ -810,7 +811,9 @@
+                 if (video && video->isHWAccelerated()) {
+                     video->bindHWContext();
+                 }
++                ATrace_beginSection("AmbientTV:Libretro/rewind");
+                 core->retro_run();
++                ATrace_endSection();
+                 // The core now shows the popped checkpoint plus one preview frame;
+                 // the ring's anchor is its predecessor. Preserve that gap on resume.
+                 rewindTimeline.restored(*rewindBuffer,
+@@ -885,7 +888,9 @@ void LibretroDroid::step() {
+         // frame to draw a rewind preview can therefore never advance past live play.
+         if (trackRewindWork) measuredFrames = frames;
          for (size_t i = 0; i < frames; i++) {
 +            ATrace_beginSection("AmbientTV:Libretro/retro_run");
              core->retro_run();
@@ -29,7 +29,7 @@ diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
  
              if (input) {
                  input->flushPendingReleases();
-@@ -883,7 +888,9 @@ void LibretroDroid::stepForNetplay() {
+@@ -960,7 +965,9 @@ void LibretroDroid::stepForNetplay() {
          video->bindHWContext();
      }
  
