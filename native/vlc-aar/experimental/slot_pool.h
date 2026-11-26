@@ -19,10 +19,13 @@ public:
         explicit operator bool() const { return index < N && generation != 0; }
     };
 
-    Ticket acquire(uint64_t epoch) {
+    // Prefer a fully retired slot with a matching cached decoder buffer.
+    // If it is busy, fall back to the normal bounded round-robin policy.
+    Ticket acquire(uint64_t epoch, size_t preferred = N) {
         if (epoch != epoch_ || exhausted_) return {};
         for (size_t n = 0; n < N; ++n) {
-            const size_t i = (next_ + n) % N;
+            const size_t start = preferred < N && slots_[preferred].state == State::Free ? preferred : next_;
+            const size_t i = (start + n) % N;
             auto &s = slots_[i];
             if (s.state != State::Free) continue;
             if (s.generation == std::numeric_limits<uint64_t>::max()) {
