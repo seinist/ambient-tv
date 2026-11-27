@@ -153,7 +153,7 @@ internal class SystemModuleRuntime(
                     throw SystemModuleTrustException("Module adapter DEX or native payload mismatch")
                 val ownership = contract.dexOwnership
                     ?: throw SystemModuleTrustException("Module adapter ownership missing")
-                if (contract.entryClass !in files.dexClasses || files.dexClasses.any { !ownership.owns(it) })
+                if (contract.entryClass !in files.dexClasses || !ownership.accepts(files.dexClasses))
                     throw SystemModuleTrustException("Module DEX defines foreign classes or lacks its entrypoint")
             }
             contract.nativeRoots.isNotEmpty() -> {
