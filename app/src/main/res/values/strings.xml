@@ -2493,4 +2493,8 @@
     <string name="game_library_scanning">Scanning games…</string>
     <string name="game_library_scan_progress">Checked %1$d of %2$d discovered files</string>
     <string name="game_library_scan_cancel">Cancel scan</string>
+    <string name="svp_transport">Frame transport</string>
+    <string name="svp_transport_standard">Standard (copy-back)</string>
+    <string name="svp_transport_resident">Hardware-resident (experimental)</string>
+    <string name="svp_transport_hint">SDR 8-bit, up to 1080p. Requires compatible native libraries and Vulkan; unsupported processing falls back. MPV applies the decoder change when reopening playback.</string>
 </resources>
