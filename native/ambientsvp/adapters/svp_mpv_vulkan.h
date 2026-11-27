@@ -212,7 +212,7 @@ static bool svp_hdrplus_lerp(AVDynamicHDRPlus *out,const AVBufferRef *x,const AV
         a->mastering_display_actual_peak_luminance_flag!=b->mastering_display_actual_peak_luminance_flag)return false;
     *out=*a;
     if(!svp_hdr_lerp_q(&out->targeted_system_display_maximum_luminance,
-        a->targeted_system_display_maximum_luminance,b->targeted_system_display_maximum_luminance,t,10000,1))return false;
+        a->targeted_system_display_maximum_luminance,b->targeted_system_display_maximum_luminance,t,1,10000))return false;
     for(unsigned i=0;i<a->num_windows;i++)if(!svp_hdr_window_lerp(&out->params[i],&a->params[i],&b->params[i],t,i!=0,width,height))return false;
 #define GRID(prefix) do{ \
     if(a->prefix##_flag){ \
