@@ -10,6 +10,9 @@ set -euo pipefail
 #   PROJECTM_PRESET_PACK=cream|classic|original|none   (default: cream)
 #   PROJECTM_FETCH_ASSETS=1                           (default: 1)
 #   ANDROID_API=29
+#   PROJECTM_OPT_LEVEL=2|3 (default: 3)
+#   PROJECTM_LTO=ON|OFF (default: ON, Clang ThinLTO)
+#   PROJECTM_ARM64_TUNE=generic|cortex-a57 (default: generic, ISA unchanged)
 #
 # Usage:
 #   ./scripts/build_projectm_android.sh
@@ -26,11 +29,17 @@ PROJECTM_REPO="https://github.com/projectM-visualizer/projectm.git"
 PROJECTM_PRESET_PACK="${PROJECTM_PRESET_PACK:-cream}"
 PROJECTM_FETCH_ASSETS="${PROJECTM_FETCH_ASSETS:-1}"
 ANDROID_API="${ANDROID_API:-29}"
+PROJECTM_OPT_LEVEL="${PROJECTM_OPT_LEVEL:-3}"
+PROJECTM_LTO="${PROJECTM_LTO:-ON}"
+PROJECTM_ARM64_TUNE="${PROJECTM_ARM64_TUNE:-generic}"
+[[ "$PROJECTM_OPT_LEVEL" =~ ^[23]$ ]] || { echo "PROJECTM_OPT_LEVEL must be 2 or 3" >&2; exit 2; }
+[[ "$PROJECTM_LTO" == ON || "$PROJECTM_LTO" == OFF ]] || { echo "PROJECTM_LTO must be ON or OFF" >&2; exit 2; }
+[[ "$PROJECTM_ARM64_TUNE" == generic || "$PROJECTM_ARM64_TUNE" == cortex-a57 ]] || { echo "Invalid PROJECTM_ARM64_TUNE" >&2; exit 2; }
 CLEAN=0
 PROJECTM_PATCH_DIR="$ROOT_DIR/native/ambientprojectm/patches"
 
 projectm_fingerprint() {
-  { grep '^PROJECTM_' "$EXTERNAL_VERSIONS"; printf '%s\n' "$PROJECTM_REF" "$PROJECTM_PRESET_PACK" "$ANDROID_API"; git hash-object "$ROOT_DIR/scripts/build_projectm_android.sh" "$ROOT_DIR/native/ambientprojectm/ambientprojectm.cpp" "$ROOT_DIR/native/ambientprojectm/native_audio_tap.h" "$PROJECTM_PATCH_DIR"/*.patch; } | git hash-object --stdin
+  { grep '^PROJECTM_' "$EXTERNAL_VERSIONS"; printf '%s\n' "$PROJECTM_REF" "$PROJECTM_PRESET_PACK" "$PROJECTM_FETCH_ASSETS" "$ANDROID_API" "$PROJECTM_OPT_LEVEL" "$PROJECTM_LTO" "$PROJECTM_ARM64_TUNE"; git hash-object "$ROOT_DIR/scripts/build_projectm_android.sh" "$ROOT_DIR/native/ambientprojectm/ambientprojectm.cpp" "$ROOT_DIR/native/ambientprojectm/native_audio_tap.h" "$PROJECTM_PATCH_DIR"/*.patch; } | git hash-object --stdin
 }
 
 for arg in "$@"; do
@@ -94,12 +103,18 @@ build_abi() {
   local dest="$ROOT_DIR/app/src/main/jniLibs/$abi"
   local cc="$TOOLCHAIN/bin/${target}${ANDROID_API}-clang"
   local cxx="$TOOLCHAIN/bin/${target}${ANDROID_API}-clang++"
+  local -a optimize=(-O"$PROJECTM_OPT_LEVEL") bridge_lto=()
+  if [[ "$abi" == arm64-v8a && "$PROJECTM_ARM64_TUNE" != generic ]]; then optimize+=("-mtune=$PROJECTM_ARM64_TUNE"); fi
+  if [[ "$PROJECTM_LTO" == ON ]]; then bridge_lto=(-flto=thin); fi
 
   cmake -S "$PROJECTM_SRC" -B "$build" \
     -DCMAKE_TOOLCHAIN_FILE="$NDK_DIR/build/cmake/android.toolchain.cmake" \
     -DANDROID_ABI="$abi" \
     -DANDROID_PLATFORM="android-$ANDROID_API" \
     -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE="$PROJECTM_LTO" \
+    -DCMAKE_C_FLAGS_RELEASE="${optimize[*]} -DNDEBUG" \
+    -DCMAKE_CXX_FLAGS_RELEASE="${optimize[*]} -DNDEBUG" \
     -DCMAKE_INSTALL_PREFIX="$prefix" \
     -DBUILD_TESTING=OFF \
     -DENABLE_PLAYLIST=OFF \
@@ -117,7 +132,7 @@ build_abi() {
   if [[ "$(basename "$projectm_so")" != "libprojectM-4.so" ]]; then cp "$projectm_so" "$dest/libprojectM-4.so"; fi
 
   [[ -x "$cxx" ]] || { echo "NDK C++ compiler missing: $cxx" >&2; exit 1; }
-  "$cxx" -shared -fPIC -O2 -std=c++17 -static-libstdc++ \
+  "$cxx" -shared -fPIC "${optimize[@]}" "${bridge_lto[@]}" -std=c++17 -static-libstdc++ \
     -I"$prefix/include" \
     "$ROOT_DIR/native/ambientprojectm/ambientprojectm.cpp" \
     -L"$dest" -lprojectM-4 -llog -landroid -lGLESv3 -lEGL \
