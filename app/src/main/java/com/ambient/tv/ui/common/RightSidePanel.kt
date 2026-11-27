@@ -616,10 +616,13 @@ private fun RightSidePanelChrome(
     val panelFocus = remember { FocusRequester() }
     val windowInfo = androidx.compose.ui.platform.LocalWindowInfo.current
     val isHandheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    val inputModeManager = androidx.compose.ui.platform.LocalInputModeManager.current
     val rescueScope = androidx.compose.runtime.rememberCoroutineScope()
     val rescue = remember { RescueRun() }
     val footerAllowed = panelFocusFallback(focusRescue?.levelFresh != false) == PanelFocusFallback.FOOTER
-    fun focusFirstRow(): Boolean = runCatching { bodyFocus.requestFocus() }.getOrDefault(false)
+    fun focusFirstRow(): Boolean = runCatching {
+        bodyFocus.requestFocus(androidx.compose.ui.focus.FocusDirection.Enter)
+    }.getOrDefault(false)
     // Parking on the first row while the real row is still missing must not make that row the
     // one remembered for later (e.g. after "Warten" in a player dialog).
     fun parkOnFirstRow(): Boolean = focusRescue?.park?.invoke(::focusFirstRow) ?: focusFirstRow()
@@ -686,12 +689,22 @@ private fun RightSidePanelChrome(
             // Give Compose one layout frame to attach the panel's controls, then claim focus.
             androidx.compose.runtime.withFrameNanos { }
             if (bodyHasFocus || !panelInteractive) return@LaunchedEffect
+            // A TV drawer explicitly requesting initial remote focus must enter keyboard
+            // mode before requesting its children. Individual controls still obey touch mode.
+            if (!isHandheld && inputModeManager.inputMode == androidx.compose.ui.input.InputMode.Touch) {
+                inputModeManager.requestInputMode(androidx.compose.ui.input.InputMode.Keyboard)
+            }
             // Focus held by the footer/parent group does not mean the content row is focused.
             // A fresh level begins at the first available control, not at its footer Back.
             // The footer is only a fallback for an empty level. A returning level keeps
             // trying its remembered item through the dedicated focus rescue.
-            if (!focusFirstRow() && (footerAllowed || focusRescue?.target?.invoke() == null))
+            val focused = retryFocusFor {
+                !panelInteractive || bodyHasFocus || rescue.userMoved || focusFirstRow()
+            }
+            if (!focused && !bodyHasFocus && !rescue.userMoved &&
+                (footerAllowed || focusRescue?.target?.invoke() == null)) {
                 runCatching { footerFocus.requestFocus() }
+            }
         }
     }
     val tokens = LocalUiTokens.current
@@ -757,7 +770,7 @@ private fun RightSidePanelChrome(
             // modal handler can move/restore focus while that body recycles its old row.
             // The Chrome's focusFirstRow effect still handles initial focus for both.
             .then(if (bodyOwnsNavigation) Modifier else Modifier.tvModalFocus(
-                initialFocus = requestHeaderFocus, scrollToTop = scrollToTop,
+                initialFocus = false, scrollToTop = scrollToTop,
                 footerFocus = footerFocus, scrollToEnd = scrollToEnd))
             // Handheld edge-to-edge: keep header and footer clear of the status and navigation bars.
             .then(if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) Modifier.windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.systemBars.only(androidx.compose.foundation.layout.WindowInsetsSides.Vertical)) else Modifier)

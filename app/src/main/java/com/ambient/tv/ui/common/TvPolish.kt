@@ -1098,6 +1098,7 @@ fun TvChip(
         val shape = RoundedCornerShape(LocalUiTokens.current.controlRadius)
         if (iconOnly && (icon != null || leadingContent != null)) {
             val buttonModifier = chipModifier
+                .focusProperties { canFocus = enabled }
                 .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
                 .appControlSurface(focused, selected, enabled, shape, pressed = pressed,
                     selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.NONE)
@@ -1130,7 +1131,7 @@ fun TvChip(
         ProvideControlContent(foreground) {
             androidx.compose.material3.FilterChip(
                 selected = selected, onClick = activate, enabled = enabled,
-                modifier = chipModifier.sizeIn(minHeight = 48.dp)
+                modifier = chipModifier.focusProperties { canFocus = enabled }.sizeIn(minHeight = 48.dp)
                     .appControlSurface(focused, selected, enabled, shape, pressed = pressed,
                     selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.NONE),
                 shape = shape,
@@ -1150,7 +1151,7 @@ fun TvChip(
                     selectedLeadingIconColor = foreground,
                     selectedTrailingIconColor = foreground,
                 ),
-                label = { androidx.compose.material3.Text(text, maxLines = textMaxLines, overflow = TextOverflow.Ellipsis) },
+                label = { androidx.compose.material3.Text(text, color = foreground, maxLines = textMaxLines, overflow = TextOverflow.Ellipsis) },
                 leadingIcon = if (showLoading) {
                     { ButtonProgress(foreground, Modifier.size(18.dp)) }
                 } else leadingContent ?: icon?.let { image -> { androidx.compose.material3.Icon(image, null, Modifier.size(18.dp)) } },
@@ -1693,7 +1694,8 @@ fun TvActionButton(
         ProvideControlContent(foreground) {
             androidx.compose.material3.FilledTonalButton(
                 onClick = activate, enabled = visuallyEnabled,
-                modifier = (if (fillWidth) modifier.fillMaxWidth() else modifier).sizeIn(minHeight = 48.dp)
+                modifier = (if (fillWidth) modifier.fillMaxWidth() else modifier)
+                    .focusProperties { canFocus = visuallyEnabled }.sizeIn(minHeight = 48.dp)
                     .appControlSurface(focused, selected, visuallyEnabled, shape, prominent = prominent, pressed = pressed,
                         selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.NONE),
                 shape = shape,
@@ -1707,7 +1709,7 @@ fun TvActionButton(
             ) {
                 if (loading) ButtonProgress(foreground, Modifier.padding(end = 6.dp).size(20.dp))
                 else if (icon != null) androidx.compose.material3.Icon(icon, null, Modifier.size(20.dp).padding(end = if (text.isEmpty()) 0.dp else 4.dp))
-                if (text.isNotEmpty()) androidx.compose.material3.Text(text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (text.isNotEmpty()) androidx.compose.material3.Text(text, color = foreground, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
         return

@@ -20,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.key.Key
@@ -96,6 +97,7 @@ class PlayerPanelAutoHideTest {
                                 Column {
                                     BasicText("Action ${fixture.statsTick}", Modifier.size(200.dp, 48.dp).testTag("action")
                                         .focusRequester(fixture.actionFocus)
+                                        .focusProperties { canFocus = true }
                                         .onPreviewKeyEvent { if (it.type == KeyEventType.KeyDown) fixture.keys++; true }
                                         .clickable { fixture.clicks++ })
                                     BasicText("Drag", Modifier.size(200.dp, 48.dp).testTag("drag")
@@ -182,7 +184,7 @@ class PlayerPanelAutoHideTest {
 
     @Test fun keyInputAndChildNavigationEachStartAFullDeadlineWhileManualBackStillReturnsToOsd() {
         val fixture = mount()
-        rule.runOnIdle { fixture.actionFocus.requestFocus() }
+        rule.runOnIdle { assertTrue(fixture.actionFocus.requestFocus()) }
         advance(28_000)
         rule.onNodeWithTag("action").performKeyInput { pressKey(Key.DirectionRight) }
         advance(28_000)
