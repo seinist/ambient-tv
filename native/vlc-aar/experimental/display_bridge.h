@@ -1,0 +1,191 @@
+#pragma once
+/* Included by the pinned VLC display.c only in experimental Android builds. */
+#include "display_owner.h"
+#include "placebo_bridge.h"
+#include "vlc_picture_bridge.h"
+#include "ambient_sample_spv.h"
+#include "dovi_vlc_bridge.h"
+
+static inline void ambient_display_lock(void *opaque)
+{
+    pl_vulkan vk = opaque;
+    vk->lock_queue(vk, vk->queue_graphics.index, 0);
+}
+static inline void ambient_display_unlock(void *opaque)
+{
+    pl_vulkan vk = opaque;
+    vk->unlock_queue(vk, vk->queue_graphics.index, 0);
+}
+static inline void *ambient_display_wrap(void *opaque, VkImage image, VkFormat format,
+                                        uint32_t width, uint32_t height, VkImageUsageFlags usage)
+{
+    pl_vulkan vk = opaque;
+    if (width > INT32_MAX || height > INT32_MAX) return NULL;
+    return (void *)ambient_pl_wrap_rgb_held(vk->gpu, vk->device, vk->queue_graphics.index,
+                                            image, format, width, height, usage);
+}
+static inline void ambient_display_release(void *opaque, void *texture, VkSemaphore semaphore)
+{
+    pl_vulkan vk = opaque;
+    ambient_pl_release_rgb(vk->gpu, texture, vk->queue_graphics.index, semaphore);
+}
+static inline bool ambient_display_hold(void *opaque, void *texture, VkSemaphore semaphore)
+{
+    pl_vulkan vk = opaque;
+    if (!ambient_pl_hold_rgb(vk->gpu, texture, vk->queue_graphics.index, semaphore))
+        return false;
+    pl_gpu_flush(vk->gpu);
+    return true;
+}
+static inline void ambient_display_destroy_texture(void *opaque, void *texture)
+{
+    pl_vulkan vk = opaque;
+    pl_tex tex = texture;
+    pl_tex_destroy(vk->gpu, &tex);
+    // Rare resize/teardown only: retire libplacebo's deferred view destruction
+    // before the external owner destroys or reallocates the raw VkImage.
+    pl_gpu_finish(vk->gpu);
+}
+
+/* Admit only explicit BT.709 SDR and BT.2020 PQ/HLG. PQ/HLG is routed
+ * through a 16-bit floating-point target with the original nonlinear color transfer.
+ * Do not infer the driver matrix, range or unknown transfer. */
+static inline bool ambient_display_sdr(const video_format_t *fmt)
+{
+    return fmt && fmt->primaries == COLOR_PRIMARIES_BT709 &&
+        fmt->transfer == TRANSFER_FUNC_BT709 && fmt->space == COLOR_SPACE_BT709 &&
+        (fmt->color_range == COLOR_RANGE_FULL || fmt->color_range == COLOR_RANGE_LIMITED) &&
+        !fmt->mastering.max_luminance && !fmt->lighting.MaxCLL && !fmt->lighting.MaxFALL;
+}
+static inline bool ambient_display_hdr(const video_format_t *fmt)
+{
+    return fmt && fmt->primaries == COLOR_PRIMARIES_BT2020 &&
+        fmt->space == COLOR_SPACE_BT2020 &&
+        (fmt->transfer == TRANSFER_FUNC_SMPTE_ST2084 || fmt->transfer == TRANSFER_FUNC_HLG) &&
+        (fmt->color_range == COLOR_RANGE_FULL || fmt->color_range == COLOR_RANGE_LIMITED);
+}
+static inline struct ambient_ahb_owner *
+ambient_display_open(pl_gpu gpu, const video_format_t *fmt, vlc_video_context *context, bool dovi)
+{
+#ifndef PL_HAVE_DOVI
+    if (dovi) return NULL;
+#endif
+    if (!fmt || fmt->i_chroma != VLC_CODEC_ANDROID_OPAQUE ||
+        (dovi ? !ambient_dovi_format(fmt) : (fmt->dovi.profile || fmt->dovi.rpu_present || fmt->dovi.el_present)) ||
+        (!dovi && !ambient_display_sdr(fmt) && !ambient_display_hdr(fmt)) || !context)
+        return NULL;
+    android_video_context_t *avctx =
+        vlc_video_context_GetPrivate(context, VLC_VIDEO_CONTEXT_AWINDOW);
+    if (!avctx || !avctx->air || !avctx->air_api) return NULL;
+    if ((dovi || ambient_display_hdr(fmt)) && !avctx->air_api->AImage.getDataSpace) return NULL;
+    pl_vulkan vk = pl_vulkan_get(gpu);
+    if (!ambient_pl_ahb_device_enabled(vk)) return NULL;
+    // Use the physical device's maintenance6 limit when available;
+    // otherwise allocate a conservative bounded pool. Allocation failure
+    // rejects this experimental path.
+    struct ambient_ahb_config config = {
+        .instance = vk->instance, .physical = vk->phys_device, .device = vk->device,
+        .family = vk->queue_graphics.index, .get_proc = vk->get_proc_addr,
+        .opaque = (void *)vk, .lock_queue = ambient_display_lock,
+        .unlock_queue = ambient_display_unlock, .wrap = ambient_display_wrap,
+        .release = ambient_display_release, .hold_and_flush = ambient_display_hold,
+        .destroy_texture = ambient_display_destroy_texture,
+        .vert_words = ambient_sample_vert, .vert_bytes = sizeof(ambient_sample_vert),
+        .frag_words = ambient_sample_frag, .frag_bytes = sizeof(ambient_sample_frag),
+        .descriptor_count = ambient_pl_descriptor_budget(vk),
+    };
+    return ambient_ahb_open(&config);
+}
+
+static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
+                                              picture_t *pic, struct ambient_ahb_output *out,
+                                              bool raw_p010, bool dovi)
+{
+    if (owner) ambient_ahb_poll(owner);
+    if (!owner || !pic ||
+        (!dovi && !ambient_display_sdr(&pic->format) && !ambient_display_hdr(&pic->format)) ||
+        (dovi ? (!raw_p010 || !ambient_dovi_format(&pic->format) ||
+                 !picture_GetAncillary(pic, pic->format.dovi.profile == 7 ?
+                     AMBIENT_FEL_ID : VLC_ANCILLARY_ID_DOVI) ||
+                 picture_GetAncillary(pic, VLC_ANCILLARY_ID_HDR10PLUS)) :
+                (pic->format.dovi.profile || pic->format.dovi.rpu_present || pic->format.dovi.el_present ||
+                 picture_GetAncillary(pic, VLC_ANCILLARY_ID_DOVI))) ||
+        (picture_GetAncillary(pic, VLC_ANCILLARY_ID_HDR10PLUS) &&
+         pic->format.transfer != TRANSFER_FUNC_SMPTE_ST2084))
+        return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    struct ambient_vlc_picture held;
+    if (!ambient_vlc_hold_picture(pic, &held)) return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    const bool hdr = dovi || ambient_display_hdr(&pic->format);
+    const bool ipt = dovi && pic->format.dovi.profile == 5;
+    const int32_t standard = hdr ? ADATASPACE_STANDARD_BT2020 : ADATASPACE_STANDARD_BT709;
+    const int32_t transfer = dovi || pic->format.transfer == TRANSFER_FUNC_SMPTE_ST2084 ?
+        ADATASPACE_TRANSFER_ST2084 : pic->format.transfer == TRANSFER_FUNC_HLG ?
+        ADATASPACE_TRANSFER_HLG : ADATASPACE_TRANSFER_SMPTE_170M;
+    const int32_t range = pic->format.color_range == COLOR_RANGE_FULL ?
+        ADATASPACE_RANGE_FULL : ADATASPACE_RANGE_LIMITED;
+    // The compressed stream's metadata alone cannot establish that the
+    // decoder did not tone-map or change range before producing this image.
+    const int32_t actual_standard = held.data_space & ADATASPACE_STANDARD_MASK;
+    // No Android IPT dataspace exists. Accept an unspecified standard for
+    // profile 5 only when source primaries are unspecified too. Never accept
+    // a decoder-reported SDR transfer or limited range for IPT code values.
+    const bool standard_ok = actual_standard == standard ||
+        (ipt && pic->format.primaries == COLOR_PRIMARIES_UNDEF && actual_standard == 0);
+    if ((hdr && !held.data_space_valid) ||
+        (held.data_space_valid && (!standard_ok ||
+          (held.data_space & ADATASPACE_TRANSFER_MASK) != transfer ||
+          (held.data_space & ADATASPACE_RANGE_MASK) != range))) {
+        ambient_vlc_release_picture(held.held, held.acquire_fd);
+        return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    }
+    uint32_t width = held.crop.right - held.crop.left;
+    uint32_t height = held.crop.bottom - held.crop.top;
+    bool fel_crop_ok=true,coded_confirmed=false;
+    if(dovi && pic->format.dovi.profile==7){
+        struct vlc_ancillary *anc=picture_GetAncillary(pic,AMBIENT_FEL_ID);
+        const struct ambient_fel_picture *el=anc?vlc_ancillary_GetData(anc):NULL;
+        // AImage must confirm the declared BL origin, including zero.
+        // Expanded geometry requires declared coded extents confirmed by
+        // the actual AImage. Allocation padding alone is not proof of scale.
+        coded_confirmed=pic->format.i_width==held.width &&
+            pic->format.i_height==held.height;
+        struct ambient_fel_axis_map x,y;
+        fel_crop_ok=el && held.crop.left>=0 && held.crop.top>=0 &&
+            pic->format.i_x_offset==(unsigned)held.crop.left &&
+            pic->format.i_y_offset==(unsigned)held.crop.top &&
+            ambient_fel_axis_mapping(width,el->width,(unsigned)held.crop.left,el->crop_x,
+                coded_confirmed?pic->format.i_width:0,el->coded_width,&x) &&
+            ambient_fel_axis_mapping(height,el->height,(unsigned)held.crop.top,el->crop_y,
+                coded_confirmed?pic->format.i_height:0,el->coded_height,&y);
+    }
+    if (!fel_crop_ok ||
+        width != pic->format.i_visible_width || height != pic->format.i_visible_height ||
+        (pic->format.i_x_offset && pic->format.i_x_offset != (unsigned)held.crop.left) ||
+        (pic->format.i_y_offset && pic->format.i_y_offset != (unsigned)held.crop.top)) {
+        ambient_vlc_release_picture(held.held, held.acquire_fd);
+        return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    }
+    const struct ambient_ahb_input input = {
+        .picture = held.held, .acquire_fd = held.acquire_fd,
+        .release_picture = ambient_vlc_release_picture, .buffer = held.buffer,
+        .buffer_id = held.buffer_id, .buffer_id_valid = held.buffer_id_valid,
+        .width = width, .height = height,
+        .crop = { (float)held.crop.left / held.width, (float)held.crop.top / held.height,
+                  (float)width / held.width, (float)height / held.height },
+        .model = hdr ? VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_2020 :
+            VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_709,
+        .high_precision = hdr,
+        .raw_yuv = dovi || (raw_p010 && hdr),
+        .range = pic->format.color_range == COLOR_RANGE_FULL ?
+            VK_SAMPLER_YCBCR_RANGE_ITU_FULL : VK_SAMPLER_YCBCR_RANGE_ITU_NARROW,
+    };
+    const bool metadata_origin_aligned=ambient_hdrplus_origin_aligned(
+        pic->format.i_width,pic->format.i_height,width,height,
+        pic->format.i_x_offset,pic->format.i_y_offset,held.crop.left,held.crop.top);
+    VkResult result=ambient_ahb_prepare(owner, &input, out);
+    if(result==VK_SUCCESS){
+        out->metadata_origin_aligned=metadata_origin_aligned;
+        out->fel_coded_confirmed=coded_confirmed;
+    }
+    return result;
+}

@@ -1,0 +1,72 @@
+diff --git a/modules/video_output/libplacebo/utils.c b/modules/video_output/libplacebo/utils.c
+--- a/modules/video_output/libplacebo/utils.c
++++ b/modules/video_output/libplacebo/utils.c
+@@ -22,7 +22,8 @@
+ # include <config.h>
+ #endif
+ 
+-#include <assert.h>
++#include <assert.h>
++#include <math.h>
+ #include <stdatomic.h>
+ #include <stdlib.h>
+ 
+@@ -390,17 +391,18 @@
+         .transfer  = transfers[fmt->transfer],
+         .hdr = {
+             .prim = {
+-                .green.x = fmt->mastering.primaries[0],
+-                .green.y = fmt->mastering.primaries[1],
+-                .blue.x  = fmt->mastering.primaries[2],
+-                .blue.y  = fmt->mastering.primaries[3],
+-                .red.x   = fmt->mastering.primaries[4],
+-                .red.y   = fmt->mastering.primaries[5],
+-                .white.x = fmt->mastering.white_point[0],
+-                .white.y = fmt->mastering.white_point[1],
+-            },
+-            .min_luma = fmt->mastering.min_luminance,
+-            .max_luma = fmt->mastering.max_luminance,
++                // ST 2086 integer units -> normalized xy.
++                .green.x = fmt->mastering.primaries[0] / 50000.0f,
++                .green.y = fmt->mastering.primaries[1] / 50000.0f,
++                .blue.x  = fmt->mastering.primaries[2] / 50000.0f,
++                .blue.y  = fmt->mastering.primaries[3] / 50000.0f,
++                .red.x   = fmt->mastering.primaries[4] / 50000.0f,
++                .red.y   = fmt->mastering.primaries[5] / 50000.0f,
++                .white.x = fmt->mastering.white_point[0] / 50000.0f,
++                .white.y = fmt->mastering.white_point[1] / 50000.0f,
++            },
++            .min_luma = fmt->mastering.min_luminance / 10000.0f,
++            .max_luma = fmt->mastering.max_luminance / 10000.0f,
+             .max_cll = fmt->lighting.MaxCLL,
+             .max_fall = fmt->lighting.MaxFALL,
+         },
+@@ -449,11 +451,13 @@
+                              struct pl_hdr_metadata *dst)
+ {
+ #if PL_API_VER >= 242
+-    for (size_t i = 0; i < ARRAY_SIZE(dst->scene_max); i++)
+-        dst->scene_max[i] = src->maxscl[i];
+-    dst->scene_avg = src->average_maxrgb;
+-
+-    if (src->tone_mapping_flag) {
++    // VLC stores normalized linear values; libplacebo consumes cd/m².
++    for (size_t i = 0; i < ARRAY_SIZE(dst->scene_max); i++)
++        dst->scene_max[i] = src->maxscl[i] * 10000.0f;
++    dst->scene_avg = src->average_maxrgb * 10000.0f;
++    dst->ootf = (struct pl_hdr_bezier){0};
++
++    if (src->tone_mapping_flag) {
+         static_assert(sizeof(dst->ootf.anchors) == sizeof(src->bezier_curve_anchors), "array mismatch");
+         memcpy(dst->ootf.anchors, src->bezier_curve_anchors, sizeof(dst->ootf.anchors));
+         dst->ootf.num_anchors = src->num_bezier_anchors;
+@@ -488,7 +492,8 @@
+             cdst->pivots[i] = scale * csrc->pivots[i];
+         }
+         for (int i = 0; i < csrc->num_pivots - 1; i++) {
+-            const float scale = 1.0f / (1 << src->coef_log2_denom);
++            // Valid fixed-point RPU denominators include 32.
++            const float scale = ldexpf(1.0f, -(int)src->coef_log2_denom);
+             cdst->method[i] = csrc->mapping_idc[i];
+             switch (csrc->mapping_idc[i]) {
+             case VLC_DOVI_RESHAPE_POLYNOMIAL:

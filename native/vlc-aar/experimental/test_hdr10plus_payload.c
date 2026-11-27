@@ -1,0 +1,161 @@
+#include "hdr10plus_payload.h"
+#include <assert.h>
+#include <math.h>
+
+struct writer { uint8_t data[1024]; size_t pos; };
+static void put(struct writer *w, unsigned n, uint32_t v) {
+    assert(w->pos + n <= sizeof(w->data) * 8);
+    for (unsigned i = n; i > 0; --i, ++w->pos)
+        w->data[w->pos / 8] |= ((v >> (i - 1)) & 1u) << (7 - w->pos % 8);
+}
+static void geometry(struct writer *w) {
+    put(w,16,10); put(w,16,20); put(w,16,100); put(w,16,200);
+    put(w,16,50); put(w,16,100); put(w,8,90);
+    put(w,16,20); put(w,16,40); put(w,16,30); put(w,1,0);
+}
+static void grid(struct writer *w, unsigned n) {
+    put(w,5,n); put(w,5,n);
+    for (unsigned i=0;i<n*n;++i) put(w,4,i%16);
+}
+static struct writer fixture(unsigned windows, unsigned grid_size, unsigned saturation) {
+    struct writer w = {{0xb5,0,0x3c,0,1,4},48};
+    put(&w,8,1); put(&w,2,windows);
+    for (unsigned i=1;i<windows;++i) geometry(&w);
+    put(&w,27,1000); put(&w,1,grid_size!=0);
+    if(grid_size) grid(&w,grid_size);
+    for (unsigned i=0;i<windows;++i) {
+        put(&w,17,10000+i); put(&w,17,9000); put(&w,17,8000); put(&w,17,2500+i);
+        put(&w,4,2); put(&w,7,50); put(&w,17,2000); put(&w,7,99); put(&w,17,9000);
+        put(&w,10,100);
+    }
+    put(&w,1,grid_size!=0);
+    if(grid_size) grid(&w,grid_size);
+    for (unsigned i=0;i<windows;++i) {
+        put(&w,1,1);
+        put(&w,12,2048+i); put(&w,12,1024); put(&w,4,2); put(&w,10,300); put(&w,10,700);
+        put(&w,1,saturation);
+        if(saturation) put(&w,6,8);
+    }
+    return w;
+}
+int main(void) {
+    struct ambient_hdrplus m;
+    for(unsigned windows=1;windows<=3;++windows) {
+        for(unsigned grids=0;grids<=2;++grids) {
+            for(unsigned saturation=0;saturation<=1;++saturation) {
+                struct writer w = fixture(windows,grids==2?25:grids==1?2:0,saturation);
+                size_t size = (w.pos + 7) / 8;
+                assert(ambient_hdrplus_parse(w.data,size,&m));
+                const struct ambient_hdrplus_window *global = &m.windows[0];
+                assert(m.version == 1 && m.target_nits == 1000 && global->anchor_count == 2);
+                assert(m.window_count == windows);
+                assert(!m.version1_constraints_ok);
+                assert(m.global_projection == (windows>1 || grids || saturation));
+                assert(fabsf(global->maxscl[0] - 0.1f) < 0.00001f);
+                assert(global->histogram_count == 2 && global->histogram[1].percentage == 99);
+                assert(global->tone_mapping && fabsf(global->average - 0.025f) < 0.00001f);
+                for (unsigned i=0;i<windows;++i) {
+                    const struct ambient_hdrplus_window *local=&m.windows[i];
+                    assert(fabsf(local->maxscl[0]-(10000+i)/100000.0f)<0.000001f);
+                    assert(fabsf(local->knee_x-(2048+i)/4095.0f)<0.000001f);
+                    assert(local->saturation_mapping==!!saturation);
+                    assert(local->saturation_weight==(saturation?8:0));
+                    if(i) {
+                        assert(local->geometry.left==10 && local->geometry.center_x==50);
+                        assert(local->geometry.semimajor_outer==40 && local->geometry.angle==90);
+                    }
+                }
+                unsigned dim=grids==2?25:grids==1?2:0;
+                assert(m.targeted_grid.rows==dim && m.mastering_grid.cols==dim);
+                if(dim) {
+                    assert(m.targeted_grid.values[dim-1][dim-1]==(dim*dim-1)%16);
+                    assert(m.mastering_grid.values[dim-1][dim-1]==(dim*dim-1)%16);
+                }
+                w.data[6]=0;
+                assert(ambient_hdrplus_parse(w.data,size,&m) && m.version==0);
+                assert(m.metadata_constraints_ok);
+                assert(!m.version0_recommended_fraction); // legacy nonzero FBP
+                assert(m.version0_recommended_features==(windows==1&&!grids&&!saturation));
+                w.data[6]=2;
+                assert(!ambient_hdrplus_parse(w.data,size,&m));
+                w.data[6]=1;
+                // Reject every byte-truncated fixture, including the last local window.
+                for(size_t n=0;n<size;++n) assert(!ambient_hdrplus_parse(w.data,n,&m));
+                assert(!ambient_hdrplus_parse(w.data,size+1,&m));
+                w.data[0] ^= 1; assert(!ambient_hdrplus_parse(w.data,size,&m));
+            }
+        }
+    }
+    // Single-window v1 metadata with nine distribution entries and no
+    // optional grids/saturation; zero knee endpoints are legal syntax.
+    struct writer conforming = {{0xb5,0,0x3c,0,1,4},48};
+    put(&conforming,8,1); put(&conforming,2,1);
+    put(&conforming,27,1000); put(&conforming,1,0);
+    for(unsigned i=0;i<3;i++) put(&conforming,17,10000);
+    put(&conforming,17,2500); put(&conforming,4,9);
+    const unsigned percentages[]={1,5,10,25,50,75,90,95,99};
+    const unsigned distribution[]={0,0,255,1000,2000,3000,4000,5000,9000};
+    for(unsigned i=0;i<9;i++){
+        put(&conforming,7,percentages[i]); put(&conforming,17,distribution[i]);
+    }
+    put(&conforming,10,100); put(&conforming,1,0);
+    put(&conforming,1,1); put(&conforming,12,0); put(&conforming,12,0);
+    put(&conforming,4,0); put(&conforming,1,0);
+    assert(ambient_hdrplus_parse(conforming.data,(conforming.pos+7)/8,&m));
+    assert(m.version1_constraints_ok && m.windows[0].knee_x==0.f &&
+           m.windows[0].knee_y==0.f);
+    assert(m.version1_recommended_distribution && m.metadata_constraints_ok);
+    // Mutate only a genuine percentile: the reserved 5/10 markers must
+    // not participate in CFD ordering or act as scene luminance values.
+    const size_t dist_start=48+8+2+27+1+4*17+4;
+    struct writer bad=conforming;
+    const size_t value_start=dist_start+4*24+7;
+    for(unsigned i=0;i<17;i++){
+        size_t bit=value_start+i;
+        bad.data[bit/8]&=~(1u<<(7-bit%8));
+    }
+    assert(ambient_hdrplus_parse(bad.data,(bad.pos+7)/8,&m));
+    assert(!m.version1_constraints_ok && m.version1_recommended_distribution && !m.metadata_constraints_ok);
+    // Legacy metadata can be syntactically valid yet fail the common CFD contract.
+    bad.data[6]=0;
+    assert(ambient_hdrplus_parse(bad.data,(bad.pos+7)/8,&m));
+    assert(!m.metadata_constraints_ok && m.version0_recommended_features);
+    // Clear just the fraction on a legacy single-window sample.
+    struct writer zero_fraction=fixture(1,0,0);
+    zero_fraction.data[6]=0;
+    const size_t fraction_start=48+8+2+27+1+4*17+4+2*24;
+    for(unsigned i=0;i<10;i++){
+        size_t bit=fraction_start+i;
+        zero_fraction.data[bit/8]&=~(1u<<(7-bit%8));
+    }
+    assert(ambient_hdrplus_parse(zero_fraction.data,(zero_fraction.pos+7)/8,&m));
+    assert(m.version0_recommended_fraction&&m.version0_recommended_features&&m.metadata_constraints_ok);
+    // Projection cannot modify the full private snapshot.
+    struct ambient_hdrplus raw={.window_count=1,.version=1,.target_nits=1000};
+    struct ambient_hdrplus_window *g=&raw.windows[0],projected;
+    g->histogram_count=9;
+    for(unsigned i=0;i<9;i++){
+        g->histogram[i].percentage=percentages[i];
+        g->histogram[i].percentile=distribution[i]/100000.f;
+    }
+    g->tone_mapping=true;g->knee_x=0.25f;g->knee_y=0.5f;
+    assert(ambient_hdrplus_global_projection(&raw,&projected));
+    assert(projected.maxscl[0]==0.09f&&projected.maxscl[2]==0.09f);
+    assert(projected.tone_mapping&&projected.anchor_count==1&&projected.anchors[0]==0.5f);
+    assert(g->maxscl[0]==0.f&&g->anchor_count==0&&g->tone_mapping);
+    g->knee_x=0.f;
+    assert(ambient_hdrplus_global_projection(&raw,&projected)&&!projected.tone_mapping);
+    assert(g->tone_mapping);
+    g->knee_x=0.25f;g->anchor_count=4;
+    g->anchors[0]=0.99f;g->anchors[1]=0.99f;g->anchors[2]=0.01f;g->anchors[3]=0.01f;
+    assert(ambient_hdrplus_global_projection(&raw,&projected)&&!projected.tone_mapping);
+    g->histogram[8].percentile=0.f;
+    assert(ambient_hdrplus_global_projection(&raw,&projected));
+    assert(!projected.histogram_count&&!projected.maxscl[0]&&g->histogram_count==9);
+    raw.window_count=0;
+    assert(!ambient_hdrplus_global_projection(&raw,&projected));
+    struct writer w = fixture(1,1,0);
+    assert(!ambient_hdrplus_parse(w.data,(w.pos+7)/8,&m)); // invalid grid dimensions
+    w = fixture(0,0,0);
+    assert(!ambient_hdrplus_parse(w.data,(w.pos+7)/8,&m));
+}

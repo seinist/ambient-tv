@@ -25,6 +25,11 @@ object HdrSupport {
     fun displayStandards(context: Context): Set<HdrStandard> {
         val displayManager = context.getSystemService<DisplayManager>() ?: return emptySet()
         val display = displayManager.getDisplay(Display.DEFAULT_DISPLAY) ?: return emptySet()
+        return displayStandards(display)
+    }
+
+    /** Use the attached display rather than assuming it is the default display. */
+    fun displayStandards(display: Display): Set<HdrStandard> {
         val types = enabledHdrTypes(display)
         return buildSet {
             if (Display.HdrCapabilities.HDR_TYPE_HDR10 in types) add(HdrStandard.HDR10)

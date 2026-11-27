@@ -1,0 +1,867 @@
+diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
+--- a/modules/codec/omxil/mediacodec.c
++++ b/modules/codec/omxil/mediacodec.c
+@@ -32,6 +32,10 @@
+ #include <assert.h>
+ 
+ #include <vlc_common.h>
++#include <vlc_ancillary.h>
++#include "dovi_rpu_au.h"
++#include "dovi_vlc_bridge.h"
++#include "hdr10plus_vlc_bridge.h"
+ #include <vlc_aout.h>
+ #include <vlc_plugin.h>
+ #include <vlc_codec.h>
+@@ -141,6 +145,17 @@
+             int i_mpeg_dar_num, i_mpeg_dar_den;
+             struct vlc_asurfacetexture *surfacetexture;
+             bool use_air;
++            bool ambient_ahb, ambient_dovi;
++            unsigned ambient_dovi_profile;
++            struct ambient_dovi_parser *dovi_parser;
++            struct ambient_fel_session *fel;
++            struct ambient_fel_picture *fel_pending;
++            struct ambient_rpu_pts_queue dovi_pts;
++            struct ambient_dovi_metadata *dovi_pending;
++            vlc_tick_t dovi_pending_ts;
++            bool hdrplus_required, hdrplus_pending, hdrplus_projection_logged;
++            vlc_tick_t hdrplus_ts;
++            struct ambient_hdrplus hdrplus;
+             vlc_cond_t air_cond;
+             unsigned air_waiting_count;
+         } video;
+@@ -613,7 +628,8 @@
+         args.video.color.transfer = vlc_to_mc_color_transfer(p_dec->fmt_out.video.transfer);
+ 
+ 
+-        args.video.b_tunneled_playback = args.video.p_surface ?
++        // AImageReader requires ordinary, non-tunneled buffer callbacks.
++        args.video.b_tunneled_playback = args.video.p_surface && !p_sys->video.ambient_ahb ?
+                 var_InheritBool(p_dec, CFG_PREFIX "tunneled-playback") : false;
+         if (p_sys->b_adaptive)
+             msg_Dbg(p_dec, "mediacodec configured for adaptative playback");
+@@ -839,10 +855,14 @@
+     android_video_context_t *avctx =
+         vlc_video_context_GetPrivate(apctx->s.vctx, VLC_VIDEO_CONTEXT_AWINDOW);
+ 
+-    if (apctx->fence_fd >= 0)
++    // If no consumer fence exists, the original producer fence still
++    // protects an image that was never sampled (including rejected frames).
++    int release_fd = apctx->read_fence_fd;
++    if (release_fd < 0)
++        release_fd = apctx->fence_fd;
++    else if (apctx->fence_fd >= 0)
+         close(apctx->fence_fd);
+-
+-    avctx->air_api->AImage.deleteAsync(apctx->image, apctx->read_fence_fd);
++    avctx->air_api->AImage.deleteAsync(apctx->image, release_fd);
+ 
+     free(apctx);
+ }
+@@ -868,8 +888,25 @@
+     int32_t status = avctx->air_api->AImage.getTimestamp(image, &timestamp);
+ 
+     vlc_tick_t date = status == 0 ? VLC_TICK_FROM_NS(timestamp) : 0;
+-
+-    picture_t *p_pic = NewPicture(p_dec, date);
++    struct ambient_fel_picture *el = p_sys->video.fel_pending;
++    p_sys->video.fel_pending = NULL;
++    struct ambient_dovi_metadata *dovi = p_sys->video.dovi_pending;
++    p_sys->video.dovi_pending = NULL;
++    const bool hdrplus = p_sys->video.hdrplus_pending;
++    p_sys->video.hdrplus_pending = false;
++    picture_t *p_pic = NULL;
++    if (p_sys->video.ambient_ahb && ((hdrplus && (status != 0 || date != p_sys->video.hdrplus_ts)) ||
++        (p_sys->video.hdrplus_required && !hdrplus))) {
++        msg_Err(p_dec, "Experimental HDR10+ image timestamp/metadata mismatch");
++        AbortDecoderLocked(p_sys);
++        goto error;
++    }
++    if (p_sys->video.ambient_dovi && (!dovi || status != 0 || date != p_sys->video.dovi_pending_ts || hdrplus)) {
++        msg_Err(p_dec, "Dolby Vision RPU/image timestamp mismatch");
++        AbortDecoderLocked(p_sys);
++        goto error;
++    }
++    p_pic = NewPicture(p_dec, date);
+     if (p_pic == NULL)
+         goto error;
+ 
+@@ -879,6 +916,44 @@
+         goto error;
+     }
+ 
++    if (dovi && p_sys->video.ambient_dovi_profile == 7) {
++        if (!el || el->pts != date || !dovi->residual_present) {
++            msg_Err(p_dec, "FEL picture lacks exact matching enhancement layer");
++            AbortDecoderLocked(p_sys); goto error;
++        }
++        el->rpu = *dovi;
++        struct vlc_ancillary *anc = vlc_ancillary_Create(el, AMBIENT_FEL_ID);
++        if (!anc) { AbortDecoderLocked(p_sys); goto error; }
++        el = NULL; // now owned by the ancillary
++        int attached = picture_AttachAncillary(p_pic, anc);
++        vlc_ancillary_Release(anc);
++        if (attached != VLC_SUCCESS) { AbortDecoderLocked(p_sys); goto error; }
++        free(dovi); dovi = NULL;
++    }
++    // An EL snapshot must only be consumed by the profile-7 ancillary.
++    if (el) {
++        msg_Err(p_dec, "Unexpected enhancement layer for decoded picture");
++        AbortDecoderLocked(p_sys); goto error;
++    }
++    if (dovi) {
++        vlc_video_dovi_metadata_t *dst =
++            picture_AttachNewAncillary(p_pic, VLC_ANCILLARY_ID_DOVI, sizeof(*dst));
++        if (!dst) { AbortDecoderLocked(p_sys); goto error; }
++        ambient_dovi_map(dst, dovi);
++        free(dovi);
++        dovi = NULL;
++    }
++    if (hdrplus) {
++        const struct ambient_hdrplus *m = &p_sys->video.hdrplus;
++        vlc_video_hdr_dynamic_metadata_t *dst =
++            picture_AttachNewAncillary(p_pic, VLC_ANCILLARY_ID_HDR10PLUS, sizeof(*dst));
++        if (!dst) { AbortDecoderLocked(p_sys); goto error; }
++        struct ambient_hdrplus *full =
++            picture_AttachNewAncillary(p_pic, AMBIENT_HDRPLUS_FULL_ID, sizeof(*full));
++        if (!full) { AbortDecoderLocked(p_sys); goto error; }
++        *full = *m;
++        ambient_hdrplus_project_global(dst, m);
++    }
+     struct android_picture_ctx *apctx = malloc(sizeof(*apctx));
+     if (apctx == NULL)
+         goto error;
+@@ -899,22 +974,29 @@
+     return VLC_SUCCESS;
+ 
+ error:
++    free(el);
++    free(dovi);
+     if (p_pic != NULL)
+         picture_Release(p_pic);
+-    if (fence_fd > 0)
+-        close(fence_fd);
+-    avctx->air_api->AImage.deleteAsync(image, -1);
++    avctx->air_api->AImage.deleteAsync(image, fence_fd);
+     return VLC_EGENERIC;
+ }
+ 
++// The callback context is owned by the video context (and therefore lives
++// as long as the reader), not by the decoder that can already have closed.
++// Holding the gate across the callback makes detach a real quiescence point.
+ static void
+ AImageReader_OnImageAvailable(void *context, AImageReader *reader)
+ {
+-    decoder_t *p_dec = context;
++    android_video_context_t *avctx = context;
++    vlc_mutex_lock(&avctx->ambient_listener_lock);
++    decoder_t *p_dec = avctx->ambient_listener_dec;
++    if (!p_dec) {
++        vlc_mutex_unlock(&avctx->ambient_listener_lock);
++        return;
++    }
+     decoder_sys_t *p_sys = p_dec->p_sys;
+     assert(p_sys->video.use_air);
+-    android_video_context_t *avctx =
+-        vlc_video_context_GetPrivate(p_sys->video.ctx, VLC_VIDEO_CONTEXT_AWINDOW);
+     assert(avctx->air != NULL);
+     assert(reader == avctx->air); (void) reader;
+ 
+@@ -927,19 +1009,49 @@
+     {
+         msg_Warn(p_dec, "AImageReader_acquireNextImageAsync failed: %d",
+                     status);
++        vlc_mutex_unlock(&avctx->ambient_listener_lock);
+         return;
+     }
+     vlc_mutex_lock(&p_sys->lock);
++    // A callback can arrive after abort/flush. Never underflow the counter
++    // or feed a late image back into a retired decoder epoch.
++    if (p_sys->b_decoder_dead || (p_sys->video.ambient_ahb &&
++        (!p_sys->video.air_waiting_count || p_sys->b_aborted)))
++    {
++        if (p_sys->video.air_waiting_count)
++            p_sys->video.air_waiting_count--;
++        vlc_cond_broadcast(&p_sys->video.air_cond);
++        avctx->air_api->AImage.deleteAsync(image, fence_fd);
++        vlc_mutex_unlock(&p_sys->lock);
++        vlc_mutex_unlock(&avctx->ambient_listener_lock);
++        return;
++    }
+     assert(p_sys->video.air_waiting_count > 0);
+     p_sys->video.air_waiting_count--;
+     vlc_cond_broadcast(&p_sys->video.air_cond);
+-    if (p_sys->b_flush_out)
++    if (p_sys->b_flush_out) {
++        free(p_sys->video.dovi_pending);
++        p_sys->video.dovi_pending = NULL;
++        free(p_sys->video.fel_pending);
++        p_sys->video.fel_pending = NULL;
++        p_sys->video.hdrplus_pending = false;
+         avctx->air_api->AImage.deleteAsync(image, fence_fd);
++    }
+     else
+         QueueAImagePicture(p_dec, avctx, image, fence_fd);
+     vlc_mutex_unlock(&p_sys->lock);
++    vlc_mutex_unlock(&avctx->ambient_listener_lock);
+ }
+ 
++// Called without the decoder lock: callback lock ordering is gate -> decoder.
++static void DetachAImageListener(android_video_context_t *avctx)
++{
++    vlc_mutex_lock(&avctx->ambient_listener_lock);
++    avctx->ambient_listener_dec = NULL;
++    vlc_mutex_unlock(&avctx->ambient_listener_lock);
++    avctx->air_api->AImageReader.setImageListener(avctx->air, NULL);
++}
++
+ static int
+ CreateSurfaceFromAImageReader(decoder_t *p_dec, vlc_decoder_device *dec_dev,
+                               AWindowHandler *awh, bool need_gpu)
+@@ -954,9 +1066,10 @@
+         msg_Warn(p_dec, "Using Surface output for MediaTek Codec2 HEVC");
+         return VLC_EGENERIC;
+     }
+-    struct aimage_reader_api *air_api = AWindowHandler_getAImageReaderApi(awh);
++    struct aimage_reader_api *air_api = p_sys->video.ambient_ahb ?
++        AWindowHandler_getGpuAImageReaderApi(awh) : AWindowHandler_getAImageReaderApi(awh);
+     struct asurface_control_api *asc_api = AWindowHandler_getASurfaceControlApi(awh);
+-    if (air_api == NULL || asc_api == NULL)
++    if (air_api == NULL || (!p_sys->video.ambient_ahb && asc_api == NULL))
+         return VLC_EGENERIC;
+ 
+     int32_t width = 1, height = 1; /* Ignored by MediaCodec */
+@@ -967,14 +1080,41 @@
+     if (need_gpu)
+         usage |= AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
+ 
+-    AImageReader *reader;
+-    int32_t status = air_api->AImageReader.newWithUsage(width, height, format,
+-                                                        usage, max_images,
+-                                                        &reader);
++    AImageReader *reader = NULL;
++    int32_t status = AMEDIA_ERROR_UNSUPPORTED;
++    const video_format_t *f = &p_dec->fmt_out.video;
++    const bool hdr = f->transfer == TRANSFER_FUNC_SMPTE_ST2084 ||
++                     f->transfer == TRANSFER_FUNC_HLG;
++    const bool request_p010 = p_sys->video.ambient_ahb &&
++        (p_sys->video.ambient_dovi || (hdr && var_InheritBool(p_dec, "vk-ambient-raw-p010")));
++    if (request_p010 && air_api->AImageReader.newWithDataSpace &&
++        f->i_width && f->i_height && f->i_width <= INT32_MAX && f->i_height <= INT32_MAX) {
++        const int32_t standard = f->primaries == COLOR_PRIMARIES_BT2020 ?
++            ADATASPACE_STANDARD_BT2020 : ADATASPACE_STANDARD_UNSPECIFIED;
++        const int32_t transfer = f->transfer == TRANSFER_FUNC_HLG ?
++            ADATASPACE_TRANSFER_HLG : ADATASPACE_TRANSFER_ST2084;
++        const int32_t range = f->color_range == COLOR_RANGE_FULL ?
++            ADATASPACE_RANGE_FULL : ADATASPACE_RANGE_LIMITED;
++        status = air_api->AImageReader.newWithDataSpace(f->i_width, f->i_height,
++            usage, max_images, AHARDWAREBUFFER_FORMAT_YCbCr_P010,
++            standard | transfer | range, &reader);
++        if (status == AMEDIA_OK && reader)
++            msg_Info(p_dec, "Experimental explicit P010 AImageReader selected");
++    }
++    // Some vendor decoders only accept an implementation-defined surface.
++    // The PRIVATE fallback must still pass the actual native P010 format,
++    // component, precision and per-image dataspace checks at GPU import.
++    if (status != AMEDIA_OK || !reader) {
++        if (reader) air_api->AImageReader.delete(reader);
++        reader = NULL;
++        status = air_api->AImageReader.newWithUsage(width, height, format,
++                                                    usage, max_images, &reader);
++    }
+ 
+-    if (status != 0)
++    if (status != AMEDIA_OK || !reader)
+     {
+-        msg_Warn(p_dec, "AImageReader_newWithUsage failed: %d", status);
++        if (reader) air_api->AImageReader.delete(reader);
++        msg_Warn(p_dec, "AImageReader creation failed: %d", status);
+         return VLC_EGENERIC;
+     }
+ 
+@@ -988,13 +1128,6 @@
+         return VLC_EGENERIC;
+     }
+ 
+-    struct AImageReader_ImageListener listener = {
+-        .context = p_dec,
+-        .onImageAvailable = AImageReader_OnImageAvailable,
+-    };
+-
+-    air_api->AImageReader.setImageListener(reader, &listener);
+-
+     static const struct vlc_video_context_operations ops =
+     {
+         .destroy = CleanFromVideoContext,
+@@ -1013,7 +1146,9 @@
+         vlc_video_context_GetPrivate(p_sys->video.ctx, VLC_VIDEO_CONTEXT_AWINDOW);
+     avctx->dec_opaque = NULL;
+     avctx->air_api = air_api;
+-    avctx->asc_api = asc_api;
++    // The isolated Vulkan path never exposes this AImageReader as a
++    // SurfaceControl presentation route. Its callbacks own all AImages.
++    avctx->asc_api = p_sys->video.ambient_ahb ? NULL : asc_api;
+     avctx->air = reader;
+     avctx->render = NULL;
+     avctx->render_ts = NULL;
+@@ -1022,6 +1157,21 @@
+     p_sys->video.p_surface = window;
+     p_sys->video.use_air = true;
+     p_sys->video.air_waiting_count = 0;
++    vlc_mutex_init(&avctx->ambient_listener_lock);
++    avctx->ambient_listener_dec = p_dec;
++    struct AImageReader_ImageListener listener = {
++        .context = avctx,
++        .onImageAvailable = AImageReader_OnImageAvailable,
++    };
++    status = air_api->AImageReader.setImageListener(reader, &listener);
++    if (status != 0) {
++        DetachAImageListener(avctx);
++        vlc_video_context_Release(p_sys->video.ctx);
++        p_sys->video.ctx = NULL;
++        p_sys->video.p_surface = NULL;
++        p_sys->video.use_air = false;
++        return VLC_EGENERIC;
++    }
+     assert(window != NULL);
+     return VLC_SUCCESS;
+ }
+@@ -1123,10 +1273,20 @@
+         || (!p_sys->api.b_support_rotation && p_dec->fmt_out.video.orientation != ORIENT_NORMAL)
+         || !can_set_video_layout;
+ 
++    p_sys->video.ambient_ahb = var_InheritBool(p_dec, "vk-ambient-ahb");
++    p_sys->video.hdrplus_required = p_sys->video.ambient_ahb &&
++        var_InheritBool(p_dec, "vk-ambient-hdr10plus");
++    need_gpu_transform |= p_sys->video.ambient_ahb;
+     bool use_surfacetexture = need_gpu_transform && can_use_surfacetexture;
+ 
+     int ret = CreateSurfaceFromAImageReader(p_dec, dec_dev, awh,
+                                             need_gpu_transform);
++    if (ret != VLC_SUCCESS && p_sys->video.ambient_ahb)
++    {
++        // A legacy SurfaceTexture cannot be imported by this Vulkan path.
++        vlc_decoder_device_Release(dec_dev);
++        return ret;
++    }
+     if (ret == VLC_SUCCESS)
+     {
+         vlc_decoder_device_Release(dec_dev);
+@@ -1165,6 +1325,13 @@
+     int i_ret;
+     int i_profile = p_dec->fmt_in->i_profile;
+     const char *mime = NULL;
++    const bool dovi_ahb_requested = p_dec->fmt_in->i_cat == VIDEO_ES &&
++        var_InheritBool(p_dec, "vk-ambient-ahb") &&
++        var_InheritBool(p_dec, "vk-ambient-dovi-ahb") &&
++        var_InheritBool(p_dec, CFG_PREFIX "dr") &&
++        p_dec->fmt_in->i_codec == VLC_CODEC_HEVC &&
++        ambient_dovi_format(&p_dec->fmt_in->video) &&
++        (p_dec->fmt_in->video.dovi.profile != 7 || var_InheritBool(p_dec, "vk-ambient-dovi-fel"));
+ 
+     /* Video or Audio if "mediacodec-audio" bool is true */
+     if (p_dec->fmt_in->i_cat != VIDEO_ES && (p_dec->fmt_in->i_cat != AUDIO_ES
+@@ -1195,7 +1362,10 @@
+             /* Single-layer DV retains HEVC CSD/NAL handling, but must select
+              * the vendor DV decoder rather than the HEVC base-layer decoder.
+              * Android CodecProfileLevel uses one bit per Dolby Vision profile. */
+-            if (p_dec->fmt_in->video.dovi.rpu_present &&
++            if (dovi_ahb_requested) {
++                i_profile = 2; // HEVC Main10 base layer, not vendor DV RGB
++                msg_Info(p_dec, "Experimental Dolby Vision HEVC base-layer decoder requested");
++            } else if (p_dec->fmt_in->video.dovi.rpu_present &&
+                 p_dec->fmt_in->video.dovi.bl_present &&
+                 !p_dec->fmt_in->video.dovi.el_present &&
+                 (p_dec->fmt_in->video.dovi.profile == 5 ||
+@@ -1272,6 +1442,10 @@
+     if ((p_sys = calloc(1, sizeof(*p_sys))) == NULL)
+         return VLC_ENOMEM;
+ 
++    if (dovi_ahb_requested) {
++        p_sys->video.ambient_dovi = true;
++        p_sys->video.ambient_dovi_profile = p_dec->fmt_in->video.dovi.profile;
++    }
+     p_sys->api.p_obj = p_this;
+     p_sys->api.i_codec = p_dec->fmt_in->i_codec;
+     p_sys->api.i_cat = p_dec->fmt_in->i_cat;
+@@ -1316,6 +1490,7 @@
+ 
+     if (p_dec->fmt_in->i_cat == VIDEO_ES)
+     {
++        p_sys->cat = VIDEO_ES; // bailout must clean partial video setup
+         vlc_cond_init(&p_sys->video.air_cond);
+         p_sys->video.use_air = false;
+         p_sys->video.air_waiting_count = 0;
+@@ -1465,21 +1640,38 @@
+     {
+         p_sys->b_aborted = true;
+         vlc_cond_broadcast(&p_sys->cond);
+-        if (p_sys->cat == VIDEO_ES && p_sys->video.use_air)
+-            vlc_cond_signal(&p_sys->video.air_cond);
++        if (p_sys->cat == VIDEO_ES && p_sys->video.use_air) {
++            vlc_cond_broadcast(&p_sys->video.air_cond);
++            if (p_sys->video.ambient_ahb) vlc_cond_broadcast(&p_sys->dec_cond);
++        }
+     }
+ }
+ 
+ static void CleanDecoder(decoder_sys_t *p_sys)
+ {
++    // OpenDecoder bailout can also reach this function after reader setup.
++    if (p_sys->cat == VIDEO_ES && p_sys->video.use_air && p_sys->video.ctx) {
++        android_video_context_t *avctx =
++            vlc_video_context_GetPrivate(p_sys->video.ctx, VLC_VIDEO_CONTEXT_AWINDOW);
++        DetachAImageListener(avctx);
++    }
+     StopMediaCodec(p_sys);
+ 
+     CSDFree(p_sys);
+     p_sys->api.clean(&p_sys->api);
++    if (p_sys->cat == VIDEO_ES && p_sys->video.use_air && p_sys->video.ctx) {
++        vlc_video_context_Release(p_sys->video.ctx);
++        p_sys->video.ctx = NULL;
++    }
+ 
+     switch (p_sys->cat)
+     {
+         case VIDEO_ES:
++            ambient_rpu_pts_clear(&p_sys->video.dovi_pts, free);
++            free(p_sys->video.dovi_pending);
++            av_ambient_dovi_free(p_sys->video.dovi_parser);
++            free(p_sys->video.fel_pending);
++            av_ambient_fel_close(p_sys->video.fel);
+             if (p_sys->video.surfacetexture)
+                 vlc_asurfacetexture_Delete(p_sys->video.surfacetexture);
+ 
+@@ -1503,6 +1695,9 @@
+ 
+     vlc_mutex_lock(&p_sys->lock);
+     p_sys->b_decoder_dead = true;
++    // Wake output/flush waits before unregistering the AImage callback.
++    if (p_sys->cat == VIDEO_ES && p_sys->video.use_air)
++        AbortDecoderLocked(p_sys);
+     vlc_mutex_unlock(&p_sys->lock);
+ 
+     if (p_sys->cat == VIDEO_ES && p_sys->video.ctx)
+@@ -1519,8 +1714,9 @@
+         }
+         android_video_context_t *avctx =
+             vlc_video_context_GetPrivate(p_sys->video.ctx, VLC_VIDEO_CONTEXT_AWINDOW);
+-        avctx->air_api->AImageReader.setImageListener(avctx->air, NULL);
+-        vlc_video_context_Release(p_sys->video.ctx);
++        DetachAImageListener(avctx);
++        // Keep the video context alive through native output-thread join and
++        // codec stop; outstanding pictures may independently hold it longer.
+     }
+ 
+     vlc_mutex_lock(&p_sys->lock);
+@@ -1546,6 +1742,10 @@
+     if (p_out->type == MC_OUT_TYPE_BUF)
+     {
+         if (!p_sys->b_has_format) {
++            if (p_sys->video.ambient_dovi) {
++                free(ambient_rpu_pts_take(&p_sys->video.dovi_pts, p_out->buf.i_ts));
++                av_ambient_fel_discard(p_sys->video.fel, p_out->buf.i_ts);
++            }
+             msg_Warn(p_dec, "Buffers returned before output format is set, dropping frame");
+             timestamp_FifoGet(p_sys->video.timestamp_fifo); /* Remove timestamp */
+             return p_sys->api.release_out(&p_sys->api, p_out->buf.i_index, false);
+@@ -1553,6 +1753,10 @@
+ 
+         if (p_out->buf.i_ts <= p_sys->i_preroll_end)
+         {
++            if (p_sys->video.ambient_dovi) {
++                free(ambient_rpu_pts_take(&p_sys->video.dovi_pts, p_out->buf.i_ts));
++                av_ambient_fel_discard(p_sys->video.fel, p_out->buf.i_ts);
++            }
+             timestamp_FifoGet(p_sys->video.timestamp_fifo); /* Remove timestamp */
+             return p_sys->api.release_out(&p_sys->api, p_out->buf.i_index, false);
+         }
+@@ -1571,9 +1775,27 @@
+             {
+                 /* We need to wait for AImageReader. Otherwise, we might
+                  * overwrite a picture (even when using acquireNextImageAsync) */
++                const vlc_tick_t deadline = vlc_tick_now() + VLC_TICK_FROM_SEC(3);
+                 while (p_sys->video.air_waiting_count != 0
+                        && !p_sys->b_aborted && !p_sys->b_flush_out)
+-                    vlc_cond_wait(&p_sys->video.air_cond, &p_sys->lock);
++                {
++                    if (!p_sys->video.ambient_ahb)
++                        vlc_cond_wait(&p_sys->video.air_cond, &p_sys->lock);
++                    else if (vlc_cond_timedwait(&p_sys->video.air_cond, &p_sys->lock, deadline))
++                    {
++                        if (p_sys->video.air_waiting_count != 0 && !p_sys->b_flush_out)
++                        {
++                            msg_Err(p_dec, "Experimental AImageReader output timed out");
++                            AbortDecoderLocked(p_sys);
++                        }
++                        break;
++                    }
++                }
++                if (p_sys->video.ambient_ahb && p_sys->b_aborted)
++                {
++                    p_sys->api.release_out(&p_sys->api, p_out->buf.i_index, false);
++                    return VLC_EGENERIC;
++                }
+ 
+                 if (p_sys->b_flush_out)
+                 {
+@@ -1582,10 +1804,83 @@
+                     return 0;
+                 }
+ 
++                if (p_sys->video.ambient_dovi) {
++                    struct ambient_dovi_metadata *m =
++                        ambient_rpu_pts_take(&p_sys->video.dovi_pts, p_out->buf.i_ts);
++                    if (!m || p_sys->video.dovi_pending) {
++                        free(m);
++                        p_sys->api.release_out(&p_sys->api, p_out->buf.i_index, false);
++                        if (p_out->b_eos && !p_sys->video.dovi_pending) return 0;
++                        msg_Err(p_dec, "Dolby Vision output has no exact RPU timestamp");
++                        AbortDecoderLocked(p_sys);
++                        return VLC_EGENERIC;
++                    }
++                    if (p_sys->video.ambient_dovi_profile == 7) {
++                        // Hardware BL can finish before the software EL reorder queue.
++                        // Wait here (not in AImageReader callback), releasing decoder
++                        // lock so input can advance and signal the exact PTS.
++                        struct ambient_fel_picture *el = NULL;
++                        const vlc_tick_t el_deadline = vlc_tick_now() + VLC_TICK_FROM_SEC(3);
++                        while (!p_sys->b_aborted && !p_sys->b_flush_out && !p_sys->b_decoder_dead &&
++                               !(el = av_ambient_fel_take_rpu(p_sys->video.fel, p_out->buf.i_ts, m))) {
++                            if (!av_ambient_fel_may_receive(p_sys->video.fel) ||
++                                vlc_cond_timedwait(&p_sys->video.air_cond, &p_sys->lock, el_deadline))
++                                break;
++                        }
++                        if (!el || p_sys->video.fel_pending || p_sys->b_aborted ||
++                            p_sys->b_flush_out || p_sys->b_decoder_dead) {
++                            free(el); free(m);
++                            p_sys->api.release_out(&p_sys->api, p_out->buf.i_index, false);
++                            if (p_sys->b_flush_out || p_sys->b_decoder_dead) return 0;
++                            msg_Err(p_dec, "FEL exact-PTS wait failed");
++                            AbortDecoderLocked(p_sys); return VLC_EGENERIC;
++                        }
++                        p_sys->video.fel_pending = el;
++                    }
++                    p_sys->video.dovi_pending = m;
++                    p_sys->video.dovi_pending_ts = p_out->buf.i_ts;
++                }
++                if (p_sys->video.ambient_ahb) {
++                    const enum ambient_hdrplus_status status = p_out->buf.hdrplus_status;
++                    if (status == AMBIENT_HDRPLUS_UNSUPPORTED ||
++                        (p_sys->video.hdrplus_required && status != AMBIENT_HDRPLUS_VALID)) {
++                        free(p_sys->video.dovi_pending);
++                        p_sys->video.dovi_pending = NULL;
++                        free(p_sys->video.fel_pending);
++                        p_sys->video.fel_pending = NULL;
++                        p_sys->video.hdrplus_pending = false;
++                        p_sys->api.release_out(&p_sys->api, p_out->buf.i_index, false);
++                        if (!p_out->b_eos) {
++                            msg_Err(p_dec, "Experimental HDR10+ metadata unavailable/unsupported");
++                            AbortDecoderLocked(p_sys);
++                            return VLC_EGENERIC;
++                        }
++                        return 0;
++                    }
++                    p_sys->video.hdrplus_pending = status == AMBIENT_HDRPLUS_VALID;
++                    if (p_sys->video.hdrplus_pending) {
++                        p_sys->video.hdrplus = p_out->buf.hdrplus;
++                        if (p_sys->video.hdrplus.global_projection && !p_sys->video.hdrplus_projection_logged) {
++                            msg_Info(p_dec, "HDR10+ local metadata parsed; spatial mapping depends on renderer support");
++                            p_sys->video.hdrplus_projection_logged = true;
++                        }
++                        p_sys->video.hdrplus_ts = p_out->buf.i_ts;
++                    }
++                }
+                 p_sys->video.air_waiting_count++;
+ 
+-                p_sys->api.release_out(&p_sys->api, p_out->buf.i_index,
+-                                       !p_sys->b_aborted);
++                int release = p_sys->api.release_out(&p_sys->api, p_out->buf.i_index,
++                                                     !p_sys->b_aborted);
++                if (release != 0 && p_sys->video.ambient_ahb) {
++                    p_sys->video.air_waiting_count--;
++                    free(p_sys->video.dovi_pending);
++                    p_sys->video.dovi_pending = NULL;
++                    free(p_sys->video.fel_pending);
++                    p_sys->video.fel_pending = NULL;
++                    p_sys->video.hdrplus_pending = false;
++                    AbortDecoderLocked(p_sys);
++                    return VLC_EGENERIC;
++                }
+                 /* picture will be wrapped from AImageReader callback */
+                 assert(*pp_out_pic  == NULL);
+             }
+@@ -1682,8 +1977,16 @@
+             p_dec->fmt_out.video.i_width = i_width;
+             p_dec->fmt_out.video.i_visible_height =
+             p_dec->fmt_out.video.i_height = i_height;
+             p_dec->fmt_out.video.i_x_offset = valid_crop ? p_out->conf.video.crop_left : 0;
+             p_dec->fmt_out.video.i_y_offset = valid_crop ? p_out->conf.video.crop_top : 0;
++            // The upstream opaque path collapses coded size to visible size.
++            // Retain the coded geometry for a validated nonzero FEL crop;
++            // otherwise the declared rectangle extends beyond its frame.
++            if (p_sys->video.ambient_dovi && p_sys->video.ambient_dovi_profile==7 &&
++                valid_crop) {
++                p_dec->fmt_out.video.i_width=p_out->conf.video.width;
++                p_dec->fmt_out.video.i_height=p_out->conf.video.height;
++            }
+         }
+         else
+         {
+@@ -1944,9 +2247,12 @@
+ 
+         /* Wait for an output buffer. This function returns when a new output
+          * is available or if output is flushed. */
+-        i_index = p_sys->api.dequeue_out(&p_sys->api, -1);
++        const bool ambient_ahb = p_sys->cat == VIDEO_ES && p_sys->video.ambient_ahb;
++        i_index = p_sys->api.dequeue_out(&p_sys->api, ambient_ahb ? VLC_TICK_FROM_MS(100) : -1);
+ 
+         vlc_mutex_lock(&p_sys->lock);
++        if (ambient_ahb && i_index == MC_API_INFO_TRYAGAIN)
++            continue; // idle decoder is normal; check abort/flush again
+ 
+         /* Ignore dequeue_out errors caused by flush, or late picture being
+          * dequeued after close. */
+@@ -1973,7 +2279,9 @@
+         if (i_index >= 0 || i_index == MC_API_INFO_OUTPUT_FORMAT_CHANGED
+          || i_index == MC_API_INFO_OUTPUT_BUFFERS_CHANGED)
+         {
+-            struct mc_api_out out;
++            // JNI does not fill the optional NDK HDR10+ fields. Never read
++            // indeterminate metadata from a reused output stack object.
++            struct mc_api_out out = {0};
+             int i_ret = p_sys->api.get_out(&p_sys->api, i_index, &out);
+ 
+             if (i_ret == 1)
+@@ -2008,6 +2316,13 @@
+     decoder_sys_t *p_sys = p_dec->p_sys;
+     block_t *p_block = NULL;
++    if (b_drain && p_sys->cat == VIDEO_ES && p_sys->video.fel) {
++        if (av_ambient_fel_drain(p_sys->video.fel) < 0) {
++            AbortDecoderLocked(p_sys); return VLC_EGENERIC;
++        }
++        vlc_cond_broadcast(&p_sys->video.air_cond);
++    }
++
+ 
+     assert(p_sys->api.b_started);
+ 
+     if ((p_sys->api.i_quirks & MC_API_QUIRKS_NEED_CSD) && !p_sys->i_csd_count
+@@ -2042,8 +2357,84 @@
+     while (b_drain || (p_block = GetNextBlock(p_sys, p_in_block)))
+     {
++        // Feed the independent EL decoder before waiting for a hardware
++        // input slot. A BL output waiting for reordered EL may otherwise
++        // prevent MediaCodec from returning a free input slot.
++        // Only this one input AU can lead the hardware decoder.
++        if (p_block && !(p_block->i_flags & BLOCK_FLAG_CSD) &&
++            p_sys->cat == VIDEO_ES && p_sys->video.ambient_dovi) {
++            const vlc_tick_t i_ts = p_block->i_pts > 0 ? p_block->i_pts : p_block->i_dts;
++            struct ambient_rpu_au au = {0};
++            const unsigned length_size=p_sys->video.hh.i_output_nal_length_size;
++            enum ambient_rpu_status found = ambient_rpu_find(p_block->p_buffer,
++                p_block->i_buffer, length_size, &au);
++            const bool fel = p_sys->video.ambient_dovi_profile == 7;
++            if (found == AMBIENT_RPU_INVALID || (!fel && au.has_nonbase_layer) ||
++                (fel && au.has_vcl && !au.has_nonbase_layer) ||
++                (au.has_vcl && found != AMBIENT_RPU_FOUND) ||
++                (!au.has_vcl && found == AMBIENT_RPU_FOUND)) {
++                msg_Err(p_dec, "Unsupported Dolby Vision access unit");
++                goto error;
++            }
++            if (au.has_vcl && p_block->i_pts <= 0) goto error;
++            if (fel && au.has_nonbase_layer) {
++                const uint8_t *input=p_block->p_buffer;
++                size_t input_size=p_block->i_buffer;
++                uint8_t *annexb=NULL;
++                // FFmpeg expects Annex B; keep the vendor's original framing.
++                if (length_size) {
++                    if (!ambient_fel_to_annexb(input,input_size,length_size,NULL,0,&input_size))
++                        goto error;
++                    annexb=malloc(input_size);
++                    if (!annexb || !ambient_fel_to_annexb(input,p_block->i_buffer,length_size,
++                            annexb,input_size,&input_size)) { free(annexb); goto error; }
++                    input=annexb;
++                }
++                if (!p_sys->video.fel) p_sys->video.fel = av_ambient_fel_open();
++                bool submitted=p_sys->video.fel && av_ambient_fel_submit(p_sys->video.fel,
++                    input,input_size,i_ts,p_block->i_dts)==0;
++                free(annexb);
++                if (!submitted) {
++                    msg_Err(p_dec, "FEL enhancement decode failed"); goto error;
++                }
++                vlc_cond_broadcast(&p_sys->video.air_cond);
++            }
++            if (found == AMBIENT_RPU_FOUND) {
++                if (!p_sys->video.dovi_parser)
++                    p_sys->video.dovi_parser = av_ambient_dovi_alloc(p_sys->video.ambient_dovi_profile);
++                uint8_t *rbsp = malloc(au.payload_size);
++                struct ambient_dovi_metadata *m = malloc(sizeof(*m));
++                size_t n = 0;
++                bool ok = rbsp && m && p_sys->video.dovi_parser &&
++                    ambient_rpu_unescape(p_block->p_buffer + au.payload_start,
++                        au.payload_size, rbsp, au.payload_size, &n) &&
++                    av_ambient_dovi_parse(p_sys->video.dovi_parser, rbsp, n, m) == 0 &&
++                    (!!m->full_range == (p_sys->video.ambient_dovi_profile == 5)) &&
++                    ambient_rpu_pts_insert(&p_sys->video.dovi_pts, i_ts, m);
++                free(rbsp);
++                if (!ok) {
++                    free(m);
++                    msg_Err(p_dec, "Invalid or unsupported Dolby Vision RPU/PTS");
++                    goto error;
++                }
++                // Prevent vendor reshape before our P010 sampling.
++                memmove(p_block->p_buffer + au.nal_start,
++                        p_block->p_buffer + au.nal_end,
++                        p_block->i_buffer - au.nal_end);
++                p_block->i_buffer -= au.nal_end - au.nal_start;
++            }
++            if (fel && au.has_nonbase_layer && !ambient_fel_strip_el_framed(p_block->p_buffer, &p_block->i_buffer,length_size))
++                goto error;
++        }
+         vlc_mutex_unlock(&p_sys->lock);
+-        int i_index = p_sys->api.dequeue_in(&p_sys->api, -1);
++        const bool ambient_ahb = p_sys->cat == VIDEO_ES && p_sys->video.ambient_ahb;
++        int i_index = p_sys->api.dequeue_in(&p_sys->api, ambient_ahb ? VLC_TICK_FROM_SEC(3) : -1);
+         vlc_mutex_lock(&p_sys->lock);
++        if (ambient_ahb && i_index == MC_API_INFO_TRYAGAIN)
++        {
++            msg_Err(p_dec, "Experimental MediaCodec input timed out");
++            AbortDecoderLocked(p_sys);
++            return VLC_EGENERIC;
++        }
+ 
+         if (p_sys->b_aborted)
+             return VLC_EGENERIC;
+@@ -2174,6 +2565,23 @@
+         goto reload;
+     }
+ 
++    // Detect HEVC Dolby Vision even when the demuxer's format flags are
++    // absent. The RGB AHB route cannot carry an RPU. Request a decoder reload
++    // before modifying the input so avcodec receives the original access unit.
++    if (p_sys->cat == VIDEO_ES && p_dec->fmt_in->i_codec == VLC_CODEC_HEVC &&
++        p_sys->video.ambient_ahb && !p_sys->video.ambient_dovi) {
++        struct ambient_rpu_au rpu;
++        enum ambient_rpu_status status = ambient_rpu_find(p_in_block->p_buffer,
++            p_in_block->i_buffer, p_sys->video.hh.i_input_nal_length_size, &rpu);
++        if (status == AMBIENT_RPU_FOUND) {
++            msg_Warn(p_dec, "In-band Dolby Vision RPU: reload with RPU-aware decoder");
++            var_Create(p_dec, "avcodec-hw", VLC_VAR_STRING);
++            var_SetString(p_dec, "avcodec-hw", "none");
++            AbortDecoderLocked(p_sys);
++            goto reload;
++        }
++    }
++
+     /* Parse input block */
+     if ((i_ret = p_sys->pf_on_new_block(p_dec, &p_in_block)) != 1)
+     {
+@@ -2345,6 +2753,14 @@
+ static void Video_OnFlush(decoder_sys_t *p_sys)
+ {
+     timestamp_FifoEmpty(p_sys->video.timestamp_fifo);
++    ambient_rpu_pts_clear(&p_sys->video.dovi_pts, free);
++    free(p_sys->video.dovi_pending);
++    p_sys->video.dovi_pending = NULL;
++    av_ambient_dovi_flush(p_sys->video.dovi_parser);
++    av_ambient_fel_flush(p_sys->video.fel);
++    free(p_sys->video.fel_pending);
++    p_sys->video.fel_pending = NULL;
++    vlc_cond_broadcast(&p_sys->video.air_cond);
+     /* Invalidate all pictures that are currently in flight
+      * since flushing make all previous indices returned by
+      * MediaCodec invalid. */
+@@ -2352,10 +2768,21 @@
+ 
+     if (p_sys->video.use_air)
+     {
++        p_sys->video.hdrplus_pending = false;
+         /* Drain AImageReader callbacks before AMediaCodec_flush() invalidates
+          * output buffer indices, or air_waiting_count may stay stuck. */
++        const vlc_tick_t deadline = vlc_tick_now() + VLC_TICK_FROM_SEC(3);
+         while (p_sys->video.air_waiting_count != 0 && !p_sys->b_aborted)
+-            vlc_cond_wait(&p_sys->video.air_cond, &p_sys->lock);
++        {
++            if (!p_sys->video.ambient_ahb)
++                vlc_cond_wait(&p_sys->video.air_cond, &p_sys->lock);
++            else if (vlc_cond_timedwait(&p_sys->video.air_cond, &p_sys->lock, deadline))
++            {
++                if (p_sys->video.air_waiting_count != 0)
++                    AbortDecoderLocked(p_sys);
++                break;
++            }
++        }
+     }
+ }
+ 
+diff --git a/modules/codec/omxil/mediacodec.h b/modules/codec/omxil/mediacodec.h
+--- a/modules/codec/omxil/mediacodec.h
++++ b/modules/codec/omxil/mediacodec.h
+@@ -27,6 +27,7 @@
+ typedef struct mc_api mc_api;
+ typedef struct mc_api_sys mc_api_sys;
+ typedef struct mc_api_out mc_api_out;
++#include "hdr10plus_payload.h"
+ 
+ typedef int (*pf_MediaCodecApi_init)(mc_api*);
+ 
+@@ -106,6 +107,8 @@
+             vlc_tick_t i_ts;
+             const uint8_t *p_ptr;
+             size_t i_size;
++            enum ambient_hdrplus_status hdrplus_status;
++            struct ambient_hdrplus hdrplus;
+         } buf;
+         union
+         {
+diff --git a/modules/codec/omxil/mediacodec_ndk.c b/modules/codec/omxil/mediacodec_ndk.c
+--- a/modules/codec/omxil/mediacodec_ndk.c
++++ b/modules/codec/omxil/mediacodec_ndk.c
+@@ -31,6 +31,7 @@
+ #include <assert.h>
+ 
+ #include <vlc_common.h>
++#include <vlc_variables.h>
+ 
+ #include <media/NdkMediaCodec.h>
+ #include <OMX_Core.h>
+@@ -119,6 +120,7 @@
+     AMediaCodec* p_codec;
+     AMediaFormat* p_format;
+     AMediaCodecBufferInfo info;
++    bool ambient_pq;
+ };
+ 
+ /*****************************************************************************
+@@ -187,6 +189,10 @@
+     }
+ 
+     api->b_direct_rendering = !!p_anw;
++    p_sys->ambient_pq = api->i_cat == VIDEO_ES && api->b_direct_rendering &&
++        var_InheritBool(api->p_obj, "vk-ambient-ahb") &&
++        (p_args->video.color.transfer == MC_COLOR_TRANSFER_ST2084 ||
++         var_InheritBool(api->p_obj, "vk-ambient-hdr10plus"));
+ 
+     return 0;
+ }
+@@ -354,6 +360,18 @@
+ 
+         p_out->buf.i_ts = p_sys->info.presentationTimeUs;
+         p_out->b_eos = p_sys->info.flags & AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM;
++        p_out->buf.hdrplus_status = AMBIENT_HDRPLUS_NONE;
++        if (p_sys->ambient_pq) {
++            AMediaFormat *format = AMediaCodec_getBufferFormat(p_sys->p_codec, i_index);
++            if (format) {
++                void *payload = NULL;
++                size_t size = 0;
++                if (AMediaFormat_getBuffer(format, "hdr10-plus-info", &payload, &size))
++                    p_out->buf.hdrplus_status = ambient_hdrplus_parse(payload, size, &p_out->buf.hdrplus) ?
++                        AMBIENT_HDRPLUS_VALID : AMBIENT_HDRPLUS_UNSUPPORTED;
++                AMediaFormat_delete(format);
++            }
++        }
+ 
+         if (api->b_direct_rendering)
+         {

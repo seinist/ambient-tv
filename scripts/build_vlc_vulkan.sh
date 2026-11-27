@@ -2,13 +2,36 @@
 # Vulkan-enabled VLC 4 / JNI build. Isolated from the stable Maven LibVLC artifact.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+EXPERIMENTAL_AHB="${VLC_EXPERIMENTAL_AHB:-0}"
+[[ "$EXPERIMENTAL_AHB" == 0 || "$EXPERIMENTAL_AHB" == 1 ]] || { echo "Invalid VLC_EXPERIMENTAL_AHB" >&2; exit 1; }
 # Include pins, build flags and both patch sets in the per-ABI cache identity.
 if [[ "${1:-}" == "--hash" ]]; then
-    (cd "$ROOT"; sha256sum gradle/external-versions.properties scripts/build_vlc_vulkan.sh native/vlc-aar/patches/*.patch native/vlc-aar/jni-patches/*.patch) | sha256sum | cut -d ' ' -f1
+    (cd "$ROOT"; sha256sum gradle/external-versions.properties scripts/build_vlc_vulkan.sh native/vlc-aar/patches/*.patch native/vlc-aar/jni-patches/*.patch
+        if [[ "$EXPERIMENTAL_AHB" == 1 ]]; then
+            sha256sum scripts/prepare_vlc_ahb_experimental.sh
+            find native/vlc-aar/experimental -type f -print0 | sort -z | xargs -0 sha256sum
+        fi
+    ) | sha256sum | cut -d ' ' -f1
     exit 0
 fi
 SOURCE_HASH="$(bash "$0" --hash)"
-JNI="${VLC_BUILD_ROOT:-$ROOT/.native/libvlcjni}"
+# A native-link receipt is opt-in and is never an AAR success marker.
+if [[ -n "${VLC_NATIVE_LINK_RECEIPT:-}" ]]; then
+    [[ "$EXPERIMENTAL_AHB" == 1 ]] || { echo "Native-link receipt requires experimental build" >&2; exit 1; }
+    rm -f -- "$VLC_NATIVE_LINK_RECEIPT"
+fi
+if [[ "$EXPERIMENTAL_AHB" == 1 ]]; then
+    JNI="${VLC_BUILD_ROOT:-$ROOT/.native/libvlcjni-ahb-experimental}"
+    # Never reuse a normal build tree or write an experimental AAR into app/libs.
+    if [[ -d "$JNI/vlc/.git" && ! -f "$JNI/vlc/.ambient-ahb-experimental" ]]; then
+        echo "Refusing to use unmarked VLC tree for AHB experiment" >&2
+        exit 1
+    fi
+else
+    JNI="${VLC_BUILD_ROOT:-$ROOT/.native/libvlcjni}"
+    [[ ! -f "$JNI/vlc/.ambient-ahb-experimental" ]] ||
+        { echo "Refusing experimental tree for production VLC" >&2; exit 1; }
+fi
 export ANDROID_NDK="${ANDROID_NDK_HOME:-$HOME/Android/Sdk/ndk/30.0.16248370}"
 export MAKEFLAGS="-j${NATIVE_JOBS:-8}"
 export PKG_CONFIG_IGNORE_CONFLICTS=1
@@ -21,6 +44,7 @@ fi
 if [[ ! -d "$JNI/vlc/.git" ]]; then
     git clone --no-checkout https://code.videolan.org/videolan/vlc.git "$JNI/vlc"
     git -C "$JNI/vlc" checkout --detach "$VLC_REF"
+    if [[ "$EXPERIMENTAL_AHB" == 1 ]]; then touch "$JNI/vlc/.ambient-ahb-experimental"; fi
 fi
 [[ "$(git -C "$JNI" rev-parse HEAD)" == "$JNI_REF" ]] || { echo "Expected libvlcjni $JNI_REF" >&2; exit 1; }
 [[ "$(git -C "$JNI/vlc" rev-parse HEAD)" == "$VLC_REF" ]] || { echo "Expected VLC $VLC_REF" >&2; exit 1; }
@@ -74,6 +98,9 @@ apply_vlc_patch() {
 for patch in "$ROOT"/native/vlc-aar/patches/*.patch; do
     apply_vlc_patch "$patch"
 done
+if [[ "$EXPERIMENTAL_AHB" == 1 ]]; then
+    bash "$ROOT/scripts/prepare_vlc_ahb_experimental.sh" "$JNI/vlc"
+fi
 # Use the same reviewed n9.0.2 commit as MPV. The patch selects VLC's native
 # Git archive + githash verification path so the source is commit-verified.
 ffmpeg_commit="$(sed -n 's/^FFMPEG_COMMIT=//p' "$ROOT/gradle/external-versions.properties")"
@@ -116,13 +143,62 @@ if ! command -v autopoint >/dev/null; then
 fi
 for abi in ${VLC_VULKAN_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
     env -u DEBUG "$JNI/buildsystem/compile-libvlc.sh" -a "$abi" --release
-    mkdir -p "$ROOT/app/libs"
-    bash "$ROOT/scripts/prepare_svp_sources.sh" --hash vlc > "$ROOT/app/libs/.svp-vlc-$abi"
-    touch "$ROOT/app/libs/.projectm-pcm-vlc-$abi"
-    printf '%s\n' "$SOURCE_HASH" > "$ROOT/app/libs/.vlc-source-$abi"
+    if [[ "$EXPERIMENTAL_AHB" == 0 ]]; then
+        mkdir -p "$ROOT/app/libs"
+        bash "$ROOT/scripts/prepare_svp_sources.sh" --hash vlc > "$ROOT/app/libs/.svp-vlc-$abi"
+        touch "$ROOT/app/libs/.projectm-pcm-vlc-$abi"
+        printf '%s\n' "$SOURCE_HASH" > "$ROOT/app/libs/.vlc-source-$abi"
+    fi
 done
+# Record native linkage only after every requested ABI has succeeded.
+if [[ -n "${VLC_NATIVE_LINK_RECEIPT:-}" ]]; then
+    receipt_tmp="$(mktemp)"
+    {
+        printf 'source_hash=%s\n' "$SOURCE_HASH"
+        printf 'ambient_head=%s\n' "$(git -C "$ROOT" rev-parse HEAD)"
+        printf 'jni_ref=%s\nvlc_ref=%s\n' "$JNI_REF" "$VLC_REF"
+        for abi in ${VLC_VULKAN_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
+            (
+                cd "$JNI/libvlc/jni/libs/$abi"
+                test -s libvlc.so && test -s libvlcjni.so || exit 1
+                printf 'abi=%s\n' "$abi"
+                sha256sum libvlc.so libvlcjni.so
+            ) || { rm -f "$receipt_tmp"; exit 1; }
+        done
+    } > "$receipt_tmp"
+    mkdir -p "$(dirname "$VLC_NATIVE_LINK_RECEIPT")"
+    mv "$receipt_tmp" "$VLC_NATIVE_LINK_RECEIPT"
+fi
 # Build the Java wrapper from this exact JNI revision, never mix VLC 3 Java with VLC 4 JNI.
-env -u ANDROID_SDK_ROOT ANDROID_HOME="${ANDROID_NDK%/ndk/*}" "$ROOT/gradlew" -p "$ROOT/native/vlc-aar" assembleRelease -PVLC_SOURCE="$JNI" --console=plain
-mkdir -p "$ROOT/app/libs"
-cp "$ROOT/native/vlc-aar/build/outputs/aar/libvlc-vulkan-release.aar" "$ROOT/app/libs/libvlc-vulkan.aar"
-echo "Installed Vulkan-enabled LibVLC AAR (Java + JNI from $JNI_REF, VLC $VLC_REF)"
+# A transient repository rate limit must not discard a completed native build.
+# Retry only explicit HTTP 429/503 responses, never compiler/configuration failures.
+package_log="$(mktemp)"
+package_status=0
+for attempt in 1 2 3 4; do
+    if env -u ANDROID_SDK_ROOT ANDROID_HOME="${ANDROID_NDK%/ndk/*}" "$ROOT/gradlew" -p "$ROOT/native/vlc-aar" assembleRelease -PVLC_SOURCE="$JNI" --console=plain 2>&1 | tee "$package_log"; then
+        package_status=0
+        break
+    else
+        package_status=${PIPESTATUS[0]}
+        [[ "$package_status" != 0 ]] || package_status=1
+    fi
+    if [[ "$attempt" == 4 ]] || ! grep -Eq 'Received status code (429|503)( |:|$)' "$package_log"; then
+        break
+    fi
+    delay=$((attempt * 30))
+    echo "Temporary Maven rate limit/service failure; retrying AAR packaging in ${delay}s (attempt $((attempt+1))/4)" >&2
+    sleep "$delay"
+done
+rm -f "$package_log"
+if [[ "$package_status" != 0 ]]; then
+    exit "$package_status"
+fi
+if [[ "$EXPERIMENTAL_AHB" == 1 ]]; then
+    mkdir -p "$ROOT/native/vlc-aar/build/experimental"
+    cp "$ROOT/native/vlc-aar/build/outputs/aar/libvlc-vulkan-release.aar" "$ROOT/native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar"
+    echo "Built isolated experimental AHB AAR; app/libs unchanged"
+else
+    mkdir -p "$ROOT/app/libs"
+    cp "$ROOT/native/vlc-aar/build/outputs/aar/libvlc-vulkan-release.aar" "$ROOT/app/libs/libvlc-vulkan.aar"
+    echo "Installed Vulkan-enabled LibVLC AAR (Java + JNI from $JNI_REF, VLC $VLC_REF)"
+fi

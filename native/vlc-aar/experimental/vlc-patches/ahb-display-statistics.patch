@@ -1,0 +1,35 @@
+diff --git a/src/video_output/video_output.c b/src/video_output/video_output.c
+--- a/src/video_output/video_output.c
++++ b/src/video_output/video_output.c
+@@ -1531,8 +1531,15 @@
+         system_now = vlc_tick_now();
+ 
+     /* Display the direct buffer returned by vout_RenderPicture */
+-    vout_display_Display(vd, todisplay);
+-    vlc_clock_Lock(sys->clock);
++    vout_display_Display(vd, todisplay);
++#ifdef __ANDROID__
++    // Only the experimental libplacebo display publishes this variable.
++    // Read under display_lock, before the display may be replaced.
++    const bool ambient_ahb_dropped =
++        var_Type(vd, "ambient-ahb-dropped") != 0 &&
++        var_GetBool(vd, "ambient-ahb-dropped");
++#endif
++    vlc_clock_Lock(sys->clock);
+     vlc_tick_t drift = vlc_clock_UpdateVideo(sys->clock,
+                                              system_now,
+                                              pts, sys->rate,
+@@ -1546,7 +1553,12 @@
+     if (subpic)
+         vlc_render_subpicture_Delete(subpic);
+ 
+-    vout_statistic_AddDisplayed(&sys->statistic, 1);
++#ifdef __ANDROID__
++    if (ambient_ahb_dropped)
++        vout_statistic_AddLost(&sys->statistic, 1);
++    else
++#endif
++        vout_statistic_AddDisplayed(&sys->statistic, 1);
+ 
+     if (tracer != NULL && system_pts != VLC_TICK_MAX)
+         vlc_tracer_TraceWithTs(tracer, system_pts,

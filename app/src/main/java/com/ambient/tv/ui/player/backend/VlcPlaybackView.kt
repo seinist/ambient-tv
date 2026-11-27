@@ -68,11 +68,14 @@ internal class VlcFrameDropSampleState {
         private set
     var buffering: Boolean = false
         private set
+    var bufferProgress: Int = 0
+        private set
 
     fun discontinuity() { generation++ }
 
     fun prepare() {
         buffering = false
+        bufferProgress = 0
         discontinuity()
     }
 
@@ -80,6 +83,7 @@ internal class VlcFrameDropSampleState {
         when (type) {
             MediaPlayer.Event.Buffering -> {
                 if (!bufferPercent.isFinite() || bufferPercent !in 0f..100f) return
+                bufferProgress = (bufferPercent / 5f).toInt().coerceIn(0, 20)
                 val active = bufferPercent < 100f
                 if (active != buffering) {
                     buffering = active
@@ -92,6 +96,25 @@ internal class VlcFrameDropSampleState {
         }
     }
 }
+
+/** Shared target query for the experimental HDR10+ renderer and output selector.
+ * Display capability alone is not proof of actual swapchain presentation. */
+@Suppress("DEPRECATION")
+internal fun vlcHdrPlusDisplayTarget(context: Context, source: HdrStandard?): VlcHdrPlusTarget? = runCatching {
+    if (!com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT ||
+        !com.ambient.tv.BuildConfig.VLC_HDR10PLUS_SPATIAL_EXPERIMENT ||
+        source != HdrStandard.HDR10_PLUS || android.os.Build.VERSION.SDK_INT < 34)
+        return@runCatching null
+    val dm = context.getSystemService(android.hardware.display.DisplayManager::class.java)
+        ?: return@runCatching null
+    val display = dm.getDisplay(android.view.Display.DEFAULT_DISPLAY) ?: return@runCatching null
+    val caps = display.hdrCapabilities ?: return@runCatching null
+    val types = HdrSupport.enabledHdrTypes(display)
+    vlcHdrPlusTarget(true, true, true, android.os.Build.VERSION.SDK_INT,
+        android.view.Display.HdrCapabilities.HDR_TYPE_HDR10 in types,
+        android.view.Display.HdrCapabilities.HDR_TYPE_HLG in types,
+        caps.desiredMinLuminance, caps.desiredMaxLuminance)
+}.getOrNull()
 
 class VlcPlaybackController(
     private val context: Context,
@@ -108,7 +131,7 @@ class VlcPlaybackController(
     videoOutputMode: String = "auto",
     /** Separate audio stream played alongside [url] (YouTube's video-only + audio-only files). */
     private val audioSlaveUrl: String? = null,
-    private val nativeHdrPreferred: Boolean = false,
+    private var nativeHdrPreferred: Boolean = false,
     private val liveStream: Boolean = false,
     val sourceHdrStandard: HdrStandard? = null,
     val audioOnly: Boolean = false,
@@ -121,14 +144,38 @@ class VlcPlaybackController(
     // HDR on an SDR display still needs the decoder/vout's tone mapping. CPU picture
     // filters must not strip its precision or feed it through SDR-to-HDR a second time.
     private val preserveHdrSource = nativeHdrPreferred || sourceHdrStandard != null
-    private val toneMappingRequired = sourceHdrStandard != null && !nativeHdrPreferred
+    private val toneMappingRequired: Boolean get() = sourceHdrStandard != null && !nativeHdrPreferred
+    private val doviRpuDecoderRequired: Boolean get() = vlcDoviRpuDecoderRequired(
+        com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT, sourceHdrStandard == HdrStandard.DOLBY_VISION,
+        nativeHdrPreferred, audioOnly, hardwareRoute = doviAhbActive,
+    )
     override val usesRendererScaling: Boolean get() = true
     val audioSession = com.ambient.tv.ui.player.AudioSession(videoImagePreferences(context), "vlc", initialAudioPassthrough, audioOnly = audioOnly)
     val bitstreamPermitted: Boolean get() = audioSession.bitstreamPermitted
     private val nightProcessing = VlcNightProcessing(context)
+    // Only an explicitly requested Vulkan renderer in the experimental build
+    // may override native HDR preference. Auto and production stay unchanged.
+    private val hdrPlusTarget = if (!audioOnly && videoOutputMode == "vulkan" &&
+        sourceHdrStandard == HdrStandard.HDR10_PLUS &&
+        com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT &&
+        com.ambient.tv.BuildConfig.VLC_HDR10PLUS_SPATIAL_EXPERIMENT &&
+        vlcOptionsForNativeHdr(effectiveVlcImageOptions(initialImageOptions,
+            reducedVideoEffects(context), vlcSvpAllowed(context)), nativeHdrPreferred,
+            sourceHdrStandard).let { !it.softwareProcessing && it.svpMode == "off" })
+        vlcHdrPlusDisplayTarget(context, sourceHdrStandard) else null
+
+
+    private var lastHdrTargetCheckMs = Long.MIN_VALUE
+    private fun hdrPlusDisplayChanged(): Boolean {
+        val expected = hdrPlusTarget ?: return false
+        val id = attachedView?.display?.displayId ?: return false
+        return vlcHdrPlusTargetChanged(expected, id, android.view.Display.DEFAULT_DISPLAY,
+            if (id == android.view.Display.DEFAULT_DISPLAY) vlcHdrPlusDisplayTarget(context, sourceHdrStandard) else null)
+    }
+
     private var vulkanOutput = !audioOnly && useVlcVulkan(videoOutputMode, VideoAccelerationRuntime.current(context),
         gpuProcessing = toneMappingRequired || initialImageOptions.softwareProcessing && !reducedVideoEffects(context),
-        nativeHdrPreferred = nativeHdrPreferred)
+        nativeHdrPreferred = nativeHdrPreferred && hdrPlusTarget == null)
     /** Live picture path. Software processing can still run swscale on this surface. */
     var usesAndroidSurfaceOutput by mutableStateOf(!vulkanOutput)
         private set
@@ -141,8 +188,10 @@ class VlcPlaybackController(
         vulkanProbePending = false
         vulkanProbeGeneration++
         vulkanOutputWatch.reset()
+        ahbOpeningWatch.reset()
     }
     private val vulkanOutputWatch = VlcVulkanOutputWatch()
+    private val ahbOpeningWatch = VlcAhbOpeningWatch()
     var accelerationFallback: String? = if (!audioOnly && videoOutputMode == "vulkan" && !vulkanOutput)
         if (nativeHdrPreferred) "Vulkan → Android: native HDR surface" else "Vulkan → Android: unavailable" else null
         private set
@@ -165,6 +214,11 @@ class VlcPlaybackController(
     var renderSurfaceSize by mutableStateOf<Pair<Int, Int>?>(null)
         private set
     val videoOutputDescription: String get() = when {
+        doviAhbActive -> "libplacebo / Vulkan · Dolby Vision AHB (experimental)"
+        ahbExperimentActive && hdrPlusTarget != null -> "libplacebo / Vulkan · HDR10+ → " +
+            if (hdrPlusTarget.mode == 1) "PQ (experimental)" else "HLG (experimental)"
+        doviRpuDecoderRequired && vulkanOutput -> "libplacebo / Vulkan · Dolby Vision RPU (SW)"
+        doviRpuDecoderRequired -> "OpenGL ES · Dolby Vision RPU (SW)"
         vulkanOutput -> "libplacebo / Vulkan"
         toneMappingRequired -> "OpenGL ES / HDR → SDR"
         else -> "Android Surface / OpenGL ES"
@@ -195,6 +249,22 @@ class VlcPlaybackController(
         private set
     private var configuredDeinterlaceMode = if (preserveHdrSource) "off" else deinterlaceMode
     private var configuredDeinterlaceFilter = if (preserveHdrSource) "auto" else effectiveDeinterlaceFilter(deinterlaceFilter, reducedVideoEffects(context))
+    // Once the experimental opaque path fails, do not try it again for this controller.
+    private var ahbCopyBackRetried = false
+    private var ahbFallbackPending = false
+    // Serialize the posted fallback with Surface callbacks and other reopens.
+    private var vulkanFallbackPosted = false
+    private val ahbExperimentActive: Boolean get() = vlcAhbExperimentEligible(
+        com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT, vulkanOutput, preserveHdrSource,
+        configuredSoftwareProcessing, configuredSvpMode, configuredDeinterlaceMode, ahbCopyBackRetried,
+        supportedHdrGpu = android.os.Build.VERSION.SDK_INT >= 34 &&
+            (!nativeHdrPreferred || hdrPlusTarget != null) &&
+            (sourceHdrStandard == HdrStandard.HDR10 || sourceHdrStandard == HdrStandard.HLG ||
+             sourceHdrStandard == HdrStandard.HDR10_PLUS ||
+             (sourceHdrStandard == HdrStandard.DOLBY_VISION && com.ambient.tv.BuildConfig.VLC_DOVI_AHB_EXPERIMENT)),
+    )
+    private val doviAhbActive: Boolean get() = ahbExperimentActive &&
+        com.ambient.tv.BuildConfig.VLC_DOVI_AHB_EXPERIMENT && sourceHdrStandard == HdrStandard.DOLBY_VISION
     override val usesFrameInterpolation: Boolean
         get() = effectiveImage().svpMode != "off"
     /** An option this LibVLC build does not know fails the whole instance: retry without the subtitle look. */
@@ -208,7 +278,7 @@ class VlcPlaybackController(
             "--network-caching=1200",
             "--audio-time-stretch",
             "--audiotrack-session-id=${nightProcessing.sessionId}",
-            "--avcodec-hw=any",
+            if (doviRpuDecoderRequired) "--avcodec-hw=none" else "--avcodec-hw=any",
             "--clock-jitter=0",
             if (com.ambient.tv.BuildConfig.DEBUG) "--verbose=2" else "--verbose=0",
         ).apply {
@@ -228,8 +298,28 @@ class VlcPlaybackController(
                 "--vout=libplacebo,none", "--pl-gpu=pl_vulkan,none",
                 "--vk-platform=vk_android,none",
                 "--vk-device=${VideoAccelerationRuntime.capabilities.value.device.device}",
-                "--no-mediacodec-dr",
+                if (ahbExperimentActive) "--vk-ambient-ahb" else "--no-mediacodec-dr",
             ))
+            if (ahbExperimentActive && sourceHdrStandard == HdrStandard.HDR10_PLUS) {
+                add("--vk-ambient-hdr10plus")
+                if (com.ambient.tv.BuildConfig.VLC_HDR10PLUS_SPATIAL_EXPERIMENT &&
+                    (toneMappingRequired || hdrPlusTarget != null)) {
+                    add("--vk-ambient-hdr10plus-spatial")
+                    hdrPlusTarget?.let {
+                        add("--vk-ambient-hdr-target-transfer=${it.mode}")
+                        add("--vk-ambient-hdr-target-min=${it.minNits}")
+                        add("--vk-ambient-hdr-target-max=${it.maxNits}")
+                    }
+                }
+            }
+            if (doviAhbActive) {
+                add("--vk-ambient-dovi-ahb")
+                if (com.ambient.tv.BuildConfig.VLC_DOVI_FEL_EXPERIMENT)
+                    add("--vk-ambient-dovi-fel")
+            }
+            // MediaCodec copy-back lacks VLC's DOVI picture ancillary. Use
+            // avcodec's RPU-aware software decoder, but keep the GPU renderer.
+            if (doviRpuDecoderRequired) add("--no-mediacodec")
         },
     )
     private var libVlc = createLibVlc()
@@ -506,7 +596,7 @@ class VlcPlaybackController(
             if (released || view.holder !== holder) return
             // AWindow detaches itself on surfaceDestroyed (including a buffer-size change).
             // The SurfaceView can survive that event, so Compose will not call attach again.
-            if (restartStop != null || restartStopFailed || dvRetirementPending) return
+            if (vulkanFallbackPosted || restartStop != null || restartStopFailed || dvRetirementPending) return
             if (!player.vlcVout.areViewsAttached()) {
                 player.vlcVout.setVideoView(view)
                 player.vlcVout.attachViews()
@@ -531,7 +621,7 @@ class VlcPlaybackController(
         renderSurfaceSize = width to height
         // Native stop owns the MediaPlayer until completion. Geometry is re-applied when
         // its new media opens instead of racing that stop on the main thread.
-        if (restartStop != null || restartStopFailed || dvRetirementPending) return
+        if (vulkanFallbackPosted || restartStop != null || restartStopFailed || dvRetirementPending) return
         runCatching {
             // The host already fits the surface. Fill it instead of preserving source DAR again.
             player.setAspectRatio("$width:$height")
@@ -580,7 +670,8 @@ class VlcPlaybackController(
         player.vlcVout.addCallback(surfaceCallback)
         val eventPlayer = player
         player.setEventListener { event ->
-            if (released || player !== eventPlayer || restartStop != null) return@setEventListener
+            if (released || player !== eventPlayer || restartStopFailed || vulkanFallbackPosted ||
+                restartStop != null) return@setEventListener
             frameDropSamples.onEvent(event.type,
                 if (event.type == MediaPlayer.Event.Buffering) event.buffering else 100f)
             when (event.type) {
@@ -609,8 +700,9 @@ class VlcPlaybackController(
                             pendingRestorePositionMs != null || lastPlaybackSeekable,
                         )
                         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                            if (released || player !== eventPlayer) return@postDelayed
-                            restartAfterStop(resumePosition, desiredPlayWhenReady)
+                            if (released || player !== eventPlayer || restartStopFailed || vulkanFallbackPosted ||
+                                restartStop != null || dvRetirementPending) return@postDelayed
+                            restartAfterStop(pendingRestorePositionMs ?: resumePosition, desiredPlayWhenReady)
                         }, 350L)
                     } else errorMessage = context.getString(com.ambient.tv.R.string.vlc_playback_error)
                 }
@@ -727,7 +819,9 @@ class VlcPlaybackController(
 
     /** Prefer the live clock; during async seeks/teardown fall back to the last confirmed time. */
     private fun confirmedPlaybackTimeMs(): Long = pendingRestorePositionMs
-        ?: player.time.takeIf { it > 0L } ?: lastPlaybackTimeMs
+        ?: if (released || restartStopFailed || vulkanFallbackPosted || restartStop != null || dvRetirementPending)
+            lastPlaybackTimeMs
+        else player.time.takeIf { it > 0L } ?: lastPlaybackTimeMs
 
     /** Live timeshift: VLC clock position to keep across the next [prepare] (audio/route restart). */
     private var pendingTimeshiftKeepMs: Long? = null
@@ -748,7 +842,10 @@ class VlcPlaybackController(
     }
 
     private fun rememberTrackSelection() {
-        val previous = pendingImageTrackSelection ?: Triple(trackAccess.audioTrack, trackAccess.spuTrack, player.rate)
+        val previous = pendingImageTrackSelection ?: run {
+            if (released || restartStopFailed || vulkanFallbackPosted || restartStop != null || dvRetirementPending) return
+            Triple(trackAccess.audioTrack, trackAccess.spuTrack, player.rate)
+        }
         pendingImageTrackSelection = previous.copy(third = if (bitstreamPermitted) 1f else previous.third)
     }
 
@@ -757,7 +854,8 @@ class VlcPlaybackController(
 
     override fun setSubtitleDelay(delayMs: Int) {
         subtitleDelayMs = delayMs.coerceIn(-com.ambient.tv.ui.player.SubtitleDelayTarget.LIMIT_MS, com.ambient.tv.ui.player.SubtitleDelayTarget.LIMIT_MS)
-        if (!released) runCatching { player.setSpuDelay(subtitleDelayMs * 1000L) }
+        if (!released && !restartStopFailed && !vulkanFallbackPosted && restartStop == null && !dvRetirementPending)
+            runCatching { player.setSpuDelay(subtitleDelayMs * 1000L) }
     }
 
     private fun applyAudioOutputDevice(): Boolean {
@@ -773,7 +871,7 @@ class VlcPlaybackController(
     }
 
     private fun applyAudioLiveOptions() {
-        if (restartStopFailed || restartStop != null || dvRetirementPending) return
+        if (restartStopFailed || vulkanFallbackPosted || restartStop != null || dvRetirementPending) return
         if (released) return
         // Re-applied with the audio options, which run again after every media restart.
         runCatching { player.setSpuDelay(subtitleDelayMs * 1000L) }
@@ -802,7 +900,7 @@ class VlcPlaybackController(
 
     fun attach(view: SurfaceView) {
         if (audioOnly && !audioVisualizationEnabled) return
-        if (released) return
+        if (released || restartStopFailed) return
         if (attachedView === view || pendingAttachView === view) return
         pendingAttachView = view
         if (restartStop != null) return
@@ -882,7 +980,7 @@ class VlcPlaybackController(
         val task = object : Runnable {
             override fun run() {
                 if (released || attachedView !== view || userVideoDisabled ||
-                    restartStopFailed || restartStop != null || dvRetirementPending) return
+                    restartStopFailed || vulkanFallbackPosted || restartStop != null || dvRetirementPending) return
                 // Surface creation and ES discovery are independent. The old one-second
                 // timer could expire while AudioTrack/HDMI or network initialization continued.
                 if (view.holder.surface.isValid) {
@@ -984,7 +1082,9 @@ class VlcPlaybackController(
         pendingAttachView = null
         if (released) return
         val view = attachedView
-        if (view != null) detach(view) else player.setVideoTrackEnabled(false)
+        if (view != null) detach(view)
+        else if (!restartStopFailed && !vulkanFallbackPosted && restartStop == null && !dvRetirementPending)
+            player.setVideoTrackEnabled(false)
     }
 
     /** Coalesce reopens while a native stop is outstanding; never stop twice concurrently. */
@@ -994,7 +1094,7 @@ class VlcPlaybackController(
         desiredPlayWhenReady = playing
         openingOrRestarting = true
         ended = false
-        if (restartStop != null || dvRetirementPending) return
+        if (vulkanFallbackPosted || restartStop != null || dvRetirementPending) return
         if (!nativeMediaOpened) {
             prepare(position, playing)
             return
@@ -1009,12 +1109,27 @@ class VlcPlaybackController(
         val stopping = player
         val stop = java.util.concurrent.CompletableFuture<Unit>()
         restartStop = stop
+        // A driver may never return from stop(). Do not leave the UI in an
+        // endless reopen state, and never free or restart a player still
+        // owned by that native thread. Keep the future for release() to join.
+        val experimentalStop = ahbFallbackPending || ahbExperimentActive
+        if (experimentalStop) pendingSeekHandler.postDelayed({
+            if (!released && restartStop === stop && player === stopping && !stop.isDone) {
+                restartStopFailed = true
+                openingOrRestarting = false
+                errorMessage = context.getString(R.string.audio_output_release_failed)
+                Timber.e("VLC experimental reopen: native stop timed out; player quarantined")
+            }
+        }, 12_000L)
         kotlin.concurrent.thread(name = "vlc-reopen-stop", isDaemon = true) {
             val result = runCatching { stopping.stop() }
             result.onSuccess { stop.complete(Unit) }.onFailure { stop.completeExceptionally(it) }
             pendingSeekHandler.post {
                 if (released || restartStop !== stop || player !== stopping) return@post
                 restartStop = null
+                // A late successful stop may permit safe release, but must
+                // not resurrect a session that already reported terminal failure.
+                if (restartStopFailed) return@post
                 if (result.isFailure) {
                     restartStopFailed = true
                     Timber.w(result.exceptionOrNull(), "VLC internal restart stop failed")
@@ -1039,7 +1154,14 @@ class VlcPlaybackController(
     }
 
     private fun prepare(resumePositionMs: Long = pendingRestorePositionMs ?: startPositionMs, resumePlaying: Boolean = desiredPlayWhenReady) {
-        if (released || restartStopFailed || headerRelayFailed || restartStop != null || dvRetirementPending) return
+        if (released || restartStopFailed || headerRelayFailed || vulkanFallbackPosted ||
+            restartStop != null || dvRetirementPending) return
+        if (ahbExperimentActive && hdrPlusDisplayChanged()) {
+            pendingRestorePositionMs = resumePositionMs.takeUnless { liveStream }
+            desiredPlayWhenReady = resumePlaying
+            fallbackVulkan("hdr_target_changed_before_open")
+            return
+        }
         frameDropSamples.prepare()
         if (previousReleaseOutcome == null && previousAudioRelease.isDone) {
             // Nothing to wait for: open in this call, not one main-thread round trip later.
@@ -1178,6 +1300,7 @@ class VlcPlaybackController(
             configuredDeinterlaceFilter = effectiveDeinterlace
             libVlc = createLibVlc(); player = MediaPlayer(libVlc)
             trackAccess.rebind(player); configurePlayer()
+            ahbFallbackPending = false
             view
         } else null
         // A new Media drops added slaves and renumbers tracks: forget old subtitle ids and requests.
@@ -1215,10 +1338,16 @@ class VlcPlaybackController(
         // clipped timeline, which otherwise shifts both duration and later seeks.
         // Respect VLC/device codec blacklists and retain software fallback.
         // Sparsam forces hardware/direct (no hqdn3d/gradfun software path) without mutating prefs.
-        media.setHWDecoderEnabled(!effectiveImage.softwareProcessing, false)
-        if (vulkanOutput || toneMappingRequired) {
-            // VLC's opaque MediaCodec Surface pictures cannot be imported by this Vulkan vout.
-            // Keep MediaCodec decoding with CPU-accessible output; software effects may opt out.
+        media.setHWDecoderEnabled(!effectiveImage.softwareProcessing && !doviRpuDecoderRequired, false)
+        if (doviRpuDecoderRequired) {
+            // Media-level decoder options must not undo the instance-level
+            // RPU-preserving software decoder fallback on an AHB retry.
+            media.addOption(":no-mediacodec")
+            media.addOption(":avcodec-hw=none")
+        }
+        if ((vulkanOutput || toneMappingRequired) && !ahbExperimentActive) {
+            // Normal Vulkan and HDR processing keep CPU-accessible MediaCodec output.
+            // The isolated experiment may negotiate opaque AImage input for eligible SDR/PQ/HLG.
             media.addOption(":no-mediacodec-dr")
         }
         applyDeinterlaceOptions(media)
@@ -1268,6 +1397,7 @@ class VlcPlaybackController(
         }
         renderSurfaceSize?.let { (width, height) -> reportWindowSize(width, height) }
         vulkanOutputWatch.reset()
+        ahbOpeningWatch.reset()
         nativeMediaOpened = true
         player.play()
         // Pause on the Playing event, after demux and the pending seek are ready.
@@ -1276,14 +1406,41 @@ class VlcPlaybackController(
 
 
     private fun fallbackVulkan(reason: String): Boolean {
-        if (!vulkanOutput || released) return false
-        VideoAccelerationRuntime.reportFallback("vlc", reason)
-        if (vulkanRequested) VideoAccelerationRuntime.notifyUnavailable()
-        vulkanOutput = false // Prevent retry loops before posting the asynchronous restart.
-        usesAndroidSurfaceOutput = true
+        if (released || restartStopFailed) return false
+        if (vulkanFallbackPosted || ahbFallbackPending) return true // Coalesce duplicate error events before the posted reopen.
+        if (!vulkanOutput) return false
+        // A failed explicit HDR swapchain must return to the original native
+        // HDR/SDR policy, not a copy-back Vulkan route with no target proof.
+        val hdrTargetFailed = ahbExperimentActive && hdrPlusTarget != null
+        val retryCopyBack = ahbExperimentActive && !hdrTargetFailed
+        val retryDoviRpu = doviAhbActive
+        if (retryCopyBack) {
+            ahbCopyBackRetried = true
+            ahbFallbackPending = true
+            accelerationFallback = if (retryDoviRpu) "Dolby Vision AHB → FFmpeg RPU (SW): $reason"
+                else "Vulkan AHB → Vulkan Copy-back: $reason"
+            Timber.w("VULKAN VLC AHB fallback: %s", accelerationFallback)
+        } else {
+            if (hdrTargetFailed) {
+                // A display replacement or force-SDR change invalidates the
+                // original native-HDR decision too. Recompute before the
+                // Android/GL instance is constructed, without retrying AHB.
+                val attachedStandards = attachedView?.display?.let { display ->
+                    runCatching { HdrSupport.displayStandards(display) }.getOrNull()
+                }
+                nativeHdrPreferred = vlcHdrPlusFallbackNativeHdr(nativeHdrPreferred, attachedStandards)
+                ahbCopyBackRetried = true
+                ahbFallbackPending = true
+            } else {
+                VideoAccelerationRuntime.reportFallback("vlc", reason)
+                if (vulkanRequested) VideoAccelerationRuntime.notifyUnavailable()
+            }
+            vulkanOutput = false // Prevent retry loops before posting the asynchronous restart.
+            usesAndroidSurfaceOutput = true
+            accelerationFallback = "Vulkan → Android Surface / OpenGL ES: $reason"
+            Timber.w("VULKAN VLC fallback: %s", reason)
+        }
         vulkanOutputWatch.reset()
-        accelerationFallback = "Vulkan → Android Surface / OpenGL ES: $reason"
-        Timber.w("VULKAN VLC fallback: %s", reason)
         val position = vlcRestartPosition(
             pendingRestorePositionMs,
             confirmedPlaybackTimeMs(),
@@ -1291,24 +1448,53 @@ class VlcPlaybackController(
         )
         rememberTrackSelection()
         forceOutputRebuild = true
-        android.os.Handler(android.os.Looper.getMainLooper()).post {
+        restartDurationMs = runCatching { player.length }.getOrDefault(0L).coerceAtLeast(0L)
+        pendingRestorePositionMs = position.takeUnless { liveStream }
+        vulkanFallbackPosted = true
+        openingOrRestarting = true
+        pendingSeekTask?.let(pendingSeekHandler::removeCallbacks)
+        pendingSeekTask = null
+        pendingSeekHandler.post {
+            vulkanFallbackPosted = false
             if (!released) restartAfterStop(pendingRestorePositionMs ?: position, desiredPlayWhenReady)
         }
         return true
     }
 
     fun checkVulkanOutput() {
-        if (!vulkanOutput || released) return
-        if (!prepared || !vulkanSurfaceChecked || restartStop != null ||
-            restartStopFailed || dvRetirementPending || userVideoDisabled || audioOnly ||
-            attachedView?.holder?.surface?.isValid != true || !frameDropSampleReady()) {
+        if (!vulkanOutput || released || restartStopFailed || vulkanFallbackPosted ||
+            restartStop != null || dvRetirementPending) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        // Check the display even while opening/paused; frame progress may
+        // never become ready if the new display cannot present this format.
+        if (!ahbFallbackPending && ahbExperimentActive && hdrPlusTarget != null &&
+            (lastHdrTargetCheckMs == Long.MIN_VALUE || now - lastHdrTargetCheckMs >= 1000L)) {
+            lastHdrTargetCheckMs = now
+            if (hdrPlusDisplayChanged()) {
+                fallbackVulkan("hdr_target_changed")
+                return
+            }
+        }
+        val eligible = !ahbFallbackPending && prepared && vulkanSurfaceChecked && restartStop == null &&
+            !restartStopFailed && !dvRetirementPending && !userVideoDisabled && !audioOnly &&
+            attachedView?.holder?.surface?.isValid == true && !ended && errorMessage == null
+        val ready = eligible && frameDropSampleReady()
+        // The ordinary observer deliberately ignores buffering, opening and pending
+        // seeks. Bound these states separately if the user still requests playback.
+        val openingActive = ahbExperimentActive && eligible && nativeMediaOpened &&
+            desiredPlayWhenReady && !ready
+        val progress = frameDropSamples.generation.toLong() * 21L + frameDropSamples.bufferProgress
+        if (ahbOpeningWatch.observe(now, progress, openingActive)) {
+            fallbackVulkan("ahb_opening_stalled")
+            return
+        }
+        if (!ready) {
             vulkanOutputWatch.suspendObservation()
             return
         }
-        val now = android.os.SystemClock.elapsedRealtime()
         if (!vulkanOutputWatch.shouldSample(now)) return
         val stats = runtimeStats()
-        when (vulkanOutputWatch.observe(now, stats?.decodedVideo, stats?.displayedPictures)) {
+        when (vulkanOutputWatch.observe(now, stats?.decodedVideo, stats?.displayedPictures, continuous = ahbExperimentActive)) {
             VlcVulkanOutputVerdict.CONFIRMED -> VideoAccelerationRuntime.reportOutput("vlc", frames = true)
             VlcVulkanOutputVerdict.STALLED -> fallbackVulkan("no_video_frames")
             null -> Unit
@@ -1338,7 +1524,7 @@ class VlcPlaybackController(
             var baselineLostPictures: Long? = null
 
             override fun run() {
-                if (released || !desiredPlayWhenReady || !player.isPlaying || renderCheckSignature != signature) {
+                if (!desiredPlayWhenReady || !isPlayingNow() || renderCheckSignature != signature) {
                     renderCheckTask = null
                     return
                 }
@@ -1461,7 +1647,7 @@ class VlcPlaybackController(
         if (released) return
         if (!desiredPlayWhenReady) frameDropSamples.discontinuity()
         desiredPlayWhenReady = true
-        if (restartStopFailed || restartStop != null || dvRetirementPending) return
+        if (restartStopFailed || vulkanFallbackPosted || restartStop != null || dvRetirementPending) return
         if (!dvPrimeActive) restorePausedSeekVolume()
         hdrOutput.discontinuity()
         pauseAfterRestorePositionMs = null
@@ -1479,14 +1665,16 @@ class VlcPlaybackController(
         hdrOutput.discontinuity()
         desiredPlayWhenReady = false
         pauseAfterRestorePositionMs = null
-        if (!released && !dvPrimeActive && !restartStopFailed && restartStop == null && !dvRetirementPending) player.pause()
+        if (!released && !dvPrimeActive && !restartStopFailed && !vulkanFallbackPosted &&
+            restartStop == null && !dvRetirementPending) player.pause()
     }
 
     override fun wantsToPlay(): Boolean = !released && desiredPlayWhenReady && !ended && errorMessage == null
     override fun requestedPlayIntent(): Boolean = !released && desiredPlayWhenReady && !ended
 
     /** Native playing flag for UI snapshots; false once released (the native player may be gone). */
-    fun isPlayingNow(): Boolean = !released && !restartStopFailed && restartStop == null && !dvRetirementPending && runCatching { player.isPlaying }.getOrDefault(false)
+    fun isPlayingNow(): Boolean = !released && !restartStopFailed && !vulkanFallbackPosted &&
+        restartStop == null && !dvRetirementPending && runCatching { player.isPlaying }.getOrDefault(false)
 
     /** A transcoded HTTP response may have no VLC seek index despite having a server start offset. */
     override fun canSeekNow(): Boolean = !released && prepared && !openingOrRestarting && player.isSeekable
@@ -1520,7 +1708,7 @@ class VlcPlaybackController(
 
     override fun status(): PlaybackStatus {
         if (released) return PlaybackStatus()
-        if (restartStopFailed || restartStop != null || dvRetirementPending)
+        if (restartStopFailed || vulkanFallbackPosted || restartStop != null || dvRetirementPending)
             return PlaybackStatus(pendingRestorePositionMs ?: lastPlaybackTimeMs, restartDurationMs, false, false, errorMessage)
         if (imageOptions.svpMode != "off" || configuredSvpMode != "off") {
             if (measuredSourceFps == null) measuredSourceFps = currentSourceFps()
@@ -1532,14 +1720,18 @@ class VlcPlaybackController(
                 refreshEffectiveOverrides(player.isSeekable)
         }
         checkVulkanOutput()
+        // Effective-option refresh can itself initiate native stop before the
+        // watchdog runs. Never read the old player after either transition.
+        if (restartStopFailed || vulkanFallbackPosted || restartStop != null || dvRetirementPending)
+            return PlaybackStatus(pendingRestorePositionMs ?: lastPlaybackTimeMs, restartDurationMs, false, false, errorMessage)
         return PlaybackStatus(confirmedPlaybackTimeMs().coerceAtLeast(0), player.length.coerceAtLeast(0), player.isPlaying && (!dvPrimeActive || desiredPlayWhenReady), ended, errorMessage)
     }
 
     fun seekBy(deltaMs: Long) {
         // Key handlers can still fire between Stop and the next recomposition; a released
         // libVLC MediaPlayer throws IllegalStateException on every native call.
-        if (released) return
-        val restarting = restartStop != null || dvRetirementPending
+        if (released || restartStopFailed) return
+        val restarting = vulkanFallbackPosted || restartStop != null || dvRetirementPending
         val length = (if (restarting) restartDurationMs else player.length).takeIf { it > 0L } ?: Long.MAX_VALUE
         val position = if (restarting) pendingRestorePositionMs ?: lastPlaybackTimeMs else confirmedPlaybackTimeMs()
         seekTo((position + deltaMs).coerceIn(0L, length))
@@ -1549,7 +1741,7 @@ class VlcPlaybackController(
         // Live no longer means unseekable: YouTube HLS/DASH can advertise a real DVR window.
         // Still reject streams without a native seek index (ordinary live channels).
         if (released || restartStopFailed || (liveStream && !canSeekNow())) return
-        if (restartStop != null || dvRetirementPending) {
+        if (vulkanFallbackPosted || restartStop != null || dvRetirementPending) {
             pendingRestorePositionMs = positionMs.coerceAtLeast(0L)
             return
         }
@@ -1635,13 +1827,17 @@ class VlcPlaybackController(
         val task = object : Runnable {
             override fun run() {
                 pendingSeekTask = null
-                if (released || !prepared || errorMessage != null || pendingRestorePositionMs == null) return
+                if (released || !prepared || restartStopFailed || vulkanFallbackPosted ||
+                    restartStop != null || dvRetirementPending || errorMessage != null || pendingRestorePositionMs == null) return
                 observePendingSeek()
                 if (pendingRestorePositionMs == null) return
                 if (seekState.expired(android.os.SystemClock.elapsedRealtime())) {
                     // Preserve the request for a renderer fallback/retry. Continuing at zero
                     // would silently lose the user's position and rewrite server progress.
                     Timber.w("AV-AUDIT VLC seek not confirmed; target=%d", pendingRestorePositionMs)
+                    // The experimental decoder may fail specifically after a flush/seek.
+                    // Retry the same pending position on the safe route before reporting failure.
+                    if (ahbExperimentActive && fallbackVulkan("ahb_seek_stalled")) return
                     errorMessage = context.getString(R.string.player_seek_failed)
                     pauseAfterRestorePositionMs = null
                     player.pause()
@@ -1668,7 +1864,8 @@ class VlcPlaybackController(
             if (prepared) seekTo(resume)
         }
         // A newly created engine has no Media yet; prepare() consumes this intent.
-        if (prepared && !openingOrRestarting) {
+        if (prepared && !openingOrRestarting && !vulkanFallbackPosted &&
+            restartStop == null && !dvRetirementPending && !restartStopFailed) {
             if (playWhenReady) player.play() else if (pendingRestorePositionMs == null) player.pause()
         }
     }
@@ -1974,7 +2171,7 @@ class VlcPlaybackController(
     fun runtimeStats(includeCounters: Boolean = true): VlcRuntimeStats? = runCatching {
         // Compose polling can outlive session release until its disposal is applied.
         // LibVLC's Media.getStats JNI dereferences the native handle even after release.
-        if (released || restartStopFailed || restartStop != null || dvRetirementPending) return@runCatching null
+        if (released || restartStopFailed || vulkanFallbackPosted || restartStop != null || dvRetirementPending) return@runCatching null
         fun member(instance: Any, name: String): Any? = ReflectiveMembers.value(instance, name)
 
         var result = VlcRuntimeStats()

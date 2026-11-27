@@ -1,0 +1,538 @@
+diff --git a/libavcodec/ambient_dovi_parser.h b/libavcodec/ambient_dovi_parser.h
+new file mode 100644
+--- /dev/null
++++ b/libavcodec/ambient_dovi_parser.h
+@@ -0,0 +1,36 @@
++#pragma once
++/* Private Ambient TV static-link interface, built against the pinned FFmpeg.
++ * No FFmpeg-private types cross the library boundary. */
++#include <stddef.h>
++#include <stdint.h>
++#ifdef __cplusplus
++extern "C" {
++#endif
++struct ambient_dovi_curve {
++    uint8_t num_pivots;
++    uint16_t pivots[9];
++    uint8_t mapping[8], poly_order[8], mmr_order[8];
++    int64_t poly_coef[8][3], mmr_constant[8], mmr_coef[8][3][7];
++};
++struct ambient_dovi_metadata {
++    uint8_t coef_log2_denom, bl_bit_depth, el_bit_depth, full_range;
++    float nonlinear_offset[3], nonlinear_matrix[9], linear_matrix[9];
++    uint16_t source_min_pq, source_max_pq;
++    struct ambient_dovi_curve curves[3];
++    /* Profile 7 only; no effect on existing single-layer callers. */
++    uint8_t residual_present, vdr_bit_depth;
++    uint16_t nlq_offset[3], nlq_pivots[2];
++    uint64_t nlq_slope[3], nlq_threshold[3], nlq_maximum[3];
++};
++struct ambient_dovi_parser;
++struct ambient_dovi_parser *av_ambient_dovi_alloc(unsigned profile);
++void av_ambient_dovi_flush(struct ambient_dovi_parser *);
++void av_ambient_dovi_free(struct ambient_dovi_parser *);
++/* Unescaped RPU beginning with byte 25, profile 5, 7 or 8, matching the selected profile.
++ * Returns zero on success, a negative AVERROR on any unsupported/invalid RPU.
++ * The output is a value snapshot, not borrowed parser state. */
++int av_ambient_dovi_parse(struct ambient_dovi_parser *, const uint8_t *, size_t,
++                         struct ambient_dovi_metadata *);
++#ifdef __cplusplus
++}
++#endif
+diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
+--- a/libavcodec/dovi_rpudec.c
++++ b/libavcodec/dovi_rpudec.c
+@@ -747,4 +747,247 @@
+     }
+ 
+     return 0;
+ }
++
++// Ambient TV: constrained, opaque interface to the existing FFmpeg RPU parser.
++// This file is compiled in the same pinned static libavcodec, not against an
++// installed private ABI. The original HEVC decoder is unchanged.
++#include "ambient_dovi_parser.h"
++
++struct ambient_dovi_parser { DOVIContext ctx; unsigned profile; };
++
++struct ambient_dovi_parser *av_ambient_dovi_alloc(unsigned profile)
++{
++    if (profile != 5 && profile != 7 && profile != 8) return NULL;
++    struct ambient_dovi_parser *p = av_mallocz(sizeof(*p));
++    if (p) {
++        p->profile = profile;
++        p->ctx.cfg.dv_profile = profile;
++    }
++    return p;
++}
++
++void av_ambient_dovi_flush(struct ambient_dovi_parser *p)
++{
++    if (p) {
++        ff_dovi_ctx_flush(&p->ctx);
++        p->ctx.cfg.dv_profile = p->profile;
++    }
++}
++
++void av_ambient_dovi_free(struct ambient_dovi_parser *p)
++{
++    if (p) {
++        ff_dovi_ctx_unref(&p->ctx);
++        av_free(p);
++    }
++}
++
++int av_ambient_dovi_parse(struct ambient_dovi_parser *p, const uint8_t *rpu,
++                         size_t size, struct ambient_dovi_metadata *out)
++{
++    if (!p || !rpu || !out || size < 7 || size > 65536 ||
++        rpu[0] != 25 || (rpu[1] >> 2) != 2)
++        return AVERROR_INVALIDDATA;
++    // FFmpeg bit readers require zero padding, even for caller-owned input.
++    uint8_t *padded = av_mallocz(size + AV_INPUT_BUFFER_PADDING_SIZE);
++    if (!padded) return AVERROR(ENOMEM);
++    memcpy(padded, rpu, size);
++    int ret = ff_dovi_rpu_parse(&p->ctx, padded, size, AV_EF_CRCCHECK | AV_EF_EXPLODE);
++    av_free(padded);
++    if (ret < 0) goto invalid;
++    const AVDOVIRpuDataHeader *h = &p->ctx.header;
++    const AVDOVIDataMapping *m = p->ctx.mapping;
++    const AVDOVIColorMetadata *c = p->ctx.color;
++    // Profile 7 exports the residual metadata for a separate FEL path.
++    // Profiles 5/8 keep their original strictly single-layer contract.
++    if (!m || !c || h->rpu_type != 2 || ff_dovi_guess_profile_hevc(h) != p->profile ||
++        !!h->bl_video_full_range_flag != (p->profile == 5) ||
++        h->bl_bit_depth != 10 ||
++        h->ext_mapping_idc_0_4 || h->ext_mapping_idc_5_7 ||
++        h->coef_log2_denom < 13 || h->coef_log2_denom > 32 ||
++        (p->profile == 7 ? (h->disable_residual_flag || h->el_bit_depth != 10 ||
++            h->vdr_bit_depth != 12 || m->nlq_method_idc != AV_DOVI_NLQ_LINEAR_DZ ||
++            m->nlq_pivots[0] > m->nlq_pivots[1] || m->nlq_pivots[1] > 1023) :
++            (!h->disable_residual_flag || m->nlq_method_idc != AV_DOVI_NLQ_NONE)) ||
++        c->source_min_pq > c->source_max_pq || c->source_max_pq > 4095)
++        goto invalid;
++    struct ambient_dovi_metadata dst = {0};
++    dst.coef_log2_denom = h->coef_log2_denom;
++    dst.bl_bit_depth = h->bl_bit_depth;
++    dst.el_bit_depth = h->el_bit_depth;
++    dst.full_range = h->bl_video_full_range_flag;
++    dst.source_min_pq = c->source_min_pq;
++    dst.source_max_pq = c->source_max_pq;
++    dst.vdr_bit_depth = h->vdr_bit_depth;
++    if (p->profile == 7) {
++        dst.residual_present = 1;
++        memcpy(dst.nlq_pivots, m->nlq_pivots, sizeof(dst.nlq_pivots));
++        for (unsigned i = 0; i < 3; ++i) {
++            const AVDOVINLQParams *n = &m->nlq[i];
++            // FFmpeg exports unsigned 64-bit fixed-point NLQ coefficients.
++            // Their scaled values fit both double and float even at denom 13.
++            if (n->nlq_offset > 1023) goto invalid;
++            dst.nlq_offset[i] = n->nlq_offset;
++            dst.nlq_slope[i] = n->linear_deadzone_slope;
++            dst.nlq_threshold[i] = n->linear_deadzone_threshold;
++            dst.nlq_maximum[i] = n->vdr_in_max;
++        }
++    }
++    for (unsigned i = 0; i < 3; ++i) {
++        if (!c->ycc_to_rgb_offset[i].den) goto invalid;
++        dst.nonlinear_offset[i] = av_q2d(c->ycc_to_rgb_offset[i]);
++    }
++    for (unsigned i = 0; i < 9; ++i) {
++        if (!c->ycc_to_rgb_matrix[i].den || !c->rgb_to_lms_matrix[i].den) goto invalid;
++        dst.nonlinear_matrix[i] = av_q2d(c->ycc_to_rgb_matrix[i]);
++        dst.linear_matrix[i] = av_q2d(c->rgb_to_lms_matrix[i]);
++    }
++    for (unsigned i = 0; i < 3; ++i) {
++        const AVDOVIReshapingCurve *src = &m->curves[i];
++        struct ambient_dovi_curve *d = &dst.curves[i];
++        if (src->num_pivots < 2 || src->num_pivots > 9) goto invalid;
++        d->num_pivots = src->num_pivots;
++        for (unsigned j = 0; j < src->num_pivots; ++j) {
++            if (src->pivots[j] > 1023 || (j && src->pivots[j] <= src->pivots[j-1]))
++                goto invalid;
++            d->pivots[j] = src->pivots[j];
++        }
++        for (unsigned j = 0; j + 1 < src->num_pivots; ++j) {
++            d->mapping[j] = src->mapping_idc[j];
++            if (src->mapping_idc[j] == AV_DOVI_MAPPING_POLYNOMIAL) {
++                if (src->poly_order[j] < 1 || src->poly_order[j] > 2) goto invalid;
++                d->poly_order[j] = src->poly_order[j];
++                memcpy(d->poly_coef[j], src->poly_coef[j], sizeof(d->poly_coef[j]));
++            } else if (src->mapping_idc[j] == AV_DOVI_MAPPING_MMR) {
++                if (src->mmr_order[j] < 1 || src->mmr_order[j] > 3) goto invalid;
++                d->mmr_order[j] = src->mmr_order[j];
++                d->mmr_constant[j] = src->mmr_constant[j];
++                memcpy(d->mmr_coef[j], src->mmr_coef[j], sizeof(d->mmr_coef[j]));
++            } else goto invalid;
++        }
++    }
++    *out = dst;
++    return 0;
++invalid:
++    av_ambient_dovi_flush(p);
++    return AVERROR_INVALIDDATA;
++}
++
++/* Private EL session shares the actual pinned decoder/filter implementation. */
++#include "ambient_fel_decoder.h"
++#include "ambient_fel_api.h"
++#include <stdlib.h>
++
++struct ambient_fel_session {
++    struct ambient_fel_decoder decoder;
++};
++
++struct ambient_fel_session *av_ambient_fel_open(void)
++{
++    struct ambient_fel_session *s=calloc(1,sizeof(*s));
++    if(s && ambient_fel_decoder_open(&s->decoder,(AVRational){1,1000000})<0){
++        free(s);s=NULL;
++    }
++    return s;
++}
++void av_ambient_fel_close(struct ambient_fel_session *s)
++{
++    if(s){ambient_fel_decoder_close(&s->decoder);free(s);}
++}
++void av_ambient_fel_flush(struct ambient_fel_session *s)
++{
++    if(s)ambient_fel_decoder_flush(&s->decoder);
++}
++int av_ambient_fel_submit(struct ambient_fel_session *s,const uint8_t *data,
++                           size_t size,int64_t pts,int64_t dts)
++{
++    if(!s||!data||!size||size>32*1024*1024)return AVERROR(EINVAL);
++    AVPacket *pkt=av_packet_alloc();
++    if(!pkt){s->decoder.failed=true;return AVERROR(ENOMEM);}
++    int ret=av_new_packet(pkt,(int)size);
++    if(ret>=0){
++        memcpy(pkt->data,data,size);pkt->pts=pts>0?pts:AV_NOPTS_VALUE;
++        pkt->dts=dts>0?dts:AV_NOPTS_VALUE;
++        ret=ambient_fel_decoder_submit(&s->decoder,pkt);
++    }
++    if(ret<0)s->decoder.failed=true;
++    av_packet_free(&pkt);
++    return ret;
++}
++int av_ambient_fel_drain(struct ambient_fel_session *s)
++{
++    if(!s)return AVERROR(EINVAL);
++    return ambient_fel_decoder_drain(&s->decoder);
++}
++bool av_ambient_fel_may_receive(const struct ambient_fel_session *s)
++{
++    return s && !s->decoder.failed && !s->decoder.draining;
++}
++void av_ambient_fel_discard(struct ambient_fel_session *s,int64_t pts)
++{
++    if(!s||pts<=0)return;
++    ambient_fel_decoder_discard(&s->decoder,pts);
++}
++struct ambient_fel_picture *av_ambient_fel_take_rpu(struct ambient_fel_session *s,int64_t pts,
++    const struct ambient_dovi_metadata *rpu)
++{
++    if(!s)return NULL;
++    AVFrame *f=ambient_fel_decoder_take(&s->decoder,pts);
++    if(!f)return NULL;
++    const unsigned crop_x=(unsigned)f->crop_left,crop_y=(unsigned)f->crop_top;
++    const unsigned coded_width=f->width,coded_height=f->height;
++    // The following transfer uses only memcpy, so an exact even crop
++    // is safe even if it is not aligned for FFmpeg SIMD operations.
++    if(av_frame_apply_cropping(f,AV_FRAME_CROP_UNALIGNED)<0){
++        s->decoder.failed=true;av_frame_free(&f);return NULL;
++    }
++    unsigned w=f->width,h=f->height,cw=(w+1)/2,ch=(h+1)/2;
++    // Keep decoding and consuming the exact EL even when its contribution
++    // is zero. Only omit the copy when valid profile-7 NLQ proves it.
++    bool zero=rpu && rpu->residual_present && !rpu->full_range &&
++        rpu->bl_bit_depth==10 && rpu->el_bit_depth==10 && rpu->vdr_bit_depth==12 &&
++        rpu->coef_log2_denom>=13 && rpu->coef_log2_denom<=32 &&
++        rpu->nlq_pivots[0]<=rpu->nlq_pivots[1] && rpu->nlq_pivots[1]<=1023;
++    for(unsigned i=0;zero&&i<3;i++)
++        if(rpu->nlq_offset[i]>1023 || (rpu->nlq_maximum[i] &&
++            (rpu->nlq_slope[i] || rpu->nlq_threshold[i])))zero=false;
++    size_t count=zero?0:(size_t)w*h+2*(size_t)cw*ch;
++    struct ambient_fel_picture *out=malloc(sizeof(*out)+count*sizeof(uint16_t));
++    if(!out){s->decoder.failed=true;goto done;}
++    *out=(struct ambient_fel_picture){.pts=pts,.width=w,.height=h,
++        .crop_x=crop_x,.crop_y=crop_y,.coded_width=coded_width,.coded_height=coded_height,
++        .sample_count=count};
++    if(rpu)out->rpu=*rpu;
++    // HEVC UHD defaults to top-left here when metadata is missing.
++    // Other explicitly signaled chroma locations retain their own offsets.
++    switch(f->chroma_location){
++        case AVCHROMA_LOC_LEFT:out->chroma_x=-0.5f;break;
++        case AVCHROMA_LOC_CENTER:break;
++        case AVCHROMA_LOC_TOPLEFT:case AVCHROMA_LOC_UNSPECIFIED:
++            out->chroma_x=-0.5f;out->chroma_y=-0.5f;break;
++        case AVCHROMA_LOC_TOP:out->chroma_y=-0.5f;break;
++        case AVCHROMA_LOC_BOTTOMLEFT:out->chroma_x=-0.5f;out->chroma_y=0.5f;break;
++        case AVCHROMA_LOC_BOTTOM:out->chroma_y=0.5f;break;
++        default:free(out);out=NULL;s->decoder.failed=true;goto done;
++    }
++    if(zero)goto done;
++    uint16_t *dst=out->samples;
++    for(unsigned i=0;i<3;i++){
++        unsigned pw=i?cw:w,ph=i?ch:h;
++        if(!f->data[i]||f->linesize[i]<(int)(pw*2u)){
++            free(out);out=NULL;s->decoder.failed=true;goto done;
++        }
++        for(unsigned row=0;row<ph;row++){
++            memcpy(dst,f->data[i]+(size_t)row*f->linesize[i],pw*2u);
++            dst+=pw;
++        }
++    }
++done:
++    av_frame_free(&f);
++    return out;
++}
++struct ambient_fel_picture *av_ambient_fel_take(struct ambient_fel_session *s,int64_t pts)
++{
++    return av_ambient_fel_take_rpu(s,pts,NULL);
++}
+diff --git a/libavcodec/ambient_fel_decoder.h b/libavcodec/ambient_fel_decoder.h
+new file mode 100644
+--- /dev/null
++++ b/libavcodec/ambient_fel_decoder.h
+@@ -0,0 +1,196 @@
++#pragma once
++/* Experimental software enhancement-layer decoder. The caller owns the BL
++ * decoder and must submit each accepted access unit exactly once, in decode
++ * order. All operations are serialized by the caller. The experimental VLC
++ * path owns matching and picture handoff. Input is normalized to Annex B. */
++#include <libavcodec/avcodec.h>
++#include <libavcodec/bsf.h>
++#include <libavutil/opt.h>
++#include <libavutil/pixdesc.h>
++#include <libavutil/error.h>
++#include <errno.h>
++#include <stdbool.h>
++#include <stdint.h>
++#include <string.h>
++
++#define AMBIENT_FEL_QUEUE_CAPACITY 12
++#define AMBIENT_FEL_DISCARD_CAPACITY 64
++struct ambient_fel_decoder {
++    AVBSFContext *split;
++    AVCodecContext *codec;
++    AVFrame *queue[AMBIENT_FEL_QUEUE_CAPACITY];
++    int64_t discard[AMBIENT_FEL_DISCARD_CAPACITY];
++    unsigned discarded;
++    bool failed, draining;
++};
++
++static inline void ambient_fel_decoder_close(struct ambient_fel_decoder *s)
++{
++    if (!s) return;
++    for (unsigned i=0;i<AMBIENT_FEL_QUEUE_CAPACITY;i++)
++        av_frame_free(&s->queue[i]);
++    avcodec_free_context(&s->codec);
++    av_bsf_free(&s->split);
++    memset(s,0,sizeof(*s));
++}
++
++static inline int ambient_fel_decoder_open(struct ambient_fel_decoder *s, AVRational time_base)
++{
++    if (!s || s->codec || s->split || time_base.num<=0 || time_base.den<=0)
++        return AVERROR(EINVAL);
++    const AVCodec *hevc=avcodec_find_decoder(AV_CODEC_ID_HEVC);
++    const AVBitStreamFilter *filter=av_bsf_get_by_name("dovi_split");
++    if (!hevc || !filter) return AVERROR(ENOSYS);
++    int ret=av_bsf_alloc(filter,&s->split);
++    if (ret<0) goto fail;
++    s->split->par_in->codec_type=AVMEDIA_TYPE_VIDEO;
++    s->split->par_in->codec_id=AV_CODEC_ID_HEVC;
++    s->split->time_base_in=time_base;
++    ret=av_opt_set(s->split->priv_data,"mode","el",0);
++    if (ret<0) goto fail;
++    ret=av_bsf_init(s->split);
++    if (ret<0) goto fail;
++    s->codec=avcodec_alloc_context3(hevc);
++    if (!s->codec) { ret=AVERROR(ENOMEM); goto fail; }
++    s->codec->pkt_timebase=time_base;
++    // Slice threading avoids an extra frame-thread reorder delay.
++    s->codec->thread_count=2;
++    s->codec->thread_type=FF_THREAD_SLICE;
++    s->codec->max_pixels=1920*1088;
++    // Inspect the coded crop before FFmpeg can silently erase its origin.
++    s->codec->apply_cropping=0;
++    s->codec->err_recognition=AV_EF_EXPLODE;
++    ret=avcodec_open2(s->codec,hevc,NULL);
++    if (ret>=0) return 0;
++fail:
++    ambient_fel_decoder_close(s);
++    return ret;
++}
++
++/* Return owned frames by exact PTS, never by FIFO/decode order. Missing
++ * frames remain missing; neither a nearest nor a stale frame is valid. */
++static inline AVFrame *ambient_fel_decoder_take(struct ambient_fel_decoder *s,int64_t pts)
++{
++    if (!s || s->failed || pts==AV_NOPTS_VALUE) return NULL;
++    for (unsigned i=0;i<AMBIENT_FEL_QUEUE_CAPACITY;i++) {
++        AVFrame *f=s->queue[i];
++        if (f && f->pts==pts) { s->queue[i]=NULL; return f; }
++    }
++    return NULL;
++}
++
++/* Drop a matching pending picture immediately, or remember a future exact
++ * PTS. Once drained, no future output is possible; do not retain tombstones. */
++static inline void ambient_fel_decoder_discard(struct ambient_fel_decoder *s,int64_t pts)
++{
++    if(!s||s->failed||pts==AV_NOPTS_VALUE)return;
++    AVFrame *f=ambient_fel_decoder_take(s,pts);
++    if(f){av_frame_free(&f);return;}
++    if(s->draining)return;
++    for(unsigned i=0;i<s->discarded;i++)if(s->discard[i]==pts)return;
++    if(s->discarded>=AMBIENT_FEL_DISCARD_CAPACITY){s->failed=true;return;}
++    s->discard[s->discarded++]=pts;
++}
++
++/* Consumes ownership on every return. Process known drops before queue
++ * admission: a discarded picture cannot exhaust the bounded live queue. */
++static inline int ambient_fel_decoder_enqueue(struct ambient_fel_decoder *s,AVFrame *f)
++{
++    if(!s||!f||s->failed){av_frame_free(&f);return AVERROR(EINVAL);}
++    unsigned slot=AMBIENT_FEL_QUEUE_CAPACITY;
++    for(unsigned i=0;i<AMBIENT_FEL_QUEUE_CAPACITY;i++){
++        if(s->queue[i]&&s->queue[i]->pts==f->pts){
++            av_frame_free(&f);return AVERROR_INVALIDDATA;
++        }
++        if(!s->queue[i]&&slot==AMBIENT_FEL_QUEUE_CAPACITY)slot=i;
++    }
++    for(unsigned i=0;i<s->discarded;i++)if(s->discard[i]==f->pts){
++        s->discard[i]=s->discard[--s->discarded];
++        av_frame_free(&f);return 0;
++    }
++    if(slot==AMBIENT_FEL_QUEUE_CAPACITY){
++        av_frame_free(&f);return AVERROR(ENOBUFS);
++    }
++    s->queue[slot]=f;
++    return 0;
++}
++
++static inline int ambient_fel_decoder_receive(struct ambient_fel_decoder *s)
++{
++    for (;;) {
++        AVFrame *f=av_frame_alloc();
++        if (!f) return AVERROR(ENOMEM);
++        int ret=avcodec_receive_frame(s->codec,f);
++        if (ret<0) {
++            av_frame_free(&f);
++            return ret==AVERROR(EAGAIN)||ret==AVERROR_EOF?0:ret;
++        }
++        // Keep the original conformance window until snapshot transfer.
++        // 4:2:0 origins must be even; invalid or empty crops are rejected.
++        if(f->width<=0||f->height<=0||(f->crop_left&1u)||(f->crop_top&1u)||
++           f->crop_left>=(size_t)f->width||f->crop_right>=(size_t)f->width-f->crop_left||
++           f->crop_top>=(size_t)f->height||f->crop_bottom>=(size_t)f->height-f->crop_top){
++            av_frame_free(&f);return AVERROR_INVALIDDATA;
++        }
++        // Only software 10-bit 4:2:0 raw codewords, no range expansion.
++        if (f->format!=AV_PIX_FMT_YUV420P10LE || f->pts==AV_NOPTS_VALUE ||
++            f->width<=0 || f->height<=0 || f->width>1920 || f->height>1088 ||
++            (f->flags&AV_FRAME_FLAG_CORRUPT)) {
++            av_frame_free(&f);return AVERROR_INVALIDDATA;
++        }
++        ret=ambient_fel_decoder_enqueue(s,f);
++        if(ret<0)return ret;
++    }
++}
++
++static inline int ambient_fel_decoder_submit(struct ambient_fel_decoder *s,const AVPacket *combined)
++{
++    if (!s || !s->codec || !s->split || s->failed || s->draining ||
++        !combined || !combined->data || combined->size<=0 ||
++        combined->size>32*1024*1024)
++        return AVERROR(EINVAL);
++    AVPacket *pkt=av_packet_clone(combined);
++    if (!pkt) { s->failed=true;return AVERROR(ENOMEM); }
++    int ret=av_bsf_send_packet(s->split,pkt);
++    if (ret<0) goto done;
++    // dovi_split can legitimately emit no packet for BL-only config.
++    while ((ret=av_bsf_receive_packet(s->split,pkt))>=0) {
++        ret=avcodec_send_packet(s->codec,pkt);
++        if (ret==AVERROR(EAGAIN)) {
++            ret=ambient_fel_decoder_receive(s);
++            if (ret>=0) ret=avcodec_send_packet(s->codec,pkt);
++        }
++        av_packet_unref(pkt);
++        if (ret<0) goto done;
++        ret=ambient_fel_decoder_receive(s);
++        if (ret<0) goto done;
++    }
++    if (ret==AVERROR(EAGAIN)) ret=0;
++done:
++    av_packet_free(&pkt);
++    if (ret<0) s->failed=true;
++    return ret;
++}
++
++static inline int ambient_fel_decoder_drain(struct ambient_fel_decoder *s)
++{
++    if (!s || !s->codec || s->failed) return AVERROR(EINVAL);
++    if (s->draining) return 0;
++    int ret=ambient_fel_decoder_receive(s);
++    if (ret>=0) ret=avcodec_send_packet(s->codec,NULL);
++    if (ret>=0) ret=ambient_fel_decoder_receive(s);
++    if (ret<0) s->failed=true;
++    else {s->draining=true;s->discarded=0;}
++    return ret;
++}
++
++// Flush is the only recovery after a failed submit; never reuse old EL frames.
++static inline void ambient_fel_decoder_flush(struct ambient_fel_decoder *s)
++{
++    if (!s || !s->codec || !s->split) return;
++    for (unsigned i=0;i<AMBIENT_FEL_QUEUE_CAPACITY;i++)
++        av_frame_free(&s->queue[i]);
++    av_bsf_flush(s->split);
++    avcodec_flush_buffers(s->codec);
++    s->discarded=0;s->failed=false;s->draining=false;
++}
+diff --git a/libavcodec/ambient_fel_api.h b/libavcodec/ambient_fel_api.h
+new file mode 100644
+--- /dev/null
++++ b/libavcodec/ambient_fel_api.h
+@@ -0,0 +1,40 @@
++#pragma once
++/* Private static FFmpeg interface. No AVFrame/AVPacket types cross modules.
++ * Data is copied once at picture ownership transfer, allocated with libc
++ * malloc and freed by VLC's standard ancillary destructor. */
++#include <stdbool.h>
++#include <stddef.h>
++#include <stdint.h>
++#include "ambient_dovi_parser.h"
++#ifdef __cplusplus
++extern "C" {
++#endif
++struct ambient_fel_session;
++struct ambient_fel_picture {
++    struct ambient_dovi_metadata rpu;
++    int64_t pts;
++    unsigned width,height;
++    unsigned coded_width,coded_height; /* before SPS conformance crop */
++    unsigned crop_x,crop_y; /* origin of the visible EL in its coded picture */
++    float chroma_x,chroma_y;
++    size_t sample_count; /* zero only for a proven zero-residual frame */
++    // Tightly packed 16-bit Y, Cb, Cr codewords, ceil chroma dimensions.
++    uint16_t samples[];
++};
++struct ambient_fel_session *av_ambient_fel_open(void);
++void av_ambient_fel_close(struct ambient_fel_session *);
++void av_ambient_fel_flush(struct ambient_fel_session *);
++int av_ambient_fel_submit(struct ambient_fel_session *,const uint8_t *,size_t,int64_t,int64_t);
++int av_ambient_fel_drain(struct ambient_fel_session *);
++/* After take() returns NULL: can another submit still produce this picture? */
++bool av_ambient_fel_may_receive(const struct ambient_fel_session *);
++/* Return owned EL frame for exactly pts, never nearest. */
++struct ambient_fel_picture *av_ambient_fel_take(struct ambient_fel_session *,int64_t);
++/* Match the decoded EL as usual, but omit its pixel copy only when the
++ * exact matching RPU proves all residual components are zero. */
++struct ambient_fel_picture *av_ambient_fel_take_rpu(struct ambient_fel_session *,int64_t,
++    const struct ambient_dovi_metadata *);
++void av_ambient_fel_discard(struct ambient_fel_session *,int64_t);
++#ifdef __cplusplus
++}
++#endif

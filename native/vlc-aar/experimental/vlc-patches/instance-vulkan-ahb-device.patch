@@ -1,0 +1,84 @@
+diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_output/libplacebo/instance_vulkan.c
+--- a/modules/video_output/libplacebo/instance_vulkan.c
++++ b/modules/video_output/libplacebo/instance_vulkan.c
+@@ -28,6 +28,9 @@
+ #include <vlc_plugin.h>
+ 
+ #include <libplacebo/vulkan.h>
++#ifdef __ANDROID__
++# include <vulkan/vulkan_android.h>
++#endif
+ 
+ #include "../vulkan/platform.h"
+ #include "instance.h"
+@@ -81,14 +84,39 @@
+ 
+     // Create vulkan device
+     char *device_name = var_InheritString(pl, "vk-device");
++    bool ambient_ahb = false;
++#ifdef __ANDROID__
++    ambient_ahb = var_InheritBool(pl, "vk-ambient-ahb");
++    // Request interop on this device, not on a separate probe device.
++    // These are optional so unsupported drivers keep a valid copy-back path.
++    const char *interop_extensions[] = {
++        VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME,
++        VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
++        VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME,
++    };
++    VkPhysicalDeviceSamplerYcbcrConversionFeatures ycbcr = {
++        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES,
++        .samplerYcbcrConversion = VK_TRUE,
++    };
++    VkPhysicalDeviceFeatures2 features = {
++        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
++        .pNext = &ycbcr,
++    };
++#endif
+     sys->vulkan = pl_vulkan_create(pl->log, &(struct pl_vulkan_params) {
+         .instance = sys->instance->instance,
+         .surface = sys->surface,
+         .device_name = device_name,
+         .allow_software = var_InheritBool(pl, "vk-allow-sw"),
+-        .async_transfer = var_InheritBool(pl, "vk-async-xfer"),
+-        .async_compute = var_InheritBool(pl, "vk-async-comp"),
+-        .queue_count = var_InheritInteger(pl, "vk-queue-count"),
++        // The experimental handoff requires one shared graphics queue.
++        .async_transfer = !ambient_ahb && var_InheritBool(pl, "vk-async-xfer"),
++        .async_compute = !ambient_ahb && var_InheritBool(pl, "vk-async-comp"),
++        .queue_count = ambient_ahb ? 1 : var_InheritInteger(pl, "vk-queue-count"),
++#ifdef __ANDROID__
++        .opt_extensions = ambient_ahb ? interop_extensions : NULL,
++        .num_opt_extensions = ambient_ahb ? ARRAY_SIZE(interop_extensions) : 0,
++        .features = ambient_ahb ? &features : NULL,
++#endif
+     });
+     free(device_name);
+     if (!sys->vulkan)
+@@ -196,6 +224,27 @@
+             ALLOWSW_TEXT, ALLOWSW_LONGTEXT)
+ 
+     set_section("Performance tuning", NULL)
++#ifdef __ANDROID__
++    add_bool("vk-ambient-ahb", false, "Experimental Android buffer interop",
++            "Request AHardwareBuffer features on the rendering device. "
++            "Disabled by default; a compatible display bridge is also required.")
++    add_bool("vk-ambient-hdr10plus", false, "Require per-picture HDR10+ metadata",
++            "Reject opaque HDR10+ when dynamic metadata cannot be verified.")
++    add_bool("vk-ambient-raw-p010", false, "Experimental raw P010 handoff",
++            "Verify native P010 identity sampling before libplacebo color conversion.")
++    add_bool("vk-ambient-dovi-ahb", false, "Experimental Dolby Vision profiles 5/8 AHB",
++            "Decode single-layer Main10 base layer and apply timestamp-bound RPU before RGB conversion.")
++    add_bool("vk-ambient-dovi-fel", false, "Experimental Dolby Vision profile 7 FEL",
++            "Requires the AHB and Dolby Vision options; decodes a second HEVC layer and reconstructs matched pictures.")
++    add_bool("vk-ambient-hdr10plus-spatial", false, "Experimental HDR10+ local-window tone mapping",
++            "Apply local-window OOTFs to RGB PQ or raw P010 AHB frames.")
++    add_integer_with_range("vk-ambient-hdr-target-transfer", 0, 0, 2,
++            "Experimental HDR target transfer", "0 SDR, 1 PQ, 2 HLG. Explicit target luminance required.")
++    add_float_with_range("vk-ambient-hdr-target-max", 0.f, 0.f, 10000.f,
++            "HDR target maximum nits", "Display capability, not source mastering luminance.")
++    add_float_with_range("vk-ambient-hdr-target-min", -1.f, -1.f, 10000.f,
++            "HDR target minimum nits", "Display capability, -1 means unknown.")
++#endif
+     add_bool("vk-async-xfer", pl_vulkan_default_params.async_transfer,
+             ASYNC_XFER_TEXT, ASYNC_XFER_LONGTEXT)
+     add_bool("vk-async-comp", pl_vulkan_default_params.async_compute,
