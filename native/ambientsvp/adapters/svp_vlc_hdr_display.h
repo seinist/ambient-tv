@@ -26,7 +26,7 @@ struct ambient_svp_hdr_display {
     pl_tex fields[2],output;
     uint64_t field_a,field_b;
     struct ambient_hdrplus metadata;
-    bool has_metadata;
+    bool has_metadata,metadata_aligned;
 };
 static inline void ambient_svp_hdr_display_destroy(pl_gpu gpu,struct ambient_svp_hdr_display *s)
 {
@@ -105,7 +105,12 @@ static inline bool ambient_svp_hdr_source_load(pl_gpu gpu,pl_log log,
     dst->color=img.color;dst->aligned=lease.metadata_origin_aligned;
     struct vlc_ancillary *full=picture_GetAncillary(pic,AMBIENT_HDRPLUS_FULL_ID);
     dst->has_hdrplus=full!=NULL;
-    if(full)dst->hdrplus=*(const struct ambient_hdrplus *)vlc_ancillary_GetData(full);
+    if(full){
+        dst->hdrplus=*(const struct ambient_hdrplus *)vlc_ancillary_GetData(full);
+        vlc_video_hdr_dynamic_metadata_t global;
+        ambient_hdrplus_project_global(&global,&dst->hdrplus);
+        vlc_placebo_HdrMetadata(&global,&dst->color.hdr);
+    }
     dst->id=id;
     return true;
 }
@@ -167,6 +172,68 @@ static inline bool ambient_svp_hdr_synth(pl_gpu gpu,struct ambient_svp_hdr_displ
     })){pl_dispatch_abort(s->dp,&sh);return false;}
     return pl_dispatch_finish(s->dp,pl_dispatch_params(.shader=&sh,.target=s->output));
 }
+static inline float ambient_svp_quant_lerp(float a,float b,float t,float scale)
+{
+    return roundf((a+(b-a)*t)*scale)/scale;
+}
+static inline bool ambient_svp_hdrplus_lerp(struct ambient_hdrplus *out,
+    const struct ambient_hdrplus *a,const struct ambient_hdrplus *b,float t,int w,int h)
+{
+    if(!a->metadata_constraints_ok||!b->metadata_constraints_ok||a->version!=b->version||
+        !a->window_count||a->window_count>3||a->window_count!=b->window_count)return false;
+    *out=*a;
+    out->target_nits=ambient_svp_quant_lerp(a->target_nits,b->target_nits,t,1);
+    for(unsigned i=0;i<a->window_count;i++){
+        struct ambient_hdrplus_window *o=&out->windows[i];
+        const struct ambient_hdrplus_window *x=&a->windows[i],*y=&b->windows[i];
+        if(x->histogram_count!=y->histogram_count||x->histogram_count>15||
+            x->tone_mapping!=y->tone_mapping||x->anchor_count!=y->anchor_count||x->anchor_count>15||
+            x->saturation_mapping!=y->saturation_mapping)return false;
+        if(i){
+            const struct ambient_hdrplus_geometry *g=&x->geometry,*k=&y->geometry;
+            if(g->angle!=k->angle||g->overlap!=k->overlap)return false;
+#define G(field) o->geometry.field=(uint16_t)roundf(g->field+(k->field-(float)g->field)*t)
+            G(left);G(top);G(right);G(bottom);G(center_x);G(center_y);
+            G(semimajor_inner);G(semimajor_outer);G(semiminor_outer);
+#undef G
+            if(o->geometry.left>=o->geometry.right||o->geometry.top>=o->geometry.bottom||
+                o->geometry.right>=w||o->geometry.bottom>=h||o->geometry.center_x>=w||
+                o->geometry.center_y>=h||!o->geometry.semimajor_inner||!o->geometry.semiminor_outer||
+                o->geometry.semimajor_outer<o->geometry.semimajor_inner||
+                o->geometry.semimajor_outer<o->geometry.semiminor_outer)return false;
+        }
+#define F(field,scale) o->field=ambient_svp_quant_lerp(x->field,y->field,t,scale)
+        for(unsigned c=0;c<3;c++){F(maxscl[c],100000);}
+        F(average,100000);F(fraction,1000);
+        for(unsigned j=0;j<x->histogram_count;j++){
+            if(x->histogram[j].percentage!=y->histogram[j].percentage)return false;
+            F(histogram[j].percentile,100000);
+        }
+        if(x->tone_mapping){
+            F(knee_x,4095);F(knee_y,4095);
+            for(unsigned j=0;j<x->anchor_count;j++){F(anchors[j],1023);}
+        }
+        if(x->saturation_mapping){o->saturation_weight=(uint8_t)roundf(x->saturation_weight+
+            (y->saturation_weight-(float)x->saturation_weight)*t);}
+#undef F
+        if(!ambient_hdrplus_distribution_ordered(o,out->version)||
+            (o->tone_mapping&&!ambient_hdrplus_usable_curve(o,out->target_nits)))return false;
+    }
+    struct ambient_hdrplus_grid *grids[]={&out->targeted_grid,&out->mastering_grid};
+    const struct ambient_hdrplus_grid *ag[]={&a->targeted_grid,&a->mastering_grid},
+        *bg[]={&b->targeted_grid,&b->mastering_grid};
+    for(unsigned i=0;i<2;i++){
+        const struct ambient_hdrplus_grid *x=ag[i],*y=bg[i];
+        if(x->rows!=y->rows||x->cols!=y->cols||x->rows>25||x->cols>25||
+            (!!x->rows!=!!x->cols)||(x->rows&&x->rows<2)||(x->cols&&x->cols<2))return false;
+        for(unsigned j=0;j<x->rows;j++)for(unsigned k=0;k<x->cols;k++){
+            if(x->values[j][k]>15||y->values[j][k]>15)return false;
+            grids[i]->values[j][k]=(uint8_t)roundf(x->values[j][k]+
+                (y->values[j][k]-(float)x->values[j][k])*t);
+        }
+    }
+    return true;
+}
 static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     struct ambient_svp_hdr_display *s,struct ambient_ahb_owner *owner,
     const struct ambient_svp_pair *pair,bool raw,bool dovi,struct pl_frame *img)
@@ -184,15 +251,18 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     if(!ambient_svp_hdr_source_load(gpu,log,s,owner,a,pair->a,pair->a_id,raw,dovi))return false;
     bool same=pair->a_id==pair->b_id||pair->phase==0.f;
     if(!same&&!ambient_svp_hdr_source_load(gpu,log,s,owner,b,pair->b,pair->b_id,raw,dovi))return false;
-    s->has_metadata=a->has_hdrplus;
+    s->has_metadata=a->has_hdrplus;s->metadata_aligned=a->aligned;
     if(s->has_metadata)s->metadata=a->hdrplus;
     if(same){*img=ambient_pl_rgb_frame(a->texture,a->color);return true;}
     if(a->texture->params.w!=b->texture->params.w||a->texture->params.h!=b->texture->params.h||
         a->color.transfer!=b->color.transfer||a->color.primaries!=b->color.primaries||
         a->has_hdrplus!=b->has_hdrplus||
-        (a->has_hdrplus&&memcmp(&a->hdrplus,&b->hdrplus,sizeof(a->hdrplus)))){
-        // Until spatial metadata is interpolated, keep exact source
-        // pixels/metadata on an incompatible pair.
+        (a->has_hdrplus&&(!a->aligned||!b->aligned||
+            !ambient_svp_hdrplus_lerp(&s->metadata,&a->hdrplus,&b->hdrplus,pair->phase,
+                a->texture->params.w,a->texture->params.h)))){
+        // Keep exact source pixels/metadata on incompatible geometry,
+        // window topology, or color contracts.
+        if(a->has_hdrplus)s->metadata=a->hdrplus;
         *img=ambient_pl_rgb_frame(a->texture,a->color);return true;
     }
     if(s->field_a!=a->id||s->field_b!=b->id){
@@ -203,6 +273,14 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     }
     if(!ambient_svp_hdr_synth(gpu,s,a->texture,b->texture,pair->phase))return false;
     *img=ambient_pl_rgb_frame(s->output,a->color);
+    if(s->has_metadata){
+        vlc_video_hdr_dynamic_metadata_t global;
+        ambient_hdrplus_project_global(&global,&s->metadata);
+        vlc_placebo_HdrMetadata(&global,&img->color.hdr);
+    }else if(dovi){
+        img->color.hdr.max_luma=fmaxf(a->color.hdr.max_luma,b->color.hdr.max_luma);
+        img->color.hdr.min_luma=fminf(a->color.hdr.min_luma,b->color.hdr.min_luma);
+    }
     return true;
 }
 #endif
