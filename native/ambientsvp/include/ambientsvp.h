@@ -41,6 +41,8 @@ int ambient_svp_push_fill(AmbientSvp *, int64_t pts_us, void *context, AmbientSv
  /* 1 output, 0 needs input/end of drain, -1 failure. Always drain before push.
  * eof=1 closes the input and drains the finite tail without extrapolation. */
 int ambient_svp_receive(AmbientSvp *svp, uint8_t *i420, size_t len, int64_t *pts_us, int eof);
+/* Optional allocation preflight: 1 may produce output, 0 needs input/end, -1 error. */
+int ambient_svp_ready(AmbientSvp *, int eof);
 /* Optional direct output visitor. Called synchronously exactly once for
  * each output, never for a need-input result. The borrowed packed I420
  * pointer is read-only and valid only during the callback; do not retain
