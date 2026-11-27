@@ -53,7 +53,7 @@ if [[ -n "${LIBPLACEBO_SOURCE:-}" ]]; then
             for module in display instance_vulkan; do
                 "$NDK/toolchains/llvm/prebuilt/$host/bin/${triple}29-clang" \
                     -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 \
-                    -DMODULE_NAME=libplacebo -DAMBIENT_VLC_AHB_EXPERIMENT \
+                    -DMODULE_NAME=libplacebo -DAMBIENT_VLC_AHB_EXPERIMENT '-DN_(s)=s' \
                     -Werror=implicit-function-declaration -Werror=incompatible-pointer-types -Werror=int-conversion \
                     -I "$TMP/pl-headers" -isystem "$LIBPLACEBO_SOURCE/src/include" \
                     -I "$VLC_SOURCE/include" \
