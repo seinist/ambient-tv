@@ -57,59 +57,81 @@ class CoreBuildPolicyTest(unittest.TestCase):
                 audit_commands(log.replace(flag, ""), "optimized-a57")
 
     def test_mupen_native_offset_helper(self):
+        import shutil
         import subprocess
         marker = "ASM_DEFINES_OBJ := $(LOCAL_OBJS_DIR)/$(call get-object-name,$(CORE_DIR)/src/asm_defines/asm_defines.c)"
         generator = "\t\t-f $(CORE_DIR)/tools/gen_asm_defines.awk"
         original = marker + "\n$(ASM_DEFINES_NASM): $(ASM_DEFINES_OBJ)\n" + generator + "\n"
-        # Reproduce the NDK's delayed evaluation: Android.mk is parsed first,
-        # then ev-compile-c-source creates actual target-specific flags.
-        template = """define ev-compile-c-source
-_SRC := $(1)
-_OBJ := $(2)
-_FLAGS := -O3 -flto=thin -mtune=cortex-a57 -c
-_TEXT := Compile $$(notdir $$(_SRC))
-$$(eval $$(call ev-build-source-file))
-endef
-
-define ev-build-source-file
-$(_OBJ): PRIVATE_CFLAGS := $(_FLAGS)
-$(_OBJ):
-	@echo $$(PRIVATE_CFLAGS)
-endef
-"""
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "jni").mkdir()
+            root = Path(directory) / "libretro"
+            (root / "jni").mkdir(parents=True)
+            amd64 = root.parent / "libretro-common/libco/amd64.c"
+            amd64.parent.mkdir(parents=True)
+            coroutine = "#include <stdlib.h>\n#include <assert.h>\ntypedef void *cothread_t;\n#define ASM_PREFIX \"\"\nstatic long long co_active_buffer[64];\nstatic cothread_t co_active_handle = 0;\ncothread_t co_active(void) { if (!co_active_handle) co_active_handle = &co_active_buffer; return co_active_handle; }\nstatic void crash(void) { abort(); }\ncothread_t co_create(unsigned int size, void (*entrypoint)(void)) {\n    co_active(); size += 512; size &= ~15;\n    void *h = malloc(size);\n    long long *p = (long long*)((char*)h + size);\n    *--p = (long long)crash; *--p = (long long)entrypoint; *(long long*)h = (long long)p;\n    return h;\n}\nvoid co_delete(cothread_t h) { free(h); }\n__asm__(\n\".intel_syntax noprefix         \\n\"\n\".globl \" ASM_PREFIX \"co_switch              \\n\"\nASM_PREFIX \"co_switch:                     \\n\"\n\"mov rsi, [rip+\" ASM_PREFIX \"co_active_handle]\\n\"\n\"mov [rsi],rsp                  \\n\"\n\"mov [rsi+0x08],rbp             \\n\"\n\"mov [rsi+0x10],rbx             \\n\"\n\"mov [rsi+0x18],r12             \\n\"\n\"mov [rsi+0x20],r13             \\n\"\n\"mov [rsi+0x28],r14             \\n\"\n\"mov [rsi+0x30],r15             \\n\"\n\"mov [rip+\" ASM_PREFIX \"co_active_handle], rdi\\n\"\n\"mov rsp,[rdi]                  \\n\"\n\"mov rbp,[rdi+0x08]             \\n\"\n\"mov rbx,[rdi+0x10]             \\n\"\n\"mov r12,[rdi+0x18]             \\n\"\n\"mov r13,[rdi+0x20]             \\n\"\n\"mov r14,[rdi+0x28]             \\n\"\n\"mov r15,[rdi+0x30]             \\n\"\n\"ret                            \\n\"\n\".att_syntax                    \\n\"\n);\n"
             recipe = root / "jni/Android.mk"
-            definitions = root / "build/core/definitions.mk"
-            definitions.parent.mkdir(parents=True)
-            with patch.dict("os.environ", {"NDK": str(root)}):
-                for profile in ("baseline", "optimized", "optimized-a57", "thinlto"):
-                    recipe.write_text(original)
-                    definitions.write_text(template)
-                    prepare_ndk(root, "mupen64plus_next_gles3", profile)
-                    if profile == "baseline":
-                        self.assertEqual(recipe.read_text(), original)
-                        self.assertEqual(definitions.read_text(), template)
-                    else:
-                        self.assertIn("test -s $(ASM_DEFINES_NASM) && test -s $(ASM_DEFINES_GAS)", recipe.read_text())
-                    makefile = root / "Makefile"
-                    makefile.write_text(definitions.read_text() + """
-$(eval $(call ev-compile-c-source,/repo/mupen64plus-core/src/asm_defines/asm_defines.c,offsets))
-$(eval $(call ev-compile-c-source,/repo/mupen64plus-core/src/device/core.c,emulator))
-$(eval $(call ev-compile-c-source,/repo/other/asm_defines.c,unrelated))
-all: offsets emulator unrelated
-""")
-                    output = subprocess.check_output(["make", "--no-print-directory", "-f", str(makefile), "all"], text=True).splitlines()
-                    common = "-O3 -flto=thin -mtune=cortex-a57 -c"
-                    self.assertEqual(output, [common + (" -fno-lto" if profile != "baseline" else ""), common, common])
+            launcher = root / "jni/ambient-mupen-cc"
+            for profile in ("baseline", "optimized", "optimized-a57", "thinlto"):
                 recipe.write_text(original)
-                definitions.write_text("changed")
-                with self.assertRaisesRegex(ValueError, "NDK C compilation template"):
-                    prepare_ndk(root, "mupen64plus_next_gles3", "optimized")
-                recipe.write_text("changed")
-                with self.assertRaises(ValueError):
-                    prepare_ndk(root, "mupen64plus_next_gles3", "optimized")
+                amd64.write_text(coroutine)
+                launcher.unlink(missing_ok=True)
+                prepare_ndk(root, "mupen64plus_next_gles3", profile)
+                if profile == "baseline":
+                    self.assertEqual(recipe.read_text(), original)
+                    self.assertFalse(launcher.exists())
+                    self.assertEqual(amd64.read_text(), coroutine)
+                else:
+                    self.assertTrue(launcher.is_file())
+                    self.assertNotIn("mov rsi, [rip+", amd64.read_text())
+                    self.assertNotIn("mov [rip+", amd64.read_text())
+                    self.assertIn("ambient_mupen_co_swap(handle, previous)", amd64.read_text())
+                    self.assertIn("test -s $(ASM_DEFINES_NASM) && test -s $(ASM_DEFINES_GAS)", recipe.read_text())
+            # Real shared-library ThinLTO link and repeated stack switches on x86_64.
+            import platform
+            if platform.machine() == "x86_64" and shutil.which("clang") and shutil.which("ld.lld"):
+                driver = shutil.which("clang")
+                library = root / "libco-test.so"
+                harness = root / "coroutine-test.c"
+                harness.write_text("#include <assert.h>\ntypedef void *cothread_t;\nextern cothread_t co_active(void), co_create(unsigned, void (*)(void));\nextern void co_switch(cothread_t), co_delete(cothread_t);\nstatic cothread_t main_co, child_co;\nstatic int phase;\nstatic void child(void) {\n    for (int i = 0; i < 10000; ++i) {\n        assert(co_active() == child_co); ++phase; co_switch(main_co);\n    }\n    __builtin_trap();\n}\nint main(void) {\n    main_co = co_active(); child_co = co_create(65536, child);\n    for (int i = 0; i < 10000; ++i) {\n        co_switch(child_co); assert(co_active() == main_co); assert(phase == i + 1);\n    }\n    co_delete(child_co);\n}\n")
+                subprocess.run([driver, "-O3", "-flto=thin", "-fPIC", "-shared", "-fuse-ld=lld",
+                                "-Wl,--no-undefined", str(amd64), "-o", str(library)], check=True)
+                executable = root / "coroutine-test"
+                subprocess.run([driver, "-O3", "-flto=thin", "-fuse-ld=lld", str(harness),
+                                str(library), "-Wl,-rpath," + str(root), "-o", str(executable)], check=True)
+                subprocess.run([str(executable)], check=True, timeout=10)
+            recipe.write_text("changed")
+            with self.assertRaises(ValueError):
+                prepare_ndk(root, "mupen64plus_next_gles3", "optimized")
+            # Exercise the actual generated launcher with an argument recorder
+            # even on a host without Clang, including response-file detection.
+            driver = root / "clang"
+            driver.write_text("#!/usr/bin/env python3\nimport json,sys\nprint(json.dumps(sys.argv[1:]))\n")
+            driver.chmod(0o755)
+            offset = root / "mupen64plus-core/src/asm_defines/asm_defines.c"
+            offset.parent.mkdir(parents=True)
+            offset.write_text('const char offset[] = "@ASM_DEFINE offsetof_struct_test 0x12345678";\n')
+            other = root / "other/asm_defines.c"
+            other.parent.mkdir()
+            other.write_text("int f(void) { return 42; }\n")
+            flags = ["--target=aarch64-linux-android21", "-O3", "-flto=thin", "-mtune=cortex-a57"]
+            response = root / "flags.rsp"
+            response.write_text(" ".join(flags + ["-c", str(offset), "-o", str(root / "response.o")]))
+            with patch.dict("os.environ", {"CORE_CCACHE": ""}):
+                for args, expected in ((flags + ["-c", str(offset), "-o", "offset.o"], True),
+                                       (flags + ["-c", str(other), "-o", "other.o"], False),
+                                       (["@" + str(response)], True),
+                                       (["-shared", "-flto=thin", "offset.o", "other.o"], False)):
+                    output = subprocess.check_output([str(launcher), str(driver), *args], text=True)
+                    executed = json.loads(output.splitlines()[-1])
+                    self.assertEqual(executed, args + (["-fno-lto"] if expected else []))
+                clang = shutil.which("clang")
+                if clang:
+                    for src, name, magic in ((offset, "offset.o", b"\x7fELF"), (other, "other.o", b"BC\xc0\xde")):
+                        obj = root / name
+                        subprocess.run([str(launcher), clang, *flags, "-c", str(src), "-o", str(obj)], check=True)
+                        self.assertTrue(obj.read_bytes().startswith(magic))
+                    subprocess.run([str(launcher), clang, "@" + str(response)], check=True)
+                    for name in ("offset.o", "response.o"):
+                        self.assertIn(b"@ASM_DEFINE offsetof_struct_test 0x12345678", (root / name).read_bytes())
         for profile in ("optimized", "optimized-a57"):
             flags = "-O3 -flto=thin" + (" -mtune=cortex-a57" if profile == "optimized-a57" else "")
             helper = f"clang {flags} -fno-lto -c src/mupen64plus-core/src/asm_defines/asm_defines.c -o offsets.o\n"
@@ -124,6 +146,13 @@ all: offsets emulator unrelated
                         log.replace("src/mupen64plus-core/src/asm_defines/asm_defines.c", "src/other/asm_defines.c")):
                 with self.assertRaises(ValueError):
                     audit_commands(bad, profile, core="mupen64plus_next_gles3", abi="arm64-v8a")
+
+    def test_targeted_pr_validation_matrix(self):
+        for profile, count in (("optimized", 4), ("optimized-a57", 1)):
+            jobs = plan(self.catalog, "pull_request", "refs/pull/1/merge", False,
+                        "mupen64plus_next_gles3", "", profile)["include"]
+            self.assertEqual(len(jobs), count)
+            self.assertTrue(all(j["core"] == "mupen64plus_next_gles3" and j["profile"] == profile for j in jobs))
 
     def test_auto_experimental_full_catalogs(self):
         for profile in ("optimized", "optimized-a57"):

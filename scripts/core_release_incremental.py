@@ -98,8 +98,14 @@ def fingerprint(job, ndk, root=ROOT):
     files["core_build_policy.py"] = policy_fingerprint(job, root)
     if job["profile"] in {"core-hotpaths", "optimized", "optimized-a57"}:
         files["hotpath"] = hotpath_fingerprint(job["core"], root)
+    build_recipe = workflow[start:end]
+    if not (job["core"] == "mupen64plus_next_gles3" and "-flto=thin" in job["cflags"].split()):
+        # This source-specific launcher does not change any other build recipe.
+        build_recipe = re.sub(r"(?m)^            # BEGIN MUPEN NATIVE OFFSET LAUNCHER\n"
+                              r"[\s\S]*?^            # END MUPEN NATIVE OFFSET LAUNCHER\n", "", build_recipe)
+        build_recipe = build_recipe.replace('NDK_CCACHE="$ndk_ccache"', 'NDK_CCACHE="${CORE_CCACHE:-}"')
     payload = {"schema": 2, "ndk": ndk, "job": job,
-               "build": digest(workflow[start:end].encode()), "files": files}
+               "build": digest(build_recipe.encode()), "files": files}
     return digest(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode())
 
 

@@ -31,7 +31,7 @@ on:
         default: none
     secrets:
       CORES_SIGNING_KEY:
-        required: true
+        required: false
   workflow_dispatch:
     inputs:
       publish:
@@ -64,7 +64,7 @@ on:
         default: none
 
 concurrency:
-  group: cores-${{ github.ref }}-${{ inputs.publish_experimental && format('release-experimental-{0}', inputs.profile) || ((github.event_name == 'push' || inputs.publish) && 'release' || (github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || 'pr')) }}
+  group: cores-${{ github.ref }}-${{ inputs.publish_experimental && format('release-experimental-{0}', inputs.profile) || ((github.event_name == 'push' || inputs.publish) && 'release' || (github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || format('pr-{0}-{1}', inputs.profile || 'baseline', inputs.cores || 'all'))) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -294,8 +294,15 @@ jobs:
             python3 scripts/core_build_policy.py ndk-flags \
               --application "src/$JNI/jni/Application.mk" --profile "$PROFILE" --cppflags="$CPPFLAGS_EXTRA"
             build_cwd="$PWD/src/$JNI/jni"
+            # BEGIN MUPEN NATIVE OFFSET LAUNCHER
+            ndk_ccache="${CORE_CCACHE:-}"
+            if [[ "$CORE" == mupen64plus_next_gles3 && "$CFLAGS_EXTRA" == *-flto=thin* ]]; then
+              test -x "$build_cwd/ambient-mupen-cc"
+              ndk_ccache="$build_cwd/ambient-mupen-cc"
+            fi
+            # END MUPEN NATIVE OFFSET LAUNCHER
             env "${extra_env[@]}" "${NDK}/ndk-build" --no-print-directory --output-sync=target -j"$(nproc)" -C "src/$JNI/jni" \
-              APP_ABI="$ABI" APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true NDK_CCACHE="${CORE_CCACHE:-}" V=1 "${makevars[@]}" 2>&1 | tee reports/build.log
+              APP_ABI="$ABI" APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true NDK_CCACHE="$ndk_ccache" V=1 "${makevars[@]}" 2>&1 | tee reports/build.log
             lib=$(python3 scripts/core_build_policy.py select --nm "$bin/llvm-nm" --root "src/$JNI/libs/$ABI" --pattern '*.so')
           fi
           target="out/${CORE}_libretro_android.so"
