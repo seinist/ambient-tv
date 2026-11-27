@@ -252,6 +252,9 @@ impl Stream{
         let batch=Batch::record(self.owner.clone(),self.resident,a,b,self.width,self.height,phases)?;
         let result=batch.outputs(out);
         self.batches.push(batch);
+        if result.is_ok(){
+            crate::ANDROID_RESIDENT_OUTPUTS.fetch_add(phases.len() as u64,std::sync::atomic::Ordering::Relaxed);
+        }
         result
     }
 }
