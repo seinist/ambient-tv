@@ -647,6 +647,83 @@ static void test_multiple_timed_intermediates(void)
         }
     }
 }
+/* A terminal EL moof may also carry audio. Its implicit base depends on
+ * the preceding hidden traf, which must not be indexed a second time. */
+static void test_mixed_terminal(void)
+{
+    for(unsigned mode=0;mode<2;mode++){
+        for(unsigned overlap=0;overlap<2;overlap++){
+            reset_stream(mode!=0);
+            mp4_track_t track[3]={{.i_track_ID=1,.b_ok=true,.i_timescale=1000,
+                .ambient_fel_el_id=2},{.i_track_ID=2,.b_ok=true,.i_timescale=1000,
+                .ambient_fel_hidden=true,.ambient_fel_separate=true},
+                {.i_track_ID=3,.b_ok=true,.i_timescale=48000}};
+            demux_sys_t sys={.i_tracks=3,.track=track,.b_seekable=mode!=0};
+            demux_t d={.s=&fixture_stream,.p_sys=&sys};
+            MP4_Box_data_mfhd_t seq[2]={{.i_sequence_number=7},{.i_sequence_number=8}};
+            MP4_Box_data_tfhd_t tf[2]={{.i_track_ID=2,
+                .i_flags=MP4_TFHD_DEFAULT_BASE_IS_MOOF|MP4_TFHD_DFLT_SAMPLE_SIZE|
+                    MP4_TFHD_DFLT_SAMPLE_DURATION,
+                .i_default_sample_size=4,.i_default_sample_duration=1},
+                {.i_track_ID=3,.i_flags=MP4_TFHD_DFLT_SAMPLE_SIZE|MP4_TFHD_DFLT_SAMPLE_DURATION,
+                .i_default_sample_size=4,.i_default_sample_duration=1024}};
+            MP4_Box_data_trun_t tr[2]={{.i_flags=MP4_TRUN_DATA_OFFSET,
+                .i_sample_count=1,.i_data_offset=48},
+                {.i_flags=overlap?MP4_TRUN_DATA_OFFSET:0,.i_sample_count=1,
+                 .i_data_offset=overlap?-4:0}};
+            MP4_Box_t run[2]={{.i_type=ATOM_trun,.data.p_trun=&tr[0]},
+                {.i_type=ATOM_trun,.data.p_trun=&tr[1]}};
+            MP4_Box_data_tfdt_t dt={.i_base_media_decode_time=48000};
+            MP4_Box_t clock={.i_type=ATOM_tfdt,.data.p_tfdt=&dt,.p_next=&run[1]};
+            MP4_Box_t header[2]={{.i_type=ATOM_tfhd,.data.p_tfhd=&tf[0],.p_next=&run[0]},
+                {.i_type=ATOM_tfhd,.data.p_tfhd=&tf[1],.p_next=&clock}};
+            MP4_Box_t traf[2]={{.i_type=ATOM_traf,.p_first=&header[0]},
+                {.i_type=ATOM_traf,.p_first=&header[1]}};
+            traf[0].p_next=&traf[1];
+            MP4_Box_t mfhd[2]={{.i_type=ATOM_mfhd,.data.p_mfhd=&seq[0]},
+                {.i_type=ATOM_mfhd,.data.p_mfhd=&seq[1],.p_next=&traf[0]}};
+            MP4_Box_t bl={.i_type=ATOM_moof,.i_pos=0,.i_size=100,.p_first=&mfhd[0]};
+            look_el=(MP4_Box_t){.i_type=ATOM_moof,.i_pos=112,.i_size=40,
+                .p_first=&mfhd[1],.p_last=&traf[1]};
+            look_root=(MP4_Box_t){0};
+            box(112,40,"moof");box(152,16,"mdat");
+            memcpy(bytes+160,"EL12AUD1",8);visible=168;
+            sys.context.ambient_fel_required_end=112;
+            assert(MP4_FEL_Lookahead(&d,&bl));
+            assert(sys.ambient_fel_replay_count==1&&sys.ambient_fel_replay[0].mixed_el);
+            assert(!sys.ambient_fel_replay[0].moof&&sys.context.ambient_fel_el_moof==&look_el);
+            bool indexed=MP4_FEL_IndexAdjacent(&d);
+            assert(indexed==!overlap);
+            if(overlap){
+                FragResetContext(&sys);MP4_FEL_ClearReplay(&sys);
+                assert(!blocks&&el_frees==1);
+                continue;
+            }
+            assert(track[1].context.runs.i_count==1);
+            assert(track[1].context.runs.p_array[0].i_offset==160);
+            assert(!track[2].context.runs.i_count);
+            assert(tf[1].i_base_data_offset==164&&(tf[1].i_flags&MP4_TFHD_BASE_DATA_OFFSET));
+            sys.context.i_lastseqnumber=7;
+            track[0].ambient_fel_clock_valid=track[0].ambient_fel_sequence_proven=true;
+            track[0].ambient_fel_bl_end=track[0].ambient_fel_el_end=1;
+            assert(MP4_FEL_AdvanceReplay(&d));
+            assert(!sys.context.ambient_fel_el_moof&&sys.ambient_fel_replay[0].moof==&look_el);
+            MP4_FEL_ReleaseCaches(&sys);
+            assert(MP4_FEL_ReplayNext(&d)&&!el_frees);
+            assert(!track[1].context.runs.i_count&&track[2].context.runs.i_count==1);
+            assert(track[2].context.i_trun_sample_pos==164&&track[2].i_time==48000);
+            assert(MP4_FEL_ValidatePayloads(&sys));
+            if(mode)assert(MP4_FEL_SeekExact(d.s,164));
+            block_t *audio=mode?MP4_FEL_ReadExact(d.s,164,4):
+                MP4_FEL_ReadCached(&sys,false,164,4);
+            assert(audio&&!memcmp(audio->p_buffer,"AUD1",4));
+            block_Release(audio);
+            assert(MP4_FEL_AdvanceReplay(&d)&&position==168&&sys.context.i_lastseqnumber==8);
+            FragResetContext(&sys);MP4_FEL_ClearReplay(&sys);
+            assert(!blocks&&el_frees==1);
+        }
+    }
+}
 int main(void)
 {
     mp4_track_t track={.i_track_ID=1,.b_ok=true,.i_timescale=1000};
@@ -661,6 +738,7 @@ int main(void)
     test_adjacent_lookahead();
     test_timed_intermediate_lookahead();
     test_multiple_timed_intermediates();
+    test_mixed_terminal();
     MP4_Box_data_tfhd_t tfhd={.i_track_ID=1,
         .i_flags=MP4_TFHD_DEFAULT_BASE_IS_MOOF|MP4_TFHD_DFLT_SAMPLE_SIZE|
             MP4_TFHD_DFLT_SAMPLE_DURATION,
