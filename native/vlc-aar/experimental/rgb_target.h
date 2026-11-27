@@ -14,10 +14,11 @@ struct TargetDispatch {
     PFN_vkBindImageMemory bind_image{};
     PFN_vkCreateImageView create_view{};
     PFN_vkDestroyImageView destroy_view{};
+    PFN_vkGetPhysicalDeviceImageFormatProperties image_format_properties{};
     bool valid() const {
         return format_properties && memory_properties && create_image && destroy_image &&
             memory_requirements && allocate_memory && free_memory && bind_image &&
-            create_view && destroy_view;
+            create_view && destroy_view && image_format_properties;
     }
 };
 
@@ -51,6 +52,17 @@ public:
         if ((props.optimalTilingFeatures & needed) != needed)
             return VK_ERROR_FORMAT_NOT_SUPPORTED;
 
+        // Format feature bits alone do not guarantee that this specific
+        // image type, tiling, usage and extent are supported together.
+        VkImageFormatProperties limits{};
+        VkResult result = d_.image_format_properties(physical_, format, VK_IMAGE_TYPE_2D,
+            VK_IMAGE_TILING_OPTIMAL, usage, 0, &limits);
+        if (result != VK_SUCCESS) return result;
+        if (width > limits.maxExtent.width || height > limits.maxExtent.height ||
+            limits.maxExtent.depth < 1 || limits.maxMipLevels < 1 || limits.maxArrayLayers < 1 ||
+            !(limits.sampleCounts & VK_SAMPLE_COUNT_1_BIT))
+            return VK_ERROR_FORMAT_NOT_SUPPORTED;
+
         reset();
         VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         ci.imageType = VK_IMAGE_TYPE_2D;
@@ -62,7 +74,7 @@ public:
         ci.usage = usage;
         ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        VkResult result = d_.create_image(device_, &ci, nullptr, &image_);
+        result = d_.create_image(device_, &ci, nullptr, &image_);
         if (result != VK_SUCCESS) return fail(result);
         VkMemoryRequirements req{};
         d_.memory_requirements(device_, image_, &req);
