@@ -60,9 +60,22 @@ def hevc_payloads(data):
         nal = data[marker.end():end]
         if len(nal)<3 or (nal[0]>>1)&63 not in (39,40):
             continue
-        rbsp = nal[2:].replace(b"\\x00\\x00\\x03",b"\\x00\\x00")
+        # Remove emulation prevention only from the escaped input, not
+        # recursively from the resulting RBSP. Invalid escapes fail closed.
+        rbsp = bytearray()
+        zeroes = 0
+        escaped = nal[2:]
+        for j, b in enumerate(escaped):
+            if zeroes >= 2 and b == 3:
+                if j+1 >= len(escaped) or escaped[j+1] > 3:
+                    raise ValueError("invalid HEVC emulation prevention")
+                zeroes = 0
+                continue
+            rbsp.append(b)
+            zeroes = zeroes+1 if b == 0 else 0
+        rbsp = bytes(rbsp)
         p = 0
-        while p<len(rbsp) and rbsp[p:] != b"\\x80":
+        while p<len(rbsp) and rbsp[p:] != b"\x80":
             kind = n = 0
             while p<len(rbsp) and rbsp[p]==255:
                 kind+=255;p+=1
@@ -205,5 +218,29 @@ def main():
         args.report.write_text(json.dumps(report,indent=2)+"\n")
         if not report["passed"]: raise SystemExit(1)
 
+def self_test():
+    # A T.35 payload with a genuine zero-byte run, escaped for HEVC only.
+    payload=PREFIX+bytes.fromhex("01000001020000030304")
+    body=bytes((4,len(payload)))+payload+bytes((128,))
+    escaped=bytearray()
+    zeroes=0
+    for b in body:
+        if zeroes>=2 and b<=3:
+            escaped.append(3);zeroes=0
+        escaped.append(b)
+        zeroes=zeroes+1 if b==0 else 0
+    stream=bytes.fromhex("000000014e01")+escaped
+    assert list(hevc_payloads(stream))==[payload]
+    obu_body=bytes((4,))+payload+bytes((128,))
+    obu=bytes((0x2a,len(obu_body)))+obu_body
+    assert list(av1_payloads(obu))==[payload]
+    code=np.array([0.0,0.25,0.5,0.75,1.0],dtype=np.float64)
+    assert np.max(np.abs(oetf(eotf(code))[1:]-code[1:]))<1e-10
+    print("Public reference intake: AV1 OBU, HEVC RBSP and PQ self-tests passed")
+
 if __name__=="__main__":
-    main()
+    import sys
+    if sys.argv[1:]==["--self-test"]:
+        self_test()
+    else:
+        main()

@@ -200,6 +200,7 @@ jobs:
           VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-etsi-fel .ci/real-fel/real-fel-snapshot.bin
           # Compile the real-data validator even when no licensed corpus is available.
           python3 -m py_compile native/vlc-aar/experimental/run_official_hdr_reference.py
+          python3 native/vlc-aar/experimental/audit_public_hdr10plus.py --self-test
           cc -std=c11 -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
             native/vlc-aar/experimental/test_official_hdr_gpu.c \
             -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-official-hdr
