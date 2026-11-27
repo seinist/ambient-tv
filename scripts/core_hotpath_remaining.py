@@ -210,6 +210,61 @@ PATCHES = {
       "src/libretro/libretro.cpp",
       "      for (int x = 0; x < sw; ++x)\n      {\n        for (int cx = 0; cx < scaleX; ++cx)\n          *newRow++ = srcRow[x];\n      }",
       "      if (scaleX == 1)\n        memcpy(dstRow, srcRow, sw * sizeof(uint32_t));\n      else if (scaleX == 2)\n        for (int x = 0; x < sw; ++x) {\n          const uint32_t pixel = srcRow[x];\n          *newRow++ = pixel;\n          *newRow++ = pixel;\n        }\n      else\n        for (int x = 0; x < sw; ++x) {\n          const uint32_t pixel = srcRow[x];\n          for (int cx = 0; cx < scaleX; ++cx)\n            *newRow++ = pixel;\n        }"
+    ],
+    [
+      "src/memfile.h",
+      "#include <vector>",
+      "#include <vector>\n#include <cstring>\n#include <cstddef>"
+    ],
+    [
+      "src/memfile.h",
+      "        MemFile() : stream(), file(nullptr) {}",
+      "        MemFile() : stream(), file(nullptr) {}\n        // Libretro's saveState methods write sequentially. Bypass the growing\n        // stringstream and write directly into the caller's bounded buffer.\n        MemFile(void* destination, size_t capacity) : stream(), file(nullptr),\n            directMode(true), directData(static_cast<unsigned char*>(destination)),\n            directCapacity(capacity), directFailed(!destination) {}"
+    ],
+    [
+      "src/memfile.h",
+      "            stream.write(static_cast<const char*>(buffer), size * count);\n            return size;",
+      "            if (directMode)\n            {\n                if (directFailed) return 0;\n                if (size != 0 && count > (directCapacity - directPos) / size)\n                {\n                    directFailed = true;\n                    return 0;\n                }\n                const size_t bytes = size * count;\n                if (bytes != 0)\n                {\n                    if (!buffer) { directFailed = true; return 0; }\n                    std::memcpy(directData + directPos, buffer, bytes);\n                    directPos += bytes;\n                }\n                return size;\n            }\n            stream.write(static_cast<const char*>(buffer), size * count);\n            return size;"
+    ],
+    [
+      "src/memfile.h",
+      "            stream.read(static_cast<char*>(buffer), size * count);",
+      "            if (directMode) { directFailed = true; return 0; }\n            stream.read(static_cast<char*>(buffer), size * count);"
+    ],
+    [
+      "src/memfile.h",
+      "            std::ios_base::seekdir dir;",
+      "            if (directMode) { directFailed = true; return -1; }\n            std::ios_base::seekdir dir;"
+    ],
+    [
+      "src/memfile.h",
+      "            return static_cast<long>(stream.tellg());",
+      "            if (directMode) return static_cast<long>(directPos);\n            return static_cast<long>(stream.tellg());"
+    ],
+    [
+      "src/memfile.h",
+      "    private:\n        std::stringstream stream;\n        FILE* file;",
+      "        bool finishDirect()\n        {\n            if (!directMode || directFailed) return false;\n            // Preserve the serialized prefix and make unused fixed-size bytes deterministic.\n            if (directPos < directCapacity)\n                std::memset(directData + directPos, 0, directCapacity - directPos);\n            return true;\n        }\n\n    private:\n        std::stringstream stream;\n        FILE* file;\n        bool directMode = false;\n        unsigned char* directData = nullptr;\n        size_t directCapacity = 0;\n        size_t directPos = 0;\n        bool directFailed = false;"
+    ],
+    [
+      "src/libretro/savestate.cpp",
+      "  if (size == 0) return false;",
+      "  if (!data || size < 8) return false;"
+    ],
+    [
+      "src/libretro/savestate.cpp",
+      "bool SaveState::save(void* data, size_t& size)\n{\n  // Open the state file and write the header\n  MemFile file;",
+      "bool SaveState::save(void* data, size_t& size)\n{\n  if (!data || size < 8) return false;\n  // Serialize the same version-3 byte stream directly into frontend memory.\n  MemFile file(data, size);"
+    ],
+    [
+      "src/libretro/savestate.cpp",
+      "  // Write save data to buffer\n  file.read(data, size, 1);\n\n  return true;",
+      "  return file.finishDirect();"
+    ],
+    [
+      "src/libretro/libretro.cpp",
+      "  // HACK: Usually around 6MB but can vary frame to frame!\n  return 1024 * 1024 * 8;",
+      "  // DS keeps its existing 8 MiB state size. DSi has 16 MiB of main RAM\n  // alone, so the former 8 MiB bound silently truncated every DSi state.\n  return 1024 * 1024 * (core && core->dsiMode ? 32 : 8);"
     ]
   ],
   "panda3ds": [

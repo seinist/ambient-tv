@@ -19,7 +19,7 @@ def replacement(core, needle):
 class RemainingCoreHotpathTests(unittest.TestCase):
     def test_exact_anchor_application_and_atomic_rejection(self):
         self.assertEqual(len(PATCHES), 39)
-        self.assertEqual(sum(map(len, PATCHES.values())), 88)
+        self.assertEqual(sum(map(len, PATCHES.values())), 99)
         for core, changes in PATCHES.items():
             with self.subTest(core=core), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -45,6 +45,62 @@ class RemainingCoreHotpathTests(unittest.TestCase):
                 self.assertEqual(expected, {name: (root / name).read_bytes().decode() for name in files})
                 with self.assertRaises(ValueError):
                     prepare_hotpaths(root, core)
+
+    def test_noods_direct_save_writer(self):
+        compiler = shutil.which("c++")
+        self.assertIsNotNone(compiler)
+        # Construct the actual changed class members from the source patch.
+        changes = {old: new for path, old, new in PATCHES["noods"] if path == "src/memfile.h"}
+        constructor = changes["        MemFile() : stream(), file(nullptr) {}"]
+        writer = changes["            stream.write(static_cast<const char*>(buffer), size * count);\n            return size;"]
+        fields = changes["    private:\n        std::stringstream stream;\n        FILE* file;"]
+        source = """
+#include <sstream>
+#include <cstdio>
+#include <cstring>
+#include <cassert>
+#include <limits>
+#include <vector>
+class MemFile {
+public:
+""" + constructor + """
+size_t write(const void* buffer, size_t size, size_t count) {
+""" + writer + """
+}
+""" + fields + """
+};
+int main() {
+    unsigned char buf[12];
+    memset(buf, 0xcc, sizeof(buf));
+    const unsigned char a[] = {1,2,3,4};
+    const unsigned char b[] = {5,6};
+    MemFile good(buf, 10);
+    assert(good.write(a, 2, 2) == 2);
+    assert(good.write(b, 1, 2) == 1);
+    assert(good.finishDirect());
+    for (unsigned i=0;i<6;i++) assert(buf[i] == i+1);
+    for (unsigned i=6;i<10;i++) assert(buf[i] == 0);
+    assert(buf[10] == 0xcc && buf[11] == 0xcc);
+    memset(buf, 0xcc, sizeof(buf));
+    MemFile shortbuf(buf, 3);
+    assert(shortbuf.write(a, 1, 4) == 0);
+    assert(!shortbuf.finishDirect());
+    assert(shortbuf.write(b, 1, 2) == 0);
+    for (auto v: buf) assert(v == 0xcc);
+    MemFile overflow(buf, sizeof(buf));
+    assert(overflow.write(a, 2, std::numeric_limits<size_t>::max()) == 0);
+    assert(!overflow.finishDirect());
+    MemFile invalid(nullptr, 12);
+    assert(!invalid.finishDirect());
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "direct.cpp"
+            binary = path.with_suffix("")
+            path.write_text(source)
+            subprocess.run([compiler, "-std=c++11", "-O2", "-fsanitize=undefined",
+                            str(path), "-o", str(binary)], check=True)
+            subprocess.run([str(binary)], check=True)
 
     def test_neon_kernels_compile_for_aarch64(self):
         clang = shutil.which("clang")
