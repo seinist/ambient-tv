@@ -74,6 +74,7 @@ int main(void) {
                 w.data[6]=0;
                 assert(ambient_hdrplus_parse(w.data,size,&m) && m.version==0);
                 assert(m.metadata_constraints_ok);
+                assert(!m.version0_recommended_fraction); // legacy nonzero FBP
                 assert(m.version0_recommended_features==(windows==1&&!grids&&!saturation));
                 w.data[6]=2;
                 assert(!ambient_hdrplus_parse(w.data,size,&m));
@@ -119,6 +120,16 @@ int main(void) {
     bad.data[6]=0;
     assert(ambient_hdrplus_parse(bad.data,(bad.pos+7)/8,&m));
     assert(!m.metadata_constraints_ok && m.version0_recommended_features);
+    // Clear just the fraction on a legacy single-window sample.
+    struct writer zero_fraction=fixture(1,0,0);
+    zero_fraction.data[6]=0;
+    const size_t fraction_start=48+8+2+27+1+4*17+4+2*24;
+    for(unsigned i=0;i<10;i++){
+        size_t bit=fraction_start+i;
+        zero_fraction.data[bit/8]&=~(1u<<(7-bit%8));
+    }
+    assert(ambient_hdrplus_parse(zero_fraction.data,(zero_fraction.pos+7)/8,&m));
+    assert(m.version0_recommended_fraction&&m.version0_recommended_features&&m.metadata_constraints_ok);
     struct writer w = fixture(1,1,0);
     assert(!ambient_hdrplus_parse(w.data,(w.pos+7)/8,&m)); // invalid grid dimensions
     w = fixture(0,0,0);
