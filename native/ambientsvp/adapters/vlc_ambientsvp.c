@@ -125,6 +125,13 @@ static picture_t *Drain(filter_t *f, bool eof) {
     filter_sys_t *s = f->p_sys; picture_t *head = NULL, **tail = &head;
     if (!s->engine || !s->reference) return NULL;
     for (int n = 0; n < 60; n++) {
+        if (s->api.ready) {
+            int ready = s->api.ready(s->engine, eof);
+            if (ready <= 0) {
+                if (ready < 0) s->api.bypass(s->engine, 3);
+                break;
+            }
+        }
         int64_t pts;
         picture_t *out = filter_NewPicture(f);
         if (!out) { s->api.bypass(s->engine, 3); break; }
