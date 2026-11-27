@@ -107,10 +107,11 @@ internal class SystemModuleStore(
     }
 
     /** Deliberate user rollback; the automatic update floor never decreases. */
-    fun rollback(module: SystemModule): Package? = locked(module) { directory ->
+    fun rollback(module: SystemModule, validateCandidate: (Package) -> Unit = {}): Package? = locked(module) { directory ->
         val state = readState(directory)
         val previous = state.previous ?: return@locked null
         val result = verify(directory, module, previous)
+        validateCandidate(result)
         writeState(directory, state.copy(current = previous, previous = state.current))
         result
     }
