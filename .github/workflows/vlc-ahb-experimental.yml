@@ -8,6 +8,10 @@ on:
       - 'app/src/main/java/com/ambient/tv/ui/player/backend/VlcPlaybackView.kt'
       - 'app/src/main/java/com/ambient/tv/ui/player/backend/VideoAccelerationPolicy.kt'
       - 'app/src/test/java/com/ambient/tv/ui/player/backend/VlcAhbExperimentPolicyTest.kt'
+      - 'app/src/main/java/com/ambient/tv/ui/player/backend/VlcTimedMetadata*.kt'
+      - 'app/src/test/java/com/ambient/tv/ui/player/backend/VlcTimedMetadataTest.kt'
+      - 'app/src/androidTest/java/com/ambient/tv/ui/player/VlcMetadataSocketAudit.kt'
+      - 'app/src/androidTest/java/com/ambient/tv/ui/player/PlaybackAuditInstrumentation.kt'
       - 'scripts/test_vlc_ahb_import.sh'
       - 'scripts/prepare_vlc_ahb_experimental.sh'
       - 'scripts/build_vlc_vulkan.sh'
@@ -159,6 +163,11 @@ jobs:
             native/vlc-aar/experimental/test_dovi_fel_gpu.c \
             -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-dovi-fel
           VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-dovi-fel
+          python3 native/vlc-aar/experimental/generate_hdr_reference.py > .ci/hdr_reference_vectors.h
+          cc -std=c11 -I .ci -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
+            native/vlc-aar/experimental/test_hdr_reference_gpu.c \
+            -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-hdr-reference
+          VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-hdr-reference
           git -C .ci/vlc-hdr apply "$GITHUB_WORKSPACE/native/vlc-aar/experimental/vlc-patches/utils-hdr-units.patch"
           # Link the actual shared adapter, retaining only the functions under test.
           clang -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -DMODULE_NAME=libplacebo '-DN_(s)=s' \

@@ -26,6 +26,9 @@ done
     "$SRC/test_hdr10plus_payload.c" -lm -o "$TMP/test_hdr10plus_payload"
 "$TMP/test_hdr10plus_payload"
 "${CC:-clang}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+    "$SRC/test_metadata_wire.c" -o "$TMP/test_metadata_wire"
+"$TMP/test_metadata_wire"
+"${CC:-clang}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
     "$SRC/test_hdr10plus_spatial.c" -lm -o "$TMP/test_hdr10plus_spatial"
 "$TMP/test_hdr10plus_spatial"
 "${CC:-clang}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \

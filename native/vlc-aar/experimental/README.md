@@ -1038,3 +1038,9 @@ route. Failed experimental AHB frames clear to black, remain counted as
 dropped, and the existing progress watchdog can trigger Android fallback
 on persistent failures. GPU regressions exercise mapped, global and reject
 paths. Latest CI and real device playback remain pending.
+
+### Independent reference and AFM3 transport validation
+
+GPU CI generates 256 HDR10+ and 256 FEL pixel vectors using standalone Python math, not VLC/libplacebo. Actual authored-curve and FEL reconstruction GPU paths report maximum and RMS normalized PQ error. Limits are engineering tolerances (0.0025 HDR10+ / 0.001 FEL), not certification thresholds. Existing tests cover local masks, grids, saturation, P010 ranges and decoder/metadata contracts. These are synthetic vectors, not licensed Dolby reference output or certified HDR10+ vectors. Hardware AHB import, vendor decoding, proprietary resampling, HDMI signal and optical output remain unverified.
+
+The native AFM3 encoder and ACK validator are shared by the actual demux and host sanitizer socket test. Android instrumentation exercises the real LocalServerSocket receiver, same fixed wire header, fragmented writes, ACK, repeated identical targets, stale IDs and session retirement. Run on a test installation with `adb shell am instrument -w -e vlcMetadataSocket true <test-package>/com.ambient.tv.ui.player.PlaybackAuditInstrumentation`. The host socket test does not execute the full VLC control queue; the Android test simulates the native producer using verified wire bytes. A linked AAR and real tagged-seek playback fixture remain necessary for end-to-end coverage. No certification claim or production enablement.

@@ -46,7 +46,7 @@ for patch in "$SRC"/vlc-patches/*.patch; do
         git -C "$VLC" apply --reverse --check "$patch"
     fi
 done
-for file in dovi_fel_hvce.h dovi_fel_dual.h; do
+for file in dovi_fel_hvce.h dovi_fel_dual.h ambient_metadata_wire.h; do
     cp "$SRC/$file" "$VLC/modules/demux/mp4/$file"
 done
 dest="$VLC/modules/video_output/libplacebo"

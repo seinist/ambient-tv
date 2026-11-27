@@ -305,6 +305,11 @@ class PlaybackAuditInstrumentation : Instrumentation() {
     override fun onStart() {
         thread(name = "playback-audit") {
             try {
+                if (arguments.getString("vlcMetadataSocket") == "true") {
+                    auditVlcMetadataSocket(::log)
+                    finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "VLC METADATA SOCKET AUDIT PASSED\n$results") })
+                    return@thread
+                }
                 if (arguments.getString("media3SsimShaders") == "true") {
                     auditMedia3SsimShaders(targetContext, ::log)
                     finish(Activity.RESULT_OK, Bundle().apply {
