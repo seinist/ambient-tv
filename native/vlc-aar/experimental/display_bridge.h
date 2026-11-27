@@ -46,9 +46,9 @@ static inline void ambient_display_destroy_texture(void *opaque, void *texture)
     pl_gpu_finish(vk->gpu);
 }
 
-/* Conservative first device milestone: verified BT.709 SDR with explicit
- * range. Do not feed HDR/DV, unknown matrix/range or other transfer functions
- * into an 8-bit RGB intermediate. */
+/* Admit only explicit BT.709 SDR and BT.2020 PQ/HLG. PQ/HLG is routed
+ * through a 16-bit UNORM target with the original nonlinear color transfer.
+ * Do not infer the driver matrix, range or unknown transfer. */
 static inline bool ambient_display_sdr(const video_format_t *fmt)
 {
     return fmt && fmt->primaries == COLOR_PRIMARIES_BT709 &&
@@ -56,11 +56,18 @@ static inline bool ambient_display_sdr(const video_format_t *fmt)
         (fmt->color_range == COLOR_RANGE_FULL || fmt->color_range == COLOR_RANGE_LIMITED) &&
         !fmt->mastering.max_luminance && !fmt->lighting.MaxCLL && !fmt->lighting.MaxFALL;
 }
+static inline bool ambient_display_hdr(const video_format_t *fmt)
+{
+    return fmt && fmt->primaries == COLOR_PRIMARIES_BT2020 &&
+        fmt->space == COLOR_SPACE_BT2020 &&
+        (fmt->transfer == TRANSFER_FUNC_SMPTE_ST2084 || fmt->transfer == TRANSFER_FUNC_HLG) &&
+        (fmt->color_range == COLOR_RANGE_FULL || fmt->color_range == COLOR_RANGE_LIMITED);
+}
 static inline struct ambient_ahb_owner *
 ambient_display_open(pl_gpu gpu, const video_format_t *fmt, vlc_video_context *context)
 {
     if (!fmt || fmt->i_chroma != VLC_CODEC_ANDROID_OPAQUE ||
-        !ambient_display_sdr(fmt) || !context)
+        (!ambient_display_sdr(fmt) && !ambient_display_hdr(fmt)) || !context)
         return NULL;
     android_video_context_t *avctx =
         vlc_video_context_GetPrivate(context, VLC_VIDEO_CONTEXT_AWINDOW);
@@ -86,9 +93,10 @@ ambient_display_open(pl_gpu gpu, const video_format_t *fmt, vlc_video_context *c
 static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
                                               picture_t *pic, struct ambient_ahb_output *out)
 {
-    if (!owner || !pic || !ambient_display_sdr(&pic->format) ||
-        (picture_GetAncillary(pic, VLC_ANCILLARY_ID_HDR10PLUS) ||
-         picture_GetAncillary(pic, VLC_ANCILLARY_ID_DOVI)))
+    if (!owner || !pic ||
+        (!ambient_display_sdr(&pic->format) && !ambient_display_hdr(&pic->format)) ||
+        picture_GetAncillary(pic, VLC_ANCILLARY_ID_DOVI) ||
+        picture_GetAncillary(pic, VLC_ANCILLARY_ID_HDR10PLUS))
         return VK_ERROR_FORMAT_NOT_SUPPORTED;
     struct ambient_vlc_picture held;
     if (!ambient_vlc_hold_picture(pic, &held)) return VK_ERROR_FORMAT_NOT_SUPPORTED;
@@ -106,7 +114,9 @@ static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
         .width = width, .height = height,
         .crop = { (float)held.crop.left / held.width, (float)held.crop.top / held.height,
                   (float)width / held.width, (float)height / held.height },
-        .model = VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_709,
+        .model = ambient_display_hdr(&pic->format) ? VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_2020 :
+            VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_709,
+        .high_precision = ambient_display_hdr(&pic->format),
         .range = pic->format.color_range == COLOR_RANGE_FULL ?
             VK_SAMPLER_YCBCR_RANGE_ITU_FULL : VK_SAMPLER_YCBCR_RANGE_ITU_NARROW,
     };
