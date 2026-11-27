@@ -18,9 +18,11 @@ SEGMENT = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_. -]{0,127}\Z")
 NATIVE_ROOTS = {
     "projectm": ("libprojectM-4.so", "libambientprojectm.so"),
     "mpv": ("libmpv.so", "libambientmpv.so"),
+    "spotify": ("libspotify_receiver_core.so",),
 }
 HOST_LIBRARIES = {
     "projectm": {"libc++_shared.so"},
+    "spotify": {"libc++_shared.so"},
     "mpv": {"libc++_shared.so", "libavcodec.so", "libavdevice.so", "libavfilter.so",
             "libavformat.so", "libavutil.so", "libswresample.so", "libswscale.so",
             "libpostproc.so", "libass.so", "libplacebo.so", "libfreetype.so",
@@ -142,7 +144,7 @@ def native_module(out, module, version, apks, licenses):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--module", choices=("shaders", "projectm", "mpv"), required=True)
+    parser.add_argument("--module", choices=("shaders", "projectm", "mpv", "spotify"), required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--version", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
