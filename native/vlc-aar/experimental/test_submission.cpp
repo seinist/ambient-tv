@@ -77,9 +77,17 @@ int main() {
         assert(submit.submit(queue, cmd, lease) == VK_ERROR_DEVICE_LOST);
         assert(submit.uncertain() && !submit.handoff_ready_semaphore());
         assert(!submit.drain_after_idle(false) && released == 1);
-        // This mock asserts an externally proven successful queue drain,
-        // not a real device-lost recovery path.
-        assert(submit.drain_after_idle(true));
+        // Model the distinct terminal device-lost teardown, not success.
+        assert(submit.drain_after_device_lost());
         assert(submit.can_retire() && released == 2 && sem_destroyed == 4 && fence_destroyed == 2);
+    }
+    {
+        FrameLease lease(&picture, -1, release, false);
+        Submission submit(device, dispatch);
+        fail_submit = false;
+        assert(submit.submit(queue, cmd, lease) == VK_SUCCESS);
+        assert(submit.handoff_ready_semaphore());
+        assert(submit.drain_after_device_lost());
+        assert(submit.can_retire() && released == 3 && sem_destroyed == 6 && fence_destroyed == 3);
     }
 }
