@@ -24,7 +24,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
  }
  
  static MP4_Box_t * MP4_GetTrexByTrackID( MP4_Box_t *p_moov, const uint32_t i_id )
-@@ -465,7 +465,101 @@
+@@ -465,7 +465,114 @@
      return p_sampleentry;
  }
  
@@ -79,6 +79,15 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +        mp4_track_t *bl=&s->track[i];
 +        if (!bl->b_ok || !bl->p_es || !bl->p_sample || bl->fmt.i_cat!=VIDEO_ES ||
 +            !bl->i_track_ID || bl->i_use_flags || bl->fmt.video.dovi.el_present ||
++            bl->fmt.video.dovi.rpu_present ||
++            (bl->fmt.video.dovi.profile && bl->fmt.video.dovi.profile!=7) ||
++            bl->fmt.video.primaries!=COLOR_PRIMARIES_BT2020 ||
++            bl->fmt.video.space!=COLOR_SPACE_BT2020 ||
++            bl->fmt.video.transfer!=TRANSFER_FUNC_SMPTE_ST2084 ||
++            bl->fmt.video.color_range!=COLOR_RANGE_LIMITED ||
++            bl->fmt.video.i_x_offset || bl->fmt.video.i_y_offset ||
++            bl->fmt.video.i_visible_width!=bl->fmt.video.i_width ||
++            bl->fmt.video.i_visible_height!=bl->fmt.video.i_height ||
 +            (bl->p_sample->i_type!=VLC_FOURCC('h','v','c','1') &&
 +             bl->p_sample->i_type!=VLC_FOURCC('h','e','v','1'))) continue;
 +        mp4_track_t *el=NULL;
@@ -96,6 +105,10 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +            bl->i_sample_count!=el->i_sample_count ||
 +            !MP4_FEL_SingleDescription(bl) || !MP4_FEL_SingleDescription(el) ||
 +            !MP4_FEL_SameEdits(bl,el)) continue;
++        unsigned el_ids=0;
++        for (unsigned j=0;j<s->i_tracks;j++)
++            if (s->track[j].i_track_ID==el->i_track_ID) el_ids++;
++        if (el_ids!=1) continue;
 +        const MP4_Box_t *bc=MP4_BoxGet(bl->p_sample,"hvcC");
 +        const MP4_Box_t *ec=MP4_BoxGet(el->p_sample,"hvcC");
 +        if (!bc || !ec || !bc->data.p_binary || !ec->data.p_binary ||
@@ -127,7 +140,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
                                     bool b_forced_spu )
  {
      es_out_id_t *p_es = es_out_Add( out, p_fmt );
-@@ -1426,7 +1520,9 @@
+@@ -1426,7 +1533,9 @@
          goto error;
      }
  
@@ -138,7 +151,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
      {
          vlc_tick_t i_max_continuity;
          bool b_flat;
-@@ -1626,7 +1722,81 @@
+@@ -1626,7 +1735,81 @@
   *****************************************************************************
   * TODO check for newly selected track (ie audio upt to now )
   *****************************************************************************/
@@ -221,7 +234,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
                         vlc_tick_t i_max_preload )
  {
      demux_sys_t *p_sys = p_demux->p_sys;
-@@ -1710,7 +1880,17 @@
+@@ -1710,7 +1893,17 @@
                  p_block->i_buffer -= 4;
              }
  
