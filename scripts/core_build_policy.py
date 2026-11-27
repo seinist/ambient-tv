@@ -109,7 +109,10 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
         if (ref != "refs/heads/main" or (profile != "baseline" and not public_push)
                 or set(chosen_cores) != set(ids) or set(chosen_abis) != expected_abis):
             raise ValueError("Automatic releases require the full public profile catalog on main; stable publish requires baseline.")
-    if event == "pull_request":
+    if event == "pull_request" and cores and profile in PUBLIC_EXPERIMENTS:
+        # Explicit artifact-only targeted PR validation, never a full release.
+        jobs = [(core, abi, profile) for core in chosen_cores for abi in chosen_abis]
+    elif event == "pull_request":
         if publish:
             raise ValueError("PRs may never publish cores")
         # Baseline/ThinLTO plus real dynarec/SIMD smoke builds and two narrow candidates.
@@ -316,37 +319,55 @@ def prepare_cmake(root, core, profile):
 
 
 def prepare_mupen_offsets(root):
-    import os
     path = root / "jni" / "Android.mk"
     source = path.read_text()
     marker = "ASM_DEFINES_OBJ := $(LOCAL_OBJS_DIR)/$(call get-object-name,$(CORE_DIR)/src/asm_defines/asm_defines.c)"
     generator = "\t\t-f $(CORE_DIR)/tools/gen_asm_defines.awk"
     if source.count(marker) != 1 or source.count(generator) != 1:
         raise ValueError("Mupen64Plus native offset generation recipe changed; inspect pinned source")
-    # Android.mk is read before ndk-build emits its object-specific flags.
-    # Appending PRIVATE_CFLAGS here was overwritten by ev-build-file.
-    # Patch the isolated runner's NDK C compile template before it emits
-    # either its direct command or response file. All other sources are unchanged.
-    ndk = os.environ.get("NDK")
-    if not ndk:
-        raise ValueError("NDK must point to the installed Android NDK for Mupen64Plus offset generation")
-    definitions = Path(ndk) / "build" / "core" / "definitions.mk"
-    contents = definitions.read_text()
-    opening = "define ev-compile-c-source\n"
-    if contents.count(opening) != 1:
-        raise ValueError("NDK C compilation template changed")
-    start = contents.index(opening)
-    end = contents.index("\nendef", start)
-    template = contents[start:end]
-    anchor = "_TEXT := Compile "
-    if template.count(anchor) != 1 or "_FLAGS :=" not in template or "ev-build-source-file" not in template:
-        raise ValueError("NDK C compiler flag recipe changed")
-    # The double dollars survive make's call/eval pass, so _SRC refers
-    # to this specific invocation, not the last compiled file.
-    flags = "_FLAGS += $$(if $$(filter %/mupen64plus-core/src/asm_defines/asm_defines.c,$$(_SRC)),-fno-lto)"
-    if flags not in template:
-        template = template.replace(anchor, flags + "\n" + anchor)
-        definitions.write_text(contents[:start] + template + contents[end:])
+    # Use the public NDK_CCACHE launcher hook instead of editing the installed
+    # NDK make templates or attempting to override delayed target variables.
+    # Print the actual executed command so the existing link/flag audit sees
+    # the final flags, not the original launcher invocation.
+    launcher = path.with_name("ambient-mupen-cc")
+    launcher.write_text(r"""#!/usr/bin/env python3
+import os
+from pathlib import Path
+import re
+import shlex
+import sys
+
+args = sys.argv[1:]
+if not args:
+    raise SystemExit('Missing NDK compiler command')
+
+def expand(tokens, depth=0):
+    if depth > 4:
+        raise SystemExit('NDK response nesting exceeds limit')
+    result = []
+    for token in tokens:
+        if token.startswith('@'):
+            path = Path(token[1:])
+            if path.stat().st_size > 8 * 1024 * 1024:
+                raise SystemExit('NDK response file exceeds limit')
+            result.extend(expand(shlex.split(path.read_text()), depth + 1))
+        else:
+            result.append(token)
+    return result
+
+driver = Path(args[0]).name
+if re.fullmatch(r'(?:[\w.-]+-)?clang(?:\+\+)?(?:-\d+)?', driver):
+    expanded = expand(args[1:])
+    suffix = '/mupen64plus-core/src/asm_defines/asm_defines.c'
+    sources = [arg for arg in expanded if not arg.startswith('-') and str(Path(arg).resolve()).endswith(suffix)]
+    if '-c' in expanded and len(sources) == 1:
+        args.append('-fno-lto')
+cache = os.environ.get('CORE_CCACHE')
+command = [cache, *args] if cache else args
+print(shlex.join(command), flush=True)
+os.execvp(command[0], command)
+""")
+    launcher.chmod(0o755)
     source = source.replace(generator, generator + "\n"
         "\t@test -s $(ASM_DEFINES_NASM) && test -s $(ASM_DEFINES_GAS) || "
         "{ echo 'Mupen64Plus native offset headers missing' >&2; exit 1; }")
