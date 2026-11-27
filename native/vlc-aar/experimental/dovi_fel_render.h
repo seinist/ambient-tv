@@ -31,8 +31,9 @@ static inline bool ambient_fel_render_picture(pl_gpu gpu,pl_log log,
         pic->rpu.source_max_pq>4095)return false;
     pl_tex bl=img->planes[0].texture;
     unsigned w=pic->width,h=pic->height,cw=(w+1)/2,ch=(h+1)/2;
-    if((bl->params.w!=(int)w&&bl->params.w!=(int)(2*w))||
-       (bl->params.h!=(int)h&&bl->params.h!=(int)(2*h)))return false;
+    if(bl->params.w<=0||bl->params.h<=0||
+       !ambient_fel_layer_ratio(bl->params.w,w)||
+       !ambient_fel_layer_ratio(bl->params.h,h))return false;
     struct pl_dovi_metadata reshape;
     struct ambient_fel_nlq nlq;
     if(!ambient_fel_metadata(&pic->rpu,&reshape,&nlq))return false;
