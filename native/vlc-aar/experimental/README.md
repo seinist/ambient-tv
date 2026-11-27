@@ -1000,3 +1000,12 @@ seekable and forward-only scans with inter-mdat padding, zero trailing
 header reads, cache bytes, overlap rejection and partial read cleanup.
 This exercises real demux functions, not a full VLC player or encoded
 Dolby Vision media; CI results remain pending.
+
+Paired fragment preflight now rejects duplicate traf track IDs across
+all tracks (including auxiliary audio/subtitle tracks), repeated tfhd,
+tfdt and mfhd headers, and more than 256 trafs. VLC has one shared set
+of default sample values per track, so accepting repeated trafs with
+potentially different defaults would be ambiguous. This is a conservative
+restriction on the experimental paired route, not a change to ordinary MP4.
+Actual staged demux sanitizer regressions exercise duplicate identities
+and clock anchors as well as a valid single-header layout.

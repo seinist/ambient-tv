@@ -119,6 +119,29 @@ int main(void)
     assert(!MP4_FEL_PreflightMoof(&demux,&moof,&required));
     tfhd.i_track_ID=1;
     assert(MP4_FEL_PreflightMoof(&demux,&moof,&required)&&required==132);
+    /* Repeated traf would overwrite the track's defaults; repeated
+     * tfhd/tfdt/mfhd boxes create ambiguous identity or clock anchors. */
+    MP4_Box_t dup_traf=traf;
+    traf.p_next=&dup_traf;
+    assert(!MP4_FEL_PreflightMoof(&demux,&moof,&required));
+    traf.p_next=NULL;
+    MP4_Box_t dup_header=header;
+    header.p_next=&dup_header;
+    assert(!MP4_FEL_PreflightMoof(&demux,&moof,&required));
+    header.p_next=&run[0];
+    MP4_Box_data_tfdt_t dt={.i_base_media_decode_time=0};
+    MP4_Box_t dt1={.i_type=ATOM_tfdt,.data.p_tfdt=&dt},dt2=dt1;
+    dt1.p_next=&dt2;dt2.p_next=&run[0];header.p_next=&dt1;
+    assert(!MP4_FEL_PreflightMoof(&demux,&moof,&required));
+    dt1.p_next=&run[0];
+    assert(MP4_FEL_PreflightMoof(&demux,&moof,&required));
+    header.p_next=&run[0];
+    MP4_Box_data_mfhd_t mh={.i_sequence_number=1};
+    MP4_Box_t mh1={.i_type=ATOM_mfhd,.data.p_mfhd=&mh},mh2=mh1;
+    mh1.p_next=&mh2;mh2.p_next=&traf;moof.p_first=&mh1;
+    assert(!MP4_FEL_PreflightMoof(&demux,&moof,&required));
+    mh1.p_next=&traf;
+    assert(MP4_FEL_PreflightMoof(&demux,&moof,&required)&&required==132);
 
     reset_stream(true);sys.b_seekable=true;
     uint64_t end=0,padding=0,total=0;
