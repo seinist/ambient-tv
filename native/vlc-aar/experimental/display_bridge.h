@@ -93,6 +93,7 @@ ambient_display_open(pl_gpu gpu, const video_format_t *fmt, vlc_video_context *c
 static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
                                               picture_t *pic, struct ambient_ahb_output *out)
 {
+    if (owner) ambient_ahb_poll(owner);
     if (!owner || !pic ||
         (!ambient_display_sdr(&pic->format) && !ambient_display_hdr(&pic->format)) ||
         picture_GetAncillary(pic, VLC_ANCILLARY_ID_DOVI) ||
@@ -111,6 +112,7 @@ static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
     const struct ambient_ahb_input input = {
         .picture = held.held, .acquire_fd = held.acquire_fd,
         .release_picture = ambient_vlc_release_picture, .buffer = held.buffer,
+        .buffer_id = held.buffer_id, .buffer_id_valid = held.buffer_id_valid,
         .width = width, .height = height,
         .crop = { (float)held.crop.left / held.width, (float)held.crop.top / held.height,
                   (float)width / held.width, (float)height / held.height },
