@@ -22,6 +22,7 @@ struct priv {
     struct opts *opts; SvpApi api; AmbientSvp *engine;
     struct mp_image *reference; uint8_t *buffer; size_t bytes;
     struct mp_image_pool *output_pool;
+    struct mp_image_pool *download_pool;
     unsigned output_pool_count;
     bool eof, bypass; int width, height;
     /* Why frames pass through unchanged (metadata "passthrough"); 0 while the engine runs.
@@ -41,6 +42,7 @@ static void reset(struct mp_filter *f) {
     p->engine = NULL; mp_image_unrefp(&p->reference);
     free(p->buffer); p->buffer = NULL; p->bytes = 0;
     if (p->output_pool) mp_image_pool_clear(p->output_pool);
+    if (p->download_pool) mp_image_pool_clear(p->download_pool);
     p->output_pool_count = 0;
     p->eof = p->bypass = false;
     p->passthrough = PASS_NONE;
@@ -62,12 +64,29 @@ static void seek_reset(struct mp_filter *f) {
 static void destroy(struct mp_filter *f) {
     struct priv *p = f->priv; reset(f); if (p->api.lib) dlclose(p->api.lib);
 }
-static bool supported(struct mp_image *img) {
-    return (img->imgfmt == IMGFMT_420P || img->imgfmt == IMGFMT_NV12)
-        && !(img->fields & MP_IMGFIELD_INTERLACED) && img->pts != MP_NOPTS_VALUE
-        && img->w >= 32 && img->h >= 32 && !(img->w % 2) && !(img->h % 2)
+static bool eligible(struct mp_image *img) {
+    return !(img->fields & MP_IMGFIELD_INTERLACED) && img->pts != MP_NOPTS_VALUE
+        && img->w >= 32 && img->h >= 32 && img->w <= 3840 && img->h <= 2160
+        && !(img->w % 2) && !(img->h % 2)
         && img->params.color.transfer != PL_COLOR_TRC_PQ && img->params.color.transfer != PL_COLOR_TRC_HLG
         && img->params.repr.sys != PL_COLOR_SYSTEM_DOLBYVISION && !img->enhancement_layer;
+}
+static bool supported(struct mp_image *img) {
+    return (img->imgfmt == IMGFMT_420P || img->imgfmt == IMGFMT_NV12) && eligible(img);
+}
+/* Vulkan AVHWFramesContext exposes an actual transferable hardware image.
+ * MPV's MediaCodec surface handle is NOT a hardware-buffer pointer and
+ * cannot be downloaded by this helper. Leave it untouched. */
+static struct mp_image *download_vulkan(struct priv *p, struct mp_image *img) {
+    if (img->imgfmt != IMGFMT_VULKAN || !img->hwctx || !eligible(img))
+        return NULL;
+    int fmt = mp_image_hw_download_get_sw_format(img);
+    if (fmt != IMGFMT_420P && fmt != IMGFMT_NV12)
+        return NULL;
+    struct mp_image *sw = mp_image_hw_download(img, p->download_pool);
+    if (sw && (!supported(sw) || sw->w != img->w || sw->h != img->h))
+        mp_image_unrefp(&sw);
+    return sw;
 }
 static void pack(struct mp_image *img, uint8_t *dst) {
     int w = img->w, h = img->h;
@@ -168,10 +187,21 @@ static void process(struct mp_filter *f) {
     }
     if (frame.type != MP_FRAME_VIDEO) { mp_pin_in_write(f->ppins[1], frame); return; }
     struct mp_image *img = frame.data;
-    if (p->engine && (img->w != p->width || img->h != p->height || !supported(img))) reset(f);
+    if (p->engine && (img->w != p->width || img->h != p->height || !eligible(img))) reset(f);
     if (!p->bypass && p->passthrough == PASS_TIMING && svp_retry_waiting(&p->retry)) {
         mp_pin_in_write(f->ppins[1], frame); return;
     }
+    if (!p->bypass && p->api.lib && p->api.enabled() && img->imgfmt == IMGFMT_VULKAN) {
+        struct mp_image *sw = download_vulkan(p, img);
+        if (sw) {
+            // The download owns its software allocation and attributes.
+            // Retire the hardware reference only after transfer succeeds.
+            mp_frame_unref(&frame);
+            frame = MAKE_FRAME(MP_FRAME_VIDEO, sw);
+            img = sw;
+        }
+    }
+    if (p->engine && !supported(img)) reset(f);
     if (p->bypass || !supported(img) || !p->api.lib || !p->api.enabled()) {
         int reason = p->passthrough;
         if (!p->bypass) reason = !p->api.lib ? PASS_UNAVAILABLE : !supported(img) ? PASS_FORMAT : PASS_NONE;
@@ -238,6 +268,7 @@ static struct mp_filter *create(struct mp_filter *parent, void *options) {
     if (!f) { talloc_free(options); return NULL; }
     struct priv *p = f->priv; p->opts = talloc_steal(p, options); svp_load(&p->api);
     p->output_pool = mp_image_pool_new(p);
+    p->download_pool = mp_image_pool_new(p);
     mp_filter_add_pin(f, MP_PIN_IN, "in"); mp_filter_add_pin(f, MP_PIN_OUT, "out"); return f;
 }
 #define OPT_BASE_STRUCT struct opts
