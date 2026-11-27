@@ -1,0 +1,238 @@
+import json
+import shutil
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+
+from core_build_policy import plan
+from core_release_incremental import fingerprint, key, select, stage_reuse, signed_history, assert_current_recipe
+
+
+class IncrementalCoreReleaseTest(unittest.TestCase):
+    def setUp(self):
+        self.catalog = json.loads((Path(__file__).resolve().parents[1] / "cores/cores.json").read_text())
+        self.ndk = "30.0.16248370"
+        self.matrix = plan(self.catalog, "push", "refs/heads/main", False)
+        self.records = {key(j): {"tag": "cores-1", "entry": {
+            "core": j["core"], "abi": j["abi"], "fingerprint": fingerprint(j, self.ndk),
+        }} for j in self.matrix["include"]}
+        self.keys = set(self.records)
+
+    def test_no_changes_skips_entire_release(self):
+        result = select(self.matrix, self.records, self.keys, "baseline", self.ndk)
+        self.assertFalse(result["publish"])
+        self.assertEqual(result["rebuilt"], 0)
+        self.assertEqual(len(result["reuse"]), len(self.keys))
+
+    def test_single_pin_change_builds_only_affected_core(self):
+        changed = {"include": [dict(j, commit="0" * 40) if j["core"] == "mgba" else j
+                               for j in self.matrix["include"]]}
+        result = select(changed, self.records, self.keys, "baseline", self.ndk)
+        self.assertTrue(result["publish"])
+        self.assertEqual({j["core"] for j in result["matrix"]["include"]}, {"mgba"})
+        self.assertEqual(result["rebuilt"], len(self.catalog["abis"]))
+        self.assertEqual(len(result["reuse"]) + result["rebuilt"], len(self.keys))
+
+    def test_failed_or_missing_build_is_retried(self):
+        missing = dict(self.records)
+        k = ("mgba", "arm64-v8a")
+        missing[k] = None
+        result = select(self.matrix, missing, self.keys, "baseline", self.ndk)
+        self.assertEqual([key(j) for j in result["matrix"]["include"]], [k])
+
+    def test_force_ndk_change_and_legacy_manifest(self):
+        for records, ndk, force in ((self.records, self.ndk, True),
+                                    (self.records, "new-ndk", False),
+                                    ({k: {"entry": {}} for k in self.keys}, self.ndk, False)):
+            with self.subTest(ndk=ndk, force=force):
+                result = select(self.matrix, records, self.keys, "baseline", ndk, force)
+                self.assertEqual(result["rebuilt"], len(self.keys))
+                self.assertEqual(result["reuse"], [])
+
+    def test_removal_only_publishes_complete_remaining_snapshot(self):
+        matrix = {"include": [j for j in self.matrix["include"] if j["core"] != "mgba"]}
+        result = select(matrix, self.records, self.keys, "baseline", self.ndk)
+        self.assertTrue(result["publish"])
+        self.assertEqual(result["rebuilt"], 0)
+        self.assertEqual(len(result["reuse"]), len(matrix["include"]))
+
+    def test_experimental_only_publishes_changed_assets(self):
+        matrix = plan(self.catalog, "workflow_dispatch", "refs/heads/main", False,
+                      "mgba,snes9x", "arm64-v8a", "core-hotpaths")
+        records = {key(j): {"tag": "experiment", "entry": {"fingerprint": fingerprint(j, self.ndk)}}
+                   for j in matrix["include"] if j["core"] == "mgba"}
+        result = select(matrix, records, set(records), "core-hotpaths", self.ndk)
+        self.assertEqual([j["core"] for j in result["matrix"]["include"]], ["snes9x"])
+        self.assertEqual(result["reuse"], [])
+
+    def test_signed_history_does_not_skip_missing_latest_experimental_asset(self):
+        profile = "core-hotpaths"
+        tag = f"core-experiments-{profile}--20261126-2-1"
+        older = f"core-experiments-{profile}--20261126-1-1"
+        entry = {"core": "mgba", "abi": "arm64-v8a",
+                 "asset": "arm64-v8a--mgba_libretro_android.so.zip",
+                 "sha256": "a" * 64, "size": 20}
+        releases = [
+            {"tag_name": tag, "id": 2, "draft": False, "prerelease": True,
+             "published_at": "2026-11-26T20:00:00Z", "assets": []},
+            {"tag_name": older, "id": 1, "draft": False, "prerelease": True,
+             "published_at": "2026-11-26T19:00:00Z",
+             "assets": [{"name": entry["asset"], "size": 20}]},
+        ]
+        def fake_gh(*args):
+            if args[0] == "api":
+                return json.dumps([releases])
+            self.assertEqual(args[2], tag)
+            directory = Path(args[args.index("--dir") + 1])
+            (directory / "manifest.json").write_text(json.dumps({
+                "version": 1, "tag": tag, "profile": profile, "cores": [entry]}))
+            return ""
+        with patch("core_release_incremental.gh", side_effect=fake_gh), \
+                patch("core_release_incremental.subprocess.run") as verify:
+            records, latest = signed_history("owner/repo", profile, {key(entry)})
+        self.assertEqual(records, {key(entry): None})
+        self.assertEqual(latest, {key(entry)})
+        verify.assert_called_once()
+
+    def test_fingerprint_ignores_catalog_order_and_release_metadata(self):
+        matrix = plan(self.catalog, "push", "refs/heads/main", False)
+        job = matrix["include"][0]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".github/workflows").mkdir(parents=True)
+            (root / "scripts").mkdir()
+            source = Path(__file__).resolve().parents[1]
+            from core_release_incremental import SHARED
+            for name in SHARED:
+                (root / "scripts" / name).write_bytes((source / "scripts" / name).read_bytes())
+            workflow = root / ".github/workflows/cores.yml"
+            workflow.write_text((source / ".github/workflows/cores.yml").read_text())
+            before = fingerprint(job, self.ndk, root)
+            workflow.write_text(workflow.read_text() + "\\n# release title only\\n")
+            self.assertEqual(before, fingerprint(job, self.ndk, root))
+            workflow.write_text(workflow.read_text().replace("android-29", "android-30"))
+            self.assertNotEqual(before, fingerprint(job, self.ndk, root))
+
+    def test_all_profiles_reuse_unchanged_and_rebuild_only_changed_core(self):
+        for profile in ("baseline", "optimized", "optimized-a57"):
+            matrix = plan(self.catalog, "push", "refs/heads/main", False, profile=profile)
+            records = {key(j): {"entry": {"fingerprint": fingerprint(j, self.ndk)}} for j in matrix["include"]}
+            self.assertFalse(select(matrix, records, set(records), profile, self.ndk)["publish"])
+            changed = {"include": [dict(j, commit="0" * 40) if j["core"] == "mgba" else j for j in matrix["include"]]}
+            result = select(changed, records, set(records), profile, self.ndk)
+            self.assertEqual({j["core"] for j in result["matrix"]["include"]}, {"mgba"})
+            self.assertEqual(result["rebuilt"], 1 if profile == "optimized-a57" else 4)
+            self.assertEqual(len(result["reuse"]) + result["rebuilt"], len(records))
+            if profile != "baseline":
+                partial = set(records) - {next(iter(records))}
+                snapshot = select(matrix, records, partial, profile, self.ndk)
+                self.assertTrue(snapshot["publish"])
+                self.assertEqual(snapshot["rebuilt"], 0)
+                self.assertEqual(len(snapshot["reuse"]), len(records))
+
+    def test_core_specific_recipe_and_patch_fingerprints(self):
+        source = Path(__file__).resolve().parents[1]
+        from core_release_incremental import SHARED
+        jobs = {j["core"]: j for j in plan(self.catalog, "push", "refs/heads/main", False,
+                profile="optimized-a57")["include"]}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".github/workflows").mkdir(parents=True)
+            (root / "scripts").mkdir()
+            (root / ".github/workflows/cores.yml").write_bytes((source / ".github/workflows/cores.yml").read_bytes())
+            for name in (*SHARED, "core_hotpath_patches.py", "core_hotpath_remaining.py"):
+                (root / "scripts" / name).write_bytes((source / "scripts" / name).read_bytes())
+            before = {core: fingerprint(j, self.ndk, root) for core, j in jobs.items()}
+            policy = root / "scripts/core_build_policy.py"
+            original = policy.read_text()
+            policy.write_text(original.replace("test -s $(ASM_DEFINES_NASM)", "test -f $(ASM_DEFINES_NASM)"))
+            self.assertEqual({core for core, j in jobs.items() if fingerprint(j, self.ndk, root) != before[core]},
+                             {"mupen64plus_next_gles3"})
+            policy.write_text(original)
+            patches = root / "scripts/core_hotpath_remaining.py"
+            patches.write_text(patches.read_text().replace("idle stick needs neither sqrt nor atan2", "idle stick skips sqrt and atan2"))
+            changed = {core for core, j in jobs.items() if fingerprint(j, self.ndk, root) != before[core]}
+            # Non-patched cores use a conservative fallback, but unrelated
+            # published patched recipes are unaffected.
+            self.assertEqual(changed, {"mupen64plus_next_gles3"})
+
+    def test_publish_freshness_ignores_workflow_cleanup_but_rejects_build_changes(self):
+        source = Path(__file__).resolve().parents[1]
+        from core_release_incremental import SHARED
+        paths = ("cores/cores.json", "cores/signing-public.pem",
+                 ".github/workflows/cores.yml", ".github/workflows/cores-all.yml",
+                 *("scripts/" + name for name in (*SHARED, "core_hotpath_patches.py",
+                   "core_hotpath_remaining.py", "core_release_incremental.py")))
+        with tempfile.TemporaryDirectory() as tmp:
+            current = Path(tmp)
+            for path in paths:
+                (current / path).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source / path, current / path)
+            workflow = current / ".github/workflows/cores.yml"
+            original = workflow.read_text()
+            workflow.write_text(original.replace("required: true", "required: false", 1)
+                                .replace("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", "cancel-in-progress: false"))
+            caller = current / ".github/workflows/cores-all.yml"
+            caller.write_text(caller.read_text() + "\n# temporary validation removed\n")
+            policy = current / "scripts/core_build_policy.py"
+            previous = policy.read_text()
+            policy.write_text(previous.replace('    if event == "pull_request":',
+                                               '    if event == "pull_request" and cores and profile in PUBLIC_EXPERIMENTS:\n'
+                                               '        jobs = [(core, abi, profile) for core in chosen_cores for abi in chosen_abis]\n'
+                                               '    elif event == "pull_request":'))
+            for profile in ("baseline", "optimized", "optimized-a57"):
+                assert_current_recipe(source, current, profile, self.ndk)
+            # A change in one core recipe invalidates only the profiles affected.
+            policy.write_text(previous.replace("test -s $(ASM_DEFINES_NASM)", "test -f $(ASM_DEFINES_NASM)"))
+            assert_current_recipe(source, current, "baseline", self.ndk)
+            with self.assertRaisesRegex(ValueError, "mupen64plus_next_gles3/arm64-v8a"):
+                assert_current_recipe(source, current, "optimized-a57", self.ndk)
+            policy.write_text(previous)
+            catalog = current / "cores/cores.json"
+            changed = json.loads(catalog.read_text())
+            next(row for row in changed["cores"] if row["core"] == "mgba")["commit"] = "0" * 40
+            catalog.write_text(json.dumps(changed))
+            with self.assertRaisesRegex(ValueError, "mgba/"):
+                assert_current_recipe(source, current, "baseline", self.ndk)
+            shutil.copyfile(source / "cores/cores.json", catalog)
+            workflow.write_text(original.replace(self.ndk, "99.0.0"))
+            with self.assertRaisesRegex(ValueError, "NDK version"):
+                assert_current_recipe(source, current, "baseline", self.ndk)
+            workflow.write_text(original.replace("gh release edit", "gh release delete"))
+            with self.assertRaisesRegex(ValueError, "signing/publication"):
+                assert_current_recipe(source, current, "baseline", self.ndk)
+            workflow.write_text(original)
+            (current / "cores/signing-public.pem").write_text("different key")
+            with self.assertRaisesRegex(ValueError, "trust/planning"):
+                assert_current_recipe(source, current, "baseline", self.ndk)
+
+    def test_only_all_profiles_has_automatic_core_trigger(self):
+        root = Path(__file__).resolve().parents[1] / ".github/workflows"
+        single = (root / "cores.yml").read_text()
+        all_profiles = (root / "cores-all.yml").read_text()
+        self.assertNotIn("\n  push:", single)
+        self.assertNotIn("\n  pull_request:", single)
+        self.assertIn("\n  push:", all_profiles)
+        self.assertNotIn("\n  pull_request:", all_profiles)
+        self.assertNotIn("mupen-validation", all_profiles)
+        self.assertNotIn("cores: mupen64plus_next_gles3", all_profiles)
+        self.assertIn("profile: [baseline, optimized, optimized-a57]", all_profiles)
+        self.assertIn("pattern: ${{ needs.plan.outputs.artifact_pattern }}", single)
+        self.assertNotIn("format('candidate-{0}-*'", single)
+        self.assertIn("force_rebuild: ${{ inputs.force_rebuild || false }}", all_profiles)
+        self.assertFalse((root / "cores-experimental.yml").exists())
+
+    def test_reuse_rejects_tampered_asset(self):
+        record = {"tag": "cores-1", "entry": {"core": "mgba", "abi": "arm64-v8a",
+                  "asset": "arm64-v8a--mgba_libretro_android.so.zip", "sha256": "0"*64, "size": 3}}
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / record["entry"]["asset"]).write_bytes(b"bad")
+            with patch("core_release_incremental.gh"):
+                with self.assertRaisesRegex(ValueError, "hash/size"):
+                    stage_reuse("owner/repo", [record], directory)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -99,7 +99,7 @@ jobs:
         run: |
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
-          "$sdkmanager" --channel=3 'platforms;android-37.0' 'build-tools;37.0.0' "ndk;$NDK_VERSION" 'cmake;3.22.1'
+          "$sdkmanager" --channel=3 'platforms;android-37.1' 'platforms;android-37.0' 'build-tools;37.0.0' "ndk;$NDK_VERSION" 'cmake;3.22.1'
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
 
       - uses: gradle/actions/setup-gradle@v4

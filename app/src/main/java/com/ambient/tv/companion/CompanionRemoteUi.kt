@@ -246,6 +246,8 @@ private fun RemoteActionButton(
 }
 
 @Composable
+// Keep the controlled slider value across remote updates and drag events.
+@Suppress("DEPRECATION")
 private fun RemoteMousePad(enabled: Boolean, sensitivity: Float, onSensitivity: (Float) -> Unit, send: (CompanionInput) -> Unit) {
     val currentSend by rememberUpdatedState(send)
     val currentSensitivity by rememberUpdatedState(sensitivity)
@@ -358,6 +360,8 @@ private fun RemoteKeyboard(enabled: Boolean, text: String, onText: (String) -> U
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
+// Keep the controlled slider value across remote updates and drag events.
+@Suppress("DEPRECATION")
 private fun RemotePlayerControls(manager: CompanionManager, state: CompanionState) {
     val frame = state.currentPlayback() ?: return
     Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface,

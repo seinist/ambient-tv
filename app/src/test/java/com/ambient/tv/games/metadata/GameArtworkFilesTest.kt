@@ -40,7 +40,7 @@ class GameArtworkFilesTest {
         val context = storageContext(temporary.newFolder("app"))
         val cover = image(GameArtworkFiles(context), "game")
         val originalBytes = cover.readBytes()
-        assertEquals(File(context.filesDir, "game_artwork").canonicalFile, cover.parentFile!!.parentFile.canonicalFile)
+        assertEquals(File(context.filesDir, "game_artwork").canonicalFile, requireNotNull(cover.parentFile?.parentFile).canonicalFile)
 
         val reopened = GameArtworkFiles(context)
         reopened.reconcile(setOf(cover.absolutePath))

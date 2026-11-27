@@ -1196,6 +1196,8 @@ fun TvChip(
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, ExperimentalLayoutApi::class)
 @Composable
+// Keep the custom TV field’s value-based editing and masking behavior.
+@Suppress("DEPRECATION")
 fun TvTextField(
     value: String,
     onValueChange: (String) -> Unit,
@@ -1476,7 +1478,7 @@ fun TvSettingRow(
         val pressed by interactions.collectIsPressedAsState()
         val shape = RoundedCornerShape(LocalUiTokens.current.controlRadius)
         androidx.compose.material3.ListItem(
-            headlineContent = { androidx.compose.material3.Text(title) },
+            content = { androidx.compose.material3.Text(title) },
             supportingContent = body?.let { description -> { androidx.compose.material3.Text(description) } },
             leadingContent = leadingContent,
             trailingContent = {

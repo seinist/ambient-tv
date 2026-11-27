@@ -6,6 +6,8 @@ import org.junit.Test
 
 class ForegroundTrimMemoryCacheTest {
     @Test
+    // Exercise the legacy API explicitly.
+    @Suppress("DEPRECATION")
     fun runningLowKeepsThreeQuartersOfTheBudget() {
         // Coil asks for half of the current size on every RUNNING_LOW.
         assertEquals(75L, foregroundTrimTarget(requested = 50L, level = ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW, maxSize = 100L))
@@ -16,6 +18,8 @@ class ForegroundTrimMemoryCacheTest {
     }
 
     @Test
+    // Exercise the legacy API explicitly.
+    @Suppress("DEPRECATION")
     fun criticalAndBackgroundTrimsPassThrough() {
         for (level in listOf(
             ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL,

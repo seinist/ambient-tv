@@ -6,6 +6,18 @@ plugins {
 
 val upstream = rootProject.file("third_party/libretrodroid")
 
+// Candidate release builds are opt-in until the same ABI and runtime benchmarks pass.
+// The baseline release flags and all debug builds remain unchanged.
+val nativeProfile = providers.gradleProperty("LIBRETRO_NATIVE_PROFILE")
+    .orElse(providers.environmentVariable("LIBRETRO_NATIVE_PROFILE"))
+    .orElse("baseline")
+    .get()
+val nativeProfiles = setOf("baseline", "o3", "thinlto", "o3-thinlto")
+require(nativeProfile in nativeProfiles) { "Unknown LIBRETRO_NATIVE_PROFILE: $nativeProfile" }
+require(nativeProfile == "baseline" || providers.gradleProperty("LIBRETRO_NATIVE_EXPERIMENT").orNull == "true") {
+    "Native performance candidates require -PLIBRETRO_NATIVE_EXPERIMENT=true"
+}
+
 // Same ABI selection as :app (APK_ABI); one ABI keeps CI and single-ABI builds short.
 val apkAbiMode = providers.gradleProperty("APK_ABI")
     .orElse(providers.environmentVariable("APK_ABI"))
@@ -51,7 +63,21 @@ android {
             externalNativeBuild {
                 cmake {
                     // AGP uses RelWithDebInfo for release. Strip DWARF from every shared library at link time.
-                    arguments += "-DCMAKE_SHARED_LINKER_FLAGS_RELWITHDEBINFO=-Wl,--strip-debug"
+                    val optimize = if (nativeProfile.startsWith("o3")) "-O3" else "-O2"
+                    val lto = if (nativeProfile.endsWith("thinlto")) " -flto=thin" else ""
+                    arguments += "-DCMAKE_SHARED_LINKER_FLAGS_RELWITHDEBINFO=-Wl,--strip-debug$lto"
+                    if (nativeProfile != "baseline") {
+                        arguments += "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+                        for (language in listOf("C", "CXX")) {
+                            arguments += "-DCMAKE_${language}_FLAGS_RELWITHDEBINFO=$optimize -g -DNDEBUG -DAMBIENT_CORE_PERF_EXPERIMENT=1$lto"
+                            arguments += "-DCMAKE_${language}_FLAGS_RELEASE=$optimize -DNDEBUG -DAMBIENT_CORE_PERF_EXPERIMENT=1$lto"
+                        }
+                        if (lto.isNotEmpty()) {
+                            arguments += "-DCMAKE_SHARED_LINKER_FLAGS_RELEASE=$lto"
+                            arguments += "-DCMAKE_MODULE_LINKER_FLAGS=$lto"
+                            arguments += "-DCMAKE_EXE_LINKER_FLAGS=$lto"
+                        }
+                    }
                 }
             }
         }

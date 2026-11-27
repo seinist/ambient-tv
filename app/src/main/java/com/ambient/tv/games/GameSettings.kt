@@ -369,8 +369,19 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
 
     /** Where cores are loaded from (the app's signed build, the libretro buildbot, or the first that has it). */
     val coreSource: GameCoreSource get() = GameCoreSource.fromKey(values["core_source"])
+        .takeIf { it in GameCoreSource.regular } ?: GameCoreSource.AUTO
 
-    fun withCoreSource(source: GameCoreSource): GameSettingsState = set("core_source", source.key.takeIf { source != GameCoreSource.AUTO })
+    fun withCoreSource(source: GameCoreSource): GameSettingsState =
+        set("core_source", source.key.takeIf { source != GameCoreSource.AUTO && source in GameCoreSource.regular })
+
+    internal fun migrateCoreSource(): GameSettingsState =
+        if (GameCoreSource.fromKey(values["core_source"]) !in GameCoreSource.regular) {
+            withCoreSource(GameCoreSource.AUTO).withCoreExperimentsEnabled(true)
+        } else this
+
+    val coreExperimentsEnabled: Boolean get() = values["core_experiments"] == "1"
+
+    fun withCoreExperimentsEnabled(enabled: Boolean): GameSettingsState = set("core_experiments", "1".takeIf { enabled })
 
     /** Options of [core] for all its games. */
     fun coreOptions(core: GameCore): Map<String, String> = withPrefix("core.${core.id}.")
@@ -420,10 +431,14 @@ object GameSettings {
 
     fun attach(stored: Map<String, String>, save: (Map<String, String>) -> Unit) {
         persist = save
-        mutable.value = GameSettingsState(stored)
+        reload(stored)
     }
 
-    fun reload(stored: Map<String, String>) { mutable.value = GameSettingsState(stored) }
+    fun reload(stored: Map<String, String>) {
+        val migrated = GameSettingsState(stored).migrateCoreSource()
+        mutable.value = migrated
+        if (migrated.values != stored) persist(migrated.values)
+    }
 
     fun update(transform: (GameSettingsState) -> GameSettingsState) {
         val value = transform(state)

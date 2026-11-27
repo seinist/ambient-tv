@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.player
 
+import com.ambient.tv.ui.youtube.failYouTubeSourceTransition
 import com.ambient.tv.youtube.youtubeProgressReport
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -16,9 +17,10 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35], application = PlaybackSeekStopTest.PreferencesApplication::class)
 class YouTubeCompletionSessionTest {
     private class Clock : PlaybackHandle {
-        override fun status() = PlaybackStatus(positionMs = 40_000L, durationMs = 100_000L, playing = true)
-        override fun play() = Unit
-        override fun pause() = Unit
+        private var playing = true
+        override fun status() = PlaybackStatus(positionMs = 40_000L, durationMs = 100_000L, playing = playing)
+        override fun play() { playing = true }
+        override fun pause() { playing = false }
         override fun seekTo(positionMs: Long) = Unit
         override fun release() = Unit
     }
@@ -88,5 +90,28 @@ class YouTubeCompletionSessionTest {
         assertTrue(outgoing.completedByNavigation)
         assertEquals("current", outgoing.metadata?.mediaId)
         assertEquals(40_000L, outgoing.status.positionMs)
+    }
+
+    @Test fun manifestFailureUsesTheOwnedTransitionWhileTheSessionStillShowsTheOutgoingVideo() {
+        val context = RuntimeEnvironment.getApplication()
+        val outgoing = Clock()
+        BackgroundPlaybackSession.acquire(context, metadata("current"), "fixture", Any()) { outgoing }
+        val superseded = BackgroundPlaybackSession.beginItemTransition()
+        val current = BackgroundPlaybackSession.beginItemTransition()
+
+        assertFalse(failYouTubeSourceTransition(superseded, "Obsolete error"))
+        assertTrue(outgoing.status().playing)
+        assertTrue(failYouTubeSourceTransition(current, "Manifest unavailable"))
+        val failed = BackgroundPlaybackSession.snapshot.value
+        assertEquals("current", failed.metadata?.mediaId)
+        assertEquals("Manifest unavailable", failed.status.error)
+        assertFalse(failed.wantsToPlay)
+        assertFalse(outgoing.status().playing)
+
+        val retry = BackgroundPlaybackSession.beginItemTransition()
+        assertTrue(BackgroundPlaybackSession.isSourceReplacement(retry))
+        BackgroundPlaybackSession.acquire(context, metadata("next"), "fixture", Any()) { Clock() }
+        assertEquals("next", BackgroundPlaybackSession.snapshot.value.metadata?.mediaId)
+        assertFalse(BackgroundPlaybackSession.isSourceReplacement(retry))
     }
 }

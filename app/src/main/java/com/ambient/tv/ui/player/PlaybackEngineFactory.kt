@@ -174,16 +174,13 @@ object PlaybackEngineFactory {
                 .build()
 
             val networkEngine = streamTuning?.networkEngine
-            val useNativeInterceptor = networkEngine == null || networkEngine == MEDIA3_NETWORK_OKHTTP
-            val streamClient = if (streamUrlRenewer == null || !useNativeInterceptor) streamingHttpClient else streamingHttpClient.newBuilder()
-                .addInterceptor(StreamUrlRenewalInterceptor(streamUrlRenewer)).build()
-            val httpDataSourceFactory = media3HttpDataSourceFactory(context, networkEngine, streamClient)
+            val httpDataSourceFactory = media3HttpDataSourceFactory(context, networkEngine, streamingHttpClient)
                 .setDefaultRequestProperties(streamHeaders)
-            val upstream = DefaultDataSource.Factory(context, httpDataSourceFactory)
-            // Cronet/default HTTP keep the user's selected engine and share the same bounded
-            // signed-URL recovery policy. Do not retry arbitrary read failures or non-HTTP URIs.
-            val sourceFactory = if (streamUrlRenewer != null && !useNativeInterceptor)
-                RenewingMedia3DataSource.Factory(upstream, streamUrlRenewer) else upstream
+            // Apply one shared renewal policy to every HTTP engine, outside the
+            // transport, so failed opens are closed before a bounded retry.
+            val networkSource = streamUrlRenewer?.let { RenewingMedia3DataSourceFactory(httpDataSourceFactory, it) }
+                ?: httpDataSourceFactory
+            val sourceFactory = DefaultDataSource.Factory(context, networkSource)
             val mediaSourceFactory = DefaultMediaSourceFactory(context)
                 .setDataSourceFactory(dataSourceFactory ?: sourceFactory)
                 .apply { if (centerYouTubeCaptions) setSubtitleParserFactory(com.ambient.tv.youtube.YouTubeSubtitleParserFactory()) }

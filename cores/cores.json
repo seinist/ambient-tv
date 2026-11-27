@@ -95,7 +95,7 @@
     {
       "core": "pcsx_rearmed",
       "repo": "https://github.com/libretro/pcsx_rearmed",
-      "commit": "0f544ce1d18ac7dd114cb8f5507f01a29d3cd58c",
+      "commit": "830e0d7cc37e0437efca0298a1de2664ce007586",
       "build": "ndk",
       "jni": "."
     },
@@ -173,7 +173,7 @@
     {
       "core": "parallel_n64",
       "repo": "https://github.com/libretro/parallel-n64",
-      "commit": "11bdf5e68e3c4448382db499b9499c74aab26ff1",
+      "commit": "70c9ba647996782b17fa1bd90e8e13d51482ff5d",
       "build": "ndk",
       "jni": "."
     },

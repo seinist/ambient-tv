@@ -274,7 +274,7 @@ internal fun GamesSettingsScreen(
                         SettingsHint(stringResource(R.string.games_settings_no_assigned))
                     }
                     items(mySystems, key = { "assigned:" + it.id }) { current ->
-                        GamesSettingsSystemRow(current, coreManager.info(GameSettings.state.systemCore(current)) != null) {
+                        GamesSettingsSystemRow(current, coreManager.installed(GameSettings.state.systemCore(current), GameSettings.state.coreSource) != null) {
                             selectedSystemId = current.id
                             page = GamesSettingsPage.SYSTEM
                         }
@@ -287,7 +287,7 @@ internal fun GamesSettingsScreen(
                         )
                     }
                     if (showOtherSystems) items(otherSystems, key = { "other:" + it.id }) { current ->
-                        GamesSettingsSystemRow(current, coreManager.info(GameSettings.state.systemCore(current)) != null) {
+                        GamesSettingsSystemRow(current, coreManager.installed(GameSettings.state.systemCore(current), GameSettings.state.coreSource) != null) {
                             selectedSystemId = current.id
                             page = GamesSettingsPage.SYSTEM
                         }
@@ -322,7 +322,11 @@ internal fun GamesSettingsScreen(
                     items(system.cores, key = { "core:" + it.id }) { candidate ->
                         SettingsNavigationRow(
                             title = candidate.name,
-                            summary = stringResource(if (coreManager.info(candidate) == null) R.string.games_core_missing else R.string.games_settings_ready),
+                            summary = stringResource(when {
+                                coreManager.installed(candidate, GameSettings.state.coreSource) != null -> R.string.games_settings_ready
+                                coreManager.info(candidate) != null -> R.string.games_core_wrong_source
+                                else -> R.string.games_core_missing
+                            }),
                             onClick = { selectedCoreId = candidate.id; page = GamesSettingsPage.CORE },
                         )
                     }

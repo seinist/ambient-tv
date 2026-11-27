@@ -46,3 +46,8 @@ internal class RenewingMedia3DataSource(
             RenewingMedia3DataSource(upstream.createDataSource(), policy)
     }
 }
+
+/** Keep the transport-neutral factory entry point used by Main. */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+internal class RenewingMedia3DataSourceFactory(upstream: DataSource.Factory, renew: (String) -> String?) :
+    DataSource.Factory by RenewingMedia3DataSource.Factory(upstream, renew)

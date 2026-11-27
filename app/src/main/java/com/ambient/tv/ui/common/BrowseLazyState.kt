@@ -61,6 +61,8 @@ internal val BrowseRowColumnCacheBehindReduced = 120.dp
 /** [rememberBrowseListState] for a horizontal row inside a browse column; see [BrowseRowCacheAhead]. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
+// Keep the browse cache window attached to the remembered state.
+@Suppress("DEPRECATION")
 fun rememberBrowseRowState(
     initialFirstVisibleItemIndex: Int = 0,
     initialFirstVisibleItemScrollOffset: Int = 0,
@@ -79,6 +81,8 @@ fun rememberBrowseRowState(
 /** Vertical stack of nested horizontal rows; see [BrowseRowColumnCacheAhead]. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
+// Keep the browse cache window attached to the remembered state.
+@Suppress("DEPRECATION")
 fun rememberBrowseRowColumnState(
     initialFirstVisibleItemIndex: Int = 0,
     initialFirstVisibleItemScrollOffset: Int = 0,
@@ -105,6 +109,8 @@ fun rememberBrowseRowColumnState(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
+// Keep the browse cache window attached to the remembered state.
+@Suppress("DEPRECATION")
 fun rememberBrowseListState(
     initialFirstVisibleItemIndex: Int = 0,
     initialFirstVisibleItemScrollOffset: Int = 0,
@@ -142,6 +148,8 @@ private fun ScrollToTopOnReselect(scroll: suspend () -> Unit) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
+// Keep the browse cache window attached to the remembered state.
+@Suppress("DEPRECATION")
 fun rememberBrowseGridState(
     initialFirstVisibleItemIndex: Int = 0,
     initialFirstVisibleItemScrollOffset: Int = 0,

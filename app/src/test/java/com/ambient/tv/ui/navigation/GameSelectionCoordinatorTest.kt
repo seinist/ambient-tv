@@ -2,6 +2,8 @@ package com.ambient.tv.ui.navigation
 
 import com.ambient.tv.data.files.FileSource
 import com.ambient.tv.data.local.MediaSelectionPreferences
+import com.ambient.tv.games.GameCoreExperiment
+import com.ambient.tv.games.GameCoreSource
 import com.ambient.tv.games.library.LibraryGame
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -36,6 +38,7 @@ class GameSelectionCoordinatorTest {
         val details = mutableListOf<LibraryGame>()
         val started = mutableListOf<LibraryGame>()
         val startedFresh = mutableListOf<LibraryGame>()
+        val startedTests = mutableListOf<Pair<LibraryGame, GameCoreExperiment>>()
         var deferTarget = false
         var completeTarget: ((() -> Unit) -> Unit)? = null
         var targetGame: LibraryGame? = null
@@ -64,12 +67,34 @@ class GameSelectionCoordinatorTest {
                 if (!deferTarget) complete { started += selected }
             },
             launchFresh = { selected, complete -> complete { startedFresh += selected } },
+            launchExperiment = { selected, test, complete -> complete { startedTests += selected to test } },
         )
         fun completeTarget() { completeTarget?.invoke { started += requireNotNull(targetGame) } }
         fun selectOther(keepPlaybackRequest: Boolean = false): BrowseSelectionIntents.Ticket {
             coordinator.cancel()
             return intents.begin(keepPlaybackRequest)
         }
+    }
+
+    @Test fun testLaunchSurvivesWakeConsentAndDoesNotChangeTheNextRegularLaunch() = runTest {
+        val f = Fixture(this, network = true)
+        f.needsWake = { true }
+        val experiment = GameCoreExperiment("snes9x", GameCoreSource.THINLTO)
+        f.coordinator.play(f.game.fileId, experiment)
+        runCurrent()
+        assertEquals(GameSelectionPhase.WAKE, f.coordinator.state.value?.phase)
+        assertTrue(f.startedTests.isEmpty())
+
+        f.coordinator.playPending(allowWake = true)
+        runCurrent()
+        assertEquals(listOf(f.game to experiment), f.startedTests)
+        assertTrue(f.started.isEmpty())
+
+        f.needsWake = { false }
+        f.coordinator.play(f.game.fileId)
+        runCurrent()
+        assertEquals(listOf(f.game), f.started)
+        assertEquals(1, f.startedTests.size)
     }
 
     @Test fun gameOptionsRetireALateVideoSelectionOnTheSameHomePage() = runTest {
