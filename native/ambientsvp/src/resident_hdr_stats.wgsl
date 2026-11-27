@@ -27,7 +27,6 @@ fn track(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:u3
     let w=g.x;
     if w==0u||w>=params.z{return;}
     let o=w*STRIDE;
-    if atomicLoad(&words[o+54u])==0u{return;}
     let ar=rectangle(o+44u);
     let br=rectangle(o+48u);
     let grid=(params.xy+vec2u(15u))/16u;
