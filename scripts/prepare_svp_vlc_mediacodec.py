@@ -25,7 +25,7 @@ utils = "modules/video_output/android/utils.h"
 insert(utils, "#include <assert.h>", "#include <assert.h>\n#include <stdatomic.h> // SVP consumer fence state",
        "stdatomic.h> // SVP")
 insert(utils, "    AImageReader *air;",
-       "    AImageReader *air;\n    bool svp_surface; // SVP selected GPU-readable PRIVATE producer",
+       "    AImageReader *air;\n    bool svp_surface; // SVP selected GPU-readable PRIVATE producer\n    bool svp_hdr10; // explicit Main10 PQ/HLG",
        "bool svp_surface; // SVP")
 insert(utils, "    AImage *image;\n    int fence_fd;",
        "    AImage *image;\n    AHardwareBuffer *svp_buffer; // SVP compositor-owned RGB output\n"
@@ -112,7 +112,7 @@ insert(decoder, '    add_bool(CFG_PREFIX "dr", true,',
        '    add_bool(CFG_PREFIX "dr", true,',
        'add_bool(CFG_PREFIX "svp-vulkan"')
 insert(decoder, "            bool use_air;",
-       "            bool use_air;\n            bool svp_sdr8; // SVP explicit 8-bit codec profile",
+       "            bool use_air;\n            bool svp_sdr8; // SVP explicit 8-bit codec profile\n            bool svp_hdr10;",
        "bool svp_sdr8;")
 insert(decoder, "        p_sys->video.use_air = false;",
        "        p_sys->video.use_air = false;\n"
@@ -125,19 +125,25 @@ insert(decoder, "        p_sys->video.use_air = false;",
        "        default: break;\n"
        "        }\n"
        "        p_sys->video.svp_sdr8 = svp_sdr8_profile(svp_codec, i_profile) ||\n"
-       "            p_dec->fmt_in->i_codec == VLC_CODEC_AV1; /* validated in MIME selection */",
+       "            p_dec->fmt_in->i_codec == VLC_CODEC_AV1; /* validated in MIME selection */\n"
+       "        const video_format_t *svpfmt = &p_dec->fmt_in->video;\n"
+       "        p_sys->video.svp_hdr10 = p_dec->fmt_in->i_codec == VLC_CODEC_HEVC && i_profile == 2 &&\n"
+       "            svpfmt->primaries == COLOR_PRIMARIES_BT2020 && svpfmt->space == COLOR_SPACE_BT2020 &&\n"
+       "            (svpfmt->transfer == TRANSFER_FUNC_SMPTE_ST2084 || svpfmt->transfer == TRANSFER_FUNC_HLG) &&\n"
+       "            (svpfmt->color_range == COLOR_RANGE_FULL || svpfmt->color_range == COLOR_RANGE_LIMITED) &&\n"
+       "            !svpfmt->dovi.profile && !svpfmt->dovi.rpu_present && !svpfmt->dovi.el_present;",
        "p_sys->video.svp_sdr8 =")
 insert(decoder, "    if (need_gpu)\n        usage |= AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;",
        "    // SVP explicitly selects the same PRIVATE reader with GPU usage.\n"
        "    // No second reader/Surface, and no competing output release.\n"
-       '    bool svp_surface = !need_gpu && p_sys->video.svp_sdr8 && var_InheritBool(p_dec, CFG_PREFIX "svp-vulkan");\n'
+       '    bool svp_surface = !need_gpu && (p_sys->video.svp_sdr8 || p_sys->video.svp_hdr10) && var_InheritBool(p_dec, CFG_PREFIX "svp-vulkan");\n'
        "    if (need_gpu || svp_surface)\n        usage |= AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;",
        "bool svp_surface = !need_gpu")
 insert(decoder, "    avctx->air = reader;",
-       "    avctx->air = reader;\n    avctx->svp_surface = svp_surface;",
+       "    avctx->air = reader;\n    avctx->svp_surface = svp_surface;\n    avctx->svp_hdr10 = svp_surface && p_sys->video.svp_hdr10;",
        "avctx->svp_surface = svp_surface;")
 insert(decoder, "    avctx->air = NULL;",
-       "    avctx->air = NULL;\n    avctx->svp_surface = false;",
+       "    avctx->air = NULL;\n    avctx->svp_surface = false;\n    avctx->svp_hdr10 = false;",
        "avctx->svp_surface = false;")
 insert(decoder, "    apctx->image = image;\n    apctx->fence_fd = fence_fd;",
        "    apctx->image = image;\n    apctx->svp_buffer = NULL; // SVP source picture\n    apctx->fence_fd = fence_fd;",
@@ -202,7 +208,7 @@ insert(display,
        "    int fence_fd = android_picture_ctx_get_fence_fd(apctx);\n\n"
        "    asc_api->ASurfaceTransaction.setBuffer(txn, sys->asc.sc, buffer, fence_fd);",
        "    // SVP generated RGB is full-range; restore source dataspace on fallback.\n"
-       "    video_format_t dataspace_fmt = *vd->source;\n"
+       "    video_format_t dataspace_fmt = pic->format;\n"
        "    if (apctx->svp_buffer) dataspace_fmt.color_range = COLOR_RANGE_FULL;\n"
        "    int32_t dataspace = video_format_to_adataspace(&dataspace_fmt);\n"
        "    if (dataspace != ADATASPACE_UNKNOWN)\n"
