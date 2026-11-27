@@ -73,6 +73,7 @@ pub struct Gpu {
     pipelines: BTreeMap<[i32; 6], wgpu::ComputePipeline>,
     driver_cache: Option<(String, wgpu::PipelineCache)>,
     cache_dirty: bool,
+    compact_fields: bool,
     sources: BTreeMap<i32, Source>,
     recycled_sources: Vec<Source>,
     empty_prepass: wgpu::BindGroup,
@@ -97,6 +98,10 @@ impl Gpu {
         self.plane_bindings = std::array::from_fn(|_| None);
     }
     pub fn new(width: u32, height: u32) -> Result<Self, String> {
+        Self::new_with_compact_fields(width, height, true)
+    }
+
+    fn new_with_compact_fields(width: u32, height: u32, allow_compact: bool) -> Result<Self, String> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN,
             ..Default::default()
@@ -119,10 +124,21 @@ impl Gpu {
         } else {
             wgpu::Features::empty()
         };
+        // UNORM16 encodes every upstream u16 exactly after the shader's
+        // round(x * 65535). Preserve RGBA32Float on adapters without support.
+        let compact_fields = allow_compact
+            && adapter.features().contains(wgpu::Features::TEXTURE_FORMAT_16BIT_NORM)
+            && adapter.get_texture_format_features(wgpu::TextureFormat::Rgba16Unorm)
+                .allowed_usages.contains(wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC)
+            && synthesis_source(true).is_ok();
+        let features = cache_feature | if compact_fields {
+            wgpu::Features::TEXTURE_FORMAT_16BIT_NORM
+        } else { wgpu::Features::empty() };
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("Open-SVPFlow compute"),
-                required_features: cache_feature,
+                required_features: features,
                 required_limits: wgpu::Limits::default().using_resolution(adapter.limits()),
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
             },
@@ -143,7 +159,7 @@ impl Gpu {
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Open-SVPFlow smooth.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("../shaders/smooth.wgsl"))),
+            source: wgpu::ShaderSource::Wgsl(synthesis_source(compact_fields)?),
         });
         let mut entries = vec![wgpu::BindGroupLayoutEntry {
             binding: 0,
@@ -248,6 +264,7 @@ impl Gpu {
             pipelines: BTreeMap::new(),
             driver_cache,
             cache_dirty: true,
+            compact_fields,
             sources: BTreeMap::new(),
             recycled_sources: Vec::new(),
             empty_prepass,
@@ -417,17 +434,28 @@ impl Gpu {
             return;
         }
         let mut field = cache.take().filter(|c| c.grid == (w, h)).unwrap_or_else(|| FieldCache {
-            texture: self.texture(w, h, wgpu::TextureFormat::Rgba32Float, false),
+            texture: self.texture(w, h, if self.compact_fields {
+                wgpu::TextureFormat::Rgba16Unorm
+            } else { wgpu::TextureFormat::Rgba32Float }, false),
             grid: (w, h),
             values: Vec::new(),
         });
         let row_values = w as usize * 4;
-        self.upload_rows(encoder, &field.texture, w, h, w * 16, |row, dst| {
-            for (out, value) in dst.chunks_exact_mut(4)
-                .zip(&data[row * row_values..(row + 1) * row_values]) {
-                out.copy_from_slice(&(*value as f32).to_le_bytes());
-            }
-        });
+        if self.compact_fields {
+            self.upload_rows(encoder, &field.texture, w, h, w * 8, |row, dst| {
+                for (out, value) in dst.chunks_exact_mut(2)
+                    .zip(&data[row * row_values..(row + 1) * row_values]) {
+                    out.copy_from_slice(&value.to_le_bytes());
+                }
+            });
+        } else {
+            self.upload_rows(encoder, &field.texture, w, h, w * 16, |row, dst| {
+                for (out, value) in dst.chunks_exact_mut(4)
+                    .zip(&data[row * row_values..(row + 1) * row_values]) {
+                    out.copy_from_slice(&(*value as f32).to_le_bytes());
+                }
+            });
+        }
         field.values.clear();
         field.values.extend_from_slice(data);
         *cache = Some(field);
@@ -668,6 +696,22 @@ impl Gpu {
 // WGSL render uses 8x8 invocations, each writing one packed u32 (four
 // pixels). Unaligned planes use a flattened word grid, preserving the bytes
 // written by the preceding plane at a shared boundary word.
+fn synthesis_source(compact_fields: bool) -> Result<Cow<'static, str>, String> {
+    let source = include_str!("../shaders/smooth.wgsl");
+    if !compact_fields { return Ok(Cow::Borrowed(source)); }
+    // Keep the managed upstream file byte-identical. Only RAW16 sampling
+    // needs a different scale; FLOAT returns early and UNORM8 sets 255.
+    // Refuse the variant if a future pinned shader changes this contract.
+    const FROM: &str = "var scale = 1.0;";
+    if source.matches(FROM).count() != 1
+        || !source.contains("if (kind == UNORM8) {\n    scale = 255.0;")
+        || !source.contains("if (kind == FLOAT)")
+    {
+        return Err("unsupported upstream compact-field shader".into());
+    }
+    Ok(Cow::Owned(source.replacen(FROM, "var scale = 65535.0;", 1)))
+}
+
 fn dispatch_geometry(base: u32, width: u32, height: u32) -> (u32, u32, u32) {
     let words_per_row = width.div_ceil(4);
     let rows = if base % 4 == 0 && width % 4 == 0 {
@@ -716,6 +760,17 @@ fn params_bytes(p: &GpuParams, base: u32, stride: u32) -> [u8; 96] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_fields_recover_all_u16_values_and_keep_upstream_source() {
+        for v in 0..=u16::MAX {
+            let normalized = f32::from(v) / 65535.0;
+            assert_eq!((normalized * 65535.0).round() as u16, v);
+        }
+        let original = synthesis_source(false).unwrap();
+        let compact = synthesis_source(true).unwrap();
+        assert_eq!(compact.replacen("var scale = 65535.0;", "var scale = 1.0;", 1), original);
+    }
 
     #[test]
     fn dispatch_covers_every_word_once() {
