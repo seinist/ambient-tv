@@ -39,7 +39,7 @@ struct svp_vk_mpv {
     int (*seal)(AmbientSvpVkPair *,VkFence);
     int (*release)(AmbientSvpVkPair *);
     int (*cancel)(AmbientSvpVkPair *);
-    AVBufferRef *device_ref, *output_frames;
+    AVBufferRef *device_ref, *output_hwframes;
     AVHWDeviceContext *avdev;
     AVVulkanDeviceContext *vkdev;
     VkDevice device;
@@ -173,7 +173,7 @@ static bool svp_vk_destroy_state(struct svp_vk_mpv *s)
     // On a stuck driver the owner must retain this state and library.
     if (svp_vk_reap(s,true)) return false;
     if (s->engine) s->destroy(s->engine);
-    av_buffer_unref(&s->output_frames);
+    av_buffer_unref(&s->output_hwframes);
     av_buffer_unref(&s->device_ref);
     free(s);return true;
 }
@@ -245,16 +245,16 @@ static struct svp_vk_mpv *svp_vk_new(void *library,struct mp_image *img,double s
     s->width=img->w;s->height=img->h;s->source_rate=source;s->target_rate=target;
     s->engine=s->create(s->vkdev->inst,s->vkdev->phys_dev,s->device,s->vkdev->get_proc_addr,s->width,s->height);
     if (!s->engine) goto fail;
-    s->output_frames=av_hwframe_ctx_alloc(s->device_ref);
-    if (!s->output_frames) goto fail;
-    AVHWFramesContext *out=(AVHWFramesContext *)s->output_frames->data;
+    s->output_hwframes=av_hwframe_ctx_alloc(s->device_ref);
+    if (!s->output_hwframes) goto fail;
+    AVHWFramesContext *out=(AVHWFramesContext *)s->output_hwframes->data;
     out->format=AV_PIX_FMT_VULKAN;out->sw_format=AV_PIX_FMT_RGBA;
     out->width=s->width;out->height=s->height;
     AVVulkanFramesContext *vfc=out->hwctx;
     vfc->usage=VK_IMAGE_USAGE_STORAGE_BIT|VK_IMAGE_USAGE_SAMPLED_BIT;
     vfc->flags=AV_VK_FRAME_FLAG_DISABLE_MULTIPLANE;
     vfc->nb_layers=1;
-    if (av_hwframe_ctx_init(s->output_frames)<0 || !vfc->lock_frame || !vfc->unlock_frame) goto fail;
+    if (av_hwframe_ctx_init(s->output_hwframes)<0 || !vfc->lock_frame || !vfc->unlock_frame) goto fail;
     return s;
 fail:
     svp_vk_destroy_state(s);return NULL;
@@ -351,7 +351,7 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
     for (unsigned i=0;i<count;i++) {
         AVFrame *frame=av_frame_alloc();
         j->frames[j->nframes++]=frame;
-        if (!frame || av_hwframe_get_buffer(s->output_frames,frame,0)<0
+        if (!frame || av_hwframe_get_buffer(s->output_hwframes,frame,0)<0
             || !svp_vk_ref(frame,true,&refs[2+i])
             || refs[2+i].vfc->format[0]!=VK_FORMAT_R8G8B8A8_UNORM) goto fail;
         dst[i]=svp_vk_view(s,j,refs[2+i].frame->img[0],VK_FORMAT_R8G8B8A8_UNORM,VK_IMAGE_ASPECT_COLOR_BIT);
