@@ -13,6 +13,16 @@ display = source / "modules/video_output/libplacebo/display.c"
 if not (source / ".ambient-ahb-experimental").is_file():
     raise SystemExit("SVP HDR bridge requires isolated experimental VLC checkout")
 s = display.read_text()
+backup = source / ".ambient-svp-hdr-display-original"
+staged = source / ".ambient-svp-hdr-display-staged"
+if len(sys.argv) > 2 and sys.argv[2] == "--restore":
+    if "SVP metadata-aware renderer bridge" in s:
+        if not backup.is_file() or not staged.is_file() or staged.read_text() != s:
+            raise SystemExit("Cannot safely restore edited SVP HDR display")
+        display.write_text(backup.read_text())
+        backup.unlink()
+        staged.unlink()
+    sys.exit(0)
 if '# include "dovi_fel_render.h"' not in s or 'ambient_fel_render_picture_ex' not in s:
     raise SystemExit("Stage PR510 experimental renderer before SVP HDR bridge")
 for name in ("svp_vlc_hdr_pair.h", "svp_vlc_hdr_display.h"):
@@ -23,6 +33,8 @@ if marker in s:
         if expected not in s:
             raise SystemExit("Incomplete staged SVP HDR bridge")
     sys.exit(0)
+
+original = s
 
 def replace(old, new):
     global s
@@ -73,5 +85,7 @@ replace('            full?vlc_ancillary_GetData(full):NULL,eligible,sys->hdr_tar
         '            metadata,eligible,sys->hdr_target_mode!=0);')
 replace('    if (ahb_output.texture)\n        sys->ahb_frame_rendered = !failed;',
         '    if (ahb_output.texture || svp_pair)\n        sys->ahb_frame_rendered = !failed;')
+backup.write_text(original)
+staged.write_text(s)
 display.write_text(s)
 print("Staged SVP after PR510 metadata-aware AHB/FEL reconstruction")
