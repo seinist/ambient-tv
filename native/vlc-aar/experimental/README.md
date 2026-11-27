@@ -818,3 +818,18 @@ pivot limits and a nonzero matrix offset. This is a source comparison
 against newer open-source libplacebo, not Dolby reference certification.
 See https://github.com/haasn/libplacebo/blob/v7.387.0/src/shaders/colorspace.c
 and https://github.com/haasn/libplacebo/blob/v7.387.0/src/include/libplacebo/utils/libav_internal.h .
+
+
+The v5 prediction shader also clamps the output to the endpoint pivots,
+whereas the newer shader clamps to [0,1]. For the FEL-specific domain,
+preclamp the input and widen only the shader's local endpoint copy so
+that internal segment selection is unchanged and the output is not
+incorrectly clipped. The initial new cross-channel regression exposed
+this difference; its independent expected values remain unchanged.
+
+EL discard markers are now consumed in the decoder before queue admission,
+so a known dropped frame cannot cause overflow of a full 12-frame queue.
+The marker set remains bounded, is reset on flush/drain, and ignores
+unknown late drops after drain. Allocation/submit failures are terminal
+until flush. Host tests exercise full-queue known/unknown output, duplicate
+PTS, repeated discard and drained late discard in addition to real HEVC.

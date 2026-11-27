@@ -42,7 +42,7 @@ new file mode 100644
 diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 --- a/libavcodec/dovi_rpudec.c
 +++ b/libavcodec/dovi_rpudec.c
-@@ -747,4 +747,264 @@
+@@ -747,4 +747,247 @@
      }
  
      return 0;
@@ -180,8 +180,6 @@ diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 +
 +struct ambient_fel_session {
 +    struct ambient_fel_decoder decoder;
-+    int64_t discard[64];
-+    unsigned discarded;
 +};
 +
 +struct ambient_fel_session *av_ambient_fel_open(void)
@@ -198,39 +196,28 @@ diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 +}
 +void av_ambient_fel_flush(struct ambient_fel_session *s)
 +{
-+    if(s){ambient_fel_decoder_flush(&s->decoder);s->discarded=0;}
-+}
-+static void ambient_fel_remove_discarded(struct ambient_fel_session *s)
-+{
-+    for(unsigned i=0;i<s->discarded;){
-+        AVFrame *f=ambient_fel_decoder_take(&s->decoder,s->discard[i]);
-+        if(!f){i++;continue;}
-+        av_frame_free(&f);
-+        s->discard[i]=s->discard[--s->discarded];
-+    }
++    if(s)ambient_fel_decoder_flush(&s->decoder);
 +}
 +int av_ambient_fel_submit(struct ambient_fel_session *s,const uint8_t *data,
 +                           size_t size,int64_t pts,int64_t dts)
 +{
 +    if(!s||!data||!size||size>32*1024*1024)return AVERROR(EINVAL);
 +    AVPacket *pkt=av_packet_alloc();
-+    if(!pkt)return AVERROR(ENOMEM);
++    if(!pkt){s->decoder.failed=true;return AVERROR(ENOMEM);}
 +    int ret=av_new_packet(pkt,(int)size);
 +    if(ret>=0){
 +        memcpy(pkt->data,data,size);pkt->pts=pts>0?pts:AV_NOPTS_VALUE;
 +        pkt->dts=dts>0?dts:AV_NOPTS_VALUE;
 +        ret=ambient_fel_decoder_submit(&s->decoder,pkt);
-+        if(ret>=0)ambient_fel_remove_discarded(s);
 +    }
++    if(ret<0)s->decoder.failed=true;
 +    av_packet_free(&pkt);
 +    return ret;
 +}
 +int av_ambient_fel_drain(struct ambient_fel_session *s)
 +{
 +    if(!s)return AVERROR(EINVAL);
-+    int ret=ambient_fel_decoder_drain(&s->decoder);
-+    if(ret>=0)ambient_fel_remove_discarded(s);
-+    return ret;
++    return ambient_fel_decoder_drain(&s->decoder);
 +}
 +bool av_ambient_fel_may_receive(const struct ambient_fel_session *s)
 +{
@@ -239,11 +226,7 @@ diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 +void av_ambient_fel_discard(struct ambient_fel_session *s,int64_t pts)
 +{
 +    if(!s||pts<=0)return;
-+    AVFrame *f=ambient_fel_decoder_take(&s->decoder,pts);
-+    if(f){av_frame_free(&f);return;}
-+    for(unsigned i=0;i<s->discarded;i++)if(s->discard[i]==pts)return;
-+    if(s->discarded>=64){s->decoder.failed=true;return;}
-+    s->discard[s->discarded++]=pts;
++    ambient_fel_decoder_discard(&s->decoder,pts);
 +}
 +struct ambient_fel_picture *av_ambient_fel_take_rpu(struct ambient_fel_session *s,int64_t pts,
 +    const struct ambient_dovi_metadata *rpu)
@@ -311,7 +294,7 @@ diff --git a/libavcodec/ambient_fel_decoder.h b/libavcodec/ambient_fel_decoder.h
 new file mode 100644
 --- /dev/null
 +++ b/libavcodec/ambient_fel_decoder.h
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,196 @@
 +#pragma once
 +/* Experimental software enhancement-layer decoder. The caller owns the BL
 + * decoder and must submit each accepted access unit exactly once, in decode
@@ -328,10 +311,13 @@ new file mode 100644
 +#include <string.h>
 +
 +#define AMBIENT_FEL_QUEUE_CAPACITY 12
++#define AMBIENT_FEL_DISCARD_CAPACITY 64
 +struct ambient_fel_decoder {
 +    AVBSFContext *split;
 +    AVCodecContext *codec;
 +    AVFrame *queue[AMBIENT_FEL_QUEUE_CAPACITY];
++    int64_t discard[AMBIENT_FEL_DISCARD_CAPACITY];
++    unsigned discarded;
 +    bool failed, draining;
 +};
 +
@@ -390,6 +376,42 @@ new file mode 100644
 +    return NULL;
 +}
 +
++/* Drop a matching pending picture immediately, or remember a future exact
++ * PTS. Once drained, no future output is possible; do not retain tombstones. */
++static inline void ambient_fel_decoder_discard(struct ambient_fel_decoder *s,int64_t pts)
++{
++    if(!s||s->failed||pts==AV_NOPTS_VALUE)return;
++    AVFrame *f=ambient_fel_decoder_take(s,pts);
++    if(f){av_frame_free(&f);return;}
++    if(s->draining)return;
++    for(unsigned i=0;i<s->discarded;i++)if(s->discard[i]==pts)return;
++    if(s->discarded>=AMBIENT_FEL_DISCARD_CAPACITY){s->failed=true;return;}
++    s->discard[s->discarded++]=pts;
++}
++
++/* Consumes ownership on every return. Process known drops before queue
++ * admission: a discarded picture cannot exhaust the bounded live queue. */
++static inline int ambient_fel_decoder_enqueue(struct ambient_fel_decoder *s,AVFrame *f)
++{
++    if(!s||!f||s->failed){av_frame_free(&f);return AVERROR(EINVAL);}
++    unsigned slot=AMBIENT_FEL_QUEUE_CAPACITY;
++    for(unsigned i=0;i<AMBIENT_FEL_QUEUE_CAPACITY;i++){
++        if(s->queue[i]&&s->queue[i]->pts==f->pts){
++            av_frame_free(&f);return AVERROR_INVALIDDATA;
++        }
++        if(!s->queue[i]&&slot==AMBIENT_FEL_QUEUE_CAPACITY)slot=i;
++    }
++    for(unsigned i=0;i<s->discarded;i++)if(s->discard[i]==f->pts){
++        s->discard[i]=s->discard[--s->discarded];
++        av_frame_free(&f);return 0;
++    }
++    if(slot==AMBIENT_FEL_QUEUE_CAPACITY){
++        av_frame_free(&f);return AVERROR(ENOBUFS);
++    }
++    s->queue[slot]=f;
++    return 0;
++}
++
 +static inline int ambient_fel_decoder_receive(struct ambient_fel_decoder *s)
 +{
 +    for (;;) {
@@ -413,17 +435,8 @@ new file mode 100644
 +            (f->flags&AV_FRAME_FLAG_CORRUPT)) {
 +            av_frame_free(&f);return AVERROR_INVALIDDATA;
 +        }
-+        unsigned slot=AMBIENT_FEL_QUEUE_CAPACITY;
-+        for (unsigned i=0;i<AMBIENT_FEL_QUEUE_CAPACITY;i++) {
-+            if (s->queue[i] && s->queue[i]->pts==f->pts) {
-+                av_frame_free(&f);return AVERROR_INVALIDDATA;
-+            }
-+            if (!s->queue[i] && slot==AMBIENT_FEL_QUEUE_CAPACITY) slot=i;
-+        }
-+        if (slot==AMBIENT_FEL_QUEUE_CAPACITY) {
-+            av_frame_free(&f);return AVERROR(ENOBUFS);
-+        }
-+        s->queue[slot]=f;
++        ret=ambient_fel_decoder_enqueue(s,f);
++        if(ret<0)return ret;
 +    }
 +}
 +
@@ -464,7 +477,7 @@ new file mode 100644
 +    if (ret>=0) ret=avcodec_send_packet(s->codec,NULL);
 +    if (ret>=0) ret=ambient_fel_decoder_receive(s);
 +    if (ret<0) s->failed=true;
-+    else s->draining=true;
++    else {s->draining=true;s->discarded=0;}
 +    return ret;
 +}
 +
@@ -476,7 +489,7 @@ new file mode 100644
 +        av_frame_free(&s->queue[i]);
 +    av_bsf_flush(s->split);
 +    avcodec_flush_buffers(s->codec);
-+    s->failed=false;s->draining=false;
++    s->discarded=0;s->failed=false;s->draining=false;
 +}
 diff --git a/libavcodec/ambient_fel_api.h b/libavcodec/ambient_fel_api.h
 new file mode 100644

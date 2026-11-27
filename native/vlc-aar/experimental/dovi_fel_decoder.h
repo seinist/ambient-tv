@@ -14,10 +14,13 @@
 #include <string.h>
 
 #define AMBIENT_FEL_QUEUE_CAPACITY 12
+#define AMBIENT_FEL_DISCARD_CAPACITY 64
 struct ambient_fel_decoder {
     AVBSFContext *split;
     AVCodecContext *codec;
     AVFrame *queue[AMBIENT_FEL_QUEUE_CAPACITY];
+    int64_t discard[AMBIENT_FEL_DISCARD_CAPACITY];
+    unsigned discarded;
     bool failed, draining;
 };
 
@@ -76,6 +79,42 @@ static inline AVFrame *ambient_fel_decoder_take(struct ambient_fel_decoder *s,in
     return NULL;
 }
 
+/* Drop a matching pending picture immediately, or remember a future exact
+ * PTS. Once drained, no future output is possible; do not retain tombstones. */
+static inline void ambient_fel_decoder_discard(struct ambient_fel_decoder *s,int64_t pts)
+{
+    if(!s||s->failed||pts==AV_NOPTS_VALUE)return;
+    AVFrame *f=ambient_fel_decoder_take(s,pts);
+    if(f){av_frame_free(&f);return;}
+    if(s->draining)return;
+    for(unsigned i=0;i<s->discarded;i++)if(s->discard[i]==pts)return;
+    if(s->discarded>=AMBIENT_FEL_DISCARD_CAPACITY){s->failed=true;return;}
+    s->discard[s->discarded++]=pts;
+}
+
+/* Consumes ownership on every return. Process known drops before queue
+ * admission: a discarded picture cannot exhaust the bounded live queue. */
+static inline int ambient_fel_decoder_enqueue(struct ambient_fel_decoder *s,AVFrame *f)
+{
+    if(!s||!f||s->failed){av_frame_free(&f);return AVERROR(EINVAL);}
+    unsigned slot=AMBIENT_FEL_QUEUE_CAPACITY;
+    for(unsigned i=0;i<AMBIENT_FEL_QUEUE_CAPACITY;i++){
+        if(s->queue[i]&&s->queue[i]->pts==f->pts){
+            av_frame_free(&f);return AVERROR_INVALIDDATA;
+        }
+        if(!s->queue[i]&&slot==AMBIENT_FEL_QUEUE_CAPACITY)slot=i;
+    }
+    for(unsigned i=0;i<s->discarded;i++)if(s->discard[i]==f->pts){
+        s->discard[i]=s->discard[--s->discarded];
+        av_frame_free(&f);return 0;
+    }
+    if(slot==AMBIENT_FEL_QUEUE_CAPACITY){
+        av_frame_free(&f);return AVERROR(ENOBUFS);
+    }
+    s->queue[slot]=f;
+    return 0;
+}
+
 static inline int ambient_fel_decoder_receive(struct ambient_fel_decoder *s)
 {
     for (;;) {
@@ -99,17 +138,8 @@ static inline int ambient_fel_decoder_receive(struct ambient_fel_decoder *s)
             (f->flags&AV_FRAME_FLAG_CORRUPT)) {
             av_frame_free(&f);return AVERROR_INVALIDDATA;
         }
-        unsigned slot=AMBIENT_FEL_QUEUE_CAPACITY;
-        for (unsigned i=0;i<AMBIENT_FEL_QUEUE_CAPACITY;i++) {
-            if (s->queue[i] && s->queue[i]->pts==f->pts) {
-                av_frame_free(&f);return AVERROR_INVALIDDATA;
-            }
-            if (!s->queue[i] && slot==AMBIENT_FEL_QUEUE_CAPACITY) slot=i;
-        }
-        if (slot==AMBIENT_FEL_QUEUE_CAPACITY) {
-            av_frame_free(&f);return AVERROR(ENOBUFS);
-        }
-        s->queue[slot]=f;
+        ret=ambient_fel_decoder_enqueue(s,f);
+        if(ret<0)return ret;
     }
 }
 
@@ -150,7 +180,7 @@ static inline int ambient_fel_decoder_drain(struct ambient_fel_decoder *s)
     if (ret>=0) ret=avcodec_send_packet(s->codec,NULL);
     if (ret>=0) ret=ambient_fel_decoder_receive(s);
     if (ret<0) s->failed=true;
-    else s->draining=true;
+    else {s->draining=true;s->discarded=0;}
     return ret;
 }
 
@@ -162,5 +192,5 @@ static inline void ambient_fel_decoder_flush(struct ambient_fel_decoder *s)
         av_frame_free(&s->queue[i]);
     av_bsf_flush(s->split);
     avcodec_flush_buffers(s->codec);
-    s->failed=false;s->draining=false;
+    s->discarded=0;s->failed=false;s->draining=false;
 }

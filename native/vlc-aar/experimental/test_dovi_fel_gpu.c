@@ -143,6 +143,9 @@ int main(void)
             double pred=j==1?0.05+0.3*x[0]+0.4*x[0]*x[1]*x[2]+0.2*pow(x[1]*x[2],2):
                 6554.0/65536.0+58982.0/65536.0*x[j];
             double exp=fmin(1.0,fmax(0.0,pred+ambient_fel_residual(&nlq,j,residual[4*i+j])));
+            if(!isfinite(pixels[4*i+j])||fabs(pixels[4*i+j]-exp)>=0.0001)
+                fprintf(stderr,"RPU-domain pixel %u component %u: actual %.9f expected %.9f\n",
+                    i,j,pixels[4*i+j],exp);
             assert(isfinite(pixels[4*i+j])&&fabs(pixels[4*i+j]-exp)<0.0001);
         }
     }

@@ -178,8 +178,39 @@ static void test_crop(const char *file,bool shifted,const struct ambient_fel_pic
     av_packet_free(&p);av_ambient_fel_close(session);free(input);
 }
 
+static AVFrame *queued(int64_t pts)
+{
+    AVFrame *f=av_frame_alloc();assert(f);f->pts=pts;return f;
+}
+static void test_queue_drop(void)
+{
+    struct ambient_fel_decoder q={0};
+    for(unsigned i=0;i<AMBIENT_FEL_QUEUE_CAPACITY;i++)
+        assert(ambient_fel_decoder_enqueue(&q,queued(100+i))==0);
+    // Known early drop must be consumed even with all 12 slots occupied.
+    ambient_fel_decoder_discard(&q,200);
+    ambient_fel_decoder_discard(&q,200);
+    assert(q.discarded==1);
+    assert(ambient_fel_decoder_enqueue(&q,queued(200))==0);
+    assert(q.discarded==0&&!ambient_fel_decoder_take(&q,200));
+    assert(ambient_fel_decoder_enqueue(&q,queued(201))==AVERROR(ENOBUFS));
+    assert(ambient_fel_decoder_enqueue(&q,queued(100))==AVERROR_INVALIDDATA);
+    ambient_fel_decoder_discard(&q,100);
+    assert(ambient_fel_decoder_enqueue(&q,queued(201))==0);
+    q.draining=true;
+    for(int64_t i=300;i<400;i++)ambient_fel_decoder_discard(&q,i);
+    assert(!q.failed&&!q.discarded);
+    ambient_fel_decoder_discard(&q,201);
+    assert(!ambient_fel_decoder_take(&q,201));
+    for(unsigned i=1;i<AMBIENT_FEL_QUEUE_CAPACITY;i++){
+        AVFrame *f=ambient_fel_decoder_take(&q,100+i);assert(f);av_frame_free(&f);
+    }
+    ambient_fel_decoder_close(&q);
+}
+
 int main(int argc,char **argv)
 {
+    test_queue_drop();
     assert(argc==2||argc==5||argc==7);
     FILE *f=fopen(argv[1],"rb");assert(f);
     assert(fseek(f,0,SEEK_END)==0);

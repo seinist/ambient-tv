@@ -179,7 +179,18 @@ static inline bool ambient_fel_compose_domain(pl_gpu gpu, pl_dispatch dispatch,
             .body="color.rgb=clamp(color.rgb*(1023.0/1024.0),fel_pivot_lo,fel_pivot_hi);",
         }))goto fail;
     }
-    pl_shader_dovi_reshape(sh,reshape);
+    if(rpu_domain){
+        // v5 clamps the predicted OUTPUT to the first/last pivots;
+        // v7 clamps to [0,1]. Inputs have already been clamped above.
+        // Endpoint pivots do not participate in segment selection, so
+        // widen only those endpoints in a local copy for the v5 shader.
+        struct pl_dovi_metadata prediction=*reshape;
+        for(unsigned i=0;i<3;i++)if(prediction.comp[i].num_pivots){
+            prediction.comp[i].pivots[0]=0.f;
+            prediction.comp[i].pivots[prediction.comp[i].num_pivots-1]=1.f;
+        }
+        pl_shader_dovi_reshape(sh,&prediction);
+    }else pl_shader_dovi_reshape(sh,reshape);
     // Canonical MEL and any provably zero residual need no EL sampling.
     if(zero) {
         // Preserve the normal residual path's final signal clamp even
