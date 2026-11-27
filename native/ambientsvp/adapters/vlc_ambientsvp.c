@@ -233,8 +233,10 @@ static int Open(filter_t *f) {
     if ((!s->measure_rate && (uint64_t)s->config.source_num * s->config.target_den >= (uint64_t)s->config.target_num * s->config.source_den)
         || !svp_load(&s->api)) { msg_Dbg(f,"SVP source >= target or library unavailable"); return VLC_EGENERIC; }
     s->bytes = (size_t)s->config.width * s->config.height * 3 / 2;
-    s->buffer = malloc(s->bytes);
-    if (!s->buffer) { dlclose(s->api.lib); return VLC_ENOMEM; }
+    if (!s->api.push_fill || !s->api.receive_visit) {
+        s->buffer = malloc(s->bytes);
+        if (!s->buffer) { dlclose(s->api.lib); return VLC_ENOMEM; }
+    }
     f->fmt_out.video.i_frame_rate = s->config.target_num;
     f->fmt_out.video.i_frame_rate_base = s->config.target_den;
     f->ops = &ops; return VLC_SUCCESS;
