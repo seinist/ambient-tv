@@ -188,15 +188,19 @@ int main(int argc,char **argv)
     // Exercise the same opaque static-link API called from VLC.
     struct ambient_fel_session *session=av_ambient_fel_open();
     assert(session);
+    assert(!av_ambient_fel_may_receive(NULL));
+    assert(av_ambient_fel_may_receive(session));
     AVPacket *wrapped=wrap(input,(size_t)n,90000);
     assert(av_ambient_fel_submit(session,wrapped->data,wrapped->size,90000,87000)==0);
     assert(av_ambient_fel_drain(session)==0);
     assert(!av_ambient_fel_take(session,90001));
+    assert(!av_ambient_fel_may_receive(session));
     struct ambient_fel_picture *picture=av_ambient_fel_take(session,90000);
     assert(picture&&picture->pts==90000&&picture->width==64&&picture->height==64);
     assert(!av_ambient_fel_take(session,90000));
     for(unsigned i=0;i<64*64+2*32*32;i++) assert(picture->samples[i]<=1023);
     av_ambient_fel_flush(session);
+    assert(av_ambient_fel_may_receive(session));
     AVPacket *paired=dual(input,(size_t)n,190000);
     assert(av_ambient_fel_submit(session,paired->data,paired->size,190000,187000)==0);
     assert(av_ambient_fel_drain(session)==0);
@@ -206,6 +210,12 @@ int main(int argc,char **argv)
         (64*64+2*32*32)*sizeof(uint16_t)));
     free(dual_picture);av_packet_free(&paired);
     av_ambient_fel_flush(session);
+    assert(av_ambient_fel_may_receive(session));
+    // Overflow of early discard markers is a terminal error, never a wait.
+    for(int64_t i=1;i<=65;i++)av_ambient_fel_discard(session,i);
+    assert(!av_ambient_fel_may_receive(session));
+    av_ambient_fel_flush(session);
+    assert(av_ambient_fel_may_receive(session));
     // Owned snapshot survives the decoder session.
     av_ambient_fel_close(session);
     assert(picture->samples[0]<=1023);
