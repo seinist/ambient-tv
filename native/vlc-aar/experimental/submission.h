@@ -114,6 +114,18 @@ public:
         return true;
     }
 
+    // Terminal teardown only, after VK_ERROR_DEVICE_LOST from queue idle.
+    // Vulkan allows destruction of in-use objects on reported device loss;
+    // do not conflate this with successful execution or ownership transfer.
+    bool drain_after_device_lost() {
+        if (lease_ && !lease_->abandon_device_lost()) return false;
+        lease_ = nullptr;
+        completed_ = true;
+        handed_off_ = false;
+        destroy();
+        return true;
+    }
+
     // Nonblocking retirement. Even if the decoder already received its fence,
     // the Vulkan resources stay alive until actual submission completion.
     VkResult poll() {
