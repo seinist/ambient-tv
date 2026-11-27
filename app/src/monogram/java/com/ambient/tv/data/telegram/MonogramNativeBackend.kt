@@ -97,6 +97,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     /** Account-generation fences prevent older thumbnail RPCs repopulating a new account's cache. */
     @Volatile private var cacheGeneration = 0L
     private var previewWrites = 0
+    private var sharpPreviewWrites = 0
     private val measuredWindows = java.util.concurrent.atomic.AtomicInteger()
     private fun recordNativeWindow() {
         if (!com.ambient.tv.BuildConfig.MONOGRAM_PGO_GENERATE && !com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS) return
@@ -525,6 +526,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             cache.deleteRecursively()
             cache.mkdirs()
             previewWrites = 0
+            sharpPreviewWrites = 0
         }
         leftChannels.clear()
         recentFeeds.clear()
@@ -549,6 +551,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     cache.deleteRecursively()
                     cache.mkdirs()
                     previewWrites = 0
+                    sharpPreviewWrites = 0
                 }
             }
             accountId = id
@@ -660,6 +663,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 cache.deleteRecursively()
                 cache.mkdirs()
                 previewWrites = 0
+                sharpPreviewWrites = 0
             }
             accountIdFile.delete()
             accountId = null
@@ -793,6 +797,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 cache.deleteRecursively()
                 cache.mkdirs()
                 previewWrites = 0
+                sharpPreviewWrites = 0
             }
             chats.clear(); clearHistoryPages()
             chatsExhausted = false
@@ -1194,7 +1199,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         if (chatId in leftChannels) return null
         val cached = File(File(cache, "previews"), "$chatId-$messageId.img")
         if (!cached.isFile || cached.length() <= 0L) return null
-        cached.setLastModified(System.currentTimeMillis())
+        val now = System.currentTimeMillis()
+        if (now - cached.lastModified() > 60_000L) cached.setLastModified(now)
         return cached.toURI().toString().takeIf {
             identity == accountId && generation == cacheGeneration && chatId !in leftChannels &&
                 revision == mediaRevision(chatId, messageId)
@@ -1239,13 +1245,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             // display size falls back to its Thumb.
             if (failure.message?.contains("cancel", ignoreCase = true) == true ||
                 classifyTelegramFailure(failure.message) != TelegramFailureKind.OTHER) throw failure
-            val inline = native.peekMessageInlineThumb(h, chatId, messageId)
-            val thumb = File(mediaClass(if (priority.foreground) DISPATCH_VISIBLE else DISPATCH_BACKGROUND) { native.downloadMessageThumb(h, chatId, messageId, stage.path) }).canonicalFile
-            if (inline != null && thumb.isFile && thumb.length() == inline.size.toLong()) {
-                thumb.delete()
-                return@nativeCall null
-            }
-            thumb
+            // Decode bounds below are authoritative; equal byte counts do not imply
+            // equal images. Avoid a second JNI copy of the inline thumbnail.
+            File(mediaClass(if (priority.foreground) DISPATCH_VISIBLE else DISPATCH_BACKGROUND) {
+                native.downloadMessageThumb(h, chatId, messageId, stage.path)
+            }).canonicalFile
         }
         // The native layer may keep the file in its own cache or add an extension: copy it into
         // our bounded cache instead of discarding a valid thumbnail.
@@ -1257,9 +1261,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         }
         // A thumbnail no larger than the inline preview (the Thumb fallback can return the
         // stripped ~40 px image) is never cached as the sharp one.
+        if (actual.length() !in 1L..(2L * 1024 * 1024)) return@nativeCall null
         val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
         android.graphics.BitmapFactory.decodeFile(actual.path, bounds)
-        if (actual.length() !in 1L..(2L * 1024 * 1024) || maxOf(bounds.outWidth, bounds.outHeight) < 120) {
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0 || maxOf(bounds.outWidth, bounds.outHeight) < 120) {
             actual.delete()
             return@nativeCall null
         }
@@ -1271,7 +1276,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 return@nativeCall null
             }
             if (!actual.renameTo(output)) return@nativeCall null
-            if (++previewWrites % 16 == 1) trimThumbnailCache(dir)
+            if (++sharpPreviewWrites % 16 == 1) trimThumbnailCache(dir)
         }
         output.toURI().toString()
         } finally {

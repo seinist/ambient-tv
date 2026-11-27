@@ -199,6 +199,7 @@ fun TelegramScreen(
     )
     val followFirst = startupFocus.followsFirst(returnVisit != null)
     val focusMemory = rememberMonogramFocusMemory(sectionKey, returnedKey, state.playbackReturnRevision)
+    var viewportFocusKey by remember(sectionKey, state.playbackReturnRevision) { mutableStateOf(focusMemory.key) }
     var layoutKey by rememberSaveable(sectionKey) { mutableStateOf(viewModel.viewMode(sectionKey).name) }
     val layout = MonogramBrowseLayout.valueOf(layoutKey)
     var gridColumns by remember(sectionKey, layoutKey) { mutableIntStateOf(viewModel.gridColumns(sectionKey, layout)) }
@@ -331,7 +332,10 @@ fun TelegramScreen(
             viewModel.loadMore()
     }
     fun rememberFocused(key: String) {
-        if (!playbackReturn.pending || key == returnTarget) focusMemory.key = key
+        if (!playbackReturn.pending || key == returnTarget) {
+            focusMemory.key = key
+            viewportFocusKey = key
+        }
     }
     LaunchedEffect(layout, grid, flatList, flat.size) {
         if (layout == MonogramBrowseLayout.ROWS) return@LaunchedEffect
@@ -353,7 +357,7 @@ fun TelegramScreen(
                 val visibleRows = rowList.layoutInfo.visibleItemsInfo.map { it.index }
                 val windows = visibleRows.mapNotNull { index ->
                     currentRows.getOrNull(index)?.let { row ->
-                        val focusedIndex = row.items.indexOfFirst { it.ratingKey == focusMemory.key }
+                        val focusedIndex = row.items.indexOfFirst { it.ratingKey == viewportFocusKey }
                         val first = focusedIndex.coerceAtLeast(0)
                         row.copy(items = monogramViewportItems(row.items, first, first,
                             ahead = monogramRowVisibleColumns(gridColumns) + 2, behind = 1))

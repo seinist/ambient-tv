@@ -774,6 +774,7 @@ class TelegramRepository @Inject constructor(
     private class ThumbnailLoad(val deferred: kotlinx.coroutines.Deferred<String?>, var waiters: Int,
         val priority: TelegramTransferPriority)
     private val thumbnailLoads = HashMap<String, ThumbnailLoad>()
+    private val thumbnailMisses = ThumbnailMissCache()
 
     /** Real thumbnail for a visible card (see [TelegramMedia.cardImageUrl]); null when unavailable. */
     suspend fun thumbnailFile(chatId: Long, messageId: Int, speculative: Boolean = false,
@@ -852,9 +853,17 @@ class TelegramRepository @Inject constructor(
         val file = try {
             // Disk hits do not consume network permits or wait for interactive catalog RPCs.
             selected.cachedThumbnail(chatId, messageId)?.let { return it.takeIf { valid() } }
+            val key = "$generation:$chatId:$messageId:$revision"
+            if (thumbnailMisses.isRecent(key)) return null
             if (!priority.foreground) awaitInteractiveIdle { !priority.foreground }
             thumbnailPermits.withPermit {
-                if (!valid()) null else selected.thumbnail(chatId, messageId, priority)
+                if (!valid() || thumbnailMisses.isRecent(key)) null else {
+                    val result = selected.thumbnail(chatId, messageId, priority)
+                    // Only an ordinary null result, never a cancelled request or thrown
+                    // network/FLOOD_WAIT error. Retry shortly, and always prefer a disk hit.
+                    if (result == null && valid()) thumbnailMisses.record(key)
+                    result
+                }
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
@@ -886,6 +895,7 @@ class TelegramRepository @Inject constructor(
             old.values.map { it.deferred }
         }
         obsoleteThumbnails.forEach { it.cancel() }
+        thumbnailMisses.clear()
     }
 
     suspend fun mediaPart(
