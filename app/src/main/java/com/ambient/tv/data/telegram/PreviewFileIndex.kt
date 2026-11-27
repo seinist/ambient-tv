@@ -37,14 +37,22 @@ internal class PreviewFileIndex(
 
     fun hit(file: File): Boolean {
         seed()
-        val size = file.length()
-        if (!file.isFile || size <= 0L) {
+        // A single stat supplies existence, type, length and persisted LRU age.
+        val attributes = runCatching {
+            java.nio.file.Files.readAttributes(file.toPath(), java.nio.file.attribute.BasicFileAttributes::class.java)
+        }.getOrNull()
+        val size = attributes?.size() ?: 0L
+        if (attributes?.isRegularFile != true || size <= 0L) {
             remove(file)
             return false
         }
         val now = clock()
         val old = entries[file]
-        val persisted = file.lastModified()
+        val persisted = attributes.lastModifiedTime().toMillis()
+        if (now - (old?.touched ?: persisted) > maxAgeMs) {
+            if (file.delete() || !file.exists()) remove(file)
+            return false
+        }
         if (old == null || old.bytes != size) {
             remove(file)
             bytes += size
@@ -52,7 +60,7 @@ internal class PreviewFileIndex(
         if (now - persisted > 60_000L) file.setLastModified(now)
         entries[file] = Entry(size, now)
         trim(now)
-        return file.isFile
+        return entries.containsKey(file)
     }
 
     fun publish(file: File) {
