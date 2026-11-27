@@ -151,8 +151,10 @@ internal class SystemModuleRuntime(
                 if (files.dex.isEmpty() || files.native.keys != contract.dexNativeRoots ||
                     files.build.hostNativeSha256.isNotEmpty())
                     throw SystemModuleTrustException("Module adapter DEX or native payload mismatch")
-                if (contract.dexOwnership == null)
-                    throw SystemModuleTrustException("Module adapter ownership missing")
+                val ownership = contract.dexOwnership
+                    ?: throw SystemModuleTrustException("Module adapter ownership missing")
+                if (contract.entryClass !in files.dexClasses || files.dexClasses.any { !ownership.owns(it) })
+                    throw SystemModuleTrustException("Module DEX defines foreign classes or lacks its entrypoint")
             }
             contract.nativeRoots.isNotEmpty() -> {
                 if (files.dex.isNotEmpty() || !files.native.keys.containsAll(contract.nativeRoots))
