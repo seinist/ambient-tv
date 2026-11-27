@@ -24,13 +24,26 @@ impl Drop for RecycledBuffer{
         if self.buffer!=0{AHardwareBuffer_release(self.buffer as *mut c_void);}
     }}
 }
-fn fence_ready(fd:i32)->bool{
+fn poll_signaled(fd:i32)->bool{
     if fd<0{return true;}
     let mut p=libc::pollfd{fd,events:libc::POLLIN,revents:0};
     unsafe{libc::poll(&mut p,1,0)==1 && p.revents==libc::POLLIN}
 }
+// Linux sync_file UAPI (linux/sync_file.h): a completed error fence
+// can also be readable. Require an actual successful sync_file status.
+#[repr(C)]
+struct SyncFileInfo{name:[u8;32],status:i32,flags:u32,num_fences:u32,pad:u32,sync_fence_info:u64}
+fn fence_ready(fd:i32)->bool{
+    if fd<0{return fd== -1;}
+    if !poll_signaled(fd){return false;}
+    let mut info=SyncFileInfo{name:[0;32],status:0,flags:0,num_fences:0,pad:0,sync_fence_info:0};
+    // _IOWR('>', 4, struct sync_file_info), fixed 56-byte UAPI.
+    const REQUEST:u32=(3<<30)|(56<<16)|((b'>' as u32)<<8)|4;
+    unsafe{libc::ioctl(fd,REQUEST as _,&mut info)==0 && info.status==1}
+}
 impl RecycledBuffer{
-    fn ready(&self)->bool{self.consumer>=0&&fence_ready(self.producer)&&fence_ready(self.consumer)}
+    fn ready_with(&self,ready:impl Fn(i32)->bool)->bool{self.consumer>=0&&ready(self.producer)&&ready(self.consumer)}
+    fn ready(&self)->bool{self.ready_with(fence_ready)}
     fn take(mut self)->*mut c_void{std::mem::take(&mut self.buffer) as *mut c_void}
 }
 #[derive(Default)]
@@ -479,10 +492,12 @@ mod tests{
             assert!(producer>=0&&consumer>=0);
             let signal=|fd|{let v=1u64;assert_eq!(libc::write(fd,(&v as *const u64).cast(),8),8);};
             let b=RecycledBuffer{buffer:0,producer,consumer};
-            assert!(!b.ready());signal(producer);assert!(!b.ready());
-            signal(consumer);assert!(b.ready());
+            assert_eq!(std::mem::size_of::<SyncFileInfo>(),56);
+            assert!(!b.ready_with(poll_signaled));signal(producer);assert!(!b.ready_with(poll_signaled));
+            signal(consumer);assert!(b.ready_with(poll_signaled));
+            assert!(!b.ready(),"eventfd is not a successful sync_file");
             let missing=RecycledBuffer{buffer:0,producer:-1,consumer:-1};
-            assert!(!missing.ready());
+            assert!(!missing.ready_with(poll_signaled));
             let pool=Arc::new(Mutex::new(OutputPool{closed:true,buffers:Vec::new()}));
             let fd=libc::eventfd(1,libc::EFD_CLOEXEC);
             assert!(fd>=0);
