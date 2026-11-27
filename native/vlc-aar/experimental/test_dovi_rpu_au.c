@@ -161,6 +161,15 @@ int main(void) {
     assert(!ambient_fel_payload_contains(payloads,3,316,UINT64_MAX));
     assert(!ambient_fel_payload_contains(payloads,3,400,1));
     assert(!ambient_fel_payload_contains(payloads,0,108,1));
+    uint64_t required=100;
+    assert(ambient_fel_required_end(&required,100,150,20)&&required==170);
+    assert(ambient_fel_required_end(&required,100,120,5)&&required==170);
+    assert(ambient_fel_required_end(&required,100,200,40)&&required==240);
+    assert(ambient_fel_required_end(&required,100,0,0)&&required==240);
+    assert(!ambient_fel_required_end(&required,100,99,1));
+    assert(!ambient_fel_required_end(&required,100,UINT64_MAX,1));
+    assert(!ambient_fel_required_end(&required,100,200,UINT64_C(1)<<32));
+    assert(required==240);
     uint64_t charged=0;
     assert(ambient_fel_mdat_charge(&charged,1024));
     assert(ambient_fel_mdat_charge(&charged,AMBIENT_FEL_MAX_MDAT-1024));

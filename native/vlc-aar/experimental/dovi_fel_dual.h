@@ -189,6 +189,17 @@ static inline bool ambient_fel_run_offset(uint64_t base,uint64_t previous,
     if(previous_size>UINT64_MAX-previous)return false;
     *out=previous+previous_size;return true;
 }
+/* Determine the highest required physical data end before accessing
+ * payloads. Empty runs have no physical byte claims. */
+static inline bool ambient_fel_required_end(uint64_t *required,uint64_t moof_end,
+    uint64_t offset,uint64_t bytes)
+{
+    if(!required||bytes>UINT32_MAX||bytes>UINT64_MAX-offset)return false;
+    if(!bytes)return true;
+    if(offset<moof_end)return false;
+    if(offset+bytes>*required)*required=offset+bytes;
+    return true;
+}
 static inline bool ambient_fel_pts_valid(int64_t dts,int64_t cts)
 {
     return dts>=0 && !(cts>0 && dts>INT64_MAX-cts) &&

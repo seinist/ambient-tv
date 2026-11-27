@@ -982,3 +982,13 @@ one next-box header lookahead after the last mdat, so a live stream can wait
 for the next header; padding between successive mdats and timed moofs
 between layers remain unsupported. Latest linked build and real streaming
 fixtures remain to be verified.
+
+Paired fragment preflight now computes the greatest referenced byte end
+using exact checked trun offsets, before reading any mdat. Both seekable
+and forward-only scanners stop once the last required payload is covered;
+no extra next-box header peek is needed after the last EL/shared mdat.
+Inert free/skip padding between required mdats is permitted within existing
+bounded budgets. Any timed or unknown box before required bytes, backward
+payload reference, overflow or invalid header fails closed. Extra unused
+mdats between a separate BL and EL are not admitted. Host tests cover
+required-end arithmetic. Real container integration remains to be verified.
