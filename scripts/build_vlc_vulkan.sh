@@ -146,7 +146,29 @@ for abi in ${VLC_VULKAN_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
     fi
 done
 # Build the Java wrapper from this exact JNI revision, never mix VLC 3 Java with VLC 4 JNI.
-env -u ANDROID_SDK_ROOT ANDROID_HOME="${ANDROID_NDK%/ndk/*}" "$ROOT/gradlew" -p "$ROOT/native/vlc-aar" assembleRelease -PVLC_SOURCE="$JNI" --console=plain
+# A transient repository rate limit must not discard a completed native build.
+# Retry only explicit HTTP 429/503 responses, never compiler/configuration failures.
+package_log="$(mktemp)"
+package_status=0
+for attempt in 1 2 3 4; do
+    if env -u ANDROID_SDK_ROOT ANDROID_HOME="${ANDROID_NDK%/ndk/*}" "$ROOT/gradlew" -p "$ROOT/native/vlc-aar" assembleRelease -PVLC_SOURCE="$JNI" --console=plain 2>&1 | tee "$package_log"; then
+        package_status=0
+        break
+    else
+        package_status=${PIPESTATUS[0]}
+        [[ "$package_status" != 0 ]] || package_status=1
+    fi
+    if [[ "$attempt" == 4 ]] || ! grep -Eq 'Received status code (429|503)( |:|$)' "$package_log"; then
+        break
+    fi
+    delay=$((attempt * 30))
+    echo "Temporary Maven rate limit/service failure; retrying AAR packaging in ${delay}s (attempt $((attempt+1))/4)" >&2
+    sleep "$delay"
+done
+rm -f "$package_log"
+if [[ "$package_status" != 0 ]]; then
+    exit "$package_status"
+fi
 if [[ "$EXPERIMENTAL_AHB" == 1 ]]; then
     mkdir -p "$ROOT/native/vlc-aar/build/experimental"
     cp "$ROOT/native/vlc-aar/build/outputs/aar/libvlc-vulkan-release.aar" "$ROOT/native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar"
