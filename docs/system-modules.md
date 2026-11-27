@@ -238,3 +238,48 @@ This is a native-first intermediate step, not a fully independent Monogram
 DEX adapter. Native release signing/publication and corresponding GPL source
 distribution, ABI/device validation, matching-artifact release selection,
 and removal of the Java/JNA payload from the base APK remain outstanding.
+
+### Independent Monogram DEX candidate
+
+The native-only Monogram format remains supported by a matching Full APK,
+but the new independent format contains the pre-R8 Monogram adapter,
+upstream UniFFI/Kotlin bindings, JNA and rustls verifier code, plus the
+ABI-specific Rust and JNA dispatch libraries. The modular preview no
+longer includes those bindings or native libraries. Neutral host artwork
+and the account/media UI remain part of the APK.
+
+The factory implements the host-owned MonogramModuleFactory interface.
+Resource IDs and diagnostic flags are resolved by MonogramHostBindings
+from the actual installed host. Host-owned DTOs/ports, Kotlin/coroutines
+and credential storage retain their identity through R8. The first
+version deliberately keeps a broad host ABI surface; optimize these keep
+rules after device validation. The signed binding fingerprint covers
+the Telegram host sources, TokenStore, runtime loader and dependency
+version catalog. The child loader resolves only explicitly owned class
+names from the module and never falls back to the Full APK for those names.
+DEX preflight checks actual defined classes, mandatory implementations
+and duplicate definitions before installation. JNA dispatch and UniFFI
+resolve the extracted absolute native paths. The selected engine is
+created by the factory even in builds without bundled Monogram.
+
+Candidate export (after building the pinned Monogram AAR and preparing
+the usual Android dependencies):
+
+    MONOGRAM_NATIVE=1 ./gradlew :app:exportMonogramAdapterDex -PAPK_ABI=arm64
+
+Output: app/build/outputs/system-modules/monogram-dex. The Gradle task
+takes the release pre-R8 class graph, separates program classes from
+host-only classpath classes, and runs D8 with min API 29. The package
+script accepts --module monogram --monogram-dex-dir <output> and the
+matching four Full ABI APKs via repeated --apk, with license notices
+via --license. Native-only --monogram-aar remains a separate format.
+The preview APK audit rejects actual definitions of Monogram/JNA/rustls
+implementation classes as well as native payloads.
+
+The malformed duplicated section in the existing Monogram workflow
+was corrected and the workflow now exports the DEX candidate on its
+generic ARM64 job. Package/exporter regression tests are included in
+module CI. Actual Android linkage, TLS verification, login, session
+restore, playback and APK size must still be tested; independent native
+release publication and corresponding GPL source distribution are not
+yet enabled. Candidate generation is not a signed public release.
