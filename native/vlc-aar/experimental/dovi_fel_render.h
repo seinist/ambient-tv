@@ -22,7 +22,7 @@ static inline void ambient_fel_render_destroy(pl_gpu gpu,struct ambient_fel_rend
 }
 static inline bool ambient_fel_render_picture(pl_gpu gpu,pl_log log,
     struct ambient_fel_render *s,struct pl_frame *img,
-    const struct ambient_fel_picture *pic,int64_t pts)
+    const struct ambient_fel_picture *pic,int64_t pts,uint32_t bl_x,uint32_t bl_y)
 {
     if(!gpu||!s||!img||!pic||pic->pts!=pts||pts<=0||
         img->num_planes!=1||!img->planes[0].texture||
@@ -32,8 +32,8 @@ static inline bool ambient_fel_render_picture(pl_gpu gpu,pl_log log,
     pl_tex bl=img->planes[0].texture;
     unsigned w=pic->width,h=pic->height,cw=(w+1)/2,ch=(h+1)/2;
     if(bl->params.w<=0||bl->params.h<=0||
-       !ambient_fel_layer_ratio(bl->params.w,w)||
-       !ambient_fel_layer_ratio(bl->params.h,h))return false;
+       !ambient_fel_crop_axis(bl->params.w,w,bl_x,pic->crop_x)||
+       !ambient_fel_crop_axis(bl->params.h,h,bl_y,pic->crop_y))return false;
     struct pl_dovi_metadata reshape;
     struct ambient_fel_nlq nlq;
     if(!ambient_fel_metadata(&pic->rpu,&reshape,&nlq))return false;
