@@ -26,8 +26,9 @@ static void check_blend(const struct ambient_hdrplus_spatial *s,const struct amb
         float a=ambient_hdrplus_weight(&masks[0],x,y),b=ambient_hdrplus_weight(&masks[1],x,y);
         if(a>0.f && b>0.f) ++overlaps;
         if((a>0.f && a<1.f)||(b>0.f && b<1.f)) ++feathers;
-        float expected=layering?((g*(1.f-a)+l*a)*(1.f-b)+r*b):
-            (g*fmaxf(0.f,1.f-a-b)+l*a+r*b)/fmaxf(1.f,a+b);
+        float expected=g;
+        if(layering) expected=a>0.f?g*(1.f-a)+l*a:b>0.f?g*(1.f-b)+r*b:g;
+        else if(a+b>0.f) expected=g+(a*a*(l-g)+b*b*(r-g))/(a+b);
         float pq=pl_hdr_rescale(PL_HDR_NORM,PL_HDR_PQ,expected);
         for(unsigned k=0;k<3;++k) {
             float actual=pixels[4*(y*width+x)+k];
@@ -129,8 +130,42 @@ int main(void)
     assert(state.previous.windows[1].geometry.center_x==16);
     img.planes[0].texture=input;img.color=pl_color_space_hdr10;
     m.windows[1].saturation_mapping=true;
-    assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
-    assert(img.planes[0].texture==input);
+    m.windows[1].saturation_weight=8;
+    assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
+    assert(img.planes[0].texture==state.output);
+    // Neutral input is invariant under chroma compensation.
+    sh=pl_dispatch_begin(state.dispatch);
+    pl_shader_sample_direct(sh,pl_sample_src(.tex=state.output));
+    assert(pl_dispatch_finish(state.dispatch,pl_dispatch_params(.shader=&sh,.target=readback)));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=readback,.ptr=pixels)));
+    for(int i=0;i<width*height;++i) assert(fabsf(pixels[4*i]-pixels[4*i+1])<0.001f);
+    // A non-unity target display LUT must change the curve cache and reduce its peak.
+    img.planes[0].texture=input;img.color=pl_color_space_hdr10;
+    m.targeted_grid=(struct ambient_hdrplus_grid){.rows=2,.cols=2,.values={{8,8},{8,8}}};
+    m.windows[0].fraction=m.windows[1].fraction=0.5f;
+    assert(!ambient_hdrplus_curve_key_equal(&state.previous,&m));
+    assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
+    assert(state.curves[0][255]<=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_NORM,state.output_max*8.f/15.f)+0.001f);
+    m.targeted_grid=(struct ambient_hdrplus_grid){0};
+    // A colored input must react to a nonzero saturation weight.
+    img.planes[0].texture=input;img.color=pl_color_space_hdr10;
+    for(int i=0;i<width*height;++i){pixels[4*i]=pq;pixels[4*i+1]=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_PQ,250.f);pixels[4*i+2]=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_PQ,120.f);pixels[4*i+3]=1.f;}
+    pl_tex colored=pl_tex_create(gpu,pl_tex_params(.w=width,.h=height,.format=fmt,.sampleable=true,.initial_data=pixels));
+    assert(colored);
+    float spread[2];
+    for(unsigned i=0;i<2;++i){
+        img.planes[0].texture=colored;img.color=pl_color_space_hdr10;
+        m.windows[1].saturation_weight=i?32:0;
+        assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
+        sh=pl_dispatch_begin(state.dispatch);
+        pl_shader_sample_direct(sh,pl_sample_src(.tex=state.output));
+        assert(pl_dispatch_finish(state.dispatch,pl_dispatch_params(.shader=&sh,.target=readback)));
+        assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=readback,.ptr=pixels)));
+        unsigned index=4*(32*width+16);
+        spread[i]=pixels[index]-pixels[index+2];
+    }
+    assert(spread[1]>spread[0]+0.0001f);
+    pl_gpu_finish(gpu);pl_tex_destroy(gpu,&colored);
     m.windows[1].saturation_mapping=false;
     // Three windows: both local regions overlap and have different curves.
     m.window_count=3;
