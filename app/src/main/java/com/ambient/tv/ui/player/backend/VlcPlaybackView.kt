@@ -126,6 +126,10 @@ class VlcPlaybackController(
     // filters must not strip its precision or feed it through SDR-to-HDR a second time.
     private val preserveHdrSource = nativeHdrPreferred || sourceHdrStandard != null
     private val toneMappingRequired = sourceHdrStandard != null && !nativeHdrPreferred
+    private val doviRpuDecoderRequired = vlcDoviRpuDecoderRequired(
+        com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT, sourceHdrStandard == HdrStandard.DOLBY_VISION,
+        nativeHdrPreferred, audioOnly,
+    )
     override val usesRendererScaling: Boolean get() = true
     val audioSession = com.ambient.tv.ui.player.AudioSession(videoImagePreferences(context), "vlc", initialAudioPassthrough, audioOnly = audioOnly)
     val bitstreamPermitted: Boolean get() = audioSession.bitstreamPermitted
@@ -224,7 +228,7 @@ class VlcPlaybackController(
             "--network-caching=1200",
             "--audio-time-stretch",
             "--audiotrack-session-id=${nightProcessing.sessionId}",
-            "--avcodec-hw=any",
+            if (doviRpuDecoderRequired) "--avcodec-hw=none" else "--avcodec-hw=any",
             "--clock-jitter=0",
             if (com.ambient.tv.BuildConfig.DEBUG) "--verbose=2" else "--verbose=0",
         ).apply {
@@ -248,6 +252,9 @@ class VlcPlaybackController(
             ))
             if (ahbExperimentActive && sourceHdrStandard == HdrStandard.HDR10_PLUS)
                 add("--vk-ambient-hdr10plus")
+            // MediaCodec copy-back lacks VLC's DOVI picture ancillary. Use
+            // avcodec's RPU-aware software decoder, but keep the GPU renderer.
+            if (doviRpuDecoderRequired) add("--no-mediacodec")
         },
     )
     private var libVlc = createLibVlc()

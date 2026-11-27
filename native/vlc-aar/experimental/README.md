@@ -77,6 +77,12 @@ distribute the experiment as a validated production build.
   The source ST 2086 units and normalized HDR10+ luminance are converted to
   libplacebo units. Dolby Vision is rejected using native format flags as well
   as app classification; opaque converted RGB cannot safely carry raw RPU reshape.
+  When a known Dolby Vision title requires GPU tone mapping in the experimental
+  build, use VLC's existing avcodec software decoder and its per-picture DOVI
+  ancillary for GPU reshaping instead of MediaCodec copy-back without RPU.
+  Native Dolby Vision surface playback and production builds are unchanged.
+  This is a correctness fallback, not AHB/DV hardware decoding; enhancement-layer
+  reconstruction and runtime decoder performance are not established.
 
 ## Validation
 

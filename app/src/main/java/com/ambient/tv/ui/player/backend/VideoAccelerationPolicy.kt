@@ -267,6 +267,17 @@ internal class MpvZeroCopyFailureCache(
 
 internal val mpvZeroCopyFailures = MpvZeroCopyFailureCache()
 
+/** The experimental MediaCodec path has no RPU output. When the display
+ * requires Dolby Vision GPU conversion, select the existing FFmpeg decoder
+ * which attaches RPU metadata to each decoded picture. Native HDR remains
+ * untouched. This is intentionally a correctness fallback, not zero-copy. */
+internal fun vlcDoviRpuDecoderRequired(
+    experiment: Boolean,
+    dolbyVision: Boolean,
+    nativeHdrPreferred: Boolean,
+    audioOnly: Boolean,
+): Boolean = experiment && dolbyVision && !nativeHdrPreferred && !audioOnly
+
 /** Opaque SDR or explicitly supported HDR GPU processing, with no CPU filters. */
 internal fun vlcAhbExperimentEligible(
     experiment: Boolean,

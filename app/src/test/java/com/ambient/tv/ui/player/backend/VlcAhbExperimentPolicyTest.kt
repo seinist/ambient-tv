@@ -5,6 +5,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class VlcAhbExperimentPolicyTest {
+    @Test fun dolbyVisionRpuFallbackNeverOverridesNativeHdrOrProduction() {
+        assertTrue(vlcDoviRpuDecoderRequired(true, true, false, false))
+        assertFalse(vlcDoviRpuDecoderRequired(false, true, false, false))
+        assertFalse(vlcDoviRpuDecoderRequired(true, true, true, false))
+        assertFalse(vlcDoviRpuDecoderRequired(true, false, false, false))
+        assertFalse(vlcDoviRpuDecoderRequired(true, true, false, true))
+    }
+
     @Test fun onlyExplicitSdrGpuPathIsEligible() {
         assertTrue(vlcAhbExperimentEligible(true, true, false, false, "off", "off", false))
         assertFalse(vlcAhbExperimentEligible(false, true, false, false, "off", "off", false))
