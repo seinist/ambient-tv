@@ -4,13 +4,39 @@
 use ash::vk;
 use crate::{ahb_vulkan::*,mediacodec_reader::{Frame,Crop,Desc,AHardwareBuffer_acquire,AHardwareBuffer_release},
     resident_vulkan::*};
-use std::{ffi::c_void,ptr,panic::{catch_unwind,AssertUnwindSafe},sync::Arc,time::{Duration,Instant}};
+use std::{ffi::c_void,ptr,panic::{catch_unwind,AssertUnwindSafe},sync::{Arc,Mutex},time::{Duration,Instant}};
 type Result<T>=std::result::Result<T,String>;
 type ReleaseSource=unsafe extern "C" fn(*mut c_void,i32);
 const HANDLE:vk::ExternalSemaphoreHandleTypeFlags=vk::ExternalSemaphoreHandleTypeFlags::SYNC_FD;
 const MEMORY:vk::ExternalMemoryHandleTypeFlags=vk::ExternalMemoryHandleTypeFlags::ANDROID_HARDWARE_BUFFER_ANDROID;
 const MAX_PHASES:usize=8;
 const MAX_BATCHES:usize=3;
+const MAX_RECYCLED_BUFFERS:usize=8;
+
+// A compositor callback can outlive the stream. Its lease owns only
+// an AHB reference and sync_file descriptors, never a Vulkan object or
+// a pointer to the stream. The pool is closed under the same mutex.
+struct RecycledBuffer{buffer:usize,producer:i32,consumer:i32}
+impl Drop for RecycledBuffer{
+    fn drop(&mut self){unsafe{
+        if self.producer>=0{libc::close(self.producer);}
+        if self.consumer>=0{libc::close(self.consumer);}
+        if self.buffer!=0{AHardwareBuffer_release(self.buffer as *mut c_void);}
+    }}
+}
+fn fence_ready(fd:i32)->bool{
+    if fd<0{return true;}
+    let mut p=libc::pollfd{fd,events:libc::POLLIN,revents:0};
+    unsafe{libc::poll(&mut p,1,0)==1 && p.revents==libc::POLLIN}
+}
+impl RecycledBuffer{
+    fn ready(&self)->bool{self.consumer>=0&&fence_ready(self.producer)&&fence_ready(self.consumer)}
+    fn take(mut self)->*mut c_void{std::mem::take(&mut self.buffer) as *mut c_void}
+}
+#[derive(Default)]
+struct OutputPool{closed:bool,buffers:Vec<RecycledBuffer>}
+pub struct OutputLease{pool:Arc<Mutex<OutputPool>>,buffer:RecycledBuffer}
+
 #[link(name="android")]
 unsafe extern "C"{
     fn AHardwareBuffer_allocate(desc:*const Desc,out:*mut *mut c_void)->i32;
@@ -62,7 +88,7 @@ impl DeviceOwner{
 }
 struct DisplayImage{
     owner:Arc<DeviceOwner>,buffer:*mut c_void,image:vk::Image,view:vk::ImageView,
-    memory:vk::DeviceMemory,signal:vk::Semaphore,
+    memory:vk::DeviceMemory,signal:vk::Semaphore,leased:bool,
 }
 impl Drop for DisplayImage{
     fn drop(&mut self){unsafe{
@@ -73,13 +99,13 @@ impl Drop for DisplayImage{
     }}
 }
 impl DisplayImage{
-    fn new(owner:Arc<DeviceOwner>,width:u32,height:u32)->Result<Self>{
-        let mut s=Self{owner,buffer:ptr::null_mut(),image:vk::Image::null(),view:vk::ImageView::null(),
-            memory:vk::DeviceMemory::null(),signal:vk::Semaphore::null()};
+    fn new(owner:Arc<DeviceOwner>,width:u32,height:u32,recycled:Option<RecycledBuffer>)->Result<Self>{
+        let mut s=Self{owner,buffer:recycled.map_or(ptr::null_mut(),RecycledBuffer::take),image:vk::Image::null(),view:vk::ImageView::null(),
+            memory:vk::DeviceMemory::null(),signal:vk::Semaphore::null(),leased:false};
         // GPU_SAMPLED_IMAGE | GPU_COLOR_OUTPUT | COMPOSER_OVERLAY.
         // Never request CPU-readable/writable allocations.
         let desc=Desc{width,height,layers:1,format:1,usage:(1<<8)|(1<<9)|(1<<11),..Default::default()};
-        if unsafe{AHardwareBuffer_allocate(&desc,&mut s.buffer)}!=0||s.buffer.is_null(){return Err("compositor AHB allocation unsupported".into());}
+        if s.buffer.is_null() && (unsafe{AHardwareBuffer_allocate(&desc,&mut s.buffer)}!=0||s.buffer.is_null()){return Err("compositor AHB allocation unsupported".into());}
         let d=s.owner.d();
         let ahb=ash::android::external_memory_android_hardware_buffer::Device::new(&s.owner.instance,d);
         let mut fmt=vk::AndroidHardwareBufferFormatPropertiesANDROID::default();
@@ -177,7 +203,7 @@ impl Drop for Batch{
 impl Batch{
     fn record(owner:Arc<DeviceOwner>,resident:*mut VulkanResident,a:*mut Job,b:*mut Job,
         width:u32,height:u32,phases:&[f32],cached:Option<BatchCommands>,
-        preflight:Option<DisplayImage>)->Result<Self>{
+        preflight:Option<DisplayImage>,mut recycled:Vec<RecycledBuffer>)->Result<Self>{
         let commands=if let Some(cached)=cached{cached.reset()?;cached}
             else{BatchCommands::new(owner.clone())?};
         let cmd=commands.command;let fence=commands.fence;
@@ -186,7 +212,7 @@ impl Batch{
         // The preflight image has never been submitted or exposed to
         // any consumer. Subsequent output images remain fresh.
         if let Some(img)=preflight{s.images.push(img);}
-        while s.images.len()<phases.len(){s.images.push(DisplayImage::new(s.owner.clone(),width,height)?);}
+        while s.images.len()<phases.len(){s.images.push(DisplayImage::new(s.owner.clone(),width,height,recycled.pop())?);}
         let d=s.owner.d();
         unsafe{
             d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).map_err(err)?;
@@ -259,7 +285,7 @@ fn discard_output(out:&mut DisplayOutput){
 pub struct Stream{
     owner:Arc<DeviceOwner>,importer:*mut Importer,resident:*mut VulkanResident,
     width:u32,height:u32,previous:*mut Job,retired:Vec<*mut Job>,batches:Vec<Batch>,
-    idle_commands:Vec<BatchCommands>,preflight:Option<DisplayImage>,
+    idle_commands:Vec<BatchCommands>,preflight:Option<DisplayImage>,output_pool:Arc<Mutex<OutputPool>>,
 }
 impl Stream{
     fn new(width:u32,height:u32)->Result<Self>{
@@ -274,8 +300,9 @@ impl Stream{
         if resident.is_null(){unsafe{ambient_svp_ahb_importer_destroy(importer)};return Err("resident device rejected geometry".into());}
         // Preflight real compositor-format output before consuming frames.
         let mut s=Self{owner,importer,resident,width,height,previous:ptr::null_mut(),retired:Vec::new(),
-            batches:Vec::with_capacity(MAX_BATCHES),idle_commands:Vec::with_capacity(MAX_BATCHES),preflight:None};
-        match DisplayImage::new(s.owner.clone(),width,height){
+            batches:Vec::with_capacity(MAX_BATCHES),idle_commands:Vec::with_capacity(MAX_BATCHES),preflight:None,
+            output_pool:Arc::new(Mutex::new(OutputPool::default()))};
+        match DisplayImage::new(s.owner.clone(),width,height,None){
             Ok(img)=>s.preflight=Some(img),
             Err(e)=>{s.dispose();return Err(e);}
         }
@@ -297,6 +324,7 @@ impl Stream{
         self.reap();
     }
     fn dispose(&mut self){
+        {let mut pool=self.output_pool.lock().unwrap_or_else(|e|e.into_inner());pool.closed=true;pool.buffers.clear();}
         unsafe{ambient_svp_vk_destroy(self.resident);ambient_svp_ahb_importer_destroy(self.importer);}
         self.resident=ptr::null_mut();self.importer=ptr::null_mut();
     }
@@ -305,8 +333,21 @@ impl Stream{
             return Err("invalid compositor phases".into());
         }
         if self.batches.len()>=MAX_BATCHES{return Err("compositor GPU backpressure".into());}
+        let mut recycled=Vec::new();
+        {
+            let mut pool=self.output_pool.lock().unwrap_or_else(|e|e.into_inner());
+            let mut i=0;
+            let needed=phases.len()-usize::from(self.preflight.is_some());
+            while i<pool.buffers.len()&&recycled.len()<needed{
+                let b=&pool.buffers[i];
+                // The old VkImage must also have retired and been
+                // destroyed before importing the same allocation again.
+                let busy=self.batches.iter().any(|batch|batch.images.iter().any(|img|img.buffer as usize==b.buffer));
+                if !busy&&b.ready(){recycled.push(pool.buffers.swap_remove(i));}else{i+=1;}
+            }
+        }
         let batch=Batch::record(self.owner.clone(),self.resident,a,b,self.width,self.height,phases,
-            self.idle_commands.pop(),self.preflight.take())?;
+            self.idle_commands.pop(),self.preflight.take(),recycled)?;
         let result=batch.outputs(out);
         self.batches.push(batch);
         if result.is_ok(){
@@ -360,6 +401,37 @@ pub unsafe extern "C" fn ambient_svp_android_stream_push(stream:*mut Stream,buff
         }
         s.previous=next;0
     })).unwrap_or(-4)
+}
+// Optional ABI: the caller holds its normal output AHB ref separately.
+ // Only one lease may be obtained for an exported output. The original
+ // producer fence is duplicated here and remains caller-owned.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_android_stream_lease_output(stream:*mut Stream,buffer:*mut c_void,producer:i32)->*mut OutputLease{
+    if stream.is_null()||buffer.is_null()||producer< -1{return ptr::null_mut();}
+    catch_unwind(AssertUnwindSafe(||{
+        let s=unsafe{&mut *stream};
+        let Some(img)=s.batches.iter_mut().flat_map(|b|b.images.iter_mut()).find(|img|img.buffer==buffer&&!img.leased)
+            else{return ptr::null_mut();};
+        let fd=if producer>=0{unsafe{libc::fcntl(producer,libc::F_DUPFD_CLOEXEC,0)}}else{-1};
+        if producer>=0&&fd<0{return ptr::null_mut();}
+        unsafe{AHardwareBuffer_acquire(buffer);}
+        img.leased=true;
+        Box::into_raw(Box::new(OutputLease{pool:s.output_pool.clone(),
+            buffer:RecycledBuffer{buffer:buffer as usize,producer:fd,consumer:-1}}))
+    })).unwrap_or(ptr::null_mut())
+}
+// Takes the lease and the explicit previous-buffer release sync_file.
+// A negative fd means unproven consumer retirement: discard, never pool.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_android_output_release(lease:*mut OutputLease,consumer:i32){
+    if lease.is_null(){if consumer>=0{unsafe{libc::close(consumer);}}return;}
+    let mut lease=unsafe{Box::from_raw(lease)};
+    lease.buffer.consumer=consumer;
+    if consumer<0{return;}
+    let mut pool=lease.pool.lock().unwrap_or_else(|e|e.into_inner());
+    if !pool.closed&&pool.buffers.len()<MAX_RECYCLED_BUFFERS{
+        pool.buffers.push(lease.buffer);
+    }
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_android_stream_drain(stream:*mut Stream,phases:*const f32,count:u32,out:*mut DisplayOutput)->i32{
