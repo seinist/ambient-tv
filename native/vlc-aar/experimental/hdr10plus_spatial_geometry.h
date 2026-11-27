@@ -139,6 +139,57 @@ static inline bool ambient_hdrplus_saturation_scales(const struct ambient_hdrplu
     }
     return true;
 }
+/* Sections 6.1 and 6.7 define overlap in terms of selected pixel
+ * centers, not the axis-aligned bounding boxes of selectors. At each
+ * integral y solve the ellipse inequality for its x interval and clip
+ * against the processing rectangle. Use the same float coefficients
+ * as the GPU, evaluated in double with a small outward error margin.
+ * This is conservative near tangencies, and O(image height), only
+ * needed for the unusual case of two different overlap modes. */
+struct ambient_hdrplus_scan {
+    double x,y,a,b,d;
+};
+static inline struct ambient_hdrplus_scan
+ambient_hdrplus_scan_init(const struct ambient_hdrplus_mask *m)
+{
+    double c=m->rotation[0],s=m->rotation[1];
+    double aa=(double)m->ellipse[2]*m->ellipse[2];
+    double bb=(double)m->ellipse[3]*m->ellipse[3];
+    double a=aa*c*c+bb*s*s,b=(aa-bb)*c*s;
+    // Determinant divided by A, avoiding catastrophic cancellation
+    // for highly eccentric rotated ellipses.
+    double norm=c*c+s*s;
+    return (struct ambient_hdrplus_scan){m->ellipse[0],m->ellipse[1],
+        a,b/a,aa*bb*norm*norm/a};
+}
+static inline bool ambient_hdrplus_scan_row(const struct ambient_hdrplus_mask *m,
+    const struct ambient_hdrplus_scan *s,double y,double *lo,double *hi)
+{
+    double dy=y-s->y;
+    double rem=1.00002-s->d*dy*dy;
+    if(rem<0.0)return false;
+    double center=s->x-s->b*dy,half=sqrt(rem/s->a);
+    *lo=fmax(m->rect[0],center-half);
+    *hi=fmin(m->rect[2],center+half);
+    return *lo<=*hi;
+}
+static inline bool ambient_hdrplus_masks_disjoint(const struct ambient_hdrplus_mask masks[2])
+{
+    int top=(int)fmaxf(masks[0].rect[1],masks[1].rect[1]);
+    int bottom=(int)fminf(masks[0].rect[3],masks[1].rect[3]);
+    if(top>bottom||masks[0].rect[2]<masks[1].rect[0]||
+        masks[1].rect[2]<masks[0].rect[0])return true;
+    const struct ambient_hdrplus_scan s[2]={
+        ambient_hdrplus_scan_init(&masks[0]),ambient_hdrplus_scan_init(&masks[1])};
+    for(int y=top;y<=bottom;y++){
+        double l0,h0,l1,h1;
+        if(!ambient_hdrplus_scan_row(&masks[0],&s[0],y,&l0,&h0)||
+           !ambient_hdrplus_scan_row(&masks[1],&s[1],y,&l1,&h1))continue;
+        if(ceil(fmax(l0,l1))<=floor(fmin(h0,h1)))return false;
+    }
+    return true;
+}
+
 static inline bool ambient_hdrplus_spatial_supported(const struct ambient_hdrplus *m,
     unsigned width, unsigned height, struct ambient_hdrplus_mask masks[2], bool *layering)
 {
@@ -161,27 +212,9 @@ static inline bool ambient_hdrplus_spatial_supported(const struct ambient_hdrplu
         if (i && !ambient_hdrplus_mask_init(&masks[i-1],&w->geometry,width,height))
             return false;
     }
-    // Section 6.7 requires equal options only for overlapping selectors.
-    // Prove disjointness conservatively using each rotated ellipse's
-    // bounding box intersected with its processing rectangle. In that case
-    // both methods produce identical pixels, so either shader mode works.
-    if(m->window_count==3 && m->windows[1].geometry.overlap!=m->windows[2].geometry.overlap){
-        float bounds[2][4];
-        for(unsigned i=0;i<2;i++){
-            const struct ambient_hdrplus_mask *mask=&masks[i];
-            float a=1.f/mask->ellipse[2],b=1.f/mask->ellipse[3];
-            float c=mask->rotation[0],s=mask->rotation[1];
-            float dx=hypotf(a*c,b*s),dy=hypotf(a*s,b*c);
-            bounds[i][0]=fmaxf(mask->rect[0],mask->ellipse[0]-dx);
-            bounds[i][1]=fmaxf(mask->rect[1],mask->ellipse[1]-dy);
-            bounds[i][2]=fminf(mask->rect[2],mask->ellipse[0]+dx);
-            bounds[i][3]=fminf(mask->rect[3],mask->ellipse[1]+dy);
-        }
-        bool disjoint=bounds[0][0]>bounds[0][2]||bounds[0][1]>bounds[0][3]||
-            bounds[1][0]>bounds[1][2]||bounds[1][1]>bounds[1][3]||
-            bounds[0][2]<bounds[1][0]||bounds[1][2]<bounds[0][0]||
-            bounds[0][3]<bounds[1][1]||bounds[1][3]<bounds[0][1];
-        if(!disjoint)return false;
-    }
+    // Different modes are harmless only when no pixel belongs to both
+    // selectors. AABB-only rejection incorrectly excluded rotated windows.
+    if(m->window_count==3 && m->windows[1].geometry.overlap!=m->windows[2].geometry.overlap &&
+        !ambient_hdrplus_masks_disjoint(masks))return false;
     return true;
 }
