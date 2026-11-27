@@ -21,10 +21,29 @@ prune_svp_dep_libs() {
 
 build_abis=()
 build_keys=()
+build_flags=()
+# Profile data is optional and ABI-specific. Never silently use a profile
+# from another architecture or reuse a binary built from another profile.
+PGO_DIR="${SVP_PGO_PROFILE_DIR:-}"
+if [[ -n "$PGO_DIR" ]]; then
+    PGO_DIR="$(cd "$PGO_DIR" && pwd)"
+    [[ "$PGO_DIR" != *[[:space:]]* ]] || { echo "SVP PGO path must not contain whitespace" >&2; exit 2; }
+fi
 for abi in ${SVP_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
     case "$abi" in arm64-v8a|armeabi-v7a|x86|x86_64) ;; *) echo "Unsupported SVP ABI: $abi" >&2; exit 2;; esac
     dest="$ROOT/app/src/main/jniLibs/$abi"
-    key="$(printf '%s\n' "$SOURCE_HASH" "$TOOLCHAIN_KEY" "$abi" | sha256sum | cut -d ' ' -f1)"
+    abi_flags="$RUSTFLAGS"
+    profile_hash="none"
+    if [[ -n "$PGO_DIR" ]]; then
+        profile="$PGO_DIR/$abi.profdata"
+        [[ -s "$profile" ]] || { echo "Missing SVP PGO profile: $profile" >&2; exit 2; }
+        profile_hash="$(sha256sum "$profile" | cut -d ' ' -f1)"
+        # Cargo's encoded flags take precedence over RUSTFLAGS; fail rather
+        # than claim a PGO build in a configuration that would ignore it.
+        [[ -z "${CARGO_ENCODED_RUSTFLAGS:-}" ]] || { echo "SVP PGO requires unencoded RUSTFLAGS" >&2; exit 2; }
+        abi_flags+=" -C profile-use=$profile"
+    fi
+    key="$(printf '%s\n' "$SOURCE_HASH" "$TOOLCHAIN_KEY" "$abi" "$profile_hash" "$abi_flags" | sha256sum | cut -d ' ' -f1)"
     # Always drop leftover dep cdylibs, including on cache hits from older builds.
     prune_svp_dep_libs "$dest"
     if [[ "${REBUILD_SVP:-0}" != 1 && -s "$dest/libambientsvp.so" && -f "$dest/.svp-engine" && "$(<"$dest/.svp-engine")" == "$key" ]]; then
@@ -33,6 +52,7 @@ for abi in ${SVP_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
     fi
     build_abis+=("$abi")
     build_keys+=("$key")
+    build_flags+=("$abi_flags")
 done
 if (( ${#build_abis[@]} == 0 )); then
     [[ -s "$ROOT/app/src/main/assets/licenses/open-svpflow/dependencies.tsv" ]] || bash "$ROOT/scripts/vendor_svp_licenses.sh"
@@ -42,10 +62,13 @@ fi
 # Android runtime is replaced. Vulkan/device playback still needs its own audit.
 # Upstream metric.rs only imports _mm_unpacklo_epi64 with ssse3/avx2, which the
 # Android x86_64 target enables but the default host target does not.
-RUSTFLAGS="$RUSTFLAGS -C target-feature=+ssse3" \
+host_flags="$RUSTFLAGS"
+case "$(uname -m)" in x86_64|i?86) host_flags+=" -C target-feature=+ssse3";; esac
+RUSTFLAGS="$host_flags" \
     cargo test --release --locked --no-default-features --lib --tests
-for abi in "${build_abis[@]}"; do
-    cargo ndk --manifest-path "$ROOT/native/ambientsvp/Cargo.toml" -t "$abi" -P 29 \
+for index in "${!build_abis[@]}"; do
+    abi="${build_abis[$index]}"
+    RUSTFLAGS="${build_flags[$index]}" cargo ndk --manifest-path "$ROOT/native/ambientsvp/Cargo.toml" -t "$abi" -P 29 \
         -o "$ROOT/app/src/main/jniLibs" build --release --locked --lib
     prune_svp_dep_libs "$ROOT/app/src/main/jniLibs/$abi"
 done
