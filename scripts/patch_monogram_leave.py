@@ -655,6 +655,7 @@ pub fn set_ambient_media_mode(enabled: bool) {
 add_before(ffi, "#[uniffi::export]\npub fn download_message_thumb(", """#[uniffi::export]
 pub fn download_message_media_chunk_bytes(
     handle: u64, chat_id: i64, message_id: i32, dest_path: String, offset: i64,
+    expected_key: String,
 ) -> Result<Vec<u8>, MtprotoError> {
     use std::io::Read;
     const LIMIT: usize = 512 * 1024;
@@ -663,9 +664,10 @@ pub fn download_message_media_chunk_bytes(
     }
     let destination = std::path::Path::new(&dest_path);
     let (path, captured) = proto_media::download::ambient_capture_range(destination, || {
-        mono_proto_client::media_download::download_message_media_range(
+        mono_proto_client::media_download::download_message_media_range_checked(
             handle, chat_id, message_id, dest_path.clone(),
             proto_media::location::MediaDownloadKind::Full, Some(offset),
+            if expected_key.is_empty() { None } else { Some(expected_key.as_str()) },
         )
     })?;
     let bytes = if let Some(bytes) = captured { bytes } else {
@@ -701,10 +703,12 @@ pub extern "system" fn downloadMediaRange<'caller>(
     message_id: jni::sys::jint,
     destination: jni::objects::JString<'caller>,
     offset: jni::sys::jlong,
+    expected_key: jni::objects::JString<'caller>,
 ) -> jni::objects::JByteArray<'caller> {
     unowned_env.with_env(|env| -> jni::errors::Result<_> {
         let path = destination.try_to_string(env)?;
-        match download_message_media_chunk_bytes(handle as u64, chat_id, message_id, path, offset) {
+        let expected = expected_key.try_to_string(env)?;
+        match download_message_media_chunk_bytes(handle as u64, chat_id, message_id, path, offset, expected) {
             Ok(bytes) => env.byte_array_from_slice(&bytes),
             Err(error) => {
                 let code = match &error {

@@ -156,6 +156,7 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
                     width = o.optInt("width").coerceAtLeast(0),
                     height = o.optInt("height").coerceAtLeast(0),
                     fileName = o.optString("file").takeIf(String::isNotBlank),
+                    nativeMediaKey = o.optString("nativeMediaKey").takeIf(String::isNotBlank),
                 )
             }.getOrNull() }
         } }
@@ -192,7 +193,8 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
                     .put("published", m.publishedAtMs).put("youtube", m.youtubeVideoId)
                     .put("youtubeLinks", JSONArray(m.linkedYouTubeVideoIds))
                     .put("protected", m.protectedContent)
-                    .put("width", m.width).put("height", m.height).put("file", m.fileName))
+                    .put("width", m.width).put("height", m.height).put("file", m.fileName)
+                    .put("nativeMediaKey", m.nativeMediaKey))
                 }
                 if (stillAuthorized()) write(account, "media:$section", array)
             }
@@ -213,7 +215,8 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
                 linkedYouTubeVideoIds = youtubeLinks(o),
                 width = o.optInt("width").coerceAtLeast(0),
                 height = o.optInt("height").coerceAtLeast(0),
-                fileName = o.optString("file").takeIf(String::isNotBlank))
+                fileName = o.optString("file").takeIf(String::isNotBlank),
+                nativeMediaKey = o.optString("nativeMediaKey").takeIf(String::isNotBlank))
         }.getOrNull() }
     }
 

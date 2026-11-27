@@ -26,6 +26,8 @@ data class TelegramMedia(
     val height: Int = 0,
     /** Original file name of a document, audio or video; null when Telegram has none. */
     val fileName: String? = null,
+    /** Native document identity, not a file reference or credential. */
+    val nativeMediaKey: String? = null,
 ) {
     /** A linked YouTube video is a separate media card, even inside a post with an attachment. */
     val youtubeIds: List<String>

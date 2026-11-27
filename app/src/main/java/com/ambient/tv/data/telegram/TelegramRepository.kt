@@ -82,6 +82,8 @@ interface TelegramClientPort {
         mediaPart(chatId, messageId, offset).also {
             check(it.size == expectedBytes) { "Incomplete Telegram media part" }
         }
+    suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int, nativeMediaKey: String?): ByteArray =
+        mediaPart(chatId, messageId, offset, expectedBytes)
     /**
      * Playable video/audio posts from subscribed channels matching [query]. One request per
      * submitted search; throws [TelegramFloodWaitException] when Telegram asks to wait.
@@ -404,7 +406,7 @@ class TelegramRepository @Inject constructor(
             media.fileSize > 0L) { appContext.getString(R.string.monogram_error_not_streamable) }
         val authenticated = checkNotNull(client) { appContext.getString(R.string.monogram_error_not_authorized) }
         val generation = streamEpoch.get()
-        val key = "${authenticated.cacheIdentity}:${media.mediaKey}"
+        val key = "${authenticated.cacheIdentity}:${media.mediaKey}:${media.nativeMediaKey.orEmpty()}"
         synchronized(playbackUrls) { playbackUrls[key] }?.let { return@withContext it }
         val url = mediaFileServer.register(
             sourceId = MONOGRAM_LOCAL_MEDIA_SOURCE,
@@ -416,10 +418,10 @@ class TelegramRepository @Inject constructor(
                 check(client === authenticated && streamEpoch.get() == generation) {
                     appContext.getString(R.string.monogram_error_account_changed)
                 }
-                mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset), generation)
+                mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset), generation, nativeMediaKey = media.nativeMediaKey)
             } },
             prefetchLoader = { offset -> kotlinx.coroutines.runBlocking {
-                mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset), generation, speculative = true)
+                mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset), generation, speculative = true, nativeMediaKey = media.nativeMediaKey)
             } },
             authorized = { client === authenticated && streamEpoch.get() == generation },
         ) }
@@ -756,7 +758,7 @@ class TelegramRepository @Inject constructor(
     private val mediaPartPermits = kotlinx.coroutines.sync.Semaphore(4)
     // At most two speculative RPCs globally; two lanes remain for actual reads.
     private val speculativePartPermits = kotlinx.coroutines.sync.Semaphore(2)
-    private data class PartKey(val epoch: Long, val chatId: Long, val messageId: Int, val offset: Long, val expectedBytes: Int?)
+    private data class PartKey(val epoch: Long, val chatId: Long, val messageId: Int, val offset: Long, val expectedBytes: Int?, val nativeMediaKey: String?)
     private class PartLoad(val deferred: kotlinx.coroutines.Deferred<ByteArray>, var waiters: Int)
     private val partLoads = HashMap<PartKey, PartLoad>()
 
@@ -778,18 +780,18 @@ class TelegramRepository @Inject constructor(
 
     suspend fun mediaPart(
         chatId: Long, messageId: Int, offset: Long, expectedBytes: Int? = null,
-        expectedRevision: Long? = null, speculative: Boolean = false,
+        expectedRevision: Long? = null, speculative: Boolean = false, nativeMediaKey: String? = null,
     ): ByteArray {
         // Acquire speculative admission before creating the shared deferred, so a
         // foreground waiter never joins a deferred queued on the speculative gate.
         if (speculative) return speculativePartPermits.withPermit {
-            loadMediaPart(chatId, messageId, offset, expectedBytes, expectedRevision)
+            loadMediaPart(chatId, messageId, offset, expectedBytes, expectedRevision, nativeMediaKey)
         }
-        return interactive { loadMediaPart(chatId, messageId, offset, expectedBytes, expectedRevision) }
+        return interactive { loadMediaPart(chatId, messageId, offset, expectedBytes, expectedRevision, nativeMediaKey) }
     }
 
     private suspend fun loadMediaPart(chatId: Long, messageId: Int, offset: Long,
-        expectedBytes: Int?, expectedRevision: Long?): ByteArray {
+        expectedBytes: Int?, expectedRevision: Long?, nativeMediaKey: String?): ByteArray {
         val selected = checkNotNull(client) { appContext.getString(R.string.monogram_error_not_authorized) }
         check(chatId !in blockedChannels) { appContext.getString(R.string.monogram_error_channel_left) }
         val generation = streamEpoch.get()
@@ -801,7 +803,7 @@ class TelegramRepository @Inject constructor(
             }
         }
         verify()
-        val key = PartKey(generation, chatId, messageId, offset, expectedBytes)
+        val key = PartKey(generation, chatId, messageId, offset, expectedBytes, nativeMediaKey)
         val load = synchronized(partLoads) {
             val existing = partLoads[key]?.takeUnless { it.deferred.isCancelled }
             if (existing != null) {
@@ -814,7 +816,7 @@ class TelegramRepository @Inject constructor(
                     mediaPartPermits.withPermit {
                         verify()
                         (if (expectedBytes == null) selected.mediaPart(chatId, messageId, offset)
-                        else selected.mediaPart(chatId, messageId, offset, expectedBytes)).also { verify() }
+                        else selected.mediaPart(chatId, messageId, offset, expectedBytes, nativeMediaKey)).also { verify() }
                     }
                 }
                 PartLoad(deferred, 1).also { partLoads[key] = it }
