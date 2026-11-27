@@ -93,6 +93,7 @@ interface TelegramClientPort {
     suspend fun media(chatId: Long, messageId: Int): TelegramMedia?
     /** The original photo is fetched only when the viewer opens, never while listing. */
     suspend fun photoFile(chatId: Long, messageId: Int): String? = null
+    suspend fun cachedPhotoFile(chatId: Long, messageId: Int): String? = null
     /** Called once when Telegram reports the session as revoked or unknown ([TelegramSessionLostException]). */
     fun setSessionLostListener(listener: ((String) -> Unit)?) = Unit
     fun setArtworkChangedListener(listener: (() -> Unit)?) = Unit
@@ -798,6 +799,18 @@ class TelegramRepository @Inject constructor(
         val priority: TelegramTransferPriority)
     private val thumbnailLoads = HashMap<String, ThumbnailLoad>()
     private val thumbnailMisses = ThumbnailMissCache()
+
+    internal suspend fun cachedPhotoArtworkFile(chatId: Long, messageId: Int): String? = withContext(Dispatchers.IO) {
+        val selected = client ?: return@withContext null
+        val generation = streamEpoch.get()
+        val identity = selected.cacheIdentity
+        val revision = selected.mediaRevision(chatId, messageId)
+        if (chatId in blockedChannels) return@withContext null
+        selected.cachedPhotoFile(chatId, messageId).takeIf {
+            sameAccount(selected, identity, generation) && chatId !in blockedChannels &&
+                selected.mediaRevision(chatId, messageId) == revision
+        }
+    }
 
     /** Cache-only requests must not start native media RPCs. */
     internal suspend fun cachedArtworkFile(chatId: Long, messageId: Int): String? = withContext(Dispatchers.IO) {

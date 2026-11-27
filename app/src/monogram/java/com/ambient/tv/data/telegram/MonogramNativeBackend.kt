@@ -33,7 +33,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     private val session = File(app.noBackupFilesDir, "monogram/account.session").apply {
         parentFile?.mkdirs()
     }
-    private val cache = File(app.cacheDir, "monogram").apply { mkdirs() }
+    private val cache = File(app.cacheDir, "monogram").canonicalFile.apply { mkdirs() }
     // v2 disk keys include the actual upstream document identity, never just message size.
     private val chunkDirectory = File(cache, "chunks-v2").apply { File(cache, "chunks").deleteRecursively() }
     /** The upstream MTProto handle supports overlapping RPCs. Only handle creation and
@@ -1185,6 +1185,18 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             }
             output.toURI().toString()
         } finally { stage.delete() }
+    }
+
+    override suspend fun cachedPhotoFile(chatId: Long, messageId: Int): String? {
+        val generation = cacheGeneration
+        val identity = accountId ?: return null
+        val revision = mediaRevision(chatId, messageId)
+        val file = File(File(cache, "photos"), "$chatId-$messageId.media")
+        return synchronized(diskChunkLock) {
+            if (generation == cacheGeneration && identity == accountId && chatId !in leftChannels &&
+                revision == mediaRevision(chatId, messageId) && file.isFile && file.length() > 0L)
+                file.toURI().toString() else null
+        }
     }
 
     /**

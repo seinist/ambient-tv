@@ -61,6 +61,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.IntSize
@@ -624,12 +625,14 @@ fun ArtworkImage(
         mutableStateOf<com.ambient.tv.network.ArtworkNetworkState?>(null)
     }
     val requestNetwork = successfulNetwork ?: network
+    var sharpRetry by remember(sharpKey) { mutableIntStateOf(0) }
+    var sharpRetriedThisFocus by remember(sharpKey, prioritizeUncached, primaryNetwork.recovery) { mutableStateOf(false) }
     val fadeMillis = artworkLoadFadeMillis(
         requested = crossfadeOnLoad,
         reducedEffects = LocalPerformanceProfile.current.reducedEffects,
         cachedInMemory = shownFromMemory,
     )
-    val request = remember(currentModel, sharpKey, context, headers, constrainDecode, cardSize, fadeMillis, refreshRevision, address?.imageKey, headerKey, requestNetwork, cacheOnly) {
+    val request = remember(currentModel, sharpKey, sharpRetry, context, headers, constrainDecode, cardSize, fadeMillis, refreshRevision, address?.imageKey, headerKey, requestNetwork, cacheOnly) {
         ImageRequest.Builder(context).data(currentModel)
             .apply { if (fadeMillis > 0) crossfade(fadeMillis) else crossfade(false) }
             .placeholderMemoryCacheKey(cachedKey)
@@ -639,7 +642,10 @@ fun ArtworkImage(
                 // small tile bitmap for a large detail/backdrop request.
                 if (continuityKey != null) memoryCacheKey(continuityKey)
                 // Changes to the sharp key must restart the painter even for the same URL.
-                scopedSharpKey?.let { memoryCacheKey(it) }
+                scopedSharpKey?.let {
+                    memoryCacheKey(it)
+                    if (sharpRetry != 0) memoryCacheKeyExtra(com.ambient.tv.data.telegram.MONOGRAM_RETRY_EXTRA, sharpRetry.toString())
+                }
                 artworkRefreshRevision(refreshRevision)
                 memoryCacheKeyExtra(com.ambient.tv.network.MEDIA_ARTWORK_IDENTITY_EXTRA, address?.imageKey)
                 memoryCacheKeyExtra(com.ambient.tv.network.MEDIA_ARTWORK_HEADERS_EXTRA, headerKey)
@@ -665,7 +671,19 @@ fun ArtworkImage(
             fadeBackground = false
         }
     }
-    var failed by remember(candidates, sharpKey) { mutableStateOf(false) }
+    var failed by remember(candidates, sharpKey, primaryNetwork.recovery) { mutableStateOf(false) }
+    // One retry per focus session, after the repository's short miss suppression expires.
+    // Offscreen cards, offline and cache-only requests never start a retry timer.
+    LaunchedEffect(sharpKey, prioritizeUncached, failed, primaryNetwork.blocked, cacheOnly, sharpRetriedThisFocus) {
+        if (sharpKey != null && prioritizeUncached && failed && !primaryNetwork.blocked && !cacheOnly && !sharpRetriedThisFocus) {
+            delay(5_500L)
+            sharpRetriedThisFocus = true
+            candidateIndex = 0
+            loading = true
+            failed = false
+            sharpRetry++
+        }
+    }
     var visibleFraction by remember(currentModel, headers, refreshRevision, address?.imageKey) { mutableStateOf<Float?>(null) }
     var focusRevision by remember(currentModel, headers, refreshRevision, address?.imageKey) { mutableStateOf<String?>(null) }
     val focusModel = (currentModel as? String)?.takeIf { focusCrop && contentScale == ContentScale.Crop }
