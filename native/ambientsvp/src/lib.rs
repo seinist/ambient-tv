@@ -20,6 +20,8 @@ mod resident_vulkan;
 mod mediacodec_reader;
 #[cfg(all(target_os="android",feature="vulkan"))]
 mod ahb_vulkan;
+#[cfg(all(target_os="android",feature="vulkan"))]
+mod android_stream;
 #[cfg(feature = "vulkan")]
 mod pipeline_cache;
 // Experimental reusable exact metric; not a replacement for the upstream analyser.
