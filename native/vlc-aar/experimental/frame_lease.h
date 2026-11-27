@@ -61,6 +61,18 @@ public:
         return true;
     }
 
+    // Only on terminal device loss, after Vulkan has reported resources no
+    // longer in-use. This does not claim successful foreign ownership release
+    // or a valid converted frame. Preserve the original producer fence when
+    // returning the discarded decoder picture; never export a GPU fence.
+    bool abandon_device_lost() {
+        if (!submitted_) return false;
+        completed_ = true;
+        if (image_ && release_) return_image(acquire_.release());
+        else acquire_.reset();
+        return true;
+    }
+
     bool can_destroy_gpu_objects() const { return !submitted_ || completed_; }
     bool allows_early_return() const { return allow_early_return_; }
     bool has_decoder_image() const { return image_ != nullptr; }
