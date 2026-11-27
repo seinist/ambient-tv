@@ -2494,5 +2494,5 @@
     <string name="game_library_scan_progress">Checked %1$d of %2$d discovered files</string>
     <string name="game_library_scan_cancel">Cancel scan</string>
     <string name="vlc_experiment_title">Enable experimental VLC features</string>
-    <string name="vlc_experiment_hint">Uses new Vulkan video processing for smoother playback and improved HDR10+ and Dolby Vision images on supported devices. May be unstable. Changes apply with the next playback.</string>
+    <string name="vlc_experiment_hint">When using Vulkan, tries new methods for smoother playback and better HDR10+ and Dolby Vision images. May be unstable. Applies from the next playback.</string>
 </resources>

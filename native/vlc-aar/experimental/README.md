@@ -1,26 +1,38 @@
-# Experimental MediaCodec → Vulkan import
+# Extended MediaCodec → Vulkan import
 
-**Opt-in test build only.** The production AAR and the production Vulkan
-copy-back path are unchanged. The experiment is restricted to opaque
-AImageReader BT.709 SDR or explicit BT.2020 HDR10/HLG on Android API 34+
-with a matching driver-reported matrix, range and actual AImage dataspace,
-one graphics queue, and no CPU picture filters. HDR10+ with validated per-frame dynamic metadata is experimental;
-Dolby Vision, invalid HDR10+ payloads, non-YUV explicit VkFormat, protected images and unsupported extensions/features
-remain on the existing copy-back or native HDR routes.
+**Included in normal native builds; disabled by default at runtime.**
+The extended AAR now ships with the regular build. In the VLC renderer
+settings, enable the single option **Enable experimental VLC features**
+and choose Vulkan video output. On the next playback it enables the eligible
+AHB, Dolby Vision, Profile 7 FEL and HDR10+ paths together. All existing
+device, API, source-format and filter restrictions and fallbacks still apply.
+HDR hardware paths require Android API 34+. It is not a certified production
+renderer. The switch is stored as a device preference and is included in
+device settings backups, not portable settings.
 
 ## Build and validate
+
+Normal builds use `build.sh` without any extra arguments. It builds and
+installs the extended VLC AAR in app/libs, with an embedded capability marker
+and source-hash receipts. Old AARs or Maven fallback builds do not advertise
+the switch. To explicitly rebuild the installed library:
+
+```sh
+bash scripts/build_vlc_vulkan.sh
+```
+
+For isolated native CI or developer testing:
 
 ```sh
 VLC_EXPERIMENTAL_AHB=1 VLC_VULKAN_ABIS=arm64-v8a bash scripts/build_vlc_vulkan.sh
 ./gradlew :app:assembleDebug -PVLC_AHB_EXPERIMENT=1 -PAPK_ABI=arm64
 ```
 
-The first command stages the pinned VLC patches in a separate marked checkout
-and produces `native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar`.
-It never replaces app/libs. The second explicitly selects that AAR; normal
-Gradle builds never auto-select it. Select Vulkan video output for the test.
-The app then opts into `--vk-ambient-ahb` only for eligible playback. Do not
-distribute the experiment as a validated production build.
+The explicit native experiment build writes the isolated AAR without replacing
+app/libs unless VLC_INSTALL_APP=1 is set. The explicit Gradle property selects
+that isolated AAR. Both app builds use the same runtime switch, default off.
+The later historical implementation notes below describe earlier opt-in
+build flags and are superseded by this packaging and settings policy.
 
 ## Native path
 

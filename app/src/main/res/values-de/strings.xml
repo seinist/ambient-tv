@@ -2493,5 +2493,5 @@
     <string name="game_library_scan_progress">%1$d von %2$d gefundenen Dateien geprüft</string>
     <string name="game_library_scan_cancel">Einlesen abbrechen</string>
     <string name="vlc_experiment_title">Experimentelle VLC-Funktionen aktivieren</string>
-    <string name="vlc_experiment_hint">Nutzt neue Vulkan-Bildverarbeitung für flüssigere Wiedergabe und eine bessere HDR10+- und Dolby-Vision-Darstellung auf unterstützten Geräten. Kann noch instabil sein. Gilt ab der nächsten Wiedergabe.</string>
+    <string name="vlc_experiment_hint">Erprobt bei Vulkan-Ausgabe neue Verfahren für flüssigere Wiedergabe und eine bessere HDR10+- und Dolby-Vision-Darstellung. Kann noch instabil sein. Gilt ab der nächsten Wiedergabe.</string>
 </resources>

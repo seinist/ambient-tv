@@ -146,7 +146,6 @@ require(appDisplayName.isNotBlank() && appDisplayName.none { it == '\n' || it ==
 }
 
 val externalVersions = loadProjectProperties("gradle/external-versions.properties")
-// Explicit test build only; never auto-select a stale experimental AAR.
 // Normal APKs use the extended AAR produced by build.sh. The explicit
 // property still selects the isolated AAR for native CI and developer tests.
 val isolatedVlc = providers.gradleProperty("VLC_AHB_EXPERIMENT").orElse("0").get() == "1"

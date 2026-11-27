@@ -1385,7 +1385,7 @@ class VlcPlaybackController(
         }
         val media = Media(libVlc, Uri.parse(if (playbackUrl == url) authProxy?.url ?: url else playbackUrl))
         closeTimedMetadataReceiver()
-        if (com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT) {
+        if (com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT && experimentalFeaturesEnabled) {
             val generation = timedMetadataInbox.beginSession()
             timedMetadataReceiver = VlcTimedMetadataReceiver.open { timedMetadataInbox.offer(generation, it) }
             timedMetadataReceiver?.let { media.addOption(":mp4-ambient-metadata-socket=" + it.socketName) }

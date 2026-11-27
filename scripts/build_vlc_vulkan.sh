@@ -4,14 +4,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Normal builds include all native modules. Explicit experimental CI builds
 # remain isolated unless the caller deliberately requests installation.
-if [[ -v VLC_EXPERIMENTAL_AHB ]]; then
-    EXPERIMENTAL_AHB="$VLC_EXPERIMENTAL_AHB"
-    INSTALL_APP="${VLC_INSTALL_APP:-$((1-EXPERIMENTAL_AHB))}"
+EXPERIMENTAL_AHB="${VLC_EXPERIMENTAL_AHB:-1}"
+[[ "$EXPERIMENTAL_AHB" == 0 || "$EXPERIMENTAL_AHB" == 1 ]] || { echo "Invalid VLC_EXPERIMENTAL_AHB" >&2; exit 1; }
+if [[ -v VLC_EXPERIMENTAL_AHB && "$EXPERIMENTAL_AHB" == 1 ]]; then
+    INSTALL_APP="${VLC_INSTALL_APP:-0}"
 else
-    EXPERIMENTAL_AHB=1
     INSTALL_APP="${VLC_INSTALL_APP:-1}"
 fi
-[[ "$EXPERIMENTAL_AHB" == 0 || "$EXPERIMENTAL_AHB" == 1 ]] || { echo "Invalid VLC_EXPERIMENTAL_AHB" >&2; exit 1; }
+[[ "$INSTALL_APP" == 0 || "$INSTALL_APP" == 1 ]] || { echo "Invalid VLC_INSTALL_APP" >&2; exit 1; }
 # Include pins, build flags and both patch sets in the per-ABI cache identity.
 if [[ "${1:-}" == "--hash" ]]; then
     (cd "$ROOT"; sha256sum gradle/external-versions.properties scripts/build_vlc_vulkan.sh native/vlc-aar/patches/*.patch native/vlc-aar/jni-patches/*.patch
