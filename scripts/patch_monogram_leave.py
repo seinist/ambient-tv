@@ -20,6 +20,14 @@ MODIFICATION_DATE = "2026-11-27"
 NOTICE_MARKER = "Modified by Ambient TV, "
 COMMENT_PREFIX = {".rs": "//", ".kt": "//", ".kts": "//", ".toml": "#"}
 MODIFICATIONS = {
+    "vendor/mono-rs/crates/mono-proto-runtime/src/api_invoke.rs":
+        "decode non-refilling media batches only once",
+    "vendor/mono-rs/crates/mono-proto-client/src/media_lane.rs":
+        "avoid duplicate decoding and lane splitting for captured ranges",
+    "vendor/mono-rs/crates/mono-proto-runtime/src/rpc/framing.rs":
+        "reuse a bounded receive scratch buffer",
+    "vendor/mono-rs/crates/mono-proto-crypto/src/symmetric.rs":
+        "added safe in-place AES-IGE primitives",
     "native/mtproto/build.gradle.kts":
         "isolated opt-in ARM64 CPU flags to Android cargo-ndk tasks",
     "vendor/mono-rs/crates/mono-proto-messages/src/membership.rs":
@@ -379,8 +387,15 @@ pub fn ambient_capture_range<T>(
     });
     Ok((result, payload))
 }
-fn ambient_capture_active(destination: &std::path::Path) -> bool {
+pub fn ambient_capture_active(destination: &std::path::Path) -> bool {
     AMBIENT_RANGE.with(|slot| slot.borrow().as_ref().is_some_and(|capture| capture.destination.as_path() == destination))
+}
+fn ambient_range_cancelled(destination: &std::path::Path) -> bool {
+    if ambient_capture_active(destination) && mono_proto_runtime::request_control::current_id() != 0 {
+        mono_proto_runtime::request_control::check().is_err()
+    } else {
+        download_cancelled(destination)
+    }
 }
 fn ambient_begin_range(destination: &std::path::Path) -> bool {
     AMBIENT_RANGE.with(|slot| {
@@ -821,6 +836,199 @@ amend(upstream_build,
                                     .filter { it.isNotBlank() }.joinToString(" ")
                             pb.environment().remove("CARGO_ENCODED_RUSTFLAGS")
                         }''')
+
+
+# The bounded range sink does not refill a wire batch. Decode the final
+# responses exactly once and keep the streaming callback for full downloads.
+api_invoke = "vendor/mono-rs/crates/mono-proto-runtime/src/api_invoke.rs"
+amend(api_invoke,
+      """    invoke_api_batch_without_updates_streaming(snapshot, api_id, requests, &mut |_, _| None)
+}""",
+      """    invoke_api_batch_impl(snapshot, api_id, requests, None)
+}""")
+amend(api_invoke,
+      """    if requests.is_empty() {
+        return Ok(Vec::new());
+    }
+    let replay_safe = replay_safe_method(Req::CONSTRUCTOR_ID);
+    let span = crate::perf::span("rpc:pipeline");""",
+      """    invoke_api_batch_impl(snapshot, api_id, requests, Some(on_chunk))
+}
+
+fn invoke_api_batch_impl<Req, Res>(
+    snapshot: &mut Snapshot,
+    api_id: i32,
+    requests: Vec<Req>,
+    mut on_chunk: Option<&mut dyn FnMut(usize, Result<Res, MtprotoError>) -> Option<Req>>,
+) -> Result<Vec<Result<Res, MtprotoError>>, MtprotoError>
+where
+    Req: TlEncode + Boxed + Clone,
+    Res: BoxedDecode,
+{
+    if requests.is_empty() {
+        return Ok(Vec::new());
+    }
+    let replay_safe = replay_safe_method(Req::CONSTRUCTOR_ID);
+    let span = crate::perf::span("rpc:pipeline");""")
+amend(api_invoke,
+      """        &mut |index, raw_res| {
+            let res = match raw_res {""",
+      """        &mut |index, raw_res| {
+            let on_chunk = on_chunk.as_deref_mut()?;
+            let res = match raw_res {""")
+media_lane = "vendor/mono-rs/crates/mono-proto-client/src/media_lane.rs"
+amend(media_lane,
+      """                    invoke_media_batch_even_odd(
+                        client,
+                        &mut media_snap,""",
+      """                    if offset.is_some() && mono_proto_media::download::ambient_capture_active(dest) {
+                        // Ranges never refill; the final response loop validates and
+                        // writes each part exactly once, including LIMIT_INVALID retries.
+                        return with_client_transport(client, &mut slot, || {
+                            mono_proto_runtime::api_invoke::invoke_api_batch_without_updates(
+                                &mut media_snap, api_id, requests,
+                            )
+                        });
+                    }
+                    invoke_media_batch_even_odd(
+                        client,
+                        &mut media_snap,""")
+amend(client_download,
+      """                        mono_proto_runtime::api_invoke::invoke_api_batch_without_updates_streaming::<
+                            _,
+                            mono_proto::latest::api::UploadFile,
+                        >(&mut state.snapshot, api_id, requests, on_chunk)""",
+      """                        if offset.is_some() && mono_proto_media::download::ambient_capture_active(dest) {
+                            mono_proto_runtime::api_invoke::invoke_api_batch_without_updates::<
+                                _, mono_proto::latest::api::UploadFile,
+                            >(&mut state.snapshot, api_id, requests)
+                        } else {
+                            mono_proto_runtime::api_invoke::invoke_api_batch_without_updates_streaming::<
+                                _, mono_proto::latest::api::UploadFile,
+                            >(&mut state.snapshot, api_id, requests, on_chunk)
+                        }""")
+amend(range_output,
+      """                if download_cancelled(cancellation_path) {
+                    return Err(MtprotoError::Message("cancelled".into()));
+                }
+                if should_pause_optional(request_profile()) {""",
+      """                if ambient_range_cancelled(cancellation_path) {
+                    return Err(MtprotoError::Message("cancelled".into()));
+                }
+                if should_pause_optional(request_profile()) {""")
+amend(range_output,
+      """                for (index, response) in responses.into_iter().enumerate() {
+                    if download_cancelled(cancellation_path) {""",
+      """                for (index, response) in responses.into_iter().enumerate() {
+                    if ambient_range_cancelled(cancellation_path) {""")
+# Reuse one 64 KiB receive scratch allocation per native thread. Taking it
+# from TLS permits nested calls without a RefCell borrow spanning network IO.
+framing = "vendor/mono-rs/crates/mono-proto-runtime/src/rpc/framing.rs"
+add_before(framing, "pub fn recv_framed(", """thread_local! {
+    static AMBIENT_RECV_SCRATCH: std::cell::RefCell<Option<Vec<u8>>> =
+        const { std::cell::RefCell::new(None) };
+}
+struct AmbientRecvScratch(Vec<u8>);
+impl AmbientRecvScratch {
+    fn take() -> Self {
+        Self(AMBIENT_RECV_SCRATCH.with(|slot| slot.borrow_mut().take())
+            .unwrap_or_else(|| vec![0_u8; 64 * 1024]))
+    }
+}
+impl Drop for AmbientRecvScratch {
+    fn drop(&mut self) {
+        let bytes = std::mem::take(&mut self.0);
+        let _ = AMBIENT_RECV_SCRATCH.try_with(|slot| {
+            if slot.borrow().is_none() {
+                *slot.borrow_mut() = Some(bytes);
+            }
+        });
+    }
+}
+""", "struct AmbientRecvScratch")
+amend(framing, "    let mut buf = vec![0_u8; 64 * 1024];",
+      "    let mut scratch = AmbientRecvScratch::take();\n    let buf = &mut scratch.0;")
+amend(framing, "                let n = match conn.receive(&mut buf) {",
+      "                let n = match conn.receive(buf.as_mut_slice()) {")
+# Safe in-place IGE: retain original APIs, use ownership for the envelope.
+crypto_symmetric = "vendor/mono-rs/crates/mono-proto-crypto/src/symmetric.rs"
+add_before(crypto_symmetric, "/// Apply AES-256-CTR in place", """/// Encrypt validated complete AES-IGE blocks in place.
+pub fn aes_ige_encrypt_in_place(payload: &mut [u8], key: &[u8], iv: &[u8]) -> Result<(), Error> {
+    validate_ige(payload, iv)?;
+    let cipher = aes(key)?;
+    let mut previous_ciphertext = <[u8; 16]>::try_from(&iv[..16]).expect("validated IV");
+    let mut previous_plaintext = <[u8; 16]>::try_from(&iv[16..]).expect("validated IV");
+    for plaintext in payload.as_chunks_mut::<16>().0 {
+        let original = *plaintext;
+        let mut block = [0_u8; 16];
+        for i in 0..16 { block[i] = original[i] ^ previous_ciphertext[i]; }
+        let mut aes_block = Block::<Aes256>::from(block);
+        cipher.encrypt_block(&mut aes_block);
+        block = aes_block.into();
+        for i in 0..16 { block[i] ^= previous_plaintext[i]; }
+        *plaintext = block;
+        previous_ciphertext = block;
+        previous_plaintext = original;
+    }
+    Ok(())
+}
+/// Decrypt validated complete AES-IGE blocks in place.
+pub fn aes_ige_decrypt_in_place(payload: &mut [u8], key: &[u8], iv: &[u8]) -> Result<(), Error> {
+    validate_ige(payload, iv)?;
+    let cipher = aes(key)?;
+    let mut previous_ciphertext = <[u8; 16]>::try_from(&iv[..16]).expect("validated IV");
+    let mut previous_plaintext = <[u8; 16]>::try_from(&iv[16..]).expect("validated IV");
+    for ciphertext in payload.as_chunks_mut::<16>().0 {
+        let original = *ciphertext;
+        let mut block = [0_u8; 16];
+        for i in 0..16 { block[i] = original[i] ^ previous_plaintext[i]; }
+        let mut aes_block = Block::<Aes256>::from(block);
+        cipher.decrypt_block(&mut aes_block);
+        block = aes_block.into();
+        for i in 0..16 { block[i] ^= previous_ciphertext[i]; }
+        *ciphertext = block;
+        previous_plaintext = block;
+        previous_ciphertext = original;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod ambient_ige_tests {
+    #[test]
+    fn in_place_matches_existing_ige() {
+        let key = [19_u8; 32];
+        let iv = [42_u8; 32];
+        let plain: Vec<u8> = (0..512 * 1024).map(|i| (i % 251) as u8).collect();
+        let expected = super::aes_ige_encrypt(&plain, &key, &iv).unwrap();
+        let mut actual = plain.clone();
+        super::aes_ige_encrypt_in_place(&mut actual, &key, &iv).unwrap();
+        assert_eq!(actual, expected);
+        super::aes_ige_decrypt_in_place(&mut actual, &key, &iv).unwrap();
+        assert_eq!(actual, plain);
+        assert!(super::aes_ige_decrypt_in_place(&mut [0_u8; 15], &key, &iv).is_err());
+    }
+}
+""", "pub fn aes_ige_encrypt_in_place(")
+amend(crypto_message,
+      "    let mut plaintext = Vec::with_capacity(32 + message.body.len() + message.padding.len());",
+      """    let mut plaintext = Vec::with_capacity(24 + 32 + message.body.len() + message.padding.len());
+    plaintext.resize(24, 0);""")
+amend(crypto_message,
+      """    let msg_key = message_key(auth_key, &plaintext, direction)?;
+    let (aes_key, aes_iv) = message_aes_key_iv(auth_key, &msg_key, direction)?;
+    let encrypted = aes_ige_encrypt(&plaintext, &aes_key, &aes_iv)?;
+    let mut packet = Vec::with_capacity(24 + encrypted.len());
+    packet.extend_from_slice(&auth_key_id(auth_key).to_le_bytes());
+    packet.extend_from_slice(&msg_key);
+    packet.extend_from_slice(&encrypted);
+    Ok(packet)""",
+      """    let msg_key = message_key(auth_key, &plaintext[24..], direction)?;
+    let (aes_key, aes_iv) = message_aes_key_iv(auth_key, &msg_key, direction)?;
+    crate::aes_ige_encrypt_in_place(&mut plaintext[24..], &aes_key, &aes_iv)?;
+    plaintext[..8].copy_from_slice(&auth_key_id(auth_key).to_le_bytes());
+    plaintext[8..24].copy_from_slice(&msg_key);
+    Ok(plaintext)""")
 
 # Commit files only after every source contract has been checked.
 for path, result in changes.items():
