@@ -81,7 +81,7 @@ class SystemModulePackageTest(unittest.TestCase):
             dex = root / "dex"
             dex.mkdir()
             (dex / "host-binding.sha256").write_text("a" * 64)
-            (dex / "classes.dex").write_bytes(b"dex\\n039\\0" + bytes(104))
+            (dex / "classes.dex").write_bytes(b"dex\n039\0" + bytes(104))
             notice = root / "NOTICE"
             notice.write_text("test")
             apk = root / "full.apk"
