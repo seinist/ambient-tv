@@ -11,14 +11,24 @@ static uint8_t *fixture(unsigned max_pq, unsigned profile, int *size) {
     assert(m);
     AVDOVIRpuDataHeader *h = av_dovi_get_header(m);
     *h = (AVDOVIRpuDataHeader) {
-        .rpu_type=2, .vdr_rpu_profile=profile==8?1:0,
+        .rpu_type=2, .vdr_rpu_profile=profile==5?0:1,
         .coef_data_type=RPU_COEFF_FIXED, .coef_log2_denom=13,
         .bl_video_full_range_flag=profile==5, .bl_bit_depth=10,
-        .el_bit_depth=10, .vdr_bit_depth=12, .disable_residual_flag=1,
+        .el_bit_depth=10, .vdr_bit_depth=12, .disable_residual_flag=profile!=7,
+        .el_spatial_resampling_filter_flag=profile==7,
     };
     AVDOVIDataMapping *map = av_dovi_get_mapping(m);
     map->num_x_partitions=map->num_y_partitions=1;
-    map->nlq_method_idc=AV_DOVI_NLQ_NONE;
+    map->nlq_method_idc=profile==7?AV_DOVI_NLQ_LINEAR_DZ:AV_DOVI_NLQ_NONE;
+    if(profile==7) {
+        map->nlq_pivots[0]=0;map->nlq_pivots[1]=1023;
+        for(unsigned i=0;i<3;i++) {
+            map->nlq[i].nlq_offset=512+i;
+            map->nlq[i].linear_deadzone_slope=128+i;
+            map->nlq[i].linear_deadzone_threshold=64+i;
+            map->nlq[i].vdr_in_max=1024+i;
+        }
+    }
     for (unsigned i=0;i<3;++i) {
         AVDOVIReshapingCurve *curve=&map->curves[i];
         curve->num_pivots=2; curve->pivots[0]=0; curve->pivots[1]=1023;
@@ -43,7 +53,7 @@ static uint8_t *fixture(unsigned max_pq, unsigned profile, int *size) {
 }
 
 int main(void) {
-    assert(!av_ambient_dovi_alloc(7));
+    assert(!av_ambient_dovi_alloc(4));
     struct ambient_dovi_parser *p=av_ambient_dovi_alloc(8);
     assert(p);
     struct ambient_dovi_metadata m, before;
@@ -81,6 +91,31 @@ int main(void) {
     av_free(rpu);
     av_ambient_dovi_flush(p);
     rpu=fixture(3500,8,&n);
+    assert(av_ambient_dovi_parse(p,rpu,n,&m)<0);
+    av_free(rpu);
+    av_ambient_dovi_free(p);
+    p=av_ambient_dovi_alloc(7);
+    assert(p);
+    rpu=fixture(3200,7,&n);
+    assert(av_ambient_dovi_parse(p,rpu,n,&m)==0);
+    assert(m.residual_present && m.el_bit_depth==10 && m.vdr_bit_depth==12);
+    assert(m.nlq_pivots[0]==0&&m.nlq_pivots[1]==1023);
+    for(unsigned i=0;i<3;i++) {
+        assert(m.nlq_offset[i]==512+i && m.nlq_slope[i]==128+i);
+        assert(m.nlq_threshold[i]==64+i && m.nlq_maximum[i]==1024+i);
+    }
+    before=m;
+    rpu[n-2]^=1;
+    assert(av_ambient_dovi_parse(p,rpu,n,&m)<0);
+    assert(!memcmp(&before,&m,sizeof(m)));
+    av_free(rpu);
+    rpu=fixture(3000,8,&n);
+    assert(av_ambient_dovi_parse(p,rpu,n,&m)<0);
+    av_free(rpu);
+    av_ambient_dovi_free(p);
+    p=av_ambient_dovi_alloc(8);
+    assert(p);
+    rpu=fixture(3200,7,&n);
     assert(av_ambient_dovi_parse(p,rpu,n,&m)<0);
     av_free(rpu);
     av_ambient_dovi_free(p);
