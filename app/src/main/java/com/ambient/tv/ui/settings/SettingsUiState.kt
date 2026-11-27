@@ -48,6 +48,7 @@ data class UiDisplayDraft(
     val scale: Float = 1f,
     val renderResolutionKey: String = UiRenderResolutionPolicy.SYSTEM,
     val mousePointerHideSeconds: Int = MousePointerSettings.DEFAULT_SECONDS,
+    val vlcExperimentFlags: Int = 0,
 )
 
 /** Keep Next Up drafts together; the parent constructor is at the JVM parameter-slot limit. */
@@ -324,6 +325,7 @@ data class SettingsUiState(
     val uiScale: Float get() = uiDisplay.scale
     val uiRenderResolutionKey: String get() = uiDisplay.renderResolutionKey
     val mousePointerHideSeconds: Int get() = uiDisplay.mousePointerHideSeconds
+    val vlcExperimentFlags: Int get() = uiDisplay.vlcExperimentFlags
     val nextUpEnabled: Boolean get() = nextUp.enabled
     val nextUpLeadSeconds: Int get() = nextUp.leadSeconds
     val nextUpCreditsDelaySeconds: Int get() = nextUp.creditsDelaySeconds
@@ -449,6 +451,7 @@ internal fun SettingsUiState.editableValues(): List<Any?> = listOf(
     mpvVideoDecoderKey,
     mpvHdrGpuEnabled,
     vlcVideoOutputModeKey,
+    vlcExperimentFlags,
     autoPictureInPicture,
     visibleBackgroundVideoPlayback,
     backgroundVideoDimPercent,
@@ -606,6 +609,8 @@ internal fun mergeStoredSettings(draft: SettingsUiState, baseline: SettingsUiSta
     forcedSubtitlesInUiLanguage = if (draft.forcedSubtitlesInUiLanguage != baseline.forcedSubtitlesInUiLanguage) draft.forcedSubtitlesInUiLanguage else stored.forcedSubtitlesInUiLanguage,
     forcedSubtitlesEnabled = if (draft.forcedSubtitlesEnabled != baseline.forcedSubtitlesEnabled) draft.forcedSubtitlesEnabled else stored.forcedSubtitlesEnabled,
     uiDisplay = UiDisplayDraft(
+        vlcExperimentFlags = if (draft.vlcExperimentFlags != baseline.vlcExperimentFlags)
+            draft.vlcExperimentFlags else stored.vlcExperimentFlags,
         scale = if (draft.uiScale != baseline.uiScale) draft.uiScale else stored.uiScale,
         renderResolutionKey = if (draft.uiRenderResolutionKey != baseline.uiRenderResolutionKey)
             draft.uiRenderResolutionKey else stored.uiRenderResolutionKey,

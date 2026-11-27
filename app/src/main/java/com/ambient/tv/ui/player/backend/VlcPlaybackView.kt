@@ -101,8 +101,10 @@ internal class VlcFrameDropSampleState {
  * Display capability alone is not proof of actual swapchain presentation. */
 @Suppress("DEPRECATION")
 internal fun vlcHdrPlusDisplayTarget(context: Context, source: HdrStandard?): VlcHdrPlusTarget? = runCatching {
+    val flags = videoImagePreferences(context).vlcExperimentFlags
     if (!com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT ||
         !com.ambient.tv.BuildConfig.VLC_HDR10PLUS_SPATIAL_EXPERIMENT ||
+        !com.ambient.tv.data.local.VlcExperimentFlags.enabled(flags, com.ambient.tv.data.local.VlcExperimentFlags.HDR10PLUS) ||
         source != HdrStandard.HDR10_PLUS || android.os.Build.VERSION.SDK_INT < 34)
         return@runCatching null
     val dm = context.getSystemService(android.hardware.display.DisplayManager::class.java)
@@ -138,6 +140,11 @@ class VlcPlaybackController(
     private val preferOriginalAudio: Boolean = false,
     private val reopeningTimeshift: Boolean = false,
 ) : PlaybackHandle, VideoPresentationTarget, com.ambient.tv.ui.player.SubtitleDelayTarget {
+    // Snapshot device settings at controller creation; a settings change
+    // applies on the next playback/reopen, not mid-native-player lifetime.
+    private val experimentFlags = videoImagePreferences(context).vlcExperimentFlags
+    private fun experimentEnabled(flag: Int): Boolean =
+        com.ambient.tv.data.local.VlcExperimentFlags.enabled(experimentFlags, flag)
     private val startupConstructionAt = System.nanoTime()
     private var initialOpenReported = false
     private val frameDropSamples = VlcFrameDropSampleState()
@@ -146,7 +153,9 @@ class VlcPlaybackController(
     private val preserveHdrSource = nativeHdrPreferred || sourceHdrStandard != null
     private val toneMappingRequired: Boolean get() = sourceHdrStandard != null && !nativeHdrPreferred
     private val doviRpuDecoderRequired: Boolean get() = vlcDoviRpuDecoderRequired(
-        com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT, sourceHdrStandard == HdrStandard.DOLBY_VISION,
+        com.ambient.tv.BuildConfig.VLC_DOVI_AHB_EXPERIMENT &&
+            experimentEnabled(com.ambient.tv.data.local.VlcExperimentFlags.DOVI),
+        sourceHdrStandard == HdrStandard.DOLBY_VISION,
         nativeHdrPreferred, audioOnly, hardwareRoute = doviAhbActive,
     )
     override val usesRendererScaling: Boolean get() = true
@@ -159,6 +168,7 @@ class VlcPlaybackController(
         sourceHdrStandard == HdrStandard.HDR10_PLUS &&
         com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT &&
         com.ambient.tv.BuildConfig.VLC_HDR10PLUS_SPATIAL_EXPERIMENT &&
+        experimentEnabled(com.ambient.tv.data.local.VlcExperimentFlags.HDR10PLUS) &&
         vlcOptionsForNativeHdr(effectiveVlcImageOptions(initialImageOptions,
             reducedVideoEffects(context), vlcSvpAllowed(context)), nativeHdrPreferred,
             sourceHdrStandard).let { !it.softwareProcessing && it.svpMode == "off" })
@@ -255,16 +265,21 @@ class VlcPlaybackController(
     // Serialize the posted fallback with Surface callbacks and other reopens.
     private var vulkanFallbackPosted = false
     private val ahbExperimentActive: Boolean get() = vlcAhbExperimentEligible(
-        com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT, vulkanOutput, preserveHdrSource,
+        com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT &&
+            experimentEnabled(com.ambient.tv.data.local.VlcExperimentFlags.AHB),
+        vulkanOutput, preserveHdrSource,
         configuredSoftwareProcessing, configuredSvpMode, configuredDeinterlaceMode, ahbCopyBackRetried,
         supportedHdrGpu = android.os.Build.VERSION.SDK_INT >= 34 &&
             (!nativeHdrPreferred || hdrPlusTarget != null) &&
             (sourceHdrStandard == HdrStandard.HDR10 || sourceHdrStandard == HdrStandard.HLG ||
              sourceHdrStandard == HdrStandard.HDR10_PLUS ||
-             (sourceHdrStandard == HdrStandard.DOLBY_VISION && com.ambient.tv.BuildConfig.VLC_DOVI_AHB_EXPERIMENT)),
+             (sourceHdrStandard == HdrStandard.DOLBY_VISION && com.ambient.tv.BuildConfig.VLC_DOVI_AHB_EXPERIMENT &&
+                 experimentEnabled(com.ambient.tv.data.local.VlcExperimentFlags.DOVI))),
     )
     private val doviAhbActive: Boolean get() = ahbExperimentActive &&
-        com.ambient.tv.BuildConfig.VLC_DOVI_AHB_EXPERIMENT && sourceHdrStandard == HdrStandard.DOLBY_VISION
+        com.ambient.tv.BuildConfig.VLC_DOVI_AHB_EXPERIMENT &&
+        experimentEnabled(com.ambient.tv.data.local.VlcExperimentFlags.DOVI) &&
+        sourceHdrStandard == HdrStandard.DOLBY_VISION
     override val usesFrameInterpolation: Boolean
         get() = effectiveImage().svpMode != "off"
     /** An option this LibVLC build does not know fails the whole instance: retry without the subtitle look. */
@@ -303,6 +318,7 @@ class VlcPlaybackController(
             if (ahbExperimentActive && sourceHdrStandard == HdrStandard.HDR10_PLUS) {
                 add("--vk-ambient-hdr10plus")
                 if (com.ambient.tv.BuildConfig.VLC_HDR10PLUS_SPATIAL_EXPERIMENT &&
+                    experimentEnabled(com.ambient.tv.data.local.VlcExperimentFlags.HDR10PLUS) &&
                     (toneMappingRequired || hdrPlusTarget != null)) {
                     add("--vk-ambient-hdr10plus-spatial")
                     hdrPlusTarget?.let {
@@ -314,7 +330,8 @@ class VlcPlaybackController(
             }
             if (doviAhbActive) {
                 add("--vk-ambient-dovi-ahb")
-                if (com.ambient.tv.BuildConfig.VLC_DOVI_FEL_EXPERIMENT)
+                if (com.ambient.tv.BuildConfig.VLC_DOVI_FEL_EXPERIMENT &&
+                    experimentEnabled(com.ambient.tv.data.local.VlcExperimentFlags.FEL))
                     add("--vk-ambient-dovi-fel")
             }
             // MediaCodec copy-back lacks VLC's DOVI picture ancillary. Use

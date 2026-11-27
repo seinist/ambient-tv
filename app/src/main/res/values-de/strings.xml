@@ -2492,4 +2492,15 @@
     <string name="game_library_scanning">Spiele werden eingelesen…</string>
     <string name="game_library_scan_progress">%1$d von %2$d gefundenen Dateien geprüft</string>
     <string name="game_library_scan_cancel">Einlesen abbrechen</string>
+    <string name="vlc_experiment_title">Experimentelle VLC-Funktionen</string>
+    <string name="vlc_experiment_hint">Vulkan als Videoausgabe wählen. Änderungen gelten ab der nächsten Wiedergabe. Bei nicht unterstützten Geräten oder Formaten greift der bisherige Wiedergabepfad.</string>
+    <string name="vlc_experiment_legacy">Die experimentelle HDR-Dekodierung benötigt Android 14 oder neuer. SDR hängt vom Vulkan-Treiber ab.</string>
+    <string name="vlc_experiment_ahb">MediaCodec Vulkan Zero-Copy</string>
+    <string name="vlc_experiment_ahb_hint">Dekoderpuffer direkt in Vulkan importieren. Benötigt kompatible Hardware sowie deaktivierte CPU-Filter, SVP und Deinterlacing.</string>
+    <string name="vlc_experiment_dovi">Dolby Vision über GPU</string>
+    <string name="vlc_experiment_dovi_hint">Experimenteller Dolby-Vision-GPU-Pfad, wenn keine native HDR-Wiedergabe bevorzugt wird. Aktiviert Zero-Copy.</string>
+    <string name="vlc_experiment_fel">Dolby Vision Profile 7 FEL</string>
+    <string name="vlc_experiment_fel_hint">Enhancement Layer mit ganzzahligen Filtern und Vorhersage rekonstruieren. Aktiviert Dolby Vision über GPU.</string>
+    <string name="vlc_experiment_hdrplus">HDR10+ räumliches Tone-Mapping</string>
+    <string name="vlc_experiment_hdrplus_hint">Experimentelle dynamische und räumliche HDR10+-GPU-Verarbeitung. Aktiviert Zero-Copy.</string>
 </resources>
