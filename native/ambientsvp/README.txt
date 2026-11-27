@@ -423,3 +423,35 @@ New cache, PGO, and clear-elision changes require current-head CI and
 physical device validation. The experimental candidate metric is not a
 complete GPU motion analyser. Decoder-to-renderer hardware zero-copy
 and full cross-source compute overlap remain separate architectural work.
+
+
+Direct output visitor and allocation preflight
+-----------------------------------------------
+The optional ABI-2 receive_visit and ready entry points extend direct
+input fill. The engine can deliver borrowed source-frame bytes or mapped
+Vulkan readback bytes synchronously to an already allocated player picture.
+MPV copies directly into padded planar I420; VLC copies directly into
+cropped I420 or interleaves NV12. Neither adapter allocates its former
+packed scratch frame when both optional direct APIs are present. Old
+ABI-compatible libraries retain the original buffer path. CPU synthesis
+into a contiguous destination remains direct; a padded destination uses
+one engine-owned recyclable scratch buffer for CPU synthesis only.
+
+The callback receives read-only bytes valid for the duration of the call.
+Output readiness avoids acquiring player pictures when more input is
+required; it conservatively allows stale bypass frames to be retired.
+Timestamps are validated before delivery. CPU and Vulkan tests compare
+the visitor against the original contiguous interface, including seeks,
+EOF, bypass, prefetch and exactly-once callback delivery.
+
+This removes intermediate CPU copies/allocations, not the physical
+GPU-to-CPU readback or decoder copyback. Hardware-buffer sharing across
+decoder, analysis and renderer remains unfinished.
+
+Validation: 268d97eb1bbc820f0b65154016552c9dec8285b0 passed native CI,
+Mesa Vulkan parity, Android JNI cross-check and private cache tests.
+The 11 unrelated focus/navigation test failures also occurred in PR #524
+on the same main base 30095218ec87b6213eab030916d8db0f974f44c7 without
+these SVP changes (run 46004250901, unit-tests job 140523738465).
+Current-head native/Android checks and physical MPV/VLC playback still
+need validation.
