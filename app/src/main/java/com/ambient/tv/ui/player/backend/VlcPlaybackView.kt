@@ -508,10 +508,21 @@ class VlcPlaybackController(
     private val seekState = VlcSeekState().apply {
         if (!liveStream && startPositionMs > 0L) request(startPositionMs)
     }
+    private var nextMetadataSeekId = 0L
+    private var metadataSeekId = 0L
+    private val taggedSeekMethod by lazy {
+        runCatching { MediaPlayer::class.java.getMethod("ambientSetTimeWithId", java.lang.Long.TYPE, java.lang.Long.TYPE) }.getOrNull()
+    }
     private var pendingRestorePositionMs: Long?
         get() = seekState.targetMs
         set(value) {
-            if (value == null) seekState.clear() else seekState.request(value)
+            if (value == null) {
+                seekState.clear()
+                metadataSeekId = 0L
+            } else {
+                seekState.request(value)
+                metadataSeekId = ++nextMetadataSeekId
+            }
         }
     private val pendingSeekHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var pendingSeekTask: Runnable? = null
@@ -1839,8 +1850,16 @@ class VlcPlaybackController(
         if (!seekState.shouldSubmit(prepared && !openingOrRestarting && player.isSeekable, now)) return
         val target = pendingRestorePositionMs ?: return
         // Precise seeking avoids exposing a preceding keyframe as the requested landing.
-        val metadataFence = timedMetadataInbox.clearForSeek(target.coerceAtMost(Long.MAX_VALUE / 1000L) * 1000L)
-        val accepted = runCatching { player.setTime(target, false) >= 0L }.getOrDefault(false)
+        if (metadataSeekId == 0L) metadataSeekId = ++nextMetadataSeekId
+        val tagged = if (timedMetadataReceiver != null) taggedSeekMethod else null
+        // Never encode an ID into an ordinary playback timestamp. Older AARs
+        // still seek normally, but cannot prove post-seek metadata identity.
+        val metadataFence = timedMetadataInbox.clearForSeek(
+            target.coerceAtMost(Long.MAX_VALUE / 1000L) * 1000L, metadataSeekId)
+        val accepted = runCatching {
+            if (tagged != null) tagged.invoke(player, target, metadataSeekId) == true
+            else player.setTime(target, false) >= 0L
+        }.getOrDefault(false)
         if (!accepted) timedMetadataInbox.rejectSeek(metadataFence)
         seekState.submitted(accepted, now)
         // VLC 4 can keep its native clock frozen on a paused seek, especially zero.

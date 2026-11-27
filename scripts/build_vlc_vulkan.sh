@@ -100,6 +100,13 @@ for patch in "$ROOT"/native/vlc-aar/patches/*.patch; do
 done
 if [[ "$EXPERIMENTAL_AHB" == 1 ]]; then
     bash "$ROOT/scripts/prepare_vlc_ahb_experimental.sh" "$JNI/vlc"
+    for patch in "$ROOT"/native/vlc-aar/experimental/jni-patches/*.patch; do
+        if git -C "$JNI" apply --check "$patch" 2>/dev/null; then
+            git -C "$JNI" apply "$patch"
+        else
+            git -C "$JNI" apply --reverse --check "$patch"
+        fi
+    done
 fi
 # Use the same reviewed n9.0.2 commit as MPV. The patch selects VLC's native
 # Git archive + githash verification path so the source is commit-verified.
