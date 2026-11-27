@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="module_settings_title">Systembibliotheken</string>
+    <string name="module_settings_description">Optionale Komponenten herunterladen. Änderungen werden nach einem Neustart von Ambient TV wirksam.</string>
+    <string name="module_settings_shaders">Vulkan-Shader-Voreinstellungen</string>
+    <string name="module_settings_installed">Heruntergeladene Version: %1$d</string>
+    <string name="module_settings_no_override">Keine heruntergeladene Bibliotheksversion</string>
+    <string name="module_settings_no_key">Downloads nicht verfügbar: Der Prüfschlüssel fehlt.</string>
+    <string name="module_settings_install">Herunterladen / aktualisieren</string>
+    <string name="module_settings_rollback">Vorherige Version</string>
+    <string name="module_settings_remove">Download entfernen</string>
+    <string name="module_settings_restart">Auswahl gespeichert. App neu starten, um sie anzuwenden.</string>
+    <string name="module_settings_no_candidate">Kein kompatibles Paket oder keine vorherige Version verfügbar.</string>
+    <string name="module_settings_error">Modulvorgang fehlgeschlagen. Die bestehende Auswahl wurde nicht absichtlich ersetzt.</string>
+</resources>
