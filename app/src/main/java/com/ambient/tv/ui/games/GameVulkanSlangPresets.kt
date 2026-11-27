@@ -86,13 +86,18 @@ internal object GameVulkanSlangPresets {
         if (selectedPack != null) return null
         val preset = supported[shader] ?: return null
         return runCatching {
+            val module = com.ambient.tv.modules.SystemModuleHost.loadSelected(com.ambient.tv.modules.SystemModule.SHADERS)
             val directory = File(context.noBackupFilesDir, "games/vulkan-slang/$VERSION")
             if (!directory.isDirectory && !directory.mkdirs())
                 error("Cannot prepare Vulkan shader storage")
             val directoryPrefix = directory.canonicalPath + File.separator
             var presetBytes = 0
             preset.files.forEach { filename ->
-                val source = context.assets.open("games/slang/$filename").use { input ->
+                val source = if (module != null) {
+                    val file = File(module.assets, "games/slang/$filename")
+                    check(file.isFile && file.length() in 1L..MAX_FILE_BYTES.toLong())
+                    file.readBytes().also { check(it.size in 1..MAX_FILE_BYTES) }
+                } else context.assets.open("games/slang/$filename").use { input ->
                     input.readBytes().also { check(it.size in 1..MAX_FILE_BYTES) }
                 }
                 presetBytes += source.size
