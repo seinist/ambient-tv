@@ -3,7 +3,7 @@
  * VkDevice, actual AVVkFrame image views and FFmpeg timeline semaphores.
  * No CPU pixel transfer. This is intentionally restricted to compatible
  * 8-bit SDR or high-depth frames; static HDR and identical supported
- * HDR10+ metadata only. Dolby Vision retains the original renderer path.
+ * HDR10+ metadata, or compatible single-layer Dolby Vision in raw YUV.
  * Included by vf_ambientsvp.c only with HAVE_VULKAN and libavutil 61.
  */
 #ifndef SVP_MPV_VULKAN_H
@@ -12,6 +12,7 @@
 #include <libavutil/hwcontext_vulkan.h>
 #include <libavutil/frame.h>
 #include <libavutil/hdr_dynamic_metadata.h>
+#include <libavutil/dovi_meta.h>
 #include <libavutil/version.h>
 #include "ambientsvp_vulkan.h"
 #include <stdbool.h>
@@ -22,7 +23,7 @@
 #define SVP_VK_PHASES 8
 #define SVP_VK_JOBS 4
 #define SVP_VK_FRAMES (2 + SVP_VK_PHASES)
-#define SVP_VK_IMAGES (6 + SVP_VK_PHASES)
+#define SVP_VK_IMAGES (6 + 3*SVP_VK_PHASES)
 struct svp_vk_job {
     VkCommandPool pool;
     VkFence fence;
@@ -39,6 +40,7 @@ struct svp_vk_mpv {
     void (*destroy)(AmbientSvpVk *);
     AmbientSvpVkPair *(*begin)(const AmbientSvpVk *,VkCommandBuffer,const AmbientSvpVkPicture *,const AmbientSvpVkPicture *);
     int (*render)(AmbientSvpVkPair *,float,uint32_t,VkImageView);
+    int (*render_raw)(AmbientSvpVkPair *,float,const VkImageView *,uint32_t);
     int (*seal)(AmbientSvpVkPair *,VkFence);
     int (*release)(AmbientSvpVkPair *);
     int (*cancel)(AmbientSvpVkPair *);
@@ -83,6 +85,7 @@ static int svp_vk_matrix(struct mp_image *img)
     case PL_COLOR_SYSTEM_BT_601: matrix=0; break;
     case PL_COLOR_SYSTEM_BT_709: matrix=1; break;
     case PL_COLOR_SYSTEM_BT_2020_NC: matrix=4; break;
+    case PL_COLOR_SYSTEM_DOLBYVISION: matrix=0; break; /* raw-only session */
     case PL_COLOR_SYSTEM_RGB: return img->params.repr.levels==PL_COLOR_LEVELS_FULL?3:-1;
     default: return -1;
     }
@@ -139,10 +142,59 @@ static bool svp_vk_hdrplus_same(const struct mp_image *a,const struct mp_image *
     // sufficient condition. A false mismatch merely repeats source frames.
     return !memcmp(x->data,y->data,x->size);
 }
+static const AVBufferRef *svp_vk_side_data(const struct mp_image *img,int type)
+{
+    for (int i=0;i<img->num_ff_side_data;i++)
+        if (img->ff_side_data[i].type==type) return img->ff_side_data[i].buf;
+    return NULL;
+}
+static bool svp_vk_buffer_equal(const AVBufferRef *a,const AVBufferRef *b)
+{
+    if (!a || !b) return !a && !b;
+    return a->data && b->data && a->size==b->size && a->size<=1024*1024 &&
+        !memcmp(a->data,b->data,a->size);
+}
+static bool svp_vk_dovi_valid(const struct mp_image *img)
+{
+    // The pinned MPV/libplacebo has already mapped the FFmpeg RPU to
+    // its renderer-owned Dolby representation. Never use a BL-only
+    // approximation when residual reconstruction is required.
+    const AVBufferRef *buf=svp_vk_side_data(img,AV_FRAME_DATA_DOVI_METADATA);
+    if (!img->dovi || img->params.repr.sys!=PL_COLOR_SYSTEM_DOLBYVISION ||
+        img->enhancement_layer || !buf || !buf->data || buf->size<sizeof(AVDOVIMetadata) ||
+        buf->size>1024*1024) return false;
+    const AVDOVIMetadata *m=(const AVDOVIMetadata *)buf->data;
+    if (m->header_offset<sizeof(*m) || m->header_offset>buf->size ||
+        sizeof(AVDOVIRpuDataHeader)>buf->size-m->header_offset ||
+        m->mapping_offset<sizeof(*m) || m->mapping_offset>buf->size ||
+        sizeof(AVDOVIDataMapping)>buf->size-m->mapping_offset ||
+        m->color_offset<sizeof(*m) || m->color_offset>buf->size ||
+        sizeof(AVDOVIColorMetadata)>buf->size-m->color_offset ||
+        m->header_offset%_Alignof(AVDOVIRpuDataHeader) ||
+        m->mapping_offset%_Alignof(AVDOVIDataMapping) ||
+        m->color_offset%_Alignof(AVDOVIColorMetadata)) return false;
+    const AVDOVIRpuDataHeader *h=av_dovi_get_header(m);
+    const AVDOVIDataMapping *map=av_dovi_get_mapping(m);
+    return h->bl_bit_depth==10 && h->disable_residual_flag==1 &&
+        map->nlq_method_idc==AV_DOVI_NLQ_NONE;
+}
+static int svp_vk_image_mode(const struct mp_image *img,enum AVPixelFormat format)
+{
+    int mode=svp_vk_mode(format);
+    if (img->params.repr.sys==PL_COLOR_SYSTEM_DOLBYVISION)
+        return svp_vk_dovi_valid(img) && (mode==1 || mode==2)?mode+3:-1;
+    // RPU metadata without the renderer's mapped representation is not
+    // a supported raw Dolby input. Preserve the normal renderer path.
+    if (img->dovi || svp_vk_side_data(img,AV_FRAME_DATA_DOVI_METADATA) ||
+        svp_vk_side_data(img,AV_FRAME_DATA_DOVI_RPU_BUFFER)) return -1;
+    return mode;
+}
 static bool svp_vk_hdr_metadata_same(const struct mp_image *a,const struct mp_image *b)
 {
     return pl_hdr_metadata_equal(&a->params.color.hdr,&b->params.color.hdr) &&
-        svp_vk_hdrplus_same(a,b);
+        svp_vk_hdrplus_same(a,b) &&
+        svp_vk_buffer_equal(svp_vk_side_data(a,AV_FRAME_DATA_DOVI_METADATA),svp_vk_side_data(b,AV_FRAME_DATA_DOVI_METADATA)) &&
+        svp_vk_buffer_equal(svp_vk_side_data(a,AV_FRAME_DATA_DOVI_RPU_BUFFER),svp_vk_side_data(b,AV_FRAME_DATA_DOVI_RPU_BUFFER));
 }
 static bool svp_vk_eligible(struct mp_image *img)
 {
@@ -153,7 +205,7 @@ static bool svp_vk_eligible(struct mp_image *img)
         || (img->params.crop.x1 && img->params.crop.x1!=img->w)
         || (img->params.crop.y1 && img->params.crop.y1!=img->h)
         || img->fields&MP_IMGFIELD_INTERLACED || img->pts==MP_NOPTS_VALUE
-        || !isfinite(img->pts) || img->enhancement_layer || img->film_grain || img->dovi
+        || !isfinite(img->pts) || img->enhancement_layer || img->film_grain
         || img->params.color.transfer==PL_COLOR_TRC_UNKNOWN
         || svp_vk_matrix(img)<0 || svp_vk_chroma(img)<0)
         return false;
@@ -161,17 +213,14 @@ static bool svp_vk_eligible(struct mp_image *img)
     if (!fc || !fc->device_ctx || !fc->device_ref || !fc->hwctx
         || fc->device_ctx->type!=AV_HWDEVICE_TYPE_VULKAN
         || fc->format!=AV_PIX_FMT_VULKAN
-        || svp_vk_mode(fc->sw_format)<0
+        || svp_vk_image_mode(img,fc->sw_format)<0
         || fc->width<img->w || fc->height<img->h)
         return false;
     if ((fc->sw_format==AV_PIX_FMT_RGBA||fc->sw_format==AV_PIX_FMT_RGBAF16)!=(img->params.repr.sys==PL_COLOR_SYSTEM_RGB)) return false;
-    int mode=svp_vk_mode(fc->sw_format);
+    int mode=svp_vk_image_mode(img,fc->sw_format);
     bool hdr=img->params.color.transfer==PL_COLOR_TRC_PQ || img->params.color.transfer==PL_COLOR_TRC_HLG;
-    if (svp_vk_hdr10plus(img) && (!mode || img->params.color.transfer!=PL_COLOR_TRC_PQ)) return false;
-    if ((!mode && (hdr || svp_vk_matrix(img)>3)) || (hdr && img->params.repr.sys!=PL_COLOR_SYSTEM_BT_2020_NC && !(mode==3 && img->params.repr.sys==PL_COLOR_SYSTEM_RGB))) return false;
-    for (int i=0;i<img->num_ff_side_data;i++)
-        if (img->ff_side_data[i].type==AV_FRAME_DATA_DOVI_METADATA ||
-            img->ff_side_data[i].type==AV_FRAME_DATA_DOVI_RPU_BUFFER) return false;
+    if (svp_vk_hdr10plus(img) && (!mode || mode>=4 || img->params.color.transfer!=PL_COLOR_TRC_PQ)) return false;
+    if ((!mode && (hdr || svp_vk_matrix(img)>3)) || (mode<4 && hdr && img->params.repr.sys!=PL_COLOR_SYSTEM_BT_2020_NC && !(mode==3 && img->params.repr.sys==PL_COLOR_SYSTEM_RGB))) return false;
     AVVulkanFramesContext *vfc=fc->hwctx;
     return vfc->nb_layers==1 && vfc->tiling==VK_IMAGE_TILING_OPTIMAL
         && (vfc->usage&VK_IMAGE_USAGE_SAMPLED_BIT)
@@ -295,7 +344,12 @@ static struct svp_vk_mpv *svp_vk_new(void *library,struct mp_image *img,double s
     get_queue(s->device,&qi,&s->queue);
     if (!s->queue) goto fail;
     s->width=img->w;s->height=img->h;s->source_rate=source;s->target_rate=target;
-    s->mode=svp_vk_mode(fc->sw_format);
+    s->mode=svp_vk_image_mode(img,fc->sw_format);
+    if (s->mode>=4) {
+        if (!s->vkdev->device_features.features.shaderStorageImageExtendedFormats) goto fail;
+        s->render_raw=dlsym(library,"ambient_svp_vk_render_raw");
+        if (!s->render_raw) goto fail;
+    }
     s->output_format=s->mode?VK_FORMAT_R16G16B16A16_SFLOAT:VK_FORMAT_R8G8B8A8_UNORM;
     if (s->mode) {
         s->create_format=dlsym(library,"ambient_svp_vk_create_format");
@@ -306,7 +360,7 @@ static struct svp_vk_mpv *svp_vk_new(void *library,struct mp_image *img,double s
     s->output_hwframes=av_hwframe_ctx_alloc(s->device_ref);
     if (!s->output_hwframes) goto fail;
     AVHWFramesContext *out=(AVHWFramesContext *)s->output_hwframes->data;
-    out->format=AV_PIX_FMT_VULKAN;out->sw_format=s->mode?AV_PIX_FMT_RGBAF16:AV_PIX_FMT_RGBA;
+    out->format=AV_PIX_FMT_VULKAN;out->sw_format=s->mode>=4?fc->sw_format:s->mode?AV_PIX_FMT_RGBAF16:AV_PIX_FMT_RGBA;
     out->width=s->width;out->height=s->height;
     AVVulkanFramesContext *vfc=out->hwctx;
     vfc->usage=VK_IMAGE_USAGE_STORAGE_BIT|VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -322,7 +376,7 @@ static bool svp_vk_matches(struct svp_vk_mpv *s,struct mp_image *img)
 {
     if (!svp_vk_eligible(img) || img->w!=(int)s->width || img->h!=(int)s->height) return false;
     AVHWFramesContext *fc=(AVHWFramesContext *)img->hwctx->data;
-    return fc->device_ctx==s->avdev && svp_vk_mode(fc->sw_format)==(int)s->mode;
+    return fc->device_ctx==s->avdev && svp_vk_image_mode(img,fc->sw_format)==(int)s->mode;
 }
 static bool svp_vk_ref(AVFrame *frame,bool write,struct svp_vk_ref *out)
 {
@@ -332,7 +386,7 @@ static bool svp_vk_ref(AVFrame *frame,bool write,struct svp_vk_ref *out)
     AVVkFrame *vkf=(AVVkFrame *)frame->data[0];
     unsigned count=0;
     while(count<AV_NUM_DATA_POINTERS && vkf->img[count]) count++;
-    unsigned expected=(write||fc->sw_format==AV_PIX_FMT_RGBA||fc->sw_format==AV_PIX_FMT_RGBAF16)?1:(fc->sw_format==AV_PIX_FMT_NV12||fc->sw_format==AV_PIX_FMT_P010)?2:3;
+    unsigned expected=(fc->sw_format==AV_PIX_FMT_RGBA||fc->sw_format==AV_PIX_FMT_RGBAF16)?1:(fc->sw_format==AV_PIX_FMT_NV12||fc->sw_format==AV_PIX_FMT_P010)?2:3;
     if (!count || (count!=1 && count!=expected) || !vfc->lock_frame || !vfc->unlock_frame)
         return false;
     *out=(struct svp_vk_ref){fc,vfc,vkf,write,count};
@@ -388,7 +442,8 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
         || (a->params.repr.sys==PL_COLOR_SYSTEM_RGB)!=(b->params.repr.sys==PL_COLOR_SYSTEM_RGB)
         || svp_vk_matrix(a)!=svp_vk_matrix(b) || a->params.color.transfer!=b->params.color.transfer
         || a->params.color.primaries!=b->params.color.primaries) return false;
-    if (s->mode && (a->params.color.transfer==PL_COLOR_TRC_PQ || a->params.color.transfer==PL_COLOR_TRC_HLG) &&
+    if (s->mode>=4 && a->params.chroma_location!=b->params.chroma_location) return false;
+    if (s->mode && (s->mode>=4 || a->params.color.transfer==PL_COLOR_TRC_PQ || a->params.color.transfer==PL_COLOR_TRC_HLG) &&
         !svp_vk_hdr_metadata_same(a,b)) return false;
     svp_vk_reap(s,false);
     unsigned slot=0;while(slot<SVP_VK_JOBS && s->jobs[slot]) slot++;
@@ -398,7 +453,7 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
     struct svp_vk_ref refs[SVP_VK_FRAMES];
     unsigned order[SVP_VK_FRAMES], unique=0, locked=0;
     VkCommandBuffer cmd=VK_NULL_HANDLE;
-    VkImageView dst[SVP_VK_PHASES];
+    VkImageView dst[SVP_VK_PHASES][3]={{0}};
     AmbientSvpVkPicture src[2];
     VkSemaphore sems[SVP_VK_IMAGES];
     uint64_t waits[SVP_VK_IMAGES],signals[SVP_VK_IMAGES];
@@ -416,20 +471,33 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
         AVFrame *frame=av_frame_alloc();
         j->frames[j->nframes++]=frame;
         if (!frame || av_hwframe_get_buffer(s->output_hwframes,frame,0)<0
-            || !svp_vk_ref(frame,true,&refs[2+i])
-            || refs[2+i].vfc->format[0]!=s->output_format) goto fail;
-        dst[i]=svp_vk_view(s,j,refs[2+i].frame->img[0],s->output_format,VK_IMAGE_ASPECT_COLOR_BIT);
-        if (!dst[i]) goto fail;
+            || !svp_vk_ref(frame,true,&refs[2+i])) goto fail;
+        if (s->mode>=4) {
+            AmbientSvpVkPicture target;
+            if (!svp_vk_picture(s,j,&refs[2+i],svp_vk_chroma(a),&target)) goto fail;
+            dst[i][0]=target.y;dst[i][1]=target.u;dst[i][2]=target.v;
+        } else {
+            if (refs[2+i].count!=1 || refs[2+i].vfc->format[0]!=s->output_format) goto fail;
+            dst[i][0]=svp_vk_view(s,j,refs[2+i].frame->img[0],s->output_format,VK_IMAGE_ASPECT_COLOR_BIT);
+            if (!dst[i][0]) goto fail;
+        }
         outputs[i]=mp_image_from_av_frame(frame);
         if (!outputs[i]) goto fail;
         mp_image_set_size(outputs[i],s->width,s->height);
         struct pl_bit_encoding output_bits=outputs[i]->params.repr.bits;
         mp_image_copy_attributes(outputs[i],a);
         outputs[i]->params.repr.bits=output_bits;
-        outputs[i]->params.repr.sys=PL_COLOR_SYSTEM_RGB;
-        outputs[i]->params.repr.levels=PL_COLOR_LEVELS_FULL;
-        outputs[i]->params.repr.alpha=PL_ALPHA_NONE;
-        outputs[i]->params.chroma_location=PL_CHROMA_UNKNOWN;
+        if (s->mode>=4) {
+            // Preserve the original mapped RPU representation and chroma
+            // siting. The renderer applies the Dolby transformation once.
+            outputs[i]->params.repr=a->params.repr;
+            outputs[i]->params.chroma_location=a->params.chroma_location;
+        } else {
+            outputs[i]->params.repr.sys=PL_COLOR_SYSTEM_RGB;
+            outputs[i]->params.repr.levels=PL_COLOR_LEVELS_FULL;
+            outputs[i]->params.repr.alpha=PL_ALPHA_NONE;
+            outputs[i]->params.chroma_location=PL_CHROMA_UNKNOWN;
+        }
         outputs[i]->pts=times[i];outputs[i]->pkt_duration=1.0/s->target_rate;
         outputs[i]->nominal_fps=s->target_rate;
     }
@@ -490,7 +558,11 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
     s->barrier(cmd,&di);
     j->pair=s->begin(s->engine,cmd,&src[0],&src[1]);
     if (!j->pair) goto fail;
-    for (unsigned i=0;i<count;i++) if (s->render(j->pair,phases[i],svp_vk_matrix(a),dst[i])) goto fail;
+    for (unsigned i=0;i<count;i++) {
+        int rc=s->mode>=4?s->render_raw(j->pair,phases[i],dst[i],s->mode==4?2:3):
+            s->render(j->pair,phases[i],svp_vk_matrix(a),dst[i][0]);
+        if (rc) goto fail;
+    }
     if (s->end_commands(cmd)!=VK_SUCCESS) goto fail;
     VkTimelineSemaphoreSubmitInfo ti={.sType=VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
         .waitSemaphoreValueCount=nsem,.pWaitSemaphoreValues=waits,.signalSemaphoreValueCount=nsem,.pSignalSemaphoreValues=signals};
@@ -556,11 +628,12 @@ static bool svp_vk_pair_frames(struct svp_vk_mpv *s,struct mp_image *next,double
     }
     if (!count) return false;
     const struct mp_image *a=s->previous;
-    bool hdr=a->params.color.transfer==PL_COLOR_TRC_PQ || a->params.color.transfer==PL_COLOR_TRC_HLG;
+    bool hdr=s->mode>=4 || a->params.color.transfer==PL_COLOR_TRC_PQ || a->params.color.transfer==PL_COLOR_TRC_HLG;
     bool compatible=a->params.color.transfer==next->params.color.transfer &&
         a->params.color.primaries==next->params.color.primaries &&
         svp_vk_matrix(s->previous)==svp_vk_matrix(next);
-    if (s->mode && hdr && compatible && !svp_vk_hdr_metadata_same(a,next)) {
+    if (s->mode && hdr && compatible && (!svp_vk_hdr_metadata_same(a,next) ||
+        (s->mode>=4 && a->params.chroma_location!=next->params.chroma_location))) {
         // Do not interpolate across dynamic/static HDR metadata changes.
         // Repeat the exact preceding source until the next source tick;
         // retain all its original pixels, representation and side data.
