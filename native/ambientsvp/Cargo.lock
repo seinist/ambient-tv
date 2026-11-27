@@ -6,6 +6,8 @@ version = 4
 name = "ambientsvp"
 version = "0.1.0"
 dependencies = [
+ "jni-sys 0.3.1",
+ "libc",
  "pollster",
  "rayon",
  "svpflow-core",
