@@ -137,3 +137,37 @@ static inline void ambient_rpu_pts_clear(struct ambient_rpu_pts_queue *q, void (
         q->entries[i] = (struct ambient_rpu_pts_entry){0};
     }
 }
+
+
+/* Remove wrapped EL NALs from combined Annex B access units before passing
+ * them to the vendor BL decoder. Validate first; never partially mutate
+ * malformed input. Type-63 payload contains another HEVC NAL header. */
+static inline bool ambient_fel_strip_el(uint8_t *p,size_t *size)
+{
+    if(!p||!size||!*size)return false;
+    size_t n=*size;
+    for(unsigned pass=0;pass<2;pass++){
+        size_t cursor=0,out=0;
+        while(cursor<n){
+            size_t prefix,next;
+            size_t start=ambient_rpu_start_code(p,n,cursor,&prefix);
+            if(!prefix)return false;
+            for(size_t i=cursor;i<start;i++)if(p[i])return false;
+            size_t data=start+prefix,end=ambient_rpu_start_code(p,n,data,&next);
+            if(end-data<2||(p[data]&0x80)||!(p[data+1]&7)||
+                (p[data]&1)||(p[data+1]>>3))return false;
+            unsigned type=(p[data]>>1)&63;
+            if(type==63){
+                if(end-data<5||(p[data+2]&0x81)||!(p[data+3]&7)||
+                    (p[data+3]>>3)||((p[data+2]>>1)&63)>=62)return false;
+            }else{
+                if(pass)memmove(p+out,p+cursor,end-cursor);
+                out+=end-cursor;
+            }
+            cursor=end;
+        }
+        if(!out)return false; // no BL data for the already-dequeued input slot
+        if(pass)*size=out;
+    }
+    return true;
+}
