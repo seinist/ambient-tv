@@ -840,3 +840,19 @@ residual, nonlinear RPU matrix/offset, ST 2084 EOTF, linear matrix,
 HPE-to-BT.2020 conversion and inverse EOTF). It does not use a second
 libplacebo shader as the expected RGB result. This checks the implemented
 floating-point reconstruction, not the proprietary Dolby reference filter.
+
+
+### Adjacent seekable BL/EL fragments
+
+In addition to the existing shared-moof layout, accept a seekable
+BL moof/mdat immediately followed by an EL-only moof/mdat with the
+next sequence number and the exact declared dependent track. Retain the
+second box tree until reset, index its runs in their own file-offset
+coordinate system, restore the BL stream position after lookahead and
+skip the consumed EL fragment once BL demux completes. Exact paired
+sample count, rational timing and per-sample PTS/duration checks remain.
+Require bounded boxes, explicit initial EL trun offset, monotone EL
+storage and complete containment in the EL mdat. Signed offsets and
+box extents have host tests. Forward-only separate fragments, multiple
+EL tracks in the adjacent fragment, and non-adjacent layouts remain
+unsupported; full container playback is not yet demonstrated.

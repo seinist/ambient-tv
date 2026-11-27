@@ -130,6 +130,16 @@ int main(void) {
     assert(!ambient_fel_fragment_start(true,18001,false,0,true,true,18000,9600,90000,48000,&bs,&es));
     assert(!ambient_fel_fragment_start(false,0,false,0,true,true,18000,9601,90000,48000,&bs,&es));
     assert(!ambient_fel_fragment_start(true,UINT64_MAX,true,0,true,true,0,0,90000,48000,&bs,&es));
+    uint64_t payload,box_end,run_offset;
+    assert(ambient_fel_box_extent(100,32,8,&payload,&box_end)&&payload==108&&box_end==132);
+    assert(ambient_fel_box_extent(100,32,16,&payload,&box_end)&&payload==116&&box_end==132);
+    assert(!ambient_fel_box_extent(100,0,8,&payload,&box_end));
+    assert(!ambient_fel_box_extent(UINT64_MAX-8,16,8,&payload,&box_end));
+    assert(ambient_fel_trun_offset(100,20,&run_offset)&&run_offset==120);
+    assert(ambient_fel_trun_offset(100,-20,&run_offset)&&run_offset==80);
+    assert(ambient_fel_trun_offset(UINT64_C(2147483648),INT32_MIN,&run_offset)&&run_offset==0);
+    assert(!ambient_fel_trun_offset(0,-1,&run_offset));
+    assert(!ambient_fel_trun_offset(UINT64_MAX,1,&run_offset));
     assert(ambient_fel_fragment_timing(9000,-3000,3000,9000,6000,3000));
     assert(ambient_fel_fragment_timing(9000,0,3000,9000,9000,3000));
     assert(!ambient_fel_fragment_timing(9001,-3001,3000,9000,6000,3000));

@@ -117,6 +117,28 @@ static inline bool ambient_fel_fragment_range(uint64_t start,uint64_t end,
         size<=AMBIENT_FEL_MAX_AU&&size<=end-offset;
 }
 
+/* Strict bounded box and signed trun offsets, independent of stream IO. */
+static inline bool ambient_fel_box_extent(uint64_t pos,uint64_t size,unsigned header,
+    uint64_t *payload,uint64_t *end)
+{
+    if(!payload||!end||(header!=8&&header!=16)||size<header||
+        size>UINT64_MAX-pos)return false;
+    *payload=pos+header;*end=pos+size;return true;
+}
+static inline bool ambient_fel_trun_offset(uint64_t base,int32_t delta,uint64_t *out)
+{
+    if(!out)return false;
+    if(delta<0){
+        uint64_t n=(uint64_t)(-(int64_t)delta);
+        if(n>base)return false;
+        *out=base-n;
+    }else{
+        if((uint64_t)delta>UINT64_MAX-base)return false;
+        *out=base+(uint64_t)delta;
+    }
+    return true;
+}
+
 /* Legacy dual-track carriage: BL sample followed by EL NALs wrapped in
  * type 63, with the original type-62 RPU outside the wrapper. No attempt
  * to infer PTS, track identity, or a missing RPU from NAL contents. */
