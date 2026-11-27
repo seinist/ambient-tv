@@ -197,6 +197,7 @@ class VlcPlaybackController(
     private var configuredDeinterlaceFilter = if (preserveHdrSource) "auto" else effectiveDeinterlaceFilter(deinterlaceFilter, reducedVideoEffects(context))
     // Once the experimental opaque path fails, do not try it again for this controller.
     private var ahbCopyBackRetried = false
+    private var ahbFallbackPending = false
     private val ahbExperimentActive: Boolean get() = vlcAhbExperimentEligible(
         com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT, vulkanOutput, preserveHdrSource,
         configuredSoftwareProcessing, configuredSvpMode, configuredDeinterlaceMode, ahbCopyBackRetried,
@@ -1184,6 +1185,7 @@ class VlcPlaybackController(
             configuredDeinterlaceFilter = effectiveDeinterlace
             libVlc = createLibVlc(); player = MediaPlayer(libVlc)
             trackAccess.rebind(player); configurePlayer()
+            ahbFallbackPending = false
             view
         } else null
         // A new Media drops added slaves and renumbers tracks: forget old subtitle ids and requests.
@@ -1283,9 +1285,11 @@ class VlcPlaybackController(
 
     private fun fallbackVulkan(reason: String): Boolean {
         if (!vulkanOutput || released) return false
+        if (ahbFallbackPending) return true // Coalesce duplicate error events before the posted reopen.
         val retryCopyBack = ahbExperimentActive
         if (retryCopyBack) {
             ahbCopyBackRetried = true
+            ahbFallbackPending = true
             accelerationFallback = "Vulkan AHB → Vulkan Copy-back: $reason"
             Timber.w("VULKAN VLC AHB fallback to copy-back: %s", reason)
         } else {
@@ -1312,7 +1316,7 @@ class VlcPlaybackController(
 
     fun checkVulkanOutput() {
         if (!vulkanOutput || released) return
-        if (!prepared || !vulkanSurfaceChecked || restartStop != null ||
+        if (ahbFallbackPending || !prepared || !vulkanSurfaceChecked || restartStop != null ||
             restartStopFailed || dvRetirementPending || userVideoDisabled || audioOnly ||
             attachedView?.holder?.surface?.isValid != true || !frameDropSampleReady()) {
             vulkanOutputWatch.suspendObservation()
@@ -1321,7 +1325,7 @@ class VlcPlaybackController(
         val now = android.os.SystemClock.elapsedRealtime()
         if (!vulkanOutputWatch.shouldSample(now)) return
         val stats = runtimeStats()
-        when (vulkanOutputWatch.observe(now, stats?.decodedVideo, stats?.displayedPictures)) {
+        when (vulkanOutputWatch.observe(now, stats?.decodedVideo, stats?.displayedPictures, continuous = ahbExperimentActive)) {
             VlcVulkanOutputVerdict.CONFIRMED -> VideoAccelerationRuntime.reportOutput("vlc", frames = true)
             VlcVulkanOutputVerdict.STALLED -> fallbackVulkan("no_video_frames")
             null -> Unit
