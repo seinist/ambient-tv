@@ -790,7 +790,8 @@ class TelegramRepository @Inject constructor(
     private val thumbnailPermits = kotlinx.coroutines.sync.Semaphore(6)
 
     /** Of those six, the page prefetch may hold two: the cards being drawn always get the rest. */
-    private val prefetchPermits = kotlinx.coroutines.sync.Semaphore(2)
+    private val prefetchPermits = kotlinx.coroutines.sync.Semaphore(
+        if (appContext.getSystemService(android.app.ActivityManager::class.java)?.isLowRamDevice == true) 1 else 2)
 
     /** One download per card, shared by the prefetch and the card's own image request. */
     private class ThumbnailLoad(val deferred: kotlinx.coroutines.Deferred<String?>, var waiters: Int,
@@ -866,11 +867,9 @@ class TelegramRepository @Inject constructor(
                         val item = targets[index]
                         prefetchPermits.withPermit {
                             if (!sameAccount(selected, identity, generation)) return@launch
-                            val revision = selected.mediaRevision(item.chatId, item.messageId)
-                            val key = "$generation:${item.chatId}:${item.messageId}:$revision"
-                            if (!synchronized(thumbnailLoads) { thumbnailLoads.containsKey(key) }) {
-                                thumbnailFile(item.chatId, item.messageId, speculative = true, expectedGeneration = generation)
-                            }
+                            // Join an existing visible request too: if the visible card is
+                            // disposed before the download finishes, the viewport still owns it.
+                            thumbnailFile(item.chatId, item.messageId, speculative = true, expectedGeneration = generation)
                         }
                     }
                 }

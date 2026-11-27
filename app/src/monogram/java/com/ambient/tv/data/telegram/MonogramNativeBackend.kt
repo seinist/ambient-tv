@@ -93,11 +93,21 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         chunkIndex.clear()
         chunkIndexBytes = 0L
         chunkIndexGeneration = -1L
+        inlinePreviewIndex.clear()
+        sharpPreviewIndex.clear()
+        inlineMemo.clear()
     }
     /** Account-generation fences prevent older thumbnail RPCs repopulating a new account's cache. */
     @Volatile private var cacheGeneration = 0L
-    private var previewWrites = 0
-    private var sharpPreviewWrites = 0
+    // All index operations are under diskChunkLock; seed only once per generation.
+    private val inlinePreviewIndex = PreviewFileIndex(cache, 500, 32L * 1024 * 1024) {
+        it.name.startsWith("thumb-") || it.name.startsWith("channel-")
+    }
+    private val sharpPreviewIndex = PreviewFileIndex(File(cache, "previews"), 500, 64L * 1024 * 1024) {
+        it.name.endsWith(".img") && !it.name.startsWith("pending-")
+    }
+    private data class InlineMemo(val revision: Long, val atMs: Long, val file: File)
+    private val inlineMemo = LinkedHashMap<Pair<Long, Int>, InlineMemo>(128, .75f, true)
     private val measuredWindows = java.util.concurrent.atomic.AtomicInteger()
     private fun recordNativeWindow() {
         if (!com.ambient.tv.BuildConfig.MONOGRAM_PGO_GENERATE && !com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS) return
@@ -324,6 +334,9 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 // Account generation is unchanged: unrelated playback and hot
                 // chunks survive. Remove just affected index and memory entries.
                 hotChunks.keys.removeAll(::affected)
+                inlineMemo.entries.removeAll { everything || it.key in changedMessages }
+                inlinePreviewIndex.removeMatching(::affected)
+                sharpPreviewIndex.removeMatching(::affected)
                 val entries = chunkIndex.entries.iterator()
                 while (entries.hasNext()) {
                     val entry = entries.next()
@@ -529,8 +542,6 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             invalidateChunksLocked()
             cache.deleteRecursively()
             cache.mkdirs()
-            previewWrites = 0
-            sharpPreviewWrites = 0
         }
         leftChannels.clear()
         recentFeeds.clear()
@@ -554,8 +565,6 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     invalidateChunksLocked()
                     cache.deleteRecursively()
                     cache.mkdirs()
-                    previewWrites = 0
-                    sharpPreviewWrites = 0
                 }
             }
             accountId = id
@@ -666,8 +675,6 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 invalidateChunksLocked()
                 cache.deleteRecursively()
                 cache.mkdirs()
-                previewWrites = 0
-                sharpPreviewWrites = 0
             }
             accountIdFile.delete()
             accountId = null
@@ -800,8 +807,6 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 invalidateChunksLocked()
                 cache.deleteRecursively()
                 cache.mkdirs()
-                previewWrites = 0
-                sharpPreviewWrites = 0
             }
             chats.clear(); clearHistoryPages()
             chatsExhausted = false
@@ -815,6 +820,23 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         val expectedGeneration = cacheGeneration
         val expectedAccount = accountId
         val revision = mediaRevision(chat, id)
+        fun valid() = expectedAccount != null && accountId == expectedAccount &&
+            cacheGeneration == expectedGeneration && revision == mediaRevision(chat, id) && chat !in leftChannels
+        val memoKey = chat to id
+        val nowMs = android.os.SystemClock.elapsedRealtime()
+        // Peer avatars have their own update semantics; only memoize revisioned messages.
+        if (!peer) synchronized(diskChunkLock) {
+            if (!valid()) return null
+            val memo = inlineMemo[memoKey]
+            if (memo != null && memo.revision == revision && nowMs - memo.atMs < 30_000L &&
+                inlinePreviewIndex.hit(memo.file)) return memo.file.toURI().toString()
+            inlineMemo.remove(memoKey)
+        }
+        fun rememberInline(file: File) {
+            if (peer) return
+            inlineMemo[memoKey] = InlineMemo(revision, nowMs, file)
+            while (inlineMemo.size > 256) inlineMemo.remove(inlineMemo.keys.first())
+        }
         val bytes = if (peer) native.peekPeerInlineThumb(h, chat)
             else native.peekMessageInlineThumb(h, chat, id)
         if (bytes == null || bytes.isEmpty() || bytes.size > 512 * 1024) return null
@@ -829,14 +851,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             }
         }
         val out = File(cache, if (peer) "channel-$chat-$key.bin" else "thumb-$chat-$id-$key.bin")
-        fun valid() = expectedAccount != null && accountId == expectedAccount &&
-            cacheGeneration == expectedGeneration && revision == mediaRevision(chat, id) && chat !in leftChannels
         synchronized(diskChunkLock) {
             if (!valid()) return null
-            if (out.isFile && out.length() == bytes.size.toLong()) {
-                // Touch only occasionally rather than on every card conversion.
-                val now = System.currentTimeMillis()
-                if (now - out.lastModified() > 60_000L) out.setLastModified(now)
+            if (out.length() == bytes.size.toLong() && inlinePreviewIndex.hit(out)) {
+                rememberInline(out)
                 return out.toURI().toString()
             }
         }
@@ -847,29 +865,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             synchronized(diskChunkLock) {
                 if (!valid()) return null
                 if ((!out.isFile || out.length() != bytes.size.toLong()) && !stage.renameTo(out)) return null
-                if (++previewWrites % 16 == 1) trimPreviewCache()
+                inlinePreviewIndex.publish(out)
+                rememberInline(out)
             }
             return out.toURI().toString()
         } finally { stage.delete() }
-    }
-
-    /** Enforce both age and byte/count limits without touching media chunk/photo caches. */
-    private fun trimPreviewCache() {
-        val thumbnails = cache.listFiles().orEmpty()
-            .filter { it.isFile && (it.name.startsWith("thumb-") || it.name.startsWith("channel-")) }
-            .sortedBy { it.lastModified() }
-        val expiry = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
-        var remainingBytes = thumbnails.sumOf { it.length() }
-        var remainingCount = thumbnails.size
-        for (item in thumbnails) {
-            if (item.lastModified() >= expiry &&
-                remainingCount <= 500 && remainingBytes <= 32L * 1024 * 1024) break
-            val size = item.length()
-            if (item.delete()) {
-                remainingBytes -= size
-                remainingCount--
-            }
-        }
     }
 
     private fun media(
@@ -1202,12 +1202,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         val revision = mediaRevision(chatId, messageId)
         if (chatId in leftChannels) return null
         val cached = File(File(cache, "previews"), "$chatId-$messageId.img")
-        if (!cached.isFile || cached.length() <= 0L) return null
-        val now = System.currentTimeMillis()
-        if (now - cached.lastModified() > 60_000L) cached.setLastModified(now)
-        return cached.toURI().toString().takeIf {
-            identity == accountId && generation == cacheGeneration && chatId !in leftChannels &&
-                revision == mediaRevision(chatId, messageId)
+        return synchronized(diskChunkLock) {
+            if (identity != accountId || generation != cacheGeneration || chatId in leftChannels ||
+                revision != mediaRevision(chatId, messageId) || !sharpPreviewIndex.hit(cached)) null
+            else cached.toURI().toString()
         }
     }
 
@@ -1226,9 +1224,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         File(cache, "thumbs-hd").takeIf { it.isDirectory }?.deleteRecursively()
         val dir = File(cache, "previews").apply { mkdirs() }.canonicalFile
         val output = File(dir, "$chatId-$messageId.img")
-        if (output.isFile && output.length() > 0L) {
-            output.setLastModified(System.currentTimeMillis())
-            return@nativeCall output.toURI().toString()
+        synchronized(diskChunkLock) {
+            if (expectedAccount == null || accountId != expectedAccount || cacheGeneration != expectedGeneration ||
+                revision != mediaRevision(chatId, messageId) || chatId in leftChannels) return@nativeCall null
+            if (sharpPreviewIndex.hit(output)) return@nativeCall output.toURI().toString()
         }
         val stage = File(dir, "pending-${java.util.UUID.randomUUID()}.img")
         val previous = uniffi.monogram_mtproto.bindRequestControl(request)
@@ -1280,26 +1279,13 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 return@nativeCall null
             }
             if (!actual.renameTo(output)) return@nativeCall null
-            if (++sharpPreviewWrites % 16 == 1) trimThumbnailCache(dir)
+            sharpPreviewIndex.publish(output)
         }
         output.toURI().toString()
         } finally {
             uniffi.monogram_mtproto.bindRequestControl(previous)
             stage.delete()
         }
-        }
-    }
-
-    /** Same bounds as the inline previews: 7 days, 500 files, 64 MiB. */
-    private fun trimThumbnailCache(dir: File) {
-        val files = dir.listFiles().orEmpty().filter { it.isFile && !it.name.startsWith("pending-") }.sortedBy { it.lastModified() }
-        val expiry = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
-        var bytes = files.sumOf { it.length() }
-        var count = files.size
-        for (item in files) {
-            if (item.lastModified() >= expiry && count <= 500 && bytes <= 64L * 1024 * 1024) break
-            val size = item.length()
-            if (item.delete()) { bytes -= size; count-- }
         }
     }
 

@@ -135,8 +135,8 @@ import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.mobile.deviceDp
 import com.ambient.tv.ui.theme.screenGutter
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 
@@ -354,15 +354,22 @@ fun TelegramScreen(
     LaunchedEffect(sectionKey, state.section, state.available, layout, currentRows, flat,
         rowList, flatList, grid, showViewOptions, rowPrefetchColumns) {
         if (!state.available || state.section != sectionKey || showViewOptions) return@LaunchedEffect
-        snapshotFlow {
+        coroutineScope {
+        val active = LinkedHashMap<Pair<Long, Int>, kotlinx.coroutines.Job>()
+        @OptIn(kotlinx.coroutines.FlowPreview::class)
+        val windows = snapshotFlow {
             val refs = if (layout == MonogramBrowseLayout.ROWS) {
                 val visibleRows = rowList.layoutInfo.visibleItemsInfo.map { it.index }
+                    .sortedByDescending { index ->
+                        currentRows.getOrNull(index)?.items?.any { it.ratingKey == viewportFocusKey } == true
+                    }
                 val windows = visibleRows.mapNotNull { index ->
                     currentRows.getOrNull(index)?.let { row ->
                         val focusedIndex = row.items.indexOfFirst { it.ratingKey == viewportFocusKey }
                         val first = focusedIndex.coerceAtLeast(0)
-                        row.copy(items = monogramViewportItems(row.items, first, first,
-                            ahead = rowPrefetchColumns + 2, behind = 1))
+                        row.copy(items = monogramViewportItems(row.items, first,
+                            (first + rowPrefetchColumns - 1).coerceAtMost(row.items.lastIndex),
+                            ahead = 2, behind = 1))
                     }
                 }
                 monogramPrefetchTargets(windows, limit = 16)
@@ -378,11 +385,19 @@ fun TelegramScreen(
                     items = window)), limit = 24)
             }
             refs
-        }.distinctUntilChanged().collectLatest { refs ->
-            if (refs.isNotEmpty()) {
-                delay(100)
-                viewModel.prefetchViewport(sectionKey, refs)
+        }.distinctUntilChanged().debounce(100)
+        windows.collect { refs ->
+            val desired = refs.associateBy { it.chatId to it.messageId }
+            val obsolete = active.keys.filter { it !in desired }
+            obsolete.forEach { active.remove(it)?.cancel() }
+            // Retain overlapping in-flight work and completed entries until they leave
+            // the window. The repository's shared semaphore limits actual transfers.
+            desired.forEach { (key, ref) ->
+                if (key !in active) active[key] = launch {
+                    viewModel.prefetchViewport(sectionKey, listOf(ref))
+                }
             }
+        }
         }
     }
     com.ambient.tv.ui.navigation.ReportSidebarContentReady(
