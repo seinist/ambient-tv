@@ -1618,7 +1618,10 @@ class SmartTubeEngine @Inject constructor(
 private data class ReflectionNameKey(val name: String, val arity: Int)
 private data class ReflectionMethodKey(
     val name: String,
-    val argumentTypes: List<Class<*>?>,
+    val firstType: Class<*>?,
+    val secondType: Class<*>?,
+    val arity: Int,
+    val remainingTypes: List<Class<*>?>,
     val allowArityFallback: Boolean,
 )
 private data class CachedReflectionMethod(val method: Method?)
@@ -1670,7 +1673,11 @@ private fun wrap(c: Class<*>) = when (c) {
 internal fun Any.cachedMethod(name: String, args: Array<out Any?>, allowArityFallback: Boolean): Method? {
     val index = reflectionIndex(javaClass)
     if (args.isEmpty()) return index.zeroArgumentMethods[name]
-    val key = ReflectionMethodKey(name, args.map { it?.javaClass }, allowArityFallback)
+    val key = ReflectionMethodKey(
+        name, args[0]?.javaClass, args.getOrNull(1)?.javaClass, args.size,
+        if (args.size <= 2) emptyList() else (2 until args.size).map { args[it]?.javaClass },
+        allowArityFallback,
+    )
     fun resolve(): CachedReflectionMethod {
         val candidates = index.methods[ReflectionNameKey(name, args.size)].orEmpty()
         val compatible = candidates.firstOrNull { method ->
