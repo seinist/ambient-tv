@@ -163,6 +163,11 @@ var<workgroup> vectors:array<vec2i,64>;
 var<workgroup> zero_score:u32;
 var<workgroup> predictor_score:u32;
 var<workgroup> source_samples:array<i32,64>;
+const HEX2:array<vec2i,6>=array<vec2i,6>(vec2i(-2,0),vec2i(-1,2),vec2i(1,2),
+    vec2i(2,0),vec2i(1,-2),vec2i(-1,-2));
+const HEX4:array<vec2i,16>=array<vec2i,16>(vec2i(-4,2),vec2i(-4,1),vec2i(-4,0),
+    vec2i(-4,-1),vec2i(-4,-2),vec2i(4,-2),vec2i(4,-1),vec2i(4,0),vec2i(4,1),
+    vec2i(4,2),vec2i(2,3),vec2i(0,4),vec2i(-2,3),vec2i(-2,-3),vec2i(0,-4),vec2i(2,-3));
 fn px(t:texture_2d<f32>,p:vec2i)->i32{
     let value=textureLoad(t,p,0);
     // RGB inputs from an Android external-format sampler use a bounded
@@ -298,6 +303,55 @@ fn analyse(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:
             choose(lane,mv,cost(origin,mv,reverse,min(current_cost,zero)+1u));
         }
         reduce(lane);
+        if causal{
+            // Bounded uneven multi-hexagon refinement of unresolved
+            // blocks: odd-radius cross and scaled HEX4, then iterative
+            // HEX2 and a final exhaustive one-pixel ring. Retain the
+            // current minimum at every stage; no speculative winner.
+            let center=vectors[0];let old=scores[0];
+            workgroupBarrier();
+            scores[lane]=0xffffffffu;vectors[lane]=vec2i(0);
+            if lane==0u{choose(lane,center,old);}
+            if old>zero/3u && old>0u && lane>0u && lane<49u{
+                var delta=vec2i(0);
+                if lane<=16u{delta=HEX4[lane-1u];}
+                else if lane<=32u{delta=HEX4[lane-17u]*2;}
+                else{
+                    let n=lane-33u;
+                    let radius=i32(n%4u)*2+1;
+                    switch n/4u{
+                        case 0u:{delta=vec2i(radius,0);}
+                        case 1u:{delta=vec2i(-radius,0);}
+                        case 2u:{delta=vec2i(0,radius);}
+                        default:{delta=vec2i(0,-radius);}
+                    }
+                }
+                let candidate=clamp(center+delta,vec2i(-64),vec2i(64));
+                choose(lane,candidate,cost(origin,candidate,reverse,old));
+            }
+            reduce(lane);
+            for(var iteration=0u;iteration<4u;iteration++){
+                let hex_center=vectors[0];let hex_best=scores[0];
+                workgroupBarrier();
+                scores[lane]=0xffffffffu;vectors[lane]=vec2i(0);
+                if lane==0u{choose(lane,hex_center,hex_best);}
+                if hex_best>0u && lane>0u && lane<=6u{
+                    let candidate=clamp(hex_center+HEX2[lane-1u],vec2i(-64),vec2i(64));
+                    choose(lane,candidate,cost(origin,candidate,reverse,hex_best));
+                }
+                reduce(lane);
+            }
+            let fine_center=vectors[0];let fine_best=scores[0];
+            workgroupBarrier();
+            scores[lane]=0xffffffffu;vectors[lane]=vec2i(0);
+            if lane==0u{choose(lane,fine_center,fine_best);}
+            if fine_best>0u&&lane>0u&&lane<=9u{
+                let n=lane-1u;
+                let candidate=clamp(fine_center+vec2i(i32(n%3u)-1,i32(n/3u)-1),vec2i(-64),vec2i(64));
+                choose(lane,candidate,cost(origin,candidate,reverse,fine_best));
+            }
+            reduce(lane);
+        }
         if lane==0u{
             fields[index]=vec4i(vectors[0],i32(scores[0]/128u),0);
         }
