@@ -374,4 +374,116 @@ mod tests{
         assert!(pollster::block_on(device.pop_error_scope()).is_none());
 
     }
+
+    #[test]
+    #[ignore="requires a Vulkan adapter, including software Vulkan"]
+    fn selected_complete_fields_enter_upstream_smoother(){
+        use crate::motion::{Candidate,MotionCostKernel,SuperLevel,reference_super_cost};
+        use crate::motion_packet::{FinalVector,PacketLayout};
+        let instance=wgpu::Instance::new(&wgpu::InstanceDescriptor{backends:wgpu::Backends::VULKAN,..Default::default()});
+        let adapter=pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+        let (device,queue)=pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor{
+            label:Some("SVP complete prepared field bridge"),required_features:wgpu::Features::empty(),
+            required_limits:wgpu::Limits::default().using_resolution(adapter.limits()),
+            memory_hints:wgpu::MemoryHints::MemoryUsage,
+        },None)).unwrap();
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let metric=MotionCostKernel::new(&device);
+        let selector=SelectionKernel::new(&device);
+        for pel in [1,2,4] {
+            let builder=svpflow1_vs::SuperBuilder::new(96,66,pel).unwrap();
+            let analyser=svpflow1_vs::Analyser::new(&builder,16,16,2,3).unwrap();
+            let header=analyser.vector_header();
+            let layout=PacketLayout::from_header(&header).unwrap();
+            let make=|shift:usize|{
+                let mut raw=vec![128;builder.source_len()];
+                for y in 0..66{
+                    for x in 0..96{
+                        raw[y*96+x]=if (x+shift)%96<32{180}else{40};
+                    }
+                }
+                raw
+            };
+            let a=make(0);
+            let b=make(2);
+            let asf=builder.build(&a).unwrap();
+            let bsf=builder.build(&b).unwrap();
+            let al=SuperLevel::new(&builder,&asf,0).unwrap();
+            let bl=SuperLevel::new(&builder,&bsf,0).unwrap();
+            let mut candidates=Vec::new();
+            let mut metrics=Vec::new();
+            let mut costs=Vec::new();
+            let mut searches=Vec::new();
+            let mut lumas=Vec::new();
+            // The test supplies complete, independently prepared blocks.
+            // It is not a claim of parity with the dependent upstream search.
+            let (bw,bh)=(header[2] as u32,header[3] as u32);
+            let (sx,sy)=((header[2]-header[9]) as u32,(header[3]-header[10]) as u32);
+            for reverse in [true,false]{
+                let source=if reverse{&b}else{&a};
+                for by in 0..header[12] as u32{
+                    for bx in 0..header[11] as u32{
+                        let (x,y)=(bx*sx,by*sy);
+                        let mut luma=0u32;
+                        for row in y..y+bh{
+                            for col in x..x+bw{luma+=u32::from(source[(row*96+col) as usize]);}
+                        }
+                        lumas.push((luma/(bw*bh)) as u8);
+                        let start=candidates.len() as u32;
+                        for dy in -2..=2{
+                            for dx in -2..=2{
+                                let c=Candidate{x,y,dx,dy,width:bw,height:bh,reverse,satd:false};
+                                if let Some(cost)=reference_super_cost(&al,&bl,c){
+                                    let index=metrics.len() as u32;
+                                    candidates.push(ScoredCandidate{dx,dy,metric:index,raw:index});
+                                    metrics.push(c);
+                                    costs.push(cost);
+                                }
+                            }
+                        }
+                        searches.push(Search{start,count:candidates.len() as u32-start,predictor:[0,0],
+                            lambda:16,pnew:0,chroma:true,sad_gate:false,
+                            initial:Choice{dx:0,dy:0,sad:0,cost:i32::MAX,raw_sad:-1,winner:-1}});
+                    }
+                }
+            }
+            assert_eq!(searches.len(),2*layout.count());
+            let raw_luma=costs.iter().map(|c|c.y).collect::<Vec<_>>();
+            let reference:Vec<_>=searches.iter().zip(&lumas).map(|(s,&luma)|
+                FinalVector{choice:reference(s,&candidates,&costs,&raw_luma).unwrap(),luma}).collect();
+            let mut encoder=device.create_command_encoder(&Default::default());
+            let at=al.upload(&device,&mut encoder).unwrap();
+            let bt=bl.upload(&device,&mut encoder).unwrap();
+            let computed=metric.encode(&device,&mut encoder,&at,&bt,96,66,&metrics).unwrap();
+            let selected=selector.encode(&device,&mut encoder,&computed,&searches,&candidates).unwrap();
+            let actual:Vec<_>=read_choices(&device,&queue,encoder,&selected).into_iter().zip(&lumas)
+                .map(|(choice,&luma)|FinalVector{choice,luma}).collect();
+            assert!(actual.iter().all(|v|v.choice.winner>=0));
+            let (fwd,bwd)=actual.split_at(layout.count());
+            let (rf,rb)=reference.split_at(layout.count());
+            let packet=layout.pack(Some(fwd),bwd).unwrap();
+            let expected=layout.pack(Some(rf),rb).unwrap();
+            assert_eq!(packet,expected,"prepared field pel={pel}");
+            let options="{rate:{abs:true,num:60,den:1},algo:13,scene:{mode:0,limits:{zero:0,blocks:100}},gpu:false}";
+            let make_smoother=|payload:&[u8]|{
+                let mut s=svpflow_wasm::Smoother::new(96,66,24,1,2,options,&header).unwrap();
+                s.set_vectors(0,payload);
+                s.set_vectors(1,payload);
+                if s.uses_super(){s.set_super(0,&asf).unwrap();s.set_super(1,&bsf).unwrap();}
+                else{s.set_source(0,&a).unwrap();s.set_source(1,&b).unwrap();}
+                s
+            };
+            let mut gpu_field=make_smoother(&packet);
+            let mut cpu_field=make_smoother(&expected);
+            let mut left=vec![0;a.len()];
+            let mut right=left.clone();
+            for frame in 0..gpu_field.output_frames(){
+                gpu_field.render_into(frame,&mut left).unwrap();
+                cpu_field.render_into(frame,&mut right).unwrap();
+                assert_eq!(left,right,"prepared field synthesis pel={pel} frame={frame}");
+            }
+        }
+        assert!(pollster::block_on(device.pop_error_scope()).is_none());
+    }
+
 }
