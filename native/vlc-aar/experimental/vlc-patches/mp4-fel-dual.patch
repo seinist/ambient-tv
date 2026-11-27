@@ -299,16 +299,17 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
          }
  
          /* Next sample */
-@@ -1947,7 +2165,28 @@
+@@ -1947,7 +2165,29 @@
      return VLC_SUCCESS;
  }
  
 -static int FragPrepareChunk( demux_t *p_demux, MP4_Box_t *p_moof,
 +/* A dependent fragment must be in the same moof and contain a single
 + * traf with explicit tfdt and the initial sample description. */
-+static const MP4_Box_data_tfdt_t *MP4_FEL_FragmentTime(const MP4_Box_t *moof,unsigned id)
++static bool MP4_FEL_FragmentTime(const MP4_Box_t *moof,unsigned id,
++                                  const MP4_Box_data_tfdt_t **time)
 +{
-+    const MP4_Box_data_tfdt_t *time=NULL;
++    *time=NULL;
 +    unsigned matches=0;
 +    for (const MP4_Box_t *t=moof->p_first;t;t=t->p_next) {
 +        if (t->i_type!=ATOM_traf) continue;
@@ -317,19 +318,19 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +        const MP4_Box_data_tfhd_t *header=h->data.p_tfhd;
 +        if (++matches!=1 || header->b_empty ||
 +            ((header->i_flags&MP4_TFHD_SAMPLE_DESC_INDEX) &&
-+             header->i_sample_description_index!=1)) return NULL;
++             header->i_sample_description_index!=1)) return false;
 +        const MP4_Box_t *dt=MP4_BoxGet(t,"tfdt");
-+        if (!dt || !dt->data.p_tfdt) return NULL;
-+        time=dt->data.p_tfdt;
++        if (!dt || !dt->data.p_tfdt) return false;
++        *time=dt->data.p_tfdt;
 +    }
-+    return time;
++    return true;
 +}
 +
 +static int FragPrepareChunk( demux_t *p_demux, MP4_Box_t *p_moof,
                               MP4_Box_t *p_sidx, stime_t i_moof_time, bool b_discontinuity )
  {
      demux_sys_t *p_sys = p_demux->p_sys;
-@@ -1958,7 +2197,24 @@
+@@ -1958,7 +2198,32 @@
              p_sys->track[i].context.b_resync_time_offset = true;
      }
  
@@ -338,9 +339,17 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +        mp4_track_t *bl=&p_sys->track[i];
 +        if (!bl->b_ok || !bl->ambient_fel_el_id) continue;
 +        mp4_track_t *el=MP4_GetTrackByTrackID(p_demux,bl->ambient_fel_el_id);
-+        const MP4_Box_data_tfdt_t *bt=MP4_FEL_FragmentTime(p_moof,bl->i_track_ID);
-+        const MP4_Box_data_tfdt_t *et=MP4_FEL_FragmentTime(p_moof,bl->ambient_fel_el_id);
-+        if (!el || !el->ambient_fel_hidden || !bt || !et ||
++        const MP4_Box_data_tfdt_t *bt,*et;
++        if (!el || !el->ambient_fel_hidden ||
++            !MP4_FEL_FragmentTime(p_moof,bl->i_track_ID,&bt) ||
++            !MP4_FEL_FragmentTime(p_moof,bl->ambient_fel_el_id,&et)) {
++            msg_Err(p_demux,"Invalid FEL fragment track description");
++            return VLC_EGENERIC;
++        }
++        // Audio-only moofs need neither video layer. A single missing
++        // layer in a video fragment is still an error.
++        if (!bt && !et) continue;
++        if (!bt || !et ||
 +            bt->i_base_media_decode_time!=et->i_base_media_decode_time ||
 +            bt->i_base_media_decode_time>INT64_MAX) {
 +            msg_Err(p_demux,"FEL fragment has no matching explicit decode time");
@@ -355,7 +364,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
      {
          for( unsigned i=0; i<p_sys->i_tracks; i++ )
          {
-@@ -2042,8 +2298,9 @@
+@@ -2042,8 +2307,9 @@
      unsigned cand = 0;
      for( unsigned i=0; i<p_sys->i_tracks; i++ )
      {
@@ -367,7 +376,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
          {
              if( cand != i && !p_sys->track[cand].b_selected )
                  cand = i;
-@@ -4987,9 +5244,10 @@
+@@ -4987,9 +5253,10 @@
              MP4_BoxFree( p_sys->context.p_fragment_atom );
          p_sys->context.p_fragment_atom = NULL;
      }
@@ -381,7 +390,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
      {
          mp4_track_t *p_track = &p_sys->track[i];
          p_track->context.i_default_sample_size = 0;
-@@ -4997,7 +5255,79 @@
+@@ -4997,7 +5264,84 @@
      }
  }
  
@@ -394,56 +403,61 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +        (int64_t)s->i_composition_time_offset.v1 : s->i_composition_time_offset.v0;
 +}
 +
-+/* Index the same run/sample in the dependent traf. Verify raw DTS, PTS and
-+ * duration before any read. The hidden-track cursor is refreshed on seeks
++/* Locate the exact DTS in the dependent traf, regardless of trun layout.
++ * Verify raw PTS and duration too. The hidden-track cursor is refreshed on seeks
 + * and fragment preparation, and never shared across decoder threads. */
 +static block_t *MP4_FEL_ReadFragment(demux_t *d,mp4_track_t *bl,
-+    block_t *base,unsigned sample,stime_t dts,stime_t pts,uint32_t duration)
++    block_t *base,stime_t dts,stime_t pts,uint32_t duration)
 +{
 +    demux_sys_t *s=d->p_sys;
 +    mp4_track_t *el=MP4_GetTrackByTrackID(d,bl->ambient_fel_el_id);
-+    unsigned run=bl->context.runs.i_current;
 +    if (!el || !el->ambient_fel_hidden || !s->context.p_fragment_atom ||
-+        el->context.runs.i_count!=bl->context.runs.i_count ||
-+        run>=el->context.runs.i_count || !el->context.runs.p_array) return NULL;
-+    const mp4_run_t *er=&el->context.runs.p_array[run];
-+    const mp4_run_t *br=&bl->context.runs.p_array[run];
-+    const MP4_Box_data_trun_t *et=er->p_trun->data.p_trun;
-+    const MP4_Box_data_trun_t *bt=br->p_trun->data.p_trun;
-+    if (!et || !bt || et->i_sample_count!=bt->i_sample_count ||
-+        sample>=et->i_sample_count || er->i_first_dts!=br->i_first_dts ||
-+        er->i_first_dts<0 || ((et->i_flags&(MP4_TRUN_SAMPLE_DURATION|
-+        MP4_TRUN_SAMPLE_SIZE|MP4_TRUN_SAMPLE_TIME_OFFSET)) && !et->p_samples))
-+        return NULL;
-+    uint64_t offset=er->i_offset;
-+    stime_t time=er->i_first_dts;
-+    unsigned start=0;
-+    if (el->context.runs.i_current==run && el->context.i_trun_sample<=sample &&
-+        el->context.i_trun_sample_pos>=offset && el->i_time>=time) {
-+        start=el->context.i_trun_sample;
-+        offset=el->context.i_trun_sample_pos;
-+        time=el->i_time;
-+    }
++        !el->context.runs.i_count || !el->context.runs.p_array || dts<0) return NULL;
++    // trun boundaries are storage boundaries, not picture boundaries.
++    // Use the independent EL cursor and match exact raw decode time,
++    // permitting different run partitioning and chunk offsets.
++    unsigned run=el->context.runs.i_current;
++    if (run>=el->context.runs.i_count || el->i_time>dts) run=0;
++    uint64_t offset=0;
 +    uint32_t size=0;
-+    for (unsigned i=start;i<=sample;i++) {
-+        size=et->i_flags&MP4_TRUN_SAMPLE_SIZE ? et->p_samples[i].i_size :
-+            el->context.i_default_sample_size;
-+        uint32_t dur=et->i_flags&MP4_TRUN_SAMPLE_DURATION ? et->p_samples[i].i_duration :
-+            el->context.i_default_sample_duration;
-+        if (!size || !dur || size>AMBIENT_FEL_MAX_AU || size>UINT64_MAX-offset ||
-+            time>INT64_MAX-dur) return NULL;
-+        if (i==sample) {
-+            int64_t cts=MP4_FEL_CompositionOffset(et,i);
-+            if (!ambient_fel_fragment_timing(time,cts,dur,dts,pts,duration)) return NULL;
-+            el->context.runs.i_current=run;
-+            el->context.i_trun_sample=i+1;
-+            el->context.i_trun_sample_pos=offset+size;
-+            el->i_time=time+dur;
-+            break;
++    bool matched=false;
++    for (;run<el->context.runs.i_count && !matched;run++) {
++        const mp4_run_t *er=&el->context.runs.p_array[run];
++        const MP4_Box_data_trun_t *et=er->p_trun->data.p_trun;
++        if (!et || er->i_first_dts<0 || er->i_first_dts>dts ||
++            ((et->i_flags&(MP4_TRUN_SAMPLE_DURATION|MP4_TRUN_SAMPLE_SIZE|
++                           MP4_TRUN_SAMPLE_TIME_OFFSET)) && !et->p_samples)) return NULL;
++        offset=er->i_offset;
++        stime_t time=er->i_first_dts;
++        unsigned start=0;
++        if (el->context.runs.i_current==run && el->i_time<=dts &&
++            el->context.i_trun_sample<=et->i_sample_count &&
++            el->context.i_trun_sample_pos>=offset && el->i_time>=time) {
++            start=el->context.i_trun_sample;
++            offset=el->context.i_trun_sample_pos;
++            time=el->i_time;
 +        }
-+        offset+=size;time+=dur;
++        for (unsigned i=start;i<et->i_sample_count;i++) {
++            size=et->i_flags&MP4_TRUN_SAMPLE_SIZE ? et->p_samples[i].i_size :
++                el->context.i_default_sample_size;
++            uint32_t dur=et->i_flags&MP4_TRUN_SAMPLE_DURATION ? et->p_samples[i].i_duration :
++                el->context.i_default_sample_duration;
++            if (!size || !dur || size>AMBIENT_FEL_MAX_AU || size>UINT64_MAX-offset ||
++                time>INT64_MAX-dur || time>dts) return NULL;
++            if (time==dts) {
++                int64_t cts=MP4_FEL_CompositionOffset(et,i);
++                if (!ambient_fel_fragment_timing(time,cts,dur,dts,pts,duration)) return NULL;
++                el->context.runs.i_current=run;
++                el->context.i_trun_sample=i+1;
++                el->context.i_trun_sample_pos=offset+size;
++                el->i_time=time+dur;
++                matched=true;
++                break;
++            }
++            offset+=size;time+=dur;
++        }
 +    }
-+    if (!ambient_fel_fragment_range(s->context.ambient_fel_mdat_start,
++    if (!matched || !ambient_fel_fragment_range(s->context.ambient_fel_mdat_start,
 +        s->context.i_post_mdat_offset,offset,size)) return NULL;
 +    // Restore the BL stream position before the normal trun loop continues.
 +    uint64_t resume=vlc_stream_Tell(d->s);
@@ -462,7 +476,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
                             vlc_tick_t i_max_preload )
  {
      if( !p_track->b_ok ||
-@@ -5026,10 +5356,17 @@
+@@ -5026,10 +5370,17 @@
          if( p_trun->i_flags & MP4_TRUN_SAMPLE_DURATION )
              dur = p_trun->p_samples[i].i_duration;
  
@@ -484,7 +498,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
          p_track->context.i_trun_sample = i + 1;
  
          if( p_trun->i_flags & MP4_TRUN_SAMPLE_TIME_OFFSET )
-@@ -5051,7 +5388,12 @@
+@@ -5051,7 +5402,12 @@
          if( !len )
              msg_Warn(p_demux, "Zero length sample in trun.");
  
@@ -498,7 +512,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
  
          block_t *p_block = vlc_stream_Block( p_demux->s, len );
          uint32_t i_read = ( p_block ) ? p_block->i_buffer : 0;
-@@ -5076,8 +5418,22 @@
+@@ -5076,8 +5432,22 @@
                  p_block->i_pts = VLC_TICK_INVALID;
              else
                  p_block->i_pts = VLC_TICK_0 + MP4_rescale_mtime( i_pts, p_track->i_timescale );
@@ -509,7 +523,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +                // In a trun without CTS offsets, presentation equals decode
 +                // time by definition; both raw times are checked below.
 +                p_block->i_pts=VLC_TICK_0+MP4_rescale_mtime(i_pts,p_track->i_timescale);
-+                block_t *paired=MP4_FEL_ReadFragment(p_demux,p_track,p_block,i,i_dts,i_pts,dur);
++                block_t *paired=MP4_FEL_ReadFragment(p_demux,p_track,p_block,i_dts,i_pts,dur);
 +                block_Release(p_block);
 +                if (!paired) {
 +                    msg_Err(p_demux,"FEL fragment sample pairing failed");
@@ -523,7 +537,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
          }
          else block_Release( p_block );
      }
-@@ -5612,8 +5968,9 @@
+@@ -5612,8 +5982,9 @@
              p_sys->context.i_current_box_type != ATOM_moov )
          {
              uint64_t i_pos = vlc_stream_Tell( p_demux->s );
@@ -535,7 +549,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
              {
                  if( vlc_stream_Peek( p_demux->s, &p_peek, 16 ) != 16 )
                  {
-@@ -5633,7 +5990,9 @@
+@@ -5633,7 +6004,9 @@
              {
                  /* We'll now read mdat using context atom,
                   * but we'll need post mdat offset, as we'll never seek backward */
