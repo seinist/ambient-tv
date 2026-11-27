@@ -113,7 +113,7 @@ object VideoImageCatalog {
     val media3Sharpening = setOf("off", "light", "medium", "strong", "cas", "adaptive")
     val media3Deband = strengths
     val toneMapping = setOf("auto", "bt.2390", "reinhard", "hable", "mobius", "clip")
-    val svpModes = setOf("off", "light", "balanced", "quality")
+    val svpModes = setOf("off", "light", "balanced", "quality", "adaptive")
     val colorMatrix = setOf("auto", "601_to_709", "709_to_601")
 }
 
