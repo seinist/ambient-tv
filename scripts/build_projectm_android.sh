@@ -14,7 +14,7 @@ set -euo pipefail
 #   PROJECTM_LTO=ON|OFF (default: ON, Clang ThinLTO)
 #   PROJECTM_ARM64_TUNE=generic|cortex-a57 (default: generic, ISA unchanged)
 #   PROJECTM_SHADER_CACHE=ON|OFF (default: ON, bounded driver-keyed cache)
-#   PROJECTM_DIRECT_CLASSIC_COMPOSITE=ON|OFF (default: OFF pending visual equivalence tests)
+#   PROJECTM_DIRECT_CLASSIC_COMPOSITE=ON|OFF (default: ON, validated on Mesa GLES; OFF for driver fallback)
 #   PROJECTM_PGO_GENERATE=ON|OFF (default: OFF; instrumented audit build only)
 #   PROJECTM_PGO_DIR=<directory with <abi>.profdata for libprojectM> (optional)
 #   PROJECTM_ABIS=<comma-separated ABIs> (default: all four; partial builds do not publish marker)
@@ -38,7 +38,7 @@ PROJECTM_OPT_LEVEL="${PROJECTM_OPT_LEVEL:-3}"
 PROJECTM_LTO="${PROJECTM_LTO:-ON}"
 PROJECTM_ARM64_TUNE="${PROJECTM_ARM64_TUNE:-generic}"
 PROJECTM_SHADER_CACHE="${PROJECTM_SHADER_CACHE:-ON}"
-PROJECTM_DIRECT_CLASSIC_COMPOSITE="${PROJECTM_DIRECT_CLASSIC_COMPOSITE:-OFF}"
+PROJECTM_DIRECT_CLASSIC_COMPOSITE="${PROJECTM_DIRECT_CLASSIC_COMPOSITE:-ON}"
 PROJECTM_PGO_DIR="${PROJECTM_PGO_DIR:-}"
 PROJECTM_PGO_GENERATE="${PROJECTM_PGO_GENERATE:-OFF}"
 [[ "$PROJECTM_PGO_GENERATE" == ON || "$PROJECTM_PGO_GENERATE" == OFF ]] || { echo "Invalid PROJECTM_PGO_GENERATE" >&2; exit 2; }
