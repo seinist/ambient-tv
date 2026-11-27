@@ -187,5 +187,42 @@ internal object SystemModuleBinary {
         }
         if (adler.value != u32(8) || !sha.digest().contentEquals(header.copyOfRange(12, 32)))
             reject("DEX header checksum or signature mismatch")
+
+        // Inspect defined classes, not merely referenced descriptors. This lets
+        // the host reject an adapter which bundles its own copy of a host port.
+        fun uintAt(offset: Long): Long {
+            if (offset < 0 || offset > size - 4) reject("DEX class reference outside file")
+            r.seek(offset)
+            return Integer.toUnsignedLong(Integer.reverseBytes(r.readInt()))
+        }
+        val classCount = u32(96)
+        if (classCount > 65536) reject("Too many DEX class definitions")
+        val classes = linkedSetOf<String>()
+        repeat(classCount.toInt()) { index ->
+            val type = uintAt(u32(100) + index.toLong() * 32)
+            if (type >= u32(64)) reject("Invalid DEX class type index")
+            val string = uintAt(u32(68) + type * 4)
+            if (string >= u32(56)) reject("Invalid DEX class string index")
+            val offset = uintAt(u32(60) + string * 4)
+            if (offset !in 112 until size) reject("Invalid DEX class descriptor offset")
+            r.seek(offset)
+            var length = 0L
+            var end = false
+            for (shift in 0..28 step 7) {
+                val value = r.readUnsignedByte()
+                length = length or ((value and 127).toLong() shl shift)
+                if (value and 128 == 0) { end = true; break }
+            }
+            if (!end || length !in 3..1024 || length >= size - r.filePointer)
+                reject("Invalid DEX class descriptor length")
+            val descriptor = ByteArray(length.toInt()).also(r::readFully)
+            if (r.readUnsignedByte() != 0 || descriptor.any { (it.toInt() and 255) !in 33..126 })
+                reject("Invalid DEX class descriptor encoding")
+            val name = descriptor.toString(Charsets.US_ASCII)
+            if (!Regex("L[A-Za-z0-9_/$-]+;").matches(name) ||
+                !classes.add(name.substring(1, name.length - 1).replace('/', '.')))
+                reject("Invalid or duplicate DEX class definition")
+        }
+        classes.toSet()
     }
 }
