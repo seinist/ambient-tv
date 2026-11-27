@@ -101,6 +101,18 @@ int main(void) {
     assert(ambient_hdrplus_parse(conforming.data,(conforming.pos+7)/8,&m));
     assert(m.version1_constraints_ok && m.windows[0].knee_x==0.f &&
            m.windows[0].knee_y==0.f);
+    assert(m.version1_recommended_distribution);
+    // Mutate only a genuine percentile: the reserved 5/10 markers must
+    // not participate in CFD ordering or act as scene luminance values.
+    const size_t dist_start=48+8+2+27+1+4*17+4;
+    struct writer bad=conforming;
+    const size_t value_start=dist_start+4*24+7;
+    for(unsigned i=0;i<17;i++){
+        size_t bit=value_start+i;
+        bad.data[bit/8]&=~(1u<<(7-bit%8));
+    }
+    assert(ambient_hdrplus_parse(bad.data,(bad.pos+7)/8,&m));
+    assert(!m.version1_constraints_ok && m.version1_recommended_distribution);
     struct writer w = fixture(1,1,0);
     assert(!ambient_hdrplus_parse(w.data,(w.pos+7)/8,&m)); // invalid grid dimensions
     w = fixture(0,0,0);
