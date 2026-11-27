@@ -11,6 +11,9 @@
 #include "ambientsvp_loader.h"
 #include "svp_retry.h"
 #include "svp_planes.h"
+#ifdef __ANDROID__
+#include "svp_vlc_android.h"
+#endif
 
 static int Open(filter_t *filter);
 vlc_module_begin()
@@ -18,6 +21,7 @@ vlc_module_begin()
     set_shortname("Open-SVPFlow")
     set_subcategory(SUBCAT_VIDEO_VFILTER)
     add_shortcut("ambientsvp")
+    add_bool("ambientsvp-hwresident", false, N_("Experimental Android GPU-resident transport"), NULL)
     add_float_with_range("ambientsvp-fps", 60., 5., 120., N_("Target frame rate"), NULL)
     add_integer_with_range("ambientsvp-preset", 0, 0, 4, N_("Quality preset"), NULL)
     add_integer_with_range("ambientsvp-backend", 0, 0, 2, N_("Compute backend"), NULL)
@@ -213,6 +217,13 @@ static picture_t *Filter(filter_t *f, picture_t *pic) {
 static const struct vlc_filter_operations ops = {.filter_video = Filter, .flush = Flush, .close = Close};
 static int Open(filter_t *f) {
     const video_format_t *v = &f->fmt_in.video;
+#ifdef __ANDROID__
+    if (v->i_chroma == VLC_CODEC_ANDROID_OPAQUE) {
+        static const char *const resident_options[]={"fps","hwresident",NULL};
+        config_ChainParse(f,"ambientsvp-",resident_options,f->p_cfg);
+        return svp_android_open(f);
+    }
+#endif
     // No high-bit-depth/HDR conversion just to enable an optional effect.
     if ((v->i_chroma != VLC_CODEC_I420 && v->i_chroma != VLC_CODEC_NV12)
         || f->fmt_out.video.i_chroma != v->i_chroma
