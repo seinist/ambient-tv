@@ -194,3 +194,67 @@ fn read_choices(device:&wgpu::Device,queue:&wgpu::Queue,mut encoder:wgpu::Comman
     drop(bytes);readback.unmap();
     Ok(result)
 }
+
+
+#[cfg(test)]
+mod tests{
+    use super::*;
+    use svpflow_core::metadata::{self,VectorRecord};
+    use svpflow1_vs::Analyser;
+
+    #[test]
+    fn hierarchical_grid_and_predictor_bounds(){
+        let g=Grid::new(96,66,16,16,4,4).unwrap();
+        assert_eq!((g.w,g.h),(7,5));
+        assert_eq!(g.origin(g.count()-1),(72,48));
+        let choice=Choice{dx:3,dy:-2,sad:0,cost:0,raw_sad:-1,winner:0};
+        let f=LevelField{grid:g,choices:vec![choice;g.count()]};
+        assert_eq!(f.predict(90,64,2),[12,-8]);
+        assert!(Grid::new(96,66,16,16,3,4).is_none());
+    }
+
+    #[test]
+    #[ignore="requires Vulkan, including software Vulkan"]
+    fn hierarchical_search_produces_complete_valid_fields(){
+        let instance=wgpu::Instance::new(&wgpu::InstanceDescriptor{backends:wgpu::Backends::VULKAN,..Default::default()});
+        let adapter=pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+        let (device,queue)=pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor{
+            label:Some("SVP hierarchical search regression"),required_features:wgpu::Features::empty(),
+            required_limits:wgpu::Limits::default().using_resolution(adapter.limits()),
+            memory_hints:wgpu::MemoryHints::MemoryUsage,
+        },None)).unwrap();
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let search=MotionSearch::new(&device);
+        for pel in [1,2,4]{
+            let builder=SuperBuilder::new(192,128,pel).unwrap();
+            let analyser=Analyser::new(&builder,16,16,2,3).unwrap();
+            let header=analyser.vector_header();
+            assert!(MotionSearch::supported(&header));
+            let make=|shift:usize|{
+                let mut raw=vec![128;builder.source_len()];
+                for y in 0..128{for x in 0..192{
+                    let xx=(x+shift)%192;
+                    raw[y*192+x]=((xx*17+y*31+xx*y*3)%256) as u8;
+                }}
+                raw
+            };
+            let a=make(0);
+            let b=make(2);
+            let asf=builder.build(&a).unwrap();
+            let bsf=builder.build(&b).unwrap();
+            let packet=search.analyse(&device,&queue,&builder,&asf,&bsf,&header,Duration::from_secs(20)).unwrap();
+            let second=search.analyse(&device,&queue,&builder,&asf,&bsf,&header,Duration::from_secs(20)).unwrap();
+            assert_eq!(packet,second,"deterministic pel={pel}");
+            let bytes:Vec<u8>=header.iter().flat_map(|x|x.to_le_bytes()).collect();
+            let VectorRecord::Ready(data)=metadata::vector_data(&bytes)else{panic!("header");};
+            let decoded=metadata::decode_vectors(&packet,3,data.grid,3).unwrap();
+            assert_eq!(decoded.previous.as_ref().unwrap().len(),(data.grid.width*data.grid.height) as usize);
+            assert_eq!(decoded.current.as_ref().unwrap().len(),(data.grid.width*data.grid.height) as usize);
+            assert!(decoded.current.as_ref().unwrap().iter().any(|v|v.dx!=0||v.dy!=0));
+            let layout=PacketLayout::from_header(&header).unwrap();
+            assert_eq!(packet.len(),72+layout.count()*16);
+            assert!(search.analyse(&device,&queue,&builder,&asf,&bsf,&header,Duration::ZERO).is_err());
+        }
+        assert!(pollster::block_on(device.pop_error_scope()).is_none());
+    }
+}
