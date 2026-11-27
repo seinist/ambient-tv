@@ -140,7 +140,18 @@ static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
     }
     uint32_t width = held.crop.right - held.crop.left;
     uint32_t height = held.crop.bottom - held.crop.top;
-    if ((dovi && pic->format.dovi.profile == 7 && (held.crop.left || held.crop.top)) ||
+    bool fel_crop_ok=true;
+    if(dovi && pic->format.dovi.profile==7){
+        struct vlc_ancillary *anc=picture_GetAncillary(pic,AMBIENT_FEL_ID);
+        const struct ambient_fel_picture *el=anc?vlc_ancillary_GetData(anc):NULL;
+        // AImage must confirm the declared BL origin, including zero.
+        fel_crop_ok=el && held.crop.left>=0 && held.crop.top>=0 &&
+            pic->format.i_x_offset==(unsigned)held.crop.left &&
+            pic->format.i_y_offset==(unsigned)held.crop.top &&
+            ambient_fel_crop_axis(width,el->width,(unsigned)held.crop.left,el->crop_x) &&
+            ambient_fel_crop_axis(height,el->height,(unsigned)held.crop.top,el->crop_y);
+    }
+    if (!fel_crop_ok ||
         width != pic->format.i_visible_width || height != pic->format.i_visible_height ||
         (pic->format.i_x_offset && pic->format.i_x_offset != (unsigned)held.crop.left) ||
         (pic->format.i_y_offset && pic->format.i_y_offset != (unsigned)held.crop.top)) {
