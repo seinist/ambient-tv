@@ -114,6 +114,12 @@ Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeSetTexturePath
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeSetFps(JNIEnv*, jobject, jlong handle, jint fps) {
+    auto* state = ptr(handle);
+    if (state && state->instance) projectm_set_fps(state->instance, std::clamp(fps, 1, 120));
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeSetPresetDuration(JNIEnv*, jobject, jlong handle, jdouble seconds) {
     auto* state = ptr(handle);
     if (state && state->instance) projectm_set_preset_duration(state->instance, std::max(1.0, seconds));
