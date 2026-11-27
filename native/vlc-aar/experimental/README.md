@@ -555,3 +555,36 @@ unit tests were canceled by subsequent pushes. The new head needs
 its own complete CI and real indexed/hybrid/forward-only playback
 validation. Full HDR10+ certification and bit-exact proprietary
 Dolby FEL resampling are still unproven. Default-off unchanged.
+
+
+### Visible picture geometry and independent HDR10+ syntax validation
+
+The experimental profile-7 decoder, MP4 pairing gate and HDR10+
+spatial prepass now accept origin-aligned visible pictures with
+right/bottom coded allocation padding. A 3840x2160 visible BL in a
+3840x2176 allocation can therefore match a 1920x1080 visible EL in
+a padded 1920x1088 allocation. AImage import already produces the
+visible texture. FEL explicitly rejects a nonzero physical crop
+origin because the current EL phase mapping does not describe that
+case. The shader and display handoff share an overflow-safe exact
+1:1 or 2:1 visible-dimension check; tests cover padded and invalid
+rectangles and incompatible ratios. Arbitrary shifted crops remain
+unsupported.
+
+The pinned FFmpeg contract CI now additionally generates T.35
+metadata via av_dynamic_hdr_plus_to_t35 and compares every decoded
+field against av_dynamic_hdr_plus_from_t35, including both application
+versions, up to three windows, 25x25 peak grids, 15 percentiles and
+15 curve anchors. FFmpeg writes application version 1; the version-0
+reader fixture changes only the version byte. The test compares
+syntax, not certification or display processing, and deliberately
+includes legacy optional metadata combinations. Truncation checks
+remain stricter in the local parser.
+
+All three native contracts passed at 1664363 (45966850004), including
+the high-gain saturation and rotated-selector tests. Its app test
+was canceled by later pushes; linked ARM64 AAR still pending.
+Final CI for the new geometry and independent metadata fixture is
+not yet confirmed. The proprietary Dolby reference reconstruction
+and arbitrary crop phase support remain outside the verified scope.
+Default-off unchanged.
