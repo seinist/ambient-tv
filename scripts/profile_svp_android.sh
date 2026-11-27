@@ -23,13 +23,15 @@ adb=(adb)
 "${adb[@]}" get-state >/dev/null
 device_abis="$("${adb[@]}" shell getprop ro.product.cpu.abilist | tr -d '\r')"
 case ",$device_abis," in *",$abi,"*) ;; *) echo "Device does not support $abi: $device_abis" >&2; exit 2;; esac
-python3 "$ROOT/scripts/svp_dependency.py" --fingerprint
+source_hash="$(python3 "$ROOT/scripts/svp_dependency.py" --fingerprint)"
+printf '%s\n' "$source_hash"
 mkdir -p "$dest"
 dest="$(cd "$dest" && pwd)"
 tmp="$(mktemp -d)"
 remote="/data/local/tmp/ambient-svp-pgo-$(basename "$tmp" | tr -cd '[:alnum:]')"
+remote_created=0
 cleanup() {
-    "${adb[@]}" shell rm -rf "$remote" >/dev/null 2>&1 || true
+    if [[ "$remote_created" == 1 ]]; then "${adb[@]}" shell rm -rf "$remote" >/dev/null 2>&1 || true; fi
     rm -rf "$tmp"
 }
 trap cleanup EXIT
@@ -48,6 +50,7 @@ export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-z,max-page-size=16384 -C profi
 binary="$CARGO_TARGET_DIR/$target/release/benchmark"
 [[ -s "$binary" ]]
 "${adb[@]}" shell mkdir "$remote"
+remote_created=1
 "${adb[@]}" push "$binary" "$remote/benchmark"
 "${adb[@]}" shell chmod 700 "$remote/benchmark"
 # Synthetic training set deliberately includes CPU and hardware Vulkan
@@ -67,5 +70,8 @@ mapfile -d '' profiles < <(find "$tmp/profiles" -name '*.profraw' -size +0c -pri
 (( ${#profiles[@]} >= run )) || { echo "Missing profile output(s)" >&2; exit 1; }
 "$profdata" merge -o "$tmp/$abi.profdata" "${profiles[@]}"
 [[ -s "$tmp/$abi.profdata" ]]
+profile_hash="$(sha256sum "$tmp/$abi.profdata" | cut -d ' ' -f1)"
+printf '%s\n' "source=$source_hash" "rustc=$(rustc --version)" "abi=$abi" "sha256=$profile_hash" > "$tmp/$abi.meta"
 mv "$tmp/$abi.profdata" "$dest/$abi.profdata"
+mv "$tmp/$abi.meta" "$dest/$abi.meta"
 printf '%s\n' "Synthetic device-training profile: $dest/$abi.profdata" "Build the non-instrumented runtime with SVP_PGO_PROFILE_DIR=$dest and measure it separately."
