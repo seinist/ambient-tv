@@ -285,6 +285,21 @@ android {
         buildConfigField("String", "APP_DISPLAY_NAME", quotedBuildConfigString(appDisplayName))
         buildConfigField("String", "MODULE_PACKAGING", quotedBuildConfigString(modulePackaging))
         buildConfigField("boolean", "MONOGRAM_NATIVE", monogramEnabled.toString())
+        // Pin the exact UniFFI/Kotlin bridge artifact, independent of CPU tuning.
+        val monogramBindingSha = if (monogramEnabled) ZipFile(monogramAar).use { aar ->
+            val entry = requireNotNull(aar.getEntry("classes.jar")) { "Monogram bindings missing" }
+            val hash = java.security.MessageDigest.getInstance("SHA-256")
+            aar.getInputStream(entry).use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    hash.update(buffer, 0, count)
+                }
+            }
+            hash.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+        } else ""
+        buildConfigField("String", "MONOGRAM_BINDING_SHA256", quotedBuildConfigString(monogramBindingSha))
         buildConfigField("boolean", "MONOGRAM_CDN_RANGES", (providers.environmentVariable("MONOGRAM_CDN_RANGES").orNull == "1").toString())
         val monogramPgoGenerate = monogramEnabled && providers.environmentVariable("MONOGRAM_PGO_MODE").orNull == "generate"
         buildConfigField("boolean", "MONOGRAM_PGO_GENERATE", monogramPgoGenerate.toString())
@@ -447,6 +462,7 @@ android {
             )
             // An earlier build may have left the Spotify core in jniLibs: never ship it when disabled.
             if (!spotifyEnabled || modularPreview) excludes += "**/libspotify_receiver_core.so"
+            if (modularPreview) excludes += "**/libmonogram_mtproto.so"
             // An earlier full Vulkan build may leave a 6+ MB native library in
             // jniLibs. A later GLES-only build must never accidentally ship it.
             val includeNativeSlang = providers.gradleProperty("LIBRASHADER_NATIVE")
