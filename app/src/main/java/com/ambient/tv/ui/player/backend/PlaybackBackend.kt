@@ -17,13 +17,15 @@ object MpvBackendAvailability {
 
     /** True when the native libmpv payload and JNI shim can be loaded for this process ABI. */
     val nativeRuntimeAvailable: Boolean by lazy {
-        if (!NativeArmRuntime.isSupportedDevice) {
+        var externalLoaded = false
+        val available = if (!NativeArmRuntime.isSupportedDevice) {
             false
         } else {
             runCatching {
                 // Android resolves libmpv.so/libambientmpv.so from the matching ABI directory
                 // (arm64-v8a, armeabi-v7a, x86 or x86_64). No manual library path is needed.
                 val external = com.ambient.tv.modules.SystemModuleHost.loadSelected(com.ambient.tv.modules.SystemModule.MPV)
+                externalLoaded = external != null
                 if (external == null) {
                     System.loadLibrary("mpv")
                     System.loadLibrary("ambientmpv")
@@ -31,6 +33,8 @@ object MpvBackendAvailability {
                 MpvNativeBridge.nativeVersion().isNotBlank()
             }.onFailure { timber.log.Timber.e(it, "MPV native runtime could not be loaded") }.getOrDefault(false)
         }
+        com.ambient.tv.modules.SystemModuleAvailability.reportProbe(com.ambient.tv.modules.SystemModule.MPV, externalLoaded, available && MpvNativeBridge.rendererImplemented)
+        available
     }
 
     /**
