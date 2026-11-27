@@ -100,7 +100,13 @@ jobs:
           # The system encoder is only for a test fixture; decoding uses the pinned static FFmpeg.
           ffmpeg -hide_banner -loglevel error -f lavfi -i color=c=gray:s=64x64:r=1 -frames:v 1 -pix_fmt yuv420p10le -c:v libx265 -x265-params 'pools=1:frame-threads=1:repeat-headers=1:log-level=error' -f hevc -y test-el.hevc
           cc -I . "$GITHUB_WORKSPACE/native/vlc-aar/experimental/test_dovi_fel_decoder.c" libavcodec/libavcodec.a libavutil/libavutil.a -lm -pthread -o test-fel-decoder
-          ./test-fel-decoder test-el.hevc
+          # Encode a genuine B-frame GOP; take packet PTS/DTS from MP4 and
+          # keep access-unit boundaries via AUD in the Annex B stream.
+          ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=s=64x64:r=24 -frames:v 8 -pix_fmt yuv420p10le -c:v libx265 -x265-params 'pools=1:frame-threads=1:repeat-headers=1:aud=1:bframes=2:b-adapt=0:keyint=8:min-keyint=8:scenecut=0:log-level=error' -y test-el-reorder.mp4
+          ffprobe -v error -select_streams v:0 -show_entries packet=pts,dts -of csv=p=0 test-el-reorder.mp4 > test-el-reorder.csv
+          ffmpeg -hide_banner -loglevel error -i test-el-reorder.mp4 -map 0:v:0 -c copy -bsf:v hevc_mp4toannexb -f hevc -y test-el-reorder.hevc
+          ffmpeg -hide_banner -loglevel error -i test-el-reorder.mp4 -map 0:v:0 -pix_fmt yuv420p10le -f rawvideo -y test-el-reorder.yuv
+          ./test-fel-decoder test-el.hevc test-el-reorder.hevc test-el-reorder.csv test-el-reorder.yuv
 
   hdrplus-spatial-gpu:
     runs-on: ubuntu-24.04
