@@ -96,6 +96,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         inlinePreviewIndex.clear()
         sharpPreviewIndex.clear()
         inlineMemo.clear()
+        displayAliases.clear()
     }
     /** Account-generation fences prevent older thumbnail RPCs repopulating a new account's cache. */
     @Volatile private var cacheGeneration = 0L
@@ -108,6 +109,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     }
     private data class InlineMemo(val revision: Long, val atMs: Long, val file: File)
     private val inlineMemo = LinkedHashMap<Pair<Long, Int>, InlineMemo>(128, .75f, true)
+    // Account-local aliases refer only to a successfully published, validated display image.
+    private val displayAliases = LinkedHashMap<String, File>(128, .75f, true)
     private val measuredWindows = java.util.concurrent.atomic.AtomicInteger()
     private fun recordNativeWindow() {
         if (!com.ambient.tv.BuildConfig.MONOGRAM_PGO_GENERATE && !com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS) return
@@ -337,6 +340,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 inlineMemo.entries.removeAll { everything || it.key in changedMessages }
                 inlinePreviewIndex.removeMatching(::affected)
                 sharpPreviewIndex.removeMatching(::affected)
+                displayAliases.entries.removeAll { affected(it.value) }
                 val entries = chunkIndex.entries.iterator()
                 while (entries.hasNext()) {
                     val entry = entries.next()
@@ -1236,10 +1240,27 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         File(cache, "thumbs-hd").takeIf { it.isDirectory }?.deleteRecursively()
         val dir = File(cache, "previews").apply { mkdirs() }.canonicalFile
         val output = File(dir, "$chatId-$messageId.img")
+        // Only identities in the authenticated shared index qualify. Reference refreshes
+        // may change tokens, but the file id, access hash and size letter must match.
+        val displayIdentity = uniffi.monogram_mtproto.ambientDisplayIdentity(h.toULong(), chatId, messageId)
         synchronized(diskChunkLock) {
             if (expectedAccount == null || accountId != expectedAccount || cacheGeneration != expectedGeneration ||
                 revision != mediaRevision(chatId, messageId) || chatId in leftChannels) return@nativeCall null
             if (sharpPreviewIndex.hit(output)) return@nativeCall output.toURI().toString()
+            if (displayIdentity != null) {
+                val source = displayAliases[displayIdentity]
+                if (source != null && source != output && sharpPreviewIndex.hit(source)) {
+                    // Independent names preserve per-post invalidation; deleting one name
+                    // cannot delete the other. Unsupported filesystems use the normal path.
+                    val linked = runCatching { android.system.Os.link(source.path, output.path) }.isSuccess
+                    if (linked) {
+                        displayAliases.entries.removeAll { it.value == output }
+                        sharpPreviewIndex.publish(output)
+                        displayAliases[displayIdentity] = output
+                        return@nativeCall output.toURI().toString()
+                    }
+                } else if (source != null) displayAliases.remove(displayIdentity)
+            }
         }
         val stage = File(dir, "pending-${java.util.UUID.randomUUID()}.img")
         val previous = uniffi.monogram_mtproto.bindRequestControl(request)
@@ -1265,6 +1286,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 uniffi.monogram_mtproto.downloadMessageDisplay(h.toULong(), chatId, messageId, stage.path)
             }).canonicalFile
         }
+        var displayResult = true
         val returned = runCatching {
             // The first file request after connecting may be cancelled by the media session
             // switching over ("session changed"): sent once more.
@@ -1276,6 +1298,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             // display size falls back to its Thumb.
             if (failure.message?.contains("cancel", ignoreCase = true) == true ||
                 classifyTelegramFailure(failure.message) != TelegramFailureKind.OTHER) throw failure
+            displayResult = false
             // Decode bounds below are authoritative; equal byte counts do not imply
             // equal images. Avoid a second JNI copy of the inline thumbnail.
             File(mediaClass(if (priority.foreground) DISPATCH_VISIBLE else DISPATCH_BACKGROUND) {
@@ -1299,15 +1322,22 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             actual.delete()
             return@nativeCall null
         }
+        val verifiedDisplay = displayIdentity.takeIf { displayResult && it != null &&
+            it == uniffi.monogram_mtproto.ambientDisplayIdentity(h.toULong(), chatId, messageId) }
         synchronized(diskChunkLock) {
             // A logout or account switch meanwhile: never keep the old account's image.
             if (expectedAccount == null || accountId != expectedAccount || cacheGeneration != expectedGeneration ||
-                revision != mediaRevision(chatId, messageId)) {
+                revision != mediaRevision(chatId, messageId) || chatId in leftChannels) {
                 actual.delete()
                 return@nativeCall null
             }
             if (!actual.renameTo(output)) return@nativeCall null
+            displayAliases.entries.removeAll { it.value == output }
             sharpPreviewIndex.publish(output)
+            if (verifiedDisplay != null && output.isFile) {
+                displayAliases[verifiedDisplay] = output
+                while (displayAliases.size > 256) displayAliases.remove(displayAliases.keys.first())
+            }
         }
         output.toURI().toString()
         } finally {

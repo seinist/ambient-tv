@@ -64,6 +64,8 @@ MODIFICATIONS = {
         "added scoped bounded in-memory range and exact-size preview output with existing session publication",
     "vendor/mono-rs/crates/mono-proto-media/src/profile.rs":
         "bounded preview and playing request windows independently of full file downloads",
+    "vendor/mono-rs/crates/mono-proto-media/src/thumbs.rs":
+        "select smallest adequate network preview from indexed Telegram sizes for Ambient cards",
     "vendor/mono-rs/crates/mono-proto-client/src/media_download.rs":
         "kept unknown-size and small full downloads on a single request window",
     "vendor/mono-rs/crates/mono-proto-crypto/src/message.rs":
@@ -873,7 +875,83 @@ amend(profile_source,
       """        in_flight: if ambient_media_mode() && profile != DownloadProfile::User {
             1
         } else { maximum.in_flight.min(policy.pipeline_parts()) },""")
+# Prefer a usable 320px-class preview to a 40–100px network thumbnail. The
+# stripped JPEG stays available for progressive painting. Never guess unindexed letters.
+thumb_source = "vendor/mono-rs/crates/mono-proto-media/src/thumbs.rs"
+add_before(thumb_source, "pub fn pick_getfile_preview(", """fn ambient_pick_preview(
+    sizes: &[(String, i32, Option<Vec<u8>>)],
+    exclude: Option<&str>,
+) -> Option<(String, Option<Vec<u8>>)> {
+    let candidates = || sizes.iter().filter(|(ty, area, bytes)|
+        is_getfile_thumb_size(ty) && !thumb_has_inline_bytes(bytes) &&
+        *area > 0 && Some(ty.as_str()) != exclude);
+    candidates().filter(|(_, area, _)| *area >= 320 * 180)
+        .min_by_key(|(_, area, _)| *area)
+        .or_else(|| candidates().max_by_key(|(_, area, _)| *area))
+        .map(|(ty, _, bytes)| (ty.clone(), bytes.clone()))
+}
+#[cfg(test)]
+mod ambient_preview_tests {
+    use super::*;
+    #[test]
+    fn smallest_adequate_real_network_preview() {
+        let sizes = vec![
+            ("s".into(), 90 * 60, None),
+            ("m".into(), 320 * 180, None),
+            ("x".into(), 800 * 450, None),
+            ("i".into(), 640 * 480, Some(vec![1])),
+        ];
+        assert_eq!(ambient_pick_preview(&sizes, None).unwrap().0, "m");
+        assert_eq!(ambient_pick_preview(&sizes, Some("m")).unwrap().0, "x");
+        assert_eq!(ambient_pick_preview(&sizes[..1], None).unwrap().0, "s");
+    }
+}
+""", "fn ambient_pick_preview(")
+amend(thumb_source,
+      """pub fn pick_getfile_preview(
+    sizes: &[(String, i32, Option<Vec<u8>>)],
+) -> Option<(String, Option<Vec<u8>>)> {""",
+      """pub fn pick_getfile_preview(
+    sizes: &[(String, i32, Option<Vec<u8>>)],
+) -> Option<(String, Option<Vec<u8>>)> {
+    if crate::profile::ambient_media_mode() {
+        return ambient_pick_preview(sizes, None);
+    }""")
+amend(thumb_source,
+      """    full_ty: &str,
+) -> Option<(String, Option<Vec<u8>>)> {
+    let usable: Vec<&(String, i32, Option<Vec<u8>>)> = sizes""",
+      """    full_ty: &str,
+) -> Option<(String, Option<Vec<u8>>)> {
+    if crate::profile::ambient_media_mode() {
+        // Full photo is deliberately excluded. An already selected network
+        // thumb may also be the best display size; the inline peek never fetches it.
+        return ambient_pick_preview(sizes, Some(full_ty));
+    }
+    let usable: Vec<&(String, i32, Option<Vec<u8>>)> = sizes""")
 client_download = "vendor/mono-rs/crates/mono-proto-client/src/media_download.rs"
+add_before(client_download, "pub fn indexed_media_for_download(", """/// Immutable network artwork identity; never reuse an inline or peer-avatar alias.
+pub fn ambient_display_identity(handle: u64, chat_id: i64, message_id: i32) -> Option<String> {
+    if message_id <= 0 { return None; }
+    let client = get_client(handle).ok()?;
+    let data = client.data.lock();
+    if data.session_dead || data.user_id.is_none() { return None; }
+    let indexed = data.media.get(&(chat_id, message_id))?;
+    let display = media::media_for_download(indexed, media::MediaDownloadKind::Display).ok()?;
+    match &display.location {
+        media::MediaLocation::Photo { id, access_hash, thumb_size, .. } =>
+            Some(format!("photo:{id}:{access_hash}:{thumb_size}")),
+        media::MediaLocation::Document { id, access_hash, thumb_size, .. } =>
+            Some(format!("doc:{id}:{access_hash}:{thumb_size}")),
+        _ => None,
+    }
+}
+""", "pub fn ambient_display_identity(")
+add_before(ffi, "#[uniffi::export]\npub fn download_message_thumb(", """#[uniffi::export]
+pub fn ambient_display_identity(handle: u64, chat_id: i64, message_id: i32) -> Option<String> {
+    mono_proto_client::media_download::ambient_display_identity(handle, chat_id, message_id)
+}
+""", "pub fn ambient_display_identity(")
 amend(client_download,
       "    let dest = Path::new(&dest_path);\n    let first = download_media_range_on_lane",
       """    // Only known large, complete user downloads benefit from a wide pipeline.
