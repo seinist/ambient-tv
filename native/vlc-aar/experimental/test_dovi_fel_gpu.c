@@ -4,6 +4,46 @@
 #include <libplacebo/vulkan.h>
 #include <assert.h>
 #include <stdio.h>
+/* Independent double-precision ST 2084 and matrix arithmetic. Do not
+ * call libplacebo's color conversion or the FEL shader to produce expected
+ * RGB values. Luminance here is relative to the 10000-nit PQ peak. */
+static double ref_pq_eotf(double v)
+{
+    const double m1=2610.0/16384.0,m2=2523.0/32.0;
+    const double c1=3424.0/4096.0,c2=2413.0/128.0,c3=2392.0/128.0;
+    double x=pow(fmax(v,0.0),1.0/m2);
+    assert(c2>c3*x);
+    return pow(fmax(x-c1,0.0)/(c2-c3*x),1.0/m1);
+}
+static double ref_pq_inverse(double v)
+{
+    const double m1=2610.0/16384.0,m2=2523.0/32.0;
+    const double c1=3424.0/4096.0,c2=2413.0/128.0,c3=2392.0/128.0;
+    double x=pow(fmax(v,0.0),m1);
+    return pow((c1+c2*x)/(1.0+c3*x),m2);
+}
+static void ref_fel_rgb(const struct pl_dovi_metadata *m,const double signal[3],double rgb[3])
+{
+    const double hpe_to_rgb[3][3]={
+        {3.06441879,-2.16597676,0.10155818},
+        {-0.65612108,1.78554118,-0.12943749},
+        {0.01736321,-0.04725154,1.03004253},
+    };
+    double light[3],lms[3]={0};
+    for(unsigned i=0;i<3;i++){
+        double code=0;
+        for(unsigned j=0;j<3;j++)
+            code+=m->nonlinear.m[i][j]*(signal[j]-m->nonlinear_offset[j]);
+        light[i]=ref_pq_eotf(code);
+    }
+    for(unsigned i=0;i<3;i++)for(unsigned j=0;j<3;j++)
+        lms[i]+=m->linear.m[i][j]*light[j];
+    for(unsigned i=0;i<3;i++){
+        double linear=0;
+        for(unsigned j=0;j<3;j++)linear+=hpe_to_rgb[i][j]*lms[j];
+        rgb[i]=ref_pq_inverse(linear);
+    }
+}
 int main(void)
 {
     struct ambient_fel_nlq nlq={.el_bits=10,.coef_log2_denom=16,
@@ -336,6 +376,32 @@ int main(void)
     for(unsigned i=0;i<16;i++)if(i%4!=3){
         assert(isfinite(expected_rgb[i])&&isfinite(pixels[i]));
         assert(fabsf(pixels[i]-expected_rgb[i])<0.0005f);
+    }
+    // Exercise the actual prediction-domain path end to end, including
+    // raw channel ordering, nonlinear prediction, signed residual, RPU
+    // offsets, both matrices, PQ EOTF and inverse EOTF. The CPU reference
+    // deliberately does not call pl_shader_decode_color.
+    assert(ambient_fel_compose_domain(gpu,dp,packed_bl,el,out,&colored,&nlq,true,true,NULL,true));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=out,.ptr=pixels)));
+    for(unsigned i=0;i<4;i++){
+        double codes3[3],rgb3[3];
+        for(unsigned j=0;j<3;j++){
+            unsigned k=4*i+j;
+            double x=fmin(1023.0/1024.0,fmax(0.0,base[k]*1023.0/1024.0));
+            double pred=fmin(1.0,fmax(0.0,6554.0/65536.0+58982.0/65536.0*x));
+            double delta=round(residual[k]*1023.0-nlq.offset[j]);
+            double scale=ldexp(1.0,-(int)nlq.coef_log2_denom);
+            double res=delta==0?0:copysign(fmin(nlq.maximum[j]*scale,
+                (fabs(delta)-0.5)*nlq.slope[j]*scale+nlq.threshold[j]*scale),delta);
+            codes3[j]=fmin(1.0,fmax(0.0,pred+res));
+        }
+        ref_fel_rgb(&colored,codes3,rgb3);
+        for(unsigned j=0;j<3;j++){
+            double actual=pixels[4*i+j];
+            if(!isfinite(actual)||fabs(actual-rgb3[j])>=0.0007)
+                fprintf(stderr,"Independent FEL RGB pixel %u component %u: actual %.9f expected %.9f\n",i,j,actual,rgb3[j]);
+            assert(isfinite(actual)&&fabs(actual-rgb3[j])<0.0007);
+        }
     }
     struct pl_dovi_metadata bad_matrix=colored;
     bad_matrix.nonlinear_offset[0]=NAN;

@@ -833,3 +833,10 @@ The marker set remains bounded, is reset on flush/drain, and ignores
 unknown late drops after drain. Allocation/submit failures are terminal
 until flush. Host tests exercise full-queue known/unknown output, duplicate
 PTS, repeated discard and drained late discard in addition to real HEVC.
+
+An additional nonneutral packed-P010 test now computes the entire FEL
+color conversion independently in double precision (polynomial and
+residual, nonlinear RPU matrix/offset, ST 2084 EOTF, linear matrix,
+HPE-to-BT.2020 conversion and inverse EOTF). It does not use a second
+libplacebo shader as the expected RGB result. This checks the implemented
+floating-point reconstruction, not the proprietary Dolby reference filter.
