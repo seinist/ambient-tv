@@ -14,6 +14,15 @@ int main(void)
     assert(ambient_fel_residual(&nlq,0,513.0/1023)==1.0/256);
     assert(ambient_fel_residual(&nlq,0,511.0/1023)==-1.0/256);
     assert(ambient_fel_residual(&nlq,0,1.0)==1.0/16);
+    assert(ambient_fel_residual(&nlq,0,511.5/1023)==-1.0/256);
+    assert(ambient_fel_residual(&nlq,0,512.5/1023)==1.0/256);
+    struct ambient_fel_nlq wide=nlq;
+    wide.coef_log2_denom=32;
+    wide.slope[0]=UINT64_C(1)<<32;wide.threshold[0]=UINT64_C(1)<<31;
+    wide.maximum[0]=UINT64_C(1)<<32;
+    assert(ambient_fel_nlq_valid(&wide));
+    assert(ambient_fel_residual(&wide,0,513.0/1023)==1.0);
+    assert(ambient_fel_residual(&wide,0,511.0/1023)==-1.0);
     pl_log log=pl_log_create(PL_API_VER,&(struct pl_log_params){
         .log_cb=pl_log_color,.log_level=PL_LOG_WARN});
     pl_vulkan vk=pl_vulkan_create(log,&(struct pl_vulkan_params){
@@ -110,6 +119,41 @@ int main(void)
         assert(fabs(big_out[i+1]-b)<0.0001);
         assert(fabs(big_out[i+2]-c)<0.0001);
     }
+    // At exact half codes the signed residual must be symmetric, including
+    // when the fraction came from interpolation of integer R16 texels.
+    const uint16_t ties[]={511,512,512,513};
+    const uint16_t *tie_planes[]={ties,u,v};
+    assert(ambient_fel_planes_upload(gpu,&planes,2,2,tie_planes,pitches,0.f,0.f));
+    assert(ambient_fel_compose_ex(gpu,dp,large_bl,NULL,large_out,&reshape,&nlq,true,false,&planes));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=large_out,.ptr=big_out)));
+    const double center=0.1+0.9*0.3;
+    assert(fabs(big_out[4]-(center-1.0/256))<0.0001);
+    assert(fabs(big_out[4*(3*4+1)]-(center+1.0/256))<0.0001);
+    // 1:1 luma fast path, with non-constant chroma and six sitings.
+    const uint16_t direct_y[]={510,511,512,513,514,515,516,517,518,519,520,521,522,523,524,525};
+    const uint16_t direct_u[]={508,512,516,520},direct_v[]={520,516,512,508};
+    const uint16_t *direct_planes[]={direct_y,direct_u,direct_v};
+    const size_t direct_pitches[]={8,4,4};
+    const float shifts[][2]={{0,0},{-.5f,0},{-.5f,-.5f},{0,-.5f},{-.5f,.5f},{0,.5f}};
+    for(unsigned s=0;s<6;s++){
+        assert(ambient_fel_planes_upload(gpu,&planes,4,4,direct_planes,direct_pitches,shifts[s][0],shifts[s][1]));
+        assert(ambient_fel_compose_ex(gpu,dp,large_bl,NULL,large_out,&reshape,&nlq,true,false,&planes));
+        assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=large_out,.ptr=big_out)));
+        for(unsigned row=0;row<4;row++)for(unsigned col=0;col<4;col++){
+            double cx=fmin(1.0,fmax(0.0,((col+0.5)-shifts[s][0])*0.5-0.5));
+            double cy=fmin(1.0,fmax(0.0,((row+0.5)-shifts[s][1])*0.5-0.5));
+            double uc=508+4*cx+8*cy,vc=520-4*cx-8*cy;
+            unsigned i=4*(row*4+col);
+            assert(fabs(big_out[i]-(center+ambient_fel_residual(&nlq,0,direct_y[row*4+col]/1023.0)))<0.0001);
+            assert(fabs(big_out[i+1]-(0.55+ambient_fel_residual(&nlq,1,uc/1023.0)))<0.0001);
+            assert(fabs(big_out[i+2]-(0.73+ambient_fel_residual(&nlq,2,vc/1023.0)))<0.0001);
+        }
+    }
+    // A coefficient above UINT32_MAX is still representable and clamps
+    // the reconstructed signal to its legal range.
+    assert(ambient_fel_compose(gpu,dp,bl,el,out,&reshape,&wide));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=out,.ptr=pixels)));
+    assert(pixels[4]==1.f&&pixels[8]==0.f);
     // A neutral signal with identity matrix and no residual remains neutral.
     // The pinned Dolby Vision LMS-to-RGB matrix preserves its neutral axis.
     struct pl_dovi_metadata identity={0};
