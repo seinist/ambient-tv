@@ -59,10 +59,13 @@ class TelegramVideoDataSource(
         if (remaining == 0L) return C.RESULT_END_OF_INPUT
         if (sourceUri == null) throw IOException("Data source closed")
         if (partStart < 0 || position !in partStart until (partStart + part.size)) {
-            partStart = telegramPartOffset(position)
-            part = fetchPart(partStart)
-            if (part.isEmpty() || part.size > TELEGRAM_MEDIA_PART_BYTES)
-                throw IOException("Invalid Telegram media part")
+            val start = telegramPartOffset(position)
+            val loaded = fetchPart(start)
+            if (loaded.size != telegramExpectedPartSize(media.fileSize, start))
+                throw IOException("Incomplete Telegram media part")
+            // Publish offset and bytes together only after a successful validated load.
+            part = loaded
+            partStart = start
             schedulePrefetch(partStart)
         }
         val relative = (position - partStart).toInt()
@@ -126,3 +129,6 @@ fun telegramPartOffset(position: Long): Long {
     require(position >= 0)
     return position / TELEGRAM_MEDIA_PART_BYTES * TELEGRAM_MEDIA_PART_BYTES
 }
+
+internal fun telegramExpectedPartSize(size: Long, offset: Long): Int =
+    (size - offset).coerceIn(0L, TELEGRAM_MEDIA_PART_BYTES.toLong()).toInt()

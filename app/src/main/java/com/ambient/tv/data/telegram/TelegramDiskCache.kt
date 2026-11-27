@@ -60,8 +60,17 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
             }.generateKey()).also { cachedKey = it }
     }
 
-    private fun hash(raw: String) = MessageDigest.getInstance("SHA-256")
-        .digest(raw.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+    private fun hash(raw: String): String {
+        val bytes = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(Charsets.UTF_8))
+        val hex = "0123456789abcdef"
+        return buildString(bytes.size * 2) {
+            for (byte in bytes) {
+                val value = byte.toInt() and 0xff
+                append(hex[value ushr 4])
+                append(hex[value and 0xf])
+            }
+        }
+    }
     private fun file(account: String, section: String): File =
         File(root, "${hash(account)}-${hash(section)}.bin")
 
@@ -97,6 +106,10 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
     }
     private fun write(account: String, section: String, entries: JSONArray) {
         val destination = file(account, section)
+        // A refresh with identical contents need not compress/encrypt/write again.
+        if (destination.isFile && System.currentTimeMillis() - destination.lastModified() <= ttlMillis &&
+            snapshots[destination]?.takeIf { it.modified == destination.lastModified() }
+                ?.rows?.toString() == entries.toString()) return
         val target = AtomicFile(destination)
         val json = JSONObject().put("version", 1).put("section", section)
             .put("rows", entries).toString().toByteArray(Charsets.UTF_8)
@@ -159,6 +172,7 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
                 val past = if (replace) emptyList() else mediaUnsafe(account, section)
                 // Pages arrive newest first. Keep the first 240, not the oldest 240;
                 // after deep scrolling Home must still hydrate with recent media.
+                if (!replace && past.size >= 240) return@runCatching
                 val selected = (past + items).distinctBy(TelegramMedia::mediaKey).take(240)
                 val array = JSONArray()
                 selected.forEach { m -> array.put(JSONObject()

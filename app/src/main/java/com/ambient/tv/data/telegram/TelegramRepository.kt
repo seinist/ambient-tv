@@ -673,13 +673,18 @@ class TelegramRepository @Inject constructor(
 
     /** Real thumbnail for a visible card (see [TelegramMedia.cardImageUrl]); null when unavailable. */
     suspend fun thumbnailFile(chatId: Long, messageId: Int): String? {
-        val key = "${streamEpoch.get()}:$chatId:$messageId"
+        val selected = client ?: return null
+        val identity = selected.cacheIdentity
+        val generation = streamEpoch.get()
+        val key = "$generation:$chatId:$messageId"
         val load = thumbnailLoads.computeIfAbsent(key) {
             // Lazy start prevents a fast cache hit from removing the entry before insertion.
-            scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) { loadThumbnailFile(chatId, messageId) }
+            scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                if (!sameAccount(selected, identity, generation)) null else loadThumbnailFile(chatId, messageId)
+            }
         }
         load.invokeOnCompletion { thumbnailLoads.remove(key, load) }
-        return load.await()
+        return load.await().takeIf { sameAccount(selected, identity, generation) && chatId !in blockedChannels }
     }
 
     /**
@@ -712,8 +717,11 @@ class TelegramRepository @Inject constructor(
         return file.takeIf { sameAccount(selected, identity, generation) && chatId !in blockedChannels }
     }
 
+    // Bound all players and cancelled seek windows to the native media lane budget.
+    private val mediaPartPermits = kotlinx.coroutines.sync.Semaphore(4)
+
     suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray =
-        interactive { loadMediaPart(chatId, messageId, offset) }
+        interactive { mediaPartPermits.withPermit { loadMediaPart(chatId, messageId, offset) } }
 
     private suspend fun loadMediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray {
         val selected = checkNotNull(client) { appContext.getString(R.string.monogram_error_not_authorized) }

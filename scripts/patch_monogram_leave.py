@@ -380,7 +380,7 @@ pub fn ambient_capture_range<T>(
 fn ambient_begin_range(destination: &std::path::Path) -> bool {
     AMBIENT_RANGE.with(|slot| {
         let mut slot = slot.borrow_mut();
-        if let Some(capture) = slot.as_mut().filter(|c| c.destination == destination) {
+        if let Some(capture) = slot.as_mut().filter(|c| c.destination.as_path() == destination) {
             capture.staged = None;
             capture.published = false;
             true
@@ -389,7 +389,7 @@ fn ambient_begin_range(destination: &std::path::Path) -> bool {
 }
 fn ambient_stage_range(destination: &std::path::Path, stage: &std::path::Path, bytes: Vec<u8>) {
     AMBIENT_RANGE.with(|slot| {
-        if let Some(capture) = slot.borrow_mut().as_mut().filter(|c| c.destination == destination) {
+        if let Some(capture) = slot.borrow_mut().as_mut().filter(|c| c.destination.as_path() == destination) {
             capture.staged = Some((stage.to_owned(), bytes));
         }
     });
@@ -398,8 +398,8 @@ fn ambient_stage_range(destination: &std::path::Path, stage: &std::path::Path, b
 fn ambient_publish_range(destination: &std::path::Path, stage: &std::path::Path) -> bool {
     AMBIENT_RANGE.with(|slot| {
         let mut slot = slot.borrow_mut();
-        if let Some(capture) = slot.as_mut().filter(|c| c.destination == destination)
-            && capture.staged.as_ref().is_some_and(|(path, _)| path == stage) {
+        if let Some(capture) = slot.as_mut().filter(|c| c.destination.as_path() == destination)
+            && capture.staged.as_ref().is_some_and(|(path, _)| path.as_path() == stage) {
             capture.published = true;
             return true;
         }
@@ -496,8 +496,9 @@ amend(range_output,
         fs::rename(&self.path, destination)""")
 amend(range_output,
       "        let mut out = if !stream && file_len > 0 {",
-      """        let mut out = if stream && ambient_begin_range(cancellation_path) {
-            AmbientRangeOutput::Memory(std::io::Cursor::new(Vec::new()))
+      """        let ambient_range = stream && ambient_begin_range(cancellation_path);
+        let mut out = if ambient_range {
+            AmbientRangeOutput::Memory(std::io::Cursor::new(Vec::with_capacity(AMBIENT_RANGE_LIMIT as usize)))
         } else if !stream && file_len > 0 {""")
 amend(range_output,
       """            file
@@ -534,7 +535,7 @@ amend(range_output,
                 }
                 if last_part {""",
       """                if stream {
-                    if last_part || written_end >= origin.saturating_add(i64::from(FAST_CHUNK)) {
+                    if !ambient_range || last_part || written_end >= origin.saturating_add(i64::from(FAST_CHUNK)) {
                         break 'download;
                     }
                     if written_end <= next {
@@ -544,24 +545,61 @@ amend(range_output,
                     continue 'download;
                 }
                 if last_part {""")
+amend(range_output,
+      "                    let seek = offset.unwrap_or(next);",
+      "                    let seek = if ambient_range { next } else { offset.unwrap_or(next) };")
+amend(range_output,
+      "                let (flags, cdn_supported) = cdn_fields_for_seek(origin);",
+      """                // CDN's whole-file receiver is inappropriate for a bounded range.
+                let (flags, cdn_supported) = if ambient_range {
+                    (0, None)
+                } else { cdn_fields_for_seek(origin) };""")
 # Keep small and unknown-size transfers at one wire request (old latency fix).
 profile_source = "vendor/mono-rs/crates/mono-proto-media/src/profile.rs"
+add_before(profile_source, "pub fn configured_download_window(profile: DownloadProfile)", """// Opt in from Ambient TV; keep upstream default profile behavior unchanged.
+static AMBIENT_MEDIA_MODE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+pub fn set_ambient_media_mode(enabled: bool) {
+    AMBIENT_MEDIA_MODE.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+pub fn ambient_media_mode() -> bool {
+    AMBIENT_MEDIA_MODE.load(std::sync::atomic::Ordering::Relaxed)
+}
+""", "static AMBIENT_MEDIA_MODE:")
 amend(profile_source,
       "        in_flight: maximum.in_flight.min(policy.pipeline_parts()),",
-      """        in_flight: match profile {
-            DownloadProfile::User => maximum.in_flight.min(policy.pipeline_parts()),
-            _ => 1,
-        },""")
+      """        in_flight: if ambient_media_mode() && profile != DownloadProfile::User {
+            1
+        } else { maximum.in_flight.min(policy.pipeline_parts()) },""")
 client_download = "vendor/mono-rs/crates/mono-proto-client/src/media_download.rs"
 amend(client_download,
       "    let dest = Path::new(&dest_path);\n    let first = download_media_range_on_lane",
       """    // Only known large, complete user downloads benefit from a wide pipeline.
     // Preview and unknown-size requests must not send speculative requests past EOF.
-    let _small_file = (profile == media::DownloadProfile::User
+    let _small_file = (mono_proto_media::profile::ambient_media_mode()
+        && profile == media::DownloadProfile::User
         && media.file_size.is_none_or(|size| size < 2 * 1024 * 1024))
         .then(|| media::bind_download_profile(media::DownloadProfile::Ordinary));
     let dest = Path::new(&dest_path);
     let first = download_media_range_on_lane""")
+amend(client_download,
+      """                drop(admission);
+                cdn_or_origin(""",
+      """                drop(admission);
+                if offset.is_some() && mono_proto_media::profile::ambient_media_mode() {
+                    return media::with_cdn_supported(false, || {
+                        let _admission = client.policy.admit_download(target_dc, large)?;
+                        download_media_range_on_lane_dc(
+                            handle, client, home, api_id, media, dest, offset, target_dc,
+                        )
+                    });
+                }
+                cdn_or_origin(""")
+add_before(ffi, "#[uniffi::export]\npub fn set_download_concurrency(", """#[uniffi::export]
+pub fn set_ambient_media_mode(enabled: bool) {
+    proto_media::profile::set_ambient_media_mode(enabled);
+}
+""", "pub fn set_ambient_media_mode(")
 # Add the byte-returning bridge. Inline/CDN paths retain the existing file sink
 # and are read with an explicit bound; all failures propagate normally.
 add_before(ffi, "#[uniffi::export]\npub fn download_message_thumb(", """#[uniffi::export]

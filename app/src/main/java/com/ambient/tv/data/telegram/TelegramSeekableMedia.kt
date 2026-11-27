@@ -43,15 +43,17 @@ internal class TelegramSeekableMedia(
         while (copied < wanted) {
             val at = position + copied
             if (partStart < 0 || at < partStart || at >= partStart + part.size) {
-                partStart = telegramPartOffset(at)
-                part = try {
-                    loadPart(partStart)
+                val start = telegramPartOffset(at)
+                val loaded = try {
+                    loadPart(start)
                 } catch (error: Exception) {
                     throw IOException("Authenticated Monogram read failed", error)
                 }
-                if (part.isEmpty() || part.size > TELEGRAM_MEDIA_PART_BYTES) {
+                if (loaded.size != telegramExpectedPartSize(size, start)) {
                     throw IOException("Incomplete Monogram media range")
                 }
+                part = loaded
+                partStart = start
                 schedulePrefetch(partStart)
             }
             val within = (at - partStart).toInt()
@@ -97,6 +99,7 @@ internal class TelegramSeekableMedia(
     private fun cancelPrefetch() {
         prefetch.values.forEach { it.cancel(true) }
         prefetch.clear()
+        (prefetcher as? java.util.concurrent.ThreadPoolExecutor)?.purge()
     }
 
     @Synchronized

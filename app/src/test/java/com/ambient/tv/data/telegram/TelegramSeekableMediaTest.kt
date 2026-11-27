@@ -56,6 +56,34 @@ class TelegramSeekableMediaTest {
         source.close()
     }
 
+    @Test fun failedRangeDoesNotRelabelPreviousChunkOnRetry() {
+        val count = TELEGRAM_MEDIA_PART_BYTES
+        val attempts = java.util.concurrent.atomic.AtomicInteger()
+        val source = TelegramSeekableMedia(
+            media(count.toLong() + 1),
+            { offset ->
+                if (offset == 0L) ByteArray(count) { 0x11 }
+                else if (attempts.incrementAndGet() <= 2) throw IOException("temporary failure")
+                else byteArrayOf(0x22)
+            }, { true },
+        )
+        try {
+            val dst = ByteArray(1)
+            assertEquals(1, source.read(0, dst, 1))
+            assertEquals(0x11.toByte(), dst[0])
+            assertTrue(runCatching { source.read(count.toLong(), dst, 1) }.exceptionOrNull() is IOException)
+            assertEquals(1, source.read(count.toLong(), dst, 1))
+            assertEquals(0x22.toByte(), dst[0])
+        } finally { source.close() }
+    }
+
+    @Test fun shortInteriorPartIsRejected() {
+        val source = TelegramSeekableMedia(media(TELEGRAM_MEDIA_PART_BYTES.toLong()), { byteArrayOf(1) }, { true })
+        try {
+            assertTrue(runCatching { source.read(0, ByteArray(1), 1) }.exceptionOrNull() is IOException)
+        } finally { source.close() }
+    }
+
     @Test fun invalidAndProtectedMediaNeverStartLoopbackStream() {
         val protected = media(100).copy(protectedContent = true)
         assertTrue(runCatching {
