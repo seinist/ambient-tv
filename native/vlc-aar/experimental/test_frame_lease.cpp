@@ -79,6 +79,21 @@ int main() {
         assert(lease.complete(true, true));
         assert(vlc.returned == 1 && vlc.fence == -1);
     }
+    // Terminal loss: do not invent a successful consumer fence; return the
+    // original producer fence exactly once.
+    Image lost;
+    int lost_pipe[2];
+    assert(pipe(lost_pipe) == 0);
+    {
+        FrameLease lease(&lost, lost_pipe[0], release, false);
+        assert(!lease.abandon_device_lost());
+        assert(lease.begin_submit());
+        assert(lease.abandon_device_lost());
+        assert(lease.can_destroy_gpu_objects());
+        assert(!lease.has_decoder_image());
+        assert(lost.returned == 1 && lost.fence == lost_pipe[0]);
+    }
+    close(lost_pipe[1]);
     // Unknown submission: never silently return the potentially in-use image.
     Image uncertain;
     {
