@@ -33,7 +33,8 @@ static inline void ambient_hdrplus_spatial_destroy(pl_gpu gpu, struct ambient_hd
 static inline bool ambient_hdrplus_curve_key_equal(const struct ambient_hdrplus *a,
     const struct ambient_hdrplus *b)
 {
-    if (a->window_count != b->window_count || a->target_nits != b->target_nits)
+    if (!a || !b || a->window_count<2 || a->window_count>3 ||
+        a->window_count != b->window_count || a->target_nits != b->target_nits)
         return false;
     for (unsigned i=0; i<a->window_count; ++i) {
         const struct ambient_hdrplus_window *x=&a->windows[i], *y=&b->windows[i];
@@ -51,13 +52,18 @@ static inline bool ambient_hdrplus_curve_key_equal(const struct ambient_hdrplus 
 static inline bool ambient_hdrplus_spatial_curves(pl_gpu gpu, struct ambient_hdrplus_spatial *s,
     const struct ambient_hdrplus *m, float out_min, float out_max)
 {
+    if (!gpu || !s || !m || m->window_count<2 || m->window_count>3 ||
+        !isfinite(out_min) || !isfinite(out_max) || out_min<0.f || out_max<=out_min)
+        return false;
     if (s->valid && s->output_min==out_min && s->output_max==out_max &&
         ambient_hdrplus_curve_key_equal(&s->previous,m)) return true;
     s->valid=false;
     for (unsigned i=0;i<3;++i) {
         const struct ambient_hdrplus_window *w=&m->windows[i<m->window_count?i:0];
         float peak=10000.f*fmaxf(w->maxscl[0],fmaxf(w->maxscl[1],w->maxscl[2]));
-        if (!isfinite(peak) || peak<=out_min || peak>10000.f) return false;
+        if (!isfinite(peak) || peak<=out_min || peak>10000.f ||
+            !isfinite(w->average) || w->average<0.f || w->average>1.f ||
+            w->anchor_count>15) return false;
         float dst=fminf(peak,out_max);
         struct pl_tone_map_params p={
             .function=peak>out_max?&pl_tone_map_st2094_40:&pl_tone_map_clip,
@@ -99,8 +105,8 @@ static const char ambient_hdrplus_mask_glsl[] =
     "  float d=length(v); if(d<=t.z) return 1.0;\n"
     "  return clamp((1.0-d)/max(1.0-t.z,1e-6),0.0,1.0);\n"
     "}\n"
-    "float ahp_curve(int i,float v) {\n"
-    "  float x=clamp(sqrt(max(v,0.0))/ahp_domains[i],0.0,1.0)*255.0;\n"
+    "float ahp_curve(int i,float root) {\n"
+    "  float x=clamp(root/ahp_domains[i],0.0,1.0)*255.0;\n"
     "  int n=int(floor(x));\n"
     "  return mix(texelFetch(ahp_lut,ivec2(n,i),0).r,texelFetch(ahp_lut,ivec2(min(n+1,255),i),0).r,fract(x));\n"
     "}\n";
@@ -108,9 +114,21 @@ static const char ambient_hdrplus_map_glsl[] =
     "vec2 p=floor(ahp_uv*ahp_size);\n"
     "float v=max(0.0,max(color.r,max(color.g,color.b)));\n"
     "float a=ahp_weight(0,p), b=ahp_weight(1,p);\n"
-    "float g=ahp_curve(0,v), l=ahp_curve(1,v), r=ahp_curve(2,v);\n"
-    "float mapped=ahp_layering!=0?mix(mix(g,l,a),r,b):"
-    "(g*max(0.0,1.0-a-b)+l*a+r*b)/max(1.0,a+b);\n"
+    "float root=sqrt(v), mapped;\n"
+    "if(ahp_layering!=0) {\n"
+    "  if(b>=1.0) mapped=ahp_curve(2,root);\n"
+    "  else {\n"
+    "    mapped=a>=1.0?ahp_curve(1,root):ahp_curve(0,root);\n"
+    "    if(a>0.0 && a<1.0) mapped=mix(mapped,ahp_curve(1,root),a);\n"
+    "    if(b>0.0) mapped=mix(mapped,ahp_curve(2,root),b);\n"
+    "  }\n"
+    "} else {\n"
+    "  float g=max(0.0,1.0-a-b);\n"
+    "  mapped=g>0.0?g*ahp_curve(0,root):0.0;\n"
+    "  if(a>0.0) mapped+=a*ahp_curve(1,root);\n"
+    "  if(b>0.0) mapped+=b*ahp_curve(2,root);\n"
+    "  mapped/=max(1.0,a+b);\n"
+    "}\n"
     "color.rgb=v>1e-7?max(color.rgb,vec3(0.0))*(mapped/v):vec3(0.0);\n";
 static inline bool ambient_hdrplus_spatial_render(pl_gpu gpu, pl_log log,
     struct ambient_hdrplus_spatial *s, struct pl_frame *img,
@@ -122,7 +140,10 @@ static inline bool ambient_hdrplus_spatial_render(pl_gpu gpu, pl_log log,
         return false;
     pl_tex input=img->planes[0].texture;
     int w=input->params.w,h=input->params.h;
-    if (w<=0 || h<=0) return false;
+    // The prepass reads the whole source and must never sample its own target.
+    if (w<=0 || h<=0 || input==s->output || !input->params.sampleable ||
+        img->crop.x0!=0.f || img->crop.y0!=0.f ||
+        img->crop.x1!=(float)w || img->crop.y1!=(float)h) return false;
     struct ambient_hdrplus_mask masks[2];
     bool layering;
     if (!ambient_hdrplus_spatial_supported(m,w,h,masks,&layering)) return false;
