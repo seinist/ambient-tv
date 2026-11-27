@@ -86,6 +86,14 @@ typedef struct {
 } AmbientSvpHdrResult;
 int ambient_svp_vk_hdr_stats(AmbientSvpVkPair *,uint32_t phase,const AmbientSvpHdrWindow *,uint32_t count);
 int ambient_svp_vk_hdr_read(const AmbientSvpVkPair *,uint32_t phase,AmbientSvpHdrResult *,uint32_t count);
+/* Optional tracked statistics: source endpoint rectangles plus interpolated
+ * ellipse center; shifts in pixels are bounded to +/-16 and frame edges.
+ * The native motion field is used before collecting the actual pixels.
+ * Existing non-tracked functions and structs are unchanged. */
+typedef struct { uint32_t a[4],b[4],ellipse[2]; } AmbientSvpHdrTrack;
+int ambient_svp_vk_hdr_stats_track(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,
+    const AmbientSvpHdrTrack *,float,uint32_t);
+int ambient_svp_vk_hdr_read_track(const AmbientSvpVkPair *,uint32_t,AmbientSvpHdrResult *,int32_t (*)[2],uint32_t);
 /* After SUCCESSFUL submission of that command buffer, register its
  * unsignaled-at-submit fence. Caller must not destroy/reset the fence
  * until release returns 1. No more recording after sealing. */
