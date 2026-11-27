@@ -5,29 +5,35 @@ cd "$ROOT"
 AAR=native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
 RECEIPT=native/vlc-aar/build/experimental/native-link-receipt.txt
 AUDIT=native/vlc-aar/seek-audit
+ABI="${VLC_SEEK_AUDIT_ABI:-arm64-v8a}"
+[[ "$ABI" == arm64-v8a || "$ABI" == x86_64 ]]
+mode="${1:-}"
+[[ -z "$mode" || "$mode" == --prepare-only || "$mode" == --run-prepared ]]
 # Default is a fresh build for the current checkout; CI supplies its just-built
 # AAR and exact receipt. No installed production APK is touched.
-if [[ "${1:-}" != --prepare-only ]]; then
-    VLC_EXPERIMENTAL_AHB=1 VLC_VULKAN_ABIS=arm64-v8a VLC_NATIVE_LINK_RECEIPT="$RECEIPT" bash scripts/build_vlc_vulkan.sh
+if [[ -z "$mode" ]]; then
+    VLC_EXPERIMENTAL_AHB=1 VLC_VULKAN_ABIS="$ABI" VLC_NATIVE_LINK_RECEIPT="$RECEIPT" bash scripts/build_vlc_vulkan.sh
 fi
 test -s "$AAR" && test -s "$RECEIPT"
 grep -Fx "ambient_head=$(git rev-parse HEAD)" "$RECEIPT"
 grep -Fx "source_hash=$(VLC_EXPERIMENTAL_AHB=1 bash scripts/build_vlc_vulkan.sh --hash)" "$RECEIPT"
-./gradlew -p "$AUDIT" assembleDebug
 APK="$AUDIT/build/outputs/apk/debug/seek-audit-debug.apk"
-test -s "$APK"
-mkdir -p "$AUDIT/build"
-python3 "$AUDIT/generate_fixture.py" "$AUDIT/build/seek-fixture.mp4"
+if [[ "$mode" != --run-prepared ]]; then
+    ./gradlew -p "$AUDIT" -PAUDIT_ABI="$ABI" assembleDebug
+    mkdir -p "$AUDIT/build"
+    python3 "$AUDIT/generate_fixture.py" "$AUDIT/build/seek-fixture.mp4"
+fi
+test -s "$APK" && test -s "$AUDIT/build/seek-fixture.mp4"
 # Keep the AAR's ELF bytes intact in the APK (AGP may otherwise strip them).
-python3 - "$AAR" "$APK" <<'PY'
+python3 - "$AAR" "$APK" "$ABI" <<'PY'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1]) as a, zipfile.ZipFile(sys.argv[2]) as p:
     for name in ("libvlc.so","libvlcjni.so"):
-        assert a.read("jni/arm64-v8a/"+name)==p.read("lib/arm64-v8a/"+name), name
+        assert a.read("jni/"+sys.argv[3]+"/"+name)==p.read("lib/"+sys.argv[3]+"/"+name), name
 PY
-[[ "${1:-}" == --prepare-only ]] && exit 0
+[[ "$mode" == --prepare-only ]] && exit 0
 adb get-state
-[[ "$(adb shell getprop ro.product.cpu.abilist)" == *arm64-v8a* ]]
+[[ ",$(adb shell getprop ro.product.cpu.abilist | tr -d '\r')," == *",$ABI,"* ]]
 PACKAGE=com.ambient.vlcseekaudit
 adb install -r "$APK"
 adb shell run-as "$PACKAGE" mkdir -p files
