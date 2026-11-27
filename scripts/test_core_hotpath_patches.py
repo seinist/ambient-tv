@@ -4,7 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core_hotpath_patches import (BSNES_INPUT, MESEN_OLD, MESEN_NEW, SAMEBOY_OLD, SAMEBOY_NEW,
+from core_hotpath_patches import (BSNES_INPUT, BSNES_ARM_SWAP_OLD, BSNES_ARM_SWAP_NEW,
+                                  BSNES_ARM_INIT_OLD, BSNES_ARM_CALL_OLD, BSNES_ARM_CALL_NEW, MESEN_OLD, MESEN_NEW, SAMEBOY_OLD, SAMEBOY_NEW,
                                   PCE_OLD, PCE_NEW, SGX_OLD, SGX_NEW, NGP_OLD, NGP_NEW,
                                   FIXED_STATE_DECL, FIXED_WRITE_OLD, FIXED_WRITE_NEW,
                                   FIXED_GROW_OLD, FIXED_GROW_NEW, FIXED_SAVE,
@@ -26,18 +27,64 @@ class CoreHotpathTests(unittest.TestCase):
                         'RETRO_API void retro_run()\n{\n\tinput_poll();\n}\n')
             dispatch = "return input_state(libretro_port, libretro_device, libretro_index, libretro_id);"
             libretro.write_text(original)
+            arm = root / "libco/arm.c"
+            arm.parent.mkdir()
+            arm_original = BSNES_ARM_SWAP_OLD + BSNES_ARM_INIT_OLD + BSNES_ARM_CALL_OLD
+            arm.write_text(arm_original)
             program.write_text("changed")
             with self.assertRaises(ValueError):
                 prepare_hotpaths(root, "bsnes")
             self.assertEqual(libretro.read_text(), original)
             program.write_text(dispatch)
+            arm.write_text("changed")
+            with self.assertRaises(ValueError):
+                prepare_hotpaths(root, "bsnes")
+            self.assertEqual(libretro.read_text(), original)
+            self.assertEqual(program.read_text(), dispatch)
+            arm.write_text(arm_original)
             prepare_hotpaths(root, "bsnes")
+            self.assertEqual(arm.read_text(), BSNES_ARM_SWAP_NEW + BSNES_ARM_CALL_NEW)
             self.assertIn("AmbientJoypadFrame ambientFrame(ambientJoypad)", libretro.read_text())
             self.assertIn("ambientJoypad.state(input_state,", program.read_text())
             with self.assertRaises(ValueError):
                 prepare_hotpaths(root, "bsnes")
             with self.assertRaises(ValueError):
                 prepare_hotpaths(root, "unknown")
+
+    def test_bsnes_arm_thumb_thinlto_link(self):
+        clang, lld, readelf = (shutil.which(tool) for tool in ("clang", "ld.lld", "readelf"))
+        if not all((clang, lld, readelf)):
+            self.skipTest("Clang, LLD and readelf required for ARM interworking test")
+        source = "typedef void *cothread_t;\n" + BSNES_ARM_SWAP_NEW + """
+static cothread_t co_active_handle;
+void co_switch(cothread_t handle) {
+  cothread_t co_previous_handle = co_active_handle;
+""" + BSNES_ARM_CALL_NEW + "\n}\n"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            swap = root / "swap.c"
+            swap.write_text(source)
+            caller = root / "caller.c"
+            caller.write_text("extern void co_switch(void *);\n"
+                              "void call_switch(void *p) { co_switch(p); co_switch(p); }\n")
+            flags = [clang, "--target=armv7a-linux-android21", "-mthumb",
+                     "-O3", "-flto=thin", "-fPIC"]
+            objects = []
+            for src in (swap, caller):
+                obj = src.with_suffix(".o")
+                subprocess.run([*flags, "-c", str(src), "-o", str(obj)], check=True)
+                self.assertEqual(obj.read_bytes()[:4], b"BC\xc0\xde")
+                objects.append(str(obj))
+            library = root / "test.so"
+            subprocess.run([*flags, "-fuse-ld=lld", "-nostdlib", "-shared",
+                            "-Wl,--fatal-warnings,--no-undefined", *objects,
+                            "-o", str(library)], check=True)
+            symbols = subprocess.check_output([readelf, "-Ws", str(library)], text=True)
+            rows = [line.split() for line in symbols.splitlines()
+                    if line.split() and line.split()[-1].startswith("co_swap_function")]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0][3], "FUNC")
+            self.assertEqual(int(rows[0][1], 16) & 1, 0)  # ARM, not Thumb.
 
     def test_other_pinned_anchors(self):
         for core, relative, old, new in (
