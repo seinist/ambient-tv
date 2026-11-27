@@ -61,6 +61,7 @@ static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
             if (!(reshape->comp[i].pivots[j]>reshape->comp[i].pivots[j-1])) return false;
     }
     float layer_ratio[2]={1.f,1.f},layer_shift[2]={0.f,0.f},chroma_shift[2]={0.f,0.f};
+    int luma_direct=0;
     if(planes){
         if(!planes->tex[0]||!planes->tex[1]||!planes->tex[2]||n->el_bits!=10)return false;
         const int ew=planes->tex[0]->params.w,eh=planes->tex[0]->params.h;
@@ -76,6 +77,7 @@ static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
         // Layer siting: left horizontally, centered vertically. Chroma
         // siting is separately derived from the software decoder metadata.
         layer_ratio[0]=(float)ew/bl->params.w;layer_ratio[1]=(float)eh/bl->params.h;
+        luma_direct=bl->params.w==ew&&bl->params.h==eh;
         layer_shift[0]=layer_ratio[0]<1.f?-0.5f:0.f;
         chroma_shift[0]=planes->chroma_x;chroma_shift[1]=planes->chroma_y;
     }
@@ -106,6 +108,7 @@ static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
         {.var=pl_var_vec2("fel_layer_ratio"),.data=layer_ratio,.dynamic=true},
         {.var=pl_var_vec2("fel_layer_shift"),.data=layer_shift,.dynamic=true},
         {.var=pl_var_vec2("fel_chroma_shift"),.data=chroma_shift,.dynamic=true},
+        {.var=pl_var_int("fel_luma_direct"),.data=&luma_direct,.dynamic=true},
     };
     pl_shader sh=pl_dispatch_begin(dispatch);
     if (!sh) return false;
@@ -128,18 +131,22 @@ static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
             .variables=plane_vars,.num_variables=sizeof(plane_vars)/sizeof(plane_vars[0]),
             // Coordinates use texel centers; manual bilinear interpolation
             // also works when R16 linear filtering is unavailable.
-            .header="float fel_sample(sampler2D t,vec2 p){"
+            .header="float fel_code(sampler2D t,ivec2 p){"
+                    "return floor(texelFetch(t,p,0).r*65535.0+0.5);}"
+                    "float fel_sample(sampler2D t,vec2 p){"
                     "vec2 q=p-vec2(0.5);ivec2 i=ivec2(floor(q));vec2 f=fract(q);"
                     "ivec2 hi=textureSize(t,0)-ivec2(1);"
-                    "float a=texelFetch(t,clamp(i,ivec2(0),hi),0).r;"
-                    "float b=texelFetch(t,clamp(i+ivec2(1,0),ivec2(0),hi),0).r;"
-                    "float c=texelFetch(t,clamp(i+ivec2(0,1),ivec2(0),hi),0).r;"
-                    "float d=texelFetch(t,clamp(i+ivec2(1,1),ivec2(0),hi),0).r;"
-                    "return mix(mix(a,b,f.x),mix(c,d,f.x),f.y)*65535.0;}",
+                    "float a=fel_code(t,clamp(i,ivec2(0),hi));"
+                    "float b=fel_code(t,clamp(i+ivec2(1,0),ivec2(0),hi));"
+                    "float c=fel_code(t,clamp(i+ivec2(0,1),ivec2(0),hi));"
+                    "float d=fel_code(t,clamp(i+ivec2(1,1),ivec2(0),hi));"
+                    "return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}",
             .body="vec2 ep=(gl_FragCoord.xy-fel_layer_shift)*fel_layer_ratio;"
                   "vec2 cp=(ep-fel_chroma_shift)*0.5;"
-                  "vec3 ec=vec3(fel_sample(fel_y,ep),fel_sample(fel_u,cp),fel_sample(fel_v,cp));"
-                  "vec3 rr=floor(clamp(ec,0.0,1023.0)+0.5)-fel_offset;"
+                  "float ey=fel_luma_direct!=0?fel_code(fel_y,ivec2(gl_FragCoord.xy)):fel_sample(fel_y,ep);"
+                  "vec3 ec=vec3(ey,fel_sample(fel_u,cp),fel_sample(fel_v,cp));"
+                  "vec3 delta=clamp(ec,0.0,1023.0)-fel_offset;"
+                  "vec3 rr=sign(delta)*floor(abs(delta)+0.5);"
                   "vec3 r=sign(rr)*((abs(rr)-0.5)*fel_slope+fel_threshold);"
                   "color.rgb=clamp(color.rgb+clamp(r,-fel_maximum,fel_maximum),0.0,1.0);",
         }))goto fail;
@@ -147,7 +154,8 @@ static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
         .input=PL_SHADER_SIG_COLOR,.output=PL_SHADER_SIG_COLOR,
         .descriptors=&desc[1],.num_descriptors=1,
         .variables=vars,.num_variables=sizeof(vars)/sizeof(vars[0]),
-        .body="vec3 rr=floor(clamp(texelFetch(fel_el,ivec2(gl_FragCoord.xy),0).rgb,0.0,1.0)*fel_codes+0.5)-fel_offset;"
+        .body="vec3 delta=clamp(texelFetch(fel_el,ivec2(gl_FragCoord.xy),0).rgb,0.0,1.0)*fel_codes-fel_offset;"
+              "vec3 rr=sign(delta)*floor(abs(delta)+0.5);"
               "vec3 r=sign(rr)*((abs(rr)-0.5)*fel_slope+fel_threshold);"
               "color.rgb=clamp(color.rgb+clamp(r,-fel_maximum,fel_maximum),0.0,1.0);",
     })) goto fail;
