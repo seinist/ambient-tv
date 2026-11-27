@@ -25,6 +25,7 @@ internal object SystemModuleMaterializer {
         val dex: List<File>,
         val native: Map<String, SystemModuleBinary.Native>,
         val hashes: Map<String, String>,
+        val dexClasses: Set<String> = emptySet(),
     ) {
         fun library(name: String): File {
             if (name !in native) throw SystemModuleTrustException("Unknown module library")
@@ -41,6 +42,7 @@ internal object SystemModuleMaterializer {
         var complete = false
         try {
             val dex = mutableListOf<File>()
+            val dexClasses = mutableSetOf<String>()
             val native = linkedMapOf<String, SystemModuleBinary.Native>()
             val hashes = linkedMapOf<String, String>()
             var expanded = 0L
@@ -100,7 +102,9 @@ internal object SystemModuleMaterializer {
                         "code" -> {
                             if (parts.size != 2 || !Regex("classes([2-9]|[1-9][0-9]+)?[.]dex").matches(target.name))
                                 throw SystemModuleTrustException("Invalid module DEX file")
-                            SystemModuleBinary.dex(target)
+                            for (name in SystemModuleBinary.dex(target)) {
+                                if (!dexClasses.add(name)) throw SystemModuleTrustException("Duplicate class across module DEX files")
+                            }
                             dex += target
                         }
                         "assets", "licenses" -> Unit
@@ -118,7 +122,7 @@ internal object SystemModuleMaterializer {
                     if (it == 0) "classes.dex" else "classes${it + 1}.dex"
                 }) throw SystemModuleTrustException("Non-contiguous module DEX sequence")
             validateNativeDependencies(native, hostLibraries)
-            val result = Materialized(pkg.build, dir, orderedDex, native.toMap(), hashes.toMap())
+            val result = Materialized(pkg.build, dir, orderedDex, native.toMap(), hashes.toMap(), dexClasses.toSet())
             complete = true
             return result
         } finally {
