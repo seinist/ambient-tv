@@ -4,13 +4,15 @@
 #include "mp4.c"
 
 static stream_t fixture_stream;
-static uint8_t bytes[256];
+static uint8_t bytes[1024];
 static size_t position, visible, blocks, peek_at_end, short_read_at;
 static bool seekable, misdirect_seek, misdirect_read;
 static uint64_t wrong_seek_at=UINT64_MAX;
 static MP4_Box_t look_root,look_el,look_mid;
 static unsigned root_frees,el_frees,mid_frees,chunk_reads;
 static bool have_mid;
+static MP4_Box_t look_extra[9];
+static unsigned extra_count,extra_frees[9];
 
 uint64_t vlc_stream_Tell(const stream_t *stream)
 {
@@ -74,6 +76,8 @@ MP4_Box_t *MP4_BoxGetNextChunk(stream_t *stream)
 {
     assert(stream==&fixture_stream);
     MP4_Box_t *next=have_mid&&position==look_mid.i_pos?&look_mid:&look_el;
+    for(unsigned i=0;i<extra_count;i++)
+        if(position==look_extra[i].i_pos){next=&look_extra[i];break;}
     assert(position==next->i_pos);
     ++chunk_reads;
     if(vlc_stream_Read(stream,NULL,next->i_size)!=(ssize_t)next->i_size)return NULL;
@@ -94,7 +98,12 @@ void MP4_BoxFree(MP4_Box_t *box)
 {
     if(box==&look_root){assert(!box->p_first);++root_frees;}
     else if(box==&look_mid)++mid_frees;
-    else{assert(box==&look_el);++el_frees;}
+    else if(box==&look_el)++el_frees;
+    else{
+        unsigned i=0;
+        while(i<extra_count&&box!=&look_extra[i])++i;
+        assert(i<extra_count);++extra_frees[i];
+    }
 }
 vlc_frame_t *vlc_frame_Alloc(size_t size)
 {
@@ -135,7 +144,7 @@ static void reset_stream(bool can_seek)
     position=100;visible=132;seekable=can_seek;
     short_read_at=SIZE_MAX;peek_at_end=0;misdirect_seek=misdirect_read=false;
     wrong_seek_at=UINT64_MAX;root_frees=el_frees=mid_frees=chunk_reads=0;
-    have_mid=false;
+    have_mid=false;extra_count=0;memset(extra_frees,0,sizeof(extra_frees));
 }
 
 static void test_segment_header(demux_t *d,demux_sys_t *sys)
@@ -549,6 +558,95 @@ static void test_timed_intermediate_lookahead(void)
         }
     }
 }
+/* Fill the real replay queue to its boundary, then replay each independent
+ * audio fragment with a changing duration and an implicit next clock. */
+static void test_multiple_timed_intermediates(void)
+{
+    for(unsigned mode=0;mode<2;mode++){
+        for(unsigned n=2;n<=9;n+=(n==2?6:1)){
+            reset_stream(mode!=0);extra_count=n;
+            mp4_track_t tracks[3]={{.i_track_ID=1,.b_ok=true,.i_timescale=1000,
+                .ambient_fel_el_id=2},{.i_track_ID=2,.b_ok=true,.i_timescale=1000,
+                .ambient_fel_hidden=true,.ambient_fel_separate=true},
+                {.i_track_ID=3,.b_ok=true,.i_timescale=48000}};
+            demux_sys_t sys={.i_tracks=3,.track=tracks,.b_seekable=mode!=0};
+            demux_t d={.s=&fixture_stream,.p_sys=&sys};
+            MP4_Box_data_mfhd_t seq[11]={0};
+            MP4_Box_data_tfhd_t tf[10]={0};
+            MP4_Box_data_trun_t tr[10]={0};
+            MP4_Box_t run[10]={0},header[10]={0},traf[10]={0},mfhd[11]={0};
+            MP4_Box_data_tfdt_t dt={.i_base_media_decode_time=48000};
+            MP4_Box_t clock={.i_type=ATOM_tfdt,.data.p_tfdt=&dt};
+            seq[0].i_sequence_number=7;
+            mfhd[0]=(MP4_Box_t){.i_type=ATOM_mfhd,.data.p_mfhd=&seq[0]};
+            MP4_Box_t bl={.i_type=ATOM_moof,.i_pos=0,.i_size=100,.p_first=&mfhd[0]};
+            for(unsigned i=0;i<=n;i++){
+                size_t pos=112+52*i;
+                seq[i+1].i_sequence_number=8+i;
+                tf[i]=(MP4_Box_data_tfhd_t){.i_track_ID=i<n?3:2,
+                    .i_flags=MP4_TFHD_DEFAULT_BASE_IS_MOOF|MP4_TFHD_DFLT_SAMPLE_SIZE|
+                        MP4_TFHD_DFLT_SAMPLE_DURATION,
+                    .i_default_sample_size=4,.i_default_sample_duration=i+1};
+                tr[i]=(MP4_Box_data_trun_t){.i_flags=MP4_TRUN_DATA_OFFSET,
+                    .i_sample_count=1,.i_data_offset=48};
+                run[i]=(MP4_Box_t){.i_type=ATOM_trun,.data.p_trun=&tr[i]};
+                header[i]=(MP4_Box_t){.i_type=ATOM_tfhd,.data.p_tfhd=&tf[i],.p_next=&run[i]};
+                traf[i]=(MP4_Box_t){.i_type=ATOM_traf,.p_first=&header[i]};
+                mfhd[i+1]=(MP4_Box_t){.i_type=ATOM_mfhd,.data.p_mfhd=&seq[i+1],.p_next=&traf[i]};
+                MP4_Box_t *m=i<n?&look_extra[i]:&look_el;
+                *m=(MP4_Box_t){.i_type=ATOM_moof,.i_pos=pos,.i_size=40,.p_first=&mfhd[i+1]};
+                box(pos,40,"moof");box(pos+40,12,"mdat");
+                memset(bytes+pos+48,(int)(i+1),4);
+            }
+            clock.p_next=&run[0];header[0].p_next=&clock;
+            visible=112+52*(n+1);sys.context.ambient_fel_required_end=112;
+            look_root=(MP4_Box_t){0};
+            const bool ok=MP4_FEL_Lookahead(&d,&bl);
+            assert(ok==(n<=8));
+            if(!ok){
+                assert(!blocks&&!sys.ambient_fel_replay_count&&!sys.context.ambient_fel_el_moof);
+                for(unsigned i=0;i<n;i++)assert(extra_frees[i]==1);
+                assert(!el_frees&&sys.b_error==!mode);
+                if(mode)assert(position==100);
+                continue;
+            }
+            assert(sys.ambient_fel_replay_count==n&&blocks==(mode?0:n+2));
+            sys.context.i_lastseqnumber=7;
+            tracks[0].ambient_fel_clock_valid=tracks[0].ambient_fel_sequence_proven=true;
+            tracks[0].ambient_fel_bl_end=tracks[0].ambient_fel_el_end=1;
+            assert(!MP4_FEL_ReplayNext(&d));
+            assert(MP4_FEL_AdvanceReplay(&d));
+            assert(!MP4_FEL_AdvanceReplay(&d));
+            MP4_FEL_ReleaseCaches(&sys);
+            stime_t time=48000;
+            for(unsigned i=0;i<n;i++){
+                assert(MP4_FEL_ReplayNext(&d));
+                assert(!MP4_FEL_ReplayNext(&d));
+                assert(sys.ambient_fel_replay_active&&!sys.ambient_fel_replay_ready);
+                assert(sys.context.i_lastseqnumber==8+i&&tracks[2].i_time==time);
+                assert(tracks[2].context.i_default_sample_duration==i+1);
+                uint64_t offset=160+52*i;
+                assert(tracks[2].context.i_trun_sample_pos==offset);
+                assert(MP4_FEL_ValidatePayloads(&sys));
+                block_t *audio=mode?MP4_FEL_ReadExact(d.s,offset,4):
+                    MP4_FEL_ReadCached(&sys,false,offset,4);
+                assert(audio&&audio->i_buffer==4&&audio->p_buffer[0]==i+1);
+                block_Release(audio);
+                // Emulate the normal track reader's committed sample advance.
+                time+=i+1;tracks[2].i_time=time;
+                assert(MP4_FEL_AdvanceReplay(&d));
+                MP4_FEL_ReleaseCaches(&sys);
+                if(i+1<n)assert(sys.ambient_fel_replay_ready&&!sys.ambient_fel_replay_active);
+            }
+            assert(position==visible&&sys.context.i_lastseqnumber==8+n);
+            assert(!sys.ambient_fel_replay_count&&!sys.ambient_fel_replay_active);
+            assert(!MP4_FEL_AdvanceReplay(&d)&&!MP4_FEL_ReplayNext(&d));
+            FragResetContext(&sys);MP4_FEL_ClearReplay(&sys);
+            assert(!blocks&&el_frees==1);
+            for(unsigned i=0;i<n;i++)assert(extra_frees[i]==1);
+        }
+    }
+}
 int main(void)
 {
     mp4_track_t track={.i_track_ID=1,.b_ok=true,.i_timescale=1000};
@@ -562,6 +660,7 @@ int main(void)
     test_prepare_paired_fragment();
     test_adjacent_lookahead();
     test_timed_intermediate_lookahead();
+    test_multiple_timed_intermediates();
     MP4_Box_data_tfhd_t tfhd={.i_track_ID=1,
         .i_flags=MP4_TFHD_DEFAULT_BASE_IS_MOOF|MP4_TFHD_DFLT_SAMPLE_SIZE|
             MP4_TFHD_DFLT_SAMPLE_DURATION,
