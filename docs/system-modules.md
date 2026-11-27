@@ -26,7 +26,7 @@ Release tags: modules-*. Each release includes manifest.json and manifest.json.s
 trust key may authenticate a release. Asset names are
 module--abi--profile.zip. Each signed entry binds the module, ABI, profile,
 monotonic module version, exact host API, minimum Android SDK, asset byte count
-and lowercase SHA-256. Supported profiles: baseline, optimized, optimized-a57.
+and lowercase SHA-256, with optional exact module dependency versions. Supported profiles: baseline, optimized, optimized-a57.
 Cortex-A57 applies only to ARM64 and is explicitly selected; architecture-neutral
 packages use baseline only. Resolve the actual process ABI, not hardware ABI.
 An authenticated missing candidate permits fallback; invalid signatures do not.
@@ -38,22 +38,22 @@ the trust key is passed by the caller, which must pin it. SystemModuleTransport 
 SystemModuleStore stages the verified ZIP and its signed catalog, checks bounded
 archive entries, persists a monotonic version floor and atomically replaces the
 selection pointer. Rollback re-authenticates the previous archive. Removal clears
-the selection but preserves the version floor. No executable files are extracted
-or loaded yet. The caller must supply the pinned key and private storage root;
-release discovery, runtime integration and safe garbage collection remain open.
+the selection but preserves the version floor. SystemModuleMaterializer extracts
+verified packages into new private trees and validates each binary before the
+SystemModuleRuntime activates a host-approved entrypoint. The caller must supply
+the pinned key, process ABI, host API, and module contracts. No production engine
+uses this loader yet; release discovery and safe garbage collection remain open.
 
 ## Next implementation stages
 
 1. Extend the implemented bounded HTTPS transport and private ZIP store with
    release discovery, cancellable streaming/progress, a pinned-key host factory,
-   safe materialization (regular files only, no symlinks), per-file hashes, ELF
-   ABI and 16 KiB checks, directory durability and safe garbage collection.
-   Reject unknown dependencies and dependency cycles. Never load a partially
-   installed package.
-2. Versioned module host API and process-start loader with isolated classloader,
-   read-only executable DEX files and native dependency resolution. No mixing
-   incompatible JNI/UniFFI/JNA bindings. Keep non-optional UI in the APK; replace
-   compile-time availability gates with reactive installed/usable state.
+   directory durability validation and safe garbage collection. Keep the existing
+   verified archive, materialization and dependency checks.
+2. Integrate the host-approved runtime loader and stable host API into the app's
+   production initialization; audit JNI/UniFFI/JNA boundaries and native namespace
+   behavior. Keep non-optional UI in the APK; replace compile-time availability
+   gates with reactive installed/usable state.
 3. Monogram first: keep TelegramRepository and the UI in the host, relocate
    adapter and matched MTProto/UniFFI/JNA/Rustls package; preserve session data.
    Test credentials, login, restoration, logout, thumbnails and video seeking.
@@ -87,3 +87,38 @@ must match the signed package size when provided; streamed byte count and hash
 are checked even for chunked responses. Tests cover signed malformed ZIPs,
 symlink attributes, local header mismatches and invalid rollback targets.
 Real-device filesystem durability and CI execution still need verification.
+
+### Executable materialization and activation
+
+The signed ZIP is rechecked before and after extraction. Every entry is
+created as a regular file in a fresh private directory; writable descriptors
+are opened before setting read-only permissions, as required for dynamic DEX.
+The extracted bytes are hashed and reread. Before activation the runtime
+rejects unexpected files, symlinks, missing files and changed hashes.
+
+ELF validation requires the exact Android ABI, little endian ET_DYN, bounded
+program headers, at least one executable segment, 16 KiB (or larger device)
+alignment, no interpreter, executable stack, writable executable segment,
+RPATH/RUNPATH or text relocations. Dynamic string tables, SONAME and DT_NEEDED
+are checked. Only an explicit Android NDK library allowlist or libraries in
+the same package satisfy native dependencies. DEX supports standalone
+035/037/038/039/040 files with bounded header tables, map entries, SHA-1 and
+Adler-32. DEX 041 containers are deliberately not supported yet; ART performs
+final bytecode verification. Module dependency versions are exact, with
+unknown, missing, conflicting or cyclic dependencies rejected before activation.
+
+A host contract fixes the entrypoint class (never supplied by the release).
+DEX adapters use DexClassLoader with the host loader as parent and the package's
+own native search directory; the entrypoint must originate from that loader and
+implement the preserved host interface. Native-only modules can be explicitly
+allowed by a host contract, load dependencies first via absolute System.load,
+and reject bundled library name collisions. Asset-only modules reject code.
+The runtime prepares the whole graph before executing any new code and never
+hot-swaps loaded modules. Loaded or partially activated trees are retained
+until safe process-lifetime reclamation is implemented. Signed code is trusted
+with the app's privileges; a classloader is not a security sandbox.
+
+Initial restrictions: cross-module native linking, shared SONAME coexistence
+(including libc++_shared), alternate DEX formats, and full APK native override
+semantics need engine-specific design and Android device validation. The
+generic runtime is not wired into the production engine paths yet.
