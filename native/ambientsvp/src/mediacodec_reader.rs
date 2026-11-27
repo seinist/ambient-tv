@@ -178,7 +178,7 @@ mod tests{
     use super::*;
     #[test]
     fn rejects_protected_and_invalid_crop_without_misreading_padding(){
-        let d=Desc{width:128,height:80,layers:1,format:PRIVATE,usage:GPU_SAMPLED_IMAGE,..Default::default()};
+        let d=Desc{width:128,height:80,layers:1,format:PRIVATE as u32,usage:GPU_SAMPLED_IMAGE,..Default::default()};
         let c=Crop{left:2,top:4,right:98,bottom:70};
         let f=checked_info(c,d,PRIVATE,10).unwrap();
         assert_eq!((f.width,f.height,f.buffer_width,f.buffer_height),(96,66,128,80));
