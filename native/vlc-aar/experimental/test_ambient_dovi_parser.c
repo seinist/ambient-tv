@@ -10,9 +10,10 @@ static uint8_t *fixture(unsigned max_pq, unsigned profile, int *size) {
     AVDOVIMetadata *m = av_dovi_metadata_alloc(NULL);
     assert(m);
     AVDOVIRpuDataHeader *h = av_dovi_get_header(m);
+    const bool wide=profile==7 && max_pq==3300;
     *h = (AVDOVIRpuDataHeader) {
         .rpu_type=2, .vdr_rpu_profile=profile==5?0:1,
-        .coef_data_type=RPU_COEFF_FIXED, .coef_log2_denom=13,
+        .coef_data_type=RPU_COEFF_FIXED, .coef_log2_denom=wide?32:13,
         .bl_video_full_range_flag=profile==5, .bl_bit_depth=10,
         .el_bit_depth=10, .vdr_bit_depth=12, .disable_residual_flag=profile!=7,
         .el_spatial_resampling_filter_flag=profile==7,
@@ -26,14 +27,18 @@ static uint8_t *fixture(unsigned max_pq, unsigned profile, int *size) {
             map->nlq[i].nlq_offset=512+i;
             map->nlq[i].linear_deadzone_slope=128+i;
             map->nlq[i].linear_deadzone_threshold=64+i;
-            map->nlq[i].vdr_in_max=1024+i;
+            map->nlq[i].vdr_in_max=wide?(UINT64_C(1)<<32)+i:1024+i;
+            if(wide){
+                map->nlq[i].linear_deadzone_slope=(UINT64_C(1)<<32)+128+i;
+                map->nlq[i].linear_deadzone_threshold=(UINT64_C(1)<<32)+64+i;
+            }
         }
     }
     for (unsigned i=0;i<3;++i) {
         AVDOVIReshapingCurve *curve=&map->curves[i];
         curve->num_pivots=2; curve->pivots[0]=0; curve->pivots[1]=1023;
         curve->mapping_idc[0]=AV_DOVI_MAPPING_POLYNOMIAL;
-        curve->poly_order[0]=1; curve->poly_coef[0][1]=8192;
+        curve->poly_order[0]=1; curve->poly_coef[0][1]=wide?(INT64_C(1)<<32):8192;
     }
     *av_dovi_get_color(m)=ff_dovi_color_default;
     av_dovi_get_color(m)->source_max_pq=max_pq;
@@ -108,6 +113,16 @@ int main(void) {
     rpu[n-2]^=1;
     assert(av_ambient_dovi_parse(p,rpu,n,&m)<0);
     assert(!memcmp(&before,&m,sizeof(m)));
+    av_free(rpu);
+    rpu=fixture(3300,7,&n);
+    assert(av_ambient_dovi_parse(p,rpu,n,&m)==0);
+    assert(m.coef_log2_denom==32 && m.residual_present);
+    for(unsigned i=0;i<3;i++){
+        assert(m.nlq_slope[i]==(UINT64_C(1)<<32)+128+i);
+        assert(m.nlq_threshold[i]==(UINT64_C(1)<<32)+64+i);
+        assert(m.nlq_maximum[i]==(UINT64_C(1)<<32)+i);
+        assert(m.curves[i].poly_coef[0][1]==(INT64_C(1)<<32));
+    }
     av_free(rpu);
     rpu=fixture(3000,8,&n);
     assert(av_ambient_dovi_parse(p,rpu,n,&m)<0);
