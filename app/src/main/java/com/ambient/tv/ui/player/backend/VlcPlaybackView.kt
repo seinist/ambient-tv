@@ -621,7 +621,7 @@ class VlcPlaybackController(
         renderSurfaceSize = width to height
         // Native stop owns the MediaPlayer until completion. Geometry is re-applied when
         // its new media opens instead of racing that stop on the main thread.
-        if (restartStop != null || restartStopFailed || dvRetirementPending) return
+        if (vulkanFallbackPosted || restartStop != null || restartStopFailed || dvRetirementPending) return
         runCatching {
             // The host already fits the surface. Fill it instead of preserving source DAR again.
             player.setAspectRatio("$width:$height")
@@ -670,7 +670,7 @@ class VlcPlaybackController(
         player.vlcVout.addCallback(surfaceCallback)
         val eventPlayer = player
         player.setEventListener { event ->
-            if (released || player !== eventPlayer || restartStop != null) return@setEventListener
+            if (released || player !== eventPlayer || vulkanFallbackPosted || restartStop != null) return@setEventListener
             frameDropSamples.onEvent(event.type,
                 if (event.type == MediaPlayer.Event.Buffering) event.buffering else 100f)
             when (event.type) {
@@ -1440,6 +1440,8 @@ class VlcPlaybackController(
         forceOutputRebuild = true
         vulkanFallbackPosted = true
         openingOrRestarting = true
+        pendingSeekTask?.let(pendingSeekHandler::removeCallbacks)
+        pendingSeekTask = null
         pendingSeekHandler.post {
             vulkanFallbackPosted = false
             if (!released) restartAfterStop(pendingRestorePositionMs ?: position, desiredPlayWhenReady)
