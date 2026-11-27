@@ -69,6 +69,7 @@ data class MpvAccelerationPlan(
      * back to the next hwdec entry when the interop is unavailable. Off after a recorded failure.
      */
     val zeroCopy: Boolean = false,
+    val svpResident: Boolean = false,
 ) {
     val vulkan get() = output == "vulkan"
     val gpu get() = output == "gpu" || vulkan
@@ -77,7 +78,8 @@ data class MpvAccelerationPlan(
     val hwdec get() = when {
         decoder == "software" -> "no"
         decoder == "vulkan" -> "vulkan,mediacodec-copy"
-        // gpu-next/Vulkan has no MediaCodec interop and needs CPU-accessible frames.
+        vulkan && svpResident -> MPV_ZERO_COPY_HWDEC
+        // Unpatched gpu-next/Vulkan needs CPU-accessible MediaCodec frames.
         vulkan -> "mediacodec-copy"
         // OpenGL: zero-copy through AImageReader first, mpv falls back to copy-back itself.
         // A runtime copy→zero-copy switch is never made (black plane after a decoder switch).
@@ -91,12 +93,22 @@ data class MpvAccelerationPlan(
      */
     fun hwdecForProcessing(copyBack: Boolean, deinterlace: Boolean, cpuFrames: Boolean = copyBack): String = when {
         decoder == "software" -> "no"
+        svpResident && (cpuFrames || deinterlace) -> if (decoder == "vulkan") "vulkan-copy,mediacodec-copy" else "mediacodec-copy"
         decoder == "vulkan" && (cpuFrames || deinterlace) -> "vulkan-copy,mediacodec-copy"
         vulkan -> hwdec
         copyBack || deinterlace -> "mediacodec-copy"
         else -> hwdec
     }
 }
+
+/** Resident transport is only chosen before decoder creation. Native profile,
+ * extension, bit depth and surface checks remain authoritative. */
+internal fun MpvAccelerationPlan.withSvpResident(
+    options: MpvImageOptions, supported: Boolean, hdr: Boolean,
+): MpvAccelerationPlan = copy(svpResident = supported && vulkan && decoder != "software" &&
+    !hdr && options.svpMode != "off" && svpResidentRequested(options.svp) &&
+    options.denoise == "off" && options.deblock == "off" &&
+    mpvImageShaderKeys(options, sdr = true).none { MPV_IMAGE_SHADERS[it]?.requiresCopyBack == true })
 
 internal const val MPV_ZERO_COPY_HWDEC = "mediacodec,mediacodec-copy"
 
