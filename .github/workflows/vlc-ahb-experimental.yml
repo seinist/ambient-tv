@@ -69,11 +69,31 @@ jobs:
           [[ "$normal_hash" != "$experimental_hash" ]]
           bash scripts/test_vlc_ahb_import.sh
 
+  ffmpeg-rpu-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: FFmpeg/FFmpeg
+          ref: 946fcce07b6dcd0331c8cc609192aeff5e1924f8
+          path: .ci/ffmpeg
+          persist-credentials: false
+      - name: Compile and exercise the real pinned FFmpeg RPU parser
+        run: |
+          cd .ci/ffmpeg
+          git apply "$GITHUB_WORKSPACE/native/vlc-aar/experimental/ffmpeg-patches/ambient-dovi-parser.patch"
+          ./configure --disable-everything --disable-autodetect --disable-programs --disable-doc --disable-network --disable-x86asm --disable-shared --enable-static --enable-decoder=hevc --disable-avdevice --disable-avfilter --disable-swscale --disable-swresample --disable-avformat
+          make -j2 libavcodec/libavcodec.a libavutil/libavutil.a
+          cc -I libavcodec "$GITHUB_WORKSPACE/native/vlc-aar/experimental/test_ambient_dovi_parser.c" libavcodec/libavcodec.a libavutil/libavutil.a -lm -pthread -o test-ambient-dovi
+          ./test-ambient-dovi
+
   linked-arm64-aar:
     # Only the repository-owned experiment branch can spend time building the
     # whole native stack. No release credentials or publishing step.
     if: github.event_name == 'workflow_dispatch' || (github.head_ref == 'experiment/vlc-vulkan-ahb-import' && github.event.pull_request.head.repo.full_name == github.repository)
-    needs: ndk-contract
+    needs: [ndk-contract, ffmpeg-rpu-contract]
     # Let an expensive linked build finish even while a newer commit is
     # audited. GitHub keeps only the newest queued build in this group.
     concurrency:

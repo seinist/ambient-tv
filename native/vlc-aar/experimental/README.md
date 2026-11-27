@@ -149,3 +149,5 @@ References:
 - https://developer.android.com/ndk/reference/group/a-data-space
 
 The contract CI additionally applies the reviewed production VLC patch stack before staging the experiment. The MediaTek HEVC Surface fallback is retained; the experimental patch does not overlap its inserted guard.
+
+The experimental contrib build now adds a private, statically linked interface to FFmpeg's existing RPU parser. It validates CRC, profile 8, 10-bit base layer, no residual/extended mapping, bounds on pivots and coefficients, and returns a value snapshot. The host CI builds the pinned actual FFmpeg decoder and exercises allocation, invalid RPU handling and flush. This parser interface is not yet attached to MediaCodec output pictures; the production FFmpeg source and normal AAR are untouched.

@@ -1,0 +1,147 @@
+diff --git a/libavcodec/ambient_dovi_parser.h b/libavcodec/ambient_dovi_parser.h
+new file mode 100644
+--- /dev/null
++++ b/libavcodec/ambient_dovi_parser.h
+@@ -0,0 +1,32 @@
++#pragma once
++/* Private Ambient TV static-link interface, built against the pinned FFmpeg.
++ * No FFmpeg-private types cross the library boundary. */
++#include <stddef.h>
++#include <stdint.h>
++#ifdef __cplusplus
++extern "C" {
++#endif
++struct ambient_dovi_curve {
++    uint8_t num_pivots;
++    uint16_t pivots[9];
++    uint8_t mapping[8], poly_order[8], mmr_order[8];
++    int64_t poly_coef[8][3], mmr_constant[8], mmr_coef[8][3][7];
++};
++struct ambient_dovi_metadata {
++    uint8_t coef_log2_denom, bl_bit_depth, el_bit_depth, full_range;
++    float nonlinear_offset[3], nonlinear_matrix[9], linear_matrix[9];
++    uint16_t source_min_pq, source_max_pq;
++    struct ambient_dovi_curve curves[3];
++};
++struct ambient_dovi_parser;
++struct ambient_dovi_parser *av_ambient_dovi_alloc(void);
++void av_ambient_dovi_flush(struct ambient_dovi_parser *);
++void av_ambient_dovi_free(struct ambient_dovi_parser *);
++/* Unescaped RPU beginning with byte 25, single-layer profile 8 only.
++ * Returns zero on success, a negative AVERROR on any unsupported/invalid RPU.
++ * The output is a value snapshot, not borrowed parser state. */
++int av_ambient_dovi_parse(struct ambient_dovi_parser *, const uint8_t *, size_t,
++                         struct ambient_dovi_metadata *);
++#ifdef __cplusplus
++}
++#endif
+diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
+--- a/libavcodec/dovi_rpudec.c
++++ b/libavcodec/dovi_rpudec.c
+@@ -747,4 +747,106 @@
+     }
+ 
+     return 0;
+ }
++
++// Ambient TV: constrained, opaque interface to the existing FFmpeg RPU parser.
++// This file is compiled in the same pinned static libavcodec, not against an
++// installed private ABI. The original HEVC decoder is unchanged.
++#include "ambient_dovi_parser.h"
++
++struct ambient_dovi_parser { DOVIContext ctx; };
++
++struct ambient_dovi_parser *av_ambient_dovi_alloc(void)
++{
++    struct ambient_dovi_parser *p = av_mallocz(sizeof(*p));
++    if (p) p->ctx.cfg.dv_profile = 8;
++    return p;
++}
++
++void av_ambient_dovi_flush(struct ambient_dovi_parser *p)
++{
++    if (p) {
++        ff_dovi_ctx_flush(&p->ctx);
++        p->ctx.cfg.dv_profile = 8;
++    }
++}
++
++void av_ambient_dovi_free(struct ambient_dovi_parser *p)
++{
++    if (p) {
++        ff_dovi_ctx_unref(&p->ctx);
++        av_free(p);
++    }
++}
++
++int av_ambient_dovi_parse(struct ambient_dovi_parser *p, const uint8_t *rpu,
++                         size_t size, struct ambient_dovi_metadata *out)
++{
++    if (!p || !rpu || !out || size < 7 || size > 65536 ||
++        rpu[0] != 25 || (rpu[1] >> 2) != 2)
++        return AVERROR_INVALIDDATA;
++    // FFmpeg bit readers require zero padding, even for caller-owned input.
++    uint8_t *padded = av_mallocz(size + AV_INPUT_BUFFER_PADDING_SIZE);
++    if (!padded) return AVERROR(ENOMEM);
++    memcpy(padded, rpu, size);
++    int ret = ff_dovi_rpu_parse(&p->ctx, padded, size, AV_EF_CRCCHECK | AV_EF_EXPLODE);
++    av_free(padded);
++    if (ret < 0) goto invalid;
++    const AVDOVIRpuDataHeader *h = &p->ctx.header;
++    const AVDOVIDataMapping *m = p->ctx.mapping;
++    const AVDOVIColorMetadata *c = p->ctx.color;
++    // Never approximate an enhancement layer, higher precision or extended
++    // mapping. Only the single-layer 10-bit profile-8 subset is enabled.
++    if (!m || !c || h->rpu_type != 2 || ff_dovi_guess_profile_hevc(h) != 8 ||
++        h->bl_bit_depth != 10 || !h->disable_residual_flag ||
++        h->ext_mapping_idc_0_4 || h->ext_mapping_idc_5_7 ||
++        h->coef_log2_denom < 13 || h->coef_log2_denom > 32 ||
++        m->nlq_method_idc != AV_DOVI_NLQ_NONE ||
++        c->source_min_pq > c->source_max_pq || c->source_max_pq > 4095)
++        goto invalid;
++    struct ambient_dovi_metadata dst = {0};
++    dst.coef_log2_denom = h->coef_log2_denom;
++    dst.bl_bit_depth = h->bl_bit_depth;
++    dst.el_bit_depth = h->el_bit_depth;
++    dst.full_range = h->bl_video_full_range_flag;
++    dst.source_min_pq = c->source_min_pq;
++    dst.source_max_pq = c->source_max_pq;
++    for (unsigned i = 0; i < 3; ++i) {
++        if (!c->ycc_to_rgb_offset[i].den) goto invalid;
++        dst.nonlinear_offset[i] = av_q2d(c->ycc_to_rgb_offset[i]);
++    }
++    for (unsigned i = 0; i < 9; ++i) {
++        if (!c->ycc_to_rgb_matrix[i].den || !c->rgb_to_lms_matrix[i].den) goto invalid;
++        dst.nonlinear_matrix[i] = av_q2d(c->ycc_to_rgb_matrix[i]);
++        dst.linear_matrix[i] = av_q2d(c->rgb_to_lms_matrix[i]);
++    }
++    for (unsigned i = 0; i < 3; ++i) {
++        const AVDOVIReshapingCurve *src = &m->curves[i];
++        struct ambient_dovi_curve *d = &dst.curves[i];
++        if (src->num_pivots < 2 || src->num_pivots > 9) goto invalid;
++        d->num_pivots = src->num_pivots;
++        for (unsigned j = 0; j < src->num_pivots; ++j) {
++            if (src->pivots[j] > 1023 || (j && src->pivots[j] <= src->pivots[j-1]))
++                goto invalid;
++            d->pivots[j] = src->pivots[j];
++        }
++        for (unsigned j = 0; j + 1 < src->num_pivots; ++j) {
++            d->mapping[j] = src->mapping_idc[j];
++            if (src->mapping_idc[j] == AV_DOVI_MAPPING_POLYNOMIAL) {
++                if (src->poly_order[j] < 1 || src->poly_order[j] > 2) goto invalid;
++                d->poly_order[j] = src->poly_order[j];
++                memcpy(d->poly_coef[j], src->poly_coef[j], sizeof(d->poly_coef[j]));
++            } else if (src->mapping_idc[j] == AV_DOVI_MAPPING_MMR) {
++                if (src->mmr_order[j] < 1 || src->mmr_order[j] > 3) goto invalid;
++                d->mmr_order[j] = src->mmr_order[j];
++                d->mmr_constant[j] = src->mmr_constant[j];
++                memcpy(d->mmr_coef[j], src->mmr_coef[j], sizeof(d->mmr_coef[j]));
++            } else goto invalid;
++        }
++    }
++    *out = dst;
++    return 0;
++invalid:
++    av_ambient_dovi_flush(p);
++    return AVERROR_INVALIDDATA;
++}

@@ -55,4 +55,19 @@ done
 cp "$TMP/ambient_sample_spv.h" "$dest/ambient_sample_spv.h"
 cp "$SRC/hdr10plus_payload.h" "$VLC/modules/codec/omxil/hdr10plus_payload.h"
 cp "$SRC/dovi_rpu_au.h" "$VLC/modules/codec/omxil/dovi_rpu_au.h"
+cp "$SRC/ambient_dovi_parser.h" "$VLC/modules/codec/omxil/ambient_dovi_parser.h"
+# The reviewed production FFmpeg 9 patch is already applied in the linked
+# build. Keep the additional private RPU interface isolated to this tree.
+cp "$SRC/ffmpeg-patches/ambient-dovi-parser.patch" "$VLC/contrib/src/ffmpeg/ambient-dovi-parser.patch"
+python3 - "$VLC/contrib/src/ffmpeg/rules.mak" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+anchor = "\t$(APPLY) $(SRC)/ffmpeg/0010-restore-v308-v408-v410-decoders.patch\n"
+line = "\t$(APPLY) $(SRC)/ffmpeg/ambient-dovi-parser.patch\n"
+if line not in s:
+    if s.count(anchor) != 1:
+        raise SystemExit("Expected reviewed FFmpeg 9 production patch before experimental staging")
+    p.write_text(s.replace(anchor, anchor + line))
+PY
 echo "Staged experimental VLC AHB display integration (runtime flag remains off by default)"
