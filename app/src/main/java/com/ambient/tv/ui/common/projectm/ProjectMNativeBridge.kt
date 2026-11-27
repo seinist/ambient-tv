@@ -59,11 +59,19 @@ object ProjectMAvailability {
         get() = com.ambient.tv.ui.player.backend.NativeArmRuntime.isSupportedDevice
 
     private val status: ProjectMRuntimeStatus by lazy {
-        probeProjectMRuntime(
-            abiSupported = canConfigure,
-            loadLibrary = System::loadLibrary,
-            readVersion = ProjectMNativeBridge::nativeVersion,
-        ).also { result ->
+        val result = runCatching {
+            val loaded = com.ambient.tv.modules.SystemModuleHost.loadSelected(com.ambient.tv.modules.SystemModule.PROJECTM)
+            if (loaded == null) probeProjectMRuntime(
+                abiSupported = canConfigure,
+                loadLibrary = System::loadLibrary,
+                readVersion = ProjectMNativeBridge::nativeVersion,
+            ) else probeProjectMRuntime(
+                abiSupported = canConfigure,
+                loadLibrary = {}, // Runtime already loaded the complete native dependency graph.
+                readVersion = ProjectMNativeBridge::nativeVersion,
+            )
+        }.getOrElse { ProjectMRuntimeStatus(false, error = it.javaClass.simpleName) }
+        result.also { result ->
             if (result.available) {
                 timber.log.Timber.i("projectM native runtime %s (%s)",
                     result.version, com.ambient.tv.ui.player.backend.NativeArmRuntime.selectedAbi)
