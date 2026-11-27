@@ -33,21 +33,48 @@ static inline float ambient_hdrplus_weight(const struct ambient_hdrplus_mask *m,
     float v=(-m->rotation[1]*dx+m->rotation[0]*dy)*m->ellipse[3];
     float radius=hypotf(u,v);
     if (radius<=m->rotation[2]) return 1.f;
-    return fmaxf(0.f,fminf(1.f,(1.f-radius)/fmaxf(1.f-m->rotation[2],1e-6f)));
+    float t=fmaxf(0.f,fminf(1.f,(radius-m->rotation[2])/fmaxf(1.f-m->rotation[2],1e-6f)));
+    return 0.5f+0.5f*cosf(3.14159265358979323846f*t);
+}
+/* ST 2094-40 sections 7.2/8.2 and ST 2094-1: row axis is
+ * FractionBrightPixels, column axis AverageMaxRGB. Never use pixel x/y.
+ * A zero fraction indicates unavailable statistics (section 8.6). */
+static inline bool ambient_hdrplus_grid_factor(const struct ambient_hdrplus_grid *g,
+    const struct ambient_hdrplus_window *w, float *factor)
+{
+    if (!g || !w || !factor) return false;
+    *factor=1.f;
+    if (!g->rows && !g->cols) return true;
+    if (g->rows<2 || g->rows>25 || g->cols<2 || g->cols>25 ||
+        !(w->fraction>=0.f && w->fraction<=1.f) ||
+        !(w->average>=0.f && w->average<=1.f)) return false;
+    for(unsigned i=0;i<g->rows;++i) for(unsigned j=0;j<g->cols;++j)
+        if(g->values[i][j]>15) return false;
+    if(w->fraction==0.f) return true;
+    float x=w->fraction*(g->rows-1),y=w->average*(g->cols-1);
+    unsigned i=(unsigned)x,j=(unsigned)y;
+    unsigned i1=i+1<g->rows?i+1:i,j1=j+1<g->cols?j+1:j;
+    float a=x-i,b=y-j;
+    float p=g->values[i][j]*(1.f-b)+g->values[i][j1]*b;
+    float q=g->values[i1][j]*(1.f-b)+g->values[i1][j1]*b;
+    *factor=(p*(1.f-a)+q*a)/15.f;
+    return *factor>0.f;
 }
 static inline bool ambient_hdrplus_spatial_supported(const struct ambient_hdrplus *m,
     unsigned width, unsigned height, struct ambient_hdrplus_mask masks[2], bool *layering)
 {
-    if (!m || !masks || !layering || m->window_count<2 || m->window_count>3 ||
-        m->targeted_grid.rows || m->mastering_grid.rows ||
+    if (!m || !masks || !layering || m->window_count<1 || m->window_count>3 ||
         !isfinite(m->target_nits) || m->target_nits<=0.f) return false;
     memset(masks,0,2*sizeof(*masks));
-    *layering=m->windows[1].geometry.overlap==1;
+    *layering=m->window_count>1 && m->windows[1].geometry.overlap==1;
     for (unsigned i=0;i<m->window_count;++i) {
         const struct ambient_hdrplus_window *w=&m->windows[i];
-        // The current subset deliberately excludes grid/saturation rendering,
-        // missing OOTFs and degenerate or nonmonotone curves.
-        if (w->saturation_mapping || !w->tone_mapping || !w->anchor_count ||
+        // Missing OOTFs and unsupported curve shapes retain the ordinary path.
+        float source_factor,target_factor;
+        if (!ambient_hdrplus_grid_factor(&m->mastering_grid,w,&source_factor) ||
+            !ambient_hdrplus_grid_factor(&m->targeted_grid,w,&target_factor) ||
+            (w->saturation_mapping && w->saturation_weight>63) ||
+            !w->tone_mapping ||
             w->anchor_count>15 || !(w->knee_x>0.f && w->knee_x<1.f) ||
             !(w->knee_y>0.f && w->knee_y<1.f) ||
             !(w->maxscl[0]>0.f || w->maxscl[1]>0.f || w->maxscl[2]>0.f)) return false;
