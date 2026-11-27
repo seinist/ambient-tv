@@ -234,15 +234,21 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             com.ambient.tv.ui.player.backend.VideoAccelerationRuntime.refresh(this@AmbientTvApplication)
         }
-        // Disabled providers must not load native libraries or restore accounts on cold start.
-        // YouTube initializes itself on IO on its first actual request.
-        if (preferences.spotifyEnabled &&
-            com.ambient.tv.ui.mobile.isTelevision(this) &&
-            com.ambient.tv.util.LocalNetworkAccess.isGranted(this)) {
-            Thread({
-                runCatching { spotifyRepository.get().start() }
-                    .onFailure { Timber.w(it, "Spotify startup failed") }
-            }, "SpotifyInit").start()
+        // A downloaded Spotify receiver must be probed before its UI becomes available.
+        // Merely probing the native library does not log in or start the receiver.
+        // Disabled bundled providers retain their existing lazy initialization.
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            runCatching {
+                val selected = com.ambient.tv.modules.SystemModuleHost.selected(com.ambient.tv.modules.SystemModule.SPOTIFY)
+                if (selected != null || preferences.spotifyEnabled) {
+                    val spotify = spotifyRepository.get()
+                    if (spotify.nativeAvailable && preferences.spotifyEnabled &&
+                        com.ambient.tv.ui.mobile.isTelevision(this@AmbientTvApplication) &&
+                        com.ambient.tv.util.LocalNetworkAccess.isGranted(this@AmbientTvApplication)) {
+                        spotify.start()
+                    }
+                }
+            }.onFailure { Timber.w(it, "Spotify startup failed") }
         }
     }
 }
