@@ -391,6 +391,6 @@
     <string name="games_core_test_sh2">Sega 32X SH2 dynarec</string>
     <string name="games_core_test_threaded">Threaded SNES renderer</string>
     <string name="games_core_test_threaded_hint">Enable the renderer in Core options and restart the test.</string>
-    <string name="games_core_experimental_hint">This test uses separate saves on this device. RomM save sync is off during the test.</string>
+    <string name="games_core_experimental_hint">This build uses shared game saves and RomM sync. Save states may require the original core build.</string>
     <string name="games_core_from_experiment">Experimental: %1$s · %2$s</string>
 </resources>

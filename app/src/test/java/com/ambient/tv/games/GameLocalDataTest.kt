@@ -24,24 +24,24 @@ class GameLocalDataTest {
         sourceName = "NAS", entry = FileEntry("src", "test.sfc", "test.sfc", false),
     )
 
-    @Test fun experimentalStatesAndSramDoNotOverwriteProduction() {
-        val experimental = game.copy(experimentalProfile = "core-hotpaths")
-        val other = game.copy(experimentalProfile = "thinlto")
+    @Test fun coreProfilesShareSramAndStateDirectory() {
+        val optimized = game.copy(experimentalProfile = "optimized")
+        val a57 = game.copy(experimentalProfile = "optimized-a57")
         try {
+            assertEquals(storage.savesDirectory(game), storage.savesDirectory(optimized))
+            assertEquals(storage.statesDirectory(game), storage.statesDirectory(a57))
             storage.write(storage.sramFile(game), byteArrayOf(1))
-            storage.write(storage.sramFile(experimental), byteArrayOf(2))
-            states.save(game, GameStateKind.AUTO, byteArrayOf(3), null, "stable", now = 1)
-            states.save(experimental, GameStateKind.AUTO, byteArrayOf(4), null, "candidate", now = 2)
-            assertEquals(1, storage.read(storage.sramFile(game))!!.single().toInt())
-            assertEquals(2, storage.read(storage.sramFile(experimental))!!.single().toInt())
-            assertEquals("stable", states.list(game).single().coreStamp)
-            assertEquals("candidate", states.list(experimental).single().coreStamp)
-            assertTrue(states.list(other).isEmpty())
+            assertEquals(1, storage.read(storage.sramFile(optimized))!!.single().toInt())
+            storage.write(storage.sramFile(a57), byteArrayOf(2))
+            assertEquals(2, storage.read(storage.sramFile(game))!!.single().toInt())
+            val entry = states.save(game, GameStateKind.MANUAL, byteArrayOf(3), null, "stable", now = 1)
+            assertEquals(entry, states.list(optimized).single())
+            assertEquals(3, states.read(a57, entry)!!.single().toInt())
+            assertTrue(GameStateStore.compatible(entry, entry.coreId, "stable", "legacy"))
+            assertTrue(!GameStateStore.compatible(entry, entry.coreId, "different", "legacy"))
         } finally {
-            listOf(game, experimental, other).forEach {
-                storage.statesDirectory(it).deleteRecursively()
-                storage.sramFile(it).delete()
-            }
+            storage.statesDirectory(game).deleteRecursively()
+            storage.sramFile(game).delete()
         }
     }
 

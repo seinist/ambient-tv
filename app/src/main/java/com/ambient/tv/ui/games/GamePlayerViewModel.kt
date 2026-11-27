@@ -185,6 +185,10 @@ class GamePlayerViewModel @Inject constructor(
                 }
                 experiment.source
             } else settings.coreSource
+            if (source.experimentalProfile != null && !source.supportsExperiment(chosen, abi)) {
+                mutable.value = GameUiState.Failed(GameFailure.CORE_INCOMPATIBLE)
+                return@launch
+            }
             // A RomM game's firmware is its server's: matched to it before the check.
             if (game.remote != null) remoteData.syncFirmware(game)
             bios.missingRequired(game.system, GameSystems.extension(game.file.name), chosen,
@@ -247,7 +251,7 @@ class GamePlayerViewModel @Inject constructor(
             val stamp = GameStateStore.coreStamp(core)
             val legacyStamp = GameStateStore.legacyCoreStamp(core)
             // A RomM game continues from the server's saves and states (the last copy when offline).
-            if (game.remote != null && game.experimentalProfile == null) remoteData.beforeStart(game, chosen.id, stamp)
+            if (game.remote != null) remoteData.beforeStart(game, chosen.id, stamp)
             val existing = states.entry(game, GameStateKind.AUTO)
             if (startFresh && existing != null) {
                 // Like a reset in the game: the last progress stays recoverable as the undo state.
@@ -281,7 +285,7 @@ class GamePlayerViewModel @Inject constructor(
             ).also { refreshStates(game) }
         }
         // "Start over" moved the automatic state: the server follows.
-        if (game.remote != null && game.experimentalProfile == null) remoteData.scheduleUpload(game, chosen.id)
+        if (game.remote != null) remoteData.scheduleUpload(game, chosen.id)
         mutable.value = GameUiState.Ready(session)
     }
 
@@ -302,7 +306,7 @@ class GamePlayerViewModel @Inject constructor(
 
     /** Sends this game's saves and states to its RomM server (after a change); nothing for local games. */
     private fun upload(game: PreparedGame, coreId: String? = null) {
-        if (game.remote == null || game.experimentalProfile != null) return
+        if (game.remote == null) return
         val core = coreId ?: (state.value as? GameUiState.Ready)?.session?.core?.id
             ?: GameSettings.state.gameCore(game.system, game.saveKey).id
         remoteData.scheduleUpload(game, core)
@@ -313,7 +317,6 @@ class GamePlayerViewModel @Inject constructor(
      * Missing cores, failed mounts and crashing cores must not pollute Recent games.
      */
     fun firstFrameRendered(session: GameSession) {
-        if (session.game.experimentalProfile != null) return
         if ((mutable.value as? GameUiState.Ready)?.session !== session ||
             recordedSession === session) return
         recordedSession = session

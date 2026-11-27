@@ -30,7 +30,7 @@ enum class GameCoreSource(val key: String, val experimentalProfile: String? = nu
     BUILDBOT("buildbot"),
     OPTIMIZED("experiment-optimized", "optimized"),
     OPTIMIZED_A57("experiment-optimized-a57", "optimized-a57"),
-    // Legacy profiles remain addressable for old isolated data and saved routes.
+    // Legacy profiles remain addressable for legacy saved routes.
     HOTPATHS("experiment-hotpaths", "core-hotpaths"),
     O3("experiment-o3", "o3"),
     THINLTO("experiment-thinlto", "thinlto"),
@@ -41,7 +41,7 @@ enum class GameCoreSource(val key: String, val experimentalProfile: String? = nu
     ;
 
     companion object {
-        val regular = listOf(AUTO, AMBIENT, BUILDBOT)
+        val regular = listOf(AUTO, AMBIENT, BUILDBOT, OPTIMIZED, OPTIMIZED_A57)
         val publicExperiments = listOf(OPTIMIZED, OPTIMIZED_A57)
 
         fun fromKey(key: String?) = entries.firstOrNull { it.key == key } ?: AUTO

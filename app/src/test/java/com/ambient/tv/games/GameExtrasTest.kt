@@ -160,7 +160,12 @@ class GameCoreChannelTest {
         val picoDrive = GameSystems.byId("sega32x")!!.core
         val snes = GameSystems.byId("snes")!!
         val threaded = snes.core("snes9x2010")!!
-        assertEquals(listOf(GameCoreSource.AUTO, GameCoreSource.AMBIENT, GameCoreSource.BUILDBOT), GameCoreSource.regular)
+        assertEquals(listOf(GameCoreSource.AUTO, GameCoreSource.AMBIENT, GameCoreSource.BUILDBOT, GameCoreSource.OPTIMIZED, GameCoreSource.OPTIMIZED_A57), GameCoreSource.regular)
+        for (source in GameCoreSource.publicExperiments) {
+            val settings = GameSettingsState().withCoreSource(source)
+            assertEquals(source, settings.coreSource)
+            assertEquals(settings, settings.migrateCoreSource())
+        }
         org.junit.Assert.assertTrue(GameCoreSource.PICODRIVE_SH2.supportsExperiment(picoDrive, "arm64-v8a"))
         org.junit.Assert.assertFalse(GameCoreSource.PICODRIVE_SH2.supportsExperiment(picoDrive, "armeabi-v7a"))
         org.junit.Assert.assertFalse(GameCoreSource.PICODRIVE_SH2.supportsExperiment(snes.core, "arm64-v8a"))

@@ -34,7 +34,7 @@ data class PreparedGame(
     val directContent: GameDirectContent? = null,
     /** A game from a RomM server: firmware, saves and states are the server's (see RommGameData). */
     val remote: com.ambient.tv.romm.RommGameRef? = null,
-    /** Experimental sessions have private saves and never mirror them to RomM. */
+    /** The selected experimental build profile; game data is shared across profiles. */
     val experimentalProfile: String? = null,
 ) {
     val direct: Boolean get() = directContent != null
