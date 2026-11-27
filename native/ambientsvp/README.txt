@@ -1076,3 +1076,31 @@ framing, truncation, invalid profile flags and sequence changes.
 A full VLC Android build, actual AV1 MediaCodec/SurfaceControl
 playback and exact-head CI remain unverified. No HDR/10-bit path or
 measured hardware throughput is claimed.
+
+
+Native high-depth Vulkan transport (experimental)
+------------------------------------------------
+Optional ambient_svp_vk_create_format sessions support P010 with
+MSB-aligned ten-bit codes in R16/RG16 UNORM and I420 10-bit with
+LSB-aligned codes in R16 UNORM. Both retain all 1024 luma levels
+during motion search; the residual reported to the synthesis cut
+threshold is scaled back to approximate eight-bit SAD units.
+Synthesis converts limited/full-range BT.601, BT.709 or BT.2020 NCL
+to encoded RGBA16F without tone mapping or clipping. Input and output
+remain GPU resident. The old SDR8 entry point and ABI remain intact.
+The native Vulkan test now submits both actual high-depth layouts and
+reads FP16 output in the test only, verifying adjacent 10-bit source
+codes remain distinct.
+
+MPV direct Vulkan frames can select the optional high-depth session
+when their actual format and separate R16 plane views match. It
+creates a RGBAF16 AVVkFrame output pool and preserves the output
+format's bit representation while copying transfer, primaries and
+compatible static HDR metadata. PQ/HLG require BT.2020 NCL and matching
+HDR metadata across the pair; HDR10+ and Dolby Vision side data are
+rejected rather than copied blindly. This does not yet enable HDR in
+the Android app's resident selection, or change the MediaCodec
+PRIVATE/AHB conversion or VLC SurfaceControl RGBA8 output. Multiplane
+high-depth Vulkan images are conservatively rejected. No end-to-end
+HDR validation, HDR10+ interpolation, Dolby Vision composition or
+hardware speed claim. Fresh CI and full MPV build required.
