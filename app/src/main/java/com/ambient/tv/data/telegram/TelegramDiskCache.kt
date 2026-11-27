@@ -109,7 +109,14 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
         // A refresh with identical contents need not compress/encrypt/write again.
         if (destination.isFile && System.currentTimeMillis() - destination.lastModified() <= ttlMillis &&
             snapshots[destination]?.takeIf { it.modified == destination.lastModified() }
-                ?.rows?.toString() == entries.toString()) return
+                ?.rows?.toString() == entries.toString()) {
+            // A successful network refresh renews the offline cache TTL even when
+            // the content is unchanged. Fall through to an atomic write if touch fails.
+            if (destination.setLastModified(System.currentTimeMillis())) {
+                remember(destination, entries)
+                return
+            }
+        }
         val target = AtomicFile(destination)
         val json = JSONObject().put("version", 1).put("section", section)
             .put("rows", entries).toString().toByteArray(Charsets.UTF_8)

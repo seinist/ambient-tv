@@ -316,6 +316,7 @@ class TelegramRepository @Inject constructor(
         port.setSessionLostListener { type -> scope.launch { sessionLost(port, type) } }
         if (client !== port) {
             streamEpoch.incrementAndGet()
+            cancelObsoleteTransfers()
             revokePlaybackUrls()
             blockedChannels.clear()
         }
@@ -342,6 +343,7 @@ class TelegramRepository @Inject constructor(
 
     fun disconnect() {
         streamEpoch.incrementAndGet()
+        cancelObsoleteTransfers()
         revokePlaybackUrls()
         blockedChannels.clear()
         client = null
@@ -496,6 +498,7 @@ class TelegramRepository @Inject constructor(
         if (left) {
             blockedChannels.add(chatId)
             streamEpoch.incrementAndGet()
+            cancelObsoleteTransfers()
             revokePlaybackUrls()
             clearResumePositions()
             account.cacheIdentity?.let { diskCache.clearAccount(it) }
@@ -687,7 +690,7 @@ class TelegramRepository @Inject constructor(
         val load = thumbnailLoads.computeIfAbsent(key) {
             // Lazy start prevents a fast cache hit from removing the entry before insertion.
             scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
-                if (!sameAccount(selected, identity, generation)) null else loadThumbnailFile(chatId, messageId)
+                loadThumbnailFile(selected, identity, generation, chatId, messageId)
             }
         }
         load.invokeOnCompletion { thumbnailLoads.remove(key, load) }
@@ -699,25 +702,32 @@ class TelegramRepository @Inject constructor(
      * are on disk by the time the cards are drawn (the inline preview showed for long).
      */
     fun prefetchThumbnails(media: List<TelegramMedia>, limit: Int = 24) {
+        val selected = client ?: return
+        val identity = selected.cacheIdentity
+        val generation = streamEpoch.get()
         media.asSequence()
             .filter { it.cardImageUrl?.startsWith(MONOGRAM_THUMB_SCHEME) == true }
             .take(limit)
             .forEach { item ->
                 scope.launch {
                     // A card already loading this image shares its download without the permit.
-                    if (thumbnailLoads.containsKey("${streamEpoch.get()}:${item.chatId}:${item.messageId}")) return@launch
-                    prefetchPermits.withPermit { runCatching { thumbnailFile(item.chatId, item.messageId) } }
+                    if (thumbnailLoads.containsKey("$generation:${item.chatId}:${item.messageId}")) return@launch
+                    prefetchPermits.withPermit {
+                        if (sameAccount(selected, identity, generation)) thumbnailFile(item.chatId, item.messageId)
+                    }
                 }
             }
     }
 
-    private suspend fun loadThumbnailFile(chatId: Long, messageId: Int): String? {
-        val selected = client ?: return null
-        if (chatId in blockedChannels) return null
-        val generation = streamEpoch.get()
-        val identity = selected.cacheIdentity
+    private suspend fun loadThumbnailFile(
+        selected: TelegramClientPort, identity: String?, generation: Long, chatId: Long, messageId: Int,
+    ): String? {
+        if (!sameAccount(selected, identity, generation) || chatId in blockedChannels) return null
         val file = try {
-            thumbnailPermits.withPermit { selected.thumbnail(chatId, messageId) }
+            thumbnailPermits.withPermit {
+                if (!sameAccount(selected, identity, generation) || chatId in blockedChannels) null
+                else selected.thumbnail(chatId, messageId)
+            }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (_: Exception) { null }
@@ -729,6 +739,19 @@ class TelegramRepository @Inject constructor(
     private data class PartKey(val epoch: Long, val chatId: Long, val messageId: Int, val offset: Long, val expectedBytes: Int?)
     private class PartLoad(val deferred: kotlinx.coroutines.Deferred<ByteArray>, var waiters: Int)
     private val partLoads = HashMap<PartKey, PartLoad>()
+
+    private fun cancelObsoleteTransfers() {
+        val epoch = streamEpoch.get()
+        val obsoleteParts = synchronized(partLoads) {
+            val old = partLoads.filterKeys { it.epoch != epoch }
+            old.keys.forEach { partLoads.remove(it) }
+            old.values.map { it.deferred }
+        }
+        obsoleteParts.forEach { it.cancel() }
+        thumbnailLoads.entries.forEach { (key, load) ->
+            if (!key.startsWith("$epoch:") && thumbnailLoads.remove(key, load)) load.cancel()
+        }
+    }
 
     suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int? = null): ByteArray = interactive {
         val selected = checkNotNull(client) { appContext.getString(R.string.monogram_error_not_authorized) }

@@ -304,9 +304,10 @@ Inline responses retain the bounded file fallback. Streaming ranges request
 origin data instead of starting the whole-file CDN receiver; ordinary full
 downloads retain upstream CDN behavior. The UniFFI
 byte-array export avoids a native payload write and Kotlin payload re-read;
-the app can persist a single atomic cache copy. A direct JNI buffer is not
-required for correctness and should be considered only after measuring the
-remaining UniFFI marshalling cost. No global CPU-feature assumptions are added.
+the app can persist a single atomic cache copy. The dedicated Android JNI path returns the final JVM byte array directly,
+avoiding the intermediate UniFFI RustBuffer/JNA lifting. Media3 and the
+loopback transport already consume byte arrays; introducing a DirectByteBuffer
+would add a conversion copy here. UniFFI remains a missing-symbol fallback. No global CPU-feature assumptions are added.
 
 A sequential read grows a bounded prefetch window from one to three parts;
 a discontinuous seek discards it and cancels native request controls when

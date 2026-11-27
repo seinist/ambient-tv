@@ -1181,8 +1181,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 val previous = uniffi.monogram_mtproto.bindRequestControl(request)
                 val payload = try {
                     mediaClass(DISPATCH_USER) {
-                        uniffi.monogram_mtproto.downloadMessageMediaChunkBytes(
-                            h.toULong(), chatId, messageId, temp.absolutePath, offset)
+                        AmbientMonogramJni.mediaRange(h, chatId, messageId, temp.absolutePath, offset)
                     }
                 } finally {
                     uniffi.monogram_mtproto.bindRequestControl(previous)
@@ -1274,3 +1273,28 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
 
 /** Channel and supergroup chat ids are -(10^12 + channel id); anything above is a user or basic group. */
 private const val TELEGRAM_CHANNEL_ID_MAX = -1_000_000_000_000L
+
+
+/** Keep the exact JNI class/method names in minified release APKs. */
+@androidx.annotation.Keep
+internal object AmbientMonogramJni {
+    @Volatile private var jniAvailable = true
+
+    private external fun downloadMediaRange(
+        handle: Long, chatId: Long, messageId: Int, destination: String, offset: Long,
+    ): ByteArray
+
+    fun mediaRange(handle: Long, chatId: Long, messageId: Int, destination: String, offset: Long): ByteArray {
+        if (jniAvailable) {
+            try {
+                return downloadMediaRange(handle, chatId, messageId, destination, offset)
+            } catch (_: UnsatisfiedLinkError) {
+                // A missing symbol is the only safe reason to retry through UniFFI.
+                // Network, authentication and RPC errors must not issue a second request.
+                jniAvailable = false
+            }
+        }
+        return uniffi.monogram_mtproto.downloadMessageMediaChunkBytes(
+            handle.toULong(), chatId, messageId, destination, offset)
+    }
+}

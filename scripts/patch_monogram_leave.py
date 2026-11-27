@@ -684,6 +684,35 @@ pub fn download_message_media_chunk_bytes(
     Ok(bytes)
 }
 """, "pub fn download_message_media_chunk_bytes(")
+# Hot-path JNI uses the same validated RPC as UniFFI. The player and cache
+# already require JVM byte arrays; copying directly into the final byte array
+# avoids the intermediate UniFFI RustBuffer/JNA lifting without an extra
+# DirectByteBuffer -> byte[] copy. Authentication and cancellation stay shared.
+add_before(ffi, "#[uniffi::export]\npub fn download_message_thumb(", """#[cfg(target_os = "android")]
+#[allow(unsafe_code)]
+#[jni::jni_mangle("com.ambient.tv.data.telegram.AmbientMonogramJni")]
+pub extern "system" fn downloadMediaRange<'caller>(
+    mut unowned_env: jni::EnvUnowned<'caller>,
+    _this: jni::objects::JObject<'caller>,
+    handle: jni::sys::jlong,
+    chat_id: jni::sys::jlong,
+    message_id: jni::sys::jint,
+    destination: jni::objects::JString<'caller>,
+    offset: jni::sys::jlong,
+) -> jni::objects::JByteArray<'caller> {
+    unowned_env.with_env(|env| -> jni::errors::Result<_> {
+        let path = destination.try_to_string(env)?;
+        match download_message_media_chunk_bytes(handle as u64, chat_id, message_id, path, offset) {
+            Ok(bytes) => env.byte_array_from_slice(&bytes),
+            Err(error) => {
+                let message = jni::strings::JNIString::from(error.to_string().as_str());
+                env.throw_new(jni::jni_str!("java/lang/RuntimeException"), message)?;
+                Ok(jni::objects::JByteArray::null())
+            }
+        }
+    }).resolve::<jni::errors::ThrowRuntimeExAndDefault>()
+}
+""", "pub extern \"system\" fn downloadMediaRange")
 # Crypto: KDF inputs have a fixed 52-byte size and need no heap allocation.
 crypto_message = "vendor/mono-rs/crates/mono-proto-crypto/src/message.rs"
 amend(crypto_message,
