@@ -92,7 +92,7 @@ fun ProjectMVisualizer(
     // including a later manual selection, instead of replaying a captured startup preset.
     val currentBrowser = rememberUpdatedState(browser)
     val currentQuality = rememberUpdatedState(qualityKey)
-    val currentAudioSource = rememberUpdatedState(if (resumed) nativeAudioSource else 0)
+    val currentAudioSource = rememberUpdatedState(nativeAudioSource)
     val refreshRate = glView?.display?.refreshRate?.takeIf { it.isFinite() && it >= 24f } ?: 60f
     val targetFps = if (throttleProjectM) 24 else minOf(60, refreshRate.roundToInt())
     val currentFps = rememberUpdatedState(targetFps)
@@ -127,7 +127,7 @@ fun ProjectMVisualizer(
         }
     }
 
-    LaunchedEffect(browser.pendingPath) {
+    LaunchedEffect(browser, browser.pendingRevision) {
         val pending = browser.consumePending() ?: return@LaunchedEffect
         load(pending.first, pending.second)
     }
@@ -190,7 +190,7 @@ fun ProjectMVisualizer(
         view.queueEvent {
             val handle = nativeHandle.get()
             if (handle != 0L) {
-                ProjectMNativeBridge.nativeSetAudioSource(handle, if (resumed) nativeAudioSource else 0)
+                ProjectMNativeBridge.nativeSetAudioSource(handle, if (hostActive.get()) currentAudioSource.value else 0)
                 ProjectMNativeBridge.nativeSetFps(handle, targetFps)
             }
         }
@@ -287,7 +287,7 @@ fun ProjectMVisualizer(
                         override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
                             if (nativeReleased.get() || !ProjectMAvailability.isAvailable) return
                             val handle = ProjectMNativeBridge.nativeCreate()
-                            if (handle != 0L && currentAudioSource.value != 0)
+                            if (handle != 0L && hostActive.get() && currentAudioSource.value != 0)
                                 ProjectMNativeBridge.nativeSetAudioSource(handle, currentAudioSource.value)
                             nativeLifecycleLock.withLock {
                                 // nativeCreate may finish after disposal cleared the published
