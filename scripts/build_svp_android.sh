@@ -38,6 +38,10 @@ for abi in ${SVP_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
         profile="$PGO_DIR/$abi.profdata"
         [[ -s "$profile" ]] || { echo "Missing SVP PGO profile: $profile" >&2; exit 2; }
         profile_hash="$(sha256sum "$profile" | cut -d ' ' -f1)"
+        meta="$PGO_DIR/$abi.meta"
+        [[ -s "$meta" ]] || { echo "Missing SVP PGO provenance: $meta (generate with profile_svp_android.sh)" >&2; exit 2; }
+        expected_meta="$(printf '%s\n' "source=$SOURCE_HASH" "rustc=$(rustc --version)" "abi=$abi" "sha256=$profile_hash")"
+        [[ "$(<"$meta")" == "$expected_meta" ]] || { echo "SVP PGO profile source, toolchain, ABI or digest mismatch: $profile" >&2; exit 2; }
         # Cargo's encoded flags take precedence over RUSTFLAGS; fail rather
         # than claim a PGO build in a configuration that would ignore it.
         [[ -z "${CARGO_ENCODED_RUSTFLAGS:-}" ]] || { echo "SVP PGO requires unencoded RUSTFLAGS" >&2; exit 2; }
