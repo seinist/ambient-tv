@@ -283,8 +283,8 @@ SVP speed success. --require-realtime rejects bypass, absent novel images or
 processing below the source cadence. Use --verify when the exact backend
 must remain active. Neither flag constitutes a display or audio-sync test.
 
-Remaining architecture work: GPU motion analysis, multi-frame asynchronous
-scheduling and cross-renderer hardware-buffer zero-copy. At the pinned
+Remaining architecture work: GPU motion analysis, CPU/GPU overlap across
+source pairs, and cross-renderer hardware-buffer zero-copy. At the pinned
 upstream revision, svpflow1's analyse/mod.rs has a native OpenCL path, but the
 portable Analyser::analyse wrapper calls it with keys=None, disabling the
 keyed GPU branches. The Android portable path therefore remains CPU analysis.
@@ -293,3 +293,36 @@ search semantics, forward/backward regions, scene-cut decisions and CPU
 fallback; a standalone block-matching demo is not an equivalent replacement.
 Do not enable a new analysis backend before motion-vector and output parity
 tests. Physical-device benchmarks and native integration remain required.
+
+
+Further native optimizations (PR #528, continued)
+-------------------------------------------------
+Exact repeated source images reuse the previous superframe and stationary
+analysis payload. The comparison covers all three planes; cache invalidation
+occurs on a changed source, seek/reset, adaptive analysis change and bypass.
+
+For <=1080p, consecutive GPU outputs from the same ready source pair can
+use two independent readback buffers. Both ordered queue submissions are
+issued before waiting for either result. One completed output may be held
+for the next receive; reset, safety bypass and GPU fallback discard it.
+The existing timestamp plan, queue bounds and CPU fallback remain in use.
+This is not yet a multi-source CPU/GPU pipeline or a zero-copy renderer path.
+
+Optional RGBA16Unorm motion fields halve the base/extended texture and upload
+size on adapters supporting the required format feature/usages. The runtime
+variant rescales RAW16 before rounding; the managed upstream WGSL stays
+byte-identical and the float path remains available. The portable unit test
+checks all 65536 u16 values; the ignored hardware test compares full output
+pixels against the original float path. Physical driver parity is pending.
+
+The new explicit Adaptive preset (native number 4, existing ABI layout) is
+available in MPV and VLC. Old stored "auto" still means Light. Adaptive
+starts with light geometry, and may switch upstream analysis fast levels
+0 -> 1 -> 2 under load without changing the configured frame-rate target,
+block layout, pel, timestamps or queued history. The upstream vector header
+must remain identical before replacing the analyzer. The absolute 500ms
+safety ceiling and overload bypass still apply. The selected adaptive
+preset remains saved; a seek preserves the session's reduced effort.
+Analysis quality can decrease in this opt-in mode. Fixed presets never
+participate. MPV retains its dropped-frame and native bypass watchdogs
+but does not issue a separate cost-only verdict for the adaptive preset.
