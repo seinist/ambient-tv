@@ -992,13 +992,44 @@ static void test_mixed_bl_el(void)
         assert(!blocks&&mid_frees==0&&el_frees==1);
     }
 }
+static unsigned meta_added,meta_sent;
+static uint8_t meta_ids[2];
+static vlc_tick_t meta_last_pts;
+void es_format_Init(es_format_t *fmt,int cat,vlc_fourcc_t codec)
+{
+    memset(fmt,0,sizeof(*fmt));fmt->i_cat=cat;fmt->i_codec=codec;
+}
+void es_format_Clean(es_format_t *fmt){(void)fmt;}
+static es_out_id_t *meta_add(es_out_t *out,input_source_t *in,const es_format_t *fmt)
+{
+    (void)out;(void)in;
+    assert(fmt->i_cat==DATA_ES);++meta_added;
+    if(fmt->i_codec==VLC_FOURCC('e','m','s','g'))return (es_out_id_t *)&meta_ids[0];
+    assert(fmt->i_codec==VLC_FOURCC('p','r','f','t'));
+    return (es_out_id_t *)&meta_ids[1];
+}
+static int meta_send(es_out_t *out,es_out_id_t *id,block_t *b)
+{
+    (void)out;
+    assert(b->i_pts>=meta_last_pts&&b->i_dts==b->i_pts);
+    assert(b->i_buffer>=8);
+    if(id==(es_out_id_t *)&meta_ids[0])assert(!memcmp(b->p_buffer+4,"emsg",4));
+    else {assert(id==(es_out_id_t *)&meta_ids[1]);assert(!memcmp(b->p_buffer+4,"prft",4));}
+    meta_last_pts=b->i_pts;++meta_sent;
+    block_Release(b);
+    return VLC_SUCCESS;
+}
+static const struct es_out_callbacks meta_callbacks={.add=meta_add,.send=meta_send};
 static void test_timed_boxes(void)
 {
     mp4_track_t track={.i_track_ID=1,.b_ok=true,.i_timescale=1000};
     demux_sys_t s={.track=&track,.i_tracks=1};
-    demux_t d={.s=&fixture_stream,.p_sys=&s};
+    es_out_t output={.cbs=&meta_callbacks};
+    demux_t d={.s=&fixture_stream,.p_sys=&s,.out=&output};
     for(unsigned mode=0;mode<2;mode++){
         reset_stream(mode!=0);s.b_seekable=mode!=0;s.ambient_fel_collect_meta=true;
+        memset(s.ambient_fel_meta_es,0,sizeof(s.ambient_fel_meta_es));
+        meta_added=meta_sent=0;meta_last_pts=0;
         // EMSG v1: 1000 Hz, 2 s absolute presentation, arbitrary scheme.
         box(100,36,"emsg");memset(bytes+108,0,28);bytes[108]=1;
         SetDWBE(bytes+112,1000);SetQWBE(bytes+116,2000);SetDWBE(bytes+124,100);
@@ -1009,7 +1040,7 @@ static void test_timed_boxes(void)
         // SIDX v0 direct segment reference, EPT 3 s.
         box(164,44,"sidx");memset(bytes+172,0,36);
         SetDWBE(bytes+176,1);SetDWBE(bytes+180,1000);SetDWBE(bytes+184,3000);
-        bytes[195]=1;SetDWBE(bytes+196,38);
+        bytes[195]=1;SetDWBE(bytes+196,40);
         // EMSG v0: scheme/value then delta 250 ms inside indexed segment.
         box(208,32,"emsg");memset(bytes+216,0,24);
         bytes[220]='s';bytes[222]='v';
@@ -1024,6 +1055,11 @@ static void test_timed_boxes(void)
         assert(s.ambient_fel_meta[1].block->i_length==CLOCK_FREQ/10);
         assert(s.ambient_fel_meta[2].block->i_length==CLOCK_FREQ/20);
         assert(!memcmp(s.ambient_fel_meta[1].block->p_buffer,bytes+100,36));
+        s.i_nztime=0;assert(MP4_FEL_EmitMetadata(&d,false)&&meta_sent==0);
+        s.i_nztime=CLOCK_FREQ;assert(MP4_FEL_EmitMetadata(&d,false)&&meta_sent==1);
+        s.i_nztime=2*CLOCK_FREQ;assert(MP4_FEL_EmitMetadata(&d,false)&&meta_sent==2);
+        assert(MP4_FEL_EmitMetadata(&d,true)&&meta_sent==3&&meta_added==2);
+        assert(MP4_FEL_EmitMetadata(&d,true)&&meta_sent==3);
         MP4_FEL_ClearReplay(&s);assert(!blocks);
         position=208;s.ambient_fel_collect_meta=true;
         assert(!MP4_FEL_SkipGap(&d,&padding,&count,true)); // no EPT anchor
