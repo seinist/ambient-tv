@@ -27,11 +27,32 @@ static inline void ambient_hdrplus_spatial_destroy(pl_gpu gpu, struct ambient_hd
     pl_tex_destroy(gpu,&s->output);
     s->valid=false;
 }
+/* Only parameters consumed by the LUT generator belong to its cache key.
+ * Moving windows and updated distributions must not trigger GPU LUT uploads.
+ * Compare fields, not struct bytes (which include padding and unused slots). */
+static inline bool ambient_hdrplus_curve_key_equal(const struct ambient_hdrplus *a,
+    const struct ambient_hdrplus *b)
+{
+    if (a->window_count != b->window_count || a->target_nits != b->target_nits)
+        return false;
+    for (unsigned i=0; i<a->window_count; ++i) {
+        const struct ambient_hdrplus_window *x=&a->windows[i], *y=&b->windows[i];
+        float xp=fmaxf(x->maxscl[0],fmaxf(x->maxscl[1],x->maxscl[2]));
+        float yp=fmaxf(y->maxscl[0],fmaxf(y->maxscl[1],y->maxscl[2]));
+        if (xp!=yp || x->average!=y->average || x->knee_x!=y->knee_x ||
+            x->knee_y!=y->knee_y || x->anchor_count!=y->anchor_count ||
+            x->anchor_count>15)
+            return false;
+        for (unsigned j=0; j<x->anchor_count; ++j)
+            if (x->anchors[j]!=y->anchors[j]) return false;
+    }
+    return true;
+}
 static inline bool ambient_hdrplus_spatial_curves(pl_gpu gpu, struct ambient_hdrplus_spatial *s,
     const struct ambient_hdrplus *m, float out_min, float out_max)
 {
     if (s->valid && s->output_min==out_min && s->output_max==out_max &&
-        !memcmp(&s->previous,m,sizeof(*m))) return true;
+        ambient_hdrplus_curve_key_equal(&s->previous,m)) return true;
     s->valid=false;
     for (unsigned i=0;i<3;++i) {
         const struct ambient_hdrplus_window *w=&m->windows[i<m->window_count?i:0];
@@ -51,7 +72,7 @@ static inline bool ambient_hdrplus_spatial_curves(pl_gpu gpu, struct ambient_hdr
         p.hdr.ootf.knee_x=w->knee_x;
         p.hdr.ootf.knee_y=w->knee_y;
         p.hdr.ootf.num_anchors=w->anchor_count;
-        memcpy(p.hdr.ootf.anchors,w->anchors,sizeof(w->anchors));
+        memcpy(p.hdr.ootf.anchors,w->anchors,w->anchor_count * sizeof(w->anchors[0]));
         s->domains[i]=p.input_max;
         pl_tone_map_generate(s->curves[i],&p);
         float previous=0.f;
