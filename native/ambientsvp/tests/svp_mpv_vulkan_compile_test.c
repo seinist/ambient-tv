@@ -29,6 +29,7 @@ struct mp_image {
     struct mp_ff_side_data *ff_side_data;
     int num_ff_side_data;
     struct mp_image *enhancement_layer;
+    bool ambient_svp_hdr_generated;
     struct {
         struct { int x0,y0,x1,y1; } crop;
         struct { int sys,levels,alpha; struct pl_bit_encoding bits; } repr;
