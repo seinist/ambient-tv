@@ -130,6 +130,30 @@ int main(void) {
     }
     assert(ambient_hdrplus_parse(zero_fraction.data,(zero_fraction.pos+7)/8,&m));
     assert(m.version0_recommended_fraction&&m.version0_recommended_features&&m.metadata_constraints_ok);
+    // Projection cannot modify the full private snapshot.
+    struct ambient_hdrplus raw={.window_count=1,.version=1,.target_nits=1000};
+    struct ambient_hdrplus_window *g=&raw.windows[0],projected;
+    g->histogram_count=9;
+    for(unsigned i=0;i<9;i++){
+        g->histogram[i].percentage=percentages[i];
+        g->histogram[i].percentile=distribution[i]/100000.f;
+    }
+    g->tone_mapping=true;g->knee_x=0.25f;g->knee_y=0.5f;
+    assert(ambient_hdrplus_global_projection(&raw,&projected));
+    assert(projected.maxscl[0]==0.09f&&projected.maxscl[2]==0.09f);
+    assert(projected.tone_mapping&&projected.anchor_count==1&&projected.anchors[0]==0.5f);
+    assert(g->maxscl[0]==0.f&&g->anchor_count==0&&g->tone_mapping);
+    g->knee_x=0.f;
+    assert(ambient_hdrplus_global_projection(&raw,&projected)&&!projected.tone_mapping);
+    assert(g->tone_mapping);
+    g->knee_x=0.25f;g->anchor_count=4;
+    g->anchors[0]=0.99f;g->anchors[1]=0.99f;g->anchors[2]=0.01f;g->anchors[3]=0.01f;
+    assert(ambient_hdrplus_global_projection(&raw,&projected)&&!projected.tone_mapping);
+    g->histogram[8].percentile=0.f;
+    assert(ambient_hdrplus_global_projection(&raw,&projected));
+    assert(!projected.histogram_count&&!projected.maxscl[0]&&g->histogram_count==9);
+    raw.window_count=0;
+    assert(!ambient_hdrplus_global_projection(&raw,&projected));
     struct writer w = fixture(1,1,0);
     assert(!ambient_hdrplus_parse(w.data,(w.pos+7)/8,&m)); // invalid grid dimensions
     w = fixture(0,0,0);
