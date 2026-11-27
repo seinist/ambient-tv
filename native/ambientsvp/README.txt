@@ -1032,3 +1032,26 @@ descriptors, closed-pool late release, actual GPU sync-file export and
 AHB reimport (device-only). Full native VLC build and a real
 SurfaceControl replacement/presentation/consumer-fence device test
 are still required. No measured reuse rate or hardware speed claim.
+
+
+Extended explicit SDR8 decoder profiles
+--------------------------------------
+VLC's opt-in PRIVATE Surface now accepts explicit AVC baseline/main/
+high, HEVC Main (profile 1) and VP9 profile 0 elementary-stream
+profiles. Unknown profiles, HEVC Main 10 and VP9 profiles 1..3 remain
+excluded. This does not add AV1 decoding to the pinned VLC MediaCodec
+module, whose MIME selection currently does not include AV1.
+The profile allowlist is shared with a host C regression and included
+in the player source fingerprint. Actual device support and correct
+external-format decoding still require physical tests.
+
+The VLC filter validates SDR transfer/primaries and geometry on each
+input and breaks the history at color or size changes. MPV's
+MediaCodec conversion checks all three component depths, 4:2:0,
+explicit supported SDR transfer, primaries, YUV matrix and range
+before releasing the opaque decoder picture to the Surface. Unknown
+or HDR input takes the existing fallback, rather than silently
+converting to RGBA8. MPV's decoder selection remains codec-agnostic.
+The previous CI head 8c4a7c25 passed source patch application and
+CPU fallback before cancellation by newer commits. Fresh native
+and full player validation are required. No 10-bit/HDR claim.
