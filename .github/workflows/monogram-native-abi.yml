@@ -83,7 +83,7 @@ jobs:
           cargo install cargo-ndk --locked
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$sdkmanager" --licenses >/dev/null 2>&1 || true
-          "$sdkmanager" --channel=3 'platforms;android-37.1' 'platforms;android-37.0' "ndk;$NDK_VERSION" 'cmake;3.22.1'
+          "$sdkmanager" --channel=3 'platforms;android-37.1' 'platforms;android-37.0' 'build-tools;37.0.0' "ndk;$NDK_VERSION" 'cmake;3.22.1'
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
       - name: Check builder and patch syntax
         run: |
@@ -119,8 +119,7 @@ jobs:
           readelf="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
           "$readelf" -h monogram-report/libmonogram_mtproto.so
           "$readelf" --dyn-syms --wide monogram-report/libmonogram_mtproto.so > monogram-report/symbols.txt
-          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadMediaRange
-          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadPreview$' monogram-report/symbols.txt
+          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadMediaRange          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadPreview$' monogram-report/symbols.txt
           grep -Fx "cpu_tune=$MONOGRAM_CPU_TUNE" app/libs/.monogram-native-version
           grep -Fx "pgo_mode=$MONOGRAM_PGO_MODE" app/libs/.monogram-native-version
           if [[ "$MONOGRAM_PGO_MODE" == generate ]]; then
@@ -137,6 +136,13 @@ jobs:
         run: |
           ./scripts/fetch_libretrodroid.sh
           ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest -PAPK_ABI=arm64 -PMONOGRAM_NATIVE=1 --tests 'com.ambient.tv.data.telegram.*'
+      - name: Export independent Monogram DEX candidate
+        if: matrix.abi == 'arm64-v8a' && matrix.cpu == 'generic' && matrix.pgo == 'off'
+        env:
+          MONOGRAM_NATIVE: '1'
+        run: |
+          ./gradlew :app:exportMonogramAdapterDex -PAPK_ABI=arm64 -PMONOGRAM_NATIVE=1
+          cp -r app/build/outputs/system-modules/monogram-dex monogram-report/
       - name: Gate exact matched release APK size delta
         if: matrix.cpu == 'generic' && matrix.pgo == 'off'
         env:
@@ -156,8 +162,7 @@ jobs:
           path: monogram-report/
           if-no-files-found: ignore
  monogram-report/symbols.txt
-          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadMediaParts
-          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadPreview$' monogram-report/symbols.txt
+          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadMediaParts          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadPreview$' monogram-report/symbols.txt
           grep -Fx "cpu_tune=$MONOGRAM_CPU_TUNE" app/libs/.monogram-native-version
           grep -Fx "pgo_mode=$MONOGRAM_PGO_MODE" app/libs/.monogram-native-version
           if [[ "$MONOGRAM_PGO_MODE" == generate ]]; then
