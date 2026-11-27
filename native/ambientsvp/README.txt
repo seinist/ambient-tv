@@ -555,3 +555,38 @@ The borrowed-source wrapper now changes the actual production path;
 its current-head CPU/Vulkan/Android checks remain to be verified.
 Full GPU search orchestration and hardware-buffer zero-copy remain
 unfinished; the experimental motion stage is not enabled in playback.
+
+
+Prepared-field vector payload bridge and update integration
+-----------------------------------------------------------
+PacketLayout validates the full upstream analysis header, supported
+full-resolution layout, grid geometry and complete bidirectional or
+backward-only regions before packing selected vectors. It applies the
+upstream packed_score distance weighting to unpenalized SAD (not the
+motion-selection cost), retains exact signed component encoding and
+restores the original header including pyramid levels. Reduced-level
+GPU mode, truncated fields, unsupported headers and oversized grids
+are rejected. Exact block luma and raster order are supplied by the
+caller; the bridge does not fabricate predictor-dependent search data.
+
+Tests compare complete static packets against the real pinned analyser
+at pel=1/2/4, exercise signed component packing and distance weighting,
+and run GPU-selected complete prepared fields through the upstream
+decoder and smoother against independently selected CPU reference
+fields. This validates the packet interface, not parity of an entire
+upstream dependent search.
+
+The managed dependency verifier now checks svpflow-wasm in
+dev-dependencies, with explicit missing/duplicate/stale-pin regressions.
+Native CI runs the source verification and updater tests before the
+Rust tests; the adapted source retains its fixed original attribution
+even when the upstream pin is updated.
+
+Exact previous head 8fd9ed28a55086c32480621153b999af1be4c920 passed
+CPU and portable Vulkan regressions, original-vs-borrowed smoother
+pixel parity, and all executed Mesa Vulkan tests in run 46038094757.
+The remaining JNI/C steps were canceled by superseding commits.
+The general CI failed early in the updater tests due to the relocated
+test-only dependency; fixed in this revision, awaiting CI confirmation.
+Full GPU predictor-dependent orchestration, hardware-buffer zero-copy,
+actual renderer builds and device performance validation remain open.
