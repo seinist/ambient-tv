@@ -1251,3 +1251,51 @@ not full upstream Open-SVPFlow orchestration parity: weighted
 multilevel predictors, all search modes/penalties and refinement
 semantics require further work and reference comparisons. No
 hardware speedup or formal HDR/FEL conformance claim.
+
+
+Measured HDR10+ statistics, MPV FEL reconstruction and causal refinement
+-------------------------------------------------------------------------
+Native Vulkan phases can optionally record PQ-to-linear statistics on
+their actual RGBA16F output. Per-window GPU histograms have 100001
+quantized MaxRGB bins, component maxima, mean, selected percentile
+ranks and brightest-bin counts. A GPU reduction publishes only compact
+statistics; no pixel or histogram readback. The pair owns allocations
+and descriptors until its exact submission fence retires. MPV uses the
+measured results for matching one-to-three-window HDR10+ intermediate
+frames, with a bounded 250 ms fence wait after releasing FFmpeg locks.
+Missing or unsupported metadata/statistics retains the original
+source pictures. Statistics use rectangular processing windows;
+curve parameters, saturation, geometry and display grids remain
+temporally estimated, not freshly authored curves or motion-tracked
+ellipses. Global MPV projection still maps window zero. The separate
+VLC HDR renderer has not yet been connected to this measured path.
+
+MPV's pinned gpu-next renderer now accepts an opt-in private
+reference-counted source-pair attachment. The filter schedules exact
+BL/EL PTS-matched inputs. gpu-next uses its existing source mappers and
+libplacebo FEL composition to reconstruct each source into a PQ BT2020
+FP16 texture, checks renderer sampling/FBO errors, caches adjacent
+sources and motion fields, and synthesizes into an independent texture
+owned by the queued output frame. The final display renderer receives
+RGB without an attached EL or RPU. The original source remains the
+fallback. Software EL upload remains possible; only supported geometry
+and original timestamps are accepted. This code requires the pinned
+Dolby-enabled Vulkan libplacebo and full MPV build/device validation.
+
+The hierarchical search now uses four overlap-weighted coarse
+predictors rather than nearest-neighbour scaling. Native Vulkan adds
+compact x+2*y causal diagonals with explicit compute barriers and
+device-local left/top/top-right median predictors. Bounded uneven
+multi-hexagon cross/HEX4, iterative HEX2 and final exhaustive
+neighbourhood refinement retain the best candidate. This is not a
+bit-exact port of the upstream search: chroma/SATD, predictor penalties,
+adaptive per-stage search, subpixel and border/recalculation semantics
+and the hierarchical host winner readbacks still require further work.
+No measured speedup or full SVP parity is claimed.
+
+Added native shader compilation, three-window actual Mesa Vulkan
+statistics fixture and overlap-weighted predictor regressions.
+All eleven MPV FEL staging anchors checked against the pinned source.
+Earlier e6c7f2d passed patch, CPU and portable Vulkan checks before
+supersession; new head CI, linked player builds, real FEL playback and
+reference measurements remain pending.
