@@ -32,6 +32,9 @@ typedef struct {
  * reader handle. Outstanding leases keep the underlying reader alive.
  * Calls on all handles must be externally serialized. */
 AmbientSvpMediaReader *ambient_svp_mediacodec_reader_create(uint32_t width,uint32_t height);
+/* Optional PRIVATE reader mode 1 accepts explicit P010 leases in
+ * addition to the SDR8 layouts. No change to the original ABI. */
+AmbientSvpMediaReader *ambient_svp_mediacodec_reader_create_format(uint32_t width,uint32_t height,uint32_t mode);
 void ambient_svp_mediacodec_reader_destroy(AmbientSvpMediaReader *);
 /* Borrowed ANativeWindow. For Java/FFmpeg MediaCodec the Surface is a
  * JNI local reference owned by caller. Keep the reader handle alive. */
@@ -82,10 +85,19 @@ typedef struct {
  * This avoids even a GPU copy into the player's output frame. */
 int ambient_svp_ahb_submit_into(const AmbientSvpAhbImporter *,AmbientSvpMediaFrame **frame,
     uint32_t sdr8,const AmbientSvpAhbDestination *,AmbientSvpAhbJob **job);
+/* Optional high-depth conversion into RGBA16F. mode=4 limited or 6
+ * full BT2020 NCL P010; caller guarantees matching PQ/HLG metadata.
+ * Requires explicitly identified P010 AHB and VkFormat and matching
+ * suggested sampler model/range, otherwise returns -4 before submit.
+ * No tone mapping; driver YCbCr conversion precision/range applies.
+ * Same timeline/lifetime contract as submit_into; never use RGBA8 view. */
+int ambient_svp_ahb_submit_into_format(const AmbientSvpAhbImporter *,AmbientSvpMediaFrame **frame,
+    uint32_t mode,const AmbientSvpAhbDestination *,AmbientSvpAhbJob **job);
 /* Borrow a GENERAL-layout GPU image/view. Use ONLY on the same queue
  * after the conversion submission (ordered GPU barrier); no ownership
  * transfer to a different queue is implied. Preserve the job until all
- * renderer uses have completed. The image is SDR encoded RGB. */
+ * renderer uses have completed. Encoded RGB; RGBA8 for old calls,
+ * RGBA16F for high-depth submit_into_format. */
 int ambient_svp_ahb_output(const AmbientSvpAhbJob *,AmbientSvpAhbOutput *);
 /* Record resident motion for two imported RGB textures. Requires the
  * same device, geometry and queue as both imports. Submit the supplied
