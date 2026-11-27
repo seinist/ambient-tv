@@ -1292,7 +1292,7 @@ pub extern "system" fn downloadMediaRange<'caller>(
 }
 """, "pub extern \"system\" fn downloadMediaRange")
 # Write directly into two final JVM part arrays; retain the old symbol as a compatibility fallback.
-add_before(ffi, "#[uniffi::export]\\npub fn download_message_thumb(", """#[cfg(target_os = "android")]
+add_before(ffi, "#[uniffi::export]\npub fn download_message_thumb(", """#[cfg(target_os = "android")]
 #[allow(unsafe_code)]
 #[jni::jni_mangle("com.ambient.tv.data.telegram.AmbientMonogramJni")]
 pub extern "system" fn downloadMediaParts<'caller>(
