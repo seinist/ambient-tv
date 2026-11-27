@@ -26,6 +26,16 @@ internal object SystemModuleHost {
     // are added as their actual adapter/build/release pipeline is migrated.
     private val contracts = mapOf(
         SystemModule.SHADERS to SystemModuleRuntime.Contract(assetOnly = true),
+        SystemModule.MPV to SystemModuleRuntime.Contract(
+            nativeRoots = setOf("libmpv.so", "libambientmpv.so"),
+            hostLibraries = setOf(
+                "libc++_shared.so", "libavcodec.so", "libavdevice.so", "libavfilter.so",
+                "libavformat.so", "libavutil.so", "libswresample.so", "libswscale.so",
+                "libpostproc.so", "libass.so", "libplacebo.so", "libfreetype.so",
+                "libharfbuzz.so", "libfribidi.so", "libssl.so", "libcrypto.so",
+            ),
+            bundledOverrides = setOf("libmpv.so", "libambientmpv.so"),
+        ),
         SystemModule.PROJECTM to SystemModuleRuntime.Contract(
             nativeRoots = setOf("libprojectM-4.so", "libambientprojectm.so"),
             hostLibraries = setOf("libc++_shared.so"),
