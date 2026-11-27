@@ -245,6 +245,20 @@ class SmartTubeDeprecationPatchesTest(unittest.TestCase):
         self.assertEqual(before, (helper.read_bytes(), manager.read_bytes(), wrapper.read_bytes()))
         self.assertFalse(list(helper.parent.glob(".ambient-cronet-*")))
 
+    def test_device_user_agent_initialization_is_lazy(self) -> None:
+        for newline in ("\n", "\r\n"):
+            with self.subTest(newline=repr(newline)):
+                source = "    private val USER_AGENT_ATV_COMBINED =\n        \"Mozilla/5.0 (Linux ${DeviceHelpers.getPrimaryAbi()}; Android ${Build.VERSION.RELEASE}) Cobalt/$COBALT_VER (unlike Gecko) v8/$V8_VER gles Starboard/$STARBOARD_VER, ${Build.BRAND}_ATV_${Build.HARDWARE}_0/${Build.ID} (${Build.BRAND}, ${Build.MODEL}) com.google.android.youtube.tv/$APK_VER\"\n"
+                path = Path(self.temporary.name) / "DefaultHeaders.kt"
+                path.write_bytes(source.replace("\n", newline).encode("utf-8"))
+                with self.assertRaises(SystemExit):
+                    patcher.patch_defer_device_user_agent(path, check=True)
+                self.assertTrue(patcher.patch_defer_device_user_agent(path, check=False))
+                expected = "    private val USER_AGENT_ATV_COMBINED by lazy {\n        \"Mozilla/5.0 (Linux ${DeviceHelpers.getPrimaryAbi()}; Android ${Build.VERSION.RELEASE}) Cobalt/$COBALT_VER (unlike Gecko) v8/$V8_VER gles Starboard/$STARBOARD_VER, ${Build.BRAND}_ATV_${Build.HARDWARE}_0/${Build.ID} (${Build.BRAND}, ${Build.MODEL}) com.google.android.youtube.tv/$APK_VER\"\n    }\n"
+                self.assertEqual(expected.replace("\n", newline).encode("utf-8"), path.read_bytes())
+                self.assertFalse(patcher.patch_defer_device_user_agent(path, check=True))
+                self.assertFalse(patcher.patch_defer_device_user_agent(path, check=False))
+
     def test_auth_headers_publish_complete_snapshots(self) -> None:
         root = Path(self.temporary.name)
         source = root / "youtubeapi/src/main/java"

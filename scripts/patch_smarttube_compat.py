@@ -1196,6 +1196,23 @@ def patch_okhttp_manager_thread_safety(path: Path, check: bool) -> bool:
     return False
 
 
+def patch_defer_device_user_agent(path: Path, check: bool) -> bool:
+    """Do not initialize Android device helpers for an unused alternative user agent."""
+    if not path.is_file():
+        die(f"SmartTube default headers moved or disappeared: {path}")
+    raw = path.read_bytes()
+    newline = "\r\n" if b"\r\n" in raw else "\n"
+    text = raw.decode("utf-8").replace("\r\n", "\n")
+    old = "    private val USER_AGENT_ATV_COMBINED =\n        \"Mozilla/5.0 (Linux ${DeviceHelpers.getPrimaryAbi()}; Android ${Build.VERSION.RELEASE}) Cobalt/$COBALT_VER (unlike Gecko) v8/$V8_VER gles Starboard/$STARBOARD_VER, ${Build.BRAND}_ATV_${Build.HARDWARE}_0/${Build.ID} (${Build.BRAND}, ${Build.MODEL}) com.google.android.youtube.tv/$APK_VER\""
+    new = "    private val USER_AGENT_ATV_COMBINED by lazy {\n        \"Mozilla/5.0 (Linux ${DeviceHelpers.getPrimaryAbi()}; Android ${Build.VERSION.RELEASE}) Cobalt/$COBALT_VER (unlike Gecko) v8/$V8_VER gles Starboard/$STARBOARD_VER, ${Build.BRAND}_ATV_${Build.HARDWARE}_0/${Build.ID} (${Build.BRAND}, ${Build.MODEL}) com.google.android.youtube.tv/$APK_VER\"\n    }"
+    if text.count(new) == 1 and old not in text:
+        return False
+    if check or text.count(old) != 1 or new in text:
+        die(f"Unsupported or eager SmartTube device user agent: {path}")
+    path.write_bytes(text.replace(old, new, 1).replace("\n", newline).encode("utf-8"))
+    return True
+
+
 def patch_auth_header_snapshots(msc: Path, check: bool) -> list[Path]:
     """Publish complete account headers once; every interceptor reads one snapshot."""
     root = msc / "youtubeapi/src/main/java"
@@ -1315,6 +1332,9 @@ def main() -> int:
         changed.append(okhttp_manager)
 
     changed.extend(patch_disable_unused_cronet(msc, shared, args.check))
+    default_headers = msc / "youtubeapi/src/main/java/com/liskovsoft/googlecommon/common/helpers/DefaultHeaders.kt"
+    if patch_defer_device_user_agent(default_headers, args.check):
+        changed.append(default_headers)
     changed.extend(patch_auth_header_snapshots(msc, args.check))
 
     v8_utils = shared / "j2v8/src/main/java/com/eclipsesource/v8/utils/V8ObjectUtils.java"
