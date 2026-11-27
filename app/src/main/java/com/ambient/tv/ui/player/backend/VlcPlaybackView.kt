@@ -186,12 +186,31 @@ class VlcPlaybackController(
         private set
     private var configuredDeinterlaceMode = if (preserveHdrSource) "off" else deinterlaceMode
     private var configuredDeinterlaceFilter = if (preserveHdrSource) "auto" else effectiveDeinterlaceFilter(deinterlaceFilter, reducedVideoEffects(context))
+    private var residentRejected = false
+    private var residentLastOutput: Long? = null
+    private var residentLastProgressMs = 0L
+    private fun wantsResident(options: VlcImageOptions, deint: String): Boolean =
+        !residentRejected && !audioOnly && !vulkanOutput && !preserveHdrSource && deint == "off" &&
+            !options.softwareProcessing && options.svpMode != "off" &&
+            svpResidentRequested(options.svp, measuredSourceSize?.first, measuredSourceSize?.second) &&
+            com.ambient.tv.BuildConfig.VLC_SVP && SvpNative.residentOutputsOrNull() != null &&
+            VideoAccelerationRuntime.current(context).let { it.checked && it.device.render }
+    private var configuredResident = wantsResident(initialImageOptions.copy(svpMode = configuredSvpMode,
+        softwareProcessing = configuredSoftwareProcessing), configuredDeinterlaceMode)
     override val usesFrameInterpolation: Boolean
         get() = effectiveImage().svpMode != "off"
     /** An option this LibVLC build does not know fails the whole instance: retry without the subtitle look. */
     private fun createLibVlc(): LibVLC = runCatching { createLibVlc(subtitleLook = true) }.getOrElse { error ->
-        timber.log.Timber.w(error, "VLC rejected the subtitle look options; using its defaults")
-        createLibVlc(subtitleLook = false)
+        if (configuredResident) {
+            // Old VLC AAR or rejected native options: retry once on the normal transport.
+            timber.log.Timber.w(error, "VLC rejected experimental SVP Surface options; using copy-back")
+            residentRejected = true
+            configuredResident = false
+            runCatching { createLibVlc(subtitleLook = true) }.getOrElse { createLibVlc(subtitleLook = false) }
+        } else {
+            timber.log.Timber.w(error, "VLC rejected the subtitle look options; using its defaults")
+            createLibVlc(subtitleLook = false)
+        }
     }
     private fun createLibVlc(subtitleLook: Boolean) = LibVLC(
         context,
@@ -208,13 +227,14 @@ class VlcPlaybackController(
             addAll(vlcDeinterlaceOptions(configuredDeinterlaceMode, configuredDeinterlaceFilter))
             // VLC 4's vout filter chain is inherited from the instance/player,
             // not from Media options. Media-only video-filter is silently ignored.
-            addAll(vlcImageMediaOptions(VlcImageOptions(svpMode = configuredSvpMode, svp = configuredSvpOptions), configuredSvpRate)
-                .filter { it.startsWith(":video-filter=") || it == ":no-mediacodec-dr" }
+            addAll(vlcImageMediaOptions(VlcImageOptions(svpMode = configuredSvpMode, svp = configuredSvpOptions), configuredSvpRate, configuredResident)
+                .filter { it.startsWith(":video-filter=") || it in setOf(":no-mediacodec-dr", ":mediacodec-dr", ":mediacodec-svp-vulkan") }
                 .map { "--" + it.removePrefix(":") })
             // VLC 4 owns vout at player level, not at input/media level.
             // "none" ends implicit module search so a failed Vulkan initialization
             // reaches our observable default-path retry instead of silently using GL.
             addAll(vlcHdrToSdrOutputOptions(vulkanOutput, toneMappingRequired))
+            if (configuredResident) add("--vout=android-display")
             if (vulkanOutput) addAll(listOf(
                 "--vout=libplacebo,none", "--pl-gpu=pl_vulkan,none",
                 "--vk-platform=vk_android,none",
@@ -990,7 +1010,8 @@ class VlcPlaybackController(
         val targetRate = svpOutputFps(svpDisplayFps(context), effectiveImage.svp)
         val effectiveDeinterlaceMode = if (preserveHdrSource) "off" else deinterlaceMode
         val effectiveDeinterlace = if (preserveHdrSource) "auto" else effectiveDeinterlaceFilter(deinterlaceFilter, reducedVideoEffects(context))
-        val reattach = if (configuredSoftwareProcessing != effectiveImage.softwareProcessing ||
+        val desiredResident = wantsResident(effectiveImage, effectiveDeinterlaceMode)
+        val reattach = if (configuredResident != desiredResident || configuredSoftwareProcessing != effectiveImage.softwareProcessing ||
             configuredSvpOptions != effectiveImage.svp || configuredSvpMode != effectiveImage.svpMode || svpTargetChanged(effectiveImage.svpMode, configuredSvpRate, targetRate) ||
             configuredDeinterlaceMode != effectiveDeinterlaceMode || configuredDeinterlaceFilter != effectiveDeinterlace) {
             val view = attachedView
@@ -999,6 +1020,7 @@ class VlcPlaybackController(
             player.vlcVout.removeCallback(surfaceCallback)
             player.stop(); player.release(); libVlcRelease.releaseWhenIdle(libVlc)
             configuredSoftwareProcessing = effectiveImage.softwareProcessing
+            configuredResident = desiredResident
             configuredSvpOptions = effectiveImage.svp
             configuredSvpMode = effectiveImage.svpMode
             configuredSvpRate = targetRate
@@ -1040,7 +1062,9 @@ class VlcPlaybackController(
             media.addOption(":no-mediacodec-dr")
         }
         applyDeinterlaceOptions(media)
-        vlcImageMediaOptions(effectiveImage, configuredSvpRate).forEach(media::addOption)
+        vlcImageMediaOptions(effectiveImage, configuredSvpRate, configuredResident).forEach(media::addOption)
+        residentLastOutput = if (configuredResident) SvpNative.residentOutputsOrNull() else null
+        residentLastProgressMs = 0L
         if (audioVisualizationEnabled && !bitstreamPermitted) {
             // VLC's visual module performs a real FFT over decoded audio and renders it through
             // the same vout surface. This is preferable to synthesizing movement in Compose.
@@ -1239,6 +1263,7 @@ class VlcPlaybackController(
     ) {
         val safe = options.normalized()
         if (!automaticFallback) imageProcessingFallback = false
+        if (!automaticFallback && safe.svp.hardwareResident != imageOptions.svp.hardwareResident) residentRejected = false
         if (released || safe == imageOptions) return
         imageOptions = safe
         if (preserveHdrSource) return
@@ -1349,8 +1374,25 @@ class VlcPlaybackController(
             if (measuredSourceSize == null) measuredSourceSize = currentSourceSize()
             // prepare() returns early without a valid surface; restarting here would stop/prepare every poll.
             val outputReady = audioOnly || attachedView?.holder?.surface?.isValid == true
-            val effectiveMode = effectiveImage().svpMode
-            if (outputReady && (effectiveMode != configuredSvpMode || svpTargetChanged(effectiveMode, configuredSvpRate, svpOutputFps(svpDisplayFps(context), imageOptions.svp))))
+            val effective = effectiveImage()
+            val effectiveMode = effective.svpMode
+            if (configuredResident && outputReady && player.isPlaying && !openingOrRestarting &&
+                !com.ambient.tv.ui.player.PlaybackOutputTransition.active()) {
+                val now = android.os.SystemClock.elapsedRealtime()
+                val frames = SvpNative.residentOutputsOrNull()
+                if (residentLastProgressMs == 0L || frames != residentLastOutput) {
+                    residentLastOutput = frames
+                    residentLastProgressMs = now
+                } else if (now - residentLastProgressMs > VLC_SVP_STALL_MS) {
+                    // Unsupported codec/profile, rejected external format or native backpressure.
+                    // Retry the existing copy-back filter, not the experimental Surface again.
+                    Timber.w("VLC resident SVP produced no output; reopening on standard transport")
+                    residentRejected = true
+                }
+            } else residentLastProgressMs = 0L
+            val wanted = wantsResident(effective, if (preserveHdrSource) "off" else deinterlaceMode)
+            if (outputReady && (wanted != configuredResident || effectiveMode != configuredSvpMode ||
+                    svpTargetChanged(effectiveMode, configuredSvpRate, svpOutputFps(svpDisplayFps(context), imageOptions.svp))))
                 refreshEffectiveOverrides(player.isSeekable)
         }
         checkVulkanOutput()
@@ -1759,7 +1801,8 @@ class VlcPlaybackController(
     fun svpStatus(): String? = formatSvpStatus(svpState())
 
     private fun vlcSvpRuntimeReason(): SvpInactiveReason? {
-        val frames = SvpNative.interpolatedFramesOrNull() ?: return SvpInactiveReason.PASSTHROUGH
+        val frames = (if (configuredResident) SvpNative.residentOutputsOrNull() else SvpNative.interpolatedFramesOrNull())
+            ?: return SvpInactiveReason.PASSTHROUGH
         val now = android.os.SystemClock.elapsedRealtime()
         val playing = !released && runCatching { player.isPlaying }.getOrDefault(false)
         if (frames != svpFramesSeen || !playing || svpFramesSeen < 0) {
