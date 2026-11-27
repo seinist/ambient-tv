@@ -28,11 +28,14 @@ int main(void) {
     curve.anchors[2]=0.01f;curve.anchors[3]=0.01f;
     assert(!ambient_hdrplus_curve_monotone(&curve));
     curve.histogram_count=9;
-    curve.histogram[1].percentage=5;curve.histogram[2].percentage=10;
+    const uint8_t percentiles[]={1,5,10,25,50,75,90,95,99};
+    for(unsigned i=0;i<9;i++)curve.histogram[i].percentage=percentiles[i];
     curve.histogram[2].percentile=0.00255f;
     curve.histogram[8].percentile=0.001f;
     assert(ambient_hdrplus_source_peak(&curve,1)==0.001f);
-    assert(ambient_hdrplus_source_peak(&curve,0)==0.00255f);
+    assert(ambient_hdrplus_source_peak(&curve,0)==0.f); // descending v0 CFD
+    curve.histogram[2].percentile=0.f;
+    assert(ambient_hdrplus_source_peak(&curve,0)==0.001f);
     curve.maxscl[0]=0.1f;
     assert(ambient_hdrplus_source_peak(&curve,1)==0.1f);
     struct ambient_hdrplus m={.window_count=3,.target_nits=1000};
