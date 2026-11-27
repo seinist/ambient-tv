@@ -276,7 +276,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          msg_Err(vd, "Failed rendering frame!");
          failed = true;
          goto done;
-@@ -445,6 +617,24 @@
+@@ -445,9 +617,27 @@
      }
  
  done:
@@ -302,6 +302,9 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +#endif
          pl_tex_clear(gpu, frame.fbo, (float[4]){ 1.0, 0.0, 0.0, 1.0 });
 +    }
+ 
+     pl_gpu_flush(gpu);
+ 
 @@ -463,8 +653,13 @@
  
      sys->fbo = NULL;
