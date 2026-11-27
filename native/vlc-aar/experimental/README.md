@@ -955,3 +955,10 @@ track checks remain exact. Seekable lookahead restores the original
 position; forward-only reads use the actual mdat header positions.
 Host tests cover exact padding budgets and malformed lengths. Arbitrary
 intervening media fragments and multi-mdat layouts remain unsupported.
+
+Fragment seeking prefers the selected paired BL over selected audio.
+For this track, sidx must reference the BL itself; hidden EL indexes are
+never used as presentation seek destinations. A loaded EL-only moof is
+rejected before the existing context is retired, permitting the existing
+caller to restore its previous position. Ordinary unpaired seek policy
+is retained. Actual seek behavior requires container/device validation.
