@@ -47,7 +47,7 @@ for patch in "$SRC"/vlc-patches/*.patch; do
     fi
 done
 dest="$VLC/modules/video_output/libplacebo"
-for file in ahb_import.h conversion_cache.h display_bridge.h display_owner.h display_owner.cpp \
+for file in ahb_import.h conversion_cache.h conversion_key.h display_bridge.h display_owner.h display_owner.cpp \
     frame_lease.h placebo_bridge.h queue_transfer.h rgb_target.h sample_pass.h slot_pool.h \
     submission.h sync_fd.h unique_fd.h vlc_picture_bridge.h; do
     cp "$SRC/$file" "$dest/$file"
