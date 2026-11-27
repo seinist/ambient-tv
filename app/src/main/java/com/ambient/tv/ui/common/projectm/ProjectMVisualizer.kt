@@ -36,6 +36,7 @@ import com.ambient.tv.ui.player.backend.AudioSpectrumAnalyzer
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 import javax.microedition.khronos.egl.EGLConfig
@@ -78,7 +79,8 @@ fun ProjectMVisualizer(
     var adaptiveLevel by remember { mutableIntStateOf(0) }
     val adaptive = remember { ProjectMAdaptiveQuality() }
     val adaptiveEnabled = rememberUpdatedState(resumed && !throttleProjectM && resolutionKey == ProjectMRenderResolution.AUTO)
-    var texturePath by remember { mutableStateOf<String?>(null) }
+    val texturePath = remember { AtomicReference<String?>(null) }
+    val preparedPreset = remember { AtomicReference<PreparedProjectMPreset?>(null) }
     val surfaceWidth = remember { AtomicInteger(0) }
     val surfaceHeight = remember { AtomicInteger(0) }
     val availablePresets = browser.presets()
@@ -104,13 +106,17 @@ fun ProjectMVisualizer(
     // active GL context; the JNI bridge applies it safely on the next render frame.
     LaunchedEffect(browser) {
         val path = withContext(Dispatchers.IO) { browser.textureDirectory()?.absolutePath }
-        texturePath = path
+        texturePath.set(path)
         if (path != null) {
-            val handle = nativeLifecycleLock.withLock { nativeHandle.get() }
-            val view = glView
-            if (handle != 0L && view != null) {
-                view.queueEvent {
-                    if (nativeHandle.get() == handle) ProjectMNativeBridge.nativeSetTexturePath(handle, path)
+            glView?.queueEvent {
+                val handle = nativeHandle.get()
+                if (handle != 0L && !nativeReleased.get()) {
+                    ProjectMNativeBridge.nativeSetTexturePath(handle, path)
+                    // Setting texture paths replaces the native manager. Reload the current
+                    // preset so its texture descriptors no longer reference the old manager.
+                    preparedPreset.get()?.takeIf { it.browser === currentBrowser.value }?.let {
+                        ProjectMNativeBridge.nativeLoadPreset(handle, it.data, false)
+                    }
                 }
             }
         }
@@ -121,6 +127,7 @@ fun ProjectMVisualizer(
         val data = withContext(Dispatchers.IO) { browser.presetData(preset) } ?: return
         if (loadGeneration.get() != generation) return
         browser.currentPath = preset.assetPath
+        preparedPreset.set(PreparedProjectMPreset(browser, preset.assetPath, data))
         val view = glView ?: return
         view.queueEvent {
             if (loadGeneration.get() != generation || nativeReleased.get()) return@queueEvent
@@ -138,7 +145,11 @@ fun ProjectMVisualizer(
         // A non-null fallback to entry zero hid the uninitialized state and made shuffle's
         // startup branch unreachable. Publish the actual choice even before GL is ready;
         // onSurfaceCreated then loads that same preset rather than choosing a second one.
-        if (browser.currentPath == null) browser.initialPreset()?.let { load(it, false) }
+        // A retained browser can already have an active path when a new GL view is mounted.
+        // Restore its decoded data here on IO, not in onSurfaceCreated.
+        if (browser.pendingPath == null &&
+            preparedPreset.get()?.let { it.browser === browser && it.path == browser.currentPath } != true
+        ) browser.initialPreset()?.let { load(it, false) }
     }
 
     LaunchedEffect(browser.locked) {
@@ -308,13 +319,13 @@ fun ProjectMVisualizer(
                                 nativeHandle.set(handle)
                                 if (handle != 0L) {
                                     val activeBrowser = currentBrowser.value
-                                    texturePath?.let { ProjectMNativeBridge.nativeSetTexturePath(handle, it) }
+                                    texturePath.get()?.let { ProjectMNativeBridge.nativeSetTexturePath(handle, it) }
                                     ProjectMNativeBridge.nativeSetFps(handle, currentFps.value)
                                     ProjectMNativeBridge.nativeSetPresetDuration(handle, activeBrowser.intervalSeconds.toDouble())
                                     ProjectMNativeBridge.nativeSetSoftCutDuration(handle, activeBrowser.transitionSeconds.coerceIn(0, 10).toDouble())
                                     ProjectMNativeBridge.nativeSetBeatSensitivity(handle, 1.0f)
-                                    activeBrowser.currentPath?.let(::ProjectMPreset)?.let { preset ->
-                                        activeBrowser.presetData(preset)?.let { ProjectMNativeBridge.nativeLoadPreset(handle, it, false) }
+                                    preparedPreset.get()?.takeIf { it.browser === activeBrowser }?.let {
+                                        ProjectMNativeBridge.nativeLoadPreset(handle, it.data, false)
                                     }
                                     ProjectMNativeBridge.nativeSetLocked(handle, activeBrowser.locked)
                                 }
@@ -389,6 +400,8 @@ fun ProjectMVisualizer(
         }
     }
 }
+
+private data class PreparedProjectMPreset(val browser: ProjectMBrowser, val path: String, val data: String)
 
 private fun projectMMesh(qualityKey: String): Pair<Int, Int> = when (qualityKey) {
     "economy" -> 32 to 24
