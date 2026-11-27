@@ -159,6 +159,11 @@ internal fun SvpMainPage(
     }
     if (mode != "off") {
         if (mode == "adaptive") ImageHint(stringResource(R.string.svp_adaptive_hint))
+        ImageChoice(R.string.svp_transport, if (o.hardwareResident) "resident" else "standard", listOf(
+            "standard" to stringResource(R.string.svp_transport_standard),
+            "resident" to stringResource(R.string.svp_transport_resident),
+        )) { change(mode, o.copy(hardwareResident = it == "resident")) }
+        if (o.hardwareResident) ImageHint(stringResource(R.string.svp_transport_hint))
         SvpChoice(R.string.svp_target, o.rateDivisor, listOf(
             1 to stringResource(R.string.svp_display_rate),
             2 to stringResource(R.string.svp_half_rate),
