@@ -109,7 +109,7 @@ jobs:
           ./test-dovi-split
           # Real independently encoded Main10 picture, wrapped as type-63 EL.
           # The system encoder is only for a test fixture; decoding uses the pinned static FFmpeg.
-          ffmpeg -hide_banner -loglevel error -f lavfi -i color=c=gray:s=64x64:r=1 -frames:v 1 -pix_fmt yuv420p10le -c:v libx265 -x265-params 'pools=1:frame-threads=1:repeat-headers=1:log-level=error' -f hevc -y test-el.hevc
+          ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=s=64x64:r=1 -frames:v 1 -pix_fmt yuv420p10le -c:v libx265 -x265-params 'pools=1:frame-threads=1:repeat-headers=1:log-level=error' -f hevc -y test-el.hevc
           cc -I . "$GITHUB_WORKSPACE/native/vlc-aar/experimental/test_dovi_fel_decoder.c" libavcodec/libavcodec.a libavutil/libavutil.a -lm -pthread -o test-fel-decoder
           # Encode a genuine B-frame GOP; take packet PTS/DTS from MP4 and
           # keep access-unit boundaries via AUD in the Annex B stream.
