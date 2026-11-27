@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
+#include <vlc_ancillary.h>
 
 #define SVP_ANDROID_PHASES 8
 // The library must outlive the last picture lease, even after filter close.
@@ -197,7 +198,8 @@ static bool svp_android_input(SvpAndroid *s,picture_t *pic,AHardwareBuffer **buf
         vlc_video_context_GetType(pic->context->vctx)!=VLC_VIDEO_CONTEXT_AWINDOW)
         return false;
     android_video_context_t *v=vlc_video_context_GetPrivate(pic->context->vctx,VLC_VIDEO_CONTEXT_AWINDOW);
-    if (!v || !v->svp_surface || (s->mode!=0)!=v->svp_hdr10 || !v->air || !v->air_api || pic->format.i_x_offset || pic->format.i_y_offset)
+    if (picture_GetAncillary(pic,VLC_ANCILLARY_ID_HDR10PLUS) || picture_GetAncillary(pic,VLC_ANCILLARY_ID_DOVI)) return false;
+    if (!v || !v->svp_surface || atomic_load(&v->svp_dynamic_hdr) || (s->mode!=0)!=v->svp_hdr10 || !v->air || !v->air_api || pic->format.i_x_offset || pic->format.i_y_offset)
         return false;
     *ctx=container_of(pic->context,struct android_picture_ctx,s);
     if ((*ctx)->svp_buffer || !(*ctx)->image || (*ctx)->read_fence_fd>=0) return false;
@@ -206,7 +208,9 @@ static bool svp_android_input(SvpAndroid *s,picture_t *pic,AHardwareBuffer **buf
 static picture_t *svp_android_filter(filter_t *f,picture_t *pic)
 {
     SvpAndroid *s=f->p_sys;
-    if (!s->api.enabled() || s->bypass) return svp_android_passthrough(s,pic,false);
+    android_video_context_t *vctx=vlc_video_context_GetPrivate(f->vctx_in,VLC_VIDEO_CONTEXT_AWINDOW);
+    if (!s->api.enabled() || s->bypass || !vctx || atomic_load(&vctx->svp_dynamic_hdr))
+        return svp_android_passthrough(s,pic,false);
     float phases[SVP_ANDROID_PHASES]={0};vlc_tick_t dates[SVP_ANDROID_PHASES];
     AmbientSvpDisplayOutput outputs[SVP_ANDROID_PHASES];
     uint64_t next=s->tick;unsigned count=0;
@@ -273,7 +277,7 @@ static int svp_android_open(filter_t *f)
         return VLC_EGENERIC;
     android_video_context_t *ctx=vlc_video_context_GetPrivate(f->vctx_in,VLC_VIDEO_CONTEXT_AWINDOW);
     unsigned mode=svp_android_hdr_mode(v);
-    if (!ctx || !ctx->svp_surface || (mode!=0)!=ctx->svp_hdr10 || !ctx->air || !ctx->asc_api || ctx->texture)
+    if (!ctx || !ctx->svp_surface || atomic_load(&ctx->svp_dynamic_hdr) || (mode!=0)!=ctx->svp_hdr10 || !ctx->air || !ctx->asc_api || ctx->texture)
         return VLC_EGENERIC;
     SvpAndroid *s=vlc_obj_calloc(VLC_OBJECT(f),1,sizeof(*s));
     if (!s) return VLC_ENOMEM;
