@@ -1,4 +1,5 @@
 #include "dovi_fel_decoder.h"
+#include "dovi_fel_api.h"
 #include "dovi_rpu_au.h"
 #include <assert.h>
 #include <stdio.h>
@@ -66,6 +67,23 @@ int main(int argc,char **argv)
     }
     ambient_fel_decoder_close(&s);
     ambient_fel_decoder_close(&s);
+    // Exercise the same opaque static-link API called from VLC.
+    struct ambient_fel_session *session=av_ambient_fel_open();
+    assert(session);
+    AVPacket *wrapped=wrap(input,(size_t)n,90000);
+    assert(av_ambient_fel_submit(session,wrapped->data,wrapped->size,90000,87000)==0);
+    assert(av_ambient_fel_drain(session)==0);
+    assert(!av_ambient_fel_take(session,90001));
+    struct ambient_fel_picture *picture=av_ambient_fel_take(session,90000);
+    assert(picture&&picture->pts==90000&&picture->width==64&&picture->height==64);
+    assert(!av_ambient_fel_take(session,90000));
+    for(unsigned i=0;i<64*64+2*32*32;i++) assert(picture->samples[i]<=1023);
+    av_ambient_fel_flush(session);
+    // Owned snapshot survives the decoder session.
+    av_ambient_fel_close(session);
+    assert(picture->samples[0]<=1023);
+    free(picture);
+    av_packet_free(&wrapped);
     free(input);
     puts("Decoded real HEVC EL codewords; exact PTS, drain and flush verified");
 }
