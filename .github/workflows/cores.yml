@@ -6,6 +6,9 @@ name: Cores (manual single profile)
 # public half is in cores/signing-public.pem (secret CORES_SIGNING_KEY, PEM, EC P-256).
 
 on:
+  pull_request:
+    paths:
+      - cores/cores.json
   workflow_call:
     inputs:
       publish:
@@ -58,7 +61,7 @@ on:
         options: [baseline, optimized, optimized-a57, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2, snes9x2010-threaded, core-hotpaths]
         default: baseline
       comparison:
-        description: Paired full-catalog builds (artifact-only; baseline profile required)
+        description: Paired builds (artifact-only; select an ABI or core subset for the expanded catalog)
         type: choice
         options: [none, baseline-thinlto, o3-o3-thinlto]
         default: none
@@ -180,7 +183,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.count != '0'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: ${{ (matrix.core == 'cemu' || matrix.core == 'armsx2' || matrix.core == 'dolphin') && 180 || 60 }}
     strategy:
       fail-fast: false
       max-parallel: 20

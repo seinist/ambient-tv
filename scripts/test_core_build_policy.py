@@ -52,8 +52,11 @@ class CoreBuildPolicyTest(unittest.TestCase):
                          {core["core"] for core in self.catalog["cores"] if not core.get("extended")} - {"picodrive", "snes9x2010"})
         for core in self.catalog["cores"]:
             if core.get("extended"):
-                self.assertEqual({item["profile"] for item in matrix if item["core"] == core["core"]},
-                                 {"baseline", "optimized", "optimized-a57"})
+                actual = {(item["abi"], item["profile"]) for item in matrix if item["core"] == core["core"]}
+                expected = {(abi, profile) for abi in core.get("abis", self.catalog["abis"])
+                            for profile in ("baseline", "optimized")}
+                expected.add(("arm64-v8a", "optimized-a57"))
+                self.assertEqual(actual, expected)
         self.assertEqual({item["profile"] for item in matrix},
                          {"baseline", "thinlto", "picodrive-sh2", "tune-a57", "o3", "o3-thinlto", "snes9x2010-threaded", "core-hotpaths", "optimized", "optimized-a57"})
         self.assertEqual(len({item["artifact"] for item in matrix}), len(matrix))

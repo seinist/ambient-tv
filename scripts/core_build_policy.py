@@ -142,15 +142,17 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
                  ("gpsp", "x86", "baseline"),
                  ("snes9x2010", "arm64-v8a", "baseline"),
                  ("snes9x2010", "arm64-v8a", "snes9x2010-threaded")]
-        # Keep the PR matrix below Actions' 256-job limit while exercising every
-        # new recipe in all public profiles on ARM64. Full profiles run separately.
+        # The new recipes need full ABI coverage before they can be released.
+        # Keep the established targeted smoke jobs and validate each extended
+        # core on all its supported ABIs in baseline/optimized, plus A57 on ARM64.
         original = [entry["core"] for entry in entries if not entry.get("extended")]
         extended = [entry["core"] for entry in entries if entry.get("extended")]
-        jobs += [(core, abi, "optimized") for core in original for abi in declared_abis]
         if extended:
-            jobs += [(core, "arm64-v8a", variant) for core in extended
-                     for variant in ("baseline", "optimized", "optimized-a57")]
+            jobs += [(core, abi, variant) for core in extended for abi in declared_abis
+                     for variant in ("baseline", "optimized")]
+            jobs += [(core, "arm64-v8a", "optimized-a57") for core in extended]
         else:
+            jobs += [(core, abi, "optimized") for core in original for abi in declared_abis]
             jobs += [(core, "arm64-v8a", "optimized-a57") for core in original]
     elif comparison != "none":
         variants = ("baseline", "thinlto") if comparison == "baseline-thinlto" else ("o3", "o3-thinlto")
