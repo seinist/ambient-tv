@@ -27,6 +27,8 @@ object MpvBackendAvailability {
                 val external = com.ambient.tv.modules.SystemModuleHost.loadSelected(com.ambient.tv.modules.SystemModule.MPV)
                 externalLoaded = external != null
                 if (external == null) {
+                    if (!com.ambient.tv.modules.SystemModuleAvailability.bundled(com.ambient.tv.modules.SystemModule.MPV))
+                        return@runCatching false
                     System.loadLibrary("mpv")
                     System.loadLibrary("ambientmpv")
                 }
