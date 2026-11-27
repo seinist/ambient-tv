@@ -104,11 +104,11 @@ data class MpvAccelerationPlan(
 /** Resident transport is only chosen before decoder creation. Native profile,
  * extension, bit depth and surface checks remain authoritative. */
 internal fun MpvAccelerationPlan.withSvpResident(
-    options: MpvImageOptions, supported: Boolean, hdr: Boolean,
+    options: MpvImageOptions, supported: Boolean, hdr: Boolean, hdrResidentAllowed: Boolean = false,
 ): MpvAccelerationPlan = copy(svpResident = supported && vulkan && decoder != "software" &&
-    !hdr && options.svpMode != "off" && svpResidentRequested(options.svp) &&
+    (!hdr || hdrResidentAllowed) && options.svpMode != "off" && svpResidentRequested(options.svp) &&
     options.denoise == "off" && options.deblock == "off" &&
-    mpvImageShaderKeys(options, sdr = true).none { MPV_IMAGE_SHADERS[it]?.requiresCopyBack == true })
+    mpvImageShaderKeys(options, sdr = !hdr).none { MPV_IMAGE_SHADERS[it]?.requiresCopyBack == true })
 
 internal const val MPV_ZERO_COPY_HWDEC = "mediacodec,mediacodec-copy"
 
