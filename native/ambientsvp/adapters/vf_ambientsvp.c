@@ -19,6 +19,7 @@
 #include "svp_retry.h"
 #include "svp_planes.h"
 #if HAVE_VULKAN && LIBAVUTIL_VERSION_MAJOR == 61
+#include <libplacebo/utils/libav.h>
 #include "svp_mpv_vulkan.h"
 #define SVP_MPV_RESIDENT 1
 #else
