@@ -22,12 +22,15 @@ class SvpNativeAbiTest {
     }
 
     /** M5: the adapters' timing-gap retry (C header) runs its own test when a C compiler exists. */
-    @Test fun timingGapRetryRecovers() {
+    @Test fun timingGapRetryRecovers() = runNativeTest("svp_retry_test")
+    @Test fun planeTransfersPreserveBytesAndPadding() = runNativeTest("svp_planes_test")
+
+    private fun runNativeTest(name: String) {
         val gcc = listOf("/usr/bin/gcc", "/usr/bin/cc").map(::File).firstOrNull { it.canExecute() }
         assumeTrue("no C compiler", gcc != null)
-        val out = File.createTempFile("svp_retry", ".bin").apply { deleteOnExit() }
+        val out = File.createTempFile(name, ".bin").apply { deleteOnExit() }
         val build = ProcessBuilder(gcc!!.path, "-std=c11", "-Wall", "-Werror", "-I", File(svp, "include").path,
-            File(svp, "tests/svp_retry_test.c").path, "-o", out.path).redirectErrorStream(true).start()
+            File(svp, "tests/$name.c").path, "-o", out.path).redirectErrorStream(true).start()
         assumeTrue("compile timed out", build.waitFor(60, TimeUnit.SECONDS))
         assertEquals(build.inputStream.bufferedReader().readText(), 0, build.exitValue())
         val run = ProcessBuilder(out.path).redirectErrorStream(true).start()
