@@ -3,7 +3,9 @@
 #
 # Usage:
 #   ./build.sh debug          # MPV (if needed) + debug APK
-#   ./build.sh release        # release APKs for all ABIs, including Monogram
+#   ./build.sh release        # Full release APKs for all ABIs, including Monogram
+#   ./build.sh release-full   # same Full release
+#   ./build.sh release-modular-preview # separate development APKs (ProjectM/Slang external)
 #   ./build.sh arm64          # arm64-v8a release APK only
 #   ./build.sh armv7          # armeabi-v7a release APK only
 #   ./build.sh x86            # x86 release APK only (emulator)
@@ -1065,6 +1067,10 @@ UPDATE_ABIS=()
 generate_release_update_manifest() {
     local output="$DIST_DIR/update.json"
     rm -f "$output"
+    if [[ "${MODULE_PACKAGING:-full}" == modular-preview ]]; then
+        log "Preview build: do not generate a stable self-update manifest"
+        return 0
+    fi
     local apk
     for apk in "${UPDATE_APKS[@]}"; do
         if [[ "$apk" == *-unsigned-* ]]; then
@@ -1529,7 +1535,13 @@ case "$MODE" in
     debug)
         build_debug
         ;;
-    release)
+    release|release-full)
+        export MODULE_PACKAGING=full
+        build_release
+        ;;
+    release-modular-preview)
+        export MODULE_PACKAGING=modular-preview
+        DIST_DIR="$ROOT_DIR/dist/modular-preview"
         build_release
         ;;
     arm64|arm64-v8a)
