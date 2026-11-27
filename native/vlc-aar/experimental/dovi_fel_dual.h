@@ -42,6 +42,24 @@ static inline bool ambient_fel_sample_offset(struct ambient_fel_offset_cursor *c
     return true;
 }
 
+/* Exact decode/presentation timing in the common track timescale. Do
+ * not compare rounded microseconds or silently substitute another sample. */
+static inline bool ambient_fel_fragment_timing(int64_t el_dts,int64_t el_cts,
+    uint32_t el_duration,int64_t bl_dts,int64_t bl_pts,uint32_t bl_duration)
+{
+    if(el_dts<0||bl_dts<0||!el_duration||el_duration!=bl_duration||
+        el_dts!=bl_dts||el_dts>INT64_MAX-el_duration||
+        (el_cts>0&&el_dts>INT64_MAX-el_cts)||
+        (el_cts<0&&el_dts<INT64_MIN-el_cts))return false;
+    return el_dts+el_cts==bl_pts;
+}
+static inline bool ambient_fel_fragment_range(uint64_t start,uint64_t end,
+    uint64_t offset,uint32_t size)
+{
+    return start<=end&&offset>=start&&offset<=end&&size>0&&
+        size<=AMBIENT_FEL_MAX_AU&&size<=end-offset;
+}
+
 /* Legacy dual-track carriage: BL sample followed by EL NALs wrapped in
  * type 63, with the original type-62 RPU outside the wrapper. No attempt
  * to infer PTS, track identity, or a missing RPU from NAL contents. */
