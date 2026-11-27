@@ -154,6 +154,9 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     @Volatile private var chatsExhausted = false
     private val recentFeeds = LinkedHashMap<String, MonogramRecentTimeline>()
     private val recentFeedRevision = java.util.concurrent.atomic.AtomicLong()
+    private val applyingUpdates = java.util.concurrent.atomic.AtomicInteger()
+    override fun catalogContentRevision(): Long = recentFeedRevision.get()
+    override fun contentUpdatePending(): Boolean = applyingUpdates.get() != 0
     private var recentFeedsSeen = -1L // guarded by browseMutex
     private val leftChannels = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
     /** Public channels resolved from t.me/<name> links, so their page has a title before joining. */
@@ -282,6 +285,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     updateWake.receive()
                 }
                 backoffMs = try {
+                    // Do not drain changes before the repository can durably invalidate them.
+                    val listener = contentChangedListener ?: continue
                     val generation = cacheGeneration
                     val identity = accountId
                     val drained = nativeCall { h ->
@@ -289,17 +294,23 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                         else drainUpdateEvents(h)
                     }
                     if (generation == cacheGeneration && identity == accountId) {
-                        val changes = applyUpdates(drained.events)
-                        if (changes != null && identity != null && generation == cacheGeneration && identity == accountId) {
-                            contentChangedListener?.invoke(identity.toString(), changes.messages, changes.all)
-                            artworkChangedListener?.invoke()
-                        }
-                        // A durable batch is acknowledged only after the local invalidation.
-                        drained.acknowledge?.let { acknowledge ->
-                            nativeCallOnce(connect = false) { h ->
-                                if (generation == cacheGeneration && identity == accountId) acknowledge(h)
+                        applyingUpdates.incrementAndGet()
+                        try {
+                            val changes = applyUpdates(drained.events)
+                            if (changes != null) {
+                                if (identity == null || generation != cacheGeneration || identity != accountId ||
+                                    !listener(identity.toString(), changes.messages, changes.all)) {
+                                    throw java.io.IOException("Monogram content invalidation not committed")
+                                }
+                                artworkChangedListener?.invoke()
                             }
-                        }
+                            // A durable batch is acknowledged only after local invalidation.
+                            drained.acknowledge?.let { acknowledge ->
+                                nativeCallOnce(connect = false) { h ->
+                                    if (generation == cacheGeneration && identity == accountId) acknowledge(h)
+                                }
+                            }
+                        } finally { applyingUpdates.decrementAndGet() }
                     }
                     if (drained.events.isEmpty()) (backoffMs + UPDATES_POLL_MS).coerceAtMost(15_000L)
                     else UPDATES_POLL_MS
@@ -328,12 +339,13 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     /** Drain first; acknowledge durable batches after local cache invalidation succeeds. */
     private fun drainUpdateEvents(h: Long): DrainedUpdates {
         if (!native.isAuthorized(h)) return DrainedUpdates(emptyList(), null)
-        if (!updatesStarted) {
+        val replay = !updatesStarted
+        if (replay) {
             native.startUpdates(h)
             updatesStarted = true
         }
         val drained = native.drainUpdateBatches(h)
-        val batches = if (drained.replayRequired)
+        val batches = if (replay || drained.replayRequired)
             (drained.batches + native.pendingUpdateBatches(h)).distinctBy { it.batchId }
         else drained.batches
         val acknowledge: ((Long) -> Unit)? = if (batches.isEmpty()) null else { handle ->
@@ -423,8 +435,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         return if (everything || changedMessages.isNotEmpty()) ContentChanges(changedMessages, everything) else null
     }
 
-    @Volatile private var contentChangedListener: (suspend (String, Set<Pair<Long, Int>>, Boolean) -> Unit)? = null
-    override fun setContentChangedListener(listener: (suspend (String, Set<Pair<Long, Int>>, Boolean) -> Unit)?) {
+    @Volatile private var contentChangedListener: (suspend (String, Set<Pair<Long, Int>>, Boolean) -> Boolean)? = null
+    override fun setContentChangedListener(listener: (suspend (String, Set<Pair<Long, Int>>, Boolean) -> Boolean)?) {
         contentChangedListener = listener
     }
     @Volatile private var artworkChangedListener: (() -> Unit)? = null
