@@ -148,7 +148,7 @@ internal object SystemModuleHost {
     fun rollback(module: SystemModule): SystemModuleBuild? {
         require(module in supported && downloadsEnabled)
         val old = session.store.selectedMetadata(module)
-        val result = session.store.rollback(module)?.build
+        val result = session.store.rollback(module) { session.runtime.validateCandidate(module, it) }?.build
         if (result != null && result != old) markChanged(module, old, result)
         return result
     }
