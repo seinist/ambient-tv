@@ -275,10 +275,19 @@ mod tests{
         let kernel=SelectionKernel::new(&device);
         let mut encoder=device.create_command_encoder(&Default::default());
         let output=kernel.encode(&device,&mut encoder,&metrics,&searches,&candidates).unwrap();
+        let choices=read_choices(&device,&queue,encoder,&output);
+        assert!(pollster::block_on(device.pop_error_scope()).is_none());
+        for (search,actual) in searches.iter().zip(choices){
+            assert_eq!(actual,reference(search,&candidates,&costs).unwrap(),"{search:?}");
+        }
+    }
+
+    fn read_choices(device:&wgpu::Device,queue:&wgpu::Queue,mut encoder:wgpu::CommandEncoder,
+                    output:&wgpu::Buffer)->Vec<Choice>{
         let readback=device.create_buffer(&wgpu::BufferDescriptor{
             label:None,size:output.size(),usage:wgpu::BufferUsages::COPY_DST|wgpu::BufferUsages::MAP_READ,mapped_at_creation:false,
         });
-        encoder.copy_buffer_to_buffer(&output,0,&readback,0,output.size());
+        encoder.copy_buffer_to_buffer(output,0,&readback,0,output.size());
         queue.submit([encoder.finish()]);
         let (tx,rx)=std::sync::mpsc::sync_channel(1);
         readback.slice(..).map_async(wgpu::MapMode::Read,move|r|{let _=tx.send(r);});
@@ -292,13 +301,78 @@ mod tests{
                 Err(_)=>std::thread::sleep(std::time::Duration::from_millis(1)),
             }
         }
-        assert!(pollster::block_on(device.pop_error_scope()).is_none());
         let bytes=readback.slice(..).get_mapped_range();
-        for (search,raw) in searches.iter().zip(bytes.chunks_exact(32)){
+        let choices=bytes.chunks_exact(32).map(|raw|{
             let word=|i:usize|i32::from_le_bytes(raw[i*4..i*4+4].try_into().unwrap());
-            let actual=Choice{dx:word(0),dy:word(1),sad:word(2),cost:word(3),raw_sad:word(4),winner:word(5)};
-            assert_eq!(actual,reference(search,&candidates,&costs).unwrap(),"{search:?}");
-        }
+            Choice{dx:word(0),dy:word(1),sad:word(2),cost:word(3),raw_sad:word(4),winner:word(5)}
+        }).collect();
         drop(bytes);readback.unmap();
+        choices
+    }
+
+    #[test]
+    #[ignore="requires a Vulkan adapter, including software Vulkan"]
+    fn chained_cost_and_selection_without_intermediate_readback(){
+        use crate::motion::{Candidate,MotionCostKernel,SuperLevel,reference_super_cost};
+        let instance=wgpu::Instance::new(&wgpu::InstanceDescriptor{backends:wgpu::Backends::VULKAN,..Default::default()});
+        let adapter=pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+        let (device,queue)=pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor{
+            label:Some("SVP chained metric/selection parity"),required_features:wgpu::Features::empty(),
+            required_limits:wgpu::Limits::default().using_resolution(adapter.limits()),
+            memory_hints:wgpu::MemoryHints::MemoryUsage,
+        },None)).unwrap();
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let metric=MotionCostKernel::new(&device);
+        let selector=SelectionKernel::new(&device);
+        for pel in [1,2,4]{
+            let builder=svpflow1_vs::SuperBuilder::new(96,66,pel).unwrap();
+            let a:Vec<u8>=(0..builder.source_len()).map(|i|((i*17+i/13)%256) as u8).collect();
+            let b:Vec<u8>=(0..a.len()).map(|i|((i*31+i/7+31)%256) as u8).collect();
+            let a=builder.build(&a).unwrap();
+            let b=builder.build(&b).unwrap();
+            for level in 0..builder.levels() as u32{
+                let al=SuperLevel::new(&builder,&a,level).unwrap();
+                let bl=SuperLevel::new(&builder,&b,level).unwrap();
+                if al.width<32 || al.height<24{continue;}
+                let mut metrics=Vec::new();
+                let mut candidates=Vec::new();
+                let mut searches=Vec::new();
+                for reverse in [false,true]{
+                    for satd in [false,true]{
+                        for chroma in [false,true]{
+                            let start=candidates.len() as u32;
+                            for dy in -3..=3{
+                                for dx in -3..=3{
+                                    let c=Candidate{x:8,y:8,dx,dy,width:8,height:8,reverse,satd};
+                                    let index=metrics.len() as u32;
+                                    metrics.push(c);
+                                    let raw=if satd{
+                                        metrics.push(Candidate{satd:false,..c});
+                                        index+1
+                                    }else{index};
+                                    candidates.push(ScoredCandidate{dx,dy,metric:index,raw});
+                                }
+                            }
+                            searches.push(Search{start,count:49,predictor:[1,-1],lambda:100,pnew:50,chroma,
+                                sad_gate:satd,initial:Choice{dx:0,dy:0,sad:100000,cost:100000,raw_sad:12000,winner:-1}});
+                        }
+                    }
+                }
+                let expected:Vec<_>=metrics.iter().map(|&c|reference_super_cost(&al,&bl,c).unwrap()).collect();
+                let mut encoder=device.create_command_encoder(&Default::default());
+                let at=al.upload(&device,&mut encoder).unwrap();
+                let bt=bl.upload(&device,&mut encoder).unwrap();
+                let costs=metric.encode(&device,&mut encoder,&at,&bt,al.width,al.height,&metrics).unwrap();
+                let selected=selector.encode(&device,&mut encoder,&costs,&searches,&candidates).unwrap();
+                // Only selected vectors leave the GPU. No cost-buffer map,
+                // readback, or queue wait between the two compute stages.
+                let actual=read_choices(&device,&queue,encoder,&selected);
+                for (s,choice) in searches.iter().zip(actual){
+                    assert_eq!(choice,reference(s,&candidates,&expected).unwrap(),"pel={pel} level={level}");
+                }
+            }
+        }
+        assert!(pollster::block_on(device.pop_error_scope()).is_none());
+
     }
 }
