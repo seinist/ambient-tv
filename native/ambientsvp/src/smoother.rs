@@ -60,7 +60,13 @@ impl Smoother {
         let (w,h)=(self.width,self.height);
         let expand=|data:&[u8],w,h|interleave_pel(data,w,h,pel)
             .ok_or_else(||String::from("super frame does not match vectors"));
-        self.expanded.insert(k,Arc::new([expand(y,w,h)?,expand(u,w/2,h/2)?,expand(v,w/2,h/2)?]));
+        // Use the existing session pool on HD frames; no additional threads.
+        let planes=if w*h>=320*240 && rayon::current_num_threads()>1 {
+            let (y,(u,v))=rayon::join(||expand(y,w,h),
+                ||rayon::join(||expand(u,w/2,h/2),||expand(v,w/2,h/2)));
+            [y?,u?,v?]
+        }else{[expand(y,w,h)?,expand(u,w/2,h/2)?,expand(v,w/2,h/2)?]};
+        self.expanded.insert(k,Arc::new(planes));
         Ok(())
     }
 
@@ -199,6 +205,8 @@ mod tests{
     #[test]
     fn borrowed_and_lazy_sources_match_pinned_upstream_smoother(){
         use svpflow1_vs::Analyser;
+        let pool=rayon::ThreadPoolBuilder::new().num_threads(2).build().unwrap();
+        pool.install(||{
         for pel in [1,2,4]{
             let builder=SuperBuilder::new(96,66,pel).unwrap();
             let analyser=Analyser::new(&builder,16,16,2,3).unwrap();
@@ -244,5 +252,27 @@ mod tests{
                 assert!(lazy.expanded.is_empty()&&lazy.vectors.is_empty());
             }
         }
+        });
+    }
+
+    #[test]
+    fn repeat_super_shares_expanded_planes_and_vector_payload(){
+        let builder=SuperBuilder::new(96,66,2).unwrap();
+        let analyser=svpflow1_vs::Analyser::new(&builder,16,16,2,3).unwrap();
+        let mut smoother=Smoother::new(96,66,24,1,8,
+            "{rate:{abs:true,num:60,den:1},algo:23,gpu:false}",&analyser.vector_header()).unwrap();
+        assert!(smoother.uses_super());
+        let data=vec![128;builder.source_len()];
+        let frame=builder.build(&data).unwrap();
+        smoother.set_super(0,&frame).unwrap();
+        smoother.repeat_super(1,&frame).unwrap();
+        assert!(Arc::ptr_eq(&smoother.expanded[&0],&smoother.expanded[&1]));
+        let payload=Arc::new(analyser.analyse(&frame,&frame).unwrap());
+        smoother.set_vectors(0,payload.clone());
+        smoother.set_vectors(1,payload);
+        assert!(Arc::ptr_eq(&smoother.vectors[&0],&smoother.vectors[&1]));
+        smoother.forget_before(1);
+        assert_eq!(smoother.expanded.len(),1);
+        assert_eq!(smoother.vectors.len(),1);
     }
 }
