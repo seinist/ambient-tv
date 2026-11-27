@@ -6,6 +6,20 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SvpPolicyTest {
+    @Test fun hdrResidentRoutingRequiresCompatibleRendererAndDecoder() {
+        for (hdr in listOf(com.ambient.tv.ui.player.HdrStandard.HDR10, com.ambient.tv.ui.player.HdrStandard.HLG)) {
+            assertTrue(svpStaticHdrResident(hdr))
+            assertTrue(svpMpvHdrResident(hdr, "mediacodec"))
+            assertTrue(svpMpvHdrResident(hdr, "vulkan"))
+        }
+        for (hdr in listOf(com.ambient.tv.ui.player.HdrStandard.HDR10_PLUS, com.ambient.tv.ui.player.HdrStandard.DOLBY_VISION)) {
+            assertFalse(svpStaticHdrResident(hdr))
+            assertFalse(svpMpvHdrResident(hdr, "mediacodec"))
+            assertTrue(svpMpvHdrResident(hdr, "vulkan"))
+        }
+        assertFalse(svpMpvHdrResident(null, "vulkan"))
+    }
+
     @Test fun adaptiveIsExplicitAndReachesBothNativePlayers() {
         assertEquals("light", MpvImageOptions(svpMode = "auto").normalized().svpMode)
         assertEquals("adaptive", MpvImageOptions(svpMode = "adaptive").normalized().svpMode)
