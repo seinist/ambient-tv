@@ -42,7 +42,7 @@ fn decode<'a>(key: &str, bytes: &'a [u8]) -> Option<&'a [u8]> {
     bytes.get(16+k..end)
 }
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", all(test, unix)))]
 mod android {
     use super::*;
     use std::{fs::{self, File, OpenOptions}, io::{Read, Write},
@@ -125,17 +125,44 @@ mod android {
     }
 }
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", all(test, unix)))]
 pub use android::{configure, load, store};
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", all(test, unix))))]
 pub fn load(_: &str) -> Option<Vec<u8>> { None }
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", all(test, unix))))]
 pub fn store(_: &str, _: &[u8]) -> Option<()> { None }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn private_file_roundtrip_rejects_symlink_and_insecure_mode() {
+        use std::{fs, os::unix::{fs::{DirBuilderExt, PermissionsExt, symlink}, ffi::OsStrExt}};
+        let base = std::env::temp_dir().join(format!("ambient-svp-cache-test-{}", std::process::id()));
+        // Unique directory owned by this process; never chmod or remove a
+        // directory another test/process created.
+        fs::DirBuilder::new().mode(0o700).create(&base).unwrap();
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
+        let _cleanup = Cleanup(base.clone());
+        assert!(configure(base.as_os_str().as_bytes()));
+        let path = base.join("pipeline.bin");
+        assert!(load("key").is_none());
+        assert_eq!(store("key", &[1,2,3]), Some(()));
+        assert_eq!(load("key"), Some(vec![1,2,3]));
+        assert!(load("wrong").is_none());
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(load("key").is_none());
+        fs::remove_file(&path).unwrap();
+        symlink("/dev/zero", &path).unwrap();
+        assert!(load("key").is_none());
+        assert_eq!(store("key", &[4,5,6]), Some(()));
+        assert_eq!(load("key"), Some(vec![4,5,6]));
+        assert!(fs::symlink_metadata(&path).unwrap().is_file());
+        assert!(!base.join(".pipeline.tmp").exists());
+    }
     #[test]
     fn envelope_roundtrip_rejects_truncation_corruption_and_wrong_driver() {
         let key = "adapter:driver:wgpu";
