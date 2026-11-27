@@ -4,7 +4,7 @@
 use crate::motion::{Candidate,MotionCostKernel,SuperLevel};
 use crate::motion_packet::{FinalVector,PacketLayout};
 use crate::motion_select::{Choice,ScoredCandidate,Search,SelectionKernel};
-use std::time::{Duration,Instant};
+use std::{collections::BTreeMap,time::{Duration,Instant}};
 use svpflow1_vs::{SuperBuilder,SuperFrame};
 
 const MAX_BATCH:usize=32_768;
@@ -12,6 +12,7 @@ const MAX_LEVELS:u32=4;
 const MAX_PIXELS:u64=1280*720;
 const MAX_BLOCKS:usize=16_384;
 const MAX_TOTAL_CANDIDATES:usize=1_000_000;
+const MAX_CACHED_TEXTURE_BYTES:u64=32*1024*1024;
 
 #[derive(Clone,Copy,Debug)]
 struct Grid{w:u32,h:u32,sx:u32,sy:u32,bw:u32,bh:u32}
@@ -45,10 +46,20 @@ impl LevelField{
 pub struct MotionSearch{
     metric:MotionCostKernel,
     selection:SelectionKernel,
+    cached_index:Option<i32>,
+    cached_next:BTreeMap<u32,wgpu::Texture>,
+    #[cfg(test)]
+    cache_hits:u64,
 }
 impl MotionSearch{
     pub fn new(device:&wgpu::Device)->Self{
-        Self{metric:MotionCostKernel::new(device),selection:SelectionKernel::new(device)}
+        Self{metric:MotionCostKernel::new(device),selection:SelectionKernel::new(device),
+            cached_index:None,cached_next:BTreeMap::new(),#[cfg(test)] cache_hits:0}
+    }
+
+    pub fn clear_sources(&mut self){
+        self.cached_index=None;
+        self.cached_next.clear();
     }
 
     pub fn supported(header:&[i32])->bool{
@@ -64,9 +75,16 @@ impl MotionSearch{
     /// All costs and candidate reduction stay on the GPU; only winners
     /// cross the host boundary between levels/chunks. Each level uploads
     /// both sources once and reuses them for both directions.
-    pub fn analyse(&self,device:&wgpu::Device,queue:&wgpu::Queue,builder:&SuperBuilder,
+    pub fn analyse(&mut self,device:&wgpu::Device,queue:&wgpu::Queue,builder:&SuperBuilder,
                    current:&SuperFrame,next:&SuperFrame,header:&[i32],
-                   timeout:Duration)->Result<Vec<u8>,String>{
+                   timeout:Duration,source_index:Option<i32>)->Result<Vec<u8>,String>{
+        // Move out the previous cache: on every error the partial next
+        // cache is dropped, rather than reused after a rejected input.
+        let mut cached=std::mem::take(&mut self.cached_next);
+        if source_index.is_none() || self.cached_index.take()!=source_index{cached.clear();}
+        self.cached_index=None;
+        let mut next_cache=BTreeMap::new();
+        let mut cache_bytes=0u64;
         if !Self::supported(header){return Err("unsupported experimental search geometry".into());}
         let deadline=Instant::now()+timeout;
         let layout=PacketLayout::from_header(header)?;
@@ -76,21 +94,28 @@ impl MotionSearch{
             let a=SuperLevel::new(builder,current,level).ok_or("invalid current super level")?;
             let b=SuperLevel::new(builder,next,level).ok_or("invalid next super level")?;
             let Some(grid)=Grid::new(a.width,a.height,bw,bh,ox,oy)else{break;};
-            levels.push((a,b,grid));
+            levels.push((level,a,b,grid));
         }
         if levels.is_empty(){return Err("no supported motion levels".into());}
         // Reject oversized jobs before uploading any frame or submitting
         // compute, rather than doing partial work and falling back late.
-        let max_candidates=levels.iter().rev().enumerate().try_fold(0usize,|sum,(index,(_,_,grid))|
-            sum.checked_add(grid.count().checked_mul(if index==0 {162}else{100})?))
+        let max_candidates=levels.iter().rev().enumerate().try_fold(0usize,|sum,(index,(_,_,_,grid))|
+            sum.checked_add(grid.count().checked_mul(if index==0 {212}else{100})?))
             .ok_or("experimental motion candidate estimate overflow")?;
         if max_candidates>MAX_TOTAL_CANDIDATES{return Err("experimental motion candidate budget".into());}
         let mut previous:[Option<LevelField>;2]=[None,None];
         let mut total=0usize;
-        for (a,b,grid) in levels.into_iter().rev(){
+        for (level,a,b,grid) in levels.into_iter().rev(){
             if Instant::now()>=deadline{return Err("experimental motion deadline".into());}
             let mut encoder=device.create_command_encoder(&Default::default());
-            let at=a.upload(device,&mut encoder)?;
+            let at=match cached.remove(&level){
+                Some(t) if t.width()==a.width && t.height()==a.height*3/2
+                    && t.depth_or_array_layers()==a.pel*a.pel=>{
+                    #[cfg(test)] {self.cache_hits+=1;}
+                    t
+                }
+                _=>a.upload(device,&mut encoder)?,
+            };
             let bt=b.upload(device,&mut encoder)?;
             queue.submit([encoder.finish()]);
             for (direction,field) in previous.iter_mut().enumerate(){
@@ -128,9 +153,13 @@ impl MotionSearch{
                                 if (vx,vy)!=(0,0){add(vx,vy);}
                             }
                         }
-                        if pred!=[0,0]{
+                        // At pel=2/4, the local radius is fractional.
+                        // Also consider integer-phase anchors at +/-2
+                        // pixels around zero, not just +/-2 pel units.
+                        if pred!=[0,0] || a.pel>1{
                             for dy in -2..=2{
                                 for dx in -2..=2{
+                                    let (dx,dy)=(dx*a.pel as i32,dy*a.pel as i32);
                                     if (dx,dy)!=(0,0) && ((dx-pred[0]).abs()>radius || (dy-pred[1]).abs()>radius){add(dx,dy);}
                                 }
                             }
@@ -158,6 +187,13 @@ impl MotionSearch{
                 }
                 *field=Some(LevelField{grid,choices});
             }
+            // Source index belongs to the validated input timeline. Keep
+            // only the next picture, and bound total retained texture bytes.
+            let bytes=u64::from(bt.width())*u64::from(bt.height())*u64::from(bt.depth_or_array_layers());
+            if source_index.is_some() && cache_bytes+bytes<=MAX_CACHED_TEXTURE_BYTES{
+                cache_bytes+=bytes;
+                next_cache.insert(level,bt);
+            }
         }
         let [forward,backward]=previous;
         let forward=forward.ok_or("missing previous field")?;
@@ -173,7 +209,12 @@ impl MotionSearch{
         };
         let previous=finish(forward,next)?;
         let current=finish(backward,current)?;
-        layout.pack(Some(&previous),&current)
+        let packet=layout.pack(Some(&previous),&current)?;
+        if let Some(index)=source_index.and_then(|i|i.checked_add(1)){
+            self.cached_index=Some(index);
+            self.cached_next=next_cache;
+        }
+        Ok(packet)
     }
 }
 
@@ -235,7 +276,7 @@ mod tests{
             memory_hints:wgpu::MemoryHints::MemoryUsage,
         },None)).unwrap();
         device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let search=MotionSearch::new(&device);
+        let mut search=MotionSearch::new(&device);
         for pel in [1,2,4]{
             let builder=SuperBuilder::new(192,128,pel).unwrap();
             let analyser=Analyser::new(&builder,16,16,2,3).unwrap();
@@ -253,9 +294,20 @@ mod tests{
             let b=make(2);
             let asf=builder.build(&a).unwrap();
             let bsf=builder.build(&b).unwrap();
-            let packet=search.analyse(&device,&queue,&builder,&asf,&bsf,&header,Duration::from_secs(20)).unwrap();
-            let second=search.analyse(&device,&queue,&builder,&asf,&bsf,&header,Duration::from_secs(20)).unwrap();
+            let packet=search.analyse(&device,&queue,&builder,&asf,&bsf,&header,Duration::from_secs(20),None).unwrap();
+            let second=search.analyse(&device,&queue,&builder,&asf,&bsf,&header,Duration::from_secs(20),None).unwrap();
             assert_eq!(packet,second,"deterministic pel={pel}");
+            // Adjacent source pairs may reuse the prior next image only
+            // under the same timeline; repeat with an uncached reference.
+            let cached=search.analyse(&device,&queue,&builder,&asf,&bsf,&header,Duration::from_secs(20),Some(0)).unwrap();
+            assert_eq!(cached,packet);
+            let hits=search.cache_hits;
+            let reverse_cached=search.analyse(&device,&queue,&builder,&bsf,&asf,&header,Duration::from_secs(20),Some(1)).unwrap();
+            assert!(search.cache_hits>hits);
+            search.clear_sources();
+            let reverse_uncached=search.analyse(&device,&queue,&builder,&bsf,&asf,&header,Duration::from_secs(20),None).unwrap();
+            assert_eq!(reverse_cached,reverse_uncached);
+            assert!(search.cached_next.is_empty());
             let bytes:Vec<u8>=header.iter().flat_map(|x|x.to_le_bytes()).collect();
             let VectorRecord::Ready(data)=metadata::vector_data(&bytes)else{panic!("header");};
             let decoded=metadata::decode_vectors(&packet,3,data.grid,3).unwrap();
@@ -264,7 +316,7 @@ mod tests{
             assert!(decoded.current.as_ref().unwrap().iter().any(|v|v.dx!=0||v.dy!=0));
             let layout=PacketLayout::from_header(&header).unwrap();
             assert_eq!(packet.len(),72+layout.count()*16);
-            assert!(search.analyse(&device,&queue,&builder,&asf,&bsf,&header,Duration::ZERO).is_err());
+            assert!(search.analyse(&device,&queue,&builder,&asf,&bsf,&header,Duration::ZERO,None).is_err());
         }
         assert!(pollster::block_on(device.pop_error_scope()).is_none());
     }
