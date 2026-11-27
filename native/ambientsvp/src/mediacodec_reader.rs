@@ -51,16 +51,47 @@ impl Drop for ReaderInner{
 pub struct Reader(Arc<ReaderInner>);
 pub struct Frame{
     // Keep parent AImageReader alive: deleting it would invalidate AImage.
-    _reader:Arc<ReaderInner>,
+    _reader:Option<Arc<ReaderInner>>,
+    external:Option<ExternalLease>,
     image:*mut c_void,
     pub(crate) buffer:*mut c_void,
     pub(crate) acquire_fd:i32,
     pub(crate) info:FrameInfo,
 }
+type ReleaseSource=unsafe extern "C" fn(*mut c_void,i32);
+struct ExternalLease{context:*mut c_void,release:ReleaseSource,buffer:*mut c_void}
+impl Drop for ExternalLease{
+    fn drop(&mut self){
+        unsafe{AHardwareBuffer_release(self.buffer);}
+    }
+}
 impl Frame{
+    /// Adopt an additional reference to a decoder picture via its owner
+    /// callback, not the AImage itself. The caller transfers the token
+    /// even if validation fails. A duplicate producer FD belongs to us.
+    pub(crate) unsafe fn borrowed(buffer:*mut c_void,fd:i32,crop:Crop,timestamp:i64,
+        context:*mut c_void,release:ReleaseSource)->Option<Self>{
+        let reject=||{unsafe{release(context,-1)};None};
+        if buffer.is_null() || fd< -1{return reject();}
+        let mut d=Desc::default();
+        unsafe{AHardwareBuffer_describe(buffer,&mut d);}
+        let Some(info)=checked_info(crop,d,PRIVATE,timestamp)else{return reject();};
+        let acquire_fd=if fd>=0{
+            let dup=unsafe{libc::fcntl(fd,libc::F_DUPFD_CLOEXEC,0)};
+            if dup<0{return reject();}dup
+        }else{-1};
+        unsafe{AHardwareBuffer_acquire(buffer);}
+        Some(Self{_reader:None,external:Some(ExternalLease{context,release,buffer}),
+            image:ptr::null_mut(),buffer,acquire_fd,info})
+    }
     // Called only after successful GPU submission and release-fence export,
     // or after completion when export is unavailable. Transfer the FD to NDK.
     pub(crate) fn return_after_gpu(&mut self,fd:i32){
+        if let Some(lease)=self.external.take(){
+            if self.acquire_fd>=0{unsafe{libc::close(self.acquire_fd)};}
+            self.acquire_fd=-1;self.buffer=ptr::null_mut();
+            unsafe{(lease.release)(lease.context,fd)};return;
+        }
         if self.image.is_null(){if fd>=0{unsafe{libc::close(fd)};}return;}
         if self.acquire_fd>=0{unsafe{libc::close(self.acquire_fd)};}
         self.acquire_fd=-1;
@@ -71,6 +102,10 @@ impl Frame{
 }
 impl Drop for Frame{
     fn drop(&mut self){
+        if let Some(lease)=self.external.take(){
+            unsafe{(lease.release)(lease.context,self.acquire_fd.max(-1))};
+            self.acquire_fd=-1;self.buffer=ptr::null_mut();
+        }
         if !self.image.is_null(){
             // No GPU use committed. Return the original producer fence,
             // not -1, so a dropped image cannot be reused prematurely.
@@ -145,7 +180,7 @@ pub unsafe extern "C" fn ambient_svp_mediacodec_acquire(reader:*const Reader,out
             return match status{-30001=>0,-30002=>-2,_=>-1};
         }
         if image.is_null(){if fence>=0{unsafe{libc::close(fence)};}return -1;}
-        let mut frame=Frame{_reader:r,image,buffer:ptr::null_mut(),acquire_fd:fence,info:FrameInfo::default()};
+        let mut frame=Frame{_reader:Some(r),external:None,image,buffer:ptr::null_mut(),acquire_fd:fence,info:FrameInfo::default()};
         let mut crop=Crop::default();
         let mut timestamp=0;
         let mut format=0;
