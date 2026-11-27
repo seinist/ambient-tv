@@ -1104,3 +1104,31 @@ PRIVATE/AHB conversion or VLC SurfaceControl RGBA8 output. Multiplane
 high-depth Vulkan images are conservatively rejected. No end-to-end
 HDR validation, HDR10+ interpolation, Dolby Vision composition or
 hardware speed claim. Fresh CI and full MPV build required.
+
+
+Explicit Android P010 -> FP16 import (experimental)
+---------------------------------------------------
+The optional PRIVATE reader accepts explicitly identified P010
+leases without changing the existing SDR8 reader ABI. The importer
+now builds separate RGBA8 and RGBA16F immutable-sampler shaders.
+High-depth submit_into_format accepts only P010 confirmed by both
+AHardwareBuffer and Vulkan format properties, with matching suggested
+BT.2020 NCL sampler model and limited/full range. Vendor-private
+unproven layouts and mismatched metadata are rejected before submit.
+Known P010 is also rejected by the old RGBA8 converter. The original
+producer/consumer fences and direct player image submission remain
+unchanged. No CPU pixel mapping or readback. Driver YCbCr conversion
+precision and range behavior remain device dependent.
+
+The MPV MediaCodec adapter negotiates optional symbols, checks actual
+10-bit 4:2:0 and PQ/HLG BT.2020 metadata, and creates a RGBAF16 AVVkFrame
+pool for compatible P010 sources. Dynamic HDR10+/Dolby side data is
+rejected. Native resident mode 3 accepts those encoded FP16 RGB views,
+avoids repeating YUV conversion, and uses a ten-bit luma proxy for
+motion. The native GPU precision fixture covers this format, and
+Android cross-compilation includes strict source-format rejection
+tests and both SPIR-V variants. No app HDR selection change or VLC
+high-depth compositor output yet. Actual ten-bit PRIVATE decoder
+buffers, driver conversion fidelity and end-to-end HDR playback
+require physical tests. Prior c28f022d CI was superseded; fresh CI
+must complete. No measured performance or full HDR claim.
