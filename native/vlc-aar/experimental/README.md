@@ -899,3 +899,11 @@ FEL clocks require both the previous and current sequence headers; missing
 headers invalidate inherited anchors, and explicit timeline jumps flag
 BL discontinuity even when sequence numbers are consecutive. Added host
 boundary tests and fixed the duplicate-range fixture's variable name.
+
+Paired fragment preparation also compares every corresponding sample's
+exact rational duration and composition offset before sending any BL AU,
+regardless of trun boundaries. With the verified equal initial clocks
+this proves all DTS/PTS pairs, not just equal total duration. Preserve
+discontinuity flags through audio-only moofs, and use the explicit VLC
+demux_sys_t pointer in preflight. Latest linked build and real container
+playback still require verification.
