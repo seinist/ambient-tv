@@ -7,6 +7,10 @@ on:
       - 'scripts/prepare_svp_sources.sh'
       - 'scripts/build_svp_android.sh'
       - 'scripts/profile_svp_android.sh'
+      - 'scripts/svp_dependency.py'
+      - 'scripts/tests/test_svp_updates.py'
+      - 'scripts/vendor_svp_licenses.sh'
+      - 'gradle/external-versions.properties'
       - '.github/workflows/svp-native.yml'
   push:
     branches: [main]
@@ -15,6 +19,10 @@ on:
       - 'scripts/prepare_svp_sources.sh'
       - 'scripts/build_svp_android.sh'
       - 'scripts/profile_svp_android.sh'
+      - 'scripts/svp_dependency.py'
+      - 'scripts/tests/test_svp_updates.py'
+      - 'scripts/vendor_svp_licenses.sh'
+      - 'gradle/external-versions.properties'
       - '.github/workflows/svp-native.yml'
   workflow_dispatch:
 
@@ -34,6 +42,10 @@ jobs:
       RUSTFLAGS: "-C target-feature=+ssse3"
     steps:
       - uses: actions/checkout@v5
+      - name: Verify source pin and updater integration
+        run: |
+          python3 scripts/svp_dependency.py
+          python3 -m unittest discover -s scripts/tests -p test_svp_updates.py
       - name: Prepare Rust
         run: rustup toolchain install stable --profile minimal
       - name: Test native CPU fallback
