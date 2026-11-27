@@ -9,7 +9,16 @@ diff --git a/modules/video_output/android/utils.h b/modules/video_output/android
      } AImage;
      pfn_sync_merge sync_merge;
      struct {
-@@ -305,6 +306,10 @@
+@@ -210,6 +211,8 @@
+     struct aimage_reader_api *air_api;
+     struct asurface_control_api *asc_api;
+     AImageReader *air;
++    vlc_mutex_t ambient_listener_lock;
++    void *ambient_listener_dec;
+ 
+     struct vlc_asurfacetexture *texture;
+     void *dec_opaque;
+@@ -305,6 +308,10 @@
  struct aimage_reader_api *
  AWindowHandler_getAImageReaderApi(AWindowHandler *p_awh);
  
