@@ -3,6 +3,21 @@
 
 #define AMBIENT_FEL_MAX_AU (32u*1024u*1024u)
 
+/* A forward-only input needs random access within one bounded mdat.
+ * The entire payload is owned by the demuxer until that fragment ends;
+ * callers receive a view only while the owner is alive. */
+#define AMBIENT_FEL_MAX_MDAT (64u*1024u*1024u)
+static inline bool ambient_fel_mdat_slice(const uint8_t *data,size_t bytes,
+    uint64_t start,uint64_t offset,size_t size,const uint8_t **slice)
+{
+    if(!data||!slice||!bytes||bytes>AMBIENT_FEL_MAX_MDAT||!size||
+        bytes>UINT64_MAX-start||offset<start||offset-start>bytes||
+        size>bytes-(size_t)(offset-start))return false;
+    *slice=data+(size_t)(offset-start);
+    return true;
+}
+
+
 /* A cursor caches the next byte offset in the current chunk. Sequential
  * playback becomes O(1) even for a chunk containing many variable-sized
  * samples; a backward seek safely restarts from the chunk's first byte.
