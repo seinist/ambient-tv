@@ -169,7 +169,8 @@ private:
             // Native P010 is independently validated with physical-device
             // format/import queries. Do not require external-format features
             // for a route that does not use VkExternalFormatANDROID.
-            if (!raw_p010_format(format.format)) return VK_ERROR_FORMAT_NOT_SUPPORTED;
+            if (!raw_p010_format(format.format) || !raw_p010_extent_valid(desc.width, desc.height))
+                return VK_ERROR_FORMAT_NOT_SUPPORTED;
         } else if (!supported_decoder_format(format.format, false) || !format.externalFormat ||
                    !(format.formatFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) {
             return VK_ERROR_FORMAT_NOT_SUPPORTED;
