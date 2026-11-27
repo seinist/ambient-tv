@@ -381,6 +381,37 @@ impl Gpu {
         }
     }
 
+    /// Stage a newly decoded HD source while the CPU constructs its super
+    /// frame and motion vectors. Queue ordering makes the texture ready for
+    /// any later synthesis without waiting on the CPU. Do not speculatively
+    /// allocate an unbounded queue or add submissions for small frames.
+    pub fn stage_source(&mut self, n: i32, data: &[u8]) -> Result<(), String> {
+        let pixels = u64::from(self.width) * u64::from(self.height);
+        if pixels < 1280 * 720 || pixels > 1920 * 1080
+            || self.sources.len() >= 3 || self.sources.contains_key(&n) {
+            return Ok(());
+        }
+        self.device.poll(wgpu::Maintain::Poll);
+        self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        self.source(n, data, false, &mut encoder);
+        self.queue.submit([encoder.finish()]);
+        self.recycle_uploads();
+        if let Some(error) = pollster::block_on(self.device.pop_error_scope()) {
+            return Err(error.to_string());
+        }
+        Ok(())
+    }
+
+    // A failed input must not leave the same frame index cached with pixels
+    // from a rejected push. A subsequent retry may supply a different image.
+    pub fn discard_source(&mut self, n: i32) {
+        if let Some(source) = self.sources.remove(&n) {
+            if self.recycled_sources.len() < 2 { self.recycled_sources.push(source); }
+        }
+        self.plane_bindings = std::array::from_fn(|_| None);
+    }
+
     fn source(&mut self, n: i32, data: &[u8], linear_needed: bool,
               encoder: &mut wgpu::CommandEncoder) {
         let (w, h) = (self.width, self.height);
