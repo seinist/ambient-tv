@@ -487,9 +487,12 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_YOUTUBE_ENABLED, false)
         set(value) = prefs.edit { putBoolean(KEY_YOUTUBE_ENABLED, value) }
 
+    /** Persist the user's choice independently of the current APK's installed engine. */
+    val spotifyRequestedEnabled: Boolean
+        get() = prefs.getBoolean(KEY_SPOTIFY_ENABLED, false)
+
     var spotifyEnabled: Boolean
-        // Off in builds without Spotify (SPOTIFY_NATIVE): every menu, row and search checks this.
-        get() = com.ambient.tv.modules.SystemModuleAvailability.spotifyOffered && prefs.getBoolean(KEY_SPOTIFY_ENABLED, false)
+        get() = com.ambient.tv.modules.SystemModuleAvailability.spotifyOffered && spotifyRequestedEnabled
         set(value) = prefs.edit { putBoolean(KEY_SPOTIFY_ENABLED, value) }
 
     var radioEnabled: Boolean
