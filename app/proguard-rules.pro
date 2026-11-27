@@ -110,3 +110,12 @@
 
 # Downloaded adapters link this host API by its original binary name.
 -keep interface com.ambient.tv.modules.SystemModuleEntrypoint { *; }
+
+# Downloaded Monogram adapter is compiled before R8. Its host types must
+# retain binary names, including Kotlin internal/default-argument methods.
+-keep class com.ambient.tv.data.telegram.** { *; }
+-keep interface com.ambient.tv.data.telegram.** { *; }
+-keep class com.ambient.tv.data.local.TokenStore { *; }
+-keep class kotlin.** { *; }
+-keep class kotlinx.coroutines.** { *; }
+-keep class timber.log.** { *; }
