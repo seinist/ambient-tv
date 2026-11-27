@@ -40,7 +40,7 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def write_package(out, module, abi, version, files, shared=None):
+def write_package(out, module, abi, version, files, shared=None, binding=None):
     if not files or len(files) > 4096 or sum(map(len, files.values())) > 512 * 1024**2:
         raise ValueError("package expansion exceeds limits")
     folded = set()
@@ -65,7 +65,7 @@ def write_package(out, module, abi, version, files, shared=None):
         raise ValueError("compressed package exceeds limits")
     return dict(module=module, abi=abi, profile="baseline", version=version,
                 hostApi=1, minSdk=29, asset=asset, size=len(raw), sha256=digest(raw),
-                hostNativeSha256=shared or {})
+                hostNativeSha256=shared or {}, **({"hostBindingSha256": binding} if binding else {}))
 
 
 def shaders(out, version):
@@ -142,20 +142,52 @@ def native_module(out, module, version, apks, licenses):
     return entries
 
 
+def monogram(out, version, aar, licenses):
+    """Package Rust only; pair it with the exact generated host binding JAR."""
+    entries = []
+    with zipfile.ZipFile(aar) as archive:
+        names = archive.namelist()
+        if len(names) != len(set(names)):
+            raise ValueError("duplicate Monogram AAR entries")
+        classes = archive.read("classes.jar")
+        if not classes:
+            raise ValueError("empty Monogram language bindings")
+        binding = digest(classes)
+        for abi in ABIS:
+            name = "libmonogram_mtproto.so"
+            data = archive.read(f"jni/{abi}/{name}")
+            needed = native_dependencies(data, name)
+            if needed - PLATFORM:
+                raise ValueError(f"unapproved Monogram native dependencies: {needed - PLATFORM}")
+            files = {"lib/" + name: data}
+            for license in licenses:
+                path = "licenses/" + license.name
+                if path in files:
+                    raise ValueError("duplicate license filename")
+                files[path] = license.read_bytes()
+            entries.append(write_package(out, "monogram", abi, version, files, binding=binding))
+    return entries
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--module", choices=("shaders", "projectm", "mpv", "spotify"), required=True)
+    parser.add_argument("--module", choices=("shaders", "projectm", "mpv", "spotify", "monogram"), required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--version", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--apk", type=Path, action="append", default=[])
     parser.add_argument("--license", type=Path, action="append", default=[])
+    parser.add_argument("--monogram-aar", type=Path)
     args = parser.parse_args()
     if args.version <= 0 or not re.fullmatch(r"modules-" + args.module + r"-[A-Za-z0-9._-]{1,70}", args.tag):
         parser.error("invalid tag or version")
     args.output.mkdir(parents=True, exist_ok=False)
     if args.module == "shaders":
         entries = shaders(args.output, args.version)
+    elif args.module == "monogram":
+        if not args.monogram_aar or not args.license:
+            parser.error("Monogram requires the pinned matching AAR and corresponding license notices")
+        entries = monogram(args.output, args.version, args.monogram_aar, args.license)
     else:
         if not args.apk or not args.license:
             parser.error("Native modules require verified Full APKs and corresponding license notices")
