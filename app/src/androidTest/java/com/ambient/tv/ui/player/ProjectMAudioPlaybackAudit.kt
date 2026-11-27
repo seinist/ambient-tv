@@ -142,20 +142,22 @@ internal class ProjectMAudioPlaybackAudit(private val test: Instrumentation, pri
                     check((BackgroundPlaybackSession.currentStatus()?.positionMs ?: 0) > 1500)
                 }
                 log("PASS $backend live=$live: PCM, advancing playback, nonblank moving projectM Surface (audibility unverified)")
-                // A normal build returns false. An instrumented build writes the accumulated
-                // counters to the app-private audit cache after real playback on this GL thread.
-                val profileWritten = CountDownLatch(1)
-                val profile = File(test.targetContext.cacheDir, "projectm-audit.profraw")
-                output.queueEvent {
-                    try {
-                        if (com.ambient.tv.ui.common.projectm.ProjectMNativeBridge.nativeWriteProfile(profile.absolutePath)) {
-                            log("PGO profile saved: ${profile.name} after $backend live=$live")
+                if (backend == "vlc" && live) {
+                    // A normal build returns false. An instrumented build writes the accumulated
+                    // counters to the app-private audit cache after real playback on this GL thread.
+                    val profileWritten = CountDownLatch(1)
+                    val profile = File(test.targetContext.cacheDir, "projectm-audit.profraw")
+                    output.queueEvent {
+                        try {
+                            if (com.ambient.tv.ui.common.projectm.ProjectMNativeBridge.nativeWriteProfile(profile.absolutePath)) {
+                                log("PGO profile saved: ${profile.name} after $backend live=$live")
+                            }
+                        } finally {
+                            profileWritten.countDown()
                         }
-                    } finally {
-                        profileWritten.countDown()
                     }
+                    check(profileWritten.await(5, TimeUnit.SECONDS)) { "profile export GL event timed out" }
                 }
-                check(profileWritten.await(5, TimeUnit.SECONDS)) { "profile export GL event timed out" }
             } finally {
                 main {
                     val retiring = BackgroundPlaybackSession.activeHandle()
