@@ -696,3 +696,17 @@ contexts. The new crop/zero-residual implementation needs final CI,
 AAR and practical playback validation. No full HDR10+ certification,
 bit-exact proprietary FEL filter or arbitrary phase reconstruction
 claim is made. Experimental defaults remain off.
+
+### Authored HDR10+ curve precision and FEL color validation
+
+The spatial renderer uses a 1024-knot LUT over the curved segment, with
+shader indexing derived from the actual texture extent. For normalized
+Bezier control points in [0,1], degree <=16, the second derivative is
+bounded by 480, yielding a uniform linear interpolation bound below
+0.000058 (excluding floating point error and display adaptation).
+Unused local LUT rows copy the global result instead of regenerating it.
+The host GPU fixture checks the degree-16 closed form and actual pixel
+readback. FEL nonneutral packed-P010 integration checks CPU-reconstructed
+codewords followed by the same pinned libplacebo color conversion; matrix
+nonfinite inputs are rejected. These are engineering regression tests,
+not full HDR10+ certification or an independent Dolby reference decoder.

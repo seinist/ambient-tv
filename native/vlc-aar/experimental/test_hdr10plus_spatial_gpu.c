@@ -154,7 +154,7 @@ int main(void)
     m.windows[0].fraction=m.windows[1].fraction=0.5f;
     assert(!ambient_hdrplus_curve_key_equal(&state.previous,&m));
     assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
-    assert(state.curves[0][255]<=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_NORM,state.output_max*8.f/15.f)+0.001f);
+    assert(state.curves[0][AMBIENT_HDRPLUS_LUT_SIZE-1]<=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_NORM,state.output_max*8.f/15.f)+0.001f);
     m.targeted_grid=(struct ambient_hdrplus_grid){0};
     // A colored input must react to a nonzero saturation weight.
     img.planes[0].texture=input;img.color=pl_color_space_hdr10;
@@ -233,6 +233,43 @@ int main(void)
         assert(fabsf(pixels[4*i]-ref)<0.0015f);
     }
     pl_gpu_finish(gpu);pl_tex_destroy(gpu,&near);
+    // Maximum-degree authored curve: B16(t)=1-(1-t)^16.
+    // Check midpoint interpolation against the closed form, independent of
+    // the LUT generator, then verify actual GPU pixels for the same curve.
+    m.windows[0].knee_x=0.f;m.windows[0].knee_y=0.f;
+    m.windows[0].anchor_count=15;
+    for(unsigned j=0;j<15;j++)m.windows[0].anchors[j]=1.f;
+    const unsigned last=AMBIENT_HDRPLUS_LUT_SIZE-1;
+    const float steep_nits[]={1000.f*0.5f/last,1000.f*1.5f/last,100.f,999.f};
+    for(int i=0;i<width*height;i++){
+        float p=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_PQ,steep_nits[i%4]);
+        pixels[i*4]=pixels[i*4+1]=pixels[i*4+2]=p;pixels[i*4+3]=1.f;
+    }
+    pl_tex steep=pl_tex_create(gpu,pl_tex_params(.w=width,.h=height,.format=fmt,
+        .sampleable=true,.initial_data=pixels));
+    assert(steep);
+    img.planes[0].texture=steep;img.color=pl_color_space_hdr10;
+    assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
+    const double scale=state.authored[0][2];
+    assert(scale>0.0);
+    for(unsigned j=0;j<last;j++){
+        double x=(j+0.5)/last;
+        double expected=1.0-pow(1.0-x,16.0);
+        double actual=(state.curves[0][j]+state.curves[0][j+1])/(2.0*scale);
+        assert(fabs(actual-expected)<0.000058);
+    }
+    assert(!memcmp(state.curves[0],state.curves[1],sizeof(state.curves[0])));
+    assert(!memcmp(state.curves[0],state.curves[2],sizeof(state.curves[0])));
+    sh=pl_dispatch_begin(state.dispatch);
+    pl_shader_sample_direct(sh,pl_sample_src(.tex=state.output));
+    assert(pl_dispatch_finish(state.dispatch,pl_dispatch_params(.shader=&sh,.target=readback)));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=readback,.ptr=pixels)));
+    for(unsigned i=0;i<4;i++){
+        double y=1.0-pow(1.0-steep_nits[i]/1000.0,16.0);
+        float ref=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_PQ,y*state.output_max);
+        assert(fabsf(pixels[4*i]-ref)<0.0015f);
+    }
+    pl_gpu_finish(gpu);pl_tex_destroy(gpu,&steep);
     // Saturation: evaluate B.8-B.12 independently, with ideal-black BT.1886.
     const float channels[3]={600.f,250.f,120.f};
     for(int i=0;i<width*height;i++){

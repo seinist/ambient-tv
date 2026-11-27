@@ -11,7 +11,10 @@
 #include <libplacebo/renderer.h>
 #include "hdr10plus_spatial_geometry.h"
 
-#define AMBIENT_HDRPLUS_LUT_SIZE 256
+// For degree <= 16 with control points in [0,1], |B''| <= 480.
+// Linear interpolation on 1024 uniform knots bounds normalized authored
+// curve error by 480/(8*1023^2) < 0.000058 (excluding FP roundoff).
+#define AMBIENT_HDRPLUS_LUT_SIZE 1024
 struct ambient_hdrplus_spatial {
     pl_dispatch dispatch;
     pl_tex lut, output;
@@ -67,12 +70,13 @@ static inline bool ambient_hdrplus_spatial_curves(pl_gpu gpu, struct ambient_hdr
     if (s->valid && s->output_min==out_min && s->output_max==out_max &&
         ambient_hdrplus_curve_key_equal(&s->previous,m)) return true;
     s->valid=false;
-    for (unsigned i=0;i<3;++i) {
-        const struct ambient_hdrplus_window *w=&m->windows[i<m->window_count?i:0];
+    for (unsigned i=0;i<m->window_count;++i) {
+        const struct ambient_hdrplus_window *w=&m->windows[i];
         float peak=ambient_hdrplus_normalization_nits(m,w);
         if (!isfinite(peak) || peak<=out_min || peak>10000.f ||
             !isfinite(w->average) || w->average<0.f || w->average>1.f ||
-            w->anchor_count>15) return false;
+            w->anchor_count>15 ||
+            (w->tone_mapping && !ambient_hdrplus_usable_curve(w,m->target_nits))) return false;
         float source_factor,target_factor;
         if (!ambient_hdrplus_grid_factor(&m->mastering_grid,w,&source_factor) ||
             !ambient_hdrplus_grid_factor(&m->targeted_grid,w,&target_factor)) return false;
@@ -128,6 +132,13 @@ static inline bool ambient_hdrplus_spatial_curves(pl_gpu gpu, struct ambient_hdr
             previous=v;
         }
     }
+    // Unused local rows mirror the global row without repeating CPU curve
+    // generation. Their selectors are disabled, but keep shader inputs valid.
+    for(unsigned i=m->window_count;i<3;++i){
+        memcpy(s->curves[i],s->curves[0],sizeof(s->curves[i]));
+        memcpy(s->authored[i],s->authored[0],sizeof(s->authored[i]));
+        s->domains[i]=s->domains[0];
+    }
     pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,1,32,32,PL_FMT_CAP_SAMPLEABLE);
     if (!fmt || !pl_tex_recreate(gpu,&s->lut,pl_tex_params(
         .w=AMBIENT_HDRPLUS_LUT_SIZE,.h=3,.format=fmt,.sampleable=true,.host_writable=true)))
@@ -153,9 +164,10 @@ static const char ambient_hdrplus_mask_glsl[] =
     "    if(k.x==1.0 || s<k.x) return k.z*k.y*s/k.x;\n"
     "    u=(s-k.x)/(1.0-k.x);\n"
     "  }\n"
-    "  float x=clamp(u,0.0,1.0)*255.0;\n"
+    "  int last=textureSize(ahp_lut,0).x-1;\n"
+    "  float x=clamp(u,0.0,1.0)*float(last);\n"
     "  int n=int(floor(x));\n"
-    "  return mix(texelFetch(ahp_lut,ivec2(n,i),0).r,texelFetch(ahp_lut,ivec2(min(n+1,255),i),0).r,fract(x));\n"
+    "  return mix(texelFetch(ahp_lut,ivec2(n,i),0).r,texelFetch(ahp_lut,ivec2(min(n+1,last),i),0).r,fract(x));\n"
     "}\n"
     "vec3 ahp_map_rgb(int i,vec3 rgb,float v,float root) {\n"
     "  if(v<=0.0) return vec3(0.0);\n"
