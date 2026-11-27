@@ -6,7 +6,8 @@ use wgpu::util::DeviceExt;
 
 struct Source {
     packed: wgpu::Texture,
-    linear: wgpu::Texture,
+    linear: Option<wgpu::Texture>,
+    linear_valid: bool,
 }
 pub struct Gpu {
     device: wgpu::Device,
@@ -18,6 +19,8 @@ pub struct Gpu {
     prepass_layout: wgpu::BindGroupLayout,
     pipelines: BTreeMap<[i32; 6], wgpu::ComputePipeline>,
     sources: BTreeMap<i32, Source>,
+    recycled_sources: Vec<Source>,
+    empty_prepass: wgpu::BindGroup,
     output: wgpu::Buffer,
     readback: wgpu::Buffer,
     width: u32,
@@ -27,7 +30,8 @@ pub struct Gpu {
 
 impl Gpu {
     pub fn clear_sources(&mut self) {
-        self.sources.clear();
+        self.recycled_sources.extend(std::mem::take(&mut self.sources).into_values());
+        self.recycled_sources.truncate(2);
     }
     pub fn new(width: u32, height: u32) -> Result<Self, String> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
@@ -115,6 +119,9 @@ impl Gpu {
             bind_group_layouts: &[&empty, &prepass_layout],
             push_constant_ranges: &[],
         });
+        let empty_prepass = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None, layout: &empty, entries: &[],
+        });
         let prepass = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: None,
             layout: Some(&pre_layout),
@@ -151,6 +158,8 @@ impl Gpu {
             prepass_layout,
             pipelines: BTreeMap::new(),
             sources: BTreeMap::new(),
+            recycled_sources: Vec::new(),
+            empty_prepass,
             output,
             readback,
             width,
@@ -189,116 +198,104 @@ impl Gpu {
         })
     }
 
-    fn upload(
+    // Keep the explicit MAP_WRITE allocation: Queue::write_texture and implicit
+    // transient staging have crashed Android gfxstream at video resolutions.
+    // Fill the mapped allocation directly, with no intermediate padded Vec.
+    fn upload_rows(
         &self,
+        encoder: &mut wgpu::CommandEncoder,
         texture: &wgpu::Texture,
-        data: &[u8],
-        origin: wgpu::Origin3d,
         w: u32,
         h: u32,
         stride: u32,
+        mut fill: impl FnMut(usize, &mut [u8]),
     ) {
-        // Explicit MAP_WRITE upload buffers avoid the transient mapped staging allocator
-        // used by Queue::write_texture (which faults on the Android emulator at 1440p).
-        // COPY_SRC alone still uses that allocator for mapped_at_creation initialization.
-        // Buffer-to-texture copies require 256-byte rows, unlike write_texture.
         let pitch = stride.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let mut padded = vec![0u8; pitch as usize * h as usize];
-        for row in 0..h as usize {
-            padded[row * pitch as usize..row * pitch as usize + stride as usize]
-                .copy_from_slice(&data[row * stride as usize..(row + 1) * stride as usize]);
-        }
-        let staging = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("SVP texture upload"),
-            contents: &padded,
+        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("SVP explicit texture upload"),
+            size: u64::from(pitch) * u64::from(h),
             usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
+            mapped_at_creation: true,
         });
-        let mut encoder = self.device.create_command_encoder(&Default::default());
+        {
+            let mut mapped = staging.slice(..).get_mapped_range_mut();
+            for (row, dst) in mapped.chunks_exact_mut(pitch as usize).enumerate() {
+                fill(row, &mut dst[..stride as usize]);
+            }
+        }
+        staging.unmap();
         encoder.copy_buffer_to_texture(
             wgpu::TexelCopyBufferInfo {
                 buffer: &staging,
                 layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(pitch),
-                    rows_per_image: Some(h),
+                    offset: 0, bytes_per_row: Some(pitch), rows_per_image: Some(h),
                 },
             },
-            wgpu::TexelCopyTextureInfo {
-                texture,
-                mip_level: 0,
-                origin,
-                aspect: wgpu::TextureAspect::All,
-            },
+            texture.as_image_copy(),
             wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
-        self.queue.submit([encoder.finish()]);
     }
 
-    fn source(&mut self, n: i32, data: &[u8]) {
-        if self.sources.contains_key(&n) {
+    fn source(&mut self, n: i32, data: &[u8], linear_needed: bool,
+              encoder: &mut wgpu::CommandEncoder) {
+        let (w, h) = (self.width, self.height);
+        if !self.sources.contains_key(&n) {
+            let mut source = self.recycled_sources.pop().unwrap_or_else(|| Source {
+                packed: self.texture(w, h * 3 / 2, wgpu::TextureFormat::R8Unorm, false),
+                linear: None,
+                linear_valid: false,
+            });
+            source.linear_valid = false;
+            let (width, height) = (w as usize, h as usize);
+            let luma = width * height;
+            let half = width / 2;
+            self.upload_rows(encoder, &source.packed, w, h * 3 / 2, w, |row, dst| {
+                if row < height {
+                    dst.copy_from_slice(&data[row * width..(row + 1) * width]);
+                } else {
+                    let offset = (row - height) * half;
+                    dst[..half].copy_from_slice(&data[luma + offset..luma + offset + half]);
+                    let v = luma * 5 / 4 + offset;
+                    dst[half..].copy_from_slice(&data[v..v + half]);
+                }
+            });
+            self.sources.insert(n, source);
+        }
+        if !linear_needed || self.sources[&n].linear_valid {
             return;
         }
-        let (w, h) = (self.width, self.height);
-        let packed = self.texture(w, h * 3 / 2, wgpu::TextureFormat::R8Unorm, false);
-        let luma = (w * h) as usize;
-        self.upload(&packed, &data[..luma], wgpu::Origin3d::ZERO, w, h, w);
-        self.upload(
-            &packed,
-            &data[luma..luma * 5 / 4],
-            wgpu::Origin3d { x: 0, y: h, z: 0 },
-            w / 2,
-            h / 2,
-            w / 2,
-        );
-        self.upload(
-            &packed,
-            &data[luma * 5 / 4..],
-            wgpu::Origin3d {
-                x: w / 2,
-                y: h,
-                z: 0,
-            },
-            w / 2,
-            h / 2,
-            w / 2,
-        );
-        let linear = self.texture(w, h, wgpu::TextureFormat::R32Float, true);
-        let input_view = packed.create_view(&Default::default());
-        let output_view = linear.create_view(&Default::default());
+        if self.sources[&n].linear.is_none() {
+            let texture = self.texture(w, h, wgpu::TextureFormat::R32Float, true);
+            self.sources.get_mut(&n).unwrap().linear = Some(texture);
+        }
+        let source = self.sources.get_mut(&n).unwrap();
+        let input_view = source.packed.create_view(&Default::default());
+        let output_view = source.linear.as_ref().unwrap().create_view(&Default::default());
         let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &self.prepass_layout,
-            entries: &[
-                texture_binding(0, &input_view),
-                texture_binding(1, &output_view),
-            ],
+            entries: &[texture_binding(0, &input_view), texture_binding(1, &output_view)],
         });
-        let empty_layout = self.prepass.get_bind_group_layout(0);
-        let empty = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &empty_layout,
-            entries: &[],
-        });
-        let mut encoder = self.device.create_command_encoder(&Default::default());
         {
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.set_pipeline(&self.prepass);
-            pass.set_bind_group(0, &empty, &[]);
+            pass.set_bind_group(0, &self.empty_prepass, &[]);
             pass.set_bind_group(1, &group, &[]);
             pass.dispatch_workgroups(w.div_ceil(16), h.div_ceil(16), 1);
         }
-        self.queue.submit([encoder.finish()]);
-        self.sources.insert(n, Source { packed, linear });
+        source.linear_valid = true;
     }
 
-    fn field(&self, data: &[u16], w: u32, h: u32) -> wgpu::Texture {
+    fn field(&self, encoder: &mut wgpu::CommandEncoder, data: &[u16], w: u32, h: u32) -> wgpu::Texture {
         let texture = self.texture(w, h, wgpu::TextureFormat::Rgba32Float, false);
-        let bytes: Vec<u8> = data
-            .iter()
-            .flat_map(|n| (*n as f32).to_le_bytes())
-            .collect();
-        self.upload(&texture, &bytes, wgpu::Origin3d::ZERO, w, h, w * 16);
+        let row_values = w as usize * 4;
+        self.upload_rows(encoder, &texture, w, h, w * 16, |row, dst| {
+            for (out, value) in dst.chunks_exact_mut(4)
+                .zip(&data[row * row_values..(row + 1) * row_values]) {
+                out.copy_from_slice(&(*value as f32).to_le_bytes());
+            }
+        });
         texture
     }
 
@@ -310,29 +307,32 @@ impl Gpu {
         output: &mut [u8],
     ) -> Result<(), String> {
         self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-        self.source(job.n, current);
-        self.source(job.n + 1, next);
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        // Retire old sources before allocating new ones; queue ordering makes
+        // reuse safe, and render waits for the previous readback before returning.
+        let retained = self.sources.split_off(&job.n);
+        self.recycled_sources.extend(std::mem::replace(&mut self.sources, retained).into_values());
+        self.recycled_sources.truncate(2);
+        self.source(job.n, current, job.linear, &mut encoder);
+        self.source(job.n + 1, next, job.linear, &mut encoder);
         let (w, h) = (job.grid.0 as u32, job.grid.1 as u32);
-        let base = self.field(&job.base, w, h);
-        let ext = job.ext.as_ref().map(|data| self.field(data, w, h));
+        let base = self.field(&mut encoder, &job.base, w, h);
+        let ext = job.ext.as_ref().map(|data| self.field(&mut encoder, data, w, h));
         let mask = self.texture(w, h, wgpu::TextureFormat::Rgba8Unorm, false);
-        self.upload(
-            &mask,
-            job.mask
-                .as_deref()
-                .unwrap_or(&vec![0; (w * h * 4) as usize]),
-            wgpu::Origin3d::ZERO,
-            w,
-            h,
-            w * 4,
-        );
+        let stride = w as usize * 4;
+        self.upload_rows(&mut encoder, &mask, w, h, w * 4, |row, dst| {
+            if let Some(data) = job.mask.as_deref() {
+                dst.copy_from_slice(&data[row * stride..(row + 1) * stride]);
+            } else {
+                dst.fill(0);
+            }
+        });
         let base_view = base.create_view(&Default::default());
         let ext_view = ext
             .as_ref()
             .unwrap_or(&base)
             .create_view(&Default::default());
         let mask_view = mask.create_view(&Default::default());
-        let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.clear_buffer(&self.output, 0, None);
         for (plane, p) in job.params.iter().enumerate() {
             let key = [
@@ -373,22 +373,18 @@ impl Gpu {
             }
             let luma = self.width * self.height;
             let start = [0, luma, luma * 5 / 4][plane];
-            let stride = if plane == 0 {
-                self.width
-            } else {
-                self.width / 2
-            };
+            let (stride_words, groups_x, groups_y) = dispatch_geometry(start, p.width as u32, p.height as u32);
             let params = self
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: None,
-                    contents: &params_bytes(p, start, stride),
+                    contents: &params_bytes(p, start, stride_words),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
             let view = |n| {
                 let source = &self.sources[&n];
                 if plane == 0 && job.linear {
-                    &source.linear
+                    source.linear.as_ref().expect("linear source prepared")
                 } else {
                     &source.packed
                 }
@@ -420,8 +416,8 @@ impl Gpu {
                 pass.set_pipeline(&self.pipelines[&key]);
                 pass.set_bind_group(0, &group, &[]);
                 pass.dispatch_workgroups(
-                    (p.width as u32).div_ceil(16),
-                    (p.height as u32).div_ceil(16),
+                    groups_x,
+                    groups_y,
                     1,
                 );
             }
@@ -458,9 +454,21 @@ impl Gpu {
             output.copy_from_slice(&mapped[..output.len()]);
         }
         self.readback.unmap();
-        self.sources.retain(|n, _| *n >= job.n);
         Ok(())
     }
+}
+
+// WGSL render uses 8x8 invocations, each writing one packed u32 (four
+// pixels). Unaligned planes use a flattened word grid, preserving the bytes
+// written by the preceding plane at a shared boundary word.
+fn dispatch_geometry(base: u32, width: u32, height: u32) -> (u32, u32, u32) {
+    let words_per_row = width.div_ceil(4);
+    let rows = if base % 4 == 0 && width % 4 == 0 {
+        height
+    } else {
+        ((base % 4 + width * height).div_ceil(4)).div_ceil(words_per_row)
+    };
+    (words_per_row, words_per_row.div_ceil(8), rows.div_ceil(8))
 }
 
 fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
@@ -516,6 +524,25 @@ fn params_bytes(p: &GpuParams, base: u32, stride: u32) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn dispatch_covers_every_word_once() {
+        for (w, h) in [(32, 32), (33, 17), (64, 64), (65, 33), (960, 540), (1920, 1080)] {
+            for base in [0, 1, 2, 3, 4096] {
+                let (stride, gx, gy) = dispatch_geometry(base, w, h);
+                let words = (base % 4 + w * h).div_ceil(4);
+                let mut covered = vec![0u8; words as usize];
+                for y in 0..gy * 8 {
+                    for x in 0..gx * 8 {
+                        if x >= stride { continue; }
+                        let i = y * stride + x;
+                        if i < words { covered[i as usize] += 1; }
+                    }
+                }
+                assert!(covered.iter().all(|n| *n == 1), "{base} {w}x{h}");
+            }
+        }
+    }
+
     // Also runnable as an Android test executable via cargo ndk test --lib --no-run.
     // The original write_texture path SIGSEGVs on the emulator at 2560x1440.
     #[test]
@@ -526,7 +553,9 @@ mod tests {
                 let mut gpu = Gpu::new(w, h).unwrap();
                 let data: Vec<u8> = (0..w as usize * h as usize * 3 / 2)
                     .map(|n| ((n * 17 + n / w as usize + cycle * 31) % 251) as u8).collect();
-                gpu.source(0, &data);
+                let mut upload = gpu.device.create_command_encoder(&Default::default());
+                gpu.source(0, &data, false, &mut upload);
+                gpu.queue.submit([upload.finish()]);
                 let pitch = w.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
                 let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("SVP upload regression readback"),
