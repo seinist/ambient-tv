@@ -161,7 +161,12 @@ pub(crate) const MOTION:&str=r#"
 var<workgroup> scores:array<u32,64>;
 var<workgroup> vectors:array<vec2i,64>;
 fn px(t:texture_2d<f32>,p:vec2i)->i32{
-    return i32(round(textureLoad(t,p,0).x*255.0));
+    let value=textureLoad(t,p,0);
+    // RGB inputs from an Android external-format sampler use a bounded
+    // luma proxy for matching. Ordinary planar frames retain exact Y.
+    let luminance=select(value.x,dot(value.rgb,vec3f(0.2126,0.7152,0.0722)),
+        (geometry.w&0x80000000u)!=0u);
+    return i32(round(luminance*255.0));
 }
 fn cost(origin:vec2i,mv:vec2i,reverse:bool)->u32{
     let size=vec2i(geometry.xy);
@@ -199,9 +204,10 @@ fn reduce(lane:u32){
 }
 @compute @workgroup_size(64)
 fn analyse(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:u32){
-    let reverse=g.y>=geometry.w;
-    let gy=g.y%geometry.w;
-    let origin=vec2i(g.x*16u,gy*16u);
+    let gh=geometry.w&0x7fffffffu;
+    let reverse=g.y>=gh;
+    let gy=g.y%gh;
+    let origin=vec2i(vec2u(g.x*16u,gy*16u));
     scores[lane]=0xffffffffu;vectors[lane]=vec2i(0);
     for(var i=lane;i<81u;i+=64u){
         let mv=(vec2i(i32(i%9u),i32(i/9u))-vec2i(4))*4;
@@ -219,7 +225,7 @@ fn analyse(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:
     }
     reduce(lane);
     if lane==0u{
-        let count=geometry.z*geometry.w;
+        let count=geometry.z*gh;
         let index=g.x+gy*geometry.z+select(0u,count,reverse);
         fields[index]=vec4i(vectors[0],i32(scores[0]/128u),0);
     }
@@ -288,8 +294,16 @@ fn synthesize(@builtin(global_invocation_id) id:vec3u){
     if f.z>64*48||r.z>64*48||mismatch>6{
         ap=p;bp=p;blend=select(0.0,1.0,phase>=0.5);
     }
-    let a=yuv(ay,au,av,ap,(params.y&1u)!=0u,(params.y>>2u)&3u,visible);
-    let b=yuv(by,bu,bv,bp,(params.y&2u)!=0u,(params.y>>4u)&3u,visible);
-    textureStore(dst,vec2i(id.xy),vec4f(rgb(mix(a,b,blend)),1.0));
+    if (params.y&64u)!=0u{
+        // Imported Android hardware pixels are already converted to
+        // encoded SDR RGB by the immutable Vulkan YCbCr sampler.
+        let a=bilinear(ay,ap,visible).rgb;
+        let b=bilinear(by,bp,visible).rgb;
+        textureStore(dst,vec2i(id.xy),vec4f(mix(a,b,blend),1.0));
+    }else{
+        let a=yuv(ay,au,av,ap,(params.y&1u)!=0u,(params.y>>2u)&3u,visible);
+        let b=yuv(by,bu,bv,bp,(params.y&2u)!=0u,(params.y>>4u)&3u,visible);
+        textureStore(dst,vec2i(id.xy),vec4f(rgb(mix(a,b,blend)),1.0));
+    }
 }
 "#;
