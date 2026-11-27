@@ -35,7 +35,7 @@ internal class TelegramSeekableMedia(
     @Synchronized
     override fun read(position: Long, buffer: ByteArray, count: Int): Int {
         if (!authorized()) throw IOException("Monogram session is no longer authorized")
-        if (position < 0 || count < 0) throw IOException("Invalid Monogram media range")
+        if (position < 0 || count < 0 || count > buffer.size) throw IOException("Invalid Monogram media range")
         if (position >= size) return -1
         if (count == 0) return 0
         var copied = 0
@@ -92,7 +92,10 @@ internal class TelegramSeekableMedia(
         for (i in 1..window) {
             val offset = start + i.toLong() * TELEGRAM_MEDIA_PART_BYTES
             if (offset >= size) break
-            if (offset !in prefetch) prefetch[offset] = prefetcher.submit(java.util.concurrent.Callable { partLoader(offset) })
+            if (offset !in prefetch) prefetch[offset] = prefetcher.submit(java.util.concurrent.Callable {
+                if (!authorized()) throw IOException("Monogram account changed")
+                partLoader(offset)
+            })
         }
     }
 

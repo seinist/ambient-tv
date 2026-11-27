@@ -12,6 +12,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.runBlocking
 
 /** Seekable Media3 transport. The authenticated Monogram port owns MTProto, session and DRM policy. */
@@ -27,7 +28,7 @@ class TelegramVideoDataSource(
         override fun createDataSource(): DataSource = TelegramVideoDataSource(repository, media, revision)
     }
     private fun requireCurrentAccount() {
-        if (repository.playbackRevision() != accountRevision) throw IOException("Monogram account changed")
+        if (!repository.isPlaybackRevisionCurrent(accountRevision)) throw IOException("Monogram account changed")
     }
 
     private var sourceUri: Uri? = null
@@ -97,8 +98,10 @@ class TelegramVideoDataSource(
         return try {
             runBlocking {
                 // A failed read-ahead is retried directly instead of failing playback.
-                pending?.let { runCatching { it.await() }.getOrNull() }
-                    ?: repository.mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset))
+                val buffered = pending?.let { runCatching { it.await() }.getOrNull() }
+                coroutineContext.ensureActive()
+                requireCurrentAccount()
+                buffered ?: repository.mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset))
             }
         } catch (error: Exception) {
             throw IOException("Telegram media read failed", error)

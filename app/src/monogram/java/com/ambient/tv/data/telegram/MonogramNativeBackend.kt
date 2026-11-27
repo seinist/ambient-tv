@@ -1140,77 +1140,88 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     override suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int): ByteArray =
         loadMediaPart(chatId, messageId, offset, expectedBytes)
 
-    private suspend fun loadMediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int?): ByteArray =
-        cancellableMediaRequest { request ->
-        nativeCall(maxFloodWaitSeconds = PLAYBACK_FLOOD_WAIT_SECONDS) { h ->
+    private suspend fun loadMediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int?): ByteArray {
+        require(offset >= 0L && offset % TELEGRAM_MEDIA_PART_BYTES == 0L)
+        require(expectedBytes == null || expectedBytes in 1..TELEGRAM_MEDIA_PART_BYTES)
+        fun validSize(size: Int) = size in 1..TELEGRAM_MEDIA_PART_BYTES &&
+            (expectedBytes == null || size == expectedBytes)
+        val generation = cacheGeneration
+        val currentIdentity = accountId
+        fun verifyGeneration() {
+            check(accountId == currentIdentity && cacheGeneration == generation && chatId !in leftChannels) {
+                app.getString(R.string.monogram_error_account_changed)
+            }
+        }
+        val dir = withContext(Dispatchers.IO) { File(cache, "chunks").canonicalFile }
+        val cacheFile = File(dir, "$chatId-$messageId-$offset.bin")
+        fun lookup(): ByteArray? = synchronized(diskChunkLock) {
+            verifyGeneration()
+            prepareChunkIndex(dir)
+            val hot = hotChunks[cacheFile]
+            if (hot != null && validSize(hot.size)) {
+                chunkIndex[cacheFile]
+                hot
+            } else if (cacheFile.isFile && cacheFile.length() <= TELEGRAM_MEDIA_PART_BYTES &&
+                validSize(cacheFile.length().toInt())) {
+                rememberChunk(cacheFile)
+                cacheFile.setLastModified(System.currentTimeMillis())
+                runCatching { cacheFile.readBytes() }.getOrNull()
+                    ?.takeIf { validSize(it.size) }?.also { rememberHotChunk(cacheFile, it) }
+            } else {
+                // Older builds could cache a reduced wire part as a complete range.
+                hotChunks.remove(cacheFile)
+                if (cacheFile.delete() || !cacheFile.exists()) chunkIndexBytes -= chunkIndex.remove(cacheFile) ?: 0L
+                null
+            }
+        }
+        // Cache hits still validate the local authenticated native handle, but do
+        // not wait on reconnect, a network flood deadline or a request control.
+        nativeCallOnce(connect = false) { h ->
             requireAuthorized(h)
-            check(chatId !in leftChannels) { app.getString(R.string.monogram_error_channel_left) }
-            require(offset >= 0L && offset % TELEGRAM_MEDIA_PART_BYTES == 0L)
-            require(expectedBytes == null || expectedBytes in 1..TELEGRAM_MEDIA_PART_BYTES)
-            fun validSize(size: Int) = size in 1..TELEGRAM_MEDIA_PART_BYTES &&
-                (expectedBytes == null || size == expectedBytes)
-            val dir = File(cache, "chunks").apply { mkdirs() }.canonicalFile
-            val cacheFile = File(dir, "$chatId-$messageId-$offset.bin")
-            val generation = cacheGeneration
-            val currentIdentity = accountId
-            val cached = synchronized(diskChunkLock) {
-                check(accountId == currentIdentity && cacheGeneration == generation && chatId !in leftChannels) {
-                    app.getString(R.string.monogram_error_account_changed)
+            lookup()
+        }?.let { return it }
+
+        return cancellableMediaRequest { request ->
+            nativeCall(maxFloodWaitSeconds = PLAYBACK_FLOOD_WAIT_SECONDS) { h ->
+                requireAuthorized(h)
+                verifyGeneration()
+                // Another reader may have filled the cache while we waited to connect.
+                lookup()?.let { return@nativeCall it }
+                val temp = synchronized(diskChunkLock) {
+                    verifyGeneration()
+                    dir.mkdirs()
+                    File.createTempFile("part-", ".bin", dir)
                 }
-                prepareChunkIndex(dir)
-                val hot = hotChunks[cacheFile]
-                if (hot != null && validSize(hot.size)) {
-                    chunkIndex[cacheFile]
-                    hot
-                } else if (cacheFile.isFile && cacheFile.length() <= TELEGRAM_MEDIA_PART_BYTES &&
-                    validSize(cacheFile.length().toInt())) {
-                    rememberChunk(cacheFile)
-                    cacheFile.setLastModified(System.currentTimeMillis())
-                    cacheFile.readBytes().takeIf { validSize(it.size) }?.also { rememberHotChunk(cacheFile, it) }
-                } else {
-                    // Older builds could cache a reduced wire part as a complete 512 KiB range.
-                    // Never let a short interior part poison retries after the upgrade.
-                    hotChunks.remove(cacheFile)
-                    if (cacheFile.delete() || !cacheFile.exists()) chunkIndexBytes -= chunkIndex.remove(cacheFile) ?: 0L
-                    null
-                }
-            }
-            if (cached != null) return@nativeCall cached
-            val temp = File.createTempFile("part-", ".bin", dir)
-            try {
-                val previous = uniffi.monogram_mtproto.bindRequestControl(request)
-                val payload = try {
-                    mediaClass(DISPATCH_USER) {
-                        AmbientMonogramJni.mediaRange(h, chatId, messageId, temp.absolutePath, offset)
+                try {
+                    val previous = uniffi.monogram_mtproto.bindRequestControl(request)
+                    val payload = try {
+                        mediaClass(DISPATCH_USER) {
+                            AmbientMonogramJni.mediaRange(h, chatId, messageId, temp.absolutePath, offset)
+                        }
+                    } finally {
+                        uniffi.monogram_mtproto.bindRequestControl(previous)
                     }
+                    require(validSize(payload.size)) { "Invalid or incomplete Monogram chunk" }
+                    verifyGeneration()
+                    requireAuthorized(h)
+                    // The single optional disk copy happens outside the shared index lock.
+                    val staged = runCatching {
+                        if (temp.length() != payload.size.toLong()) temp.writeBytes(payload)
+                    }.isSuccess
+                    synchronized(diskChunkLock) {
+                        verifyGeneration()
+                        prepareChunkIndex(dir)
+                        rememberHotChunk(cacheFile, payload)
+                        if (staged && !cacheFile.isFile && temp.renameTo(cacheFile)) rememberChunk(cacheFile)
+                        trimChunkCache()
+                    }
+                    payload
                 } finally {
-                    uniffi.monogram_mtproto.bindRequestControl(previous)
+                    temp.delete()
                 }
-                require(validSize(payload.size)) { "Invalid or incomplete Monogram chunk" }
-                // An account switch/log-out invalidates in-flight native file results.
-                check(accountId == currentIdentity && cacheGeneration == generation && native.isAuthorized(h) &&
-                    chatId !in leftChannels) {
-                    app.getString(R.string.monogram_error_account_changed)
-                }
-                // Write the single optional disk copy outside the shared index lock.
-                val staged = runCatching {
-                    if (temp.length() != payload.size.toLong()) temp.writeBytes(payload)
-                }.isSuccess
-                synchronized(diskChunkLock) {
-                    check(accountId == currentIdentity && cacheGeneration == generation && chatId !in leftChannels) {
-                        app.getString(R.string.monogram_error_account_changed)
-                    }
-                    prepareChunkIndex(dir)
-                    rememberHotChunk(cacheFile, payload)
-                    if (staged && !cacheFile.isFile && temp.renameTo(cacheFile)) rememberChunk(cacheFile)
-                    trimChunkCache()
-                }
-                payload
-            } finally {
-                temp.delete()
             }
         }
-        }
+    }
 
     /** All index operations are under diskChunkLock, including account invalidation. */
     private fun prepareChunkIndex(dir: File) {

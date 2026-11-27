@@ -311,10 +311,15 @@ class TelegramRepository @Inject constructor(
     /** Frozen browse returns are invalid after logout, account replacement or channel exit. */
     internal fun playbackRevision(): Long = streamEpoch.get()
 
+    internal fun isPlaybackRevisionCurrent(revision: Long): Boolean =
+        client != null && streamEpoch.get() == revision
+
     /** Install only an already authenticated Monogram client, never a partially signed-in one. */
     fun installAuthorized(port: TelegramClientPort) {
         port.setSessionLostListener { type -> scope.launch { sessionLost(port, type) } }
         if (client !== port) {
+            // Close admission for the previous port before publishing a new epoch.
+            client = null
             streamEpoch.incrementAndGet()
             cancelObsoleteTransfers()
             revokePlaybackUrls()
@@ -342,11 +347,11 @@ class TelegramRepository @Inject constructor(
     }
 
     fun disconnect() {
+        client = null
         streamEpoch.incrementAndGet()
         cancelObsoleteTransfers()
         revokePlaybackUrls()
         blockedChannels.clear()
-        client = null
         clearResumePositions()
         mutableAuthorized.value = false
     }
