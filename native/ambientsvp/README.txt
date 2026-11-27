@@ -521,3 +521,37 @@ adjacent-source synthesis, direct output visitor and C loader fixtures
 (run 46034930487). The Android test run had the same 11 pre-existing
 navigation failures among 6495 tests. Current-head selection shader
 and chained tests still need CI confirmation; no device speed claim.
+
+
+Native borrowed-source smoothing
+--------------------------------
+The runtime now adapts the pinned upstream Smoother wrapper in
+src/smoother.rs; the upstream Engine and Job implementation and exact
+band-rendering code remain in use. The wrapper borrows original I420
+planes from the existing bounded native source queue instead of copying
+every picture into another map. The original wrapper is retained as a
+test-only dependency. Motion-vector payloads move into shared ownership
+without copying their allocation; exactly repeated inputs share payloads
+and CPU-expanded subpixel planes.
+
+When Vulkan is active, the CPU-only interleaved pel buffers are no
+longer eagerly generated or stored. If CPU fallback is required, the
+smoother reconstructs the needed superframes from retained source data
+with the same upstream SuperBuilder and caches the interleaved planes.
+Normal CPU sessions expand once as before, with HD plane expansion
+distributed across the existing session pool. Forgetting old entries
+releases shared references without creating a second source map.
+
+Reference tests compare output bytes and plans against the pinned
+original Smoother for pel=1/2/4 and algorithms 13/21/23, including
+GPU planning followed by lazy CPU rendering and repeated-frame
+allocation sharing. These are native correctness tests, not device
+throughput measurements.
+
+Exact previous head e1c967ede57e9d9d3b72db3eda05b2b396547c29 passed the
+entire SVP native workflow 46037094296, including the fused SAD/SATD
+and ordered candidate-selection shader and chained GPU parity tests.
+The borrowed-source wrapper now changes the actual production path;
+its current-head CPU/Vulkan/Android checks remain to be verified.
+Full GPU search orchestration and hardware-buffer zero-copy remain
+unfinished; the experimental motion stage is not enabled in playback.
