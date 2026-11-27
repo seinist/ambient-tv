@@ -24,10 +24,10 @@ new file mode 100644
 +    struct ambient_dovi_curve curves[3];
 +};
 +struct ambient_dovi_parser;
-+struct ambient_dovi_parser *av_ambient_dovi_alloc(void);
++struct ambient_dovi_parser *av_ambient_dovi_alloc(unsigned profile);
 +void av_ambient_dovi_flush(struct ambient_dovi_parser *);
 +void av_ambient_dovi_free(struct ambient_dovi_parser *);
-+/* Unescaped RPU beginning with byte 25, single-layer profile 8 only.
++/* Unescaped RPU beginning with byte 25, single-layer profile 5 or 8, matching the selected profile.
 + * Returns zero on success, a negative AVERROR on any unsupported/invalid RPU.
 + * The output is a value snapshot, not borrowed parser state. */
 +int av_ambient_dovi_parse(struct ambient_dovi_parser *, const uint8_t *, size_t,
@@ -38,7 +38,7 @@ new file mode 100644
 diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 --- a/libavcodec/dovi_rpudec.c
 +++ b/libavcodec/dovi_rpudec.c
-@@ -747,4 +747,106 @@
+@@ -747,4 +747,111 @@
      }
  
      return 0;
@@ -49,12 +49,16 @@ diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 +// installed private ABI. The original HEVC decoder is unchanged.
 +#include "ambient_dovi_parser.h"
 +
-+struct ambient_dovi_parser { DOVIContext ctx; };
++struct ambient_dovi_parser { DOVIContext ctx; unsigned profile; };
 +
-+struct ambient_dovi_parser *av_ambient_dovi_alloc(void)
++struct ambient_dovi_parser *av_ambient_dovi_alloc(unsigned profile)
 +{
++    if (profile != 5 && profile != 8) return NULL;
 +    struct ambient_dovi_parser *p = av_mallocz(sizeof(*p));
-+    if (p) p->ctx.cfg.dv_profile = 8;
++    if (p) {
++        p->profile = profile;
++        p->ctx.cfg.dv_profile = profile;
++    }
 +    return p;
 +}
 +
@@ -62,7 +66,7 @@ diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 +{
 +    if (p) {
 +        ff_dovi_ctx_flush(&p->ctx);
-+        p->ctx.cfg.dv_profile = 8;
++        p->ctx.cfg.dv_profile = p->profile;
 +    }
 +}
 +
@@ -91,8 +95,9 @@ diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 +    const AVDOVIDataMapping *m = p->ctx.mapping;
 +    const AVDOVIColorMetadata *c = p->ctx.color;
 +    // Never approximate an enhancement layer, higher precision or extended
-+    // mapping. Only the single-layer 10-bit profile-8 subset is enabled.
-+    if (!m || !c || h->rpu_type != 2 || ff_dovi_guess_profile_hevc(h) != 8 ||
++    // mapping. Enforce profile-specific codeword range before GPU use.
++    if (!m || !c || h->rpu_type != 2 || ff_dovi_guess_profile_hevc(h) != p->profile ||
++        !!h->bl_video_full_range_flag != (p->profile == 5) ||
 +        h->bl_bit_depth != 10 || !h->disable_residual_flag ||
 +        h->ext_mapping_idc_0_4 || h->ext_mapping_idc_5_7 ||
 +        h->coef_log2_denom < 13 || h->coef_log2_denom > 32 ||

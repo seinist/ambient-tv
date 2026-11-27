@@ -43,7 +43,8 @@ static uint8_t *fixture(unsigned max_pq, unsigned profile, int *size) {
 }
 
 int main(void) {
-    struct ambient_dovi_parser *p=av_ambient_dovi_alloc();
+    assert(!av_ambient_dovi_alloc(7));
+    struct ambient_dovi_parser *p=av_ambient_dovi_alloc(8);
     assert(p);
     struct ambient_dovi_metadata m, before;
     memset(&m,0x4a,sizeof m); before=m;
@@ -71,6 +72,15 @@ int main(void) {
     av_free(rpu);
     av_ambient_dovi_flush(p);
     rpu=fixture(3000,5,&n);
+    assert(av_ambient_dovi_parse(p,rpu,n,&m)<0);
+    av_ambient_dovi_free(p);
+    p=av_ambient_dovi_alloc(5);
+    assert(p);
+    assert(av_ambient_dovi_parse(p,rpu,n,&m)==0);
+    assert(m.full_range && m.bl_bit_depth==10 && m.source_max_pq==3000);
+    av_free(rpu);
+    av_ambient_dovi_flush(p);
+    rpu=fixture(3500,8,&n);
     assert(av_ambient_dovi_parse(p,rpu,n,&m)<0);
     av_free(rpu);
     av_ambient_dovi_free(p);

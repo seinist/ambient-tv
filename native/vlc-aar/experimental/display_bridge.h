@@ -72,12 +72,12 @@ ambient_display_open(pl_gpu gpu, const video_format_t *fmt, vlc_video_context *c
 #endif
     if (!fmt || fmt->i_chroma != VLC_CODEC_ANDROID_OPAQUE ||
         (dovi ? !ambient_dovi_format(fmt) : (fmt->dovi.profile || fmt->dovi.rpu_present || fmt->dovi.el_present)) ||
-        (!ambient_display_sdr(fmt) && !ambient_display_hdr(fmt)) || !context)
+        (!dovi && !ambient_display_sdr(fmt) && !ambient_display_hdr(fmt)) || !context)
         return NULL;
     android_video_context_t *avctx =
         vlc_video_context_GetPrivate(context, VLC_VIDEO_CONTEXT_AWINDOW);
     if (!avctx || !avctx->air || !avctx->air_api) return NULL;
-    if (ambient_display_hdr(fmt) && !avctx->air_api->AImage.getDataSpace) return NULL;
+    if ((dovi || ambient_display_hdr(fmt)) && !avctx->air_api->AImage.getDataSpace) return NULL;
     pl_vulkan vk = pl_vulkan_get(gpu);
     if (!ambient_pl_ahb_device_enabled(vk)) return NULL;
     // Use the physical device's maintenance6 limit when available;
@@ -103,7 +103,7 @@ static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
 {
     if (owner) ambient_ahb_poll(owner);
     if (!owner || !pic ||
-        (!ambient_display_sdr(&pic->format) && !ambient_display_hdr(&pic->format)) ||
+        (!dovi && !ambient_display_sdr(&pic->format) && !ambient_display_hdr(&pic->format)) ||
         (dovi ? (!raw_p010 || !ambient_dovi_format(&pic->format) ||
                  !picture_GetAncillary(pic, VLC_ANCILLARY_ID_DOVI) ||
                  picture_GetAncillary(pic, VLC_ANCILLARY_ID_HDR10PLUS)) :
@@ -114,17 +114,24 @@ static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
         return VK_ERROR_FORMAT_NOT_SUPPORTED;
     struct ambient_vlc_picture held;
     if (!ambient_vlc_hold_picture(pic, &held)) return VK_ERROR_FORMAT_NOT_SUPPORTED;
-    const bool hdr = ambient_display_hdr(&pic->format);
+    const bool hdr = dovi || ambient_display_hdr(&pic->format);
+    const bool ipt = dovi && pic->format.dovi.profile == 5;
     const int32_t standard = hdr ? ADATASPACE_STANDARD_BT2020 : ADATASPACE_STANDARD_BT709;
-    const int32_t transfer = pic->format.transfer == TRANSFER_FUNC_SMPTE_ST2084 ?
+    const int32_t transfer = dovi || pic->format.transfer == TRANSFER_FUNC_SMPTE_ST2084 ?
         ADATASPACE_TRANSFER_ST2084 : pic->format.transfer == TRANSFER_FUNC_HLG ?
         ADATASPACE_TRANSFER_HLG : ADATASPACE_TRANSFER_SMPTE_170M;
     const int32_t range = pic->format.color_range == COLOR_RANGE_FULL ?
         ADATASPACE_RANGE_FULL : ADATASPACE_RANGE_LIMITED;
     // The compressed stream's metadata alone cannot establish that the
     // decoder did not tone-map or change range before producing this image.
+    const int32_t actual_standard = held.data_space & ADATASPACE_STANDARD_MASK;
+    // No Android IPT dataspace exists. Accept an unspecified standard for
+    // profile 5 only when source primaries are unspecified too. Never accept
+    // a decoder-reported SDR transfer or limited range for IPT code values.
+    const bool standard_ok = actual_standard == standard ||
+        (ipt && pic->format.primaries == COLOR_PRIMARIES_UNDEF && actual_standard == 0);
     if ((hdr && !held.data_space_valid) ||
-        (held.data_space_valid && ((held.data_space & ADATASPACE_STANDARD_MASK) != standard ||
+        (held.data_space_valid && (!standard_ok ||
           (held.data_space & ADATASPACE_TRANSFER_MASK) != transfer ||
           (held.data_space & ADATASPACE_RANGE_MASK) != range))) {
         ambient_vlc_release_picture(held.held, held.acquire_fd);
@@ -148,7 +155,7 @@ static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
         .model = hdr ? VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_2020 :
             VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_709,
         .high_precision = hdr,
-        .raw_yuv = raw_p010 && hdr,
+        .raw_yuv = dovi || (raw_p010 && hdr),
         .range = pic->format.color_range == COLOR_RANGE_FULL ?
             VK_SAMPLER_YCBCR_RANGE_ITU_FULL : VK_SAMPLER_YCBCR_RANGE_ITU_NARROW,
     };

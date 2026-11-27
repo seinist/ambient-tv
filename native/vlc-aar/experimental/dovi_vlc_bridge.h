@@ -6,12 +6,19 @@
 
 static inline bool ambient_dovi_format(const video_format_t *f)
 {
-    // Only a verifiable single-layer PQ/BT.2020 limited-range base layer.
-    return f && f->dovi.profile == 8 && f->dovi.bl_present &&
-        f->dovi.rpu_present && !f->dovi.el_present &&
-        f->primaries == COLOR_PRIMARIES_BT2020 && f->space == COLOR_SPACE_BT2020 &&
-        f->transfer == TRANSFER_FUNC_SMPTE_ST2084 &&
-        f->color_range == COLOR_RANGE_LIMITED;
+    if (!f || !f->dovi.bl_present || !f->dovi.rpu_present || f->dovi.el_present)
+        return false;
+    if (f->dovi.profile == 8)
+        return f->primaries == COLOR_PRIMARIES_BT2020 && f->space == COLOR_SPACE_BT2020 &&
+            f->transfer == TRANSFER_FUNC_SMPTE_ST2084 && f->color_range == COLOR_RANGE_LIMITED;
+    // Profile 5 is full-range IPTPQc2, not ordinary BT.2020 YCbCr.
+    // VLC cannot represent IPT in video_format_t. Permit only unspecified
+    // or PQ/2020 container tags; the actual buffer must still report PQ and
+    // full range, and explicit P010 identity sampling is mandatory.
+    return f->dovi.profile == 5 && f->color_range == COLOR_RANGE_FULL &&
+        (f->primaries == COLOR_PRIMARIES_UNDEF || f->primaries == COLOR_PRIMARIES_BT2020) &&
+        (f->space == COLOR_SPACE_UNDEF || f->space == COLOR_SPACE_BT2020) &&
+        (f->transfer == TRANSFER_FUNC_UNDEF || f->transfer == TRANSFER_FUNC_SMPTE_ST2084);
 }
 static inline void ambient_dovi_map(vlc_video_dovi_metadata_t *dst,
                                      const struct ambient_dovi_metadata *src)

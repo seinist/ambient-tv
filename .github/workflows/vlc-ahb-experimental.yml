@@ -3,6 +3,11 @@ on:
   pull_request:
     paths:
       - 'native/vlc-aar/experimental/**'
+      - 'native/vlc-aar/patches/**'
+      - 'app/build.gradle.kts'
+      - 'app/src/main/java/com/ambient/tv/ui/player/backend/VlcPlaybackView.kt'
+      - 'app/src/main/java/com/ambient/tv/ui/player/backend/VideoAccelerationPolicy.kt'
+      - 'app/src/test/java/com/ambient/tv/ui/player/backend/VlcAhbExperimentPolicyTest.kt'
       - 'scripts/test_vlc_ahb_import.sh'
       - 'scripts/prepare_vlc_ahb_experimental.sh'
       - 'scripts/build_vlc_vulkan.sh'
@@ -15,7 +20,7 @@ jobs:
     concurrency:
       group: vlc-ahb-contract-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: true
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
@@ -44,7 +49,7 @@ jobs:
           echo "sdkmanager: $sdkmanager"
           yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
           "$sdkmanager" "ndk;30.0.16248370" || "$sdkmanager" --channel=3 "ndk;30.0.16248370"
-          sudo apt-get update
+          sudo apt-get update -o Acquire::Retries=3
           sudo apt-get install -y glslc libvulkan-dev
       - name: Stage experimental display module and embedded shaders
         run: |
@@ -67,7 +72,7 @@ jobs:
           bash scripts/test_vlc_ahb_import.sh
 
   ffmpeg-rpu-contract:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
@@ -96,7 +101,7 @@ jobs:
     concurrency:
       group: vlc-ahb-linked-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:
       CI: 'true'
@@ -114,7 +119,7 @@ jobs:
           java-version: '21'
       - name: Install native build dependencies
         run: |
-          sudo apt-get update
+          sudo apt-get update -o Acquire::Retries=3
           sudo apt-get install -y build-essential autoconf automake autopoint gettext libtool libtool-bin \
             pkg-config ninja-build cmake gperf nasm yasm bison flex texinfo \
             curl wget unzip zip xz-utils patch perl python3 python3-venv libssl-dev glslang-tools glslc

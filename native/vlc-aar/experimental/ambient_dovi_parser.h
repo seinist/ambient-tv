@@ -19,10 +19,10 @@ struct ambient_dovi_metadata {
     struct ambient_dovi_curve curves[3];
 };
 struct ambient_dovi_parser;
-struct ambient_dovi_parser *av_ambient_dovi_alloc(void);
+struct ambient_dovi_parser *av_ambient_dovi_alloc(unsigned profile);
 void av_ambient_dovi_flush(struct ambient_dovi_parser *);
 void av_ambient_dovi_free(struct ambient_dovi_parser *);
-/* Unescaped RPU beginning with byte 25, single-layer profile 8 only.
+/* Unescaped RPU beginning with byte 25, single-layer profile 5 or 8, matching the selected profile.
  * Returns zero on success, a negative AVERROR on any unsupported/invalid RPU.
  * The output is a value snapshot, not borrowed parser state. */
 int av_ambient_dovi_parse(struct ambient_dovi_parser *, const uint8_t *, size_t,
