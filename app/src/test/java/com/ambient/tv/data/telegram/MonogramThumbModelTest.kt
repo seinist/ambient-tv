@@ -33,4 +33,32 @@ class MonogramThumbModelTest {
         val audioWithoutCover = video.copy(kind = TelegramMediaKind.AUDIO, thumbnailUrl = null)
         assertNull(audioWithoutCover.cardImageUrl)
     }
+
+    @Test fun sharpCacheKeyIgnoresFallbackButNotAccountMediaOrKind() {
+        val first = monogramThumbModel(5, 7, "file:/old.bin")
+        val second = monogramThumbModel(5, 7, "file:/new.bin")
+        val key = monogramSharpCacheKey(first, 1, 2)
+        assertEquals(key, monogramSharpCacheKey(second, 1, 2))
+        org.junit.Assert.assertNotEquals(key, monogramSharpCacheKey(second, 2, 2))
+        org.junit.Assert.assertNotEquals(key, monogramSharpCacheKey(second, 1, 3))
+        org.junit.Assert.assertNotEquals(key, monogramSharpCacheKey(monogramThumbModel(5, 8, null), 1, 2))
+        assertNull(monogramSharpCacheKey(monogramPhotoModel(5, 7, null), 1, 2))
+    }
+
+    @Test fun malformedFallbackDoesNotBreakSharpImageIdentity() {
+        val malformed = "monogram-thumb://5/7?fallback=%GG"
+        assertEquals(MonogramThumbRef(5, 7, null), parseMonogramThumbModel(malformed))
+        assertEquals(monogramSharpCacheKey(monogramThumbModel(5, 7, null), 1, 2),
+            monogramSharpCacheKey(malformed, 1, 2))
+    }
+    @Test fun fullPhotoHasIndependentAccountAndRevisionScopedKey() {
+        val thumb = monogramThumbModel(5, 7, null)
+        val photo = monogramPhotoModel(5, 7, thumb)
+        val key = monogramArtworkCacheKey(photo, 1, 2)
+        assertEquals("monogram-photo-v1:1:2:5:7", key)
+        org.junit.Assert.assertNotEquals(key, monogramArtworkCacheKey(thumb, 1, 2))
+        org.junit.Assert.assertNotEquals(key, monogramArtworkCacheKey(photo, 2, 2))
+        org.junit.Assert.assertNotEquals(key, monogramArtworkCacheKey(photo, 1, 3))
+        assertEquals(key, monogramArtworkCacheKey(monogramPhotoModel(5, 7, null), 1, 2))
+    }
 }

@@ -12,6 +12,8 @@ internal class TelegramSeekableMedia(
     private val media: TelegramMedia,
     private val partLoader: (Long) -> ByteArray,
     private val authorized: () -> Boolean,
+    private val prefetchLoader: (Long) -> ByteArray = partLoader,
+    private val prefetchWindow: ((Long) -> List<ByteArray>)? = null,
 ) : SeekableMedia {
     override val size: Long = media.fileSize
     private var partStart = -1L
@@ -21,10 +23,20 @@ internal class TelegramSeekableMedia(
      * served. Without it VLC/MPV got one part per round trip (the file server's parallel readers
      * serialised on the single part above), a few MB/s at most for a large file.
      */
-    private val prefetcher = java.util.concurrent.Executors.newSingleThreadExecutor { work ->
+    private val prefetcher = java.util.concurrent.Executors.newFixedThreadPool(3) { work ->
         Thread(work, "monogram-media-prefetch").apply { isDaemon = true }
     }
-    private var prefetch: Pair<Long, java.util.concurrent.Future<ByteArray>>? = null
+    private val prefetch = java.util.concurrent.ConcurrentHashMap<Long, java.util.concurrent.Future<ByteArray>>()
+    private val prefetchGroups = ArrayList<java.util.concurrent.Future<List<ByteArray>>>()
+    private val lifecycle = Any()
+    @Volatile private var closed = false
+    private var readingThread: Thread? = null
+    private fun checkOpen() {
+        if (closed || !authorized()) throw IOException("Monogram session is no longer authorized")
+    }
+    private var previousPart = -1L
+    private val readAhead = TelegramReadAhead(media)
+    private var window = 1
 
     init {
         require(size > 0L && media.playableOnTelegram) { "Unavailable Monogram media" }
@@ -32,8 +44,12 @@ internal class TelegramSeekableMedia(
 
     @Synchronized
     override fun read(position: Long, buffer: ByteArray, count: Int): Int {
-        if (!authorized()) throw IOException("Monogram session is no longer authorized")
-        if (position < 0 || count < 0) throw IOException("Invalid Monogram media range")
+        synchronized(lifecycle) {
+            checkOpen()
+            readingThread = Thread.currentThread()
+        }
+        try {
+        if (position < 0 || count < 0 || count > buffer.size) throw IOException("Invalid Monogram media range")
         if (position >= size) return -1
         if (count == 0) return 0
         var copied = 0
@@ -41,16 +57,18 @@ internal class TelegramSeekableMedia(
         while (copied < wanted) {
             val at = position + copied
             if (partStart < 0 || at < partStart || at >= partStart + part.size) {
-                partStart = telegramPartOffset(at)
-                part = try {
-                    loadPart(partStart)
+                val start = telegramPartOffset(at)
+                val loaded = try {
+                    loadPart(start)
                 } catch (error: Exception) {
                     throw IOException("Authenticated Monogram read failed", error)
                 }
-                if (part.isEmpty() || part.size > TELEGRAM_MEDIA_PART_BYTES) {
+                if (loaded.size != telegramExpectedPartSize(size, start)) {
                     throw IOException("Incomplete Monogram media range")
                 }
-                schedulePrefetch(partStart + TELEGRAM_MEDIA_PART_BYTES)
+                part = loaded
+                partStart = start
+                schedulePrefetch(partStart)
             }
             val within = (at - partStart).toInt()
             val amount = minOf(wanted - copied, part.size - within)
@@ -58,33 +76,108 @@ internal class TelegramSeekableMedia(
             part.copyInto(buffer, copied, within, within + amount)
             copied += amount
         }
-        if (!authorized()) throw IOException("Monogram account changed during media read")
+        checkOpen()
         return copied
+        } finally {
+            synchronized(lifecycle) {
+                readingThread = null
+                if (closed) { part = ByteArray(0); partStart = -1L }
+            }
+        }
     }
 
     /** The prefetched part when it is the wanted one; a failed read-ahead is simply loaded again. */
     private fun loadPart(offset: Long): ByteArray {
-        val pending = prefetch
-        prefetch = null
-        if (pending != null && pending.first == offset) {
-            runCatching { pending.second.get() }.getOrNull()?.let { return it }
-        } else {
-            pending?.second?.cancel(true)
+        val sequential = previousPart >= 0L && offset - previousPart == TELEGRAM_MEDIA_PART_BYTES.toLong()
+        if (!sequential) {
+            cancelPrefetch()
+            readAhead.reset()
         }
+        previousPart = offset
+        val began = System.nanoTime()
+        val loaded = loadCurrentPart(offset)
+        window = readAhead.observe(sequential, System.nanoTime() - began)
+        return loaded
+    }
+
+    private fun loadCurrentPart(offset: Long): ByteArray {
+        val pending = prefetch.remove(offset)
+        if (pending != null) {
+            // The production foreground loader coalesces with an active RPC,
+            // without waiting for speculative admission. Standalone callers with
+            // a single loader retain the original one-request behavior.
+            if (!pending.isDone && partLoader !== prefetchLoader) {
+                try { checkOpen(); return partLoader(offset) } finally { pending.cancel(true) }
+            }
+            try { return pending.get() }
+            catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw interrupted
+            }
+            catch (_: java.util.concurrent.ExecutionException) { }
+            catch (_: java.util.concurrent.CancellationException) { }
+        }
+        checkOpen()
         return partLoader(offset)
     }
 
-    private fun schedulePrefetch(offset: Long) {
-        if (offset >= size || prefetcher.isShutdown) return
-        prefetch = offset to prefetcher.submit(java.util.concurrent.Callable { partLoader(offset) })
+    private fun schedulePrefetch(start: Long) {
+        synchronized(lifecycle) {
+        if (closed || prefetcher.isShutdown) return
+        prefetchGroups.removeAll { it.isDone }
+        val offsets = (1..window).map { start + it.toLong() * TELEGRAM_MEDIA_PART_BYTES }
+            .takeWhile { it < size }.filterNot { prefetch.containsKey(it) }
+        val loader = prefetchWindow
+        val pair = offsets.take(2).takeIf { it.size == 2 && it[1] - it[0] == TELEGRAM_MEDIA_PART_BYTES.toLong() }
+        if (loader != null && pair != null) {
+            val group = prefetcher.submit(java.util.concurrent.Callable { checkOpen(); loader(pair[0]) })
+            prefetchGroups.add(group)
+            pair.forEachIndexed { index, at -> prefetch[at] = WindowPartFuture(group, index) }
+        }
+        for (offset in offsets) {
+            if (!prefetch.containsKey(offset)) prefetch[offset] = prefetcher.submit(java.util.concurrent.Callable {
+                checkOpen()
+                prefetchLoader(offset)
+            })
+        }
+        }
     }
 
-    @Synchronized
+    private fun cancelPrefetch() {
+        prefetch.values.forEach { it.cancel(true) }
+        prefetch.clear()
+        prefetchGroups.forEach { it.cancel(true) }
+        prefetchGroups.clear()
+        (prefetcher as? java.util.concurrent.ThreadPoolExecutor)?.purge()
+    }
+
+    private class WindowPartFuture(
+        private val group: java.util.concurrent.Future<List<ByteArray>>, private val index: Int,
+    ) : java.util.concurrent.Future<ByteArray> {
+        private val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
+        override fun isDone() = cancelled.get() || group.isDone
+        override fun isCancelled() = cancelled.get() || group.isCancelled
+        override fun cancel(mayInterruptIfRunning: Boolean) = cancelled.compareAndSet(false, true)
+        override fun get(): ByteArray {
+            if (isCancelled) throw java.util.concurrent.CancellationException()
+            return group.get()[index]
+        }
+        override fun get(timeout: Long, unit: java.util.concurrent.TimeUnit): ByteArray {
+            if (isCancelled) throw java.util.concurrent.CancellationException()
+            return group.get(timeout, unit)[index]
+        }
+    }
+
     override fun close() {
-        prefetch?.second?.cancel(true)
-        prefetch = null
-        prefetcher.shutdownNow()
-        part = ByteArray(0)
-        partStart = -1L
+        synchronized(lifecycle) {
+            if (closed) return
+            closed = true
+            cancelPrefetch()
+            prefetcher.shutdownNow()
+            readingThread?.takeIf { it !== Thread.currentThread() }?.interrupt()
+            if (readingThread == null) { part = ByteArray(0); partStart = -1L }
+        }
+        // Never acquire the read monitor here: a native RPC can be blocked.
+        // The last read owns its byte array until it observes the closed flag.
     }
 }

@@ -55,6 +55,27 @@ data class TelegramChannelPage(val items: List<TelegramChannel>, val nextCursor:
 
 /** A narrow bridge boundary: Monogram/mono-rs and its GPL sources are not bundled into core APKs.
  * An optional, separately licensed native module may install its authorized client here. */
+class TelegramTransferPriority(foreground: Boolean) {
+    private val lock = Any()
+    @Volatile var foreground = foreground
+        private set
+    private var promoteNative: (() -> Unit)? = null
+
+    fun promote(): Unit = synchronized(lock) {
+        if (!foreground) {
+            foreground = true
+            promoteNative?.invoke()
+        }
+    }
+
+    fun bind(callback: () -> Unit): Unit = synchronized(lock) {
+        promoteNative = callback
+        if (foreground) callback()
+    }
+
+    fun unbind(): Unit = synchronized(lock) { promoteNative = null }
+}
+
 interface TelegramClientPort {
     val accountName: String
     /** Stable native account identity; no cache is shared across different logins. */
@@ -72,12 +93,36 @@ interface TelegramClientPort {
     suspend fun media(chatId: Long, messageId: Int): TelegramMedia?
     /** The original photo is fetched only when the viewer opens, never while listing. */
     suspend fun photoFile(chatId: Long, messageId: Int): String? = null
+    suspend fun cachedPhotoFile(chatId: Long, messageId: Int): String? = null
     /** Called once when Telegram reports the session as revoked or unknown ([TelegramSessionLostException]). */
     fun setSessionLostListener(listener: ((String) -> Unit)?) = Unit
+    fun setArtworkChangedListener(listener: (() -> Unit)?) = Unit
+    /** Revision of the media at this post, changed by native edit/delete updates. */
+    fun mediaRevision(chatId: Long, messageId: Int): Long = 0L
+    /** Local authenticated sharp thumbnail, without native RPC or download admission. */
+    suspend fun cachedThumbnail(chatId: Long, messageId: Int): String? = null
+    suspend fun cachedThumbnail(chatId: Long, messageId: Int, target: Int): String? = cachedThumbnail(chatId, messageId)
     /** Telegram's real (non-inline) thumbnail of a post as a local file URI, or null. */
     suspend fun thumbnail(chatId: Long, messageId: Int): String? = null
+    suspend fun thumbnail(chatId: Long, messageId: Int, priority: TelegramTransferPriority): String? =
+        thumbnail(chatId, messageId)
+    suspend fun thumbnail(chatId: Long, messageId: Int, priority: TelegramTransferPriority, target: Int): String? =
+        thumbnail(chatId, messageId, priority)
     /** A byte range from a Telegram file; Monogram downloadMessageMediaChunk does the MTProto I/O. */
     suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray
+    suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int): ByteArray =
+        mediaPart(chatId, messageId, offset).also {
+            check(it.size == expectedBytes) { "Incomplete Telegram media part" }
+        }
+    suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int, nativeMediaKey: String?): ByteArray =
+        mediaPart(chatId, messageId, offset, expectedBytes)
+    suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int, nativeMediaKey: String?,
+        priority: TelegramTransferPriority): ByteArray = mediaPart(chatId, messageId, offset, expectedBytes, nativeMediaKey)
+    suspend fun mediaWindow(chatId: Long, messageId: Int, offset: Long, lengths: List<Int>,
+        nativeMediaKey: String?, priority: TelegramTransferPriority): List<ByteArray> =
+        lengths.mapIndexed { index, count ->
+            mediaPart(chatId, messageId, offset + index.toLong() * TELEGRAM_MEDIA_PART_BYTES, count, nativeMediaKey, priority)
+        }
     /**
      * Playable video/audio posts from subscribed channels matching [query]. One request per
      * submitted search; throws [TelegramFloodWaitException] when Telegram asks to wait.
@@ -168,6 +213,26 @@ class TelegramRepository @Inject constructor(
     }
     @Volatile private var client: TelegramClientPort? = null
     private val playbackUrls = LinkedHashMap<String, String>()
+    private val playbackWarmupLock = Any()
+    private var playbackWarmup: kotlinx.coroutines.Job? = null
+
+    private fun warmLoopback(media: TelegramMedia, generation: Long, revision: Long) {
+        synchronized(playbackWarmupLock) {
+            playbackWarmup?.cancel()
+            playbackWarmup = scope.launch {
+                // Warm the actual header block. A resumed seek still needs container
+                // metadata; demand joins this exact key instead of opening another lane.
+                try {
+                    kotlinx.coroutines.withTimeout(2_000L) {
+                        mediaPart(media.chatId, media.messageId, 0,
+                            telegramExpectedPartSize(media.fileSize, 0), generation, speculative = true,
+                            nativeMediaKey = media.nativeMediaKey, expectedMediaRevision = revision)
+                    }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) { /* Demand retries independently. */ }
+            }
+        }
+    }
     private val streamEpoch = java.util.concurrent.atomic.AtomicLong()
 
     private fun applyLogin(state: MonogramLoginState) {
@@ -292,6 +357,25 @@ class TelegramRepository @Inject constructor(
     }
     private val mutableCatalogRevision = MutableStateFlow(0L)
     val catalogRevision: StateFlow<Long> = mutableCatalogRevision.asStateFlow()
+    private val mutableArtworkRevision = MutableStateFlow(0L)
+    val artworkRevision: StateFlow<Long> = mutableArtworkRevision.asStateFlow()
+
+    private fun notifyArtworkChanged() {
+        synchronized(mutableArtworkRevision) { mutableArtworkRevision.value++ }
+    }
+
+    /** In-memory Coil identity; the fallback URL is not the sharp image's identity. */
+    internal fun artworkCacheKey(model: String): String? {
+        val selected = client ?: return null
+        val generation = streamEpoch.get()
+        val identity = selected.cacheIdentity
+        val ref = parseMonogramThumbModel(model) ?: return null
+        if (ref.chatId in blockedChannels) return null
+        val revision = selected.mediaRevision(ref.chatId, ref.messageId)
+        val key = monogramArtworkCacheKey(model, generation, revision)
+        return key.takeIf { sameAccount(selected, identity, generation) && ref.chatId !in blockedChannels &&
+            selected.mediaRevision(ref.chatId, ref.messageId) == revision }
+    }
     /** A channel exit revokes local content immediately, before disk cleanup completes. */
     private val blockedChannels = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
 
@@ -307,16 +391,42 @@ class TelegramRepository @Inject constructor(
     /** Frozen browse returns are invalid after logout, account replacement or channel exit. */
     internal fun playbackRevision(): Long = streamEpoch.get()
 
+    internal fun isPlaybackRevisionCurrent(revision: Long): Boolean =
+        client != null && streamEpoch.get() == revision
+
+    internal fun playbackMediaRevision(media: TelegramMedia): Long =
+        client?.mediaRevision(media.chatId, media.messageId) ?: -1L
+
+    internal suspend fun validatePlaybackMedia(media: TelegramMedia, accountRevision: Long, mediaRevision: Long) {
+        val selected = checkNotNull(client)
+        check(isPlaybackMediaCurrent(media, accountRevision, mediaRevision)) { "Monogram account or media changed" }
+        val fresh = selected.media(media.chatId, media.messageId)
+        check(fresh != null && fresh.playableOnTelegram && fresh.fileSize == media.fileSize &&
+            (media.nativeMediaKey == null || fresh.nativeMediaKey == media.nativeMediaKey) &&
+            isPlaybackMediaCurrent(media, accountRevision, mediaRevision)) { "Monogram media identity changed" }
+    }
+
+    internal fun isPlaybackMediaCurrent(media: TelegramMedia, accountRevision: Long, mediaRevision: Long): Boolean {
+        val selected = client ?: return false
+        return streamEpoch.get() == accountRevision && selected.mediaRevision(media.chatId, media.messageId) == mediaRevision &&
+            client === selected && streamEpoch.get() == accountRevision && media.chatId !in blockedChannels
+    }
+
     /** Install only an already authenticated Monogram client, never a partially signed-in one. */
     fun installAuthorized(port: TelegramClientPort) {
         port.setSessionLostListener { type -> scope.launch { sessionLost(port, type) } }
+        port.setArtworkChangedListener { if (client === port) notifyArtworkChanged() }
         if (client !== port) {
+            // Close admission for the previous port before publishing a new epoch.
+            client = null
             streamEpoch.incrementAndGet()
+            cancelObsoleteTransfers()
             revokePlaybackUrls()
             blockedChannels.clear()
         }
         client = port
         mutableAuthorized.value = true
+        notifyArtworkChanged()
     }
 
     /**
@@ -337,12 +447,14 @@ class TelegramRepository @Inject constructor(
     }
 
     fun disconnect() {
+        client = null
         streamEpoch.incrementAndGet()
+        cancelObsoleteTransfers()
         revokePlaybackUrls()
         blockedChannels.clear()
-        client = null
         clearResumePositions()
         mutableAuthorized.value = false
+        notifyArtworkChanged()
     }
 
     /**
@@ -393,8 +505,13 @@ class TelegramRepository @Inject constructor(
             media.fileSize > 0L) { appContext.getString(R.string.monogram_error_not_streamable) }
         val authenticated = checkNotNull(client) { appContext.getString(R.string.monogram_error_not_authorized) }
         val generation = streamEpoch.get()
-        val key = "${authenticated.cacheIdentity}:${media.mediaKey}"
-        synchronized(playbackUrls) { playbackUrls[key] }?.let { return@withContext it }
+        val mediaRevision = authenticated.mediaRevision(media.chatId, media.messageId)
+        validatePlaybackMedia(media, generation, mediaRevision)
+        val key = "${authenticated.cacheIdentity}:${media.mediaKey}:${media.nativeMediaKey.orEmpty()}:$mediaRevision"
+        synchronized(playbackUrls) { playbackUrls[key] }?.let {
+            warmLoopback(media, generation, mediaRevision)
+            return@withContext it
+        }
         val url = mediaFileServer.register(
             sourceId = MONOGRAM_LOCAL_MEDIA_SOURCE,
             mime = "application/octet-stream",
@@ -402,12 +519,21 @@ class TelegramRepository @Inject constructor(
         ) { TelegramSeekableMedia(
             media = media,
             partLoader = { offset -> kotlinx.coroutines.runBlocking {
-                mediaPart(media.chatId, media.messageId, offset)
+                check(client === authenticated && isPlaybackMediaCurrent(media, generation, mediaRevision)) {
+                    appContext.getString(R.string.monogram_error_account_changed)
+                }
+                mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset), generation, nativeMediaKey = media.nativeMediaKey, expectedMediaRevision = mediaRevision)
             } },
-            authorized = { client === authenticated && streamEpoch.get() == generation },
+            prefetchLoader = { offset -> kotlinx.coroutines.runBlocking {
+                mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset), generation, speculative = true, nativeMediaKey = media.nativeMediaKey, expectedMediaRevision = mediaRevision)
+            } },
+            prefetchWindow = { offset -> kotlinx.coroutines.runBlocking {
+                prefetchAdjacent(media, offset, generation, mediaRevision)
+            } },
+            authorized = { client === authenticated && isPlaybackMediaCurrent(media, generation, mediaRevision) },
         ) }
         // An account may be logged out while the URL is being registered on a worker.
-        if (client !== authenticated || streamEpoch.get() != generation) {
+        if (client !== authenticated || !isPlaybackMediaCurrent(media, generation, mediaRevision)) {
             mediaFileServer.revoke(MONOGRAM_LOCAL_MEDIA_SOURCE)
             error(appContext.getString(R.string.monogram_error_account_changed))
         }
@@ -417,10 +543,12 @@ class TelegramRepository @Inject constructor(
             // references smaller, so no evicted token is reused by a future renderer.
             while (playbackUrls.size > 24) playbackUrls.remove(playbackUrls.keys.first())
         }
+        warmLoopback(media, generation, mediaRevision)
         url
     }
 
     private fun revokePlaybackUrls() {
+        synchronized(playbackWarmupLock) { playbackWarmup?.cancel(); playbackWarmup = null }
         synchronized(playbackUrls) { playbackUrls.clear() }
         mediaFileServer.revoke(MONOGRAM_LOCAL_MEDIA_SOURCE)
     }
@@ -489,10 +617,12 @@ class TelegramRepository @Inject constructor(
         if (left) {
             blockedChannels.add(chatId)
             streamEpoch.incrementAndGet()
+            cancelObsoleteTransfers()
             revokePlaybackUrls()
             clearResumePositions()
             account.cacheIdentity?.let { diskCache.clearAccount(it) }
             mutableCatalogRevision.value++
+            notifyArtworkChanged()
         }
         return left
     }
@@ -518,9 +648,9 @@ class TelegramRepository @Inject constructor(
     }
 
     /** Waits (bounded) until no interactive request runs. */
-    private suspend fun awaitInteractiveIdle() {
+    private suspend fun awaitInteractiveIdle(shouldWait: () -> Boolean = { true }) {
         var waitedMs = 0L
-        while (interactiveRequests.get() > 0 && waitedMs < BACKGROUND_MAX_WAIT_MS) {
+        while (shouldWait() && interactiveRequests.get() > 0 && waitedMs < BACKGROUND_MAX_WAIT_MS) {
             kotlinx.coroutines.delay(BACKGROUND_POLL_MS)
             waitedMs += BACKGROUND_POLL_MS
         }
@@ -537,9 +667,9 @@ class TelegramRepository @Inject constructor(
             .let { result -> result.copy(items = result.items.filterNot { it.chatId in blockedChannels }) }
         if (!sameAccount(selected, identity, generation)) return TelegramChannelPage(emptyList())
         selected.cacheIdentity?.let { id ->
-            if (page.items.isNotEmpty()) diskCache.saveChannels(id, page.items, cursor == null)
+            if (page.items.isNotEmpty()) diskCache.saveChannels(id, page.items, cursor == null) { sameAccount(selected, identity, generation) }
         }
-        return page
+        return page.takeIf { sameAccount(selected, identity, generation) } ?: TelegramChannelPage(emptyList())
     }
     suspend fun browsePage(section: String, cursor: String? = null, limit: Int = 60): TelegramMediaPage =
         interactive { loadBrowsePage(section, cursor, limit) }
@@ -552,9 +682,9 @@ class TelegramRepository @Inject constructor(
             .let { result -> result.copy(items = result.items.filterNot { it.chatId in blockedChannels }) }
         if (!sameAccount(selected, identity, generation)) return TelegramMediaPage(emptyList())
         selected.cacheIdentity?.let { id ->
-            if (page.items.isNotEmpty()) diskCache.saveMedia(id, section, page.items, cursor == null)
+            if (page.items.isNotEmpty()) diskCache.saveMedia(id, section, page.items, cursor == null) { sameAccount(selected, identity, generation) }
         }
-        return page
+        return page.takeIf { sameAccount(selected, identity, generation) } ?: TelegramMediaPage(emptyList())
     }
     /** Home rows: background priority (see [interactive]). */
     suspend fun channels(): List<TelegramChannel> = try {
@@ -614,14 +744,41 @@ class TelegramRepository @Inject constructor(
         flood?.let { throw it }
         return null
     }
+    private val photoPermits = kotlinx.coroutines.sync.Semaphore(2)
+
     suspend fun photoFile(chatId: Long, messageId: Int): String? {
         val selected = client ?: return null
         check(chatId !in blockedChannels) { appContext.getString(R.string.monogram_error_channel_left) }
         val generation = streamEpoch.get()
         val identity = selected.cacheIdentity
-        val result = selected.photoFile(chatId, messageId)
-        return result.takeIf { sameAccount(selected, identity, generation) &&
-            chatId !in blockedChannels }
+        val revision = selected.mediaRevision(chatId, messageId)
+        fun valid() = sameAccount(selected, identity, generation) && chatId !in blockedChannels &&
+            selected.mediaRevision(chatId, messageId) == revision
+        if (!valid()) return null
+        val key = "$generation:photo:$chatId:$messageId:$revision"
+        // The same lifetime/refcount machinery as sharp cards; independent photo admission.
+        val load = synchronized(thumbnailLoads) {
+            thumbnailLoads[key]?.takeUnless { it.deferred.isCancelled }?.also { it.waiters++ }
+                ?: ThumbnailLoad(scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                    if (!valid()) null else {
+                        selected.cachedPhotoFile(chatId, messageId)?.takeIf { valid() }
+                            ?: photoPermits.withPermit {
+                                if (!valid()) null else selected.photoFile(chatId, messageId).takeIf { valid() }
+                            }
+                    }
+                }, 1, TelegramTransferPriority(true)).also { thumbnailLoads[key] = it }
+        }
+        try {
+            return load.deferred.await().takeIf { valid() }
+        } finally {
+            val cancel = synchronized(thumbnailLoads) {
+                if (--load.waiters == 0) {
+                    if (thumbnailLoads[key] === load) thumbnailLoads.remove(key)
+                    !load.deferred.isCompleted
+                } else false
+            }
+            if (cancel) load.deferred.cancel()
+        }
     }
     /** Monotonic end of a FLOOD_WAIT: until then, search answers without contacting Telegram. */
     @Volatile private var searchBlockedUntilMs = 0L
@@ -666,63 +823,306 @@ class TelegramRepository @Inject constructor(
     private val thumbnailPermits = kotlinx.coroutines.sync.Semaphore(6)
 
     /** Of those six, the page prefetch may hold two: the cards being drawn always get the rest. */
-    private val prefetchPermits = kotlinx.coroutines.sync.Semaphore(2)
+    private val prefetchPermits = kotlinx.coroutines.sync.Semaphore(
+        if (appContext.getSystemService(android.app.ActivityManager::class.java)?.isLowRamDevice == true) 1 else 2)
+    private val constrainedPrefetchPermit = kotlinx.coroutines.sync.Semaphore(1)
+    private val thumbnailConnectivity by lazy {
+        appContext.getSystemService(android.net.ConnectivityManager::class.java)
+    }
+    private data class PrefetchNetwork(val at: Long, val lanes: Int)
+    @Volatile private var prefetchNetwork: PrefetchNetwork? = null
+
+    /** Avoid repeated connectivity IPC during a scroll burst. Never constrain demand reads. */
+    private fun prefetchNetworkLanes(): Int {
+        val now = android.os.SystemClock.elapsedRealtime()
+        prefetchNetwork?.takeIf { now - it.at < 1_000L }?.let { return it.lanes }
+        val lanes = runCatching {
+            val manager = thumbnailConnectivity ?: return@runCatching 1
+            val network = manager.activeNetwork ?: return@runCatching 0
+            val capabilities = manager.getNetworkCapabilities(network)
+            monogramPrefetchNetworkLanes(
+                online = true, metered = manager.isActiveNetworkMetered,
+                downstreamKbps = capabilities?.linkDownstreamBandwidthKbps ?: 0)
+        }.getOrDefault(1)
+        prefetchNetwork = PrefetchNetwork(now, lanes)
+        return lanes
+    }
 
     /** One download per card, shared by the prefetch and the card's own image request. */
-    private val thumbnailLoads = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<String?>>()
+    private class ThumbnailLoad(val deferred: kotlinx.coroutines.Deferred<String?>, var waiters: Int,
+        val priority: TelegramTransferPriority)
+    private val thumbnailLoads = HashMap<String, ThumbnailLoad>()
+    private val thumbnailMisses = ThumbnailMissCache()
+
+    internal suspend fun cachedPhotoArtworkFile(chatId: Long, messageId: Int): String? = withContext(Dispatchers.IO) {
+        val selected = client ?: return@withContext null
+        val generation = streamEpoch.get()
+        val identity = selected.cacheIdentity
+        val revision = selected.mediaRevision(chatId, messageId)
+        if (chatId in blockedChannels) return@withContext null
+        selected.cachedPhotoFile(chatId, messageId).takeIf {
+            sameAccount(selected, identity, generation) && chatId !in blockedChannels &&
+                selected.mediaRevision(chatId, messageId) == revision
+        }
+    }
+
+    /** Cache-only requests must not start native media RPCs. */
+    internal suspend fun cachedArtworkFile(chatId: Long, messageId: Int, target: Int = 320): String? = withContext(Dispatchers.IO) {
+        val selected = client ?: return@withContext null
+        val generation = streamEpoch.get()
+        val identity = selected.cacheIdentity
+        val revision = selected.mediaRevision(chatId, messageId)
+        if (chatId in blockedChannels) return@withContext null
+        selected.cachedThumbnail(chatId, messageId, target).takeIf {
+            sameAccount(selected, identity, generation) && chatId !in blockedChannels &&
+                selected.mediaRevision(chatId, messageId) == revision
+        }
+    }
 
     /** Real thumbnail for a visible card (see [TelegramMedia.cardImageUrl]); null when unavailable. */
-    suspend fun thumbnailFile(chatId: Long, messageId: Int): String? {
-        val key = "$chatId:$messageId"
-        val load = thumbnailLoads.computeIfAbsent(key) {
-            scope.async { try { loadThumbnailFile(chatId, messageId) } finally { thumbnailLoads.remove(key) } }
+    suspend fun thumbnailFile(chatId: Long, messageId: Int, speculative: Boolean = false,
+        expectedGeneration: Long? = null, target: Int = 320): String? {
+        val selected = client ?: return null
+        val identity = selected.cacheIdentity
+        val generation = streamEpoch.get()
+        if (expectedGeneration != null && generation != expectedGeneration) return null
+        if (!sameAccount(selected, identity, generation)) return null
+        val revision = selected.mediaRevision(chatId, messageId)
+        val key = "$generation:$chatId:$messageId:$revision:$target"
+        val load = synchronized(thumbnailLoads) {
+            thumbnailLoads[key]?.takeUnless { it.deferred.isCancelled }?.also { it.waiters++ }
+                ?: run {
+                    val priority = TelegramTransferPriority(!speculative)
+                    ThumbnailLoad(scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                        loadThumbnailFile(selected, identity, generation, chatId, messageId, revision, priority, target)
+                    }, 1, priority).also { thumbnailLoads[key] = it }
+                }
         }
-        return load.await()
+        if (!speculative) load.priority.promote()
+        try {
+            return load.deferred.await().takeIf {
+                sameAccount(selected, identity, generation) && chatId !in blockedChannels &&
+                    selected.mediaRevision(chatId, messageId) == revision
+            }
+        } finally {
+            val cancel = synchronized(thumbnailLoads) {
+                if (--load.waiters == 0) {
+                    if (thumbnailLoads[key] === load) thumbnailLoads.remove(key)
+                    !load.deferred.isCompleted
+                } else false
+            }
+            if (cancel) load.deferred.cancel()
+        }
     }
 
     /**
      * Loads the card images of a freshly shown page in the background, newest first, so they
      * are on disk by the time the cards are drawn (the inline preview showed for long).
      */
-    fun prefetchThumbnails(media: List<TelegramMedia>, limit: Int = 24) {
-        media.asSequence()
-            .filter { it.cardImageUrl?.startsWith(MONOGRAM_THUMB_SCHEME) == true }
-            .take(limit)
-            .forEach { item ->
-                scope.launch {
-                    // A card already loading this image shares its download without the permit.
-                    if (thumbnailLoads.containsKey("${item.chatId}:${item.messageId}")) return@launch
-                    prefetchPermits.withPermit { runCatching { thumbnailFile(item.chatId, item.messageId) } }
+    suspend fun prefetchThumbnails(refs: List<MonogramThumbRef>, limit: Int = 24, target: Int = 320) {
+        val selected = client ?: return
+        val identity = selected.cacheIdentity
+        val generation = streamEpoch.get()
+        val targets = refs.asSequence().distinctBy { it.chatId to it.messageId }
+            .take(limit.coerceAtLeast(0)).toList()
+        // A constrained or metered network has one speculative lane globally; offline
+        // does not start any native download. Visible artwork still has its own demand path.
+        val lanes = prefetchNetworkLanes()
+        if (lanes == 0 || targets.isEmpty()) return
+        suspend fun runWorkers() = kotlinx.coroutines.coroutineScope {
+            repeat(minOf(lanes, targets.size)) { lane ->
+                launch {
+                    for (index in lane until targets.size step lanes) {
+                        val item = targets[index]
+                        prefetchPermits.withPermit {
+                            if (!sameAccount(selected, identity, generation)) return@launch
+                            // Join an existing visible request too: if the visible card is
+                            // disposed before the download finishes, the viewport still owns it.
+                            thumbnailFile(item.chatId, item.messageId, speculative = true, expectedGeneration = generation,
+                                target = if (item.messageId == 0) 320 else target)
+                        }
+                    }
                 }
             }
+        }
+        if (lanes == 1) constrainedPrefetchPermit.withPermit { runWorkers() } else runWorkers()
     }
 
-    private suspend fun loadThumbnailFile(chatId: Long, messageId: Int): String? {
-        val selected = client ?: return null
-        if (chatId in blockedChannels) return null
-        val generation = streamEpoch.get()
-        val identity = selected.cacheIdentity
+    private suspend fun loadThumbnailFile(
+        selected: TelegramClientPort, identity: String?, generation: Long, chatId: Long, messageId: Int,
+        revision: Long, priority: TelegramTransferPriority, target: Int,
+    ): String? {
+        fun valid() = sameAccount(selected, identity, generation) && chatId !in blockedChannels &&
+            selected.mediaRevision(chatId, messageId) == revision
+        if (!valid()) return null
         val file = try {
-            thumbnailPermits.withPermit { selected.thumbnail(chatId, messageId) }
+            // Disk hits do not consume network permits or wait for interactive catalog RPCs.
+            selected.cachedThumbnail(chatId, messageId, target)?.let { return it.takeIf { valid() } }
+            val key = "$generation:$chatId:$messageId:$revision:$target"
+            if (thumbnailMisses.isRecent(key)) return null
+            if (!priority.foreground) awaitInteractiveIdle { !priority.foreground }
+            thumbnailPermits.withPermit {
+                if (!valid() || thumbnailMisses.isRecent(key)) null else {
+                    val result = selected.thumbnail(chatId, messageId, priority, target)
+                    // Only an ordinary null result, never a cancelled request or thrown
+                    // network/FLOOD_WAIT error. Retry shortly, and always prefer a disk hit.
+                    if (result == null && valid()) thumbnailMisses.record(key)
+                    result
+                }
+            }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (_: Exception) { null }
-        return file.takeIf { sameAccount(selected, identity, generation) && chatId !in blockedChannels }
+        return file.takeIf { valid() }
     }
 
-    suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray =
-        interactive { loadMediaPart(chatId, messageId, offset) }
+    // Bound all players and cancelled seek windows to the native media lane budget.
+    private val mediaPartPermits = kotlinx.coroutines.sync.Semaphore(4)
+    // At most two speculative RPCs globally; two lanes remain for actual reads.
+    private val speculativePartPermits = kotlinx.coroutines.sync.Semaphore(2)
+    private data class PartKey(val epoch: Long, val chatId: Long, val messageId: Int, val offset: Long, val expectedBytes: Int?, val nativeMediaKey: String?, val mediaRevision: Long)
+    private class PartGroup(val job: kotlinx.coroutines.Job, var activeKeys: Int)
+    private class PartLoad(val deferred: kotlinx.coroutines.Deferred<ByteArray>, var waiters: Int,
+        val priority: TelegramTransferPriority, val group: PartGroup? = null)
+    private val partLoads = HashMap<PartKey, PartLoad>()
 
-    private suspend fun loadMediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray {
+    private fun cancelObsoleteTransfers() {
+        val epoch = streamEpoch.get()
+        val obsoleteParts = synchronized(partLoads) {
+            val old = partLoads.filterKeys { it.epoch != epoch }
+            old.keys.forEach { partLoads.remove(it) }
+            old.values.toList()
+        }
+        obsoleteParts.forEach { load -> load.group?.job?.cancel() ?: load.deferred.cancel() }
+        val obsoleteThumbnails = synchronized(thumbnailLoads) {
+            val old = thumbnailLoads.filterKeys { !it.startsWith("$epoch:") }
+            old.keys.forEach { thumbnailLoads.remove(it) }
+            old.values.map { it.deferred }
+        }
+        obsoleteThumbnails.forEach { it.cancel() }
+        thumbnailMisses.clear()
+    }
+
+    suspend fun mediaPart(
+        chatId: Long, messageId: Int, offset: Long, expectedBytes: Int? = null,
+        expectedRevision: Long? = null, speculative: Boolean = false, nativeMediaKey: String? = null,
+        expectedMediaRevision: Long? = null,
+    ): ByteArray {
+        // Acquire speculative admission before creating the shared deferred, so a
+        // foreground waiter never joins a deferred queued on the speculative gate.
+        if (speculative) return speculativePartPermits.withPermit {
+            loadMediaPart(chatId, messageId, offset, expectedBytes, expectedRevision, nativeMediaKey, expectedMediaRevision, true)
+        }
+        return interactive { loadMediaPart(chatId, messageId, offset, expectedBytes, expectedRevision, nativeMediaKey, expectedMediaRevision, false) }
+    }
+
+    private suspend fun loadMediaPart(chatId: Long, messageId: Int, offset: Long,
+        expectedBytes: Int?, expectedRevision: Long?, nativeMediaKey: String?, expectedMediaRevision: Long?, speculative: Boolean): ByteArray {
         val selected = checkNotNull(client) { appContext.getString(R.string.monogram_error_not_authorized) }
         check(chatId !in blockedChannels) { appContext.getString(R.string.monogram_error_channel_left) }
         val generation = streamEpoch.get()
         val identity = selected.cacheIdentity
-        val bytes = selected.mediaPart(chatId, messageId, offset)
-        check(sameAccount(selected, identity, generation) && chatId !in blockedChannels) {
-            appContext.getString(R.string.monogram_error_account_changed)
+        val mediaRevision = expectedMediaRevision ?: selected.mediaRevision(chatId, messageId)
+        fun verify() {
+            check((expectedRevision == null || expectedRevision == generation) &&
+                sameAccount(selected, identity, generation) && chatId !in blockedChannels &&
+                selected.mediaRevision(chatId, messageId) == mediaRevision) {
+                appContext.getString(R.string.monogram_error_account_changed)
+            }
         }
-        return bytes
+        verify()
+        val key = PartKey(generation, chatId, messageId, offset, expectedBytes, nativeMediaKey, mediaRevision)
+        val load = synchronized(partLoads) {
+            val existing = partLoads[key]?.takeUnless { it.deferred.isCancelled }
+            if (existing != null) {
+                existing.waiters++
+                existing
+            } else {
+                // A VLC/MPV range reader and a prefetcher can ask for the same part.
+                // Keep one native RPC, but cancel it when its final waiter goes away.
+                val priority = TelegramTransferPriority(!speculative)
+                val deferred = scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                    mediaPartPermits.withPermit {
+                        verify()
+                        (if (expectedBytes == null) selected.mediaPart(chatId, messageId, offset)
+                        else selected.mediaPart(chatId, messageId, offset, expectedBytes, nativeMediaKey, priority)).also { verify() }
+                    }
+                }
+                PartLoad(deferred, 1, priority).also { partLoads[key] = it }
+            }
+        }
+        if (!speculative) load.priority.promote()
+        try {
+            return load.deferred.await().also { verify() }
+        } finally { releasePart(key, load) }
+    }
+
+    private fun releasePart(key: PartKey, load: PartLoad) {
+        val cancel = synchronized(partLoads) {
+            if (--load.waiters != 0) null
+            else {
+                if (partLoads[key] === load) partLoads.remove(key)
+                val group = load.group
+                if (group == null) load.deferred.takeUnless { it.isCompleted }
+                else if (--group.activeKeys == 0) group.job.takeUnless { it.isCompleted }
+                else null
+            }
+        }
+        cancel?.cancel()
+    }
+
+    /** Reserve both adjacent keys before starting one bounded native window.
+     * A foreground read joins either key and promotes the shared transfer. */
+    internal suspend fun prefetchAdjacent(media: TelegramMedia, offset: Long,
+        accountRevision: Long, mediaRevision: Long): List<ByteArray> {
+        val offsets = listOf(offset, offset + TELEGRAM_MEDIA_PART_BYTES)
+        val lengths = offsets.map { telegramExpectedPartSize(media.fileSize, it) }
+        require(lengths[0] == TELEGRAM_MEDIA_PART_BYTES && lengths[1] > 0)
+        val batched = speculativePartPermits.withPermit {
+            val selected = checkNotNull(client)
+            val identity = selected.cacheIdentity
+            fun verify() {
+                check(sameAccount(selected, identity, accountRevision) &&
+                    isPlaybackMediaCurrent(media, accountRevision, mediaRevision))
+            }
+            verify()
+            val keys = offsets.mapIndexed { index, at ->
+                PartKey(accountRevision, media.chatId, media.messageId, at, lengths[index], media.nativeMediaKey, mediaRevision)
+            }
+            val loads = synchronized(partLoads) {
+                if (keys.any { partLoads.containsKey(it) }) null
+                else {
+                    val priority = TelegramTransferPriority(false)
+                    val results = keys.map { kotlinx.coroutines.CompletableDeferred<ByteArray>() }
+                    val job = scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                        mediaPartPermits.withPermit {
+                            verify()
+                            val data = selected.mediaWindow(media.chatId, media.messageId, offset,
+                                lengths, media.nativeMediaKey, priority)
+                            verify()
+                            check(data.size == 2 && data.indices.all { data[it].size == lengths[it] })
+                            results.indices.forEach { results[it].complete(data[it]) }
+                        }
+                    }
+                    job.invokeOnCompletion { failure ->
+                        if (failure != null) results.forEach { it.completeExceptionally(failure) }
+                    }
+                    val group = PartGroup(job, 2)
+                    keys.mapIndexed { index, key ->
+                        PartLoad(results[index], 1, priority, group).also { partLoads[key] = it }
+                    }
+                }
+            } ?: return@withPermit null
+            try {
+                loads.first().group!!.job.start()
+                loads.map { it.deferred.await() }.also { verify() }
+            } finally { keys.indices.forEach { releasePart(keys[it], loads[it]) } }
+        }
+        // Never hold the speculative gate while falling back to individual keys.
+        return batched ?: offsets.mapIndexed { index, at ->
+            mediaPart(media.chatId, media.messageId, at, lengths[index], accountRevision,
+                speculative = true, nativeMediaKey = media.nativeMediaKey, expectedMediaRevision = mediaRevision)
+        }
     }
 
     // Last in the class: the IO coroutine may reach disconnect()/installAuthorized() at once,

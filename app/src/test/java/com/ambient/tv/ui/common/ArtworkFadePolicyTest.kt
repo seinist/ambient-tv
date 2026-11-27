@@ -20,4 +20,12 @@ class ArtworkFadePolicyTest {
     @Test fun explicitOptOutIsPreserved() {
         assertEquals(0, artworkLoadFadeMillis(requested = false, reducedEffects = false, cachedInMemory = false))
     }
+
+    @Test fun progressivePreviewSurvivesAdmissionLoadingFadeAndFailureOnly() {
+        org.junit.Assert.assertTrue(showProgressiveArtworkPreview(false, false, false, false))
+        org.junit.Assert.assertTrue(showProgressiveArtworkPreview(true, true, false, false))
+        org.junit.Assert.assertTrue(showProgressiveArtworkPreview(true, false, true, false))
+        org.junit.Assert.assertTrue(showProgressiveArtworkPreview(true, false, false, true))
+        org.junit.Assert.assertFalse(showProgressiveArtworkPreview(true, false, false, false))
+    }
 }

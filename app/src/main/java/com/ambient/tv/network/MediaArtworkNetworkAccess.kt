@@ -48,7 +48,10 @@ class MediaArtworkNetworkAccess @Inject constructor(
     val changes = availability.changes
 
     fun blocked(model: Any?, headers: Map<String, String> = emptyMap()): Boolean {
-        val url = (model as? String)?.toHttpUrlOrNull() ?: return false
+        val raw = model as? String ?: return false
+        if (raw.startsWith(com.ambient.tv.data.telegram.MONOGRAM_THUMB_SCHEME + "://") ||
+            raw.startsWith(com.ambient.tv.data.telegram.MONOGRAM_PHOTO_SCHEME + "://")) return !availability.hasNetwork()
+        val url = raw.toHttpUrlOrNull() ?: return false
         if (artworkLoopbackHost(url.host)) return false
         if (!availability.hasNetwork()) return true
         val provider = mediaImageProvider(url, mediaImageEndpoints(preferences) + MediaImageEndpoint(

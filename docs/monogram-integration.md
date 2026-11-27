@@ -32,8 +32,10 @@ Kotlin facades and `tlottie`/`rxing`/`flate2` dependency declarations
 The actual MTProto `mono-rs` transport, auth, session, chat metadata and
 media fetching remain intact; broader mono-rs functionality cannot all be
 safely removed without independent, reviewed upstream feature work. The
-upstream Rust release already uses `opt-level="z"`, full LTO, stripping and
-`panic="abort"`. R8 also shrinks Kotlin/Java code in release APKs.
+upstream Rust release uses `opt-level="z"`. Ambient TV selects a portable
+speed-oriented `opt-level=2` by default (compare `MONOGRAM_OPT_LEVEL=3` or
+`z`), retaining full LTO, one codegen unit, stripping and `panic="abort"`.
+R8 also shrinks Kotlin/Java code in release APKs.
 The saved native bytes from this trim must be confirmed by a passing four-ABI
 CI rebuild and compared with the previously recorded raw ELF figures.
 
@@ -113,8 +115,10 @@ an arbitrary commit. Upstream publishes every release as a *pre-release*
 
 `scripts/build_monogram_native.sh` fetches only the tag, and fails if the tag
 no longer points to `MONOGRAM_REF` or the submodule is not at
-`MONOGRAM_MONO_RS_REF`. The AAR stamp records `version=`, `ref=`, `abis=` and
-`patch=`; the app build fails if the AAR was built for another release.
+`MONOGRAM_MONO_RS_REF`. The AAR stamp records `version=`, `ref=`, `abis=`, `patch=`,
+`builder=`, `build_config=` and `opt_level=`; stale builds are rejected.
+The build configuration includes the Rust compiler and effective Rust flags.
+Do not globally enable optional CPU instructions on portable ABI builds.
 `./build.sh libs-check` asks the GitHub releases API for the newest published
 release (pre-releases included) and prints its tag, commit, mono-rs commit and
 rustls version together with the other managed libraries. `./build.sh libs-update`
@@ -139,9 +143,9 @@ are identical.
 
 ## Size budget and release APK measurement
 
-An optional native CI workflow (recording the **raw MTProto ELF** and compressed
-AAR size per ABI with an early **12 MB raw ELF budget**) is not part of this
-change; it is proposed separately for workflow approval. A raw ELF budget alone
+The native CI workflow builds all four ABIs, records the **raw MTProto ELF**
+and compressed AAR size per ABI, checks ELF page alignment, exercises the
+patched Rust range/crypto tests and compiles the opt-in Android adapter. A raw ELF budget alone
 does **not** show that the final APK fits: Android can store native libraries
 uncompressed, and Monogram also needs UniFFI, JNA and Rustls dependencies.
 
@@ -289,3 +293,70 @@ of the optional Rust/UniFFI path, full Android device playback, ABI size or
 licensing approval. Before release: build arm64/armv7/x86/x86_64; instrument
 QR, code, 2FA, logout, session restore and media seeking; inspect ABI APK
 size with `apkanalyzer`; test background playback and session/cache cleanup.
+
+
+## Native streaming performance
+
+Ambient TV's versioned source patch adds a bounded 512 KiB in-memory origin
+range sink to mono-rs, preserving existing authentication, file-reference
+refresh, migration, flood handling, cancellation and session-lease publication.
+Inline responses retain the bounded file fallback. Streaming ranges request
+origin data instead of starting the whole-file CDN receiver; ordinary full
+downloads retain upstream CDN behavior. The UniFFI
+byte-array export avoids a native payload write and Kotlin payload re-read;
+the app can persist a single atomic cache copy. The dedicated Android JNI path returns the final JVM byte array directly,
+avoiding the intermediate UniFFI RustBuffer/JNA lifting. Media3 and the
+loopback transport already consume byte arrays; introducing a DirectByteBuffer
+would add a conversion copy here. UniFFI remains a missing-symbol fallback. No global CPU-feature assumptions are added.
+
+A sequential read grows a bounded prefetch window from one to three parts;
+a discontinuous seek discards it and cancels native request controls when
+the final waiter leaves. Four concurrent part RPCs are allowed across players.
+Identical part requests are coalesced by account generation and offset. Preview and individual streaming ranges
+use single wire requests per lane, while known large complete user downloads
+may pipeline up to four parts. The chunk cache tracks LRU order incrementally.
+The chunk hot cache retains at most eight parts (4 MiB), cleared on account
+generation changes. The encrypted metadata snapshot retains a bounded
+in-memory parsed cache and skips unchanged snapshot writes.
+The pinned aes 0.9.3, sha1 0.11.0 and sha2 0.11.1 depend on cpufeatures
+0.3.1; preserve their safe CPU dispatch rather than forcing AES/SHA/AVX on
+all devices. The patch also removes fixed-size KDF heap allocations and
+reuses authenticated plaintext storage; existing authentication and
+constant-time comparisons are unchanged.
+
+Benchmark on Shield and a phone: first frame, random and forward seek latency,
+sustained 1080p/4K throughput, concurrent thumbnail load, native and Java heap,
+GC, disk writes, and release APK delta per ABI. Compare the three compiler
+profiles before raising the portable default; keep the existing APK size gate.
+
+For compiler profile size comparisons, run `MONOGRAM_ABIS=arm64-v8a bash scripts/measure_monogram_native_profiles.sh`. This reports actual AAR and raw ELF bytes, not APK overhead or device throughput.
+
+An opt-in Shield-oriented build is available with `MONOGRAM_CPU_TUNE=cortex-a57 MONOGRAM_ABIS=arm64-v8a bash scripts/build_monogram_native.sh`. Use the same `MONOGRAM_CPU_TUNE=cortex-a57` when assembling the ARM64 APK. Multi-ABI and ordinary release builds use the generic default; the AAR stamp prevents accidentally packaging the tuned binary as a generic one. Android-only compiler flags do not affect host bindgen. Optional AES/SHA/CRC features are not globally enabled. CI builds the additional tuned ARM64 variant and verifies the JNI symbol in each ELF.
+
+### Native transport follow-up
+The bounded range path decodes each wire result once, moves a single wire response into the memory sink, and returns it over JNI. The owned receive path decrypts AES-IGE in-place after envelope length validation and retains all message-key, session, parity and replay validation; the ordinary raw RPC result path moves the existing vector. Transactional snapshot cloning remains for nested containers and gzip wrappers. Socket receive scratch storage is reused, and warm same-DC media lanes are preferred. Visible/demanded reads promote the same native request instead of issuing duplicates. The read-ahead window and hot cache remain bounded by bitrate/observed wait and heap class. Small preview windows remain single-part. The full native build now uses the locally provisioned compatible JDK (JDK 21 in CI) without the external Foojay resolver. Real-device profiling is required before changing server transfer limits, adding multi-range CDN handling, replacing allocators, or selecting PGO/SIMD variants as defaults.
+
+Inline previews are content-addressed and staged outside the chunk lock, then published only under the current account/media revision. Identical images do not rewrite their file or touch timestamps on every browse conversion.
+
+### Optional device-native experiments
+`MONOGRAM_CDN_RANGES=1` enables the bounded hash-verified CDN path when packaging the APK. Default remains origin ranges. `MONOGRAM_PERF_COUNTERS=1` enables native timing snapshots in the MonogramPerf logcat tag (16 successful media windows per snapshot). The normal build does not enable profiling.
+
+For Android PGO, build the chosen single ABI with `MONOGRAM_PGO_MODE=generate MONOGRAM_ABIS=arm64-v8a MONOGRAM_NATIVE=1`, install the matching debuggable APK, exercise browsing/streaming/seeks, and collect `files/monogram-pgo.profraw` with adb run-as after at least 16 native media windows. Merge using llvm-profdata from the exact Rust toolchain, then rebuild using `MONOGRAM_PGO_MODE=use MONOGRAM_PGO_PROFILE=/absolute/path/monogram.profdata` and the same ABI, compiler, sources, optimization level and CPU tune. The profile SHA-256 and mode are included in the AAR stamp; packaging rejects mismatches. Do not ship instrumented training builds as normal releases.
+
+Playback startup warms only the actual header/initial requested media block, coalesces with demand, and cancels abandoned startup work. Completed RPCs detach their exact socket from request cancellation before pooling; abandoned speculative work has an 80 ms bounded grace to finish at a verified boundary before hard cancellation. Foreground cancellation remains immediate. The optional PGO generation variant is compiled in CI; a trained profile-use build requires real-device counters.
+
+Full-file media batches retain at most one initial window plus four bounded refills before continuing on the same connection, preventing transient raw/typed response vectors from accumulating an entire file. The PGO collector verifies the installed APK's exact native source stamp against the retained local training AAR and the profile-use builder requires matching compiler, source pins, patch, builder, ABI, CPU and optimization level. Use `scripts/collect_monogram_pgo.sh <application-id> <absolute-path.profdata>` before rebuilding the AAR. CPU capability diagnostics (AES/SHA/NEON or x86 capabilities) are available only in the opt-in performance-counter mode.
+
+## Card artwork performance follow-up
+
+- Measured decode dimensions map to three bounded preview classes (160/320/640). The native metadata-only index keeps at most 2,048 Telegram file identities and up to 16 actual network size candidates per identity. It is cleared on account/cache invalidation. If metadata is absent, use the indexed default display location; no guessed size letters. Full photos and playback use their own paths.
+- Preview requests include the class in shared work, disk filenames and Coil cache extras. Exact native identity permits hardlink reuse across posts and classes only when the selected physical size matches. The RAM path is bounded to 1 MiB and requires known exact length or contiguous verified EOF; larger/unsupported paths fall back to staged files.
+- Speculative thumbnail transfers are constrained on metered/slow links. Native full-file pipeline width is reevaluated at most every five seconds from Android's bandwidth hint, metered and low-RAM flags (1/2/4 parts); the four demand lanes and existing FLOOD_WAIT backoff remain independent. Hints are not measured throughput. Single-block playback and preview ranges remain single-part.
+- A validated, substantial incoming frame may reserve capacity once, up to 2 MiB, avoiding repeated vector growth while retaining the existing decoder and framing limits.
+- These are bounded optimizations, not measured speedup claims. PGO profile-use and architecture-specific changes still require representative device traces and release size checks.
+
+- Full-photo requests share one account/revision-scoped transfer with reference-counted cancellation, independent two-request admission and a separate 24-file / 128 MiB cache. Photo and sharp-preview transfers also contribute to opt-in PGO flush cadence, so an artwork-only training session can produce profiles.
+
+- The pinned upstream Gradle build is limited to `:native:mtproto`; unused application/Compose/KSP/serialization/Google Services plugins and project configuration are removed by exact-source patches. Native Android library plugin, dependency repositories and Rust pins are unchanged.
+
+- CI limits concurrent native matrix jobs to three and retries only Gradle dependency-resolution failures at most twice, with staggered backoff and a final negative-cache refresh. Compilation, test and APK-size failures remain fatal; dependency pins and repositories are unchanged.

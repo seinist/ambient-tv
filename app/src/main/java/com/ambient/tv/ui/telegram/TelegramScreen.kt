@@ -77,6 +77,7 @@ import com.ambient.tv.ui.common.BrowseFocusKey
 import com.ambient.tv.ui.common.BrowseStatusKind
 import com.ambient.tv.ui.common.BrowseStatusPanel
 import com.ambient.tv.ui.common.ContentRow
+import com.ambient.tv.ui.common.ContentRowData
 import com.ambient.tv.ui.common.FilterBar
 import com.ambient.tv.ui.common.FilterBarModel
 import com.ambient.tv.ui.common.LocalFilterBarSetting
@@ -134,6 +135,8 @@ import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.mobile.deviceDp
 import com.ambient.tv.ui.theme.screenGutter
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 
@@ -197,6 +200,7 @@ fun TelegramScreen(
     )
     val followFirst = startupFocus.followsFirst(returnVisit != null)
     val focusMemory = rememberMonogramFocusMemory(sectionKey, returnedKey, state.playbackReturnRevision)
+    var viewportFocusKey by remember(sectionKey, state.playbackReturnRevision) { mutableStateOf(focusMemory.key) }
     var layoutKey by rememberSaveable(sectionKey) { mutableStateOf(viewModel.viewMode(sectionKey).name) }
     val layout = MonogramBrowseLayout.valueOf(layoutKey)
     var gridColumns by remember(sectionKey, layoutKey) { mutableIntStateOf(viewModel.gridColumns(sectionKey, layout)) }
@@ -329,7 +333,10 @@ fun TelegramScreen(
             viewModel.loadMore()
     }
     fun rememberFocused(key: String) {
-        if (!playbackReturn.pending || key == returnTarget) focusMemory.key = key
+        if (!playbackReturn.pending || key == returnTarget) {
+            focusMemory.key = key
+            viewportFocusKey = key
+        }
     }
     LaunchedEffect(layout, grid, flatList, flat.size) {
         if (layout == MonogramBrowseLayout.ROWS) return@LaunchedEffect
@@ -339,6 +346,67 @@ fun TelegramScreen(
             else flatList.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
         }.distinctUntilChanged().collect { last ->
             if (last >= 0 && last >= flat.size - 10) loadMoreVisible()
+        }
+    }
+    // Observe indices, not pixel offsets: scrolling within the same tile does not restart
+    // downloads. A short quiet period avoids competing with D-pad/touch navigation.
+    val rowPrefetchColumns = monogramRowVisibleColumns(gridColumns)
+    val decodeContext = androidx.compose.ui.platform.LocalContext.current
+    val decodeHint = remember(sectionKey, layout, gridColumns, listRows, decodeContext) {
+        com.ambient.tv.ui.common.MonogramDecodeHint(decodeContext)
+    }
+    LaunchedEffect(sectionKey, state.section, state.available, layout, currentRows, flat,
+        rowList, flatList, grid, showViewOptions, rowPrefetchColumns, decodeHint) {
+        if (!state.available || state.section != sectionKey || showViewOptions) return@LaunchedEffect
+        coroutineScope {
+        val active = LinkedHashMap<Triple<Long, Int, Int>, kotlinx.coroutines.Job>()
+        @OptIn(kotlinx.coroutines.FlowPreview::class)
+        val windows = snapshotFlow {
+            val refs = if (layout == MonogramBrowseLayout.ROWS) {
+                val visibleRows = rowList.layoutInfo.visibleItemsInfo.map { it.index }
+                    .sortedByDescending { index ->
+                        currentRows.getOrNull(index)?.items?.any { it.ratingKey == viewportFocusKey } == true
+                    }
+                val windows = visibleRows.mapNotNull { index ->
+                    currentRows.getOrNull(index)?.let { row ->
+                        val focusedIndex = row.items.indexOfFirst { it.ratingKey == viewportFocusKey }
+                        val first = focusedIndex.coerceAtLeast(0)
+                        row.copy(items = monogramViewportItems(row.items, first,
+                            (first + rowPrefetchColumns - 1).coerceAtMost(row.items.lastIndex),
+                            ahead = 2, behind = 1))
+                    }
+                }
+                monogramPrefetchTargets(windows, limit = 16)
+            } else {
+                val visible = if (layout == MonogramBrowseLayout.GRID)
+                    grid.layoutInfo.visibleItemsInfo.map { it.index }
+                else flatList.layoutInfo.visibleItemsInfo.map { it.index }
+                val valid = visible.filter { it in flat.indices }
+                val window = if (valid.isEmpty()) emptyList() else monogramViewportItems(
+                    flat, valid.min(), valid.max(), ahead = 8, behind = 2)
+                monogramPrefetchTargets(listOf(ContentRowData(
+                    id = "monogram.viewport", title = "", style = com.ambient.tv.ui.common.MediaTileStyle.LANDSCAPE,
+                    items = window)), limit = 24)
+            }
+            refs to decodeHint.target
+        }.distinctUntilChanged().debounce(100)
+        windows.collect { (refs, target) ->
+            val desired = refs.associateBy { Triple(it.chatId, it.messageId, if (it.messageId == 0) 320 else target) }
+            val obsolete = active.keys.filter { it !in desired }
+            obsolete.forEach { active.remove(it)?.cancel() }
+            // Retain overlapping in-flight work and completed entries until they leave
+            // the window. The repository's shared semaphore limits actual transfers.
+            val decodeCandidates = desired.keys.toList().takeLast(4).toSet()
+            desired.forEach { (key, ref) ->
+                if (key !in active) active[key] = launch {
+                    viewModel.prefetchViewport(sectionKey, listOf(ref), key.third)
+                    // Warm only a few nearby non-avatar images, using the last measured card.
+                    // The single decode slot is non-queuing and cache-only.
+                    if (ref.messageId != 0 && key in decodeCandidates)
+                        decodeHint.warm(ref)
+                }
+            }
+        }
         }
     }
     com.ambient.tv.ui.navigation.ReportSidebarContentReady(
@@ -371,6 +439,7 @@ fun TelegramScreen(
         restorePanelFocus = true
     }
 
+    CompositionLocalProvider(com.ambient.tv.ui.common.LocalMonogramDecodeHint provides decodeHint) {
     Box(Modifier.fillMaxSize().claimBrowseStartupFocusOnInput(startupFocus)) {
         Column(
             Modifier.fillMaxSize().handheldSwipeTabs(
@@ -713,6 +782,7 @@ fun TelegramScreen(
                 }
             }
         }
+    }
     }
 }
 
