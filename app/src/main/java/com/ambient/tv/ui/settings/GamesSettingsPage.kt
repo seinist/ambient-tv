@@ -274,7 +274,7 @@ internal fun GamesSettingsScreen(
                         SettingsHint(stringResource(R.string.games_settings_no_assigned))
                     }
                     items(mySystems, key = { "assigned:" + it.id }) { current ->
-                        GamesSettingsSystemRow(current, coreManager.installed(GameSettings.state.systemCore(current), GameSettings.state.coreSource) != null) {
+                        GamesSettingsSystemRow(current, coreManager.installedPreferredSource(GameSettings.state.systemCore(current), GameSettings.state.coreSource) != null) {
                             selectedSystemId = current.id
                             page = GamesSettingsPage.SYSTEM
                         }
@@ -287,7 +287,7 @@ internal fun GamesSettingsScreen(
                         )
                     }
                     if (showOtherSystems) items(otherSystems, key = { "other:" + it.id }) { current ->
-                        GamesSettingsSystemRow(current, coreManager.installed(GameSettings.state.systemCore(current), GameSettings.state.coreSource) != null) {
+                        GamesSettingsSystemRow(current, coreManager.installedPreferredSource(GameSettings.state.systemCore(current), GameSettings.state.coreSource) != null) {
                             selectedSystemId = current.id
                             page = GamesSettingsPage.SYSTEM
                         }
