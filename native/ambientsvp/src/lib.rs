@@ -400,7 +400,7 @@ impl AmbientSvp {
                 }
                 self.smoother.set_vectors(self.input - 1, self.repeated_vectors.as_ref().unwrap().clone());
                 if self.stats.backend == 1 && self.smoother.uses_super() {
-                    self.smoother.repeat_super(self.input, previous).map_err(|_| -1)?;
+                    self.pool.install(|| self.smoother.repeat_super(self.input, previous)).map_err(|_| -1)?;
                 }
             } else {
                 self.repeated_vectors = None;
@@ -416,7 +416,7 @@ impl AmbientSvp {
                     self.smoother.set_vectors(self.input - 1, Arc::new(vectors));
                 }
                 if self.stats.backend == 1 && self.smoother.uses_super() {
-                    self.smoother.set_super(self.input, &current).map_err(|_| -1)?;
+                    self.pool.install(|| self.smoother.set_super(self.input, &current)).map_err(|_| -1)?;
                 }
                 self.previous = Some(current);
             }
