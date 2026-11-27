@@ -92,6 +92,9 @@ pub struct Gpu {
 }
 
 impl Gpu {
+    #[cfg(test)]
+    pub(super) fn uses_compact_fields(&self) -> bool { self.compact_fields }
+
     pub fn clear_sources(&mut self) {
         self.recycled_sources.extend(std::mem::take(&mut self.sources).into_values());
         self.recycled_sources.truncate(2);
@@ -101,7 +104,7 @@ impl Gpu {
         Self::new_with_compact_fields(width, height, true)
     }
 
-    fn new_with_compact_fields(width: u32, height: u32, allow_compact: bool) -> Result<Self, String> {
+    pub(super) fn new_with_compact_fields(width: u32, height: u32, allow_compact: bool) -> Result<Self, String> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN,
             ..Default::default()
