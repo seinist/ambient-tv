@@ -205,3 +205,34 @@ picture ownership, chroma/geometry alignment, complete RPU NLQ transport
 and downstream color conversion. Missing EL must not be presented as FEL.
 The original single-layer hardware route and production configuration
 remain unchanged.
+
+
+### Profile 7 decoder and metadata follow-up
+
+The software EL decoder component uses the real pinned FFmpeg HEVC decoder
+and `dovi_split` filter. It accepts combined Annex B access units with
+in-band EL parameter sets, decodes raw 10-bit 4:2:0 frames, and transfers
+owned frames by exact PTS from a bounded 12-frame queue. Drain/flush and
+failure recovery are explicit; no stale or nearest-timestamp frame is
+substituted. A host test wraps an actual independently encoded Main10
+picture as type-63 NALs, decodes it and exercises ownership across flush.
+The isolated native contrib now enables `dovi_split`.
+
+The private FFmpeg RPU interface exports validated profile-7 LINEAR_DZ
+parameters and the existing reshape/matrix fields; profile 5/8 continue
+to reject residual metadata. The FEL metadata bridge converts this value
+snapshot to libplacebo reshape and NLQ inputs. Synthetic CRC-protected
+profile-7 RPU and cross-profile rejection tests have been added.
+
+The previous host FEL GPU fixture passed (run 45952822050); the logs
+contained debug-utils extension validation warnings, addressed by enabling
+the extension explicitly in the test instance. The previous FFmpeg split
+test failed on Annex B packet size; the replacement compares NAL payloads,
+allowing trailing zeros. New FFmpeg/decoder and final-head CI are not
+yet confirmed.
+
+The components still require live VLC decoder/callback wiring, pairing
+of hardware BL and software EL across output reordering and drops,
+chroma/layer alignment and matrix/color conversion before the feature
+can be enabled. No actual FEL title playback or production activation
+is claimed.
