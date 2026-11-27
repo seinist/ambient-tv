@@ -1,6 +1,6 @@
-//! Exact integer SAD batch primitive for a future Vulkan motion analyser.
-//! It deliberately does not choose vectors or replace upstream search stages:
-//! those require pyramid, predictor, SATD, penalties and border parity.
+//! Exact integer SAD/SATD batch primitive for a future Vulkan motion analyser.
+//! It deliberately does not replace upstream search stages: those require
+//! pyramid, predictor, search ordering, penalties and border parity.
 use wgpu::util::DeviceExt;
 
 const MAX_CANDIDATES: usize = 65_535;
@@ -109,7 +109,7 @@ impl MotionCostKernel {
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(WGSL)),
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("SVP candidate SAD reduction"),
+            label: Some("SVP candidate SAD/SATD reduction"),
             layout: None,
             module: &shader,
             entry_point: Some("cost"),
@@ -131,8 +131,15 @@ impl MotionCostKernel {
             || a.width() != width || b.width() != width
             || a.height() != height*3/2 || b.height() != height*3/2
             || a.format() != wgpu::TextureFormat::R8Unorm || b.format() != a.format()
+            || a.dimension() != wgpu::TextureDimension::D2 || b.dimension() != a.dimension()
+            || a.depth_or_array_layers() != 1 || b.depth_or_array_layers() != 1
+            || a.sample_count() != 1 || b.sample_count() != 1
+            || !a.usage().contains(wgpu::TextureUsages::TEXTURE_BINDING)
+            || !b.usage().contains(wgpu::TextureUsages::TEXTURE_BINDING)
             || candidates.is_empty() || candidates.len() > MAX_CANDIDATES
             || candidates.len() > device.limits().max_compute_workgroups_per_dimension as usize
+            || candidates.len() as u64 * 32 > u64::from(device.limits().max_storage_buffer_binding_size)
+            || candidates.len() as u64 * 32 > device.limits().max_buffer_size
             || candidates.iter().any(|c| !c.valid(width,height))
         { return Err("unsupported motion candidate batch".into()); }
         let bytes: Vec<u8> = candidates.iter().flat_map(|c| {
