@@ -91,6 +91,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan-dev glslang-tools
           export XDG_RUNTIME_DIR="$RUNNER_TEMP"
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident_vulkan::gpu_tests::native_resident_commands_keep_images_on_shared_device -- --ignored --exact
+          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident::tests::resident_motion_matches_unpruned_scalar_search -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib motion::tests::vulkan_candidate_costs_match_cpu -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib motion::tests::vulkan_super_phase_and_pyramid_costs_match_cpu -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib motion_select::tests::vulkan_ordered_selection_matches_cpu -- --ignored --exact
