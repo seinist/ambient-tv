@@ -423,7 +423,7 @@ class VlcPlaybackController(
         dvPrimeTask = null
         dvPrimeWaiting = false
         dvPrimeActive = false
-        restorePausedSeekVolume()
+        if (!nativeCommandsBlocked()) restorePausedSeekVolume()
     }
 
     private fun beginDvPrime() {
@@ -643,7 +643,10 @@ class VlcPlaybackController(
         private set
 
     internal fun captureOutputRestartState(): (VlcPlaybackController) -> Unit {
-        val selection = pendingImageTrackSelection ?: Triple(trackAccess.audioTrack, trackAccess.spuTrack, player.rate)
+        val selection = pendingImageTrackSelection ?: run {
+            if (nativeCommandsBlocked()) return {}
+            Triple(trackAccess.audioTrack, trackAccess.spuTrack, player.rate)
+        }
         return { target ->
             target.pendingImageTrackSelection = selection
             target.restoredOutputAudioSelection = selection.first >= 0
@@ -910,7 +913,7 @@ class VlcPlaybackController(
         if (released || restartStopFailed) return
         if (attachedView === view || pendingAttachView === view) return
         pendingAttachView = view
-        if (restartStop != null) return
+        if (vulkanFallbackPosted || restartStop != null || dvRetirementPending) return
         if (hdrOutput.deferUntilStopped(replacementView = view) {
                 if (pendingAttachView === view && !released) {
                     pendingAttachView = null
@@ -952,6 +955,7 @@ class VlcPlaybackController(
                         .onFailure { retirement.completeExceptionally(NativeOutputReleaseUncertain(it)) }
                     if (!released) {
                         if (closed.isSuccess) {
+                            consumePendingAttachView()
                             if (!prepared) prepare()
                             attachedView?.let(::restoreVideoTrackWhenSurfaceIsReady)
                         } else {
@@ -979,6 +983,12 @@ class VlcPlaybackController(
         }
         Timber.i("HDR-AUDIT VLC surface attached view=%dx%d", view.width, view.height)
         restoreVideoTrackWhenSurfaceIsReady(view)
+    }
+
+    private fun consumePendingAttachView() {
+        val nextView = pendingAttachView ?: return
+        pendingAttachView = null
+        attach(nextView)
     }
 
     private fun restoreVideoTrackWhenSurfaceIsReady(view: SurfaceView) {
@@ -1049,6 +1059,7 @@ class VlcPlaybackController(
     private fun completeVulkanProbe(view: SurfaceView, generation: Long, probed: VulkanDeviceCapabilities) {
         if (released || generation != vulkanProbeGeneration) return
         vulkanProbePending = false
+        if (nativeCommandsBlocked()) return
         if (!vulkanOutput || attachedView !== view || !view.holder.surface.isValid) return
         if (!VideoAccelerationRuntime.acceptSurfaceProbe(probed, "vlc")) {
             fallbackVulkan("surface")
@@ -1061,7 +1072,7 @@ class VlcPlaybackController(
     fun detach(view: SurfaceView) {
         if (pendingAttachView === view) pendingAttachView = null
         if (released || attachedView !== view) return
-        if (dvResumeWorkaround && prepared) {
+        if (dvResumeWorkaround && prepared && nativeMediaOpened && !nativeCommandsBlocked()) {
             dvSurfacePosition = confirmedPlaybackTimeMs()
             pendingImageTrackSelection = pendingImageTrackSelection ?:
                 Triple(trackAccess.audioTrack, trackAccess.spuTrack, player.rate)
@@ -1071,7 +1082,7 @@ class VlcPlaybackController(
         view.holder.removeCallback(surfaceSizeCallback)
         videoRestoreTask?.let(view::removeCallbacks)
         videoRestoreTask = null
-        if (restartStop == null && !restartStopFailed && !dvRetirementPending) {
+        if (!nativeCommandsBlocked()) {
             val videoTrack = trackAccess.videoTrack
             videoTrack.takeIf { it >= 0 }?.let { detachedVideoTrack = it }
             Timber.i("AV-AUDIT VLC detach track=%d", videoTrack)
@@ -1103,6 +1114,8 @@ class VlcPlaybackController(
         ended = false
         if (vulkanFallbackPosted || restartStop != null || dvRetirementPending) return
         if (!nativeMediaOpened) {
+            dvSurfacePosition = null
+            consumePendingAttachView()
             prepare(position, playing)
             return
         }
@@ -1144,9 +1157,10 @@ class VlcPlaybackController(
                     return@post
                 }
                 nativeMediaOpened = false
-                val nextView = pendingAttachView
-                pendingAttachView = null
-                nextView?.let(::attach)
+                // A completed native stop already reset the decoder. Do not
+                // initiate another DV surface retirement for the same media.
+                dvSurfacePosition = null
+                consumePendingAttachView()
                 val view = attachedView
                 if (view != null && view.holder.surface.isValid && !player.vlcVout.areViewsAttached()) {
                     player.vlcVout.setVideoView(view)
