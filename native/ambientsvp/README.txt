@@ -1299,3 +1299,53 @@ All eleven MPV FEL staging anchors checked against the pinned source.
 Earlier e6c7f2d passed patch, CPU and portable Vulkan checks before
 supersession; new head CI, linked player builds, real FEL playback and
 reference measurements remain pending.
+
+
+Configured resident quality and spatial HDR10+ in MPV
+------------------------------------------------------
+An optional native Vulkan create_config ABI accepts 8/16/32-pixel
+blocks, supported even pixel overlaps, pel 1/2/4, local search
+radius 1..4, SATD/chroma flags, bounded lambda/pnew, scene percentage
+and artifact policy. The MPV filter derives these from its existing
+options. Legacy creation functions remain unchanged. The configured
+path seeds full-block luma/chroma SAD and 4x4 SATD searches from the
+coarse causal GPU fields, evaluates fractional candidates using
+integer bilinear weights, and records the actual pel units.
+A separate GPU scene reduction gates synthesis. RGB8/FP16 and raw
+10-bit YUV synthesis blend independently warped overlapping blocks
+using raised-cosine weights. The configured grid is bounded to 32768
+blocks; unsupported configurations fall back rather than silently
+creating an incompatible session. VLC/MPV FEL renderer-side
+independent search and the experimental hierarchical wgpu analyser
+are not yet migrated to this configured quality path.
+This is a substantial independent implementation, not bit-exact
+Open-SVPFlow parity. Exact upstream superframe filtering, predictor
+and stage penalties, search ordering/adaptive modes, all synthesis
+algorithms and border/recalculation behavior still differ. The
+hierarchical path still reads winners between waves.
+
+MPV measured HDR10+ now derives a monotone nine-anchor shoulder from
+actual peak/mean/upper-percentile statistics and authored target
+peak, with no compression when the scene fits. This is a new
+content-dependent renderer policy, not normative metadata authoring.
+The optional tracking ABI uses reciprocal motion support and adjusts
+each local window rectangle and ellipse center by at most 16 pixels
+before GPU histogram collection; original shape/angle remain authored.
+Only metadata/geometry is read back, never pixels or full vectors.
+A private measured-frame marker activates the PR510 spatial
+libplacebo mapper on MPV gpu-next; per-queue-frame GPU output
+textures and target-color cache keys prevent overwriting queued
+frames. SDR targets and explicitly characterized PQ/HLG BT2020
+targets are supported; uncharacterized HDR, invalid metadata, LUT/
+ICC conflicts and unsupported source geometry retain global mapping.
+The PR510 headers are staged in a separate directory until the
+two PRs are combined. Original non-SVP frames are unchanged.
+
+Added portable shader compilation for all six configured formats,
+actual Mesa configured quarter-pel/overlap and tracked HDR fixtures,
+and content-dependent curve assertions. Corrected the previous
+half-overlap predictor regression expectation using the upstream
+weight formula. Earlier CI passed source staging/idempotence and
+CPU tests; exact-head native GPU execution, full MPV/VLC builds,
+physical hardware quality/performance and normative conformance
+remain pending.
