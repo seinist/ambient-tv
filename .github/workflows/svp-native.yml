@@ -1,0 +1,49 @@
+name: SVP native checks
+
+on:
+  pull_request:
+    paths:
+      - 'native/ambientsvp/**'
+      - 'scripts/prepare_svp_sources.sh'
+      - 'scripts/build_svp_android.sh'
+      - '.github/workflows/svp-native.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'native/ambientsvp/**'
+      - 'scripts/prepare_svp_sources.sh'
+      - 'scripts/build_svp_android.sh'
+      - '.github/workflows/svp-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: svp-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Matches the host x86 build workaround in build_svp_android.sh.
+      RUSTFLAGS: "-C target-feature=+ssse3"
+    steps:
+      - uses: actions/checkout@v5
+      - name: Prepare Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Test native CPU fallback
+        run: cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --no-default-features --lib --tests
+      - name: Compile Vulkan path and run portable regressions
+        run: cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib --tests
+      - name: Test C adapters' shared helpers
+        run: |
+          set -euo pipefail
+          bash -n scripts/prepare_svp_sources.sh
+          for test in svp_retry_test svp_planes_test; do
+            cc -std=c11 -O2 -Wall -Wextra -Werror -I native/ambientsvp/include "native/ambientsvp/tests/$test.c" -o "/tmp/$test"
+            "/tmp/$test"
+          done
+      # Real Vulkan tests are ignored on CI hosts without a hardware GPU.
