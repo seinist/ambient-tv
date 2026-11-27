@@ -783,3 +783,21 @@ seek. Missing initial anchors, ambiguous timing, missing layers and
 unproven discontinuous starts are still rejected. Pure host regressions
 cover exact and conflicting rational timelines; full demux and device
 playback validation remain separate.
+
+
+### Explicit HDR target negotiation in Ambient TV
+
+The default-off spatial build may override native HDR preference only
+when the user explicitly selects Vulkan for a known HDR10+ source,
+Android API >=34, the enabled display HDR types and valid reported
+luminance are available, and CPU processing/SVP are off. PQ is preferred
+when enabled; otherwise characterized HLG is possible. Auto and
+production remain unchanged. The native swapchain hint is set from
+these independent display capabilities, not source mastering metadata.
+Validate the actual target transfer, BT.2020 and >=10-bit depth before
+applying the target parameters; a failed explicit HDR output goes back
+to the original native HDR/SDR policy instead of an unverified Vulkan
+copy-back path. Detect default-display/capability changes during playback.
+A spatial SDR request explicitly selects SDR. Native and app regression
+fixtures cover invalid capabilities, source vs target luminance and
+actual output format checks. Physical display behavior is unverified.

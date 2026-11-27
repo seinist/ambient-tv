@@ -403,6 +403,17 @@ int main(void)
         }
         pl_gpu_finish(gpu);pl_tex_destroy(gpu,&packed);pl_tex_destroy(gpu,&rgb);
     }
+    // Swapchain metadata can be source mastering values. Require independent
+    // display capability and a matching >=10-bit target surface.
+    struct pl_frame characterized={.color=pl_color_space_hdr10};
+    characterized.color.hdr.max_luma=4000.f;characterized.repr.bits.color_depth=8;
+    assert(!ambient_hdrplus_characterize_target(&characterized,1,0.005f,600.f));
+    characterized.repr.bits.color_depth=10;
+    assert(!ambient_hdrplus_characterize_target(&characterized,2,0.005f,600.f));
+    assert(!ambient_hdrplus_characterize_target(&characterized,1,-1.f,600.f));
+    assert(characterized.color.hdr.max_luma==4000.f);
+    assert(ambient_hdrplus_characterize_target(&characterized,1,0.005f,600.f));
+    assert(characterized.color.hdr.max_luma==600.f&&characterized.color.hdr.min_luma==0.005f);
     // Explicit PQ target: preserve local authored differences and absolute
     // PQ luminance. No SDR range cap, no guessed display capabilities.
     struct pl_frame pq_target={.color=pl_color_space_hdr10};

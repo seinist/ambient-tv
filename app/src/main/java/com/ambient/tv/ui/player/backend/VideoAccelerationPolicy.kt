@@ -279,6 +279,23 @@ internal fun vlcDoviRpuDecoderRequired(
     hardwareRoute: Boolean = false,
 ): Boolean = experiment && dolbyVision && !nativeHdrPreferred && !audioOnly && !hardwareRoute
 
+/** Explicit default-off Vulkan HDR10+ output. Android capability, not source metadata. */
+internal data class VlcHdrPlusTarget(val mode: Int, val minNits: Float, val maxNits: Float)
+
+internal fun vlcHdrPlusTarget(
+    enabled: Boolean, explicitVulkan: Boolean, hdr10PlusSource: Boolean, api: Int,
+    pqSupported: Boolean, hlgSupported: Boolean, minNits: Float, maxNits: Float,
+): VlcHdrPlusTarget? {
+    if (!enabled || !explicitVulkan || !hdr10PlusSource || api < 34 ||
+        !minNits.isFinite() || !maxNits.isFinite() || maxNits !in 100f..10000f ||
+        minNits < 0f || minNits >= maxNits) return null
+    if (pqSupported) return VlcHdrPlusTarget(1, minNits, maxNits)
+    if (!hlgSupported) return null
+    val gamma = maxOf(1.0, 1.2 + 0.42 * Math.log10(maxNits / 1000.0))
+    val beta = Math.sqrt(3.0 * Math.pow((minNits / maxNits).toDouble(), 1.0 / gamma))
+    return if (beta < 1.0) VlcHdrPlusTarget(2, minNits, maxNits) else null
+}
+
 /** Opaque SDR or explicitly supported HDR GPU processing, with no CPU filters. */
 internal fun vlcAhbExperimentEligible(
     experiment: Boolean,

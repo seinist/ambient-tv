@@ -16,6 +16,21 @@ class VlcAhbExperimentPolicyTest {
         assertFalse(vlcDoviRpuDecoderRequired(true, true, false, true))
     }
 
+    @Test fun hdrPlusTargetRequiresOptInAndCharacterizedDisplay() {
+        val pq = vlcHdrPlusTarget(true, true, true, 34, true, true, 0.005f, 600f)
+        org.junit.Assert.assertEquals(VlcHdrPlusTarget(1, 0.005f, 600f), pq)
+        org.junit.Assert.assertEquals(VlcHdrPlusTarget(2, 0.005f, 600f),
+            vlcHdrPlusTarget(true, true, true, 34, false, true, 0.005f, 600f))
+        org.junit.Assert.assertNull(vlcHdrPlusTarget(false, true, true, 34, true, true, 0f, 600f))
+        org.junit.Assert.assertNull(vlcHdrPlusTarget(true, false, true, 34, true, true, 0f, 600f))
+        org.junit.Assert.assertNull(vlcHdrPlusTarget(true, true, false, 34, true, true, 0f, 600f))
+        org.junit.Assert.assertNull(vlcHdrPlusTarget(true, true, true, 33, true, true, 0f, 600f))
+        org.junit.Assert.assertNull(vlcHdrPlusTarget(true, true, true, 34, false, false, 0f, 600f))
+        org.junit.Assert.assertNull(vlcHdrPlusTarget(true, true, true, 34, true, true, -1f, 600f))
+        org.junit.Assert.assertNull(vlcHdrPlusTarget(true, true, true, 34, true, true, 0f, Float.NaN))
+        org.junit.Assert.assertNull(vlcHdrPlusTarget(true, true, true, 34, false, true, 500f, 600f))
+    }
+
     @Test fun onlyExplicitSdrGpuPathIsEligible() {
         assertTrue(vlcAhbExperimentEligible(true, true, false, false, "off", "off", false))
         assertFalse(vlcAhbExperimentEligible(false, true, false, false, "off", "off", false))

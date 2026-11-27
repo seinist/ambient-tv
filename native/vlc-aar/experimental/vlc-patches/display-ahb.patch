@@ -193,7 +193,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
      struct pl_plane_data data[4];
      if (!vlc_placebo_PlaneData(pic, data)) {
          // This should never happen, in theory
-@@ -287,6 +390,9 @@
+@@ -287,6 +390,23 @@
                                        &plane->shift_y);
      }
  
@@ -202,6 +202,20 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +#endif
      struct pl_frame target;
      pl_frame_from_swapchain(&target, &frame);
++#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
++    if (ahb_output.texture && sys->ahb_hdrplus_spatial) {
++        int mode=var_InheritInteger(vd,"vk-ambient-hdr-target-transfer");
++        if (mode ? !ambient_hdrplus_characterize_target(&target,mode,
++                    var_InheritFloat(vd,"vk-ambient-hdr-target-min"),
++                    var_InheritFloat(vd,"vk-ambient-hdr-target-max")) :
++                   pl_color_space_is_hdr(&target.color)) {
++            if (!sys->ahb_error_logged)
++                msg_Err(vd,"Experimental HDR target swapchain/capability mismatch");
++            sys->ahb_error_logged=true;
++            failed=true;goto done;
++        }
++    }
++#endif
      if (vd->cfg->icc_profile) {
 @@ -438,7 +544,32 @@
      }
@@ -270,3 +284,27 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          pl_swapchain_swap_buffers(sys->pl->swapchain);
          vlc_placebo_ReleaseCurrent(sys->pl);
      }
+
+@@ -516,6 +665,22 @@
+         break;
+     }
+ 
++#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
++    if (var_InheritBool(vd,"vk-ambient-ahb") && var_InheritBool(vd,"vk-ambient-hdr10plus-spatial")) {
++        int mode=var_InheritInteger(vd,"vk-ambient-hdr-target-transfer");
++        float min=var_InheritFloat(vd,"vk-ambient-hdr-target-min");
++        float max=var_InheritFloat(vd,"vk-ambient-hdr-target-max");
++        // Do not request HDR using the video's mastering metadata as the
++        // display capability. Zero mode explicitly requests an SDR surface.
++        hint=(struct pl_swapchain_colors){0};
++        if(ambient_hdrplus_target_luma_valid(mode,min,max)){
++            hint.primaries=PL_COLOR_PRIM_BT_2020;
++            hint.transfer=mode==1?PL_COLOR_TRC_PQ:PL_COLOR_TRC_HLG;
++            hint.hdr=(struct pl_hdr_metadata){.prim=*pl_raw_primaries_get(PL_COLOR_PRIM_BT_2020),
++                .min_luma=min,.max_luma=max};
++        }
++    }
++#endif
+     pl_swapchain_colorspace_hint(sys->pl->swapchain, &hint);
+ }
+ 

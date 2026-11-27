@@ -212,6 +212,30 @@ static const char ambient_hdrplus_map_glsl[] =
     "  if(a>0.0) color.rgb+=wa*ahp_map_rgb(1,rgb,v,root);\n"
     "  if(b>0.0) color.rgb+=wb*ahp_map_rgb(2,rgb,v,root);\n"
     "} else color.rgb=g;\n";
+/* Display luminance is supplied independently of source/mastering metadata.
+ * Mode 1 = PQ, 2 = HLG. Never infer HDR target values from swapchain hints. */
+static inline bool ambient_hdrplus_target_luma_valid(int mode,float min,float max)
+{
+    if((mode!=1&&mode!=2)||!(max>=100.f&&max<=10000.f)||
+        !(min>=0.f&&min<max))return false;
+    if(mode==2){
+        float gamma=fmaxf(1.f,1.2f+0.42f*log10f(max/1000.f));
+        float beta=sqrtf(3.f*powf(min/max,1.f/gamma));
+        if(!(beta>=0.f&&beta<1.f))return false;
+    }
+    return true;
+}
+static inline bool ambient_hdrplus_characterize_target(struct pl_frame *target,
+    int mode,float min,float max)
+{
+    if(!target||!ambient_hdrplus_target_luma_valid(mode,min,max)||
+        target->color.transfer!=(mode==1?PL_COLOR_TRC_PQ:PL_COLOR_TRC_HLG)||
+        target->color.primaries!=PL_COLOR_PRIM_BT_2020||
+        target->repr.bits.color_depth<10)return false;
+    target->color.hdr=(struct pl_hdr_metadata){
+        .prim=*pl_raw_primaries_get(PL_COLOR_PRIM_BT_2020),.min_luma=min,.max_luma=max};
+    return true;
+}
 static inline bool ambient_hdrplus_spatial_render(pl_gpu gpu, pl_log log,
     struct ambient_hdrplus_spatial *s, struct pl_frame *img,
     const struct pl_frame *target, const struct ambient_hdrplus *m)
@@ -245,15 +269,8 @@ static inline bool ambient_hdrplus_spatial_render(pl_gpu gpu, pl_log log,
     // Do not mistake an inferred nominal peak for a characterized target.
     // Pinned libplacebo ignores static peak metadata below 100 nits.
     const bool hdr_target=dst.transfer==PL_COLOR_TRC_PQ || dst.transfer==PL_COLOR_TRC_HLG;
-    if(hdr_target && (!(dst.hdr.max_luma>=100.f && dst.hdr.max_luma<=10000.f) ||
-        !(dst.hdr.min_luma>=0.f && dst.hdr.min_luma<dst.hdr.max_luma))) return false;
-    if(dst.transfer==PL_COLOR_TRC_HLG){
-        // The pinned HLG inverse OOTF uses beta and 1/(1-beta). Reject
-        // impossible contrast before the final renderer reaches it.
-        const float gamma=fmaxf(1.f,1.2f+0.42f*log10f(dst.hdr.max_luma/1000.f));
-        const float beta=sqrtf(3.f*powf(dst.hdr.min_luma/dst.hdr.max_luma,1.f/gamma));
-        if(!(beta>=0.f && beta<1.f)) return false;
-    }
+    if(hdr_target && !ambient_hdrplus_target_luma_valid(
+        dst.transfer==PL_COLOR_TRC_PQ?1:2,dst.hdr.min_luma,dst.hdr.max_luma))return false;
     pl_color_space_infer_map(&src,&dst);
     if (pl_color_space_is_hdr(&dst) && !hdr_target) return false;
     float out_min=0.f,out_max=0.f;

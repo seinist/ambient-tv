@@ -54,7 +54,7 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
      });
      free(device_name);
      if (!sys->vulkan)
-@@ -196,6 +224,21 @@
+@@ -196,6 +224,27 @@
              ALLOWSW_TEXT, ALLOWSW_LONGTEXT)
  
      set_section("Performance tuning", NULL)
@@ -71,7 +71,13 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
 +    add_bool("vk-ambient-dovi-fel", false, "Experimental Dolby Vision profile 7 FEL",
 +            "Requires the AHB and Dolby Vision options; decodes a second HEVC layer and reconstructs matched pictures.")
 +    add_bool("vk-ambient-hdr10plus-spatial", false, "Experimental HDR10+ local-window tone mapping",
-+            "Apply local-window OOTFs to RGB PQ AHB frames before SDR gamut conversion.")
++            "Apply local-window OOTFs to RGB PQ or raw P010 AHB frames.")
++    add_integer_with_range("vk-ambient-hdr-target-transfer", 0, 0, 2,
++            "Experimental HDR target transfer", "0 SDR, 1 PQ, 2 HLG. Explicit target luminance required.")
++    add_float_with_range("vk-ambient-hdr-target-max", 0.f, 0.f, 10000.f,
++            "HDR target maximum nits", "Display capability, not source mastering luminance.")
++    add_float_with_range("vk-ambient-hdr-target-min", -1.f, -1.f, 10000.f,
++            "HDR target minimum nits", "Display capability, -1 means unknown.")
 +#endif
      add_bool("vk-async-xfer", pl_vulkan_default_params.async_transfer,
              ASYNC_XFER_TEXT, ASYNC_XFER_LONGTEXT)
