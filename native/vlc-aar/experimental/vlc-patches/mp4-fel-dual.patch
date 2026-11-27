@@ -1180,8 +1180,9 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +    const demux_sys_t *sys=p_demux->p_sys;
 +    if( !sys->context.ambient_fel_mdat &&
 +        vlc_stream_Tell(p_demux->s) != p_track->context.i_trun_sample_pos &&
-+        MP4_Seek( p_demux->s, p_track->context.i_trun_sample_pos ) != VLC_SUCCESS )
-         return VLC_DEMUXER_EOF;
++        !MP4_FEL_SeekExact(p_demux->s,p_track->context.i_trun_sample_pos) )
+-        return VLC_DEMUXER_EOF;
++        return sys->context.ambient_fel_bl_extent_count ? VLC_DEMUXER_FATAL : VLC_DEMUXER_EOF;
  
      const stime_t i_demux_max_dts = (i_max_preload < INVALID_PRELOAD) ?
 @@ -5026,10 +6036,17 @@
@@ -1452,7 +1453,8 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
                  if( i_pos > p_sys->context.i_post_mdat_offset )
                      msg_Err( p_demux, " Overread mdat by %" PRIu64, i_pos - p_sys->context.i_post_mdat_offset );
 @@ -5742,9 +6870,19 @@
-                 if( MP4_Seek( p_demux->s, p_sys->context.i_post_mdat_offset ) != VLC_SUCCESS )
+-                if( MP4_Seek( p_demux->s, p_sys->context.i_post_mdat_offset ) != VLC_SUCCESS )
++                if( !MP4_FEL_SeekExact(p_demux->s,p_sys->context.i_post_mdat_offset) )
                      i_status = VLC_DEMUXER_EGENERIC;
              }
 -            p_sys->context.i_current_box_type = 0;
