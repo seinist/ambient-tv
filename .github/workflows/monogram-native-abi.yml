@@ -135,6 +135,7 @@ jobs:
         if: matrix.cpu == 'generic' && matrix.pgo == 'off'
         env:
           MONOGRAM_SIZE_GRADLE_ONLY: '1'
+          GH_TOKEN: ${{ github.token }}
           MONOGRAM_ABIS: ${{ matrix.abi }}
         run: |
           ./scripts/fetch_libretrodroid.sh

@@ -44,4 +44,11 @@ class MonogramThumbModelTest {
         org.junit.Assert.assertNotEquals(key, monogramSharpCacheKey(monogramThumbModel(5, 8, null), 1, 2))
         assertNull(monogramSharpCacheKey(monogramPhotoModel(5, 7, null), 1, 2))
     }
+
+    @Test fun malformedFallbackDoesNotBreakSharpImageIdentity() {
+        val malformed = "monogram-thumb://5/7?fallback=%GG"
+        assertEquals(MonogramThumbRef(5, 7, null), parseMonogramThumbModel(malformed))
+        assertEquals(monogramSharpCacheKey(monogramThumbModel(5, 7, null), 1, 2),
+            monogramSharpCacheKey(malformed, 1, 2))
+    }
 }

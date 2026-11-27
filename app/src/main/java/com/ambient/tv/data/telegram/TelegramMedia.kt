@@ -202,7 +202,9 @@ fun parseMonogramThumbModel(value: String): MonogramThumbRef? {
         ?: value.removePrefix("$MONOGRAM_PHOTO_SCHEME://").takeIf { it != value } ?: return null
     val path = rest.substringBefore('?')
     val fallback = rest.substringAfter('?', "").takeIf { it.startsWith("fallback=") }
-        ?.removePrefix("fallback=")?.let { java.net.URLDecoder.decode(it, "UTF-8") }?.takeIf { it.isNotBlank() }
+        ?.removePrefix("fallback=")?.let { encoded ->
+            runCatching { java.net.URLDecoder.decode(encoded, "UTF-8") }.getOrNull()
+        }?.takeIf { it.isNotBlank() }
     val parts = path.split('/')
     if (parts.size != 2) return null
     val chatId = parts[0].toLongOrNull()?.takeIf { it != 0L } ?: return null

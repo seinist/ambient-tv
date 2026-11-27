@@ -151,7 +151,18 @@ for abi in "${abis[@]}"; do
     echo "Building Monogram :native:mtproto ONLY for $abi"
     ( cd "$source_dir"
       # Upstream's native task does not fingerprint Cargo profile environment.
-      ./gradlew --no-daemon --no-configuration-cache --rerun-tasks :native:mtproto:assembleRelease -PtargetAbi="$abi"
+      gradle_args=(--no-daemon --no-configuration-cache --rerun-tasks :native:mtproto:assembleRelease "-PtargetAbi=$abi")
+      # CI runners sometimes fail to resolve an otherwise identical pinned plugin.
+      # Retry once only for a plugin repository resolution failure, not compile errors.
+      log="$scratch/gradle-$abi.log"
+      if ! ./gradlew "${gradle_args[@]}" 2>&1 | tee "$log"; then
+          if [[ "${CI:-}" != true && "${CI:-}" != 1 ]] || ! grep -Fq 'could not resolve plugin artifact' "$log"; then
+              exit 1
+          fi
+          echo "Retrying pinned Gradle plugin resolution for $abi" >&2
+          sleep 5
+          ./gradlew "${gradle_args[@]}" --refresh-dependencies
+      fi
     )
     aar="$source_dir/native/mtproto/build/outputs/aar/mtproto-release.aar"
     [[ -s "$aar" ]] || { echo "Missing $aar" >&2; exit 1; }

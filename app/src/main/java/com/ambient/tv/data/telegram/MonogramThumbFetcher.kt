@@ -62,10 +62,14 @@ internal class MonogramSharpCacheInterceptor(
         if (!model.startsWith("$MONOGRAM_THUMB_SCHEME://")) return chain.proceed()
         val repo = repository()
         val key = repo.artworkCacheKey(model)
+        // Do not rebind an old Compose request (and its placeholder) to a newer session.
+        val requestedKey = request.memoryCacheKey
+        if (requestedKey?.startsWith("monogram-sharp-v1:") == true && requestedKey != key)
+            throw kotlinx.coroutines.CancellationException("Monogram artwork request became obsolete")
         val result = chain.withRequest(request.newBuilder().apply {
             if (key == null) {
                 memoryCachePolicy(coil3.request.CachePolicy.DISABLED)
-                placeholderMemoryCacheKey(null)
+                placeholderMemoryCacheKey(null as coil3.memory.MemoryCache.Key?)
                 networkCachePolicy(coil3.request.CachePolicy.DISABLED)
             } else memoryCacheKey(key)
         }.build()).proceed()
