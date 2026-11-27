@@ -108,6 +108,7 @@ impl Gpu {
 
     pub fn clear_sources(&mut self) {
         self.cancel_prefetch();
+        if let Some(search)=self.motion_search.as_mut(){search.clear_sources();}
         self.recycled_sources.extend(std::mem::take(&mut self.sources).into_values());
         self.recycled_sources.truncate(2);
         self.plane_bindings = std::array::from_fn(|_| None);
@@ -418,13 +419,13 @@ impl Gpu {
     // The pinned CPU analyser remains the normal playback backend.
     pub(super) fn experimental_motion(&mut self,builder:&svpflow1_vs::SuperBuilder,
             current:&svpflow1_vs::SuperFrame,next:&svpflow1_vs::SuperFrame,
-            header:&[i32])->Result<Vec<u8>,String>{
+            header:&[i32],source_index:Option<i32>)->Result<Vec<u8>,String>{
         if !crate::motion_search::MotionSearch::supported(header){
             return Err("unsupported experimental motion configuration".into());
         }
         self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let search=self.motion_search.get_or_insert_with(||crate::motion_search::MotionSearch::new(&self.device));
-        let result=search.analyse(&self.device,&self.queue,builder,current,next,header,Duration::from_millis(250));
+        let result=search.analyse(&self.device,&self.queue,builder,current,next,header,Duration::from_millis(250),source_index);
         if let Some(error)=pollster::block_on(self.device.pop_error_scope()){
             return Err(error.to_string());
         }
@@ -452,6 +453,7 @@ impl Gpu {
     // A failed input must not leave the same frame index cached with pixels
     // from a rejected push. A subsequent retry may supply a different image.
     pub fn discard_source(&mut self, n: i32) {
+        if let Some(search)=self.motion_search.as_mut(){search.clear_sources();}
         if let Some(source) = self.sources.remove(&n) {
             if self.recycled_sources.len() < 2 { self.recycled_sources.push(source); }
         }
