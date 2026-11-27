@@ -2,9 +2,11 @@
 
 **Opt-in test build only.** The production AAR and the production Vulkan
 copy-back path are unchanged. The experiment is restricted to opaque
-AImageReader BT.709 SDR with a matching driver-reported range and matrix,
-one graphics queue, and no CPU picture filters. HDR/DV, explicit VkFormat,
-protected images and unsupported extensions/features are rejected.
+AImageReader BT.709 SDR or explicit BT.2020 HDR10/HLG on Android API 34+
+with a matching driver-reported matrix, range and actual AImage dataspace,
+one graphics queue, and no CPU picture filters. HDR10+/Dolby Vision,
+explicit VkFormat, protected images and unsupported extensions/features
+remain on the existing copy-back or native HDR routes.
 
 ## Build and validate
 
@@ -27,6 +29,9 @@ distribute the experiment as a validated production build.
 - Opaque AHB dedicated import, driver YCbCr conversion, foreign queue acquire
   and release, producer sync-fd import, conservative VLC picture lease.
   AHardwareBuffer references do not substitute for the decoder picture lease.
+  The decoder requests GPU_SAMPLED_IMAGE even for unrotated output. Stable
+  AHardwareBuffer IDs prevent aliasing across in-flight slots. Dropped pictures
+  pass the original producer fence back via the VLC-owned AImage context.
 - Three bounded reusable slots, command buffers, device-local RGB targets,
   immutable sampler, descriptors and pipeline. Exact buffer identity reuses
   the import. Distinct buffers with identical driver format/conversion and
@@ -44,6 +49,17 @@ distribute the experiment as a validated production build.
   presentation watchdog can retry Vulkan copy-back once on failure/stall
   before the existing Android/OpenGL fallback. It preserves the existing
   asynchronous restart and position/track restore path.
+- Experimental-only MediaCodec input and AImageReader callback/flush timeouts;
+  output polling observes abort/flush instead of waiting indefinitely. Late
+  callbacks after abort are discarded. The watchdog now also handles static
+  or missing counters and stalled opening/buffering/seek states (bounded
+  deadlines reset on progress, pause or surface loss).
+- HDR10/PQ and HLG use a 16-bit floating-point RGB intermediate. The source
+  primaries, transfer and mastering/light metadata remain attached for
+  libplacebo tone mapping. Actual AImage dataspace must agree; the API is
+  dynamically resolved, so old Android devices retain SDR support. Opaque
+  input alone cannot prove decoder bit depth. Dynamic HDR metadata and DV
+  reshaping are not claimed to be supported.
 
 ## Validation
 
@@ -52,8 +68,10 @@ including format identity and device-loss ownership, GLSL compilation,
 four Android ABI owner syntax/link checks, pinned libplacebo API and
 patched display/instance translation unit checks when the source paths are
 provided. The CI stages the exact patches twice and checks the isolated build
-hashes. Prior run 45940950741 passed the patched C contract; the subsequent
-cache, recovery, presentation statistics and app changes need their own checks.
+hashes. Native contract job 140316567169 in run 45941465294 passed all
+four ABI checks before the latest decoder/HDR/recovery changes. The full
+linked build was superseded by subsequent commits; no linked artifact has
+been confirmed yet.
 
 The experimental workflow also schedules a full ARM64 VLC/JNI AAR build
 after the native contract checks. That linked artifact is not a GPU execution
@@ -65,13 +83,15 @@ test. No hardware performance or correctness claim is made yet.
   negotiation on the actual driver, descriptor allocation, ownership/layout
   validation, color range/crop, orientation, subtitles and rendering.
 - On Shield and phone test long playback, seeks, pause, surface recreation,
-  format changes, HDR rejection, restart to copy-back, device loss and close.
+  format changes, SDR/PQ/HLG color accuracy, HDR10+/DV fallback, restart to
+  copy-back, device loss and close.
   Confirm no validation errors or retained AImages and measure startup,
   frame times, dropped frames, decoder backlog and memory versus copy-back.
-- The watchdog requires valid counters and observable decoder progress;
-  terminal driver failure or decoder starvation may need a separate native
-  failure signal. Do not treat the current fallback as proof of all recovery
-  scenarios.
+- A permanently blocked Vulkan or Android driver call cannot be safely
+  interrupted by the in-process watchdog. The decoder/application timeouts
+  handle ordinary starvation and missing statistics, not arbitrary kernel or
+  driver hangs. Full process isolation would be needed for hard guarantees.
+  Verify recovery on hardware before enabling production.
 
 References:
 - https://docs.vulkan.org/refpages/latest/refpages/source/VK_ANDROID_external_memory_android_hardware_buffer.html
@@ -82,3 +102,4 @@ References:
 - https://docs.vulkan.org/refpages/latest/refpages/source/VK_EXT_queue_family_foreign.html
 - https://docs.vulkan.org/spec/latest/chapters/devsandqueues.html
 - https://developer.android.com/ndk/reference/group/media
+- https://developer.android.com/ndk/reference/group/a-data-space
