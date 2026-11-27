@@ -130,14 +130,43 @@ internal class SystemModuleRuntime(
                         name !in contract.bundledOverrides &&
                         bundled?.findLibrary(name.removePrefix("lib").removeSuffix(".so")) != null
                     }) throw SystemModuleTrustException("Native-only module conflicts with bundled library")
-                if (contract.hostLibraries.any { name ->
-                        bundled?.findLibrary(name.removePrefix("lib").removeSuffix(".so")) == null
-                    }) throw SystemModuleTrustException("Required host library unavailable")
+                if (files.build.hostNativeSha256.keys != contract.hostLibraries)
+                    throw SystemModuleTrustException("Host native fingerprint contract mismatch")
+                for ((name, hash) in files.build.hostNativeSha256) {
+                    val location = bundled?.findLibrary(name.removePrefix("lib").removeSuffix(".so"))
+                        ?: throw SystemModuleTrustException("Required host library unavailable")
+                    if (hostLibraryHash(location) != hash)
+                        throw SystemModuleTrustException("Host native dependency fingerprint mismatch")
+                }
                 nativeOrder(files.native, contract.nativeRoots)
             }
             else -> if (files.dex.isNotEmpty() || files.native.isNotEmpty())
                 throw SystemModuleTrustException("Executable code in asset-only module")
         }
+    }
+
+    private fun hostLibraryHash(location: String): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        fun read(input: java.io.InputStream) {
+            var total = 0L
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buffer)
+                if (n == -1) break
+                if (n == 0 || n > SystemModuleChannel.MAX_PACKAGE_BYTES - total)
+                    throw SystemModuleTrustException("Host native library exceeds bounds")
+                total += n
+                digest.update(buffer, 0, n)
+            }
+        }
+        val split = location.indexOf("!/")
+        if (split < 0) File(location).inputStream().use(::read)
+        else java.util.zip.ZipFile(location.substring(0, split)).use { zip ->
+            val entry = zip.getEntry(location.substring(split + 2))
+                ?: throw SystemModuleTrustException("Host APK native library missing")
+            zip.getInputStream(entry).use(::read)
+        }
+        return digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
     }
 
     private fun activate(files: SystemModuleMaterializer.Materialized, contract: Contract): Loaded {
