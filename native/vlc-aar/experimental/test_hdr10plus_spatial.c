@@ -28,8 +28,16 @@ int main(void) {
     assert(ambient_hdrplus_spatial_supported(&m,200,200,masks,&layering)&&layering);
     m.targeted_grid.rows=2;
     assert(!ambient_hdrplus_spatial_supported(&m,200,200,masks,&layering));
-    m.targeted_grid.rows=0;m.windows[0].saturation_mapping=true;
-    assert(!ambient_hdrplus_spatial_supported(&m,200,200,masks,&layering));
+    m.targeted_grid=(struct ambient_hdrplus_grid){.rows=2,.cols=2,.values={{0,3},{12,15}}};
+    m.windows[0].fraction=0.75f;m.windows[0].average=0.25f;
+    float factor;
+    assert(ambient_hdrplus_grid_factor(&m.targeted_grid,&m.windows[0],&factor));
+    assert(fabsf(factor-0.65f)<1e-6f);
+    m.windows[0].fraction=0.f;
+    assert(ambient_hdrplus_grid_factor(&m.targeted_grid,&m.windows[0],&factor)&&factor==1.f);
+    m.targeted_grid=(struct ambient_hdrplus_grid){0};m.windows[0].saturation_mapping=true;
+    m.windows[0].saturation_weight=63;
+    assert(ambient_hdrplus_spatial_supported(&m,200,200,masks,&layering));
     m.windows[0].saturation_mapping=false;m.windows[2].geometry.right=200;
     assert(!ambient_hdrplus_spatial_supported(&m,200,200,masks,&layering));
     m.window_count=2;
