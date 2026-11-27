@@ -3,6 +3,19 @@ import java.security.MessageDigest
 import java.net.URI
 import java.util.Properties
 import java.util.zip.ZipFile
+import com.android.build.api.artifact.ScopedArtifact
+import com.android.build.api.variant.ScopedArtifacts
+import org.gradle.api.file.Directory
+import org.gradle.api.file.RegularFile
+import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.TaskAction
+import org.gradle.process.ExecOperations
+import javax.inject.Inject
 
 plugins {
     alias(libs.plugins.android.application)
@@ -513,6 +526,48 @@ if (modularPreview) {
         if (name == "preBuild" || (name.startsWith("merge") && name.endsWith("Assets"))) {
             dependsOn(prepareModularAssets)
         }
+    }
+}
+
+
+/** Read-only view of the variant's complete pre-R8 class graph. */
+abstract class ExportMonogramDex @Inject constructor(
+    private val execOperations: ExecOperations,
+) : DefaultTask() {
+    @get:InputFiles abstract val allJars: ListProperty<RegularFile>
+    @get:InputFiles abstract val allDirectories: ListProperty<Directory>
+    @get:InputFiles abstract val androidLibraries: ListProperty<RegularFile>
+    @get:InputFile abstract val exporter: org.gradle.api.file.RegularFileProperty
+    @get:InputFile abstract val d8: org.gradle.api.file.RegularFileProperty
+    @get:Input abstract val binding: Property<String>
+    @get:OutputDirectory abstract val destination: org.gradle.api.file.DirectoryProperty
+
+    @TaskAction fun export() {
+        val output = destination.get().asFile
+        check(!output.exists() || output.deleteRecursively()) { "Cannot clean Monogram adapter output" }
+        val command = mutableListOf("python3", exporter.get().asFile.absolutePath,
+            "--d8", d8.get().asFile.absolutePath, "--binding", binding.get(),
+            "--output", output.absolutePath)
+        for (input in allJars.get().map { it.asFile } + allDirectories.get().map { it.asFile }) {
+            command.addAll(listOf("--input", input.absolutePath))
+        }
+        for (library in androidLibraries.get()) command.addAll(listOf("--android-lib", library.asFile.absolutePath))
+        execOperations.exec { commandLine(command) }.assertNormalExitValue()
+    }
+}
+
+if (monogramEnabled) {
+    androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
+        val task = tasks.register<ExportMonogramDex>("exportMonogramAdapterDex") {
+            exporter.set(rootProject.layout.projectDirectory.file("scripts/export_monogram_adapter.py"))
+            binding.set(monogramAdapterSha)
+            androidLibraries.set(androidComponents.sdkComponents.bootClasspath)
+            d8.set(androidComponents.sdkComponents.sdkDirectory.map { it.file("build-tools/37.0.0/d8") })
+            destination.set(layout.buildDirectory.dir("outputs/system-modules/monogram-dex"))
+        }
+        variant.artifacts.forScope(ScopedArtifacts.Scope.ALL).use(task).toGet(
+            ScopedArtifact.CLASSES, ExportMonogramDex::allJars, ExportMonogramDex::allDirectories,
+        )
     }
 }
 
