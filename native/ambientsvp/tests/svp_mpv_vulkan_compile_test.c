@@ -53,6 +53,7 @@ void svp_mpv_compile_entrypoints(void *lib,struct mp_image *img)
 
 #ifdef SVP_METADATA_TEST
 #include <assert.h>
+#include <stddef.h>
 bool pl_hdr_metadata_equal(const struct pl_hdr_metadata *a,const struct pl_hdr_metadata *b)
 {
     return a->min_luma==b->min_luma && a->max_luma==b->max_luma;
@@ -75,7 +76,8 @@ static struct dovi_fixture make_dovi(void)
 }
 int main(void)
 {
-    AVDynamicHDRPlus h={.num_windows=1},h2=h;
+    AVDynamicHDRPlus h={.num_windows=1},h2;
+    memcpy(&h2,&h,sizeof(h));
     AVBufferRef x={.data=(uint8_t *)&h,.size=sizeof(h)},y={.data=(uint8_t *)&h2,.size=sizeof(h2)};
     struct mp_ff_side_data ax={AV_FRAME_DATA_DYNAMIC_HDR_PLUS,&x},ay={AV_FRAME_DATA_DYNAMIC_HDR_PLUS,&y};
     struct mp_image a={.ff_side_data=&ax,.num_ff_side_data=1},b={.ff_side_data=&ay,.num_ff_side_data=1};
@@ -85,7 +87,8 @@ int main(void)
     assert(!svp_vk_hdr_metadata_same(&a,&b));
     h2=h;y.size--;assert(!svp_vk_hdr_metadata_same(&a,&b));y.size++;
     b.num_ff_side_data=0;assert(!svp_vk_hdr_metadata_same(&a,&b));b.num_ff_side_data=1;
-    struct dovi_fixture d=make_dovi(),d2=d;
+    struct dovi_fixture d=make_dovi(),d2;
+    memcpy(&d2,&d,sizeof(d));
     x.data=(uint8_t *)&d;x.size=sizeof(d);y.data=(uint8_t *)&d2;y.size=sizeof(d2);
     ax.type=ay.type=AV_FRAME_DATA_DOVI_METADATA;
     a.dovi=&x;b.dovi=&y;
