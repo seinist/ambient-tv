@@ -23,6 +23,17 @@ class VlcVulkanOutputWatchTest {
         assertFalse(watch.shouldSample(10000))
     }
 
+    @Test fun experimentalPathContinuesMonitoringAfterFirstPresentation() {
+        val watch = VlcVulkanOutputWatch()
+        assertNull(watch.observe(0, 100, 90, continuous = true))
+        assertEquals(VlcVulkanOutputVerdict.CONFIRMED, watch.observe(1000, 101, 91, continuous = true))
+        assertTrue(watch.shouldSample(2000))
+        assertNull(watch.observe(2000, 102, 92, continuous = true))
+        assertNull(watch.observe(9000, 110, 92, continuous = true))
+        assertEquals(VlcVulkanOutputVerdict.STALLED, watch.observe(10000, 111, 92, continuous = true))
+        assertFalse(watch.shouldSample(11000))
+    }
+
     @Test fun bufferingAndMissingOrResetCountersRestartObservation() {
         val watch = VlcVulkanOutputWatch()
         assertNull(watch.observe(0, 100, 90))
