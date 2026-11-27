@@ -1,6 +1,7 @@
 #include "dovi_fel_decoder.h"
 #include "dovi_fel_api.h"
 #include "dovi_rpu_au.h"
+#include "dovi_fel_dual.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,6 +28,42 @@ static AVPacket *wrap(const uint8_t *input,size_t size,int64_t pts)
     }
     av_shrink_packet(p,(int)out);
     p->pts=pts;p->dts=pts;p->duration=1;
+    return p;
+}
+
+/* Simulate the MP4 sample merger using a real Main10 EL elementary stream
+ * and then the packetizer's length-prefix to Annex B conversion. The BL and
+ * RPU below are synthetic framing markers, not valid Dolby Vision content;
+ * this test exercises actual EL decode and sample ownership. */
+static AVPacket *dual(const uint8_t *input,size_t size,int64_t pts)
+{
+    uint8_t *el=malloc(size*2+32);assert(el);
+    size_t off=0,out=0;
+    while(off<size){
+        size_t prefix,next;
+        size_t start=ambient_rpu_start_code(input,size,off,&prefix);
+        assert(prefix);
+        size_t data=start+prefix,end=ambient_rpu_start_code(input,size,data,&next);
+        uint32_t len=(uint32_t)(end-data);assert(len>=3);
+        for(unsigned j=0;j<4;j++)el[out++]=(uint8_t)(len>>(8*(3-j)));
+        memcpy(el+out,input+data,len);out+=len;off=end;
+    }
+    const uint8_t rpu[]={0,0,0,3,0x7c,1,0x80};
+    memcpy(el+out,rpu,sizeof(rpu));out+=sizeof(rpu);
+    const uint8_t bl[]={0,0,0,3,0x26,1,0x80};
+    size_t n;
+    assert(ambient_fel_dual_sample(bl,sizeof(bl),4,el,out,4,NULL,0,false,NULL,0,&n));
+    AVPacket *p=av_packet_alloc();
+    assert(p&&av_new_packet(p,(int)n)>=0);
+    assert(ambient_fel_dual_sample(bl,sizeof(bl),4,el,out,4,NULL,0,false,p->data,n,&n));
+    for(size_t i=0;i<n;){
+        assert(n-i>=4);
+        uint32_t len=0;
+        for(unsigned j=0;j<4;j++)len=(len<<8)|p->data[i+j];
+        assert(len>=2&&len<=n-i-4);
+        memset(p->data+i,0,3);p->data[i+3]=1;i+=4+len;
+    }
+    free(el);p->pts=pts;p->dts=pts;p->duration=1;
     return p;
 }
 
@@ -78,6 +115,15 @@ int main(int argc,char **argv)
     assert(picture&&picture->pts==90000&&picture->width==64&&picture->height==64);
     assert(!av_ambient_fel_take(session,90000));
     for(unsigned i=0;i<64*64+2*32*32;i++) assert(picture->samples[i]<=1023);
+    av_ambient_fel_flush(session);
+    AVPacket *paired=dual(input,(size_t)n,190000);
+    assert(av_ambient_fel_submit(session,paired->data,paired->size,190000,187000)==0);
+    assert(av_ambient_fel_drain(session)==0);
+    struct ambient_fel_picture *dual_picture=av_ambient_fel_take(session,190000);
+    assert(dual_picture&&dual_picture->width==64&&dual_picture->height==64);
+    assert(!memcmp(picture->samples,dual_picture->samples,
+        (64*64+2*32*32)*sizeof(uint16_t)));
+    free(dual_picture);av_packet_free(&paired);
     av_ambient_fel_flush(session);
     // Owned snapshot survives the decoder session.
     av_ambient_fel_close(session);
