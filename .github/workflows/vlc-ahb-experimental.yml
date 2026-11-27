@@ -86,10 +86,12 @@ jobs:
         run: |
           cd .ci/ffmpeg
           git apply "$GITHUB_WORKSPACE/native/vlc-aar/experimental/ffmpeg-patches/ambient-dovi-parser.patch"
-          ./configure --disable-everything --disable-autodetect --disable-programs --disable-doc --disable-network --disable-x86asm --disable-shared --enable-static --enable-decoder=hevc --enable-bsf=dovi_rpu --disable-avdevice --disable-avfilter --disable-swscale --disable-swresample --disable-avformat
+          ./configure --disable-everything --disable-autodetect --disable-programs --disable-doc --disable-network --disable-x86asm --disable-shared --enable-static --enable-decoder=hevc --enable-bsf=dovi_rpu,dovi_split --disable-avdevice --disable-avfilter --disable-swscale --disable-swresample --disable-avformat
           make -j2 libavcodec/libavcodec.a libavutil/libavutil.a
           cc -I . -I libavcodec -I "$GITHUB_WORKSPACE/native/vlc-aar/experimental" "$GITHUB_WORKSPACE/native/vlc-aar/experimental/test_ambient_dovi_parser.c" libavcodec/libavcodec.a libavutil/libavutil.a -lm -pthread -o test-ambient-dovi
           ./test-ambient-dovi
+          cc -I . "$GITHUB_WORKSPACE/native/vlc-aar/experimental/test_dovi_split.c" libavcodec/libavcodec.a libavutil/libavutil.a -lm -pthread -o test-dovi-split
+          ./test-dovi-split
 
   hdrplus-spatial-gpu:
     runs-on: ubuntu-24.04
@@ -114,6 +116,10 @@ jobs:
             native/vlc-aar/experimental/test_hdr10plus_spatial_gpu.c \
             -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-hdrplus-spatial
           VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-hdrplus-spatial
+          cc -std=c11 -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
+            native/vlc-aar/experimental/test_dovi_fel_gpu.c \
+            -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-dovi-fel
+          VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-dovi-fel
 
   linked-arm64-aar:
     # Only the repository-owned experiment branch can spend time building the
