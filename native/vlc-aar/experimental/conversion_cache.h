@@ -36,6 +36,22 @@ public:
             return VK_ERROR_INITIALIZATION_FAILED;
         if (matches(buffer, width, height, format, descriptors)) return VK_SUCCESS;
 
+        // Different AHB, same output geometry and exact conversion format:
+        // import just the replacement image and update its descriptor, not
+        // the immutable sampler, render pass, framebuffer or graphics pipeline.
+        if (pass_ && imported_ && buffer_ != buffer && width_ == width &&
+            height_ == height && format_ == format && descriptors_ == descriptors) {
+            bool reused = false;
+            VkResult result = imported_->try_rebind(buffer, reused);
+            if (result != VK_SUCCESS) return result;
+            if (reused) {
+                buffer_ = buffer;
+                if (pass_->rebind_input(imported_->view())) return VK_SUCCESS;
+                pass_.reset();
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+        }
+
         // Framebuffer/descriptor/pipeline reference the target and immutable
         // sampler. Destroy the pass FIRST, before changing either dependency.
         pass_.reset();
