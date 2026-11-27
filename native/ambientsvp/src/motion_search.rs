@@ -61,12 +61,33 @@ impl Grid{
 struct LevelField{grid:Grid,choices:Vec<Choice>}
 impl LevelField{
     fn predict(&self,x:u32,y:u32,pel:u32)->[i32;2]{
-        // Project the centre of the fine block to the coarse grid;
-        // compare block centres, not the top-left corner.
-        let i=self.grid.nearest((x/2).saturating_sub(self.grid.bw/4),(y/2).saturating_sub(self.grid.bh/4));
-        let c=self.choices[i];
-        let scale=2*pel as i32;
-        [c.dx.saturating_mul(scale),c.dy.saturating_mul(scale)]
+        // Match upstream's four-neighbour interpolation topology and
+        // overlap-dependent weights. Scale from coarse integer-pel units
+        // into the finer grid's pel units; use wide arithmetic instead of
+        // allowing signed 16-bit intermediate overflow.
+        let g=self.grid;
+        let i=(x/g.sx).min(2*g.w-1);let j=(y/g.sy).min(2*g.h-1);
+        let (cx,cy)=(i/2,j/2);
+        let (ox,oy)=(g.bw-g.sx,g.bh-g.sy);
+        let nx=if i==0||i==2*g.w-1{cx}else if i%2==0{cx-1}else{cx+1};
+        let ny=if j==0||j==2*g.h-1{cy}else if j%2==0{cy-1}else{cy+1};
+        let at=|x:u32,y:u32|self.choices[(y*g.w+x) as usize];
+        let v=[at(cx,cy),at(nx,cy),at(cx,ny),at(nx,ny)];
+        let axis=|block:u32,overlap:u32,step:u32,odd:bool|{
+            let first=3*i64::from(block)-i64::from(overlap)*if odd{2}else{4};
+            let total=4*i64::from(step);
+            (first.clamp(0,total),total)
+        };
+        let (ax,tx)=axis(g.bw,ox,g.sx,i%2!=0);
+        let (ay,ty)=axis(g.bh,oy,g.sy,j%2!=0);
+        let weights=[ax*ay,(tx-ax)*ay,ax*(ty-ay),(tx-ax)*(ty-ay)];
+        let denom=tx*ty;
+        let blend=|component:fn(Choice)->i32|{
+            let n=v.iter().zip(weights).map(|(&c,w)|i64::from(component(c))*w).sum::<i64>()*2*i64::from(pel);
+            // Arithmetic floor agrees with signed shifts for flat grids.
+            n.div_euclid(denom).clamp(i64::from(i32::MIN),i64::from(i32::MAX)) as i32
+        };
+        [blend(|c|c.dx),blend(|c|c.dy)]
     }
 
     /// A dominant low-residual translation from the preceding level.
@@ -442,6 +463,20 @@ mod tests{
             assert_eq!(offsets[0],[0,0]);
             assert_eq!(offsets.len(),offsets.iter().collect::<std::collections::BTreeSet<_>>().len());
             assert!(offsets.len()<=60);
+        }
+    }
+
+    #[test]
+    fn weighted_coarse_predictor_respects_flat_and_overlapped_edges(){
+        let choice=|dx,dy|Choice{dx,dy,sad:0,cost:0,raw_sad:-1,winner:0};
+        for overlap in [0,4,8]{
+            let g=Grid{w:2,h:2,sx:16-overlap,sy:16-overlap,bw:16,bh:16};
+            let field=LevelField{grid:g,choices:vec![choice(0,0),choice(8,-8),choice(16,-16),choice(24,-24)]};
+            assert_eq!(field.predict(0,0,1),[0,0]);
+            assert_eq!(field.predict(g.sx*3,g.sy*3,1),[48,-48]);
+            let p=field.predict(g.sx,g.sy,1);
+            assert!(p[0]>0 && p[0]<48 && p[1]<=-p[0]);
+            if overlap==0{assert_eq!(p,[12,-12]);}
         }
     }
 
