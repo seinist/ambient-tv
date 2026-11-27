@@ -619,7 +619,9 @@ private fun RightSidePanelChrome(
     val rescueScope = androidx.compose.runtime.rememberCoroutineScope()
     val rescue = remember { RescueRun() }
     val footerAllowed = panelFocusFallback(focusRescue?.levelFresh != false) == PanelFocusFallback.FOOTER
-    fun focusFirstRow(): Boolean = runCatching { bodyFocus.requestFocus() }.getOrDefault(false)
+    fun focusFirstRow(): Boolean = runCatching {
+        bodyFocus.requestFocus(androidx.compose.ui.focus.FocusDirection.Enter)
+    }.getOrDefault(false)
     // Parking on the first row while the real row is still missing must not make that row the
     // one remembered for later (e.g. after "Warten" in a player dialog).
     fun parkOnFirstRow(): Boolean = focusRescue?.park?.invoke(::focusFirstRow) ?: focusFirstRow()
@@ -762,7 +764,7 @@ private fun RightSidePanelChrome(
             // modal handler can move/restore focus while that body recycles its old row.
             // The Chrome's focusFirstRow effect still handles initial focus for both.
             .then(if (bodyOwnsNavigation) Modifier else Modifier.tvModalFocus(
-                initialFocus = requestHeaderFocus, scrollToTop = scrollToTop,
+                initialFocus = false, scrollToTop = scrollToTop,
                 footerFocus = footerFocus, scrollToEnd = scrollToEnd))
             // Handheld edge-to-edge: keep header and footer clear of the status and navigation bars.
             .then(if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) Modifier.windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.systemBars.only(androidx.compose.foundation.layout.WindowInsetsSides.Vertical)) else Modifier)
@@ -921,6 +923,7 @@ fun RightPanelChoice(
     val shape = RoundedCornerShape(LocalUiTokens.current.controlRadius)
     Row(
         modifier = modifier
+            .focusProperties { canFocus = enabled }
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) uiSounds?.playFocus() }
             .menuFocusMotion(focused, focusedScale = 1.006f)
             .then(if (LocalPlayerChromeState.current != null) Modifier.appOsdControlSurface(
