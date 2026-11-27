@@ -156,9 +156,16 @@ internal class SystemModuleStore(
     }
 
     private fun readBounded(file: File, max: Int): ByteArray = file.inputStream().use { input ->
-        val bytes = input.readNBytes(max + 1)
-        if (bytes.size !in 1..max) throw SystemModuleTrustException("Stored metadata exceeds bounds")
-        bytes
+        val buffer = ByteArray(max + 1)
+        var count = 0
+        while (count < buffer.size) {
+            val n = input.read(buffer, count, buffer.size - count)
+            if (n == -1) break
+            if (n == 0) throw IOException("Stored metadata stream made no progress")
+            count += n
+        }
+        if (count !in 1..max) throw SystemModuleTrustException("Stored metadata exceeds bounds")
+        buffer.copyOf(count)
     }
 
     private fun <T> locked(module: SystemModule, action: (File) -> T): T = synchronized(processLock) {
