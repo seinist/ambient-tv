@@ -118,7 +118,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          vlc_placebo_ReleaseCurrent(sys->pl);
          return; // Probably benign error, ignore it
      }
-@@ -238,19 +312,51 @@
+@@ -238,19 +312,44 @@
      bool need_vflip = frame.flipped;
  #endif
  
@@ -141,13 +141,6 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +        // The opaque fourcc has no CPU-plane format descriptor. Never call
 +        // vlc_placebo_ColorRepr for it, even as a temporary initializer.
 +        struct pl_color_space color = vlc_placebo_ColorSpace(&pic->format);
-+        // VLC ST 2086 uses integer units: chromaticity 1/50000, luminance
-+        // 1/10000 cd/m². libplacebo expects normalized xy and actual nits.
-+        color.hdr.prim.green.x /= 50000.0f; color.hdr.prim.green.y /= 50000.0f;
-+        color.hdr.prim.blue.x /= 50000.0f; color.hdr.prim.blue.y /= 50000.0f;
-+        color.hdr.prim.red.x /= 50000.0f; color.hdr.prim.red.y /= 50000.0f;
-+        color.hdr.prim.white.x /= 50000.0f; color.hdr.prim.white.y /= 50000.0f;
-+        color.hdr.min_luma /= 10000.0f; color.hdr.max_luma /= 10000.0f;
 +        img = ahb_output.raw_yuv ? ambient_pl_raw_p010_frame((pl_tex)ahb_output.texture, color,
 +                pic->format.color_range == COLOR_RANGE_FULL ? PL_COLOR_LEVELS_FULL : PL_COLOR_LEVELS_LIMITED) :
 +            ambient_pl_rgb_frame((pl_tex)ahb_output.texture, color);
@@ -183,17 +176,10 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
  
      struct vlc_ancillary *iccp = picture_GetAncillary(pic, VLC_ANCILLARY_ID_ICC);
      if (iccp) {
-@@ -264,9 +370,19 @@
+@@ -264,9 +363,12 @@
      if (hdrplus) {
          vlc_video_hdr_dynamic_metadata_t *hdm = vlc_ancillary_GetData(hdrplus);
          vlc_placebo_HdrMetadata(hdm, &img.color.hdr);
-+#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
-+        if (ahb_output.texture) {
-+            // HDR10+ RGB statistics are normalized to 10000 cd/m² in VLC.
-+            for (unsigned i = 0; i < 3; ++i) img.color.hdr.scene_max[i] *= 10000.0f;
-+            img.color.hdr.scene_avg *= 10000.0f;
-+        }
-+#endif
      }
  
 -    // Upload the image data for each plane
@@ -204,7 +190,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
      struct pl_plane_data data[4];
      if (!vlc_placebo_PlaneData(pic, data)) {
          // This should never happen, in theory
-@@ -287,6 +403,9 @@
+@@ -287,6 +389,9 @@
                                        &plane->shift_y);
      }
  
@@ -214,7 +200,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
      struct pl_frame target;
      pl_frame_from_swapchain(&target, &frame);
      if (vd->cfg->icc_profile) {
-@@ -438,7 +557,32 @@
+@@ -438,7 +543,32 @@
      }
  
      // Dispatch the actual image rendering with the pre-configured parameters
@@ -248,7 +234,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          msg_Err(vd, "Failed rendering frame!");
          failed = true;
          goto done;
-@@ -445,6 +589,17 @@
+@@ -445,6 +575,17 @@
      }
  
  done:
@@ -266,7 +252,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
  
      if (failed)
          pl_tex_clear(gpu, frame.fbo, (float[4]){ 1.0, 0.0, 0.0, 1.0 });
-@@ -463,8 +618,13 @@
+@@ -463,8 +604,13 @@
  
      sys->fbo = NULL;
      if (vlc_placebo_MakeCurrent(sys->pl) == VLC_SUCCESS) {
