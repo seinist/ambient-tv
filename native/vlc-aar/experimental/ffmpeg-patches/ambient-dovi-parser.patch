@@ -2,7 +2,7 @@ diff --git a/libavcodec/ambient_dovi_parser.h b/libavcodec/ambient_dovi_parser.h
 new file mode 100644
 --- /dev/null
 +++ b/libavcodec/ambient_dovi_parser.h
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,37 @@
 +#pragma once
 +/* Private Ambient TV static-link interface, built against the pinned FFmpeg.
 + * No FFmpeg-private types cross the library boundary. */
@@ -24,6 +24,7 @@ new file mode 100644
 +    struct ambient_dovi_curve curves[3];
 +    /* Profile 7 only; no effect on existing single-layer callers. */
 +    uint8_t residual_present, vdr_bit_depth;
++    uint8_t bl_spatial_resampling, el_spatial_resampling;
 +    uint16_t nlq_offset[3], nlq_pivots[2];
 +    uint64_t nlq_slope[3], nlq_threshold[3], nlq_maximum[3];
 +};
@@ -42,7 +43,7 @@ new file mode 100644
 diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 --- a/libavcodec/dovi_rpudec.c
 +++ b/libavcodec/dovi_rpudec.c
-@@ -747,4 +747,247 @@
+@@ -747,4 +747,249 @@
      }
  
      return 0;
@@ -121,6 +122,8 @@ diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 +    dst.vdr_bit_depth = h->vdr_bit_depth;
 +    if (p->profile == 7) {
 +        dst.residual_present = 1;
++        dst.bl_spatial_resampling = h->spatial_resampling_filter_flag;
++        dst.el_spatial_resampling = h->el_spatial_resampling_filter_flag;
 +        memcpy(dst.nlq_pivots, m->nlq_pivots, sizeof(dst.nlq_pivots));
 +        for (unsigned i = 0; i < 3; ++i) {
 +            const AVDOVINLQParams *n = &m->nlq[i];

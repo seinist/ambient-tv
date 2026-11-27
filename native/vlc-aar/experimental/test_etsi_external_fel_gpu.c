@@ -129,6 +129,85 @@ static void crop_el(const uint16_t source[YUV],uint16_t dest[YUV],
         memcpy(dest+g->ew*g->eh+c*cw*ch+y*cw,
             source+N+c*C+y*(W/2),cw*sizeof(uint16_t));
 }
+/* CPU reference uses a materialized vertical image and independent dot
+ * products, not the shader's coordinate or arithmetic code. */
+static void reference_expand(const uint16_t *src,unsigned w,unsigned h,bool luma,uint16_t *dst)
+{
+    const int v0[]={-3,29,111,-9},v1[]={-9,111,29,-3};
+    const int vc0[]={64,192},vc1[]={192,64};
+    const int hc[]={22,94,-524,2456,2456,-524,94,22};
+    uint16_t *v=malloc((size_t)w*h*2*sizeof(*v));assert(v);
+    for(unsigned y=0;y<2*h;y++)for(unsigned x=0;x<w;x++){
+        int n=(int)y/2,sum=0;
+        const int *c=luma?(y%2?v1:v0):(y%2?vc1:vc0);
+        int start=luma?(y%2?n-1:n-2):(y%2?n:n-1);
+        for(unsigned j=0;j<(luma?4u:2u);j++)sum+=c[j]*(int)at_plane(src,w,h,(int)x,start+(int)j);
+        v[y*w+x]=clip(floor_shift((wide)sum+(luma?64:128),luma?7:8),65535);
+    }
+    for(unsigned y=0;y<2*h;y++)for(unsigned x=0;x<2*w;x++){
+        if(!(x%2)){dst[y*2*w+x]=v[y*w+x/2];continue;}
+        int sum=0;
+        for(int j=0;j<8;j++)sum+=hc[j]*(int)at_plane(v,w,2*h,(int)x/2-3+j,(int)y);
+        dst[y*2*w+x]=clip(floor_shift((wide)sum+2048,12),65535);
+    }
+    free(v);
+}
+static void assert_filter_pixels(pl_gpu gpu,pl_dispatch dp,pl_tex actual,const uint16_t *expected)
+{
+    unsigned w=actual->params.w,h=actual->params.h;
+    pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,32,32,PL_FMT_CAP_RENDERABLE|PL_FMT_CAP_HOST_READABLE);
+    assert(fmt);
+    pl_tex readback=pl_tex_create(gpu,pl_tex_params(.w=w,.h=h,.format=fmt,.renderable=true,.host_readable=true));
+    assert(readback);
+    const struct pl_shader_desc d={.desc={.name="filter_check",.type=PL_DESC_SAMPLED_TEX},.binding={.object=actual}};
+    pl_shader sh=pl_dispatch_begin(dp);assert(sh);
+    assert(pl_shader_custom(sh,&(struct pl_custom_shader){
+        .input=PL_SHADER_SIG_NONE,.output=PL_SHADER_SIG_COLOR,.descriptors=&d,.num_descriptors=1,
+        .body="color=texelFetch(filter_check,ivec2(gl_FragCoord.xy),0);",
+    }));
+    assert(pl_dispatch_finish(dp,pl_dispatch_params(.shader=&sh,.target=readback)));
+    float *out=malloc((size_t)w*h*4*sizeof(*out));assert(out);
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=readback,.ptr=out)));
+    for(unsigned i=0;i<w*h;i++){
+        unsigned got=(unsigned)lroundf(out[4*i]*65535.f);
+        if(got!=expected[i])fprintf(stderr,"Annex B.3 sample %u: actual %u expected %u\n",i,got,expected[i]);
+        assert(got==expected[i]);
+    }
+    free(out);pl_tex_destroy(gpu,&readback);
+}
+static void check_reference_filter(pl_gpu gpu,pl_dispatch dp,struct ambient_fel_planes *planes,
+    const uint16_t source[YUV])
+{
+    const struct spatial_case g={"Annex B.3",32,32,2,2,0,0,0,0};
+    uint16_t raw[YUV],expanded[YUV];crop_el(source,raw,&g);
+    const uint16_t *data[]={raw,raw+1024,raw+1280};
+    const size_t pitches[]={64,32,32};
+    assert(ambient_fel_planes_upload(gpu,planes,32,32,data,pitches,0,0));
+    planes->mapped=true;planes->x=(struct ambient_fel_axis_map){.5f,0};planes->y=planes->x;
+    struct ambient_fel_planes view={0};
+    assert(ambient_fel_reference_el(gpu,dp,planes,&view));
+    assert(view.x.ratio==1.f&&view.y.ratio==1.f);
+    for(unsigned c=0;c<3;c++){
+        unsigned w=c?16:32;
+        uint16_t *expected=expanded+(c?N+(c-1)*C:0);
+        reference_expand(data[c],w,w,c==0,expected);
+        assert_filter_pixels(gpu,dp,view.tex[c],expected);
+    }
+    // A second frame uses impulse, alternating extrema and constant
+    // patterns, exercising overshoot clipping and both filter phases.
+    for(unsigned i=0;i<1536;i++)raw[i]=(i%7==0)?1023:(i%3==0?0:512);
+    assert(ambient_fel_planes_upload(gpu,planes,32,32,data,pitches,0,0));
+    planes->mapped=true;planes->x=(struct ambient_fel_axis_map){.5f,0};planes->y=planes->x;
+    assert(ambient_fel_reference_el(gpu,dp,planes,&view));
+    for(unsigned c=0;c<3;c++){
+        unsigned w=c?16:32;
+        uint16_t *expected=expanded+(c?N+(c-1)*C:0);
+        reference_expand(data[c],w,w,c==0,expected);
+        assert_filter_pixels(gpu,dp,view.tex[c],expected);
+    }
+    fprintf(stderr,"Annex B.3 EL reference: 12288 exact 16-bit output samples, two independent frames\n");
+    pl_gpu_finish(gpu);
+}
 static void check_geometry(const struct spatial_case *g,struct ambient_fel_planes *planes)
 {
     // Geometry derived independently: choose coded EL=64x64 and coded
@@ -244,6 +323,7 @@ int main(int argc,char **argv)
     pl_gpu_finish(gpu);
     pl_tex_destroy(gpu,&out);pl_tex_destroy(gpu,&e);pl_tex_destroy(gpu,&b);
     }
+    if(decoded)check_reference_filter(gpu,dp,&planes,el_frame);
     ambient_fel_planes_destroy(gpu,&planes);pl_dispatch_destroy(&dp);
     pl_vulkan_destroy(&vk);pl_log_destroy(&log);
     // Keep the original one-code threshold separately for every case.

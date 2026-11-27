@@ -10,6 +10,7 @@
  * full-resolution packed residuals. Offsets are in EL luma pixels. */
 struct ambient_fel_planes {
     pl_tex tex[3];
+    pl_tex vertical[3], expanded[3];
     float chroma_x,chroma_y;
     bool mapped;
     struct ambient_fel_axis_map x,y;
@@ -17,7 +18,11 @@ struct ambient_fel_planes {
 static inline void ambient_fel_planes_destroy(pl_gpu gpu,struct ambient_fel_planes *p)
 {
     if (!p) return;
-    for(unsigned i=0;i<3;i++) pl_tex_destroy(gpu,&p->tex[i]);
+    for(unsigned i=0;i<3;i++){
+        pl_tex_destroy(gpu,&p->tex[i]);
+        pl_tex_destroy(gpu,&p->vertical[i]);
+        pl_tex_destroy(gpu,&p->expanded[i]);
+    }
 }
 static inline bool ambient_fel_planes_upload(pl_gpu gpu,struct ambient_fel_planes *p,
     unsigned w,unsigned h,const uint16_t *const data[3],const size_t pitch[3],
@@ -38,6 +43,80 @@ static inline bool ambient_fel_planes_upload(pl_gpu gpu,struct ambient_fel_plane
     }
     p->chroma_x=chroma_x;p->chroma_y=chroma_y;
     p->mapped=false;
+    return true;
+}
+
+/* ETSI GS CCM 001 V1.1.1 Annex B.3 reference EL filter.
+ * Separate integer vertical/horizontal passes preserve the mandated
+ * intermediate rounding and 16-bit clipping. No CPU readback or expansion.
+ * The source and destination remain 4:2:0; chroma reconstruction to the
+ * packed RGB prepass grid is a distinct, existing approximation. */
+static inline bool ambient_fel_filter_axis(pl_gpu gpu,pl_dispatch dp,
+    pl_tex input,pl_tex *output,bool vertical,bool luma)
+{
+    if(!gpu||!dp||!input||!output||input==*output)return false;
+    int w=input->params.w,h=input->params.h;
+    if(w<=0||h<=0||w>3840||h>2160)return false;
+    pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_UNORM,1,16,16,
+        PL_FMT_CAP_SAMPLEABLE|PL_FMT_CAP_RENDERABLE);
+    if(!fmt||fmt->component_depth[0]!=16||!pl_tex_recreate(gpu,output,
+        pl_tex_params(.w=vertical?w:w*2,.h=vertical?h*2:h,.format=fmt,
+            .sampleable=true,.renderable=true)))return false;
+    const struct pl_shader_desc d={.desc={.name="fel_filter_input",.type=PL_DESC_SAMPLED_TEX},
+        .binding={.object=input}};
+    int axis=vertical?1:0,kind=luma?0:1;
+    const struct pl_shader_var vars[]={
+        {.var=pl_var_int("fel_filter_vertical"),.data=&axis,.dynamic=true},
+        {.var=pl_var_int("fel_filter_chroma"),.data=&kind,.dynamic=true},
+    };
+    pl_shader sh=pl_dispatch_begin(dp);
+    if(!sh)return false;
+    if(!pl_shader_custom(sh,&(struct pl_custom_shader){
+        .input=PL_SHADER_SIG_NONE,.output=PL_SHADER_SIG_COLOR,
+        .descriptors=&d,.num_descriptors=1,.variables=vars,.num_variables=2,
+        .header="int fel_filter_code(ivec2 p){"
+            "ivec2 hi=textureSize(fel_filter_input,0)-ivec2(1);"
+            "return int(floor(texelFetch(fel_filter_input,clamp(p,ivec2(0),hi),0).r*65535.0+0.5));}",
+        .body="ivec2 p=ivec2(gl_FragCoord.xy);int sum=0;int shift=0;"
+            "if(fel_filter_vertical!=0){int odd=p.y&1;p.y/=2;"
+            "if(fel_filter_chroma!=0){"
+            "sum=192*fel_filter_code(p)+64*fel_filter_code(p+ivec2(0,odd!=0?1:-1));shift=8;"
+            "}else{int k=odd!=0?1:-1;"
+            "sum=111*fel_filter_code(p)+29*fel_filter_code(p+ivec2(0,k))"
+            "-3*fel_filter_code(p+ivec2(0,2*k))-9*fel_filter_code(p-ivec2(0,k));shift=7;}"
+            "}else{int odd=p.x&1;p.x/=2;"
+            "if(odd==0){sum=fel_filter_code(p);}"
+            "else{sum=2456*(fel_filter_code(p)+fel_filter_code(p+ivec2(1,0)))"
+            "-524*(fel_filter_code(p-ivec2(1,0))+fel_filter_code(p+ivec2(2,0)))"
+            "+94*(fel_filter_code(p-ivec2(2,0))+fel_filter_code(p+ivec2(3,0)))"
+            "+22*(fel_filter_code(p-ivec2(3,0))+fel_filter_code(p+ivec2(4,0)));shift=12;}}"
+            "if(shift>0)sum=max(sum+(1<<(shift-1)),0)>>shift;"
+            "int code=clamp(sum,0,65535);"
+            "color=vec4(float(code)/65535.0,0.0,0.0,1.0);",
+    })){pl_dispatch_abort(dp,&sh);return false;}
+    return pl_dispatch_finish(dp,pl_dispatch_params(.shader=&sh,.target=*output));
+}
+
+/* Produce a borrowed view of the expanded EL planes. Preserve visible
+ * crop coordinates after doubling and never overwrite decoder textures.
+ * For an odd visible EL extent, the doubled chroma plane can contain one
+ * more sample than ceil(doubled luma / 2); reject that case rather than
+ * silently changing the filter phase. */
+static inline bool ambient_fel_reference_el(pl_gpu gpu,pl_dispatch dp,
+    struct ambient_fel_planes *src,struct ambient_fel_planes *view)
+{
+    if(!src||!view||src==view||!src->mapped||!src->tex[0]||
+       src->x.ratio!=0.5f||src->y.ratio!=0.5f||
+       (src->tex[0]->params.w&1)||(src->tex[0]->params.h&1))return false;
+    pl_dispatch_reset_frame(dp);
+    for(unsigned c=0;c<3;c++){
+        if(!ambient_fel_filter_axis(gpu,dp,src->tex[c],&src->vertical[c],true,c==0)||
+           !ambient_fel_filter_axis(gpu,dp,src->vertical[c],&src->expanded[c],false,c==0))return false;
+    }
+    *view=(struct ambient_fel_planes){.mapped=true,
+        .chroma_x=src->chroma_x,.chroma_y=src->chroma_y,
+        .x={1.f,src->x.offset*2.f},.y={1.f,src->y.offset*2.f}};
+    for(unsigned c=0;c<3;c++)view->tex[c]=src->expanded[c];
     return true;
 }
 

@@ -104,6 +104,7 @@ int main(void) {
     rpu=fixture(3200,7,&n);
     assert(av_ambient_dovi_parse(p,rpu,n,&m)==0);
     assert(m.residual_present && m.el_bit_depth==10 && m.vdr_bit_depth==12);
+    assert(m.el_spatial_resampling==1 && m.bl_spatial_resampling==0);
     assert(m.nlq_pivots[0]==0&&m.nlq_pivots[1]==1023);
     for(unsigned i=0;i<3;i++) {
         assert(m.nlq_offset[i]==512+i && m.nlq_slope[i]==128+i);

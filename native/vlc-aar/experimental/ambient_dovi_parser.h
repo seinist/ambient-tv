@@ -19,6 +19,7 @@ struct ambient_dovi_metadata {
     struct ambient_dovi_curve curves[3];
     /* Profile 7 only; no effect on existing single-layer callers. */
     uint8_t residual_present, vdr_bit_depth;
+    uint8_t bl_spatial_resampling, el_spatial_resampling;
     uint16_t nlq_offset[3], nlq_pivots[2];
     uint64_t nlq_slope[3], nlq_threshold[3], nlq_maximum[3];
 };

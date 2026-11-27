@@ -53,13 +53,25 @@ static inline bool ambient_fel_render_picture_ex(pl_gpu gpu,pl_log log,
         s->planes.mapped=true;s->planes.x=x;s->planes.y=y;
     }
     if(!s->dispatch)s->dispatch=pl_dispatch_create(log,gpu);
+    if(!s->dispatch)return false;
+    // Profile 7 has a full-resolution BL. A signalled BL upscale is not
+    // supported by this packed AHB input contract: fail closed.
+    if(pic->rpu.bl_spatial_resampling)return false;
+    struct ambient_fel_planes expanded={0};
+    const struct ambient_fel_planes *active=zero?NULL:&s->planes;
+    if(!zero){
+        if(pic->rpu.el_spatial_resampling){
+            if(!ambient_fel_reference_el(gpu,s->dispatch,&s->planes,&expanded))return false;
+            active=&expanded;
+        }else if(x.ratio!=1.f||y.ratio!=1.f)return false;
+    }
     pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,16,0,
         PL_FMT_CAP_SAMPLEABLE|PL_FMT_CAP_RENDERABLE|PL_FMT_CAP_LINEAR);
     if(!s->dispatch||!fmt||!pl_tex_recreate(gpu,&s->output,pl_tex_params(
         .w=bl->params.w,.h=bl->params.h,.format=fmt,.sampleable=true,.renderable=true)))
         return false;
     if(!ambient_fel_compose_domain(gpu,s->dispatch,bl,NULL,s->output,&reshape,&nlq,
-        true,true,zero?NULL:&s->planes,true))return false;
+        true,true,active,true))return false;
     // The prepass has produced nonlinear BT.2020 PQ RGB. Ordinary rendering
     // now handles target gamut, tone mapping, scaling, overlays and dither.
     img->planes[0]=(struct pl_plane){.texture=s->output,.components=3,
