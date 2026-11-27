@@ -12,3 +12,8 @@ internal fun artworkLoadFadeMillis(
     reducedEffects: Boolean,
     cachedInMemory: Boolean,
 ): Int = if (requested && !reducedEffects && !cachedInMemory) ARTWORK_LOAD_FADE_MS else 0
+
+/** Do not retain the inline image after a sharp image has completed its transition. */
+internal fun showProgressiveArtworkPreview(
+    admitted: Boolean, loading: Boolean, fading: Boolean, failed: Boolean,
+): Boolean = !admitted || loading || fading || failed

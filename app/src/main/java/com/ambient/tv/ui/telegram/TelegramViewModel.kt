@@ -93,6 +93,15 @@ internal fun telegramRows(
             )
         }
 
+/** Only published Monogram cards; never prefetch YouTube artwork or full photos. */
+internal fun monogramPrefetchTargets(rows: List<ContentRowData>, limit: Int = 24):
+    List<com.ambient.tv.data.telegram.MonogramThumbRef> =
+    rows.asSequence().flatMap { it.items.asSequence() }.mapNotNull { item ->
+        (item.artUrl ?: item.thumbUrl)
+            ?.takeIf { it.startsWith(com.ambient.tv.data.telegram.MONOGRAM_THUMB_SCHEME + "://") }
+            ?.let { com.ambient.tv.data.telegram.parseMonogramThumbModel(it) }
+    }.distinctBy { it.chatId to it.messageId }.take(limit.coerceAtLeast(0)).toList()
+
 @HiltViewModel
 class TelegramViewModel @Inject constructor(
     private val repository: TelegramRepository,
@@ -343,10 +352,7 @@ class TelegramViewModel @Inject constructor(
         // Only prefetch cards actually published after section filtering/deduplication,
         // including channel avatars. The latest page supersedes queued speculative work.
         thumbnailPrefetchJob?.cancel()
-        val previews = pageRows.asSequence().flatMap { it.items.asSequence() }
-            .mapNotNull { item ->
-                item.artUrl?.let { com.ambient.tv.data.telegram.parseMonogramThumbModel(it) }
-            }.distinctBy { it.chatId to it.messageId }.take(24).toList()
+        val previews = monogramPrefetchTargets(pageRows)
         if (previews.isNotEmpty()) thumbnailPrefetchJob = viewModelScope.launch {
             repository.prefetchThumbnails(previews)
         }

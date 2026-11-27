@@ -776,10 +776,13 @@ class TelegramRepository @Inject constructor(
     private val thumbnailLoads = HashMap<String, ThumbnailLoad>()
 
     /** Real thumbnail for a visible card (see [TelegramMedia.cardImageUrl]); null when unavailable. */
-    suspend fun thumbnailFile(chatId: Long, messageId: Int, speculative: Boolean = false): String? {
+    suspend fun thumbnailFile(chatId: Long, messageId: Int, speculative: Boolean = false,
+        expectedGeneration: Long? = null): String? {
         val selected = client ?: return null
         val identity = selected.cacheIdentity
         val generation = streamEpoch.get()
+        if (expectedGeneration != null && generation != expectedGeneration) return null
+        if (!sameAccount(selected, identity, generation)) return null
         val revision = selected.mediaRevision(chatId, messageId)
         val key = "$generation:$chatId:$messageId:$revision"
         val load = synchronized(thumbnailLoads) {
@@ -830,7 +833,7 @@ class TelegramRepository @Inject constructor(
                             val revision = selected.mediaRevision(item.chatId, item.messageId)
                             val key = "$generation:${item.chatId}:${item.messageId}:$revision"
                             if (!synchronized(thumbnailLoads) { thumbnailLoads.containsKey(key) }) {
-                                thumbnailFile(item.chatId, item.messageId, speculative = true)
+                                thumbnailFile(item.chatId, item.messageId, speculative = true, expectedGeneration = generation)
                             }
                         }
                     }

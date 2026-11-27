@@ -657,7 +657,7 @@ fun ArtworkImage(
     val hdrFilter = com.ambient.tv.ui.display.rememberUiHdrBitmapColorFilter()
     Box(modifier = if (focusCrop) modifier.onSizeChanged { containerSize = it } else modifier) {
         if (hasModel) {
-            if (progressivePreview != null && (!loadAdmitted || loading || fadeBackground || failed)) {
+            if (progressivePreview != null && showProgressiveArtworkPreview(loadAdmitted, loading, fadeBackground, failed)) {
                 ArtworkImage(progressivePreview, title, Modifier.matchParentSize(), contentScale,
                     alignment = alignment, crossfadeOnLoad = false)
             } else if (loadAdmitted && placeholder && (loading || fadeBackground)) PulsingArtworkPlaceholder()
