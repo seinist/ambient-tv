@@ -265,7 +265,8 @@ impl MotionCostKernel {
     /// queue. Source textures use the existing packed SVP layout (Y above
     /// side-by-side U/V), one array layer per exact upstream subpixel phase.
     /// A one-layer pel=1 source can reuse the existing synthesis texture. The output
-    /// is vec4<u32> (Y, U, V, sum) per candidate, ready for later GPU stages.
+    /// is vec4<u32> (Y, U, V, raw luma SAD) per candidate. For SATD the
+    /// raw luma SAD is accumulated from the same samples, avoiding a second dispatch.
     pub fn encode(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder,
                   a: &wgpu::Texture, b: &wgpu::Texture,
                   width: u32, height: u32, candidates: &[Candidate])
@@ -331,7 +332,7 @@ struct Candidate { x:i32,y:i32,dx:i32,dy:i32,w:i32,h:i32,reverse:i32,satd:i32 };
 @group(0) @binding(1) var b: texture_2d_array<f32>;
 @group(0) @binding(2) var<storage,read> candidates: array<Candidate>;
 @group(0) @binding(3) var<storage,read_write> costs: array<vec4u>;
-var<workgroup> partial: array<vec3u,64>;
+var<workgroup> partial: array<vec4u,64>;
 
 fn pixel(tex: texture_2d_array<f32>, p:vec2i, layer:i32) -> i32 {
     return i32(round(textureLoad(tex,p,layer,0).x*255.0));
@@ -350,14 +351,17 @@ fn hadamard(p:vec4i)->vec4i {
     let d=p.z-p.w;
     return vec4i(a+b,a-b,c+d,c-d);
 }
-fn satd_tile(p:vec2i,q:vec2i,layer:i32,reverse:bool)->u32 {
+fn satd_tile(p:vec2i,q:vec2i,layer:i32,reverse:bool)->vec2u {
     var rows:array<vec4i,4>;
+    var raw=0u;
     for(var y=0;y<4;y++){
         var row=vec4i(0);
         for(var x=0;x<4;x++){
             let offset=vec2i(x,y);
             row[x]=signed_diff(p+offset,q+offset,layer,reverse);
         }
+        let a=vec4u(abs(row));
+        raw+=a.x+a.y+a.z+a.w;
         rows[y]=hadamard(row);
     }
     var sum=0u;
@@ -365,7 +369,7 @@ fn satd_tile(p:vec2i,q:vec2i,layer:i32,reverse:bool)->u32 {
         let col=vec4u(abs(hadamard(vec4i(rows[0][x],rows[1][x],rows[2][x],rows[3][x]))));
         sum+=col.x+col.y+col.z+col.w;
     }
-    return sum;
+    return vec2u(sum,raw);
 }
 @compute @workgroup_size(64)
 fn cost(@builtin(workgroup_id) group:vec3u,@builtin(local_invocation_index) lane:u32) {
@@ -384,20 +388,22 @@ fn cost(@builtin(workgroup_id) group:vec3u,@builtin(local_invocation_index) lane
     let cphase=cmv&vec2i(pel-1);
     let layer=phase.x+phase.y*pel;
     let clayer=cphase.x+cphase.y*pel;
-    var sum=vec3u(0);
+    var sum=vec4u(0);
     if c.satd!=0 {
         let tiles=c.w/4;
         for(var i=lane;i<u32(tiles*(c.h/4));i+=64u){
             let offset=vec2i(i32(i)%tiles,i32(i)/tiles)*4;
-            sum.x+=satd_tile(src+offset,dst+offset,layer,c.reverse!=0);
+            let cost=satd_tile(src+offset,dst+offset,layer,c.reverse!=0);
+            sum.x+=cost.x;
+            sum.w+=cost.y;
         }
         let ct=c.w/8;
         for(var i=lane;i<u32(ct*(c.h/8));i+=64u){
             let offset=vec2i(i32(i)%ct,i32(i)/ct)*4;
             let p=src/2+offset+vec2i(0,height);
             let q=cdst+offset+vec2i(0,height);
-            sum.y+=satd_tile(p,q,clayer,c.reverse!=0);
-            sum.z+=satd_tile(p+vec2i(size.x/2,0),q+vec2i(size.x/2,0),clayer,c.reverse!=0);
+            sum.y+=satd_tile(p,q,clayer,c.reverse!=0).x;
+            sum.z+=satd_tile(p+vec2i(size.x/2,0),q+vec2i(size.x/2,0),clayer,c.reverse!=0).x;
         }
     } else {
         for(var i=lane;i<u32(c.w*c.h);i+=64u){
@@ -413,6 +419,7 @@ fn cost(@builtin(workgroup_id) group:vec3u,@builtin(local_invocation_index) lane
             sum.z+=diff(p+vec2i(size.x/2,0),q+vec2i(size.x/2,0),clayer,c.reverse!=0);
         }
     }
+    if c.satd==0 {sum.w=sum.x;}
     partial[lane]=sum;
     workgroupBarrier();
     for(var stride=32u;stride>0u;stride/=2u){
@@ -421,8 +428,8 @@ fn cost(@builtin(workgroup_id) group:vec3u,@builtin(local_invocation_index) lane
     }
     if lane==0u {
         var s=partial[0];
-        if c.satd!=0 { s/=vec3u(2); }
-        costs[group.x]=vec4u(s,s.x+s.y+s.z);
+        if c.satd!=0 { s=vec4u(s.xyz/vec3u(2),s.w); }
+        costs[group.x]=s;
     }
 }
 "#;
@@ -506,13 +513,14 @@ mod tests {
         let output=kernel.encode(&device,&mut encoder,&at,&bt,w,h,&candidates).unwrap();
         let results=read_costs(&device,&queue,encoder,&output);
         assert!(pollster::block_on(device.pop_error_scope()).is_none());
-        for (c,actual) in candidates.iter().zip(results) {
+        for (c,(actual,raw)) in candidates.iter().zip(results) {
             assert_eq!(actual,reference_cost(&a,&b,w,h,*c).unwrap(),"{c:?}");
+            assert_eq!(raw,reference_cost(&a,&b,w,h,Candidate{satd:false,..*c}).unwrap().y);
         }
     }
 
     fn read_costs(device:&wgpu::Device,queue:&wgpu::Queue,mut encoder:wgpu::CommandEncoder,
-                  output:&wgpu::Buffer)->Vec<Cost>{
+                  output:&wgpu::Buffer)->Vec<(Cost,u32)>{
         let readback=device.create_buffer(&wgpu::BufferDescriptor{
             label:None,size:output.size(),usage:wgpu::BufferUsages::COPY_DST|wgpu::BufferUsages::MAP_READ,
             mapped_at_creation:false,
@@ -535,8 +543,7 @@ mod tests {
         let results=bytes.chunks_exact(16).map(|raw|{
             let word=|i:usize|u32::from_le_bytes(raw[i*4..i*4+4].try_into().unwrap());
             let cost=Cost{y:word(0),u:word(1),v:word(2)};
-            assert_eq!(word(3),cost.y+cost.u+cost.v);
-            cost
+            (cost,word(3))
         }).collect();
         drop(bytes);
         readback.unmap();
@@ -624,8 +631,9 @@ mod tests {
                 let bt=bl.upload(&device,&mut encoder).unwrap();
                 let output=kernel.encode(&device,&mut encoder,&at,&bt,al.width,al.height,&candidates).unwrap();
                 let results=read_costs(&device,&queue,encoder,&output);
-                for (c,actual) in candidates.iter().zip(results){
+                for (c,(actual,raw)) in candidates.iter().zip(results){
                     assert_eq!(actual,reference_super_cost(&al,&bl,*c).unwrap(),"pel={pel} level={level} {c:?}");
+                    assert_eq!(raw,reference_super_cost(&al,&bl,Candidate{satd:false,..*c}).unwrap().y);
                     tested+=1;
                 }
             }
