@@ -69,6 +69,23 @@ int ambient_svp_vk_render(AmbientSvpVkPair *,float phase,uint32_t matrix,VkImage
 /* Raw-mode output: exact plane count (2/3), all distinct nonaliasing
  * GENERAL storage views, same visible geometry and packing as input. */
 int ambient_svp_vk_render_raw(AmbientSvpVkPair *,float,const VkImageView *,uint32_t count);
+/* Optional PQ RGB statistics on a recorded high-depth output phase.
+ * Rectangles are inclusive left/top, exclusive right/bottom. Window 0
+ * covers the complete visible frame. Percentile indices strictly ordered.
+ * All luminance results are normalized linear RGB in 1/100000 units.
+ * Counts refer to actual pixels, brightest counts ties in quantized MaxRGB.
+ * GPU histogram stays resident; only the compact result is host-visible.
+ * The caller guarantees PQ encoded BT2020 RGB and distinct output views.
+ * Record before sealing; read returns 1 complete, 0 pending, -1 rejected.
+ * Read before releasing the pair. No pixel readback or implicit submit. */
+typedef struct {
+    uint32_t rect[4],count,percentages[15];
+} AmbientSvpHdrWindow;
+typedef struct {
+    uint32_t maxscl[3],average,percentiles[15],pixels,brightest;
+} AmbientSvpHdrResult;
+int ambient_svp_vk_hdr_stats(AmbientSvpVkPair *,uint32_t phase,const AmbientSvpHdrWindow *,uint32_t count);
+int ambient_svp_vk_hdr_read(const AmbientSvpVkPair *,uint32_t phase,AmbientSvpHdrResult *,uint32_t count);
 /* After SUCCESSFUL submission of that command buffer, register its
  * unsignaled-at-submit fence. Caller must not destroy/reset the fence
  * until release returns 1. No more recording after sealing. */
