@@ -148,6 +148,32 @@ internal object SystemModuleMaterializer {
     }
 
     fun verifyFiles(materialized: Materialized) {
+        val root = materialized.directory
+        if (!Files.isDirectory(root.toPath(), LinkOption.NOFOLLOW_LINKS))
+            throw SystemModuleTrustException("Missing materialization directory")
+        val expectedDirs = materialized.hashes.keys.flatMap { path ->
+            val parts = path.split('/')
+            (1 until parts.size).map { parts.take(it).joinToString("/") }
+        }.toSet()
+        val found = mutableSetOf<String>()
+        Files.walk(root.toPath()).use { paths ->
+            val iterator = paths.iterator()
+            var count = 0
+            while (iterator.hasNext()) {
+                val path = iterator.next()
+                if (path == root.toPath()) continue
+                if (++count > materialized.hashes.size + expectedDirs.size)
+                    throw SystemModuleTrustException("Unexpected materialized path count")
+                val relative = root.toPath().relativize(path).toString()
+                if (Files.isSymbolicLink(path) ||
+                    if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) relative !in expectedDirs
+                    else !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) ||
+                        relative !in materialized.hashes || !found.add(relative))
+                    throw SystemModuleTrustException("Unexpected materialized path")
+            }
+        }
+        if (found != materialized.hashes.keys) throw SystemModuleTrustException("Missing materialized file")
+        var expanded = 0L
         for ((path, expected) in materialized.hashes) {
             val file = File(materialized.directory, path)
             var cursor: File? = file
@@ -157,8 +183,10 @@ internal object SystemModuleMaterializer {
                 cursor = cursor.parentFile
             }
             if (!Files.isDirectory(materialized.directory.toPath(), LinkOption.NOFOLLOW_LINKS) ||
-                !Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS) || hashFile(file) != expected)
+                !Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS) ||
+                file.length() > MAX_EXPANDED - expanded || hashFile(file) != expected)
                 throw SystemModuleTrustException("Materialized module file changed")
+            expanded += file.length()
         }
     }
 
