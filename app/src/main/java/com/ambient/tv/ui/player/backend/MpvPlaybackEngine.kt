@@ -87,6 +87,7 @@ internal fun initialMpvAccelerationPlan(
     nativeHdrPreferred: Boolean,
     hdrGpuPassthrough: Boolean,
     toneMappingRequired: Boolean,
+    sourceHdr: HdrStandard? = null,
 ): MpvAccelerationPlan {
     val reduced = reducedVideoEffects(context)
     val svp = svpAllowed(context)
@@ -99,7 +100,8 @@ internal fun initialMpvAccelerationPlan(
         hdrPassthrough = hdrGpuPassthrough, toneMappingRequired = toneMappingRequired,
         zeroCopy = !videoImagePreferences(context).mpvZeroCopyFailed && !mpvStartupRequiresCopyBack(effective))
         .withSvpResident(effective, MpvNativeFeatures.SVP_RESIDENT in MpvNativeFeatures.current,
-            nativeHdrPreferred || hdrGpuPassthrough || toneMappingRequired)
+            nativeHdrPreferred || hdrGpuPassthrough || toneMappingRequired,
+            hdrResidentAllowed = svpStaticHdrResident(sourceHdr) || sourceHdr == HdrStandard.HDR10_PLUS && decoderMode == "vulkan")
 }
 
 internal class MpvPlaybackEngine(
@@ -143,7 +145,7 @@ internal class MpvPlaybackEngine(
     private fun needsHdrToSdr(source: HdrStandard?): Boolean = source != null &&
         !com.ambient.tv.ui.player.nativeHdrSurfacePreferred(source, displayHdrStandards)
     private var acceleration = initialMpvAccelerationPlan(context, videoOutputMode, decoderMode, initialImageOptions,
-        nativeHdrPreferred, hdrGpuPassthrough, needsHdrToSdr(declaredHdr))
+        nativeHdrPreferred, hdrGpuPassthrough, needsHdrToSdr(declaredHdr), declaredHdr)
     /** One copy-back reopen per engine after zero-copy failed at runtime. */
     private var zeroCopyRetried = false
     private var zeroCopyFrameCheckSinceNs = 0L
@@ -416,7 +418,7 @@ internal class MpvPlaybackEngine(
         get() = gpuQualityMode && mpvSvpInterpolationIntended(
             modeOn = effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context), mpvCheapDefaults(context)).svpMode != "off",
             overloaded = svpOverloaded,
-            hdr = hdrImageTransfer,
+            hdr = hdrImageTransfer && !hdrResidentAllowed(imageOptions),
             decided = fileReady && svpFilterDecided,
             inChain = "plex-svp" in activeCpuImageFilters,
             runtimeReason = svpRuntimeReason,
@@ -1274,9 +1276,12 @@ internal class MpvPlaybackEngine(
         }
         activeShaderPresetKey = o.scaler.takeIf { it in loadedShaderKeys }
         val desiredFilters = desiredImageFilters(o, sdr)
+        val cpuFiltersNeeded = (activeCpuImageFilters + desiredFilters).any { (label, filter) ->
+            label != "plex-svp" || !filter.endsWith(":hwresident=1")
+        }
         if (mpvProcessingNeedsCopyBackReopen(
                 acceleration, getPropertyString("hwdec-current"), loadedShaderKeys,
-                desiredFilters.isNotEmpty() || activeCpuImageFilters.isNotEmpty(), deinterlaceRequested,
+                cpuFiltersNeeded, deinterlaceRequested,
             )) {
             // The shader may have been selected while an opaque MediaCodec decoder was already
             // running (e.g. SmartTube switches to NNEDI3 mid-playback). Merely setting "hwdec"
@@ -1292,10 +1297,10 @@ internal class MpvPlaybackEngine(
         // moment before plex-svp is linked; it is cleared once that filter leaves.
         val copyBackNeeded = mpvCopyBackNeeded(
             loadedShaderKeys,
-            desiredFilters.isNotEmpty() || activeCpuImageFilters.isNotEmpty(),
+            cpuFiltersNeeded,
             deinterlaceRequested,
         )
-        if (!trySetGpuDecoder(copyBackNeeded, cpuFrames = desiredFilters.isNotEmpty() || activeCpuImageFilters.isNotEmpty())) warnings += "hwdec"
+        if (!trySetGpuDecoder(copyBackNeeded, cpuFrames = cpuFiltersNeeded)) warnings += "hwdec"
         if (!rebuildMpvVideoFilterChain(desiredFilters, explicitDeinterlaceFilter)) warnings += "vf-order"
         if ("plex-svp" !in activeCpuImageFilters) svpCopyBackSession = false
         svpFilterDecided = fileReady
@@ -1810,12 +1815,18 @@ internal class MpvPlaybackEngine(
     private fun desiredImageFilters(o: MpvImageOptions, sdr: Boolean): Map<String, String> =
         desiredCopyBackImageFilters(o, sdr)
 
+    private fun hdrResidentAllowed(o: MpvImageOptions): Boolean = acceleration.svpResident &&
+        !deinterlaceRequested && o.denoise == "off" && o.deblock == "off" && svpResidentRequested(o.svp) &&
+        !dolbyVisionDetected && declaredHdr != HdrStandard.DOLBY_VISION &&
+        (svpStaticHdrResident(declaredHdr ?: sourceHdrStandard) ||
+            (declaredHdr ?: sourceHdrStandard) == HdrStandard.HDR10_PLUS && acceleration.decoder == "vulkan")
+
     private fun desiredCopyBackImageFilters(o: MpvImageOptions, sdr: Boolean): Map<String, String> = buildMap {
         // The GPU hook replaces, never stacks with, FFmpeg's CPU filter.
         // When shader loading failed, retain the existing CPU fallback.
         putAll(mpvCpuImageFilters(o, sdr,
             hardwareDeblock = sdr && o.deblock != "off" && "deblock_${o.deblock}" in loadedShaderKeys))
-        if (sdr && !svpOverloaded && svpAllowed(context)) {
+        if ((sdr || hdrImageTransfer && hdrResidentAllowed(o)) && !svpOverloaded && svpAllowed(context)) {
             // Quality waits on light. Sparsam already forced svpMode off above this call.
             val mode = mpvSvpAppliedMode(o.svpMode, svpQualityCleared && !svpQualityProbeFailed)
             val tuning = if (o.svpMode == "quality" && mode != "quality") svpProbeOptions(o.svp) else o.svp
@@ -2252,7 +2263,7 @@ internal class MpvPlaybackEngine(
             !performanceProfile(context).allowSvpInterpolation -> SvpInactiveReason.PERFORMANCE_MODE
             !SvpNative.isEnabledAndAvailable() -> SvpInactiveReason.LIBRARY
             effective.svpMode == "off" -> SvpInactiveReason.PERFORMANCE_MODE
-            hdrImageTransfer -> SvpInactiveReason.HDR
+            hdrImageTransfer && !hdrResidentAllowed(effective) -> SvpInactiveReason.HDR
             else -> null
         }
         val size = sourceDimensions()
