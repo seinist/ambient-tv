@@ -51,6 +51,34 @@ jobs:
           python3 scripts/svp_dependency.py
           bash scripts/tests/test_svp_pgo_metadata.sh
           python3 -m unittest discover -s scripts/tests -p test_svp_updates.py
+      - name: Verify native player MediaCodec patch application and idempotence
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          mpv_pin="$(sed -n 's/^MPV_DEP_MPV_COMMIT=//p' gradle/external-versions.properties)"
+          vlc_pin="$(sed -n 's/^VLC_REF=//p' scripts/build_vlc_vulkan.sh)"
+          [[ "$mpv_pin" =~ ^[0-9a-f]{40}$ && "$vlc_pin" =~ ^[0-9a-f]{40}$ ]]
+          fetch_source() {
+            local player="$1" repo="$2" pin="$3" path
+            shift 3
+            for path in "$@"; do
+              mkdir -p "$tmp/$player/$(dirname "$path")"
+              curl -fsSL --retry 3 "https://raw.githubusercontent.com/$repo/$pin/$path" -o "$tmp/$player/$path"
+            done
+          }
+          fetch_source mpv mpv-player/mpv "$mpv_pin" meson.build filters/user_filters.h filters/user_filters.c \
+            video/out/gpu/hwdec.h video/out/gpu/hwdec.c video/out/hwdec/hwdec_vulkan.c video/decode/vd_lavc.c video/out/vulkan/context.c
+          mkdir -p "$tmp/mpv/video/filter"
+          fetch_source vlc videolan/vlc "$vlc_pin" modules/video_filter/Makefile.am src/video_output/video_output.c \
+            modules/video_output/android/utils.h modules/codec/omxil/mediacodec.c modules/video_output/android/display.c modules/video_output/opengl/interop_aimage.c
+          for player in mpv vlc; do
+            bash scripts/prepare_svp_sources.sh "$player" "$tmp/$player"
+            first="$(find "$tmp/$player" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum)"
+            bash scripts/prepare_svp_sources.sh "$player" "$tmp/$player"
+            second="$(find "$tmp/$player" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum)"
+            [[ "$first" == "$second" ]]
+          done
       - name: Prepare Rust
         run: rustup toolchain install stable --profile minimal
       - name: Test native CPU fallback
