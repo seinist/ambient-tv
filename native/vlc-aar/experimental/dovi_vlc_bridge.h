@@ -3,11 +3,19 @@
 #include <vlc_es.h>
 #include <vlc_ancillary.h>
 #include "ambient_dovi_parser.h"
+#include "dovi_fel_api.h"
+#define AMBIENT_FEL_ID VLC_FOURCC('a','F','E','L')
 
 static inline bool ambient_dovi_format(const video_format_t *f)
 {
-    if (!f || !f->dovi.bl_present || !f->dovi.rpu_present || f->dovi.el_present)
+    if (!f || !f->dovi.bl_present || !f->dovi.rpu_present)
         return false;
+    if (f->dovi.profile == 7)
+        return f->dovi.el_present && f->primaries == COLOR_PRIMARIES_BT2020 &&
+            f->space == COLOR_SPACE_BT2020 && f->transfer == TRANSFER_FUNC_SMPTE_ST2084 &&
+            f->color_range == COLOR_RANGE_LIMITED && !f->i_x_offset && !f->i_y_offset &&
+            f->i_visible_width == f->i_width && f->i_visible_height == f->i_height;
+    if (f->dovi.el_present) return false;
     if (f->dovi.profile == 8)
         return f->primaries == COLOR_PRIMARIES_BT2020 && f->space == COLOR_SPACE_BT2020 &&
             f->transfer == TRANSFER_FUNC_SMPTE_ST2084 && f->color_range == COLOR_RANGE_LIMITED;
