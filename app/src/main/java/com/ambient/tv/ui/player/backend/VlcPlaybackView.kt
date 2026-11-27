@@ -596,7 +596,7 @@ class VlcPlaybackController(
             if (released || view.holder !== holder) return
             // AWindow detaches itself on surfaceDestroyed (including a buffer-size change).
             // The SurfaceView can survive that event, so Compose will not call attach again.
-            if (restartStop != null || restartStopFailed || dvRetirementPending) return
+            if (vulkanFallbackPosted || restartStop != null || restartStopFailed || dvRetirementPending) return
             if (!player.vlcVout.areViewsAttached()) {
                 player.vlcVout.setVideoView(view)
                 player.vlcVout.attachViews()
@@ -670,7 +670,8 @@ class VlcPlaybackController(
         player.vlcVout.addCallback(surfaceCallback)
         val eventPlayer = player
         player.setEventListener { event ->
-            if (released || player !== eventPlayer || vulkanFallbackPosted || restartStop != null) return@setEventListener
+            if (released || player !== eventPlayer || restartStopFailed || vulkanFallbackPosted ||
+                restartStop != null) return@setEventListener
             frameDropSamples.onEvent(event.type,
                 if (event.type == MediaPlayer.Event.Buffering) event.buffering else 100f)
             when (event.type) {
@@ -863,7 +864,7 @@ class VlcPlaybackController(
     }
 
     private fun applyAudioLiveOptions() {
-        if (restartStopFailed || restartStop != null || dvRetirementPending) return
+        if (restartStopFailed || vulkanFallbackPosted || restartStop != null || dvRetirementPending) return
         if (released) return
         // Re-applied with the audio options, which run again after every media restart.
         runCatching { player.setSpuDelay(subtitleDelayMs * 1000L) }
@@ -1396,7 +1397,7 @@ class VlcPlaybackController(
 
 
     private fun fallbackVulkan(reason: String): Boolean {
-        if (released) return false
+        if (released || restartStopFailed) return false
         if (vulkanFallbackPosted || ahbFallbackPending) return true // Coalesce duplicate error events before the posted reopen.
         if (!vulkanOutput) return false
         // A failed explicit HDR swapchain must return to the original native
@@ -1438,6 +1439,8 @@ class VlcPlaybackController(
         )
         rememberTrackSelection()
         forceOutputRebuild = true
+        restartDurationMs = runCatching { player.length }.getOrDefault(0L).coerceAtLeast(0L)
+        pendingRestorePositionMs = position.takeUnless { liveStream }
         vulkanFallbackPosted = true
         openingOrRestarting = true
         pendingSeekTask?.let(pendingSeekHandler::removeCallbacks)
@@ -1450,7 +1453,8 @@ class VlcPlaybackController(
     }
 
     fun checkVulkanOutput() {
-        if (!vulkanOutput || released) return
+        if (!vulkanOutput || released || restartStopFailed || vulkanFallbackPosted ||
+            restartStop != null || dvRetirementPending) return
         val now = android.os.SystemClock.elapsedRealtime()
         // Check the display even while opening/paused; frame progress may
         // never become ready if the new display cannot present this format.
@@ -1694,7 +1698,7 @@ class VlcPlaybackController(
 
     override fun status(): PlaybackStatus {
         if (released) return PlaybackStatus()
-        if (restartStopFailed || restartStop != null || dvRetirementPending)
+        if (restartStopFailed || vulkanFallbackPosted || restartStop != null || dvRetirementPending)
             return PlaybackStatus(pendingRestorePositionMs ?: lastPlaybackTimeMs, restartDurationMs, false, false, errorMessage)
         if (imageOptions.svpMode != "off" || configuredSvpMode != "off") {
             if (measuredSourceFps == null) measuredSourceFps = currentSourceFps()
@@ -1706,6 +1710,8 @@ class VlcPlaybackController(
                 refreshEffectiveOverrides(player.isSeekable)
         }
         checkVulkanOutput()
+        if (vulkanFallbackPosted)
+            return PlaybackStatus(pendingRestorePositionMs ?: lastPlaybackTimeMs, restartDurationMs, false, false, errorMessage)
         return PlaybackStatus(confirmedPlaybackTimeMs().coerceAtLeast(0), player.length.coerceAtLeast(0), player.isPlaying && (!dvPrimeActive || desiredPlayWhenReady), ended, errorMessage)
     }
 
@@ -1713,7 +1719,7 @@ class VlcPlaybackController(
         // Key handlers can still fire between Stop and the next recomposition; a released
         // libVLC MediaPlayer throws IllegalStateException on every native call.
         if (released) return
-        val restarting = restartStop != null || dvRetirementPending
+        val restarting = vulkanFallbackPosted || restartStop != null || dvRetirementPending
         val length = (if (restarting) restartDurationMs else player.length).takeIf { it > 0L } ?: Long.MAX_VALUE
         val position = if (restarting) pendingRestorePositionMs ?: lastPlaybackTimeMs else confirmedPlaybackTimeMs()
         seekTo((position + deltaMs).coerceIn(0L, length))
@@ -1809,13 +1815,17 @@ class VlcPlaybackController(
         val task = object : Runnable {
             override fun run() {
                 pendingSeekTask = null
-                if (released || !prepared || errorMessage != null || pendingRestorePositionMs == null) return
+                if (released || !prepared || restartStopFailed || vulkanFallbackPosted ||
+                    restartStop != null || errorMessage != null || pendingRestorePositionMs == null) return
                 observePendingSeek()
                 if (pendingRestorePositionMs == null) return
                 if (seekState.expired(android.os.SystemClock.elapsedRealtime())) {
                     // Preserve the request for a renderer fallback/retry. Continuing at zero
                     // would silently lose the user's position and rewrite server progress.
                     Timber.w("AV-AUDIT VLC seek not confirmed; target=%d", pendingRestorePositionMs)
+                    // The experimental decoder may fail specifically after a flush/seek.
+                    // Retry the same pending position on the safe route before reporting failure.
+                    if (ahbExperimentActive && fallbackVulkan("ahb_seek_stalled")) return
                     errorMessage = context.getString(R.string.player_seek_failed)
                     pauseAfterRestorePositionMs = null
                     player.pause()
@@ -2149,7 +2159,7 @@ class VlcPlaybackController(
     fun runtimeStats(includeCounters: Boolean = true): VlcRuntimeStats? = runCatching {
         // Compose polling can outlive session release until its disposal is applied.
         // LibVLC's Media.getStats JNI dereferences the native handle even after release.
-        if (released || restartStopFailed || restartStop != null || dvRetirementPending) return@runCatching null
+        if (released || restartStopFailed || vulkanFallbackPosted || restartStop != null || dvRetirementPending) return@runCatching null
         fun member(instance: Any, name: String): Any? = ReflectiveMembers.value(instance, name)
 
         var result = VlcRuntimeStats()
