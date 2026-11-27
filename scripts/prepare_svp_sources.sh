@@ -6,7 +6,7 @@ SVP="$ROOT/native/ambientsvp"
 if [[ "${1:-}" == --hash ]]; then
     case "${2:-}" in mpv) adapter=vf_ambientsvp.c;; vlc) adapter=vlc_ambientsvp.c;; *) exit 2;; esac
     extra=()
-    if [[ "${2:-}" == mpv ]]; then extra+=("$SVP/adapters/svp_mpv_vulkan.h" "$SVP/adapters/svp_mpv_mediacodec.h" "$SVP/include/ambientsvp_vulkan.h" "$SVP/include/ambientsvp_android_vulkan.h" "$ROOT/scripts/prepare_svp_mpv_mediacodec.py" "$ROOT/scripts/prepare_svp_mpv_fel.py" "$SVP/adapters/svp_mpv_fel_pair.h" "$SVP/adapters/svp_mpv_fel_vo.h"); else extra+=("$SVP/adapters/svp_vlc_android.h" "$SVP/include/ambientsvp_android_stream.h" "$SVP/include/svp_sdr_profile.h" "$SVP/include/svp_av1_config.h" "$SVP/include/svp_hevc_hdr_guard.h" "$ROOT/scripts/prepare_svp_vlc_mediacodec.py" "$ROOT/scripts/prepare_svp_vlc_hdr_bridge.py" "$SVP/adapters/svp_vlc_hdr_pair.h" "$SVP/adapters/svp_vlc_hdr_schedule.h" "$SVP/adapters/svp_vlc_hdr_display.h"); fi
+    if [[ "${2:-}" == mpv ]]; then extra+=("$SVP/adapters/svp_mpv_vulkan.h" "$SVP/adapters/svp_mpv_mediacodec.h" "$SVP/include/ambientsvp_vulkan.h" "$SVP/include/ambientsvp_android_vulkan.h" "$ROOT/scripts/prepare_svp_mpv_mediacodec.py" "$ROOT/scripts/prepare_svp_mpv_fel.py" "$SVP/adapters/svp_mpv_fel_pair.h" "$SVP/adapters/svp_mpv_fel_vo.h" "$ROOT/scripts/prepare_svp_mpv_hdr.py" "$SVP/adapters/svp_mpv_hdr_spatial.h" "$SVP/adapters/hdr10plus/"*.h "$SVP/include/svp_hdr_curve.h"); else extra+=("$SVP/adapters/svp_vlc_android.h" "$SVP/include/ambientsvp_android_stream.h" "$SVP/include/svp_sdr_profile.h" "$SVP/include/svp_av1_config.h" "$SVP/include/svp_hevc_hdr_guard.h" "$ROOT/scripts/prepare_svp_vlc_mediacodec.py" "$ROOT/scripts/prepare_svp_vlc_hdr_bridge.py" "$SVP/adapters/svp_vlc_hdr_pair.h" "$SVP/adapters/svp_vlc_hdr_schedule.h" "$SVP/adapters/svp_vlc_hdr_display.h"); fi
     sha256sum "${extra[@]}" "$SVP/adapters/$adapter" "$SVP/include/ambientsvp.h" "$SVP/include/ambientsvp_loader.h" "$SVP/include/svp_retry.h" "$SVP/include/svp_planes.h" "$0" \
         | cut -d ' ' -f1 | sha256sum | cut -d ' ' -f1
     exit 0
@@ -15,7 +15,7 @@ case "${1:?mpv or vlc}" in
 mpv)
     SOURCE="${2:-$ROOT/.native/mpv-android/buildscripts/deps/mpv}"
     cp "$SVP/adapters/vf_ambientsvp.c" "$SOURCE/video/filter/vf_ambientsvp.c"
-    cp "$SVP/adapters/svp_mpv_vulkan.h" "$SVP/include/ambientsvp_vulkan.h" "$SOURCE/video/filter/"
+    cp "$SVP/adapters/svp_mpv_vulkan.h" "$SVP/include/ambientsvp_vulkan.h" "$SVP/include/svp_hdr_curve.h" "$SOURCE/video/filter/"
     cp "$SVP/include/ambientsvp.h" "$SVP/include/ambientsvp_loader.h" "$SVP/include/svp_retry.h" "$SVP/include/svp_planes.h" "$SOURCE/video/filter/"
     if ! grep -q 'vf_ambientsvp.c' "$SOURCE/meson.build"; then
         sed -i "/'video\/filter\/vf_sub.c',/a\    'video/filter/vf_ambientsvp.c'," "$SOURCE/meson.build"
@@ -29,6 +29,7 @@ mpv)
     grep -q 'vf_ambientsvp.c' "$SOURCE/meson.build"
     python3 "$ROOT/scripts/prepare_svp_mpv_mediacodec.py" "$SOURCE"
     python3 "$ROOT/scripts/prepare_svp_mpv_fel.py" "$SOURCE"
+    python3 "$ROOT/scripts/prepare_svp_mpv_hdr.py" "$SOURCE"
     ;;
 vlc)
     SOURCE="${2:-$ROOT/.native/libvlcjni/vlc}"
