@@ -94,6 +94,8 @@ jobs:
           make -j2 libavcodec/libavcodec.a libavutil/libavutil.a
           cc -I . -I libavcodec -I "$GITHUB_WORKSPACE/native/vlc-aar/experimental" "$GITHUB_WORKSPACE/native/vlc-aar/experimental/test_ambient_dovi_parser.c" libavcodec/libavcodec.a libavutil/libavutil.a -lm -pthread -o test-ambient-dovi
           ./test-ambient-dovi
+          cc -std=c11 -I . "$GITHUB_WORKSPACE/native/vlc-aar/experimental/test_hdr10plus_ffmpeg.c" libavutil/libavutil.a -lm -pthread -o test-hdr10plus-ffmpeg
+          ./test-hdr10plus-ffmpeg
           cc -I . "$GITHUB_WORKSPACE/native/vlc-aar/experimental/test_dovi_split.c" libavcodec/libavcodec.a libavutil/libavutil.a -lm -pthread -o test-dovi-split
           ./test-dovi-split
           # Real independently encoded Main10 picture, wrapped as type-63 EL.
