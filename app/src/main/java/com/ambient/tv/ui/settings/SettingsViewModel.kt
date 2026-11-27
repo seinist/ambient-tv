@@ -447,7 +447,7 @@ class SettingsViewModel @Inject constructor(
         systemNames = appPreferences.systemNames,
         youtubeEnabled = appPreferences.youtubeEnabled,
         youtubeAvailable = smartTubeEngine.available,
-        spotifyEnabled = appPreferences.spotifyEnabled,
+        spotifyEnabled = appPreferences.spotifyRequestedEnabled,
         radioEnabled = appPreferences.radioEnabled,
         rommEnabled = appPreferences.rommEnabled,
         rommConfigured = appPreferences.rommServerUrl.isNotBlank() && appPreferences.rommAuthMode.isNotBlank(),
