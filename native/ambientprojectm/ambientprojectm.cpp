@@ -186,6 +186,26 @@ Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeRender(JNIEnv*
     projectm_opengl_render_frame(state->instance);
 }
 
+#if defined(AMBIENT_PROJECTM_PGO_GENERATE)
+extern "C" int ambient_projectm_write_profile(const char* path);
+#endif
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeWriteProfile(JNIEnv* env, jobject, jstring path) {
+#if defined(AMBIENT_PROJECTM_PGO_GENERATE)
+    if (!path) return JNI_FALSE;
+    const char* raw = env->GetStringUTFChars(path, nullptr);
+    if (!raw) return JNI_FALSE;
+    const int result = ambient_projectm_write_profile(raw);
+    env->ReleaseStringUTFChars(path, raw);
+    return result == 0 ? JNI_TRUE : JNI_FALSE;
+#else
+    (void)env;
+    (void)path;
+    return JNI_FALSE;
+#endif
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeVersion(JNIEnv* env, jobject) {
     char* version = projectm_get_version_string();
