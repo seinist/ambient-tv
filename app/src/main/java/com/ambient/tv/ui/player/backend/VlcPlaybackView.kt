@@ -207,7 +207,8 @@ class VlcPlaybackController(
     private val ahbExperimentActive: Boolean get() = vlcAhbExperimentEligible(
         com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT, vulkanOutput, preserveHdrSource,
         configuredSoftwareProcessing, configuredSvpMode, configuredDeinterlaceMode, ahbCopyBackRetried,
-        supportedHdrGpu = !nativeHdrPreferred && (sourceHdrStandard == HdrStandard.HDR10 || sourceHdrStandard == HdrStandard.HLG),
+        supportedHdrGpu = android.os.Build.VERSION.SDK_INT >= 34 && !nativeHdrPreferred &&
+            (sourceHdrStandard == HdrStandard.HDR10 || sourceHdrStandard == HdrStandard.HLG),
     )
     override val usesFrameInterpolation: Boolean
         get() = effectiveImage().svpMode != "off"
