@@ -68,7 +68,8 @@ jobs:
             done
           }
           fetch_source mpv mpv-player/mpv "$mpv_pin" meson.build filters/user_filters.h filters/user_filters.c \
-            video/out/gpu/hwdec.h video/out/gpu/hwdec.c video/out/hwdec/hwdec_vulkan.c video/decode/vd_lavc.c video/out/vulkan/context.c
+            video/out/gpu/hwdec.h video/out/gpu/hwdec.c video/out/hwdec/hwdec_vulkan.c video/decode/vd_lavc.c video/out/vulkan/context.c \
+            video/mp_image.h video/mp_image.c video/out/vo_gpu_next.c
           mkdir -p "$tmp/mpv/video/filter"
           fetch_source vlc videolan/vlc "$vlc_pin" modules/codec/Makefile.am modules/video_filter/Makefile.am src/video_output/video_output.c \
             modules/video_output/android/utils.h modules/codec/omxil/mediacodec.c modules/video_output/android/display.c modules/video_output/opengl/interop_aimage.c
