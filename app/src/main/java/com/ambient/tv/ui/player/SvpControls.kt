@@ -158,6 +158,7 @@ internal fun SvpMainPage(
         if (choice == "custom") onOpenAdvanced()
     }
     if (mode != "off") {
+        if (mode == "adaptive") ImageHint(stringResource(R.string.svp_adaptive_hint))
         SvpChoice(R.string.svp_target, o.rateDivisor, listOf(
             1 to stringResource(R.string.svp_display_rate),
             2 to stringResource(R.string.svp_half_rate),
