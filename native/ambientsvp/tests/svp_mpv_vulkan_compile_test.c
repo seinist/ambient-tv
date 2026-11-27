@@ -8,6 +8,7 @@
 #include <dlfcn.h>
 #include <libavutil/hwcontext_vulkan.h>
 #include <libavutil/frame.h>
+#include <libavutil/hdr_dynamic_metadata.h>
 enum { IMGFMT_VULKAN=1, MP_IMGFIELD_INTERLACED=1 };
 #define MP_NOPTS_VALUE (-1e20)
 enum { PL_COLOR_SYSTEM_BT_601=1,PL_COLOR_SYSTEM_BT_709,PL_COLOR_SYSTEM_RGB,PL_COLOR_SYSTEM_BT_2020_NC,PL_COLOR_SYSTEM_DOLBYVISION };
@@ -17,7 +18,9 @@ enum { PL_COLOR_TRC_UNKNOWN=0,PL_COLOR_TRC_PQ,PL_COLOR_TRC_HLG };
 enum { PL_ALPHA_NONE=3 };
 struct pl_bit_encoding { int sample_depth,color_depth,bit_shift; };
 struct mp_ff_side_data { int type; AVBufferRef *buf; };
-struct pl_hdr_metadata { float min_luma,max_luma; };
+struct pl_hdr_metadata { float min_luma,max_luma,scene_max[3],scene_avg,max_pq_y,avg_pq_y; struct { float target_luma; } ootf; };
+struct pl_av_hdr_metadata { const AVDynamicHDRPlus *dhp; };
+void pl_map_hdr_metadata(struct pl_hdr_metadata *,const struct pl_av_hdr_metadata *);
 bool pl_hdr_metadata_equal(const struct pl_hdr_metadata *,const struct pl_hdr_metadata *);
 struct mp_image {
     int imgfmt,w,h,fields;
