@@ -113,6 +113,10 @@ pub struct AmbientSvp {
     needs_neighbors: bool,
     #[cfg(feature = "vulkan")]
     gpu: Option<gpu::Gpu>,
+    #[cfg(feature = "vulkan")]
+    prefetched: Option<i32>,
+    #[cfg(feature = "vulkan")]
+    prefetch_buffer: Vec<u8>,
 }
 
 impl AmbientSvp {
@@ -233,6 +237,10 @@ impl AmbientSvp {
             needs_neighbors: algo == 23,
             #[cfg(feature = "vulkan")]
             gpu,
+            #[cfg(feature = "vulkan")]
+            prefetched: None,
+            #[cfg(feature = "vulkan")]
+            prefetch_buffer: Vec::new(),
         })
     }
 
@@ -275,8 +283,9 @@ impl AmbientSvp {
         // repeated late-frame flushes cannot defeat overload protection.
         self.stats.queued_frames = 0;
         #[cfg(feature = "vulkan")]
-        if let Some(gpu) = self.gpu.as_mut() {
-            gpu.clear_sources();
+        {
+            self.prefetched = None;
+            if let Some(gpu) = self.gpu.as_mut() { gpu.clear_sources(); }
         }
         Ok(())
     }
@@ -392,7 +401,15 @@ impl AmbientSvp {
         #[cfg(feature = "vulkan")]
         {
             self.gpu = None;
+            self.prefetched = None;
+            self.prefetch_buffer = Vec::new();
         }
+    }
+
+    fn required_input(&self, plan: [i32; 4]) -> i32 {
+        if plan[2] == plan[3] { plan[0] }
+        else if !self.needs_neighbors { plan[1] }
+        else { plan[1].max(plan[3]) }
     }
 
     pub fn receive(&mut self, out: &mut [u8], eof: bool) -> Result<Option<i64>, String> {
@@ -427,13 +444,7 @@ impl AmbientSvp {
         // Algo 13 with flags=0 uses only the current pair. The upstream plan is
         // conservative and also requests neighbor vectors; waiting for those
         // would unnecessarily double latency. Algo 23 really needs neighbors.
-        let required = if plan[2] == plan[3] {
-            plan[0]
-        } else if !self.needs_neighbors {
-            plan[1]
-        } else {
-            plan[1].max(plan[3])
-        };
+        let required = self.required_input(plan);
         if !self.eof && required >= self.input {
             return Ok(None);
         }
@@ -444,7 +455,22 @@ impl AmbientSvp {
         } else {
             let begin = Instant::now();
             #[cfg(feature = "vulkan")]
-            let (gpu_done, known_copy) = if let Some(gpu) = self.gpu.as_mut() {
+            let (gpu_done, known_copy) = if self.prefetched.take() == Some(self.output) {
+                out.copy_from_slice(&self.prefetch_buffer);
+                GPU_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                (true, false)
+            } else if self.gpu.is_some() {
+                // Only prefetch a ready consecutive output from the same
+                // source pair, never across a seek, EOF tail or lookahead gap.
+                // Bound extra readback + CPU storage to <= 1080p.
+                let next_index = self.output + 1;
+                let next_plan = self.smoother.plan(next_index);
+                let next_offset = (next_index as i128 * 1_000_000 * self.config.target_den as i128
+                    / self.config.target_num as i128) as i64;
+                let can_prefetch = self.frame_len() <= 1920 * 1080 * 3 / 2
+                    && next_plan[0] == plan[0]
+                    && self.required_input(next_plan) < self.input
+                    && (!self.eof || next_offset < self.source_time(self.input));
                 use svpflow_core::smooth_engine::Output;
                 match self.smoother.prepare_gpu(self.output) {
                     Output::Copy(k) => {
@@ -454,13 +480,30 @@ impl AmbientSvp {
                     Output::Gpu(job) => {
                         let current = &self.frames.get(&job.n).ok_or("missing current")?.data;
                         let next = &self.frames.get(&(job.n + 1)).ok_or("missing next")?.data;
-                        match gpu.render(&job, current, next, out) {
+                        let next_job = if can_prefetch {
+                            match self.smoother.prepare_gpu(next_index) {
+                                Output::Gpu(next_job) if next_job.n == job.n => Some(next_job),
+                                _ => None,
+                            }
+                        } else { None };
+                        let gpu = self.gpu.as_mut().unwrap();
+                        let result = if let Some(next_job) = next_job {
+                            self.prefetch_buffer.resize(out.len(), 0);
+                            let result = gpu.render_pair(&job, &next_job, current, next, out, &mut self.prefetch_buffer);
+                            if result.is_ok() { self.prefetched = Some(next_index); }
+                            result
+                        } else {
+                            gpu.render(&job, current, next, out)
+                        };
+                        match result {
                             Ok(()) => {
                                 GPU_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                 (true, false)
                             }
                             Err(_) => {
                                 self.gpu = None;
+                                self.prefetched = None;
+                                self.prefetch_buffer = Vec::new();
                                 self.stats.backend = 1;
                                 (false, false)
                             }
