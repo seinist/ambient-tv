@@ -30,6 +30,7 @@ internal fun svpModeLabelRes(mode: String): Int = when (mode) {
     "auto", "light" -> R.string.svp_mode_light
     "balanced" -> R.string.svp_mode_balanced
     "quality" -> R.string.svp_mode_smooth
+    "adaptive" -> R.string.svp_mode_adaptive
     else -> R.string.player_off
 }
 
@@ -147,6 +148,7 @@ internal fun SvpMainPage(
         "light" to stringResource(R.string.svp_mode_light),
         "balanced" to stringResource(R.string.svp_mode_balanced),
         "quality" to stringResource(R.string.svp_mode_smooth),
+        "adaptive" to stringResource(R.string.svp_mode_adaptive),
         "custom" to if (o.isCustom) stringResource(R.string.svp_mode_custom_of, base) else stringResource(R.string.svp_mode_custom),
     )) { choice ->
         val (nextMode, nextOptions) = svpApplyPresetChoice(choice, mode, o)
