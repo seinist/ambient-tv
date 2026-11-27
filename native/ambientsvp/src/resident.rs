@@ -160,6 +160,7 @@ pub(crate) const MOTION:&str=r#"
 @group(0) @binding(3) var<uniform> geometry:vec4u;
 var<workgroup> scores:array<u32,64>;
 var<workgroup> vectors:array<vec2i,64>;
+var<workgroup> zero_score:u32;
 fn px(t:texture_2d<f32>,p:vec2i)->i32{
     let value=textureLoad(t,p,0);
     // RGB inputs from an Android external-format sampler use a bounded
@@ -168,10 +169,11 @@ fn px(t:texture_2d<f32>,p:vec2i)->i32{
         (geometry.w&0x80000000u)!=0u);
     return i32(round(luminance*255.0));
 }
-fn cost(origin:vec2i,mv:vec2i,reverse:bool)->u32{
+fn cost(origin:vec2i,mv:vec2i,reverse:bool,bound:u32)->u32{
     let size=vec2i(geometry.xy);
     var sad=0u;
     var n=0u;
+    let penalty=u32(abs(mv.x)+abs(mv.y));
     for(var y=0;y<16;y+=2){
         for(var x=0;x<16;x+=2){
             let p=origin+vec2i(x,y);
@@ -183,10 +185,13 @@ fn cost(origin:vec2i,mv:vec2i,reverse:bool)->u32{
             else{sad+=u32(abs(px(a,p)-px(b,q)));}
             n+=1u;
         }
+        // At most 64 samples contribute. The normalized SAD cannot
+        // be smaller than the partial raw sum, even at clipped edges.
+        if sad*128u+penalty>=bound{return bound;}
     }
     // Normalize partial blocks, and prefer smaller displacements on ties.
     let avg=sad*64u/max(n,1u);
-    return avg*128u+u32(abs(mv.x)+abs(mv.y));
+    return avg*128u+penalty;
 }
 fn choose(lane:u32,mv:vec2i,c:u32){
     if c<scores[lane]{
@@ -209,9 +214,18 @@ fn analyse(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:
     let gy=g.y%gh;
     let origin=vec2i(vec2u(g.x*16u,gy*16u));
     scores[lane]=0xffffffffu;vectors[lane]=vec2i(0);
+    // Compute zero displacement once. A zero score is the absolute
+    // minimum and uniquely selects zero; other blocks can use it as
+    // an upper bound. +1 preserves every equal-score tie.
+    if lane==0u{zero_score=cost(origin,vec2i(0),reverse,0xffffffffu);}
+    workgroupBarrier();
+    let zero=zero_score;
     for(var i=lane;i<81u;i+=64u){
-        let mv=(vec2i(i32(i%9u),i32(i/9u))-vec2i(4))*4;
-        choose(lane,mv,cost(origin,mv,reverse));
+        if i==40u{choose(lane,vec2i(0),zero);}
+        else if zero!=0u{
+            let mv=(vec2i(i32(i%9u),i32(i/9u))-vec2i(4))*4;
+            choose(lane,mv,cost(origin,mv,reverse,min(scores[lane],zero+1u)));
+        }
     }
     reduce(lane);
     let pred=vectors[0];
@@ -219,9 +233,9 @@ fn analyse(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:
     workgroupBarrier();
     scores[lane]=0xffffffffu;vectors[lane]=vec2i(0);
     if lane==0u{choose(lane,pred,best);}
-    if lane<25u{
+    if lane<25u && best!=0u{
         let mv=pred+vec2i(i32(lane%5u)-2,i32(lane/5u)-2);
-        choose(lane,mv,cost(origin,mv,reverse));
+        choose(lane,mv,cost(origin,mv,reverse,min(scores[lane],best+1u)));
     }
     reduce(lane);
     if lane==0u{
@@ -259,7 +273,10 @@ fn yuv(y:texture_2d<f32>,u:texture_2d<f32>,v:texture_2d<f32>,p:vec2f,nv:bool,loc
     let offset=vec2f(select(0.0,0.5,location==2u),select(0.0,0.5,location!=0u));
     let chroma=(p-offset)*0.5;
     let uv=bilinear(u,chroma,visible/2u);
-    let vv=select(bilinear(v,chroma,visible/2u).x,uv.y,nv);
+    // NV12 stores both components in one sampled view; avoid a second
+    // bilinear lookup of the same plane. I420 keeps its separate V plane.
+    var vv=uv.y;
+    if !nv{vv=bilinear(v,chroma,visible/2u).x;}
     return vec3f(bilinear(y,p,visible).x,uv.x,vv);
 }
 fn rgb(yuv:vec3f)->vec3f{
