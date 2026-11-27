@@ -19,6 +19,11 @@ on:
       - 'native/vlc-aar/seek-audit/**'
       - '.github/workflows/vlc-ahb-experimental.yml'
   workflow_dispatch:
+    inputs:
+      aom_reference:
+        description: 'Run official Netflix/AOM reference input (confirm NC-ND-compatible use)'
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -109,6 +114,13 @@ jobs:
           make -j2 libavcodec/libavcodec.a libavutil/libavutil.a
           cc -I . -I libavcodec -I "$GITHUB_WORKSPACE/native/vlc-aar/experimental" "$GITHUB_WORKSPACE/native/vlc-aar/experimental/test_ambient_dovi_parser.c" libavcodec/libavcodec.a libavutil/libavutil.a -lm -pthread -o test-ambient-dovi
           ./test-ambient-dovi
+          # Actual external FEL coefficients, pinned to a single public Git blob.
+          curl --fail --location --retry 3 --max-time 60 \
+            https://raw.githubusercontent.com/quietvoid/dovi_tool/41dae646193c12de152333ff5dbc33579cb9ef4a/assets/tests/fel_orig.bin -o real-fel.rpu
+          test "$(git hash-object real-fel.rpu)" = a7926febb39043d938ebc49dce0a4c043b5b32f0
+          cc -I . "$GITHUB_WORKSPACE/native/vlc-aar/experimental/export_external_fel_rpu.c" \
+            libavcodec/libavcodec.a libavutil/libavutil.a -lm -pthread -o export-external-fel
+          ./export-external-fel real-fel.rpu real-fel-snapshot.bin
           cc -std=c11 -I . "$GITHUB_WORKSPACE/native/vlc-aar/experimental/test_hdr10plus_ffmpeg.c" libavutil/libavutil.a -lm -pthread -o test-hdr10plus-ffmpeg
           ./test-hdr10plus-ffmpeg
           cc -I . "$GITHUB_WORKSPACE/native/vlc-aar/experimental/test_dovi_split.c" libavcodec/libavcodec.a libavutil/libavutil.a -lm -pthread -o test-dovi-split
@@ -127,7 +139,15 @@ jobs:
           ffmpeg -hide_banner -loglevel error -i test-el.hevc -c copy -bsf:v hevc_metadata=crop_left=2:crop_top=4 -f hevc -y test-el-shift.hevc
           ./test-fel-decoder test-el.hevc test-el-reorder.hevc test-el-reorder.csv test-el-reorder.yuv test-el-pad.hevc test-el-shift.hevc
 
+      - uses: actions/upload-artifact@v5
+        with:
+          name: external-fel-rpu-snapshot
+          path: .ci/ffmpeg/real-fel-snapshot.bin
+          if-no-files-found: error
+          retention-days: 1
+
   hdrplus-spatial-gpu:
+    needs: ffmpeg-rpu-contract
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -148,10 +168,14 @@ jobs:
             include
             modules/video_output/libplacebo
             modules/video_output/opengl
+      - uses: actions/download-artifact@v5
+        with:
+          name: external-fel-rpu-snapshot
+          path: .ci/real-fel
       - name: Install host Vulkan and libplacebo build dependencies
         run: |
           sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update -o Acquire::Retries=3
-          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y meson ninja-build python3-jinja2 libvulkan-dev vulkan-validationlayers mesa-vulkan-drivers libshaderc-dev
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y meson ninja-build python3-jinja2 libvulkan-dev vulkan-validationlayers mesa-vulkan-drivers libshaderc-dev ffmpeg python3-numpy
       - name: Build pinned libplacebo and render local-window reference fixture
         run: |
           git -C .ci/libplacebo apply "$GITHUB_WORKSPACE/native/vlc-aar/experimental/libplacebo-patches/ambient-mmr-order3.patch"
@@ -170,6 +194,10 @@ jobs:
             native/vlc-aar/experimental/test_hdr_reference_gpu.c \
             -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-hdr-reference
           VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-hdr-reference
+          cc -std=gnu11 -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
+            native/vlc-aar/experimental/test_etsi_external_fel_gpu.c \
+            -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-etsi-fel
+          VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-etsi-fel .ci/real-fel/real-fel-snapshot.bin
           # Compile the real-data validator even when no licensed corpus is available.
           python3 -m py_compile native/vlc-aar/experimental/run_official_hdr_reference.py
           cc -std=c11 -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
@@ -184,6 +212,22 @@ jobs:
             .ci/vlc-hdr/modules/video_output/libplacebo/utils.c native/vlc-aar/experimental/test_vlc_hdr_units.c \
             -Wl,--gc-sections -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-vlc-hdr-units
           .ci/test-vlc-hdr-units
+      - name: Compare official AOM HDR10+ conformance picture against independent reference
+        if: github.event_name == 'workflow_dispatch' && inputs.aom_reference
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --max-time 180 \
+            https://media.githubusercontent.com/media/AOMediaCodec/av1-hdr10plus/47f1059c45f95b21b77a94037618e79c44d79c4e/conformance/conformance_files/Netflix/sparks_libaom_4096x2160_0_888_hdr10plus.mp4 -o .ci/aom-hdr10plus.mp4
+          python3 native/vlc-aar/experimental/audit_public_hdr10plus.py .ci/aom-hdr10plus.mp4 \
+            --kind aom --permission-confirmed \
+            --sha256 79d2bd39fe7583055548628c2c06649a14dee05742887eeb71959938007e72d9 \
+            --gpu-runner .ci/test-official-hdr --report .ci/aom-hdr-report.json
+      - uses: actions/upload-artifact@v5
+        if: always() && hashFiles('.ci/aom-hdr-report.json') != ''
+        with:
+          name: aom-hdr10plus-metrics-only
+          path: .ci/aom-hdr-report.json
+          retention-days: 7
 
   linked-arm64-aar:
     name: linked-${{ matrix.label }}-aar
