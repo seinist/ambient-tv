@@ -18,4 +18,5 @@
     <string name="module_state_active_bundled">Active (bundled)</string>
     <string name="module_state_active_external">Active (downloaded)</string>
     <string name="module_state_failed">Module unavailable or incompatible</string>
+    <string name="module_settings_spotify_experimental">Experimental: Spotify currently rejects the audio keys used by this receiver. Loading the module does not guarantee playback.</string>
 </resources>
