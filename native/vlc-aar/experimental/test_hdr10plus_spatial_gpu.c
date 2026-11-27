@@ -20,6 +20,24 @@ static float reference_curve(const struct ambient_hdrplus_spatial *s,unsigned i,
     unsigned n=(unsigned)x, next=n+1<AMBIENT_HDRPLUS_LUT_SIZE?n+1:n;
     return s->curves[i][n]+(s->curves[i][next]-s->curves[i][n])*(x-n);
 }
+// Independent double-precision geometry reference: use authored fields
+// directly, rather than the production mask initializer or weight helper.
+static double reference_weight(const struct ambient_hdrplus_geometry *g,double x,double y)
+{
+    if(x<g->left||x>g->right||y<g->top||y>g->bottom)return 0.0;
+    const double pi=3.1415926535897932384626433832795;
+    const double theta=g->angle*pi/180.0;
+    const double dx=x-g->center_x,dy=y-g->center_y;
+    const double along=dx*cos(theta)+dy*sin(theta);
+    const double across=dy*cos(theta)-dx*sin(theta);
+    const double r=sqrt(along*along/((double)g->semimajor_outer*g->semimajor_outer)+
+        across*across/((double)g->semiminor_outer*g->semiminor_outer));
+    const double inner=(double)g->semimajor_inner/g->semimajor_outer;
+    if(r>=1.0)return 0.0;
+    if(r<=inner)return 1.0;
+    const double c=cos(0.5*pi*(r-inner)/(1.0-inner));
+    return c*c;
+}
 static void check_blend(const struct ambient_hdrplus_spatial *s,const struct ambient_hdrplus *m,
     const float *pixels,unsigned width,unsigned height,float nits)
 {
@@ -30,7 +48,8 @@ static void check_blend(const struct ambient_hdrplus_spatial *s,const struct amb
     float g=reference_curve(s,0,v),l=reference_curve(s,1,v),r=reference_curve(s,2,v);
     unsigned overlaps=0, feathers=0;
     for(unsigned y=0;y<height;++y) for(unsigned x=0;x<width;++x) {
-        float a=ambient_hdrplus_weight(&masks[0],x,y),b=ambient_hdrplus_weight(&masks[1],x,y);
+        float a=reference_weight(&m->windows[1].geometry,x,y);
+        float b=reference_weight(&m->windows[2].geometry,x,y);
         if(a>0.f && b>0.f) ++overlaps;
         if((a>0.f && a<1.f)||(b>0.f && b<1.f)) ++feathers;
         float expected=g;
@@ -181,6 +200,14 @@ int main(void)
     m.windows[2]=m.windows[0];
     m.windows[2].geometry=m.windows[1].geometry;
     m.windows[2].geometry.center_x=24;
+    // Non-circular, differently rotated windows exercise sign, axis and
+    // rectangle clipping independently of the production CPU mask code.
+    m.windows[1].geometry.angle=35;
+    m.windows[1].geometry.semiminor_outer=9;
+    m.windows[1].geometry.left=10;
+    m.windows[2].geometry.angle=120;
+    m.windows[2].geometry.semiminor_outer=11;
+    m.windows[2].geometry.right=34;
     for(unsigned mode=0;mode<2;++mode) {
         m.windows[1].geometry.overlap=mode;
         m.windows[2].geometry.overlap=mode;
