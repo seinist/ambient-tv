@@ -22,6 +22,8 @@ struct Commands {
     PFN_vkEndCommandBuffer end{};
     PFN_vkCmdPipelineBarrier barrier{};
     PFN_vkQueueWaitIdle idle{};
+    PFN_vkCreatePipelineCache create_pipeline_cache{};
+    PFN_vkDestroyPipelineCache destroy_pipeline_cache{};
 };
 struct Slot {
     std::optional<ConversionCacheEntry> cache;
@@ -52,6 +54,7 @@ struct ambient_ahb_owner {
     Commands commands{};
     VkQueue queue{};
     VkCommandPool command_pool{};
+    VkPipelineCache pipeline_cache{};
     Pool pool;
     std::array<Slot, slot_count> slots;
     bool failed{};
@@ -97,6 +100,8 @@ struct ambient_ahb_owner {
         D(commands, allocate, AllocateCommandBuffers); D(commands, reset, ResetCommandBuffer);
         D(commands, begin, BeginCommandBuffer); D(commands, end, EndCommandBuffer);
         D(commands, barrier, CmdPipelineBarrier); D(commands, idle, QueueWaitIdle);
+        D(commands, create_pipeline_cache, CreatePipelineCache);
+        D(commands, destroy_pipeline_cache, DestroyPipelineCache);
 #undef I
 #undef D
         commands.get_queue(c.device, c.family, 0, &queue);
@@ -111,11 +116,17 @@ struct ambient_ahb_owner {
         alloc.commandBufferCount = slot_count;
         std::array<VkCommandBuffer, slot_count> buffers{};
         if (commands.allocate(c.device, &alloc, buffers.data()) != VK_SUCCESS) return false;
+        // Shared driver compilation cache across all buffers, layouts and slots.
+        // Host access is serialized by the display owner thread. Failure is
+        // nonfatal: per-buffer pass reuse still works without this cache.
+        VkPipelineCacheCreateInfo cache_info{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+        if (commands.create_pipeline_cache(c.device, &cache_info, nullptr, &pipeline_cache) != VK_SUCCESS)
+            pipeline_cache = VK_NULL_HANDLE;
         for (size_t i = 0; i < slot_count; ++i) {
             slots[i].cmd = buffers[i];
             slots[i].cache.emplace(c.physical, c.device, images, targets, samples,
                                    ShaderCode{c.vert_words, c.vert_bytes},
-                                   ShaderCode{c.frag_words, c.frag_bytes});
+                                   ShaderCode{c.frag_words, c.frag_bytes}, pipeline_cache);
         }
         return true;
     }
@@ -296,6 +307,7 @@ struct ambient_ahb_owner {
         return true;
     }
     ~ambient_ahb_owner() {
+        if (pipeline_cache) commands.destroy_pipeline_cache(c.device, pipeline_cache, nullptr);
         if (command_pool) commands.destroy_pool(c.device, command_pool, nullptr);
     }
 };
