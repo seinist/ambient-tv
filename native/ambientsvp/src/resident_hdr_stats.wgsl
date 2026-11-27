@@ -29,26 +29,29 @@ fn track(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:u3
     let o=w*STRIDE;
     let ar=rectangle(o+44u);
     let br=rectangle(o+48u);
-    let grid=(params.xy+vec2u(15u))/16u;
+    let step=max(params.w,1u);
+    let grid=(params.xy+vec2u(step-1u))/step;
     let n=grid.x*grid.y;
     var sum=vec4i(0);var support=vec2u(0);
     for(var direction=0u;direction<2u;direction++){
         let r=select(ar,br,direction==1u);
-        let lo=r.xy/16u;let hi=min((r.zw+vec2u(15u))/16u,grid);
+        let lo=r.xy/step;let hi=min((r.zw+vec2u(step-1u))/step,grid);
         let size=hi-lo;
         for(var i=lane;i<size.x*size.y;i+=64u){
             let cell=lo+vec2u(i%size.x,i/size.x);
-            let center=min(cell*16u+vec2u(8u),params.xy-vec2u(1u));
+            let center=min(cell*step+vec2u(step/2u),params.xy-vec2u(1u));
             // Include partially intersecting blocks, but prefer exact
             // cycle consistency at their displaced sample position.
             let f=motion[direction*n+cell.y*grid.x+cell.x];
-            let displaced=vec2i(center)+f.xy;
+            let mv=f.xy*4/max(f.w,1);
+            let displaced=vec2i(center)+vec2i(round(vec2f(mv)/4.0));
             if f.z<0||f.z>64*32||any(displaced<vec2i(0))||any(displaced>=vec2i(params.xy)){continue;}
-            let other=vec2u(displaced)/16u;
+            let other=vec2u(displaced)/step;
             let b=motion[(1u-direction)*n+other.y*grid.x+other.x];
-            if b.z<0||b.z>64*32||abs(f.x+b.x)+abs(f.y+b.y)>4{continue;}
-            if direction==0u{sum.x+=f.x;sum.y+=f.y;support.x+=1u;}
-            else{sum.z+=f.x;sum.w+=f.y;support.y+=1u;}
+            let back=b.xy*4/max(b.w,1);
+            if b.z<0||b.z>64*32||abs(mv.x+back.x)+abs(mv.y+back.y)>16{continue;}
+            if direction==0u{sum.x+=mv.x;sum.y+=mv.y;support.x+=1u;}
+            else{sum.z+=mv.x;sum.w+=mv.y;support.y+=1u;}
         }
     }
     track_sum[lane]=sum;track_count[lane]=support;
@@ -68,8 +71,8 @@ fn track(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:u3
         let ac=(vec2f(ar.xy)+vec2f(ar.zw))*0.5;
         let bc=(vec2f(br.xy)+vec2f(br.zw))*0.5;
         let t=bitcast<f32>(atomicLoad(&words[o+43u]));
-        let forward=vec2f(track_sum[0].xy)/f32(max(counts.x,1u));
-        let reverse=vec2f(track_sum[0].zw)/f32(max(counts.y,1u));
+        let forward=vec2f(track_sum[0].xy)/(4.0*f32(max(counts.x,1u)));
+        let reverse=vec2f(track_sum[0].zw)/(4.0*f32(max(counts.y,1u)));
         let aw=(1.0-t)*f32(counts.x);let bw=t*f32(counts.y);
         let prediction=(aw*(ac+t*forward)+bw*(bc+(1.0-t)*reverse))/max(aw+bw,0.00001);
         let fade=4.0*t*(1.0-t);
