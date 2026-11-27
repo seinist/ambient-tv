@@ -280,7 +280,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         updatesJob = updatesScope.launch {
             var backoffMs = UPDATES_POLL_MS
             while (true) {
-                val active = android.os.SystemClock.elapsedRealtime() < activeUntil.get()
+                val active = updatesStarted && android.os.SystemClock.elapsedRealtime() < activeUntil.get()
                 kotlinx.coroutines.withTimeoutOrNull(if (active) minOf(backoffMs, 2_000L) else backoffMs) {
                     updateWake.receive()
                 }
@@ -294,7 +294,9 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                         else drainUpdateEvents(h)
                     }
                     if (generation == cacheGeneration && identity == accountId) {
-                        applyingUpdates.incrementAndGet()
+                        val applying = drained.events.isNotEmpty()
+                        var changesApplied = false
+                        if (applying) applyingUpdates.incrementAndGet()
                         try {
                             val changes = applyUpdates(drained.events)
                             if (changes != null) {
@@ -302,7 +304,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                                     !listener(identity.toString(), changes.messages, changes.all)) {
                                     throw java.io.IOException("Monogram content invalidation not committed")
                                 }
-                                artworkChangedListener?.invoke()
+                                changesApplied = true
                             }
                             // A durable batch is acknowledged only after local invalidation.
                             drained.acknowledge?.let { acknowledge ->
@@ -310,7 +312,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                                     if (generation == cacheGeneration && identity == accountId) acknowledge(h)
                                 }
                             }
-                        } finally { applyingUpdates.decrementAndGet() }
+                        } finally {
+                            if (applying) applyingUpdates.decrementAndGet()
+                            if (changesApplied && generation == cacheGeneration && identity == accountId)
+                                artworkChangedListener?.invoke()
+                        }
                     }
                     if (drained.events.isEmpty()) (backoffMs + UPDATES_POLL_MS).coerceAtMost(15_000L)
                     else UPDATES_POLL_MS
