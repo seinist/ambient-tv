@@ -1839,7 +1839,7 @@ class VlcPlaybackController(
         if (!seekState.shouldSubmit(prepared && !openingOrRestarting && player.isSeekable, now)) return
         val target = pendingRestorePositionMs ?: return
         // Precise seeking avoids exposing a preceding keyframe as the requested landing.
-        val metadataFence = timedMetadataInbox.clearForSeek()
+        val metadataFence = timedMetadataInbox.clearForSeek(target.coerceAtMost(Long.MAX_VALUE / 1000L) * 1000L)
         val accepted = runCatching { player.setTime(target, false) >= 0L }.getOrDefault(false)
         if (!accepted) timedMetadataInbox.rejectSeek(metadataFence)
         seekState.submitted(accepted, now)

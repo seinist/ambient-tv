@@ -75,6 +75,36 @@ class VlcTimedMetadataTest {
         assertEquals(listOf(latest), inbox.events.value)
     }
 
+    @Test fun targetAwarePacketsRejectDelayedDifferentSeekEvenWithoutBarrier() {
+        val inbox = VlcTimedMetadataInbox()
+        val session = inbox.beginSession()
+        val old = readEvent(packet().inputStream())
+        inbox.clearForSeek(1000000)
+        inbox.clearForSeek(2000000)
+        inbox.offer(session, VlcTimedMetadataPacket.Message.Epoch(1, 1000000))
+        inbox.offer(session, old.copy(seekEpoch = 1, seekTargetUs = 1000000))
+        assertTrue(inbox.events.value.isEmpty())
+        val current = old.copy(seekEpoch = 2, seekTargetUs = 2000000)
+        inbox.offer(session, current)
+        assertEquals(listOf(current), inbox.events.value)
+        inbox.offer(session, VlcTimedMetadataPacket.Message.Epoch(1, 1000000))
+        assertEquals(listOf(current), inbox.events.value)
+        inbox.clearForSeek(3000000)
+        inbox.offer(session, old.copy(seekEpoch = 3))
+        assertTrue(inbox.events.value.isEmpty())
+    }
+
+    @Test fun versionTwoBarrierCarriesNativeRequestedTime() {
+        val out = ByteArrayOutputStream()
+        DataOutputStream(out).use {
+            it.writeInt(0x41464d32); it.writeInt(2)
+            it.writeLong(0); it.writeLong(0)
+            it.writeInt(0); it.writeInt(7); it.writeLong(1234000)
+        }
+        assertEquals(VlcTimedMetadataPacket.Message.Epoch(7, 1234000),
+            VlcTimedMetadataPacket.read(out.toByteArray().inputStream()))
+    }
+
     @Test fun packetPreservesOpaqueBoxAndClock() {
         val event = readEvent(packet(2).inputStream())
         assertEquals(VlcTimedMetadata.Kind.EVENT_MESSAGE, event.kind)
