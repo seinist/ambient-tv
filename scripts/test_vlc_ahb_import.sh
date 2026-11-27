@@ -25,6 +25,9 @@ done
 "${CC:-clang}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
     "$SRC/test_hdr10plus_payload.c" -lm -o "$TMP/test_hdr10plus_payload"
 "$TMP/test_hdr10plus_payload"
+"${CC:-clang}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+    "$SRC/test_dovi_rpu_au.c" -o "$TMP/test_dovi_rpu_au"
+"$TMP/test_dovi_rpu_au"
 GLSLC="$NDK/shader-tools/$host/glslc"
 if [[ ! -x "$GLSLC" ]]; then GLSLC="$(command -v glslc || true)"; fi
 [[ -n "$GLSLC" && -x "$GLSLC" ]] || { echo "glslc unavailable" >&2; exit 1; }

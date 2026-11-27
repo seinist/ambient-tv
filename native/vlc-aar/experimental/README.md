@@ -93,6 +93,11 @@ distribute the experiment as a validated production build.
   16-bit UNORM storage and packed Cr/Y/Cb mapping into libplacebo for HDR10/HLG.
   This is a pre-reshape validation route; it does not yet accept Dolby Vision.
   It requires the actual P010 format, native image import and chroma features.
+  HEVC access-unit scanning now detects in-band RPU even when container DV flags
+  are absent and requests an RPU-aware decoder reload before modifying the input.
+  The bounded Annex-B/length-prefixed extractor, RBSP unescape and exact PTS
+  association queue have host sanitizer fixtures; the queue is groundwork for
+  the future hardware-decoded per-picture RPU attachment, not yet active.
   The existing external-format RGB path is unchanged by default.
   The software path is a correctness fallback, not AHB/DV hardware decoding; enhancement-layer
   reconstruction and runtime decoder performance are not established.
