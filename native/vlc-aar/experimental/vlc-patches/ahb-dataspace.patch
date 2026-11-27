@@ -1,0 +1,27 @@
+diff --git a/modules/video_output/android/utils.h b/modules/video_output/android/utils.h
+--- a/modules/video_output/android/utils.h
++++ b/modules/video_output/android/utils.h
+@@ -141,7 +141,8 @@
+         pfn_AImage_getTimestamp getTimestamp;
+         pfn_AImage_getCropRect getCropRect;
+         pfn_AImage_getWidth getWidth;
+-        pfn_AImage_getHeight getHeight;
++        pfn_AImage_getHeight getHeight;
++        media_status_t (*getDataSpace)(const AImage *, int32_t *);
+     } AImage;
+     pfn_sync_merge sync_merge;
+     struct {
+diff --git a/modules/video_output/android/utils.c b/modules/video_output/android/utils.c
+--- a/modules/video_output/android/utils.c
++++ b/modules/video_output/android/utils.c
+@@ -420,7 +420,9 @@
+     LOAD(AImage, getTimestamp);
+     LOAD(AImage, getCropRect);
+     LOAD(AImage, getWidth);
+-    LOAD(AImage, getHeight);
++    LOAD(AImage, getHeight);
++    /* Optional since Android API 34; do not disable SDR interop on older devices. */
++    p_awh->ndk_air_api.AImage.getDataSpace = dlsym(p_library, "AImage_getDataSpace");
+ 
+ #undef LOAD
+ 
