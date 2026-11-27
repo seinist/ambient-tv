@@ -182,8 +182,8 @@ fn tuned_synthesis(source:&str,t:ResidentTuning)->Result<String>{
     let threshold=match t.artifacts{1=>64,2=>48,3=>32,_=>48};
     let mismatch=match t.artifacts{1=>8,2=>6,3=>4,_=>6};
     let helper=format!(r#"
-struct BlendGrid {{ indices:vec4u, weights:vec4f }}
-struct Warp {{ ap:vec2f, bp:vec2f, blend:f32 }}
+struct BlendGrid {{ indices:vec4u, weights:vec4f, }}
+struct Warp {{ ap:vec2f, bp:vec2f, blend:f32, }}
 fn decode_mv(v:vec4i)->vec4f{{
     return vec4f(vec2f(v.xy)/f32(max(v.w,1)),f32(v.z),1.0);
 }}
@@ -191,7 +191,7 @@ fn overlap_grid(p:vec2u,grid:vec2u)->BlendGrid{{
     let cell=min(p/{step}u,grid-vec2u(1));
     let prev=cell-min(cell,vec2u(1));
     let frac=clamp((vec2f(p-cell*{step}u)+vec2f(0.5))/f32(max({overlap}u,1u)),vec2f(0),vec2f(1));
-    let rise=0.5-0.5*cos(3.141592653589793*frac);
+    let rise=vec2f(0.5)-0.5*cos(3.141592653589793*frac);
     let w=select(rise,vec2f(1),cell==vec2u(0));
     let x=select(w.x,1.0,{overlap}u==0u);
     let y=select(w.y,1.0,{overlap}u==0u);
