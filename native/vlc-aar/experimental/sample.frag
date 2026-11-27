@@ -4,6 +4,6 @@ layout(location = 0) in vec2 uv;
 layout(location = 0) out vec4 rgb;
 void main() {
     // Immutable Vulkan sampler performs YCbCr conversion, not transfer-function
-    // conversion. Preserve nonlinear RGB for libplacebo's SDR color management.
+    // conversion. Preserve nonlinear RGB for libplacebo's SDR/HDR color management.
     rgb = vec4(texture(decoder_image, uv).rgb, 1.0);
 }
