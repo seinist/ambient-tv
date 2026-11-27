@@ -33,7 +33,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
  
      // Pool of textures for the subpictures
      struct pl_overlay *overlays;
-@@ -129,9 +147,46 @@
+@@ -129,9 +147,43 @@
      if (!sys->renderer)
          goto error;
  
@@ -43,9 +43,6 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +    sys->hdr_target_max = var_InheritFloat(vd,"vk-ambient-hdr-target-max");
 +    if (sys->hdr_target_mode &&
 +        (!var_InheritBool(vd,"vk-ambient-ahb") ||
-+         !var_InheritBool(vd,"vk-ambient-hdr10plus-spatial") ||
-+         !var_InheritBool(vd,"vk-ambient-hdr10plus") ||
-+         var_InheritBool(vd,"vk-ambient-dovi-ahb") ||
 +         vd->source->i_chroma != VLC_CODEC_ANDROID_OPAQUE ||
 +         !ambient_hdrplus_target_luma_valid(sys->hdr_target_mode,
 +            sys->hdr_target_min,sys->hdr_target_max))) {
@@ -80,7 +77,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
      if (vlc_placebo_FormatSupported(gpu, vd->source->i_chroma)) {
          fmt->i_chroma = vd->source->i_chroma;
      } else {
-@@ -195,6 +250,16 @@
+@@ -195,6 +247,16 @@
          for (int i = 0; i < sys->num_overlays; i++)
              pl_tex_destroy(gpu, &sys->overlay_tex[i]);
          pl_renderer_destroy(&sys->renderer);
@@ -97,7 +94,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          vlc_placebo_ReleaseCurrent(sys->pl);
      }
  
-@@ -222,11 +287,40 @@
+@@ -222,11 +284,40 @@
      pl_gpu gpu = sys->pl->gpu;
      bool failed = false;
  
@@ -138,7 +135,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          vlc_placebo_ReleaseCurrent(sys->pl);
          return; // Probably benign error, ignore it
      }
-@@ -238,19 +332,47 @@
+@@ -238,19 +329,47 @@
      bool need_vflip = frame.flipped;
  #endif
  
@@ -199,7 +196,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
  
      struct vlc_ancillary *iccp = picture_GetAncillary(pic, VLC_ANCILLARY_ID_ICC);
      if (iccp) {
-@@ -264,9 +386,12 @@
+@@ -264,9 +383,12 @@
      if (hdrplus) {
          vlc_video_hdr_dynamic_metadata_t *hdm = vlc_ancillary_GetData(hdrplus);
          vlc_placebo_HdrMetadata(hdm, &img.color.hdr);
@@ -213,7 +210,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
      struct pl_plane_data data[4];
      if (!vlc_placebo_PlaneData(pic, data)) {
          // This should never happen, in theory
-@@ -287,6 +412,22 @@
+@@ -287,6 +409,23 @@
                                        &plane->shift_y);
      }
  
@@ -223,10 +220,11 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
      struct pl_frame target;
      pl_frame_from_swapchain(&target, &frame);
 +#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
-+    if (ahb_output.texture && sys->ahb_hdrplus_spatial) {
++    if (sys->hdr_target_mode || (ahb_output.texture && sys->ahb_hdrplus_spatial)) {
 +        int mode=sys->hdr_target_mode;
-+        if (mode ? !ambient_hdrplus_characterize_target(&target,mode,
-+                    sys->hdr_target_min,sys->hdr_target_max) :
++        if (mode ? (!ahb_output.texture || !pl_color_space_is_hdr(&img.color) ||
++                    !ambient_hdrplus_characterize_target(&target,mode,
++                    sys->hdr_target_min,sys->hdr_target_max)) :
 +                   pl_color_space_is_hdr(&target.color)) {
 +            if (!sys->ahb_error_logged)
 +                msg_Err(vd,"Experimental HDR target swapchain/capability mismatch");
@@ -236,7 +234,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +    }
 +#endif
      if (vd->cfg->icc_profile) {
-@@ -438,7 +579,41 @@
+@@ -438,7 +577,41 @@
      }
  
      // Dispatch the actual image rendering with the pre-configured parameters
@@ -279,7 +277,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          msg_Err(vd, "Failed rendering frame!");
          failed = true;
          goto done;
-@@ -445,9 +620,27 @@
+@@ -445,9 +618,27 @@
      }
  
  done:
@@ -308,7 +306,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
  
      pl_gpu_flush(gpu);
  
-@@ -463,8 +656,13 @@
+@@ -463,8 +654,13 @@
  
      sys->fbo = NULL;
      if (vlc_placebo_MakeCurrent(sys->pl) == VLC_SUCCESS) {
@@ -323,13 +321,14 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          pl_swapchain_swap_buffers(sys->pl->swapchain);
          vlc_placebo_ReleaseCurrent(sys->pl);
      }
-@@ -516,6 +714,22 @@
+@@ -516,6 +712,23 @@
          break;
      }
  
 +#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
-+    if (var_InheritBool(vd,"vk-ambient-ahb") && var_InheritBool(vd,"vk-ambient-hdr10plus-spatial")) {
-+        int mode=var_InheritInteger(vd,"vk-ambient-hdr-target-transfer");
++    int mode=var_InheritInteger(vd,"vk-ambient-hdr-target-transfer");
++    if (var_InheritBool(vd,"vk-ambient-ahb") &&
++        (mode || var_InheritBool(vd,"vk-ambient-hdr10plus-spatial"))) {
 +        float min=var_InheritFloat(vd,"vk-ambient-hdr-target-min");
 +        float max=var_InheritFloat(vd,"vk-ambient-hdr-target-max");
 +        // Do not request HDR using the video's mastering metadata as the

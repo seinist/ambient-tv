@@ -281,7 +281,7 @@ internal fun vlcDoviRpuDecoderRequired(
     hardwareRoute: Boolean = false,
 ): Boolean = experiment && dolbyVision && !nativeHdrPreferred && !audioOnly && !hardwareRoute
 
-/** Explicit default-off Vulkan HDR10+ output. Android capability, not source metadata. */
+/** Explicit default-off Vulkan HDR output. Android capability, not source metadata. */
 internal data class VlcHdrPlusTarget(val mode: Int, val minNits: Float, val maxNits: Float)
 
 internal fun vlcHdrPlusTarget(
@@ -298,6 +298,18 @@ internal fun vlcHdrPlusTarget(
     return if (beta < 1.0) VlcHdrPlusTarget(2, minNits, maxNits) else null
 }
 
+/** Prefer a matching HLG display transfer for HLG, otherwise PQ when
+ * available. Dolby Vision is reconstructed to HDR10/HLG, never advertised
+ * as a proprietary Dolby Vision output. No characterized target => native. */
+internal fun vlcHdrGpuTarget(
+    built: Boolean, experiment: Boolean, hdrGpu: Boolean, output: String,
+    source: HdrStandard?, api: Int, pqSupported: Boolean, hlgSupported: Boolean,
+    minNits: Float, maxNits: Float,
+): VlcHdrPlusTarget? = vlcHdrPlusTarget(
+    built && experiment && hdrGpu, output in setOf("auto", "vulkan"), source != null, api,
+    pqSupported && !(source == HdrStandard.HLG && hlgSupported), hlgSupported, minNits, maxNits,
+)
+
 /** Validate a previously negotiated target on the actual attached display.
  * No display is not a confirmed mismatch (surface replacement can be pending). */
 internal fun vlcHdrPlusTargetChanged(expected: VlcHdrPlusTarget?, displayId: Int?,
@@ -305,11 +317,10 @@ internal fun vlcHdrPlusTargetChanged(expected: VlcHdrPlusTarget?, displayId: Int
     expected != null && displayId != null &&
         (displayId != defaultDisplayId || actual != expected)
 
-/** An explicit HDR10+ target fallback must use the current attached display's
- * native HDR10+/HDR10 capability. A temporarily missing view preserves the
- * last known policy rather than making an unsupported capability claim. */
-internal fun vlcHdrPlusFallbackNativeHdr(previous: Boolean, attachedStandards: Set<HdrStandard>?): Boolean =
-    attachedStandards?.let { nativeHdrSurfacePreferred(HdrStandard.HDR10_PLUS, it) } ?: previous
+/** Reevaluate the original source/base-layer native route after an HDR GPU failure. */
+internal fun vlcHdrPlusFallbackNativeHdr(previous: Boolean, attachedStandards: Set<HdrStandard>?,
+    source: HdrStandard? = HdrStandard.HDR10_PLUS, baseLayer: HdrStandard? = null): Boolean =
+    attachedStandards?.let { nativeHdrSurfacePreferred(source, it, baseLayer) } ?: previous
 
 /** Opaque SDR or explicitly supported HDR GPU processing, with no CPU filters. */
 internal fun vlcAhbExperimentEligible(

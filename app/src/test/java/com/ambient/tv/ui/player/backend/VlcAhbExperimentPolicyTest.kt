@@ -63,4 +63,30 @@ class VlcAhbExperimentPolicyTest {
         assertFalse(vlcAhbExperimentEligible(true, true, false, false, "off", "auto", false))
         assertFalse(vlcAhbExperimentEligible(true, true, false, false, "off", "off", true))
     }
+    @Test fun hdrGpuSelectionIsSeparateAndSupportsAllHdrSources() {
+        val hdr = com.ambient.tv.ui.player.HdrStandard.HDR10
+        val hlg = com.ambient.tv.ui.player.HdrStandard.HLG
+        val dovi = com.ambient.tv.ui.player.HdrStandard.DOLBY_VISION
+        val hdrplus = com.ambient.tv.ui.player.HdrStandard.HDR10_PLUS
+        fun target(source: com.ambient.tv.ui.player.HdrStandard?, built: Boolean = true,
+            exp: Boolean = true, opt: Boolean = true, out: String = "auto", api: Int = 34,
+            pq: Boolean = true, hlgDisplay: Boolean = true) =
+            vlcHdrGpuTarget(built, exp, opt, out, source, api, pq, hlgDisplay, 0.01f, 600f)
+        for (source in listOf(hdr, hlg, dovi, hdrplus)) {
+            org.junit.Assert.assertNotNull(target(source))
+            org.junit.Assert.assertNotNull(target(source, out = "vulkan"))
+            org.junit.Assert.assertNull(target(source, opt = false))
+            org.junit.Assert.assertNull(target(source, exp = false))
+            org.junit.Assert.assertNull(target(source, built = false))
+            org.junit.Assert.assertNull(target(source, out = "android"))
+            org.junit.Assert.assertNull(target(source, api = 33))
+            org.junit.Assert.assertNull(target(source, pq = false, hlgDisplay = false))
+        }
+        org.junit.Assert.assertNull(target(null))
+        org.junit.Assert.assertEquals(2, target(hlg)?.mode)
+        org.junit.Assert.assertEquals(1, target(dovi)?.mode)
+        org.junit.Assert.assertEquals(2, target(dovi, pq = false)?.mode)
+        assertTrue(vlcHdrPlusFallbackNativeHdr(false, setOf(hlg), dovi, hlg))
+        assertFalse(vlcHdrPlusFallbackNativeHdr(true, setOf(hdr), dovi, null))
+    }
 }

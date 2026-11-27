@@ -100,19 +100,22 @@ internal class VlcFrameDropSampleState {
 /** Shared target query for the experimental HDR10+ renderer and output selector.
  * Display capability alone is not proof of actual swapchain presentation. */
 @Suppress("DEPRECATION")
-internal fun vlcHdrPlusDisplayTarget(context: Context, source: HdrStandard?): VlcHdrPlusTarget? = runCatching {
-    val experimentalFeaturesEnabled = videoImagePreferences(context).vlcExperimentalFeaturesEnabled
-    if (!com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT ||
-        !com.ambient.tv.BuildConfig.VLC_HDR10PLUS_SPATIAL_EXPERIMENT ||
-        !experimentalFeaturesEnabled ||
-        source != HdrStandard.HDR10_PLUS || android.os.Build.VERSION.SDK_INT < 34)
+internal fun vlcHdrPlusDisplayTarget(context: Context, source: HdrStandard?,
+    output: String = "vulkan"): VlcHdrPlusTarget? = runCatching {
+    val preferences = videoImagePreferences(context)
+    val built = com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT &&
+        (source != HdrStandard.HDR10_PLUS || com.ambient.tv.BuildConfig.VLC_HDR10PLUS_SPATIAL_EXPERIMENT) &&
+        (source != HdrStandard.DOLBY_VISION || com.ambient.tv.BuildConfig.VLC_DOVI_AHB_EXPERIMENT)
+    if (!built || !preferences.vlcExperimentalFeaturesEnabled || !preferences.vlcHdrGpuEnabled ||
+        source == null || android.os.Build.VERSION.SDK_INT < 34 || output !in setOf("auto", "vulkan"))
         return@runCatching null
     val dm = context.getSystemService(android.hardware.display.DisplayManager::class.java)
         ?: return@runCatching null
     val display = dm.getDisplay(android.view.Display.DEFAULT_DISPLAY) ?: return@runCatching null
     val caps = display.hdrCapabilities ?: return@runCatching null
     val types = HdrSupport.enabledHdrTypes(display)
-    vlcHdrPlusTarget(true, true, true, android.os.Build.VERSION.SDK_INT,
+    vlcHdrGpuTarget(built, preferences.vlcExperimentalFeaturesEnabled, preferences.vlcHdrGpuEnabled,
+        output, source, android.os.Build.VERSION.SDK_INT,
         android.view.Display.HdrCapabilities.HDR_TYPE_HDR10 in types,
         android.view.Display.HdrCapabilities.HDR_TYPE_HLG in types,
         caps.desiredMinLuminance, caps.desiredMaxLuminance)
@@ -139,6 +142,7 @@ class VlcPlaybackController(
     val audioOnly: Boolean = false,
     private val preferOriginalAudio: Boolean = false,
     private val reopeningTimeshift: Boolean = false,
+    private val sourceHdrBaseLayer: HdrStandard? = null,
 ) : PlaybackHandle, VideoPresentationTarget, com.ambient.tv.ui.player.SubtitleDelayTarget {
     // Snapshot device settings at controller creation; a settings change
     // applies on the next playback/reopen, not mid-native-player lifetime.
@@ -160,17 +164,14 @@ class VlcPlaybackController(
     val audioSession = com.ambient.tv.ui.player.AudioSession(videoImagePreferences(context), "vlc", initialAudioPassthrough, audioOnly = audioOnly)
     val bitstreamPermitted: Boolean get() = audioSession.bitstreamPermitted
     private val nightProcessing = VlcNightProcessing(context)
-    // Only an explicitly requested Vulkan renderer in the experimental build
-    // may override native HDR preference. Auto and production stay unchanged.
-    private val hdrPlusTarget = if (!audioOnly && videoOutputMode == "vulkan" &&
-        sourceHdrStandard == HdrStandard.HDR10_PLUS &&
-        com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT &&
-        com.ambient.tv.BuildConfig.VLC_HDR10PLUS_SPATIAL_EXPERIMENT &&
+    // A separate default-off preference permits characterized HDR output
+    // via Vulkan, including Auto. Explicit Android output remains direct.
+    private val hdrPlusTarget = if (!audioOnly && sourceHdrStandard != null &&
         experimentalFeaturesEnabled &&
         vlcOptionsForNativeHdr(effectiveVlcImageOptions(initialImageOptions,
             reducedVideoEffects(context), vlcSvpAllowed(context)), nativeHdrPreferred,
             sourceHdrStandard).let { !it.softwareProcessing && it.svpMode == "off" })
-        vlcHdrPlusDisplayTarget(context, sourceHdrStandard) else null
+        vlcHdrPlusDisplayTarget(context, sourceHdrStandard, videoOutputMode) else null
 
 
     private var lastHdrTargetCheckMs = Long.MIN_VALUE
@@ -182,7 +183,7 @@ class VlcPlaybackController(
     }
 
     private var vulkanOutput = !audioOnly && useVlcVulkan(videoOutputMode, VideoAccelerationRuntime.current(context),
-        gpuProcessing = toneMappingRequired || initialImageOptions.softwareProcessing && !reducedVideoEffects(context),
+        gpuProcessing = hdrPlusTarget != null || toneMappingRequired || initialImageOptions.softwareProcessing && !reducedVideoEffects(context),
         nativeHdrPreferred = nativeHdrPreferred && hdrPlusTarget == null)
     /** Live picture path. Software processing can still run swscale on this surface. */
     var usesAndroidSurfaceOutput by mutableStateOf(!vulkanOutput)
@@ -222,9 +223,9 @@ class VlcPlaybackController(
     var renderSurfaceSize by mutableStateOf<Pair<Int, Int>?>(null)
         private set
     val videoOutputDescription: String get() = when {
+        ahbExperimentActive && hdrPlusTarget != null -> "libplacebo / Vulkan · ${sourceHdrStandard?.label} → " +
+            if (hdrPlusTarget.mode == 1) "HDR10/PQ (experimental)" else "HLG (experimental)"
         doviAhbActive -> "libplacebo / Vulkan · Dolby Vision AHB (experimental)"
-        ahbExperimentActive && hdrPlusTarget != null -> "libplacebo / Vulkan · HDR10+ → " +
-            if (hdrPlusTarget.mode == 1) "PQ (experimental)" else "HLG (experimental)"
         doviRpuDecoderRequired && vulkanOutput -> "libplacebo / Vulkan · Dolby Vision RPU (SW)"
         doviRpuDecoderRequired -> "OpenGL ES · Dolby Vision RPU (SW)"
         vulkanOutput -> "libplacebo / Vulkan"
@@ -319,12 +320,12 @@ class VlcPlaybackController(
                     experimentalFeaturesEnabled &&
                     (toneMappingRequired || hdrPlusTarget != null)) {
                     add("--vk-ambient-hdr10plus-spatial")
-                    hdrPlusTarget?.let {
-                        add("--vk-ambient-hdr-target-transfer=${it.mode}")
-                        add("--vk-ambient-hdr-target-min=${it.minNits}")
-                        add("--vk-ambient-hdr-target-max=${it.maxNits}")
-                    }
                 }
+            }
+            if (ahbExperimentActive) hdrPlusTarget?.let {
+                add("--vk-ambient-hdr-target-transfer=${it.mode}")
+                add("--vk-ambient-hdr-target-min=${it.minNits}")
+                add("--vk-ambient-hdr-target-max=${it.maxNits}")
             }
             if (doviAhbActive) {
                 add("--vk-ambient-dovi-ahb")
@@ -1496,7 +1497,8 @@ class VlcPlaybackController(
                 val attachedStandards = attachedView?.display?.let { display ->
                     runCatching { HdrSupport.displayStandards(display) }.getOrNull()
                 }
-                nativeHdrPreferred = vlcHdrPlusFallbackNativeHdr(nativeHdrPreferred, attachedStandards)
+                nativeHdrPreferred = vlcHdrPlusFallbackNativeHdr(nativeHdrPreferred, attachedStandards,
+                    sourceHdrStandard, sourceHdrBaseLayer)
                 ahbCopyBackRetried = true
                 ahbFallbackPending = true
             } else {
@@ -2450,7 +2452,7 @@ fun rememberVlcPlaybackController(
     val videoOutputMode = BackgroundPlaybackSession.videoSettings(metadata,
         com.ambient.tv.ui.player.PlayerVideoSettings.from(preferences).withResolution(resolution).withTitle(title)).vlcOutput
     val nativeHdr = nativeHdrSurfacePreferred(metadata?.handheldHdrStandard, HdrSupport.displayStandards(context), metadata?.hdrBaseLayer)
-    val key = listOf(url, startPositionMs, headers, initialAudioPassthrough, networkCache, videoOutputMode, audioSlaveUrl, nativeHdr, metadata?.handheldHdrStandard, refreshToken)
+    val key = listOf(url, startPositionMs, headers, initialAudioPassthrough, networkCache, videoOutputMode, audioSlaveUrl, nativeHdr, metadata?.handheldHdrStandard, metadata?.hdrBaseLayer, preferences.vlcExperimentalFeaturesEnabled, preferences.vlcHdrGpuEnabled, refreshToken)
     val controller = remember(metadata?.route, key) {
         runCatching {
             val previous = (BackgroundPlaybackSession.activeHandle() as? VlcPlaybackController)
@@ -2466,7 +2468,7 @@ fun rememberVlcPlaybackController(
             val create = { VlcPlaybackController(context.applicationContext, url, resumeMs, headers,
                 deinterlaceMode, deinterlaceFilter, initialScalingFilter, initialAudioVisualization, initialAudioPassthrough, imageOptions, networkCache, videoOutputMode, audioSlaveUrl, nativeHdr,
                 liveStream = metadata?.isLive == true, sourceHdrStandard = metadata?.handheldHdrStandard, audioOnly = metadata?.hasVideo == false, preferOriginalAudio = metadata?.source == "youtube",
-                reopeningTimeshift = previous?.url == url).also {
+                reopeningTimeshift = previous?.url == url, sourceHdrBaseLayer = metadata?.hdrBaseLayer).also {
                 it.saveImageDefaults = saveDefaults
                 if (previous == null) title?.vlcOverloadContinueSignature?.let(it::restoreOverloadContinue)
                 else previous.overloadContinueSignature?.let(it::restoreOverloadContinue)
