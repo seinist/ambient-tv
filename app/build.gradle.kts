@@ -439,8 +439,12 @@ android {
             pickFirsts += selectedAbis.map { "**/$it/libc++_shared.so" }
             // JNA (Monogram) bundles libjnidispatch for ABIs Android no longer supports.
             excludes += setOf("**/mips/libjnidispatch.so", "**/mips64/libjnidispatch.so", "**/armeabi/libjnidispatch.so")
-            // Preview only: omit the two projectM libraries that the module host can load.
-            if (modularPreview) excludes += setOf("**/libprojectM-4.so", "**/libambientprojectm.so")
+            // Preview only: omit native roots already routed through the module host.
+            // Retain FFmpeg and other APK-owned dependencies for local audio and MPV modules.
+            if (modularPreview) excludes += setOf(
+                "**/libprojectM-4.so", "**/libambientprojectm.so",
+                "**/libmpv.so", "**/libambientmpv.so",
+            )
             // An earlier build may have left the Spotify core in jniLibs: never ship it when disabled.
             if (!spotifyEnabled || modularPreview) excludes += "**/libspotify_receiver_core.so"
             // An earlier full Vulkan build may leave a 6+ MB native library in
