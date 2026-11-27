@@ -18,4 +18,5 @@
     <string name="module_state_active_bundled">Aktiv (integriert)</string>
     <string name="module_state_active_external">Aktiv (heruntergeladen)</string>
     <string name="module_state_failed">Modul nicht verfügbar oder inkompatibel</string>
+    <string name="module_settings_spotify_experimental">Experimentell: Spotify verweigert derzeit die vom Receiver verwendeten Audioschlüssel. Das Laden des Moduls garantiert keine Wiedergabe.</string>
 </resources>
