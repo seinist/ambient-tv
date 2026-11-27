@@ -267,7 +267,7 @@ internal class MpvZeroCopyFailureCache(
 
 internal val mpvZeroCopyFailures = MpvZeroCopyFailureCache()
 
-/** The native experiment only negotiates opaque SDR when no CPU filter requires readable frames. */
+/** Opaque SDR or explicitly supported HDR GPU processing, with no CPU filters. */
 internal fun vlcAhbExperimentEligible(
     experiment: Boolean,
     vulkan: Boolean,
@@ -276,5 +276,6 @@ internal fun vlcAhbExperimentEligible(
     svpMode: String,
     deinterlaceMode: String,
     copyBackRetried: Boolean,
-): Boolean = experiment && vulkan && !preserveHdr && !softwareProcessing &&
+    supportedHdrGpu: Boolean = false,
+): Boolean = experiment && vulkan && (!preserveHdr || supportedHdrGpu) && !softwareProcessing &&
     svpMode == "off" && deinterlaceMode == "off" && !copyBackRetried
