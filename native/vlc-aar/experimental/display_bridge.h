@@ -140,14 +140,14 @@ static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
     }
     uint32_t width = held.crop.right - held.crop.left;
     uint32_t height = held.crop.bottom - held.crop.top;
-    bool fel_crop_ok=true;
+    bool fel_crop_ok=true,coded_confirmed=false;
     if(dovi && pic->format.dovi.profile==7){
         struct vlc_ancillary *anc=picture_GetAncillary(pic,AMBIENT_FEL_ID);
         const struct ambient_fel_picture *el=anc?vlc_ancillary_GetData(anc):NULL;
         // AImage must confirm the declared BL origin, including zero.
         // Expanded geometry requires declared coded extents confirmed by
         // the actual AImage. Allocation padding alone is not proof of scale.
-        const bool coded_confirmed=pic->format.i_width==held.width &&
+        coded_confirmed=pic->format.i_width==held.width &&
             pic->format.i_height==held.height;
         struct ambient_fel_axis_map x,y;
         fel_crop_ok=el && held.crop.left>=0 && held.crop.top>=0 &&
@@ -183,7 +183,9 @@ static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
         pic->format.i_width,pic->format.i_height,width,height,
         pic->format.i_x_offset,pic->format.i_y_offset,held.crop.left,held.crop.top);
     VkResult result=ambient_ahb_prepare(owner, &input, out);
-    if(result==VK_SUCCESS)
+    if(result==VK_SUCCESS){
         out->metadata_origin_aligned=metadata_origin_aligned;
+        out->fel_coded_confirmed=coded_confirmed;
+    }
     return result;
 }

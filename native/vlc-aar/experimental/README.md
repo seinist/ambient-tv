@@ -759,3 +759,11 @@ their prior behavior. The GPU uses the existing experimental bilinear
 filter, not a claim of Dolby proprietary reference filtering. Tests cover
 actual cropped HEVC coded dimensions, invalid geometry and independent
 pixel arithmetic for shifted 2:1 sampling.
+
+The AImage bridge forwards its coded-extent confirmation bit to the
+renderer. Both admission and rendering therefore select the same
+mapping even when the codec reports visible dimensions. A proven
+exact coded ratio takes precedence over coincidentally equal visible
+sizes; only an unproven coded ratio uses the prior matched-visible
+contract. Fractional luma offsets are rejected; an integral odd luma
+offset can still represent half a chroma sample at 4:2:0.

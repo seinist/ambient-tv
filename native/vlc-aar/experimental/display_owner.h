@@ -54,6 +54,7 @@ struct ambient_ahb_output {
     uint64_t generation;
     bool raw_yuv;
     bool metadata_origin_aligned; /* set only by verified VLC/AImage geometry */
+    bool fel_coded_confirmed; /* identical coded-extent proof at bridge and renderer */
 };
 
 struct ambient_ahb_owner *ambient_ahb_open(const struct ambient_ahb_config *);

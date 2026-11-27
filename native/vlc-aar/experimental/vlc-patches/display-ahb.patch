@@ -118,7 +118,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          vlc_placebo_ReleaseCurrent(sys->pl);
          return; // Probably benign error, ignore it
      }
-@@ -238,19 +312,46 @@
+@@ -238,19 +312,47 @@
      bool need_vflip = frame.flipped;
  #endif
  
@@ -150,7 +150,8 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +                if (!el || !ambient_fel_render_picture_ex(gpu, sys->pl->log, &sys->fel,
 +                    &img, vlc_ancillary_GetData(el), pic->date,
 +                    pic->format.i_x_offset, pic->format.i_y_offset,
-+                    pic->format.i_width, pic->format.i_height)) {
++                    ahb_output.fel_coded_confirmed ? pic->format.i_width : 0,
++                    ahb_output.fel_coded_confirmed ? pic->format.i_height : 0)) {
 +                    if (!sys->ahb_error_logged)
 +                        msg_Err(vd, "Experimental FEL reconstruction failed");
 +                    sys->ahb_error_logged = true;
