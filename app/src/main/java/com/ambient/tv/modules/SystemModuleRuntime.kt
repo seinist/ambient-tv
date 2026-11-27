@@ -40,6 +40,7 @@ internal class SystemModuleRuntime(
         val hostLibraries: Set<String> = emptySet(),
         // Only engines whose first load is controlled by this runtime may opt in.
         val bundledOverrides: Set<String> = emptySet(),
+        val hostBindingSha256: String? = null,
     )
 
     data class Loaded(
@@ -47,6 +48,7 @@ internal class SystemModuleRuntime(
         val assets: File,
         val entrypoint: SystemModuleEntrypoint?,
         val classLoader: ClassLoader?,
+        val nativeDirectory: File? = null,
     )
 
     private val active = mutableMapOf<SystemModule, Loaded>()
@@ -133,6 +135,8 @@ internal class SystemModuleRuntime(
     }
 
     private fun validateContract(contract: Contract, files: SystemModuleMaterializer.Materialized) {
+        if (files.build.hostBindingSha256 != contract.hostBindingSha256)
+            throw SystemModuleTrustException("Host language binding fingerprint mismatch")
         val modes = listOf(contract.entryClass != null, contract.nativeRoots.isNotEmpty(), contract.assetOnly).count { it }
         if (modes != 1) throw SystemModuleTrustException("Invalid host module contract")
         when {
@@ -216,7 +220,7 @@ internal class SystemModuleRuntime(
                 System.load(files.library(name).absolutePath)
             }
         }
-        return Loaded(files.build, assets, null, null)
+        return Loaded(files.build, assets, null, null, File(files.directory, "lib").takeIf { files.native.isNotEmpty() })
     }
 
     companion object {
