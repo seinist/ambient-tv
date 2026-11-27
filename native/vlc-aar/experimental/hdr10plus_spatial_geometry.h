@@ -109,22 +109,22 @@ static inline bool ambient_hdrplus_spatial_supported(const struct ambient_hdrplu
     unsigned width, unsigned height, struct ambient_hdrplus_mask masks[2], bool *layering)
 {
     if (!m || !masks || !layering || m->window_count<1 || m->window_count>3 ||
-        !isfinite(m->target_nits) || m->target_nits<=0.f) return false;
+        !isfinite(m->target_nits) || m->target_nits<0.f || m->target_nits>10000.f) return false;
     memset(masks,0,2*sizeof(*masks));
     *layering=m->window_count>1 && m->windows[1].geometry.overlap==1;
     for (unsigned i=0;i<m->window_count;++i) {
         const struct ambient_hdrplus_window *w=&m->windows[i];
-        // Missing OOTFs and unsupported curve shapes retain the ordinary path.
+        // A missing authored OOTF uses scene-statistics-based mapping.
         float source_factor,target_factor;
         if (!ambient_hdrplus_grid_factor(&m->mastering_grid,w,&source_factor) ||
             !ambient_hdrplus_grid_factor(&m->targeted_grid,w,&target_factor) ||
             (w->saturation_mapping && w->saturation_weight>63) ||
-            !w->tone_mapping ||
-            w->anchor_count>15 || !(w->knee_x>=0.f && w->knee_x<=1.f) ||
-            !(w->knee_y>=0.f && w->knee_y<=1.f) ||
             ambient_hdrplus_source_peak(w,m->version)<=0.f) return false;
+        if(w->tone_mapping && (m->target_nits<=0.f || w->anchor_count>15 ||
+            !(w->knee_x>=0.f && w->knee_x<=1.f) ||
+            !(w->knee_y>=0.f && w->knee_y<=1.f))) return false;
         float last=0.f;
-        for (unsigned j=0;j<w->anchor_count;++j) {
+        for (unsigned j=0;w->tone_mapping && j<w->anchor_count;++j) {
             if (!(w->anchors[j]>=last && w->anchors[j]<=1.f)) return false;
             last=w->anchors[j];
         }
