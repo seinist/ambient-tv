@@ -884,3 +884,10 @@ and sort run byte ranges to reject overlap before demux. Preserve the
 combined 64 MiB payload cap. Tests cover disjoint, touching, overlapping,
 duplicate and empty byte intervals. Actual multi-track playback and
 linked build remain unverified. Non-adjacent fragments remain excluded.
+
+Fragment reset now releases run indexes and clears adjacent-track membership
+before reuse. Failed preparation after a seek or during streaming resets
+all partially constructed indexes and stops demux rather than attempting
+to use the replaced context. The cached fragmented scheduler limits each
+track to its current sample per iteration instead of reading an entire
+run ahead on forward-only inputs.
