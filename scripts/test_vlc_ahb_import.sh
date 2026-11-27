@@ -89,7 +89,7 @@ if [[ -n "${LIBPLACEBO_SOURCE:-}" ]]; then
             for module in mp4 libmp4; do
                 "$NDK/toolchains/llvm/prebuilt/$host/bin/${triple}29-clang" \
                     -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 \
-                    -DMODULE_NAME=mp4 '-DN_(s)=s' \
+                    -DMODULE_NAME=mp4 -DHAVE_ATTRIBUTE_PACKED=1 '-DN_(s)=s' '-D_(s)=s' \
                     -Werror=implicit-function-declaration -Werror=incompatible-pointer-types -Werror=int-conversion \
                     -I "$VLC_SOURCE/include" \
                     -fsyntax-only "$VLC_SOURCE/modules/demux/mp4/$module.c"
