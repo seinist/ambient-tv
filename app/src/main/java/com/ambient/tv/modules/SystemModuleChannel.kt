@@ -42,6 +42,7 @@ data class SystemModuleBuild(
     val size: Long,
     val sha256: String,
     val dependencies: List<SystemModuleDependency> = emptyList(),
+    val hostNativeSha256: Map<String, String> = emptyMap(),
 )
 
 @Serializable
@@ -116,6 +117,8 @@ object SystemModuleChannel {
                 (build.abi == "any" && build.profile != "baseline") ||
                 build.version <= 0 || build.hostApi <= 0 || build.minSdk < 29 ||
                 build.size !in 1..MAX_PACKAGE_BYTES || !digest.matches(build.sha256) ||
+                build.hostNativeSha256.size > 32 ||
+                build.hostNativeSha256.any { (name, sha) -> !Regex("lib[A-Za-z0-9_+.-]+[.]so").matches(name) || !digest.matches(sha) } ||
                 build.dependencies.size >= SystemModule.entries.size ||
                 build.dependencies.any { SystemModule.fromId(it.module) == null || it.module == build.module || it.version <= 0 } ||
                 build.dependencies.map { it.module }.distinct().size != build.dependencies.size ||
