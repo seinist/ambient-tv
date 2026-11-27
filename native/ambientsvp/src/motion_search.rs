@@ -28,19 +28,81 @@ impl Grid{
     fn count(self)->usize{(self.w*self.h) as usize}
     fn origin(self,i:usize)->(u32,u32){(i as u32%self.w*self.sx,i as u32/self.w*self.sy)}
     fn nearest(self,x:u32,y:u32)->usize{
-        let bx=(x/self.sx).min(self.w-1);
-        let by=(y/self.sy).min(self.h-1);
+        // Round to the nearest grid origin rather than always selecting
+        // the block to the left/above the projected location.
+        let bx=((x+self.sx/2)/self.sx).min(self.w-1);
+        let by=((y+self.sy/2)/self.sy).min(self.h-1);
         (by*self.w+bx) as usize
     }
 }
 struct LevelField{grid:Grid,choices:Vec<Choice>}
 impl LevelField{
     fn predict(&self,x:u32,y:u32,pel:u32)->[i32;2]{
-        let i=self.grid.nearest(x/2,y/2);
+        // Project the centre of the fine block to the coarse grid;
+        // compare block centres, not the top-left corner.
+        let i=self.grid.nearest((x/2).saturating_sub(self.grid.bw/4),(y/2).saturating_sub(self.grid.bh/4));
         let c=self.choices[i];
         let scale=2*pel as i32;
         [c.dx.saturating_mul(scale),c.dy.saturating_mul(scale)]
     }
+
+    /// A dominant low-residual translation from the preceding level.
+    /// Require support in at least a quarter of the grid; a single
+    /// arbitrary border vector must not dictate a finer search.
+    fn global(&self,pel:u32)->Option<[i32;2]>{
+        let min_sad=self.choices.iter().map(|c|c.sad).min()?;
+        let limit=min_sad.saturating_add((self.grid.bw*self.grid.bh*2) as i32);
+        let mut votes:BTreeMap<(i32,i32),(usize,i64)>=BTreeMap::new();
+        for c in self.choices.iter().filter(|c|c.sad<=limit){
+            let vote=votes.entry((c.dx,c.dy)).or_default();
+            vote.0+=1;
+            vote.1+=i64::from(c.sad);
+        }
+        let (&(dx,dy),&(support,_))=votes.iter().max_by_key(|(mv,(n,sad))|
+            (*n,-*sad,-(i64::from(mv.0).abs()+i64::from(mv.1).abs())))?;
+        if support*4<self.choices.len(){return None;}
+        let scale=2*pel as i32;
+        Some([dx.saturating_mul(scale),dy.saturating_mul(scale)])
+    }
+}
+
+fn clamp_predictor(pred:[i32;2],x:u32,y:u32,w:u32,h:u32,bw:u32,bh:u32,pel:u32)->[i32;2]{
+    let p=pel as i32;
+    [pred[0].clamp(-(x as i32)*p,((w-x-bw) as i32)*p),
+     pred[1].clamp(-(y as i32)*p,((h-y-bh) as i32)*p)]
+}
+
+fn candidate_offsets(pred:[i32;2],global:Option<[i32;2]>,radius:i32,pel:u32,finest:bool)->Vec<[i32;2]>{
+    let mut out=Vec::with_capacity(((2*radius+1)*(2*radius+1)+35) as usize);
+    out.push([0,0]);
+    for dy in -radius..=radius{
+        for dx in -radius..=radius{
+            let v=[pred[0]+dx,pred[1]+dy];
+            if v!=[0,0]{out.push(v);}
+        }
+    }
+    let p=pel as i32;
+    for dy in -2..=2{
+        for dx in -2..=2{
+            let v=[dx*p,dy*p];
+            if v!=[0,0] && ((v[0]-pred[0]).abs()>radius || (v[1]-pred[1]).abs()>radius){out.push(v);}
+        }
+    }
+    if let Some(v)=global{
+        if !out.contains(&v){out.push(v);}
+    }
+    // A clipped top-level field can fail to predict a moderate pan.
+    // Eight whole-pixel axial/diagonal anchors recover a four-pixel
+    // displacement without a dense additional search window.
+    if finest{
+        for dy in [-4,0,4]{
+            for dx in [-4,0,4]{
+                let v=[dx*p,dy*p];
+                if !out.contains(&v){out.push(v);}
+            }
+        }
+    }
+    out
 }
 
 pub struct MotionSearch{
@@ -100,7 +162,7 @@ impl MotionSearch{
         // Reject oversized jobs before uploading any frame or submitting
         // compute, rather than doing partial work and falling back late.
         let max_candidates=levels.iter().rev().enumerate().try_fold(0usize,|sum,(index,(_,_,_,grid))|
-            sum.checked_add(grid.count().checked_mul(if index==0 {212}else{100})?))
+            sum.checked_add(grid.count().checked_mul(if index==0 {232}else{120})?))
             .ok_or("experimental motion candidate estimate overflow")?;
         if max_candidates>MAX_TOTAL_CANDIDATES{return Err("experimental motion candidate budget".into());}
         let mut previous:[Option<LevelField>;2]=[None,None];
@@ -121,9 +183,11 @@ impl MotionSearch{
             for (direction,field) in previous.iter_mut().enumerate(){
                 let reverse=direction==0; // upstream previous region: next -> current
                 let mut choices=Vec::with_capacity(grid.count());
-                // Each block contributes at most 81 + 25 candidate metrics.
+                // Dense local window, integer zero anchors, one global
+                // candidate and eight sparse full-resolution pan anchors.
                 let radius=if field.is_none(){4}else{2};
-                let max_per=((2*radius+1)*(2*radius+1)+25) as usize;
+                let global=field.as_ref().and_then(|f|f.global(a.pel));
+                let max_per=((2*radius+1)*(2*radius+1)+35) as usize;
                 let batch_limit=MAX_BATCH.min(device.limits().max_compute_workgroups_per_dimension as usize)
                     .min((device.limits().max_storage_buffer_binding_size/32) as usize);
                 if batch_limit<max_per{return Err("insufficient motion dispatch capacity".into());}
@@ -135,38 +199,20 @@ impl MotionSearch{
                     let mut searches=Vec::with_capacity(end-start);
                     for i in start..end{
                         let (x,y)=grid.origin(i);
-                        let pred=field.as_ref().map_or([0,0],|f|f.predict(x,y,a.pel));
+                        let pred=clamp_predictor(field.as_ref().map_or([0,0],|f|f.predict(x,y,a.pel)),
+                            x,y,a.width,a.height,bw,bh,a.pel);
+                        let global=global.map(|v|clamp_predictor(v,x,y,a.width,a.height,bw,bh,a.pel));
                         let from=candidates.len() as u32;
-                        let mut add=|dx:i32,dy:i32|{
+                        for [dx,dy] in candidate_offsets(pred,global,radius,a.pel,level==0){
                             let c=Candidate{x,y,dx,dy,width:bw,height:bh,reverse,satd:false};
-                            if !c.valid(a.width,a.height,a.pel) {return;}
+                            if !c.valid(a.width,a.height,a.pel){continue;}
                             let index=metrics.len() as u32;
                             metrics.push(c);
                             candidates.push(ScoredCandidate{dx,dy,metric:index,raw:index});
-                        };
-                        // Zero candidate first for deterministic ties; then
-                        // the propagated predictor and its bounded neighborhood.
-                        add(0,0);
-                        for dy in -radius..=radius{
-                            for dx in -radius..=radius{
-                                let (vx,vy)=(pred[0]+dx,pred[1]+dy);
-                                if (vx,vy)!=(0,0){add(vx,vy);}
-                            }
-                        }
-                        // At pel=2/4, the local radius is fractional.
-                        // Also consider integer-phase anchors at +/-2
-                        // pixels around zero, not just +/-2 pel units.
-                        if pred!=[0,0] || a.pel>1{
-                            for dy in -2..=2{
-                                for dx in -2..=2{
-                                    let (dx,dy)=(dx*a.pel as i32,dy*a.pel as i32);
-                                    if (dx,dy)!=(0,0) && ((dx-pred[0]).abs()>radius || (dy-pred[1]).abs()>radius){add(dx,dy);}
-                                }
-                            }
                         }
                         let count=candidates.len() as u32-from;
                         if count==0{return Err("empty motion block".into());}
-                        searches.push(Search{start:from,count,predictor:pred,lambda:32,pnew:0,chroma:true,sad_gate:false,
+                        searches.push(Search{start:from,count,predictor:pred,lambda:(32/(a.pel*a.pel)) as i32,pnew:0,chroma:true,sad_gate:false,
                             initial:Choice{dx:0,dy:0,sad:0,cost:i32::MAX,raw_sad:-1,winner:-1}});
                     }
                     total=total.checked_add(metrics.len()).filter(|&n|n<=MAX_TOTAL_CANDIDATES)
@@ -263,6 +309,17 @@ mod tests{
         let f=LevelField{grid:g,choices:vec![choice;g.count()]};
         assert_eq!(f.predict(90,64,2),[12,-8]);
         assert!(Grid::new(96,66,16,16,3,4).is_none());
+        assert_eq!(f.global(2),Some([12,-8]));
+        assert_eq!(clamp_predictor([-16,20],0,48,96,66,16,16,2),[0,4]);
+        for pel in [1,2,4]{
+            let offsets=candidate_offsets([0,0],Some([5,1]),2,pel,true);
+            assert!(offsets.contains(&[-4*pel as i32,0]));
+            assert!(offsets.contains(&[4*pel as i32,0]));
+            assert!(offsets.contains(&[5,1]));
+            assert_eq!(offsets[0],[0,0]);
+            assert_eq!(offsets.len(),offsets.iter().collect::<std::collections::BTreeSet<_>>().len());
+            assert!(offsets.len()<=60);
+        }
     }
 
     #[test]
