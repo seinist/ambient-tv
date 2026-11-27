@@ -657,3 +657,42 @@ The latest changes need their final CI. Full linked packaged AAR,
 arbitrary shifted crop support, real-device playback, certification
 and proprietary bit-exact reference reconstruction remain unconfirmed.
 Default-off unchanged.
+
+
+### Matched shifted conformance windows and zero-residual fast path
+
+Supersedes the earlier origin-zero-only admission policy: the private
+EL snapshot retains the actual SPS conformance-window origin. The
+decoder validates the even 4:2:0 crop and the snapshot transfer applies
+the crop exactly (unaligned memcpy only, never unaligned SIMD). The
+AImage's physical BL crop must agree with the declared BL origin and
+the EL origin after exact 1:1 or 2:1 scaling, independently on each
+axis. MediaCodec retains coded dimensions for the experimental P7
+output. Renderer entry repeats the same geometry contract.
+This supports matched, chroma-aligned shifted visible rectangles;
+odd, mismatched and fractional-phase crops remain unsupported. The
+resampler operates on the visible EL rectangle and clamps its edges;
+equivalence to proprietary pre-crop resampling is not established.
+Real HEVC crop fixtures compare every Y/Cb/Cr sample with the
+uncropped decoded reference. GPU tests check accepted/rejected origins.
+
+A mathematically identically zero NLQ residual (all components with
+zero maximum or both zero slope and threshold) needs no EL GPU plane
+allocation, upload, or sampling. This includes canonical MEL
+coefficients as described by dovi_tool's RpuDataNlq::is_mel:
+https://github.com/quietvoid/dovi_tool/blob/main/dolby_vision/src/rpu/rpu_data_nlq.rs
+The predicate is not a profile classifier. The EL software decoder
+and exact-PTS ownership remain active to preserve reference pictures
+across a later nonzero-residual frame. Keep the final codeword clamp
+identical. The shader additionally rejects invalid pivot ranges,
+mapping methods, MMR orders and nonfinite coefficients before entering
+libplacebo. Host GPU regressions exercise zero/nonzero transitions,
+absent EL textures and malformed reshaping.
+
+At 63d115a FFmpeg and HDR GPU contracts passed (45969269376), including
+the previous crop and fallback tests; NDK and app jobs were canceled
+by subsequent pushes. MP4 and display patches match pinned source
+contexts. The new crop/zero-residual implementation needs final CI,
+AAR and practical playback validation. No full HDR10+ certification,
+bit-exact proprietary FEL filter or arbitrary phase reconstruction
+claim is made. Experimental defaults remain off.
