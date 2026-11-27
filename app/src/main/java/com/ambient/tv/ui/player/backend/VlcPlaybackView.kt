@@ -195,6 +195,12 @@ class VlcPlaybackController(
         private set
     private var configuredDeinterlaceMode = if (preserveHdrSource) "off" else deinterlaceMode
     private var configuredDeinterlaceFilter = if (preserveHdrSource) "auto" else effectiveDeinterlaceFilter(deinterlaceFilter, reducedVideoEffects(context))
+    // Once the experimental opaque path fails, do not try it again for this controller.
+    private var ahbCopyBackRetried = false
+    private val ahbExperimentActive: Boolean get() = vlcAhbExperimentEligible(
+        com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT, vulkanOutput, preserveHdrSource,
+        configuredSoftwareProcessing, configuredSvpMode, configuredDeinterlaceMode, ahbCopyBackRetried,
+    )
     override val usesFrameInterpolation: Boolean
         get() = effectiveImage().svpMode != "off"
     /** An option this LibVLC build does not know fails the whole instance: retry without the subtitle look. */
@@ -228,7 +234,7 @@ class VlcPlaybackController(
                 "--vout=libplacebo,none", "--pl-gpu=pl_vulkan,none",
                 "--vk-platform=vk_android,none",
                 "--vk-device=${VideoAccelerationRuntime.capabilities.value.device.device}",
-                "--no-mediacodec-dr",
+                if (ahbExperimentActive) "--vk-ambient-ahb" else "--no-mediacodec-dr",
             ))
         },
     )
@@ -1216,9 +1222,9 @@ class VlcPlaybackController(
         // Respect VLC/device codec blacklists and retain software fallback.
         // Sparsam forces hardware/direct (no hqdn3d/gradfun software path) without mutating prefs.
         media.setHWDecoderEnabled(!effectiveImage.softwareProcessing, false)
-        if (vulkanOutput || toneMappingRequired) {
-            // VLC's opaque MediaCodec Surface pictures cannot be imported by this Vulkan vout.
-            // Keep MediaCodec decoding with CPU-accessible output; software effects may opt out.
+        if (vulkanOutput && !ahbExperimentActive || toneMappingRequired) {
+            // Normal Vulkan and HDR processing keep CPU-accessible MediaCodec output.
+            // The separately built SDR experiment may negotiate opaque AImage input.
             media.addOption(":no-mediacodec-dr")
         }
         applyDeinterlaceOptions(media)
@@ -1277,13 +1283,20 @@ class VlcPlaybackController(
 
     private fun fallbackVulkan(reason: String): Boolean {
         if (!vulkanOutput || released) return false
-        VideoAccelerationRuntime.reportFallback("vlc", reason)
-        if (vulkanRequested) VideoAccelerationRuntime.notifyUnavailable()
-        vulkanOutput = false // Prevent retry loops before posting the asynchronous restart.
-        usesAndroidSurfaceOutput = true
+        val retryCopyBack = ahbExperimentActive
+        if (retryCopyBack) {
+            ahbCopyBackRetried = true
+            accelerationFallback = "Vulkan AHB → Vulkan Copy-back: $reason"
+            Timber.w("VULKAN VLC AHB fallback to copy-back: %s", reason)
+        } else {
+            VideoAccelerationRuntime.reportFallback("vlc", reason)
+            if (vulkanRequested) VideoAccelerationRuntime.notifyUnavailable()
+            vulkanOutput = false // Prevent retry loops before posting the asynchronous restart.
+            usesAndroidSurfaceOutput = true
+            accelerationFallback = "Vulkan → Android Surface / OpenGL ES: $reason"
+            Timber.w("VULKAN VLC fallback: %s", reason)
+        }
         vulkanOutputWatch.reset()
-        accelerationFallback = "Vulkan → Android Surface / OpenGL ES: $reason"
-        Timber.w("VULKAN VLC fallback: %s", reason)
         val position = vlcRestartPosition(
             pendingRestorePositionMs,
             confirmedPlaybackTimeMs(),
