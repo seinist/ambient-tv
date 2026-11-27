@@ -9,6 +9,7 @@ internal class VlcVulkanOutputWatch(
     private val stallMs: Long = 8_000L,
 ) {
     private var finished = false
+    private var confirmed = false
     private var sampledAt: Long? = null
     private var baselineAt: Long? = null
     private var baselineDecoded: Int? = null
@@ -16,6 +17,7 @@ internal class VlcVulkanOutputWatch(
 
     fun reset() {
         finished = false
+        confirmed = false
         suspendObservation()
     }
 
@@ -30,7 +32,7 @@ internal class VlcVulkanOutputWatch(
     fun shouldSample(now: Long): Boolean =
         !finished && (sampledAt?.let { now - it >= intervalMs } ?: true)
 
-    fun observe(now: Long, decoded: Int?, displayed: Int?): VlcVulkanOutputVerdict? {
+    fun observe(now: Long, decoded: Int?, displayed: Int?, continuous: Boolean = false): VlcVulkanOutputVerdict? {
         if (!shouldSample(now)) return null
         sampledAt = now
         if (decoded == null || displayed == null || decoded < 0 || displayed < 0) {
@@ -50,7 +52,14 @@ internal class VlcVulkanOutputWatch(
             return null
         }
         if (displayed > firstDisplayed) {
-            finished = true
+            if (!continuous) finished = true
+            // The experimental path can lose support after successful startup
+            // (format change, seek, device loss). Keep a moving progress baseline.
+            baselineAt = now
+            baselineDecoded = decoded
+            baselineDisplayed = displayed
+            if (confirmed) return null
+            confirmed = true
             return VlcVulkanOutputVerdict.CONFIRMED
         }
         if (now - firstAt >= stallMs && decoded > firstDecoded) {
