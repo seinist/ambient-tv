@@ -2,7 +2,7 @@
  * Opt-in MPV native Vulkan SVP transport. Uses the decoder/renderer
  * VkDevice, actual AVVkFrame image views and FFmpeg timeline semaphores.
  * No CPU pixel transfer. This is intentionally restricted to compatible
- * 8-bit SDR frames and the independently experimental resident kernels.
+ * 8-bit SDR or separate 10-bit YUV planes, with static HDR metadata only.
  * Included by vf_ambientsvp.c only with HAVE_VULKAN and libavutil 61.
  */
 #ifndef SVP_MPV_VULKAN_H
@@ -33,6 +33,7 @@ struct svp_vk_job {
 struct svp_vk_mpv {
     AmbientSvpVk *engine;
     AmbientSvpVk *(*create)(VkInstance,VkPhysicalDevice,VkDevice,PFN_vkGetInstanceProcAddr,uint32_t,uint32_t);
+    AmbientSvpVk *(*create_format)(VkInstance,VkPhysicalDevice,VkDevice,PFN_vkGetInstanceProcAddr,uint32_t,uint32_t,uint32_t);
     void (*destroy)(AmbientSvpVk *);
     AmbientSvpVkPair *(*begin)(const AmbientSvpVk *,VkCommandBuffer,const AmbientSvpVkPicture *,const AmbientSvpVkPicture *);
     int (*render)(AmbientSvpVkPair *,float,uint32_t,VkImageView);
@@ -44,7 +45,8 @@ struct svp_vk_mpv {
     AVVulkanDeviceContext *vkdev;
     VkDevice device;
     VkQueue queue;
-    uint32_t family, width, height;
+    uint32_t family, width, height, mode;
+    VkFormat output_format;
     PFN_vkCreateCommandPool create_pool;
     PFN_vkDestroyCommandPool destroy_pool;
     PFN_vkAllocateCommandBuffers allocate_commands;
@@ -78,6 +80,7 @@ static int svp_vk_matrix(struct mp_image *img)
     switch (img->params.repr.sys) {
     case PL_COLOR_SYSTEM_BT_601: matrix=0; break;
     case PL_COLOR_SYSTEM_BT_709: matrix=1; break;
+    case PL_COLOR_SYSTEM_BT_2020_NC: matrix=4; break;
     case PL_COLOR_SYSTEM_RGB: return img->params.repr.levels==PL_COLOR_LEVELS_FULL?3:-1;
     default: return -1;
     }
@@ -97,6 +100,15 @@ static int svp_vk_chroma(struct mp_image *img)
     default: return -1;
     }
 }
+static int svp_vk_mode(enum AVPixelFormat format)
+{
+    switch (format) {
+    case AV_PIX_FMT_RGBA: case AV_PIX_FMT_NV12: case AV_PIX_FMT_YUV420P: return 0;
+    case AV_PIX_FMT_P010: return 1;
+    case AV_PIX_FMT_YUV420P10: return 2;
+    default: return -1;
+    }
+}
 static bool svp_vk_eligible(struct mp_image *img)
 {
     if (!img || img->imgfmt!=IMGFMT_VULKAN || !img->hwctx
@@ -106,20 +118,25 @@ static bool svp_vk_eligible(struct mp_image *img)
         || (img->params.crop.x1 && img->params.crop.x1!=img->w)
         || (img->params.crop.y1 && img->params.crop.y1!=img->h)
         || img->fields&MP_IMGFIELD_INTERLACED || img->pts==MP_NOPTS_VALUE
-        || !isfinite(img->pts) || img->enhancement_layer || img->film_grain
+        || !isfinite(img->pts) || img->enhancement_layer || img->film_grain || img->dovi
         || img->params.color.transfer==PL_COLOR_TRC_UNKNOWN
-        || img->params.color.transfer==PL_COLOR_TRC_PQ
-        || img->params.color.transfer==PL_COLOR_TRC_HLG
         || svp_vk_matrix(img)<0 || svp_vk_chroma(img)<0)
         return false;
     AVHWFramesContext *fc=(AVHWFramesContext *)img->hwctx->data;
     if (!fc || !fc->device_ctx || !fc->device_ref || !fc->hwctx
         || fc->device_ctx->type!=AV_HWDEVICE_TYPE_VULKAN
         || fc->format!=AV_PIX_FMT_VULKAN
-        || (fc->sw_format!=AV_PIX_FMT_NV12 && fc->sw_format!=AV_PIX_FMT_YUV420P && fc->sw_format!=AV_PIX_FMT_RGBA)
+        || svp_vk_mode(fc->sw_format)<0
         || fc->width<img->w || fc->height<img->h)
         return false;
     if ((fc->sw_format==AV_PIX_FMT_RGBA)!=(img->params.repr.sys==PL_COLOR_SYSTEM_RGB)) return false;
+    int mode=svp_vk_mode(fc->sw_format);
+    bool hdr=img->params.color.transfer==PL_COLOR_TRC_PQ || img->params.color.transfer==PL_COLOR_TRC_HLG;
+    if ((!mode && (hdr || svp_vk_matrix(img)>3)) || (hdr && img->params.repr.sys!=PL_COLOR_SYSTEM_BT_2020_NC)) return false;
+    for (int i=0;i<img->num_ff_side_data;i++)
+        if (img->ff_side_data[i].type==AV_FRAME_DATA_DYNAMIC_HDR_PLUS ||
+            img->ff_side_data[i].type==AV_FRAME_DATA_DOVI_METADATA ||
+            img->ff_side_data[i].type==AV_FRAME_DATA_DOVI_RPU_BUFFER) return false;
     AVVulkanFramesContext *vfc=fc->hwctx;
     return vfc->nb_layers==1 && vfc->tiling==VK_IMAGE_TILING_OPTIMAL
         && (vfc->usage&VK_IMAGE_USAGE_SAMPLED_BIT)
@@ -243,12 +260,18 @@ static struct svp_vk_mpv *svp_vk_new(void *library,struct mp_image *img,double s
     get_queue(s->device,&qi,&s->queue);
     if (!s->queue) goto fail;
     s->width=img->w;s->height=img->h;s->source_rate=source;s->target_rate=target;
-    s->engine=s->create(s->vkdev->inst,s->vkdev->phys_dev,s->device,s->vkdev->get_proc_addr,s->width,s->height);
+    s->mode=svp_vk_mode(fc->sw_format);
+    s->output_format=s->mode?VK_FORMAT_R16G16B16A16_SFLOAT:VK_FORMAT_R8G8B8A8_UNORM;
+    if (s->mode) {
+        s->create_format=dlsym(library,"ambient_svp_vk_create_format");
+        if (!s->create_format) goto fail;
+        s->engine=s->create_format(s->vkdev->inst,s->vkdev->phys_dev,s->device,s->vkdev->get_proc_addr,s->width,s->height,s->mode);
+    } else s->engine=s->create(s->vkdev->inst,s->vkdev->phys_dev,s->device,s->vkdev->get_proc_addr,s->width,s->height);
     if (!s->engine) goto fail;
     s->output_hwframes=av_hwframe_ctx_alloc(s->device_ref);
     if (!s->output_hwframes) goto fail;
     AVHWFramesContext *out=(AVHWFramesContext *)s->output_hwframes->data;
-    out->format=AV_PIX_FMT_VULKAN;out->sw_format=AV_PIX_FMT_RGBA;
+    out->format=AV_PIX_FMT_VULKAN;out->sw_format=s->mode?AV_PIX_FMT_RGBAF16:AV_PIX_FMT_RGBA;
     out->width=s->width;out->height=s->height;
     AVVulkanFramesContext *vfc=out->hwctx;
     vfc->usage=VK_IMAGE_USAGE_STORAGE_BIT|VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -264,7 +287,7 @@ static bool svp_vk_matches(struct svp_vk_mpv *s,struct mp_image *img)
 {
     if (!svp_vk_eligible(img) || img->w!=(int)s->width || img->h!=(int)s->height) return false;
     AVHWFramesContext *fc=(AVHWFramesContext *)img->hwctx->data;
-    return fc->device_ctx==s->avdev;
+    return fc->device_ctx==s->avdev && svp_vk_mode(fc->sw_format)==(int)s->mode;
 }
 static bool svp_vk_ref(AVFrame *frame,bool write,struct svp_vk_ref *out)
 {
@@ -274,7 +297,7 @@ static bool svp_vk_ref(AVFrame *frame,bool write,struct svp_vk_ref *out)
     AVVkFrame *vkf=(AVVkFrame *)frame->data[0];
     unsigned count=0;
     while(count<AV_NUM_DATA_POINTERS && vkf->img[count]) count++;
-    unsigned expected=(write||fc->sw_format==AV_PIX_FMT_RGBA)?1:fc->sw_format==AV_PIX_FMT_NV12?2:3;
+    unsigned expected=(write||fc->sw_format==AV_PIX_FMT_RGBA)?1:(fc->sw_format==AV_PIX_FMT_NV12||fc->sw_format==AV_PIX_FMT_P010)?2:3;
     if (!count || (count!=1 && count!=expected) || !vfc->lock_frame || !vfc->unlock_frame)
         return false;
     *out=(struct svp_vk_ref){fc,vfc,vkf,write,count};
@@ -300,12 +323,15 @@ static bool svp_vk_picture(struct svp_vk_mpv *s,struct svp_vk_job *j,
         *p=(AmbientSvpVkPicture){view,VK_NULL_HANDLE,VK_NULL_HANDLE,2,0};
         return true;
     }
-    unsigned planes=r->fc->sw_format==AV_PIX_FMT_NV12?2:3;
+    unsigned planes=(r->fc->sw_format==AV_PIX_FMT_NV12||r->fc->sw_format==AV_PIX_FMT_P010)?2:3;
+    // Initially accept only explicit separate R16 planes.
+    if (s->mode && r->count!=planes) return false;
     VkFormat expected_multi=planes==2?VK_FORMAT_G8_B8R8_2PLANE_420_UNORM:VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM;
     if (r->count==1 && r->vfc->format[0]!=expected_multi) return false;
     VkImageView views[3]={0};
     for (unsigned i=0;i<planes;i++) {
-        VkFormat format=i==1 && planes==2?VK_FORMAT_R8G8_UNORM:VK_FORMAT_R8_UNORM;
+        VkFormat format=s->mode?(i==1 && planes==2?VK_FORMAT_R16G16_UNORM:VK_FORMAT_R16_UNORM):
+            (i==1 && planes==2?VK_FORMAT_R8G8_UNORM:VK_FORMAT_R8_UNORM);
         unsigned index=r->count==1?0:i;
         VkImageAspectFlags aspect=r->count==1?(VK_IMAGE_ASPECT_PLANE_0_BIT<<i):VK_IMAGE_ASPECT_COLOR_BIT;
         if (r->count!=1 && r->vfc->format[index]!=format) return false;
@@ -326,6 +352,8 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
         || (a->params.repr.sys==PL_COLOR_SYSTEM_RGB)!=(b->params.repr.sys==PL_COLOR_SYSTEM_RGB)
         || svp_vk_matrix(a)!=svp_vk_matrix(b) || a->params.color.transfer!=b->params.color.transfer
         || a->params.color.primaries!=b->params.color.primaries) return false;
+    if (s->mode && (a->params.color.transfer==PL_COLOR_TRC_PQ || a->params.color.transfer==PL_COLOR_TRC_HLG) &&
+        memcmp(&a->params.color.hdr,&b->params.color.hdr,sizeof(a->params.color.hdr))) return false;
     svp_vk_reap(s,false);
     unsigned slot=0;while(slot<SVP_VK_JOBS && s->jobs[slot]) slot++;
     if (slot==SVP_VK_JOBS) return false;
@@ -353,13 +381,15 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
         j->frames[j->nframes++]=frame;
         if (!frame || av_hwframe_get_buffer(s->output_hwframes,frame,0)<0
             || !svp_vk_ref(frame,true,&refs[2+i])
-            || refs[2+i].vfc->format[0]!=VK_FORMAT_R8G8B8A8_UNORM) goto fail;
-        dst[i]=svp_vk_view(s,j,refs[2+i].frame->img[0],VK_FORMAT_R8G8B8A8_UNORM,VK_IMAGE_ASPECT_COLOR_BIT);
+            || refs[2+i].vfc->format[0]!=s->output_format) goto fail;
+        dst[i]=svp_vk_view(s,j,refs[2+i].frame->img[0],s->output_format,VK_IMAGE_ASPECT_COLOR_BIT);
         if (!dst[i]) goto fail;
         outputs[i]=mp_image_from_av_frame(frame);
         if (!outputs[i]) goto fail;
         mp_image_set_size(outputs[i],s->width,s->height);
+        struct pl_bit_encoding output_bits=outputs[i]->params.repr.bits;
         mp_image_copy_attributes(outputs[i],a);
+        outputs[i]->params.repr.bits=output_bits;
         outputs[i]->params.repr.sys=PL_COLOR_SYSTEM_RGB;
         outputs[i]->params.repr.levels=PL_COLOR_LEVELS_FULL;
         outputs[i]->params.repr.alpha=PL_ALPHA_NONE;
