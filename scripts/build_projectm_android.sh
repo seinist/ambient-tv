@@ -227,6 +227,7 @@ fetch_assets() {
   done < <(find "$textures_src" -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.tga' -o -iname '*.bmp' \) | sort)
   (cd "$asset_root/presets" && find . -type f -name '*.milk' -printf '%P\n' | sort > "$asset_root/index.txt")
   printf '%s\n' "$PROJECTM_PRESET_PACK" > "$asset_root/pack.txt"
+  printf '%s\n' "$(external_version PROJECTM_TEXTURES_COMMIT)" > "$asset_root/textures-version.txt"
   echo "projectM assets ready: $(wc -l < "$asset_root/index.txt") presets"
 }
 
