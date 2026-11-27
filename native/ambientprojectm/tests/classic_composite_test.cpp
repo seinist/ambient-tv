@@ -3,11 +3,14 @@
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
 #include "MilkdropPreset/PresetState.hpp"
+#include "MilkdropPreset/PerFrameContext.hpp"
 #include "MilkdropPreset/VideoEcho.hpp"
 #include "MilkdropPreset/Filters.hpp"
 #include "Renderer/CopyTexture.hpp"
 #include "Renderer/Texture.hpp"
 #include <array>
+#include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -98,9 +101,92 @@ static void renderCases(std::ofstream& out) {
     }
 }
 
+static void renderBlurCases(std::ofstream& out) {
+    // One instance grows from blur1 to blur3, then resizes, just as a shader can.
+    MilkdropPreset::PresetState state;
+    MilkdropPreset::PerFrameContext frame(state.globalMemory, &state.globalRegisters);
+    frame.RegisterBuiltinVariables();
+    GLuint readFbo{};
+    glGenFramebuffers(1, &readFbo);
+    for (auto size : {std::array<int, 2>{128, 96}, std::array<int, 2>{193, 111}}) {
+        const int w = size[0], h = size[1];
+        Target source(w, h);
+        std::vector<unsigned char> data(w * h * 4);
+        for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) {
+            const auto i = (y * w + x) * 4;
+            data[i] = (x * 3 + y * 7) % 256;
+            data[i + 1] = (x * 11 + y * 2 + 17) % 256;
+            data[i + 2] = ((x / 9 + y / 7) % 2) ? 231 : 29;
+            data[i + 3] = 255;
+        }
+        source.texture->Bind(0);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, data.data());
+        source.texture->Unbind(0);
+        for (int level = 1; level <= 3; ++level) {
+            state.blurTexture.SetRequiredBlurLevel(static_cast<MilkdropPreset::BlurTexture::BlurLevel>(level));
+            for (int mode = 0; mode < 2; ++mode) {
+                *frame.blur1_min = mode ? .5 : .05;
+                *frame.blur1_max = mode ? .5 : .95;
+                *frame.blur2_min = mode ? .5 : .15;
+                *frame.blur2_max = mode ? .5 : .85;
+                *frame.blur3_min = mode ? .5 : .25;
+                *frame.blur3_max = mode ? .5 : .75;
+                *frame.blur1_edge_darken = .2;
+                MilkdropPreset::BlurTexture::Values min{}, max{};
+                MilkdropPreset::BlurTexture::GetSafeBlurMinMaxValues(frame, min, max);
+                for (int i = 0; i < 3; ++i)
+                    check(std::isfinite(min[i]) && std::isfinite(max[i]) && max[i] - min[i] > .09f, "invalid blur range");
+                source.bind();
+                glDisable(GL_BLEND);
+                state.blurTexture.Update(*source.texture, frame);
+                GLint read{}, draw{};
+                glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read);
+                glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw);
+                check(read == GLint(source.fbo) && draw == GLint(source.fbo), "blur changed caller FBO bindings");
+                state.texturedShader.Bind();
+                GLint units = 0;
+                state.blurTexture.Bind(units, state.texturedShader);
+                const int expected = size[0] == 128 ? level : 3;
+                check(units == expected, "incorrect blur pass allocation");
+                int tw = w, th = h;
+                for (int pass = 0; pass < expected * 2; ++pass) {
+                    if (!(pass & 1) || pass < 2) {
+                        tw = std::max(16, tw / 2);
+                        th = std::max(16, th / 2);
+                    }
+                    if (!(pass & 1)) continue;
+                    const int bw = ((tw + 3) / 16) * 16;
+                    const int bh = ((th + 3) / 4) * 4;
+                    glActiveTexture(GL_TEXTURE0 + pass / 2);
+                    GLint tex{};
+                    glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex);
+                    check(tex != 0, "missing blur texture");
+                    glBindFramebuffer(GL_FRAMEBUFFER, readFbo);
+                    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, GLuint(tex), 0);
+                    check(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE, "blur read FBO incomplete");
+                    std::vector<unsigned char> pixels(bw * bh * 4);
+                    glReadPixels(0, 0, bw, bh, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                    check(glGetError() == GL_NO_ERROR, "GL error reading blur");
+                    out.write(reinterpret_cast<const char*>(pixels.data()), pixels.size());
+                }
+                glBindFramebuffer(GL_FRAMEBUFFER, readFbo);
+                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+                for (int i = 0; i < units; ++i) {
+                    glActiveTexture(GL_TEXTURE0 + i);
+                    glBindTexture(GL_TEXTURE_2D, 0);
+                    glBindSampler(i, 0);
+                }
+                glActiveTexture(GL_TEXTURE0);
+                Renderer::Shader::Unbind();
+            }
+        }
+    }
+    glDeleteFramebuffers(1, &readFbo);
+}
+
 int main(int argc, char** argv) {
     try {
-        check(argc == 2, "expected output filename");
+        check(argc == 3, "expected classic and blur output filenames");
         EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
         check(display != EGL_NO_DISPLAY && eglInitialize(display, nullptr, nullptr), "EGL initialize");
         check(eglBindAPI(EGL_OPENGL_ES_API), "EGL bind ES");
@@ -120,6 +206,11 @@ int main(int argc, char** argv) {
         renderCases(out);
         check(bool(out), "write output");
         out.close();
+        std::ofstream blur(argv[2], std::ios::binary);
+        check(bool(blur), "open blur output");
+        renderBlurCases(blur);
+        check(bool(blur), "write blur output");
+        blur.close();
         eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
         eglDestroyContext(display, context);
         eglDestroySurface(display, surface);
