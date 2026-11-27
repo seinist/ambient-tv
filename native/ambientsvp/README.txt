@@ -488,3 +488,36 @@ checks and renderer builds are required. The motion metric still does not
 replace the upstream predictor-dependent search pipeline; complete GPU
 motion estimation and decoder-to-renderer hardware-buffer zero-copy remain
 unfinished. No device performance gain has been measured.
+
+
+Ordered candidate selection (experimental Vulkan motion stage)
+-------------------------------------------------------------
+The selection kernel accepts independent blocks with explicit initial
+winner, predictor, lambda, new-vector penalty, chroma and SAD-gating
+settings, and ordered candidate ranges. It implements the pinned
+upstream try_candidate_at arithmetic and strict less-than replacement,
+including wrapping i32 penalties, evolving raw-SAD gates and stable
+ties. Raw luma SAD is computed alongside SATD from the same pixels
+in the metric kernel and stored in the fourth cost-buffer word.
+The selection stage consumes that GPU storage directly in the same
+command encoder, with only winning vector records read back. No extra
+raw-SAD dispatch or per-candidate host readback is needed.
+
+CPU reference tests cover gate updates, ties, invalid ranges, and
+overflow-sensitive penalty arithmetic. Mesa tests compare synthetic
+cost lists and a chained real superframe upload -> pel=1/2/4 SAD/SATD
+-> ordered selection -> vector readback against CPU references.
+
+The caller still supplies upstream candidate generation, predictor
+dependencies, bounds and initial winner. This is not a complete
+production GPU analyser: wavefront/pyramid search orchestration,
+adaptive search/early exits, border and differing luma-offset semantics,
+refinement and vector serialization still require integration with the
+pinned upstream library. The CPU analysis path remains active.
+
+The exact previous head 11f31a8155a9e6fe91a04c85c4503c8abd6a924f passed
+all native tests, including actual Mesa subpixel/pyramid metrics,
+adjacent-source synthesis, direct output visitor and C loader fixtures
+(run 46034930487). The Android test run had the same 11 pre-existing
+navigation failures among 6495 tests. Current-head selection shader
+and chained tests still need CI confirmation; no device speed claim.
