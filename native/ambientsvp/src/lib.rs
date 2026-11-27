@@ -96,6 +96,7 @@ pub struct AmbientSvp {
     smoother: Smoother,
     pool: rayon::ThreadPool,
     previous: Option<SuperFrame>,
+    repeated_vectors: Option<Vec<u8>>,
     frames: BTreeMap<i32, Source>,
     recycled_frames: Vec<Vec<u8>>,
     input: i32,
@@ -211,6 +212,7 @@ impl AmbientSvp {
             smoother,
             pool,
             previous: None,
+            repeated_vectors: None,
             frames: BTreeMap::new(),
             recycled_frames: Vec::new(),
             input: 0,
@@ -262,6 +264,7 @@ impl AmbientSvp {
             self.recycle_frame(source.data);
         }
         self.previous = None;
+        self.repeated_vectors = None;
         self.input = 0;
         self.output = 0;
         self.origin = None;
@@ -297,25 +300,44 @@ impl AmbientSvp {
         }
         let begin = Instant::now();
         if self.stats.bypass_reason == 0 {
-            // Enter the session worker pool once for both CPU stages.
-            let (current, vectors) = self.pool.install(|| {
-                let current = self.builder.build(data).map_err(|_| -1)?;
-                let vectors = self.previous.as_ref()
-                    .map(|previous| self.analyser.analyse(previous, &current))
-                    .transpose().map_err(|_| -1)?;
-                Ok::<_, i32>((current, vectors))
-            })?;
-            if let Some(vectors) = vectors {
-                self.smoother.set_vectors(self.input - 1, &vectors);
-            }
-            if self.smoother.uses_super() {
-                self.smoother
-                    .set_super(self.input, &current)
-                    .map_err(|_| -1)?;
+            // Exact repeated source pictures can share the previous super
+            // frame and the analysis of an identical pair. No sampled hashes,
+            // luma-only comparison or guessed static vectors are used.
+            let repeated = self.previous.is_some()
+                && self.frames.get(&(self.input - 1)).is_some_and(|frame| frame.data == data);
+            if repeated {
+                let previous = self.previous.as_ref().unwrap();
+                if self.repeated_vectors.is_none() {
+                    let vectors = self.pool.install(|| self.analyser.analyse(previous, previous))
+                        .map_err(|_| -1)?;
+                    self.repeated_vectors = Some(vectors);
+                }
+                self.smoother.set_vectors(self.input - 1, self.repeated_vectors.as_ref().unwrap());
+                if self.smoother.uses_super() {
+                    self.smoother.set_super(self.input, previous).map_err(|_| -1)?;
+                } else {
+                    self.smoother.set_source(self.input, data).map_err(|_| -1)?;
+                }
             } else {
-                self.smoother.set_source(self.input, data).map_err(|_| -1)?;
+                self.repeated_vectors = None;
+                // Enter the session worker pool once for both CPU stages.
+                let (current, vectors) = self.pool.install(|| {
+                    let current = self.builder.build(data).map_err(|_| -1)?;
+                    let vectors = self.previous.as_ref()
+                        .map(|previous| self.analyser.analyse(previous, &current))
+                        .transpose().map_err(|_| -1)?;
+                    Ok::<_, i32>((current, vectors))
+                })?;
+                if let Some(vectors) = vectors {
+                    self.smoother.set_vectors(self.input - 1, &vectors);
+                }
+                if self.smoother.uses_super() {
+                    self.smoother.set_super(self.input, &current).map_err(|_| -1)?;
+                } else {
+                    self.smoother.set_source(self.input, data).map_err(|_| -1)?;
+                }
+                self.previous = Some(current);
             }
-            self.previous = Some(current);
         }
         let mut stored = self.recycled_frames.pop().unwrap_or_default();
         stored.clear();
@@ -365,6 +387,7 @@ impl AmbientSvp {
     pub fn bypass(&mut self, reason: u32) {
         self.stats.bypass_reason = reason.max(1);
         self.previous = None;
+        self.repeated_vectors = None;
         self.smoother.forget_before(self.input);
         #[cfg(feature = "vulkan")]
         {
