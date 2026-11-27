@@ -43,6 +43,7 @@ struct ambient_ahb_input {
     float crop[4]; /* normalized origin and extent */
     VkSamplerYcbcrModelConversion model;
     VkSamplerYcbcrRange range;
+    bool high_precision; /* BT.2020 PQ/HLG: never quantize into 8-bit RGB */
 };
 struct ambient_ahb_output {
     const void *texture;
