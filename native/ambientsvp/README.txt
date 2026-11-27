@@ -934,3 +934,39 @@ Android cross-compilation caught a test-only signed/unsigned format
 field mismatch, corrected in this revision. New code still needs
 current-head CI. Do not equate patch applicability with a compiled
 player or completed hardware qualification.
+
+
+Resident pair reuse and bounded motion cost
+-------------------------------------------
+The latest experimental resident transport retains up to four fully
+initialized Vulkan motion-field/descriptor bundles per session. A
+bundle returns to the idle pool only after the actual borrowed
+submission fence signals or the caller cancels an unsubmitted,
+discarded command buffer. Confirmed device loss prevents reuse.
+Every active descriptor set is rewritten before recording the next
+pair; unused sets are not bound. Input and output picture ownership
+and the existing fence contract do not change. Descriptor writes are
+batched into one stack-backed driver call per active set.
+
+The shared resident WGSL kernel evaluates zero displacement once per
+block/direction. Its absolute minimum score skips unnecessary motion
+candidates; other candidates may stop once their partial raw SAD
+plus displacement penalty cannot beat the bound. The normalized SAD
+cannot be smaller than the partial raw sum (at most 64 samples);
+global bounds retain equal-cost candidates, and local bounds preserve
+the existing strict winner ordering. NV12 synthesis uses one UV
+bilinear lookup rather than sampling the identical V view twice.
+The native Vulkan test now verifies actual handle reuse after fence
+retirement and stationary RGB output on a subsequent submission.
+
+The Android app now exposes the explicit experimental hardware-
+resident transport selector (off by default), with the MPV/VLC
+Surface integrations described above and CPU/HDR/size/feature
+fallbacks. The older statements that the application cannot select
+this transport describe earlier revisions only. The new path remains
+SDR8/limited geometry and a distinct motion policy. Full upstream
+motion-search parity, HDR/high-bit-depth processing, additional
+decoder formats, compositor-consumer release synchronization for
+output-buffer pooling, full player builds and physical-device
+validation are still outstanding. Do not infer a measured speedup
+from reduced work or from Mesa software Vulkan correctness checks.
