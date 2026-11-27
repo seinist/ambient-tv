@@ -8,6 +8,7 @@ int main(void) {
     const uint8_t annexb[]={0,0,1,0x26,1,0x80,0,0,0,1,0x7c,1,25,8,0,0,3,1,0x80,0,0,1,0x50,1,0x80};
     struct ambient_rpu_au au;
     assert(ambient_rpu_find(annexb,sizeof annexb,0,&au)==AMBIENT_RPU_FOUND);
+    assert(!au.has_nonbase_layer);
     assert(au.has_vcl && au.nal_start==6 && au.nal_end==19 && au.payload_start==12);
     uint8_t rbsp[64]; size_t n;
     assert(ambient_rpu_unescape(annexb+au.payload_start,au.payload_size,rbsp,sizeof rbsp,&n));
@@ -18,6 +19,9 @@ int main(void) {
     assert(ambient_rpu_find(prefixed,sizeof prefixed-1,4,&au)==AMBIENT_RPU_INVALID);
     assert(ambient_rpu_find(annexb,6,0,&au)==AMBIENT_RPU_NONE);
     assert(ambient_rpu_find(annexb,sizeof annexb,3,&au)==AMBIENT_RPU_INVALID);
+    const uint8_t multilayer[]={0,0,1,0x26,9,0x80,0,0,1,0x7e,1,0x80};
+    assert(ambient_rpu_find(multilayer,sizeof multilayer,0,&au)==AMBIENT_RPU_NONE);
+    assert(au.has_nonbase_layer && !au.has_vcl);
     const uint8_t duplicate[]={0,0,1,0x7c,1,25,8,1,2,3,0,0,1,0x7c,1,25,8,1,2,3};
     assert(ambient_rpu_find(duplicate,sizeof duplicate,0,&au)==AMBIENT_RPU_INVALID);
     const uint8_t invalid_escape[]={25,8,0,0,3,4};

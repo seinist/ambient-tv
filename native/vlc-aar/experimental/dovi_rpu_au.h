@@ -10,7 +10,7 @@
 enum ambient_rpu_status { AMBIENT_RPU_NONE, AMBIENT_RPU_FOUND, AMBIENT_RPU_INVALID };
 struct ambient_rpu_au {
     size_t nal_start, nal_end, payload_start, payload_size;
-    bool has_vcl;
+    bool has_vcl, has_nonbase_layer;
 };
 
 static inline size_t ambient_rpu_start_code(const uint8_t *p, size_t n, size_t from, size_t *prefix)
@@ -55,7 +55,9 @@ ambient_rpu_find(const uint8_t *p, size_t size, unsigned length_size, struct amb
         }
         const unsigned type = (p[data] >> 1) & 63;
         if ((p[data] & 0x80) || !(p[data+1] & 7)) return AMBIENT_RPU_INVALID;
-        if (type <= 31) result.has_vcl = true;
+        const unsigned layer = ((p[data] & 1u) << 5) | (p[data+1] >> 3);
+        if (layer || type == 63) result.has_nonbase_layer = true;
+        if (type <= 31 && !layer) result.has_vcl = true;
         // HEVC type 62, layer ID zero, temporal ID zero, Dolby RPU prefix.
         // Match FFmpeg's HEVC RPU framing and validate its NAL prefix.
         if (type == 62 && (p[data] & 1) == 0 && p[data+1] == 1 &&

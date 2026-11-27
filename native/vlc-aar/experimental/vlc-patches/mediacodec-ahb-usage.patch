@@ -403,7 +403,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
 +                    struct ambient_rpu_au au = {0};
 +                    enum ambient_rpu_status found = ambient_rpu_find(p_block->p_buffer,
 +                        p_block->i_buffer, p_sys->video.hh.i_output_nal_length_size, &au);
-+                    if (found == AMBIENT_RPU_INVALID || (au.has_vcl && found != AMBIENT_RPU_FOUND) ||
++                    if (found == AMBIENT_RPU_INVALID || au.has_nonbase_layer || (au.has_vcl && found != AMBIENT_RPU_FOUND) ||
 +                        (!au.has_vcl && found == AMBIENT_RPU_FOUND)) {
 +                        msg_Err(p_dec, "Unsupported Dolby Vision access unit");
 +                        goto error;
