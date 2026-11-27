@@ -513,7 +513,7 @@ static void test_timed_intermediate_lookahead(void)
                 continue;
             }
             assert(chunk_reads==2&&root_frees==2&&!mid_frees&&!el_frees);
-            assert(sys.ambient_fel_replay_count==1&&!sys.ambient_fel_replay_ready);
+            assert(sys.ambient_fel_replay_count==1&&!sys.context.ambient_fel_interleaved);
             assert(sys.ambient_fel_replay[0].moof==&look_mid);
             assert(sys.ambient_fel_replay[0].sequence==8);
             assert(sys.ambient_fel_replay[0].count==1&&sys.ambient_fel_replay[0].end==164);
@@ -528,31 +528,22 @@ static void test_timed_intermediate_lookahead(void)
             assert(MP4_FEL_IndexAdjacent(&d));
             assert(tracks[1].context.runs.i_count==1);
             assert(tracks[1].context.runs.p_array[0].i_offset==212);
-            // Finish the BL, then execute the actual replay preparation.
             sys.context.i_lastseqnumber=7;
-            tracks[0].ambient_fel_clock_valid=true;
-            tracks[0].ambient_fel_sequence_proven=true;
+            tracks[0].ambient_fel_clock_valid=tracks[0].ambient_fel_sequence_proven=true;
             tracks[0].ambient_fel_bl_end=tracks[0].ambient_fel_el_end=1;
             tracks[2].i_time=7;
-            assert(MP4_FEL_AdvanceReplay(&d));
-            MP4_FEL_ReleaseCaches(&sys);
-            assert(MP4_FEL_ReplayNext(&d));
-            assert(el_frees==1&&!mid_frees);
-            assert(sys.context.i_lastseqnumber==8&&sys.context.p_fragment_atom==&look_mid);
-            assert(sys.context.i_current_box_type==ATOM_mdat);
-            assert(tracks[0].ambient_fel_clock_valid&&tracks[0].ambient_fel_bl_end==1);
-            assert(!tracks[0].context.runs.i_count&&!tracks[1].context.runs.i_count);
-            assert(tracks[2].context.runs.i_count==1&&tracks[2].i_time==48000);
-            assert(tracks[2].context.i_trun_sample_pos==160);
-            assert(tracks[2].i_next_block_flags&BLOCK_FLAG_DISCONTINUITY);
-            assert(MP4_FEL_ValidatePayloads(&sys));
-            block_t *audio=mode?MP4_FEL_ReadExact(d.s,160,4):MP4_FEL_ReadCached(&sys,false,160,4);
+            assert(MP4_FEL_InterleaveReplay(&d));
+            assert(tracks[1].context.runs.i_count==1&&tracks[2].context.runs.i_count==1);
+            mp4_run_t *r=&tracks[2].context.runs.p_array[0];
+            assert(r->ambient_fel_source==1&&r->ambient_fel_discontinuity);
+            assert(r->i_offset==160&&r->i_first_dts==48000);
+            if(mode)assert(MP4_FEL_SeekExact(d.s,160));
+            block_t *audio=MP4_FEL_ReadRun(&d,r,160,4);
             assert(audio&&audio->i_buffer==4&&!memcmp(audio->p_buffer,"AUD1",4));
             block_Release(audio);
-            assert(MP4_FEL_AdvanceReplay(&d));
+            assert(MP4_FEL_FinishInterleave(&d));
             assert(position==216&&sys.context.i_lastseqnumber==9);
             FragResetContext(&sys);
-            MP4_FEL_ClearReplay(&sys);MP4_FEL_ClearReplay(&sys);
             assert(!blocks&&mid_frees==1&&el_frees==1);
             assert(!sys.ambient_fel_replay_count&&!sys.ambient_fel_replay_end);
         }
@@ -562,9 +553,7 @@ static void test_timed_intermediate_lookahead(void)
  * audio fragment with a changing duration and an implicit next clock. */
 static void test_multiple_timed_intermediates(void)
 {
-    for(unsigned variant=0;variant<4;variant++){
-        unsigned mode=variant%2;
-        bool interleave=variant>=2;
+    for(unsigned mode=0;mode<2;mode++){
         for(unsigned n=2;n<=9;n+=(n==2?6:1)){
             reset_stream(mode!=0);extra_count=n;
             mp4_track_t tracks[3]={{.i_track_ID=1,.b_ok=true,.i_timescale=1000,
@@ -616,94 +605,61 @@ static void test_multiple_timed_intermediates(void)
             sys.context.i_lastseqnumber=7;
             tracks[0].ambient_fel_clock_valid=tracks[0].ambient_fel_sequence_proven=true;
             tracks[0].ambient_fel_bl_end=tracks[0].ambient_fel_el_end=1;
-            if(interleave){
-                assert(MP4_FEL_IndexAdjacent(&d));
-                assert(MP4_FEL_InterleaveReplay(&d));
-                assert(!MP4_FEL_InterleaveReplay(&d));
-                assert(tracks[1].context.runs.i_count==1);
-                assert(tracks[2].context.runs.i_count==n&&tracks[2].i_time==48000);
-                stime_t time=48000;
-                for(unsigned i=0;i<n;i++){
-                    mp4_run_t *r=&tracks[2].context.runs.p_array[i];
-                    uint64_t offset=160+52*i;
-                    assert(r->ambient_fel_source==i+1&&r->i_first_dts==time);
-                    assert(r->ambient_fel_size==4&&r->ambient_fel_duration==i+1);
-                    assert(r->ambient_fel_discontinuity==(i==0));
-                    assert(MP4_FEL_RunContains(&sys,r,offset,4));
-                    assert(!MP4_FEL_RunContains(&sys,r,108,4));
-                    // Legacy nonseekable OverflowCheck uses the BL end.
-                    // Independent runs must use their own extent instead.
-                    sys.b_fragmented=true;
-                    sys.context.i_post_mdat_offset=112;
-                    assert(MP4_FEL_CheckedRunSize(&d,&tracks[2],r,offset,4)==4);
-                    assert(MP4_FEL_CheckedRunSize(&d,&tracks[2],r,offset,5)==0);
-                    assert(MP4_FEL_CheckedRunSize(&d,&tracks[2],r,108,4)==0);
-                    if(mode)assert(MP4_FEL_SeekExact(d.s,offset));
-                    block_t *audio=MP4_FEL_ReadRun(&d,r,offset,4);
-                    assert(audio&&audio->i_buffer==4&&audio->p_buffer[0]==i+1);
-                    block_Release(audio);
-                    time+=i+1;
-                    stime_t end;
-                    assert(MP4_FEL_RunEnd(&tracks[2],r,&end)&&end==time);
-                }
-                // Seek into the second retained fragment using its own defaults.
-                assert(MP4_FEL_SeekIndexedTrack(&tracks[2],48001));
-                assert(tracks[2].context.runs.i_current==1&&tracks[2].i_time==48001);
-                assert(tracks[2].context.i_trun_sample_pos==212);
-                assert(MP4_FEL_SeekIndexedTrack(&tracks[2],time));
-                assert(tracks[2].context.runs.i_current==n&&tracks[2].i_time==time);
-                assert(MP4_FEL_SeekIndexedTrack(&tracks[2],48000));
-                assert(tracks[2].context.runs.i_current==0);
-                // Re-enabling a track one sample later must not replay it.
-                sys.i_nztime=(48001LL*CLOCK_FREQ+47999)/48000;
-                tracks[2].i_next_block_flags=0;
-                assert(MP4_FEL_ResumeIndependentTrack(&sys,&tracks[2]));
-                assert(tracks[2].context.runs.i_current==1);
-                assert(tracks[2].i_next_block_flags&BLOCK_FLAG_DISCONTINUITY);
-                // If already ahead, a second enable must not rewind.
-                sys.i_nztime=CLOCK_FREQ;
-                assert(MP4_FEL_ResumeIndependentTrack(&sys,&tracks[2]));
-                assert(tracks[2].context.runs.i_current==1);
-                // The fixture did not consume the track cursor: retirement
-                // still advances the implicit clock and marks the gap.
-                tracks[2].i_next_block_flags=0;
-                assert(MP4_FEL_FinishInterleave(&d));
-                assert(tracks[2].i_time==time);
-                assert(tracks[2].i_next_block_flags&BLOCK_FLAG_DISCONTINUITY);
-                assert(position==visible&&sys.context.i_lastseqnumber==8+n);
-                assert(!blocks&&el_frees==1&&!sys.ambient_fel_replay_count);
-                for(unsigned i=0;i<n;i++)assert(extra_frees[i]==1);
-                continue;
-            }
-            assert(!MP4_FEL_ReplayNext(&d));
-            assert(MP4_FEL_AdvanceReplay(&d));
-            assert(!MP4_FEL_AdvanceReplay(&d));
-            MP4_FEL_ReleaseCaches(&sys);
+            assert(MP4_FEL_IndexAdjacent(&d));
+            assert(MP4_FEL_InterleaveReplay(&d));
+            assert(!MP4_FEL_InterleaveReplay(&d));
+            assert(tracks[1].context.runs.i_count==1);
+            assert(tracks[2].context.runs.i_count==n&&tracks[2].i_time==48000);
             stime_t time=48000;
             for(unsigned i=0;i<n;i++){
-                assert(MP4_FEL_ReplayNext(&d));
-                assert(!MP4_FEL_ReplayNext(&d));
-                assert(sys.ambient_fel_replay_active&&!sys.ambient_fel_replay_ready);
-                assert(sys.context.i_lastseqnumber==8+i&&tracks[2].i_time==time);
-                assert(tracks[2].context.i_default_sample_duration==i+1);
+                mp4_run_t *r=&tracks[2].context.runs.p_array[i];
                 uint64_t offset=160+52*i;
-                assert(tracks[2].context.i_trun_sample_pos==offset);
-                assert(MP4_FEL_ValidatePayloads(&sys));
-                block_t *audio=mode?MP4_FEL_ReadExact(d.s,offset,4):
-                    MP4_FEL_ReadCached(&sys,false,offset,4);
+                assert(r->ambient_fel_source==i+1&&r->i_first_dts==time);
+                assert(r->ambient_fel_size==4&&r->ambient_fel_duration==i+1);
+                assert(r->ambient_fel_discontinuity==(i==0));
+                assert(MP4_FEL_RunContains(&sys,r,offset,4));
+                assert(!MP4_FEL_RunContains(&sys,r,108,4));
+                // Legacy nonseekable OverflowCheck uses the BL end.
+                // Independent runs must use their own extent instead.
+                sys.b_fragmented=true;
+                sys.context.i_post_mdat_offset=112;
+                assert(MP4_FEL_CheckedRunSize(&d,&tracks[2],r,offset,4)==4);
+                assert(MP4_FEL_CheckedRunSize(&d,&tracks[2],r,offset,5)==0);
+                assert(MP4_FEL_CheckedRunSize(&d,&tracks[2],r,108,4)==0);
+                if(mode)assert(MP4_FEL_SeekExact(d.s,offset));
+                block_t *audio=MP4_FEL_ReadRun(&d,r,offset,4);
                 assert(audio&&audio->i_buffer==4&&audio->p_buffer[0]==i+1);
                 block_Release(audio);
-                // Emulate the normal track reader's committed sample advance.
-                time+=i+1;tracks[2].i_time=time;
-                assert(MP4_FEL_AdvanceReplay(&d));
-                MP4_FEL_ReleaseCaches(&sys);
-                if(i+1<n)assert(sys.ambient_fel_replay_ready&&!sys.ambient_fel_replay_active);
+                time+=i+1;
+                stime_t end;
+                assert(MP4_FEL_RunEnd(&tracks[2],r,&end)&&end==time);
             }
+            // Seek into the second retained fragment using its own defaults.
+            assert(MP4_FEL_SeekIndexedTrack(&tracks[2],48001));
+            assert(tracks[2].context.runs.i_current==1&&tracks[2].i_time==48001);
+            assert(tracks[2].context.i_trun_sample_pos==212);
+            assert(MP4_FEL_SeekIndexedTrack(&tracks[2],time));
+            assert(tracks[2].context.runs.i_current==n&&tracks[2].i_time==time);
+            assert(MP4_FEL_SeekIndexedTrack(&tracks[2],48000));
+            assert(tracks[2].context.runs.i_current==0);
+            // Re-enabling a track one sample later must not replay it.
+            sys.i_nztime=(48001LL*CLOCK_FREQ+47999)/48000;
+            tracks[2].i_next_block_flags=0;
+            assert(MP4_FEL_ResumeIndependentTrack(&sys,&tracks[2]));
+            assert(tracks[2].context.runs.i_current==1);
+            assert(tracks[2].i_next_block_flags&BLOCK_FLAG_DISCONTINUITY);
+            // If already ahead, a second enable must not rewind.
+            sys.i_nztime=CLOCK_FREQ;
+            assert(MP4_FEL_ResumeIndependentTrack(&sys,&tracks[2]));
+            assert(tracks[2].context.runs.i_current==1);
+            // The fixture did not consume the track cursor: retirement
+            // still advances the implicit clock and marks the gap.
+            tracks[2].i_next_block_flags=0;
+            assert(MP4_FEL_FinishInterleave(&d));
+            assert(tracks[2].i_time==time);
+            assert(tracks[2].i_next_block_flags&BLOCK_FLAG_DISCONTINUITY);
             assert(position==visible&&sys.context.i_lastseqnumber==8+n);
-            assert(!sys.ambient_fel_replay_count&&!sys.ambient_fel_replay_active);
-            assert(!MP4_FEL_AdvanceReplay(&d)&&!MP4_FEL_ReplayNext(&d));
-            FragResetContext(&sys);MP4_FEL_ClearReplay(&sys);
-            assert(!blocks&&el_frees==1);
+            assert(!blocks&&el_frees==1&&!sys.ambient_fel_replay_count);
             for(unsigned i=0;i<n;i++)assert(extra_frees[i]==1);
         }
     }
@@ -712,9 +668,7 @@ static void test_multiple_timed_intermediates(void)
  * the preceding hidden traf, which must not be indexed a second time. */
 static void test_mixed_terminal(void)
 {
-    for(unsigned variant=0;variant<4;variant++){
-        unsigned mode=variant%2;
-        bool interleave=variant>=2;
+    for(unsigned mode=0;mode<2;mode++){
         for(unsigned overlap=0;overlap<2;overlap++){
             reset_stream(mode!=0);
             mp4_track_t track[3]={{.i_track_ID=1,.b_ok=true,.i_timescale=1000,
@@ -769,49 +723,31 @@ static void test_mixed_terminal(void)
             sys.context.i_lastseqnumber=7;
             track[0].ambient_fel_clock_valid=track[0].ambient_fel_sequence_proven=true;
             track[0].ambient_fel_bl_end=track[0].ambient_fel_el_end=1;
-            if(interleave){
-                assert(MP4_FEL_InterleaveReplay(&d));
-                assert(track[1].context.runs.i_count==1&&track[2].context.runs.i_count==1);
-                mp4_run_t *r=&track[2].context.runs.p_array[0];
-                assert(r->ambient_fel_source==1&&r->ambient_fel_duration==1024);
-                assert(r->i_offset==164&&r->i_first_dts==48000);
-                sys.b_fragmented=true;
-                sys.context.i_post_mdat_offset=112;
-                assert(MP4_FEL_CheckedRunSize(&d,&track[2],r,164,4)==4);
-                assert(MP4_FEL_CheckedRunSize(&d,&track[2],r,168,4)==0);
-                if(mode)assert(MP4_FEL_SeekExact(d.s,164));
-                block_t *audio=MP4_FEL_ReadRun(&d,r,164,4);
-                assert(audio&&!memcmp(audio->p_buffer,"AUD1",4));
-                block_Release(audio);
-                assert(sys.context.ambient_fel_el_moof==&look_el);
-                sys.context.ambient_fel_seek_pending=true;
-                sys.context.ambient_fel_seek_time=CLOCK_FREQ;
-                assert(MP4_FEL_ApplyInterleaveSeek(&sys));
-                assert(!sys.context.ambient_fel_seek_pending&&track[2].i_time==48000);
-                assert(track[2].context.i_trun_sample_pos==164);
-                // A fully consumed audio track keeps its ordinary
-                // continuity flag; only skipped samples mark a gap.
-                track[2].context.runs.i_current=track[2].context.runs.i_count;
-                track[2].i_next_block_flags=0;
-                assert(MP4_FEL_FinishInterleave(&d)&&position==168&&sys.context.i_lastseqnumber==8);
-                assert(track[2].i_time==49024&&!track[2].i_next_block_flags);
-                assert(!blocks&&el_frees==1);
-                continue;
-            }
-            assert(MP4_FEL_AdvanceReplay(&d));
-            assert(!sys.context.ambient_fel_el_moof&&sys.ambient_fel_replay[0].moof==&look_el);
-            MP4_FEL_ReleaseCaches(&sys);
-            assert(MP4_FEL_ReplayNext(&d)&&!el_frees);
-            assert(!track[1].context.runs.i_count&&track[2].context.runs.i_count==1);
-            assert(track[2].context.i_trun_sample_pos==164&&track[2].i_time==48000);
-            assert(MP4_FEL_ValidatePayloads(&sys));
+            assert(MP4_FEL_InterleaveReplay(&d));
+            assert(track[1].context.runs.i_count==1&&track[2].context.runs.i_count==1);
+            mp4_run_t *r=&track[2].context.runs.p_array[0];
+            assert(r->ambient_fel_source==1&&r->ambient_fel_duration==1024);
+            assert(r->i_offset==164&&r->i_first_dts==48000);
+            sys.b_fragmented=true;
+            sys.context.i_post_mdat_offset=112;
+            assert(MP4_FEL_CheckedRunSize(&d,&track[2],r,164,4)==4);
+            assert(MP4_FEL_CheckedRunSize(&d,&track[2],r,168,4)==0);
             if(mode)assert(MP4_FEL_SeekExact(d.s,164));
-            block_t *audio=mode?MP4_FEL_ReadExact(d.s,164,4):
-                MP4_FEL_ReadCached(&sys,false,164,4);
+            block_t *audio=MP4_FEL_ReadRun(&d,r,164,4);
             assert(audio&&!memcmp(audio->p_buffer,"AUD1",4));
             block_Release(audio);
-            assert(MP4_FEL_AdvanceReplay(&d)&&position==168&&sys.context.i_lastseqnumber==8);
-            FragResetContext(&sys);MP4_FEL_ClearReplay(&sys);
+            assert(sys.context.ambient_fel_el_moof==&look_el);
+            sys.context.ambient_fel_seek_pending=true;
+            sys.context.ambient_fel_seek_time=CLOCK_FREQ;
+            assert(MP4_FEL_ApplyInterleaveSeek(&sys));
+            assert(!sys.context.ambient_fel_seek_pending&&track[2].i_time==48000);
+            assert(track[2].context.i_trun_sample_pos==164);
+            // A fully consumed audio track keeps its ordinary
+            // continuity flag; only skipped samples mark a gap.
+            track[2].context.runs.i_current=track[2].context.runs.i_count;
+            track[2].i_next_block_flags=0;
+            assert(MP4_FEL_FinishInterleave(&d)&&position==168&&sys.context.i_lastseqnumber==8);
+            assert(track[2].i_time==49024&&!track[2].i_next_block_flags);
             assert(!blocks&&el_frees==1);
         }
     }
@@ -821,6 +757,14 @@ static void test_interleave_clock_limits(void)
     assert(!MP4_FEL_ClockFits(-1,1000));
     assert(!MP4_FEL_ClockFits(0,0));
     assert(MP4_FEL_ClockFits(48000,48000));
+    mp4_track_t a={.i_time=1,.i_timescale=4000000},
+                b={.i_time=1,.i_timescale=2000000};
+    assert(MP4_FEL_DtsBefore(&a,&b)&&!MP4_FEL_DtsBefore(&b,&a));
+    a.i_time=2;
+    assert(!MP4_FEL_DtsBefore(&a,&b)&&!MP4_FEL_DtsBefore(&b,&a));
+    a.i_time=INT64_MAX-1;a.i_timescale=UINT32_MAX;
+    b.i_time=INT64_MAX;b.i_timescale=UINT32_MAX;
+    assert(MP4_FEL_DtsBefore(&a,&b));
     assert(!MP4_FEL_ClockFits(INT64_MAX,1));
     assert(!MP4_FEL_ClockFits(INT64_MAX,CLOCK_FREQ));
     const stime_t limit=VLC_TICK_MAX-VLC_TICK_0-2*DEMUX_INCREMENT;
