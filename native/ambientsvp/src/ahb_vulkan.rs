@@ -4,7 +4,7 @@
 //! a GPU-local RGB texture for resident motion/synthesis. There is no
 //! AHardwareBuffer_lock, host image upload or pixel readback.
 use ash::vk;
-use crate::mediacodec_reader::{Frame,FrameInfo,AHardwareBuffer_acquire,AHardwareBuffer_release};
+use crate::mediacodec_reader::{Frame,FrameInfo,Desc,AHardwareBuffer_describe,AHardwareBuffer_acquire,AHardwareBuffer_release};
 use std::{ffi::{c_void,CStr,c_char},ptr,sync::{Arc,atomic::{AtomicU32,Ordering}},
     panic::{catch_unwind,AssertUnwindSafe}};
 use std::os::fd::{FromRawFd,IntoRawFd,OwnedFd,AsRawFd};
@@ -22,7 +22,7 @@ struct Core{
     ahb:ash::android::external_memory_android_hardware_buffer::Device,
     fd:ash::khr::external_semaphore_fd::Device,
     memory:vk::PhysicalDeviceMemoryProperties,
-    limits:vk::PhysicalDeviceLimits,
+    limits:vk::PhysicalDeviceLimits,high_supported:bool,
     queue:vk::Queue,family:u32,
     in_flight:AtomicU32,
 }
@@ -81,11 +81,13 @@ unsafe fn make_importer(instance:vk::Instance,physical:vk::PhysicalDevice,device
             return Err("required device entry point missing".into());
         }
     }
+    let high_supported=unsafe{instance.get_physical_device_format_properties(physical,vk::Format::R16G16B16A16_SFLOAT)}
+        .optimal_tiling_features.contains(vk::FormatFeatureFlags::STORAGE_IMAGE|vk::FormatFeatureFlags::SAMPLED_IMAGE);
     let d=unsafe{ash::Device::load(instance.fp_v1_0(),device)};
     let ahb=ash::android::external_memory_android_hardware_buffer::Device::new(&instance,&d);
     let fd=ash::khr::external_semaphore_fd::Device::new(&instance,&d);
     let memory=unsafe{instance.get_physical_device_memory_properties(physical)};
-    Ok(Importer(Arc::new(Core{device:d,ahb,fd,memory,limits:properties.limits,queue,family,in_flight:AtomicU32::new(0)})))
+    Ok(Importer(Arc::new(Core{device:d,ahb,fd,memory,limits:properties.limits,high_supported,queue,family,in_flight:AtomicU32::new(0)})))
 }
 
 /// Borrowed player-owned storage image. The caller locks the AVVkFrame,
@@ -108,7 +110,7 @@ impl Destination{
     }
 }
 pub struct Job{
-    core:Arc<Core>,info:FrameInfo,
+    core:Arc<Core>,info:FrameInfo,mode:u32,
     buffer:*mut c_void,source:vk::Image,source_memory:vk::DeviceMemory,source_view:vk::ImageView,
     conversion:vk::SamplerYcbcrConversion,sampler:vk::Sampler,
     output:vk::Image,output_memory:vk::DeviceMemory,output_view:vk::ImageView,
@@ -153,9 +155,9 @@ impl Drop for Job{
     }
 }
 impl Job{
-    fn new(core:Arc<Core>,frame:&Frame,destination:Option<Destination>)->Result<Self>{
+    fn new(core:Arc<Core>,frame:&Frame,destination:Option<Destination>,mode:u32)->Result<Self>{
         let info=frame.info;
-        if destination.is_some_and(|dst|!dst.valid(&core,info)) || frame.buffer.is_null() || info.buffer_width>core.limits.max_image_dimension2_d
+        if (mode!=0 && (!core.high_supported || !matches!(mode,4|6))) || destination.is_some_and(|dst|!dst.valid(&core,info)) || frame.buffer.is_null() || info.buffer_width>core.limits.max_image_dimension2_d
             || info.buffer_height>core.limits.max_image_dimension2_d
             || core.limits.max_push_constants_size<24
             || core.limits.max_compute_work_group_invocations<64
@@ -165,7 +167,7 @@ impl Job{
         {return Err("AHB image/dispatch limits".into());}
         core.in_flight.fetch_update(Ordering::AcqRel,Ordering::Acquire,|n|(n<MAX_JOBS).then_some(n+1))
             .map_err(|_|"AHB outstanding job budget")?;
-        let mut j=Self{core,info,buffer:frame.buffer,source:vk::Image::null(),source_memory:vk::DeviceMemory::null(),
+        let mut j=Self{core,info,mode,buffer:frame.buffer,source:vk::Image::null(),source_memory:vk::DeviceMemory::null(),
             source_view:vk::ImageView::null(),conversion:vk::SamplerYcbcrConversion::null(),sampler:vk::Sampler::null(),
             output:vk::Image::null(),output_memory:vk::DeviceMemory::null(),output_view:vk::ImageView::null(),destination,
             set_layout:vk::DescriptorSetLayout::null(),pipeline_layout:vk::PipelineLayout::null(),pipeline:vk::Pipeline::null(),
@@ -182,6 +184,8 @@ impl Job{
     pub(crate) fn picture(&self)->(vk::Device,vk::Queue,u32,u32,vk::ImageView){
         (self.core.device.handle(),self.core.queue,self.info.width,self.info.height,self.output_view)
     }
+    pub(crate) fn high_depth(&self)->bool{self.mode!=0}
+    fn output_format(&self)->vk::Format{if self.high_depth(){vk::Format::R16G16B16A16_SFLOAT}else{vk::Format::R8G8B8A8_UNORM}}
     pub(crate) fn retain_consumer(&self){self.consumers.fetch_add(1,Ordering::AcqRel);}
     pub(crate) fn release_consumer(&self){self.consumers.fetch_sub(1,Ordering::AcqRel);}
     fn import(&mut self)->Result<()>{
@@ -193,6 +197,16 @@ impl Job{
         if size==0 || fmt.external_format==0 || !fmt.format_features.contains(vk::FormatFeatureFlags::SAMPLED_IMAGE){
             return Err("AHB external format unavailable".into());
         }
+        let mut desc=Desc::default();
+        unsafe{AHardwareBuffer_describe(self.buffer,&mut desc);}
+        let p010=fmt.format==vk::Format::G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16;
+        if self.high_depth(){
+            // Require explicit agreement on ten-bit storage and decoder
+            // color metadata. Opaque vendor layouts are not proof.
+            let range=if self.mode==6{vk::SamplerYcbcrRange::ITU_FULL}else{vk::SamplerYcbcrRange::ITU_NARROW};
+            if desc.format!=0x36 || !p010 || fmt.suggested_ycbcr_model!=vk::SamplerYcbcrModelConversion::YCBCR_2020
+                || fmt.suggested_ycbcr_range!=range{return Err("unproven P010 BT2020 external format".into());}
+        }else if desc.format==0x36 || p010{return Err("P010 cannot enter RGBA8 converter".into());}
         // Use the external-format path even if a conventional VkFormat
         // also exists. Preserve the allocator/decoder's actual format.
         let mut ext_format=vk::ExternalFormatANDROID::default().external_format(fmt.external_format);
@@ -238,10 +252,11 @@ impl Job{
         Ok(())
     }
     fn create_output(&mut self)->Result<()>{
+        let format=self.output_format();
         let d=&self.core.device;
         unsafe{
             self.output=d.create_image(&vk::ImageCreateInfo::default().image_type(vk::ImageType::TYPE_2D)
-                .format(vk::Format::R8G8B8A8_UNORM)
+                .format(format)
                 .extent(vk::Extent3D{width:self.info.width,height:self.info.height,depth:1})
                 .mip_levels(1).array_layers(1).samples(vk::SampleCountFlags::TYPE_1)
                 .tiling(vk::ImageTiling::OPTIMAL).usage(vk::ImageUsageFlags::STORAGE|vk::ImageUsageFlags::SAMPLED)
@@ -252,7 +267,7 @@ impl Job{
                 .memory_type_index(index),None).map_err(err)?;
             d.bind_image_memory(self.output,self.output_memory,0).map_err(err)?;
             self.output_view=d.create_image_view(&vk::ImageViewCreateInfo::default().image(self.output)
-                .view_type(vk::ImageViewType::TYPE_2D).format(vk::Format::R8G8B8A8_UNORM)
+                 .view_type(vk::ImageViewType::TYPE_2D).format(format)
                 .subresource_range(range()),None).map_err(err)?;
         }
         Ok(())
@@ -272,7 +287,9 @@ impl Job{
             let ranges=[vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).size(24)];
             self.pipeline_layout=d.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts)
                 .push_constant_ranges(&ranges),None).map_err(err)?;
-            let words=include_bytes!(concat!(env!("OUT_DIR"),"/ahb_convert.spv")).chunks_exact(4)
+            let bytes:&[u8]=if self.high_depth(){include_bytes!(concat!(env!("OUT_DIR"),"/ahb_convert_high.spv"))}
+                else{include_bytes!(concat!(env!("OUT_DIR"),"/ahb_convert.spv"))};
+            let words=bytes.chunks_exact(4)
                 .map(|w|u32::from_le_bytes(w.try_into().unwrap())).collect::<Vec<_>>();
             let shader=d.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&words),None).map_err(err)?;
             let stage=vk::PipelineShaderStageCreateInfo::default().stage(vk::ShaderStageFlags::COMPUTE).module(shader).name(c"main");
@@ -434,7 +451,8 @@ pub unsafe extern "C" fn ambient_svp_ahb_importer_destroy(importer:*mut Importer
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_ahb_submit(importer:*const Importer,frame:*mut *mut Frame,
     sdr8:u32,out:*mut *mut Job)->i32{
-    unsafe{submit_impl(importer,frame,sdr8,None,out)}
+    if sdr8!=1{if !out.is_null(){unsafe{*out=ptr::null_mut();}}return -4;}
+    unsafe{submit_impl(importer,frame,0,None,out)}
 }
 /// Same import, directly into the renderer's native storage image.
 /// Requires an actually enabled timeline semaphore feature.
@@ -442,18 +460,26 @@ pub unsafe extern "C" fn ambient_svp_ahb_submit(importer:*const Importer,frame:*
 pub unsafe extern "C" fn ambient_svp_ahb_submit_into(importer:*const Importer,frame:*mut *mut Frame,
     sdr8:u32,destination:*const Destination,out:*mut *mut Job)->i32{
     if destination.is_null(){if !out.is_null(){unsafe{*out=ptr::null_mut();}}return -4;}
-    unsafe{submit_impl(importer,frame,sdr8,Some(*destination),out)}
+    if sdr8!=1{if !out.is_null(){unsafe{*out=ptr::null_mut();}}return -4;}
+    unsafe{submit_impl(importer,frame,0,Some(*destination),out)}
 }
-unsafe fn submit_impl(importer:*const Importer,frame:*mut *mut Frame,sdr8:u32,
+// Optional ABI: 4=BT2020 limited P010, 6=BT2020 full P010.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_ahb_submit_into_format(importer:*const Importer,frame:*mut *mut Frame,
+    mode:u32,destination:*const Destination,out:*mut *mut Job)->i32{
+    if destination.is_null() || !matches!(mode,4|6){if !out.is_null(){unsafe{*out=ptr::null_mut();}}return -4;}
+    unsafe{submit_impl(importer,frame,mode,Some(*destination),out)}
+}
+unsafe fn submit_impl(importer:*const Importer,frame:*mut *mut Frame,mode:u32,
     destination:Option<Destination>,out:*mut *mut Job)->i32{
     if out.is_null(){return -4;}
     unsafe{*out=ptr::null_mut();}
-    if importer.is_null() || frame.is_null() || sdr8!=1{return -4;}
+    if importer.is_null() || frame.is_null() || !matches!(mode,0|4|6){return -4;}
     if unsafe{(*frame).is_null()}{return -4;}
     catch_unwind(AssertUnwindSafe(||{
         let core=unsafe{(&*importer).0.clone()};
         if core.in_flight.load(Ordering::Acquire)>=MAX_JOBS{return -2;}
-        let Ok(mut j)=Job::new(core,unsafe{&**frame},destination)else{return -4;};
+        let Ok(mut j)=Job::new(core,unsafe{&**frame},destination,mode)else{return -4;};
         if j.record_submit().is_err(){return -4;}
         // No fallible work between successful submit and publishing the
         // owned job; frame cannot be discarded by the caller after this.
