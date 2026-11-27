@@ -630,9 +630,63 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      assert(p_sys->api.b_started);
  
      if ((p_sys->api.i_quirks & MC_API_QUIRKS_NEED_CSD) && !p_sys->i_csd_count
-@@ -2042,8 +2348,15 @@
+@@ -2042,8 +2348,69 @@
      while (b_drain || (p_block = GetNextBlock(p_sys, p_in_block)))
      {
++        // Feed the independent EL decoder before waiting for a hardware
++        // input slot. A BL output waiting for reordered EL may otherwise
++        // prevent MediaCodec from returning a free input slot.
++        // Only this one input AU can lead the hardware decoder.
++        if (p_block && !(p_block->i_flags & BLOCK_FLAG_CSD) &&
++            p_sys->cat == VIDEO_ES && p_sys->video.ambient_dovi) {
++            const vlc_tick_t i_ts = p_block->i_pts > 0 ? p_block->i_pts : p_block->i_dts;
++            struct ambient_rpu_au au = {0};
++            enum ambient_rpu_status found = ambient_rpu_find(p_block->p_buffer,
++                p_block->i_buffer, p_sys->video.hh.i_output_nal_length_size, &au);
++            const bool fel = p_sys->video.ambient_dovi_profile == 7;
++            if (found == AMBIENT_RPU_INVALID || (!fel && au.has_nonbase_layer) ||
++                (fel && (p_sys->video.hh.i_output_nal_length_size != 0 || (au.has_vcl && !au.has_nonbase_layer))) ||
++                (au.has_vcl && found != AMBIENT_RPU_FOUND) ||
++                (!au.has_vcl && found == AMBIENT_RPU_FOUND)) {
++                msg_Err(p_dec, "Unsupported Dolby Vision access unit");
++                goto error;
++            }
++            if (au.has_vcl && p_block->i_pts <= 0) goto error;
++            if (fel && au.has_nonbase_layer) {
++                if (!p_sys->video.fel) p_sys->video.fel = av_ambient_fel_open();
++                if (!p_sys->video.fel || av_ambient_fel_submit(p_sys->video.fel,
++                    p_block->p_buffer, p_block->i_buffer, i_ts, p_block->i_dts) < 0) {
++                    msg_Err(p_dec, "FEL enhancement decode failed"); goto error;
++                }
++                vlc_cond_broadcast(&p_sys->video.air_cond);
++            }
++            if (found == AMBIENT_RPU_FOUND) {
++                if (!p_sys->video.dovi_parser)
++                    p_sys->video.dovi_parser = av_ambient_dovi_alloc(p_sys->video.ambient_dovi_profile);
++                uint8_t *rbsp = malloc(au.payload_size);
++                struct ambient_dovi_metadata *m = malloc(sizeof(*m));
++                size_t n = 0;
++                bool ok = rbsp && m && p_sys->video.dovi_parser &&
++                    ambient_rpu_unescape(p_block->p_buffer + au.payload_start,
++                        au.payload_size, rbsp, au.payload_size, &n) &&
++                    av_ambient_dovi_parse(p_sys->video.dovi_parser, rbsp, n, m) == 0 &&
++                    (!!m->full_range == (p_sys->video.ambient_dovi_profile == 5)) &&
++                    ambient_rpu_pts_insert(&p_sys->video.dovi_pts, i_ts, m);
++                free(rbsp);
++                if (!ok) {
++                    free(m);
++                    msg_Err(p_dec, "Invalid or unsupported Dolby Vision RPU/PTS");
++                    goto error;
++                }
++                // Prevent vendor reshape before our P010 sampling.
++                memmove(p_block->p_buffer + au.nal_start,
++                        p_block->p_buffer + au.nal_end,
++                        p_block->i_buffer - au.nal_end);
++                p_block->i_buffer -= au.nal_end - au.nal_start;
++            }
++            if (fel && au.has_nonbase_layer && !ambient_fel_strip_el(p_block->p_buffer, &p_block->i_buffer))
++                goto error;
++        }
          vlc_mutex_unlock(&p_sys->lock);
 -        int i_index = p_sys->api.dequeue_in(&p_sys->api, -1);
 +        const bool ambient_ahb = p_sys->cat == VIDEO_ES && p_sys->video.ambient_ahb;
@@ -647,62 +701,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
          if (p_sys->b_aborted)
              return VLC_EGENERIC;
-@@ -2066,6 +2379,54 @@
-                     if (!i_ts && p_block->i_dts)
-                         i_ts = p_block->i_dts;
-                 }
-+                if (!b_config && p_sys->cat == VIDEO_ES && p_sys->video.ambient_dovi) {
-+                    struct ambient_rpu_au au = {0};
-+                    enum ambient_rpu_status found = ambient_rpu_find(p_block->p_buffer,
-+                        p_block->i_buffer, p_sys->video.hh.i_output_nal_length_size, &au);
-+                    const bool fel = p_sys->video.ambient_dovi_profile == 7;
-+                    if (found == AMBIENT_RPU_INVALID || (!fel && au.has_nonbase_layer) ||
-+                        (fel && (p_sys->video.hh.i_output_nal_length_size != 0 || (au.has_vcl && !au.has_nonbase_layer))) ||
-+                        (au.has_vcl && found != AMBIENT_RPU_FOUND) ||
-+                        (!au.has_vcl && found == AMBIENT_RPU_FOUND)) {
-+                        msg_Err(p_dec, "Unsupported Dolby Vision access unit");
-+                        goto error;
-+                    }
-+                    if (fel && au.has_nonbase_layer) {
-+                        if (!p_sys->video.fel) p_sys->video.fel = av_ambient_fel_open();
-+                        if (!p_sys->video.fel || av_ambient_fel_submit(p_sys->video.fel,
-+                            p_block->p_buffer, p_block->i_buffer, i_ts, p_block->i_dts) < 0) {
-+                            msg_Err(p_dec, "FEL enhancement decode failed"); goto error;
-+                        }
-+                        vlc_cond_broadcast(&p_sys->video.air_cond);
-+                    }
-+                    if (found == AMBIENT_RPU_FOUND) {
-+                        if (p_block->i_pts <= 0) goto error; // real PTS, never DTS
-+                        if (!p_sys->video.dovi_parser)
-+                            p_sys->video.dovi_parser = av_ambient_dovi_alloc(p_sys->video.ambient_dovi_profile);
-+                        uint8_t *rbsp = malloc(au.payload_size);
-+                        struct ambient_dovi_metadata *m = malloc(sizeof(*m));
-+                        size_t n = 0;
-+                        bool ok = rbsp && m && p_sys->video.dovi_parser &&
-+                            ambient_rpu_unescape(p_block->p_buffer + au.payload_start,
-+                                au.payload_size, rbsp, au.payload_size, &n) &&
-+                            av_ambient_dovi_parse(p_sys->video.dovi_parser, rbsp, n, m) == 0 &&
-+                            (!!m->full_range == (p_sys->video.ambient_dovi_profile == 5)) &&
-+                            ambient_rpu_pts_insert(&p_sys->video.dovi_pts, i_ts, m);
-+                        free(rbsp);
-+                        if (!ok) {
-+                            free(m);
-+                            msg_Err(p_dec, "Invalid or unsupported Dolby Vision RPU/PTS");
-+                            goto error;
-+                        }
-+                        // Prevent vendor reshape before our P010 sampling.
-+                        memmove(p_block->p_buffer + au.nal_start,
-+                                p_block->p_buffer + au.nal_end,
-+                                p_block->i_buffer - au.nal_end);
-+                        p_block->i_buffer -= au.nal_end - au.nal_start;
-+                    }
-+                    if (fel && au.has_nonbase_layer && !ambient_fel_strip_el(p_block->p_buffer, &p_block->i_buffer))
-+                        goto error;
-+                }
-                 p_buf = p_block->p_buffer;
-                 i_size = p_block->i_buffer;
-             }
-@@ -2174,6 +2535,23 @@
+@@ -2174,6 +2541,23 @@
          goto reload;
      }
  
@@ -726,7 +725,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      /* Parse input block */
      if ((i_ret = p_sys->pf_on_new_block(p_dec, &p_in_block)) != 1)
      {
-@@ -2345,6 +2723,14 @@
+@@ -2345,6 +2729,14 @@
  static void Video_OnFlush(decoder_sys_t *p_sys)
  {
      timestamp_FifoEmpty(p_sys->video.timestamp_fifo);
@@ -741,7 +740,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      /* Invalidate all pictures that are currently in flight
       * since flushing make all previous indices returned by
       * MediaCodec invalid. */
-@@ -2352,10 +2738,21 @@
+@@ -2352,10 +2744,21 @@
  
      if (p_sys->video.use_air)
      {
