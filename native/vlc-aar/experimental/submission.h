@@ -126,7 +126,11 @@ public:
     // on the shared queue completed, including an uncertain submit.
     bool drain_after_idle(bool queue_idle) {
         if (!queue_idle) return false;
-        if (lease_ && !lease_->complete(true, true)) return false;
+        // Queue idle proves there is no remaining GPU read. If submit was
+        // rejected, it does not prove that the imported producer fence was
+        // actually waited on. Return the original fence in that case.
+        if (lease_ && !(accepted_ ? lease_->complete(true, true) :
+                                    lease_->abandon_after_gpu_retired())) return false;
         lease_ = nullptr;
         completed_ = true;
         handed_off_ = false;
@@ -138,7 +142,7 @@ public:
     // Vulkan allows destruction of in-use objects on reported device loss;
     // do not conflate this with successful execution or ownership transfer.
     bool drain_after_device_lost() {
-        if (lease_ && !lease_->abandon_device_lost()) return false;
+        if (lease_ && !lease_->abandon_after_gpu_retired()) return false;
         lease_ = nullptr;
         completed_ = true;
         handed_off_ = false;
