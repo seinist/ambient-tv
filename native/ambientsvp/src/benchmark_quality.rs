@@ -23,7 +23,7 @@ impl Quality{
         // source frame. Exclude the frame edges where motion is clipped.
         if index%2==0 || index>=2*u64::from(count-1){return;}
         let shift=index*2;
-        let mut (before,after)=(0u128,0u128);
+        let (mut before,mut after)=(0u128,0u128);
         for y in 16..h-16{
             for x in 16..w-16{
                 let target=i32::from(translation_pixel(w,x,y,shift));
