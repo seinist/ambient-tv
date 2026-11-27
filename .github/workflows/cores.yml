@@ -269,13 +269,25 @@ jobs:
             python3 scripts/core_build_policy.py prepare-hotpaths --root src --core "$CORE" --profile "$PROFILE"
           fi
           if [ "$BUILD_KIND" = "cmake" ]; then
+            export ANDROID_NDK_HOME="$NDK" ANDROID_NDK_ROOT="$NDK"
+            if [[ "$CORE" == armsx2 ]]; then
+              (cd src && ANDROID_NDK="$NDK" ANDROID_ABI="$ABI" ANDROID_API=29 \
+                bash .github/workflows/scripts/android/build-dependencies.sh "$PWD/.deps")
+              args+=("-DCMAKE_PREFIX_PATH=$PWD/src/.deps" "-DCMAKE_FIND_ROOT_PATH=$PWD/src/.deps")
+            fi
+            if [[ "$CORE" == cemu ]]; then
+              unset CC CXX VCPKG_FORCE_SYSTEM_BINARIES
+            fi
             python3 scripts/core_build_policy.py prepare-cmake --root src --core "$CORE" --profile "$PROFILE"
             flags=()
             if [ -n "${CORE_CCACHE:-}" ]; then
               flags+=("-DCMAKE_C_COMPILER_LAUNCHER=$CORE_CCACHE" "-DCMAKE_CXX_COMPILER_LAUNCHER=$CORE_CCACHE")
             fi
             if [ -n "$CFLAGS_EXTRA" ]; then
-              flags+=("-DCMAKE_C_FLAGS=$CFLAGS_EXTRA" "-DCMAKE_CXX_FLAGS=$CFLAGS_EXTRA")
+              flags+=("-DCMAKE_C_FLAGS=$CFLAGS_EXTRA")
+            fi
+            if [ -n "$CFLAGS_EXTRA$CPPFLAGS_EXTRA" ]; then
+              flags+=("-DCMAKE_CXX_FLAGS=$CFLAGS_EXTRA $CPPFLAGS_EXTRA")
             fi
             if [[ "$PROFILE" = o3* || "$PROFILE" = optimized* ]]; then
               flags+=("-DCMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG" "-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG")
@@ -292,7 +304,9 @@ jobs:
             # GNU Make must buffer each target; otherwise concurrent diagnostics can
             # splice into a verbose compiler/link command and corrupt the flag audit.
             cmake --build build --verbose -j"$(nproc)" -- --output-sync=target 2>&1 | tee reports/build.log
-            lib=$(python3 scripts/core_build_policy.py select --nm "$bin/llvm-nm" --root build --pattern '*libretro*.so')
+            output_root=build
+            if [[ "$CORE" == cemu ]]; then output_root=src/bin; fi
+            lib=$(python3 scripts/core_build_policy.py select --nm "$bin/llvm-nm" --root "$output_root" --pattern '*libretro*.so')
           else
             python3 scripts/core_build_policy.py prepare-ndk --root "src/$JNI" --core "$CORE" --profile "$PROFILE"
             python3 scripts/core_build_policy.py ndk-flags \

@@ -164,8 +164,7 @@ object GameSystems {
             ),
             shortName = "PlayStation"),
 
-        // Buildbot cores: deliberately outside cores/cores.json until pinned source builds
-        // have passed every supported ABI + 16 KB page-size validation.
+        // Extended systems: signed builds are offered after their catalog recipes pass release validation.
         GameSystem("nds", "Nintendo DS / DSi", setOf("nds", "dsi", "ids"),
             // The libretro build server has no 32-bit x86 build of melonDS DS.
             GameCore("melondsds", "melonDS DS", "GPL-3.0",

@@ -65,6 +65,11 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
             raise ValueError("Invalid upstream repository")
         if not re.fullmatch(r"[0-9a-f]{40}", entry["commit"]):
             raise ValueError("Expected a full pinned commit")
+        supported = entry.get("abis", declared_abis)
+        if not supported or len(set(supported)) != len(supported) or not set(supported) <= set(declared_abis):
+            raise ValueError("Invalid core ABI list")
+        if not set(entry.get("abi_args", {})) <= set(supported):
+            raise ValueError("Invalid ABI-specific build arguments")
         if entry["build"] not in {"ndk", "cmake"}:
             raise ValueError("Unknown build system")
         if entry["build"] == "ndk":
@@ -137,9 +142,16 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
                  ("gpsp", "x86", "baseline"),
                  ("snes9x2010", "arm64-v8a", "baseline"),
                  ("snes9x2010", "arm64-v8a", "snes9x2010-threaded")]
-        # Compile all public combined candidates before merging the policy.
-        jobs += [(core, abi, "optimized") for core in ids for abi in declared_abis]
-        jobs += [(core, "arm64-v8a", "optimized-a57") for core in ids]
+        # Keep the PR matrix below Actions' 256-job limit while exercising every
+        # new recipe in all public profiles on ARM64. Full profiles run separately.
+        original = [entry["core"] for entry in entries if not entry.get("extended")]
+        extended = [entry["core"] for entry in entries if entry.get("extended")]
+        jobs += [(core, abi, "optimized") for core in original for abi in declared_abis]
+        if extended:
+            jobs += [(core, "arm64-v8a", variant) for core in extended
+                     for variant in ("baseline", "optimized", "optimized-a57")]
+        else:
+            jobs += [(core, "arm64-v8a", "optimized-a57") for core in original]
     elif comparison != "none":
         variants = ("baseline", "thinlto") if comparison == "baseline-thinlto" else ("o3", "o3-thinlto")
         jobs = [(core, abi, variant) for core in chosen_cores for abi in chosen_abis for variant in variants]
@@ -153,8 +165,13 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
         if core not in by_id or abi not in declared_abis:
             raise ValueError(f"Missing required CI recipe: {core}/{abi}")
         entry = by_id[core]
+        if abi not in entry.get("abis", declared_abis):
+            continue
         cflags, ldflags = PROFILES[variant]
-        matrix.append({**entry, "abi": abi, "profile": variant,
+        recipe = {k: v for k, v in entry.items() if k not in {"abis", "abi_args", "extended"}}
+        if entry.get("abi_args", {}).get(abi):
+            recipe["args"] = " ".join(filter(None, (recipe.get("args", ""), entry["abi_args"][abi])))
+        matrix.append({**recipe, "abi": abi, "profile": variant,
                        "cflags": " ".join(cflags), "ldflags": " ".join(ldflags),
                        "makevars": "use_sh2drc=1" if (variant == "picodrive-sh2" or (variant in PUBLIC_EXPERIMENTS and core == "picodrive" and abi == "arm64-v8a")) else "",
                        "artifact": ("core" if variant == "baseline" else "candidate-" + variant)

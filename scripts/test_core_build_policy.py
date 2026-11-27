@@ -17,9 +17,25 @@ class CoreBuildPolicyTest(unittest.TestCase):
 
     def test_release_matrix(self):
         matrix = plan(self.catalog, "push", "refs/heads/main", False)["include"]
-        self.assertEqual(len(matrix), len(self.catalog["cores"]) * len(self.catalog["abis"]))
+        self.assertEqual(len(matrix), sum(len(c.get("abis", self.catalog["abis"])) for c in self.catalog["cores"]))
         self.assertTrue(all(item["profile"] == "baseline" for item in matrix))
         self.assertEqual(len({item["artifact"] for item in matrix}), len(matrix))
+
+    def test_catalog_matches_app_and_abi_restrictions(self):
+        import re
+        app = (Path(__file__).resolve().parents[1] / "app/src/main/java/com/ambient/tv/games/GameSystems.kt").read_text()
+        ids = set(re.findall(r'GameCore\(\s*"([^"]+)"', app))
+        self.assertEqual({c["core"] for c in self.catalog["cores"]}, ids)
+        for profile in ("baseline", "optimized", "optimized-a57"):
+            jobs = plan(self.catalog, "push", "refs/heads/main", False, profile=profile)["include"]
+            self.assertEqual({j["core"] for j in jobs}, ids)
+            self.assertFalse(any(j["core"] == "melondsds" and j["abi"] == "x86" for j in jobs))
+            self.assertTrue(all(j["abi"] == "arm64-v8a" for j in jobs if j["core"] in {"armsx2", "panda3ds"}))
+        with self.assertRaises(ValueError):
+            plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False, cores="melondsds", abis="x86")
+        job = plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False,
+                   cores="melondsds", abis="armeabi-v7a")["include"][0]
+        self.assertIn("-DENABLE_JIT=OFF", job["args"])
 
     def test_experiment(self):
         matrix = plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False,
@@ -31,9 +47,13 @@ class CoreBuildPolicyTest(unittest.TestCase):
 
     def test_pr_comparison(self):
         matrix = plan(self.catalog, "pull_request", "refs/pull/1/merge", False)["include"]
-        self.assertEqual(len(matrix), 69 + len(self.catalog["cores"]) * (len(self.catalog["abis"]) + 1))
+        self.assertLessEqual(len(matrix), 256)
         self.assertEqual({item["core"] for item in matrix if item["profile"] == "core-hotpaths"},
-                         {core["core"] for core in self.catalog["cores"]} - {"picodrive", "snes9x2010"})
+                         {core["core"] for core in self.catalog["cores"] if not core.get("extended")} - {"picodrive", "snes9x2010"})
+        for core in self.catalog["cores"]:
+            if core.get("extended"):
+                self.assertEqual({item["profile"] for item in matrix if item["core"] == core["core"]},
+                                 {"baseline", "optimized", "optimized-a57"})
         self.assertEqual({item["profile"] for item in matrix},
                          {"baseline", "thinlto", "picodrive-sh2", "tune-a57", "o3", "o3-thinlto", "snes9x2010-threaded", "core-hotpaths", "optimized", "optimized-a57"})
         self.assertEqual(len({item["artifact"] for item in matrix}), len(matrix))
@@ -43,7 +63,7 @@ class CoreBuildPolicyTest(unittest.TestCase):
         for profile in ("optimized", "optimized-a57"):
             matrix = plan(self.catalog, "workflow_dispatch", "refs/heads/main", False, profile=profile)["include"]
             abis = self.catalog["abis"] if profile == "optimized" else ["arm64-v8a"]
-            self.assertEqual(len(matrix), len(self.catalog["cores"]) * len(abis))
+            self.assertEqual(len(matrix), sum(len(set(c.get("abis", self.catalog["abis"])) & set(abis)) for c in self.catalog["cores"]))
             self.assertEqual({j["abi"] for j in matrix}, set(abis))
             self.assertTrue(all(j["cflags"].startswith("-O3 -flto=thin") and j["ldflags"] == "-flto=thin" for j in matrix))
             self.assertTrue(all(("-mtune=cortex-a57" in j["cflags"]) == (profile == "optimized-a57") for j in matrix))
@@ -187,10 +207,13 @@ class CoreBuildPolicyTest(unittest.TestCase):
     def test_full_paired_comparisons(self):
         for comparison, profiles in (("baseline-thinlto", ("baseline", "thinlto")),
                                      ("o3-o3-thinlto", ("o3", "o3-thinlto"))):
-            matrix = plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False,
-                          comparison=comparison)["include"]
+            # The expanded catalog exceeds the Actions limit for a paired
+            # all-ABI build. Pair per ABI without changing the coverage.
+            matrix = [job for abi in self.catalog["abis"]
+                      for job in plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False,
+                                      abis=abi, comparison=comparison)["include"]]
             expected = {(core["core"], abi, profile) for core in self.catalog["cores"]
-                        for abi in self.catalog["abis"] for profile in profiles}
+                        for abi in core.get("abis", self.catalog["abis"]) for profile in profiles}
             actual = {(item["core"], item["abi"], item["profile"]) for item in matrix}
             self.assertEqual(actual, expected)
             self.assertEqual(len(matrix), len(expected))

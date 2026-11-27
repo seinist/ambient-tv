@@ -191,6 +191,243 @@
       "build": "ndk",
       "jni": ".",
       "env": "HAVE_HW=1"
+    },
+    {
+      "core": "melondsds",
+      "repo": "https://github.com/JesseTG/melonds-ds",
+      "commit": "f394adbacb5722ee97c1b37c8064da9a25818310",
+      "build": "cmake",
+      "args": "-Wno-deprecated",
+      "abis": [
+        "arm64-v8a",
+        "armeabi-v7a",
+        "x86_64"
+      ],
+      "abi_args": {
+        "armeabi-v7a": "-DENABLE_JIT=OFF"
+      },
+      "cppflags": "-Wno-deprecated-declarations -Wno-unknown-attributes",
+      "extended": true
+    },
+    {
+      "core": "noods",
+      "repo": "https://github.com/jonian/libretro-noods",
+      "commit": "9a2665306927ede64f4b5c109df79f4015607dbc",
+      "build": "ndk",
+      "jni": "src/libretro",
+      "extended": true
+    },
+    {
+      "core": "citra2018",
+      "repo": "https://github.com/libretro/citra2018",
+      "commit": "95e2f06c179c8daf44fa344c206f549cf332d21b",
+      "build": "cmake",
+      "args": "-DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH",
+      "abis": [
+        "arm64-v8a",
+        "x86_64"
+      ],
+      "cppflags": "-Wno-invalid-specialization",
+      "extended": true
+    },
+    {
+      "core": "panda3ds",
+      "repo": "https://github.com/wheremyfoodat/Panda3DS",
+      "commit": "b18e6586a56b4d35ac0953be6359beed93586dfe",
+      "build": "cmake",
+      "args": "-DBUILD_LIBRETRO_CORE=ON -DENABLE_USER_BUILD=ON -DENABLE_VULKAN=OFF -DENABLE_LUAJIT=OFF -DENABLE_DISCORD_RPC=OFF -DENABLE_METAL=OFF",
+      "abis": [
+        "arm64-v8a"
+      ],
+      "extended": true
+    },
+    {
+      "core": "dolphin",
+      "repo": "https://github.com/libretro/dolphin",
+      "commit": "a91b1d311d4d57757282e0644a63bfd100d8d232",
+      "build": "cmake",
+      "args": "-DLIBRETRO=ON -DENABLE_LTO=OFF",
+      "abis": [
+        "arm64-v8a",
+        "x86_64"
+      ],
+      "extended": true
+    },
+    {
+      "core": "cemu",
+      "repo": "https://github.com/WizzardSK/cemu-libretro",
+      "commit": "a6bcbe6b73b41a4d6b05c0a3622241411acf7602",
+      "build": "cmake",
+      "args": "-DENABLE_LIBRETRO=ON -DENABLE_BLUEZ=OFF -DENABLE_FERAL_GAMEMODE=OFF -DENABLE_WAYLAND=OFF -DENABLE_DISCORD_RPC=OFF -DVCPKG_HOST_TRIPLET=x64-linux",
+      "abis": [
+        "arm64-v8a",
+        "x86_64"
+      ],
+      "abi_args": {
+        "arm64-v8a": "-DVCPKG_TARGET_TRIPLET=arm64-android",
+        "x86_64": "-DVCPKG_TARGET_TRIPLET=x64-android"
+      },
+      "extended": true
+    },
+    {
+      "core": "ppsspp",
+      "repo": "https://github.com/hrydgard/ppsspp",
+      "commit": "1cd06ff11dd7010123e0b5ada244f76597c42ea5",
+      "build": "cmake",
+      "args": "-DLIBRETRO=ON",
+      "extended": true
+    },
+    {
+      "core": "flycast",
+      "repo": "https://github.com/flyinghead/flycast",
+      "commit": "12a7f18b81c0c7dc2e52c29b6615c7fe0d496ee5",
+      "build": "cmake",
+      "args": "-DLIBRETRO=ON -DUSE_OPENMP=OFF -DANDROID_STL=c++_static -DANDROID_ARM_MODE=arm -DANDROID_WEAK_API_DEFS=ON",
+      "extended": true
+    },
+    {
+      "core": "mednafen_saturn",
+      "repo": "https://github.com/libretro/beetle-saturn-libretro",
+      "commit": "7126d65b83b65b4316736434ecca2f5ff4f1a3dd",
+      "build": "ndk",
+      "jni": ".",
+      "extended": true
+    },
+    {
+      "core": "yabasanshiro",
+      "repo": "https://github.com/libretro/yabause",
+      "commit": "10f50efbbfed745757ce20d34ced7c80f06c68dd",
+      "build": "ndk",
+      "jni": "yabause/src/libretro",
+      "extended": true
+    },
+    {
+      "core": "yabause",
+      "repo": "https://github.com/libretro/yabause",
+      "commit": "8926b0c6c347f8c5c755911ddb0ac695420ffbf8",
+      "build": "ndk",
+      "jni": "yabause/src/libretro",
+      "extended": true
+    },
+    {
+      "core": "ymir",
+      "repo": "https://github.com/warmenhoven/Emir",
+      "commit": "8174cbbeea4070654841cdd4604361b3eee8fdd1",
+      "build": "cmake",
+      "args": "-DYmir_ENABLE_LIBRETRO=ON -DYmir_DEV_BUILD=OFF -DYmir_ENABLE_GPU_API=OFF -DYmir_AVX2=OFF",
+      "abis": [
+        "arm64-v8a",
+        "x86_64"
+      ],
+      "extended": true
+    },
+    {
+      "core": "armsx2",
+      "repo": "https://github.com/ARMSX2/ARMSX2",
+      "commit": "2232a8133a5ccaab539110205b2a15fe902ce220",
+      "build": "cmake",
+      "args": "-DENABLE_LIBRETRO=ON -DENABLE_QT_UI=OFF -DENABLE_SDL_FRONTEND=OFF -DENABLE_GSRUNNER=OFF -DENABLE_TESTS=OFF -DENABLE_RECOMPILER_TEST_HOOKS=OFF -DENABLE_SETCAP=OFF -DUSE_BACKTRACE=OFF -DX11_API=OFF -DWAYLAND_API=OFF -DDISABLE_ADVANCE_SIMD=TRUE -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON",
+      "abis": [
+        "arm64-v8a"
+      ],
+      "extended": true
+    },
+    {
+      "core": "vice_x64sc",
+      "repo": "https://github.com/libretro/vice-libretro",
+      "commit": "1aee3768761e4dba73e794642d5bc71515618dee",
+      "build": "ndk",
+      "jni": ".",
+      "env": "EMUTYPE=x64sc",
+      "extended": true
+    },
+    {
+      "core": "vice_x64",
+      "repo": "https://github.com/libretro/vice-libretro",
+      "commit": "1aee3768761e4dba73e794642d5bc71515618dee",
+      "build": "ndk",
+      "jni": ".",
+      "env": "EMUTYPE=x64",
+      "extended": true
+    },
+    {
+      "core": "vice_xscpu64",
+      "repo": "https://github.com/libretro/vice-libretro",
+      "commit": "1aee3768761e4dba73e794642d5bc71515618dee",
+      "build": "ndk",
+      "jni": ".",
+      "env": "EMUTYPE=xscpu64",
+      "extended": true
+    },
+    {
+      "core": "vice_x128",
+      "repo": "https://github.com/libretro/vice-libretro",
+      "commit": "1aee3768761e4dba73e794642d5bc71515618dee",
+      "build": "ndk",
+      "jni": ".",
+      "env": "EMUTYPE=x128",
+      "extended": true
+    },
+    {
+      "core": "vice_xvic",
+      "repo": "https://github.com/libretro/vice-libretro",
+      "commit": "1aee3768761e4dba73e794642d5bc71515618dee",
+      "build": "ndk",
+      "jni": ".",
+      "env": "EMUTYPE=xvic",
+      "extended": true
+    },
+    {
+      "core": "vice_xplus4",
+      "repo": "https://github.com/libretro/vice-libretro",
+      "commit": "1aee3768761e4dba73e794642d5bc71515618dee",
+      "build": "ndk",
+      "jni": ".",
+      "env": "EMUTYPE=xplus4",
+      "extended": true
+    },
+    {
+      "core": "vice_xpet",
+      "repo": "https://github.com/libretro/vice-libretro",
+      "commit": "1aee3768761e4dba73e794642d5bc71515618dee",
+      "build": "ndk",
+      "jni": ".",
+      "env": "EMUTYPE=xpet",
+      "extended": true
+    },
+    {
+      "core": "vice_xcbm2",
+      "repo": "https://github.com/libretro/vice-libretro",
+      "commit": "1aee3768761e4dba73e794642d5bc71515618dee",
+      "build": "ndk",
+      "jni": ".",
+      "env": "EMUTYPE=xcbm2",
+      "extended": true
+    },
+    {
+      "core": "vice_xcbm5x0",
+      "repo": "https://github.com/libretro/vice-libretro",
+      "commit": "1aee3768761e4dba73e794642d5bc71515618dee",
+      "build": "ndk",
+      "jni": ".",
+      "env": "EMUTYPE=xcbm5x0",
+      "extended": true
+    },
+    {
+      "core": "prosystem",
+      "repo": "https://github.com/libretro/prosystem-libretro",
+      "commit": "8a88014287c7a01cd568067e5a557d0a2b2a051f",
+      "build": "ndk",
+      "jni": ".",
+      "extended": true
+    },
+    {
+      "core": "a5200",
+      "repo": "https://github.com/libretro/a5200",
+      "commit": "40c6f2f1ad4a3145b328d5baaf010fae6c7e752b",
+      "build": "ndk",
+      "jni": ".",
+      "extended": true
     }
   ]
 }
