@@ -19,6 +19,9 @@ fn main() {
     let threads = option("--threads=", 0);
     let preset = option("--preset=", 1);
     let target_fps = option("--target=", 60);
+    let algo = option("--algo=", 0);
+    let min_novel_percent = option("--min-novel-percent=", 50);
+    assert!(matches!(algo, 0 | 13 | 21 | 23) && min_novel_percent <= 100);
     let no_checksum = a.iter().any(|s| s == "--no-checksum");
     let realtime = a.iter().any(|s| s == "--require-realtime");
     assert!(count > 0 && cycles > 0, "frames and cycles must be positive");
@@ -36,7 +39,7 @@ fn main() {
         threads,
         artifacts: 0,
         scene: 0,
-        algo: if cycles > 1 { [13, 21, 23][cycle as usize % 3] } else { 0 },
+        algo: if algo != 0 { algo } else if cycles > 1 { [13, 21, 23][cycle as usize % 3] } else { 0 },
         block: 0,
         overlap: 0,
         pel: 0,
@@ -50,6 +53,15 @@ fn main() {
     let start = Instant::now();
     let mut checksum = 0u64;
     let mut processing_us = 0u128;
+    let mut timings = Vec::with_capacity(count as usize);
+    let mut outputs = 0u64;
+    let mut last_pts = None;
+    let mut monotonic = true;
+    let mut record = |pts: i64| {
+        if last_pts.is_some_and(|last| pts <= last) { monotonic = false; }
+        last_pts = Some(pts);
+        outputs += 1;
+    };
     for n in 0..count {
         for y in 0..h {
             for x in 0..w {
@@ -58,21 +70,29 @@ fn main() {
         }
         let processing = Instant::now();
         engine.push(&input, n as i64 * 1_000_000 / source_fps as i64).unwrap();
-        while engine.receive(&mut output, false).unwrap().is_some() {
+        while let Some(pts) = engine.receive(&mut output, false).unwrap() {
+            record(pts);
             if !no_checksum {
                 checksum = checksum.wrapping_add(output.iter().map(|x| *x as u64).sum::<u64>());
             }
         }
-        processing_us += processing.elapsed().as_micros();
+        let elapsed = processing.elapsed().as_micros();
+        timings.push(elapsed);
+        processing_us += elapsed;
     }
     let drain = Instant::now();
-    while engine.receive(&mut output, true).unwrap().is_some() {
+    while let Some(pts) = engine.receive(&mut output, true).unwrap() {
+        record(pts);
         if !no_checksum {
             checksum = checksum.wrapping_add(output.iter().map(|x| *x as u64).sum::<u64>());
         }
     }
     processing_us += drain.elapsed().as_micros();
     let stats = engine.stats();
+    timings.sort_unstable();
+    let percentile = |p: usize| timings[(timings.len() * p).div_ceil(100).saturating_sub(1)] as f64 / 1000.0;
+    let expected = (u64::from(count) * u64::from(target_fps)).div_ceil(u64::from(source_fps));
+    let output_fps = outputs as f64 * 1_000_000.0 / processing_us.max(1) as f64;
     let compute_ms = processing_us as f64 / 1000.0;
     let input_fps = count as f64 * 1_000_000.0 / processing_us.max(1) as f64;
     let novel_fps = stats.interpolated_frames as f64 * 1_000_000.0 / processing_us.max(1) as f64;
@@ -80,14 +100,19 @@ fn main() {
         "cycle={cycle} {w}x{h} {source_fps}->{target_fps} threads={threads} preset={preset} init_ms={init_ms:.2} wall_ms={} processing_ms={compute_ms:.2} input_fps={input_fps:.2} novel_fps={novel_fps:.2} checksum={checksum} {:?}",
         start.elapsed().as_millis(), stats
     );
+    println!("outputs={outputs}/{expected} output_fps={output_fps:.2} push_drain_p50_ms={:.2} p95_ms={:.2} p99_ms={:.2} monotonic={monotonic}", percentile(50), percentile(95), percentile(99));
     if realtime {
         assert!(no_checksum, "--require-realtime requires --no-checksum");
         assert_eq!(stats.bypass_reason, 0, "protective bypass is not real-time SVP");
-        assert!(stats.interpolated_frames > 0, "no interpolation");
+        assert!(monotonic && outputs == expected && outputs == stats.output_frames, "incorrect output cadence");
+        if backend != 0 { assert_eq!(stats.backend, backend, "requested backend fell back"); }
+        let nominal_novel = expected.saturating_sub(u64::from(count)).saturating_sub(u64::from(target_fps.div_ceil(source_fps)));
+        assert!(stats.interpolated_frames > 0 && stats.interpolated_frames * 100 >= nominal_novel * u64::from(min_novel_percent), "insufficient novel pictures");
         assert!(input_fps >= source_fps as f64, "below source cadence");
     }
     if a.iter().any(|s| s == "--verify") {
-        assert_eq!(engine.stats().backend, backend);
+        if backend != 0 { assert_eq!(engine.stats().backend, backend); }
+        assert!(monotonic && outputs == expected, "incorrect output cadence");
         assert!(engine.stats().interpolated_frames > 0, "no novel output frames");
         assert_eq!(engine.stats().bypass_reason, 0, "unexpected bypass");
     }
