@@ -90,6 +90,31 @@ int main(void) {
             false,NULL,0,&merged_size));
     assert(!ambient_fel_dual_sample(bl4,sizeof(bl4),4,el2,sizeof(el2),2,NULL,0,
         false,merged,20,&merged_size));
+    // Sequential offsets, chunk switch, backward/forward seek and overflow.
+    const uint32_t sizes[]={3,7,9,11,15,20};
+    struct ambient_fel_offset_cursor cursor={0};
+    uint64_t offset; uint32_t bytes;
+    assert(ambient_fel_sample_offset(&cursor,0,0,4,100,0,6,0,sizes,&offset,&bytes));
+    assert(offset==100&&bytes==3&&cursor.sample==1);
+    assert(ambient_fel_sample_offset(&cursor,0,0,4,100,1,6,0,sizes,&offset,&bytes));
+    assert(offset==103&&bytes==7);
+    assert(ambient_fel_sample_offset(&cursor,0,0,4,100,3,6,0,sizes,&offset,&bytes));
+    assert(offset==119&&bytes==11);
+    assert(ambient_fel_sample_offset(&cursor,0,0,4,100,1,6,0,sizes,&offset,&bytes));
+    assert(offset==103&&bytes==7);
+    assert(ambient_fel_sample_offset(&cursor,1,4,2,1000,5,6,0,sizes,&offset,&bytes));
+    assert(offset==1015&&bytes==20);
+    assert(ambient_fel_sample_offset(&cursor,2,0,6,1000,5,6,8,NULL,&offset,&bytes));
+    assert(offset==1040&&bytes==8);
+    assert(!ambient_fel_sample_offset(&cursor,3,4,3,100,5,6,0,sizes,&offset,&bytes));
+    assert(!ambient_fel_sample_offset(&cursor,3,4,2,UINT64_MAX-2,5,6,0,sizes,&offset,&bytes));
+    assert(!ambient_fel_sample_offset(&cursor,3,0,6,UINT64_MAX-3,1,6,8,NULL,&offset,&bytes));
+    uint8_t wrong_rap[sizeof(el2)];memcpy(wrong_rap,el2,sizeof(el2));wrong_rap[2]=0x02;
+    assert(!ambient_fel_dual_sample(bl4,sizeof(bl4),4,wrong_rap,sizeof(wrong_rap),2,
+        NULL,0,false,NULL,0,&merged_size));
+    wrong_rap[2]=0x26;wrong_rap[4]=0x10;
+    assert(!ambient_fel_dual_sample(bl4,sizeof(bl4),4,wrong_rap,sizeof(wrong_rap),2,
+        NULL,0,false,NULL,0,&merged_size));
     struct ambient_rpu_pts_queue q={0};
     int a=1,b=2,c=3;
     assert(ambient_rpu_pts_insert(&q,30,&a));
