@@ -129,6 +129,13 @@ static void visit_output(void *context, const uint8_t *data, size_t len) {
 static bool receive(struct mp_filter *f) {
     struct priv *p = f->priv;
     if (!p->engine || !p->reference) return false;
+    if (p->api.ready) {
+        int ready = p->api.ready(p->engine, p->eof);
+        if (ready <= 0) {
+            if (ready < 0) p->api.bypass(p->engine, 3);
+            return false;
+        }
+    }
     struct mp_image *out = output_image(p);
     if (!out) { p->api.bypass(p->engine, 3); return false; }
     bool direct = packed_output(out, p->width, p->height, p->bytes);
