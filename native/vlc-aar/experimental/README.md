@@ -1028,3 +1028,13 @@ the attached display before rebuilding the Android/GL instance. An HLG-only
 or SDR display needs SDR tone mapping on that fallback, not stale native
 HDR preference. Added JVM policy tests. Latest CI and display transition
 playback remain to be verified.
+
+Explicit characterized HDR10+ output now fails closed if the actual frame
+has no complete metadata, incompatible geometry/LUTs, or failed spatial
+mapping. It cannot silently present global projection as successful
+explicit spatial HDR. SDR retains its documented global fallback. Explicit
+HDR admission requires the HDR10+ option and excludes the competing DOVI
+route. Failed experimental AHB frames clear to black, remain counted as
+dropped, and the existing progress watchdog can trigger Android fallback
+on persistent failures. GPU regressions exercise mapped, global and reject
+paths. Latest CI and real device playback remain pending.

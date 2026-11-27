@@ -579,6 +579,21 @@ int main(void)
     img.crop.x0=1.f;
     assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
     assert(img.planes[0].texture==input && img.crop.x0==1.f);
+    assert(ambient_hdrplus_spatial_apply(gpu,log,&state,&img,&pq_target,&m,true,true)
+        ==AMBIENT_HDRPLUS_SPATIAL_REJECT);
+    assert(ambient_hdrplus_spatial_apply(gpu,log,&state,&img,&target,&m,true,false)
+        ==AMBIENT_HDRPLUS_SPATIAL_GLOBAL);
+    img.crop.x0=0.f;
+    assert(ambient_hdrplus_spatial_apply(gpu,log,&state,&img,&pq_target,NULL,true,true)
+        ==AMBIENT_HDRPLUS_SPATIAL_REJECT);
+    assert(ambient_hdrplus_spatial_apply(gpu,log,&state,&img,&pq_target,&m,false,true)
+        ==AMBIENT_HDRPLUS_SPATIAL_REJECT);
+    assert(ambient_hdrplus_spatial_apply(gpu,log,&state,&img,&target,NULL,true,false)
+        ==AMBIENT_HDRPLUS_SPATIAL_GLOBAL);
+    assert(img.planes[0].texture==input);
+    assert(ambient_hdrplus_spatial_apply(gpu,log,&state,&img,&pq_target,&m,true,true)
+        ==AMBIENT_HDRPLUS_SPATIAL_MAPPED);
+    assert(img.planes[0].texture==state.output);
     pl_gpu_finish(gpu);
     pl_tex_destroy(gpu,&readback);
     ambient_hdrplus_spatial_destroy(gpu,&state);

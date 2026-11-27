@@ -386,3 +386,20 @@ fail:
     pl_dispatch_abort(s->dispatch,&sh);
     return false;
 }
+
+/* Explicit characterized HDR is an opt-in spatial contract. SDR retains
+ * its documented global projection fallback. */
+enum ambient_hdrplus_spatial_result {
+    AMBIENT_HDRPLUS_SPATIAL_GLOBAL,
+    AMBIENT_HDRPLUS_SPATIAL_MAPPED,
+    AMBIENT_HDRPLUS_SPATIAL_REJECT,
+};
+static inline enum ambient_hdrplus_spatial_result ambient_hdrplus_spatial_apply(
+    pl_gpu gpu, pl_log log, struct ambient_hdrplus_spatial *s,
+    struct pl_frame *img, const struct pl_frame *target,
+    const struct ambient_hdrplus *m, bool eligible, bool explicit_hdr)
+{
+    if(eligible && m && ambient_hdrplus_spatial_render(gpu,log,s,img,target,m))
+        return AMBIENT_HDRPLUS_SPATIAL_MAPPED;
+    return explicit_hdr ? AMBIENT_HDRPLUS_SPATIAL_REJECT : AMBIENT_HDRPLUS_SPATIAL_GLOBAL;
+}
