@@ -55,6 +55,9 @@ done
 cp "$TMP/ambient_sample_spv.h" "$dest/ambient_sample_spv.h"
 cp "$SRC/hdr10plus_payload.h" "$VLC/modules/codec/omxil/hdr10plus_payload.h"
 cp "$SRC/dovi_rpu_au.h" "$VLC/modules/codec/omxil/dovi_rpu_au.h"
+for file in hdr10plus_spatial.h hdr10plus_spatial_geometry.h; do
+    cp "$SRC/$file" "$dest/$file"
+done
 for file in ambient_dovi_parser.h dovi_vlc_bridge.h hdr10plus_payload.h hdr10plus_vlc_bridge.h; do
     cp "$SRC/$file" "$VLC/modules/codec/omxil/$file"
     cp "$SRC/$file" "$dest/$file"

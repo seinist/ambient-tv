@@ -54,7 +54,7 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
      });
      free(device_name);
      if (!sys->vulkan)
-@@ -196,6 +224,17 @@
+@@ -196,6 +224,19 @@
              ALLOWSW_TEXT, ALLOWSW_LONGTEXT)
  
      set_section("Performance tuning", NULL)
@@ -68,6 +68,8 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
 +            "Verify native P010 identity sampling before libplacebo color conversion.")
 +    add_bool("vk-ambient-dovi-ahb", false, "Experimental Dolby Vision profiles 5/8 AHB",
 +            "Decode single-layer Main10 base layer and apply timestamp-bound RPU before RGB conversion.")
++    add_bool("vk-ambient-hdr10plus-spatial", false, "Experimental HDR10+ local-window tone mapping",
++            "Apply local-window OOTFs to RGB PQ AHB frames before SDR gamut conversion.")
 +#endif
      add_bool("vk-async-xfer", pl_vulkan_default_params.async_transfer,
              ASYNC_XFER_TEXT, ASYNC_XFER_LONGTEXT)

@@ -26,6 +26,9 @@ done
     "$SRC/test_hdr10plus_payload.c" -lm -o "$TMP/test_hdr10plus_payload"
 "$TMP/test_hdr10plus_payload"
 "${CC:-clang}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+    "$SRC/test_hdr10plus_spatial.c" -lm -o "$TMP/test_hdr10plus_spatial"
+"$TMP/test_hdr10plus_spatial"
+"${CC:-clang}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
     "$SRC/test_dovi_rpu_au.c" -o "$TMP/test_dovi_rpu_au"
 "$TMP/test_dovi_rpu_au"
 GLSLC="$NDK/shader-tools/$host/glslc"
