@@ -740,3 +740,62 @@ synchronization and compatible output presentation. The upstream CPU
 motion analyser needs host I420 data, so a GPU-only path also needs a
 validated hardware motion-analysis implementation. No such path is
 silently enabled by these optional APIs.
+
+
+Experimental native GPU-resident Vulkan transport
+--------------------------------------------------
+The resident module records bidirectional block motion estimation and
+multi-phase SDR synthesis directly on renderer-owned GPU images. The
+native ash/Naga implementation (ambientsvp_vulkan.h) borrows the actual
+VkInstance, VkPhysicalDevice and VkDevice and records into an already
+recording caller command buffer. No pixel upload, CPU mapping, motion
+readback, or CPU synthesis is performed. Motion fields are device-local
+storage buffers; the caller supplies R8/RG8 planar/NV12 image views and
+a distinct RGBA8 storage output. Visible dimensions, padding, color
+matrix/range and supported chroma siting are explicit. Up to eight
+phases share one motion field; four pairs may be outstanding. Each
+pair's resources survive session destruction and are retired only
+after its submitted fence signals or the device is confirmed lost.
+
+The MPV filter now has an EXPLICIT EXPERIMENTAL hwresident=1 option:
+    --vf=ambientsvp=source=24:fps=60:hwresident=1
+With the pinned libavutil 61 and Vulkan-enabled MPV, eligible actual
+AV_PIX_FMT_VULKAN decoder frames are processed on the decoder/renderer's
+same VkDevice. FFmpeg frame locks and unique timeline semaphore waits
+and signals coordinate access, including the output AVVkFramesContext
+pool. Inputs, image views, command pools, descriptors and output frame
+references are retained until the job fence retires. No queue-wide
+idle wait or CPU pixel transfer on the normal resident path. Queue
+family ownership, sync2/timeline features, format/usage, color, cadence
+and in-flight bounds are checked before submission. Unsupported input
+falls back to the existing software transfer/passthrough. Seek and EOF
+are handled separately; the last source is preserved at fallback.
+If driver retirement fails at teardown, the adapter retains the state
+and library rather than freeing in-flight resources. That emergency
+path needs physical-device testing.
+
+This is a distinct integer-motion experimental algorithm, not the
+pinned upstream SVP search/synthesis parity path. Regular presets and
+app defaults remain unchanged; hardware-resident output ticks are not
+reported as proven novel frames. No automatic enablement. The native
+Vulkan CI test creates GPU images on a borrowed device, records three
+phases, verifies the fence lifetime and reads the output only in the
+test. The MPV helper is syntax-checked against the pinned FFmpeg public
+ABI; full player builds and physical playback/quality tests remain
+required.
+
+Android MediaCodec/VLC zero-copy is NOT complete. The current MPV
+MediaCodec AImageReader is owned by a GLES renderer and acquires its
+PRIVATE hardware buffer only after releasing AVMediaCodecBuffer at the
+mapper; an opaque AVMediaCodecBuffer is not an AVVkFrame or AHB. A
+producer/renderer bridge must preserve one-time release and acquire
+semantics, imported AHardwareBuffer memory/YCbCr external-format
+sampling, foreign queue ownership and acquire/release sync_file
+semaphores. The output must then be presented through a compatible
+Android renderer. The separate CPU-mappable AHB ABI remains available,
+but is not the native GPU-only path. VLC's software I420/NV12 filter
+also needs a hardware producer/renderer integration. wgpu 24's
+create_texture_from_hal tracks imported images as UNINITIALIZED; the
+native Vulkan implementation avoids guessing external image layouts
+through that API. These boundaries prevent claiming complete Android
+decoder-to-display zero-copy from the new MPV Vulkan transport alone.
