@@ -1,4 +1,4 @@
-//! Exact integer SAD/SATD batch primitive for a future Vulkan motion analyser.
+//! Exact SAD/SATD batch primitive for integer and subpixel motion candidates.
 //! It deliberately does not replace upstream search stages: those require
 //! pyramid, predictor, search ordering, penalties and border parity.
 use wgpu::util::DeviceExt;
@@ -25,21 +25,23 @@ pub struct Cost {
 }
 
 impl Candidate {
-    fn valid(self, width: u32, height: u32) -> bool {
-        // Interior pel=1 I420 blocks only. Padding and fractional pel are
-        // handled by later kernels, not by implicit edge clamping here.
-        let inside = |x: i64, y: i64, w: u32, h: u32| {
-            x >= 0 && y >= 0
-                && x + i64::from(self.width) <= i64::from(w)
-                && y + i64::from(self.height) <= i64::from(h)
-        };
-        matches!(self.width, 8 | 16 | 32)
-            && matches!(self.height, 8 | 16 | 32)
-            && self.x % 2 == 0 && self.y % 2 == 0
-            && width % 2 == 0 && height % 2 == 0
-            && inside(i64::from(self.x), i64::from(self.y), width, height)
-            && inside(i64::from(self.x) + i64::from(self.dx),
-                      i64::from(self.y) + i64::from(self.dy), width, height)
+    fn valid(self, width: u32, height: u32, pel: u32) -> bool {
+        // Candidate displacement is measured in pel units. Chroma shifts
+        // motion before subpel indexing, matching the upstream PlaneView.
+        if !matches!(pel, 1 | 2 | 4) || !matches!(self.width, 8 | 16 | 32)
+            || !matches!(self.height, 8 | 16 | 32)
+            || self.x % 2 != 0 || self.y % 2 != 0 || width % 2 != 0 || height % 2 != 0
+        { return false; }
+        for shift in [0,1] {
+            let x = i64::from(self.x >> shift);
+            let y = i64::from(self.y >> shift);
+            let (bw,bh)=(i64::from(self.width>>shift),i64::from(self.height>>shift));
+            let (w,h)=(i64::from(width>>shift),i64::from(height>>shift));
+            let rx=x+i64::from(self.dx>>shift).div_euclid(i64::from(pel));
+            let ry=y+i64::from(self.dy>>shift).div_euclid(i64::from(pel));
+            if x+bw>w || y+bh>h || rx<0 || ry<0 || rx+bw>w || ry+bh>h { return false; }
+        }
+        true
     }
 }
 
@@ -64,7 +66,7 @@ fn tile_satd(mut diff: impl FnMut(usize,usize)->i32) -> u32 {
 /// CPU reference for the raw per-plane metrics, not upstream vector selection.
 pub fn reference_cost(a: &[u8], b: &[u8], width: u32, height: u32, c: Candidate) -> Option<Cost> {
     let len = (width as usize).checked_mul(height as usize)?.checked_mul(3)?.checked_div(2)?;
-    if a.len() != len || b.len() != len || !c.valid(width, height) { return None; }
+    if a.len() != len || b.len() != len || !c.valid(width, height, 1) { return None; }
     let (a,b) = if c.reverse { (b,a) } else { (a,b) };
     let luma = width as usize * height as usize;
     let mut result = [0;3];
@@ -121,18 +123,20 @@ impl MotionCostKernel {
 
     /// Enqueue one independent workgroup per candidate on the caller's
     /// queue. Source textures use the existing packed SVP layout (Y above
-    /// side-by-side U/V); no additional pixel upload is needed. The output
+    /// side-by-side U/V), one array layer per exact upstream subpixel phase.
+    /// A one-layer pel=1 source can reuse the existing synthesis texture. The output
     /// is vec4<u32> (Y, U, V, sum) per candidate, ready for later GPU stages.
     pub fn encode(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder,
                   a: &wgpu::Texture, b: &wgpu::Texture,
                   width: u32, height: u32, candidates: &[Candidate])
                   -> Result<wgpu::Buffer, String> {
+        let pel = match a.depth_or_array_layers() { 1 => 1, 4 => 2, 16 => 4, _ => return Err("unsupported subpixel array".into()) };
         if width == 0 || height == 0 || width > 3840 || height > 2160
             || a.width() != width || b.width() != width
             || a.height() != height*3/2 || b.height() != height*3/2
             || a.format() != wgpu::TextureFormat::R8Unorm || b.format() != a.format()
             || a.dimension() != wgpu::TextureDimension::D2 || b.dimension() != a.dimension()
-            || a.depth_or_array_layers() != 1 || b.depth_or_array_layers() != 1
+            || b.depth_or_array_layers() != a.depth_or_array_layers()
             || a.sample_count() != 1 || b.sample_count() != 1
             || !a.usage().contains(wgpu::TextureUsages::TEXTURE_BINDING)
             || !b.usage().contains(wgpu::TextureUsages::TEXTURE_BINDING)
@@ -140,7 +144,7 @@ impl MotionCostKernel {
             || candidates.len() > device.limits().max_compute_workgroups_per_dimension as usize
             || candidates.len() as u64 * 32 > u64::from(device.limits().max_storage_buffer_binding_size)
             || candidates.len() as u64 * 32 > device.limits().max_buffer_size
-            || candidates.iter().any(|c| !c.valid(width,height))
+            || candidates.iter().any(|c| !c.valid(width,height,pel))
         { return Err("unsupported motion candidate batch".into()); }
         let bytes: Vec<u8> = candidates.iter().flat_map(|c| {
             [c.x as i32,c.y as i32,c.dx,c.dy,c.width as i32,c.height as i32,
@@ -156,8 +160,12 @@ impl MotionCostKernel {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
-        let av = a.create_view(&Default::default());
-        let bv = b.create_view(&Default::default());
+        let view = wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            mip_level_count: Some(1), ..Default::default()
+        };
+        let av = a.create_view(&view);
+        let bv = b.create_view(&view);
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None, layout: &self.pipeline.get_bind_group_layout(0),
             entries: &[
@@ -179,21 +187,21 @@ impl MotionCostKernel {
 
 const WGSL: &str = r#"
 struct Candidate { x:i32,y:i32,dx:i32,dy:i32,w:i32,h:i32,reverse:i32,satd:i32 };
-@group(0) @binding(0) var a: texture_2d<f32>;
-@group(0) @binding(1) var b: texture_2d<f32>;
+@group(0) @binding(0) var a: texture_2d_array<f32>;
+@group(0) @binding(1) var b: texture_2d_array<f32>;
 @group(0) @binding(2) var<storage,read> candidates: array<Candidate>;
 @group(0) @binding(3) var<storage,read_write> costs: array<vec4u>;
 var<workgroup> partial: array<vec3u,64>;
 
-fn pixel(tex: texture_2d<f32>, p:vec2i) -> i32 {
-    return i32(round(textureLoad(tex,p,0).x*255.0));
+fn pixel(tex: texture_2d_array<f32>, p:vec2i, layer:i32) -> i32 {
+    return i32(round(textureLoad(tex,p,layer,0).x*255.0));
 }
-fn signed_diff(p:vec2i,q:vec2i,reverse:bool) -> i32 {
-    if reverse { return pixel(b,p)-pixel(a,q); }
-    return pixel(a,p)-pixel(b,q);
+fn signed_diff(p:vec2i,q:vec2i,layer:i32,reverse:bool) -> i32 {
+    if reverse { return pixel(b,p,0)-pixel(a,q,layer); }
+    return pixel(a,p,0)-pixel(b,q,layer);
 }
-fn diff(p:vec2i,q:vec2i,reverse:bool) -> u32 {
-    return u32(abs(signed_diff(p,q,reverse)));
+fn diff(p:vec2i,q:vec2i,layer:i32,reverse:bool) -> u32 {
+    return u32(abs(signed_diff(p,q,layer,reverse)));
 }
 fn hadamard(p:vec4i)->vec4i {
     let a=p.x+p.y;
@@ -202,13 +210,13 @@ fn hadamard(p:vec4i)->vec4i {
     let d=p.z-p.w;
     return vec4i(a+b,a-b,c+d,c-d);
 }
-fn satd_tile(p:vec2i,q:vec2i,reverse:bool)->u32 {
+fn satd_tile(p:vec2i,q:vec2i,layer:i32,reverse:bool)->u32 {
     var rows:array<vec4i,4>;
     for(var y=0;y<4;y++){
         var row=vec4i(0);
         for(var x=0;x<4;x++){
             let offset=vec2i(x,y);
-            row[x]=signed_diff(p+offset,q+offset,reverse);
+            row[x]=signed_diff(p+offset,q+offset,layer,reverse);
         }
         rows[y]=hadamard(row);
     }
@@ -225,34 +233,44 @@ fn cost(@builtin(workgroup_id) group:vec3u,@builtin(local_invocation_index) lane
     let size=vec2i(textureDimensions(a));
     let height=size.y*2/3;
     let src=vec2i(c.x,c.y);
-    let dst=src+vec2i(c.dx,c.dy);
+    let layers=textureNumLayers(a);
+    let bits=select(select(0u,1u,layers==4u),2u,layers==16u);
+    let pel=1i<<bits;
+    let mv=vec2i(c.dx,c.dy);
+    let cmv=mv>>vec2u(1);
+    let dst=src+(mv>>vec2u(bits));
+    let cdst=src/2+(cmv>>vec2u(bits));
+    let phase=mv&vec2i(pel-1);
+    let cphase=cmv&vec2i(pel-1);
+    let layer=phase.x+phase.y*pel;
+    let clayer=cphase.x+cphase.y*pel;
     var sum=vec3u(0);
     if c.satd!=0 {
         let tiles=c.w/4;
         for(var i=lane;i<u32(tiles*(c.h/4));i+=64u){
             let offset=vec2i(i32(i)%tiles,i32(i)/tiles)*4;
-            sum.x+=satd_tile(src+offset,dst+offset,c.reverse!=0);
+            sum.x+=satd_tile(src+offset,dst+offset,layer,c.reverse!=0);
         }
         let ct=c.w/8;
         for(var i=lane;i<u32(ct*(c.h/8));i+=64u){
             let offset=vec2i(i32(i)%ct,i32(i)/ct)*4;
             let p=src/2+offset+vec2i(0,height);
-            let q=dst/2+offset+vec2i(0,height);
-            sum.y+=satd_tile(p,q,c.reverse!=0);
-            sum.z+=satd_tile(p+vec2i(size.x/2,0),q+vec2i(size.x/2,0),c.reverse!=0);
+            let q=cdst+offset+vec2i(0,height);
+            sum.y+=satd_tile(p,q,clayer,c.reverse!=0);
+            sum.z+=satd_tile(p+vec2i(size.x/2,0),q+vec2i(size.x/2,0),clayer,c.reverse!=0);
         }
     } else {
         for(var i=lane;i<u32(c.w*c.h);i+=64u){
             let offset=vec2i(i32(i)%c.w,i32(i)/c.w);
-            sum.x+=diff(src+offset,dst+offset,c.reverse!=0);
+            sum.x+=diff(src+offset,dst+offset,layer,c.reverse!=0);
         }
         let chroma_width=c.w/2;
         for(var i=lane;i<u32(chroma_width*(c.h/2));i+=64u){
             let offset=vec2i(i32(i)%chroma_width,i32(i)/chroma_width);
             let p=src/2+offset+vec2i(0,height);
-            let q=dst/2+offset+vec2i(0,height);
-            sum.y+=diff(p,q,c.reverse!=0);
-            sum.z+=diff(p+vec2i(size.x/2,0),q+vec2i(size.x/2,0),c.reverse!=0);
+            let q=cdst+offset+vec2i(0,height);
+            sum.y+=diff(p,q,clayer,c.reverse!=0);
+            sum.z+=diff(p+vec2i(size.x/2,0),q+vec2i(size.x/2,0),clayer,c.reverse!=0);
         }
     }
     partial[lane]=sum;
