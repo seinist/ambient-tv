@@ -125,7 +125,31 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      else
          QueueAImagePicture(p_dec, avctx, image, fence_fd);
      vlc_mutex_unlock(&p_sys->lock);
-@@ -1114,10 +1166,20 @@
+@@ -945,9 +997,10 @@
+                               AWindowHandler *awh, bool need_gpu)
+ {
+     decoder_sys_t *p_sys = p_dec->p_sys;
+-    struct aimage_reader_api *air_api = AWindowHandler_getAImageReaderApi(awh);
++    struct aimage_reader_api *air_api = p_sys->video.ambient_ahb ?
++        AWindowHandler_getGpuAImageReaderApi(awh) : AWindowHandler_getAImageReaderApi(awh);
+     struct asurface_control_api *asc_api = AWindowHandler_getASurfaceControlApi(awh);
+-    if (air_api == NULL || asc_api == NULL)
++    if (air_api == NULL || (!p_sys->video.ambient_ahb && asc_api == NULL))
+         return VLC_EGENERIC;
+ 
+     int32_t width = 1, height = 1; /* Ignored by MediaCodec */
+@@ -1004,7 +1057,9 @@
+         vlc_video_context_GetPrivate(p_sys->video.ctx, VLC_VIDEO_CONTEXT_AWINDOW);
+     avctx->dec_opaque = NULL;
+     avctx->air_api = air_api;
+-    avctx->asc_api = asc_api;
++    // The isolated Vulkan path never exposes this AImageReader as a
++    // SurfaceControl presentation route. Its callbacks own all AImages.
++    avctx->asc_api = p_sys->video.ambient_ahb ? NULL : asc_api;
+     avctx->air = reader;
+     avctx->render = NULL;
+     avctx->render_ts = NULL;
+@@ -1114,10 +1169,20 @@
          || (!p_sys->api.b_support_rotation && p_dec->fmt_out.video.orientation != ORIENT_NORMAL)
          || !can_set_video_layout;
  
@@ -146,7 +170,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      if (ret == VLC_SUCCESS)
      {
          vlc_decoder_device_Release(dec_dev);
-@@ -1441,8 +1503,10 @@
+@@ -1441,8 +1506,10 @@
      {
          p_sys->b_aborted = true;
          vlc_cond_broadcast(&p_sys->cond);
@@ -159,7 +183,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      }
  }
  
-@@ -1479,6 +1543,9 @@
+@@ -1479,6 +1546,9 @@
  
      vlc_mutex_lock(&p_sys->lock);
      p_sys->b_decoder_dead = true;
@@ -169,7 +193,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      vlc_mutex_unlock(&p_sys->lock);
  
      if (p_sys->cat == VIDEO_ES && p_sys->video.ctx)
-@@ -1547,9 +1614,27 @@
+@@ -1547,9 +1617,27 @@
              {
                  /* We need to wait for AImageReader. Otherwise, we might
                   * overwrite a picture (even when using acquireNextImageAsync) */
@@ -198,7 +222,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
                  if (p_sys->b_flush_out)
                  {
-@@ -1558,10 +1643,38 @@
+@@ -1558,10 +1646,38 @@
                      return 0;
                  }
  
@@ -239,7 +263,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
                  /* picture will be wrapped from AImageReader callback */
                  assert(*pp_out_pic  == NULL);
              }
-@@ -1920,9 +2033,12 @@
+@@ -1920,9 +2036,12 @@
  
          /* Wait for an output buffer. This function returns when a new output
           * is available or if output is flushed. */
@@ -253,7 +277,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
          /* Ignore dequeue_out errors caused by flush, or late picture being
           * dequeued after close. */
-@@ -2018,8 +2134,15 @@
+@@ -2018,8 +2137,15 @@
      while (b_drain || (p_block = GetNextBlock(p_sys, p_in_block)))
      {
          vlc_mutex_unlock(&p_sys->lock);
@@ -270,7 +294,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
          if (p_sys->b_aborted)
              return VLC_EGENERIC;
-@@ -2328,10 +2451,21 @@
+@@ -2328,10 +2454,21 @@
  
      if (p_sys->video.use_air)
      {

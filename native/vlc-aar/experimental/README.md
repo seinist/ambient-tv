@@ -30,8 +30,13 @@ distribute the experiment as a validated production build.
   import, driver YCbCr conversion, foreign queue acquire
   and release, producer sync-fd import, conservative VLC picture lease.
   AHardwareBuffer references do not substitute for the decoder picture lease.
-  The decoder requests GPU_SAMPLED_IMAGE even for unrotated output. Stable
-  AHardwareBuffer IDs prevent aliasing across in-flight slots. All discarded
+  The decoder requests GPU_SAMPLED_IMAGE even for unrotated output. The
+  experimental GPU-only AImageReader accessor does not require SurfaceControl
+  or Android 31's AHardwareBuffer_getId; ordinary VLC callers retain their
+  original API contract. Stable IDs prevent aliasing across in-flight slots.
+  On API 29/30 or failed ID lookup, at most one slot may be in flight, avoiding
+  aliasing between distinct AHB wrappers. Actual older-device support still
+  depends on Vulkan features and must be tested on hardware. All discarded
   pictures retain their original producer fence in the VLC-owned context;
   its destructor transfers it to AImage_deleteAsync when no consumer fence exists.
 - Three bounded reusable slots, command buffers, device-local RGB targets,

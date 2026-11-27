@@ -175,6 +175,8 @@ class VlcPlaybackController(
     var renderSurfaceSize by mutableStateOf<Pair<Int, Int>?>(null)
         private set
     val videoOutputDescription: String get() = when {
+        doviRpuDecoderRequired && vulkanOutput -> "libplacebo / Vulkan · Dolby Vision RPU (SW)"
+        doviRpuDecoderRequired -> "OpenGL ES · Dolby Vision RPU (SW)"
         vulkanOutput -> "libplacebo / Vulkan"
         toneMappingRequired -> "OpenGL ES / HDR → SDR"
         else -> "Android Surface / OpenGL ES"

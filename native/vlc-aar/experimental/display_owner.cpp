@@ -37,6 +37,7 @@ struct Slot {
     uint32_t width{}, height{};
     VkFormat format = VK_FORMAT_UNDEFINED;
     bool converted{};
+    bool buffer_id_valid{};
 };
 struct QueueLock {
     const ambient_ahb_config &c;
@@ -201,8 +202,12 @@ struct ambient_ahb_owner {
         // AHB wrapper can refer to the same allocation. Do not acquire the
         // same foreign image in another slot until its prior GPU use retires.
         for (size_t i = 0; i < slot_count; ++i) {
-            if (pool.state(i) != State::Free && slots[i].cache->same_buffer(
-                in.buffer, in.buffer_id, in.buffer_id_valid)) {
+            // Without Android's stable ID, different wrappers might alias
+            // the same allocation. On API 29/30, or when ID lookup fails,
+            // serialize conversion rather than relying on pointer identity.
+            if (pool.state(i) != State::Free && (!in.buffer_id_valid ||
+                !slots[i].buffer_id_valid || slots[i].cache->same_buffer(
+                in.buffer, in.buffer_id, in.buffer_id_valid))) {
                 in.release_picture(in.picture, in.acquire_fd);
                 return VK_NOT_READY;
             }
@@ -224,6 +229,7 @@ struct ambient_ahb_owner {
         Slot &s = slots[ticket.index];
         s.ticket = ticket;
         s.converted = false;
+        s.buffer_id_valid = in.buffer_id_valid;
         s.lease.emplace(in.picture, in.acquire_fd, in.release_picture, false);
         if (s.texture && (s.width != in.width || s.height != in.height || s.format != format)) {
             // The held wrapper may still own image views; destroy it before
