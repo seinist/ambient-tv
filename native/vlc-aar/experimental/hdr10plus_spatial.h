@@ -103,6 +103,9 @@ static inline bool ambient_hdrplus_spatial_curves(pl_gpu gpu, struct ambient_hdr
             w->knee_x==0.f||w->knee_x==1.f||w->knee_y==0.f||w->knee_y==1.f ||
             fabsf(out_max-m->target_nits)<=0.01f);
         if(direct) {
+            // Authored output is normalized to the targeted display, not
+            // to MaxSCL. A valid curve can explicitly expand a dark scene.
+            p.output_max=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_NORM,target_peak);
             for(unsigned j=0;j<AMBIENT_HDRPLUS_LUT_SIZE;j++){
                 float x=(float)j/(AMBIENT_HDRPLUS_LUT_SIZE-1);
                 float y=ambient_hdrplus_bezier(w,x*x);
