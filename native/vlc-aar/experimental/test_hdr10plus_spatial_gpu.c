@@ -46,6 +46,8 @@ int main(void)
     });
     pl_vulkan vk=pl_vulkan_create(log,&(struct pl_vulkan_params){
         .allow_software=true,.queue_count=1,
+        .instance_params=pl_vk_inst_params(.debug=true,
+            .extensions=(const char *const[]){"VK_EXT_debug_utils"},.num_extensions=1),
     });
     assert(vk);
     pl_gpu gpu=vk->gpu;
