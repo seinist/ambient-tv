@@ -21,6 +21,8 @@ pub mod motion_select;
 pub mod motion_packet;
 #[cfg(feature = "vulkan")]
 mod motion_search;
+#[cfg(all(test, feature = "vulkan"))]
+mod benchmark_quality;
 
 const MAX_QUEUE: usize = 10;
 const MAX_FRAMES: i32 = 100_000_000;
@@ -1035,6 +1037,59 @@ mod pipelining_tests {
             }
         }
         data
+    }
+
+    #[test]
+    #[ignore = "requires Vulkan"]
+    fn known_translation_quality_compares_upstream_and_experimental(){
+        use crate::benchmark_quality::{Quality,translation_pixel};
+        let c=Config{target_num:48,artifacts:0,scene:0,..config()};
+        let mut baseline=AmbientSvp::new(c).unwrap();
+        let mut experimental=AmbientSvp::new(c).unwrap();
+        experimental.enable_experimental_motion().unwrap();
+        let (w,h)=(c.width,c.height);
+        let make=|n:u64|{
+            let mut raw=vec![128;(w*h*3/2) as usize];
+            for y in 0..h{for x in 0..w{raw[(y*w+x) as usize]=translation_pixel(w,x,y,n*4);}}
+            raw
+        };
+        let a=experimental.builder.build(&make(0)).unwrap();
+        let b=experimental.builder.build(&make(1)).unwrap();
+        experimental.gpu.as_mut().unwrap().experimental_motion(
+            &experimental.builder,&a,&b,&experimental.analyser.vector_header(),None).unwrap();
+        let mut out=vec![0;baseline.frame_len()];
+        let count=8u32;
+        let run=|engine:&mut AmbientSvp,out:&mut [u8]|{
+            let mut q=Quality::default();
+            let mut index=0u64;
+            let mut last=None;
+            let mut observe=|pts:i64,out:&[u8]|{
+                assert!(last.is_none_or(|p|pts>p));last=Some(pts);
+                q.observe(out,w,h,index,count);index+=1;
+            };
+            for n in 0..count{
+                engine.push(&make(u64::from(n)),i64::from(n)*1_000_000/24).unwrap();
+                while let Some(pts)=engine.receive(out,false).unwrap(){observe(pts,out);}
+            }
+            while let Some(pts)=engine.receive(out,true).unwrap(){observe(pts,out);}
+            assert_eq!(index,2*u64::from(count));
+            assert_eq!(q.frames,u64::from(count-1));
+            assert_eq!(engine.stats.backend,2);
+            assert_eq!(engine.stats.bypass_reason,0);
+            q
+        };
+        let cpu=run(&mut baseline,&mut out);
+        let gpu=run(&mut experimental,&mut out);
+        assert_eq!(experimental.experimental_motion_stats(),(u64::from(count-1),0));
+        assert_eq!(cpu.pixels,gpu.pixels);
+        assert_eq!(cpu.nearest_squared,gpu.nearest_squared);
+        // Report objective quality relative to a known in-between image.
+        // No assertion of upstream equivalence or superiority from one
+        // synthetic clip; the production selection remains unchanged.
+        println!("translation baseline CPU analysis psnr={:.3} mae={:.3} analysis_us={} nearest_source_psnr={:.3}",
+            cpu.psnr(cpu.squared),cpu.absolute as f64/cpu.pixels as f64,baseline.stats.analysis_us,cpu.psnr(cpu.nearest_squared));
+        println!("translation experimental GPU analysis psnr={:.3} mae={:.3} analysis_us={} nearest_source_psnr={:.3}",
+            gpu.psnr(gpu.squared),gpu.absolute as f64/gpu.pixels as f64,experimental.stats.analysis_us,gpu.psnr(gpu.nearest_squared));
     }
 
     #[test]
