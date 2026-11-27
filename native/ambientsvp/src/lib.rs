@@ -795,4 +795,43 @@ mod pipelining_tests {
         }
         assert!(saw_prefetch, "test must exercise two in-flight jobs");
     }
+
+    #[test]
+    #[ignore = "requires hardware Vulkan with optional 16-bit normalized textures"]
+    fn compact_motion_fields_match_float_fields() {
+        let c = config();
+        let mut compact = AmbientSvp::new(c).unwrap();
+        let mut float = AmbientSvp::new(c).unwrap();
+        if !compact.gpu.as_ref().is_some_and(|gpu| gpu.uses_compact_fields()) {
+            eprintln!("SKIP: device does not support compact fields");
+            return;
+        }
+        float.gpu = Some(gpu::Gpu::new_with_compact_fields(c.width, c.height, false).unwrap());
+        compact.disable_prefetch = true;
+        float.disable_prefetch = true;
+        let mut a = vec![0; compact.frame_len()];
+        let mut b = a.clone();
+        let mut compared = 0;
+        for n in 0..16 {
+            let input = image(n);
+            let pts = n as i64 * 1_000_000 / 24;
+            compact.push(&input, pts).unwrap();
+            float.push(&input, pts).unwrap();
+            loop {
+                let ap = compact.receive(&mut a, false).unwrap();
+                let bp = float.receive(&mut b, false).unwrap();
+                assert_eq!(ap, bp);
+                if ap.is_none() { break; }
+                assert_eq!(a, b, "compact field changed output at {ap:?}");
+                compared += 1;
+            }
+        }
+        assert!(compared > 30);
+        assert!(compact.stats.interpolated_frames > 0);
+        assert_eq!(compact.stats.backend, 2);
+        assert_eq!(float.stats.backend, 2);
+        assert_eq!(compact.stats.bypass_reason, 0);
+        assert_eq!(float.stats.bypass_reason, 0);
+    }
+
 }
