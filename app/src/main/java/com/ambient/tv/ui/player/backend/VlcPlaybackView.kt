@@ -1027,12 +1027,27 @@ class VlcPlaybackController(
         val stopping = player
         val stop = java.util.concurrent.CompletableFuture<Unit>()
         restartStop = stop
+        // A driver may never return from stop(). Do not leave the UI in an
+        // endless reopen state, and never free or restart a player still
+        // owned by that native thread. Keep the future for release() to join.
+        val experimentalStop = ahbFallbackPending || ahbExperimentActive
+        if (experimentalStop) pendingSeekHandler.postDelayed({
+            if (!released && restartStop === stop && player === stopping && !stop.isDone) {
+                restartStopFailed = true
+                openingOrRestarting = false
+                errorMessage = context.getString(R.string.audio_output_release_failed)
+                Timber.e("VLC experimental reopen: native stop timed out; player quarantined")
+            }
+        }, 12_000L)
         kotlin.concurrent.thread(name = "vlc-reopen-stop", isDaemon = true) {
             val result = runCatching { stopping.stop() }
             result.onSuccess { stop.complete(Unit) }.onFailure { stop.completeExceptionally(it) }
             pendingSeekHandler.post {
                 if (released || restartStop !== stop || player !== stopping) return@post
                 restartStop = null
+                // A late successful stop may permit safe release, but must
+                // not resurrect a session that already reported terminal failure.
+                if (restartStopFailed) return@post
                 if (result.isFailure) {
                     restartStopFailed = true
                     Timber.w(result.exceptionOrNull(), "VLC internal restart stop failed")

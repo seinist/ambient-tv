@@ -10,11 +10,11 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: vlc-ahb-experimental-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 jobs:
   ndk-contract:
+    concurrency:
+      group: vlc-ahb-contract-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -66,6 +66,11 @@ jobs:
     # whole native stack. No release credentials or publishing step.
     if: github.event_name == 'workflow_dispatch' || (github.head_ref == 'experiment/vlc-vulkan-ahb-import' && github.event.pull_request.head.repo.full_name == github.repository)
     needs: ndk-contract
+    # Let an expensive linked build finish even while a newer commit is
+    # audited. GitHub keeps only the newest queued build in this group.
+    concurrency:
+      group: vlc-ahb-linked-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:

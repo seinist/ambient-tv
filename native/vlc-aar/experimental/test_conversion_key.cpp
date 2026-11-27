@@ -32,4 +32,14 @@ int main() {
     assert(!same_conversion_format(a, b));
     b = a; a.externalFormat = b.externalFormat = 0;
     assert(!same_conversion_format(a, b));
+    a.externalFormat = b.externalFormat = 1234;
+    a.format = b.format = VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16;
+    assert(same_conversion_format(a, b));
+    assert(supported_decoder_format(a.format, true));
+    b.format = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
+    assert(!same_conversion_format(a, b));
+    assert(supported_decoder_format(b.format, false));
+    assert(!supported_decoder_format(b.format, true));
+    assert(!supported_decoder_format(VK_FORMAT_R8G8B8A8_UNORM, false));
+    assert(supported_decoder_format(VK_FORMAT_UNDEFINED, true));
 }

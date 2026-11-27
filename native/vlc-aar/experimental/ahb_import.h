@@ -112,9 +112,9 @@ public:
         return VK_SUCCESS;
     }
 
-    bool color_matches(VkSamplerYcbcrModelConversion model, VkSamplerYcbcrRange range) const {
-        return allocation_.buffer && format_.suggestedYcbcrModel == model &&
-            format_.suggestedYcbcrRange == range;
+    bool color_matches(VkSamplerYcbcrModelConversion model, VkSamplerYcbcrRange range, bool high_precision = false) const {
+        return allocation_.buffer && supported_decoder_format(format_.format, high_precision) &&
+            format_.suggestedYcbcrModel == model && format_.suggestedYcbcrRange == range;
     }
 
     VkImage image() const { return allocation_.image; }
@@ -141,7 +141,10 @@ private:
         properties.pNext = &format;
         VkResult result = d_.properties(device_, buffer, &properties);
         if (result != VK_SUCCESS) return result;
-        if (format.format != VK_FORMAT_UNDEFINED || !format.externalFormat ||
+        // Vulkan allows external-format images even when an equivalent VkFormat
+        // exists. formatFeatures describes this external route, not the native
+        // VkFormat. Keep the equivalent format for precision/identity checks.
+        if (!supported_decoder_format(format.format, false) || !format.externalFormat ||
             !(format.formatFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) ||
             !properties.memoryTypeBits || !properties.allocationSize)
             return VK_ERROR_FORMAT_NOT_SUPPORTED;

@@ -5,7 +5,7 @@ copy-back path are unchanged. The experiment is restricted to opaque
 AImageReader BT.709 SDR or explicit BT.2020 HDR10/HLG on Android API 34+
 with a matching driver-reported matrix, range and actual AImage dataspace,
 one graphics queue, and no CPU picture filters. HDR10+ with validated single-window dynamic metadata is experimental;
-Dolby Vision, other HDR10+ payloads, explicit VkFormat, protected images and unsupported extensions/features
+Dolby Vision, other HDR10+ payloads, non-YUV explicit VkFormat, protected images and unsupported extensions/features
 remain on the existing copy-back or native HDR routes.
 
 ## Build and validate
@@ -26,7 +26,8 @@ distribute the experiment as a validated production build.
 
 - Pinned VLC display.c Open/PictureRender/Close and Vulkan instance patches,
   built with a C++ display owner on libplacebo's actual logical device.
-- Opaque AHB dedicated import, driver YCbCr conversion, foreign queue acquire
+- Opaque or known multi-planar YUV (including P010) AHB dedicated external-format
+  import, driver YCbCr conversion, foreign queue acquire
   and release, producer sync-fd import, conservative VLC picture lease.
   AHardwareBuffer references do not substitute for the decoder picture lease.
   The decoder requests GPU_SAMPLED_IMAGE even for unrotated output. Stable
@@ -59,7 +60,8 @@ distribute the experiment as a validated production build.
   primaries, transfer and mastering/light metadata remain attached for
   libplacebo tone mapping. Actual AImage dataspace must agree; the API is
   dynamically resolved, so old Android devices retain SDR support. Opaque
-  input alone cannot prove decoder bit depth. HDR10+ obtains per-buffer T.35 metadata from MediaCodec, accepts only the
+  input alone cannot prove decoder bit depth; explicit known 8-bit YUV is rejected
+  for HDR, while explicit P010 and other known >=10-bit YUV use the external-format path. HDR10+ obtains per-buffer T.35 metadata from MediaCodec, accepts only the
   representable single-window subset, binds it to the exact AImage timestamp,
   and rejects missing/mismatched/unsupported metadata when HDR10+ is requested.
   The source ST 2086 units and normalized HDR10+ luminance are converted to
@@ -80,7 +82,8 @@ been confirmed yet.
 
 The experimental workflow also schedules a full ARM64 VLC/JNI AAR build
 after the native contract checks. That linked artifact is not a GPU execution
-test. No hardware performance or correctness claim is made yet.
+test. Linked builds are serialized without canceling a running build when a
+new contract-check commit arrives. No hardware performance or correctness claim is made yet.
 
 ## Required before production activation
 
@@ -95,7 +98,9 @@ test. No hardware performance or correctness claim is made yet.
 - A permanently blocked Vulkan or Android driver call cannot be safely
   interrupted by the in-process watchdog. The decoder/application timeouts
   handle ordinary starvation and missing statistics, not arbitrary kernel or
-  driver hangs. Full process isolation would be needed for hard guarantees.
+  driver hangs. The experimental reopen reports a terminal error after 12 s
+  without releasing or reusing an in-flight native player. Full process isolation
+  would be needed for hard recovery guarantees.
   Verify recovery on hardware before enabling production.
 
 References:

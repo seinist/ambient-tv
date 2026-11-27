@@ -5,8 +5,8 @@
 
 namespace ambient::vlc_ahb {
 
-// SDR-only GPU conversion pass. The immutable YCbCr sampler must outlive the
-// descriptor layout/pipeline. The target must be an ordinary UNORM RGB image
+// GPU conversion pass for SDR and HDR. The immutable YCbCr sampler must outlive
+// the descriptor layout/pipeline. The target must be an ordinary UNORM or FP16 RGB image
 // with COLOR_ATTACHMENT | SAMPLED usage, owned by this graphics queue.
 // Caller retains this pass, imported image and target until its fence signals.
 struct SampleDispatch {

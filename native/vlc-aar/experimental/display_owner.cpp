@@ -230,7 +230,7 @@ struct ambient_ahb_owner {
         VkResult result = s.cache->prepare_retired(in.buffer, in.width, in.height, format, c.descriptor_count,
                                                     in.buffer_id, in.buffer_id_valid);
         if (result != VK_SUCCESS) { cancel(s); return result; }
-        if (!s.cache->imported()->color_matches(in.model, in.range)) {
+        if (!s.cache->imported()->color_matches(in.model, in.range, in.high_precision)) {
             cancel(s);
             return VK_ERROR_FORMAT_NOT_SUPPORTED;
         }
