@@ -166,3 +166,25 @@ by this source change. Monogram, SmartTube, Spotify, VLC, Moonlight, LibretroDro
 SVP and the executable shader runtime still require their individual production
 migration. Variant-aware stable self-updates and complete Full/Modular packaging
 remain required before the new distribution is ready.
+
+### UI availability contract
+
+SystemModuleAvailability publishes a StateFlow separating the verified current
+process runtime (bundled or external, uninitialized, missing, failed) from
+the selected package version and pending restart. A downloaded package alone
+does not enable its dependent UI. ProjectM and MPV publish actual engine probe
+results; Slang asset preparation reports whether the selected preset was
+available. Settings probes MPV and ProjectM on a worker when their relevant
+pages are opened. Renderer and visualizer choices and dependent profile/preset
+controls are filtered. Existing stored preferences are not rewritten when
+these controls disappear. The module management page itself remains reachable,
+including recovery actions for corrupt packages.
+
+Monogram and Spotify eligibility has been centralized across the provider
+catalog, settings, search, sidebar, handheld navigation and other affected
+paths; their predicates still reflect bundled build flags until their external
+runtime contracts are migrated. Spotify's requested enabled flag is saved
+and backed up independently of runtime eligibility. Other legacy modules still
+need their actual runtime migration and UI audit (including Android Auto,
+background tasks, direct routes, and all player OSD panels). Native/device
+and CI validation remain required.
