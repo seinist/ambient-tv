@@ -404,3 +404,41 @@ Nonseekable streams, hybrid moov+moof tracks, audio-only/missing-layer
 fragments, differing trun layouts or timescales and alternate container
 carriage remain outside the restricted route. HDR10+ full reference
 equivalence remains unproven; production configuration is unchanged.
+
+
+### Authored curve precision and metadata validity
+
+ST 2094-40:2020 sections 8.5, 8.7 and 9 and informative Annex B
+were rechecked against the published standard:
+https://pub.smpte.org/pub/st2094-40/st2094-40-2020.pdf
+
+The direct-authored GPU curve now evaluates the linear portion exactly;
+its 256-entry LUT covers only the curved segment, so even the smallest
+legal nonzero knee does not interpolate across the linear/Bezier
+boundary. Direct normalized output scales with target peak without an
+additional black pedestal. The ordinary renderer handles display black
+adaptation. The independent GPU tests verify black, steep near-black
+knees, and colored saturation against analytical calculations, not
+just the generated LUT. Different overlap options are accepted for
+provably disjoint selectors; intersecting bounding boxes still use
+the conservative rejection policy when their modes differ.
+
+The parser distinguishes syntax compatibility from checkable semantic
+constraints for both application versions, including CFD ordering and
+Bezier monotonicity. Version 0 optional-feature recommendations remain
+separate from mandatory restrictions in version 1. The source peak
+fallback uses the final valid CFD percentile; reserved v1 markers are
+not scene statistics. A decoder cannot verify statistics derived from
+the original scene from metadata alone. This is not a certification
+claim. Annex B describes illustrative processing; adaptation to other
+target displays, ideal-black BT.1886 saturation, conservative geometry
+checks and LUT interpolation remain implementation choices.
+
+At 4c6137a all three native contract jobs passed (45961233663), including
+the real reordered Main10 EL reference fixture and all four Android
+ABI syntax checks; the app PR checks also passed. The linked ARM64 AAR
+build started. At 5d09306 the independent new HDR10+ GPU fixtures passed
+(45962861319). Subsequent parser/CFD changes need their final CI.
+No real title/device playback, bit-exact Dolby Vision FEL reconstruction
+or full HDR10+ certification is established. Experimental defaults
+remain off.
