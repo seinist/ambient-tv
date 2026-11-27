@@ -645,6 +645,74 @@ mod gpu_tests{
             }
             d.unmap_memory(readback_memory);
             ambient_svp_vk_destroy(engine);
+            // Actual R16 plane / RGBA16F Vulkan execution. Adjacent
+            // 10-bit luma codes must stay distinguishable at source ticks.
+            for mode in [1,2]{
+                let engine=ambient_svp_vk_create_format(instance.handle(),physical,d.handle(),
+                    Some(entry.static_fn().get_instance_proc_addr),w,h,mode);
+                assert!(!engine.is_null(),"high depth resident mode {mode}");
+                let high=[
+                    image(&d,&props,w,h,vk::Format::R16_UNORM,src),
+                    image(&d,&props,w,h,vk::Format::R16_UNORM,src),
+                    image(&d,&props,w/2,h/2,if mode==1{vk::Format::R16G16_UNORM}else{vk::Format::R16_UNORM},src),
+                    image(&d,&props,w/2,h/2,vk::Format::R16_UNORM,src),
+                    image(&d,&props,w,h,vk::Format::R16G16B16A16_SFLOAT,out),
+                ];
+                let pic=|y|VulkanPicture{y,u:high[2].view,v:if mode==1{vk::ImageView::null()}else{high[3].view},
+                    nv12:if mode==1{1}else{0},chroma_location:1};
+                let a=pic(high[0].view);let b=pic(high[1].view);
+                let mut observed=[0u16;2];
+                for (i,phase) in [0.0,1.0].into_iter().enumerate(){
+                    d.reset_fences(&[fence]).unwrap();
+                    d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
+                    d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).unwrap();
+                    if i==0{
+                        for (j,img) in high[..4].iter().enumerate(){
+                            transition(&d,cmd,img.image,vk::ImageLayout::UNDEFINED,vk::ImageLayout::GENERAL,
+                                vk::AccessFlags::empty(),vk::AccessFlags::TRANSFER_WRITE,
+                                vk::PipelineStageFlags::TOP_OF_PIPE,vk::PipelineStageFlags::TRANSFER);
+                            let code=[502.0,503.0,512.0,512.0][j];
+                            let value=code*if mode==1{64.0/65535.0}else{1.0/65535.0};
+                            d.cmd_clear_color_image(cmd,img.image,vk::ImageLayout::GENERAL,
+                                &vk::ClearColorValue{float32:[value,value,0.0,1.0]},&[range()]);
+                            transition(&d,cmd,img.image,vk::ImageLayout::GENERAL,vk::ImageLayout::GENERAL,
+                                vk::AccessFlags::TRANSFER_WRITE,vk::AccessFlags::SHADER_READ,
+                                vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::COMPUTE_SHADER);
+                        }
+                    }
+                    transition(&d,cmd,high[4].image,if i==0{vk::ImageLayout::UNDEFINED}else{vk::ImageLayout::TRANSFER_SRC_OPTIMAL},
+                        vk::ImageLayout::GENERAL,if i==0{vk::AccessFlags::empty()}else{vk::AccessFlags::TRANSFER_READ},
+                        vk::AccessFlags::SHADER_WRITE,if i==0{vk::PipelineStageFlags::TOP_OF_PIPE}else{vk::PipelineStageFlags::TRANSFER},
+                        vk::PipelineStageFlags::COMPUTE_SHADER);
+                    let pair=ambient_svp_vk_begin(engine,cmd,&a,&b);
+                    assert!(!pair.is_null());
+                    assert_eq!(ambient_svp_vk_render(pair,phase,4,high[4].view),0);
+                    transition(&d,cmd,high[4].image,vk::ImageLayout::GENERAL,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                        vk::AccessFlags::SHADER_WRITE,vk::AccessFlags::TRANSFER_READ,
+                        vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::TRANSFER);
+                    d.cmd_copy_image_to_buffer(cmd,high[4].image,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,readback,&region);
+                    d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::HOST,
+                        vk::DependencyFlags::empty(),&host,&[],&[]);
+                    d.end_command_buffer(cmd).unwrap();
+                    d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
+                    assert_eq!(ambient_svp_vk_seal(pair,fence),0);
+                    d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
+                    assert_eq!(ambient_svp_vk_release(pair),1);
+                    let mapped=d.map_memory(readback_memory,0,bytes*2,vk::MemoryMapFlags::empty()).unwrap();
+                    let data=std::slice::from_raw_parts(mapped.cast::<u8>(),(bytes*2) as usize);
+                    let expected=if i==0{0x3800u16}else{0x3802u16};
+                    for px in data.chunks_exact(8){
+                        let value=|j:usize|u16::from_ne_bytes([px[j*2],px[j*2+1]]);
+                        assert!(value(0).abs_diff(expected)<=1 && value(1)==value(0) && value(2)==value(0) && value(3)==0x3c00,
+                            "high-depth output mode {mode}, phase {phase}: {px:?}");
+                    }
+                    observed[i]=u16::from_ne_bytes([data[0],data[1]]);
+                    d.unmap_memory(readback_memory);
+                }
+                assert!(observed[1]>observed[0],"10-bit codes collapsed");
+                ambient_svp_vk_destroy(engine);
+                for img in high{d.destroy_image_view(img.view,None);d.destroy_image(img.image,None);d.free_memory(img.memory,None);}
+            }
             d.destroy_fence(fence,None);d.destroy_command_pool(pool,None);
             d.destroy_buffer(readback,None);d.free_memory(readback_memory,None);
             for img in images{
