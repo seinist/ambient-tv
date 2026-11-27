@@ -12,6 +12,8 @@
 struct ambient_vlc_picture {
     picture_t *held;
     AHardwareBuffer *buffer; // borrowed while held is alive
+    uint64_t buffer_id;
+    bool buffer_id_valid;
     AImageCropRect crop;
     int64_t timestamp_ns;
     uint32_t width, height;
@@ -49,6 +51,8 @@ static inline bool ambient_vlc_hold_picture(picture_t *pic, struct ambient_vlc_p
         result.crop.right <= result.crop.left || result.crop.bottom <= result.crop.top ||
         (uint32_t)result.crop.right > desc.width || (uint32_t)result.crop.bottom > desc.height)
         return false;
+    result.buffer_id_valid = api->AHardwareBuffer.getId &&
+        api->AHardwareBuffer.getId(result.buffer, &result.buffer_id) == 0;
     result.width = desc.width;
     result.height = desc.height;
     // Do not mistake a failed dup() for an already signaled producer fence.
@@ -66,6 +70,20 @@ static inline bool ambient_vlc_hold_picture(picture_t *pic, struct ambient_vlc_p
 // it cannot be used with an early GPU release-fence handoff.
 static inline void ambient_vlc_release_picture(void *held, int duplicated_fd)
 {
+    picture_t *pic = held;
+    // Unsubmitted/abandoned frame: the callback receives its producer fence.
+    // Return it through VLC's AImage release fence rather than discarding it.
+    // A completed GPU frame receives -1, so it never installs a fake fence.
+    if (duplicated_fd >= 0 && pic && pic->context) {
+        struct android_picture_ctx *apctx =
+            container_of(pic->context, struct android_picture_ctx, s);
+        if (apctx->read_fence_fd < 0) {
+            apctx->read_fence_fd = duplicated_fd;
+            duplicated_fd = -1;
+        }
+        // An existing read fence already subsumes this same picture's
+        // producer fence; retain it rather than replacing it on a drop.
+    }
     if (duplicated_fd >= 0) close(duplicated_fd);
-    if (held) picture_Release((picture_t *)held);
+    if (pic) picture_Release(pic);
 }
