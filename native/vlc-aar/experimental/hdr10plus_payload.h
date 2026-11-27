@@ -33,6 +33,7 @@ struct ambient_hdrplus_window {
 struct ambient_hdrplus {
     uint8_t version, window_count;
     bool global_projection; /* metadata beyond VLC/libplacebo's global contract */
+    bool version1_constraints_ok; /* ST 2094-40:2020 section 9.4 and 8.5.4/8.7.3.2 */
     float target_nits;
     struct ambient_hdrplus_window windows[3];
     struct ambient_hdrplus_grid targeted_grid, mastering_grid;
@@ -127,8 +128,8 @@ static inline bool ambient_hdrplus_parse(const uint8_t *data, size_t size, struc
         READ(1); p->tone_mapping = v != 0;
         if (p->tone_mapping) {
             if (m.target_nits <= 0) return false;
-            READ(12); if (!v) return false; p->knee_x = v / 4095.0f;
-            READ(12); if (!v) return false; p->knee_y = v / 4095.0f;
+            READ(12); p->knee_x = v / 4095.0f;
+            READ(12); p->knee_y = v / 4095.0f;
             READ(4); p->anchor_count = v;
             for (unsigned i = 0; i < p->anchor_count; ++i) {
                 READ(10); p->anchors[i] = v / 1023.0f;
@@ -143,6 +144,19 @@ static inline bool ambient_hdrplus_parse(const uint8_t *data, size_t size, struc
     if (r.bits - r.pos > 7) return false;
     while (r.pos < r.bits) { READ(1); if (v) return false; }
 #undef READ
+    // Version 1 has a narrower metadata contract than the general syntax.
+    // Preserve parseable legacy/nonconforming payloads for compatibility but
+    // do not describe them as compliant. Version 0 does not use this flag.
+    if (m.version==1) {
+        const struct ambient_hdrplus_window *p=&m.windows[0];
+        m.version1_constraints_ok=m.window_count==1 && !m.targeted_grid.rows &&
+            !m.mastering_grid.rows && !p->saturation_mapping &&
+            p->histogram_count==9 && p->anchor_count<=9;
+        if (m.version1_constraints_ok && p->histogram[1].percentage==5 &&
+            p->histogram[2].percentage==10 &&
+            (p->histogram[1].percentile!=0.f || p->histogram[2].percentile!=255.f/100000.f))
+            m.version1_constraints_ok=false;
+    }
     *out = m;
     return true;
 }
