@@ -79,7 +79,7 @@ if [[ -n "${LIBPLACEBO_SOURCE:-}" ]]; then
             for module in utils display; do
                 "$NDK/toolchains/llvm/prebuilt/$host/bin/${triple}29-clang" \
                     -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 \
-                    -DMODULE_NAME=android '-DN_(s)=s' \
+                    -DMODULE_NAME=android -DUSE_OPENGL_ES2 '-DN_(s)=s' \
                     -Werror=implicit-function-declaration -Werror=incompatible-pointer-types -Werror=int-conversion \
                     -I "$VLC_SOURCE/include" \
                     -fsyntax-only "$VLC_SOURCE/modules/video_output/android/$module.c"
