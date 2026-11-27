@@ -88,6 +88,8 @@ jobs:
           python3 scripts/patch_monogram_leave.py third_party/monogram
           cargo test --manifest-path third_party/monogram/vendor/mono-rs/Cargo.toml -p mono-proto-media --lib ambient_range_tests
           cargo test --manifest-path third_party/monogram/vendor/mono-rs/Cargo.toml -p mono-proto-crypto --lib
+          cargo test --manifest-path third_party/monogram/vendor/mono-rs/Cargo.toml -p mono-proto-engine --lib
+          cargo test --manifest-path third_party/monogram/vendor/mono-rs/Cargo.toml -p mono-proto-runtime --lib
       - name: Verify native ABI and report raw size
         env:
           ABI: ${{ matrix.abi }}

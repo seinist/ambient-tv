@@ -20,6 +20,8 @@ MODIFICATION_DATE = "2026-11-27"
 NOTICE_MARKER = "Modified by Ambient TV, "
 COMMENT_PREFIX = {".rs": "//", ".kt": "//", ".kts": "//", ".toml": "#"}
 MODIFICATIONS = {
+    "settings.gradle.kts":
+        "removed external Foojay toolchain resolver for the JDK-provisioned native build",
     "vendor/mono-rs/crates/mono-proto-engine/src/rpc.rs":
         "accept owned inbound packets and move raw RPC responses",
     "vendor/mono-rs/crates/mono-proto-runtime/src/rpc/invoke.rs":
@@ -456,6 +458,19 @@ enum AmbientRangeOutput {
     Memory(std::io::Cursor<Vec<u8>>),
 }
 impl AmbientRangeOutput {
+    // The usual single-wire 512 KiB response can be moved into the memory
+    // sink, rather than allocated and copied. Reduced parts append normally.
+    fn write_owned(&mut self, bytes: Vec<u8>) -> std::io::Result<()> {
+        if let Self::Memory(cursor) = self
+            && cursor.position() == 0 && cursor.get_ref().is_empty()
+            && bytes.len() as u64 <= AMBIENT_RANGE_LIMIT {
+            let len = bytes.len() as u64;
+            *cursor = std::io::Cursor::new(bytes);
+            cursor.set_position(len);
+            return Ok(());
+        }
+        std::io::Write::write_all(self, &bytes)
+    }
     fn set_len(&mut self, len: u64) -> std::io::Result<()> {
         match self {
             Self::File(file) => file.set_len(len),
@@ -498,6 +513,16 @@ impl std::io::Write for AmbientRangeOutput {
 #[cfg(test)]
 mod ambient_range_tests {
     use super::*;
+    #[test]
+    fn single_wire_response_reuses_owned_payload() {
+        let bytes = vec![3; AMBIENT_RANGE_LIMIT as usize];
+        let ptr = bytes.as_ptr();
+        let mut out = AmbientRangeOutput::Memory(std::io::Cursor::new(Vec::new()));
+        out.write_owned(bytes).unwrap();
+        let AmbientRangeOutput::Memory(cursor) = out else { panic!("memory sink"); };
+        assert_eq!(cursor.get_ref().as_ptr(), ptr);
+        assert_eq!(cursor.position(), AMBIENT_RANGE_LIMIT);
+    }
     #[test]
     fn only_published_exact_destination_and_stage_are_returned() {
         let dest = std::path::Path::new("ambient-range");
@@ -619,7 +644,7 @@ amend(range_output,
       "        let mut out = if !stream && file_len > 0 {",
       """        let ambient_range = stream && ambient_begin_range(cancellation_path);
         let mut out = if ambient_range {
-            AmbientRangeOutput::Memory(std::io::Cursor::new(Vec::with_capacity(AMBIENT_RANGE_LIMIT as usize)))
+            AmbientRangeOutput::Memory(std::io::Cursor::new(Vec::new()))
         } else if !stream && file_len > 0 {""")
 amend(range_output,
       """            file
@@ -1285,6 +1310,35 @@ amend(tcp,
       """        read_timeout: Duration::from_secs(connect_secs.max(1)),
         configured_timeout_ms: None,
     };""")
+
+
+amend(range_output,
+      """                            out.write_all(&bytes)
+                                .map_err(|e| MtprotoError::Message(e.to_string()))?;
+                            written_end = written_end.max(part_offset + bytes.len() as i64);
+                            if counted_offsets.insert(part_offset) {
+                                downloaded_bytes += bytes.len() as i64;
+                                notify_progress(&target_str, downloaded_bytes, 0);
+                            }
+                            if bytes.len() < chunk as usize {""",
+      """                            let len = bytes.len();
+                            out.write_owned(bytes)
+                                .map_err(|e| MtprotoError::Message(e.to_string()))?;
+                            written_end = written_end.max(part_offset + len as i64);
+                            if counted_offsets.insert(part_offset) {
+                                downloaded_bytes += len as i64;
+                                if ambient_range {
+                                    crate::transfer_policy::current().floods.lock()
+                                        .download_succeeded(dc_id, std::time::Instant::now());
+                                }
+                                notify_progress(&target_str, downloaded_bytes, 0);
+                            }
+                            if len < chunk as usize {""")
+
+upstream_settings = "settings.gradle.kts"
+amend(upstream_settings,
+      '    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"',
+      '    // Ambient TV provisions the required JDK before invoking Gradle.')
 
 # Commit files only after every source contract has been checked.
 for path, result in changes.items():

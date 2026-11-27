@@ -78,6 +78,11 @@ export RUSTFLAGS="${RUSTFLAGS:-} --cap-lints allow"
 for command in git java python3 cargo cargo-ndk rustup; do
     command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }
 done
+java_version="$("${JAVA_HOME:+$JAVA_HOME/bin/}java" -version 2>&1 | sed -n '1p')"
+if [[ ! "$java_version" =~ \"21([.\"]|$) ]]; then
+    echo "Monogram native build requires a locally provisioned JDK 21 (JAVA_HOME); got $java_version" >&2
+    exit 1
+fi
 [[ -n "${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}" ]] ||
     { echo "Set ANDROID_SDK_ROOT or ANDROID_HOME; Monogram requires Android SDK 37 and NDK." >&2; exit 1; }
 if [[ ! -d "$source_dir/.git" ]]; then
