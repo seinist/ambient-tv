@@ -7,9 +7,9 @@
  * Input must already be chroma-aligned, normalized raw codewords. Output is
  * reconstructed codewords, NOT RGB; a downstream DV matrix stage is required.
  * No claim of bit-exact reference decoder or complete playback integration. */
-static inline bool ambient_fel_compose(pl_gpu gpu, pl_dispatch dispatch,
+static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
     pl_tex bl, pl_tex el, pl_tex output, const struct pl_dovi_metadata *reshape,
-    const struct ambient_fel_nlq *n)
+    const struct ambient_fel_nlq *n, bool packed_cr_y_cb, bool decode_rgb)
 {
     if (!gpu || !dispatch || !bl || !el || !output || !reshape ||
         !ambient_fel_nlq_valid(n) || output==bl || output==el ||
@@ -48,7 +48,8 @@ static inline bool ambient_fel_compose(pl_gpu gpu, pl_dispatch dispatch,
     if (!pl_shader_custom(sh,&(struct pl_custom_shader){
         .input=PL_SHADER_SIG_NONE,.output=PL_SHADER_SIG_COLOR,
         .descriptors=desc,.num_descriptors=1,
-        .body="color=texelFetch(fel_bl,ivec2(gl_FragCoord.xy),0);",
+        .body=packed_cr_y_cb ? "color=texelFetch(fel_bl,ivec2(gl_FragCoord.xy),0).gbra;" :
+            "color=texelFetch(fel_bl,ivec2(gl_FragCoord.xy),0);",
     })) goto fail;
     pl_shader_dovi_reshape(sh,reshape);
     if (!pl_shader_custom(sh,&(struct pl_custom_shader){
@@ -59,8 +60,29 @@ static inline bool ambient_fel_compose(pl_gpu gpu, pl_dispatch dispatch,
               "vec3 r=sign(rr)*((abs(rr)-0.5)*fel_slope+fel_threshold);"
               "color.rgb=clamp(color.rgb+clamp(r,-fel_maximum,fel_maximum),0.0,1.0);",
     })) goto fail;
+    if (decode_rgb) {
+        // The reconstructed codewords already passed the RPU reshape.
+        // Reuse the pinned Dolby matrix/PQ conversion with the curves cleared,
+        // rather than applying the reshape twice or treating EL as RGB.
+        struct pl_dovi_metadata matrix=*reshape;
+        for(unsigned i=0;i<3;i++) matrix.comp[i].num_pivots=0;
+        struct pl_color_repr repr={
+            .sys=PL_COLOR_SYSTEM_DOLBYVISION,.levels=PL_COLOR_LEVELS_LIMITED,
+            .bits={.sample_depth=10,.color_depth=10},.dovi=&matrix,
+        };
+        pl_shader_decode_color(sh,&repr,NULL);
+        // Keep the resulting PQ RGB signal for the normal color mapping pass.
+        return pl_dispatch_finish(dispatch,pl_dispatch_params(.shader=&sh,.target=output));
+    }
     return pl_dispatch_finish(dispatch,pl_dispatch_params(.shader=&sh,.target=output));
 fail:
     pl_dispatch_abort(dispatch,&sh);
     return false;
+}
+
+static inline bool ambient_fel_compose(pl_gpu gpu, pl_dispatch dispatch,
+    pl_tex bl, pl_tex el, pl_tex output, const struct pl_dovi_metadata *reshape,
+    const struct ambient_fel_nlq *n)
+{
+    return ambient_fel_compose_ex(gpu,dispatch,bl,el,output,reshape,n,false,false);
 }
