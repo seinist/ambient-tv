@@ -124,9 +124,9 @@ diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 +        memcpy(dst.nlq_pivots, m->nlq_pivots, sizeof(dst.nlq_pivots));
 +        for (unsigned i = 0; i < 3; ++i) {
 +            const AVDOVINLQParams *n = &m->nlq[i];
-+            if (n->nlq_offset > 1023 || n->linear_deadzone_slope > UINT32_MAX ||
-+                n->linear_deadzone_threshold > UINT32_MAX || n->vdr_in_max > UINT32_MAX)
-+                goto invalid;
++            // FFmpeg exports unsigned 64-bit fixed-point NLQ coefficients.
++            // Their scaled values fit both double and float even at denom 13.
++            if (n->nlq_offset > 1023) goto invalid;
 +            dst.nlq_offset[i] = n->nlq_offset;
 +            dst.nlq_slope[i] = n->linear_deadzone_slope;
 +            dst.nlq_threshold[i] = n->linear_deadzone_threshold;
