@@ -1,0 +1,21 @@
+diff --git a/src/main/cpp/environment.h b/src/main/cpp/environment.h
+--- a/src/main/cpp/environment.h
++++ b/src/main/cpp/environment.h
+@@ -193,4 +193,6 @@
+ 
+-    int pixelFormat = RETRO_PIXEL_FORMAT_RGB565;
++    // Libretro defaults to 0RGB1555 until SET_PIXEL_FORMAT succeeds.
++    // In particular, bsnes intentionally relies on this default.
++    int pixelFormat = RETRO_PIXEL_FORMAT_0RGB1555;
+     bool useHWAcceleration = false;
+     bool useVulkan = false;
+diff --git a/src/main/cpp/environment.cpp b/src/main/cpp/environment.cpp
+--- a/src/main/cpp/environment.cpp
++++ b/src/main/cpp/environment.cpp
+@@ -83,4 +83,5 @@
+ 
+-    pixelFormat = RETRO_PIXEL_FORMAT_RGB565;
++    // Do not leak the previous core's negotiated format into the next game.
++    pixelFormat = RETRO_PIXEL_FORMAT_0RGB1555;
+     useHWAcceleration = false;
+     useVulkan = false;

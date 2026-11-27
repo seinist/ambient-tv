@@ -85,5 +85,9 @@ cp "$ROOT/scripts/native_rewind/rewindcapture.h" "$DEST/src/main/cpp/rewindcaptu
 
 grep -q "RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:" "$DEST/src/main/cpp/environment.cpp" \
     || fail "Core options patch missing after apply"
+# Libretro's implicit source format is 0RGB1555, not RGB565. Verify both
+# initial and post-core reset defaults before marking the patched source ready.
+grep -Fxq '    int pixelFormat = RETRO_PIXEL_FORMAT_0RGB1555;' "$DEST/src/main/cpp/environment.h" || fail "Libretro implicit pixel format must be 0RGB1555"
+grep -Fxq '    pixelFormat = RETRO_PIXEL_FORMAT_0RGB1555;' "$DEST/src/main/cpp/environment.cpp" || fail "Libretro pixel format reset must restore 0RGB1555"
 echo "$marker" > "$DEST/.ambient-libretrodroid"
 log "LibretroDroid ready in third_party/libretrodroid"
