@@ -15,6 +15,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import kotlin.math.roundToInt
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -64,6 +66,8 @@ fun ProjectMVisualizer(
     }
     val throttleProjectM = performance.throttleProjectM
     val lifecycleOwner = LocalLifecycleOwner.current
+    var resumed by remember(lifecycleOwner) { mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
+    val hostActive = remember { AtomicBoolean(resumed) }
     val nativeHandle = remember { AtomicLong(0L) }
     val nativeLifecycleLock = remember { ReentrantLock() }
     val nativeReleased = remember { AtomicBoolean(false) }
@@ -84,7 +88,12 @@ fun ProjectMVisualizer(
     // including a later manual selection, instead of replaying a captured startup preset.
     val currentBrowser = rememberUpdatedState(browser)
     val currentQuality = rememberUpdatedState(qualityKey)
-    val currentAudioSource = rememberUpdatedState(nativeAudioSource)
+    val currentAudioSource = rememberUpdatedState(if (resumed) nativeAudioSource else 0)
+    val refreshRate = glView?.display?.refreshRate?.takeIf { it.isFinite() && it >= 24f } ?: 60f
+    val targetFps = if (throttleProjectM) 24 else minOf(60, refreshRate.roundToInt())
+    val currentFps = rememberUpdatedState(targetFps)
+    val pacedRendering = throttleProjectM || refreshRate > 61f
+    val loadGeneration = remember { AtomicLong() }
 
     // The MilkDrop texture pack can contain many files. Extract it off the GL thread so the
     // first visualizer frame is not blocked by APK I/O. Once ready, queue the path onto the
@@ -103,8 +112,10 @@ fun ProjectMVisualizer(
         }
     }
 
-    fun load(preset: ProjectMPreset, smooth: Boolean) {
-        val data = browser.presetData(preset) ?: return
+    suspend fun load(preset: ProjectMPreset, smooth: Boolean) {
+        val generation = loadGeneration.incrementAndGet()
+        val data = withContext(Dispatchers.IO) { browser.presetData(preset) } ?: return
+        if (loadGeneration.get() != generation) return
         browser.currentPath = preset.assetPath
         nativeLifecycleLock.withLock {
             val handle = nativeHandle.get()
@@ -170,11 +181,14 @@ fun ProjectMVisualizer(
         }
     }
 
-    LaunchedEffect(glView, nativeAudioSource) {
+    LaunchedEffect(glView, nativeAudioSource, resumed, targetFps) {
         val view = glView ?: return@LaunchedEffect
         view.queueEvent {
             val handle = nativeHandle.get()
-            if (handle != 0L) ProjectMNativeBridge.nativeSetAudioSource(handle, nativeAudioSource)
+            if (handle != 0L) {
+                ProjectMNativeBridge.nativeSetAudioSource(handle, if (resumed) nativeAudioSource else 0)
+                ProjectMNativeBridge.nativeSetFps(handle, targetFps)
+            }
         }
     }
 
@@ -189,8 +203,8 @@ fun ProjectMVisualizer(
         if (size == null) view.holder.setSizeFromLayout() else view.holder.setFixedSize(size.first, size.second)
     }
 
-    LaunchedEffect(browser, availablePresets.size, intervalSeconds, browser.locked) {
-        if (availablePresets.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(browser, availablePresets.size, intervalSeconds, browser.locked, resumed) {
+        if (availablePresets.isEmpty() || !resumed || browser.locked) return@LaunchedEffect
         while (true) {
             delay(intervalSeconds.coerceIn(10, 600) * 1000L)
             if (!browser.locked && availablePresets.isNotEmpty()) {
@@ -202,13 +216,27 @@ fun ProjectMVisualizer(
     DisposableEffect(lifecycleOwner, glView) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_RESUME -> glView?.onResume()
-                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> glView?.onPause()
+                Lifecycle.Event.ON_RESUME -> {
+                    resumed = true
+                    hostActive.set(true)
+                    glView?.onResume()
+                }
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
+                    resumed = false
+                    hostActive.set(false)
+                    glView?.queueEvent {
+                        val handle = nativeHandle.get()
+                        if (handle != 0L) ProjectMNativeBridge.nativeSetAudioSource(handle, 0)
+                    }
+                    glView?.onPause()
+                }
                 else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) glView?.onResume()
+        resumed = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+        hostActive.set(resumed)
+        if (resumed) glView?.onResume() else glView?.onPause()
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
@@ -228,10 +256,10 @@ fun ProjectMVisualizer(
         }
     }
 
-    DisposableEffect(analyzer) {
+    DisposableEffect(analyzer, resumed) {
         val sink = AudioPcmSink { samples ->
             // Never make the playback audio thread wait for surface creation or preset loading.
-            if (nativeLifecycleLock.tryLock()) {
+            if (hostActive.get() && nativeLifecycleLock.tryLock()) {
                 try {
                     val handle = nativeHandle.get()
                     if (handle != 0L) ProjectMNativeBridge.nativeFeedPcm(handle, samples)
@@ -240,7 +268,7 @@ fun ProjectMVisualizer(
                 }
             }
         }
-        analyzer?.addPcmSink(sink)
+        if (resumed) analyzer?.addPcmSink(sink)
         onDispose { analyzer?.removePcmSink(sink) }
     }
 
@@ -268,6 +296,7 @@ fun ProjectMVisualizer(
                                 if (handle != 0L) {
                                     val activeBrowser = currentBrowser.value
                                     texturePath?.let { ProjectMNativeBridge.nativeSetTexturePath(handle, it) }
+                                    ProjectMNativeBridge.nativeSetFps(handle, currentFps.value)
                                     ProjectMNativeBridge.nativeSetPresetDuration(handle, activeBrowser.intervalSeconds.toDouble())
                                     ProjectMNativeBridge.nativeSetSoftCutDuration(handle, activeBrowser.transitionSeconds.coerceIn(0, 10).toDouble())
                                     ProjectMNativeBridge.nativeSetBeatSensitivity(handle, 1.0f)
@@ -293,7 +322,7 @@ fun ProjectMVisualizer(
                             if (handle != 0L) ProjectMNativeBridge.nativeRender(handle)
                         }
                     })
-                    renderMode = if (throttleProjectM) {
+                    renderMode = if (pacedRendering) {
                         GLSurfaceView.RENDERMODE_WHEN_DIRTY
                     } else {
                         GLSurfaceView.RENDERMODE_CONTINUOUSLY
@@ -302,17 +331,24 @@ fun ProjectMVisualizer(
             },
         )
 
-        LaunchedEffect(glView, throttleProjectM) {
+        LaunchedEffect(glView, pacedRendering, resumed, targetFps) {
             val view = glView ?: return@LaunchedEffect
-            view.renderMode = if (throttleProjectM) {
+            view.renderMode = if (pacedRendering || !resumed) {
                 GLSurfaceView.RENDERMODE_WHEN_DIRTY
             } else {
                 GLSurfaceView.RENDERMODE_CONTINUOUSLY
             }
-            if (!throttleProjectM) return@LaunchedEffect
+            if (!pacedRendering || !resumed) return@LaunchedEffect
+            // Align requests with display frames, retain fractional cadence and avoid catch-up bursts.
+            val period = 1_000_000_000L / targetFps
+            var next = 0L
             while (true) {
-                view.requestRender()
-                delay(42L) // ~24 fps cap on low/Auto→low
+                withFrameNanos { now ->
+                    if (next == 0L || now + 500_000L >= next) {
+                        view.requestRender()
+                        next = if (next == 0L || now - next >= period) now + period else next + period
+                    }
+                }
             }
         }
 
