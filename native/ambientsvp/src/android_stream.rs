@@ -112,12 +112,13 @@ impl Drop for DisplayImage{
     }}
 }
 impl DisplayImage{
-    fn new(owner:Arc<DeviceOwner>,width:u32,height:u32,recycled:Option<RecycledBuffer>)->Result<Self>{
+    fn new(owner:Arc<DeviceOwner>,width:u32,height:u32,recycled:Option<RecycledBuffer>,high:bool)->Result<Self>{
+        let format=if high{vk::Format::R16G16B16A16_SFLOAT}else{vk::Format::R8G8B8A8_UNORM};
         let mut s=Self{owner,buffer:recycled.map_or(ptr::null_mut(),RecycledBuffer::take),image:vk::Image::null(),view:vk::ImageView::null(),
             memory:vk::DeviceMemory::null(),signal:vk::Semaphore::null(),leased:false};
         // GPU_SAMPLED_IMAGE | GPU_COLOR_OUTPUT | COMPOSER_OVERLAY.
         // Never request CPU-readable/writable allocations.
-        let desc=Desc{width,height,layers:1,format:1,usage:(1<<8)|(1<<9)|(1<<11),..Default::default()};
+        let desc=Desc{width,height,layers:1,format:if high{0x16}else{1},usage:(1<<8)|(1<<9)|(1<<11),..Default::default()};
         if s.buffer.is_null() && (unsafe{AHardwareBuffer_allocate(&desc,&mut s.buffer)}!=0||s.buffer.is_null()){return Err("compositor AHB allocation unsupported".into());}
         let d=s.owner.d();
         let ahb=ash::android::external_memory_android_hardware_buffer::Device::new(&s.owner.instance,d);
@@ -125,14 +126,14 @@ impl DisplayImage{
         let mut props=vk::AndroidHardwareBufferPropertiesANDROID::default().push_next(&mut fmt);
         unsafe{ahb.get_android_hardware_buffer_properties(s.buffer.cast_const(),&mut props)}.map_err(err)?;
         let (size,bits)=(props.allocation_size,props.memory_type_bits);
-        if size==0 || fmt.format!=vk::Format::R8G8B8A8_UNORM ||
+        if size==0 || fmt.format!=format ||
             !fmt.format_features.contains(vk::FormatFeatureFlags::STORAGE_IMAGE){
             return Err("compositor AHB is not a storage image".into());
         }
         let mut ext=vk::ExternalMemoryImageCreateInfo::default().handle_types(MEMORY);
         let mut ext_in=vk::PhysicalDeviceExternalImageFormatInfo::default().handle_type(MEMORY);
         let usage=vk::ImageUsageFlags::STORAGE|vk::ImageUsageFlags::SAMPLED|vk::ImageUsageFlags::COLOR_ATTACHMENT;
-        let info=vk::PhysicalDeviceImageFormatInfo2::default().format(vk::Format::R8G8B8A8_UNORM)
+        let info=vk::PhysicalDeviceImageFormatInfo2::default().format(format)
             .ty(vk::ImageType::TYPE_2D).tiling(vk::ImageTiling::OPTIMAL).usage(usage).push_next(&mut ext_in);
         let mut external=vk::ExternalImageFormatProperties::default();
         let mut format_props=vk::ImageFormatProperties2::default().push_next(&mut external);
@@ -142,7 +143,7 @@ impl DisplayImage{
         }
         unsafe{
             s.image=d.create_image(&vk::ImageCreateInfo::default().push_next(&mut ext)
-                .image_type(vk::ImageType::TYPE_2D).format(vk::Format::R8G8B8A8_UNORM)
+                .image_type(vk::ImageType::TYPE_2D).format(format)
                 .extent(vk::Extent3D{width,height,depth:1}).mip_levels(1).array_layers(1)
                 .samples(vk::SampleCountFlags::TYPE_1).tiling(vk::ImageTiling::OPTIMAL)
                 .usage(usage).sharing_mode(vk::SharingMode::EXCLUSIVE).initial_layout(vk::ImageLayout::UNDEFINED),None).map_err(err)?;
@@ -156,7 +157,7 @@ impl DisplayImage{
                 .push_next(&mut dedicated).push_next(&mut import),None).map_err(err)?;
             d.bind_image_memory(s.image,s.memory,0).map_err(err)?;
             s.view=d.create_image_view(&vk::ImageViewCreateInfo::default().image(s.image)
-                .view_type(vk::ImageViewType::TYPE_2D).format(vk::Format::R8G8B8A8_UNORM).subresource_range(range()),None).map_err(err)?;
+                .view_type(vk::ImageViewType::TYPE_2D).format(format).subresource_range(range()),None).map_err(err)?;
             let mut export=vk::ExportSemaphoreCreateInfo::default().handle_types(HANDLE);
             s.signal=d.create_semaphore(&vk::SemaphoreCreateInfo::default().push_next(&mut export),None).map_err(err)?;
         }
@@ -216,7 +217,7 @@ impl Drop for Batch{
 impl Batch{
     fn record(owner:Arc<DeviceOwner>,resident:*mut VulkanResident,a:*mut Job,b:*mut Job,
         width:u32,height:u32,phases:&[f32],cached:Option<BatchCommands>,
-        preflight:Option<DisplayImage>,mut recycled:Vec<RecycledBuffer>)->Result<Self>{
+        preflight:Option<DisplayImage>,mut recycled:Vec<RecycledBuffer>,high:bool)->Result<Self>{
         let commands=if let Some(cached)=cached{cached.reset()?;cached}
             else{BatchCommands::new(owner.clone())?};
         let cmd=commands.command;let fence=commands.fence;
@@ -225,7 +226,7 @@ impl Batch{
         // The preflight image has never been submitted or exposed to
         // any consumer. Subsequent output images remain fresh.
         if let Some(img)=preflight{s.images.push(img);}
-        while s.images.len()<phases.len(){s.images.push(DisplayImage::new(s.owner.clone(),width,height,recycled.pop())?);}
+        while s.images.len()<phases.len(){s.images.push(DisplayImage::new(s.owner.clone(),width,height,recycled.pop(),high)?);}
         let d=s.owner.d();
         unsafe{
             d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).map_err(err)?;
@@ -297,11 +298,12 @@ fn discard_output(out:&mut DisplayOutput){
 }
 pub struct Stream{
     owner:Arc<DeviceOwner>,importer:*mut Importer,resident:*mut VulkanResident,
-    width:u32,height:u32,previous:*mut Job,retired:Vec<*mut Job>,batches:Vec<Batch>,
+    width:u32,height:u32,mode:u32,previous:*mut Job,retired:Vec<*mut Job>,batches:Vec<Batch>,
     idle_commands:Vec<BatchCommands>,preflight:Option<DisplayImage>,output_pool:Arc<Mutex<OutputPool>>,
 }
 impl Stream{
-    fn new(width:u32,height:u32)->Result<Self>{
+    fn new(width:u32,height:u32,mode:u32)->Result<Self>{
+        if !matches!(mode,0|4|6){return Err("unsupported compositor mode".into());}
         let owner=DeviceOwner::new()?;
         let names=[c"VK_ANDROID_external_memory_android_hardware_buffer",c"VK_EXT_queue_family_foreign",c"VK_KHR_external_semaphore_fd"];
         let pointers=names.map(|n|n.as_ptr());
@@ -309,13 +311,13 @@ impl Stream{
         let importer=unsafe{ambient_svp_ahb_importer_create(owner.instance.handle(),owner.physical,owner.d().handle(),
             get,owner.queue,owner.family,pointers.as_ptr(),pointers.len() as u32,1)};
         if importer.is_null(){return Err("Android importer rejected device".into());}
-        let resident=unsafe{ambient_svp_vk_create(owner.instance.handle(),owner.physical,owner.d().handle(),get,width,height)};
+        let resident=unsafe{ambient_svp_vk_create_format(owner.instance.handle(),owner.physical,owner.d().handle(),get,width,height,if mode==0{0}else{3})};
         if resident.is_null(){unsafe{ambient_svp_ahb_importer_destroy(importer)};return Err("resident device rejected geometry".into());}
         // Preflight real compositor-format output before consuming frames.
-        let mut s=Self{owner,importer,resident,width,height,previous:ptr::null_mut(),retired:Vec::new(),
+        let mut s=Self{owner,importer,resident,width,height,mode,previous:ptr::null_mut(),retired:Vec::new(),
             batches:Vec::with_capacity(MAX_BATCHES),idle_commands:Vec::with_capacity(MAX_BATCHES),preflight:None,
             output_pool:Arc::new(Mutex::new(OutputPool::default()))};
-        match DisplayImage::new(s.owner.clone(),width,height,None){
+        match DisplayImage::new(s.owner.clone(),width,height,None,mode!=0){
             Ok(img)=>s.preflight=Some(img),
             Err(e)=>{s.dispose();return Err(e);}
         }
@@ -360,7 +362,7 @@ impl Stream{
             }
         }
         let batch=Batch::record(self.owner.clone(),self.resident,a,b,self.width,self.height,phases,
-            self.idle_commands.pop(),self.preflight.take(),recycled)?;
+            self.idle_commands.pop(),self.preflight.take(),recycled,self.mode!=0)?;
         let result=batch.outputs(out);
         self.batches.push(batch);
         if result.is_ok(){
@@ -371,8 +373,12 @@ impl Stream{
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_android_stream_create(width:u32,height:u32)->*mut Stream{
+    unsafe{ambient_svp_android_stream_create_format(width,height,0)}
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_android_stream_create_format(width:u32,height:u32,mode:u32)->*mut Stream{
     if width<32||height<32||(width|height)&1!=0||u64::from(width)*u64::from(height)>1920*1080{return ptr::null_mut();}
-    catch_unwind(AssertUnwindSafe(||Stream::new(width,height).map_or(ptr::null_mut(),|s|Box::into_raw(Box::new(s))))).unwrap_or(ptr::null_mut())
+    catch_unwind(AssertUnwindSafe(||Stream::new(width,height,mode).map_or(ptr::null_mut(),|s|Box::into_raw(Box::new(s))))).unwrap_or(ptr::null_mut())
 }
 /// Extra source-picture reference transferred unconditionally via callback.
 /// On failure, caller still owns its ORIGINAL picture reference for fallback.
@@ -395,10 +401,12 @@ pub unsafe extern "C" fn ambient_svp_android_stream_push(stream:*mut Stream,buff
         let out=unsafe{std::slice::from_raw_parts_mut(out,count as usize)};
         out.fill(DisplayOutput::default());
         let crop=Crop{left:left as i32,top:top as i32,right:(left+width) as i32,bottom:(top+height) as i32};
-        let Some(frame)= (unsafe{Frame::borrowed(buffer,fd,crop,timestamp,context,release)}) else{return -4;};
+        let Some(frame)= (unsafe{Frame::borrowed(buffer,fd,crop,timestamp,context,release,s.mode!=0)}) else{return -4;};
         let mut frame=Box::into_raw(Box::new(frame));
         let mut next=ptr::null_mut();
-        if unsafe{ambient_svp_ahb_submit(s.importer,&mut frame,1,&mut next)}!=0{
+        let submitted=unsafe{if s.mode==0{ambient_svp_ahb_submit(s.importer,&mut frame,1,&mut next)}
+            else{submit_high_local(s.importer,&mut frame,s.mode,&mut next)}};
+        if submitted!=0{
             if !frame.is_null(){unsafe{drop(Box::from_raw(frame))};}
             return -4;
         }
@@ -512,7 +520,7 @@ mod tests{
     #[ignore="requires a physical Android Vulkan device with compositor AHB extensions"]
     fn compositor_allocation_can_be_reimported_after_successful_gpu_sync(){
         let owner=DeviceOwner::new().unwrap();
-        let image=DisplayImage::new(owner.clone(),64,64,None).unwrap();
+        let image=DisplayImage::new(owner.clone(),64,64,None,false).unwrap();
         let buffer=image.buffer;
         // Submit a real GPU clear-independent handoff semaphore and
         // export its sync_file; no compositor transaction is simulated.
@@ -532,7 +540,7 @@ mod tests{
         unsafe{AHardwareBuffer_acquire(buffer);}
         drop(image);
         let new=DisplayImage::new(owner.clone(),64,64,Some(RecycledBuffer{
-            buffer:buffer as usize,producer:-1,consumer:-1})).unwrap();
+            buffer:buffer as usize,producer:-1,consumer:-1}),false).unwrap();
         assert_eq!(new.buffer,buffer);
     }
     #[test]
