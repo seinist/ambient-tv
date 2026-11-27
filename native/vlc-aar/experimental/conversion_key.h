@@ -58,6 +58,20 @@ inline bool raw_p010_features(VkFormatFeatureFlags features, VkChromaLocation x,
     return supported(x) && supported(y);
 }
 
+// The native P010 route uses a fixed RGB_IDENTITY/full-range sampler,
+// identity swizzles and nearest filtering. Only native format and chroma
+// location vary; external-format identifiers are not part of this contract.
+inline bool same_native_p010_conversion(const VkAndroidHardwareBufferFormatPropertiesANDROID &a,
+                                        const VkAndroidHardwareBufferFormatPropertiesANDROID &b) {
+    return raw_p010_format(a.format) && a.format == b.format &&
+        a.suggestedXChromaOffset == b.suggestedXChromaOffset &&
+        a.suggestedYChromaOffset == b.suggestedYChromaOffset;
+}
+inline bool native_p010_descriptor_count_valid(uint32_t count) {
+    // Vulkan specifies 1..number of planes for a known native format.
+    return count >= 1 && count <= 2;
+}
+
 // Identically defined external YCbCr conversion, independent of AHB identity
 // and dimensions. Deliberately include all reported feature flags and component
 // swizzles; only reuse when the driver-reported conversion contract is exact.

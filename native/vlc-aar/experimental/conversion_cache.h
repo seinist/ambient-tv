@@ -81,8 +81,11 @@ public:
         VkResult result = target_.ensure(width, height, format);
         if (result != VK_SUCCESS) return result;
         pass_.emplace(device_, sample_dispatch_);
+        // Native P010 has an exact descriptor count from the format query.
+        // Only opaque external imports need the device-wide conservative budget.
+        const uint32_t pool_descriptors = raw_yuv ? imported_->native_descriptors() : descriptors;
         result = pass_->create(imported_->sampler(), imported_->view(), target_.view(),
-                               format, width, height, descriptors, vert_, frag_, pipeline_cache_);
+                               format, width, height, pool_descriptors, vert_, frag_, pipeline_cache_);
         if (result != VK_SUCCESS) {
             pass_.reset();
             return result;

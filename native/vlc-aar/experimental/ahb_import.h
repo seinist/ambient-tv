@@ -55,7 +55,7 @@ public:
         if (result != VK_SUCCESS) return result;
 
         raw_yuv_ = raw_yuv;
-        if (raw_yuv_ && !raw_supported(format, desc)) return fail(VK_ERROR_FORMAT_NOT_SUPPORTED);
+        if (raw_yuv_ && !raw_supported(format, desc, native_descriptors_)) return fail(VK_ERROR_FORMAT_NOT_SUPPORTED);
         VkExternalFormatANDROID external{VK_STRUCTURE_TYPE_EXTERNAL_FORMAT_ANDROID};
         external.externalFormat = format.externalFormat;
         VkSamplerYcbcrConversionCreateInfo conversion{VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_CREATE_INFO};
@@ -109,8 +109,14 @@ public:
             VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_PROPERTIES_ANDROID};
         VkResult result = query(buffer, desc, format, properties, raw_yuv_);
         if (result != VK_SUCCESS) return result;
-        if (!same_conversion_format(format_, format)) return VK_SUCCESS;
-        if (raw_yuv_ && !raw_supported(format, desc)) return VK_ERROR_FORMAT_NOT_SUPPORTED;
+        if (raw_yuv_ ? !same_native_p010_conversion(format_, format) :
+                       !same_conversion_format(format_, format)) return VK_SUCCESS;
+        uint32_t candidate_descriptors = 0;
+        if (raw_yuv_ && !raw_supported(format, desc, candidate_descriptors))
+            return VK_ERROR_FORMAT_NOT_SUPPORTED;
+        // A changed descriptor count requires rebuilding the sampler layout
+        // and pool, not rebinding into the old immutable descriptor set.
+        if (raw_yuv_ && candidate_descriptors != native_descriptors_) return VK_SUCCESS;
         Allocation candidate{};
         result = allocate_image(buffer, desc, format, properties, candidate);
         if (result != VK_SUCCESS) {
@@ -129,6 +135,7 @@ public:
     }
 
     bool raw_yuv() const { return raw_yuv_ && allocation_.buffer; }
+    uint32_t native_descriptors() const { return raw_yuv() ? native_descriptors_ : 0; }
     VkImage image() const { return allocation_.image; }
     VkImageView view() const { return allocation_.view; }
     // Must be an immutable sampler in the combined-image-sampler descriptor layout.
@@ -171,7 +178,7 @@ private:
     }
 
     bool raw_supported(const VkAndroidHardwareBufferFormatPropertiesANDROID &format,
-                       const AHardwareBuffer_Desc &desc) const {
+                       const AHardwareBuffer_Desc &desc, uint32_t &descriptors) const {
         if (!physical_ || !d_.format_properties || !d_.image_format_properties ||
             !raw_p010_format(format.format)) return false;
         VkFormatProperties format_props{};
@@ -187,15 +194,25 @@ private:
         query_info.tiling = VK_IMAGE_TILING_OPTIMAL;
         query_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
         VkExternalImageFormatProperties external_props{VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES};
+        VkSamplerYcbcrConversionImageFormatProperties conversion_props{
+            VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_IMAGE_FORMAT_PROPERTIES};
         VkImageFormatProperties2 props{VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2};
         props.pNext = &external_props;
+        external_props.pNext = &conversion_props;
         if (d_.image_format_properties(physical_, &query_info, &props) != VK_SUCCESS) return false;
+        if (!native_p010_descriptor_count_valid(conversion_props.combinedImageSamplerDescriptorCount))
+            return false;
+        descriptors = conversion_props.combinedImageSamplerDescriptorCount;
         return (external_props.externalMemoryProperties.externalMemoryFeatures &
                 VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) &&
                (external_props.externalMemoryProperties.compatibleHandleTypes &
                 VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID) &&
                desc.width <= props.imageFormatProperties.maxExtent.width &&
-               desc.height <= props.imageFormatProperties.maxExtent.height;
+               desc.height <= props.imageFormatProperties.maxExtent.height &&
+               props.imageFormatProperties.maxExtent.depth >= 1 &&
+               props.imageFormatProperties.maxMipLevels >= 1 &&
+               props.imageFormatProperties.maxArrayLayers >= 1 &&
+               (props.imageFormatProperties.sampleCounts & VK_SAMPLE_COUNT_1_BIT);
     }
 
     VkResult allocate_image(AHardwareBuffer *buffer, const AHardwareBuffer_Desc &desc,
@@ -274,11 +291,13 @@ private:
         conversion_ = VK_NULL_HANDLE;
         format_ = {};
         raw_yuv_ = false;
+        native_descriptors_ = 0;
     }
     VkDevice device_{};
     Dispatch d_{};
     VkPhysicalDevice physical_{};
     bool raw_yuv_{};
+    uint32_t native_descriptors_{};
     Allocation allocation_{};
     VkSamplerYcbcrConversion conversion_{};
     VkSampler sampler_{};
