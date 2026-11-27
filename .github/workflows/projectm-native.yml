@@ -5,6 +5,7 @@ on:
     paths:
       - 'native/ambientprojectm/**'
       - 'scripts/build_projectm_android.sh'
+      - 'scripts/test_projectm_classic_composite.sh'
       - 'build.sh'
       - 'gradle/external-versions.properties'
       - 'app/src/main/java/com/ambient/tv/ui/common/projectm/**'
@@ -15,6 +16,7 @@ on:
     paths:
       - 'native/ambientprojectm/**'
       - 'scripts/build_projectm_android.sh'
+      - 'scripts/test_projectm_classic_composite.sh'
       - 'build.sh'
       - 'gradle/external-versions.properties'
       - '.github/workflows/projectm-native.yml'
@@ -40,6 +42,18 @@ jobs:
         run: |
           bash -n scripts/build_projectm_android.sh
           test "$(bash scripts/build_projectm_android.sh --fingerprint | wc -c)" -eq 41
+
+  classic-composite-pixels:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install host GLES regression dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake g++ libegl-dev libgles-dev libgl1-mesa-dri python3-numpy
+      - name: Compare actual MilkDrop classic composite paths
+        run: bash scripts/test_projectm_classic_composite.sh
 
   android-native:
     runs-on: ubuntu-latest
