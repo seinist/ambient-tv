@@ -36,6 +36,7 @@ internal fun svpPreset(mode: String): Int = when (mode) {
     "auto", "light" -> 1
     "balanced" -> 2
     "quality" -> 3
+    "adaptive" -> 4
     else -> 0
 }
 
@@ -121,7 +122,7 @@ internal fun mpvSvpFilter(
     width: Int? = null,
     height: Int? = null,
 ): String? {
-    if (mode !in setOf("auto", "light", "balanced", "quality")) return null
+    if (mode !in setOf("auto", "light", "balanced", "quality", "adaptive")) return null
     val run = svpDecision(sourceFps, displayFps, options, width, height) as? SvpDecision.Run ?: return null
     return "ambientsvp=source=${run.source}:fps=${run.target}:preset=${svpPreset(mode)}:${svpNativeOptions(options, ":")}"
 }
