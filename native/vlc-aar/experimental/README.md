@@ -307,3 +307,32 @@ device playback result. The subsequent HDR10+ changes need their own CI.
 The renderer still has display-adaptation policy, LUT approximation and
 experimental legacy grid/saturation handling; neither complete reference
 equivalence nor HDR10+ certification has been established.
+
+
+### Display LUT normalization and MP4 hvcE follow-up
+
+Annex B.3 source normalization now uses the mastering actual-peak LUT
+as an alternative denominator to MaxSCL, not a multiplier on the
+MaxSCL-derived peak. Individual RGB components are clamped to that
+normalization domain before applying the tone curve. Saturation uses
+separate normalized source/target luminance scales based on Annex B.11:
+both available actual-peak factors are applied together or both omitted.
+Missing explicit mastering peak uses the scene peak as an adaptation
+fallback; actual-display adaptation and guarded logarithms remain
+implementation policy. Ellipse centers are bounded by the image rather
+than the processing rectangle, and the normative clockwise angle in
+y-down image coordinates is covered by a 45-degree test. The existing
+inverse coordinate rotation is intentionally retained.
+
+All three native contract jobs passed at c3765b0 (run 45956475239).
+
+The experimental MP4 demux patch reads hvcE as an HEVC configuration
+record and validates bounded VPS/SPS/PPS arrays. For opted-in combined
+profile-7 streams with wrapped EL NALs, it injects the wrapped
+configuration at the first EL NAL after BL VCL on random access or
+discontinuity. This preserves the container length-prefix width and
+avoids VLC's HEVC packetizer discarding orphan tail NALs. Malformed or
+unsupported configurations are not injected. The host fixtures exercise
+prefix widths, truncation and the insertion location. Separate BL and EL
+tracks with vdep references are still not merged by this patch. The
+final native/app build and real MP4 seek/playback tests remain pending.
