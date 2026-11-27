@@ -1,9 +1,8 @@
 #pragma once
 /* Experimental software enhancement-layer decoder. The caller owns the BL
  * decoder and must submit each accepted access unit exactly once, in decode
- * order. All operations are serialized by the caller. This is intentionally
- * not yet enabled in VLC: matching and picture ownership must be wired first.
- * Only combined Annex B access units with in-band EL parameter sets. */
+ * order. All operations are serialized by the caller. The experimental VLC
+ * path owns matching and picture handoff. Input is normalized to Annex B. */
 #include <libavcodec/avcodec.h>
 #include <libavcodec/bsf.h>
 #include <libavutil/opt.h>
@@ -55,6 +54,8 @@ static inline int ambient_fel_decoder_open(struct ambient_fel_decoder *s, AVRati
     s->codec->thread_count=2;
     s->codec->thread_type=FF_THREAD_SLICE;
     s->codec->max_pixels=1920*1088;
+    // Inspect the coded crop before FFmpeg can silently erase its origin.
+    s->codec->apply_cropping=0;
     s->codec->err_recognition=AV_EF_EXPLODE;
     ret=avcodec_open2(s->codec,hevc,NULL);
     if (ret>=0) return 0;
@@ -84,6 +85,11 @@ static inline int ambient_fel_decoder_receive(struct ambient_fel_decoder *s)
         if (ret<0) {
             av_frame_free(&f);
             return ret==AVERROR(EAGAIN)||ret==AVERROR_EOF?0:ret;
+        }
+        // Right/bottom padding does not shift the EL sample phase. A
+        // nonzero left/top crop is ambiguous without original BL phase.
+        if(f->crop_left||f->crop_top||av_frame_apply_cropping(f,0)<0){
+            av_frame_free(&f);return AVERROR_INVALIDDATA;
         }
         // Only software 10-bit 4:2:0 raw codewords, no range expansion.
         if (f->format!=AV_PIX_FMT_YUV420P10LE || f->pts==AV_NOPTS_VALUE ||
