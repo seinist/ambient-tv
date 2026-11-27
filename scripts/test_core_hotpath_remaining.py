@@ -102,6 +102,184 @@ int main() {
                             str(path), "-o", str(binary)], check=True)
             subprocess.run([str(binary)], check=True)
 
+    def test_extended_neon_kernels_compile(self):
+        clang = shutil.which("clang")
+        self.assertIsNotNone(clang)
+        _, pokey = replacement("prosystem", "for(j = 0; j < tia_size; j++)")
+        _, prosystem_audio = replacement("prosystem", "*(audio_out_buf++) = sample_16;")
+        _, atari_mix = replacement("a5200", "static void blend_frames_mix(void)")
+        _, atari_audio = replacement("a5200", "/* Update output buffer */")
+        _, saturn = replacement("mednafen_saturn", "const uint64_t mxor = masks[0] ^ masks[1];")
+        source = """
+#include <stdint.h>
+#include <stddef.h>
+#include <arm_neon.h>
+void pro_pokey(uint8_t* tia_samples_buf, uint8_t* pokey_samples_buf, uint8_t* pokey_mix_buf, size_t tia_size) {
+size_t j;
+""" + pokey + """
+}
+void pro_audio(uint8_t* tia_samples_buf, int16_t* audio_out_buf, size_t tia_size) {
+size_t i;
+""" + prosystem_audio + """
+}
+#define A5200_VIDEO_WIDTH 17
+#define A5200_VIDEO_HEIGHT 3
+static uint16_t *video_buffer, *video_buffer_prev;
+""" + atari_mix + """
+       {
+          uint16_t a = *curr, b = *prev;
+          *prev++ = a;
+          *curr++ = (a+b+((a^b)&0x821))>>1;
+       }
+   }
+}
+#define A5200_AUDIO_BUFFER_SIZE 19
+void a5200_audio(uint8_t* samples_ptr, int16_t* out_ptr) {
+size_t i;
+""" + atari_audio + """
+         *out_ptr++ = sample_16;
+         *out_ptr++ = sample_16;
+      }
+}
+static struct { uint64_t spr[704]; } LB;
+static unsigned WinPieces[5];
+#define PIX_SWBIT_SHIFT 56
+#define MDFN_LIKELY(x) (x)
+void saturn_window(uint64_t* buf, unsigned piece, uint64_t mor, const uint64_t* masks) {
+unsigned x = 0;
+""" + saturn + """
+    {
+      const int64_t shifted = (int64_t)(LB.spr[x] << (63 - PIX_SWBIT_SHIFT));
+      const uint64_t sel = (uint64_t)(shifted >> 63);
+      buf[x] &= mor ^ (sel & mxor);
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "extended.cpp"
+            output = path.with_suffix(".o")
+            path.write_text(source)
+            for target, flags in (("aarch64-none-elf", []), ("armv7a-none-eabi", ["-mfpu=neon"])):
+                subprocess.run([clang, "--target=" + target, *flags, "-ffreestanding", "-std=c++11",
+                                "-O3", "-c", str(path), "-o", str(output)], check=True)
+                self.assertGreater(output.stat().st_size, 0)
+
+    def test_extended_bitmask_and_audio_equivalence(self):
+        compiler = shutil.which("c++")
+        self.assertIsNotNone(compiler)
+        _, cemu = replacement("cemu", "pad.buttons[id] = input_state_cb")
+        _, panda = replacement("panda3ds", "static bool getButtonState(uint id)")
+        _, ppsspp_decl = replacement("ppsspp", "} output_audio_buffer = {NULL, 0, 0};")
+        _, ppsspp_upload = replacement("ppsspp", "audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2)")
+        _, ppsspp_init = replacement("ppsspp", "ensure_output_audio_buffer_capacity(capacity);")
+        _, ppsspp_free = replacement("ppsspp", "free(output_audio_buffer.data);")
+        source = """
+#include <cstdint>
+#include <cstdlib>
+#include <cassert>
+#include <cstring>
+#include <mutex>
+#include <vector>
+using uint = unsigned;
+#define RETRO_DEVICE_JOYPAD 1
+#define RETRO_DEVICE_ID_JOYPAD_MASK 256
+static unsigned callbacks;
+static uint16_t buttons;
+static int16_t input_state_cb(unsigned, unsigned, unsigned, unsigned id) {
+    ++callbacks;
+    return id == RETRO_DEVICE_ID_JOYPAD_MASK ? static_cast<int16_t>(buttons) : ((buttons >> id) & 1);
+}
+static auto inputStateCallback = input_state_cb;
+static bool ambient_input_bitmasks, ambientInputBitmasks;
+static uint16_t ambientJoypadMask;
+struct Pad { int16_t buttons[16]; };
+void read_cemu(Pad& pad, unsigned port) {
+""" + cemu + """
+}
+""" + panda + """
+static struct { int16_t* data; int32_t size; int32_t capacity;
+""" + ppsspp_decl + """
+static std::mutex output_audio_buffer_mutex;
+static bool ensure_output_audio_buffer_capacity(int32_t capacity) {
+    output_audio_buffer.data = static_cast<int16_t*>(realloc(output_audio_buffer.data, capacity * sizeof(int16_t)));
+    output_audio_buffer.capacity = capacity;
+    return output_audio_buffer.data != nullptr;
+}
+void init_buffer(int32_t capacity) {
+    std::lock_guard<std::mutex> lock(output_audio_buffer_mutex);
+""" + ppsspp_init + """
+}
+void free_buffer() {
+    std::lock_guard<std::mutex> lock(output_audio_buffer_mutex);
+""" + ppsspp_free + """
+}
+static std::vector<int16_t> submitted;
+static unsigned submissions;
+void audio_batch_cb(const int16_t* data, size_t frames) {
+    // The producer can acquire its lock during a frontend submission. A
+    // blocking regression here would deadlock; try_lock fails immediately.
+    assert(output_audio_buffer_mutex.try_lock());
+    submitted.insert(submitted.end(), data, data + frames * 2);
+    if (++submissions == 1) {
+        output_audio_buffer.data[0] = 33;
+        output_audio_buffer.data[1] = 44;
+        output_audio_buffer.size = 2;
+    }
+    output_audio_buffer_mutex.unlock();
+}
+void upload_buffer() {
+""" + ppsspp_upload + """
+}
+int main() {
+    Pad pad{};
+    for (unsigned m=0;m<65536;m++) {
+        buttons = static_cast<uint16_t>(m);
+        ambient_input_bitmasks = false;
+        callbacks = 0;
+        read_cemu(pad, 0);
+        assert(callbacks == 16);
+        for (unsigned i=0;i<16;i++) assert(pad.buttons[i] == ((m>>i)&1));
+        ambient_input_bitmasks = true;
+        callbacks = 0;
+        read_cemu(pad, 0);
+        assert(callbacks == 1);
+        for (unsigned i=0;i<16;i++) assert(pad.buttons[i] == ((m>>i)&1));
+        ambientInputBitmasks = true;
+        ambientJoypadMask = buttons;
+        callbacks = 0;
+        for (unsigned i=0;i<16;i++) assert(getButtonState(i) == bool((m>>i)&1));
+        assert(callbacks == 0);
+        // 0xffff must not collide with a signed -1 "not sampled" sentinel.
+        const int32_t cached = static_cast<uint16_t>(static_cast<int16_t>(buttons));
+        assert(cached >= 0);
+    }
+    for (uint32_t x=0;x<0x1000000;x+=251) {
+        for (uint32_t alpha: {0u, 1u, 127u, 255u}) {
+            uint32_t pixel = (alpha<<24) | x;
+            assert(((0xffffffu-pixel)|0xff000000u) == (~pixel|0xff000000u));
+        }
+    }
+    init_buffer(16);
+    output_audio_buffer.data[0] = 11;
+    output_audio_buffer.data[1] = 22;
+    output_audio_buffer.size = 2;
+    upload_buffer();
+    upload_buffer();
+    upload_buffer();
+    assert((submitted == std::vector<int16_t>{11,22,33,44}));
+    assert(submissions == 2);
+    free_buffer();
+    assert(!output_audio_buffer.data && !ambient_upload_buffer.data);
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "extended.cpp"
+            binary = path.with_suffix("")
+            path.write_text(source)
+            subprocess.run([compiler, "-std=c++11", "-O2", "-fsanitize=undefined", "-pthread",
+                            str(path), "-o", str(binary)], check=True)
+            subprocess.run([str(binary)], check=True)
+
     def test_neon_kernels_compile_for_aarch64(self):
         clang = shutil.which("clang")
         self.assertIsNotNone(clang, "Clang is required for the ARM64 candidate syntax check")

@@ -471,7 +471,7 @@ PATCHES = {
     [
       "Source/Core/DolphinLibretro/Input.cpp",
       "static retro_input_state_t input_cb = nullptr;",
-      "static retro_input_state_t input_cb = nullptr;\nstatic bool ambient_input_bitmasks = false;\n// One snapshot per port, published by Update() for the emulation thread.\n// A negative value means no snapshot, not an all-buttons-pressed mask.\nstatic std::atomic<int> ambient_joypad[8]{{-1}, {-1}, {-1}, {-1}, {-1}, {-1}, {-1}, {-1}};\nstatic void AmbientInvalidateJoypads()\n{\n  for (auto& mask : ambient_joypad)\n    mask.store(-1, std::memory_order_relaxed);\n}"
+      "static retro_input_state_t input_cb = nullptr;\nstatic std::atomic<bool> ambient_input_bitmasks{false};\n// One snapshot per port, published by Update() for the emulation thread.\n// A negative value means no snapshot, not an all-buttons-pressed mask.\nstatic std::atomic<int> ambient_joypad[8]{{-1}, {-1}, {-1}, {-1}, {-1}, {-1}, {-1}, {-1}};\nstatic void AmbientInvalidateJoypads()\n{\n  for (auto& mask : ambient_joypad)\n    mask.store(-1, std::memory_order_relaxed);\n}"
     ],
     [
       "Source/Core/DolphinLibretro/Input.cpp",
@@ -486,7 +486,7 @@ PATCHES = {
     [
       "Source/Core/DolphinLibretro/Input.cpp",
       "void Shutdown()\n{",
-      "void Shutdown()\n{\n  AmbientInvalidateJoypads();"
+      "void Shutdown()\n{\n  ambient_input_bitmasks.store(false, std::memory_order_relaxed);\n  AmbientInvalidateJoypads();"
     ],
     [
       "Source/Core/DolphinLibretro/Input.cpp",
