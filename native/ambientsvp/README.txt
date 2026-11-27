@@ -870,3 +870,67 @@ the new Android ABI in normal playback. Do not release one MediaCodec
 buffer to two Surface consumers or reinterpret AVMediaCodecBuffer as
 AHardwareBuffer. Regular presets and application defaults remain
 unchanged until end-to-end player/device validation.
+
+
+Experimental actual player MediaCodec Surface selection
+--------------------------------------------------------
+The native source integration scripts now patch the pinned MPV and VLC
+sources during their regular Android library build. No changes to the
+ordinary default paths.
+
+MPV (Vulkan/gpu-next, explicit test flags):
+    --vo=gpu-next --gpu-api=vulkan
+    --gpu-hwdec-interop=mediacodec-svp-vulkan
+    --hwdec=mediacodec,mediacodec-copy
+    --vf=ambientsvp=source=24:fps=60:hwresident=1
+
+The explicit-only interop creates the decoder's actual PRIVATE Surface
+before configuring MediaCodec and registers the matching AVHWDevice.
+The decoder hook checks 8-bit SDR metadata and matches the AImage's
+timestamp to the released MediaCodec output. The converter writes
+directly into the player's allocated RGBA AVVkFrame on the same Vulkan
+device, with FFmpeg's frame lock, queue lock and timeline semaphore
+handoff. The resident filter accepts those RGB frames and sends its
+own Vulkan frames to the existing renderer mapper. Ineligible or
+failed imports trigger MPV's normal decoder fallback (never release a
+MediaCodec output twice). The device extensions/YCbCr feature are
+requested opportunistically; no implicit enablement of the interop.
+
+VLC 4 custom Android build (explicit test flags):
+    --vout=android-display --mediacodec-dr
+    --mediacodec-svp-vulkan
+    --video-filter=ambientsvp{fps=60,hwresident=1}
+
+VLC already has an ordered PRIVATE AImageReader and SurfaceControl
+producer/consumer path. Select its GPU_SAMPLED_IMAGE usage for
+explicit verified 8-bit AVC profiles and ordinary rectangular output,
+rather than creating another Surface. The pre-clock SVP filter uses
+the actual AImage picture, borrows a hardware buffer and producer
+fence and retains a source-picture token until a GPU handback fence
+is published. A bounded owned Vulkan compute device imports and
+samples the AHB; resident motion/synthesis writes directly into fresh
+compositor-capable RGBA AHardwareBuffers. SurfaceControl receives
+the actual output buffer and exported sync_file at the regular
+presentation timestamp, with full-range RGB dataspace and fallback
+to source dataspace. Source frames retain their handback fence;
+unsupported formats, missing features, timing discontinuities and
+backpressure fall back to original pictures. A failed fence export
+that cannot retire safely drops the affected original rather than
+presenting an unsynchronized buffer. The output buffers are fresh
+allocations, not pooled across compositor reads. The existing GLES
+AImage interop is not selected for this explicitly opted-in ASC path.
+
+These are explicit native player options for validation, not default
+app settings. The Android UI/backend policy currently retains its
+existing copy-back behavior and does not expose a new resident toggle.
+VLC's initial profile gate is deliberately limited to AVC baseline,
+main and high (8-bit) and known SDR color metadata; MPV also rejects
+unknown decoder bit depth. Real device playback, Vulkan validation
+layers, full MPV/VLC builds, quality, cadence and throughput checks
+remain required. The source-patch anchors were checked against both
+exact pins and CI exercises patch application/idempotence. The
+previous revision's native Mesa YUV/RGB resident tests passed;
+Android cross-compilation caught a test-only signed/unsigned format
+field mismatch, corrected in this revision. New code still needs
+current-head CI. Do not equate patch applicability with a compiled
+player or completed hardware qualification.
