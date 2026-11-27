@@ -53,6 +53,14 @@ enum { AMBIENT_SVP_VK_FORMAT_SDR8=0, AMBIENT_SVP_VK_FORMAT_P010=1,
        AMBIENT_SVP_VK_FORMAT_P010_RAW=4, AMBIENT_SVP_VK_FORMAT_I420_10_RAW=5 };
 AmbientSvpVk *ambient_svp_vk_create_format(VkInstance,VkPhysicalDevice,VkDevice,
     PFN_vkGetInstanceProcAddr,uint32_t width,uint32_t height,uint32_t mode);
+/* Optional quality configuration, explicit pixel overlap and pel units.
+ * Uses full-block metrics, subpixel refinement and GPU scene gate.
+ * Legacy create/create_format remain available and unchanged. */
+typedef struct {
+    uint32_t block,overlap,pel,radius,satd,chroma,lambda,pnew,scene,artifacts;
+} AmbientSvpVkTuning;
+AmbientSvpVk *ambient_svp_vk_create_config(VkInstance,VkPhysicalDevice,VkDevice,
+    PFN_vkGetInstanceProcAddr,uint32_t width,uint32_t height,uint32_t mode,const AmbientSvpVkTuning *);
 void ambient_svp_vk_destroy(AmbientSvpVk *);
 /* Record motion analysis into an already-recording command buffer
  * outside a render pass; no submit. Pair retains its private resources.
