@@ -12,19 +12,24 @@ static void metrics(const char *label,const float *pixels,const float expected[N
     unsigned offset,double tolerance)
 {
     double max=0,sum=0;
+    unsigned worst_i=0,worst_k=0;
     for(unsigned i=0;i<N;i++)for(unsigned k=0;k<3;k++){
         double d=fabs(pixels[i*4+k]-expected[i][offset+k]);
         assert(isfinite(d));
-        max=fmax(max,d);sum+=d*d;
+        if(d>max){max=d;worst_i=i;worst_k=k;}
+        sum+=d*d;
     }
-    printf("%s: %u channels, max PQ error %.8f, RMS %.8f, limit %.8f\n",
-        label,3u*N,max,sqrt(sum/(3*N)),tolerance);
+    fprintf(stderr,"%s: %u channels, max PQ error %.8f, RMS %.8f, limit %.8f; worst pixel %u channel %u actual %.9f expected %.9f\n",
+        label,3u*N,max,sqrt(sum/(3*N)),tolerance,worst_i,worst_k,
+        pixels[4*worst_i+worst_k],expected[worst_i][offset+worst_k]);
     assert(max<tolerance);
 }
 int main(void)
 {
     pl_log log=pl_log_create(PL_API_VER,&(struct pl_log_params){.log_cb=pl_log_color,.log_level=PL_LOG_WARN});
-    pl_vulkan vk=pl_vulkan_create(log,&(struct pl_vulkan_params){.allow_software=true,.queue_count=1});
+    pl_vulkan vk=pl_vulkan_create(log,&(struct pl_vulkan_params){.allow_software=true,.queue_count=1,
+        .instance_params=pl_vk_inst_params(.debug=true,
+            .extensions=(const char *const[]){"VK_EXT_debug_utils"},.num_extensions=1)});
     assert(vk);pl_gpu gpu=vk->gpu;
     pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,32,32,
         PL_FMT_CAP_SAMPLEABLE|PL_FMT_CAP_RENDERABLE|PL_FMT_CAP_HOST_READABLE);

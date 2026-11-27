@@ -239,6 +239,42 @@ static inline bool ambient_fel_compose_domain(pl_gpu gpu, pl_dispatch dispatch,
               "vec3 r=sign(rr)*((abs(rr)-0.5)*fel_slope+fel_threshold);"
               "color.rgb=clamp(color.rgb+clamp(r,-fel_maximum,fel_maximum),0.0,1.0);",
     })) goto fail;
+    if (decode_rgb && rpu_domain) {
+        // The RPU-domain codewords are already normalized by 2^bit_depth.
+        // Apply the authored matrices and offsets exactly once, in that domain.
+        // Near a gamut edge the difference of two linear-light components is
+        // small; evaluating x = pow(PQ, 1/m2) and then c2 - c3*x loses
+        // significant FP32 precision. Compute u = 1 - exp(log(PQ)/m2)
+        // directly, using a short expm1 series around zero. Algebraically,
+        // (x-c1)/(c2-c3*x) == ((1-c1)-u)/((c2-c3)+c3*u).
+        float nonlinear[3][3],linear[3][3];
+        for(unsigned i=0;i<3;i++)for(unsigned j=0;j<3;j++){
+            nonlinear[j][i]=reshape->nonlinear.m[i][j];
+            linear[j][i]=reshape->linear.m[i][j];
+        }
+        const struct pl_shader_var color_vars[]={
+            {.var=pl_var_mat3("fel_nonlinear"),.data=nonlinear,.dynamic=true},
+            {.var=pl_var_mat3("fel_linear"),.data=linear,.dynamic=true},
+            {.var=pl_var_vec3("fel_color_offset"),.data=reshape->nonlinear_offset,.dynamic=true},
+        };
+        if(!pl_shader_custom(sh,&(struct pl_custom_shader){
+            .input=PL_SHADER_SIG_COLOR,.output=PL_SHADER_SIG_COLOR,
+            .variables=color_vars,.num_variables=sizeof(color_vars)/sizeof(color_vars[0]),
+            .body="vec3 code=fel_nonlinear*(color.rgb-fel_color_offset);"
+                  "vec3 t=log(max(code,vec3(1e-20)))*(32.0/2523.0);"
+                  "vec3 u=-t*(1.0+t*(0.5+t*(1.0/6.0+t*(1.0/24.0+t*(1.0/120.0+t/720.0)))));"
+                  "u=mix(1.0-exp(t),u,lessThanEqual(abs(t),vec3(0.125)));"
+                  "vec3 light=pow(max(vec3(1.0-3424.0/4096.0)-u,0.0)/"
+                  "max(vec3(21.0/128.0)+(2392.0/128.0)*u,vec3(1e-8)),vec3(16384.0/2610.0));"
+                  "vec3 lms=fel_linear*light;"
+                  "const mat3 hpe=mat3(3.06441879,-0.65612108,0.01736321,"
+                  "-2.16597676,1.78554118,-0.04725154,0.10155818,-0.12943749,1.03004253);"
+                  "vec3 p=pow(max(hpe*lms,0.0),vec3(2610.0/16384.0));"
+                  "color.rgb=pow((vec3(3424.0/4096.0)+(2413.0/128.0)*p)/"
+                  "(vec3(1.0)+(2392.0/128.0)*p),vec3(2523.0/32.0));",
+        }))goto fail;
+        return pl_dispatch_finish(dispatch,pl_dispatch_params(.shader=&sh,.target=output));
+    }
     if (decode_rgb) {
         // The reconstructed codewords already passed the RPU reshape.
         // Reuse the pinned Dolby matrix/PQ conversion with the curves cleared,
@@ -246,10 +282,7 @@ static inline bool ambient_fel_compose_domain(pl_gpu gpu, pl_dispatch dispatch,
         struct pl_dovi_metadata matrix=*reshape;
         for(unsigned i=0;i<3;i++){
             matrix.comp[i].num_pivots=0;
-            // Pinned v5 matrix decoding scales the RPU offset by
-            // 1024/1023. Our composed values are already in the RPU
-            // domain; undo that legacy offset adjustment here only.
-            if(rpu_domain)matrix.nonlinear_offset[i]*=1023.f/1024.f;
+            // Legacy normalized-input callers retain the pinned matrix path.
         }
         struct pl_color_repr repr={
             .sys=PL_COLOR_SYSTEM_DOLBYVISION,.levels=PL_COLOR_LEVELS_LIMITED,

@@ -37,7 +37,7 @@ def main(path):
     with tempfile.TemporaryDirectory() as tmp:
         raw = pathlib.Path(tmp) / "base.mp4"
         subprocess.run(["ffmpeg","-v","error","-f","lavfi","-i","testsrc2=size=128x72:rate=10",
-            "-t","12","-an","-c:v","libx264","-pix_fmt","yuv420p","-g","10","-keyint_min","10",
+            "-t","12","-an","-c:v","libx264","-pix_fmt","yuv420p","-video_track_timescale","1000","-g","10","-keyint_min","10",
             "-sc_threshold","0","-bf","0","-movflags","+empty_moov+default_base_moof+frag_keyframe+skip_trailer",
             "-y",str(raw)],check=True)
         init, fragments = [], []
@@ -64,5 +64,8 @@ def main(path):
                    + b"".join(struct.pack(">III",len(f),1000,0x90000000) for f in fragments))
         path.write_bytes(b"".join(init)+sidx+b"".join(fragments))
         subprocess.run(["ffmpeg","-v","error","-i",str(path),"-f","null","-"],check=True)
+        duration = float(subprocess.check_output(["ffprobe","-v","error","-show_entries",
+            "format=duration","-of","default=nw=1:nk=1",str(path)],text=True))
+        assert abs(duration-12.0)<0.001
 if __name__ == "__main__":
     main(pathlib.Path(sys.argv[1]))

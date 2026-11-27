@@ -62,7 +62,9 @@ int main(int argc,char **argv)
     }
     free(rgb);
     pl_log log=pl_log_create(PL_API_VER,&(struct pl_log_params){.log_cb=pl_log_color,.log_level=PL_LOG_WARN});
-    pl_vulkan vk=pl_vulkan_create(log,&(struct pl_vulkan_params){.allow_software=true,.queue_count=1});
+    pl_vulkan vk=pl_vulkan_create(log,&(struct pl_vulkan_params){.allow_software=true,.queue_count=1,
+        .instance_params=pl_vk_inst_params(.debug=true,
+            .extensions=(const char *const[]){"VK_EXT_debug_utils"},.num_extensions=1)});
     assert(vk);pl_gpu gpu=vk->gpu;
     pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,32,32,PL_FMT_CAP_SAMPLEABLE|PL_FMT_CAP_RENDERABLE|PL_FMT_CAP_HOST_READABLE);
     assert(fmt);
