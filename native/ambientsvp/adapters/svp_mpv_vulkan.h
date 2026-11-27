@@ -53,7 +53,6 @@ struct svp_vk_mpv {
     PFN_vkCreateFence create_fence;
     PFN_vkDestroyFence destroy_fence;
     PFN_vkWaitForFences wait_fences;
-    PFN_vkGetFenceStatus fence_status;
     PFN_vkCreateImageView create_view;
     PFN_vkDestroyImageView destroy_view;
     PFN_vkCmdPipelineBarrier2 barrier;
@@ -106,6 +105,7 @@ static bool svp_vk_eligible(struct mp_image *img)
         || (img->params.crop.y1 && img->params.crop.y1!=img->h)
         || img->fields&MP_IMGFIELD_INTERLACED || img->pts==MP_NOPTS_VALUE
         || !isfinite(img->pts) || img->enhancement_layer || img->film_grain
+        || img->params.color.transfer==PL_COLOR_TRC_UNKNOWN
         || img->params.color.transfer==PL_COLOR_TRC_PQ
         || img->params.color.transfer==PL_COLOR_TRC_HLG
         || svp_vk_matrix(img)<0 || svp_vk_chroma(img)<0)
@@ -170,6 +170,24 @@ static bool svp_vk_destroy_state(struct svp_vk_mpv *s)
     av_buffer_unref(&s->device_ref);
     free(s);return true;
 }
+static bool svp_vk_sync_features(const AVVulkanDeviceContext *ctx)
+{
+    bool timeline=false,sync2=false;
+    for (const VkBaseInStructure *p=ctx->device_features.pNext;p;p=p->pNext) {
+        switch (p->sType) {
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES:
+            timeline|=((const VkPhysicalDeviceVulkan12Features *)p)->timelineSemaphore;break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES:
+            sync2|=((const VkPhysicalDeviceVulkan13Features *)p)->synchronization2;break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES:
+            timeline|=((const VkPhysicalDeviceTimelineSemaphoreFeatures *)p)->timelineSemaphore;break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES:
+            sync2|=((const VkPhysicalDeviceSynchronization2Features *)p)->synchronization2;break;
+        default: break;
+        }
+    }
+    return timeline && sync2;
+}
 static struct svp_vk_mpv *svp_vk_new(void *library,struct mp_image *img,double source,double target)
 {
     if (!library || !svp_vk_eligible(img) || !(source>0 && target>source && target/source<=SVP_VK_PHASES))
@@ -186,7 +204,8 @@ static struct svp_vk_mpv *svp_vk_new(void *library,struct mp_image *img,double s
     s->avdev=fc->device_ctx;
     s->vkdev=s->avdev->hwctx;
     if (!s->vkdev || !s->vkdev->get_proc_addr || !s->vkdev->act_dev
-        || s->vkdev->queue_flags&VK_DEVICE_QUEUE_CREATE_PROTECTED_BIT) goto fail;
+        || (s->vkdev->queue_flags&VK_DEVICE_QUEUE_CREATE_PROTECTED_BIT)
+        || !svp_vk_sync_features(s->vkdev)) goto fail;
     s->device=s->vkdev->act_dev;
     bool found=false;
     for (int i=0;i<s->vkdev->nb_qf && i<64;i++) {
@@ -206,7 +225,7 @@ static struct svp_vk_mpv *svp_vk_new(void *library,struct mp_image *img,double s
     LOAD_VK(create_pool,CreateCommandPool);LOAD_VK(destroy_pool,DestroyCommandPool);
     LOAD_VK(allocate_commands,AllocateCommandBuffers);LOAD_VK(begin_commands,BeginCommandBuffer);
     LOAD_VK(end_commands,EndCommandBuffer);LOAD_VK(create_fence,CreateFence);
-    LOAD_VK(destroy_fence,DestroyFence);LOAD_VK(wait_fences,WaitForFences);LOAD_VK(fence_status,GetFenceStatus);
+    LOAD_VK(destroy_fence,DestroyFence);LOAD_VK(wait_fences,WaitForFences);
     LOAD_VK(create_view,CreateImageView);LOAD_VK(destroy_view,DestroyImageView);
     LOAD_VK(barrier,CmdPipelineBarrier2);LOAD_VK(submit,QueueSubmit);
 #undef LOAD_VK
@@ -376,7 +395,9 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
             signals[sem]=waits[sem]+1;
             barriers[nbar++]=(VkImageMemoryBarrier2){.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
                 .srcStageMask=VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                .srcAccessMask=v->layout[i]==VK_IMAGE_LAYOUT_UNDEFINED?0:v->access[i],
+                // The timeline wait provides producer availability.
+                // Do not put video-decode-only access flags on a compute queue.
+                .srcAccessMask=0,
                 .dstStageMask=VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                 .dstAccessMask=r->write?VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT:VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                 .oldLayout=v->layout[i],.newLayout=VK_IMAGE_LAYOUT_GENERAL,
