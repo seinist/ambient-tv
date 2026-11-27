@@ -120,6 +120,15 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     // Account-local aliases refer only to a successfully published, validated display image.
     private val displayAliases = LinkedHashMap<String, File>(128, .75f, true)
     private val measuredWindows = java.util.concurrent.atomic.AtomicInteger()
+    private fun recordRead(path: String, data: List<ByteArray>, started: Long): List<ByteArray> {
+        if (com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS) {
+            val micros = (System.nanoTime() - started).coerceAtLeast(0L) / 1_000L
+            // No chat/message/file identity or payload ever enters diagnostics.
+            android.util.Log.i("MonogramPerf", "media-read path=$path bytes=${data.sumOf { it.size }} us=$micros")
+        }
+        return data
+    }
+
     private fun recordNativeWindow() {
         if (!com.ambient.tv.BuildConfig.MONOGRAM_PGO_GENERATE && !com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS) return
         if (measuredWindows.incrementAndGet() % 16 != 0) return
@@ -1545,6 +1554,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
 
     private suspend fun loadMediaWindow(chatId: Long, messageId: Int, offset: Long, lengths: List<Int?>,
         nativeMediaKey: String?, priority: TelegramTransferPriority): List<ByteArray> {
+        val started = if (com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS) System.nanoTime() else 0L
         noteInteractiveActivity()
         require(offset >= 0L && offset % TELEGRAM_MEDIA_PART_BYTES == 0L)
         require(lengths.size in 1..2 && lengths.all { it == null || it in 1..TELEGRAM_MEDIA_PART_BYTES })
@@ -1620,13 +1630,13 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 found.filterNotNull()
             } finally { read.unlock() }
         }
-        if (hot != null) return hot
+        if (hot != null) return recordRead("ram", hot, started)
         // Cold disk hits retain the regular authenticated handle acquisition path.
         val cached = nativeCallOnce(connect = false) { h ->
             requireAuthorized(h)
             lengths.indices.map(::lookup)
         }
-        if (cached.all { it != null }) return cached.filterNotNull()
+        if (cached.all { it != null }) return recordRead("disk-or-mixed", cached.filterNotNull(), started)
         if (lengths.size == 2 && cached.any { it != null }) {
             // A partial hit must not redownload a cached neighbor.
             return lengths.indices.map { index ->
@@ -1641,7 +1651,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 verifyGeneration()
                 // Another reader may have filled the cache while we waited to connect.
                 val ready = lengths.indices.map(::lookup)
-                if (ready.all { it != null }) return@nativeCall ready.filterNotNull()
+                if (ready.all { it != null }) return@nativeCall recordRead("disk-or-mixed", ready.filterNotNull(), started)
                 val temp = synchronized(diskChunkLock) {
                     verifyGeneration()
                     // A unique destination name does not create an empty file.
@@ -1685,7 +1695,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                                 trimChunkCache()
                             }
                         }
-                        parts
+                        recordRead("native", parts, started)
                     } finally { stages.forEach { it.delete() } }
                 } finally {
                     temp.delete()
