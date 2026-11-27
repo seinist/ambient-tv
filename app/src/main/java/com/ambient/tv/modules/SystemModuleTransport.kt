@@ -29,7 +29,7 @@ internal class SystemModuleTransport {
         val manifest = readMetadata(releaseUrl(tag, "manifest.json"), SystemModuleChannel.MAX_MANIFEST_BYTES)
         val signature = readMetadata(releaseUrl(tag, "manifest.json.sig"), 256)
         return store.install(module, tag, manifest, signature, profile) { build ->
-            open(releaseUrl(tag, build.asset), build.size)
+            open(releaseUrl(tag, build.asset), build.size, exactSize = true)
         }
     }
 
@@ -52,10 +52,11 @@ internal class SystemModuleTransport {
             bytes.copyOf(count)
         }
 
-    private fun open(initial: HttpUrl, limit: Long): InputStream {
+    private fun open(initial: HttpUrl, limit: Long, exactSize: Boolean = false): InputStream {
         var url = initial
         repeat(6) {
-            if (!allowed(url)) throw SystemModuleTrustException("Untrusted module download origin")
+            if (!allowed(url) || (url.host == "github.com" && url.encodedPath != initial.encodedPath))
+                throw SystemModuleTrustException("Untrusted module download origin or repository path")
             val response = client.newCall(Request.Builder().url(url)
                 .header("Accept-Encoding", "identity").get().build()).execute()
             if (response.code in setOf(301, 302, 303, 307, 308)) {
@@ -71,9 +72,28 @@ internal class SystemModuleTransport {
                 if (response.header("Content-Encoding")?.equals("identity", ignoreCase = true) == false)
                     throw SystemModuleTrustException("Unexpected module transfer encoding")
                 val length = body.contentLength()
-                if (length == 0L || length > limit)
+                if (length == 0L || length > limit || (exactSize && length >= 0L && length != limit))
                     throw SystemModuleTrustException("Module response exceeds bounds")
                 return object : FilterInputStream(body.byteStream()) {
+                    private var count = 0L
+                    private fun account(n: Int): Int {
+                        if (n > 0) {
+                            count += n
+                            if (count > limit) throw SystemModuleTrustException("Module response exceeds bounds")
+                        } else if (n == -1 && exactSize && count != limit) {
+                            throw SystemModuleTrustException("Module response is truncated")
+                        }
+                        return n
+                    }
+                    override fun read(): Int {
+                        val byte = super.read()
+                        account(if (byte == -1) -1 else 1)
+                        return byte
+                    }
+                    override fun read(b: ByteArray, off: Int, len: Int): Int =
+                        account(super.read(b, off, len))
+                    override fun skip(n: Long): Long = 0L
+                    override fun markSupported(): Boolean = false
                     override fun close() {
                         response.close()
                     }
