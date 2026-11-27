@@ -209,7 +209,8 @@ class SvpUpdateTest(unittest.TestCase):
 
     def test_fingerprint_changes_on_engine_source_and_stays_location_independent(self):
         (self.root / "scripts").mkdir()
-        for name in ("build_svp_android.sh", "vendor_svp_licenses.sh", "svp_dependency.py"):
+        for name in ("build_svp_android.sh", "vendor_svp_licenses.sh", "svp_dependency.py",
+                     "svp_pgo_metadata.sh", "profile_svp_android.sh"):
             shutil.copyfile(SCRIPTS / name, self.root / "scripts" / name)
         (self.crate / "src").mkdir()
         source = self.crate / "src/lib.rs"
