@@ -14,7 +14,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
              struct vlc_asurfacetexture *surfacetexture;
              bool use_air;
 +            bool ambient_ahb;
-+            bool hdrplus_required, hdrplus_pending;
++            bool hdrplus_required, hdrplus_pending, hdrplus_projection_logged;
 +            vlc_tick_t hdrplus_ts;
 +            struct ambient_hdrplus hdrplus;
              vlc_cond_t air_cond;
@@ -198,7 +198,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
                  if (p_sys->b_flush_out)
                  {
-@@ -1558,10 +1643,34 @@
+@@ -1558,10 +1643,38 @@
                      return 0;
                  }
  
@@ -217,6 +217,10 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
 +                    p_sys->video.hdrplus_pending = status == AMBIENT_HDRPLUS_VALID;
 +                    if (p_sys->video.hdrplus_pending) {
 +                        p_sys->video.hdrplus = p_out->buf.hdrplus;
++                        if (p_sys->video.hdrplus.global_projection && !p_sys->video.hdrplus_projection_logged) {
++                            msg_Info(p_dec, "HDR10+ local metadata validated; using VLC global-window tone map");
++                            p_sys->video.hdrplus_projection_logged = true;
++                        }
 +                        p_sys->video.hdrplus_ts = p_out->buf.i_ts;
 +                    }
 +                }
@@ -235,7 +239,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
                  /* picture will be wrapped from AImageReader callback */
                  assert(*pp_out_pic  == NULL);
              }
-@@ -1920,9 +2029,12 @@
+@@ -1920,9 +2033,12 @@
  
          /* Wait for an output buffer. This function returns when a new output
           * is available or if output is flushed. */
@@ -249,7 +253,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
          /* Ignore dequeue_out errors caused by flush, or late picture being
           * dequeued after close. */
-@@ -2018,8 +2130,15 @@
+@@ -2018,8 +2134,15 @@
      while (b_drain || (p_block = GetNextBlock(p_sys, p_in_block)))
      {
          vlc_mutex_unlock(&p_sys->lock);
@@ -266,7 +270,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
          if (p_sys->b_aborted)
              return VLC_EGENERIC;
-@@ -2328,10 +2447,21 @@
+@@ -2328,10 +2451,21 @@
  
      if (p_sys->video.use_air)
      {
