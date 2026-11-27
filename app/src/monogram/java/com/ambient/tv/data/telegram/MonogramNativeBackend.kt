@@ -1246,9 +1246,22 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         try {
         // Upstream's MtprotoNativeUniFfi.downloadMessageDisplay calls the FULL media download
         // (a whole video for one card); the UniFFI export itself fetches the display size.
-        fun display() = File(mediaClass(if (priority.foreground) DISPATCH_ORDINARY else DISPATCH_BACKGROUND) {
-            uniffi.monogram_mtproto.downloadMessageDisplay(h.toULong(), chatId, messageId, stage.path)
-        }).canonicalFile
+        fun display(): File {
+            val dispatch = if (priority.foreground) DISPATCH_ORDINARY else DISPATCH_BACKGROUND
+            try {
+                val bytes = mediaClass(dispatch) { AmbientMonogramJni.preview(h, chatId, messageId, stage.path) }
+                if (bytes.size !in 1..(1024 * 1024)) return stage
+                // The native sink has already validated exact size and session ownership.
+                // Write only once to the Kotlin-controlled atomic publication stage.
+                stage.writeBytes(bytes)
+                return stage.canonicalFile
+            } catch (failure: Exception) {
+                if (failure.message?.contains("ambient preview requires file sink") != true) throw failure
+            }
+            return File(mediaClass(dispatch) {
+                uniffi.monogram_mtproto.downloadMessageDisplay(h.toULong(), chatId, messageId, stage.path)
+            }).canonicalFile
+        }
         val returned = runCatching {
             // The first file request after connecting may be cancelled by the media session
             // switching over ("session changed"): sent once more.
@@ -1556,6 +1569,20 @@ private const val TELEGRAM_CHANNEL_ID_MAX = -1_000_000_000_000L
 internal object AmbientMonogramJni {
     @Volatile private var jniAvailable = true
     external fun flushPgoProfile(destination: String): Int
+
+    @Volatile private var previewJniAvailable = true
+    private external fun downloadPreview(handle: Long, chatId: Long, messageId: Int, destination: String): ByteArray
+
+    fun preview(handle: Long, chatId: Long, messageId: Int, destination: String): ByteArray {
+        if (previewJniAvailable) {
+            try {
+                return downloadPreview(handle, chatId, messageId, destination)
+            } catch (_: UnsatisfiedLinkError) {
+                previewJniAvailable = false
+            }
+        }
+        return uniffi.monogram_mtproto.downloadMessagePreviewBytes(handle.toULong(), chatId, messageId, destination)
+    }
 
     private external fun downloadMediaRange(
         handle: Long, chatId: Long, messageId: Int, destination: String, offset: Long, expectedKey: String, parts: Int,

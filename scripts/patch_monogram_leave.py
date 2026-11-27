@@ -432,6 +432,44 @@ pub fn ambient_capture_range_bounded<T>(
     });
     Ok((result, payload))
 }
+// The complete-preview mode is deliberately distinct from playback ranges.
+std::thread_local! {
+    static AMBIENT_PREVIEW_SIZE: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+pub fn ambient_prepare_preview(size: Option<i64>, inline: bool) -> Result<(), MtprotoError> {
+    AMBIENT_PREVIEW_SIZE.with(|slot| {
+        if slot.get().is_none() { return Ok(()); }
+        let size = size.filter(|size| *size > 0 && *size <= (2 * AMBIENT_RANGE_LIMIT) as i64)
+            .filter(|_| !inline)
+            .ok_or_else(|| MtprotoError::Message("ambient preview requires file sink".into()))?;
+        slot.set(Some(size as u64));
+        Ok(())
+    })
+}
+pub fn ambient_capture_complete_preview<T>(
+    destination: &std::path::Path,
+    work: impl FnOnce() -> Result<T, MtprotoError>,
+) -> Result<Vec<u8>, MtprotoError> {
+    AMBIENT_PREVIEW_SIZE.with(|slot| {
+        if slot.get().is_some() {
+            return Err(MtprotoError::Message("nested preview capture".into()));
+        }
+        slot.set(Some(0));
+        Ok(())
+    })?;
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) { AMBIENT_PREVIEW_SIZE.with(|slot| slot.set(None)); }
+    }
+    let _reset = Reset;
+    let (_, payload) = ambient_capture_range_bounded(destination, 2 * AMBIENT_RANGE_LIMIT, work)?;
+    let expected = AMBIENT_PREVIEW_SIZE.with(|slot| slot.get().unwrap_or(0));
+    let bytes = payload.ok_or_else(|| MtprotoError::Message("ambient preview requires file sink".into()))?;
+    if expected == 0 || bytes.len() as u64 != expected {
+        return Err(MtprotoError::Message("incomplete captured preview".into()));
+    }
+    Ok(bytes)
+}
 static AMBIENT_CDN_RANGES: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 pub fn set_ambient_cdn_ranges(enabled: bool) {
@@ -647,6 +685,27 @@ mod ambient_range_tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
+    fn complete_preview_rejects_unknown_size_and_truncated_payload() {
+        let dest = std::path::Path::new("ambient-preview-test");
+        assert!(ambient_capture_complete_preview(dest, || {
+            ambient_prepare_preview(None, false)?;
+            Ok(())
+        }).is_err());
+        assert!(ambient_capture_complete_preview(dest, || {
+            ambient_prepare_preview(Some(4), false)?;
+            ambient_stage_range(dest, dest, vec![1, 2, 3]);
+            assert!(ambient_publish_range(dest, dest));
+            Ok(())
+        }).is_err());
+        let bytes = ambient_capture_complete_preview(dest, || {
+            ambient_prepare_preview(Some(4), false)?;
+            ambient_stage_range(dest, dest, vec![1, 2, 3, 4]);
+            assert!(ambient_publish_range(dest, dest));
+            Ok(())
+        }).unwrap();
+        assert_eq!(bytes, vec![1, 2, 3, 4]);
+    }
+    #[test]
     fn captured_output_is_bounded() {
         use std::io::{Seek, SeekFrom, Write};
         let mut out = AmbientRangeOutput::Memory(std::io::Cursor::new(Vec::new()), AMBIENT_RANGE_LIMIT);
@@ -783,6 +842,8 @@ amend(client_download,
         && media.file_size.is_none_or(|size| size < 2 * 1024 * 1024))
         .then(|| media::bind_download_profile(media::DownloadProfile::Ordinary));
     let dest = Path::new(&dest_path);
+    mono_proto_media::download::ambient_prepare_preview(
+        media.file_size, media::location_is_inline(&media.location))?;
     let first = download_media_range_on_lane""")
 amend(client_download,
       """                drop(admission);
@@ -866,6 +927,52 @@ pub fn download_message_media_window_bytes(
     Ok(bytes)
 }
 """, "pub fn download_message_media_chunk_bytes(")
+# Complete previews reuse the bounded range sink only with an exact native file size.
+add_before(ffi, "#[uniffi::export]\\npub fn download_message_thumb(", """#[uniffi::export]
+pub fn download_message_preview_bytes(
+    handle: u64, chat_id: i64, message_id: i32, dest_path: String,
+) -> Result<Vec<u8>, MtprotoError> {
+    let destination = std::path::Path::new(&dest_path);
+    proto_media::download::ambient_capture_complete_preview(destination, || {
+        mono_proto_client::media_download::download_message_media_range_checked(
+            handle, chat_id, message_id, dest_path.clone(),
+            proto_media::location::MediaDownloadKind::Display, Some(0), None,
+        )
+    })
+}
+
+#[cfg(target_os = "android")]
+#[allow(unsafe_code)]
+#[jni::jni_mangle("com.ambient.tv.data.telegram.AmbientMonogramJni")]
+pub extern "system" fn downloadPreview<'caller>(
+    mut unowned_env: jni::EnvUnowned<'caller>,
+    _this: jni::objects::JObject<'caller>,
+    handle: jni::sys::jlong,
+    chat_id: jni::sys::jlong,
+    message_id: jni::sys::jint,
+    destination: jni::objects::JString<'caller>,
+) -> jni::objects::JByteArray<'caller> {
+    unowned_env.with_env(|env| -> jni::errors::Result<_> {
+        let path = destination.try_to_string(env)?;
+        match download_message_preview_bytes(handle as u64, chat_id, message_id, path) {
+            Ok(bytes) => env.byte_array_from_slice(&bytes),
+            Err(error) => {
+                let code = match &error {
+                    MtprotoError::UnknownClient => "unknown-client",
+                    MtprotoError::PasswordRequired => "password-required",
+                    MtprotoError::RegistrationRequired => "registration-required",
+                    MtprotoError::Message(message) if message.eq_ignore_ascii_case("cancelled") => "cancelled",
+                    MtprotoError::Message(_) => "rpc",
+                };
+                let description = format!("{code}:{error}");
+                let message = jni::strings::JNIString::from(description.as_str());
+                env.throw_new(jni::jni_str!("com/ambient/tv/data/telegram/AmbientMonogramJniFailure"), message)?;
+                Ok(jni::objects::JByteArray::null())
+            }
+        }
+    }).resolve::<jni::errors::ThrowRuntimeExAndDefault>()
+}
+""", "pub fn download_message_preview_bytes(")
 # Hot-path JNI uses the same validated RPC as UniFFI. The player and cache
 # already require JVM byte arrays; copying directly into the final byte array
 # avoids the intermediate UniFFI RustBuffer/JNA lifting without an extra
