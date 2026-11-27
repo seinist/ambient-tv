@@ -67,6 +67,26 @@ static void Transfer(picture_t *pic, uint8_t *data, int w, int h, bool pack) {
         offset += pw*ph;
     }
 }
+typedef struct {
+    picture_t *picture;
+    int w, h;
+} SvpFillContext;
+static int FillInput(void *context, uint8_t *dst, size_t len) {
+    SvpFillContext *src = context;
+    if (len != (size_t)src->w * src->h * 3 / 2) return -1;
+    Transfer(src->picture, dst, src->w, src->h, true);
+    return 0;
+}
+static int PushPicture(filter_sys_t *s, picture_t *pic) {
+    const int w = s->config.width, h = s->config.height;
+    int64_t pts = US_FROM_VLC_TICK(pic->date);
+    if (s->api.push_fill) {
+        SvpFillContext context = {pic, w, h};
+        return s->api.push_fill(s->engine, pts, &context, FillInput);
+    }
+    Transfer(pic, s->buffer, w, h, true);
+    return s->api.push(s->engine, s->buffer, s->bytes, pts);
+}
 static void DropEngine(filter_t *f) {
     filter_sys_t *s = f->p_sys;
     if (s->engine) s->api.destroy(s->engine);
@@ -148,15 +168,13 @@ static picture_t *Filter(filter_t *f, picture_t *pic) {
         msg_Info(f, "Open-SVPFlow %ux%u %u/%u -> %u/%u", s->config.width, s->config.height,
             s->config.source_num, s->config.source_den, s->config.target_num, s->config.target_den);
     }
-    const int w = s->config.width, h = s->config.height;
-    Transfer(pic, s->buffer, w, h, true);
-    int r = s->api.push(s->engine, s->buffer, s->bytes, US_FROM_VLC_TICK(pic->date));
+    int r = PushPicture(s, pic);
     if (r == -3 && s->timing_resets++ < 5) {
         // The vout can skip source pictures while the first Vulkan pipelines
         // compile. Reset temporal history but retain compiled GPU resources.
         msg_Dbg(f,"SVP timing reset %d, input delta %lld us",s->timing_resets,
             (long long)(s->reference ? US_FROM_VLC_TICK(pic->date-s->reference->date) : 0));
-        if (!s->api.reset(s->engine)) r=s->api.push(s->engine,s->buffer,s->bytes,US_FROM_VLC_TICK(pic->date));
+        if (!s->api.reset(s->engine)) r=PushPicture(s, pic);
     }
     if (r == -3) {
         // Still discontinuous after the quick resets: pass through for a cool-down, then retry.
