@@ -296,7 +296,8 @@ jobs:
             build_cwd="$PWD/src/$JNI/jni"
             # BEGIN MUPEN NATIVE OFFSET LAUNCHER
             ndk_ccache="${CORE_CCACHE:-}"
-            if [ -x "$build_cwd/ambient-mupen-cc" ]; then
+            if [[ "$CORE" == mupen64plus_next_gles3 && "$CFLAGS_EXTRA" == *-flto=thin* ]]; then
+              test -x "$build_cwd/ambient-mupen-cc"
               ndk_ccache="$build_cwd/ambient-mupen-cc"
             fi
             # END MUPEN NATIVE OFFSET LAUNCHER
