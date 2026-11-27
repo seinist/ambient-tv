@@ -1020,6 +1020,43 @@ static int meta_send(es_out_t *out,es_out_id_t *id,block_t *b)
     return VLC_SUCCESS;
 }
 static const struct es_out_callbacks meta_callbacks={.add=meta_add,.send=meta_send};
+static void test_hierarchical_sidx(void)
+{
+    reset_stream(true);visible=1024;
+    demux_sys_t s={0};demux_t d={.s=&fixture_stream,.p_sys=&s};
+    uint8_t boxdata[36]={0};vlc_tick_t pts,dur;bool relative;
+    SetDWBE(boxdata+4,1);SetDWBE(boxdata+8,1000);SetDWBE(boxdata+12,3000);
+    boxdata[23]=1;SetDWBE(boxdata+24,0x8000002c);SetDWBE(boxdata+28,1000);
+    assert(MP4_FEL_ParseTimedBox(&d,ATOM_sidx,boxdata,sizeof(boxdata),100,144,&pts,&dur,&relative));
+    assert(s.ambient_fel_sidx_count==1&&s.ambient_fel_sidx[0].index);
+    SetDWBE(boxdata+24,100);SetDWBE(boxdata+28,999);
+    assert(!MP4_FEL_ParseTimedBox(&d,ATOM_sidx,boxdata,sizeof(boxdata),144,188,&pts,&dur,&relative));
+    SetDWBE(boxdata+28,1000);
+    assert(MP4_FEL_ParseTimedBox(&d,ATOM_sidx,boxdata,sizeof(boxdata),144,188,&pts,&dur,&relative));
+    assert(s.ambient_fel_sidx_count==2&&s.ambient_fel_sidx[0].seen&&s.ambient_fel_sidx[1].depth==1);
+    uint8_t event[24]={0};event[4]='s';event[6]='v';
+    SetDWBE(event+8,1000);SetDWBE(event+12,250);
+    assert(MP4_FEL_ParseTimedBox(&d,VLC_FOURCC('e','m','s','g'),event,sizeof(event),188,220,&pts,&dur,&relative));
+    assert(!relative&&pts==13*CLOCK_FREQ/4);
+    MP4_FEL_ClearReplay(&s);
+}
+
+static void test_nested_metadata(void)
+{
+    demux_sys_t s={0};demux_t d={.s=&fixture_stream,.p_sys=&s};
+    uint8_t payload[28]={1};SetDWBE(payload+4,1000);SetQWBE(payload+8,2000);
+    payload[24]='x';payload[26]='y';
+    MP4_Box_data_binary_t raw={.p_blob=payload,.i_blob=sizeof(payload)};
+    MP4_Box_t event={.i_type=VLC_FOURCC('e','m','s','g'),.i_pos=160,.i_size=36,.i_shortsize=36,.data.p_binary=&raw};
+    MP4_Box_t traf={.i_type=ATOM_traf,.p_first=&event};
+    MP4_Box_t moof={.i_type=ATOM_moof,.p_first=&traf};
+    assert(MP4_FEL_CollectNested(&d,&moof,0));
+    assert(s.ambient_fel_meta_count==1&&s.ambient_fel_meta[0].block->i_pts==VLC_TICK_0+2*CLOCK_FREQ);
+    assert(!memcmp(s.ambient_fel_meta[0].block->p_buffer+8,payload,sizeof(payload)));
+    MP4_FEL_ClearReplay(&s);assert(!blocks);
+    raw.i_blob--;
+    assert(!MP4_FEL_CollectNested(&d,&moof,0));
+}
 static void test_timed_boxes(void)
 {
     mp4_track_t track={.i_track_ID=1,.b_ok=true,.i_timescale=1000};
@@ -1089,6 +1126,8 @@ static void test_timed_boxes(void)
 int main(void)
 {
     test_timed_boxes();
+    test_hierarchical_sidx();
+    test_nested_metadata();
     test_mixed_bl_el();
     test_split_bl();
     test_split_el();
