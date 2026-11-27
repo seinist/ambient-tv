@@ -28,6 +28,17 @@ class PlayerVideoSettingsTest {
         mpvOutputBuilt = true, mpvDecodeBuilt = true, vlcOutputBuilt = true,
     )
 
+    @Test fun vlcExperimentalHdrTargetUnlocksOnlyAvailableVulkan() {
+        assertEquals(emptySet<String>(), disabledPlayerVideoOutputs("vlc", capable,
+            nativeHdrPreferred = true, vlcHdrTargetAvailable = true))
+        assertEquals(setOf("vulkan"), disabledPlayerVideoOutputs("vlc", capable,
+            nativeHdrPreferred = true))
+        assertEquals(setOf("vulkan"), disabledPlayerVideoOutputs("vlc", VideoAccelerationCapabilities(),
+            nativeHdrPreferred = true, vlcHdrTargetAvailable = true))
+        assertEquals(setOf("gpu", "vulkan"), disabledPlayerVideoOutputs("mpv", capable,
+            nativeHdrPreferred = true, vlcHdrTargetAvailable = true))
+    }
+
     @Test fun unprobedOrUnsupportedVulkanCannotBeSelected() {
         for (backend in listOf("mpv", "vlc")) {
             assertEquals(setOf("vulkan"), disabledPlayerVideoOutputs(backend, VideoAccelerationCapabilities()))

@@ -50,9 +50,11 @@ internal fun sameVideoSettingsPlayback(a: PlaybackMetadata?, b: PlaybackMetadata
     a != null && b != null && a.route == b.route && a.source == b.source && a.mediaId == b.mediaId
 
 internal fun disabledPlayerVideoOutputs(backend: String, caps: VideoAccelerationCapabilities,
-    nativeHdrPreferred: Boolean = false, hdrGpu: Boolean = false): Set<String> =
+    nativeHdrPreferred: Boolean = false, hdrGpu: Boolean = false,
+    vlcHdrTargetAvailable: Boolean = false): Set<String> =
     (if (if (backend == "mpv") caps.mpvVulkanOutput else caps.vlcVulkanOutput) emptySet() else setOf("vulkan")) +
-        (if (nativeHdrPreferred) if (backend == "mpv") setOf("gpu", "vulkan") else setOf("vulkan") else emptySet()) +
+        (if (nativeHdrPreferred) if (backend == "mpv") setOf("gpu", "vulkan")
+            else if (backend == "vlc" && vlcHdrTargetAvailable) emptySet() else setOf("vulkan") else emptySet()) +
         // HDR über GPU on Vulkan: plain OpenGL cannot signal HDR; every GPU choice plays through Vulkan.
         // (The EGL PQ route passes hdrGpu=false: there OpenGL is the HDR output.)
         (if (hdrGpu && backend == "mpv") setOf("gpu") else emptySet())

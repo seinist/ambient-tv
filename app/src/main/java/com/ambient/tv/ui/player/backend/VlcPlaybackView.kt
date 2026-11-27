@@ -97,6 +97,25 @@ internal class VlcFrameDropSampleState {
     }
 }
 
+/** Shared target query for the experimental HDR10+ renderer and output selector.
+ * Display capability alone is not proof of actual swapchain presentation. */
+@Suppress("DEPRECATION")
+internal fun vlcHdrPlusDisplayTarget(context: Context, source: HdrStandard?): VlcHdrPlusTarget? = runCatching {
+    if (!com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT ||
+        !com.ambient.tv.BuildConfig.VLC_HDR10PLUS_SPATIAL_EXPERIMENT ||
+        source != HdrStandard.HDR10_PLUS || android.os.Build.VERSION.SDK_INT < 34)
+        return@runCatching null
+    val dm = context.getSystemService(android.hardware.display.DisplayManager::class.java)
+        ?: return@runCatching null
+    val display = dm.getDisplay(android.view.Display.DEFAULT_DISPLAY) ?: return@runCatching null
+    val caps = display.hdrCapabilities ?: return@runCatching null
+    val types = HdrSupport.enabledHdrTypes(display)
+    vlcHdrPlusTarget(true, true, true, android.os.Build.VERSION.SDK_INT,
+        android.view.Display.HdrCapabilities.HDR_TYPE_HDR10 in types,
+        android.view.Display.HdrCapabilities.HDR_TYPE_HLG in types,
+        caps.desiredMinLuminance, caps.desiredMaxLuminance)
+}.getOrNull()
+
 class VlcPlaybackController(
     private val context: Context,
     val url: String,
@@ -143,27 +162,15 @@ class VlcPlaybackController(
         vlcOptionsForNativeHdr(effectiveVlcImageOptions(initialImageOptions,
             reducedVideoEffects(context), vlcSvpAllowed(context)), nativeHdrPreferred,
             sourceHdrStandard).let { !it.softwareProcessing && it.svpMode == "off" })
-        readHdrPlusDisplayTarget() else null
+        vlcHdrPlusDisplayTarget(context, sourceHdrStandard) else null
 
-    @Suppress("DEPRECATION")
-    private fun readHdrPlusDisplayTarget(): VlcHdrPlusTarget? = runCatching {
-        val dm = context.getSystemService(android.hardware.display.DisplayManager::class.java)
-            ?: return@runCatching null
-        val display = dm.getDisplay(android.view.Display.DEFAULT_DISPLAY) ?: return@runCatching null
-        val caps = display.hdrCapabilities ?: return@runCatching null
-        val types = HdrSupport.enabledHdrTypes(display)
-        vlcHdrPlusTarget(true, true, true, android.os.Build.VERSION.SDK_INT,
-            android.view.Display.HdrCapabilities.HDR_TYPE_HDR10 in types,
-            android.view.Display.HdrCapabilities.HDR_TYPE_HLG in types,
-            caps.desiredMinLuminance, caps.desiredMaxLuminance)
-    }.getOrNull()
 
     private var lastHdrTargetCheckMs = Long.MIN_VALUE
     private fun hdrPlusDisplayChanged(): Boolean {
         val expected = hdrPlusTarget ?: return false
         val id = attachedView?.display?.displayId ?: return false
         return vlcHdrPlusTargetChanged(expected, id, android.view.Display.DEFAULT_DISPLAY,
-            if (id == android.view.Display.DEFAULT_DISPLAY) readHdrPlusDisplayTarget() else null)
+            if (id == android.view.Display.DEFAULT_DISPLAY) vlcHdrPlusDisplayTarget(context, sourceHdrStandard) else null)
     }
 
     private var vulkanOutput = !audioOnly && useVlcVulkan(videoOutputMode, VideoAccelerationRuntime.current(context),

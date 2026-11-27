@@ -907,3 +907,14 @@ this proves all DTS/PTS pairs, not just equal total duration. Preserve
 discontinuity flags through audio-only moofs, and use the explicit VLC
 demux_sys_t pointer in preflight. Latest linked build and real container
 playback still require verification.
+
+The HDR10+ experimental Vulkan output is now selectable in the shared
+playback output panel even when the ordinary native-HDR policy would
+hide Vulkan. The controller and UI share the same default-off target
+capability query. Auto, production, other HDR formats and unavailable
+Vulkan remain unchanged. A characterized target is only an admission
+condition; native swapchain validation and fallback remain authoritative.
+HLG-only HDR displays remain eligible for explicitly requested conversion;
+the current nativeHdrPreferred value describes source/display compatibility,
+not a user-forced SDR preference. Corrected the missing unified-diff prefix
+in the previous MP4 change and validated every hunk's line syntax/counts.

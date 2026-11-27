@@ -55,8 +55,12 @@ internal fun PlayerVideoOutputControls(backend: String) {
     val hdrGpuAvailable = hdrGpuProbe.gpu
     val nativeHdr = nativeHdrSurfacePreferred(source, display) && !hdrGpu.gpu
     val output = if (mpv) settings.mpvOutput else settings.vlcOutput
+    // Unlike native passthrough, the experimental VLC route renders the
+    // dynamic metadata into a characterized PQ or HLG swapchain.
+    val vlcHdrTargetAvailable = !mpv && metadata.hasVideo != false &&
+        com.ambient.tv.ui.player.backend.vlcHdrPlusDisplayTarget(context, metadata.handheldHdrStandard) != null
     val disabledOutputs = disabledPlayerVideoOutputs(backend, caps, nativeHdr && !hdrGpuAvailable,
-        hdrGpuAvailable && !hdrGpuProbe.openGl)
+        hdrGpuAvailable && !hdrGpuProbe.openGl, vlcHdrTargetAvailable = vlcHdrTargetAvailable)
     val outputs = buildList {
         add("auto" to stringResource(R.string.player_automatic))
         if (mpv) {
@@ -120,7 +124,8 @@ internal fun PlayerVideoOutputControls(backend: String) {
         ImageHint(stringResource(R.string.player_output_sparsam_gpu))
         SparsamOverrideNotice(showText = false)
     }
-    if (nativeHdr) ImageHint(stringResource(R.string.player_output_hdr_direct))
+    if (nativeHdr && !(vlcHdrTargetAvailable && output == "vulkan" && "vulkan" !in disabledOutputs))
+        ImageHint(stringResource(R.string.player_output_hdr_direct))
     // "Als HDR markiert" once mpv and Android tagged the output PQ; the TV's mode only if Android reports it.
     if (passthroughRunning) ImageHint(stringResource(mpvHdrPassthroughStatusRes(passthroughConfirmed, activeMpv.hdrDisplaySwitched)))
     hdrGpu.reason?.takeUnless { passthroughRunning }?.let { ImageHint(stringResource(mpvHdrGpuReasonRes(it))) }
