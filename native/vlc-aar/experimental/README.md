@@ -36,7 +36,9 @@ distribute the experiment as a validated production build.
   original API contract. Stable IDs prevent aliasing across in-flight slots.
   On API 29/30 or failed ID lookup, at most one slot may be in flight, avoiding
   aliasing between distinct AHB wrappers. Actual older-device support still
-  depends on Vulkan features and must be tested on hardware. All discarded
+  depends on Vulkan features and must be tested on hardware. Direct Android
+  display and GLES explicitly reject the GPU-only reader rather than
+  dereference a missing SurfaceControl/ID function. All discarded
   pictures retain their original producer fence in the VLC-owned context;
   its destructor transfers it to AImage_deleteAsync when no consumer fence exists.
 - Three bounded reusable slots, command buffers, device-local RGB targets,
