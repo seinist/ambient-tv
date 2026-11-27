@@ -541,10 +541,11 @@ integer pixel centers, rather than rejecting every overlapping
 axis-aligned bounding box. The bounded scan uses a conservative
 floating-point margin near tangencies. A regression independently
 checks every pixel of a rotated, disjoint pair, and tests a truly
-overlapping pair. Annex B.12 saturation gain is no longer subject
-to an arbitrary 4x cap: it is bounded by the RGB gamut, with
-existing log singularity guards. A new GPU test independently
-calculates a valid gain greater than 4. Section 10.3's zero
+overlapping pair. Annex B.12 saturation gain is bounded both by the RGB gamut and
+the explicit maximum gain of 4. The earlier removal of the 4x
+limit was incorrect and has been reverted. The independent GPU
+fixture computes an unconstrained B.11 gain above 4 and verifies
+the capped result. Section 10.3's zero
 FractionBrightPixels recommendation for new version-0 metadata is
 reported separately from compatible legacy data; version-1 local
 nonzero values violate the section 10.4.1 check.
@@ -588,3 +589,36 @@ Final CI for the new geometry and independent metadata fixture is
 not yet confirmed. The proprietary Dolby reference reconstruction
 and arbitrary crop phase support remain outside the verified scope.
 Default-off unchanged.
+
+
+### Shared HDR adapter audit and B.12 correction
+
+The published ST 2094-40:2020 Annex B.12 (page 23) explicitly
+bounds the maximum saturation gain eta to [0,4], in addition
+to its RGB gamut inequalities. The earlier removal of this limit
+was incorrect. The shader and independent high-gain fixture now
+apply the correct maximum of 4. The dark-luminance log guard is
+still an implementation choice. Annex B remains informative.
+
+The isolated experimental VLC build now converts ST 2086 xy
+and luminance units and normalized HDR10+ RGB statistics in the
+shared libplacebo adapter, not only in the AHB display path.
+This also fixes the units on the software/copy-back fallback
+within that build. Remove the old AHB-only conversion to avoid
+double scaling. Content light metadata is already in nits and
+remains unchanged. The shared HDR10+ adapter clears a stale
+authored curve when the next metadata set has no curve.
+The Dolby reshaping adapter uses ldexpf instead of shifting a
+signed 32-bit integer by an RPU fractional denominator of 32.
+
+The host CI now builds the actual patched VLC utils.c and runs
+a linked UBSan regression on HDR units, curve reset and signed
+32-bit-denominator reshaping coefficients; unrelated VLC plugin
+functions are discarded by the linker. The display and utils
+patch contexts were checked against the pinned source. All
+three native contracts passed at 1664363, and the independent
+FFmpeg HDR10+ syntax fixture and GPU tests passed at 81fda87
+(run 45967867413); its NDK job was canceled by newer pushes.
+Final-head CI and actual playback remain unconfirmed.
+No certification or proprietary bit-exact FEL reconstruction
+claim is made. Experimental defaults remain off.
