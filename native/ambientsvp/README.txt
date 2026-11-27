@@ -633,3 +633,36 @@ prepared-field serialization and upstream smoother tests, Android JNI
 and C loader checks. SmartTube integration also passed. Current-head
 experimental search and streaming tests still need CI confirmation.
 Hardware-buffer zero-copy and full upstream search parity remain open.
+
+
+Adjacent-pair motion texture reuse and translation quality comparison
+--------------------------------------------------------------------
+The experimental search now retains up to 32 MiB of next-picture
+pyramid textures under their exact session source index. The adjacent
+pair reuses those textures rather than uploading the current picture
+again; an index mismatch, seek, rejected input or failed search
+invalidates cached state. Cache-vs-uncached packet parity is tested.
+For pel=2/4, local fractional candidates are supplemented by whole
+pixel anchors within +/-2 pixels of zero, with bounded candidate
+counts. This is a search policy change, not upstream vector parity.
+
+For quality, run two independent otherwise identical benchmark
+sessions on supported hardware (24 -> 48 fps, four-pixel source motion):
+  benchmark 320 180 48 2 24 1 --target=48 --quality-translation --no-checksum
+  benchmark 320 180 48 2 24 1 --target=48 --quality-translation --no-checksum --experimental-motion
+
+The quality fixture generates exact halfway images, excludes edge
+pixels, source-copy positions and final EOF clamping, and reports
+luma PSNR/MAE and the better nearest-source baseline. Throughput
+includes quality evaluation in this mode, so use a separate ordinary
+benchmark run for performance. The same fixture is exercised in Mesa
+CI with both analysers sharing the Vulkan synthesis backend, and
+quality statistics are printed without asserting an unsupported
+general quality equivalence. Natural video, occlusion, scene changes,
+fast motion and physical-device profiling are still needed.
+
+Exact prior head f67cdbc89caf938bdb58615cfd2e5b7df550c64d passed CPU,
+portable Vulkan and actual Mesa tests (run 46040903207), including
+hierarchical fields and streaming interpolation. The remaining JNI/C
+checks were canceled by superseding commits. Current-head texture
+reuse, integer-anchor and quality-comparison tests await validation.
