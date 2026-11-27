@@ -936,3 +936,12 @@ Unknown tracks and allocation failure fail closed in paired fragments,
 not ordinary MP4. Validate signed composition offset arithmetic before
 sample delivery. New host boundary tests cover positive/negative explicit
 offsets, implicit continuation, unsigned offset wrap and signed PTS wrap.
+
+Before the first fragmented sample is delivered, validate the entire
+physical BL mdat run index (including shared EL and unrelated auxiliary
+tracks), checking exact payload bounds and sorted nonoverlapping byte
+intervals. Separate EL ranges remain independently validated. Empty
+auxiliary runs do not claim bytes. The one-time check is reset with the
+fragment context and shared by seekable and buffered paths. This strict
+admission deliberately rejects aliased runs and layouts with multiple
+physical mdats for a single moof, rather than silently truncating them.
