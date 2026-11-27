@@ -46,15 +46,30 @@ internal class ProjectMPresetRepository(private val context: Context) {
     }
 
     fun textureDirectory(): File? = synchronized(extractionLock) {
-        val target = File(context.filesDir, "projectm/textures")
+        // Immutable, versioned directory for each pack; APK upgrades cannot accidentally
+        // reuse a stale .ready marker. Legacy APKs use their install/update timestamp.
+        val version = runCatching {
+            assetManager.open("projectm/textures-version.txt").bufferedReader().use { it.readText().trim() }
+                .takeIf { it.matches(Regex("[0-9a-f]{40}")) }
+        }.getOrNull() ?: runCatching {
+            @Suppress("DEPRECATION")
+            "apk-" + context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
+        }.getOrDefault("apk-unknown")
+        val root = File(context.filesDir, "projectm")
+        val target = File(root, "textures-$version")
         val marker = File(target, ".ready")
         if (marker.isFile) return@synchronized target
+        val staging = File(root, "textures-$version.partial")
         runCatching {
-            target.mkdirs()
-            copyAssetTree("projectm/textures", target)
-            marker.writeText("ok")
+            staging.deleteRecursively()
+            check(staging.mkdirs())
+            copyAssetTree("projectm/textures", staging)
+            File(staging, ".ready").writeText(version)
+            // Publish only the fully extracted pack. The target is not in use without a marker.
+            if (target.exists()) check(target.deleteRecursively())
+            check(staging.renameTo(target))
             target
-        }.getOrNull()
+        }.onFailure { staging.deleteRecursively() }.getOrNull()
     }
 
     private fun copyAssetTree(assetPath: String, target: File) {
