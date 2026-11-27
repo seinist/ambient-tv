@@ -38,12 +38,18 @@ jobs:
         run: cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --no-default-features --lib --tests
       - name: Compile Vulkan path and run portable regressions
         run: cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib --tests
+      - name: Validate integer GPU motion costs using Mesa software Vulkan
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP"
+          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib motion::tests::vulkan_candidate_costs_match_cpu -- --ignored --exact
       - name: Test C adapters' shared helpers
         run: |
           set -euo pipefail
-          bash -n scripts/prepare_svp_sources.sh
+          bash -n scripts/prepare_svp_sources.sh scripts/build_svp_android.sh
           for test in svp_retry_test svp_planes_test; do
             cc -std=c11 -O2 -Wall -Wextra -Werror -I native/ambientsvp/include "native/ambientsvp/tests/$test.c" -o "/tmp/$test"
             "/tmp/$test"
           done
-      # Real Vulkan tests are ignored on CI hosts without a hardware GPU.
+      # Full synthesis/hardware throughput tests still require a physical GPU.
