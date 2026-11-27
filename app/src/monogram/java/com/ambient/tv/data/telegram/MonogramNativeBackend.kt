@@ -164,8 +164,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     private val recentFeeds = LinkedHashMap<String, MonogramRecentTimeline>()
     private val recentFeedRevision = java.util.concurrent.atomic.AtomicLong()
     private val applyingUpdates = java.util.concurrent.atomic.AtomicInteger()
+    @Volatile private var failedContentGeneration: Long? = null
     override fun catalogContentRevision(): Long = recentFeedRevision.get()
-    override fun contentUpdatePending(): Boolean = applyingUpdates.get() != 0
+    override fun contentUpdatePending(): Boolean =
+        applyingUpdates.get() != 0 || failedContentGeneration == cacheGeneration
     private var recentFeedsSeen = -1L // guarded by browseMutex
     private val leftChannels = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
     /** Public channels resolved from t.me/<name> links, so their page has a title before joining. */
@@ -303,16 +305,21 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                         else drainUpdateEvents(h)
                     }
                     if (generation == cacheGeneration && identity == accountId) {
-                        val applying = drained.events.isNotEmpty()
+                        val retry = failedContentGeneration == generation
+                        val applying = drained.events.isNotEmpty() || retry
                         var changesApplied = false
                         if (applying) applyingUpdates.incrementAndGet()
                         try {
                             val changes = applyUpdates(drained.events)
-                            if (changes != null) {
+                            if (changes != null || retry) {
+                                failedContentGeneration = generation
+                                // If the previous invalidation failed, invalidate all feed
+                                // snapshots on retry, even if a live event was not replayed.
                                 if (identity == null || generation != cacheGeneration || identity != accountId ||
-                                    !listener(identity.toString(), changes.messages, changes.all)) {
+                                    !listener(identity.toString(), changes?.messages.orEmpty(), retry || changes?.all == true)) {
                                     throw java.io.IOException("Monogram content invalidation not committed")
                                 }
+                                failedContentGeneration = null
                                 changesApplied = true
                             }
                             // A durable batch is acknowledged only after local invalidation.
@@ -321,6 +328,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                                     if (generation == cacheGeneration && identity == accountId) acknowledge(h)
                                 }
                             }
+                        } catch (failure: Exception) {
+                            if (applying && !changesApplied && generation == cacheGeneration)
+                                failedContentGeneration = generation
+                            throw failure
                         } finally {
                             if (applying) applyingUpdates.decrementAndGet()
                             if (changesApplied && generation == cacheGeneration && identity == accountId)
