@@ -992,8 +992,53 @@ static void test_mixed_bl_el(void)
         assert(!blocks&&mid_frees==0&&el_frees==1);
     }
 }
+static void test_timed_boxes(void)
+{
+    mp4_track_t track={.i_track_ID=1,.b_ok=true,.i_timescale=1000};
+    demux_sys_t s={.track=&track,.i_tracks=1};
+    demux_t d={.s=&fixture_stream,.p_sys=&s};
+    for(unsigned mode=0;mode<2;mode++){
+        reset_stream(mode!=0);s.b_seekable=mode!=0;s.ambient_fel_collect_meta=true;
+        // EMSG v1: 1000 Hz, 2 s absolute presentation, arbitrary scheme.
+        box(100,36,"emsg");memset(bytes+108,0,28);bytes[108]=1;
+        SetDWBE(bytes+112,1000);SetQWBE(bytes+116,2000);SetDWBE(bytes+124,100);
+        bytes[132]='x';bytes[134]='y';
+        // PRFT v0 precedes the event on the media timeline.
+        box(136,28,"prft");memset(bytes+144,0,20);
+        SetDWBE(bytes+148,1);SetDWBE(bytes+160,1000);
+        // SIDX v0 direct segment reference, EPT 3 s.
+        box(164,44,"sidx");memset(bytes+172,0,36);
+        SetDWBE(bytes+176,1);SetDWBE(bytes+180,1000);SetDWBE(bytes+184,3000);
+        bytes[195]=1;SetDWBE(bytes+196,38);
+        // EMSG v0: scheme/value then delta 250 ms inside indexed segment.
+        box(208,32,"emsg");memset(bytes+216,0,24);
+        bytes[220]='s';bytes[222]='v';
+        SetDWBE(bytes+224,1000);SetDWBE(bytes+228,250);SetDWBE(bytes+232,50);
+        box(240,8,"moof");visible=248;
+        uint64_t padding=0;unsigned count=0;
+        assert(MP4_FEL_SkipGap(&d,&padding,&count,true));
+        assert(position==240&&s.ambient_fel_meta_count==3&&s.ambient_fel_meta_boxes==4);
+        assert(s.ambient_fel_meta[0].kind==1&&s.ambient_fel_meta[0].block->i_pts==VLC_TICK_0+CLOCK_FREQ);
+        assert(s.ambient_fel_meta[1].block->i_pts==VLC_TICK_0+2*CLOCK_FREQ);
+        assert(s.ambient_fel_meta[2].block->i_pts==VLC_TICK_0+13*CLOCK_FREQ/4);
+        assert(s.ambient_fel_meta[1].block->i_length==CLOCK_FREQ/10);
+        assert(s.ambient_fel_meta[2].block->i_length==CLOCK_FREQ/20);
+        assert(!memcmp(s.ambient_fel_meta[1].block->p_buffer,bytes+100,36));
+        MP4_FEL_ClearReplay(&s);assert(!blocks);
+        position=208;s.ambient_fel_collect_meta=true;
+        assert(!MP4_FEL_SkipGap(&d,&padding,&count,true)); // no EPT anchor
+        MP4_FEL_ClearReplay(&s);assert(!blocks);
+        position=100;s.ambient_fel_collect_meta=true;bytes[108]=2;
+        assert(!MP4_FEL_SkipGap(&d,&padding,&count,true));
+        MP4_FEL_ClearReplay(&s);assert(!blocks);
+        position=240;s.ambient_fel_collect_meta=true;box(240,8,"uuid");
+        assert(MP4_FEL_SkipGap(&d,&padding,&count,true)&&position==240);
+        MP4_FEL_ClearReplay(&s);
+    }
+}
 int main(void)
 {
+    test_timed_boxes();
     test_mixed_bl_el();
     test_split_bl();
     test_split_el();
