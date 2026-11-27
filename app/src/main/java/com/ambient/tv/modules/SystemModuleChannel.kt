@@ -28,6 +28,9 @@ enum class SystemModule(val id: String) {
 }
 
 @Serializable
+data class SystemModuleDependency(val module: String, val version: Long)
+
+@Serializable
 data class SystemModuleBuild(
     val module: String,
     val abi: String,
@@ -38,6 +41,7 @@ data class SystemModuleBuild(
     val asset: String,
     val size: Long,
     val sha256: String,
+    val dependencies: List<SystemModuleDependency> = emptyList(),
 )
 
 @Serializable
@@ -112,6 +116,9 @@ object SystemModuleChannel {
                 (build.abi == "any" && build.profile != "baseline") ||
                 build.version <= 0 || build.hostApi <= 0 || build.minSdk < 29 ||
                 build.size !in 1..MAX_PACKAGE_BYTES || !digest.matches(build.sha256) ||
+                build.dependencies.size >= SystemModule.entries.size ||
+                build.dependencies.any { SystemModule.fromId(it.module) == null || it.module == build.module || it.version <= 0 } ||
+                build.dependencies.map { it.module }.distinct().size != build.dependencies.size ||
                 build.asset != expectedAsset || !assets.add(build.asset) ||
                 !identities.add(Triple(build.module, build.abi, build.profile))) {
                 throw SystemModuleTrustException("Invalid or duplicate system module entry")
