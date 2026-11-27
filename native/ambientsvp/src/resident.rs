@@ -183,11 +183,11 @@ fn cost(origin:vec2i,mv:vec2i,reverse:bool,bound:u32)->u32{
             if any(q<vec2i(0))||any(q>=size){
                 sad+=255u;
             }else{
-                let sample=source_samples[u32(y/2*8+x/2)];
+                let source_value=source_samples[u32(y/2*8+x/2)];
                 // The original source sample is invariant across all
                 // candidate offsets; only the reference picture moves.
-                if reverse{sad+=u32(abs(sample-px(a,q)));}
-                else{sad+=u32(abs(sample-px(b,q)));}
+                if reverse{sad+=u32(abs(source_value-px(a,q)));}
+                else{sad+=u32(abs(source_value-px(b,q)));}
             }
             n+=1u;
         }
@@ -436,11 +436,11 @@ mod tests{
         }).collect()};
         let base=pattern(0);
         let shifted=pattern(4);
-        let fractional=pattern(1);
+        let one_pixel=pattern(1);
         let unrelated:Vec<u8>=(0..w*h).map(|i|((i*31+i/7+31)%256) as u8).collect();
         let flat=vec![80; (w*h) as usize];
         let flat_other=vec![120; (w*h) as usize];
-        for (case,(a,b)) in [(&base,&base),(&base,&shifted),(&base,&fractional),
+        for (case,(a,b)) in [(&base,&base),(&base,&shifted),(&base,&one_pixel),
             (&base,&unrelated),(&flat,&flat_other)].into_iter().enumerate(){
             let at=upload(a);let bt=upload(b);
             let av=at.create_view(&Default::default());let bv=bt.create_view(&Default::default());
