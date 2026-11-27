@@ -87,40 +87,6 @@ static inline float ambient_hdrplus_bezier(const struct ambient_hdrplus_window *
     return w->knee_y+(1.f-w->knee_y)*v[0];
 }
 
-/* A monotone Bezier curve need not have sorted control points. Check
- * the derivative in Bernstein form: nonnegative coefficients prove
- * nonnegativity over that interval; subdivide ambiguous intervals.
- * Bound recursion and reject unproven curves rather than assuming monotonicity. */
-static inline bool ambient_hdrplus_nonnegative_bernstein(const double *p,
-    unsigned n,unsigned depth)
-{
-    bool positive=true;
-    for(unsigned i=0;i<=n;i++)if(p[i]<0.0){positive=false;break;}
-    if(positive)return true;
-    if(p[0]<0.0||p[n]<0.0||!depth)return false;
-    double v[16],left[16],right[16];
-    memcpy(v,p,(n+1)*sizeof(*p));
-    left[0]=v[0];right[n]=v[n];
-    for(unsigned k=1;k<=n;k++){
-        for(unsigned j=0;j<=n-k;j++)v[j]=(v[j]+v[j+1])*0.5;
-        left[k]=v[0];right[n-k]=v[n-k];
-    }
-    return ambient_hdrplus_nonnegative_bernstein(left,n,depth-1)&&
-           ambient_hdrplus_nonnegative_bernstein(right,n,depth-1);
-}
-static inline bool ambient_hdrplus_curve_monotone(const struct ambient_hdrplus_window *w)
-{
-    if(!w||w->anchor_count>15)return false;
-    double delta[16],last=0.0;
-    for(unsigned i=0;i<w->anchor_count;i++){
-        double x=w->anchors[i];
-        if(!(x>=0.0&&x<=1.0))return false;
-        delta[i]=x-last;last=x;
-    }
-    delta[w->anchor_count]=1.0-last;
-    return ambient_hdrplus_nonnegative_bernstein(delta,w->anchor_count,10);
-}
-
 /* Section 8.7.4 permits a percentile source normalization when MaxSCL
  * is zero. Reserved v1 distribution markers are never scene statistics. */
 static inline float ambient_hdrplus_source_peak(const struct ambient_hdrplus_window *w,unsigned version)
@@ -132,15 +98,11 @@ static inline float ambient_hdrplus_source_peak(const struct ambient_hdrplus_win
         peak=fmaxf(peak,w->maxscl[i]);
     }
     if(peak>0.f)return peak;
-    bool reserved=version==1&&w->histogram_count==9&&
-        w->histogram[1].percentage==5&&w->histogram[2].percentage==10;
-    for(unsigned i=0;i<w->histogram_count;i++){
-        if(reserved&&(i==1||i==2))continue;
-        float v=w->histogram[i].percentile;
-        if(!(v>=0.f&&v<=1.f))return 0.f;
-        peak=fmaxf(peak,v);
-    }
-    return peak;
+    // Section 8.7.4 uses the final CFD element, not the maximum of
+    // possibly malformed metadata. Reserved markers cannot be the last
+    // element of a valid v1 distribution.
+    if(!w->histogram_count||!ambient_hdrplus_distribution_ordered(w,version))return 0.f;
+    return w->histogram[w->histogram_count-1].percentile;
 }
 /* Annex B.3 normalizes linear light by M_RP (relative to 10000 nits)
  * when available, otherwise by scene MaxSCL / the highest percentile.
