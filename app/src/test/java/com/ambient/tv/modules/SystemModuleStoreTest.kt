@@ -132,4 +132,60 @@ class SystemModuleStoreTest {
             "https://user@github.com/file",
         )) assertFalse(SystemModuleTransport.allowed(url.toHttpUrl()))
     }
+    private fun centralOffset(bytes: ByteArray): Int {
+        val end = bytes.size - 22
+        return java.nio.ByteBuffer.wrap(bytes, end + 16, 4)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+    }
+
+    @Test fun signedZipSymlinkAndInconsistentLocalHeaderAreRejected() {
+        val manager = store()
+        val regular = zip("lib/libgood.so")
+        val central = centralOffset(regular)
+        val symlink = regular.clone().apply {
+            this[central + 5] = 3 // Unix creator
+            // S_IFLNK | 0777, high 16 bits of external attributes.
+            this[central + 40] = 0xff.toByte()
+            this[central + 41] = 0xa1.toByte()
+        }
+        reject { install(manager, 1, symlink) }
+        val mismatch = regular.clone().apply { this[30] = 'x'.code.toByte() }
+        reject { install(manager, 1, mismatch) }
+        val trailing = regular + byteArrayOf(0)
+        reject { install(manager, 1, trailing) }
+        val oversized = regular.clone().apply {
+            java.nio.ByteBuffer.wrap(this, central + 24, 4)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(Int.MAX_VALUE)
+        }
+        reject { install(manager, 1, oversized) }
+        val excessiveEntries = regular.clone().apply {
+            val end = size - 22
+            java.nio.ByteBuffer.wrap(this, end + 8, 4)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                .putShort(4097.toShort()).putShort(4097.toShort())
+        }
+        reject { install(manager, 1, excessiveEntries) }
+        assertNull(manager.current(module))
+        assertNotNull(install(manager, 1, regular))
+    }
+
+    @Test fun corruptRollbackTargetDoesNotChangeCurrent() {
+        val manager = store()
+        val previous = install(manager, 1, zip("lib/libone.so"))!!.archive
+        install(manager, 2, zip("lib/libtwo.so"))
+        previous.writeBytes(byteArrayOf(0))
+        reject { manager.rollback(module) }
+        assertEquals(2L, store().current(module)?.build?.version)
+    }
+
+    @Test fun storedPackageSymlinkIsNotFollowed() {
+        val manager = store()
+        val installed = install(manager, 1, zip("lib/libone.so"))!!.archive
+        val outside = folder.newFile("outside.zip")
+        outside.writeBytes(installed.readBytes())
+        assertTrue(installed.delete())
+        java.nio.file.Files.createSymbolicLink(installed.toPath(), outside.toPath())
+        reject { manager.current(module) }
+    }
+
 }
