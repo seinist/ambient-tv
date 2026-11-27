@@ -13,7 +13,7 @@ typedef struct VulkanResident AmbientSvpVk;
 typedef struct VulkanPair AmbientSvpVkPair;
 typedef struct {
     VkImageView y, u, v;
-    uint32_t nv12; /* 0 I420 R8/R8/R8, 1 NV12 R8/RG8 (v ignored) */
+    uint32_t nv12; /* 0 I420, 1 NV12, 2 SDR RGBA8 in y (u/v ignored) */
     uint32_t chroma_location; /* 0 top-left, 1 left, 2 center */
 } AmbientSvpVkPicture;
 enum {
@@ -22,7 +22,8 @@ enum {
 };
 /* Borrow the player's actual instance, physical device, logical device.
  * Do not destroy them until all sessions and pairs have been released.
- * Requires 8-bit SDR planes, sampled R8_UNORM/R8G8_UNORM image views,
+ * Requires 8-bit SDR planes (R8_UNORM/R8G8_UNORM) or two RGBA8_UNORM inputs,
+ * no mixed RGB/YUV pair. The matrix parameter is ignored for RGB pairs.
  * even visible dimensions and <=1920x1080 pixels. Native RGBA8_UNORM
  * output needs STORAGE usage and a nonaliasing distinct allocation.
  * Padding beyond visible width/height is permitted, nonzero crop origin is not.
