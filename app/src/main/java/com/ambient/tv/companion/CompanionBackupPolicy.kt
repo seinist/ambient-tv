@@ -81,7 +81,7 @@ internal object CompanionBackupPolicy {
             "viewTransitionStyleKey", "mousePointerHideSeconds",
             "gameMetadataOptions",
         ),
-        "device" to setOf("imageCacheMb", "cardImages1080"),
+        "device" to setOf("imageCacheMb", "cardImages1080", "vlcExperimentalFeaturesEnabled", "vlcHdrGpuEnabled"),
         "connections" to setOf("tvheadendHtspPort", "rommEnabled", "rommServerUrl", "rommUsername"),
         "credentials" to setOf("gameMetadata"),
     )
