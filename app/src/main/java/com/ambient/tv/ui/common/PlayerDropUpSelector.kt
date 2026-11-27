@@ -291,6 +291,7 @@ private fun PlayerDropUpSelectorImpl(
                 .heightIn(min = 48.dp)
                 .then(if (compactFooter) Modifier.semantics { contentDescription = "$label: $value" } else Modifier)
                 .focusRequester(triggerFocus)
+                .focusProperties { canFocus = enabled }
                 .onFocusChanged {
                     focused = it.hasFocus
                     if (it.hasFocus) videoState?.focusedSelector = selectorId
