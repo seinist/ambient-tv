@@ -28,7 +28,7 @@ static inline void svp_fel_pair_free(void *opaque,uint8_t *data)
 }
 static inline bool svp_fel_eligible(const struct mp_image *a)
 {
-#if PL_API_VER >= 367
+#if PL_API_VER >= 367 && defined(PL_HAVE_DOVI) && defined(PL_HAVE_VULKAN)
     if(!a||!a->enhancement_layer||!a->dovi||a->ambient_svp_pair||a->film_grain||
         a->icc_profile||a->params.no_dovi||a->params.no_enhancement_layer||
         a->params.repr.sys!=PL_COLOR_SYSTEM_DOLBYVISION||!a->params.repr.dovi||
@@ -40,7 +40,7 @@ static inline bool svp_fel_eligible(const struct mp_image *a)
         (a->params.crop.y1&&a->params.crop.y1!=a->h))return false;
     const struct mp_image *el=a->enhancement_layer;
     // Use only pairs matched by MPV's pinned f_enhancement_pair.
-    return !el->enhancement_layer&&!el->ambient_svp_pair&&!el->film_grain&&
+    return el->w>0 && el->h>0 && !el->enhancement_layer&&!el->ambient_svp_pair&&!el->film_grain&&
         !(el->fields&MP_IMGFIELD_INTERLACED)&&isfinite(el->pts)&&fabs(a->pts-el->pts)<=1e-6&&
         ((el->w==a->w&&el->h==a->h)||(el->w*2==a->w&&el->h*2==a->h));
 #else
