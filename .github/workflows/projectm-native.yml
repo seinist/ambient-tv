@@ -83,10 +83,10 @@ jobs:
             grep -q 'Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeSetFps' "/tmp/projectm-symbols-$abi"
             grep -q 'ambient_projectm_pcm_v1' "/tmp/projectm-symbols-$abi"
           done
-      - name: Compile experimental direct classic composite on ARM64
+      - name: Compile reference classic composite fallback on ARM64
         env:
           PROJECTM_ABIS: arm64-v8a
-          PROJECTM_DIRECT_CLASSIC_COMPOSITE: 'ON'
+          PROJECTM_DIRECT_CLASSIC_COMPOSITE: 'OFF'
         run: |
           bash scripts/build_projectm_android.sh
           test -s app/src/main/jniLibs/arm64-v8a/libprojectM-4.so
