@@ -15,7 +15,7 @@ struct AmbientProjectM {
     projectm_handle instance = nullptr;
     int audioSource = 0;
     std::mutex mutex;
-    std::vector<float> pcm;
+    PcmRing pcm;
     std::string pendingPreset;
     bool pendingSmooth = false;
     std::string pendingTexturePath;
@@ -59,7 +59,7 @@ Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeSetAudioSource
     if (source) {
         auto& tap = nativeAudio[source];
         std::lock_guard<std::mutex> lock(tap.mutex);
-        tap.count = 0;
+        tap.pcm.clear();
         tap.consumers.fetch_add(1);
     }
 }
@@ -78,12 +78,12 @@ Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeFeedPcm(JNIEnv
     if (!state || !state->instance || !samples) return;
     const jsize count = env->GetArrayLength(samples);
     if (count <= 0) return;
-    std::vector<float> incoming(static_cast<size_t>(count));
-    env->GetFloatArrayRegion(samples, 0, count, incoming.data());
-    std::lock_guard<std::mutex> guard(state->mutex);
-    const unsigned maxSamples = projectm_pcm_get_max_samples();
-    if (incoming.size() > maxSamples) incoming.erase(incoming.begin(), incoming.end() - maxSamples);
-    state->pcm = std::move(incoming);
+    std::array<float, PcmRing::capacity> incoming;
+    const jsize size = std::min(count, static_cast<jsize>(incoming.size()));
+    env->GetFloatArrayRegion(samples, count - size, size, incoming.data());
+    if (env->ExceptionCheck()) return;
+    std::unique_lock<std::mutex> guard(state->mutex, std::try_to_lock);
+    if (guard.owns_lock()) state->pcm.append(incoming.data(), size);
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -144,7 +144,9 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeRender(JNIEnv*, jobject, jlong handle) {
     auto* state = ptr(handle);
     if (!state || !state->instance) return;
-    std::vector<float> pcm;
+    std::array<float, PcmRing::capacity> pcm;
+    size_t pcmCount = 0;
+    const size_t maxSamples = std::min<size_t>(pcm.size(), projectm_pcm_get_max_samples());
     std::string preset;
     std::string texturePath;
     bool smooth = false;
@@ -152,7 +154,7 @@ Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeRender(JNIEnv*
     bool lockedDirty = false;
     {
         std::lock_guard<std::mutex> guard(state->mutex);
-        pcm.swap(state->pcm);
+        pcmCount = state->pcm.drainLatest(pcm.data(), maxSamples);
         preset.swap(state->pendingPreset);
         texturePath.swap(state->pendingTexturePath);
         smooth = state->pendingSmooth;
@@ -162,9 +164,8 @@ Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeRender(JNIEnv*
     }
     if (state->audioSource) {
         auto& tap = nativeAudio[state->audioSource];
-        std::lock_guard<std::mutex> lock(tap.mutex);
-        pcm.assign(tap.samples.begin(), tap.samples.begin() + tap.count);
-        tap.count = 0;
+        std::unique_lock<std::mutex> lock(tap.mutex, std::try_to_lock);
+        if (lock.owns_lock()) pcmCount = tap.pcm.drainLatest(pcm.data(), maxSamples);
     }
     if (!texturePath.empty()) {
         const char* paths[] = { texturePath.c_str() };
@@ -172,7 +173,7 @@ Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeRender(JNIEnv*
     }
     if (!preset.empty()) projectm_load_preset_data(state->instance, preset.c_str(), smooth);
     if (lockedDirty) projectm_set_preset_locked(state->instance, locked);
-    if (!pcm.empty()) projectm_pcm_add_float(state->instance, pcm.data(), static_cast<unsigned>(pcm.size()), PROJECTM_MONO);
+    if (pcmCount) projectm_pcm_add_float(state->instance, pcm.data(), static_cast<unsigned>(pcmCount), PROJECTM_MONO);
     projectm_opengl_render_frame(state->instance);
 }
 
