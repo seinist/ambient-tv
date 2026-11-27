@@ -34,8 +34,8 @@ fn synthesis_spirv()->Result<Vec<u32>>{
 // P010 in the high ten bits and planar 10-bit in the low ten bits.
 fn high_motion_spirv(mode:u32)->Result<Vec<u32>>{
     let scale=match mode{1|4=>"65535.0/64.0",2|5=>"65535.0",3=>"1023.0",_=>return Err("unknown high-depth mode".into())};
-    for anchor in ["luminance*255.0","sad+=255u;","i32(scores[0]/128u)"]{
-        if MOTION.matches(anchor).count()!=1{return Err("high-depth motion shader contract changed".into());}
+    for (anchor,count) in [("luminance*255.0",1),("sad+=255u;",1),("i32(scores[0]/128u)",2)]{
+        if MOTION.matches(anchor).count()!=count{return Err("high-depth motion shader contract changed".into());}
     }
     // Search on all 1024 luma levels. Keep the existing synthesis cut
     // threshold in approximately eight-bit SAD units; selection itself
@@ -324,13 +324,16 @@ impl VulkanPair{
         self.descriptors(set,&[(0,self.a.y,vk::DescriptorType::SAMPLED_IMAGE),
             (1,self.b.y,vk::DescriptorType::SAMPLED_IMAGE)],2);
         unsafe{
-            c.motion.dispatch(self.command,set,[c.width,c.height,c.gw,c.gh|if self.a.rgb(){1<<31}else{0}],c.gw,c.gh*2);
+            let flags=c.gh|if self.a.rgb(){1<<31}else{0};
             let barrier=[vk::BufferMemoryBarrier::default().src_access_mask(vk::AccessFlags::SHADER_WRITE)
-                .dst_access_mask(vk::AccessFlags::SHADER_READ)
+                .dst_access_mask(vk::AccessFlags::SHADER_READ|vk::AccessFlags::SHADER_WRITE)
                 .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                 .buffer(self.field).offset(0).size(c.field_size)];
-            c.device.cmd_pipeline_barrier(self.command,vk::PipelineStageFlags::COMPUTE_SHADER,
-                vk::PipelineStageFlags::COMPUTE_SHADER,vk::DependencyFlags::empty(),&[],&barrier,&[]);
+            for pass in [0,1<<30,(1<<30)|(1<<29)]{
+                c.motion.dispatch(self.command,set,[c.width,c.height,c.gw,flags|pass],c.gw,c.gh*2);
+                c.device.cmd_pipeline_barrier(self.command,vk::PipelineStageFlags::COMPUTE_SHADER,
+                    vk::PipelineStageFlags::COMPUTE_SHADER,vk::DependencyFlags::empty(),&[],&barrier,&[]);
+            }
         }
     }
     unsafe fn render(&mut self,phase:f32,matrix:u32,output:vk::ImageView)->Result<()>{
