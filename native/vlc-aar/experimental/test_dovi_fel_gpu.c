@@ -1,4 +1,5 @@
-#include "dovi_fel_gpu.h"
+#include "dovi_fel_render.h"
+#include <stdlib.h>
 #include "dovi_fel_metadata.h"
 #include <libplacebo/vulkan.h>
 #include <assert.h>
@@ -127,7 +128,29 @@ int main(void)
     assert(ambient_fel_compose_ex(gpu,dp,neutral_bl,zero_el,out,&identity,&nlq,false,true,NULL));
     assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=out,.ptr=pixels)));
     for(unsigned i=0;i<16;i++)if(i%4!=3)assert(fabsf(pixels[i]-0.5f)<0.0002f);
+    // Exercise the exact owned-picture handoff used by display.c.
+    struct ambient_fel_picture *pic=calloc(1,sizeof(*pic)+6*sizeof(uint16_t));
+    assert(pic);
+    pic->rpu=metadata;pic->rpu.residual_present=1;pic->rpu.source_max_pq=3072;
+    pic->width=2;pic->height=2;pic->pts=1234;
+    for(unsigned i=0;i<3;i++){
+        pic->rpu.nonlinear_matrix[3*i+i]=1.f;
+        pic->rpu.linear_matrix[3*i+i]=1.f;
+        pic->rpu.curves[i].poly_coef[0][0]=0;
+        pic->rpu.curves[i].poly_coef[0][1]=65536;
+    }
+    for(unsigned i=0;i<6;i++)pic->samples[i]=512;
+    struct ambient_fel_render render={0};
+    struct pl_frame frame={.num_planes=1};
+    frame.planes[0].texture=neutral_bl;
+    assert(!ambient_fel_render_picture(gpu,log,&render,&frame,pic,1235));
+    assert(frame.planes[0].texture==neutral_bl);
+    assert(ambient_fel_render_picture(gpu,log,&render,&frame,pic,1234));
+    assert(frame.planes[0].texture==render.output && frame.repr.sys==PL_COLOR_SYSTEM_RGB);
+    assert(frame.color.transfer==PL_COLOR_TRC_PQ);
+    free(pic);
     pl_gpu_finish(gpu);
+    ambient_fel_render_destroy(gpu,&render);
     pl_tex_destroy(gpu,&neutral_bl);pl_tex_destroy(gpu,&zero_el);
     pl_tex_destroy(gpu,&large_bl);pl_tex_destroy(gpu,&large_out);
     ambient_fel_planes_destroy(gpu,&planes);
