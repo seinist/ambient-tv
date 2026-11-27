@@ -261,7 +261,11 @@ class VlcPlaybackController(
                 if (com.ambient.tv.BuildConfig.VLC_HDR10PLUS_SPATIAL_EXPERIMENT && toneMappingRequired)
                     add("--vk-ambient-hdr10plus-spatial")
             }
-            if (doviAhbActive) add("--vk-ambient-dovi-ahb")
+            if (doviAhbActive) {
+                add("--vk-ambient-dovi-ahb")
+                if (com.ambient.tv.BuildConfig.VLC_DOVI_FEL_EXPERIMENT)
+                    add("--vk-ambient-dovi-fel")
+            }
             // MediaCodec copy-back lacks VLC's DOVI picture ancillary. Use
             // avcodec's RPU-aware software decoder, but keep the GPU renderer.
             if (doviRpuDecoderRequired) add("--no-mediacodec")
