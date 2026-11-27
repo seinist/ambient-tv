@@ -50,13 +50,6 @@ impl Grid{
         let median=|axis:usize|{let mut v=vectors.map(|v|v[axis]);v.sort_unstable();v[1]};
         ([median(0),median(1)],high)
     }
-    fn nearest(self,x:u32,y:u32)->usize{
-        // Round to the nearest grid origin rather than always selecting
-        // the block to the left/above the projected location.
-        let bx=((x+self.sx/2)/self.sx).min(self.w-1);
-        let by=((y+self.sy/2)/self.sy).min(self.h-1);
-        (by*self.w+bx) as usize
-    }
 }
 struct LevelField{grid:Grid,choices:Vec<Choice>}
 impl LevelField{
