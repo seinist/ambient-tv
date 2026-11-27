@@ -104,7 +104,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +            bl->fmt.video.space!=COLOR_SPACE_BT2020 ||
 +            bl->fmt.video.transfer!=TRANSFER_FUNC_SMPTE_ST2084 ||
 +            bl->fmt.video.color_range!=COLOR_RANGE_LIMITED ||
-+            bl->fmt.video.i_x_offset || bl->fmt.video.i_y_offset ||
++            (bl->fmt.video.i_x_offset&1u) || (bl->fmt.video.i_y_offset&1u) ||
 +            !bl->fmt.video.i_visible_width || !bl->fmt.video.i_visible_height ||
 +            bl->fmt.video.i_visible_width>bl->fmt.video.i_width ||
 +            bl->fmt.video.i_visible_height>bl->fmt.video.i_height ||
