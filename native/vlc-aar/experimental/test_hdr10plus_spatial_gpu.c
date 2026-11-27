@@ -264,8 +264,8 @@ int main(void)
         assert(fabsf(pixels[j]-pl_hdr_rescale(PL_HDR_NITS,PL_HDR_PQ,nits))<0.0015f);
     }
     pl_gpu_finish(gpu);pl_tex_destroy(gpu,&sat_input);
-    // A nearly neutral pixel with large authored weight can legitimately
-    // require gain above 4; Annex B.12 limits it by gamut, not a fixed cap.
+    // A nearly neutral pixel with large authored weight can yield an
+    // unconstrained B.11 gain above 4. B.12 explicitly caps eta at 4.
     const float near_neutral[3]={600.f,570.f,540.f};
     for(int i=0;i<width*height;i++){
         for(unsigned j=0;j<3;j++)
@@ -290,7 +290,8 @@ int main(void)
         if(d>0.f)gain=fminf(gain,(1.f-lum)/d);
         if(d<0.f)gain=fminf(gain,-lum/d);
     }
-    assert(gain>4.f);
+    assert(gain>4.f); // unconstrained by B.12 upper limit
+    gain=fminf(gain,4.f);
     for(unsigned j=0;j<3;j++){
         float nits=powf(fmaxf(0.f,lum+gain*(e[j]-lum)),2.4f)*state.output_max;
         assert(fabsf(pixels[j]-pl_hdr_rescale(PL_HDR_NITS,PL_HDR_PQ,nits))<0.003f);
