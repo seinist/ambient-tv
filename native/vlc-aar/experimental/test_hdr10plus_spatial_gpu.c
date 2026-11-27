@@ -264,6 +264,38 @@ int main(void)
         assert(fabsf(pixels[j]-pl_hdr_rescale(PL_HDR_NITS,PL_HDR_PQ,nits))<0.0015f);
     }
     pl_gpu_finish(gpu);pl_tex_destroy(gpu,&sat_input);
+    // A nearly neutral pixel with large authored weight can legitimately
+    // require gain above 4; Annex B.12 limits it by gamut, not a fixed cap.
+    const float near_neutral[3]={600.f,570.f,540.f};
+    for(int i=0;i<width*height;i++){
+        for(unsigned j=0;j<3;j++)
+            pixels[4*i+j]=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_PQ,near_neutral[j]);
+        pixels[4*i+3]=1.f;
+    }
+    sat_input=pl_tex_create(gpu,pl_tex_params(.w=width,.h=height,.format=fmt,
+        .sampleable=true,.initial_data=pixels));
+    assert(sat_input);
+    m.windows[0].knee_y=0.1f;m.windows[0].saturation_weight=63;
+    img.planes[0].texture=sat_input;img.color=pl_color_space_hdr10;img.color.hdr.max_luma=1000.f;
+    assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
+    sh=pl_dispatch_begin(state.dispatch);
+    pl_shader_sample_direct(sh,pl_sample_src(.tex=state.output));
+    assert(pl_dispatch_finish(state.dispatch,pl_dispatch_params(.shader=&sh,.target=readback)));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=readback,.ptr=pixels)));
+    for(unsigned j=0;j<3;j++)e[j]=powf(near_neutral[j]/10000.f,1.f/2.4f);
+    lum=0.2627f*e[0]+0.6780f*e[1]+0.0593f*e[2];
+    gain=1.f+(63.f/8.f)*fmaxf(0.f,logf(600.f)/logf(state.output_max*0.06f)-1.f);
+    for(unsigned j=0;j<3;j++){
+        float d=e[j]-lum;
+        if(d>0.f)gain=fminf(gain,(1.f-lum)/d);
+        if(d<0.f)gain=fminf(gain,-lum/d);
+    }
+    assert(gain>4.f);
+    for(unsigned j=0;j<3;j++){
+        float nits=powf(fmaxf(0.f,lum+gain*(e[j]-lum)),2.4f)*state.output_max;
+        assert(fabsf(pixels[j]-pl_hdr_rescale(PL_HDR_NITS,PL_HDR_PQ,nits))<0.003f);
+    }
+    pl_gpu_finish(gpu);pl_tex_destroy(gpu,&sat_input);
     m.windows[0].saturation_mapping=false;
     // Legal no-OOTF input uses scene statistics, not an uninitialized curve.
     m.windows[0].tone_mapping=false;m.target_nits=0.f;
