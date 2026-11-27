@@ -169,6 +169,49 @@ def monogram(out, version, aar, licenses):
     return entries
 
 
+def monogram_dex(out, version, dex_dir, apks, licenses):
+    """Package isolated adapter and its two native roots from matching Full APKs."""
+    binding = (dex_dir / "host-binding.sha256").read_text(encoding="ascii").strip()
+    if not re.fullmatch(r"[0-9a-f]{64}", binding):
+        raise ValueError("invalid Monogram adapter host fingerprint")
+    dex = {path.name: path.read_bytes() for path in dex_dir.glob("*.dex")}
+    expected = {"classes.dex"} | {f"classes{i}.dex" for i in range(2, len(dex) + 1)}
+    if not dex or set(dex) != expected or any(
+            len(data) < 112 or not data.startswith(b"dex\\n") for data in dex.values()):
+        raise ValueError("invalid or noncontiguous Monogram adapter DEX")
+    roots = {"libmonogram_mtproto.so", "libjnidispatch.so"}
+    entries = []
+    seen = set()
+    for apk in apks:
+        with zipfile.ZipFile(apk) as archive:
+            names = archive.namelist()
+            if len(names) != len(set(names)):
+                raise ValueError(f"duplicate APK entries: {apk}")
+            for abi in ABIS:
+                prefix = f"lib/{abi}/"
+                if prefix + "libmonogram_mtproto.so" not in names:
+                    continue
+                if abi in seen:
+                    raise ValueError(f"duplicate APK ABI: {abi}")
+                seen.add(abi)
+                files = {"code/" + name: data for name, data in dex.items()}
+                for name in sorted(roots):
+                    data = archive.read(prefix + name)
+                    needed = native_dependencies(data, name)
+                    if needed - PLATFORM - roots:
+                        raise ValueError(f"unapproved adapter native dependencies: {name}: {needed}")
+                    files["lib/" + name] = data
+                for license in licenses:
+                    path = "licenses/" + license.name
+                    if path in files:
+                        raise ValueError("duplicate license filename")
+                    files[path] = license.read_bytes()
+                entries.append(write_package(out, "monogram", abi, version, files, binding=binding))
+    if seen != set(ABIS):
+        raise ValueError("Monogram adapter requires matching Full APKs for all four ABIs")
+    return entries
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--module", choices=("shaders", "projectm", "mpv", "spotify", "monogram"), required=True)
@@ -178,6 +221,7 @@ def main():
     parser.add_argument("--apk", type=Path, action="append", default=[])
     parser.add_argument("--license", type=Path, action="append", default=[])
     parser.add_argument("--monogram-aar", type=Path)
+    parser.add_argument("--monogram-dex-dir", type=Path)
     args = parser.parse_args()
     if args.version <= 0 or not re.fullmatch(r"modules-" + args.module + r"-[A-Za-z0-9._-]{1,70}", args.tag):
         parser.error("invalid tag or version")
@@ -185,9 +229,14 @@ def main():
     if args.module == "shaders":
         entries = shaders(args.output, args.version)
     elif args.module == "monogram":
-        if not args.monogram_aar or not args.license:
-            parser.error("Monogram requires the pinned matching AAR and corresponding license notices")
-        entries = monogram(args.output, args.version, args.monogram_aar, args.license)
+        if not args.license or bool(args.monogram_aar) == bool(args.monogram_dex_dir):
+            parser.error("Monogram requires one adapter format and corresponding license notices")
+        if args.monogram_dex_dir:
+            if not args.apk:
+                parser.error("Monogram DEX requires matching Full APKs")
+            entries = monogram_dex(args.output, args.version, args.monogram_dex_dir, args.apk, args.license)
+        else:
+            entries = monogram(args.output, args.version, args.monogram_aar, args.license)
     else:
         if not args.apk or not args.license:
             parser.error("Native modules require verified Full APKs and corresponding license notices")
