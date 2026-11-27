@@ -12,7 +12,7 @@ struct ambient_fel_planes {
     pl_tex tex[3];
     pl_tex vertical[3], expanded[3];
     float chroma_x,chroma_y;
-    bool mapped;
+    bool mapped, reference_codes;
     struct ambient_fel_axis_map x,y;
 };
 static inline void ambient_fel_planes_destroy(pl_gpu gpu,struct ambient_fel_planes *p)
@@ -42,7 +42,7 @@ static inline bool ambient_fel_planes_upload(pl_gpu gpu,struct ambient_fel_plane
             .ptr=(void *)data[i],.row_pitch=pitch[i])))return false;
     }
     p->chroma_x=chroma_x;p->chroma_y=chroma_y;
-    p->mapped=false;
+    p->mapped=false;p->reference_codes=false;
     return true;
 }
 
@@ -56,7 +56,7 @@ static inline bool ambient_fel_filter_axis(pl_gpu gpu,pl_dispatch dp,
 {
     if(!gpu||!dp||!input||!output||input==*output)return false;
     int w=input->params.w,h=input->params.h;
-    if(w<=0||h<=0||w>3840||h>2160)return false;
+    if(w<=0||h<=0||w>1920||h>(vertical?1088:2176))return false;
     pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_UNORM,1,16,16,
         PL_FMT_CAP_SAMPLEABLE|PL_FMT_CAP_RENDERABLE);
     if(!fmt||fmt->component_depth[0]!=16||!pl_tex_recreate(gpu,output,
@@ -105,7 +105,7 @@ static inline bool ambient_fel_filter_axis(pl_gpu gpu,pl_dispatch dp,
 static inline bool ambient_fel_reference_el(pl_gpu gpu,pl_dispatch dp,
     struct ambient_fel_planes *src,struct ambient_fel_planes *view)
 {
-    if(!src||!view||src==view||!src->mapped||!src->tex[0]||
+    if(!gpu||!dp||!src||!view||src==view||!src->mapped||!src->tex[0]||
        src->x.ratio!=0.5f||src->y.ratio!=0.5f||
        (src->tex[0]->params.w&1)||(src->tex[0]->params.h&1))return false;
     pl_dispatch_reset_frame(dp);
@@ -113,7 +113,7 @@ static inline bool ambient_fel_reference_el(pl_gpu gpu,pl_dispatch dp,
         if(!ambient_fel_filter_axis(gpu,dp,src->tex[c],&src->vertical[c],true,c==0)||
            !ambient_fel_filter_axis(gpu,dp,src->vertical[c],&src->expanded[c],false,c==0))return false;
     }
-    *view=(struct ambient_fel_planes){.mapped=true,
+    *view=(struct ambient_fel_planes){.mapped=true,.reference_codes=true,
         .chroma_x=src->chroma_x,.chroma_y=src->chroma_y,
         .x={1.f,src->x.offset*2.f},.y={1.f,src->y.offset*2.f}};
     for(unsigned c=0;c<3;c++)view->tex[c]=src->expanded[c];
@@ -169,6 +169,7 @@ static inline bool ambient_fel_compose_domain(pl_gpu gpu, pl_dispatch dispatch,
     float layer_ratio[2]={1.f,1.f},layer_shift[2]={0.f,0.f},chroma_shift[2]={0.f,0.f};
     float layer_offset[2]={0.f,0.f};
     int luma_direct=0;
+    float plane_code_max=1023.f;
     if(planes){
         if(!planes->tex[0]||!planes->tex[1]||!planes->tex[2]||n->el_bits!=10||
             !isfinite(planes->chroma_x)||!isfinite(planes->chroma_y)||
@@ -195,6 +196,8 @@ static inline bool ambient_fel_compose_domain(pl_gpu gpu, pl_dispatch dispatch,
         luma_direct=x.ratio==1.f&&y.ratio==1.f&&x.offset==0.f&&y.offset==0.f;
         layer_shift[0]=layer_ratio[0]<1.f?-0.5f:0.f;
         chroma_shift[0]=planes->chroma_x;chroma_shift[1]=planes->chroma_y;
+        // Annex B clips each pass to 16 bits; retain overshoots until NLQ.
+        if(planes->reference_codes)plane_code_max=65535.f;
     }
     const struct pl_shader_desc desc[2]={
         {.desc={.name="fel_bl",.type=PL_DESC_SAMPLED_TEX},.binding={.object=bl}},
@@ -225,6 +228,7 @@ static inline bool ambient_fel_compose_domain(pl_gpu gpu, pl_dispatch dispatch,
         {.var=pl_var_vec2("fel_layer_offset"),.data=layer_offset,.dynamic=true},
         {.var=pl_var_vec2("fel_chroma_shift"),.data=chroma_shift,.dynamic=true},
         {.var=pl_var_int("fel_luma_direct"),.data=&luma_direct,.dynamic=true},
+        {.var=pl_var_float("fel_plane_code_max"),.data=&plane_code_max,.dynamic=true},
     };
     // This dispatch is dedicated to the FEL prepass, one invocation per
     // frame. Retire per-frame temporary state and reuse compiled shaders.
@@ -304,7 +308,7 @@ static inline bool ambient_fel_compose_domain(pl_gpu gpu, pl_dispatch dispatch,
                   "vec2 cp=(ep-fel_chroma_shift)*0.5;"
                   "float ey=fel_luma_direct!=0?fel_code(fel_y,ivec2(gl_FragCoord.xy)):fel_sample(fel_y,ep);"
                   "vec3 ec=vec3(ey,fel_sample(fel_u,cp),fel_sample(fel_v,cp));"
-                  "vec3 delta=clamp(ec,0.0,1023.0)-fel_offset;"
+                  "vec3 delta=clamp(ec,0.0,fel_plane_code_max)-fel_offset;"
                   "vec3 rr=sign(delta)*floor(abs(delta)+0.5);"
                   "vec3 r=sign(rr)*((abs(rr)-0.5)*fel_slope+fel_threshold);"
                   "color.rgb=clamp(color.rgb+clamp(r,-fel_maximum,fel_maximum),0.0,1.0);",

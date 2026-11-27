@@ -4,7 +4,7 @@
  * samples include deterministic aligned vectors and decoded 4:2:0 planes.
  * Spatial cases validate the experimental bilinear approximation; normative
  * Dolby resampling and display management are not asserted. */
-#include "dovi_fel_gpu.h"
+#include "dovi_fel_render.h"
 #include "dovi_fel_metadata.h"
 #include <libplacebo/vulkan.h>
 #include <assert.h>
@@ -92,7 +92,7 @@ static unsigned at_plane(const uint16_t *p,unsigned w,unsigned h,int x,int y)
     return p[(unsigned)y*w+(unsigned)x];
 }
 static unsigned aligned_el(const uint16_t *el,const struct spatial_case *g,
-    unsigned x,unsigned y,unsigned c,unsigned offset)
+    unsigned x,unsigned y,unsigned c,unsigned offset,unsigned max_code)
 {
     unsigned w=g->ew,h=g->eh;
     const uint16_t *p=el;
@@ -117,7 +117,7 @@ static unsigned aligned_el(const uint16_t *el,const struct spatial_case *g,
     // NLQ rounds the signed distance from the offset, not the raw sample.
     int delta=(int)weighted-(int)(256*offset);
     int rounded=delta<0?-((-delta+128)/256):(delta+128)/256;
-    return clip((int)offset+rounded,1023);
+    return clip((int)offset+rounded,max_code);
 }
 static void crop_el(const uint16_t source[YUV],uint16_t dest[YUV],
     const struct spatial_case *g)
@@ -175,8 +175,9 @@ static void assert_filter_pixels(pl_gpu gpu,pl_dispatch dp,pl_tex actual,const u
     }
     free(out);pl_tex_destroy(gpu,&readback);
 }
-static void check_reference_filter(pl_gpu gpu,pl_dispatch dp,struct ambient_fel_planes *planes,
-    const uint16_t source[YUV])
+static void check_reference_filter(pl_gpu gpu,pl_log log,pl_dispatch dp,struct ambient_fel_planes *planes,
+    const uint16_t source[YUV],const uint16_t bl_frame[YUV],const struct ambient_dovi_metadata *m,
+    const struct pl_dovi_metadata *reshape,const struct ambient_fel_nlq *nlq)
 {
     const struct spatial_case g={"Annex B.3",32,32,2,2,0,0,0,0};
     uint16_t raw[YUV],expanded[YUV];crop_el(source,raw,&g);
@@ -206,7 +207,63 @@ static void check_reference_filter(pl_gpu gpu,pl_dispatch dp,struct ambient_fel_
         assert_filter_pixels(gpu,dp,view.tex[c],expected);
     }
     fprintf(stderr,"Annex B.3 EL reference: 12288 exact 16-bit output samples, two independent frames\n");
-    pl_gpu_finish(gpu);
+
+    // Exercise the filtered codes all the way through NLQ and prediction.
+    // Keep the 16-bit Annex B overshoot in the oracle (no 10-bit clamp).
+    const struct spatial_case identity={"expanded",64,64,1,1,0,0,0,0};
+    float input[N*4],pixels[N*4];
+    unsigned expected[N][3],over=0;
+    for(unsigned i=0;i<YUV;i++)over+=expanded[i]>1023;
+    for(unsigned i=0;i<N;i++){
+        unsigned x=i%W,y=i/W;
+        unsigned bl[3]={bl_frame[i],bl_frame[N+(y/2)*(W/2)+x/2],
+            bl_frame[N+C+(y/2)*(W/2)+x/2]};
+        for(unsigned c=0;c<3;c++){
+            input[4*i+c]=bl[c]/1023.f;
+            expected[i][c]=oracle(m,bl,aligned_el(expanded,&identity,x,y,c,m->nlq_offset[c],65535),c);
+        }
+        input[4*i+3]=1.f;
+    }
+    pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,32,32,PL_FMT_CAP_SAMPLEABLE|PL_FMT_CAP_RENDERABLE|PL_FMT_CAP_HOST_READABLE);
+    assert(fmt);
+    pl_tex bl=pl_tex_create(gpu,pl_tex_params(.w=W,.h=H,.format=fmt,.sampleable=true,.initial_data=input));
+    pl_tex out=pl_tex_create(gpu,pl_tex_params(.w=W,.h=H,.format=fmt,.renderable=true,.host_readable=true));
+    assert(bl&&out);
+    assert(ambient_fel_compose_domain(gpu,dp,bl,NULL,out,reshape,nlq,false,false,&view,true));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=out,.ptr=pixels)));
+    unsigned max=0;
+    for(unsigned i=0;i<N;i++)for(unsigned c=0;c<3;c++){
+        unsigned code=clip((wide)floor(pixels[4*i+c]*4096.0+0.5),4095);
+        unsigned err=(unsigned)abs((int)code-(int)expected[i][c]);
+        if(err>max)max=err;
+    }
+    fprintf(stderr,"Annex B.3 + NLQ reference: %u components, max error %u, %u overshoot codes\n",3u*N,max,over);
+    assert(max<=1);
+    pl_tex_destroy(gpu,&out);pl_tex_destroy(gpu,&bl);
+
+    // Check the actual render entry point uses the signalled filter and
+    // rejects contradictory geometry. The packed BL order is Cr/Y/Cb.
+    for(unsigned i=0;i<N;i++){
+        float y=input[4*i],cb=input[4*i+1],cr=input[4*i+2];
+        input[4*i]=cr;input[4*i+1]=y;input[4*i+2]=cb;
+    }
+    bl=pl_tex_create(gpu,pl_tex_params(.w=W,.h=H,.format=fmt,.sampleable=true,.initial_data=input));
+    assert(bl);
+    struct ambient_fel_picture *pic=calloc(1,sizeof(*pic)+1536*sizeof(uint16_t));assert(pic);
+    pic->rpu=*m;pic->rpu.bl_spatial_resampling=0;pic->rpu.el_spatial_resampling=1;
+    pic->width=pic->height=pic->coded_width=pic->coded_height=32;
+    pic->pts=1;pic->sample_count=1536;memcpy(pic->samples,raw,1536*sizeof(uint16_t));
+    struct ambient_fel_render render={0};
+    struct pl_frame frame={.num_planes=1};
+    frame.planes[0].texture=bl;
+    pic->rpu.el_spatial_resampling=0;
+    assert(!ambient_fel_render_picture_ex(gpu,log,&render,&frame,pic,1,0,0,64,64));
+    pic->rpu.el_spatial_resampling=1;
+    assert(ambient_fel_render_picture_ex(gpu,log,&render,&frame,pic,1,0,0,64,64));
+    assert(render.planes.expanded[0]&&render.planes.expanded[0]->params.w==64);
+    assert(frame.planes[0].texture==render.output);
+    pl_gpu_finish(gpu);ambient_fel_render_destroy(gpu,&render);
+    pl_tex_destroy(gpu,&bl);free(pic);
 }
 static void check_geometry(const struct spatial_case *g,struct ambient_fel_planes *planes)
 {
@@ -288,7 +345,7 @@ int main(int argc,char **argv)
             if(i%8==0)e=0;
             if(i%8==1)e=1023;
             if(i%8==2)e=m.nlq_offset[k];
-            unsigned ec=decoded?aligned_el(spatial_el,g,i%W,i/W,k,m.nlq_offset[k]):clip(e,1023);
+            unsigned ec=decoded?aligned_el(spatial_el,g,i%W,i/W,k,m.nlq_offset[k],1023):clip(e,1023);
             bl_code[i][k]=b[k];el_code[i][k]=ec;
             bl[4*i+k]=b[k]/1023.f;el[4*i+k]=ec/1023.f;
             expected[i][k]=oracle(&m,b,ec,k);
@@ -323,7 +380,7 @@ int main(int argc,char **argv)
     pl_gpu_finish(gpu);
     pl_tex_destroy(gpu,&out);pl_tex_destroy(gpu,&e);pl_tex_destroy(gpu,&b);
     }
-    if(decoded)check_reference_filter(gpu,dp,&planes,el_frame);
+    if(decoded)check_reference_filter(gpu,log,dp,&planes,el_frame,bl_frame,&m,&reshape,&nlq);
     ambient_fel_planes_destroy(gpu,&planes);pl_dispatch_destroy(&dp);
     pl_vulkan_destroy(&vk);pl_log_destroy(&log);
     // Keep the original one-code threshold separately for every case.

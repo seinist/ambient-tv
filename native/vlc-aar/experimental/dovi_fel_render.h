@@ -29,7 +29,7 @@ static inline bool ambient_fel_render_picture_ex(pl_gpu gpu,pl_log log,
         img->num_planes!=1||!img->planes[0].texture||
         !pic->width||!pic->height||pic->width>1920||pic->height>1088||
         pic->rpu.source_min_pq>pic->rpu.source_max_pq||
-        pic->rpu.source_max_pq>4095)return false;
+        pic->rpu.source_max_pq>4095||pic->rpu.bl_spatial_resampling)return false;
     pl_tex bl=img->planes[0].texture;
     unsigned w=pic->width,h=pic->height,cw=(w+1)/2,ch=(h+1)/2;
     struct ambient_fel_axis_map x,y;
@@ -40,6 +40,11 @@ static inline bool ambient_fel_render_picture_ex(pl_gpu gpu,pl_log log,
     struct ambient_fel_nlq nlq;
     if(!ambient_fel_metadata(&pic->rpu,&reshape,&nlq))return false;
     const bool zero=ambient_fel_nlq_zero(&nlq);
+    if(!zero){
+        if(pic->rpu.el_spatial_resampling){
+            if(x.ratio!=.5f||y.ratio!=.5f||(w&1)||(h&1))return false;
+        }else if(x.ratio!=1.f||y.ratio!=1.f)return false;
+    }
     const size_t expected=(size_t)w*h+2*(size_t)cw*ch;
     // A compact snapshot may only be used with a matching zero-residual
     // RPU. Validate its length before forming any flexible-array pointers.
@@ -54,16 +59,13 @@ static inline bool ambient_fel_render_picture_ex(pl_gpu gpu,pl_log log,
     }
     if(!s->dispatch)s->dispatch=pl_dispatch_create(log,gpu);
     if(!s->dispatch)return false;
-    // Profile 7 has a full-resolution BL. A signalled BL upscale is not
-    // supported by this packed AHB input contract: fail closed.
-    if(pic->rpu.bl_spatial_resampling)return false;
     struct ambient_fel_planes expanded={0};
     const struct ambient_fel_planes *active=zero?NULL:&s->planes;
     if(!zero){
         if(pic->rpu.el_spatial_resampling){
             if(!ambient_fel_reference_el(gpu,s->dispatch,&s->planes,&expanded))return false;
             active=&expanded;
-        }else if(x.ratio!=1.f||y.ratio!=1.f)return false;
+        }
     }
     pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,16,0,
         PL_FMT_CAP_SAMPLEABLE|PL_FMT_CAP_RENDERABLE|PL_FMT_CAP_LINEAR);
