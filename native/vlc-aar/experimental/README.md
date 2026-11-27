@@ -147,3 +147,5 @@ References:
 - https://docs.vulkan.org/spec/latest/chapters/devsandqueues.html
 - https://developer.android.com/ndk/reference/group/media
 - https://developer.android.com/ndk/reference/group/a-data-space
+
+The contract CI additionally applies the reviewed production VLC patch stack before staging the experiment. The MediaTek HEVC Surface fallback is retained; the experimental patch does not overlap its inserted guard.

@@ -34,6 +34,12 @@ jobs:
       - name: Check experimental patch against pinned VLC
         run: |
           git -C .ci/vlc apply --check "$GITHUB_WORKSPACE"/native/vlc-aar/experimental/vlc-patches/*.patch
+      - name: Apply reviewed production VLC patches before contract checks
+        run: |
+          for patch in "$GITHUB_WORKSPACE"/native/vlc-aar/patches/*.patch; do
+            git -C .ci/vlc apply "$patch"
+          done
+          git -C .ci/vlc apply --check "$GITHUB_WORKSPACE"/native/vlc-aar/experimental/vlc-patches/*.patch
       - name: Install pinned Android NDK and shader compiler
         run: |
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
@@ -49,7 +55,9 @@ jobs:
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
           bash scripts/prepare_vlc_ahb_experimental.sh .ci/vlc
           bash scripts/prepare_vlc_ahb_experimental.sh .ci/vlc
-          git -C .ci/vlc diff --check
+          # Production patch files include pre-existing whitespace in nested
+          # contrib patches; validate only the experimental staging delta.
+          git -C .ci/vlc diff --check -- modules/video_output modules/codec/omxil src/video_output
       - name: Host sanitizer regressions, GLSL and Android ABI checks
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"

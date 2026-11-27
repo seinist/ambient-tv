@@ -126,10 +126,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      else
          QueueAImagePicture(p_dec, avctx, image, fence_fd);
      vlc_mutex_unlock(&p_sys->lock);
-@@ -945,9 +998,10 @@
-                               AWindowHandler *awh, bool need_gpu)
- {
-     decoder_sys_t *p_sys = p_dec->p_sys;
+@@ -948,6 +1001,7 @@
 -    struct aimage_reader_api *air_api = AWindowHandler_getAImageReaderApi(awh);
 +    struct aimage_reader_api *air_api = p_sys->video.ambient_ahb ?
 +        AWindowHandler_getGpuAImageReaderApi(awh) : AWindowHandler_getAImageReaderApi(awh);
