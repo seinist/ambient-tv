@@ -42,8 +42,8 @@ jobs:
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
           yes | "$sdkmanager" --licenses >/dev/null 2>&1 || true
-          "$sdkmanager" "platforms;android-37.0" "ndk;30.0.16248370" "cmake;3.22.1" ||
-            "$sdkmanager" --channel=3 "platforms;android-37.0" "ndk;30.0.16248370" "cmake;3.22.1"
+          "$sdkmanager" "platforms;android-37.1" "platforms;android-37.0" "ndk;30.0.16248370" "cmake;3.22.1" ||
+            "$sdkmanager" --channel=3 "platforms;android-37.1" "platforms;android-37.0" "ndk;30.0.16248370" "cmake;3.22.1"
       - uses: gradle/actions/setup-gradle@v4
       - name: Fetch and patch pinned upstream sources
         run: |
