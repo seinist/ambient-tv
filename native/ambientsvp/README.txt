@@ -1216,3 +1216,38 @@ patch application and CPU checks before supersession. Exact-head
 CI, full player builds, real HDR rendering and device performance
 remain unverified. No full HDR10+/Dolby Vision standard-conformance
 or hardware validation claim.
+
+
+Dynamic HDR synthesis and PR510 renderer bridge
+------------------------------------------------
+MPV generates phase-specific HDR10+ FFmpeg side data for matching
+one-to-three-window topology, ellipse geometry, percentile indices,
+tone-curve anchors, saturation and peak luminance grids. The values
+are bounded temporal estimates, not measured synthetic-image
+statistics. The current MPV libplacebo mapping remains global (window
+zero); full local-window metadata is retained in the side data.
+Unsupported transitions preserve the original source pictures.
+
+The isolated experimental VLC build can stage the new SVP source-pair
+scheduler and display bridge on top of PR510's renderer. Original
+picture timestamps and matching FEL ancillary data are retained until
+the display reconstructs each source. GPU-resident FP16 copies of
+the reconstructed images then undergo bidirectional motion estimation
+and synthesis; the resulting HDR10+ spatial metadata is passed to the
+existing renderer. FEL residual composition precedes interpolation,
+never reapplied to interpolated RGB. Existing PR510 EL upload is not
+a fully zero-copy decoder path. The ordinary SurfaceControl build
+does not use this bridge. Combined app selection, the combined
+PR510 build, and physical Profile 7 FEL/HDR playback are not yet
+validated or completed. All fourteen staging anchors were checked
+against the pinned VLC source plus PR510 display patch.
+
+Native resident motion now performs GPU red-black adaptive neighbor
+refinement with explicit compute barriers. The experimental
+hierarchical analyser additionally schedules causal x+2*y wavefronts
+with left/top/top-right predictors, bounded adaptive search radii and
+GPU cost/selection. It still reads winners between waves. This is
+not full upstream Open-SVPFlow orchestration parity: weighted
+multilevel predictors, all search modes/penalties and refinement
+semantics require further work and reference comparisons. No
+hardware speedup or formal HDR/FEL conformance claim.
