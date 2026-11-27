@@ -99,6 +99,51 @@ static inline bool ambient_hdrplus_distribution_ordered(const struct ambient_hdr
     }
     return true;
 }
+/* A syntactically valid legacy payload can still contain an unusable
+ * authored curve. Keep it in the full snapshot, but never send it to a
+ * fallback renderer that assumes a valid monotone OOTF. */
+static inline bool ambient_hdrplus_usable_curve(const struct ambient_hdrplus_window *w,
+    float target_nits)
+{
+    return w && w->tone_mapping && target_nits>0.f && target_nits<=10000.f &&
+        w->knee_x>=0.f && w->knee_x<=1.f &&
+        w->knee_y>=0.f && w->knee_y<=1.f &&
+        ambient_hdrplus_curve_monotone(w);
+}
+
+/* Zero MaxSCL means absent scene peak. Only the final ordered CFD
+ * percentile may substitute; reserved markers must not become peaks. */
+static inline float ambient_hdrplus_cfd_peak(const struct ambient_hdrplus_window *w,
+    unsigned version)
+{
+    if(!w||!w->histogram_count||!ambient_hdrplus_distribution_ordered(w,version))
+        return 0.f;
+    return w->histogram[w->histogram_count-1].percentile;
+}
+
+/* The public VLC global ancillary cannot carry grids or local windows.
+ * Preserve the original private snapshot and sanitize only the projected
+ * fallback: unsafe OOTF and invalid CFD must not reach libplacebo. */
+static inline bool ambient_hdrplus_global_projection(const struct ambient_hdrplus *m,
+    struct ambient_hdrplus_window *out)
+{
+    if(!m||!out||m->window_count<1||m->window_count>3)return false;
+    struct ambient_hdrplus_window w=m->windows[0];
+    if(!ambient_hdrplus_distribution_ordered(&w,m->version)){
+        w.histogram_count=0;
+        memset(w.histogram,0,sizeof(w.histogram));
+    }
+    if(!w.maxscl[0]&&!w.maxscl[1]&&!w.maxscl[2]){
+        float peak=ambient_hdrplus_cfd_peak(&w,m->version);
+        for(unsigned i=0;i<3;i++)w.maxscl[i]=peak;
+    }
+    if(!ambient_hdrplus_usable_curve(&w,m->target_nits)){
+        w.tone_mapping=false;w.knee_x=w.knee_y=0.f;w.anchor_count=0;
+        memset(w.anchors,0,sizeof(w.anchors));
+    }
+    *out=w;
+    return true;
+}
 struct ambient_hdrplus_bits { const uint8_t *data; size_t bits, pos; };
 static inline bool ambient_hdrplus_read(struct ambient_hdrplus_bits *r, unsigned n, uint32_t *value)
 {
