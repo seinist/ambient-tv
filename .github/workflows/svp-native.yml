@@ -128,7 +128,7 @@ jobs:
             -I native/ambientsvp/include native/ambientsvp/tests/svp_mpv_vulkan_compile_test.c
           cc -std=c11 -O2 -Wall -Wextra -Werror -Wno-unused-function -ffunction-sections -fdata-sections \
             -DSVP_METADATA_TEST -I "$tmp/ffmpeg" -I native/ambientsvp/include \
-            native/ambientsvp/tests/svp_mpv_vulkan_compile_test.c -Wl,--gc-sections -ldl -o "$tmp/metadata"
+            native/ambientsvp/tests/svp_mpv_vulkan_compile_test.c -Wl,--gc-sections -ldl -lm -o "$tmp/metadata"
           "$tmp/metadata"
       - name: Test C adapters' shared helpers
         run: |
