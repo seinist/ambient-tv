@@ -183,7 +183,12 @@ static int svp_mc_init(struct ra_hwdec *hw)
     AmbientSvpMediaReader *(*create_format)(uint32_t,uint32_t,uint32_t)=
         dlsym(s->lib,"ambient_svp_mediacodec_reader_create_format");
     s->submit_format=dlsym(s->lib,"ambient_svp_ahb_submit_into_format");
-    s->reader=(create_format && s->submit_format)?create_format(64,64,1):s->reader_create(64,64);
+    if (!create_format || !s->submit_format) s->submit_format=NULL;
+    if (s->submit_format) s->reader=create_format(64,64,1);
+    if (!s->reader) {
+        s->submit_format=NULL;
+        s->reader=s->reader_create(64,64);
+    }
     if (!s->reader) goto fail;
     JNIEnv *env=MP_JNI_GET_ENV(hw);
     if (!env || (*env)->GetJavaVM(env,&s->vm)!=JNI_OK) goto fail;
