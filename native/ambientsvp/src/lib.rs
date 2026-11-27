@@ -19,6 +19,8 @@ pub mod motion;
 pub mod motion_select;
 #[cfg(feature = "vulkan")]
 pub mod motion_packet;
+#[cfg(feature = "vulkan")]
+mod motion_search;
 
 const MAX_QUEUE: usize = 10;
 const MAX_FRAMES: i32 = 100_000_000;
@@ -125,6 +127,12 @@ pub struct AmbientSvp {
     pool: rayon::ThreadPool,
     previous: Option<SuperFrame>,
     repeated_vectors: Option<Arc<Vec<u8>>>,
+    #[cfg(feature = "vulkan")]
+    experimental_motion: bool,
+    #[cfg(feature = "vulkan")]
+    experimental_motion_pairs: u64,
+    #[cfg(feature = "vulkan")]
+    experimental_motion_failures: u64,
     frames: BTreeMap<i32, Source>,
     recycled_frames: Vec<Vec<u8>>,
     input: i32,
@@ -249,6 +257,12 @@ impl AmbientSvp {
             pool,
             previous: None,
             repeated_vectors: None,
+            #[cfg(feature = "vulkan")]
+            experimental_motion: false,
+            #[cfg(feature = "vulkan")]
+            experimental_motion_pairs: 0,
+            #[cfg(feature = "vulkan")]
+            experimental_motion_failures: 0,
             frames: BTreeMap::new(),
             recycled_frames: Vec::new(),
             input: 0,
@@ -282,6 +296,31 @@ impl AmbientSvp {
 
     // Cap spare capacity separately from live frames: 4K I420 is about
     // 12 MiB per allocation, so ten spare frames are not appropriate.
+    /// Explicit Rust-only benchmark/experimental entry point. This is not
+    /// part of the C ABI, cannot be enabled by player settings, and does
+    /// not claim identical vectors to the upstream analyser.
+    pub fn enable_experimental_motion(&mut self)->Result<(),String>{
+        #[cfg(feature="vulkan")]
+        {
+            if self.input!=0 || self.stats.bypass_reason!=0 || self.gpu.is_none()
+                || self.config.preset==ADAPTIVE_PRESET
+                || !motion_search::MotionSearch::supported(&self.analyser.vector_header()){
+                return Err("unsupported experimental motion session".into());
+            }
+            self.experimental_motion=true;
+            Ok(())
+        }
+        #[cfg(not(feature="vulkan"))]
+        Err("experimental motion requires Vulkan".into())
+    }
+
+    pub fn experimental_motion_stats(&self)->(u64,u64){
+        #[cfg(feature="vulkan")]
+        { (self.experimental_motion_pairs,self.experimental_motion_failures) }
+        #[cfg(not(feature="vulkan"))]
+        { (0,0) }
+    }
+
     fn recycle_frame(&mut self, data: Vec<u8>) {
         let bytes: usize = self.recycled_frames.iter().map(Vec::capacity).sum();
         if self.recycled_frames.len() < MAX_QUEUE
@@ -406,14 +445,50 @@ impl AmbientSvp {
                 }
             } else {
                 self.repeated_vectors = None;
-                // Enter the session worker pool once for both CPU stages.
-                let (current, vectors) = self.pool.install(|| {
-                    let current = self.builder.build(data).map_err(|_| -1)?;
-                    let vectors = self.previous.as_ref()
-                        .map(|previous| self.analyser.analyse(previous, &current))
-                        .transpose().map_err(|_| -1)?;
-                    Ok::<_, i32>((current, vectors))
-                })?;
+                // The normal CPU analyser still enters the session pool
+                // once for both stages. The explicit benchmark path builds
+                // the same superframe then uses the existing Vulkan device.
+                #[cfg(feature="vulkan")]
+                let use_experimental=self.experimental_motion && self.gpu.is_some();
+                #[cfg(not(feature="vulkan"))]
+                let use_experimental=false;
+                let (current, vectors) = if use_experimental {
+                    #[cfg(feature="vulkan")]
+                    {
+                        let current=self.pool.install(||self.builder.build(data)).map_err(|_|-1)?;
+                        let vectors=if let Some(previous)=self.previous.as_ref(){
+                            match self.gpu.as_mut().unwrap().experimental_motion(&self.builder,previous,&current,&self.analyser.vector_header()){
+                                Ok(vectors)=>{
+                                    self.experimental_motion_pairs+=1;
+                                    Some(vectors)
+                                }
+                                Err(_)=>{
+                                    // Never silently benchmark a mixed GPU/CPU
+                                    // analyser as a successful experimental run.
+                                    self.experimental_motion_failures+=1;
+                                    self.experimental_motion=false;
+                                    self.gpu=None;
+                                    self.prefetched=None;
+                                    self.stats.backend=1;
+                                    // A rejected experimental packet never
+                                    // replaces the upstream CPU result.
+                                    Some(self.pool.install(||self.analyser.analyse(previous,&current)).map_err(|_|-1)?)
+                                }
+                            }
+                        }else{None};
+                        (current,vectors)
+                    }
+                    #[cfg(not(feature="vulkan"))]
+                    unreachable!()
+                }else{
+                    self.pool.install(|| {
+                        let current = self.builder.build(data).map_err(|_| -1)?;
+                        let vectors = self.previous.as_ref()
+                            .map(|previous| self.analyser.analyse(previous, &current))
+                            .transpose().map_err(|_| -1)?;
+                        Ok::<_, i32>((current, vectors))
+                    })?
+                };
                 if let Some(vectors) = vectors {
                     self.smoother.set_vectors(self.input - 1, Arc::new(vectors));
                 }
