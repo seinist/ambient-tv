@@ -6,6 +6,7 @@ internal object ProjectMNativeBridge {
     external fun nativeDestroy(handle: Long)
     external fun nativeResize(handle: Long, width: Int, height: Int, meshX: Int, meshY: Int)
     external fun nativeRender(handle: Long)
+    external fun nativeSetFps(handle: Long, fps: Int)
     external fun nativeFeedPcm(handle: Long, samples: FloatArray)
     external fun nativeLoadPreset(handle: Long, presetData: String, smooth: Boolean)
     external fun nativeSetTexturePath(handle: Long, path: String)
