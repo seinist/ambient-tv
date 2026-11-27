@@ -38,13 +38,14 @@ AmbientSvpVk *ambient_svp_vk_create(VkInstance,VkPhysicalDevice,VkDevice,
 /* Optional format-specific ABI; legacy create remains unchanged.
  * Mode 1: P010 high ten bits in separate R16/RG16 UNORM views (nv12=1).
  * Mode 2: planar low ten bits in separate R16 UNORM views (nv12=0).
- * Both output RGBA16F (R16G16B16A16_SFLOAT) and allow BT2020 NCL.
+ * Mode 3: RGBA16F encoded RGB (nv12=2), also output RGBA16F.
+ * Modes 1/2 convert BT2020 NCL; mode 3 does not repeat YUV conversion.
  * No EOTF or tone mapping; encoded RGB and headroom are preserved.
  * Caller must preserve compatible transfer/primaries/static metadata.
  * Motion uses ten-bit luma SAD. No dynamic HDR/Dolby metadata processing.
  * The legacy picture struct and render call remain unchanged. */
 enum { AMBIENT_SVP_VK_FORMAT_SDR8=0, AMBIENT_SVP_VK_FORMAT_P010=1,
-       AMBIENT_SVP_VK_FORMAT_I420_10=2 };
+       AMBIENT_SVP_VK_FORMAT_I420_10=2, AMBIENT_SVP_VK_FORMAT_RGB16F=3 };
 AmbientSvpVk *ambient_svp_vk_create_format(VkInstance,VkPhysicalDevice,VkDevice,
     PFN_vkGetInstanceProcAddr,uint32_t width,uint32_t height,uint32_t mode);
 void ambient_svp_vk_destroy(AmbientSvpVk *);
