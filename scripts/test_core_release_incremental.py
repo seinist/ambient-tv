@@ -113,6 +113,53 @@ class IncrementalCoreReleaseTest(unittest.TestCase):
             workflow.write_text(workflow.read_text().replace("android-29", "android-30"))
             self.assertNotEqual(before, fingerprint(job, self.ndk, root))
 
+    def test_all_profiles_reuse_unchanged_and_rebuild_only_changed_core(self):
+        for profile in ("baseline", "optimized", "optimized-a57"):
+            matrix = plan(self.catalog, "push", "refs/heads/main", False, profile=profile)
+            records = {key(j): {"entry": {"fingerprint": fingerprint(j, self.ndk)}} for j in matrix["include"]}
+            self.assertFalse(select(matrix, records, set(records), profile, self.ndk)["publish"])
+            changed = {"include": [dict(j, commit="0" * 40) if j["core"] == "mgba" else j for j in matrix["include"]]}
+            result = select(changed, records, set(records), profile, self.ndk)
+            self.assertEqual({j["core"] for j in result["matrix"]["include"]}, {"mgba"})
+            self.assertEqual(result["rebuilt"], 1 if profile == "optimized-a57" else 4)
+
+    def test_core_specific_recipe_and_patch_fingerprints(self):
+        source = Path(__file__).resolve().parents[1]
+        from core_release_incremental import SHARED
+        jobs = {j["core"]: j for j in plan(self.catalog, "push", "refs/heads/main", False,
+                profile="optimized-a57")["include"]}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".github/workflows").mkdir(parents=True)
+            (root / "scripts").mkdir()
+            (root / ".github/workflows/cores.yml").write_bytes((source / ".github/workflows/cores.yml").read_bytes())
+            for name in (*SHARED, "core_hotpath_patches.py", "core_hotpath_remaining.py"):
+                (root / "scripts" / name).write_bytes((source / "scripts" / name).read_bytes())
+            before = {core: fingerprint(j, self.ndk, root) for core, j in jobs.items()}
+            policy = root / "scripts/core_build_policy.py"
+            original = policy.read_text()
+            policy.write_text(original.replace("test -s $(ASM_DEFINES_NASM)", "test -f $(ASM_DEFINES_NASM)"))
+            self.assertEqual({core for core, j in jobs.items() if fingerprint(j, self.ndk, root) != before[core]},
+                             {"mupen64plus_next_gles3"})
+            policy.write_text(original)
+            patches = root / "scripts/core_hotpath_remaining.py"
+            patches.write_text(patches.read_text().replace("idle stick needs neither sqrt nor atan2", "idle stick skips sqrt and atan2"))
+            changed = {core for core, j in jobs.items() if fingerprint(j, self.ndk, root) != before[core]}
+            # Non-patched cores use a conservative fallback, but unrelated
+            # published patched recipes are unaffected.
+            self.assertEqual(changed, {"mupen64plus_next_gles3"})
+
+    def test_only_all_profiles_has_automatic_core_trigger(self):
+        root = Path(__file__).resolve().parents[1] / ".github/workflows"
+        single = (root / "cores.yml").read_text()
+        all_profiles = (root / "cores-all.yml").read_text()
+        self.assertNotIn("\n  push:", single)
+        self.assertNotIn("\n  pull_request:", single)
+        self.assertIn("\n  push:", all_profiles)
+        self.assertIn("profile: [baseline, optimized, optimized-a57]", all_profiles)
+        self.assertIn("force_rebuild: ${{ inputs.force_rebuild || false }}", all_profiles)
+        self.assertFalse((root / "cores-experimental.yml").exists())
+
     def test_reuse_rejects_tampered_asset(self):
         record = {"tag": "cores-1", "entry": {"core": "mgba", "abi": "arm64-v8a",
                   "asset": "arm64-v8a--mgba_libretro_android.so.zip", "sha256": "0"*64, "size": 3}}

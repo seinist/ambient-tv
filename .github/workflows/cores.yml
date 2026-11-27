@@ -1,4 +1,4 @@
-name: Cores (PR and single profile)
+name: Cores (manual single profile)
 
 # Builds the pinned libretro cores of cores/cores.json from source with the app's NDK (16 KB
 # pages checked) and, when publishing, puts them into a signed "cores-…" release. The app's
@@ -62,23 +62,6 @@ on:
         type: choice
         options: [none, baseline-thinlto, o3-o3-thinlto]
         default: none
-  pull_request:
-    paths:
-      - cores/cores.json
-      - .github/workflows/cores.yml
-      - .github/workflows/cores-all.yml
-      - cores/signing-public.pem
-      - scripts/core_build_policy.py
-      - scripts/core_release_incremental.py
-      - scripts/test_core_release_incremental.py
-      - scripts/core_acceleration_audit.py
-      - scripts/core_link_evidence.py
-      - scripts/core_hotpath_patches.py
-      - scripts/core_hotpath_remaining.py
-      - scripts/test_core_hotpath_remaining.py
-      - scripts/test_core_hotpath_patches.py
-      - scripts/test_core_build_policy.py
-      - scripts/check_elf_pages.py
 
 concurrency:
   group: cores-${{ github.ref }}-${{ inputs.publish_experimental && format('release-experimental-{0}', inputs.profile) || ((github.event_name == 'push' || inputs.publish) && 'release' || (github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || 'pr')) }}

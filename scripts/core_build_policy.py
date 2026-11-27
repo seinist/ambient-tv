@@ -315,26 +315,23 @@ def prepare_cmake(root, core, profile):
     path.write_text(source)
 
 
-def prepare_ndk(root, core, profile):
-    if core == "mupen64plus_next_gles3" and "-flto=thin" in PROFILES[profile][0]:
-        path = root / "jni" / "Android.mk"
-        source = path.read_text()
-        marker = "ASM_DEFINES_OBJ := $(LOCAL_OBJS_DIR)/$(call get-object-name,$(CORE_DIR)/src/asm_defines/asm_defines.c)"
-        generator = "\t\t-f $(CORE_DIR)/tools/gen_asm_defines.awk"
-        if source.count(marker) != 1 or source.count(generator) != 1:
-            raise ValueError("Mupen64Plus native offset generation recipe changed; inspect pinned source")
-        # ndk-build sets PRIVATE_CFLAGS on each object in BUILD_SHARED_LIBRARY.
-        # Append only on this target, without propagating to its prerequisites.
-        source = source.replace(marker, marker + "\n"
-            "$(ASM_DEFINES_OBJ): private PRIVATE_CFLAGS += -fno-lto")
-        source = source.replace(generator, generator + "\n"
-            "\t@test -s $(ASM_DEFINES_NASM) && test -s $(ASM_DEFINES_GAS)")
-        path.write_text(source)
-        return
-    if profile != "snes9x2010-threaded" and not (profile in PUBLIC_EXPERIMENTS and core == "snes9x2010"):
-        return
-    if core != "snes9x2010":
-        raise ValueError("Threaded renderer recipe requires Snes9x2010")
+def prepare_mupen_offsets(root):
+    path = root / "jni" / "Android.mk"
+    source = path.read_text()
+    marker = "ASM_DEFINES_OBJ := $(LOCAL_OBJS_DIR)/$(call get-object-name,$(CORE_DIR)/src/asm_defines/asm_defines.c)"
+    generator = "\t\t-f $(CORE_DIR)/tools/gen_asm_defines.awk"
+    if source.count(marker) != 1 or source.count(generator) != 1:
+        raise ValueError("Mupen64Plus native offset generation recipe changed; inspect pinned source")
+    # ndk-build sets PRIVATE_CFLAGS on each object in BUILD_SHARED_LIBRARY.
+    # Append only on this target, without propagating to its prerequisites.
+    source = source.replace(marker, marker + "\n"
+        "$(ASM_DEFINES_OBJ): private PRIVATE_CFLAGS += -fno-lto")
+    source = source.replace(generator, generator + "\n"
+        "\t@test -s $(ASM_DEFINES_NASM) && test -s $(ASM_DEFINES_GAS)")
+    path.write_text(source)
+
+
+def prepare_snes_threading(root):
     path = root / "jni" / "Android.mk"
     source = path.read_text()
     marker = "include $(CORE_DIR)/build/Makefile.common"
@@ -351,6 +348,17 @@ def prepare_ndk(root, core, profile):
     source = source.replace(marker, "HAVE_THREADS := 1\n" + marker)
     source = flags.sub(lambda match: match.group(0).rstrip() + " -DHAVE_THREADS", source)
     path.write_text(source)
+
+
+def prepare_ndk(root, core, profile):
+    if core == "mupen64plus_next_gles3" and "-flto=thin" in PROFILES[profile][0]:
+        prepare_mupen_offsets(root)
+        return
+    if profile != "snes9x2010-threaded" and not (profile in PUBLIC_EXPERIMENTS and core == "snes9x2010"):
+        return
+    if core != "snes9x2010":
+        raise ValueError("Threaded renderer recipe requires Snes9x2010")
+    prepare_snes_threading(root)
 
 
 def ndk_flags(path, profile, cppflags):
