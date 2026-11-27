@@ -20,7 +20,10 @@ PROFILES = {
     "picodrive-sh2": ((), ()),
     "snes9x2010-threaded": ((), ()),
     "core-hotpaths": ((), ()),
+    "optimized": (("-O3", "-flto=thin"), ("-flto=thin",)),
+    "optimized-a57": (("-O3", "-flto=thin", "-mtune=cortex-a57"), ("-flto=thin",)),
 }
+PUBLIC_EXPERIMENTS = {"optimized", "optimized-a57"}
 ABIS = {"arm64-v8a", "armeabi-v7a", "x86_64", "x86"}
 REQUIRED_EXPORTS = {
     "retro_init", "retro_deinit", "retro_api_version", "retro_get_system_info",
@@ -88,7 +91,7 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
         if event != "workflow_dispatch" or publish:
             raise ValueError("Snes9x2010 threaded renderer candidate is artifact-only")
         cores = cores or "snes9x2010"
-    if profile == "tune-a57":
+    if profile in {"tune-a57", "optimized-a57"}:
         abis = abis or "arm64-v8a"
     chosen_cores = selection(cores, ids, "core")
     chosen_abis = selection(abis, declared_abis, "ABI")
@@ -98,7 +101,7 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
         raise ValueError("No reviewed source hotpath patch for selected core")
     if profile == "snes9x2010-threaded" and chosen_cores != ["snes9x2010"]:
         raise ValueError("Threaded renderer candidate requires Snes9x2010")
-    if profile == "tune-a57" and chosen_abis != ["arm64-v8a"]:
+    if profile in {"tune-a57", "optimized-a57"} and chosen_abis != ["arm64-v8a"]:
         raise ValueError("Cortex-A57 tuning is initially restricted to arm64-v8a")
     if event == "push" or publish:
         if ref != "refs/heads/main" or profile != "baseline" or set(chosen_cores) != set(ids) or set(chosen_abis) != set(declared_abis):
@@ -130,6 +133,9 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
                  ("gpsp", "x86", "baseline"),
                  ("snes9x2010", "arm64-v8a", "baseline"),
                  ("snes9x2010", "arm64-v8a", "snes9x2010-threaded")]
+        # Compile all public combined candidates before merging the policy.
+        jobs += [(core, abi, "optimized") for core in ids for abi in declared_abis]
+        jobs += [(core, "arm64-v8a", "optimized-a57") for core in ids]
     elif comparison != "none":
         variants = ("baseline", "thinlto") if comparison == "baseline-thinlto" else ("o3", "o3-thinlto")
         jobs = [(core, abi, variant) for core in chosen_cores for abi in chosen_abis for variant in variants]
@@ -146,7 +152,7 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
         cflags, ldflags = PROFILES[variant]
         matrix.append({**entry, "abi": abi, "profile": variant,
                        "cflags": " ".join(cflags), "ldflags": " ".join(ldflags),
-                       "makevars": "use_sh2drc=1" if variant == "picodrive-sh2" else "",
+                       "makevars": "use_sh2drc=1" if (variant == "picodrive-sh2" or (variant in PUBLIC_EXPERIMENTS and core == "picodrive" and abi == "arm64-v8a")) else "",
                        "artifact": ("core" if variant == "baseline" else "candidate-" + variant)
                                    + "-" + core + "-" + abi})
     if not matrix or len(matrix) > 256:
@@ -264,11 +270,11 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scope
             shared_outputs.append({"output": output, "lto": mode})
     if profile != "baseline" and (not compile_count or not link_count):
         raise ValueError("Candidate lacks auditable C/C++ compile or shared link commands")
-    if "o3" in profile and opt_levels != {"-O3": compile_count}:
+    if "-O3" in PROFILES[profile][0] and opt_levels != {"-O3": compile_count}:
         raise ValueError(f"Core overrides requested -O3: {opt_levels}")
-    if "thinlto" in profile and (thin_compiles != compile_count or thin_links != link_count):
+    if "-flto=thin" in PROFILES[profile][0] and (thin_compiles != compile_count or thin_links != link_count):
         raise ValueError(f"ThinLTO not effective everywhere: compile {thin_compiles}/{compile_count}, link {thin_links}/{link_count}")
-    if profile == "tune-a57" and tuning_count != compile_count:
+    if profile in {"tune-a57", "optimized-a57"} and tuning_count != compile_count:
         raise ValueError(f"Cortex-A57 tuning not effective: {tuning_count}/{compile_count}")
     acceleration = audit_acceleration(commands, core, abi, profile) if core else {}
     return {"compile_commands": compile_count, "shared_link_commands": link_count,
@@ -282,7 +288,7 @@ def prepare_cmake(root, core, profile):
     # SwanStation's pin sets IPO unconditionally for Release, overriding cache flags.
     # Preserve the upstream baseline. In explicit candidates disable only the
     # automatic IPO block; the workflow supplies the requested LTO mode itself.
-    if core != "swanstation" or profile not in {"o3", "thinlto", "o3-thinlto"}:
+    if core != "swanstation" or profile not in ({"o3", "thinlto", "o3-thinlto"} | PUBLIC_EXPERIMENTS):
         return
     path = root / "CMakeLists.txt"
     source = path.read_text()
@@ -294,7 +300,7 @@ def prepare_cmake(root, core, profile):
 
 
 def prepare_ndk(root, core, profile):
-    if profile != "snes9x2010-threaded":
+    if profile != "snes9x2010-threaded" and not (profile in PUBLIC_EXPERIMENTS and core == "snes9x2010"):
         return
     if core != "snes9x2010":
         raise ValueError("Threaded renderer recipe requires Snes9x2010")
@@ -347,6 +353,7 @@ def main():
     p = sub.add_parser("prepare-hotpaths")
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--core", required=True)
+    p.add_argument("--profile", choices=PROFILES, default="core-hotpaths")
     p = sub.add_parser("prepare-ndk")
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--core", required=True)
@@ -380,7 +387,8 @@ def main():
     elif args.action == "prepare-cmake":
         prepare_cmake(args.root, args.core, args.profile)
     elif args.action == "prepare-hotpaths":
-        prepare_hotpaths(args.root, args.core)
+        if args.profile == "core-hotpaths" or (args.profile in PUBLIC_EXPERIMENTS and args.core in HOTPATH_CORES):
+            prepare_hotpaths(args.root, args.core)
     elif args.action == "prepare-ndk":
         prepare_ndk(args.root, args.core, args.profile)
     elif args.action == "ndk-flags":

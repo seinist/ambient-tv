@@ -30,13 +30,30 @@ class CoreBuildPolicyTest(unittest.TestCase):
 
     def test_pr_comparison(self):
         matrix = plan(self.catalog, "pull_request", "refs/pull/1/merge", False)["include"]
-        self.assertEqual(len(matrix), 67)
+        self.assertEqual(len(matrix), 67 + len(self.catalog["cores"]) * (len(self.catalog["abis"]) + 1))
         self.assertEqual({item["core"] for item in matrix if item["profile"] == "core-hotpaths"},
                          {core["core"] for core in self.catalog["cores"]} - {"picodrive", "snes9x2010"})
         self.assertEqual({item["profile"] for item in matrix},
-                         {"baseline", "thinlto", "picodrive-sh2", "tune-a57", "o3", "o3-thinlto", "snes9x2010-threaded", "core-hotpaths"})
+                         {"baseline", "thinlto", "picodrive-sh2", "tune-a57", "o3", "o3-thinlto", "snes9x2010-threaded", "core-hotpaths", "optimized", "optimized-a57"})
         self.assertEqual(len({item["artifact"] for item in matrix}), len(matrix))
         self.assertEqual([item["makevars"] for item in matrix if item["profile"] == "picodrive-sh2"], ["use_sh2drc=1"])
+
+    def test_combined_public_profiles(self):
+        for profile in ("optimized", "optimized-a57"):
+            matrix = plan(self.catalog, "workflow_dispatch", "refs/heads/main", False, profile=profile)["include"]
+            abis = self.catalog["abis"] if profile == "optimized" else ["arm64-v8a"]
+            self.assertEqual(len(matrix), len(self.catalog["cores"]) * len(abis))
+            self.assertEqual({j["abi"] for j in matrix}, set(abis))
+            self.assertTrue(all(j["cflags"].startswith("-O3 -flto=thin") and j["ldflags"] == "-flto=thin" for j in matrix))
+            self.assertTrue(all(("-mtune=cortex-a57" in j["cflags"]) == (profile == "optimized-a57") for j in matrix))
+            self.assertEqual([(j["core"], j["abi"]) for j in matrix if j["makevars"]], [("picodrive", "arm64-v8a")])
+        with self.assertRaises(ValueError):
+            plan(self.catalog, "workflow_dispatch", "refs/heads/main", False, abis="x86", profile="optimized-a57")
+        log = "clang -O3 -flto=thin -mtune=cortex-a57 -c a.c -o a.o\nclang -shared -flto=thin a.o -o a.so\n"
+        self.assertEqual(audit_commands(log, "optimized-a57")["thinlto_compiles"], 1)
+        for flag in ("-O3", "-flto=thin", "-mtune=cortex-a57"):
+            with self.assertRaises(ValueError):
+                audit_commands(log.replace(flag, ""), "optimized-a57")
 
     def test_full_paired_comparisons(self):
         for comparison, profiles in (("baseline-thinlto", ("baseline", "thinlto")),

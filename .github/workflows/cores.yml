@@ -27,9 +27,9 @@ on:
         description: Android ABIs, comma separated (empty = all)
         default: ""
       profile:
-        description: Compiler profile (non-baseline requires explicit experimental publication)
+        description: Compiler profile (optimized and optimized-a57 are public; other candidates are diagnostic)
         type: choice
-        options: [baseline, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2, snes9x2010-threaded, core-hotpaths]
+        options: [baseline, optimized, optimized-a57, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2, snes9x2010-threaded, core-hotpaths]
         default: baseline
       comparison:
         description: Paired full-catalog builds (artifact-only; baseline profile required)
@@ -109,8 +109,8 @@ jobs:
           set -euo pipefail
           if [ "$PUBLISH_EXPERIMENTAL" = true ]; then
             [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" == refs/heads/main &&
-               "$PUBLISH" != true && "$PROFILE" != baseline && "$COMPARISON" == none ]] ||
-              { echo "::error::Experimental publishing requires main, a non-baseline profile, and no production publish/comparison"; exit 1; }
+               "$PUBLISH" != true && ( "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ) && "$COMPARISON" == none ]] ||
+              { echo "::error::Experimental publishing requires main, optimized or optimized-a57, and no production publish/comparison"; exit 1; }
           fi
           matrix=$(python3 scripts/core_build_policy.py plan --catalog cores/cores.json \
             --event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF" --publish "$PUBLISH" \
@@ -249,8 +249,8 @@ jobs:
           read -r -a args <<< "$ARGS"
           read -r -a extra_env <<< "$EXTRA_ENV"
           read -r -a makevars <<< "$MAKEVARS"
-          if [ "$PROFILE" = "core-hotpaths" ]; then
-            python3 scripts/core_build_policy.py prepare-hotpaths --root src --core "$CORE"
+          if [[ "$PROFILE" == core-hotpaths || "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ]]; then
+            python3 scripts/core_build_policy.py prepare-hotpaths --root src --core "$CORE" --profile "$PROFILE"
           fi
           if [ "$BUILD_KIND" = "cmake" ]; then
             python3 scripts/core_build_policy.py prepare-cmake --root src --core "$CORE" --profile "$PROFILE"
@@ -261,7 +261,7 @@ jobs:
             if [ -n "$CFLAGS_EXTRA" ]; then
               flags+=("-DCMAKE_C_FLAGS=$CFLAGS_EXTRA" "-DCMAKE_CXX_FLAGS=$CFLAGS_EXTRA")
             fi
-            if [[ "$PROFILE" = o3* ]]; then
+            if [[ "$PROFILE" = o3* || "$PROFILE" = optimized* ]]; then
               flags+=("-DCMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG" "-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG")
             fi
             cmake -G "Unix Makefiles" -S src -B build \
@@ -321,7 +321,7 @@ jobs:
       (needs.build.result == 'success' || (needs.build.result == 'skipped' && needs.plan.outputs.count == '0')) &&
       github.ref == 'refs/heads/main' &&
       ((github.event_name == 'workflow_dispatch' && inputs.publish && inputs.profile == 'baseline') ||
-       (github.event_name == 'workflow_dispatch' && inputs.publish_experimental && !inputs.publish && inputs.profile != 'baseline' && inputs.comparison == 'none') ||
+       (github.event_name == 'workflow_dispatch' && inputs.publish_experimental && !inputs.publish && (inputs.profile == 'optimized' || inputs.profile == 'optimized-a57') && inputs.comparison == 'none') ||
        (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
     steps:
@@ -361,7 +361,7 @@ jobs:
           assert_current_recipe
           # Require every planned artifact, and ensure the profile cannot cross channels.
           if [ "$EXPERIMENT" = true ]; then
-            [[ "$PROFILE" != baseline && "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || exit 1
+            [[ ( "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ) && "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || exit 1
             prefix="candidate-$PROFILE-"
             tag="core-experiments-$PROFILE--$(date -u +%Y%m%d)-$GITHUB_RUN_NUMBER-$GITHUB_RUN_ATTEMPT"
           else
@@ -412,9 +412,9 @@ jobs:
           release_args=(--latest=false)
           if [ "$EXPERIMENT" = true ]; then
             release_args+=(--prerelease)
-            title="Ambient TV – Libretro Cores (Experimental: $PROFILE) – $(date -u +%Y-%m-%d)"
+            title="Ambient TV Experimental cores"
           else
-            title="Ambient TV – Libretro Cores (Stable) – $(date -u +%Y-%m-%d)"
+            title="Ambient TV cores"
           fi
           # Publish only after every asset has been uploaded to an invisible draft.
           gh release create "$tag" release/* --draft --title "$title" "${release_args[@]}" --target "$GITHUB_SHA" \

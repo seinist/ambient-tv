@@ -206,7 +206,7 @@ def requirements(core, abi, profile):
                 "stereo_audio": ("sound/Stereo_Buffer.cpp", ())}
     if core == "snes9x2010":
         result = {"rgb565_renderer": ("libretro/libretro.c", (("FRONTEND_SUPPORTS_RGB565", "1"),))}
-        if profile == "snes9x2010-threaded":
+        if profile in {"snes9x2010-threaded", "optimized", "optimized-a57"}:
             result["threaded_ppu"] = ("src/ppu.c", (("HAVE_THREADS", "1"),))
             result["threaded_frontend"] = ("libretro/libretro.c", (("HAVE_THREADS", "1"),))
             result["eventcount"] = ("rthreads/retro_eventcount.c", ())
@@ -264,7 +264,7 @@ def requirements(core, abi, profile):
         if abi in {"arm64-v8a", "x86_64"}:
             macros += (("WITH_MMAP_FASTMEM", "1"),)
         return {"dynarec": ("cpu_recompiler_code_generator_" + arch + ".cpp", macros)}
-    if core == "picodrive" and (abi == "armeabi-v7a" or profile == "picodrive-sh2"):
+    if core == "picodrive" and (abi == "armeabi-v7a" or profile == "picodrive-sh2" or (abi == "arm64-v8a" and profile in {"optimized", "optimized-a57"})):
         return {"sh2_dynarec": ("cpu/sh2/compiler.c", (("DRC_SH2", "1"),))}
     return {}
 
