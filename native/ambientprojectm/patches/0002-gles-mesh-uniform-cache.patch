@@ -139,7 +139,19 @@ diff --git a/src/libprojectM/MilkdropPreset/PerPixelMesh.hpp b/src/libprojectM/M
 diff --git a/src/libprojectM/MilkdropPreset/FinalComposite.cpp b/src/libprojectM/MilkdropPreset/FinalComposite.cpp
 --- a/src/libprojectM/MilkdropPreset/FinalComposite.cpp
 +++ b/src/libprojectM/MilkdropPreset/FinalComposite.cpp
-@@ -154,7 +154,9 @@
+@@ -15,6 +15,11 @@
+     RenderItem::Init();
+ }
+ 
++FinalComposite::~FinalComposite()
++{
++    glDeleteBuffers(1, &m_elementBuffer);
++}
++
+ void FinalComposite::InitVertexAttrib()
+ {
+     glGenBuffers(1, &m_elementBuffer);
+@@ -154,7 +159,9 @@
  void FinalComposite::InitializeMesh(const PresetState& presetState)
  {
      if (m_viewportWidth == presetState.renderContext.viewportSizeX &&
@@ -150,7 +162,7 @@ diff --git a/src/libprojectM/MilkdropPreset/FinalComposite.cpp b/src/libprojectM
      {
          return;
      }
-@@ -304,6 +306,11 @@
+@@ -304,6 +311,11 @@
          }
      }
  
@@ -165,7 +177,15 @@ diff --git a/src/libprojectM/MilkdropPreset/FinalComposite.cpp b/src/libprojectM
 diff --git a/src/libprojectM/MilkdropPreset/FinalComposite.hpp b/src/libprojectM/MilkdropPreset/FinalComposite.hpp
 --- a/src/libprojectM/MilkdropPreset/FinalComposite.hpp
 +++ b/src/libprojectM/MilkdropPreset/FinalComposite.hpp
-@@ -96,6 +96,8 @@
+@@ -20,6 +20,7 @@
+ {
+ public:
+     FinalComposite();
++    ~FinalComposite();
+ 
+     void InitVertexAttrib() override;
+ 
+@@ -96,6 +97,8 @@
  
      int m_viewportWidth{};  //!< Last known viewport width.
      int m_viewportHeight{}; //!< Last known viewport height.
