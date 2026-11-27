@@ -1038,6 +1038,38 @@ mod pipelining_tests {
     }
 
     #[test]
+    #[ignore = "requires Vulkan"]
+    fn experimental_hierarchical_motion_reaches_streaming_synthesis(){
+        let c=Config{target_num:60,..config()};
+        let mut engine=AmbientSvp::new(c).unwrap();
+        assert_eq!(engine.experimental_motion_stats(),(0,0));
+        assert!(!engine.experimental_motion);
+        engine.enable_experimental_motion().unwrap();
+        // Warm the motion pipelines before measuring streaming watchdogs.
+        // The benchmark itself does not hide initialization cost.
+        let a=engine.builder.build(&image(0)).unwrap();
+        let b=engine.builder.build(&image(1)).unwrap();
+        engine.gpu.as_mut().unwrap().experimental_motion(&engine.builder,&a,&b,&engine.analyser.vector_header()).unwrap();
+        let mut out=vec![0;engine.frame_len()];
+        let mut count=0;
+        let mut previous=None;
+        for n in 0..6{
+            engine.push(&image(n),n as i64*1_000_000/24).unwrap();
+            while let Some(pts)=engine.receive(&mut out,false).unwrap(){
+                assert!(previous.is_none_or(|p|pts>p));previous=Some(pts);count+=1;
+            }
+        }
+        while let Some(pts)=engine.receive(&mut out,true).unwrap(){
+            assert!(previous.is_none_or(|p|pts>p));previous=Some(pts);count+=1;
+        }
+        assert_eq!(count,15);
+        assert_eq!(engine.experimental_motion_stats(),(5,0));
+        assert_eq!(engine.stats.backend,2);
+        assert_eq!(engine.stats.bypass_reason,0);
+        assert!(engine.stats.interpolated_frames>0);
+    }
+
+    #[test]
     #[ignore = "requires hardware Vulkan"]
     fn dual_output_matches_single_and_drops_prefetch_on_seek() {
         let mut pipelined = AmbientSvp::new(config()).unwrap();
