@@ -46,7 +46,14 @@ internal object SystemModuleHost {
             hostLibraries = setOf("libc++_shared.so"),
             bundledOverrides = setOf("libprojectM-4.so", "libambientprojectm.so"),
         ),
-    )
+    ) + if (BuildConfig.MONOGRAM_NATIVE && BuildConfig.MONOGRAM_BINDING_SHA256.isNotBlank()) {
+        mapOf(SystemModule.MONOGRAM to SystemModuleRuntime.Contract(
+            nativeRoots = setOf("libmonogram_mtproto.so"),
+            hostLibraries = setOf("libc++_shared.so"),
+            bundledOverrides = setOf("libmonogram_mtproto.so"),
+            hostBindingSha256 = BuildConfig.MONOGRAM_BINDING_SHA256,
+        ))
+    } else emptyMap()
     val supported: Set<SystemModule> get() = contracts.keys
 
     fun initialize(context: Context) {
