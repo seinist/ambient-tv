@@ -57,3 +57,57 @@ jobs:
           experimental_hash="$(VLC_EXPERIMENTAL_AHB=1 bash scripts/build_vlc_vulkan.sh --hash)"
           [[ "$normal_hash" != "$experimental_hash" ]]
           bash scripts/test_vlc_ahb_import.sh
+
+  linked-arm64-aar:
+    # Only the repository-owned experiment branch can spend time building the
+    # whole native stack. No release credentials or publishing step.
+    if: github.event_name == 'workflow_dispatch' || (github.head_ref == 'experiment/vlc-vulkan-ahb-import' && github.event.pull_request.head.repo.full_name == github.repository)
+    needs: ndk-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      CI: 'true'
+      NATIVE_JOBS: '2'
+      CARGO_BUILD_JOBS: '2'
+      VLC_EXPERIMENTAL_AHB: '1'
+      VLC_VULKAN_ABIS: arm64-v8a
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential autoconf automake autopoint gettext libtool libtool-bin \
+            pkg-config ninja-build cmake gperf nasm yasm bison flex texinfo \
+            curl wget unzip zip xz-utils patch perl python3 python3-venv libssl-dev glslang-tools glslc
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Install pinned Meson and SDK
+        run: |
+          python3 -m venv "$RUNNER_TEMP/meson-venv"
+          "$RUNNER_TEMP/meson-venv/bin/python" -m pip install --disable-pip-version-check 'meson==1.11.0'
+          echo "$RUNNER_TEMP/meson-venv/bin" >> "$GITHUB_PATH"
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" --channel=3 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;30.0.16248370' 'cmake;3.22.1'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build full linked VLC and JNI AAR (arm64)
+        run: |
+          bash scripts/build_vlc_vulkan.sh
+          aar=native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+          unzip -tq "$aar"
+          unzip -Z1 "$aar" | grep -Fx jni/arm64-v8a/libvlc.so
+          unzip -Z1 "$aar" | grep -Fx jni/arm64-v8a/libvlcjni.so
+      - uses: actions/upload-artifact@v5
+        with:
+          name: vlc-ahb-experimental-arm64
+          path: native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+          if-no-files-found: error
+          retention-days: 7
