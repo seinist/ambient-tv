@@ -1,13 +1,16 @@
 diff --git a/modules/demux/mp4/mp4.h b/modules/demux/mp4/mp4.h
 --- a/modules/demux/mp4/mp4.h
 +++ b/modules/demux/mp4/mp4.h
-@@ -104,7 +104,9 @@
+@@ -104,7 +104,12 @@
      int b_ok;               /* The track is usable */
      int b_enable;           /* is the trak enable by default */
      bool b_selected;  /* is the trak being played */
 -    int i_use_flags;  /* !=0 Set when track is referenced by specific reference types.
 +    unsigned ambient_fel_el_id; /* paired EL track ID, zero means none */
 +    bool ambient_fel_hidden; /* paired EL has no independent ES */
++    bool ambient_fel_cursor_valid;
++    uint32_t ambient_fel_cursor_chunk, ambient_fel_cursor_sample;
++    uint64_t ambient_fel_cursor_offset;
 +    int i_use_flags;  /* !=0 Set when track is referenced by specific reference types.
                           You'll need to lookup other tracks tref to know the ref source */
      bool b_forced_spu; /* forced track selection (never done by default/priority) */
@@ -151,7 +154,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
      {
          vlc_tick_t i_max_continuity;
          bool b_flat;
-@@ -1626,7 +1735,81 @@
+@@ -1626,7 +1735,78 @@
   *****************************************************************************
   * TODO check for newly selected track (ie audio upt to now )
   *****************************************************************************/
@@ -184,22 +187,19 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +    vlc_tick_t dts=MP4_TrackGetDTSPTS(d,&pos,&pts);
 +    if (pts==INVALID_PTS || base->i_dts!=VLC_TICK_0+dts ||
 +        base->i_pts!=VLC_TICK_0+pts) return NULL;
-+    uint64_t offset=ck->i_offset;
-+    uint32_t size=pos.i_sample_size;
-+    if (size) {
-+        uint64_t add=(uint64_t)(pos.i_sample-ck->i_sample_first)*size;
-+        if (add>UINT64_MAX-offset) return NULL;
-+        offset+=add;
-+    } else {
-+        if (!pos.p_sample_size) return NULL;
-+        for (uint32_t j=ck->i_sample_first;j<pos.i_sample;j++) {
-+            if (pos.p_sample_size[j]>UINT64_MAX-offset) return NULL;
-+            offset+=pos.p_sample_size[j];
-+        }
-+        size=pos.p_sample_size[pos.i_sample];
-+    }
-+    if (!size || size>AMBIENT_FEL_MAX_AU || size>UINT64_MAX-offset ||
++    struct ambient_fel_offset_cursor cursor={
++        .valid=el->ambient_fel_cursor_valid,.chunk=el->ambient_fel_cursor_chunk,
++        .sample=el->ambient_fel_cursor_sample,.offset=el->ambient_fel_cursor_offset,
++    };
++    uint64_t offset; uint32_t size;
++    if (!ambient_fel_sample_offset(&cursor,pos.i_chunk,ck->i_sample_first,
++        ck->i_sample_count,ck->i_offset,pos.i_sample,el->i_sample_count,
++        pos.i_sample_size,pos.p_sample_size,&offset,&size) ||
 +        MP4_Seek(d->s,offset)!=VLC_SUCCESS) return NULL;
++    el->ambient_fel_cursor_valid=cursor.valid;
++    el->ambient_fel_cursor_chunk=cursor.chunk;
++    el->ambient_fel_cursor_sample=cursor.sample;
++    el->ambient_fel_cursor_offset=cursor.offset;
 +    block_t *enh=vlc_stream_Block(d->s,size);
 +    if (!enh) return NULL;
 +    block_t *merged=NULL;
@@ -234,7 +234,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
                         vlc_tick_t i_max_preload )
  {
      demux_sys_t *p_sys = p_demux->p_sys;
-@@ -1710,7 +1893,17 @@
+@@ -1710,7 +1890,20 @@
                  p_block->i_buffer -= 4;
              }
  
@@ -245,6 +245,9 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +                if (!paired) {
 +                    msg_Err(p_demux,"FEL dependent sample missing, malformed or timestamp mismatch");
 +                    MP4_TrackSelect(p_demux,tk,false);
++                    // A broken pairing is terminal for this ES; do not retry
++                    // the same corrupt sample indefinitely in DemuxMoov.
++                    tk->b_ok=false;
 +                    goto end;
 +                }
 +                p_block=paired;
