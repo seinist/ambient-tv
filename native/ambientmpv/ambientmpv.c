@@ -150,6 +150,14 @@ Java_com_ambient_tv_ui_player_backend_MpvNativeBridge_nativeFeatures(JNIEnv *env
     if (!egl) egl = dlsym(RTLD_DEFAULT, "ambient_mpv_egl_hdr_surface");
     if (egl && *(const int *)egl == 1) strncat(features, "mpv-egl-hdr-surface,", sizeof(features) - strlen(features) - 1);
     if (mpv) dlclose(mpv);
+    // Validate the actual loaded libmpv's registered driver rather than
+    // assuming that the Kotlin sources and the AAR have the same age.
+    mpv_handle *probe = mpv_create();
+    if (probe) {
+        if (mpv_set_option_string(probe, "gpu-hwdec-interop", "mediacodec-svp-vulkan") >= 0)
+            strncat(features, "mpv-svp-resident,", sizeof(features) - strlen(features) - 1);
+        mpv_terminate_destroy(probe);
+    }
     return new_utf(env, features);
 }
 
