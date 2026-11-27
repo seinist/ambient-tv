@@ -192,33 +192,36 @@ class TelegramRepository @Inject constructor(
     // or on an ordinary no-Monogram build. Only enabled systems restore sessions.
     private val appContext = context.applicationContext
     private val backend: MonogramAuthClientPort? by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        if (!BuildConfig.MONOGRAM_NATIVE) null
-        else {
-            var external = false
-            val result = runCatching {
-                val module = com.ambient.tv.modules.SystemModuleHost.loadSelected(com.ambient.tv.modules.SystemModule.MONOGRAM)
-                external = module != null
+        var external = false
+        val result = runCatching {
+            val module = com.ambient.tv.modules.SystemModuleHost.loadSelected(com.ambient.tv.modules.SystemModule.MONOGRAM)
+            external = module != null
+            val factory = module?.entrypoint
+            if (factory != null) {
+                val adapter = factory as? MonogramModuleFactory ?: error("Invalid Monogram adapter factory")
+                adapter.create(appContext, tokenStore)
+            } else {
                 if (module != null) {
                     val library = java.io.File(checkNotNull(module.nativeDirectory), "libmonogram_mtproto.so")
                     check(library.isFile)
-                    // Both generated UniFFI/JNA and the patched JNI verifier use this exact file.
                     System.setProperty("uniffi.component.monogram_mtproto.libraryOverride", library.absolutePath)
                 } else {
                     if (!com.ambient.tv.modules.SystemModuleAvailability.bundled(com.ambient.tv.modules.SystemModule.MONOGRAM))
                         return@runCatching null
                     System.clearProperty("uniffi.component.monogram_mtproto.libraryOverride")
                 }
-                val factory = Class.forName("com.ambient.tv.data.telegram.MonogramNativeBackend")
-                factory.getConstructor(Context::class.java, TokenStore::class.java)
+                check(BuildConfig.MONOGRAM_NATIVE)
+                val bundledFactory = Class.forName("com.ambient.tv.data.telegram.MonogramNativeBackend")
+                bundledFactory.getConstructor(Context::class.java, TokenStore::class.java)
                     .newInstance(appContext, tokenStore) as MonogramAuthClientPort
-            }.onFailure { timber.log.Timber.w("Monogram runtime initialization failed: %s", it.javaClass.simpleName) }.getOrNull()
-            if (result != null && mutableLogin.value.step == MonogramLoginStep.UNAVAILABLE)
-                mutableLogin.value = MonogramLoginState(MonogramLoginStep.READY)
-            com.ambient.tv.modules.SystemModuleAvailability.reportProbe(
-                com.ambient.tv.modules.SystemModule.MONOGRAM, external, result != null,
-            )
-            result
-        }
+            }
+        }.onFailure { timber.log.Timber.w("Monogram runtime initialization failed: %s", it.javaClass.simpleName) }.getOrNull()
+        if (result != null && mutableLogin.value.step == MonogramLoginStep.UNAVAILABLE)
+            mutableLogin.value = MonogramLoginState(MonogramLoginStep.READY)
+        com.ambient.tv.modules.SystemModuleAvailability.reportProbe(
+            com.ambient.tv.modules.SystemModule.MONOGRAM, external, result != null,
+        )
+        result
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutableLogin = MutableStateFlow(MonogramLoginState(
@@ -1241,10 +1244,10 @@ class TelegramRepository @Inject constructor(
     // Last in the class: the IO coroutine may reach disconnect()/installAuthorized() at once,
     // and those use properties that must already be initialized by the constructor.
     init {
-        if (BuildConfig.MONOGRAM_NATIVE) {
-            scope.launch {
-                // A verified backend is required even for the first sign-in UI.
-                // Initialization does not make an MTProto request.
+        scope.launch {
+            val module = com.ambient.tv.modules.SystemModule.MONOGRAM
+            if (com.ambient.tv.modules.SystemModuleAvailability.bundled(module) ||
+                runCatching { com.ambient.tv.modules.SystemModuleHost.selected(module) != null }.getOrDefault(false)) {
                 if (obtainBackend() != null && preferences.telegramEnabled) restoreIfNeeded()
             }
         }
