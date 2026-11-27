@@ -128,6 +128,24 @@ class GameExtrasTest {
 }
 
 class GameCoreChannelTest {
+    @Test fun coreSourceDefaultsInheritAndOverrideIndependently() {
+        val system = GameSystems.byId("snes")!!
+        val other = GameSystems.byId("nes")!!
+        val global = GameSettingsState().withCoreSource(GameCoreSource.OPTIMIZED)
+        assertEquals(GameCoreSource.OPTIMIZED, global.gameCoreSource(system, "game"))
+        val scoped = global.withSystemCoreSource(system, GameCoreSource.OPTIMIZED_A57)
+        assertEquals(GameCoreSource.OPTIMIZED_A57, scoped.gameCoreSource(system, "game"))
+        assertEquals(GameCoreSource.OPTIMIZED, scoped.systemCoreSource(other))
+        val explicit = scoped.withGameCoreSource("game", GameCoreSource.AMBIENT)
+        assertEquals(GameCoreSource.AMBIENT, explicit.gameCoreSource(system, "game"))
+        assertEquals(GameCoreSource.OPTIMIZED_A57, explicit.gameCoreSource(system, "other"))
+        assertEquals(GameCoreSource.AUTO, explicit.withGameCoreSource("game", GameCoreSource.AUTO).gameCoreSource(system, "game"))
+        assertEquals(GameCoreSource.OPTIMIZED_A57, explicit.withGameCoreSource("game", null).gameCoreSource(system, "game"))
+        assertEquals(GameCoreSource.OPTIMIZED, scoped.withSystemCoreSource(system, null).systemCoreSource(system))
+        assertEquals(GameCoreSource.OPTIMIZED_A57, scoped.withGameCoreSource("game", GameCoreSource.HOTPATHS).gameCoreSource(system, "game"))
+        assertEquals(explicit, GameSettingsState(explicit.values).migrateCoreSource())
+    }
+
     @Test fun optimizedPreferencesRespectAbiAndStaySigned() {
         val core = GameCore("fixture", "Fixture", "MIT")
         assertEquals(listOf(GameCoreSource.OPTIMIZED_A57, GameCoreSource.OPTIMIZED, GameCoreSource.AMBIENT),

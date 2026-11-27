@@ -63,13 +63,38 @@ internal interface GamesSettingsEntryPoint {
     fun metadata(): com.ambient.tv.games.metadata.GameMetadataSettings
 }
 
-private fun GameCoreSource.titleRes(): Int = when (this) {
+internal fun GameCoreSource.titleRes(): Int = when (this) {
     GameCoreSource.AUTO -> R.string.games_core_source_auto
     GameCoreSource.AMBIENT -> R.string.games_core_source_ambient
     GameCoreSource.BUILDBOT -> R.string.games_core_source_buildbot
     GameCoreSource.OPTIMIZED -> R.string.games_core_source_optimized
     GameCoreSource.OPTIMIZED_A57 -> R.string.games_core_source_optimized_a57
     else -> error("Expected a regular core source")
+}
+
+/** Null means inherit; AUTO is an explicit choice and must not be conflated with inheritance. */
+@Composable
+internal fun GameCoreSourceOverrideSelect(
+    own: GameCoreSource?,
+    inherited: GameCoreSource,
+    onSelect: (GameCoreSource?) -> Unit,
+) {
+    val channelAvailable = gamesEntryPoint().channel().available
+    SettingsSelect(
+        label = stringResource(R.string.games_core_source_default),
+        options = listOf(SettingsSelectOption(
+            text = stringResource(R.string.games_core_source_inherit, stringResource(inherited.titleRes())),
+            selected = own == null,
+            onClick = { onSelect(null) },
+        )) + GameCoreSource.regular.map { source ->
+            SettingsSelectOption(
+                text = stringResource(source.titleRes()),
+                selected = own == source,
+                enabled = source == GameCoreSource.AUTO || source == GameCoreSource.BUILDBOT || channelAvailable,
+                onClick = { onSelect(source) },
+            )
+        },
+    )
 }
 
 /** Removing a file or core always asks first, like save states and shader packs. */
@@ -323,7 +348,7 @@ internal fun GamesShaderPacks() {
 }
 
 @Composable
-internal fun GamesCores(onlyCoreId: String? = null) {
+internal fun GamesCores(onlyCoreId: String? = null, system: com.ambient.tv.games.GameSystem? = null) {
     val context = LocalContext.current
     val entry = gamesEntryPoint()
     val cores = entry.cores()
@@ -383,7 +408,7 @@ internal fun GamesCores(onlyCoreId: String? = null) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsSubheader(stringResource(R.string.games_cores))
         SettingsHint(stringResource(R.string.games_cores_hint))
-        val source = GameSettings.state.coreSource
+        val source = system?.let { GameSettings.state.systemCoreSource(it) } ?: GameSettings.state.coreSource
         if (onlyCoreId == null) {
             SettingsSelect(
                 label = stringResource(R.string.games_core_source),
@@ -403,12 +428,6 @@ internal fun GamesCores(onlyCoreId: String? = null) {
                         onClick = { GameSettings.update { it.withCoreSource(option) } },
                     )
                 },
-            )
-            TvSettingRow(
-                title = stringResource(R.string.games_core_tests_enable),
-                body = stringResource(R.string.games_core_tests_enable_hint),
-                checked = GameSettings.state.coreExperimentsEnabled,
-                onCheckedChange = { enabled -> GameSettings.update { it.withCoreExperimentsEnabled(enabled) } },
             )
         }
         failed?.let { SettingsHint(it) }

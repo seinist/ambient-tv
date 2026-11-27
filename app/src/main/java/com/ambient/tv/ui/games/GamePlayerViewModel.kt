@@ -178,13 +178,15 @@ class GamePlayerViewModel @Inject constructor(
             }
             val source = if (testingCore) {
                 val experiment = GameCoreExperiment.fromKey(savedArguments.get<String>("experiment").orEmpty())
-                if (!settings.coreExperimentsEnabled || experiment == null || experiment.coreId != chosen.id ||
+                if (experiment == null ||
+                    (experiment.source !in GameCoreSource.publicExperiments && !settings.coreExperimentsEnabled) ||
+                    experiment.coreId != chosen.id ||
                     !experiment.source.supportsExperiment(chosen, abi)) {
                     mutable.value = GameUiState.Failed(GameFailure.CORE_INCOMPATIBLE)
                     return@launch
                 }
                 experiment.source
-            } else settings.coreSource
+            } else settings.gameCoreSource(game.system, game.saveKey)
             // A RomM game's firmware is its server's: matched to it before the check.
             if (game.remote != null) remoteData.syncFirmware(game)
             bios.missingRequired(game.system, GameSystems.extension(game.file.name), chosen,
