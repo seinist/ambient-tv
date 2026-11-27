@@ -39,8 +39,8 @@ static inline bool ambient_hdrplus_curve_key_equal(const struct ambient_hdrplus 
         return false;
     for (unsigned i=0; i<a->window_count; ++i) {
         const struct ambient_hdrplus_window *x=&a->windows[i], *y=&b->windows[i];
-        float xp=ambient_hdrplus_source_peak(x,a->version);
-        float yp=ambient_hdrplus_source_peak(y,b->version);
+        float xp=ambient_hdrplus_normalization_nits(a,x);
+        float yp=ambient_hdrplus_normalization_nits(b,y);
         float am,at,bm,bt;
         if (!ambient_hdrplus_grid_factor(&a->mastering_grid,x,&am) ||
             !ambient_hdrplus_grid_factor(&a->targeted_grid,x,&at) ||
@@ -67,14 +67,13 @@ static inline bool ambient_hdrplus_spatial_curves(pl_gpu gpu, struct ambient_hdr
     s->valid=false;
     for (unsigned i=0;i<3;++i) {
         const struct ambient_hdrplus_window *w=&m->windows[i<m->window_count?i:0];
-        float peak=10000.f*ambient_hdrplus_source_peak(w,m->version);
+        float peak=ambient_hdrplus_normalization_nits(m,w);
         if (!isfinite(peak) || peak<=out_min || peak>10000.f ||
             !isfinite(w->average) || w->average<0.f || w->average>1.f ||
             w->anchor_count>15) return false;
         float source_factor,target_factor;
         if (!ambient_hdrplus_grid_factor(&m->mastering_grid,w,&source_factor) ||
             !ambient_hdrplus_grid_factor(&m->targeted_grid,w,&target_factor)) return false;
-        peak*=source_factor;
         float target_peak=out_max*target_factor;
         if (peak<=out_min || target_peak<=out_min) return false;
         float dst=fminf(peak,target_peak);
@@ -83,7 +82,7 @@ static inline bool ambient_hdrplus_spatial_curves(pl_gpu gpu, struct ambient_hdr
             .input_scaling=PL_HDR_SQRT,.output_scaling=PL_HDR_NORM,
             .lut_size=AMBIENT_HDRPLUS_LUT_SIZE,
             .input_min=0.f,.input_max=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_SQRT,peak),
-            .input_avg=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_SQRT,fminf(peak,w->average*10000.f*source_factor)),
+            .input_avg=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_SQRT,fminf(peak,w->average*10000.f)),
             .output_min=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_NORM,out_min),
             .output_max=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_NORM,dst),
         };
@@ -133,7 +132,7 @@ static const char ambient_hdrplus_mask_glsl[] =
     "  vec4 r=ahp_rect[i], e=ahp_ellipse[i], t=ahp_rotation[i];\n"
     "  if(t.w==0.0 || any(lessThan(p,r.xy)) || any(greaterThan(p,r.zw))) return 0.0;\n"
     "  vec2 q=p-e.xy; vec2 v=vec2(dot(t.xy,q),dot(vec2(-t.y,t.x),q))*e.zw;\n"
-    "  float d=length(v); if(d<=t.z) return 1.0;\n"
+    "  float d=length(v); if(d>=1.0) return 0.0; if(d<=t.z) return 1.0;\n"
     "  float u=clamp((d-t.z)/max(1.0-t.z,1e-6),0.0,1.0);\n"
     "  return 0.5+0.5*cos(3.141592653589793*u);\n"
     "}\n"
@@ -144,10 +143,14 @@ static const char ambient_hdrplus_mask_glsl[] =
     "}\n"
     "vec3 ahp_map_rgb(int i,vec3 rgb,float v,float root) {\n"
     "  if(v<=1e-7) return vec3(0.0);\n"
+    "  float domain=ahp_domains[i]*ahp_domains[i];\n"
+    "  vec3 normalized=clamp(rgb/domain,0.0,1.0);\n"
+    "  float s=min(v/domain,1.0);\n"
     "  float mapped=ahp_curve(i,root);\n"
-    "  vec3 out_rgb=rgb*(mapped/v);\n"
+    "  vec3 out_rgb=normalized*(mapped/s);\n"
     "  if(ahp_sat[i]<=0.0 || mapped<=0.0) return out_rgb;\n"
-    "  float source_nits=v*ahp_ref_white, target_nits=mapped*ahp_ref_white;\n"
+    "  float source_nits=s*ahp_sat_source_scale[i];\n"
+    "  float target_nits=clamp(mapped/ahp_sat_peak[i],0.0,1.0)*ahp_sat_target_scale[i];\n"
     "  if(target_nits<=1.0001 || source_nits<=target_nits) return out_rgb;\n"
     "  float gain=clamp(1.0+ahp_sat[i]*max(0.0,log(source_nits)/log(target_nits)-1.0),1.0,4.0);\n"
     "  vec3 enc=pow(clamp(out_rgb/ahp_sat_peak[i],0.0,1.0),vec3(1.0/2.4));\n"
@@ -219,14 +222,23 @@ static inline bool ambient_hdrplus_spatial_render(pl_gpu gpu, pl_log log,
     };
     float rect[2][4],ellipse[2][4],rotation[2][4],size[2]={(float)w,(float)h};
     int layer=layering?1:0;
-    float sat[3]={0},sat_peak[3]={0};
-    float ref_white=pl_hdr_rescale(PL_HDR_NORM,PL_HDR_NITS,1.f);
+    float sat[3]={0},sat_peak[3]={0},sat_source_scale[3]={0},sat_target_scale[3]={0};
     for(unsigned i=0;i<3;++i) {
         const struct ambient_hdrplus_window *window=&m->windows[i<m->window_count?i:0];
         float factor;
         if (!ambient_hdrplus_grid_factor(&m->targeted_grid,window,&factor)) return false;
         sat[i]=window->saturation_mapping?window->saturation_weight/8.f:0.f;
         sat_peak[i]=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_NORM,out_max*factor);
+        if(sat[i]>0.f){
+            // Use explicit mastering metadata when present. Scene peak is
+            // a documented adaptation fallback, not invented ST2086 data.
+            float mastering=img->color.hdr.max_luma;
+            if(!(mastering>0.f && mastering<=10000.f))
+                mastering=10000.f*ambient_hdrplus_source_peak(window,m->version);
+            float authored=m->target_nits>0.f?m->target_nits:out_max;
+            if(!ambient_hdrplus_saturation_scales(m,window,mastering,authored,
+                &sat_source_scale[i],&sat_target_scale[i])) sat[i]=0.f;
+        }
     }
     for (unsigned i=0;i<2;++i) {
         memcpy(rect[i],masks[i].rect,sizeof(rect[i]));
@@ -242,7 +254,8 @@ static inline bool ambient_hdrplus_spatial_render(pl_gpu gpu, pl_log log,
         {.var=pl_var_int("ahp_layering"),.data=&layer,.dynamic=true},
         {.var=pl_var_vec3("ahp_sat"),.data=sat,.dynamic=true},
         {.var=pl_var_vec3("ahp_sat_peak"),.data=sat_peak,.dynamic=true},
-        {.var=pl_var_float("ahp_ref_white"),.data=&ref_white,.dynamic=true},
+        {.var=pl_var_vec3("ahp_sat_source_scale"),.data=sat_source_scale,.dynamic=true},
+        {.var=pl_var_vec3("ahp_sat_target_scale"),.data=sat_target_scale,.dynamic=true},
     };
     for(unsigned i=0;i<3;++i) vars[i].var.dim_a=2;
     pl_dispatch_reset_frame(s->dispatch);
