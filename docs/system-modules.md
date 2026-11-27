@@ -41,8 +41,8 @@ selection pointer. Rollback re-authenticates the previous archive. Removal clear
 the selection but preserves the version floor. SystemModuleMaterializer extracts
 verified packages into new private trees and validates each binary before the
 SystemModuleRuntime activates a host-approved entrypoint. The caller must supply
-the pinned key, process ABI, host API, and module contracts. No production engine
-uses this loader yet; release discovery and safe garbage collection remain open.
+the pinned key, process ABI, host API, and module contracts. The first production paths now consult the loader; release discovery and
+process-lease garbage collection are implemented for the migrated modules.
 
 ## Next implementation stages
 
@@ -120,5 +120,49 @@ with the app's privileges; a classloader is not a security sandbox.
 
 Initial restrictions: cross-module native linking, shared SONAME coexistence
 (including libc++_shared), alternate DEX formats, and full APK native override
-semantics need engine-specific design and Android device validation. The
-generic runtime is not wired into the production engine paths yet.
+semantics need engine-specific design and Android device validation. The first production engine paths now use the generic runtime.
+
+## First production migration (development preview)
+
+AmbientTvApplication registers SystemModuleHost without loading executable code.
+The process holds a shared filesystem lease during module operations. Before
+acquiring the first shared lease, an exclusive nonblocking lease permits cleanup
+of old extracted runtime trees and unreferenced package versions, retaining
+current and rollback packages. Other live processes prevent reclamation.
+The existing core release public key is reused for this initial channel;
+modules-* tags and the separate catalog schema distinguish module manifests.
+
+ProjectM and MPV consult the module host before their original first-load
+paths. Only an absent override falls back to the bundled runtime; an activation
+failure must not load a second copy of JNI libraries into the same process.
+ProjectM uses APK-owned C++ runtime, MPV uses approved APK-owned shared libraries
+including FFmpeg. The signed catalog records their SHA-256 fingerprints, and
+the host verifies the exact installed bytes before loading. Native package
+generation traverses the dependency closure from verified Full APKs.
+FFmpeg remains in the APK because local audio also links against it; independent
+shared-runtime delivery, other native engines and DEX adapters remain open.
+The Shader module currently contains only the signed Vulkan Slang preset assets,
+not librashader or all filters. A selected external preset pack is used as a
+whole, not mixed with APK files.
+
+Settings > About / App updates exposes the initial migrated components,
+version, download/update, rollback and removal. Selection is fixed on the first
+use in a process. Restart after changing selection; native code is never unloaded.
+
+Build commands:
+- ./build.sh release or ./build.sh release-full: existing full distribution.
+- ./build.sh release-modular-preview: separate development APKs under
+  dist/modular-preview; excludes the ProjectM native pair and Slang assets.
+  It is NOT the completed Modular APK. No stable app update manifest is generated
+  and the regular APK updater is disabled for this preview.
+
+The System module packages workflow validates and builds reproducible shader
+packages on PRs. Manual publication is permitted only on main and uses signed
+manifests, a fresh-main check, and a non-latest GitHub release. Native package
+candidates can be built with scripts/package_system_modules.py from the verified
+matching Full APKs and corresponding license notices; their public release
+workflow is not yet enabled. No signed release or Android test result is implied
+by this source change. Monogram, SmartTube, Spotify, VLC, Moonlight, LibretroDroid,
+SVP and the executable shader runtime still require their individual production
+migration. Variant-aware stable self-updates and complete Full/Modular packaging
+remain required before the new distribution is ready.
