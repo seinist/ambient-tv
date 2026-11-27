@@ -52,8 +52,8 @@ static inline bool ambient_fel_planes_upload(pl_gpu gpu,struct ambient_fel_plane
  * intermediate rounding and 16-bit clipping. No CPU readback or expansion.
  * The source and destination remain 4:2:0; chroma reconstruction to the
  * packed RGB prepass grid is a distinct, existing approximation. */
-static inline bool ambient_fel_filter_axis(pl_gpu gpu,pl_dispatch dp,
-    pl_tex input,pl_tex *output,bool vertical,bool luma)
+static inline bool ambient_fel_filter_axis_kind(pl_gpu gpu,pl_dispatch dp,
+    pl_tex input,pl_tex *output,bool vertical,int kind)
 {
     if(!gpu||!dp||!input||!output||input==*output)return false;
     int w=input->params.w,h=input->params.h;
@@ -65,7 +65,7 @@ static inline bool ambient_fel_filter_axis(pl_gpu gpu,pl_dispatch dp,
             .sampleable=true,.renderable=true)))return false;
     const struct pl_shader_desc d={.desc={.name="fel_filter_input",.type=PL_DESC_SAMPLED_TEX},
         .binding={.object=input}};
-    int axis=vertical?1:0,kind=luma?0:1;
+    int axis=vertical?1:0;
     const struct pl_shader_var vars[]={
         {.var=pl_var_int("fel_filter_vertical"),.data=&axis,.dynamic=true},
         {.var=pl_var_int("fel_filter_chroma"),.data=&kind,.dynamic=true},
@@ -80,7 +80,11 @@ static inline bool ambient_fel_filter_axis(pl_gpu gpu,pl_dispatch dp,
             "return int(floor(texelFetch(fel_filter_input,clamp(p,ivec2(0),hi),0).r*65535.0+0.5));}",
         .body="ivec2 p=ivec2(gl_FragCoord.xy);int sum=0;int shift=0;"
             "if(fel_filter_vertical!=0){int odd=p.y&1;p.y/=2;"
-            "if(fel_filter_chroma!=0){"
+            "if(fel_filter_chroma==2){int k=odd!=0?-1:1;"
+            "sum=222*fel_filter_code(p)+65*fel_filter_code(p-ivec2(0,k))"
+            "-12*fel_filter_code(p-ivec2(0,2*k))+2*fel_filter_code(p-ivec2(0,3*k))"
+            "-25*fel_filter_code(p+ivec2(0,k))+4*fel_filter_code(p+ivec2(0,2*k));shift=8;"
+            "}else if(fel_filter_chroma!=0){"
             "sum=192*fel_filter_code(p)+64*fel_filter_code(p+ivec2(0,odd!=0?1:-1));shift=8;"
             "}else{int k=odd!=0?1:-1;"
             "sum=111*fel_filter_code(p)+29*fel_filter_code(p+ivec2(0,k))"
@@ -96,6 +100,12 @@ static inline bool ambient_fel_filter_axis(pl_gpu gpu,pl_dispatch dp,
             "color=vec4(float(code)/65535.0,0.0,0.0,1.0);",
     })){pl_dispatch_abort(dp,&sh);return false;}
     return pl_dispatch_finish(dp,pl_dispatch_params(.shader=&sh,.target=*output));
+}
+
+static inline bool ambient_fel_filter_axis(pl_gpu gpu,pl_dispatch dp,
+    pl_tex input,pl_tex *output,bool vertical,bool luma)
+{
+    return ambient_fel_filter_axis_kind(gpu,dp,input,output,vertical,luma?0:1);
 }
 
 /* Produce a borrowed view of the expanded EL planes. Preserve visible
@@ -486,10 +496,67 @@ static inline bool ambient_fel_fixed_params_init(struct ambient_fel_fixed_params
  * [1,2,1] sums and a rounded vertical mean for the chroma predictor. */
 struct ambient_fel_native420 {
     pl_tex y,uv;
+    pl_tex bl_raw[3],bl_vertical[3],bl_expanded[3],bl_packed;
 };
 static inline void ambient_fel_native420_destroy(pl_gpu gpu,struct ambient_fel_native420 *s)
 {
     pl_tex_destroy(gpu,&s->y);pl_tex_destroy(gpu,&s->uv);
+    for(unsigned c=0;c<3;c++){
+        pl_tex_destroy(gpu,&s->bl_raw[c]);pl_tex_destroy(gpu,&s->bl_vertical[c]);
+        pl_tex_destroy(gpu,&s->bl_expanded[c]);
+    }
+    pl_tex_destroy(gpu,&s->bl_packed);
+}
+/* Annex B.2, signalled BL factor-two resampling. Operate on native grids
+ * before MMR, not on a pre-interpolated RGB or chroma image. */
+static inline bool ambient_fel_reference_bl(pl_gpu gpu,pl_dispatch dp,
+    struct ambient_fel_native420 *s,pl_tex bl)
+{
+    if(!gpu||!dp||!s||!bl||!bl->params.sampleable||bl==s->bl_packed)return false;
+    int w=bl->params.w,h=bl->params.h;
+    if(w<=0||h<=0||w>1920||h>1088||(w&1)||(h&1))return false;
+    pl_fmt r16=pl_find_fmt(gpu,PL_FMT_UNORM,1,16,16,
+        PL_FMT_CAP_SAMPLEABLE|PL_FMT_CAP_RENDERABLE);
+    if(!r16||r16->component_depth[0]!=16)return false;
+    const struct pl_shader_desc d={.desc={.name="bl_unpack",.type=PL_DESC_SAMPLED_TEX},.binding={.object=bl}};
+    pl_dispatch_reset_frame(dp);
+    for(unsigned c=0;c<3;c++){
+        if(!pl_tex_recreate(gpu,&s->bl_raw[c],pl_tex_params(.w=c?w/2:w,.h=c?h/2:h,
+            .format=r16,.sampleable=true,.renderable=true)))return false;
+        pl_shader sh=pl_dispatch_begin(dp);if(!sh)return false;
+        const char *body=c==0?
+            "float v=texelFetch(bl_unpack,ivec2(gl_FragCoord.xy),0).g; color=vec4(floor(v*1023.0+0.5)/65535.0,0,0,1);":
+            c==1?
+            "float v=texelFetch(bl_unpack,ivec2(gl_FragCoord.xy)*2,0).b; color=vec4(floor(v*1023.0+0.5)/65535.0,0,0,1);":
+            "float v=texelFetch(bl_unpack,ivec2(gl_FragCoord.xy)*2,0).r; color=vec4(floor(v*1023.0+0.5)/65535.0,0,0,1);";
+        if(!pl_shader_custom(sh,&(struct pl_custom_shader){
+            .input=PL_SHADER_SIG_NONE,.output=PL_SHADER_SIG_COLOR,
+            .descriptors=&d,.num_descriptors=1,.body=body,
+        })){pl_dispatch_abort(dp,&sh);return false;}
+        if(!pl_dispatch_finish(dp,pl_dispatch_params(.shader=&sh,.target=s->bl_raw[c]))||
+           !ambient_fel_filter_axis_kind(gpu,dp,s->bl_raw[c],&s->bl_vertical[c],true,2)||
+           !ambient_fel_filter_axis_kind(gpu,dp,s->bl_vertical[c],&s->bl_expanded[c],false,2))return false;
+    }
+    // Preserve the full integer code range, including the filter's positive
+    // overshoot, until the per-component pivot clamp in prediction.
+    pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,32,32,PL_FMT_CAP_SAMPLEABLE|PL_FMT_CAP_RENDERABLE);
+    if(!fmt||!pl_tex_recreate(gpu,&s->bl_packed,pl_tex_params(.w=w*2,.h=h*2,.format=fmt,
+        .sampleable=true,.renderable=true)))return false;
+    const struct pl_shader_desc p[]={
+        {.desc={.name="bl_y",.type=PL_DESC_SAMPLED_TEX},.binding={.object=s->bl_expanded[0]}},
+        {.desc={.name="bl_u",.type=PL_DESC_SAMPLED_TEX},.binding={.object=s->bl_expanded[1]}},
+        {.desc={.name="bl_v",.type=PL_DESC_SAMPLED_TEX},.binding={.object=s->bl_expanded[2]}},
+    };
+    pl_shader sh=pl_dispatch_begin(dp);if(!sh)return false;
+    if(!pl_shader_custom(sh,&(struct pl_custom_shader){
+        .input=PL_SHADER_SIG_NONE,.output=PL_SHADER_SIG_COLOR,.descriptors=p,.num_descriptors=3,
+        .body="ivec2 q=ivec2(gl_FragCoord.xy);"
+            "float y=floor(texelFetch(bl_y,q,0).r*65535.0+0.5);"
+            "float u=floor(texelFetch(bl_u,q/2,0).r*65535.0+0.5);"
+            "float v=floor(texelFetch(bl_v,q/2,0).r*65535.0+0.5);"
+            "color=vec4(vec3(v,y,u)/1023.0,1.0);",
+    })){pl_dispatch_abort(dp,&sh);return false;}
+    return pl_dispatch_finish(dp,pl_dispatch_params(.shader=&sh,.target=s->bl_packed));
 }
 static inline bool ambient_fel_native_grid(pl_gpu gpu,pl_dispatch dp,
     pl_tex bl,pl_tex *out,const struct ambient_fel_fixed_params *fixed,

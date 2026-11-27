@@ -152,6 +152,25 @@ static void reference_expand(const uint16_t *src,unsigned w,unsigned h,bool luma
     }
     free(v);
 }
+static void reference_expand_bl(const uint16_t *src,unsigned w,unsigned h,uint16_t *dst)
+{
+    const int v0[]={2,-12,65,222,-25,4},v1[]={4,-25,222,65,-12,2};
+    const int hc[]={22,94,-524,2456,2456,-524,94,22};
+    uint16_t *v=malloc((size_t)w*h*2*sizeof(*v));assert(v);
+    for(unsigned y=0;y<2*h;y++)for(unsigned x=0;x<w;x++){
+        int n=(int)y/2,sum=0;
+        const int *c=y%2?v1:v0;
+        for(unsigned j=0;j<6;j++)sum+=c[j]*(int)at_plane(src,w,h,(int)x,n-(y%2?2:3)+(int)j);
+        v[y*w+x]=clip(floor_shift((wide)sum+128,8),65535);
+    }
+    for(unsigned y=0;y<2*h;y++)for(unsigned x=0;x<2*w;x++){
+        if(!(x%2)){dst[y*2*w+x]=v[y*w+x/2];continue;}
+        int sum=0;
+        for(int j=0;j<8;j++)sum+=hc[j]*(int)at_plane(v,w,2*h,(int)x/2-3+j,(int)y);
+        dst[y*2*w+x]=clip(floor_shift((wide)sum+2048,12),65535);
+    }
+    free(v);
+}
 static void assert_filter_pixels(pl_gpu gpu,pl_dispatch dp,pl_tex actual,const uint16_t *expected)
 {
     unsigned w=actual->params.w,h=actual->params.h;
@@ -324,7 +343,31 @@ static void check_reference_filter(pl_gpu gpu,pl_log log,pl_dispatch dp,struct a
     frame.planes[0].texture=bl;
     assert(ambient_fel_render_picture_ex(gpu,log,&render,&frame,pic,1,0,0,64,64));
     check_native_grid(gpu,dp,render.native420.uv,true,bl_frame,expanded,&pic->rpu);
-    pl_gpu_finish(gpu);ambient_fel_render_destroy(gpu,&render);
+    // Both layers signalled at 32x32: reconstructed target is 64x64.
+    uint16_t small_bl[YUV],large_bl[YUV];crop_el(bl_frame,small_bl,&g);
+    float small_packed[32*32*4];
+    for(unsigned i=0;i<1024;i++){
+        unsigned ci=(i/32/2)*16+(i%32)/2;
+        small_packed[4*i]=small_bl[1280+ci]/1023.f;
+        small_packed[4*i+1]=small_bl[i]/1023.f;
+        small_packed[4*i+2]=small_bl[1024+ci]/1023.f;
+        small_packed[4*i+3]=1;
+    }
+    for(unsigned c=0;c<3;c++){
+        unsigned w=c?16:32;
+        reference_expand_bl(small_bl+(c?1024+(c-1)*256:0),w,w,large_bl+(c?N+(c-1)*C:0));
+    }
+    pl_tex small=pl_tex_create(gpu,pl_tex_params(.w=32,.h=32,.format=fmt,
+        .sampleable=true,.initial_data=small_packed));assert(small);
+    pic->rpu=*m;pic->rpu.bl_spatial_resampling=1;pic->rpu.el_spatial_resampling=1;
+    frame.planes[0].texture=small;frame.crop=(struct pl_rect2df){0,0,32,32};
+    assert(ambient_fel_render_picture_ex(gpu,log,&render,&frame,pic,1,0,0,32,32));
+    assert(frame.crop.x1==64&&frame.crop.y1==64&&render.output->params.w==64);
+    for(unsigned c=0;c<3;c++)assert_filter_pixels(gpu,dp,render.native420.bl_expanded[c],large_bl+(c?N+(c-1)*C:0));
+    check_native_grid(gpu,dp,render.native420.y,false,large_bl,expanded,m);
+    check_native_grid(gpu,dp,render.native420.uv,true,large_bl,expanded,m);
+    pl_gpu_finish(gpu);pl_tex_destroy(gpu,&small);
+    ambient_fel_render_destroy(gpu,&render);
     pl_tex_destroy(gpu,&bl);free(pic);
 }
 static void check_geometry(const struct spatial_case *g,struct ambient_fel_planes *planes)
