@@ -96,7 +96,7 @@ pub struct Job{
     set_layout:vk::DescriptorSetLayout,pipeline_layout:vk::PipelineLayout,pipeline:vk::Pipeline,
     pool:vk::DescriptorPool,commands:vk::CommandPool,fence:vk::Fence,
     wait:vk::Semaphore,signal:vk::Semaphore,
-    frame:Option<Box<Frame>>,submitted:bool,completed:bool,
+    frame:Option<Box<Frame>>,completed:bool,
     consumers:AtomicU32,
 }
 impl Drop for Job{
@@ -148,8 +148,7 @@ impl Job{
             output:vk::Image::null(),output_memory:vk::DeviceMemory::null(),output_view:vk::ImageView::null(),
             set_layout:vk::DescriptorSetLayout::null(),pipeline_layout:vk::PipelineLayout::null(),pipeline:vk::Pipeline::null(),
             pool:vk::DescriptorPool::null(),commands:vk::CommandPool::null(),fence:vk::Fence::null(),
-            wait:vk::Semaphore::null(),signal:vk::Semaphore::null(),frame:None,submitted:false,
-            completed:false,consumers:AtomicU32::new(0)};
+            wait:vk::Semaphore::null(),signal:vk::Semaphore::null(),frame:None,completed:false,consumers:AtomicU32::new(0)};
         unsafe{AHardwareBuffer_acquire(j.buffer)};
         j.import()?;
         j.create_output()?;
@@ -355,7 +354,6 @@ impl Job{
             // Caller owns external synchronization of this exact queue.
             d.queue_submit(self.core.queue,&[submit],self.fence).map_err(err)?;
         }
-        self.submitted=true;
         Ok(())
     }
     fn finish_producer(&mut self){
@@ -395,8 +393,9 @@ pub unsafe extern "C" fn ambient_svp_ahb_importer_destroy(importer:*mut Importer
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_ahb_submit(importer:*const Importer,frame:*mut *mut Frame,
     sdr8:u32,out:*mut *mut Job)->i32{
-    if importer.is_null() || frame.is_null() || out.is_null() || sdr8!=1{return -4;}
+    if out.is_null(){return -4;}
     unsafe{*out=ptr::null_mut();}
+    if importer.is_null() || frame.is_null() || sdr8!=1{return -4;}
     if unsafe{(*frame).is_null()}{return -4;}
     catch_unwind(AssertUnwindSafe(||{
         let core=unsafe{(&*importer).0.clone()};
