@@ -565,7 +565,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +    if(!MP4_FEL_PeekBox(d->s,type,&payload,&end)||
 +       end-payload<8||(end-payload-8)%4||
 +       !ambient_fel_padding_budget(bytes,count,end-pos))return false;
-+    if(d->p_sys->b_seekable){
++    if(((demux_sys_t *)d->p_sys)->b_seekable){
 +        if(MP4_Seek(d->s,end)!=VLC_SUCCESS)return false;
 +    }else if(vlc_stream_Read(d->s,NULL,(size_t)(end-pos))!=(ssize_t)(end-pos))
 +        return false;
