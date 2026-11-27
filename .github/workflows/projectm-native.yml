@@ -92,3 +92,14 @@ jobs:
           test -s app/src/main/jniLibs/arm64-v8a/libprojectM-4.so
           test ! -f app/src/main/jniLibs/.projectm-version
 
+      - name: Compile developer PGO instrumentation on ARM64
+        env:
+          PROJECTM_ABIS: arm64-v8a
+          PROJECTM_PGO_GENERATE: 'ON'
+        run: |
+          set -euo pipefail
+          bash scripts/build_projectm_android.sh
+          nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          "$nm" -D --defined-only app/src/main/jniLibs/arm64-v8a/libprojectM-4.so > /tmp/projectm-pgo-symbols
+          grep -q 'ambient_projectm_write_profile' /tmp/projectm-pgo-symbols
+          test ! -f app/src/main/jniLibs/.projectm-version
