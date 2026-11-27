@@ -819,7 +819,9 @@ class VlcPlaybackController(
 
     /** Prefer the live clock; during async seeks/teardown fall back to the last confirmed time. */
     private fun confirmedPlaybackTimeMs(): Long = pendingRestorePositionMs
-        ?: player.time.takeIf { it > 0L } ?: lastPlaybackTimeMs
+        ?: if (released || restartStopFailed || vulkanFallbackPosted || restartStop != null || dvRetirementPending)
+            lastPlaybackTimeMs
+        else player.time.takeIf { it > 0L } ?: lastPlaybackTimeMs
 
     /** Live timeshift: VLC clock position to keep across the next [prepare] (audio/route restart). */
     private var pendingTimeshiftKeepMs: Long? = null
@@ -840,7 +842,10 @@ class VlcPlaybackController(
     }
 
     private fun rememberTrackSelection() {
-        val previous = pendingImageTrackSelection ?: Triple(trackAccess.audioTrack, trackAccess.spuTrack, player.rate)
+        val previous = pendingImageTrackSelection ?: run {
+            if (released || restartStopFailed || vulkanFallbackPosted || restartStop != null || dvRetirementPending) return
+            Triple(trackAccess.audioTrack, trackAccess.spuTrack, player.rate)
+        }
         pendingImageTrackSelection = previous.copy(third = if (bitstreamPermitted) 1f else previous.third)
     }
 
@@ -849,7 +854,8 @@ class VlcPlaybackController(
 
     override fun setSubtitleDelay(delayMs: Int) {
         subtitleDelayMs = delayMs.coerceIn(-com.ambient.tv.ui.player.SubtitleDelayTarget.LIMIT_MS, com.ambient.tv.ui.player.SubtitleDelayTarget.LIMIT_MS)
-        if (!released) runCatching { player.setSpuDelay(subtitleDelayMs * 1000L) }
+        if (!released && !restartStopFailed && !vulkanFallbackPosted && restartStop == null && !dvRetirementPending)
+            runCatching { player.setSpuDelay(subtitleDelayMs * 1000L) }
     }
 
     private fun applyAudioOutputDevice(): Boolean {
@@ -1518,7 +1524,7 @@ class VlcPlaybackController(
             var baselineLostPictures: Long? = null
 
             override fun run() {
-                if (released || !desiredPlayWhenReady || !player.isPlaying || renderCheckSignature != signature) {
+                if (!desiredPlayWhenReady || !isPlayingNow() || renderCheckSignature != signature) {
                     renderCheckTask = null
                     return
                 }
