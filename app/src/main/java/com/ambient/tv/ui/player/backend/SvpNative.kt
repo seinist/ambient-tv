@@ -1,6 +1,9 @@
 package com.ambient.tv.ui.player.backend
 
 import androidx.annotation.Keep
+import android.content.Context
+import android.system.Os
+import java.io.File
 
 /**
  * Native configuration ABI shared by libambientsvp, the mpv/VLC adapters and this JNI check
@@ -14,9 +17,10 @@ internal const val SVP_NATIVE_ABI = 2
 internal object SvpNative {
     private var loaded = false
     private var attempted = false
+    private var cacheAttempted = false
 
     @Synchronized
-    fun updateGate(allowed: Boolean): Boolean {
+    fun updateGate(allowed: Boolean, context: Context? = null): Boolean {
         // Ordinary playback never loads this optional native library.
         if (allowed && !attempted) {
             attempted = true
@@ -29,10 +33,24 @@ internal object SvpNative {
                 native == SVP_NATIVE_ABI
             }.getOrDefault(false)
         }
+        if (allowed && loaded && context != null && !cacheAttempted) {
+            cacheAttempted = true
+            // Never use external storage or accept an imported pipeline blob.
+            // Older ABI-compatible engines may lack the optional JNI method.
+            runCatching {
+                val dir = File(context.applicationContext.cacheDir, "svp-pipelines-v1")
+                if (!dir.exists()) dir.mkdir()
+                if (dir.isDirectory && dir.canonicalFile == dir.absoluteFile) {
+                    Os.chmod(dir.path, 448) // 0700
+                    setCacheDirectory(dir.path.toByteArray(Charsets.UTF_8))
+                }
+            }.onFailure { timber.log.Timber.d(it, "SVP disk pipeline cache unavailable") }
+        }
         if (loaded) setEnabled(allowed)
         return allowed && loaded
     }
 
+    private external fun setCacheDirectory(path: ByteArray): Boolean
     private external fun abi(): Int
     @Synchronized
     fun isEnabledAndAvailable(): Boolean = loaded && enabled()
