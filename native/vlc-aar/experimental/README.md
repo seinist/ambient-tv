@@ -1009,3 +1009,13 @@ potentially different defaults would be ambiguous. This is a conservative
 restriction on the experimental paired route, not a change to ordinary MP4.
 Actual staged demux sanitizer regressions exercise duplicate identities
 and clock anchors as well as a valid single-header layout.
+
+The repository-owned linked ARM64 job now records a native-link receipt
+with source hash, checked-out commit and SHA-256 of both libraries after
+successful linkage, before Gradle packaging. If packaging fails, the
+receipt and native libraries are retained as a distinct non-AAR artifact.
+The job still fails normally; the AAR success condition is unchanged.
+Gradle cache writes are enabled for this restricted linked job, scoped
+by GitHub's PR cache rules, to reduce repeated Maven downloads. The older
+97b2321 build linked both libraries but all four packaging attempts hit
+HTTP 429 from Maven Central (job 140463618096).

@@ -15,6 +15,11 @@ if [[ "${1:-}" == "--hash" ]]; then
     exit 0
 fi
 SOURCE_HASH="$(bash "$0" --hash)"
+# A native-link receipt is opt-in and is never an AAR success marker.
+if [[ -n "${VLC_NATIVE_LINK_RECEIPT:-}" ]]; then
+    [[ "$EXPERIMENTAL_AHB" == 1 ]] || { echo "Native-link receipt requires experimental build" >&2; exit 1; }
+    rm -f -- "$VLC_NATIVE_LINK_RECEIPT"
+fi
 if [[ "$EXPERIMENTAL_AHB" == 1 ]]; then
     JNI="${VLC_BUILD_ROOT:-$ROOT/.native/libvlcjni-ahb-experimental}"
     # Never reuse a normal build tree or write an experimental AAR into app/libs.
@@ -145,6 +150,25 @@ for abi in ${VLC_VULKAN_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
         printf '%s\n' "$SOURCE_HASH" > "$ROOT/app/libs/.vlc-source-$abi"
     fi
 done
+# Record native linkage only after every requested ABI has succeeded.
+if [[ -n "${VLC_NATIVE_LINK_RECEIPT:-}" ]]; then
+    receipt_tmp="$(mktemp)"
+    {
+        printf 'source_hash=%s\n' "$SOURCE_HASH"
+        printf 'ambient_head=%s\n' "$(git -C "$ROOT" rev-parse HEAD)"
+        printf 'jni_ref=%s\nvlc_ref=%s\n' "$JNI_REF" "$VLC_REF"
+        for abi in ${VLC_VULKAN_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
+            (
+                cd "$JNI/libvlc/jni/libs/$abi"
+                test -s libvlc.so && test -s libvlcjni.so || exit 1
+                printf 'abi=%s\n' "$abi"
+                sha256sum libvlc.so libvlcjni.so
+            ) || { rm -f "$receipt_tmp"; exit 1; }
+        done
+    } > "$receipt_tmp"
+    mkdir -p "$(dirname "$VLC_NATIVE_LINK_RECEIPT")"
+    mv "$receipt_tmp" "$VLC_NATIVE_LINK_RECEIPT"
+fi
 # Build the Java wrapper from this exact JNI revision, never mix VLC 3 Java with VLC 4 JNI.
 # A transient repository rate limit must not discard a completed native build.
 # Retry only explicit HTTP 429/503 responses, never compiler/configuration failures.

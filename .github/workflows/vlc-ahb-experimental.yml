@@ -187,6 +187,7 @@ jobs:
       CARGO_BUILD_JOBS: '2'
       VLC_EXPERIMENTAL_AHB: '1'
       VLC_VULKAN_ABIS: arm64-v8a
+      VLC_NATIVE_LINK_RECEIPT: native/vlc-aar/build/experimental/native-link-receipt.txt
     steps:
       - uses: actions/checkout@v5
         with:
@@ -214,6 +215,10 @@ jobs:
           "$sdkmanager" --channel=3 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;30.0.16248370' 'cmake;3.22.1'
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          # This job only runs on the repository-owned experiment branch
+          # or a manual dispatch. PR caches remain scoped to their merge ref.
+          cache-read-only: false
       - name: Build full linked VLC and JNI AAR (arm64)
         run: |
           bash scripts/build_vlc_vulkan.sh
@@ -225,5 +230,17 @@ jobs:
         with:
           name: vlc-ahb-experimental-arm64
           path: native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain verified native libraries if packaging fails
+        if: ${{ failure() && hashFiles('native/vlc-aar/build/experimental/native-link-receipt.txt') != '' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: vlc-ahb-native-link-only-arm64-not-aar
+          path: |
+            native/vlc-aar/build/experimental/native-link-receipt.txt
+            .native/libvlcjni-ahb-experimental/libvlc/jni/libs/arm64-v8a/libvlc.so
+            .native/libvlcjni-ahb-experimental/libvlc/jni/libs/arm64-v8a/libvlcjni.so
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
