@@ -109,13 +109,19 @@ pub struct MotionSearch{
     selection:SelectionKernel,
     cached_index:Option<i32>,
     cached_next:BTreeMap<u32,wgpu::Texture>,
+    readback:Option<wgpu::Buffer>,
+    #[cfg(test)]
+    separate_directions:bool,
+    #[cfg(test)]
+    submissions:u64,
     #[cfg(test)]
     cache_hits:u64,
 }
 impl MotionSearch{
     pub fn new(device:&wgpu::Device)->Self{
         Self{metric:MotionCostKernel::new(device),selection:SelectionKernel::new(device),
-            cached_index:None,cached_next:BTreeMap::new(),#[cfg(test)] cache_hits:0}
+            cached_index:None,cached_next:BTreeMap::new(),readback:None,
+            #[cfg(test)] separate_directions:false,#[cfg(test)] submissions:0,#[cfg(test)] cache_hits:0}
     }
 
     pub fn clear_sources(&mut self){
@@ -179,61 +185,69 @@ impl MotionSearch{
             };
             let bt=b.upload(device,&mut encoder)?;
             queue.submit([encoder.finish()]);
-            for (direction,field) in previous.iter_mut().enumerate(){
-                let reverse=direction==0; // upstream previous region: next -> current
-                let mut choices=Vec::with_capacity(grid.count());
-                // Dense local window, integer zero anchors, one global
-                // candidate and eight sparse full-resolution pan anchors.
-                let radius=if field.is_none(){4}else{2};
-                let global=field.as_ref().and_then(|f|f.global(a.pel));
-                let max_per=((2*radius+1)*(2*radius+1)+35) as usize;
-                let batch_limit=MAX_BATCH.min(device.limits().max_compute_workgroups_per_dimension as usize)
-                    .min((device.limits().max_storage_buffer_binding_size/32) as usize);
-                if batch_limit<max_per{return Err("insufficient motion dispatch capacity".into());}
-                let blocks=batch_limit/max_per;
-                let mut offsets=Vec::with_capacity(max_per);
-                for start in (0..grid.count()).step_by(blocks){
-                    let end=(start+blocks).min(grid.count());
-                    let mut metrics=Vec::with_capacity((end-start)*max_per);
-                    let mut candidates=Vec::with_capacity(metrics.capacity());
-                    let mut searches=Vec::with_capacity(end-start);
-                    for i in start..end{
-                        let (x,y)=grid.origin(i);
-                        let pred=clamp_predictor(field.as_ref().map_or([0,0],|f|f.predict(x,y,a.pel)),
-                            x,y,a.width,a.height,bw,bh,a.pel);
-                        let global=global.map(|v|clamp_predictor(v,x,y,a.width,a.height,bw,bh,a.pel));
-                        let from=candidates.len() as u32;
-                        candidate_offsets(&mut offsets,pred,global,radius,a.pel,level==0);
-                        for &[dx,dy] in &offsets{
-                            let c=Candidate{x,y,dx,dy,width:bw,height:bh,reverse,satd:false};
-                            if !c.valid(a.width,a.height,a.pel){continue;}
-                            let index=metrics.len() as u32;
-                            metrics.push(c);
-                            candidates.push(ScoredCandidate{dx,dy,metric:index,raw:index});
-                        }
-                        let count=candidates.len() as u32-from;
-                        if count==0{return Err("empty motion block".into());}
-                        searches.push(Search{start:from,count,predictor:pred,lambda:(32/(a.pel*a.pel)) as i32,pnew:0,chroma:true,sad_gate:false,
-                            initial:Choice{dx:0,dy:0,sad:0,cost:i32::MAX,raw_sad:-1,winner:-1}});
+            // The two directions have no same-level dependencies. Flatten
+            // the two raster grids into one bounded stream of independent
+            // jobs, preserving each block's exact candidate order.
+            let count=grid.count();
+            let radius=if previous[0].is_none(){4}else{2};
+            let global:[Option<[i32;2]>;2]=std::array::from_fn(|d|previous[d].as_ref().and_then(|f|f.global(a.pel)));
+            let max_per=((2*radius+1)*(2*radius+1)+35) as usize;
+            let batch_limit=MAX_BATCH.min(device.limits().max_compute_workgroups_per_dimension as usize)
+                .min((device.limits().max_storage_buffer_binding_size/32) as usize);
+            if batch_limit<max_per{return Err("insufficient motion dispatch capacity".into());}
+            let blocks=batch_limit/max_per;
+            let mut offsets=Vec::with_capacity(max_per);
+            let mut choices:[Vec<Choice>;2]=std::array::from_fn(|_|Vec::with_capacity(count));
+            let mut start=0;
+            while start<2*count{
+                let end=(start+blocks).min(2*count);
+                #[cfg(test)]
+                let end=if self.separate_directions && start<count{end.min(count)}else{end};
+                let mut metrics=Vec::with_capacity((end-start)*max_per);
+                let mut candidates=Vec::with_capacity(metrics.capacity());
+                let mut searches=Vec::with_capacity(end-start);
+                for i in start..end{
+                    let direction=i/count;
+                    let field=&previous[direction];
+                    let (x,y)=grid.origin(i%count);
+                    let pred=clamp_predictor(field.as_ref().map_or([0,0],|f|f.predict(x,y,a.pel)),
+                        x,y,a.width,a.height,bw,bh,a.pel);
+                    let global=global[direction].map(|v|clamp_predictor(v,x,y,a.width,a.height,bw,bh,a.pel));
+                    let from=candidates.len() as u32;
+                    candidate_offsets(&mut offsets,pred,global,radius,a.pel,level==0);
+                    for &[dx,dy] in &offsets{
+                        let c=Candidate{x,y,dx,dy,width:bw,height:bh,reverse:direction==0,satd:false};
+                        if !c.valid(a.width,a.height,a.pel){continue;}
+                        let index=metrics.len() as u32;
+                        metrics.push(c);
+                        candidates.push(ScoredCandidate{dx,dy,metric:index,raw:index});
                     }
-                    total=total.checked_add(metrics.len()).filter(|&n|n<=MAX_TOTAL_CANDIDATES)
-                        .ok_or("experimental motion candidate budget")?;
-                    let mut encoder=device.create_command_encoder(&Default::default());
-                    let costs=self.metric.encode(device,&mut encoder,&at,&bt,a.width,a.height,&metrics)?;
-                    let selected=self.selection.encode(device,&mut encoder,&costs,&searches,&candidates)?;
-                    let batch=read_choices(device,queue,encoder,&selected,deadline)?;
-                    if batch.len()!=end-start || batch.iter().zip(&searches).any(|(c,s)|{
-                        if c.winner<s.start as i32 || c.winner>=(s.start+s.count) as i32
-                            || c.sad<0 || c.sad>3*(bw*bh*255) as i32{return true;}
-                        let selected=candidates[c.winner as usize];
-                        c.dx!=selected.dx || c.dy!=selected.dy || c.raw_sad != -1
-                    }){
-                        return Err("invalid GPU motion winner".into());
-                    }
-                    choices.extend(batch);
+                    let n=candidates.len() as u32-from;
+                    if n==0{return Err("empty motion block".into());}
+                    searches.push(Search{start:from,count:n,predictor:pred,lambda:(32/(a.pel*a.pel)) as i32,pnew:0,chroma:true,sad_gate:false,
+                        initial:Choice{dx:0,dy:0,sad:0,cost:i32::MAX,raw_sad:-1,winner:-1}});
                 }
-                *field=Some(LevelField{grid,choices});
+                total=total.checked_add(metrics.len()).filter(|&n|n<=MAX_TOTAL_CANDIDATES)
+                    .ok_or("experimental motion candidate budget")?;
+                let mut encoder=device.create_command_encoder(&Default::default());
+                let costs=self.metric.encode(device,&mut encoder,&at,&bt,a.width,a.height,&metrics)?;
+                let selected=self.selection.encode(device,&mut encoder,&costs,&searches,&candidates)?;
+                let batch=read_choices(device,queue,encoder,&selected,deadline,&mut self.readback)?;
+                #[cfg(test)] {self.submissions+=1;}
+                if batch.len()!=end-start || batch.iter().zip(&searches).any(|(c,s)|{
+                    if c.winner<s.start as i32 || c.winner>=(s.start+s.count) as i32
+                        || c.sad<0 || c.sad>3*(bw*bh*255) as i32{return true;}
+                    let selected=candidates[c.winner as usize];
+                    c.dx!=selected.dx || c.dy!=selected.dy || c.raw_sad != -1
+                }){
+                    return Err("invalid GPU motion winner".into());
+                }
+                for (i,c) in batch.into_iter().enumerate(){
+                    choices[(start+i)/count].push(c);
+                }
+                start=end;
             }
+            previous=choices.map(|choices|Some(LevelField{grid,choices}));
             // Source index belongs to the validated input timeline. Keep
             // only the next picture, and bound total retained texture bytes.
             let bytes=u64::from(bt.width())*u64::from(bt.height())*u64::from(bt.depth_or_array_layers());
@@ -266,16 +280,18 @@ impl MotionSearch{
 }
 
 fn read_choices(device:&wgpu::Device,queue:&wgpu::Queue,mut encoder:wgpu::CommandEncoder,
-                output:&wgpu::Buffer,deadline:Instant)->Result<Vec<Choice>,String>{
+                output:&wgpu::Buffer,deadline:Instant,slot:&mut Option<wgpu::Buffer>)->Result<Vec<Choice>,String>{
     if Instant::now()>=deadline{return Err("experimental motion deadline".into());}
-    let readback=device.create_buffer(&wgpu::BufferDescriptor{
+    // Retain one unmapped buffer across batches. On timeout/map error
+    // ownership stays local so a possibly busy buffer is never reused.
+    let readback=slot.take().filter(|b|b.size()>=output.size()).unwrap_or_else(||device.create_buffer(&wgpu::BufferDescriptor{
         label:Some("SVP motion winners readback"),size:output.size(),
         usage:wgpu::BufferUsages::COPY_DST|wgpu::BufferUsages::MAP_READ,mapped_at_creation:false,
-    });
+    }));
     encoder.copy_buffer_to_buffer(output,0,&readback,0,output.size());
     queue.submit([encoder.finish()]);
     let (tx,rx)=std::sync::mpsc::sync_channel(1);
-    readback.slice(..).map_async(wgpu::MapMode::Read,move|r|{let _=tx.send(r);});
+    readback.slice(..output.size()).map_async(wgpu::MapMode::Read,move|r|{let _=tx.send(r);});
     loop{
         device.poll(wgpu::Maintain::Poll);
         match rx.try_recv(){
@@ -285,12 +301,13 @@ fn read_choices(device:&wgpu::Device,queue:&wgpu::Queue,mut encoder:wgpu::Comman
             Err(_)=>std::thread::sleep(Duration::from_micros(200)),
         }
     }
-    let bytes=readback.slice(..).get_mapped_range();
+    let bytes=readback.slice(..output.size()).get_mapped_range();
     let result=bytes.chunks_exact(32).map(|raw|{
         let word=|i:usize|i32::from_le_bytes(raw[i*4..i*4+4].try_into().unwrap());
         Choice{dx:word(0),dy:word(1),sad:word(2),cost:word(3),raw_sad:word(4),winner:word(5)}
     }).collect();
     drop(bytes);readback.unmap();
+    *slot=Some(readback);
     Ok(result)
 }
 
@@ -353,9 +370,17 @@ mod tests{
             let b=make(2);
             let asf=builder.build(&a).unwrap();
             let bsf=builder.build(&b).unwrap();
+            let start=search.submissions;
             let packet=search.analyse(&device,&queue,&builder,&asf,&bsf,&header,Duration::from_secs(20),None).unwrap();
+            let combined=search.submissions-start;
+            search.separate_directions=true;
+            let start=search.submissions;
             let second=search.analyse(&device,&queue,&builder,&asf,&bsf,&header,Duration::from_secs(20),None).unwrap();
-            assert_eq!(packet,second,"deterministic pel={pel}");
+            let separated=search.submissions-start;
+            search.separate_directions=false;
+            assert_eq!(packet,second,"combined vs separate directions pel={pel}");
+            assert!(combined<separated,"expected fewer GPU readbacks: {combined} vs {separated}");
+            assert!(search.readback.is_some());
             // Adjacent source pairs may reuse the prior next image only
             // under the same timeline; repeat with an uncached reference.
             let cached=search.analyse(&device,&queue,&builder,&asf,&bsf,&header,Duration::from_secs(20),Some(0)).unwrap();
