@@ -219,6 +219,13 @@ fn moving_edge_midpoint(backend: u32) {
                     row[7] > 170 && row[28] > 170,
                     "Expected compensated edge, not crossfade: {row:?}"
                 );
+                // The old host used 16x16 dispatch groups with an 8x8
+                // shader. A single middle-row assertion cannot establish
+                // coverage of the lower half or either chroma plane.
+                if backend == 2 {
+                    assert!(out[..64*64].iter().all(|v| *v >= 30), "unwritten luma pixels");
+                    assert!(out[64*64..].iter().all(|v| v.abs_diff(128) <= 2), "unwritten chroma pixels");
+                }
                 found = true;
             }
         }
