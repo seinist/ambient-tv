@@ -53,6 +53,17 @@ int main(void) {
     assert(fabsf(ambient_hdrplus_weight(&masks[0],130,100)-0.5f)<1e-5f);
     assert(ambient_hdrplus_weight(&masks[0],140,100)==0.f);
     assert(ambient_hdrplus_weight(&masks[0],100,130)==0.f);
+    // Fig. 1 uses clockwise angles in y-down image coordinates.
+    m.windows[1].geometry.angle=45;
+    assert(ambient_hdrplus_spatial_supported(&m,200,200,masks,&layering));
+    assert(ambient_hdrplus_weight(&masks[0],120,120)>0.5f);
+    assert(ambient_hdrplus_weight(&masks[0],120,80)==0.f);
+    // The ellipse center can lie outside its intersecting processing rectangle.
+    m.windows[1].geometry.left=110;
+    assert(ambient_hdrplus_spatial_supported(&m,200,200,masks,&layering));
+    assert(ambient_hdrplus_weight(&masks[0],100,100)==0.f);
+    assert(ambient_hdrplus_weight(&masks[0],120,120)>0.5f);
+    m.windows[1].geometry.left=0;
     m.windows[1].geometry.angle=90;
     assert(ambient_hdrplus_spatial_supported(&m,200,200,masks,&layering));
     assert(fabsf(ambient_hdrplus_weight(&masks[0],100,130)-0.5f)<1e-5f);
@@ -67,6 +78,17 @@ int main(void) {
     float factor;
     assert(ambient_hdrplus_grid_factor(&m.targeted_grid,&m.windows[0],&factor));
     assert(fabsf(factor-0.65f)<1e-6f);
+    // B.3: mastering grid is an alternate denominator, not a
+    // multiplier on MaxSCL. B.11: use both actual-peak factors or neither.
+    m.mastering_grid=(struct ambient_hdrplus_grid){.rows=2,.cols=2,.values={{6,6},{6,6}}};
+    assert(fabsf(ambient_hdrplus_normalization_nits(&m,&m.windows[0])-4000.f)<0.001f);
+    float sm,tm;
+    assert(ambient_hdrplus_saturation_scales(&m,&m.windows[0],4000.f,203.f,&sm,&tm));
+    assert(fabsf(sm-400.f)<0.001f&&fabsf(tm-650.f)<0.001f);
+    m.mastering_grid=(struct ambient_hdrplus_grid){0};
+    assert(ambient_hdrplus_saturation_scales(&m,&m.windows[0],4000.f,203.f,&sm,&tm));
+    assert(sm==4000.f&&tm==203.f);
+    assert(fabsf(ambient_hdrplus_normalization_nits(&m,&m.windows[0])-1000.f)<0.001f);
     m.windows[0].fraction=0.f;
     assert(ambient_hdrplus_grid_factor(&m.targeted_grid,&m.windows[0],&factor)&&factor==1.f);
     m.targeted_grid=(struct ambient_hdrplus_grid){0};m.windows[0].saturation_mapping=true;
