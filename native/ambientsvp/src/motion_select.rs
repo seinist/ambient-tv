@@ -36,8 +36,8 @@ pub struct ScoredCandidate {
     pub dx: i32,
     pub dy: i32,
     pub metric: u32,
-    /// Index of the raw-SAD cost entry for this exact luma sample.
-    /// Ignored when the stage has no SAD-gated SATD.
+    /// Index of the cost record containing raw luma SAD (fourth word).
+    /// Usually equal to metric; ignored without SAD-gated SATD.
     pub raw: u32,
 }
 
@@ -69,15 +69,15 @@ fn valid(search:&Search,candidates:&[ScoredCandidate],cost_count:usize)->bool{
 /// Match the pinned upstream try_candidate_at ordering, not a min-reduction:
 /// SAD gating depends on the evolving winner, and ties retain that winner.
 /// The caller has already generated valid candidates in the correct order.
-pub fn reference(search:&Search,candidates:&[ScoredCandidate],costs:&[Cost])->Option<Choice>{
-    if !valid(search,candidates,costs.len()){return None;}
+pub fn reference(search:&Search,candidates:&[ScoredCandidate],costs:&[Cost],raw_luma:&[u32])->Option<Choice>{
+    if raw_luma.len()!=costs.len() || !valid(search,candidates,costs.len()){return None;}
     let mut best=search.initial;
     for i in search.start..search.start+search.count {
         let c=candidates[i as usize];
         let mut cost=motion_component(c.dx,c.dy,search);
         if cost>=best.cost{continue;}
         let raw=if search.sad_gate && best.raw_sad>=0{
-            let raw=i32::try_from(costs[c.raw as usize].y).ok()?;
+            let raw=i32::try_from(raw_luma[c.raw as usize]).ok()?;
             if raw.wrapping_mul(4)>best.raw_sad.wrapping_mul(5){continue;}
             raw
         }else{-1};
@@ -205,7 +205,7 @@ fn select_block(@builtin(global_invocation_id) id:vec3u){
         if cost>=best.w{continue;}
         var raw=-1;
         if gated && raw_best>=0 {
-            raw=i32(costs[u32(c.w)].x);
+            raw=i32(costs[u32(c.w)].w);
             if mul(raw,4)>mul(raw_best,5){continue;}
         }
         let m=costs[u32(c.z)];
@@ -244,6 +244,7 @@ mod tests{
     #[test]
     fn ordered_selection_preserves_ties_and_sad_gate(){
         let costs=[Cost{y:50,u:0,v:0},Cost{y:20,u:0,v:0},Cost{y:10,u:0,v:0},Cost{y:200,u:0,v:0},Cost{y:50,u:0,v:0}];
+        let raw_luma=costs.map(|c|c.y);
         let candidates=[
             ScoredCandidate{dx:1,dy:0,metric:0,raw:4},
             ScoredCandidate{dx:2,dy:0,metric:2,raw:3}, // rejected by evolving raw gate
@@ -251,10 +252,10 @@ mod tests{
             ScoredCandidate{dx:4,dy:0,metric:1,raw:4},
         ];
         let s=Search{start:0,count:4,predictor:[0,0],lambda:0,pnew:0,chroma:false,sad_gate:true,initial:initial()};
-        let result=reference(&s,&candidates,&costs).unwrap();
+        let result=reference(&s,&candidates,&costs,&raw_luma).unwrap();
         assert_eq!(result,Choice{dx:4,dy:0,sad:20,cost:20,raw_sad:50,winner:3});
-        assert_eq!(reference(&Search{count:3,..s},&candidates,&costs).unwrap().winner,0);
-        assert!(reference(&Search{count:5,..s},&candidates,&costs).is_none());
+        assert_eq!(reference(&Search{count:3,..s},&candidates,&costs,&raw_luma).unwrap().winner,0);
+        assert!(reference(&Search{count:5,..s},&candidates,&costs,&raw_luma).is_none());
     }
     #[test]
     #[ignore="requires a Vulkan adapter, including software Vulkan"]
@@ -268,7 +269,8 @@ mod tests{
             memory_hints:wgpu::MemoryHints::MemoryUsage,
         },None)).unwrap();
         device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let bytes:Vec<u8>=costs.iter().flat_map(|c|[c.y,c.u,c.v,c.y+c.u+c.v].into_iter().flat_map(u32::to_le_bytes)).collect();
+        let raw_luma:Vec<u32>=costs.iter().enumerate().map(|(i,c)|c.y+(i as u32%13)).collect();
+        let bytes:Vec<u8>=costs.iter().zip(&raw_luma).flat_map(|(c,raw)|[c.y,c.u,c.v,*raw].into_iter().flat_map(u32::to_le_bytes)).collect();
         let metrics=device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
             label:None,contents:&bytes,usage:wgpu::BufferUsages::STORAGE,
         });
@@ -278,7 +280,7 @@ mod tests{
         let choices=read_choices(&device,&queue,encoder,&output);
         assert!(pollster::block_on(device.pop_error_scope()).is_none());
         for (search,actual) in searches.iter().zip(choices){
-            assert_eq!(actual,reference(search,&candidates,&costs).unwrap(),"{search:?}");
+            assert_eq!(actual,reference(search,&candidates,&costs,&raw_luma).unwrap(),"{search:?}");
         }
     }
 
@@ -346,11 +348,7 @@ mod tests{
                                     let c=Candidate{x:8,y:8,dx,dy,width:8,height:8,reverse,satd};
                                     let index=metrics.len() as u32;
                                     metrics.push(c);
-                                    let raw=if satd{
-                                        metrics.push(Candidate{satd:false,..c});
-                                        index+1
-                                    }else{index};
-                                    candidates.push(ScoredCandidate{dx,dy,metric:index,raw});
+                                    candidates.push(ScoredCandidate{dx,dy,metric:index,raw:index});
                                 }
                             }
                             searches.push(Search{start,count:49,predictor:[1,-1],lambda:100,pnew:50,chroma,
@@ -359,6 +357,7 @@ mod tests{
                     }
                 }
                 let expected:Vec<_>=metrics.iter().map(|&c|reference_super_cost(&al,&bl,c).unwrap()).collect();
+                let raw_luma:Vec<_>=metrics.iter().map(|&c|reference_super_cost(&al,&bl,Candidate{satd:false,..c}).unwrap().y).collect();
                 let mut encoder=device.create_command_encoder(&Default::default());
                 let at=al.upload(&device,&mut encoder).unwrap();
                 let bt=bl.upload(&device,&mut encoder).unwrap();
@@ -368,7 +367,7 @@ mod tests{
                 // readback, or queue wait between the two compute stages.
                 let actual=read_choices(&device,&queue,encoder,&selected);
                 for (s,choice) in searches.iter().zip(actual){
-                    assert_eq!(choice,reference(s,&candidates,&expected).unwrap(),"pel={pel} level={level}");
+                    assert_eq!(choice,reference(s,&candidates,&expected,&raw_luma).unwrap(),"pel={pel} level={level}");
                 }
             }
         }
