@@ -86,9 +86,11 @@ static inline int ambient_fel_decoder_receive(struct ambient_fel_decoder *s)
             av_frame_free(&f);
             return ret==AVERROR(EAGAIN)||ret==AVERROR_EOF?0:ret;
         }
-        // Right/bottom padding does not shift the EL sample phase. A
-        // nonzero left/top crop is ambiguous without original BL phase.
-        if(f->crop_left||f->crop_top||av_frame_apply_cropping(f,0)<0){
+        // Keep the original conformance window until snapshot transfer.
+        // 4:2:0 origins must be even; invalid or empty crops are rejected.
+        if(f->width<=0||f->height<=0||(f->crop_left&1u)||(f->crop_top&1u)||
+           f->crop_left>=(size_t)f->width||f->crop_right>=(size_t)f->width-f->crop_left||
+           f->crop_top>=(size_t)f->height||f->crop_bottom>=(size_t)f->height-f->crop_top){
             av_frame_free(&f);return AVERROR_INVALIDDATA;
         }
         // Only software 10-bit 4:2:0 raw codewords, no range expansion.
