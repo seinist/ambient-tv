@@ -1,8 +1,61 @@
 #include "conversion_key.h"
+#include "rgb_target.h"
 #include <cassert>
 using namespace ambient::vlc_ahb;
 
+namespace {
+int image_creates;
+VkImageFormatProperties image_limits{};
+VkResult format_result = VK_SUCCESS;
+VKAPI_ATTR void VKAPI_CALL format_properties(VkPhysicalDevice, VkFormat, VkFormatProperties *out) {
+    out->optimalTilingFeatures = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+}
+VKAPI_ATTR VkResult VKAPI_CALL image_format_properties(VkPhysicalDevice, VkFormat, VkImageType type,
+    VkImageTiling tiling, VkImageUsageFlags usage, VkImageCreateFlags flags, VkImageFormatProperties *out) {
+    assert(type == VK_IMAGE_TYPE_2D && tiling == VK_IMAGE_TILING_OPTIMAL && usage == RgbTarget::usage && flags == 0);
+    *out = image_limits;
+    return format_result;
+}
+VKAPI_ATTR void VKAPI_CALL memory_properties(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties *) {}
+VKAPI_ATTR VkResult VKAPI_CALL create_image(VkDevice, const VkImageCreateInfo *, const VkAllocationCallbacks *, VkImage *) {
+    ++image_creates;
+    return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+}
+VKAPI_ATTR void VKAPI_CALL destroy_image(VkDevice, VkImage, const VkAllocationCallbacks *) {}
+VKAPI_ATTR void VKAPI_CALL memory_requirements(VkDevice, VkImage, VkMemoryRequirements *) {}
+VKAPI_ATTR VkResult VKAPI_CALL allocate_memory(VkDevice, const VkMemoryAllocateInfo *, const VkAllocationCallbacks *, VkDeviceMemory *) {
+    assert(false); return VK_ERROR_INITIALIZATION_FAILED;
+}
+VKAPI_ATTR void VKAPI_CALL free_memory(VkDevice, VkDeviceMemory, const VkAllocationCallbacks *) {}
+VKAPI_ATTR VkResult VKAPI_CALL bind_image(VkDevice, VkImage, VkDeviceMemory, VkDeviceSize) {
+    assert(false); return VK_ERROR_INITIALIZATION_FAILED;
+}
+VKAPI_ATTR VkResult VKAPI_CALL create_view(VkDevice, const VkImageViewCreateInfo *, const VkAllocationCallbacks *, VkImageView *) {
+    assert(false); return VK_ERROR_INITIALIZATION_FAILED;
+}
+VKAPI_ATTR void VKAPI_CALL destroy_view(VkDevice, VkImageView, const VkAllocationCallbacks *) {}
+void test_target_extent() {
+    TargetDispatch d{format_properties,memory_properties,create_image,destroy_image,memory_requirements,
+        allocate_memory,free_memory,bind_image,create_view,destroy_view,image_format_properties};
+    RgbTarget target(reinterpret_cast<VkPhysicalDevice>(1),reinterpret_cast<VkDevice>(1),d);
+    image_limits.maxExtent = {3840,2160,1};
+    image_limits.maxMipLevels = image_limits.maxArrayLayers = 1;
+    image_limits.sampleCounts = VK_SAMPLE_COUNT_1_BIT;
+    assert(target.ensure(3841,2160,VK_FORMAT_R16G16B16A16_UNORM) == VK_ERROR_FORMAT_NOT_SUPPORTED);
+    assert(target.ensure(3840,2161,VK_FORMAT_R16G16B16A16_UNORM) == VK_ERROR_FORMAT_NOT_SUPPORTED);
+    image_limits.sampleCounts = VK_SAMPLE_COUNT_4_BIT;
+    assert(target.ensure(3840,2160,VK_FORMAT_R16G16B16A16_UNORM) == VK_ERROR_FORMAT_NOT_SUPPORTED);
+    format_result = VK_ERROR_FORMAT_NOT_SUPPORTED;
+    assert(target.ensure(1920,1080,VK_FORMAT_R16G16B16A16_UNORM) == VK_ERROR_FORMAT_NOT_SUPPORTED);
+    assert(image_creates == 0);
+    format_result = VK_SUCCESS;
+    image_limits.sampleCounts = VK_SAMPLE_COUNT_1_BIT;
+    assert(target.ensure(3840,2160,VK_FORMAT_R16G16B16A16_UNORM) == VK_ERROR_OUT_OF_DEVICE_MEMORY);
+    assert(image_creates == 1);
+}
+}
 int main() {
+    test_target_extent();
     VkAndroidHardwareBufferFormatPropertiesANDROID a{};
     a.sType = VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_FORMAT_PROPERTIES_ANDROID;
     a.format = VK_FORMAT_UNDEFINED;
