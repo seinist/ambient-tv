@@ -54,19 +54,28 @@ static inline bool ambient_fel_hvce_prefix(const uint8_t *p,size_t n,unsigned le
 /* Validate all NAL lengths and detect both a wrapped enhancement layer
  * and random access in the BL. No Annex B guessing or timestamp guessing. */
 static inline bool ambient_fel_mp4_sample(const uint8_t *p,size_t n,unsigned length,
-    bool *has_el,bool *random_access)
+    bool *has_el,bool *random_access,size_t *el_offset)
 {
-    if(!p||!n||!has_el||!random_access||(length!=1&&length!=2&&length!=4))return false;
-    bool el=false,irap=false;
+    if(!p||!n||!has_el||!random_access||!el_offset||(length!=1&&length!=2&&length!=4))return false;
+    bool el=false,irap=false,bl_vcl=false;
+    size_t first_el=0;
     for(size_t off=0;off<n;){
+        size_t start=off;
         if(n-off<length)return false;
         uint32_t len=0;
         for(unsigned i=0;i<length;i++)len=(len<<8)|p[off++];
         if(len<2||len>n-off||(p[off]&0x80)||!(p[off+1]&7))return false;
         unsigned type=(p[off]>>1)&63;
-        if(type==63){if(len<5)return false;el=true;}
+        if(type<=31&&!(p[off]&1)&&!(p[off+1]>>3))bl_vcl=true;
+        if(type==63){
+            // VLC treats type 63 as AU tail; injecting before BL VCL
+            // would cause its packetizer to discard the config as orphan data.
+            if(len<5||!bl_vcl)return false;
+            if(!el)first_el=start;
+            el=true;
+        }
         if(type>=16&&type<=23&&!(p[off]&1)&&!(p[off+1]>>3))irap=true;
         off+=len;
     }
-    *has_el=el;*random_access=irap;return true;
+    *has_el=el;*random_access=irap;*el_offset=first_el;return true;
 }
