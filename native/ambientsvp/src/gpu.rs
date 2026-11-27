@@ -83,6 +83,7 @@ pub struct Gpu {
     #[cfg(test)]
     pub(super) cross_pair_submissions: u64,
     compact_fields: bool,
+    motion_search: Option<crate::motion_search::MotionSearch>,
     sources: BTreeMap<i32, Source>,
     recycled_sources: Vec<Source>,
     empty_prepass: wgpu::BindGroup,
@@ -294,6 +295,7 @@ impl Gpu {
             #[cfg(test)]
             cross_pair_submissions: 0,
             compact_fields,
+            motion_search: None,
             sources: BTreeMap::new(),
             recycled_sources: Vec::new(),
             empty_prepass,
@@ -412,6 +414,23 @@ impl Gpu {
     /// frame and motion vectors. Queue ordering makes the texture ready for
     /// any later synthesis without waiting on the CPU. Do not speculatively
     /// allocate an unbounded queue or add submissions for small frames.
+    // Only the explicit native experimental benchmark enables this path.
+    // The pinned CPU analyser remains the normal playback backend.
+    pub(super) fn experimental_motion(&mut self,builder:&svpflow1_vs::SuperBuilder,
+            current:&svpflow1_vs::SuperFrame,next:&svpflow1_vs::SuperFrame,
+            header:&[i32])->Result<Vec<u8>,String>{
+        if !crate::motion_search::MotionSearch::supported(header){
+            return Err("unsupported experimental motion configuration".into());
+        }
+        self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let search=self.motion_search.get_or_insert_with(||crate::motion_search::MotionSearch::new(&self.device));
+        let result=search.analyse(&self.device,&self.queue,builder,current,next,header,Duration::from_millis(250));
+        if let Some(error)=pollster::block_on(self.device.pop_error_scope()){
+            return Err(error.to_string());
+        }
+        result
+    }
+
     pub fn stage_source(&mut self, n: i32, data: &[u8]) -> Result<(), String> {
         let pixels = u64::from(self.width) * u64::from(self.height);
         if pixels < 1280 * 720 || pixels > 1920 * 1080
