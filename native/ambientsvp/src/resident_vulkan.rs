@@ -342,6 +342,15 @@ impl VulkanPair{
                 c.device.cmd_pipeline_barrier(self.command,vk::PipelineStageFlags::COMPUTE_SHADER,
                     vk::PipelineStageFlags::COMPUTE_SHADER,vk::DependencyFlags::empty(),&[],&barrier,&[]);
             }
+            // Compact causal diagonals. Each workgroup handles one row
+            // and direction, rejecting cells outside the active diagonal.
+            // All winners remain in device-local fields.
+            for wave in 0..c.gw+2*(c.gh-1){
+                let mode=flags|(1<<28)|(wave<<16);
+                c.motion.dispatch(self.command,set,[c.width,c.height,c.gw,mode],c.gh,2);
+                c.device.cmd_pipeline_barrier(self.command,vk::PipelineStageFlags::COMPUTE_SHADER,
+                    vk::PipelineStageFlags::COMPUTE_SHADER,vk::DependencyFlags::empty(),&[],&barrier,&[]);
+            }
         }
     }
     unsafe fn render(&mut self,phase:f32,matrix:u32,output:vk::ImageView)->Result<()>{
