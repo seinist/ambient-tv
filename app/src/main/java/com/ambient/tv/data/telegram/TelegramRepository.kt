@@ -793,6 +793,28 @@ class TelegramRepository @Inject constructor(
     /** Of those six, the page prefetch may hold two: the cards being drawn always get the rest. */
     private val prefetchPermits = kotlinx.coroutines.sync.Semaphore(
         if (appContext.getSystemService(android.app.ActivityManager::class.java)?.isLowRamDevice == true) 1 else 2)
+    private val constrainedPrefetchPermit = kotlinx.coroutines.sync.Semaphore(1)
+    private val thumbnailConnectivity by lazy {
+        appContext.getSystemService(android.net.ConnectivityManager::class.java)
+    }
+    private data class PrefetchNetwork(val at: Long, val lanes: Int)
+    @Volatile private var prefetchNetwork: PrefetchNetwork? = null
+
+    /** Avoid repeated connectivity IPC during a scroll burst. Never constrain demand reads. */
+    private fun prefetchNetworkLanes(): Int {
+        val now = android.os.SystemClock.elapsedRealtime()
+        prefetchNetwork?.takeIf { now - it.at < 1_000L }?.let { return it.lanes }
+        val lanes = runCatching {
+            val manager = thumbnailConnectivity ?: return@runCatching 1
+            val network = manager.activeNetwork ?: return@runCatching 0
+            val capabilities = manager.getNetworkCapabilities(network)
+            monogramPrefetchNetworkLanes(
+                online = true, metered = manager.isActiveNetworkMetered,
+                downstreamKbps = capabilities?.linkDownstreamBandwidthKbps ?: 0)
+        }.getOrDefault(1)
+        prefetchNetwork = PrefetchNetwork(now, lanes)
+        return lanes
+    }
 
     /** One download per card, shared by the prefetch and the card's own image request. */
     private class ThumbnailLoad(val deferred: kotlinx.coroutines.Deferred<String?>, var waiters: Int,
@@ -871,12 +893,14 @@ class TelegramRepository @Inject constructor(
         val generation = streamEpoch.get()
         val targets = refs.asSequence().distinctBy { it.chatId to it.messageId }
             .take(limit.coerceAtLeast(0)).toList()
-        // Two structured workers rather than one repository-lifetime coroutine per card.
-        // Cancelling the owning page releases speculative waiters; visible cards retain theirs.
-        kotlinx.coroutines.coroutineScope {
-            repeat(minOf(2, targets.size)) { lane ->
+        // A constrained or metered network has one speculative lane globally; offline
+        // does not start any native download. Visible artwork still has its own demand path.
+        val lanes = prefetchNetworkLanes()
+        if (lanes == 0 || targets.isEmpty()) return
+        suspend fun runWorkers() = kotlinx.coroutines.coroutineScope {
+            repeat(minOf(lanes, targets.size)) { lane ->
                 launch {
-                    for (index in lane until targets.size step 2) {
+                    for (index in lane until targets.size step lanes) {
                         val item = targets[index]
                         prefetchPermits.withPermit {
                             if (!sameAccount(selected, identity, generation)) return@launch
@@ -888,6 +912,7 @@ class TelegramRepository @Inject constructor(
                 }
             }
         }
+        if (lanes == 1) constrainedPrefetchPermit.withPermit { runWorkers() } else runWorkers()
     }
 
     private suspend fun loadThumbnailFile(

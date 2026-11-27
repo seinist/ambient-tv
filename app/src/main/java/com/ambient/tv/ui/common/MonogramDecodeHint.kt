@@ -6,6 +6,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.unit.IntSize
 import coil3.SingletonImageLoader
 import coil3.request.CachePolicy
+import coil3.request.bitmapConfig
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
 import coil3.size.Precision

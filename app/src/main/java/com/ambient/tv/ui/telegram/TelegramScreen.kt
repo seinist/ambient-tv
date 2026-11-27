@@ -396,12 +396,13 @@ fun TelegramScreen(
             obsolete.forEach { active.remove(it)?.cancel() }
             // Retain overlapping in-flight work and completed entries until they leave
             // the window. The repository's shared semaphore limits actual transfers.
+            val decodeCandidates = desired.keys.toList().takeLast(4).toSet()
             desired.forEach { (key, ref) ->
                 if (key !in active) active[key] = launch {
                     viewModel.prefetchViewport(sectionKey, listOf(ref))
                     // Warm only a few nearby non-avatar images, using the last measured card.
                     // The single decode slot is non-queuing and cache-only.
-                    if (ref.messageId != 0 && key in desired.keys.toList().takeLast(4))
+                    if (ref.messageId != 0 && key in decodeCandidates)
                         decodeHint.warm(ref)
                 }
             }

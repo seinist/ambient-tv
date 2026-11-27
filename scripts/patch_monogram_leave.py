@@ -59,9 +59,9 @@ MODIFICATIONS = {
     "vendor/mono-rs/crates/mono-proto-client/src/dispatch.rs":
         "added leave_chat and search_global_channels dispatch",
     "native/mtproto-rs/src/ffi.rs":
-        "added leave_chat, search_global_filtered and bounded in-memory media ranges; removed unused exports",
+        "added leave_chat, search_global_filtered and bounded in-memory media ranges and complete previews; removed unused exports",
     "vendor/mono-rs/crates/mono-proto-media/src/download.rs":
-        "added scoped bounded in-memory range output with existing session publication",
+        "added scoped bounded in-memory range and exact-size preview output with existing session publication",
     "vendor/mono-rs/crates/mono-proto-media/src/profile.rs":
         "bounded preview and playing request windows independently of full file downloads",
     "vendor/mono-rs/crates/mono-proto-client/src/media_download.rs":

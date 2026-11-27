@@ -1250,13 +1250,16 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             val dispatch = if (priority.foreground) DISPATCH_ORDINARY else DISPATCH_BACKGROUND
             try {
                 val bytes = mediaClass(dispatch) { AmbientMonogramJni.preview(h, chatId, messageId, stage.path) }
-                if (bytes.size !in 1..(1024 * 1024)) return stage
+                if (bytes.size !in 1..(1024 * 1024)) throw IllegalStateException("incomplete captured preview")
                 // The native sink has already validated exact size and session ownership.
                 // Write only once to the Kotlin-controlled atomic publication stage.
                 stage.writeBytes(bytes)
                 return stage.canonicalFile
             } catch (failure: Exception) {
-                if (failure.message?.contains("ambient preview requires file sink") != true) throw failure
+                val reason = failure.message.orEmpty()
+                if (!reason.contains("ambient preview requires file sink") &&
+                    !reason.contains("incomplete captured preview") &&
+                    !reason.contains("oversized captured media range")) throw failure
             }
             return File(mediaClass(dispatch) {
                 uniffi.monogram_mtproto.downloadMessageDisplay(h.toULong(), chatId, messageId, stage.path)
