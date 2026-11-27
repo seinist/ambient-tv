@@ -66,6 +66,7 @@ jobs:
           # Allow software Vulkan only in the Rust test build.
           export AMBIENTSVP_TEST_SOFTWARE_VULKAN=1
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::experimental_hierarchical_motion_reaches_streaming_synthesis -- --ignored --exact
+          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::known_translation_quality_compares_upstream_and_experimental -- --ignored --exact --nocapture
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::dual_output_matches_single_and_drops_prefetch_on_seek -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::adjacent_ready_source_pairs_match_serial_output -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::compact_motion_fields_match_float_fields -- --ignored --exact
