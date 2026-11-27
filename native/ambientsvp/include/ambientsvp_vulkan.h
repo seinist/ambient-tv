@@ -41,7 +41,7 @@ AmbientSvpVk *ambient_svp_vk_create(VkInstance,VkPhysicalDevice,VkDevice,
  * Both output RGBA16F (R16G16B16A16_SFLOAT) and allow BT2020 NCL.
  * No EOTF or tone mapping; encoded RGB and headroom are preserved.
  * Caller must preserve compatible transfer/primaries/static metadata.
- * Motion remains an 8-bit proxy. No dynamic HDR/Dolby metadata processing.
+ * Motion uses ten-bit luma SAD. No dynamic HDR/Dolby metadata processing.
  * The legacy picture struct and render call remain unchanged. */
 enum { AMBIENT_SVP_VK_FORMAT_SDR8=0, AMBIENT_SVP_VK_FORMAT_P010=1,
        AMBIENT_SVP_VK_FORMAT_I420_10=2 };
