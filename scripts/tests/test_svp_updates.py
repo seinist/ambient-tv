@@ -65,6 +65,20 @@ class SvpUpdateTest(unittest.TestCase):
     def test_existing_sources_are_consistent(self):
         svp.verify(self.crate, self.old)
 
+    def test_reference_smoother_pin_is_checked_in_dev_dependencies(self):
+        manifest = self.crate / "Cargo.toml"
+        original = manifest.read_text()
+        line = next(line for line in original.splitlines() if line.startswith("svpflow-wasm = "))
+        manifest.write_text(original.replace(line, line.replace(self.old, NEW)))
+        with self.assertRaisesRegex(RuntimeError, "svpflow-wasm pin mismatch"):
+            svp.verify(self.crate, self.old)
+        manifest.write_text(original.replace(line + "\n", ""))
+        with self.assertRaisesRegex(RuntimeError, "svpflow-wasm pin mismatch"):
+            svp.verify(self.crate, self.old)
+        manifest.write_text(original.replace("[dependencies]\n", "[dependencies]\n" + line + "\n"))
+        with self.assertRaisesRegex(RuntimeError, "svpflow-wasm pin mismatch"):
+            svp.verify(self.crate, self.old)
+
     def test_changed_shader_is_rejected(self):
         (self.crate / "shaders/smooth.wgsl").write_bytes(b"stale")
         with self.assertRaisesRegex(RuntimeError, "asset modified"):
