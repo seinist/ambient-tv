@@ -86,6 +86,7 @@ pub struct Gpu {
     output: wgpu::Buffer,
     readback: wgpu::Buffer,
     readback_next: Option<wgpu::Buffer>,
+    pending_next: Option<PendingReadback>,
     width: u32,
     height: u32,
     bytes: u64,
@@ -96,6 +97,7 @@ impl Gpu {
     pub(super) fn uses_compact_fields(&self) -> bool { self.compact_fields }
 
     pub fn clear_sources(&mut self) {
+        self.cancel_prefetch();
         self.recycled_sources.extend(std::mem::take(&mut self.sources).into_values());
         self.recycled_sources.truncate(2);
         self.plane_bindings = std::array::from_fn(|_| None);
@@ -117,7 +119,13 @@ impl Gpu {
         }))
         .ok_or("no Vulkan compute adapter")?;
         let info = adapter.get_info();
-        if info.device_type == wgpu::DeviceType::Cpu {
+        // A software adapter is permitted exclusively in the test build
+        // for deterministic correctness CI, never in the Android library.
+        #[cfg(test)]
+        let software_test = std::env::var("AMBIENTSVP_TEST_SOFTWARE_VULKAN").as_deref() == Ok("1");
+        #[cfg(not(test))]
+        let software_test = false;
+        if info.device_type == wgpu::DeviceType::Cpu && !software_test {
             return Err("software Vulkan adapter".into());
         }
         let cache_key = wgpu::util::pipeline_cache_key(&info)
@@ -281,6 +289,7 @@ impl Gpu {
             output,
             readback,
             readback_next: None,
+            pending_next: None,
             width,
             height,
             bytes,
@@ -503,6 +512,7 @@ impl Gpu {
         next: &[u8],
         output: &mut [u8],
     ) -> Result<(), String> {
+        self.cancel_prefetch();
         let pending = self.submit(job, current, next, self.readback.clone())?;
         self.finish(pending, output)
     }
@@ -511,6 +521,8 @@ impl Gpu {
     /// The second command reuses source/field/output resources only after the
     /// first copy-to-readback command; it has its own readback allocation.
     /// Both jobs are submitted before waiting for either mapped result.
+    /// The second mapping is consumed directly by the next receive call;
+    /// never stage its pixels in an extra CPU frame allocation.
     pub fn render_pair(
         &mut self,
         first: &GpuJob,
@@ -518,9 +530,9 @@ impl Gpu {
         current: &[u8],
         next: &[u8],
         output: &mut [u8],
-        output_next: &mut [u8],
     ) -> Result<(), String> {
         if first.n != second.n { return Err("different source pairs".into()); }
+        self.cancel_prefetch();
         let second_buffer = self.readback_next.get_or_insert_with(|| self.device.create_buffer(
             &wgpu::BufferDescriptor {
                 label: Some("SVP second in-flight readback"),
@@ -530,8 +542,23 @@ impl Gpu {
             })).clone();
         let pending = self.submit(first, current, next, self.readback.clone())?;
         let pending_next = self.submit(second, current, next, second_buffer)?;
-        self.finish(pending, output)?;
-        self.finish(pending_next, output_next)
+        self.pending_next = Some(pending_next);
+        self.finish(pending, output)
+    }
+
+    pub fn finish_prefetched(&mut self, output: &mut [u8]) -> Result<(), String> {
+        let pending = self.pending_next.take().ok_or("missing prefetched readback")?;
+        self.finish(pending, output)
+    }
+
+    pub fn cancel_prefetch(&mut self) {
+        if let Some(pending) = self.pending_next.take() {
+            // Cancel a pending or completed map and retire its buffer.
+            // Submitted commands retain their own references; the next
+            // prefetch gets a fresh allocation rather than a racing map.
+            pending.buffer.unmap();
+            self.readback_next = None;
+        }
     }
 
     fn submit(
