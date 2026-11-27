@@ -1,4 +1,5 @@
 #include "dovi_rpu_au.h"
+#include "dovi_fel_hvce.h"
 #include <assert.h>
 #include <stdlib.h>
 static unsigned freed;
@@ -36,6 +37,34 @@ int main(void) {
     size_t bad_size=sizeof(bad);
     assert(!ambient_fel_strip_el(bad,&bad_size));
     assert(bad_size==sizeof(bad)&&!memcmp(saved,bad,sizeof(bad)));
+    // hvcE uses an HEVC configuration record with complete VPS/SPS/PPS arrays.
+    uint8_t hvce[47]={0};
+    hvce[0]=1;hvce[21]=3;hvce[22]=3;
+    for(unsigned i=0;i<3;i++){
+        size_t off=23+8*i;
+        hvce[off]=0x80|(32+i);hvce[off+2]=1;hvce[off+4]=3;
+        hvce[off+5]=(32+i)<<1;hvce[off+6]=1;hvce[off+7]=0x80;
+    }
+    assert(ambient_fel_hvcc_length(hvce,sizeof(hvce))==4);
+    size_t config_size;
+    assert(ambient_fel_hvce_prefix(hvce,sizeof(hvce),4,NULL,0,&config_size));
+    assert(config_size==27);
+    uint8_t config[27];
+    assert(ambient_fel_hvce_prefix(hvce,sizeof(hvce),4,config,sizeof(config),&config_size));
+    for(unsigned i=0;i<3;i++){
+        assert(config[9*i+3]==5&&config[9*i+4]==0x7e&&config[9*i+5]==1);
+        assert(config[9*i+6]==((32+i)<<1));
+    }
+    for(size_t i=0;i<sizeof(hvce);i++)
+        assert(!ambient_fel_hvce_prefix(hvce,i,4,NULL,0,&config_size));
+    assert(!ambient_fel_hvce_prefix(hvce,sizeof(hvce),4,config,26,&config_size));
+    assert(ambient_fel_hvce_prefix(hvce,sizeof(hvce),2,NULL,0,&config_size)&&config_size==21);
+    uint8_t sample[]={0,0,0,3,0x26,1,0x80,0,0,0,5,0x7e,1,0x26,1,0x80};
+    bool has_el,irap;size_t el_offset;
+    assert(ambient_fel_mp4_sample(sample,sizeof(sample),4,&has_el,&irap,&el_offset));
+    assert(has_el&&irap&&el_offset==7);
+    assert(!ambient_fel_mp4_sample(sample+7,sizeof(sample)-7,4,&has_el,&irap,&el_offset));
+    assert(!ambient_fel_mp4_sample(sample,sizeof(sample)-1,4,&has_el,&irap,&el_offset));
     struct ambient_rpu_pts_queue q={0};
     int a=1,b=2,c=3;
     assert(ambient_rpu_pts_insert(&q,30,&a));
