@@ -19,6 +19,9 @@ done
 "${CXX:-clang++}" -std=c++17 -Wall -Wextra -Werror -Wno-missing-field-initializers \
     -fsanitize=address,undefined "$SRC/test_submission.cpp" -o "$TMP/test_submission"
 "$TMP/test_submission"
+"${CXX:-clang++}" -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
+    "$SRC/test_conversion_key.cpp" -o "$TMP/test_conversion_key"
+"$TMP/test_conversion_key"
 GLSLC="$NDK/shader-tools/$host/glslc"
 if [[ ! -x "$GLSLC" ]]; then GLSLC="$(command -v glslc || true)"; fi
 [[ -n "$GLSLC" && -x "$GLSLC" ]] || { echo "glslc unavailable" >&2; exit 1; }
