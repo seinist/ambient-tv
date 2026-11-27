@@ -57,6 +57,26 @@ static inline bool ambient_fel_sample_offset(struct ambient_fel_offset_cursor *c
     return true;
 }
 
+/* Convert raw timestamps between independent MP4 track timescales without
+ * rounding, overflow, or a compiler-dependent 128-bit integer type.
+ * A fractional destination tick means the samples cannot match exactly. */
+static inline bool ambient_fel_rescale_exact(int64_t value,uint32_t from,uint32_t to,
+    int64_t *result)
+{
+    if(!from||!to||!result)return false;
+    bool neg=value<0;
+    uint64_t magnitude=neg?(uint64_t)(-(value+1))+1:(uint64_t)value;
+    uint64_t whole=magnitude/from,rem=magnitude%from;
+    uint64_t fraction=rem*(uint64_t)to;
+    if(fraction%from)return false;
+    fraction/=from;
+    uint64_t limit=(uint64_t)INT64_MAX+(neg?1u:0u);
+    if(fraction>limit||whole>(limit-fraction)/to)return false;
+    uint64_t scaled=whole*to+fraction;
+    *result=neg?(scaled==limit?INT64_MIN:-(int64_t)scaled):(int64_t)scaled;
+    return true;
+}
+
 /* Exact decode/presentation timing in the common track timescale. Do
  * not compare rounded microseconds or silently substitute another sample. */
 static inline bool ambient_fel_fragment_timing(int64_t el_dts,int64_t el_cts,
