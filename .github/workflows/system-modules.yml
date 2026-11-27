@@ -6,6 +6,9 @@ on:
       - 'app/src/main/java/com/ambient/tv/modules/**'
       - 'app/src/main/assets/games/slang/**'
       - 'scripts/package_system_modules.py'
+      - 'scripts/check_modular_preview_apk.py'
+      - 'scripts/test_*system_modules.py'
+      - 'scripts/test_check_modular_preview_apk.py'
       - '.github/workflows/system-modules.yml'
   workflow_dispatch:
     inputs:
@@ -31,7 +34,9 @@ jobs:
       - name: Validate bundled shader sources
         run: python3 scripts/check_game_slang.py
       - name: Package format tests
-        run: python3 -m unittest discover -s scripts -p test_package_system_modules.py
+        run: |
+          python3 -m unittest discover -s scripts -p test_package_system_modules.py
+          python3 -m unittest discover -s scripts -p test_check_modular_preview_apk.py
       - name: Build reproducible module package
         run: |
           set -euo pipefail
