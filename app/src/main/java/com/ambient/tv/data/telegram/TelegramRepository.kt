@@ -192,12 +192,33 @@ class TelegramRepository @Inject constructor(
     // or on an ordinary no-Monogram build. Only enabled systems restore sessions.
     private val appContext = context.applicationContext
     private val backend: MonogramAuthClientPort? by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        if (!com.ambient.tv.modules.SystemModuleAvailability.monogramOffered) null
-        else runCatching {
-            val factory = Class.forName("com.ambient.tv.data.telegram.MonogramNativeBackend")
-            factory.getConstructor(Context::class.java, TokenStore::class.java)
-                .newInstance(appContext, tokenStore) as MonogramAuthClientPort
-        }.getOrNull()
+        if (!BuildConfig.MONOGRAM_NATIVE) null
+        else {
+            var external = false
+            val result = runCatching {
+                val module = com.ambient.tv.modules.SystemModuleHost.loadSelected(com.ambient.tv.modules.SystemModule.MONOGRAM)
+                external = module != null
+                if (module != null) {
+                    val library = java.io.File(checkNotNull(module.nativeDirectory), "libmonogram_mtproto.so")
+                    check(library.isFile)
+                    // Both generated UniFFI/JNA and the patched JNI verifier use this exact file.
+                    System.setProperty("uniffi.component.monogram_mtproto.libraryOverride", library.absolutePath)
+                } else {
+                    if (!com.ambient.tv.modules.SystemModuleAvailability.bundled(com.ambient.tv.modules.SystemModule.MONOGRAM))
+                        return@runCatching null
+                    System.clearProperty("uniffi.component.monogram_mtproto.libraryOverride")
+                }
+                val factory = Class.forName("com.ambient.tv.data.telegram.MonogramNativeBackend")
+                factory.getConstructor(Context::class.java, TokenStore::class.java)
+                    .newInstance(appContext, tokenStore) as MonogramAuthClientPort
+            }.onFailure { timber.log.Timber.w("Monogram runtime initialization failed: %s", it.javaClass.simpleName) }.getOrNull()
+            if (result != null && mutableLogin.value.step == MonogramLoginStep.UNAVAILABLE)
+                mutableLogin.value = MonogramLoginState(MonogramLoginStep.READY)
+            com.ambient.tv.modules.SystemModuleAvailability.reportProbe(
+                com.ambient.tv.modules.SystemModule.MONOGRAM, external, result != null,
+            )
+            result
+        }
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutableLogin = MutableStateFlow(MonogramLoginState(
@@ -1220,8 +1241,12 @@ class TelegramRepository @Inject constructor(
     // Last in the class: the IO coroutine may reach disconnect()/installAuthorized() at once,
     // and those use properties that must already be initialized by the constructor.
     init {
-        if (nativeAvailable && preferences.telegramEnabled) {
-            scope.launch { restoreIfNeeded() }
+        if (BuildConfig.MONOGRAM_NATIVE) {
+            scope.launch {
+                // A verified backend is required even for the first sign-in UI.
+                // Initialization does not make an MTProto request.
+                if (obtainBackend() != null && preferences.telegramEnabled) restoreIfNeeded()
+            }
         }
     }
 }
