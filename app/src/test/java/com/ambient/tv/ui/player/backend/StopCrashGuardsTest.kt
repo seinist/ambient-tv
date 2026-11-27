@@ -33,13 +33,30 @@ class StopCrashGuardsTest {
             "fun cycleAudioTrack(", "fun cycleSubtitleTrack(", "fun preferredAudioTrack(",
             "override fun restoreAfterRendererSwitch(", "private fun mediaTrackLanguages(",
             "private fun refreshSelectedAudioCodec(").forEach {
-            assertTrue("$it lacks a released guard", body(it).contains("if (released) return"))
+            assertTrue("$it lacks a released guard", body(it).contains("if (released") || body(it).contains("if (nativeCommandsBlocked()) return"))
         }
-        assertTrue(body("fun currentVideoTrackId(").contains("if (released) -1"))
+        assertTrue(body("fun currentVideoTrackId(").contains("if (nativeCommandsBlocked()) -1"))
         assertTrue(body("fun isPlayingNow(").contains("!released"))
         assertTrue(vlc.contains("VlcPlaybackSnapshot(isPlaying = controller.isPlayingNow()"))
         // The player is only replaced inside the controller.
         assertTrue(Regex("""var player = MediaPlayer\(libVlc\)\s+private set""").containsMatchIn(vlc))
+    }
+
+    @Test fun vlcFallbackGuardsCoverAllNativeOwnershipTransitions() {
+        val vlc = source("ui/player/backend/VlcPlaybackView.kt")
+        val guard = vlc.substringAfter("private fun nativeCommandsBlocked(): Boolean =").substringBefore("private val previousAudioRelease")
+        listOf("released", "restartStopFailed", "vulkanFallbackPosted", "restartStop != null", "dvRetirementPending").forEach {
+            assertTrue("missing ownership guard: $it", guard.contains(it))
+        }
+        val playing = vlc.substringAfter("MediaPlayer.Event.Playing -> {").substringBefore("private fun fourCc")
+        val codec = playing.indexOf("refreshSelectedAudioCodec()")
+        val recheck = playing.indexOf("if (nativeCommandsBlocked() || player !== eventPlayer)", codec)
+        val restore = playing.indexOf("pendingImageTrackSelection?.let", codec)
+        assertTrue(codec >= 0 && recheck > codec && restore > recheck)
+        val attach = vlc.substringAfter("fun attach(view: SurfaceView) {").substringBefore("private fun consumePendingAttachView")
+        assertTrue(attach.contains("if (attachedView === view) {"))
+        assertTrue(attach.indexOf("pendingAttachView = null") < attach.indexOf("pendingAttachView = view"))
+        assertTrue(attach.contains("if (vulkanFallbackPosted || restartStop != null || dvRetirementPending) return"))
     }
 
     // 4 VLC: LibVLC outlives retiring DV-surface players ----------------------------------------

@@ -911,7 +911,12 @@ class VlcPlaybackController(
     fun attach(view: SurfaceView) {
         if (audioOnly && !audioVisualizationEnabled) return
         if (released || restartStopFailed) return
-        if (attachedView === view || pendingAttachView === view) return
+        // A request to keep the current surface supersedes a queued replacement.
+        if (attachedView === view) {
+            pendingAttachView = null
+            return
+        }
+        if (pendingAttachView === view) return
         pendingAttachView = view
         if (vulkanFallbackPosted || restartStop != null || dvRetirementPending) return
         if (hdrOutput.deferUntilStopped(replacementView = view) {
@@ -1915,6 +1920,7 @@ class VlcPlaybackController(
     }
 
     fun videoAspectRatio(): Float? = runCatching {
+        if (nativeCommandsBlocked()) return@runCatching null
         val track = trackAccess.currentVideoTrack ?: return@runCatching null
         val sampleAspect = if (track.sarNum > 0 && track.sarDen > 0) {
             track.sarNum.toFloat() / track.sarDen
@@ -1924,12 +1930,13 @@ class VlcPlaybackController(
     }.getOrNull()
 
     fun sourceDimensions(): Pair<Int, Int>? = runCatching {
+        if (nativeCommandsBlocked()) return@runCatching null
         val track = trackAccess.currentVideoTrack ?: return@runCatching null
         if (track.width > 0 && track.height > 0) track.width to track.height else null
     }.getOrNull()
 
     fun preferredAudioTrack(language: String?): Pair<Int, String>? {
-        if (released) return null
+        if (nativeCommandsBlocked()) return null
         val metadata = trackAccess.mediaTracks(org.videolan.libvlc.interfaces.IMedia.Track.Type.Audio).associateBy { it.id }
         return com.ambient.tv.ui.player.choosePreferredAudioTrack(
             audioTracks().filter { it.first >= 0 }, language, audioSession.settings.tracks,
@@ -1940,13 +1947,13 @@ class VlcPlaybackController(
     }
 
     override fun chapters(): List<com.ambient.tv.domain.model.VideoChapter> =
-        if (released) emptyList() else player.getChapters(player.title.coerceAtLeast(0))?.map { chapter ->
+        if (nativeCommandsBlocked()) emptyList() else player.getChapters(player.title.coerceAtLeast(0))?.map { chapter ->
             com.ambient.tv.domain.model.VideoChapter(chapter.timeOffset, chapter.name,
                 endMs = (chapter.timeOffset + chapter.duration).takeIf { chapter.duration > 0 })
         }.orEmpty()
 
     fun audioTracks(): List<Pair<Int, String>> =
-        if (released) emptyList() else {
+        if (nativeCommandsBlocked()) emptyList() else {
             val metadata = trackAccess.mediaTracks(0).associateBy { it.id }
             trackAccess.getAudioTracks().map { track ->
                 val info = metadata[track.id] ?: track
@@ -1956,21 +1963,22 @@ class VlcPlaybackController(
         }
 
     fun subtitleTracks(): List<Pair<Int, String>> =
-        if (released) emptyList() else trackAccess.getSpuTracks().map { it.id to (it.name ?: context.getString(com.ambient.tv.R.string.vlc_subtitle_track_fallback, it.id)) }
+        if (nativeCommandsBlocked()) emptyList() else trackAccess.getSpuTracks().map { it.id to (it.name ?: context.getString(com.ambient.tv.R.string.vlc_subtitle_track_fallback, it.id)) }
 
     fun videoTracks(): List<Pair<Int, String>> = runCatching {
+        if (nativeCommandsBlocked()) return@runCatching emptyList()
         // TrackDescription exposes public fields, not getId()/getName() methods.
         trackAccess.getVideoTracks().map { it.id to (it.name ?: context.getString(R.string.vlc_video_track_fallback, it.id)) }
     }.getOrDefault(emptyList())
 
-    fun currentVideoTrackId(): Int = if (released) -1 else trackAccess.videoTrack
+    fun currentVideoTrackId(): Int = if (nativeCommandsBlocked()) -1 else trackAccess.videoTrack
     fun selectVideoTrack(id: Int) {
-        if (released) return
+        if (nativeCommandsBlocked()) return
         userVideoDisabled = id < 0
         trackAccess.setVideoTrack(id)
     }
 
-    fun currentAudioTrackId(): Int = if (released) -1 else trackAccess.audioTrack
+    fun currentAudioTrackId(): Int = if (nativeCommandsBlocked()) pendingImageTrackSelection?.first ?: -1 else trackAccess.audioTrack
     private val externalSubtitleRequests = mutableSetOf<String>()
     private var pendingExternalSubtitle: com.ambient.tv.domain.model.MediaTrack? = null
     private var manualExternalSubtitleUrl: String? = null
@@ -2047,11 +2055,11 @@ class VlcPlaybackController(
         ?: com.ambient.tv.ui.player.PlaybackLanguagePolicy.inferLanguageFromLabel(audioTracks().firstOrNull { it.first == currentAudioTrackId() }?.second)
 
     private fun mediaTrackLanguages(type: Int): Map<Int, String?> {
-        if (released) return emptyMap()
+        if (nativeCommandsBlocked()) return emptyMap()
         return trackAccess.mediaTracks(type).associate { it.id to it.language }
     }
 
-    fun currentSubtitleTrackId(): Int = if (released) -1 else trackAccess.spuTrack
+    fun currentSubtitleTrackId(): Int = if (nativeCommandsBlocked()) pendingImageTrackSelection?.second ?: -1 else trackAccess.spuTrack
     fun currentScalingFilter(): String = imageOptions.scaler
     /** Filters, deinterlace, and SVP actually passed to the current LibVLC instance. */
     internal fun appliedVideoProcessing(): com.ambient.tv.ui.player.AppliedVideoProcessing =
@@ -2086,13 +2094,14 @@ class VlcPlaybackController(
         }, 100L)
     }
     fun selectSubtitleTrack(id: Int?) {
-        if (released) return
+        if (nativeCommandsBlocked()) return
         manualExternalSubtitleUrl = null
         trackAccess.setSpuTrack(id ?: -1)
     }
 
     /** Actual playback rate, so the panel follows renderer restores and bitstream resets. */
-    fun currentSpeed(): Float = if (released) 1f else runCatching { player.rate }.getOrDefault(1f)
+    fun currentSpeed(): Float = if (nativeCommandsBlocked()) pendingImageTrackSelection?.third ?: 1f
+        else runCatching { player.rate }.getOrDefault(1f)
 
     /** Expected output cadence before speed, based on this LibVLC instance's configuration. */
     fun targetVideoFps(sourceFps: Double?): Double? {
@@ -2105,11 +2114,11 @@ class VlcPlaybackController(
     }
 
     fun setSpeed(speed: Float) {
-        if (!released) player.setRate(if (bitstreamPermitted) 1f else speed)
+        if (!nativeCommandsBlocked()) player.setRate(if (bitstreamPermitted) 1f else speed)
     }
 
     fun cycleAudioTrack(): String? {
-        if (released) return null
+        if (nativeCommandsBlocked()) return null
         val tracks = trackAccess.getAudioTracks()
         if (tracks.isEmpty()) return null
         val current = trackAccess.audioTrack
@@ -2120,7 +2129,7 @@ class VlcPlaybackController(
     }
 
     fun cycleSubtitleTrack(): String? {
-        if (released) return null
+        if (nativeCommandsBlocked()) return null
         BackgroundPlaybackSession.manualSubtitleSelection()
         val tracks = trackAccess.getSpuTracks()
         if (tracks.isEmpty()) {
