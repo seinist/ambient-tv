@@ -1,5 +1,6 @@
 """Plan incremental signed core releases against verified publication history."""
 import argparse
+import ast
 import hashlib
 import json
 from pathlib import Path
@@ -21,18 +22,84 @@ def key(entry):
     return entry["core"], entry["abi"]
 
 
+def syntax(path):
+    return ast.parse(path.read_text()).body
+
+
+def semantic(nodes):
+    return digest(ast.dump(ast.Module(body=nodes, type_ignores=[]), include_attributes=False).encode())
+
+
+def named(node):
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return node.name
+    if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+        return node.targets[0].id
+    return None
+
+
+def policy_fingerprint(job, root):
+    nodes = syntax(root / "scripts/core_build_policy.py")
+    # Planner output is already included as the complete selected job.
+    # Shared verification and dispatch code remains a conservative dependency.
+    isolated = {"prepare_mupen_offsets", "prepare_snes_threading", "prepare_cmake"}
+    omitted = isolated | {"plan", "selection", "PROFILES"}
+    common = [n for n in nodes if named(n) not in omitted]
+    selected = set()
+    profile, core = job["profile"], job["core"]
+    if job["build"] == "cmake":
+        selected.add("prepare_cmake")
+    if core == "mupen64plus_next_gles3" and "-flto=thin" in job["cflags"].split():
+        selected.add("prepare_mupen_offsets")
+    if core == "snes9x2010" and profile in {"snes9x2010-threaded", "optimized", "optimized-a57"}:
+        selected.add("prepare_snes_threading")
+    helpers = [n for n in nodes if named(n) in selected]
+    if {named(n) for n in helpers} != selected:
+        raise ValueError("Missing selected core recipe in fingerprint")
+    return semantic(common + helpers)
+
+
+def hotpath_fingerprint(core, root):
+    primary = syntax(root / "scripts/core_hotpath_patches.py")
+    remaining = syntax(root / "scripts/core_hotpath_remaining.py")
+    tables = [n for n in remaining if named(n) == "PATCHES"]
+    if len(tables) != 1 or not isinstance(tables[0].value, ast.Dict):
+        raise ValueError("Unexpected core patch table")
+    table = tables[0].value
+    entries = {ast.literal_eval(k): v for k, v in zip(table.keys, table.values)}
+    # Common patch execution is shared; only the selected entry's source
+    # replacement data is hashed, never the entire unrelated PATCHES table.
+    common = [n for n in primary if named(n) in {"replace_once", "prepare_hotpaths"} or isinstance(n, (ast.Import, ast.ImportFrom))]
+    if core in entries:
+        return digest(json.dumps({"dispatch": semantic(common),
+                                  "executor": semantic([n for n in remaining if named(n) != "PATCHES"]),
+                                  "patch": ast.dump(entries[core], include_attributes=False)}, sort_keys=True).encode())
+    prefixes = {"bsnes": ("BSNES_", "prepare_bsnes"), "mesen": ("MESEN_",),
+                "sameboy": ("SAMEBOY_",), "mednafen_pce_fast": ("PCE_",),
+                "mednafen_supergrafx": ("SGX_",),
+                "mednafen_ngp": ("FIXED_", "NGP_", "prepare_fixed_states"),
+                "mednafen_wswan": ("FIXED_", "prepare_fixed_states"),
+                "mednafen_vb": ("FIXED_", "prepare_fixed_states"),
+                "mednafen_lynx": ("FIXED_", "prepare_fixed_states")}
+    if core in prefixes:
+        return semantic(common + [n for n in primary if named(n) and named(n).startswith(prefixes[core])])
+    # No current patch (e.g. PicoDrive): keep conservative evidence for the
+    # dispatch so a newly added recipe cannot silently reuse the old binary.
+    return semantic(primary)
+
+
 def fingerprint(job, ndk, root=ROOT):
-    # Only the actual build step and recipe/audit inputs matter; packaging,
-    # titles, scheduling and unrelated catalog entries do not invalidate cores.
+    # Shared toolchain/build/audit changes invalidate affected signed builds.
+    # Core-specific source patches and NDK helpers are scoped to their core.
     workflow = (root / ".github/workflows/cores.yml").read_text()
     start = workflow.index("      - name: Install NDK")
     end = workflow.index("      - uses: actions/upload-artifact", start)
-    files = list(SHARED)
+    files = {p: digest((root / "scripts" / p).read_bytes()) for p in SHARED if p != "core_build_policy.py"}
+    files["core_build_policy.py"] = policy_fingerprint(job, root)
     if job["profile"] in {"core-hotpaths", "optimized", "optimized-a57"}:
-        files += ["core_hotpath_patches.py", "core_hotpath_remaining.py"]
-    payload = {"schema": 1, "ndk": ndk, "job": job,
-               "build": digest(workflow[start:end].encode()),
-               "files": {p: digest((root / "scripts" / p).read_bytes()) for p in files}}
+        files["hotpath"] = hotpath_fingerprint(job["core"], root)
+    payload = {"schema": 2, "ndk": ndk, "job": job,
+               "build": digest(workflow[start:end].encode()), "files": files}
     return digest(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode())
 
 
