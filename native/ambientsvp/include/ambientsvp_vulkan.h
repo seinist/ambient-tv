@@ -40,12 +40,17 @@ AmbientSvpVk *ambient_svp_vk_create(VkInstance,VkPhysicalDevice,VkDevice,
  * Mode 2: planar low ten bits in separate R16 UNORM views (nv12=0).
  * Mode 3: RGBA16F encoded RGB (nv12=2), also output RGBA16F.
  * Modes 1/2 convert BT2020 NCL; mode 3 does not repeat YUV conversion.
+ * Mode 4: raw P010 output (R16/RG16); mode 5: raw I420-10 output (3 R16).
+ * Modes 4/5 require enabled shaderStorageImageExtendedFormats and
+ * matching chroma siting, no RGB conversion, preserve 10-bit packing.
  * No EOTF or tone mapping; encoded RGB and headroom are preserved.
  * Caller must preserve compatible transfer/primaries/static metadata.
- * Motion uses ten-bit luma SAD. No dynamic HDR/Dolby metadata processing.
+ * Motion uses ten-bit luma SAD. Renderer owns dynamic HDR/Dolby metadata;
+ * raw modes retain the YUV representation for downstream RPU reshaping.
  * The legacy picture struct and render call remain unchanged. */
 enum { AMBIENT_SVP_VK_FORMAT_SDR8=0, AMBIENT_SVP_VK_FORMAT_P010=1,
-       AMBIENT_SVP_VK_FORMAT_I420_10=2, AMBIENT_SVP_VK_FORMAT_RGB16F=3 };
+       AMBIENT_SVP_VK_FORMAT_I420_10=2, AMBIENT_SVP_VK_FORMAT_RGB16F=3,
+       AMBIENT_SVP_VK_FORMAT_P010_RAW=4, AMBIENT_SVP_VK_FORMAT_I420_10_RAW=5 };
 AmbientSvpVk *ambient_svp_vk_create_format(VkInstance,VkPhysicalDevice,VkDevice,
     PFN_vkGetInstanceProcAddr,uint32_t width,uint32_t height,uint32_t mode);
 void ambient_svp_vk_destroy(AmbientSvpVk *);
@@ -61,6 +66,9 @@ AmbientSvpVkPair *ambient_svp_vk_begin(const AmbientSvpVk *,VkCommandBuffer,
  * Output is encoded full-range RGB, in the session's configured format.
  * 0 success, -1 rejected. */
 int ambient_svp_vk_render(AmbientSvpVkPair *,float phase,uint32_t matrix,VkImageView output);
+/* Raw-mode output: exact plane count (2/3), all distinct nonaliasing
+ * GENERAL storage views, same visible geometry and packing as input. */
+int ambient_svp_vk_render_raw(AmbientSvpVkPair *,float,const VkImageView *,uint32_t count);
 /* After SUCCESSFUL submission of that command buffer, register its
  * unsignaled-at-submit fence. Caller must not destroy/reset the fence
  * until release returns 1. No more recording after sealing. */
