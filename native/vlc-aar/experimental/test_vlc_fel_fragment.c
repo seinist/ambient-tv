@@ -654,6 +654,16 @@ static void test_multiple_timed_intermediates(void)
                 assert(tracks[2].context.runs.i_current==n&&tracks[2].i_time==time);
                 assert(MP4_FEL_SeekIndexedTrack(&tracks[2],48000));
                 assert(tracks[2].context.runs.i_current==0);
+                // Re-enabling a track one sample later must not replay it.
+                sys.i_nztime=(48001LL*CLOCK_FREQ+47999)/48000;
+                tracks[2].i_next_block_flags=0;
+                assert(MP4_FEL_ResumeIndependentTrack(&sys,&tracks[2]));
+                assert(tracks[2].context.runs.i_current==1);
+                assert(tracks[2].i_next_block_flags&BLOCK_FLAG_DISCONTINUITY);
+                // If already ahead, a second enable must not rewind.
+                sys.i_nztime=CLOCK_FREQ;
+                assert(MP4_FEL_ResumeIndependentTrack(&sys,&tracks[2]));
+                assert(tracks[2].context.runs.i_current==1);
                 // The fixture did not consume the track cursor: retirement
                 // still advances the implicit clock and marks the gap.
                 tracks[2].i_next_block_flags=0;
