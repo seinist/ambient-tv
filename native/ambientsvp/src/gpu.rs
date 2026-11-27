@@ -1,6 +1,6 @@
 //! Native Vulkan compute execution of upstream's WGSL synthesis kernel.
 //! wgpu owns feature negotiation and Vulkan synchronization (no render surface).
-use std::{borrow::Cow, collections::BTreeMap, sync::mpsc, time::Duration};
+use std::{borrow::Cow, collections::BTreeMap, sync::{Arc, Mutex, mpsc, atomic::{AtomicU8, Ordering}}, time::Duration};
 use svpflow_core::smooth_engine::{GpuJob, GpuParams};
 
 struct Source {
@@ -19,6 +19,20 @@ struct MaskCache {
     values: Option<Vec<u8>>,
 }
 
+// The previous render has completed before the next render starts. Request
+// remapping after submission and service callbacks during the readback wait.
+const MAX_UPLOAD_SLOTS: usize = 8;
+const MAX_UPLOAD_BYTES: u64 = 48 * 1024 * 1024;
+struct UploadSlot {
+    buffer: wgpu::Buffer,
+    status: Arc<AtomicU8>, // 0 pending, 1 mapped, 2 failed
+}
+#[derive(Default)]
+struct UploadPool {
+    slots: Vec<UploadSlot>,
+    submitted: Vec<wgpu::Buffer>,
+}
+
 pub struct Gpu {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -35,6 +49,7 @@ pub struct Gpu {
     ext_field: Option<FieldCache>,
     mask: Option<MaskCache>,
     uniforms: [wgpu::Buffer; 3],
+    uploads: Mutex<UploadPool>,
     output: wgpu::Buffer,
     readback: wgpu::Buffer,
     width: u32,
@@ -184,6 +199,7 @@ impl Gpu {
             ext_field: None,
             mask: None,
             uniforms,
+            uploads: Mutex::new(UploadPool::default()),
             output,
             readback,
             width,
@@ -236,12 +252,19 @@ impl Gpu {
     ) {
         let pitch = stride.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+        let size = u64::from(pitch) * u64::from(h);
+        let staging = {
+            let mut pool = self.uploads.lock().unwrap();
+            pool.slots.retain(|slot| slot.status.load(Ordering::Acquire) != 2);
+            let reuse = pool.slots.iter().position(|slot|
+                slot.buffer.size() == size && slot.status.load(Ordering::Acquire) == 1);
+            reuse.map(|i| pool.slots.swap_remove(i).buffer)
+        }.unwrap_or_else(|| self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("SVP explicit texture upload"),
-            size: u64::from(pitch) * u64::from(h),
+            size,
             usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
             mapped_at_creation: true,
-        });
+        }));
         {
             let mut mapped = staging.slice(..).get_mapped_range_mut();
             for (row, dst) in mapped.chunks_exact_mut(pitch as usize).enumerate() {
@@ -259,6 +282,25 @@ impl Gpu {
             texture.as_image_copy(),
             wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
+        self.uploads.lock().unwrap().submitted.push(staging);
+    }
+
+    fn recycle_uploads(&self) {
+        let mut pool = self.uploads.lock().unwrap();
+        let submitted = std::mem::take(&mut pool.submitted);
+        let mut bytes: u64 = pool.slots.iter().map(|s| s.buffer.size()).sum();
+        for buffer in submitted {
+            if pool.slots.len() >= MAX_UPLOAD_SLOTS || bytes + buffer.size() > MAX_UPLOAD_BYTES {
+                continue;
+            }
+            let status = Arc::new(AtomicU8::new(0));
+            let callback_status = Arc::clone(&status);
+            buffer.slice(..).map_async(wgpu::MapMode::Write, move |result| {
+                callback_status.store(if result.is_ok() { 1 } else { 2 }, Ordering::Release);
+            });
+            bytes += buffer.size();
+            pool.slots.push(UploadSlot { buffer, status });
+        }
     }
 
     fn source(&mut self, n: i32, data: &[u8], linear_needed: bool,
@@ -480,6 +522,7 @@ impl Gpu {
         }
         encoder.copy_buffer_to_buffer(&self.output, 0, &self.readback, 0, self.bytes);
         self.queue.submit([encoder.finish()]);
+        self.recycle_uploads();
         let (tx, rx) = mpsc::sync_channel(1);
         self.readback
             .slice(..)
