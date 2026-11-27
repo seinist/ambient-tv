@@ -2492,4 +2492,8 @@
     <string name="game_library_scanning">Spiele werden eingelesen…</string>
     <string name="game_library_scan_progress">%1$d von %2$d gefundenen Dateien geprüft</string>
     <string name="game_library_scan_cancel">Einlesen abbrechen</string>
+    <string name="svp_transport">Bildtransport</string>
+    <string name="svp_transport_standard">Standard (Copy-back)</string>
+    <string name="svp_transport_resident">Hardware-resident (experimentell)</string>
+    <string name="svp_transport_hint">SDR mit 8 Bit bis 1080p. Benötigt kompatible native Bibliotheken und Vulkan; bei nicht unterstützter Verarbeitung wird zurückgefallen. MPV übernimmt den Decoderwechsel beim erneuten Öffnen.</string>
 </resources>
