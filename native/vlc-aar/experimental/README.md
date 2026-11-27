@@ -478,3 +478,44 @@ RPU generator test, MediaCodec ownership changes and final ABI
 contracts need their own CI. Full linked ARM64 AAR and real-device
 Dolby Vision playback remain unconfirmed. The experimental flags
 remain off by default.
+
+
+### Forward-only fragmented FEL and explicit input framing
+
+Pure fragmented MP4 with an unambiguous Profile 7 BL/EL track pair
+can now use a forward-only source. A finite mdat payload is consumed
+once into an owned block, limited to 64 MiB. All fragment track reads
+(including audio and subtitles) use bounded slices of that immutable
+payload, so neither the EL-before-BL nor EL-after-BL storage ordering
+requires a backward stream seek. The cache is released at fragment
+completion, reset, or demux close. Seekable inputs continue to use
+the existing indexed read path. This deliberately does not enable
+unbounded mdat boxes, hybrid moov+moof files, or arbitrarily large
+fragments; buffering a whole fragment increases initial latency and
+memory use.
+
+Fragmented BL and EL tracks may have different media timescales.
+Explicit tfdt, total run duration, and sample DTS, PTS and duration
+are compared by overflow-checked exact rational conversion. A
+fractional destination tick is rejected, not rounded. Ordinary
+non-fragmented dual-track MP4 still requires equal timescales and
+compatible edit lists.
+
+The decoder no longer requires Annex B vendor input for the wrapped
+EL path. Explicit 1-, 2- and 4-byte NAL length prefixes are accepted;
+the combined access unit is validated and converted to Annex B for
+FFmpeg, while the original framing is retained when stripping EL
+for the vendor BL decoder. The conversion rejects embedded unescaped
+start codes, invalid headers, truncated NALs and oversized samples.
+The actual Main10 decoder comparison fixture now uses this converter.
+
+Host regressions cover bounded mdat slices, both storage orders,
+signed exact time conversion, overflow, all prefix widths and
+transactional rejection of truncated samples. The previous head
+e58b260 passed all three native contract jobs (45965101902).
+The new integrated source changes still require final CI and
+actual forward-only dual-track playback testing. The earlier linked
+native ARM64 build succeeded at the library-link stage, but the
+AAR packaging failed on Maven Central HTTP 429; a bounded retry
+has since been added. Full HDR10+ reference equivalence and exact
+Dolby proprietary reconstruction remain unproven. Default-off unchanged.
