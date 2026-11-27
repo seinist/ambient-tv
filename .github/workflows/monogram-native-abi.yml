@@ -119,7 +119,80 @@ jobs:
           readelf="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
           "$readelf" -h monogram-report/libmonogram_mtproto.so
           "$readelf" --dyn-syms --wide monogram-report/libmonogram_mtproto.so > monogram-report/symbols.txt
-          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadMediaRange$' monogram-report/symbols.txt
+          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadMediaRange
+          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadPreview$' monogram-report/symbols.txt
+          grep -Fx "cpu_tune=$MONOGRAM_CPU_TUNE" app/libs/.monogram-native-version
+          grep -Fx "pgo_mode=$MONOGRAM_PGO_MODE" app/libs/.monogram-native-version
+          if [[ "$MONOGRAM_PGO_MODE" == generate ]]; then
+            grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_flushPgoProfile$' monogram-report/symbols.txt
+          fi
+          python3 scripts/check_elf_page_alignment.py "$readelf" monogram-report/libmonogram_mtproto.so
+          cp app/libs/.monogram-native-version monogram-report/stamp.txt
+          printf 'ABI: %s\nRaw ELF bytes: %s\nAAR bytes: %s\n' "$ABI" "$(stat -c%s monogram-report/libmonogram_mtproto.so)" "$(stat -c%s app/libs/monogram-mtproto.aar)" | tee monogram-report/sizes.txt >> "$GITHUB_STEP_SUMMARY"
+          rm monogram-report/libmonogram_mtproto.so
+      - name: Compile opt-in Android adapter and test streaming
+        if: matrix.abi == 'arm64-v8a' && matrix.cpu == 'generic' && matrix.pgo == 'off'
+        env:
+          MONOGRAM_NATIVE: '1'
+        run: |
+          ./scripts/fetch_libretrodroid.sh
+          ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest -PAPK_ABI=arm64 -PMONOGRAM_NATIVE=1 --tests 'com.ambient.tv.data.telegram.*'
+      - name: Gate exact matched release APK size delta
+        if: matrix.cpu == 'generic' && matrix.pgo == 'off'
+        env:
+          MONOGRAM_SIZE_GRADLE_ONLY: '1'
+          GH_TOKEN: ${{ github.token }}
+          MONOGRAM_ABIS: ${{ matrix.abi }}
+        run: |
+          ./scripts/fetch_libretrodroid.sh
+          PROJECTM_ABIS="${{ matrix.abi }}" bash scripts/build_projectm_android.sh
+          SVP_ABIS="${{ matrix.abi }}" bash scripts/build_svp_android.sh
+          bash scripts/measure_monogram_apk.sh "${{ matrix.abi }}"
+          cp dist/monogram-size-* monogram-report/
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: monogram-native-report-${{ matrix.abi }}-${{ matrix.cpu }}-${{ matrix.pgo }}
+          path: monogram-report/
+          if-no-files-found: ignore
+ monogram-report/symbols.txt
+          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadMediaParts
+          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadPreview$' monogram-report/symbols.txt
+          grep -Fx "cpu_tune=$MONOGRAM_CPU_TUNE" app/libs/.monogram-native-version
+          grep -Fx "pgo_mode=$MONOGRAM_PGO_MODE" app/libs/.monogram-native-version
+          if [[ "$MONOGRAM_PGO_MODE" == generate ]]; then
+            grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_flushPgoProfile$' monogram-report/symbols.txt
+          fi
+          python3 scripts/check_elf_page_alignment.py "$readelf" monogram-report/libmonogram_mtproto.so
+          cp app/libs/.monogram-native-version monogram-report/stamp.txt
+          printf 'ABI: %s\nRaw ELF bytes: %s\nAAR bytes: %s\n' "$ABI" "$(stat -c%s monogram-report/libmonogram_mtproto.so)" "$(stat -c%s app/libs/monogram-mtproto.aar)" | tee monogram-report/sizes.txt >> "$GITHUB_STEP_SUMMARY"
+          rm monogram-report/libmonogram_mtproto.so
+      - name: Compile opt-in Android adapter and test streaming
+        if: matrix.abi == 'arm64-v8a' && matrix.cpu == 'generic' && matrix.pgo == 'off'
+        env:
+          MONOGRAM_NATIVE: '1'
+        run: |
+          ./scripts/fetch_libretrodroid.sh
+          ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest -PAPK_ABI=arm64 -PMONOGRAM_NATIVE=1 --tests 'com.ambient.tv.data.telegram.*'
+      - name: Gate exact matched release APK size delta
+        if: matrix.cpu == 'generic' && matrix.pgo == 'off'
+        env:
+          MONOGRAM_SIZE_GRADLE_ONLY: '1'
+          GH_TOKEN: ${{ github.token }}
+          MONOGRAM_ABIS: ${{ matrix.abi }}
+        run: |
+          ./scripts/fetch_libretrodroid.sh
+          PROJECTM_ABIS="${{ matrix.abi }}" bash scripts/build_projectm_android.sh
+          SVP_ABIS="${{ matrix.abi }}" bash scripts/build_svp_android.sh
+          bash scripts/measure_monogram_apk.sh "${{ matrix.abi }}"
+          cp dist/monogram-size-* monogram-report/
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: monogram-native-report-${{ matrix.abi }}-${{ matrix.cpu }}-${{ matrix.pgo }}
+          path: monogram-report/
+          if-no-files-found: ignore
+ monogram-report/symbols.txt
           grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadPreview$' monogram-report/symbols.txt
           grep -Fx "cpu_tune=$MONOGRAM_CPU_TUNE" app/libs/.monogram-native-version
           grep -Fx "pgo_mode=$MONOGRAM_PGO_MODE" app/libs/.monogram-native-version
