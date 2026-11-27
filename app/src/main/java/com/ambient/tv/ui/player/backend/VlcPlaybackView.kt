@@ -972,7 +972,7 @@ class VlcPlaybackController(
         val task = object : Runnable {
             override fun run() {
                 if (released || attachedView !== view || userVideoDisabled ||
-                    restartStopFailed || restartStop != null || dvRetirementPending) return
+                    restartStopFailed || vulkanFallbackPosted || restartStop != null || dvRetirementPending) return
                 // Surface creation and ES discovery are independent. The old one-second
                 // timer could expire while AudioTrack/HDMI or network initialization continued.
                 if (view.holder.surface.isValid) {
@@ -1439,6 +1439,7 @@ class VlcPlaybackController(
         rememberTrackSelection()
         forceOutputRebuild = true
         vulkanFallbackPosted = true
+        openingOrRestarting = true
         pendingSeekHandler.post {
             vulkanFallbackPosted = false
             if (!released) restartAfterStop(pendingRestorePositionMs ?: position, desiredPlayWhenReady)
@@ -1649,7 +1650,8 @@ class VlcPlaybackController(
         hdrOutput.discontinuity()
         desiredPlayWhenReady = false
         pauseAfterRestorePositionMs = null
-        if (!released && !dvPrimeActive && !restartStopFailed && restartStop == null && !dvRetirementPending) player.pause()
+        if (!released && !dvPrimeActive && !restartStopFailed && !vulkanFallbackPosted &&
+            restartStop == null && !dvRetirementPending) player.pause()
     }
 
     override fun wantsToPlay(): Boolean = !released && desiredPlayWhenReady && !ended && errorMessage == null
@@ -1838,7 +1840,8 @@ class VlcPlaybackController(
             if (prepared) seekTo(resume)
         }
         // A newly created engine has no Media yet; prepare() consumes this intent.
-        if (prepared && !openingOrRestarting) {
+        if (prepared && !openingOrRestarting && !vulkanFallbackPosted &&
+            restartStop == null && !dvRetirementPending && !restartStopFailed) {
             if (playWhenReady) player.play() else if (pendingRestorePositionMs == null) player.pause()
         }
     }
