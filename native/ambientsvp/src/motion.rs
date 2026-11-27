@@ -204,4 +204,92 @@ mod tests {
         assert!(reference_cost(&a,&b,w as u32,h as u32,Candidate{dx:-17,..c}).is_none());
         assert!(reference_cost(&a,&b,w as u32,h as u32,Candidate{x:15,..c}).is_none());
     }
+    // Software Vulkan is sufficient for integer correctness and WGSL
+    // validation. Actual throughput still requires a physical GPU.
+    #[test]
+    #[ignore = "requires a Vulkan adapter, including software Vulkan"]
+    fn vulkan_candidate_costs_match_cpu() {
+        let instance=wgpu::Instance::new(&wgpu::InstanceDescriptor{
+            backends:wgpu::Backends::VULKAN,..Default::default()
+        });
+        let adapter=pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+            .expect("Vulkan adapter required");
+        let (device,queue)=pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor{
+            label:Some("SVP motion parity"),
+            required_features:wgpu::Features::empty(),
+            required_limits:wgpu::Limits::default().using_resolution(adapter.limits()),
+            memory_hints:wgpu::MemoryHints::MemoryUsage,
+        },None)).unwrap();
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let (w,h)=(96u32,66u32);
+        let len=(w*h*3/2) as usize;
+        let a:Vec<u8>=(0..len).map(|i|((i*17+i/13)%256) as u8).collect();
+        let b:Vec<u8>=(0..len).map(|i|((i*31+i/7+31)%256) as u8).collect();
+        let upload=|data:&[u8]| {
+            let tex=device.create_texture(&wgpu::TextureDescriptor{
+                label:None,size:wgpu::Extent3d{width:w,height:h*3/2,depth_or_array_layers:1},
+                mip_level_count:1,sample_count:1,dimension:wgpu::TextureDimension::D2,
+                format:wgpu::TextureFormat::R8Unorm,view_formats:&[],
+                usage:wgpu::TextureUsages::TEXTURE_BINDING|wgpu::TextureUsages::COPY_DST,
+            });
+            let luma=(w*h) as usize;
+            let mut packed=data[..luma].to_vec();
+            for y in 0..h as usize/2 {
+                let x=y*w as usize/2;
+                let half=w as usize/2;
+                packed.extend_from_slice(&data[luma+x..luma+x+half]);
+                packed.extend_from_slice(&data[luma*5/4+x..luma*5/4+x+half]);
+            }
+            queue.write_texture(tex.as_image_copy(),&packed,wgpu::TexelCopyBufferLayout{
+                offset:0,bytes_per_row:Some(w),rows_per_image:Some(h*3/2),
+            },wgpu::Extent3d{width:w,height:h*3/2,depth_or_array_layers:1});
+            tex
+        };
+        let at=upload(&a);
+        let bt=upload(&b);
+        let kernel=MotionCostKernel::new(&device);
+        let mut candidates=Vec::new();
+        for bw in [8,16,32] {
+            for bh in [8,16,32] {
+                for dx in [-7,-2,0,1,6] {
+                    for dy in [-5,0,3] {
+                        for reverse in [false,true] {
+                            candidates.push(Candidate{x:16,y:16,dx,dy,width:bw,height:bh,reverse});
+                        }
+                    }
+                }
+            }
+        }
+        let mut encoder=device.create_command_encoder(&Default::default());
+        let output=kernel.encode(&device,&mut encoder,&at,&bt,w,h,&candidates).unwrap();
+        let readback=device.create_buffer(&wgpu::BufferDescriptor{
+            label:None,size:output.size(),usage:wgpu::BufferUsages::COPY_DST|wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation:false,
+        });
+        encoder.copy_buffer_to_buffer(&output,0,&readback,0,output.size());
+        queue.submit([encoder.finish()]);
+        let (tx,rx)=std::sync::mpsc::sync_channel(1);
+        readback.slice(..).map_async(wgpu::MapMode::Read,move |r|{let _=tx.send(r);});
+        let deadline=std::time::Instant::now()+std::time::Duration::from_secs(20);
+        loop {
+            device.poll(wgpu::Maintain::Poll);
+            match rx.try_recv(){
+                Ok(result)=>{result.unwrap();break;}
+                Err(std::sync::mpsc::TryRecvError::Disconnected)=>panic!("map disconnected"),
+                Err(_) if std::time::Instant::now()>=deadline=>panic!("motion cost timeout"),
+                Err(_)=>std::thread::sleep(std::time::Duration::from_millis(1)),
+            }
+        }
+        assert!(pollster::block_on(device.pop_error_scope()).is_none());
+        let bytes=readback.slice(..).get_mapped_range();
+        for (c,raw) in candidates.iter().zip(bytes.chunks_exact(16)) {
+            let word=|i:usize|u32::from_le_bytes(raw[i*4..i*4+4].try_into().unwrap());
+            let expected=reference_cost(&a,&b,w,h,*c).unwrap();
+            assert_eq!(Cost{y:word(0),u:word(1),v:word(2)},expected,"{c:?}");
+            assert_eq!(word(3),expected.y+expected.u+expected.v);
+        }
+        drop(bytes);
+        readback.unmap();
+    }
+
 }
