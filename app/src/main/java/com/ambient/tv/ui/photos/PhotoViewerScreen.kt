@@ -101,6 +101,8 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
 
 /**
  * Full-screen photo viewer and slideshow (all systems).
@@ -155,12 +157,15 @@ fun PhotoViewerScreen(
         controlsVisible = false
     }
     // Preload the neighbours so moving on never shows a black frame while decoding.
-    LaunchedEffect(state.position, state.order) {
-        listOf(1, -1).mapNotNull { state.neighbour(it) }.forEach { entry ->
-            val model = entry.imageModel(widthPx, heightPx) ?: entry.thumbModel() ?: return@forEach
-            // Full-screen photos live in the backdrop cache; the album's thumbnails stay put.
-            // The request is owned by this viewport effect, not a detached enqueue.
-            com.ambient.tv.backdropImageLoader(context).execute(ImageRequest.Builder(context).data(model).size(widthPx, heightPx).scale(Scale.FIT).build())
+    LaunchedEffect(state.position, state.order, widthPx, heightPx) {
+        coroutineScope {
+            listOf(1, -1).mapNotNull { state.neighbour(it) }.forEach { entry ->
+                val model = entry.imageModel(widthPx, heightPx) ?: entry.thumbModel() ?: return@forEach
+                // At most two viewport-owned jobs, cancelled together on navigation.
+                launch {
+                    com.ambient.tv.backdropImageLoader(context).execute(ImageRequest.Builder(context).data(model).size(widthPx, heightPx).scale(Scale.FIT).build())
+                }
+            }
         }
     }
 
