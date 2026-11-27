@@ -114,7 +114,9 @@ class TelegramVideoDataSource(
         val sequential = previousPart >= 0L && offset - previousPart == TELEGRAM_MEDIA_PART_BYTES.toLong()
         val pending = prefetch.remove(offset)
         if (!sequential) {
-            cancelPrefetch()
+            // open() has already cancelled the old window; keep its exact start
+            // warmup alive until the foreground joins the same repository key.
+            if (previousPart >= 0L) cancelPrefetch()
             readAhead.reset()
         }
         previousPart = offset

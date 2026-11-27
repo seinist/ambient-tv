@@ -355,9 +355,13 @@ fun TelegramScreen(
     val decodeHint = remember(sectionKey, layout, gridColumns, listRows, decodeContext) {
         com.ambient.tv.ui.common.MonogramDecodeHint(decodeContext)
     }
+    val viewportNetwork = com.ambient.tv.ui.common.rememberArtworkNetworkAccess(
+        com.ambient.tv.data.telegram.MONOGRAM_THUMB_SCHEME + "://viewport")
     LaunchedEffect(sectionKey, state.section, state.available, layout, currentRows, flat,
-        rowList, flatList, grid, showViewOptions, rowPrefetchColumns, decodeHint) {
-        if (!state.available || state.section != sectionKey || showViewOptions) return@LaunchedEffect
+        rowList, flatList, grid, showViewOptions, rowPrefetchColumns, decodeHint,
+        viewportNetwork.blocked, viewportNetwork.recovery) {
+        if (!state.available || state.section != sectionKey || showViewOptions || viewportNetwork.blocked)
+            return@LaunchedEffect
         coroutineScope {
         val active = LinkedHashMap<Triple<Long, Int, Int>, kotlinx.coroutines.Job>()
         @OptIn(kotlinx.coroutines.FlowPreview::class)

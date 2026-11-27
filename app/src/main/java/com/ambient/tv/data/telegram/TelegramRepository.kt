@@ -21,6 +21,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 
 /** Current native sign-in stage. Phone codes/passwords are NEVER persisted or logged. */
 enum class MonogramLoginStep { UNAVAILABLE, READY, QR, CODE, PASSWORD, AUTHORIZED, ERROR }
@@ -60,10 +61,12 @@ class TelegramTransferPriority(foreground: Boolean) {
     @Volatile var foreground = foreground
         private set
     private var promoteNative: (() -> Unit)? = null
+    private var promoteAdmission: (() -> Unit)? = null
 
     fun promote(): Unit = synchronized(lock) {
         if (!foreground) {
             foreground = true
+            promoteAdmission?.invoke()
             promoteNative?.invoke()
         }
     }
@@ -74,6 +77,47 @@ class TelegramTransferPriority(foreground: Boolean) {
     }
 
     fun unbind(): Unit = synchronized(lock) { promoteNative = null }
+    internal fun bindAdmission(callback: (() -> Unit)?) = synchronized(lock) { promoteAdmission = callback }
+}
+
+/** Demand-first bounded admission. Promotion wakes a queued speculative request.
+ * No monitor is held across suspension or native calls. */
+internal class MonogramThumbnailAdmission(private val capacity: Int = 6, private val speculativeCapacity: Int = 2) {
+    private val lock = Any()
+    private val changed = MutableStateFlow(0L)
+    private val queued = ArrayList<TelegramTransferPriority>()
+    private val running = ArrayList<TelegramTransferPriority>()
+
+    private fun signal() = synchronized(lock) { changed.value++ }
+
+    suspend fun <T> withPermit(priority: TelegramTransferPriority, block: suspend () -> T): T {
+        synchronized(lock) { queued.add(priority); changed.value++ }
+        priority.bindAdmission { signal() }
+        try {
+            while (true) {
+                val revision = synchronized(lock) {
+                    val next = queued.firstOrNull { it.foreground }
+                        ?: queued.firstOrNull()?.takeIf { running.count { !it.foreground } < speculativeCapacity }
+                    if (next === priority && running.size < capacity) {
+                        queued.remove(priority)
+                        running.add(priority)
+                        changed.value++
+                        null
+                    } else changed.value
+                }
+                if (revision == null) break
+                changed.first { it != revision }
+            }
+            return block()
+        } finally {
+            priority.bindAdmission(null)
+            synchronized(lock) {
+                queued.remove(priority)
+                running.remove(priority)
+                changed.value++
+            }
+        }
+    }
 }
 
 interface TelegramClientPort {
@@ -97,6 +141,9 @@ interface TelegramClientPort {
     /** Called once when Telegram reports the session as revoked or unknown ([TelegramSessionLostException]). */
     fun setSessionLostListener(listener: ((String) -> Unit)?) = Unit
     fun setArtworkChangedListener(listener: (() -> Unit)?) = Unit
+    fun setContentChangedListener(listener: (suspend (String, Set<Pair<Long, Int>>, Boolean) -> Boolean)?) = Unit
+    fun catalogContentRevision(): Long = 0L
+    fun contentUpdatePending(): Boolean = false
     /** Revision of the media at this post, changed by native edit/delete updates. */
     fun mediaRevision(chatId: Long, messageId: Int): Long = 0L
     /** Local authenticated sharp thumbnail, without native RPC or download admission. */
@@ -355,6 +402,8 @@ class TelegramRepository @Inject constructor(
             loginMutex.unlock()
         }
     }
+    private val contentRevision = java.util.concurrent.atomic.AtomicLong()
+    private val contentInvalidations = java.util.concurrent.atomic.AtomicInteger()
     private val mutableCatalogRevision = MutableStateFlow(0L)
     val catalogRevision: StateFlow<Long> = mutableCatalogRevision.asStateFlow()
     private val mutableArtworkRevision = MutableStateFlow(0L)
@@ -415,7 +464,29 @@ class TelegramRepository @Inject constructor(
     /** Install only an already authenticated Monogram client, never a partially signed-in one. */
     fun installAuthorized(port: TelegramClientPort) {
         port.setSessionLostListener { type -> scope.launch { sessionLost(port, type) } }
-        port.setArtworkChangedListener { if (client === port) notifyArtworkChanged() }
+        port.setArtworkChangedListener {
+            if (client === port) {
+                notifyArtworkChanged()
+                // The native update fence has now been released; refreshing earlier
+                // would race the durable invalidation and reject the new browse.
+                synchronized(mutableCatalogRevision) { mutableCatalogRevision.value++ }
+            }
+        }
+        port.setContentChangedListener { identity, messages, all ->
+            if (client === port && port.cacheIdentity == identity) {
+                contentInvalidations.incrementAndGet()
+                contentRevision.incrementAndGet()
+                try {
+                    // Finish persistent invalidation even if the update pump is stopped.
+                    withContext(kotlinx.coroutines.NonCancellable) {
+                        diskCache.invalidateMedia(identity, messages, all)
+                    }
+                } finally {
+                    contentInvalidations.decrementAndGet()
+                }
+                true
+            } else false
+        }
         if (client !== port) {
             // Close admission for the previous port before publishing a new epoch.
             client = null
@@ -630,8 +701,13 @@ class TelegramRepository @Inject constructor(
         val source = client ?: return emptyList()
         val generation = streamEpoch.get()
         val identity = source.cacheIdentity ?: return emptyList()
+        val revision = contentRevision.get()
+        val nativeRevision = source.catalogContentRevision()
+        if (contentInvalidations.get() != 0 || source.contentUpdatePending()) return emptyList()
         val cached = diskCache.media(identity, section)
-        return if (sameAccount(source, identity, generation))
+        return if (sameAccount(source, identity, generation) &&
+            source.catalogContentRevision() == nativeRevision && !source.contentUpdatePending() &&
+            contentRevision.get() == revision && contentInvalidations.get() == 0)
             cached.filterNot { it.chatId in blockedChannels } else emptyList()
     }
 
@@ -678,13 +754,24 @@ class TelegramRepository @Inject constructor(
         val selected = client ?: return TelegramMediaPage(emptyList())
         val generation = streamEpoch.get()
         val identity = selected.cacheIdentity
-        val page = selected.browse(section, cursor, limit)
-            .let { result -> result.copy(items = result.items.filterNot { it.chatId in blockedChannels }) }
-        if (!sameAccount(selected, identity, generation)) return TelegramMediaPage(emptyList())
-        selected.cacheIdentity?.let { id ->
-            if (page.items.isNotEmpty()) diskCache.saveMedia(id, section, page.items, cursor == null) { sameAccount(selected, identity, generation) }
+        repeat(2) {
+            val revision = contentRevision.get()
+            val nativeRevision = selected.catalogContentRevision()
+            fun current() = sameAccount(selected, identity, generation) &&
+                selected.catalogContentRevision() == nativeRevision && !selected.contentUpdatePending() &&
+                contentRevision.get() == revision && contentInvalidations.get() == 0
+            val page = selected.browse(section, cursor, limit)
+                .let { result -> result.copy(items = result.items.filterNot { it.chatId in blockedChannels }) }
+            if (!sameAccount(selected, identity, generation)) return TelegramMediaPage(emptyList())
+            if (current()) {
+                identity?.let { id ->
+                    if (page.items.isNotEmpty() || cursor == null)
+                        diskCache.saveMedia(id, section, page.items, cursor == null) { current() }
+                }
+                if (current()) return page
+            }
         }
-        return page.takeIf { sameAccount(selected, identity, generation) } ?: TelegramMediaPage(emptyList())
+        throw java.io.IOException("Monogram catalog changed during browse")
     }
     /** Home rows: background priority (see [interactive]). */
     suspend fun channels(): List<TelegramChannel> = try {
@@ -718,6 +805,13 @@ class TelegramRepository @Inject constructor(
         if (chatId in blockedChannels) return null
         val generation = streamEpoch.get()
         val identity = selected.cacheIdentity
+        val revision = contentRevision.get()
+        val postRevision = selected.mediaRevision(chatId, messageId)
+        val nativeRevision = selected.catalogContentRevision()
+        fun current() = sameAccount(selected, identity, generation) && chatId !in blockedChannels &&
+            selected.catalogContentRevision() == nativeRevision && !selected.contentUpdatePending() &&
+            selected.mediaRevision(chatId, messageId) == postRevision &&
+            contentRevision.get() == revision && contentInvalidations.get() == 0
         var flood: TelegramFloodWaitException? = null
         val live = try {
             selected.media(chatId, messageId)
@@ -729,7 +823,7 @@ class TelegramRepository @Inject constructor(
         } catch (lost: TelegramSessionLostException) {
             throw lost
         } catch (_: Exception) { null }
-        if (!sameAccount(selected, identity, generation) || chatId in blockedChannels) return null
+        if (!current()) return null
         if (live != null) return live
         // Telegram asked for a pause: say so (after the cache), not "media unavailable".
         if (identity == null) flood?.let { throw it } ?: return null
@@ -737,9 +831,7 @@ class TelegramRepository @Inject constructor(
         for (section in sections) {
             val cached = diskCache.media(identity, section)
                 .firstOrNull { it.chatId == chatId && it.messageId == messageId }
-            if (cached != null) return cached.takeIf {
-                sameAccount(selected, identity, generation) && chatId !in blockedChannels
-            }
+            if (cached != null) return cached.takeIf { current() }
         }
         flood?.let { throw it }
         return null
@@ -820,7 +912,7 @@ class TelegramRepository @Inject constructor(
      * Card images load a few at a time: two made a scrolled grid fill very slowly; the native
      * media lanes spread six, and getFile of preview sizes rarely hits FLOOD_WAIT.
      */
-    private val thumbnailPermits = kotlinx.coroutines.sync.Semaphore(6)
+    private val thumbnailPermits = MonogramThumbnailAdmission()
 
     /** Of those six, the page prefetch may hold two: the cards being drawn always get the rest. */
     private val prefetchPermits = kotlinx.coroutines.sync.Semaphore(
@@ -961,7 +1053,7 @@ class TelegramRepository @Inject constructor(
             val key = "$generation:$chatId:$messageId:$revision:$target"
             if (thumbnailMisses.isRecent(key)) return null
             if (!priority.foreground) awaitInteractiveIdle { !priority.foreground }
-            thumbnailPermits.withPermit {
+            thumbnailPermits.withPermit(priority) {
                 if (!valid() || thumbnailMisses.isRecent(key)) null else {
                     val result = selected.thumbnail(chatId, messageId, priority, target)
                     // Only an ordinary null result, never a cancelled request or thrown

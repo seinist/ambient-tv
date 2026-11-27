@@ -315,8 +315,7 @@ the final waiter leaves. Four concurrent part RPCs are allowed across players.
 Identical part requests are coalesced by account generation and offset. Preview and individual streaming ranges
 use single wire requests per lane, while known large complete user downloads
 may pipeline up to four parts. The chunk cache tracks LRU order incrementally.
-The chunk hot cache retains at most eight parts (4 MiB), cleared on account
-generation changes. The encrypted metadata snapshot retains a bounded
+The chunk hot cache retains 4–24 parts depending on heap class (4 parts on low-RAM devices), cleared on account generation changes. The encrypted metadata snapshot retains a bounded
 in-memory parsed cache and skips unchanged snapshot writes.
 The pinned aes 0.9.3, sha1 0.11.0 and sha2 0.11.1 depend on cpufeatures
 0.3.1; preserve their safe CPU dispatch rather than forcing AES/SHA/AVX on
@@ -360,3 +359,11 @@ Full-file media batches retain at most one initial window plus four bounded refi
 - The pinned upstream Gradle build is limited to `:native:mtproto`; unused application/Compose/KSP/serialization/Google Services plugins and project configuration are removed by exact-source patches. Native Android library plugin, dependency repositories and Rust pins are unchanged.
 
 - CI limits concurrent native matrix jobs to three and retries only Gradle dependency-resolution failures at most twice, with staggered backoff and a final negative-cache refresh. Compilation, test and APK-size failures remain fatal; dependency pins and repositories are unchanged.
+
+## PR #525 re-audit follow-up
+
+- Two adjacent blocks use the new `downloadMediaParts` JNI symbol: the native authenticated range validates the exact combined length, then copies directly into the two final JVM arrays. No intermediate JVM payload or Kotlin split is allocated on this path. The old one-array JNI and UniFFI exports remain compatible fallbacks only when the new symbol is unavailable. CI checks the new ELF export for every ABI; the host range suite covers exact and short-tail lengths.
+- Fully RAM-cached windows take a nonblocking handle read-lock rather than the connection/setup mutex. Native authorization, account/cache generation, document digest, media revision and channel-membership checks remain mandatory. A queued writer, absent handle or partial RAM miss takes the existing slower path. This is not permission-free cache access or end-to-end zero-copy.
+- Edits/deletes invalidate persistent snapshots before durable native update acknowledgement. A failed invalidation stays fenced until retry succeeds; the UI is notified after releasing the native update fence. Recovery artifacts from AtomicFile are included. Active browsing/streaming shortens healthy update polling without shortening failure backoff.
+- For a practical A/B measurement, package each exact revision with `MONOGRAM_PERF_COUNTERS=1`, restart the app (fresh PID), run the same warm/cold playback and forward/random seek workload on the same device, then run `python3 scripts/measure_monogram_device.py <application-id> [--serial <adb-serial>]`. The collector reports successful backend window counts, bytes, p50, p95 and max latency by RAM, disk-or-mixed, or native path. It reads only the MonogramPerf tag and emits no media or account identities. Partial cache windows may be measured as individual misses; these service times are not end-to-end first-frame or sustained playback throughput. Use the same instrumentation on both builds; collect memory/GC and first-frame/seek latency separately. Logcat retention limits the sample; use shorter controlled runs.
+- PGO training still requires the actual device workload and matching instrumented APK; use the existing collector and exact build provenance checks described above. No trained profile or measured speedup is supplied by the code changes alone.

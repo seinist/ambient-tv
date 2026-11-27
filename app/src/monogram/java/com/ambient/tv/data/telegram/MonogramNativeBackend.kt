@@ -59,6 +59,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     private val chunkIndex = LinkedHashMap<File, Long>(128, 0.75f, true)
     private var chunkIndexGeneration = -1L
     private var chunkIndexBytes = 0L
+    private val chunkTouched = HashMap<File, Long>()
     // Cap memory by heap class and use a stricter ceiling on low-RAM devices.
     private val hotChunkLimit = run {
         val manager = app.getSystemService(android.app.ActivityManager::class.java)
@@ -91,6 +92,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         hotChunks.clear()
         synchronized(mediaDigests) { mediaDigests.clear() }
         chunkIndex.clear()
+        chunkTouched.clear()
         chunkIndexBytes = 0L
         chunkIndexGeneration = -1L
         inlinePreviewIndex.clear()
@@ -118,6 +120,15 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     // Account-local aliases refer only to a successfully published, validated display image.
     private val displayAliases = LinkedHashMap<String, File>(128, .75f, true)
     private val measuredWindows = java.util.concurrent.atomic.AtomicInteger()
+    private fun recordRead(path: String, data: List<ByteArray>, started: Long): List<ByteArray> {
+        if (com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS) {
+            val micros = (System.nanoTime() - started).coerceAtLeast(0L) / 1_000L
+            // No chat/message/file identity or payload ever enters diagnostics.
+            android.util.Log.i("MonogramPerf", "media-read path=$path bytes=${data.sumOf { it.size }} us=$micros")
+        }
+        return data
+    }
+
     private fun recordNativeWindow() {
         if (!com.ambient.tv.BuildConfig.MONOGRAM_PGO_GENERATE && !com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS) return
         if (measuredWindows.incrementAndGet() % 16 != 0) return
@@ -139,7 +150,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     @Volatile private var accountId: Long? = accountIdFile.takeIf { it.isFile }?.let {
         runCatching { it.readText().trim().toLongOrNull() }.getOrNull()
     }
-    private var handle = 0L
+    @Volatile private var handle = 0L
     @Volatile private var connected = false
     private var epoch = System.nanoTime()
     /**
@@ -151,6 +162,13 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     @Volatile private var chatsLoadedAtMs = 0L
     @Volatile private var chatsExhausted = false
     private val recentFeeds = LinkedHashMap<String, MonogramRecentTimeline>()
+    private val recentFeedRevision = java.util.concurrent.atomic.AtomicLong()
+    private val applyingUpdates = java.util.concurrent.atomic.AtomicInteger()
+    @Volatile private var failedContentGeneration: Long? = null
+    override fun catalogContentRevision(): Long = recentFeedRevision.get()
+    override fun contentUpdatePending(): Boolean =
+        applyingUpdates.get() != 0 || failedContentGeneration == cacheGeneration
+    private var recentFeedsSeen = -1L // guarded by browseMutex
     private val leftChannels = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
     /** Public channels resolved from t.me/<name> links, so their page has a title before joining. */
     private val resolvedChannels = java.util.concurrent.ConcurrentHashMap<Long, String>()
@@ -174,7 +192,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
      * (account change, logout, manual refresh, leaving a channel).
      */
     private val historyPages = LinkedHashMap<Pair<Long, Int>, HistoryPage>(64, 0.75f, true)
-    private val historyLocks = Array(32) { Any() }
+    private class HistoryFlight { var users = 0 }
+    private val historyFlights = HashMap<Pair<Long, Int>, HistoryFlight>()
     // Guarded by historyPages; never publish an RPC begun before an invalidation.
     private var historyRevision = 0L
     private var historyFloor = 0L
@@ -210,23 +229,37 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
 
     private fun historyPage(h: Long, chatId: Long, size: Int, offset: Int): List<MessageDto> {
         val key = chatId to offset
-        return synchronized(historyLocks[(key.hashCode() and Int.MAX_VALUE) % historyLocks.size]) {
-            val now = android.os.SystemClock.elapsedRealtime()
-            val revision = synchronized(historyPages) {
-                historyPages[key]?.takeIf { now - it.atMs < HISTORY_PAGE_TTL_MS &&
-                    (it.requested >= size || it.messages.size < it.requested) }
-                    ?.let { return it.messages.take(size) }
-                historyRevisionFor(chatId)
-            }
-            val requested = maxOf(size, HISTORY_SHARED_PAGE).coerceAtMost(100)
-            val fetched = native.getHistoryPage(h, chatId, requested, offset, 0, 0)
-            synchronized(historyPages) {
-                if (revision == historyRevisionFor(chatId) && chatId !in leftChannels) {
-                    historyPages[key] = HistoryPage(requested, fetched, android.os.SystemClock.elapsedRealtime())
-                    while (historyPages.size > HISTORY_PAGE_LIMIT) historyPages.remove(historyPages.keys.first())
+        val flight = synchronized(historyFlights) {
+            historyFlights.getOrPut(key) { HistoryFlight() }.also { it.users++ }
+        }
+        try {
+            synchronized(flight) {
+                repeat(2) {
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    val revision = synchronized(historyPages) {
+                        if (chatId in leftChannels) return emptyList()
+                        historyPages[key]?.takeIf { now - it.atMs < HISTORY_PAGE_TTL_MS &&
+                            (it.requested >= size || it.messages.size < it.requested) }
+                            ?.let { return it.messages.take(size) }
+                        historyRevisionFor(chatId)
+                    }
+                    val requested = maxOf(size, HISTORY_SHARED_PAGE).coerceAtMost(100)
+                    val fetched = native.getHistoryPage(h, chatId, requested, offset, 0, 0)
+                    synchronized(historyPages) {
+                        if (chatId in leftChannels) return emptyList()
+                        if (revision == historyRevisionFor(chatId)) {
+                            historyPages[key] = HistoryPage(requested, fetched, android.os.SystemClock.elapsedRealtime())
+                            while (historyPages.size > HISTORY_PAGE_LIMIT) historyPages.remove(historyPages.keys.first())
+                            return fetched.take(size)
+                        }
+                    }
                 }
+                throw java.io.IOException("Monogram history changed during request")
             }
-            fetched.take(size)
+        } finally {
+            synchronized(historyFlights) {
+                if (--flight.users == 0) historyFlights.remove(key)
+            }
         }
     }
 
@@ -244,22 +277,68 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
     private var updatesJob: kotlinx.coroutines.Job? = null
     @Volatile private var updatesStarted = false
+    private val activeUntil = java.util.concurrent.atomic.AtomicLong()
+    private val updateWake = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+
+    private fun noteInteractiveActivity() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val previous = activeUntil.getAndSet(now + 10_000L)
+        if (previous <= now) updateWake.trySend(Unit)
+    }
 
     private fun startUpdatesPump() {
         if (updatesJob?.isActive == true) return
         updatesJob = updatesScope.launch {
             var backoffMs = UPDATES_POLL_MS
             while (true) {
-                kotlinx.coroutines.delay(backoffMs)
+                val active = updatesStarted && android.os.SystemClock.elapsedRealtime() < activeUntil.get()
+                kotlinx.coroutines.withTimeoutOrNull(if (active) minOf(backoffMs, 2_000L) else backoffMs) {
+                    updateWake.receive()
+                }
                 backoffMs = try {
+                    // Do not drain changes before the repository can durably invalidate them.
+                    val listener = contentChangedListener ?: continue
                     val generation = cacheGeneration
                     val identity = accountId
-                    val events = nativeCall { h ->
-                        if (generation != cacheGeneration || identity != accountId) emptyList()
+                    val drained = nativeCall { h ->
+                        if (generation != cacheGeneration || identity != accountId) DrainedUpdates(emptyList(), null)
                         else drainUpdateEvents(h)
                     }
-                    if (generation == cacheGeneration && identity == accountId) applyUpdates(events)
-                    if (events.isEmpty()) (backoffMs + UPDATES_POLL_MS).coerceAtMost(15_000L)
+                    if (generation == cacheGeneration && identity == accountId) {
+                        val retry = failedContentGeneration == generation
+                        val applying = drained.events.isNotEmpty() || retry
+                        var changesApplied = false
+                        if (applying) applyingUpdates.incrementAndGet()
+                        try {
+                            val changes = applyUpdates(drained.events)
+                            if (changes != null || retry) {
+                                failedContentGeneration = generation
+                                // If the previous invalidation failed, invalidate all feed
+                                // snapshots on retry, even if a live event was not replayed.
+                                if (identity == null || generation != cacheGeneration || identity != accountId ||
+                                    !listener(identity.toString(), changes?.messages.orEmpty(), retry || changes?.all == true)) {
+                                    throw java.io.IOException("Monogram content invalidation not committed")
+                                }
+                                failedContentGeneration = null
+                                changesApplied = true
+                            }
+                            // A durable batch is acknowledged only after local invalidation.
+                            drained.acknowledge?.let { acknowledge ->
+                                nativeCallOnce(connect = false) { h ->
+                                    if (generation == cacheGeneration && identity == accountId) acknowledge(h)
+                                }
+                            }
+                        } catch (failure: Exception) {
+                            if (applying && !changesApplied && generation == cacheGeneration)
+                                failedContentGeneration = generation
+                            throw failure
+                        } finally {
+                            if (applying) applyingUpdates.decrementAndGet()
+                            if (changesApplied && generation == cacheGeneration && identity == accountId)
+                                artworkChangedListener?.invoke()
+                        }
+                    }
+                    if (drained.events.isEmpty()) (backoffMs + UPDATES_POLL_MS).coerceAtMost(15_000L)
                     else UPDATES_POLL_MS
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                     throw cancelled
@@ -280,26 +359,31 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         updatesStarted = false
     }
 
-    /** Drains and acknowledges the delivered batches; replays pending ones when asked to. */
-    private fun drainUpdateEvents(h: Long): List<UpdateEventDto> {
-        if (!native.isAuthorized(h)) return emptyList()
-        if (!updatesStarted) {
+    private data class DrainedUpdates(val events: List<UpdateEventDto>, val acknowledge: ((Long) -> Unit)?)
+    private data class ContentChanges(val messages: Set<Pair<Long, Int>>, val all: Boolean)
+
+    /** Drain first; acknowledge durable batches after local cache invalidation succeeds. */
+    private fun drainUpdateEvents(h: Long): DrainedUpdates {
+        if (!native.isAuthorized(h)) return DrainedUpdates(emptyList(), null)
+        val replay = !updatesStarted
+        if (replay) {
             native.startUpdates(h)
             updatesStarted = true
         }
         val drained = native.drainUpdateBatches(h)
-        val batches = if (drained.replayRequired)
+        val batches = if (replay || drained.replayRequired)
             (drained.batches + native.pendingUpdateBatches(h)).distinctBy { it.batchId }
         else drained.batches
-        // Nothing is stored durably here: acknowledge so the native side does not redeliver.
-        batches.forEach { batch ->
-            runCatching { native.acknowledgeUpdateBatch(h, batch.accountGeneration, batch.batchId) }
+        val acknowledge: ((Long) -> Unit)? = if (batches.isEmpty()) null else { handle ->
+            batches.forEach { batch ->
+                native.acknowledgeUpdateBatch(handle, batch.accountGeneration, batch.batchId)
+            }
         }
-        return batches.flatMap { it.events } + drained.liveEvents
+        return DrainedUpdates(batches.flatMap { it.events } + drained.liveEvents, acknowledge)
     }
 
-    private fun applyUpdates(events: List<UpdateEventDto>) {
-        if (events.isEmpty()) return
+    private fun applyUpdates(events: List<UpdateEventDto>): ContentChanges? {
+        if (events.isEmpty()) return null
         val touched = HashSet<Long>()
         var everything = false
         val changedMessages = HashSet<Pair<Long, Int>>()
@@ -331,6 +415,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             if (everything || touched.isNotEmpty()) invalidateHistoryLocked(touched, everything)
         }
         if (everything || changedMessages.isNotEmpty()) {
+            recentFeedRevision.incrementAndGet()
             synchronized(diskChunkLock) {
                 // Existing player buffers and in-flight chunk publications are fenced.
                 invalidateMediaRevisions(changedMessages, everything)
@@ -353,6 +438,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     val entry = entries.next()
                     if (affected(entry.key)) {
                         chunkIndexBytes -= entry.value
+                        chunkTouched.remove(entry.key)
                         entries.remove()
                     }
                 }
@@ -361,7 +447,6 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 }
             }
         }
-        if (everything || changedMessages.isNotEmpty()) artworkChangedListener?.invoke()
         // Newer last-message dates for loaded dialogs. The catalog's last entry is the paging
         // offset for loadMoreChats and stays untouched.
         val lastIndex = chats.size - 1
@@ -373,8 +458,13 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     chats[index] = chat.copy(lastMessageDate = newest.first, lastMessageId = newest.second)
             }
         }
+        return if (everything || changedMessages.isNotEmpty()) ContentChanges(changedMessages, everything) else null
     }
 
+    @Volatile private var contentChangedListener: (suspend (String, Set<Pair<Long, Int>>, Boolean) -> Boolean)? = null
+    override fun setContentChangedListener(listener: (suspend (String, Set<Pair<Long, Int>>, Boolean) -> Boolean)?) {
+        contentChangedListener = listener
+    }
     @Volatile private var artworkChangedListener: (() -> Unit)? = null
     override fun setArtworkChangedListener(listener: (() -> Unit)?) { artworkChangedListener = listener }
 
@@ -972,6 +1062,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
      * is a hit, instead of scanning plain history for the odd video).
      */
     private fun recent(h: Long, token: String?, limit: Int, section: String = "recent"): TelegramMediaPage {
+        val revision = recentFeedRevision.get()
+        if (recentFeedsSeen != revision) {
+            recentFeeds.clear()
+            recentFeedsSeen = revision
+        }
         val filter = categoryFilter(section)
         // Categories: Telegram's own "media of all chats" (one searchGlobal per page) instead
         // of one search per channel; the per-channel timeline stays the fallback.
@@ -1037,6 +1132,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             checkNotNull(recentFeeds[cursorToken]) { "Expired Monogram recent cursor" }
         }
         val page = timeline.nextPage(limit.coerceIn(1, 60))
+        if (recentFeedRevision.get() != revision) {
+            recentFeeds.remove(cursorToken)
+            throw java.io.IOException("Monogram timeline changed during request")
+        }
         if (!page.hasMore) recentFeeds.remove(cursorToken)
         while (recentFeeds.size > 8) recentFeeds.remove(recentFeeds.keys.first())
         return TelegramMediaPage(page.media, if (page.hasMore) "$cursorToken:${pageNumber + 1}" else null)
@@ -1106,8 +1205,9 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     }
 
     // A single channel keeps its history-offset cursor; recent and categories use a global timeline.
-    override suspend fun browse(section: String, cursor: String?, limit: Int): TelegramMediaPage =
-        if (!section.startsWith("channel:")) browseMutex.withLock { nativeCall { h ->
+    override suspend fun browse(section: String, cursor: String?, limit: Int): TelegramMediaPage {
+        noteInteractiveActivity()
+        return if (!section.startsWith("channel:")) browseMutex.withLock { nativeCall { h ->
             requireAuthorized(h)
             recent(h, cursor, limit, section)
         } } else browsePermits.withPermit { nativeCall { h ->
@@ -1143,6 +1243,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 "$epoch:$index:$offset" else null
             TelegramMediaPage(items.distinctBy(TelegramMedia::mediaKey), next)
         } }
+    }
 
     /**
      * messages.searchGlobal has no media filter (search_rpc.rs), so its hits are reduced to
@@ -1464,6 +1565,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
 
     private suspend fun loadMediaWindow(chatId: Long, messageId: Int, offset: Long, lengths: List<Int?>,
         nativeMediaKey: String?, priority: TelegramTransferPriority): List<ByteArray> {
+        val started = if (com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS) System.nanoTime() else 0L
+        noteInteractiveActivity()
         require(offset >= 0L && offset % TELEGRAM_MEDIA_PART_BYTES == 0L)
         require(lengths.size in 1..2 && lengths.all { it == null || it in 1..TELEGRAM_MEDIA_PART_BYTES })
         require(lengths.size == 1 || lengths.first() == TELEGRAM_MEDIA_PART_BYTES && lengths.last() != null)
@@ -1478,7 +1581,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 app.getString(R.string.monogram_error_account_changed)
             }
         }
-        val dir = withContext(Dispatchers.IO) { chunkDirectory.canonicalFile }
+        // The parent was canonicalized at initialization; all children are private, fixed names.
+        val dir = chunkDirectory
         val mediaIdentity = nativeMediaKey?.takeIf { it.isNotBlank() }
         val digest = mediaIdentity?.let(::mediaDigest)
         val cacheFiles = lengths.indices.map { index ->
@@ -1492,6 +1596,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 prepareChunkIndex(dir)
                 hotChunks[cacheFile]?.takeIf { validSize(index, it.size) }?.let {
                     chunkIndex[cacheFile]
+                    touchChunk(cacheFile)
                     return it
                 }
                 // Files are published atomically and never modified in place.
@@ -1503,20 +1608,46 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 verifyGeneration()
                 if (bytes != null && bytes.size.toLong() == candidate && validSize(index, bytes.size)) {
                     rememberHotChunk(cacheFile, bytes)
+                    touchChunk(cacheFile)
                     bytes
                 } else {
-                    if (cacheFile.delete() || !cacheFile.exists()) chunkIndexBytes -= chunkIndex.remove(cacheFile) ?: 0L
+                    if (cacheFile.delete() || !cacheFile.exists()) {
+                        chunkIndexBytes -= chunkIndex.remove(cacheFile) ?: 0L
+                        chunkTouched.remove(cacheFile)
+                    }
                     null
                 }
             }
         }
-        // Cache hits still validate the local authenticated native handle, but do
-        // not wait on reconnect, a network flood deadline or a request control.
+        // Fully hot windows bypass the connection/setup mutex, never authorization.
+        // tryLock avoids parking a read behind logout; the slow path serializes safely.
+        val hot = withContext(Dispatchers.IO) {
+            if (digest == null || handleUse.hasQueuedThreads()) return@withContext null
+            val read = handleUse.readLock()
+            if (!read.tryLock()) return@withContext null
+            try {
+                val current = handle
+                if (current == 0L) return@withContext null
+                val found = synchronized(diskChunkLock) {
+                    verifyGeneration()
+                    cacheFiles.mapIndexed { index, file -> hotChunks[file]?.takeIf { validSize(index, it.size) } }
+                }
+                if (found.any { it == null }) return@withContext null
+                requireAuthorized(current)
+                synchronized(diskChunkLock) {
+                    verifyGeneration()
+                    cacheFiles.forEach { file -> chunkIndex[file]; touchChunk(file) }
+                }
+                found.filterNotNull()
+            } finally { read.unlock() }
+        }
+        if (hot != null) return recordRead("ram", hot, started)
+        // Cold disk hits retain the regular authenticated handle acquisition path.
         val cached = nativeCallOnce(connect = false) { h ->
             requireAuthorized(h)
             lengths.indices.map(::lookup)
         }
-        if (cached.all { it != null }) return cached.filterNotNull()
+        if (cached.all { it != null }) return recordRead("disk-or-mixed", cached.filterNotNull(), started)
         if (lengths.size == 2 && cached.any { it != null }) {
             // A partial hit must not redownload a cached neighbor.
             return lengths.indices.map { index ->
@@ -1531,7 +1662,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 verifyGeneration()
                 // Another reader may have filled the cache while we waited to connect.
                 val ready = lengths.indices.map(::lookup)
-                if (ready.all { it != null }) return@nativeCall ready.filterNotNull()
+                if (ready.all { it != null }) return@nativeCall recordRead("disk-or-mixed", ready.filterNotNull(), started)
                 val temp = synchronized(diskChunkLock) {
                     verifyGeneration()
                     // A unique destination name does not create an empty file.
@@ -1539,19 +1670,17 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 }
                 try {
                     val previous = uniffi.monogram_mtproto.bindRequestControl(request)
-                    val payload = try {
+                    val parts = try {
                         mediaClass(if (priority.foreground) DISPATCH_USER else DISPATCH_BACKGROUND) {
-                            AmbientMonogramJni.mediaRange(h, chatId, messageId, temp.absolutePath, offset, mediaIdentity.orEmpty(), lengths.size)
+                            if (lengths.size == 1) listOf(AmbientMonogramJni.mediaRange(
+                                h, chatId, messageId, temp.absolutePath, offset, mediaIdentity.orEmpty(), 1))
+                            else AmbientMonogramJni.mediaParts(h, chatId, messageId, temp.absolutePath,
+                                offset, mediaIdentity.orEmpty(), checkNotNull(lengths[1]))
                         }
                     } finally {
                         uniffi.monogram_mtproto.bindRequestControl(previous)
                     }
-                    val parts = if (lengths.size == 1) listOf(payload) else {
-                        require(payload.size == lengths.sumOf { checkNotNull(it) }) { "Incomplete Monogram window" }
-                        listOf(payload.copyOfRange(0, TELEGRAM_MEDIA_PART_BYTES),
-                            payload.copyOfRange(TELEGRAM_MEDIA_PART_BYTES, payload.size))
-                    }
-                    require(parts.indices.all { validSize(it, parts[it].size) }) { "Invalid or incomplete Monogram chunk" }
+                    require(parts.size == lengths.size && parts.indices.all { validSize(it, parts[it].size) }) { "Invalid or incomplete Monogram chunk" }
                     recordNativeWindow()
                     verifyGeneration()
                     requireAuthorized(h)
@@ -1577,7 +1706,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                                 trimChunkCache()
                             }
                         }
-                        parts
+                        recordRead("native", parts, started)
                     } finally { stages.forEach { it.delete() } }
                 } finally {
                     temp.delete()
@@ -1590,6 +1719,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     private fun prepareChunkIndex(dir: File) {
         if (chunkIndexGeneration == cacheGeneration) return
         chunkIndex.clear()
+        chunkTouched.clear()
         chunkIndexBytes = 0L
         dir.listFiles().orEmpty().filter {
             it.isFile && it.name.endsWith(".bin") && !it.name.startsWith("part-")
@@ -1601,6 +1731,14 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     private fun rememberChunk(file: File) {
         val size = file.length()
         chunkIndexBytes += size - (chunkIndex.put(file, size) ?: 0L)
+        chunkTouched[file] = file.lastModified()
+    }
+
+    /** Persist recency at most once per minute per on-disk entry. */
+    private fun touchChunk(file: File) {
+        val touched = chunkTouched[file] ?: return
+        val now = System.currentTimeMillis()
+        if (now - touched >= 60_000L && file.setLastModified(now)) chunkTouched[file] = now
     }
 
     private fun trimChunkCache() {
@@ -1609,6 +1747,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             val entry = iterator.next()
             if (entry.key.delete() || !entry.key.exists()) {
                 chunkIndexBytes -= entry.value
+                chunkTouched.remove(entry.key)
                 iterator.remove()
             }
         }
@@ -1673,6 +1812,32 @@ internal object AmbientMonogramJni {
             }
         }
         return uniffi.monogram_mtproto.downloadMessagePreviewBytes(handle.toULong(), chatId, messageId, destination, target.toUInt())
+    }
+
+    @Volatile private var partsJniAvailable = true
+    private external fun downloadMediaParts(
+        handle: Long, chatId: Long, messageId: Int, destination: String, offset: Long, expectedKey: String,
+        first: ByteArray, second: ByteArray,
+    ): Int
+
+    fun mediaParts(handle: Long, chatId: Long, messageId: Int, destination: String, offset: Long,
+        expectedKey: String, secondBytes: Int): List<ByteArray> {
+        require(secondBytes in 1..TELEGRAM_MEDIA_PART_BYTES)
+        if (partsJniAvailable) {
+            val first = ByteArray(TELEGRAM_MEDIA_PART_BYTES)
+            val second = ByteArray(secondBytes)
+            try {
+                val count = downloadMediaParts(handle, chatId, messageId, destination, offset, expectedKey, first, second)
+                check(count == first.size + second.size) { "Incomplete Monogram window" }
+                return listOf(first, second)
+            } catch (_: UnsatisfiedLinkError) {
+                partsJniAvailable = false
+            }
+        }
+        val payload = mediaRange(handle, chatId, messageId, destination, offset, expectedKey, 2)
+        require(payload.size == TELEGRAM_MEDIA_PART_BYTES + secondBytes) { "Incomplete Monogram window" }
+        return listOf(payload.copyOfRange(0, TELEGRAM_MEDIA_PART_BYTES),
+            payload.copyOfRange(TELEGRAM_MEDIA_PART_BYTES, payload.size))
     }
 
     private external fun downloadMediaRange(

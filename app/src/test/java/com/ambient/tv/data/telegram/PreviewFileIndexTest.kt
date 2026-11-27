@@ -22,6 +22,14 @@ class PreviewFileIndexTest {
         assertTrue(c.exists())
     }
 
+    @Test fun expiredEntryCannotRenewItselfOnHit() {
+        val dir = folder.root
+        val old = File(dir, "old.img").apply { writeBytes(ByteArray(3)); setLastModified(1_000) }
+        val cache = PreviewFileIndex(dir, 2, 6, maxAgeMs = 1_000, clock = { 3_000 }) { true }
+        assertFalse(cache.hit(old))
+        assertFalse(old.exists())
+    }
+
     @Test fun missingFileAndInvalidationDoNotKeepGhostBytes() {
         val dir = folder.root
         val cache = PreviewFileIndex(dir, 2, 6) { it.extension == "img" }

@@ -242,6 +242,54 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
             }
         } }
 
+    private fun deleteInvalidSnapshot(target: File) {
+        snapshots.remove(target)
+        AtomicFile(target).delete()
+        // AtomicFile can log a filesystem deletion error without throwing.
+        // Do not acknowledge the update until all possible recovery files are gone.
+        check(!target.exists() && !File(target.path + ".bak").exists() &&
+            !File(target.path + ".new").exists()) { "Monogram snapshot invalidation failed" }
+    }
+
+    /** Remove edited/deleted posts from all persisted sections, including unopened ones. */
+    suspend fun invalidateMedia(account: String, messages: Set<Pair<Long, Int>>, all: Boolean) =
+        withContext(Dispatchers.IO) { lock.withLock {
+            val prefix = hash(account) + "-"
+            // Include AtomicFile recovery artifacts after a process interruption.
+            root.listFiles().orEmpty().mapNotNull { item ->
+                val base = item.name.removeSuffix(".bak").removeSuffix(".new")
+                if (base.startsWith(prefix) && base.endsWith(".bin")) File(root, base) else null
+            }.distinct().forEach { target ->
+                    val decoded = runCatching {
+                        JSONObject(String(decrypt(AtomicFile(target).readFully()), Charsets.UTF_8))
+                    }.getOrNull()
+                    if (decoded == null) {
+                        deleteInvalidSnapshot(target)
+                        return@forEach
+                    }
+                    val section = decoded.optString("section")
+                    if (!section.startsWith("media:")) return@forEach
+                    val rows = decoded.optJSONArray("rows") ?: return@forEach
+                    val filtered = JSONArray()
+                    if (!all) for (index in 0 until rows.length()) {
+                        val item = rows.optJSONObject(index) ?: continue
+                        if ((item.optLong("chat") to item.optInt("message")) !in messages) filtered.put(item)
+                    }
+                    if (filtered.length() != rows.length()) {
+                        val modified = target.lastModified()
+                        snapshots.remove(target)
+                        // A deletion must never renew the offline TTL; fail closed on write failure.
+                        try {
+                            write(account, section, filtered) { true }
+                            target.setLastModified(modified)
+                            remember(target, filtered)
+                        } catch (_: Exception) {
+                            deleteInvalidSnapshot(target)
+                        }
+                    }
+                }
+        } }
+
     suspend fun clearAccount(account: String) =
         withContext(Dispatchers.IO) { lock.withLock {
             val prefix = hash(account) + "-"
