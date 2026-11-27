@@ -799,3 +799,74 @@ create_texture_from_hal tracks imported images as UNINITIALIZED; the
 native Vulkan implementation avoids guessing external image layouts
 through that API. These boundaries prevent claiming complete Android
 decoder-to-display zero-copy from the new MPV Vulkan transport alone.
+
+
+Android MediaCodec Vulkan external-memory bridge (experimental)
+---------------------------------------------------------------
+The new native Android ABI (include/ambientsvp_android_vulkan.h)
+provides a PRIVATE AImageReader with GPU_SAMPLED_IMAGE usage,
+maxImages=4, a borrowed ANativeWindow and a Java Surface local ref.
+Configure the MediaCodec output with that Surface BEFORE decoding.
+Release each codec output to it exactly once; acquireNextImageAsync
+preserves frame order and the actual decoder acquire sync_file.
+The lease owns AImage and retains its parent reader. Dropping an
+unsubmitted lease returns the original producer fence.
+
+The importer borrows a Vulkan 1.1+ device/compute queue, requiring
+VK_ANDROID_external_memory_android_hardware_buffer,
+VK_EXT_queue_family_foreign, VK_KHR_external_semaphore_fd and
+enabled samplerYcbcrConversion. It imports the ORIGINAL AHardwareBuffer
+allocation using dedicated VkDeviceMemory and its actual reported
+externalFormat, rather than inventing a Vulkan YUV format or CPU mapping
+the opaque image. It uses the driver's suggested immutable YCbCr
+conversion sampler and a compiled combined-sampler compute shader,
+which samples the visible crop into a GPU-local RGBA8 image. No host
+pixel copies or GPU readback in this path. This GPU color conversion
+does write an intermediate image; the original buffer is imported
+without copying its backing memory. Only explicit SDR8 metadata from
+the decoder is accepted, not protected, HDR or unknown streams.
+
+A duplicate of the acquire FD is temporarily imported into a binary
+Vulkan semaphore; the original remains with the AImage lease. The
+command buffer acquires/relinquishes FOREIGN_EXT queue-family ownership
+with GENERAL layout, and exports a release SYNC_FD after submission.
+AImage_deleteAsync returns the buffer to the producer with that FD.
+If export fails, hold the image until the conversion fence completes.
+Device loss preserves the original producer fence if still needed.
+The caller externally synchronizes the borrowed compute queue.
+There are at most four outstanding conversion jobs. The output remains
+on that same queue/device; cross-queue presentation needs explicit
+additional synchronization and is not implicit.
+
+ambient_svp_vk_begin_ahb connects two such GPU RGB textures directly
+to the existing resident motion/synthesis path. It checks matching
+device, queue and geometry and pins the import jobs until pair
+retirement. RGB motion uses a luma proxy; synthesis does not apply
+YUV conversion a second time. No production Open-SVPFlow parity or
+hardware speed claim is made for this distinct resident algorithm.
+The ordinary YUV/CPU fallback is unchanged.
+
+Build: the Android-only combined immutable sampler shader is compiled
+with NDK glslc (or SVP_GLSLC override; glslangValidator is the CI
+fallback). Shader and build.rs are part of the engine source/PGO
+fingerprint. CI validates SPIR-V, cross-checks the Android API and
+device test, and runs an RGB-resident GPU test on Mesa.
+
+The ignored Android device test
+ahb_vulkan::device_tests::mediacodec_surface_external_memory_reaches_resident_synthesis
+configures an actual MediaCodec with the new PRIVATE Surface, decodes
+an original synthetic AVC IDR, acquires/imports it and runs resident
+synthesis, then verifies a final test-only readback. Set
+SVP_TEST_MEDIACODEC_NAME to select the specific hardware decoder on
+the target device. This test needs a real Android device with the
+required Vulkan extensions; cross-compilation is not execution.
+
+Remaining player integration: the current MPV Android MediaCodec
+renderer still owns its existing GLES AImageReader. The new Surface
+producer must be selected by a Vulkan-aware MPV decoder/renderer
+bridge, with actual decoder timestamp matching and compatible output
+presentation; VLC needs its own integration. Neither currently calls
+the new Android ABI in normal playback. Do not release one MediaCodec
+buffer to two Surface consumers or reinterpret AVMediaCodecBuffer as
+AHardwareBuffer. Regular presets and application defaults remain
+unchanged until end-to-end player/device validation.
