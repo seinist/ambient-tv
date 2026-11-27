@@ -27,6 +27,29 @@ impl Grid{
     }
     fn count(self)->usize{(self.w*self.h) as usize}
     fn origin(self,i:usize)->(u32,u32){(i as u32%self.w*self.sx,i as u32/self.w*self.sy)}
+    // x+2*y places left, top and top-right strictly before the
+    // current block. Both directions can share a wave's GPU submission.
+    fn wave(self,n:u32)->Vec<usize>{
+        (0..self.h).filter_map(|y|n.checked_sub(2*y).filter(|&x|x<self.w)
+            .map(|x|(y*self.w+x) as usize)).collect()
+    }
+    fn causal(self,i:usize,choices:&[Choice],coarse:[i32;2])->([i32;2],bool){
+        let x=i as u32%self.w;let y=i as u32/self.w;
+        let mut vectors=[coarse;3];let mut high=false;
+        for (slot,cell) in [(0,x.checked_sub(1).map(|x|(x,y))),
+            (1,y.checked_sub(1).map(|y|(x,y))),
+            (2,y.checked_sub(1).filter(|_|x+1<self.w).map(|y|(x+1,y)))]{
+            if let Some((x,y))=cell{
+                let c=choices[(y*self.w+x) as usize];
+                if c.winner>=0{
+                    vectors[slot]=[c.dx,c.dy];
+                    high|=c.sad>(self.bw*self.bh*12) as i32;
+                }
+            }
+        }
+        let median=|axis:usize|{let mut v=vectors.map(|v|v[axis]);v.sort_unstable();v[1]};
+        ([median(0),median(1)],high)
+    }
     fn nearest(self,x:u32,y:u32)->usize{
         // Round to the nearest grid origin rather than always selecting
         // the block to the left/above the projected location.
@@ -223,7 +246,7 @@ impl MotionSearch{
         // Reject oversized jobs before uploading any frame or submitting
         // compute, rather than doing partial work and falling back late.
         let max_candidates=levels.iter().rev().enumerate().try_fold(0usize,|sum,(index,(_,_,_,grid))|
-            sum.checked_add(grid.count().checked_mul(if index==0 {232}else{120})?))
+            sum.checked_add(grid.count().checked_mul(if index==0 {234}else{172})?))
             .ok_or("experimental motion candidate estimate overflow")?;
         if max_candidates>MAX_TOTAL_CANDIDATES{return Err("experimental motion candidate budget".into());}
         let mut previous:[Option<LevelField>;2]=[None,None];
@@ -243,13 +266,13 @@ impl MotionSearch{
             // Record the uploads in the first metric batch's encoder, so
             // upload and compute execute in order in one queue submission.
             let mut first_encoder=Some(encoder);
-            // The two directions have no same-level dependencies. Flatten
-            // the two raster grids into one bounded stream of independent
-            // jobs, preserving each block's exact candidate order.
+            // Causal predictors are finalized by the previous wave.
+            // Both directional grids remain independent of one another.
             let count=grid.count();
             let radius=if previous[0].is_none(){4}else{2};
             let global:[Option<[i32;2]>;2]=std::array::from_fn(|d|previous[d].as_ref().and_then(|f|f.global(a.pel)));
-            let max_per=((2*radius+1)*(2*radius+1)+35) as usize;
+            let max_radius=if radius==4{4}else{3};
+            let max_per=((2*max_radius+1)*(2*max_radius+1)+36) as usize;
             let batch_limit=MAX_BATCH.min(device.limits().max_compute_workgroups_per_dimension as usize)
                 .min((device.limits().max_storage_buffer_binding_size/32) as usize);
             if batch_limit<max_per{return Err("insufficient motion dispatch capacity".into());}
@@ -258,12 +281,16 @@ impl MotionSearch{
             let metrics=&mut self.metrics;
             let candidates=&mut self.candidates;
             let searches=&mut self.searches;
-            let mut choices:[Vec<Choice>;2]=std::array::from_fn(|_|Vec::with_capacity(count));
+            let unset=Choice{dx:0,dy:0,sad:0,cost:i32::MAX,raw_sad:-1,winner:-1};
+            let mut choices:[Vec<Choice>;2]=std::array::from_fn(|_|vec![unset;count]);
+            for wave in 0..grid.w+2*(grid.h-1){
+            let indices=grid.wave(wave);
+            let width=indices.len();
             let mut start=0;
-            while start<2*count{
-                let end=(start+blocks).min(2*count);
+            while start<2*width{
+                let end=(start+blocks).min(2*width);
                 #[cfg(test)]
-                let end=if self.separate_directions && start<count{end.min(count)}else{end};
+                let end=if self.separate_directions && start<width{end.min(width)}else{end};
                 metrics.clear();
                 candidates.clear();
                 searches.clear();
@@ -271,14 +298,19 @@ impl MotionSearch{
                 candidates.reserve((end-start)*max_per);
                 searches.reserve(end-start);
                 for i in start..end{
-                    let direction=i/count;
+                    let direction=i/width;
+                    let index=indices[i%width];
                     let field=&previous[direction];
-                    let (x,y)=grid.origin(i%count);
-                    let pred=clamp_predictor(field.as_ref().map_or([0,0],|f|f.predict(x,y,a.pel)),
+                    let (x,y)=grid.origin(index);
+                    let coarse=clamp_predictor(field.as_ref().map_or([0,0],|f|f.predict(x,y,a.pel)),
                         x,y,a.width,a.height,bw,bh,a.pel);
+                    let (causal,high)=grid.causal(index,&choices[direction],coarse);
+                    let pred=clamp_predictor(causal,x,y,a.width,a.height,bw,bh,a.pel);
+                    let radius=if radius==2&&high{3}else{radius};
                     let global=global[direction].map(|v|clamp_predictor(v,x,y,a.width,a.height,bw,bh,a.pel));
                     let from=candidates.len() as u32;
                     candidate_offsets(offsets,pred,global,radius,a.pel,level==0);
+                    if !offsets.contains(&coarse){offsets.push(coarse);}
                     for &[dx,dy] in offsets.iter(){
                         let c=Candidate{x,y,dx,dy,width:bw,height:bh,reverse:direction==0,satd:false};
                         if !c.valid(a.width,a.height,a.pel){continue;}
@@ -307,10 +339,13 @@ impl MotionSearch{
                     return Err("invalid GPU motion winner".into());
                 }
                 for (i,c) in batch.into_iter().enumerate(){
-                    choices[(start+i)/count].push(c);
+                    let job=start+i;
+                    choices[job/width][indices[job%width]]=c;
                 }
                 start=end;
             }
+            }
+            if choices.iter().flatten().any(|c|c.winner<0){return Err("incomplete causal wavefront".into());}
             previous=choices.map(|choices|Some(LevelField{grid,choices}));
             // Source index belongs to the validated input timeline. Keep
             // only the next picture, and bound total retained texture bytes.
@@ -408,6 +443,29 @@ mod tests{
             assert_eq!(offsets.len(),offsets.iter().collect::<std::collections::BTreeSet<_>>().len());
             assert!(offsets.len()<=60);
         }
+    }
+
+    #[test]
+    fn causal_wavefront_orders_every_predictor_and_adapts_to_residual(){
+        let g=Grid::new(96,66,16,16,0,0).unwrap();
+        let unset=Choice{dx:0,dy:0,sad:0,cost:i32::MAX,raw_sad:-1,winner:-1};
+        let mut choices=vec![unset;g.count()];
+        let mut seen=0;
+        for wave in 0..g.w+2*(g.h-1){
+            for i in g.wave(wave){
+                let x=i as u32%g.w;let y=i as u32/g.w;
+                if x>0{assert!(choices[i-1].winner>=0);}
+                if y>0{
+                    assert!(choices[i-g.w as usize].winner>=0);
+                    if x+1<g.w{assert!(choices[i-g.w as usize+1].winner>=0);}
+                }
+                let (_,high)=g.causal(i,&choices,[4,-2]);
+                if x>0||y>0{assert!(high);}
+                choices[i]=Choice{dx:4,dy:-2,sad:4096,cost:4096,raw_sad:-1,winner:0};
+                seen+=1;
+            }
+        }
+        assert_eq!(seen,g.count());
     }
 
     #[test]
