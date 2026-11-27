@@ -46,10 +46,9 @@ fn decode<'a>(key: &str, bytes: &'a [u8]) -> Option<&'a [u8]> {
 mod android {
     use super::*;
     use std::{fs::{self, File, OpenOptions}, io::{Read, Write},
-        os::unix::{fs::{MetadataExt, OpenOptionsExt}, ffi::OsStrExt},
-        path::{Path, PathBuf}, sync::{Mutex, atomic::{AtomicU64, Ordering}}};
+        os::unix::{fs::{MetadataExt, OpenOptionsExt}, ffi::OsStrExt, io::AsRawFd},
+        path::{Path, PathBuf}, sync::Mutex};
     static DIRECTORY: Mutex<Option<PathBuf>> = Mutex::new(None);
-    static SERIAL: AtomicU64 = AtomicU64::new(0);
 
     fn private(metadata: &fs::Metadata) -> bool {
         // SAFETY: geteuid has no pointer arguments and cannot unwind.
@@ -95,10 +94,22 @@ mod android {
     pub fn store(key: &str, data: &[u8]) -> Option<()> {
         let dir = directory()?;
         let bytes = encode(key, data)?;
-        // One cache entry per app, bounded. A crashed writer leaves at most
-        // a temporary file; remove that process's temporary on ordinary errors.
-        let name = format!(".pipeline-{}-{}.tmp", std::process::id(), SERIAL.fetch_add(1, Ordering::Relaxed));
-        let path = dir.join(name);
+        // Cross-process nonblocking lock, one fixed temporary file, and one
+        // final entry: even repeated process crashes cannot grow this cache.
+        let lock = OpenOptions::new().write(true).create(true)
+            .mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+            .open(dir.join(".pipeline.lock")).ok()?;
+        let meta = lock.metadata().ok()?;
+        if !meta.is_file() || !private(&meta) || meta.nlink() != 1 { return None; }
+        // SAFETY: lock is a live owned regular file descriptor; dropping it
+        // releases the advisory lock after the atomic rename.
+        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 { return None; }
+        let path = dir.join(".pipeline.tmp");
+        match fs::remove_file(&path) {
+            Ok(()) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(_) => return None,
+        }
         let mut file: File = OpenOptions::new().write(true).create_new(true)
             .mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
             .open(&path).ok()?;
