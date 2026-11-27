@@ -639,18 +639,12 @@ fail:
     pl_dispatch_abort(dp,&sh);return false;
 }
 
-static inline bool ambient_fel_native420_compose(pl_gpu gpu,pl_dispatch dp,
-    struct ambient_fel_native420 *s,pl_tex bl,pl_tex output,
-    const struct pl_dovi_metadata *reshape,const struct ambient_fel_nlq *n,
-    const struct ambient_fel_planes *el,const struct ambient_dovi_metadata *raw)
+static inline bool ambient_fel_native420_output(pl_dispatch dp,
+    const struct ambient_fel_native420 *s,pl_tex output,
+    const struct pl_dovi_metadata *reshape)
 {
-    struct ambient_fel_fixed_params fixed;
-    if(!ambient_fel_fixed_params_init(&fixed,raw))return false;
-    if(!gpu||!dp||!s||!bl||!output||!reshape||output==bl||
-       output->params.w!=bl->params.w||output->params.h!=bl->params.h)return false;
-    pl_dispatch_reset_frame(dp);
-    if(!ambient_fel_native_grid(gpu,dp,bl,&s->y,&fixed,n,el,false)||
-       !ambient_fel_native_grid(gpu,dp,bl,&s->uv,&fixed,n,el,true))return false;
+    if(!dp||!s||!s->y||!s->uv||!output||output==s->y||output==s->uv||
+       output->params.w!=s->y->params.w||output->params.h!=s->y->params.h)return false;
     const struct pl_shader_desc d[]={
         {.desc={.name="native_y",.type=PL_DESC_SAMPLED_TEX},.binding={.object=s->y}},
         {.desc={.name="native_uv",.type=PL_DESC_SAMPLED_TEX},.binding={.object=s->uv}},
@@ -673,10 +667,25 @@ static inline bool ambient_fel_native420_compose(pl_gpu gpu,pl_dispatch dp,
             "vec2 uv=vec2(clamp(uvq,ivec2(0),ivec2(4095)));"
             "float y=floor(texelFetch(native_y,ivec2(gl_FragCoord.xy),0).r*65535.0+0.5);"
             "color=vec4(vec3(y,uv)/4096.0,1.0);",
-    })||!ambient_fel_rgb_shader(sh,reshape)){
+    })||(reshape&&!ambient_fel_rgb_shader(sh,reshape))){
         pl_dispatch_abort(dp,&sh);return false;
     }
     return pl_dispatch_finish(dp,pl_dispatch_params(.shader=&sh,.target=output));
+}
+
+static inline bool ambient_fel_native420_compose(pl_gpu gpu,pl_dispatch dp,
+    struct ambient_fel_native420 *s,pl_tex bl,pl_tex output,
+    const struct pl_dovi_metadata *reshape,const struct ambient_fel_nlq *n,
+    const struct ambient_fel_planes *el,const struct ambient_dovi_metadata *raw)
+{
+    struct ambient_fel_fixed_params fixed;
+    if(!ambient_fel_fixed_params_init(&fixed,raw))return false;
+    if(!gpu||!dp||!s||!bl||!output||!reshape||output==bl||
+       output->params.w!=bl->params.w||output->params.h!=bl->params.h)return false;
+    pl_dispatch_reset_frame(dp);
+    if(!ambient_fel_native_grid(gpu,dp,bl,&s->y,&fixed,n,el,false)||
+       !ambient_fel_native_grid(gpu,dp,bl,&s->uv,&fixed,n,el,true))return false;
+    return ambient_fel_native420_output(dp,s,output,reshape);
 }
 
 /* Low-level fixtures with already prediction-normalized BL input. Live

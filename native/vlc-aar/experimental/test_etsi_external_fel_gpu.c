@@ -241,6 +241,53 @@ static void check_native_grid(pl_gpu gpu,pl_dispatch dp,pl_tex actual,bool chrom
     assert(max==0);
     free(out);pl_tex_destroy(gpu,&rb);
 }
+static void check_output_chroma(pl_gpu gpu,pl_dispatch dp,const struct ambient_fel_native420 *s,
+    const uint16_t bl[YUV],const uint16_t el[YUV],const struct ambient_dovi_metadata *m)
+{
+    uint16_t uv[2][C];
+    int vertical[2][W*H/2];
+    for(unsigned c=0;c<2;c++){
+        for(unsigned i=0;i<C;i++){
+            unsigned x=i%(W/2),y=i/(W/2);
+            unsigned b[3]={native420_ref_luma(bl,x,y),bl[N+i],bl[N+C+i]};
+            uv[c][i]=oracle(m,b,el[N+c*C+i],c+1);
+        }
+        for(unsigned y=0;y<H;y++)for(unsigned x=0;x<W/2;x++){
+            int t=(int)y/2;
+            if(!(y&1))vertical[c][y*(W/2)+x]=64*uv[c][t*(W/2)+x];
+            else{
+                int sum=0;const int k[]={-4,36,36,-4};
+                for(int j=0;j<4;j++)sum+=k[j]*(int)at_plane(uv[c],W/2,H/2,(int)x,t+j-1);
+                vertical[c][y*(W/2)+x]=sum;
+            }
+        }
+    }
+    pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,32,32,PL_FMT_CAP_RENDERABLE|PL_FMT_CAP_HOST_READABLE);
+    assert(fmt);
+    pl_tex out=pl_tex_create(gpu,pl_tex_params(.w=W,.h=H,.format=fmt,.renderable=true,.host_readable=true));
+    assert(out&&ambient_fel_native420_output(dp,s,out,NULL));
+    float pixels[N*4];assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=out,.ptr=pixels)));
+    for(unsigned i=0;i<N;i++){
+        unsigned x=i%W,y=i/W;
+        for(unsigned c=0;c<2;c++){
+            int n=(int)x/2,sum=0;
+            if(!(x&1))sum=(int)floor_shift((wide)vertical[c][y*(W/2)+n]+32,6);
+            else{
+                const int k[]={-4,36,36,-4};
+                for(int j=0;j<4;j++){
+                    int ix=n+j-1;ix=ix<0?0:ix>=W/2?W/2-1:ix;
+                    sum+=k[j]*vertical[c][y*(W/2)+ix];
+                }
+                sum=(int)floor_shift((wide)sum+2048,12);
+            }
+            unsigned want=clip(sum,4095),got=(unsigned)lroundf(pixels[4*i+c+1]*4096.f);
+            if(got!=want)fprintf(stderr,"output chroma pixel %u component %u got %u expected %u\n",i,c,got,want);
+            assert(got==want);
+        }
+    }
+    fprintf(stderr,"Annex C output chroma: %u exact codes\n",2u*N);
+    pl_tex_destroy(gpu,&out);
+}
 static void check_reference_filter(pl_gpu gpu,pl_log log,pl_dispatch dp,struct ambient_fel_planes *planes,
     const uint16_t source[YUV],const uint16_t bl_frame[YUV],const struct ambient_dovi_metadata *m,
     const struct pl_dovi_metadata *reshape,const struct ambient_fel_nlq *nlq)
@@ -330,6 +377,7 @@ static void check_reference_filter(pl_gpu gpu,pl_log log,pl_dispatch dp,struct a
     assert(frame.planes[0].texture==render.output);
     check_native_grid(gpu,dp,render.native420.y,false,bl_frame,expanded,m);
     check_native_grid(gpu,dp,render.native420.uv,true,bl_frame,expanded,m);
+    check_output_chroma(gpu,dp,&render.native420,bl_frame,expanded,m);
     // Force luma-dependent MMR even when the external RPU uses only
     // polynomial chroma curves. A strong cross-component term catches a
     // regression to point-sampled luma, including both image edges.
@@ -343,6 +391,42 @@ static void check_reference_filter(pl_gpu gpu,pl_log log,pl_dispatch dp,struct a
     frame.planes[0].texture=bl;
     assert(ambient_fel_render_picture_ex(gpu,log,&render,&frame,pic,1,0,0,64,64));
     check_native_grid(gpu,dp,render.native420.uv,true,bl_frame,expanded,&pic->rpu);
+    // Stress all MMR orders with negative products, large cancellation,
+    // a quadratic polynomial and NLQ fractional bits above FP32 precision.
+    for(unsigned denom=15;denom<=32;denom+=17){
+        for(unsigned order=1;order<=3;order++){
+            pic->rpu=*m;pic->rpu.bl_spatial_resampling=0;pic->rpu.el_spatial_resampling=1;
+            pic->rpu.coef_log2_denom=denom;
+            int64_t unit=INT64_C(1)<<denom;
+            for(unsigned c=0;c<3;c++){
+                struct ambient_dovi_curve *q=&pic->rpu.curves[c];
+                memset(q,0,sizeof(*q));q->num_pivots=3;q->pivots[1]=512;q->pivots[2]=1023;
+                for(unsigned seg=0;seg<2;seg++){
+                    if(c==0){
+                        q->poly_order[seg]=2;
+                        q->poly_coef[seg][0]=unit/8+3;
+                        q->poly_coef[seg][1]=unit/2-7;
+                        q->poly_coef[seg][2]=unit/8+11;
+                    }else{
+                        q->mapping[seg]=1;q->mmr_order[seg]=order;
+                        q->mmr_constant[seg]=unit/4+5;
+                        for(unsigned k=0;k<order;k++)for(unsigned j=0;j<7;j++)
+                            q->mmr_coef[seg][k][j]=((j+k+c+seg)&1?-1:1)*(unit/(16+4*k)+1+j);
+                        q->mmr_coef[seg][0][0]+=unit*4096;
+                        q->mmr_constant[seg]-=unit*2048;
+                    }
+                }
+                pic->rpu.nlq_offset[c]=512;
+                pic->rpu.nlq_slope[c]=unit/256+1;
+                pic->rpu.nlq_threshold[c]=unit/512+3;
+                pic->rpu.nlq_maximum[c]=unit/4+7;
+            }
+            frame.planes[0].texture=bl;
+            assert(ambient_fel_render_picture_ex(gpu,log,&render,&frame,pic,1,0,0,64,64));
+            check_native_grid(gpu,dp,render.native420.y,false,bl_frame,expanded,&pic->rpu);
+            check_native_grid(gpu,dp,render.native420.uv,true,bl_frame,expanded,&pic->rpu);
+        }
+    }
     // Both layers signalled at 32x32: reconstructed target is 64x64.
     uint16_t small_bl[YUV],large_bl[YUV];crop_el(bl_frame,small_bl,&g);
     float small_packed[32*32*4];
