@@ -760,10 +760,21 @@ amend(upstream_build,
         inputs.property("ambientAndroidRustFlags", androidRustFlags)''')
 amend(upstream_build,
       '                        pb.environment()["CARGO_BUILD_JOBS"] = jobs.toString()',
-      '''                        pb.environment()["CARGO_BUILD_JOBS"] = jobs.toString()
-                        if (androidRustFlags.isNotBlank()) {
-                            check(abi == "arm64-v8a") { "Ambient CPU tuning requires ARM64" }
-                            pb.environment()["RUSTFLAGS"] = androidRustFlags
+      '''                        pb.environment()["CARGO_BUILD_JOBS"] =
+                            System.getenv("CARGO_BUILD_JOBS")?.takeIf { it.toIntOrNull()?.let { n -> n > 0 } == true }
+                                ?: jobs.toString()
+                        // Android-only flags: also align 32-bit ELF LOAD segments.
+                        val alignment = "-C link-arg=-Wl,-z,max-page-size=16384"
+                        val encoded = pb.environment()["CARGO_ENCODED_RUSTFLAGS"]
+                        if (encoded != null && androidRustFlags.isBlank()) {
+                            pb.environment()["CARGO_ENCODED_RUSTFLAGS"] =
+                                listOf(encoded, "-C", "link-arg=-Wl,-z,max-page-size=16384")
+                                    .filter { it.isNotEmpty() }.joinToString(31.toChar().toString())
+                        } else {
+                            if (androidRustFlags.isNotBlank()) check(abi == "arm64-v8a")
+                            pb.environment()["RUSTFLAGS"] =
+                                listOf(androidRustFlags.ifBlank { pb.environment()["RUSTFLAGS"].orEmpty() }, alignment)
+                                    .filter { it.isNotBlank() }.joinToString(" ")
                             pb.environment().remove("CARGO_ENCODED_RUSTFLAGS")
                         }''')
 

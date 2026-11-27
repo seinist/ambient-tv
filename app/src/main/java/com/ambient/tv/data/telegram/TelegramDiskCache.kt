@@ -173,9 +173,11 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
             }.getOrNull() }
         } }
 
-    suspend fun saveMedia(account: String, section: String, items: List<TelegramMedia>, replace: Boolean) =
+    suspend fun saveMedia(account: String, section: String, items: List<TelegramMedia>, replace: Boolean,
+        stillAuthorized: () -> Boolean = { true }) =
         withContext(Dispatchers.IO) { lock.withLock {
             runCatching {
+                if (!stillAuthorized()) return@runCatching
                 val past = if (replace) emptyList() else mediaUnsafe(account, section)
                 // Pages arrive newest first. Keep the first 240, not the oldest 240;
                 // after deep scrolling Home must still hydrate with recent media.
@@ -192,7 +194,7 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
                     .put("protected", m.protectedContent)
                     .put("width", m.width).put("height", m.height).put("file", m.fileName))
                 }
-                write(account, "media:$section", array)
+                if (stillAuthorized()) write(account, "media:$section", array)
             }
         } }
 
@@ -215,9 +217,11 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
         }.getOrNull() }
     }
 
-    suspend fun saveChannels(account: String, entries: List<TelegramChannel>, replace: Boolean) =
+    suspend fun saveChannels(account: String, entries: List<TelegramChannel>, replace: Boolean,
+        stillAuthorized: () -> Boolean = { true }) =
         withContext(Dispatchers.IO) { lock.withLock {
             runCatching {
+                if (!stillAuthorized()) return@runCatching
                 val past = if (replace) emptyList() else {
                     val array = read(account, "channels")
                     (0 until (array?.length() ?: 0)).mapNotNull { i -> runCatching {
@@ -234,7 +238,7 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
                         .put("description", c.description).put("thumb", c.thumbnailUrl)
                         .also { obj -> c.subscribed?.let { obj.put("member", it) } })
                 }
-                write(account, "channels", array)
+                if (stillAuthorized()) write(account, "channels", array)
             }
         } }
 

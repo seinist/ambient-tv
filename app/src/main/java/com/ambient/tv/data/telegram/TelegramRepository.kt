@@ -416,7 +416,10 @@ class TelegramRepository @Inject constructor(
                 check(client === authenticated && streamEpoch.get() == generation) {
                     appContext.getString(R.string.monogram_error_account_changed)
                 }
-                mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset))
+                mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset), generation)
+            } },
+            prefetchLoader = { offset -> kotlinx.coroutines.runBlocking {
+                mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset), generation, speculative = true)
             } },
             authorized = { client === authenticated && streamEpoch.get() == generation },
         ) }
@@ -552,9 +555,9 @@ class TelegramRepository @Inject constructor(
             .let { result -> result.copy(items = result.items.filterNot { it.chatId in blockedChannels }) }
         if (!sameAccount(selected, identity, generation)) return TelegramChannelPage(emptyList())
         selected.cacheIdentity?.let { id ->
-            if (page.items.isNotEmpty()) diskCache.saveChannels(id, page.items, cursor == null)
+            if (page.items.isNotEmpty()) diskCache.saveChannels(id, page.items, cursor == null) { sameAccount(selected, identity, generation) }
         }
-        return page
+        return page.takeIf { sameAccount(selected, identity, generation) } ?: TelegramChannelPage(emptyList())
     }
     suspend fun browsePage(section: String, cursor: String? = null, limit: Int = 60): TelegramMediaPage =
         interactive { loadBrowsePage(section, cursor, limit) }
@@ -567,9 +570,9 @@ class TelegramRepository @Inject constructor(
             .let { result -> result.copy(items = result.items.filterNot { it.chatId in blockedChannels }) }
         if (!sameAccount(selected, identity, generation)) return TelegramMediaPage(emptyList())
         selected.cacheIdentity?.let { id ->
-            if (page.items.isNotEmpty()) diskCache.saveMedia(id, section, page.items, cursor == null)
+            if (page.items.isNotEmpty()) diskCache.saveMedia(id, section, page.items, cursor == null) { sameAccount(selected, identity, generation) }
         }
-        return page
+        return page.takeIf { sameAccount(selected, identity, generation) } ?: TelegramMediaPage(emptyList())
     }
     /** Home rows: background priority (see [interactive]). */
     suspend fun channels(): List<TelegramChannel> = try {
@@ -741,6 +744,8 @@ class TelegramRepository @Inject constructor(
 
     // Bound all players and cancelled seek windows to the native media lane budget.
     private val mediaPartPermits = kotlinx.coroutines.sync.Semaphore(4)
+    // At most two speculative RPCs globally; two lanes remain for actual reads.
+    private val speculativePartPermits = kotlinx.coroutines.sync.Semaphore(2)
     private data class PartKey(val epoch: Long, val chatId: Long, val messageId: Int, val offset: Long, val expectedBytes: Int?)
     private class PartLoad(val deferred: kotlinx.coroutines.Deferred<ByteArray>, var waiters: Int)
     private val partLoads = HashMap<PartKey, PartLoad>()
@@ -758,13 +763,27 @@ class TelegramRepository @Inject constructor(
         }
     }
 
-    suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int? = null): ByteArray = interactive {
+    suspend fun mediaPart(
+        chatId: Long, messageId: Int, offset: Long, expectedBytes: Int? = null,
+        expectedRevision: Long? = null, speculative: Boolean = false,
+    ): ByteArray {
+        // Acquire speculative admission before creating the shared deferred, so a
+        // foreground waiter never joins a deferred queued on the speculative gate.
+        if (speculative) return speculativePartPermits.withPermit {
+            loadMediaPart(chatId, messageId, offset, expectedBytes, expectedRevision)
+        }
+        return interactive { loadMediaPart(chatId, messageId, offset, expectedBytes, expectedRevision) }
+    }
+
+    private suspend fun loadMediaPart(chatId: Long, messageId: Int, offset: Long,
+        expectedBytes: Int?, expectedRevision: Long?): ByteArray {
         val selected = checkNotNull(client) { appContext.getString(R.string.monogram_error_not_authorized) }
         check(chatId !in blockedChannels) { appContext.getString(R.string.monogram_error_channel_left) }
         val generation = streamEpoch.get()
         val identity = selected.cacheIdentity
         fun verify() {
-            check(sameAccount(selected, identity, generation) && chatId !in blockedChannels) {
+            check((expectedRevision == null || expectedRevision == generation) &&
+                sameAccount(selected, identity, generation) && chatId !in blockedChannels) {
                 appContext.getString(R.string.monogram_error_account_changed)
             }
         }
@@ -789,7 +808,7 @@ class TelegramRepository @Inject constructor(
             }
         }
         try {
-            load.deferred.await().also { verify() }
+            return load.deferred.await().also { verify() }
         } finally {
             val cancel = synchronized(partLoads) {
                 if (--load.waiters == 0) {

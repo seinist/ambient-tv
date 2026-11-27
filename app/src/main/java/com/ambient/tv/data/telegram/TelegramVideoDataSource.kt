@@ -101,7 +101,7 @@ class TelegramVideoDataSource(
                 val buffered = pending?.let { runCatching { it.await() }.getOrNull() }
                 coroutineContext.ensureActive()
                 requireCurrentAccount()
-                buffered ?: repository.mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset))
+                buffered ?: repository.mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset), accountRevision)
             }
         } catch (error: Exception) {
             throw IOException("Telegram media read failed", error)
@@ -114,7 +114,7 @@ class TelegramVideoDataSource(
             if (offset >= media.fileSize || offset >= position + remaining) break
             if (offset !in prefetch) prefetch[offset] = prefetchScope.async {
                 requireCurrentAccount()
-                repository.mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset))
+                repository.mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset), accountRevision, speculative = true)
             }
         }
     }

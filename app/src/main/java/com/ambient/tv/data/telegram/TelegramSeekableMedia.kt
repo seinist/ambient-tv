@@ -12,6 +12,7 @@ internal class TelegramSeekableMedia(
     private val media: TelegramMedia,
     private val partLoader: (Long) -> ByteArray,
     private val authorized: () -> Boolean,
+    private val prefetchLoader: (Long) -> ByteArray = partLoader,
 ) : SeekableMedia {
     override val size: Long = media.fileSize
     private var partStart = -1L
@@ -24,7 +25,13 @@ internal class TelegramSeekableMedia(
     private val prefetcher = java.util.concurrent.Executors.newFixedThreadPool(3) { work ->
         Thread(work, "monogram-media-prefetch").apply { isDaemon = true }
     }
-    private val prefetch = LinkedHashMap<Long, java.util.concurrent.Future<ByteArray>>()
+    private val prefetch = java.util.concurrent.ConcurrentHashMap<Long, java.util.concurrent.Future<ByteArray>>()
+    private val lifecycle = Any()
+    @Volatile private var closed = false
+    private var readingThread: Thread? = null
+    private fun checkOpen() {
+        if (closed || !authorized()) throw IOException("Monogram session is no longer authorized")
+    }
     private var previousPart = -1L
     private var window = 1
 
@@ -34,7 +41,11 @@ internal class TelegramSeekableMedia(
 
     @Synchronized
     override fun read(position: Long, buffer: ByteArray, count: Int): Int {
-        if (!authorized()) throw IOException("Monogram session is no longer authorized")
+        synchronized(lifecycle) {
+            checkOpen()
+            readingThread = Thread.currentThread()
+        }
+        try {
         if (position < 0 || count < 0 || count > buffer.size) throw IOException("Invalid Monogram media range")
         if (position >= size) return -1
         if (count == 0) return 0
@@ -62,8 +73,11 @@ internal class TelegramSeekableMedia(
             part.copyInto(buffer, copied, within, within + amount)
             copied += amount
         }
-        if (!authorized()) throw IOException("Monogram account changed during media read")
+        checkOpen()
         return copied
+        } finally {
+            synchronized(lifecycle) { readingThread = null }
+        }
     }
 
     /** The prefetched part when it is the wanted one; a failed read-ahead is simply loaded again. */
@@ -84,18 +98,21 @@ internal class TelegramSeekableMedia(
             catch (_: java.util.concurrent.ExecutionException) { }
             catch (_: java.util.concurrent.CancellationException) { }
         }
+        checkOpen()
         return partLoader(offset)
     }
 
     private fun schedulePrefetch(start: Long) {
-        if (prefetcher.isShutdown) return
+        synchronized(lifecycle) {
+        if (closed || prefetcher.isShutdown) return
         for (i in 1..window) {
             val offset = start + i.toLong() * TELEGRAM_MEDIA_PART_BYTES
             if (offset >= size) break
             if (offset !in prefetch) prefetch[offset] = prefetcher.submit(java.util.concurrent.Callable {
-                if (!authorized()) throw IOException("Monogram account changed")
-                partLoader(offset)
+                checkOpen()
+                prefetchLoader(offset)
             })
+        }
         }
     }
 
@@ -105,11 +122,15 @@ internal class TelegramSeekableMedia(
         (prefetcher as? java.util.concurrent.ThreadPoolExecutor)?.purge()
     }
 
-    @Synchronized
     override fun close() {
-        cancelPrefetch()
-        prefetcher.shutdownNow()
-        part = ByteArray(0)
-        partStart = -1L
+        synchronized(lifecycle) {
+            if (closed) return
+            closed = true
+            cancelPrefetch()
+            prefetcher.shutdownNow()
+            readingThread?.takeIf { it !== Thread.currentThread() }?.interrupt()
+        }
+        // Never acquire the read monitor here: a native RPC can be blocked.
+        // The last read owns its byte array until it observes the closed flag.
     }
 }
