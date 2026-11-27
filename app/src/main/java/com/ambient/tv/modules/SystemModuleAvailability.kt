@@ -44,13 +44,16 @@ internal object SystemModuleAvailability {
         if (module == SystemModule.SPOTIFY && offered != spotifyOffered)
             com.ambient.tv.data.local.LoginStateSignal.changed()
     }
-    fun reportFailure(module: SystemModule) = registry.reportFailure(module)
+    fun reportFailure(module: SystemModule) {
+        val offered = spotifyOffered
+        registry.reportFailure(module)
+        if (module == SystemModule.SPOTIFY && offered != spotifyOffered)
+            com.ambient.tv.data.local.LoginStateSignal.changed()
+    }
 
     /** Legacy providers retain their compile-time behavior until their loader is migrated. */
     val monogramOffered: Boolean get() = bundled(SystemModule.MONOGRAM)
-    val spotifyOffered: Boolean get() = state(SystemModule.SPOTIFY).let {
-        it.usable || it.runtime == ModuleRuntimeState.BUNDLED_UNVERIFIED
-    }
+    val spotifyOffered: Boolean get() = state(SystemModule.SPOTIFY).usable
 }
 
 internal class ModuleAvailabilityRegistry(private val bundled: (SystemModule) -> Boolean) {
