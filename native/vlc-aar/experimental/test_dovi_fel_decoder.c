@@ -56,13 +56,12 @@ static AVPacket *dual(const uint8_t *input,size_t size,int64_t pts)
     AVPacket *p=av_packet_alloc();
     assert(p&&av_new_packet(p,(int)n)>=0);
     assert(ambient_fel_dual_sample(bl,sizeof(bl),4,el,out,4,NULL,0,false,p->data,n,&n));
-    for(size_t i=0;i<n;){
-        assert(n-i>=4);
-        uint32_t len=0;
-        for(unsigned j=0;j<4;j++)len=(len<<8)|p->data[i+j];
-        assert(len>=2&&len<=n-i-4);
-        memset(p->data+i,0,3);p->data[i+3]=1;i+=4+len;
-    }
+    size_t converted;
+    assert(ambient_fel_to_annexb(p->data,n,4,NULL,0,&converted)&&converted==n);
+    AVPacket *annex=av_packet_alloc();
+    assert(annex&&av_new_packet(annex,(int)converted)>=0);
+    assert(ambient_fel_to_annexb(p->data,n,4,annex->data,converted,&converted));
+    av_packet_free(&p);p=annex;
     free(el);p->pts=pts;p->dts=pts;p->duration=1;
     return p;
 }
