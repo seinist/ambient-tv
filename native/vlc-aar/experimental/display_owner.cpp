@@ -96,6 +96,7 @@ struct ambient_ahb_owner {
         D(sync, create_fence, CreateFence); D(sync, destroy_fence, DestroyFence);
         D(sync, import_fd, ImportSemaphoreFdKHR); D(sync, export_fd, GetSemaphoreFdKHR);
         D(sync, submit, QueueSubmit); D(sync, fence_status, GetFenceStatus);
+        D(sync, reset_fences, ResetFences);
         D(commands, get_queue, GetDeviceQueue);
         D(commands, create_pool, CreateCommandPool); D(commands, destroy_pool, DestroyCommandPool);
         D(commands, allocate, AllocateCommandBuffers); D(commands, reset, ResetCommandBuffer);
@@ -174,8 +175,8 @@ struct ambient_ahb_owner {
                 quarantine(s);
                 continue;
             }
-            clear_reclaim(s);
-            s.submission.reset();
+            // Keep both pairs of semaphores/fences for the next frame.
+            // Reclaim's wait is proven complete by its fence.
             s.ticket = {};
         }
     }
@@ -251,7 +252,7 @@ struct ambient_ahb_owner {
             cancel(s); return VK_ERROR_INITIALIZATION_FAILED;
         }
         if ((result = commands.end(s.cmd)) != VK_SUCCESS) { cancel(s); return result; }
-        s.submission.emplace(c.device, sync);
+        if (!s.submission) s.submission.emplace(c.device, sync, true);
         {
             QueueLock lock(c);
             result = s.submission->submit(queue, s.cmd, *s.lease);
@@ -280,8 +281,16 @@ struct ambient_ahb_owner {
             s.texture != out.texture || pool.state(out.index) != State::Rendering) return false;
         VkSemaphoreCreateInfo si{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
         VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-        if (sync.create_semaphore(c.device, &si, nullptr, &s.reclaimed) != VK_SUCCESS ||
-            sync.create_fence(c.device, &fi, nullptr, &s.reclaim_fence) != VK_SUCCESS ||
+        VkResult reclaim_result = VK_SUCCESS;
+        if (!s.reclaimed)
+            reclaim_result = sync.create_semaphore(c.device, &si, nullptr, &s.reclaimed);
+        if (reclaim_result == VK_SUCCESS) {
+            if (!s.reclaim_fence)
+                reclaim_result = sync.create_fence(c.device, &fi, nullptr, &s.reclaim_fence);
+            else
+                reclaim_result = sync.reset_fences(c.device, 1, &s.reclaim_fence);
+        }
+        if (reclaim_result != VK_SUCCESS ||
             !c.hold_and_flush(c.opaque, s.texture, s.reclaimed)) {
             quarantine(s); return false;
         }

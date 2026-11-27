@@ -42,7 +42,10 @@ distribute the experiment as a validated production build.
   A shared VkPipelineCache also permits driver compilation reuse across slots.
 - GPU-only conversion and asynchronous libplacebo semaphore handoff. Decoder
   picture completion and consumer hold/reclaim completion are distinct;
-  no per-frame CPU fence wait or device-wide idle. On terminal device loss
+  no per-frame CPU fence wait or device-wide idle. Per-slot binary semaphores
+  and fences are reused only after both conversion and consumer wait completion;
+  the real same-device handoff avoids unnecessary exportable ready semaphores.
+  On terminal device loss
   the owner destroys its resources after the queue reports loss and discards
   rather than claiming successful conversion; original producer fence ownership
   is preserved. Unexpected retirement errors remain quarantined.

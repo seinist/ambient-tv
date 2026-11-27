@@ -9,7 +9,7 @@ template<class T> T handle(uintptr_t value) {
     if constexpr (std::is_pointer_v<T>) return reinterpret_cast<T>(value);
     else return static_cast<T>(value);
 }
-int sem_created, sem_destroyed, fence_destroyed, released;
+int sem_created, sem_destroyed, fence_destroyed, released, fence_resets;
 bool completed, fail_submit;
 VKAPI_ATTR VkResult VKAPI_CALL create_sem(VkDevice, const VkSemaphoreCreateInfo *,
     const VkAllocationCallbacks *, VkSemaphore *out) {
@@ -42,12 +42,15 @@ VKAPI_ATTR VkResult VKAPI_CALL queue_submit(VkQueue, uint32_t count, const VkSub
 VKAPI_ATTR VkResult VKAPI_CALL fence_status(VkDevice, VkFence) {
     return completed ? VK_SUCCESS : VK_NOT_READY;
 }
+VKAPI_ATTR VkResult VKAPI_CALL reset_fences(VkDevice, uint32_t count, const VkFence *) {
+    assert(count == 1); ++fence_resets; completed = false; return VK_SUCCESS;
+}
 void release(void *, int fd) {
     if (fd >= 0) close(fd);
     ++released;
 }
 const QueueDispatch dispatch{create_sem, destroy_sem, create_fence, destroy_fence,
-                             import_fd, export_fd, queue_submit, fence_status};
+                             import_fd, export_fd, queue_submit, fence_status, reset_fences};
 }
 int main() {
     int picture = 1;
@@ -89,5 +92,30 @@ int main() {
         assert(submit.handoff_ready_semaphore());
         assert(submit.drain_after_device_lost());
         assert(submit.can_retire() && released == 3 && sem_destroyed == 6 && fence_destroyed == 3);
+    }
+    {
+        fail_submit = false;
+        completed = false;
+        const int before = sem_created, destroyed = sem_destroyed, fences = fence_destroyed;
+        Submission submit(device, dispatch, true);
+        VkSemaphore previous = VK_NULL_HANDLE;
+        for (int i = 0; i < 10; ++i) {
+            FrameLease lease(&picture, -1, release, false);
+            assert(submit.submit(queue, cmd, lease) == VK_SUCCESS);
+            auto ready = submit.handoff_ready_semaphore();
+            assert(ready && (!previous || previous == ready));
+            previous = ready;
+            assert(submit.return_decoder_image() == VK_ERROR_INITIALIZATION_FAILED);
+            assert(submit.poll() == VK_NOT_READY);
+            completed = true;
+            assert(submit.poll() == VK_SUCCESS);
+            assert(!submit.retire_after_consumer(false));
+            assert(submit.retire_after_consumer(true));
+            assert(sem_created == before + 2 && sem_destroyed == destroyed);
+            assert(fence_destroyed == fences);
+        }
+        assert(fence_resets == 9);
+        assert(submit.drain_after_idle(true));
+        assert(sem_destroyed == destroyed + 2 && fence_destroyed == fences + 1);
     }
 }

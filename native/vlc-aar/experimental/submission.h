@@ -14,6 +14,7 @@ struct QueueDispatch {
     PFN_vkGetSemaphoreFdKHR export_fd{};
     PFN_vkQueueSubmit submit{};
     PFN_vkGetFenceStatus fence_status{};
+    PFN_vkResetFences reset_fences{};
 
     bool valid() const {
         return create_semaphore && destroy_semaphore && create_fence && destroy_fence &&
@@ -26,7 +27,8 @@ struct QueueDispatch {
 // Caller serializes access to the actual renderer queue. No vkDeviceWaitIdle.
 class Submission {
 public:
-    Submission(VkDevice device, QueueDispatch dispatch) : device_(device), d_(dispatch) {}
+    Submission(VkDevice device, QueueDispatch dispatch, bool reuse_after_handoff = false)
+        : device_(device), d_(dispatch), reuse_after_handoff_(reuse_after_handoff) {}
     Submission(const Submission &) = delete;
     Submission &operator=(const Submission &) = delete;
     ~Submission() { if (!submitted_ || (completed_ && !handed_off_)) destroy(); }
@@ -34,23 +36,37 @@ public:
     // cmd must have recorded paired foreign acquire/release barriers around all
     // sampling, and be executable. No caller-owned semaphores are consumed.
     VkResult submit(VkQueue queue, VkCommandBuffer cmd, FrameLease &lease) {
-        if (!device_ || !queue || !cmd || !d_.valid() || submitted_ || acquire_ || release_ || done_)
+        if (!device_ || !queue || !cmd || !d_.valid() || submitted_ ||
+            (reuse_after_handoff_ && !d_.reset_fences)) return VK_ERROR_INITIALIZATION_FAILED;
+        if ((acquire_ || release_ || done_) && !(acquire_ && release_ && done_ && reusable_))
             return VK_ERROR_INITIALIZATION_FAILED;
         UniqueFd producer;
         if (!lease.duplicate_acquire(producer)) return VK_ERROR_INITIALIZATION_FAILED;
 
-        VkSemaphoreCreateInfo plain{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-        VkResult result = d_.create_semaphore(device_, &plain, nullptr, &acquire_);
-        if (result != VK_SUCCESS) return fail_before_submit(result);
-        VkExportSemaphoreCreateInfo external{VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO};
-        external.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
-        VkSemaphoreCreateInfo exportable{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-        exportable.pNext = &external;
-        result = d_.create_semaphore(device_, &exportable, nullptr, &release_);
-        if (result != VK_SUCCESS) return fail_before_submit(result);
-        VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-        result = d_.create_fence(device_, &fence, nullptr, &done_);
-        if (result != VK_SUCCESS) return fail_before_submit(result);
+        VkResult result;
+        if (reusable_) {
+            // Conversion and the consumer's semaphore wait have both retired.
+            // Temporary imported payload was consumed, restoring the original
+            // unsignaled binary semaphore. The ready semaphore was also consumed.
+            result = d_.reset_fences(device_, 1, &done_);
+            reusable_ = false;
+            if (result != VK_SUCCESS) return fail_before_submit(result);
+        } else {
+            VkSemaphoreCreateInfo plain{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+            result = d_.create_semaphore(device_, &plain, nullptr, &acquire_);
+            if (result != VK_SUCCESS) return fail_before_submit(result);
+            VkExportSemaphoreCreateInfo external{VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO};
+            external.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
+            VkSemaphoreCreateInfo exportable{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+            // The real VLC path never exports the ready semaphore: it is
+            // handed to libplacebo on the same device instead.
+            exportable.pNext = reuse_after_handoff_ ? nullptr : &external;
+            result = d_.create_semaphore(device_, &exportable, nullptr, &release_);
+            if (result != VK_SUCCESS) return fail_before_submit(result);
+            VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+            result = d_.create_fence(device_, &fence, nullptr, &done_);
+            if (result != VK_SUCCESS) return fail_before_submit(result);
+        }
         result = import_acquire_fd(device_, d_.import_fd, acquire_, producer);
         if (result != VK_SUCCESS) return fail_before_submit(result);
 
@@ -75,7 +91,7 @@ public:
     }
 
     VkResult return_decoder_image() {
-        if (!accepted_ || completed_ || handed_off_ || !lease_ || !lease_->has_decoder_image() || !lease_->allows_early_return() || export_attempted_)
+        if (reuse_after_handoff_ || !accepted_ || completed_ || handed_off_ || !lease_ || !lease_->has_decoder_image() || !lease_->allows_early_return() || export_attempted_)
             return VK_ERROR_INITIALIZATION_FAILED;
         export_attempted_ = true;
         UniqueFd release_fd;
@@ -98,7 +114,11 @@ public:
     bool retire_after_consumer(bool consumer_done) {
         if (!consumer_done || !completed_ || !handed_off_) return false;
         handed_off_ = false;
-        destroy();
+        if (reuse_after_handoff_) {
+            // No outstanding ownership, reusable only after the actual wait.
+            submitted_ = accepted_ = completed_ = export_attempted_ = false;
+            reusable_ = true;
+        } else destroy();
         return true;
     }
 
@@ -151,6 +171,7 @@ private:
         if (acquire_) d_.destroy_semaphore(device_, acquire_, nullptr);
         done_ = VK_NULL_HANDLE;
         release_ = acquire_ = VK_NULL_HANDLE;
+        reusable_ = false;
     }
     VkDevice device_{};
     QueueDispatch d_{};
@@ -163,5 +184,7 @@ private:
     bool completed_ = false;
     bool export_attempted_ = false;
     bool handed_off_ = false;
+    bool reuse_after_handoff_ = false;
+    bool reusable_ = false;
 };
 } // namespace ambient::vlc_ahb
