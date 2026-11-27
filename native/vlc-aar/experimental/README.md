@@ -710,3 +710,17 @@ readback. FEL nonneutral packed-P010 integration checks CPU-reconstructed
 codewords followed by the same pinned libplacebo color conversion; matrix
 nonfinite inputs are rejected. These are engineering regression tests,
 not full HDR10+ certification or an independent Dolby reference decoder.
+
+
+### Spatial HDR10+ on explicit PQ targets
+
+The spatial prepass now also accepts a PQ target with explicitly supplied
+valid peak/minimum luminance, up to 10000 nits. It retains absolute PQ
+encoding and mapped metadata for the normal renderer. Unknown PQ peaks,
+HLG targets and nonzero authored saturation compensation on PQ fall back
+to the existing global rendering route; the current saturation algorithm
+uses SDR BT.1886 and is not assumed to be a PQ saturation model.
+Native Android HDR passthrough preference and application gating remain
+unchanged. This is native renderer capability, not a new default HDR
+output policy or certification. Host GPU fixtures compare absolute nits
+on 600 and 1500 nit targets and test rejected configurations.

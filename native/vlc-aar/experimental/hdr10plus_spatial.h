@@ -3,7 +3,8 @@
  * LUT generator and GPU-side elliptical weighting. No claim of conformance
  * for complete ST2094-40 conformance. Scene LUTs and saturation use an
  * adapted display peak with the existing libplacebo curve generator.
- * RGB PQ or native packed P010 AHB frames -> SDR, no Dolby Vision. */
+ * RGB PQ or native packed P010 AHB frames -> SDR or explicit PQ targets,
+ * no Dolby Vision. HDR target saturation adaptation is not yet supported. */
 #include <libplacebo/dispatch.h>
 #include <libplacebo/shaders/custom.h>
 #include <libplacebo/shaders/colorspace.h>
@@ -240,13 +241,23 @@ static inline bool ambient_hdrplus_spatial_render(pl_gpu gpu, pl_log log,
     bool layering;
     if (!ambient_hdrplus_spatial_supported(m,w,h,masks,&layering)) return false;
     struct pl_color_space src=img->color,dst=target->color;
+    // Do not mistake a transfer-function default or inferred source peak
+    // for a measured/configured PQ display capability. HLG is relative
+    // to its system gamma and needs a separate adaptation policy.
+    const bool pq_target=dst.transfer==PL_COLOR_TRC_PQ;
+    if(pq_target && (!(dst.hdr.max_luma>0.f && dst.hdr.max_luma<=10000.f) ||
+        !(dst.hdr.min_luma>=0.f && dst.hdr.min_luma<dst.hdr.max_luma))) return false;
+    if(pq_target)for(unsigned i=0;i<m->window_count;i++)
+        // The current saturation model uses ideal-black BT.1886. Do not
+        // apply this SDR approximation to PQ output. Preserve global fallback.
+        if(m->windows[i].saturation_mapping && m->windows[i].saturation_weight) return false;
     pl_color_space_infer_map(&src,&dst);
-    if (pl_color_space_is_hdr(&dst)) return false;
+    if (pl_color_space_is_hdr(&dst) && !pq_target) return false;
     float out_min=0.f,out_max=0.f;
     pl_color_space_nominal_luma_ex(pl_nominal_luma_params(
         .color=&dst,.metadata=PL_HDR_METADATA_HDR10,.scaling=PL_HDR_NITS,
         .out_min=&out_min,.out_max=&out_max));
-    if (!(out_min>=0.f && out_max>out_min && out_max<=1000.f)) return false;
+    if (!(out_min>=0.f && out_max>out_min && out_max<=(pq_target?10000.f:1000.f))) return false;
     if (!ambient_hdrplus_spatial_curves(gpu,s,m,out_min,out_max)) return false;
     pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,16,0,PL_FMT_CAP_SAMPLEABLE | PL_FMT_CAP_RENDERABLE | PL_FMT_CAP_LINEAR);
     if (!fmt || !pl_tex_recreate(gpu,&s->output,pl_tex_params(

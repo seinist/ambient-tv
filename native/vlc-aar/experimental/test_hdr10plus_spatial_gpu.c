@@ -403,6 +403,50 @@ int main(void)
         }
         pl_gpu_finish(gpu);pl_tex_destroy(gpu,&packed);pl_tex_destroy(gpu,&rgb);
     }
+    // Explicit PQ target: preserve local authored differences and absolute
+    // PQ luminance. No SDR range cap, no guessed display capabilities.
+    struct pl_frame pq_target={.color=pl_color_space_hdr10};
+    pq_target.color.hdr.min_luma=0.005f;
+    pq_target.color.hdr.max_luma=600.f;
+    m=(struct ambient_hdrplus){.window_count=2,.version=0,.target_nits=600.f};
+    m.windows[0]=(struct ambient_hdrplus_window){.tone_mapping=true,.knee_x=1.f,
+        .knee_y=0.5f,.maxscl={0.1f,0.1f,0.1f}};
+    m.windows[1]=m.windows[0];m.windows[1].knee_y=0.8f;
+    m.windows[1].geometry=(struct ambient_hdrplus_geometry){
+        .left=0,.top=0,.right=63,.bottom=63,.center_x=32,.center_y=32,
+        .semimajor_inner=8,.semimajor_outer=16,.semiminor_outer=16};
+    img.planes[0].texture=input;img.color=pl_color_space_hdr10;
+    assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&pq_target,&m));
+    assert(img.color.transfer==PL_COLOR_TRC_PQ && img.repr.sys==PL_COLOR_SYSTEM_RGB);
+    assert(fabsf(state.output_max-600.f)<0.01f && img.color.hdr.max_luma==state.output_max);
+    sh=pl_dispatch_begin(state.dispatch);
+    pl_shader_sample_direct(sh,pl_sample_src(.tex=state.output));
+    assert(pl_dispatch_finish(state.dispatch,pl_dispatch_params(.shader=&sh,.target=readback)));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=readback,.ptr=pixels)));
+    assert(fabsf(pl_hdr_rescale(PL_HDR_PQ,PL_HDR_NITS,pixels[0])-180.f)<2.f);
+    assert(fabsf(pl_hdr_rescale(PL_HDR_PQ,PL_HDR_NITS,pixels[4*(32*width+32)])-288.f)<2.f);
+    // Above the former SDR-only peak cap, authored output stays absolute.
+    pq_target.color.hdr.max_luma=1500.f;m.target_nits=1500.f;
+    img.planes[0].texture=input;img.color=pl_color_space_hdr10;
+    assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&pq_target,&m));
+    assert(fabsf(state.output_max-1500.f)<0.01f);
+    sh=pl_dispatch_begin(state.dispatch);
+    pl_shader_sample_direct(sh,pl_sample_src(.tex=state.output));
+    assert(pl_dispatch_finish(state.dispatch,pl_dispatch_params(.shader=&sh,.target=readback)));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=readback,.ptr=pixels)));
+    assert(fabsf(pl_hdr_rescale(PL_HDR_PQ,PL_HDR_NITS,pixels[0])-450.f)<4.f);
+    img.planes[0].texture=input;img.color=pl_color_space_hdr10;
+    pq_target.color.hdr.max_luma=0.f;
+    assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&pq_target,&m));
+    pq_target.color.hdr.max_luma=10001.f;
+    assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&pq_target,&m));
+    pq_target.color.hdr.max_luma=600.f;
+    m.windows[1].saturation_mapping=true;m.windows[1].saturation_weight=8;
+    assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&pq_target,&m));
+    m.windows[1].saturation_mapping=false;
+    pq_target.color.transfer=PL_COLOR_TRC_HLG;
+    assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&pq_target,&m));
+    assert(img.planes[0].texture==input && img.color.transfer==PL_COLOR_TRC_PQ);
     // A crop changes local coordinates; preserve the ordinary renderer path.
     img.planes[0].texture=input;img.color=pl_color_space_hdr10;
     img.crop.x0=1.f;
