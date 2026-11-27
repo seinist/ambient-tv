@@ -44,6 +44,59 @@ static void ref_fel_rgb(const struct pl_dovi_metadata *m,const double signal[3],
         rgb[i]=ref_pq_inverse(linear);
     }
 }
+/* Exhaust every decoded 10-bit EL code, with different offsets and
+ * coefficient sets in each component. The expected residual is calculated
+ * from the integer code and fixed-point coefficients, not ambient_fel_residual. */
+static void test_nlq_code_sweep(pl_gpu gpu,pl_dispatch dp,pl_fmt fmt)
+{
+    enum { W=32,H=32,N=W*H };
+    float *base=calloc(N*4,sizeof(*base)),*el=calloc(N*4,sizeof(*el)),
+          *actual=calloc(N*4,sizeof(*actual));
+    assert(base&&el&&actual);
+    const struct ambient_fel_nlq n={.el_bits=10,.coef_log2_denom=16,
+        .offset={511,64,900},.slope={128,73,0},
+        .threshold={31,51,127},.maximum={4096,8192,127}};
+    struct pl_dovi_metadata reshape={0};
+    for(unsigned j=0;j<3;j++){
+        reshape.comp[j].num_pivots=2;
+        reshape.comp[j].pivots[1]=1.f;
+        reshape.comp[j].method[0]=0;
+        reshape.comp[j].poly_coeffs[0][1]=1.f;
+    }
+    for(unsigned i=0;i<N;i++){
+        const unsigned codes[]={i,(i*17u+123u)%N,N-1u-i};
+        for(unsigned j=0;j<3;j++){
+            base[4*i+j]=(float)(i%3==0?0.02:i%3==1?0.5:0.98);
+            el[4*i+j]=codes[j]/1023.f;
+        }
+        base[4*i+3]=el[4*i+3]=1.f;
+    }
+    pl_tex bl=pl_tex_create(gpu,pl_tex_params(.w=W,.h=H,.format=fmt,
+        .sampleable=true,.initial_data=base));
+    pl_tex residual=pl_tex_create(gpu,pl_tex_params(.w=W,.h=H,.format=fmt,
+        .sampleable=true,.initial_data=el));
+    pl_tex out=pl_tex_create(gpu,pl_tex_params(.w=W,.h=H,.format=fmt,
+        .renderable=true,.host_readable=true));
+    assert(bl&&residual&&out);
+    assert(ambient_fel_compose(gpu,dp,bl,residual,out,&reshape,&n));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=out,.ptr=actual)));
+    for(unsigned i=0;i<N;i++){
+        const unsigned codes[]={i,(i*17u+123u)%N,N-1u-i};
+        for(unsigned j=0;j<3;j++){
+            int d=(int)codes[j]-(int)n.offset[j];
+            double res=0.0;
+            if(d){
+                double fixed=(abs(d)-0.5)*n.slope[j]+n.threshold[j];
+                res=(d<0?-1.0:1.0)*fmin(fixed,n.maximum[j])/65536.0;
+            }
+            double expected=fmin(1.0,fmax(0.0,(double)base[4*i+j]+res));
+            assert(isfinite(actual[4*i+j])&&fabs(actual[4*i+j]-expected)<0.0001);
+        }
+    }
+    pl_gpu_finish(gpu);
+    pl_tex_destroy(gpu,&out);pl_tex_destroy(gpu,&residual);pl_tex_destroy(gpu,&bl);
+    free(actual);free(el);free(base);
+}
 int main(void)
 {
     struct ambient_fel_nlq nlq={.el_bits=10,.coef_log2_denom=16,
@@ -76,6 +129,7 @@ int main(void)
     pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,32,32,
         PL_FMT_CAP_SAMPLEABLE|PL_FMT_CAP_RENDERABLE|PL_FMT_CAP_HOST_READABLE);
     assert(fmt);
+    test_nlq_code_sweep(gpu,dp,fmt);
     float base[16]={0.5,0.5,0.5,1, 0.99,0.01,0.5,1,
                     0.2,0.4,0.6,1, 0.5,0.5,0.5,1};
     float residual[16]={512.f/1023,513.f/1023,511.f/1023,1, 1,0,1,1,
