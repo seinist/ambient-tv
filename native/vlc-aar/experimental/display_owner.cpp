@@ -293,12 +293,14 @@ struct ambient_ahb_owner {
         if (!queue) return true;
         VkResult result;
         { QueueLock lock(c); result = commands.idle(queue); }
-        if (result != VK_SUCCESS) return false;
+        if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST) return false;
+        const bool lost = result == VK_ERROR_DEVICE_LOST;
         for (auto &s : slots) {
             // Destroy the wrapper and its deferred dependencies before the
             // conversion semaphore it may still reference on a failed hold.
             clear_texture(s);
-            if (s.submission && !s.submission->drain_after_idle(true)) return false;
+            if (s.submission && !(lost ? s.submission->drain_after_device_lost() :
+                                        s.submission->drain_after_idle(true))) return false;
             clear_reclaim(s);
             s.submission.reset();
             s.lease.reset();
