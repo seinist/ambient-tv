@@ -129,6 +129,20 @@ int main(void) {
     assert(!ambient_fel_fragment_range(1008,2000,1100,901));
     assert(!ambient_fel_fragment_range(2000,1008,1100,1));
     assert(!ambient_fel_fragment_range(0,UINT64_MAX,UINT64_MAX-1,2));
+    // A nonseekable fragment may store the EL before OR after the BL.
+    // Immutable cached payload supports either order and all other tracks.
+    const uint8_t mdat[]={10,11,12,13,14,15,16,17};
+    const uint8_t *slice=NULL;
+    assert(ambient_fel_mdat_slice(mdat,sizeof(mdat),100,104,4,&slice));
+    assert(slice[0]==14&&slice[3]==17);
+    assert(ambient_fel_mdat_slice(mdat,sizeof(mdat),100,100,4,&slice));
+    assert(slice[0]==10&&slice[3]==13);
+    assert(!ambient_fel_mdat_slice(mdat,sizeof(mdat),100,99,1,&slice));
+    assert(!ambient_fel_mdat_slice(mdat,sizeof(mdat),100,108,1,&slice));
+    assert(!ambient_fel_mdat_slice(mdat,sizeof(mdat),100,107,2,&slice));
+    assert(!ambient_fel_mdat_slice(mdat,sizeof(mdat),UINT64_MAX-2,UINT64_MAX-1,1,&slice));
+    assert(!ambient_fel_mdat_slice(mdat,AMBIENT_FEL_MAX_MDAT+1u,100,100,1,&slice));
+    assert(!ambient_fel_mdat_slice(mdat,sizeof(mdat),100,100,0,&slice));
     struct ambient_rpu_pts_queue q={0};
     int a=1,b=2,c=3;
     assert(ambient_rpu_pts_insert(&q,30,&a));
