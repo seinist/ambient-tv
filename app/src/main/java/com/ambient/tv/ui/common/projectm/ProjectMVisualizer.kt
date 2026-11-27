@@ -78,11 +78,6 @@ fun ProjectMVisualizer(
     var adaptiveLevel by remember { mutableIntStateOf(0) }
     val adaptive = remember { ProjectMAdaptiveQuality() }
     val adaptiveEnabled = rememberUpdatedState(resumed && !throttleProjectM && resolutionKey == ProjectMRenderResolution.AUTO)
-    com.ambient.tv.ui.display.RegisterAmbientHdr(windowOutput = false, priority = 1, eligible = !throttleProjectM) { request ->
-        (glView as? ProjectMHdrView)?.updateHdr(request, !throttleProjectM && nativeHandle.get() != 0L)
-            ?: if (request == null) com.ambient.tv.ui.display.SdrToHdrStatus.OFF
-            else com.ambient.tv.ui.display.SdrToHdrStatus.UNAVAILABLE
-    }
     var texturePath by remember { mutableStateOf<String?>(null) }
     val surfaceWidth = remember { AtomicInteger(0) }
     val surfaceHeight = remember { AtomicInteger(0) }
@@ -98,6 +93,11 @@ fun ProjectMVisualizer(
     val currentFps = rememberUpdatedState(targetFps)
     val pacedRendering = throttleProjectM || refreshRate > 61f
     val loadGeneration = remember { AtomicLong() }
+    com.ambient.tv.ui.display.RegisterAmbientHdr(windowOutput = false, priority = 1, eligible = resumed && !throttleProjectM) { request ->
+        (glView as? ProjectMHdrView)?.updateHdr(request, resumed && !throttleProjectM && nativeHandle.get() != 0L, targetFps.toFloat())
+            ?: if (request == null) com.ambient.tv.ui.display.SdrToHdrStatus.OFF
+            else com.ambient.tv.ui.display.SdrToHdrStatus.UNAVAILABLE
+    }
 
     // The MilkDrop texture pack can contain many files. Extract it off the GL thread so the
     // first visualizer frame is not blocked by APK I/O. Once ready, queue the path onto the
