@@ -162,7 +162,9 @@ class VlcPlaybackController(
     }
     private var residentRejected = false
     private fun hdrResidentAvailable(): Boolean = nativeHdrPreferred && svpStaticHdrResident(sourceHdrStandard) &&
-        !residentRejected && !audioOnly && !vulkanOutput && com.ambient.tv.BuildConfig.VLC_SVP &&
+        !residentRejected && !audioOnly && !vulkanOutput &&
+        svpResidentRequested(com.ambient.tv.data.local.SvpOptions(hardwareResident = true), measuredSourceSize?.first, measuredSourceSize?.second) &&
+        com.ambient.tv.BuildConfig.VLC_SVP &&
         SvpNative.residentOutputsOrNull() != null && VideoAccelerationRuntime.current(context).let { it.checked && it.device.render }
     private fun effectiveImage(): VlcImageOptions = vlcOptionsForNativeHdr(
         effectiveVlcImageOptions(imageOptions, reducedVideoEffects(context), vlcSvpAllowed(context)), nativeHdrPreferred, sourceHdrStandard, hdrResidentAvailable())
