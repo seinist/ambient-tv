@@ -47,6 +47,11 @@ inline bool supported_decoder_format(VkFormat format, bool high_precision) {
 inline bool raw_p010_format(VkFormat format) {
     return format == VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16;
 }
+// Native 4:2:0 VkImage extents must be multiples of the chroma subsampling
+// factors. This applies to the actual allocation, not the visible crop.
+inline bool raw_p010_extent_valid(uint32_t width, uint32_t height) {
+    return width != 0 && height != 0 && !(width & 1u) && !(height & 1u);
+}
 inline bool raw_p010_features(VkFormatFeatureFlags features, VkChromaLocation x, VkChromaLocation y) {
     if (!(features & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) return false;
     auto supported = [features](VkChromaLocation location) {
