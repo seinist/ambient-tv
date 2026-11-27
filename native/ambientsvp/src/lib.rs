@@ -11,6 +11,35 @@ mod gpu;
 
 const MAX_QUEUE: usize = 10;
 const MAX_FRAMES: i32 = 100_000_000;
+const MAX_RECYCLED_FRAME_BYTES: usize = 32 * 1024 * 1024;
+
+// Decoder, audio and render threads must retain CPU time. Small images
+// don't amortize dispatch overhead as well as HD images. Explicit settings
+// remain authoritative, including on constrained cpusets.
+fn worker_count(requested: u32, available: usize, pixels: u64) -> usize {
+    if requested != 0 { return requested.clamp(1, 8) as usize; }
+    let available = available.max(1);
+    let reserved = if available >= 8 { 2 } else { 1 };
+    let budget = available.saturating_sub(reserved).max(1);
+    let target = if pixels <= 320 * 240 { 2 }
+        else if pixels <= 1280 * 720 { 4 }
+        else { 6 };
+    budget.min(target)
+}
+
+#[cfg(test)]
+mod worker_tests {
+    use super::*;
+    #[test]
+    fn auto_workers_reserve_cpu_for_playback_and_scale_with_work() {
+        assert_eq!(worker_count(0, 1, 1920*1080), 1);
+        assert_eq!(worker_count(0, 4, 1920*1080), 3);
+        assert_eq!(worker_count(0, 8, 320*180), 2);
+        assert_eq!(worker_count(0, 8, 1280*720), 4);
+        assert_eq!(worker_count(0, 8, 3840*2160), 6);
+        assert_eq!(worker_count(8, 2, 320*180), 8);
+    }
+}
 static ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static INTERPOLATED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static GPU_FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -115,15 +144,12 @@ impl AmbientSvp {
         if !(5.0..=120.0).contains(&src) || dst <= src || dst > 120.0 || dst / src > 5.0 {
             return Err("unsupported frame rate".into());
         }
-        let threads = if c.threads == 0 {
-            std::thread::available_parallelism()
-                .map_or(2, |n| n.get())
-                .min(4)
-        } else {
-            c.threads.clamp(1, 8) as usize
-        };
+        let threads = worker_count(c.threads,
+            std::thread::available_parallelism().map_or(2, |n| n.get()),
+            u64::from(c.width) * u64::from(c.height));
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(threads)
+            .thread_name(|index| format!("svp-worker-{index}"))
             .build()
             .map_err(|e| e.to_string())?;
         // Start automatic mode conservatively. No architecture-wide AVX/NEON requirement.
@@ -212,6 +238,16 @@ impl AmbientSvp {
         self.config.width as usize * self.config.height as usize * 3 / 2
     }
 
+    // Cap spare capacity separately from live frames: 4K I420 is about
+    // 12 MiB per allocation, so ten spare frames are not appropriate.
+    fn recycle_frame(&mut self, data: Vec<u8>) {
+        let bytes: usize = self.recycled_frames.iter().map(Vec::capacity).sum();
+        if self.recycled_frames.len() < MAX_QUEUE
+            && bytes.saturating_add(data.capacity()) <= MAX_RECYCLED_FRAME_BYTES {
+            self.recycled_frames.push(data);
+        }
+    }
+
     pub fn reset(&mut self) -> Result<(), String> {
         self.smoother = Smoother::new(
             self.config.width as i32,
@@ -222,8 +258,9 @@ impl AmbientSvp {
             &self.options,
             &self.analyser.vector_header(),
         )?;
-        self.recycled_frames.extend(std::mem::take(&mut self.frames).into_values().map(|s| s.data));
-        self.recycled_frames.truncate(MAX_QUEUE);
+        for source in std::mem::take(&mut self.frames).into_values() {
+            self.recycle_frame(source.data);
+        }
         self.previous = None;
         self.input = 0;
         self.output = 0;
@@ -346,10 +383,11 @@ impl AmbientSvp {
         if self.stats.bypass_reason != 0 {
             while let Some((_, source)) = self.frames.pop_first() {
                 if self.last_output.is_some_and(|pts| source.pts <= pts) {
+                    self.recycle_frame(source.data);
                     continue;
                 }
                 out.copy_from_slice(&source.data);
-                if self.recycled_frames.len() < MAX_QUEUE { self.recycled_frames.push(source.data); }
+                self.recycle_frame(source.data);
                 self.last_output = Some(source.pts);
                 self.stats.output_frames += 1;
                 self.stats.queued_frames = self.frames.len() as u32;
@@ -445,9 +483,7 @@ impl AmbientSvp {
         let keep = self.smoother.plan(self.output)[0].saturating_sub(3);
         while self.frames.first_key_value().is_some_and(|(key, _)| *key < keep) {
             let (_, source) = self.frames.pop_first().unwrap();
-            if self.recycled_frames.len() < MAX_QUEUE {
-                self.recycled_frames.push(source.data);
-            }
+            self.recycle_frame(source.data);
         }
         self.smoother.forget_before(keep);
         self.stats.queued_frames = self.frames.len() as u32;
