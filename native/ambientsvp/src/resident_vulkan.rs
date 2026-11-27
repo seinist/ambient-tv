@@ -798,6 +798,17 @@ pub unsafe extern "C" fn ambient_svp_vk_cancel(pair:*mut VulkanPair)->i32{
 mod tests{
     #[test]
     fn resident_native_shaders_compile_to_spirv(){
+        let t=super::ResidentTuning{block:16,overlap:4,pel:4,radius:2,satd:1,chroma:1,lambda:64,pnew:50,scene:50,artifacts:2};
+        assert!(t.valid());
+        for mode in 0..=5{
+            assert_eq!(super::tuned_motion_spirv(mode,t).unwrap()[0],0x07230203);
+            assert_eq!(super::quality_spirv(mode,t,"analyse").unwrap()[0],0x07230203);
+            assert_eq!(super::quality_spirv(mode,t,"scene").unwrap()[0],0x07230203);
+            let out=if mode==0{super::spirv(&super::tuned_synthesis(super::SYNTHESIS,t).unwrap(),
+                "@group(0) @binding(8) var<uniform> params:vec4u;","synthesize")}
+                else if mode>=4{super::raw_synthesis_config(mode,Some(t))}else{super::high_synthesis_config(mode,Some(t))};
+            assert_eq!(out.unwrap()[0],0x07230203);
+        }
         let m=super::motion_spirv().unwrap();
         let s=super::synthesis_spirv().unwrap();
         assert_eq!(m[0],0x07230203);assert_eq!(s[0],0x07230203);
@@ -1025,9 +1036,11 @@ mod gpu_tests{
             ambient_svp_vk_destroy(engine);
             // Actual R16 plane / RGBA16F Vulkan execution. Adjacent
             // 10-bit luma codes must stay distinguishable at source ticks.
-            for mode in [1,2,3]{
-                let engine=ambient_svp_vk_create_format(instance.handle(),physical,d.handle(),
-                    Some(entry.static_fn().get_instance_proc_addr),w,h,mode);
+            for (mode,tuned) in [(1,false),(2,false),(3,false),(3,true)]{
+                let tune=ResidentTuning{block:16,overlap:4,pel:4,radius:1,satd:1,chroma:1,lambda:64,pnew:50,scene:50,artifacts:2};
+                let engine=if tuned{ambient_svp_vk_create_config(instance.handle(),physical,d.handle(),
+                    Some(entry.static_fn().get_instance_proc_addr),w,h,mode,&tune)}else{ambient_svp_vk_create_format(instance.handle(),physical,d.handle(),
+                    Some(entry.static_fn().get_instance_proc_addr),w,h,mode)};
                 assert!(!engine.is_null(),"high depth resident mode {mode}");
                 let input_format=if mode==3{vk::Format::R16G16B16A16_SFLOAT}else{vk::Format::R16_UNORM};
                 let high=[
@@ -1073,7 +1086,10 @@ mod gpu_tests{
                     ];
                     let mut stats=[HdrResult::default();3];
                     if mode==3{
-                        assert_eq!(ambient_svp_vk_hdr_stats(pair,0,windows.as_ptr(),3),0);
+                        if tuned{
+                            let tracks=windows.map(|window|HdrTrack{a:window.rect,b:window.rect,ellipse:[window.rect[0],window.rect[1]]});
+                            assert_eq!(ambient_svp_vk_hdr_stats_track(pair,0,windows.as_ptr(),tracks.as_ptr(),phase,3),0);
+                        }else{assert_eq!(ambient_svp_vk_hdr_stats(pair,0,windows.as_ptr(),3),0);}
                         assert_eq!(ambient_svp_vk_hdr_read(pair,0,stats.as_mut_ptr(),3),-1);
                     }
                     transition(&d,cmd,high[4].image,vk::ImageLayout::GENERAL,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
@@ -1087,7 +1103,11 @@ mod gpu_tests{
                     assert_eq!(ambient_svp_vk_seal(pair,fence),0);
                     d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
                     if mode==3{
-                        assert_eq!(ambient_svp_vk_hdr_read(pair,0,stats.as_mut_ptr(),3),1);
+                        if tuned{
+                            let mut shifts=[[0i32;2];3];
+                            assert_eq!(ambient_svp_vk_hdr_read_track(pair,0,stats.as_mut_ptr(),shifts.as_mut_ptr(),3),1);
+                            assert_eq!(shifts,[[0,0];3]);
+                        }else{assert_eq!(ambient_svp_vk_hdr_read(pair,0,stats.as_mut_ptr(),3),1);}
                         for (r,window) in stats.iter().zip(windows){
                             assert_eq!(r.pixels,(window.rect[2]-window.rect[0])*(window.rect[3]-window.rect[1]));
                             assert_eq!(r.brightest,r.pixels);
