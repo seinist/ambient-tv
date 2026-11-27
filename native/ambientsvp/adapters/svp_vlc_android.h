@@ -12,6 +12,16 @@
 #include <math.h>
 
 #define SVP_ANDROID_PHASES 8
+// The library must outlive the last picture lease, even after filter close.
+typedef struct {
+    atomic_uint refs;
+    void *lib;
+    void (*release)(void *,int);
+} SvpRecycle;
+static void svp_recycle_unref(SvpRecycle *r)
+{
+    if (r && atomic_fetch_sub(&r->refs,1)==1) { dlclose(r->lib);free(r); }
+}
 typedef struct {
     SvpApi api;
     AmbientSvpAndroidStream *stream;
@@ -22,6 +32,8 @@ typedef struct {
     int (*drain)(AmbientSvpAndroidStream *,const float *,uint32_t,AmbientSvpDisplayOutput *);
     void (*reset)(AmbientSvpAndroidStream *);
     int (*destroy)(AmbientSvpAndroidStream *);
+    void *(*lease_output)(AmbientSvpAndroidStream *,AHardwareBuffer *,int);
+    SvpRecycle *recycle;
     picture_t *previous;
     double source,target;
     vlc_tick_t origin;
@@ -47,9 +59,18 @@ static void svp_android_output_destroy(picture_context_t *context)
     if (!vlc_atomic_rc_dec(&p->rc)) return;
     if (p->fence_fd>=0) close(p->fence_fd);
     if (p->read_fence_fd>=0) close(p->read_fence_fd);
-    // Each output is a fresh allocation, never recycled while compositor
-    // may still sample it. SurfaceControl retains its own AHB reference.
+    // Only the explicit release fence of exactly one ASC presentation
+    // can qualify this allocation. No fence (including teardown) means
+    // discard rather than guessing that SurfaceControl is done.
+    int consumer=atomic_exchange(&p->svp_consumer_fd,-1);
+    if (atomic_load(&p->svp_present_count)!=1 && consumer>=0) {
+        close(consumer);consumer=-1;
+    }
+    SvpRecycle *recycle=p->svp_recycle;
+    if (p->svp_lease && recycle) recycle->release(p->svp_lease,consumer);
+    else if (consumer>=0) close(consumer);
     AHardwareBuffer_release(p->svp_buffer);
+    svp_recycle_unref(recycle);
     free(p);
 }
 static picture_context_t *svp_android_output_copy(picture_context_t *context)
@@ -80,6 +101,16 @@ static picture_t *svp_android_chain(filter_t *f,picture_t *reference,
         }
         p->svp_buffer=outputs[i].buffer;p->fence_fd=outputs[i].fence_fd;
         p->read_fence_fd=-1;vlc_atomic_rc_init(&p->rc);
+        atomic_init(&p->svp_present_count,0);
+        atomic_init(&p->svp_consumer_fd,-1);
+        SvpAndroid *s=f->p_sys;
+        if (s->recycle && s->lease_output) {
+            p->svp_lease=s->lease_output(s->stream,p->svp_buffer,p->fence_fd);
+            if (p->svp_lease) {
+                atomic_fetch_add(&s->recycle->refs,1);
+                p->svp_recycle=s->recycle;
+            }
+        }
         p->s=(picture_context_t){svp_android_output_destroy,svp_android_output_copy,f->vctx_out};
         outputs[i]=(AmbientSvpDisplayOutput){NULL,-1};
         out->context=&p->s;vlc_video_context_Hold(p->s.vctx);
@@ -107,6 +138,7 @@ static void svp_android_close(filter_t *f)
         // picture references alive. Never unload in-flight Vulkan code.
         msg_Warn(f,"SVP Android compositor stream did not retire; retaining native library");
     } else dlclose(s->api.lib);
+    svp_recycle_unref(s->recycle);s->recycle=NULL;
     vlc_video_context_Release(f->vctx_out);f->vctx_out=NULL;
 }
 static unsigned svp_android_phases(SvpAndroid *s,vlc_tick_t end,
@@ -222,6 +254,17 @@ static int svp_android_open(filter_t *f)
 #undef LOAD
     s->stream=s->create(v->i_visible_width,v->i_visible_height);
     if (!s->stream) goto fail;
+    // Optional ABI extension: older engines retain the fresh-buffer path.
+    s->lease_output=dlsym(s->api.lib,"ambient_svp_android_stream_lease_output");
+    if (s->lease_output) {
+        SvpRecycle *r=calloc(1,sizeof(*r));
+        if (r) {
+            r->lib=dlopen("libambientsvp.so",RTLD_NOW|RTLD_LOCAL);
+            if (r->lib) r->release=dlsym(r->lib,"ambient_svp_android_output_release");
+            if (r->release) { atomic_init(&r->refs,1);s->recycle=r; }
+            else { if (r->lib) dlclose(r->lib);free(r); }
+        }
+    }
     f->p_sys=s;
     f->vctx_out=f->vctx_in;vlc_video_context_Hold(f->vctx_out);
     f->fmt_out.video.i_frame_rate=llround(s->target*1000.0);
