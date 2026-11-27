@@ -1,6 +1,32 @@
 #include "hdr10plus_spatial_geometry.h"
 #include <assert.h>
 int main(void) {
+    // Independent analytic vectors for equations 3-5 of ST2094-40.
+    struct ambient_hdrplus_window curve={.tone_mapping=true,.knee_x=0.f,
+        .knee_y=0.25f,.anchor_count=1,.anchors={0.25f}};
+    // B2(0.5)=2*0.5*0.5*0.25+0.25=0.375.
+    assert(fabsf(ambient_hdrplus_bezier(&curve,0.f)-0.25f)<1e-6f);
+    assert(fabsf(ambient_hdrplus_bezier(&curve,0.5f)-0.53125f)<1e-6f);
+    assert(ambient_hdrplus_bezier(&curve,1.f)==1.f);
+    curve.knee_x=1.f;
+    assert(fabsf(ambient_hdrplus_bezier(&curve,0.5f)-0.125f)<1e-6f);
+    assert(ambient_hdrplus_bezier(&curve,1.f)==0.25f);
+    curve.knee_x=0.5f;curve.knee_y=0.25f;
+    assert(fabsf(ambient_hdrplus_bezier(&curve,0.25f)-0.125f)<1e-6f);
+    assert(fabsf(ambient_hdrplus_bezier(&curve,0.75f)-0.53125f)<1e-6f);
+    curve.anchor_count=0;curve.knee_x=curve.knee_y=0.f;
+    assert(fabsf(ambient_hdrplus_bezier(&curve,0.75f)-0.75f)<1e-6f);
+    curve.anchor_count=15;
+    for(unsigned i=0;i<15;i++)curve.anchors[i]=(i+1)/16.f;
+    assert(fabsf(ambient_hdrplus_bezier(&curve,0.625f)-0.625f)<1e-6f);
+    curve.histogram_count=9;
+    curve.histogram[1].percentage=5;curve.histogram[2].percentage=10;
+    curve.histogram[2].percentile=0.00255f;
+    curve.histogram[8].percentile=0.001f;
+    assert(ambient_hdrplus_source_peak(&curve,1)==0.001f);
+    assert(ambient_hdrplus_source_peak(&curve,0)==0.00255f);
+    curve.maxscl[0]=0.1f;
+    assert(ambient_hdrplus_source_peak(&curve,1)==0.1f);
     struct ambient_hdrplus m={.window_count=3,.target_nits=1000};
     for (unsigned i=0;i<3;++i) {
         m.windows[i].maxscl[0]=0.1f;
