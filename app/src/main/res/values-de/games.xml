@@ -391,6 +391,6 @@
     <string name="games_core_test_sh2">Sega 32X mit SH2-Dynarec</string>
     <string name="games_core_test_threaded">SNES-Renderer auf eigenem Thread</string>
     <string name="games_core_test_threaded_hint">Den Renderer in den Core-Optionen einschalten und den Test neu starten.</string>
-    <string name="games_core_experimental_hint">Dieser Test verwendet eigene Spielstände auf diesem Gerät. Während des Tests ist die RomM-Synchronisierung für Spielstände aus.</string>
+    <string name="games_core_experimental_hint">Diese Variante verwendet gemeinsame Spielstände und RomM-Synchronisierung. Speicherstände können den ursprünglichen Core-Build erfordern.</string>
     <string name="games_core_from_experiment">Experimentell: %1$s · %2$s</string>
 </resources>

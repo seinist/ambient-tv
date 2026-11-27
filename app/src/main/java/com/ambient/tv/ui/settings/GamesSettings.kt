@@ -67,6 +67,8 @@ private fun GameCoreSource.titleRes(): Int = when (this) {
     GameCoreSource.AUTO -> R.string.games_core_source_auto
     GameCoreSource.AMBIENT -> R.string.games_core_source_ambient
     GameCoreSource.BUILDBOT -> R.string.games_core_source_buildbot
+    GameCoreSource.OPTIMIZED -> R.string.games_core_source_optimized
+    GameCoreSource.OPTIMIZED_A57 -> R.string.games_core_source_optimized_a57
     else -> error("Expected a regular core source")
 }
 
@@ -394,7 +396,8 @@ internal fun GamesCores(onlyCoreId: String? = null) {
                     SettingsSelectOption(
                         text = stringResource(option.titleRes()),
                         selected = option == source,
-                        enabled = option != GameCoreSource.AMBIENT || entry.channel().available,
+                        enabled = (option == GameCoreSource.AUTO || option == GameCoreSource.BUILDBOT || entry.channel().available) &&
+                            (option != GameCoreSource.OPTIMIZED_A57 || cores.abi == "arm64-v8a"),
                         onClick = { GameSettings.update { it.withCoreSource(option) } },
                     )
                 },
@@ -450,7 +453,8 @@ internal fun GamesCores(onlyCoreId: String? = null) {
                             text = stringResource(if (matchesSource) R.string.games_core_update else R.string.game_core_load),
                             loading = downloading,
                             enabled = !downloading && cores.abi?.let { core.supportedAbis.isEmpty() || it in core.supportedAbis } == true &&
-                                (source != GameCoreSource.AMBIENT || entry.channel().available),
+                                (source == GameCoreSource.AUTO || source == GameCoreSource.BUILDBOT || entry.channel().available) &&
+                                (source.experimentalProfile == null || cores.abi?.let { source.supportsExperiment(core, it) } == true),
                             onClick = { download(core, source) },
                         )
                         if (remember(version, source) { cores.canRollback(core, source) }) TvActionButton(

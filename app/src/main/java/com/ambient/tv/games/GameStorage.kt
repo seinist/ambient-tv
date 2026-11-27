@@ -32,23 +32,15 @@ class GameStorage @Inject constructor(@ApplicationContext private val context: C
         game.remote?.let { File(remoteRoot(it.serverKey), "system").also { it.mkdirs() } } ?: systemDirectory
 
     /** RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY for [game]. */
-    fun savesDirectory(game: PreparedGame): File = game.experimentalProfile?.let { profile ->
-        File(experimentRoot(game, profile), "saves").also { it.mkdirs() }
-    } ?: (game.remote?.let { remoteSavesDirectory(it.serverKey) } ?: savesDirectory)
+    fun savesDirectory(game: PreparedGame): File =
+        game.remote?.let { remoteSavesDirectory(it.serverKey) } ?: savesDirectory
 
     /** The save folder the cores get for every game of one RomM server. */
     fun remoteSavesDirectory(serverKey: String): File = File(remoteRoot(serverKey), "saves").also { it.mkdirs() }
 
     /** Save states of one game (see GameStateStore). */
-    fun statesDirectory(game: PreparedGame): File = (game.experimentalProfile?.let { File(experimentRoot(game, it), "states/${game.saveKey}") }
-        ?: game.remote?.let { File(remoteRoot(it.serverKey), "states/${game.saveKey}") }
+    fun statesDirectory(game: PreparedGame): File = (game.remote?.let { File(remoteRoot(it.serverKey), "states/${game.saveKey}") }
         ?: File(root, "states/${game.saveKey}")).also { it.mkdirs() }
-
-    private fun experimentRoot(game: PreparedGame, profile: String): File {
-        require(GameCoreSource.entries.any { it.experimentalProfile == profile })
-        val base = game.remote?.let { remoteRoot(it.serverKey) } ?: root
-        return File(base, "experiments/$profile")
-    }
 
     fun sramFile(game: PreparedGame): File = File(savesDirectory(game), "${game.saveKey}.srm")
 

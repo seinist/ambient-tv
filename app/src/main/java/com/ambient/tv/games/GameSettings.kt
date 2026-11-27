@@ -372,10 +372,10 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
         .takeIf { it in GameCoreSource.regular } ?: GameCoreSource.AUTO
 
     fun withCoreSource(source: GameCoreSource): GameSettingsState =
-        set("core_source", source.key.takeIf { source == GameCoreSource.AMBIENT || source == GameCoreSource.BUILDBOT })
+        set("core_source", source.key.takeIf { source != GameCoreSource.AUTO && source in GameCoreSource.regular })
 
     internal fun migrateCoreSource(): GameSettingsState =
-        if (GameCoreSource.fromKey(values["core_source"]).experimentalProfile != null) {
+        if (GameCoreSource.fromKey(values["core_source"]) !in GameCoreSource.regular) {
             withCoreSource(GameCoreSource.AUTO).withCoreExperimentsEnabled(true)
         } else this
 

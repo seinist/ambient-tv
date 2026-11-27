@@ -73,14 +73,14 @@ private fun GameCoreExperimentList(
             value = ExperimentOptions(installed, checking = candidates.isNotEmpty())
             val available = installed.toMutableSet()
             var failed = false
-            try {
-                for (source in candidates) {
+            for (source in candidates) {
+                try {
                     if (channel.build(core, abi, source) != null) available += source
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    failed = true
                 }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                failed = true
             }
             value = ExperimentOptions(eligible.filter { it in available }, failed = failed)
         }

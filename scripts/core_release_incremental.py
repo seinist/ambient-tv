@@ -210,19 +210,20 @@ def signed_history(repo, profile, desired, root=ROOT):
 def select(matrix, records, latest_keys, profile, ndk, force=False, root=ROOT):
     desired = {key(j) for j in matrix["include"]}
     build, reuse = [], []
+    complete_snapshot = profile in {"baseline", "optimized", "optimized-a57"}
     for job in matrix["include"]:
         job = dict(job)
         fp = fingerprint(job, ndk, root)
         job["fingerprint"] = fp
         previous = records.get(key(job))
         if not force and previous and previous["entry"].get("fingerprint") == fp:
-            if profile == "baseline":
+            if complete_snapshot:
                 reuse.append(previous)
         else:
             build.append(job)
-    # Stable snapshots retain the entire current catalog for older clients;
-    # removal-only catalog changes need publication too.
-    changed = bool(build) or (profile == "baseline" and latest_keys != desired)
+    # Public snapshots retain the entire current catalog; partial legacy history
+    # is consolidated even if all fingerprints can be reused without builds.
+    changed = bool(build) or (complete_snapshot and latest_keys != desired)
     return {"matrix": {"include": build}, "reuse": reuse, "publish": changed,
             "total": len(desired), "rebuilt": len(build)}
 

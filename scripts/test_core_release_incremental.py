@@ -123,6 +123,13 @@ class IncrementalCoreReleaseTest(unittest.TestCase):
             result = select(changed, records, set(records), profile, self.ndk)
             self.assertEqual({j["core"] for j in result["matrix"]["include"]}, {"mgba"})
             self.assertEqual(result["rebuilt"], 1 if profile == "optimized-a57" else 4)
+            self.assertEqual(len(result["reuse"]) + result["rebuilt"], len(records))
+            if profile != "baseline":
+                partial = set(records) - {next(iter(records))}
+                snapshot = select(matrix, records, partial, profile, self.ndk)
+                self.assertTrue(snapshot["publish"])
+                self.assertEqual(snapshot["rebuilt"], 0)
+                self.assertEqual(len(snapshot["reuse"]), len(records))
 
     def test_core_specific_recipe_and_patch_fingerprints(self):
         source = Path(__file__).resolve().parents[1]
