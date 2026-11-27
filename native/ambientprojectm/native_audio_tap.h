@@ -12,12 +12,14 @@ struct PcmRing {
     std::array<float, capacity> samples{};
     size_t end = 0;
     size_t count = 0;
+    uint64_t sequence = 0;
 
-    void clear() { end = count = 0; }
+    void clear() { end = count = 0; sequence = 0; }
     void push(float sample) {
         samples[end] = sample;
         end = (end + 1) % capacity;
         count = std::min(count + 1, capacity);
+        ++sequence;
     }
     void append(const float* data, size_t size) {
         if (size > capacity) { data += size - capacity; size = capacity; }
@@ -26,15 +28,25 @@ struct PcmRing {
         std::copy_n(data + first, size - first, samples.data());
         end = (end + size) % capacity;
         count = std::min(count + size, capacity);
+        sequence += size;
     }
-    size_t drainLatest(float* output, size_t limit) {
+    size_t copyLatest(float* output, size_t limit) const {
         const size_t size = std::min(count, limit);
         const size_t start = (end + capacity - size) % capacity;
         const size_t first = std::min(size, capacity - start);
         std::copy_n(samples.data() + start, first, output);
         std::copy_n(samples.data(), size - first, output + first);
+        return size;
+    }
+    size_t drainLatest(float* output, size_t limit) {
+        const size_t size = copyLatest(output, limit);
         count = 0;
         return size;
+    }
+    size_t readLatestSince(float* output, size_t limit, uint64_t& cursor) const {
+        const size_t fresh = static_cast<size_t>(std::min<uint64_t>(sequence - cursor, capacity));
+        cursor = sequence;
+        return copyLatest(output, std::min(limit, fresh));
     }
 };
 
@@ -43,6 +55,7 @@ struct NativeAudioTap {
     std::atomic<int> consumers{0};
     std::mutex mutex;
     PcmRing pcm;
+    size_t maxFrames = PcmRing::capacity; // Configured from the pinned projectM API.
 };
 static NativeAudioTap nativeAudio[3]; // 1 = VLC, 2 = MPV
 
@@ -91,9 +104,10 @@ ambient_projectm_pcm_v1(int source, const void* data, size_t frames, int channel
     std::unique_lock<std::mutex> lock(tap.mutex, std::try_to_lock);
     if (!lock.owns_lock()) return;
     if (tap.consumers.load(std::memory_order_relaxed) == 0) return;
-    const size_t count = std::min(frames, PcmRing::capacity);
+    const size_t count = std::min(frames, tap.maxFrames);
     const auto* bytes = static_cast<const unsigned char*>(data);
     const size_t stride = channels * encoding;
+    if (frames > SIZE_MAX / stride || count == 0) return;
     bytes += (frames - count) * stride;
     std::array<float, PcmRing::capacity> converted;
     if (encoding == 4) downmixChannels<4>(bytes, converted.data(), count, channels);
