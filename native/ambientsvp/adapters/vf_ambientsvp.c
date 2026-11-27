@@ -21,6 +21,7 @@
 #if HAVE_VULKAN && LIBAVUTIL_VERSION_MAJOR == 61
 #include <libplacebo/utils/libav.h>
 #include "svp_mpv_vulkan.h"
+#include "svp_mpv_fel_pair.h"
 #define SVP_MPV_RESIDENT 1
 #else
 #define SVP_MPV_RESIDENT 0
@@ -35,6 +36,7 @@ struct priv {
     unsigned output_pool_count;
 #if SVP_MPV_RESIDENT
     struct svp_vk_mpv *vk;
+    struct svp_fel_schedule fel;
     bool vk_disabled;
 #endif
     bool eof, bypass; int width, height;
@@ -53,6 +55,7 @@ static void reset(struct mp_filter *f) {
     struct priv *p = f->priv;
 #if SVP_MPV_RESIDENT
     svp_vk_reset_history(p->vk);
+    svp_fel_reset(&p->fel);
 #endif
     if (p->engine) p->api.destroy(p->engine);
     p->engine = NULL; mp_image_unrefp(&p->reference);
@@ -69,6 +72,7 @@ static void seek_reset(struct mp_filter *f) {
     struct priv *p = f->priv;
 #if SVP_MPV_RESIDENT
     svp_vk_reset_history(p->vk);
+    svp_fel_reset(&p->fel);
     p->vk_disabled = false;
 #endif
     AmbientSvpStats stats = {0};
@@ -208,6 +212,13 @@ static void process(struct mp_filter *f) {
     struct priv *p = f->priv;
     if (!mp_pin_in_needs_data(f->ppins[1])) return;
 #if SVP_MPV_RESIDENT
+    if(p->api.lib && !p->api.enabled() && p->fel.previous){
+        struct mp_image *prev=svp_fel_previous(&p->fel);
+        svp_fel_reset(&p->fel);
+        mp_pin_in_write(f->ppins[1],MAKE_FRAME(MP_FRAME_VIDEO,prev));return;
+    }
+    struct mp_image *fel=svp_fel_take(&p->fel);
+    if(fel){mp_pin_in_write(f->ppins[1],MAKE_FRAME(MP_FRAME_VIDEO,fel));return;}
     if (p->vk) {
         svp_vk_reap(p->vk, false);
         if (!p->api.enabled()) {
@@ -224,6 +235,10 @@ static void process(struct mp_filter *f) {
     struct mp_frame frame = mp_pin_out_read(f->ppins[0]);
     if (!frame.type) return;
 #if SVP_MPV_RESIDENT
+    if(frame.type==MP_FRAME_EOF && p->fel.previous){
+        struct mp_image *prev=svp_fel_previous(&p->fel);
+        mp_pin_in_write(f->ppins[1],MAKE_FRAME(MP_FRAME_VIDEO,prev));p->eof=true;return;
+    }
     if (frame.type == MP_FRAME_EOF && p->vk && p->vk->previous) {
         svp_vk_eof(p->vk);
         p->eof = true; mp_filter_internal_mark_progress(f); return;
@@ -235,6 +250,19 @@ static void process(struct mp_filter *f) {
     if (frame.type != MP_FRAME_VIDEO) { mp_pin_in_write(f->ppins[1], frame); return; }
     struct mp_image *img = frame.data;
 #if SVP_MPV_RESIDENT
+    if(p->opts->hwresident&&!p->bypass&&p->api.lib&&p->api.enabled()&&
+        svp_fel_eligible(img)&&!(p->vk&&p->vk->previous)){
+        if(p->engine)reset(f);
+        if(svp_fel_push(&p->fel,img,p->opts->source,p->opts->fps)){
+            p->passthrough=PASS_NONE;
+            mp_filter_internal_mark_progress(f);return;
+        }
+    }
+    if(p->fel.previous){
+        struct mp_image *prev=svp_fel_previous(&p->fel);
+        mp_pin_out_unread(f->ppins[0],frame);
+        mp_pin_in_write(f->ppins[1],MAKE_FRAME(MP_FRAME_VIDEO,prev));return;
+    }
     // Explicitly opt-in until the independent resident search has device
     // quality/performance validation. Never route MediaCodec surface handles
     // here; only actual FFmpeg Vulkan frames with supported plane views.
@@ -333,12 +361,15 @@ static bool command(struct mp_filter *f, struct mp_filter_command *cmd) {
     AmbientSvpStats s = {0}; if (p->engine) p->api.stats(p->engine, &s);
     bool resident = false;
 #if SVP_MPV_RESIDENT
-    resident = p->vk && p->vk->previous && !p->vk_disabled;
+    resident = (p->vk && p->vk->previous && !p->vk_disabled) || p->fel.previous;
 #endif
     mp_tags_set_str(tags, "backend", resident || s.backend == 2 ? "vulkan" : s.backend == 1 ? "cpu" : "off");
     mp_tags_set_str(tags, "transport", resident ? "hardware-resident" : "host-i420");
 #if SVP_MPV_RESIDENT
-    if (resident) {
+    if (p->fel.previous) {
+        s.output_frames=p->fel.output_ticks;
+        mp_tags_set_str(tags,"fel-scheduled-frames",talloc_asprintf(tags,"%llu",(unsigned long long)p->fel.output_ticks));
+    } else if (resident && p->vk) {
         s.output_frames = p->vk->output_frames;
         // No GPU readback to count genuinely novel images. Generated
         // output ticks are exposed separately from novelty statistics.
