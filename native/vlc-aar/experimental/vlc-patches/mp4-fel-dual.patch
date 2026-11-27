@@ -1605,7 +1605,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
              {
                  if( i_pos > p_sys->context.i_post_mdat_offset )
                      msg_Err( p_demux, " Overread mdat by %" PRIu64, i_pos - p_sys->context.i_post_mdat_offset );
-@@ -5742,9 +7009,34 @@
+@@ -5742,12 +7009,37 @@
 -                if( MP4_Seek( p_demux->s, p_sys->context.i_post_mdat_offset ) != VLC_SUCCESS )
 +                if( !MP4_FEL_SeekExact(p_demux->s,p_sys->context.i_post_mdat_offset) )
                      i_status = VLC_DEMUXER_EGENERIC;
@@ -1644,3 +1644,6 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
  
  end:
 +    if(i_status<=VLC_DEMUXER_EOF)MP4_FEL_ClearReplay(p_sys);
+     if( i_status == VLC_DEMUXER_EOF )
+     {
+         vlc_tick_t i_demux_end = VLC_TICK_MIN;
