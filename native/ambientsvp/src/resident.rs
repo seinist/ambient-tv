@@ -216,13 +216,22 @@ fn reduce(lane:u32){
 }
 @compute @workgroup_size(64)
 fn analyse(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:u32){
-    let gh=geometry.w&0x1fffffffu;
-    let reverse=g.y>=gh;
-    let gy=g.y%gh;
-    let wave=(geometry.w&0x40000000u)!=0u;
+    let gh=geometry.w&0xffffu;
+    let causal=(geometry.w&0x10000000u)!=0u;
+    let wave_index=(geometry.w>>16u)&0xfffu;
+    var gx=g.x;
+    var gy=g.y%gh;
+    var reverse=g.y>=gh;
+    if causal{
+        gy=g.x;reverse=g.y!=0u;
+        if gy>=gh||wave_index<2u*gy{return;}
+        gx=wave_index-2u*gy;
+        if gx>=geometry.z{return;}
+    }
+    let wave=causal||(geometry.w&0x40000000u)!=0u;
     let parity=(geometry.w>>29u)&1u;
-    if wave && ((g.x+gy)&1u)!=parity{return;}
-    let origin=vec2i(vec2u(g.x*16u,gy*16u));
+    if wave && !causal && ((gx+gy)&1u)!=parity{return;}
+    let origin=vec2i(vec2u(gx*16u,gy*16u));
     scores[lane]=0xffffffffu;vectors[lane]=vec2i(0);
     let p=origin+vec2i(i32(lane%8u)*2,i32(lane/8u)*2);
     source_samples[lane]=0;
@@ -240,7 +249,7 @@ fn analyse(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:
     if wave{
         let count=geometry.z*gh;
         let base=select(0u,count,reverse);
-        let index=base+g.x+gy*geometry.z;
+        let index=base+gx+gy*geometry.z;
         let current=fields[index].xy;
         // Red/black scheduling: only the opposite parity is read.
         // Each dispatch has an explicit device-scope storage barrier.
@@ -248,15 +257,33 @@ fn analyse(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:
         var neighbor=current;
         let side=lane/16u;
         let step=vec2i(i32((lane%16u)%4u)-1,i32((lane%16u)/4u)-1);
-        var cell=vec2i(i32(g.x),i32(gy));
-        switch side{
-            case 0u:{cell.x-=1;}
-            case 1u:{cell.x+=1;}
-            case 2u:{cell.y-=1;}
-            default:{cell.y+=1;}
-        }
-        if all(cell>=vec2i(0)) && all(cell<vec2i(i32(geometry.z),i32(gh))){
-            neighbor=fields[base+u32(cell.x)+u32(cell.y)*geometry.z].xy;
+        var cell=vec2i(i32(gx),i32(gy));
+        if causal{
+            // The compact x+2*y dispatch only reads earlier waves:
+            // left, top and top-right. Use their median as a fourth
+            // candidate. No host readback or intra-dispatch spin wait.
+            var left=current;var top=current;var right=current;
+            if gx>0u{left=fields[index-1u].xy;}
+            if gy>0u{
+                top=fields[index-geometry.z].xy;
+                if gx+1u<geometry.z{right=fields[index-geometry.z+1u].xy;}
+            }
+            switch side{
+                case 0u:{neighbor=left;}
+                case 1u:{neighbor=top;}
+                case 2u:{neighbor=right;}
+                default:{neighbor=left+top+right-min(left,min(top,right))-max(left,max(top,right));}
+            }
+        }else{
+            switch side{
+                case 0u:{cell.x-=1;}
+                case 1u:{cell.x+=1;}
+                case 2u:{cell.y-=1;}
+                default:{cell.y+=1;}
+            }
+            if all(cell>=vec2i(0)) && all(cell<vec2i(i32(geometry.z),i32(gh))){
+                neighbor=fields[base+u32(cell.x)+u32(cell.y)*geometry.z].xy;
+            }
         }
         if lane==0u{predictor_score=cost(origin,current,reverse,0xffffffffu);}
         workgroupBarrier();
@@ -296,7 +323,7 @@ fn analyse(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:
     reduce(lane);
     if lane==0u{
         let count=geometry.z*gh;
-        let index=g.x+gy*geometry.z+select(0u,count,reverse);
+        let index=gx+gy*geometry.z+select(0u,count,reverse);
         fields[index]=vec4i(vectors[0],i32(scores[0]/128u),0);
     }
 }
