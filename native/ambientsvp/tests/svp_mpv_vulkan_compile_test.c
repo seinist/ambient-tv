@@ -80,6 +80,13 @@ static struct dovi_fixture make_dovi(void)
 }
 int main(void)
 {
+    SvpHdrCurve low,high,bright;
+    assert(svp_hdr_curve(5000,1000,4000,1000,&low)&&low.count==0);
+    assert(svp_hdr_curve(40000,1000,30000,1000,&high)&&high.count==9);
+    assert(svp_hdr_curve(40000,20000,30000,1000,&bright)&&bright.count==9);
+    assert(high.knee_x!=bright.knee_x&&high.knee_y!=bright.knee_y);
+    for(unsigned j=1;j<high.count;j++)assert(high.anchors[j]>=high.anchors[j-1]);
+    assert(!svp_hdr_curve(1000,2000,900,1000,&low));
     AVDynamicHDRPlus h={.num_windows=1},h2;
     memcpy(&h2,&h,sizeof(h));
     AVBufferRef x={.data=(uint8_t *)&h,.size=sizeof(h)},y={.data=(uint8_t *)&h2,.size=sizeof(h2)};
