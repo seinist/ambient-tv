@@ -2,7 +2,8 @@
  * Opt-in MPV native Vulkan SVP transport. Uses the decoder/renderer
  * VkDevice, actual AVVkFrame image views and FFmpeg timeline semaphores.
  * No CPU pixel transfer. This is intentionally restricted to compatible
- * 8-bit SDR or separate 10-bit YUV planes, with static HDR metadata only.
+ * 8-bit SDR or high-depth frames; static HDR and identical supported
+ * HDR10+ metadata only. Dolby Vision retains the original renderer path.
  * Included by vf_ambientsvp.c only with HAVE_VULKAN and libavutil 61.
  */
 #ifndef SVP_MPV_VULKAN_H
@@ -126,7 +127,7 @@ static bool svp_vk_hdrplus_same(const struct mp_image *a,const struct mp_image *
 {
     const AVBufferRef *x=svp_vk_hdr10plus(a),*y=svp_vk_hdr10plus(b);
     if (!x || !y) return !x && !y;
-    if (x->size!=y->size || x->size<sizeof(AVDynamicHDRPlus)) return false;
+    if (x->size!=sizeof(AVDynamicHDRPlus) || y->size!=sizeof(AVDynamicHDRPlus)) return false;
     const AVDynamicHDRPlus *p=(const AVDynamicHDRPlus *)x->data;
     const AVDynamicHDRPlus *q=(const AVDynamicHDRPlus *)y->data;
     if (!p || !q || p->num_windows!=1 || q->num_windows!=1 ||
@@ -166,6 +167,7 @@ static bool svp_vk_eligible(struct mp_image *img)
     if ((fc->sw_format==AV_PIX_FMT_RGBA||fc->sw_format==AV_PIX_FMT_RGBAF16)!=(img->params.repr.sys==PL_COLOR_SYSTEM_RGB)) return false;
     int mode=svp_vk_mode(fc->sw_format);
     bool hdr=img->params.color.transfer==PL_COLOR_TRC_PQ || img->params.color.transfer==PL_COLOR_TRC_HLG;
+    if (svp_vk_hdr10plus(img) && (!mode || img->params.color.transfer!=PL_COLOR_TRC_PQ)) return false;
     if ((!mode && (hdr || svp_vk_matrix(img)>3)) || (hdr && img->params.repr.sys!=PL_COLOR_SYSTEM_BT_2020_NC && !(mode==3 && img->params.repr.sys==PL_COLOR_SYSTEM_RGB))) return false;
     for (int i=0;i<img->num_ff_side_data;i++)
         if (img->ff_side_data[i].type==AV_FRAME_DATA_DOVI_METADATA ||
