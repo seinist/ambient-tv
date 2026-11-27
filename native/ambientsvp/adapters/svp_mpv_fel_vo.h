@@ -157,7 +157,12 @@ static inline bool svp_fel_vo_map(struct priv *p,struct vo *vo,struct mp_image *
 #if PL_API_VER >= 367 && defined(PL_HAVE_DOVI) && defined(PL_HAVE_VULKAN)
     const struct svp_fel_pair *pair=svp_fel_get(mpi);
     if(!pair||!pl_vulkan_get(p->gpu)||!pair->source[0]||!pair->source[1]||
-        !isfinite(pair->phase)||pair->phase<0||pair->phase>1)return false;
+        !isfinite(pair->phase)||pair->phase<0||pair->phase>1||
+        mpi->w!=pair->source[0]->w||mpi->h!=pair->source[0]->h||
+        mpi->w!=pair->source[1]->w||mpi->h!=pair->source[1]->h||mpi->params.rotate||mpi->params.vflip||
+        mpi->params.crop.x0||mpi->params.crop.y0||
+        (mpi->params.crop.x1&&mpi->params.crop.x1!=mpi->w)||
+        (mpi->params.crop.y1&&mpi->params.crop.y1!=mpi->h))return false;
     if(!p->svp_fel)p->svp_fel=calloc(1,sizeof(*p->svp_fel));
     struct svp_fel_vo_cache *s=p->svp_fel;
     if(!s)return false;
