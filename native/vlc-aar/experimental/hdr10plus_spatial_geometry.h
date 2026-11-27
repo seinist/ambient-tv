@@ -11,8 +11,8 @@ static inline bool ambient_hdrplus_mask_init(struct ambient_hdrplus_mask *out,
     const struct ambient_hdrplus_geometry *g, unsigned width, unsigned height)
 {
     if (!out || !g || !width || !height || g->left > g->right || g->top > g->bottom ||
-        g->right >= width || g->bottom >= height || g->center_x < g->left ||
-        g->center_x > g->right || g->center_y < g->top || g->center_y > g->bottom ||
+        g->right >= width || g->bottom >= height ||
+        g->center_x >= width || g->center_y >= height ||
         !g->semimajor_inner || !g->semimajor_outer || !g->semiminor_outer ||
         g->semimajor_inner > g->semimajor_outer || g->semiminor_outer > g->semimajor_outer ||
         g->angle > 180 || g->overlap > 1) return false;
@@ -29,9 +29,12 @@ static inline float ambient_hdrplus_weight(const struct ambient_hdrplus_mask *m,
     if (!m->rotation[3] || x<m->rect[0] || y<m->rect[1] ||
         x>m->rect[2] || y>m->rect[3]) return 0.f;
     float dx=x-m->ellipse[0],dy=y-m->ellipse[1];
+    // Section 6.3/Fig. 1 uses clockwise angles in image coordinates (y down).
+    // Project onto the rotated major axis, i.e. inverse rotation of the point.
     float u=(m->rotation[0]*dx+m->rotation[1]*dy)*m->ellipse[2];
     float v=(-m->rotation[1]*dx+m->rotation[0]*dy)*m->ellipse[3];
     float radius=hypotf(u,v);
+    if (radius>=1.f) return 0.f;
     if (radius<=m->rotation[2]) return 1.f;
     float t=fmaxf(0.f,fminf(1.f,(radius-m->rotation[2])/fmaxf(1.f-m->rotation[2],1e-6f)));
     return 0.5f+0.5f*cosf(3.14159265358979323846f*t);
@@ -139,6 +142,41 @@ static inline float ambient_hdrplus_source_peak(const struct ambient_hdrplus_win
     }
     return peak;
 }
+/* Annex B.3 normalizes linear light by M_RP (relative to 10000 nits)
+ * when available, otherwise by scene MaxSCL / the highest percentile.
+ * Multiplying the two values would apply the scene range twice.
+ * A zero/unknown FBP means the LUT cannot be evaluated reliably. */
+static inline float ambient_hdrplus_normalization_nits(const struct ambient_hdrplus *m,
+    const struct ambient_hdrplus_window *w)
+{
+    float factor;
+    if(!m||!w||!ambient_hdrplus_grid_factor(&m->mastering_grid,w,&factor))return 0.f;
+    float normalized=m->mastering_grid.rows&&w->fraction>0.f?factor:
+        ambient_hdrplus_source_peak(w,m->version);
+    return 10000.f*normalized;
+}
+
+/* Annex B.11 luminance scales for saturation: both actual-peak factors
+ * participate or neither. Separate these scales from display adaptation.
+ * Fallback mastering peak is supplied by the caller if ST2086 is absent. */
+static inline bool ambient_hdrplus_saturation_scales(const struct ambient_hdrplus *m,
+    const struct ambient_hdrplus_window *w,float mastering_nits,float target_nits,
+    float *source_scale,float *target_scale)
+{
+    if(!m||!w||!source_scale||!target_scale||
+        !(mastering_nits>0.f&&mastering_nits<=10000.f)||
+        !(target_nits>0.f&&target_nits<=10000.f))return false;
+    float sm,tm;
+    if(!ambient_hdrplus_grid_factor(&m->mastering_grid,w,&sm)||
+       !ambient_hdrplus_grid_factor(&m->targeted_grid,w,&tm))return false;
+    float peak=10000.f*fmaxf(w->maxscl[0],fmaxf(w->maxscl[1],w->maxscl[2]));
+    if(m->mastering_grid.rows&&m->targeted_grid.rows&&w->fraction>0.f&&peak>0.f){
+        *source_scale=sm*peak;*target_scale=tm*peak;
+    }else{
+        *source_scale=mastering_nits;*target_scale=target_nits;
+    }
+    return true;
+}
 static inline bool ambient_hdrplus_spatial_supported(const struct ambient_hdrplus *m,
     unsigned width, unsigned height, struct ambient_hdrplus_mask masks[2], bool *layering)
 {
@@ -153,7 +191,7 @@ static inline bool ambient_hdrplus_spatial_supported(const struct ambient_hdrplu
         if (!ambient_hdrplus_grid_factor(&m->mastering_grid,w,&source_factor) ||
             !ambient_hdrplus_grid_factor(&m->targeted_grid,w,&target_factor) ||
             (w->saturation_mapping && w->saturation_weight>63) ||
-            ambient_hdrplus_source_peak(w,m->version)<=0.f) return false;
+            ambient_hdrplus_normalization_nits(m,w)<=0.f) return false;
         if(w->tone_mapping && (m->target_nits<=0.f || w->anchor_count>15 ||
             !(w->knee_x>=0.f && w->knee_x<=1.f) ||
             !(w->knee_y>=0.f && w->knee_y<=1.f))) return false;
