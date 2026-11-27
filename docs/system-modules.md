@@ -72,3 +72,18 @@ release discovery, runtime integration and safe garbage collection remain open.
 Direct executable downloads are intended for the GitHub distribution, not
 Google Play. A future Play distribution requires a separate compliant delivery
 strategy (e.g. Play Feature Delivery).
+
+### Package store hardening
+
+The v1 ZIP format intentionally excludes ZIP64, archive comments, special-file
+modes, overlapping or gapped local entries and inconsistent local/central
+headers. The central directory is bounded before opening ZipFile. Package
+payloads and selection metadata are synced before publication; an uncertain
+post-rename sync failure retains the package rather than deleting a possibly
+referenced version. The stored archive and metadata must be regular files,
+not symlinks. HTTP redirects stay on HTTPS GitHub release origins and a
+redirect to github.com must preserve the original release path. Content-Length
+must match the signed package size when provided; streamed byte count and hash
+are checked even for chunked responses. Tests cover signed malformed ZIPs,
+symlink attributes, local header mismatches and invalid rollback targets.
+Real-device filesystem durability and CI execution still need verification.
