@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <string.h>
 #include <stdio.h>
+#include "dovi_rpu_au.h"
 static void split(const char *mode,const uint8_t *expected,size_t expected_size)
 {
     const AVBitStreamFilter *filter=av_bsf_get_by_name("dovi_split");
@@ -28,8 +29,23 @@ static void split(const char *mode,const uint8_t *expected,size_t expected_size)
     assert(av_bsf_send_packet(ctx,pkt)>=0);
     assert(av_bsf_receive_packet(ctx,pkt)>=0);
     assert(pkt->pts==90000&&pkt->dts==87000&&pkt->duration==3000);
-    assert((size_t)pkt->size==expected_size);
-    assert(memcmp(pkt->data,expected,expected_size)==0);
+    // Annex B permits trailing_zero_8bits and either start-code length.
+    // FFmpeg can retain the zero before the next start code in raw_size.
+    size_t pos=0, want=0;
+    while (want<expected_size) {
+        size_t prefix, wp;
+        size_t start=ambient_rpu_start_code(pkt->data,pkt->size,pos,&prefix);
+        size_t ws=ambient_rpu_start_code(expected,expected_size,want,&wp);
+        assert(prefix&&wp&&start==(size_t)pos&&ws==want);
+        size_t data=start+prefix, wd=ws+wp, np, wn;
+        size_t end=ambient_rpu_start_code(pkt->data,pkt->size,data,&np);
+        size_t we=ambient_rpu_start_code(expected,expected_size,wd,&wn);
+        size_t actual=end;
+        while(actual>data&&pkt->data[actual-1]==0) --actual;
+        assert(actual-data==we-wd && memcmp(pkt->data+data,expected+wd,we-wd)==0);
+        pos=end;want=we;
+    }
+    assert(pos==(size_t)pkt->size);
     av_packet_free(&pkt);av_bsf_free(&ctx);
 }
 int main(void)
