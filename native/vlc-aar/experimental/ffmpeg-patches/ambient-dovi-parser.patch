@@ -42,7 +42,7 @@ new file mode 100644
 diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 --- a/libavcodec/dovi_rpudec.c
 +++ b/libavcodec/dovi_rpudec.c
-@@ -747,4 +747,239 @@
+@@ -747,4 +747,246 @@
      }
  
      return 0;
@@ -250,11 +250,18 @@ diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 +    if(!s)return NULL;
 +    AVFrame *f=ambient_fel_decoder_take(&s->decoder,pts);
 +    if(!f)return NULL;
++    const unsigned crop_x=(unsigned)f->crop_left,crop_y=(unsigned)f->crop_top;
++    // The following transfer uses only memcpy, so an exact even crop
++    // is safe even if it is not aligned for FFmpeg SIMD operations.
++    if(av_frame_apply_cropping(f,AV_FRAME_CROP_UNALIGNED)<0){
++        s->decoder.failed=true;av_frame_free(&f);return NULL;
++    }
 +    unsigned w=f->width,h=f->height,cw=(w+1)/2,ch=(h+1)/2;
 +    size_t count=(size_t)w*h+2*(size_t)cw*ch;
 +    struct ambient_fel_picture *out=malloc(sizeof(*out)+count*sizeof(uint16_t));
 +    if(!out){s->decoder.failed=true;goto done;}
-+    *out=(struct ambient_fel_picture){.pts=pts,.width=w,.height=h};
++    *out=(struct ambient_fel_picture){.pts=pts,.width=w,.height=h,
++        .crop_x=crop_x,.crop_y=crop_y};
 +    // HEVC UHD defaults to top-left here when metadata is missing.
 +    // Other explicitly signaled chroma locations retain their own offsets.
 +    switch(f->chroma_location){
@@ -286,7 +293,7 @@ diff --git a/libavcodec/ambient_fel_decoder.h b/libavcodec/ambient_fel_decoder.h
 new file mode 100644
 --- /dev/null
 +++ b/libavcodec/ambient_fel_decoder.h
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,166 @@
 +#pragma once
 +/* Experimental software enhancement-layer decoder. The caller owns the BL
 + * decoder and must submit each accepted access unit exactly once, in decode
@@ -375,9 +382,11 @@ new file mode 100644
 +            av_frame_free(&f);
 +            return ret==AVERROR(EAGAIN)||ret==AVERROR_EOF?0:ret;
 +        }
-+        // Right/bottom padding does not shift the EL sample phase. A
-+        // nonzero left/top crop is ambiguous without original BL phase.
-+        if(f->crop_left||f->crop_top||av_frame_apply_cropping(f,0)<0){
++        // Keep the original conformance window until snapshot transfer.
++        // 4:2:0 origins must be even; invalid or empty crops are rejected.
++        if(f->width<=0||f->height<=0||(f->crop_left&1u)||(f->crop_top&1u)||
++           f->crop_left>=(size_t)f->width||f->crop_right>=(size_t)f->width-f->crop_left||
++           f->crop_top>=(size_t)f->height||f->crop_bottom>=(size_t)f->height-f->crop_top){
 +            av_frame_free(&f);return AVERROR_INVALIDDATA;
 +        }
 +        // Only software 10-bit 4:2:0 raw codewords, no range expansion.
@@ -455,7 +464,7 @@ diff --git a/libavcodec/ambient_fel_api.h b/libavcodec/ambient_fel_api.h
 new file mode 100644
 --- /dev/null
 +++ b/libavcodec/ambient_fel_api.h
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,34 @@
 +#pragma once
 +/* Private static FFmpeg interface. No AVFrame/AVPacket types cross modules.
 + * Data is copied once at picture ownership transfer, allocated with libc
@@ -472,6 +481,7 @@ new file mode 100644
 +    struct ambient_dovi_metadata rpu;
 +    int64_t pts;
 +    unsigned width,height;
++    unsigned crop_x,crop_y; /* origin of the visible EL in its coded picture */
 +    float chroma_x,chroma_y;
 +    // Tightly packed 16-bit Y, Cb, Cr codewords, ceil chroma dimensions.
 +    uint16_t samples[];
