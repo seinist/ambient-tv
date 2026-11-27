@@ -392,3 +392,29 @@ pub unsafe extern "C" fn ambient_svp_android_stream_destroy(stream:*mut Stream)-
     s.dispose();
     unsafe{drop(Box::from_raw(stream))};1
 }
+
+
+#[cfg(test)]
+mod tests{
+    use super::*;
+    #[test]
+    #[ignore="requires a physical Android Vulkan device with compositor AHB extensions"]
+    fn compositor_command_bundle_reuses_only_signaled_fences(){
+        let owner=DeviceOwner::new().unwrap();
+        let commands=BatchCommands::new(owner.clone()).unwrap();
+        let d=owner.d();
+        assert!(commands.reset().is_err(),"an unsignaled fence must not be recycled");
+        for _ in 0..2{
+            unsafe{
+                d.begin_command_buffer(commands.command,&vk::CommandBufferBeginInfo::default()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).unwrap();
+                d.end_command_buffer(commands.command).unwrap();
+                d.queue_submit(owner.queue,&[vk::SubmitInfo::default()
+                    .command_buffers(&[commands.command])],commands.fence).unwrap();
+                d.wait_for_fences(&[commands.fence],true,20_000_000_000).unwrap();
+            }
+            commands.reset().unwrap();
+            assert!(!unsafe{d.get_fence_status(commands.fence)}.unwrap());
+        }
+    }
+}
