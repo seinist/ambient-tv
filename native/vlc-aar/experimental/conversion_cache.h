@@ -16,9 +16,10 @@ class ConversionCacheEntry {
 public:
     ConversionCacheEntry(VkPhysicalDevice physical, VkDevice device,
                          Dispatch image_dispatch, TargetDispatch target_dispatch,
-                         SampleDispatch sample_dispatch, ShaderCode vert, ShaderCode frag)
+                         SampleDispatch sample_dispatch, ShaderCode vert, ShaderCode frag,
+                         VkPipelineCache pipeline_cache = VK_NULL_HANDLE)
         : device_(device), image_dispatch_(image_dispatch), sample_dispatch_(sample_dispatch),
-          vert_(vert), frag_(frag), target_(physical, device, target_dispatch) {}
+          vert_(vert), frag_(frag), pipeline_cache_(pipeline_cache), target_(physical, device, target_dispatch) {}
     ConversionCacheEntry(const ConversionCacheEntry &) = delete;
     ConversionCacheEntry &operator=(const ConversionCacheEntry &) = delete;
 
@@ -54,7 +55,7 @@ public:
         if (result != VK_SUCCESS) return result;
         pass_.emplace(device_, sample_dispatch_);
         result = pass_->create(imported_->sampler(), imported_->view(), target_.view(),
-                               format, width, height, descriptors, vert_, frag_);
+                               format, width, height, descriptors, vert_, frag_, pipeline_cache_);
         if (result != VK_SUCCESS) {
             pass_.reset();
             return result;
@@ -81,6 +82,7 @@ private:
     Dispatch image_dispatch_{};
     SampleDispatch sample_dispatch_{};
     ShaderCode vert_{}, frag_{};
+    VkPipelineCache pipeline_cache_{};
     // Reverse member destruction: pass, imported image, then target.
     RgbTarget target_;
     std::optional<ImportedImage> imported_;
