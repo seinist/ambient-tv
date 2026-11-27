@@ -1085,6 +1085,7 @@ mod pipelining_tests {
             };
             println!("translation field {name}: vectors={} motion_mismatch={mismatched} score_mismatch={score_mismatch} luma_mismatch={luma_mismatch} CPU={:?} GPU={:?}",
                 cpu.len(),histogram(&cpu),histogram(&gpu));
+            assert_eq!(mismatched+score_mismatch+luma_mismatch,0,"exact translation field {name} regressed");
         }
         let mut out=vec![0;baseline.frame_len()];
         let count=8u32;
@@ -1112,11 +1113,11 @@ mod pipelining_tests {
         assert_eq!(experimental.experimental_motion_stats(),(u64::from(count-1),0));
         assert_eq!(cpu.pixels,gpu.pixels);
         assert_eq!(cpu.nearest_squared,gpu.nearest_squared);
-        // Protect the measured previous experimental baseline (38.280 dB,
-        // MAE 0.742 on this exact fixture), not a claim of general parity.
-        // Leave a small margin for floating-point synthesis differences.
-        assert!(gpu.psnr(gpu.squared)>=38.0,"experimental translation PSNR regressed: {}",gpu.psnr(gpu.squared));
-        assert!(gpu.absolute as f64/gpu.pixels as f64<=0.8,"experimental translation MAE regressed");
+        // Both analysers now yield pixel-exact halfway images on this
+        // specific deterministic fixture; keep that exact regression.
+        assert_eq!(cpu.squared,0,"upstream translation reference changed");
+        assert_eq!(gpu.squared,0,"experimental exact translation regressed");
+        assert_eq!(gpu.absolute,0);
         assert!(gpu.squared<gpu.nearest_squared,"interpolation is worse than source-frame repetition");
         // Report objective quality relative to a known in-between image.
         // No assertion of upstream equivalence or superiority from one
@@ -1125,6 +1126,85 @@ mod pipelining_tests {
             cpu.psnr(cpu.squared),cpu.absolute as f64/cpu.pixels as f64,baseline.stats.analysis_us,cpu.psnr(cpu.nearest_squared));
         println!("translation experimental GPU analysis psnr={:.3} mae={:.3} analysis_us={} nearest_source_psnr={:.3}",
             gpu.psnr(gpu.squared),gpu.absolute as f64/gpu.pixels as f64,experimental.stats.analysis_us,gpu.psnr(gpu.nearest_squared));
+    }
+
+    #[test]
+    #[ignore = "requires Vulkan"]
+    fn translation_and_occlusion_quality_matrix(){
+        use crate::benchmark_quality::{Quality,translation_pixel};
+        // Keep the cases small for software Vulkan CI. The two motion
+        // policies use the same synthesis, geometry, cadence and input.
+        // These are diagnostic quality measurements, not a declaration
+        // that all motion, occlusion or subpixel cases match upstream.
+        for (name,dx,dy,pel,object) in [
+            ("reverse-horizontal",-2,0,1,false),
+            ("vertical",0,2,1,false),
+            ("diagonal",2,-2,1,false),
+            ("subpixel-grid",1,1,2,false),
+            ("local-occluding-object",2,0,1,true),
+        ]{
+            let c=Config{target_num:48,artifacts:0,scene:0,pel,..config()};
+            let (w,h)=(c.width,c.height);
+            let count=5u32;
+            let sample=|x:u32,y:u32,t:u64|{
+                if object{
+                    let left=20+t as i32*dx;
+                    let local=x as i32-left;
+                    if (0..28).contains(&local) && (20..46).contains(&y){
+                        return 235-translation_pixel(w,local as u32,y-20,0)/2;
+                    }
+                    return translation_pixel(w,x,y,0)/2+16;
+                }
+                let sx=(i64::from(x)+i64::from(dx)*t as i64).rem_euclid(i64::from(w)) as u32;
+                let sy=(i64::from(y)+i64::from(dy)*t as i64).rem_euclid(i64::from(h)) as u32;
+                translation_pixel(w,sx,sy,0)
+            };
+            let make=|n:u32|{
+                let mut raw=vec![128;(w*h*3/2) as usize];
+                for y in 0..h{for x in 0..w{raw[(y*w+x) as usize]=sample(x,y,2*u64::from(n));}}
+                raw
+            };
+            let run=|experimental:bool|{
+                let mut engine=AmbientSvp::new(c).unwrap();
+                if experimental{
+                    engine.enable_experimental_motion().unwrap();
+                    let a=engine.builder.build(&make(0)).unwrap();
+                    let b=engine.builder.build(&make(1)).unwrap();
+                    engine.gpu.as_mut().unwrap().experimental_motion(
+                        &engine.builder,&a,&b,&engine.analyser.vector_header(),None).unwrap();
+                }
+                let mut q=Quality::default();
+                let mut index=0u64;
+                let mut last=None;
+                let mut output=vec![0;engine.frame_len()];
+                let mut observe=|pts:i64,out:&[u8]|{
+                    assert!(last.is_none_or(|p|pts>p),"{name}: nonmonotonic PTS");
+                    last=Some(pts);
+                    q.observe_with(out,w,h,index,count,sample);
+                    index+=1;
+                };
+                for n in 0..count{
+                    engine.push(&make(n),i64::from(n)*1_000_000/24).unwrap();
+                    while let Some(pts)=engine.receive(&mut output,false).unwrap(){observe(pts,&output);}
+                }
+                while let Some(pts)=engine.receive(&mut output,true).unwrap(){observe(pts,&output);}
+                assert_eq!(index,2*u64::from(count),"{name}: wrong cadence");
+                assert_eq!(q.frames,u64::from(count-1));
+                assert_eq!(engine.stats.backend,2,"{name}: GPU synthesis fallback");
+                assert_eq!(engine.stats.bypass_reason,0,"{name}: bypass");
+                if experimental{
+                    assert_eq!(engine.experimental_motion_stats(),(u64::from(count-1),0),"{name}: analyser fallback");
+                }
+                (q,engine.stats.analysis_us)
+            };
+            let (cpu,ct)=run(false);
+            let (gpu,gt)=run(true);
+            assert_eq!(cpu.pixels,gpu.pixels);
+            assert_eq!(cpu.nearest_squared,gpu.nearest_squared);
+            println!("quality matrix {name} pel={pel} cpu_psnr={:.3} gpu_psnr={:.3} cpu_mae={:.3} gpu_mae={:.3} nearest_psnr={:.3} cpu_analysis_us={ct} gpu_analysis_us={gt}",
+                cpu.psnr(cpu.squared),gpu.psnr(gpu.squared),cpu.absolute as f64/cpu.pixels as f64,
+                gpu.absolute as f64/gpu.pixels as f64,gpu.psnr(gpu.nearest_squared));
+        }
     }
 
     #[test]
