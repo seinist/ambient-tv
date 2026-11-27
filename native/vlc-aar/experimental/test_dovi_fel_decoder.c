@@ -147,9 +147,9 @@ static void test_reorder(const char *stream,const char *timestamps,const char *r
     puts("Reordered Main10 GOP matched independent reference, exact PTS, early/late drop and two epochs");
 }
 
-/* A real HEVC SPS conformance window, modified by independent FFmpeg
- * hevc_metadata: padding at right/bottom is valid, shifted origin isn't. */
-static void test_crop(const char *file,bool shifted)
+/* Real HEVC SPS conformance windows, modified by independent FFmpeg.
+ * Compare the exact visible planes against the uncropped decoded reference. */
+static void test_crop(const char *file,bool shifted,const struct ambient_fel_picture *full)
 {
     FILE *f=fopen(file,"rb");assert(f);
     assert(fseek(f,0,SEEK_END)==0);
@@ -160,16 +160,20 @@ static void test_crop(const char *file,bool shifted)
     AVPacket *p=wrap(input,(size_t)n,100000);
     int ret=av_ambient_fel_submit(session,p->data,p->size,100000,100000);
     if(ret>=0)ret=av_ambient_fel_drain(session);
-    if(shifted){
-        assert(ret<0&&!av_ambient_fel_may_receive(session));
-        assert(!av_ambient_fel_take(session,100000));
-    }else{
-        assert(ret==0);
-        struct ambient_fel_picture *pic=av_ambient_fel_take(session,100000);
-        assert(pic&&pic->width==62&&pic->height==60);
-        for(unsigned i=0;i<62*60+2*31*30;i++)assert(pic->samples[i]<=1023);
-        free(pic);
+    assert(ret==0);
+    struct ambient_fel_picture *pic=av_ambient_fel_take(session,100000);
+    assert(pic&&pic->width==62&&pic->height==60);
+    assert(pic->crop_x==(shifted?2u:0u)&&pic->crop_y==(shifted?4u:0u));
+    const uint16_t *src=full->samples,*dst=pic->samples;
+    assert(full->width==64&&full->height==64);
+    for(unsigned i=0;i<3;i++){
+        unsigned sw=i?32:64,sh=i?32:64,dw=i?31:62,dh=i?30:60;
+        unsigned x=i?pic->crop_x/2:pic->crop_x,y=i?pic->crop_y/2:pic->crop_y;
+        for(unsigned row=0;row<dh;row++)
+            assert(!memcmp(dst+row*dw,src+(row+y)*sw+x,dw*sizeof(*dst)));
+        src+=sw*sh;dst+=dw*dh;
     }
+    free(pic);
     av_packet_free(&p);av_ambient_fel_close(session);free(input);
 }
 
@@ -244,10 +248,10 @@ int main(int argc,char **argv)
     // Owned snapshot survives the decoder session.
     av_ambient_fel_close(session);
     assert(picture->samples[0]<=1023);
+    if(argc==7){test_crop(argv[5],false,picture);test_crop(argv[6],true,picture);}
     free(picture);
     av_packet_free(&wrapped);
     free(input);
     puts("Decoded real HEVC EL codewords; exact PTS, drain and flush verified");
     if(argc>=5)test_reorder(argv[2],argv[3],argv[4]);
-    if(argc==7){test_crop(argv[5],false);test_crop(argv[6],true);}
 }
