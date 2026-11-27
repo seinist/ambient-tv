@@ -173,6 +173,12 @@ mod android{
         #[test]
         #[ignore="requires Android API29+ and CPU-mappable YUV420 AHardwareBuffer allocation"]
         fn hardware_buffer_roundtrip_matches_native_i420_stream(){
+            // The process gate is off by default. Run this ignored device
+            // test alone; restore the original gate even after a panic.
+            struct Gate(i32);
+            impl Drop for Gate{fn drop(&mut self){crate::ambient_svp_set_enabled(self.0);}}
+            let _gate=Gate(crate::ambient_svp_enabled());
+            crate::ambient_svp_set_enabled(1);
             let c=crate::Config{abi:crate::AMBIENTSVP_ABI,width:96,height:66,
                 source_num:24,source_den:1,target_num:48,target_den:1,preset:1,backend:1,
                 threads:2,artifacts:0,scene:0,algo:13,block:16,overlap:2,pel:1,search:1};
