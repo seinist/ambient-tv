@@ -11,10 +11,11 @@ fn ndk_glslc()->Option<PathBuf>{
     candidates.sort();
     candidates.into_iter().find(|p|Command::new(p).arg("--version").output().is_ok_and(|o|o.status.success()))
 }
-fn compile(tool:&Path,glslang:bool,src:&Path,dst:&Path){
+fn compile(tool:&Path,glslang:bool,src:&Path,dst:&Path,high:bool){
     let mut cmd=Command::new(tool);
     if glslang{cmd.args(["-V","--target-env","vulkan1.1","-S","comp"]);}
     else{cmd.args(["--target-env=vulkan1.1","-fshader-stage=compute","-O"]);}
+    if high{cmd.arg("-DSVP_HIGH_DEPTH=1");}
     let result=cmd.arg("-o").arg(dst).arg(src).output()
         .unwrap_or_else(|e|panic!("could not launch {}: {e}",tool.display()));
     if !result.status.success(){panic!("AHB shader compilation failed: {}",String::from_utf8_lossy(&result.stderr));}
@@ -25,16 +26,19 @@ fn main(){
     for e in ["ANDROID_NDK_HOME","ANDROID_NDK_ROOT","SVP_GLSLC"]{println!("cargo:rerun-if-env-changed={e}");}
     if env::var("CARGO_CFG_TARGET_OS").as_deref()!=Ok("android")||env::var_os("CARGO_FEATURE_VULKAN").is_none(){return;}
     let src=PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("shaders/ahb_convert.comp");
-    let dst=PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("ahb_convert.spv");
+    let out=PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    for high in [false,true]{
+    let dst=out.join(if high{"ahb_convert_high.spv"}else{"ahb_convert.spv"});
     if let Some(tool)=env::var_os("SVP_GLSLC").map(PathBuf::from).or_else(ndk_glslc){
         println!("cargo:rerun-if-changed={}",tool.display());
-        compile(&tool,false,&src,&dst);
+        compile(&tool,false,&src,&dst,high);
     }else if Command::new("glslc").arg("--version").output().is_ok_and(|o|o.status.success()){
-        compile(Path::new("glslc"),false,&src,&dst);
+        compile(Path::new("glslc"),false,&src,&dst,high);
     }else{
         // Host cross-check CI uses the system GLSL compiler.
-        compile(Path::new("glslangValidator"),true,&src,&dst);
+        compile(Path::new("glslangValidator"),true,&src,&dst,high);
     }
     let bytes=std::fs::read(dst).expect("missing AHB SPIR-V");
     assert!(bytes.len()>=20&&bytes.len()%4==0&&bytes[..4]==[3,2,35,7],"invalid AHB SPIR-V");
+    }
 }
