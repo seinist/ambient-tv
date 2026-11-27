@@ -274,7 +274,17 @@ static void process(struct mp_filter *f) {
             if (svp_vk_destroy_state(p->vk)) p->vk = NULL;
         }
         if (!p->vk) {
-            p->vk = svp_vk_new(p->api.lib, img, p->opts->source, p->opts->fps);
+            unsigned preset=p->opts->preset==0||p->opts->preset==4?1:p->opts->preset;
+            unsigned block=p->opts->block?p->opts->block:preset==1?32:16;
+            unsigned overlap=p->opts->overlap?p->opts->overlap-1:preset==1?0:2;
+            if(block==8&&overlap==1)overlap=2;
+            unsigned pixels=overlap==1?block/8:overlap==2?block/4:overlap==3?block/2:0;
+            unsigned pel=p->opts->pel?p->opts->pel:preset==3?2:1;
+            unsigned radius=p->opts->search==1?1:p->opts->search==2?2:p->opts->search==3?4:pel*2;
+            AmbientSvpVkTuning tune={.block=block,.overlap=pixels,.pel=pel,.radius=radius>4?4:radius,
+                .satd=1,.chroma=1,.lambda=block*block*4/(pel*pel),.pnew=50,
+                .scene=p->opts->scene==1?30:p->opts->scene==3?70:50,.artifacts=p->opts->artifacts};
+            p->vk = svp_vk_new(p->api.lib, img, p->opts->source, p->opts->fps,&tune);
             if (p->vk) MP_INFO(f, "SVP native Vulkan resident path %dx%d %.6f -> %.6f\n",
                                img->w, img->h, p->opts->source, p->opts->fps);
         }
