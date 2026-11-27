@@ -140,7 +140,12 @@ static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
     pl_shader_dovi_reshape(sh,reshape);
     // Canonical MEL and any provably zero residual need no EL sampling.
     if(zero) {
-        // Reshaping already clamps each component to its RPU pivot bounds.
+        // Preserve the normal residual path's final signal clamp even
+        // when an input component has no reshape curve.
+        if(!pl_shader_custom(sh,&(struct pl_custom_shader){
+            .input=PL_SHADER_SIG_COLOR,.output=PL_SHADER_SIG_COLOR,
+            .body="color.rgb=clamp(color.rgb,0.0,1.0);",
+        }))goto fail;
     }else if(planes){
         const struct pl_shader_desc pd[]={
             {.desc={.name="fel_y",.type=PL_DESC_SAMPLED_TEX},.binding={.object=planes->tex[0]}},
