@@ -118,6 +118,18 @@ int main(void) {
         NULL,0,false,NULL,0,&merged_size));
     // Fragmented MP4 raw timestamp and byte-range contracts, including
     // negative composition offsets used by reordered pictures.
+    int64_t bs,es;
+    assert(ambient_fel_fragment_start(true,9000,true,4800,false,false,0,0,90000,48000,&bs,&es));
+    assert(bs==9000&&es==4800);
+    assert(ambient_fel_fragment_start(false,0,false,0,true,true,18000,9600,90000,48000,&bs,&es));
+    assert(bs==18000&&es==9600);
+    assert(ambient_fel_fragment_start(true,18000,false,0,true,true,18000,9600,90000,48000,&bs,&es));
+    assert(ambient_fel_fragment_start(false,0,true,9600,true,true,18000,9600,90000,48000,&bs,&es));
+    assert(!ambient_fel_fragment_start(false,0,false,0,false,true,18000,9600,90000,48000,&bs,&es));
+    assert(!ambient_fel_fragment_start(false,0,true,9600,true,false,18000,9600,90000,48000,&bs,&es));
+    assert(!ambient_fel_fragment_start(true,18001,false,0,true,true,18000,9600,90000,48000,&bs,&es));
+    assert(!ambient_fel_fragment_start(false,0,false,0,true,true,18000,9601,90000,48000,&bs,&es));
+    assert(!ambient_fel_fragment_start(true,UINT64_MAX,true,0,true,true,0,0,90000,48000,&bs,&es));
     assert(ambient_fel_fragment_timing(9000,-3000,3000,9000,6000,3000));
     assert(ambient_fel_fragment_timing(9000,0,3000,9000,9000,3000));
     assert(!ambient_fel_fragment_timing(9001,-3001,3000,9000,6000,3000));

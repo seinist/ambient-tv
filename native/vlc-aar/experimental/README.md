@@ -767,3 +767,19 @@ exact coded ratio takes precedence over coincidentally equal visible
 sizes; only an unproven coded ratio uses the prior matched-visible
 contract. Fractional luma offsets are rejected; an integral odd luma
 offset can still represent half a chroma sample at 4:2:0.
+
+
+### Contiguous dual-track fragmented decode clocks
+
+A paired fragment can omit one or both tfdt boxes after an explicit
+pair of anchors and a fully validated, contiguous run timeline. The
+inherited start must equal the previous verified end for both tracks;
+any explicit anchor in a partially implicit pair must match that end.
+The demuxer seeds both raw track clocks before building trun indexes,
+without rounded SIDX/movie-time fallback. Seeks and discontinuities
+invalidate implicit anchors; audio-only fragments do not advance video
+clocks. Validate run count/start/end and return preparation errors from
+seek. Missing initial anchors, ambiguous timing, missing layers and
+unproven discontinuous starts are still rejected. Pure host regressions
+cover exact and conflicting rational timelines; full demux and device
+playback validation remain separate.

@@ -1,13 +1,15 @@
 diff --git a/modules/demux/mp4/mp4.h b/modules/demux/mp4/mp4.h
 --- a/modules/demux/mp4/mp4.h
 +++ b/modules/demux/mp4/mp4.h
-@@ -104,7 +104,12 @@
+@@ -104,7 +104,14 @@
      int b_ok;               /* The track is usable */
      int b_enable;           /* is the trak enable by default */
      bool b_selected;  /* is the trak being played */
 -    int i_use_flags;  /* !=0 Set when track is referenced by specific reference types.
 +    unsigned ambient_fel_el_id; /* paired EL track ID, zero means none */
 +    bool ambient_fel_hidden; /* paired EL has no independent ES */
++    bool ambient_fel_clock_valid, ambient_fel_fragment_present;
++    int64_t ambient_fel_bl_end, ambient_fel_el_end;
 +    bool ambient_fel_cursor_valid;
 +    uint32_t ambient_fel_cursor_chunk, ambient_fel_cursor_sample;
 +    uint64_t ambient_fel_cursor_offset;
@@ -335,17 +337,18 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
      int i_status;
      /* demux up to increment amount of data on every track, or just set pcr if empty data */
      for( ;; )
-@@ -1947,7 +2192,61 @@
+@@ -1947,7 +2192,65 @@
      return VLC_SUCCESS;
  }
  
 -static int FragPrepareChunk( demux_t *p_demux, MP4_Box_t *p_moof,
 +/* A dependent fragment must be in the same moof and contain a single
-+ * traf with explicit tfdt and the initial sample description. */
++ * traf with the initial sample description. Distinguish an absent track
++ * from a present traf without optional tfdt. */
 +static bool MP4_FEL_FragmentTime(const MP4_Box_t *moof,unsigned id,
-+                                  const MP4_Box_data_tfdt_t **time)
++                                  bool *present,const MP4_Box_data_tfdt_t **time)
 +{
-+    *time=NULL;
++    *present=false;*time=NULL;
 +    unsigned matches=0;
 +    for (const MP4_Box_t *t=moof->p_first;t;t=t->p_next) {
 +        if (t->i_type!=ATOM_traf) continue;
@@ -356,8 +359,11 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +            ((header->i_flags&MP4_TFHD_SAMPLE_DESC_INDEX) &&
 +             header->i_sample_description_index!=1)) return false;
 +        const MP4_Box_t *dt=MP4_BoxGet(t,"tfdt");
-+        if (!dt || !dt->data.p_tfdt) return false;
-+        *time=dt->data.p_tfdt;
++        *present=true;
++        if (dt) {
++            if (!dt->data.p_tfdt) return false;
++            *time=dt->data.p_tfdt;
++        }
 +    }
 +    return true;
 +}
@@ -398,7 +404,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
                               MP4_Box_t *p_sidx, stime_t i_moof_time, bool b_discontinuity )
  {
      demux_sys_t *p_sys = p_demux->p_sys;
-@@ -1958,7 +2257,48 @@
+@@ -1958,7 +2257,62 @@
              p_sys->track[i].context.b_resync_time_offset = true;
      }
  
@@ -408,26 +414,33 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +        if (!bl->b_ok || !bl->ambient_fel_el_id) continue;
 +        mp4_track_t *el=MP4_GetTrackByTrackID(p_demux,bl->ambient_fel_el_id);
 +        const MP4_Box_data_tfdt_t *bt,*et;
++        bool bp,ep;
++        bl->ambient_fel_fragment_present=false;
++        if (b_discontinuity) bl->ambient_fel_clock_valid=false;
 +        if (!el || !el->ambient_fel_hidden ||
-+            !MP4_FEL_FragmentTime(p_moof,bl->i_track_ID,&bt) ||
-+            !MP4_FEL_FragmentTime(p_moof,bl->ambient_fel_el_id,&et)) {
++            !MP4_FEL_FragmentTime(p_moof,bl->i_track_ID,&bp,&bt) ||
++            !MP4_FEL_FragmentTime(p_moof,bl->ambient_fel_el_id,&ep,&et)) {
 +            msg_Err(p_demux,"Invalid FEL fragment track description");
 +            return VLC_EGENERIC;
 +        }
-+        // Audio-only moofs need neither video layer. A single missing
-+        // layer in a video fragment is still an error.
-+        if (!bt && !et) continue;
-+        int64_t mapped;
-+        if (!bt || !et || bt->i_base_media_decode_time>INT64_MAX ||
-+            et->i_base_media_decode_time>INT64_MAX ||
-+            !ambient_fel_rescale_exact((int64_t)bt->i_base_media_decode_time,
-+                bl->i_timescale,el->i_timescale,&mapped) ||
-+            mapped!=(int64_t)et->i_base_media_decode_time) {
-+            msg_Err(p_demux,"FEL fragment has no matching explicit decode time");
++        // Audio-only moofs do not consume either video clock.
++        if (!bp && !ep) continue;
++        int64_t bs,es;
++        const MP4_Box_t *mfhd=MP4_BoxGet(p_moof,"mfhd");
++        const bool contiguous=!b_discontinuity && mfhd && mfhd->data.p_mfhd;
++        if (!bp || !ep ||
++            !ambient_fel_fragment_start(bt!=NULL,bt?bt->i_base_media_decode_time:0,
++                et!=NULL,et?et->i_base_media_decode_time:0,contiguous,
++                bl->ambient_fel_clock_valid,bl->ambient_fel_bl_end,bl->ambient_fel_el_end,
++                bl->i_timescale,el->i_timescale,&bs,&es)) {
++            msg_Err(p_demux,"FEL fragment has no proven matching decode time");
 +            return VLC_EGENERIC;
 +        }
-+        // Do not infer the hidden EL clock from the previous fragment.
-+        bl->context.b_resync_time_offset=el->context.b_resync_time_offset=true;
++        // Seed both exact raw clocks; prevent VLC's generic indexer from
++        // independently guessing times via rounded movie/SIDX timestamps.
++        bl->i_time=bs;el->i_time=es;
++        bl->context.b_resync_time_offset=el->context.b_resync_time_offset=false;
++        bl->ambient_fel_fragment_present=true;
 +        if (b_discontinuity) bl->i_next_block_flags |= BLOCK_FLAG_DISCONTINUITY;
 +    }
 +
@@ -440,14 +453,33 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +            uint64_t bn,en;stime_t be,ee;int64_t mapped;
 +            if (!el || !MP4_FEL_ValidateRuns(bl,&bn,&be) ||
 +                !MP4_FEL_ValidateRuns(el,&en,&ee) || bn!=en ||
++                (bl->ambient_fel_fragment_present != (bn!=0)) ||
++                (bn && (bl->context.runs.p_array[0].i_first_dts!=bl->i_time ||
++                    el->context.runs.p_array[0].i_first_dts!=el->i_time)) ||
 +                !ambient_fel_rescale_exact(be,bl->i_timescale,el->i_timescale,&mapped) ||
 +                mapped!=ee) {
 +                msg_Err(p_demux,"Invalid or unequal FEL fragment run timelines");
 +                return VLC_EGENERIC;
 +            }
++            if (bn) {
++                bl->ambient_fel_bl_end=be;bl->ambient_fel_el_end=ee;
++                bl->ambient_fel_clock_valid=true;
++            }
 +        }
          for( unsigned i=0; i<p_sys->i_tracks; i++ )
          {
+@@ -2027,8 +2367,11 @@
+             return VLC_EGENERIC;
+     }
+ 
+     FragResetContext( p_sys );
++    /* Explicit seek invalidates all implicit FEL clock anchors. */
++    for (unsigned i=0;i<p_sys->i_tracks;i++)
++        p_sys->track[i].ambient_fel_clock_valid=false;
+ 
+     /* map context */
+     p_sys->context.p_fragment_atom = p_moox;
+     p_sys->context.i_current_box_type = i_moox;
 @@ -2042,8 +2382,9 @@
      unsigned cand = 0;
      for( unsigned i=0; i<p_sys->i_tracks; i++ )
@@ -460,6 +492,16 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
          {
              if( cand != i && !p_sys->track[cand].b_selected )
                  cand = i;
+@@ -2188,7 +2529,8 @@
+     if( i_segment_type == ATOM_moof )
+     {
+         MP4_Box_t *p_moox = p_sys->context.p_fragment_atom;
+-        FragPrepareChunk( p_demux, p_moox, NULL, i_segment_time, true );
++        if (FragPrepareChunk( p_demux, p_moox, NULL, i_segment_time, true ) != VLC_SUCCESS)
++            return VLC_EGENERIC;
+         p_sys->context.i_lastseqnumber = FragGetMoofSequenceNumber( p_moox );
+ 
+         p_sys->i_nztime = FragGetDemuxTimeFromTracksTime( p_sys );
 @@ -4987,9 +5328,12 @@
              MP4_BoxFree( p_sys->context.p_fragment_atom );
          p_sys->context.p_fragment_atom = NULL;

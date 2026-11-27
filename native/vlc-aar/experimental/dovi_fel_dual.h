@@ -77,6 +77,28 @@ static inline bool ambient_fel_rescale_exact(int64_t value,uint32_t from,uint32_
     return true;
 }
 
+/* A missing tfdt may only inherit the end of a previously validated,
+ * contiguous fragment. The other track's explicit start (if any) must
+ * agree with that same end. A seek or discontinuity requires both anchors. */
+static inline bool ambient_fel_fragment_start(bool bl_explicit,uint64_t bl_time,
+    bool el_explicit,uint64_t el_time,bool contiguous,bool prior_valid,
+    int64_t prior_bl,int64_t prior_el,uint32_t bl_scale,uint32_t el_scale,
+    int64_t *bl_start,int64_t *el_start)
+{
+    if(!bl_start||!el_start||
+        (bl_explicit&&bl_time>INT64_MAX)||(el_explicit&&el_time>INT64_MAX))
+        return false;
+    bool implicit=!bl_explicit||!el_explicit;
+    if(implicit&&(!contiguous||!prior_valid||prior_bl<0||prior_el<0))return false;
+    int64_t b=bl_explicit?(int64_t)bl_time:prior_bl;
+    int64_t e=el_explicit?(int64_t)el_time:prior_el;
+    if(implicit&&(b!=prior_bl||e!=prior_el))return false;
+    int64_t mapped;
+    if(b<0||e<0||!ambient_fel_rescale_exact(b,bl_scale,el_scale,&mapped)||mapped!=e)
+        return false;
+    *bl_start=b;*el_start=e;return true;
+}
+
 /* Exact decode/presentation timing in the common track timescale. Do
  * not compare rounded microseconds or silently substitute another sample. */
 static inline bool ambient_fel_fragment_timing(int64_t el_dts,int64_t el_cts,
