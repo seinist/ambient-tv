@@ -46,11 +46,13 @@ struct ambient_ahb_input {
     VkSamplerYcbcrModelConversion model;
     VkSamplerYcbcrRange range;
     bool high_precision; /* BT.2020 PQ/HLG: never quantize into 8-bit RGB */
+    bool raw_yuv; /* opt-in native P010, preserve unexpanded code values */
 };
 struct ambient_ahb_output {
     const void *texture;
     size_t index;
     uint64_t generation;
+    bool raw_yuv;
 };
 
 struct ambient_ahb_owner *ambient_ahb_open(const struct ambient_ahb_config *);

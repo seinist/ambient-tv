@@ -14,6 +14,8 @@ bool compile_placebo_handoff(pl_gpu gpu, VkDevice device, uint32_t family,
     ambient_pl_release_rgb(gpu, texture, family, converted);
     struct pl_frame frame = ambient_pl_rgb_frame(texture, pl_color_space_bt709);
     (void)frame;
+    struct pl_frame raw = ambient_pl_raw_p010_frame(texture, pl_color_space_bt709, PL_COLOR_LEVELS_LIMITED);
+    (void)raw;
     /* The real owner retains the wrapper until the hold semaphore is consumed. */
     return ambient_pl_hold_rgb(gpu, texture, family, reclaimed);
 }

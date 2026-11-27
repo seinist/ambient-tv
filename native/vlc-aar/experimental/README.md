@@ -88,7 +88,13 @@ distribute the experiment as a validated production build.
   build, use VLC's existing avcodec software decoder and its per-picture DOVI
   ancillary for GPU reshaping instead of MediaCodec copy-back without RPU.
   Native Dolby Vision surface playback and production builds are unchanged.
-  This is a correctness fallback, not AHB/DV hardware decoding; enhancement-layer
+  A separate, default-off native `--vk-ambient-raw-p010` option now exercises
+  explicit native P010 imports, RGB_IDENTITY sampling (no range expansion),
+  16-bit UNORM storage and packed Cr/Y/Cb mapping into libplacebo for HDR10/HLG.
+  This is a pre-reshape validation route; it does not yet accept Dolby Vision.
+  It requires the actual P010 format, native image import and chroma features.
+  The existing external-format RGB path is unchanged by default.
+  The software path is a correctness fallback, not AHB/DV hardware decoding; enhancement-layer
   reconstruction and runtime decoder performance are not established.
 
 ## Validation

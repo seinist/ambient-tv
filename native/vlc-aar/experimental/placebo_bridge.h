@@ -176,6 +176,26 @@ static inline struct pl_frame ambient_pl_rgb_frame(pl_tex texture, struct pl_col
     return frame;
 }
 
+// A native P010 identity sampler returns (Cr,Y,Cb), not RGB. Values are
+// normalized 10-bit codewords stored in a 16-bit UNORM target (not shifted
+// 10-bit integers in a 16-bit plane). Map components accordingly; libplacebo
+// applies the source range/matrix exactly once, or an eventual RPU reshape.
+static inline struct pl_frame ambient_pl_raw_p010_frame(pl_tex texture,
+                                                        struct pl_color_space color,
+                                                        enum pl_color_levels levels)
+{
+    struct pl_frame frame = ambient_pl_rgb_frame(texture, color);
+    if (!texture) return frame;
+    frame.planes[0].component_mapping[0] = 2;
+    frame.planes[0].component_mapping[1] = 0;
+    frame.planes[0].component_mapping[2] = 1;
+    frame.repr.sys = PL_COLOR_SYSTEM_BT_2020_NC;
+    frame.repr.levels = levels;
+    frame.repr.bits.sample_depth = 10;
+    frame.repr.bits.color_depth = 10;
+    return frame;
+}
+
 // Once no more rendering calls reference the texture, request ownership back.
 // The supplied binary semaphore must remain alive; the owner waits for a
 // submission consuming it and proves completion BEFORE reusing or freeing the

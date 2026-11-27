@@ -93,7 +93,8 @@ ambient_display_open(pl_gpu gpu, const video_format_t *fmt, vlc_video_context *c
 }
 
 static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
-                                              picture_t *pic, struct ambient_ahb_output *out)
+                                              picture_t *pic, struct ambient_ahb_output *out,
+                                              bool raw_p010)
 {
     if (owner) ambient_ahb_poll(owner);
     if (!owner || !pic ||
@@ -139,6 +140,7 @@ static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
         .model = hdr ? VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_2020 :
             VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_709,
         .high_precision = hdr,
+        .raw_yuv = raw_p010 && hdr,
         .range = pic->format.color_range == COLOR_RANGE_FULL ?
             VK_SAMPLER_YCBCR_RANGE_ITU_FULL : VK_SAMPLER_YCBCR_RANGE_ITU_NARROW,
     };

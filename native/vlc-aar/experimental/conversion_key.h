@@ -42,6 +42,22 @@ inline bool supported_decoder_format(VkFormat format, bool high_precision) {
     return depth != 0 && (!high_precision || depth >= 10);
 }
 
+// The pre-reshape path deliberately accepts only a known P010 native format.
+// Opaque external formats cannot establish component ordering or bit depth.
+inline bool raw_p010_format(VkFormat format) {
+    return format == VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16;
+}
+inline bool raw_p010_features(VkFormatFeatureFlags features, VkChromaLocation x, VkChromaLocation y) {
+    if (!(features & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) return false;
+    auto supported = [features](VkChromaLocation location) {
+        return location == VK_CHROMA_LOCATION_MIDPOINT ?
+            (features & VK_FORMAT_FEATURE_MIDPOINT_CHROMA_SAMPLES_BIT) != 0 :
+            location == VK_CHROMA_LOCATION_COSITED_EVEN &&
+            (features & VK_FORMAT_FEATURE_COSITED_CHROMA_SAMPLES_BIT) != 0;
+    };
+    return supported(x) && supported(y);
+}
+
 // Identically defined external YCbCr conversion, independent of AHB identity
 // and dimensions. Deliberately include all reported feature flags and component
 // swizzles; only reuse when the driver-reported conversion contract is exact.

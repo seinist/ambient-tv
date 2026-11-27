@@ -42,4 +42,10 @@ int main() {
     assert(!supported_decoder_format(b.format, true));
     assert(!supported_decoder_format(VK_FORMAT_R8G8B8A8_UNORM, false));
     assert(supported_decoder_format(VK_FORMAT_UNDEFINED, true));
+    assert(raw_p010_format(VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16));
+    assert(!raw_p010_format(VK_FORMAT_UNDEFINED));
+    assert(!raw_p010_format(VK_FORMAT_G8_B8R8_2PLANE_420_UNORM));
+    const auto features = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_MIDPOINT_CHROMA_SAMPLES_BIT;
+    assert(raw_p010_features(features, VK_CHROMA_LOCATION_MIDPOINT, VK_CHROMA_LOCATION_MIDPOINT));
+    assert(!raw_p010_features(features, VK_CHROMA_LOCATION_MIDPOINT, VK_CHROMA_LOCATION_COSITED_EVEN));
 }

@@ -54,7 +54,7 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
      });
      free(device_name);
      if (!sys->vulkan)
-@@ -196,6 +224,13 @@
+@@ -196,6 +224,15 @@
              ALLOWSW_TEXT, ALLOWSW_LONGTEXT)
  
      set_section("Performance tuning", NULL)
@@ -64,6 +64,8 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
 +            "Disabled by default; a compatible display bridge is also required.")
 +    add_bool("vk-ambient-hdr10plus", false, "Require per-picture HDR10+ metadata",
 +            "Reject opaque HDR10+ when dynamic metadata cannot be verified.")
++    add_bool("vk-ambient-raw-p010", false, "Experimental raw P010 handoff",
++            "Verify native P010 identity sampling before libplacebo color conversion.")
 +#endif
      add_bool("vk-async-xfer", pl_vulkan_default_params.async_transfer,
              ASYNC_XFER_TEXT, ASYNC_XFER_LONGTEXT)

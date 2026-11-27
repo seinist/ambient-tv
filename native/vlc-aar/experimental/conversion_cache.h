@@ -18,7 +18,7 @@ public:
                          Dispatch image_dispatch, TargetDispatch target_dispatch,
                          SampleDispatch sample_dispatch, ShaderCode vert, ShaderCode frag,
                          VkPipelineCache pipeline_cache = VK_NULL_HANDLE)
-        : device_(device), image_dispatch_(image_dispatch), sample_dispatch_(sample_dispatch),
+        : physical_(physical), device_(device), image_dispatch_(image_dispatch), sample_dispatch_(sample_dispatch),
           vert_(vert), frag_(frag), pipeline_cache_(pipeline_cache), target_(physical, device, target_dispatch) {}
     ConversionCacheEntry(const ConversionCacheEntry &) = delete;
     ConversionCacheEntry &operator=(const ConversionCacheEntry &) = delete;
@@ -30,23 +30,23 @@ public:
 
     bool matches(AHardwareBuffer *buffer, uint32_t width, uint32_t height,
                  VkFormat format, uint32_t descriptors, uint64_t id = 0,
-                 bool id_valid = false) const {
-        return pass_.has_value() && same_buffer(buffer, id, id_valid) &&
+                 bool id_valid = false, bool raw_yuv = false) const {
+        return raw_yuv_ == raw_yuv && pass_.has_value() && same_buffer(buffer, id, id_valid) &&
             width_ == width && height_ == height && format_ == format &&
             descriptors_ == descriptors;
     }
 
     VkResult prepare_retired(AHardwareBuffer *buffer, uint32_t width, uint32_t height,
                              VkFormat format, uint32_t descriptors, uint64_t id = 0,
-                             bool id_valid = false) {
+                             bool id_valid = false, bool raw_yuv = false) {
         if (!buffer || !width || !height || !descriptors)
             return VK_ERROR_INITIALIZATION_FAILED;
-        if (matches(buffer, width, height, format, descriptors, id, id_valid)) return VK_SUCCESS;
+        if (matches(buffer, width, height, format, descriptors, id, id_valid, raw_yuv)) return VK_SUCCESS;
 
         // Different AHB, same output geometry and exact conversion format:
         // import just the replacement image and update its descriptor, not
         // the immutable sampler, render pass, framebuffer or graphics pipeline.
-        if (pass_ && imported_ && !same_buffer(buffer, id, id_valid) && width_ == width &&
+        if (raw_yuv_ == raw_yuv && pass_ && imported_ && !same_buffer(buffer, id, id_valid) && width_ == width &&
             height_ == height && format_ == format && descriptors_ == descriptors) {
             bool reused = false;
             VkResult result = imported_->try_rebind(buffer, reused);
@@ -63,18 +63,19 @@ public:
         // Framebuffer/descriptor/pipeline reference the target and immutable
         // sampler. Destroy the pass FIRST, before changing either dependency.
         pass_.reset();
-        if (!same_buffer(buffer, id, id_valid) || !imported_) {
+        if (raw_yuv_ != raw_yuv || !same_buffer(buffer, id, id_valid) || !imported_) {
             imported_.reset();
             buffer_ = nullptr;
             buffer_id_valid_ = false;
-            imported_.emplace(device_, image_dispatch_);
-            VkResult result = imported_->import(buffer);
+            imported_.emplace(device_, image_dispatch_, physical_);
+            VkResult result = imported_->import(buffer, raw_yuv);
             if (result != VK_SUCCESS) {
                 imported_.reset();
                 return result;
             }
             buffer_ = buffer;
             buffer_id_ = id; buffer_id_valid_ = id_valid;
+            raw_yuv_ = raw_yuv;
         }
 
         VkResult result = target_.ensure(width, height, format);
@@ -105,6 +106,7 @@ public:
     const RgbTarget &target() const { return target_; }
 
 private:
+    VkPhysicalDevice physical_{};
     VkDevice device_{};
     Dispatch image_dispatch_{};
     SampleDispatch sample_dispatch_{};
@@ -117,6 +119,7 @@ private:
     AHardwareBuffer *buffer_{};
     uint64_t buffer_id_{};
     bool buffer_id_valid_{};
+    bool raw_yuv_{};
     uint32_t width_{}, height_{}, descriptors_{};
     VkFormat format_ = VK_FORMAT_UNDEFINED;
 };

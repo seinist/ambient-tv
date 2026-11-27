@@ -75,6 +75,8 @@ struct ambient_ahb_owner {
         D(images, create_view, CreateImageView); D(images, destroy_view, DestroyImageView);
         D(images, create_sampler, CreateSampler); D(images, destroy_sampler, DestroySampler);
         I(targets, format_properties, GetPhysicalDeviceFormatProperties);
+        images.format_properties = targets.format_properties;
+        I(images, image_format_properties, GetPhysicalDeviceImageFormatProperties2);
         I(targets, memory_properties, GetPhysicalDeviceMemoryProperties);
         targets.create_image = images.create_image; targets.destroy_image = images.destroy_image;
         targets.allocate_memory = images.allocate_memory; targets.free_memory = images.free_memory;
@@ -197,7 +199,8 @@ struct ambient_ahb_owner {
             in.release_picture(in.picture, in.acquire_fd);
             return VK_ERROR_DEVICE_LOST;
         }
-        const VkFormat format = in.high_precision ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+        const VkFormat format = in.raw_yuv ? VK_FORMAT_R16G16B16A16_UNORM :
+            in.high_precision ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
         // VLC redisplays pictures during pause/subtitle updates. A different
         // AHB wrapper can refer to the same allocation. Do not acquire the
         // same foreign image in another slot until its prior GPU use retires.
@@ -216,7 +219,7 @@ struct ambient_ahb_owner {
         for (size_t i = 0; i < slot_count; ++i) {
             if (pool.state(i) == State::Free && slots[i].cache->matches(
                 in.buffer, in.width, in.height, format, c.descriptor_count,
-                in.buffer_id, in.buffer_id_valid)) {
+                in.buffer_id, in.buffer_id_valid, in.raw_yuv)) {
                 preferred = i;
                 break;
             }
@@ -237,9 +240,10 @@ struct ambient_ahb_owner {
             clear_texture(s);
         }
         VkResult result = s.cache->prepare_retired(in.buffer, in.width, in.height, format, c.descriptor_count,
-                                                    in.buffer_id, in.buffer_id_valid);
+                                                    in.buffer_id, in.buffer_id_valid, in.raw_yuv);
         if (result != VK_SUCCESS) { cancel(s); return result; }
-        if (!s.cache->imported()->color_matches(in.model, in.range, in.high_precision)) {
+        if (in.raw_yuv ? !s.cache->imported()->raw_yuv() :
+            !s.cache->imported()->color_matches(in.model, in.range, in.high_precision)) {
             cancel(s);
             return VK_ERROR_FORMAT_NOT_SUPPORTED;
         }
@@ -278,7 +282,7 @@ struct ambient_ahb_owner {
         VkSemaphore ready = s.submission->handoff_ready_semaphore();
         if (!ready) { quarantine(s); return VK_ERROR_INITIALIZATION_FAILED; }
         c.release(c.opaque, s.texture, ready);
-        out = {s.texture, ticket.index, ticket.generation};
+        out = {s.texture, ticket.index, ticket.generation, in.raw_yuv};
         return VK_SUCCESS;
     }
 

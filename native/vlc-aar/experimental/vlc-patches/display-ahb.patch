@@ -11,7 +11,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
  
  typedef struct vout_display_sys_t
  {
-@@ -47,6 +50,11 @@
+@@ -47,6 +50,12 @@
      pl_renderer renderer;
      pl_tex plane_tex[4];
      pl_tex fbo;
@@ -19,11 +19,12 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +    struct ambient_ahb_owner *ahb;
 +    bool ahb_error_logged;
 +    bool ahb_frame_rendered;
++    bool ahb_raw_p010;
 +#endif
  
      // Pool of textures for the subpictures
      struct pl_overlay *overlays;
-@@ -129,9 +137,27 @@
+@@ -129,9 +138,28 @@
      if (!sys->renderer)
          goto error;
  
@@ -45,13 +46,14 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
 +    if (sys->ahb) {
 +        fmt->i_chroma = VLC_CODEC_ANDROID_OPAQUE;
++        sys->ahb_raw_p010 = var_InheritBool(vd, "vk-ambient-raw-p010");
 +        msg_Info(vd, "Experimental Android Vulkan AHB output selected");
 +    } else
 +#endif
      if (vlc_placebo_FormatSupported(gpu, vd->source->i_chroma)) {
          fmt->i_chroma = vd->source->i_chroma;
      } else {
-@@ -195,6 +221,14 @@
+@@ -195,6 +223,14 @@
          for (int i = 0; i < sys->num_overlays; i++)
              pl_tex_destroy(gpu, &sys->overlay_tex[i]);
          pl_renderer_destroy(&sys->renderer);
@@ -66,7 +68,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          vlc_placebo_ReleaseCurrent(sys->pl);
      }
  
-@@ -222,11 +256,37 @@
+@@ -222,11 +258,37 @@
      pl_gpu gpu = sys->pl->gpu;
      bool failed = false;
  
@@ -84,7 +86,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +    if (sys->ahb) {
 +        // Drop before acquiring a swapchain frame when all GPU slots are busy.
 +        // Never feed an opaque Android picture into the CPU plane uploader.
-+        VkResult result = ambient_display_prepare(sys->ahb, pic, &ahb_output);
++        VkResult result = ambient_display_prepare(sys->ahb, pic, &ahb_output, sys->ahb_raw_p010);
 +        if (result != VK_SUCCESS) {
 +            if (result != VK_NOT_READY && !sys->ahb_error_logged) {
 +                msg_Err(vd, "Experimental AHB frame rejected: %d", result);
@@ -104,7 +106,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          vlc_placebo_ReleaseCurrent(sys->pl);
          return; // Probably benign error, ignore it
      }
-@@ -238,19 +298,36 @@
+@@ -238,19 +300,38 @@
      bool need_vflip = frame.flipped;
  #endif
  
@@ -134,7 +136,9 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +        color.hdr.prim.red.x /= 50000.0f; color.hdr.prim.red.y /= 50000.0f;
 +        color.hdr.prim.white.x /= 50000.0f; color.hdr.prim.white.y /= 50000.0f;
 +        color.hdr.min_luma /= 10000.0f; color.hdr.max_luma /= 10000.0f;
-+        img = ambient_pl_rgb_frame((pl_tex)ahb_output.texture, color);
++        img = ahb_output.raw_yuv ? ambient_pl_raw_p010_frame((pl_tex)ahb_output.texture, color,
++                pic->format.color_range == COLOR_RANGE_FULL ? PL_COLOR_LEVELS_FULL : PL_COLOR_LEVELS_LIMITED) :
++            ambient_pl_rgb_frame((pl_tex)ahb_output.texture, color);
 +    } else
 +#endif
 +    {
@@ -154,7 +158,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
  
      struct vlc_ancillary *iccp = picture_GetAncillary(pic, VLC_ANCILLARY_ID_ICC);
      if (iccp) {
-@@ -264,9 +341,19 @@
+@@ -264,9 +345,19 @@
      if (hdrplus) {
          vlc_video_hdr_dynamic_metadata_t *hdm = vlc_ancillary_GetData(hdrplus);
          vlc_placebo_HdrMetadata(hdm, &img.color.hdr);
@@ -175,7 +179,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
      struct pl_plane_data data[4];
      if (!vlc_placebo_PlaneData(pic, data)) {
          // This should never happen, in theory
-@@ -287,6 +374,9 @@
+@@ -287,6 +378,9 @@
                                        &plane->shift_y);
      }
  
@@ -185,7 +189,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
      struct pl_frame target;
      pl_frame_from_swapchain(&target, &frame);
      if (vd->cfg->icc_profile) {
-@@ -445,6 +535,17 @@
+@@ -445,6 +539,17 @@
      }
  
  done:
@@ -203,7 +207,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
  
      if (failed)
          pl_tex_clear(gpu, frame.fbo, (float[4]){ 1.0, 0.0, 0.0, 1.0 });
-@@ -463,8 +564,13 @@
+@@ -463,8 +568,13 @@
  
      sys->fbo = NULL;
      if (vlc_placebo_MakeCurrent(sys->pl) == VLC_SUCCESS) {
