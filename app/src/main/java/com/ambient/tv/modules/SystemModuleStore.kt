@@ -52,6 +52,7 @@ internal class SystemModuleStore(
         manifestBytes: ByteArray,
         signature: ByteArray,
         profile: String = "baseline",
+        validateCandidate: (Package) -> Unit = {},
         openArchive: (SystemModuleBuild) -> InputStream,
     ): Package? = locked(module) { directory ->
         val state = readState(directory)
@@ -64,7 +65,10 @@ internal class SystemModuleStore(
             val verified = try { verify(directory, module, it) } catch (_: IOException) { null }
             if (verified != null) {
                 currentVerified = true
-                if (it.build == build) return@locked verified
+                if (it.build == build) {
+                    validateCandidate(verified)
+                    return@locked verified
+                }
             }
         }
 
@@ -79,6 +83,7 @@ internal class SystemModuleStore(
             writeSynced(File(packageDir, "manifest.sig"), signature)
             val pointer = Pointer(id, tag, build)
             val result = verify(directory, module, pointer)
+            validateCandidate(result)
             syncDirectory(packageDir)
             syncDirectory(directory)
             // Once publication starts, retain the payload even if the directory
