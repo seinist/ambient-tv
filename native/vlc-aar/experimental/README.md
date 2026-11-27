@@ -1048,3 +1048,5 @@ The native AFM3 encoder and ACK validator are shared by the actual demux and hos
 ### Actual tagged seek integration audit
 
 The standalone `native/vlc-aar/seek-audit` APK builds against the freshly linked experimental arm64 AAR without unrelated Ambient dependencies. CI prepares it and a generated seekable fMP4 with indexed fragments and nested emsg. `bash scripts/run_vlc_seek_e2e.sh` builds the current checkout, verifies receipt and exact packaged ELF bytes, installs only the separate debug audit package on an attached arm64 Android device and requires real native epoch and emsg delivery for two completed seeks at the same target plus superseded requests. The CI runner prepares artifacts; an attached device is required to execute the APK. No device pass is implied by packaging.
+
+External official reference inputs and golden-frame intake: see [official reference validation](OFFICIAL_REFERENCE.md). The offline GPU runner exercises the same spatial and FEL render paths on supplier-provided frames, validates SHA-256, and requires both format cases. Public DVB material and Dolby profiles 5/8 are not substitutes for licensed FEL golden reference output.

@@ -170,6 +170,11 @@ jobs:
             native/vlc-aar/experimental/test_hdr_reference_gpu.c \
             -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-hdr-reference
           VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-hdr-reference
+          # Compile the real-data validator even when no licensed corpus is available.
+          python3 -m py_compile native/vlc-aar/experimental/run_official_hdr_reference.py
+          cc -std=c11 -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
+            native/vlc-aar/experimental/test_official_hdr_gpu.c \
+            -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-official-hdr
           git -C .ci/vlc-hdr apply "$GITHUB_WORKSPACE/native/vlc-aar/experimental/vlc-patches/utils-hdr-units.patch"
           # Link the actual shared adapter, retaining only the functions under test.
           clang -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -DMODULE_NAME=libplacebo '-DN_(s)=s' \
@@ -212,7 +217,7 @@ jobs:
           sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update -o Acquire::Retries=3
           sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y build-essential autoconf automake autopoint gettext libtool libtool-bin \
             pkg-config ninja-build cmake gperf nasm yasm bison flex texinfo \
-            curl wget unzip zip xz-utils patch perl python3 python3-venv libssl-dev glslang-tools glslc
+            curl wget unzip zip xz-utils patch perl python3 python3-venv libssl-dev glslang-tools glslc ffmpeg
           rustup toolchain install stable --profile minimal
           rustup default stable
       - name: Install pinned Meson and SDK
