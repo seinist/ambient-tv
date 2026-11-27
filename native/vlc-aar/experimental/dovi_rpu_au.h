@@ -185,6 +185,10 @@ static inline bool ambient_fel_to_annexb(const uint8_t *p,size_t n,unsigned leng
         if(!ambient_fel_nal_bounds(p,n,cur,length_size,&data,&end)||
             end-data>AMBIENT_FEL_AU_LIMIT-4||
             end-data+4>AMBIENT_FEL_AU_LIMIT-total)return false;
+        // A length-prefixed EBSP must not contain an unescaped start code.
+        // Otherwise re-framing would split one malformed NAL into several.
+        size_t embedded;
+        if(ambient_rpu_start_code(p,end,data,&embedded)!=end)return false;
         total+=end-data+4;cur=end;
     }
     if(dst){
