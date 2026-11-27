@@ -195,6 +195,14 @@ int main(void) {
     assert(!ambient_fel_layer_ratio(2161,1080));
     assert(!ambient_fel_layer_ratio(0,0));
     assert(!ambient_fel_layer_ratio(UINT32_MAX-1,UINT32_MAX));
+    assert(ambient_fel_crop_axis(3840,1920,8,4));
+    assert(ambient_fel_crop_axis(1080,1080,2,2));
+    assert(!ambient_fel_crop_axis(3840,1920,4,4));
+    assert(!ambient_fel_crop_axis(3840,1920,2,1));
+    assert(!ambient_fel_crop_axis(3840,1920,1,0));
+    assert(!ambient_fel_crop_axis(2160,1088,0,0));
+    assert(ambient_fel_format_geometry(1920,1080,1920,1080,2,4));
+    assert(!ambient_fel_format_geometry(1920,1080,1920,1080,1,4));
     struct ambient_rpu_pts_queue q={0};
     int a=1,b=2,c=3;
     assert(ambient_rpu_pts_insert(&q,30,&a));
