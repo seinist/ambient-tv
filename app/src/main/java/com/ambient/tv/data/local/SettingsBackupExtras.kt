@@ -62,6 +62,7 @@ data class DeviceSettingsExtras(
     val cardImages1080: Boolean? = null,
     /** Explicit device tuning; old/partial backups preserve the receiving device. */
     val vlcExperimentalFeaturesEnabled: Boolean? = null,
+    val vlcHdrGpuEnabled: Boolean? = null,
 )
 
 @Serializable

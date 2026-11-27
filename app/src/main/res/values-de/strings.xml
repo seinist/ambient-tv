@@ -2494,4 +2494,7 @@
     <string name="game_library_scan_cancel">Einlesen abbrechen</string>
     <string name="vlc_experiment_title">Experimentelle VLC-Funktionen aktivieren</string>
     <string name="vlc_experiment_hint">Erprobt bei Vulkan-Ausgabe neue Verfahren für flüssigere Wiedergabe und eine bessere HDR10+- und Dolby-Vision-Darstellung. Kann noch instabil sein. Gilt ab der nächsten Wiedergabe.</string>
+    <string name="settings_vlc_hdr_gpu">HDR über GPU verarbeiten</string>
+    <string name="settings_vlc_hdr_gpu_hint">Verarbeitet HDR über Vulkan statt direkt am Bildschirm, sofern unterstützt. Dolby Vision und HDR10+ können dabei als HDR10 oder HLG ausgegeben werden. Bei Problemen wird automatisch zurückgewechselt. Gilt ab der nächsten Wiedergabe.</string>
+    <string name="settings_vlc_hdr_gpu_unavailable">Die experimentelle HDR-Ausgabe benötigt Android 14 oder neuer und kompatible Vulkan-Hardware.</string>
 </resources>

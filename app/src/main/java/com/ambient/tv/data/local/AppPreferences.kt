@@ -1339,6 +1339,10 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean("mpv_hdr_gpu", false)
         set(value) = prefs.edit { putBoolean("mpv_hdr_gpu", value) }
 
+    var vlcHdrGpuEnabled: Boolean
+        get() = prefs.getBoolean("vlc_hdr_gpu", false)
+        set(value) = prefs.edit { putBoolean("vlc_hdr_gpu", value) }
+
     var vlcExperimentalFeaturesEnabled: Boolean
         get() = prefs.getBoolean("vlc_experimental_features_enabled", false)
         set(value) = prefs.edit { putBoolean("vlc_experimental_features_enabled", value) }

@@ -43,6 +43,16 @@ internal fun SettingsVideoAcceleration(state: SettingsUiState, model: SettingsVi
         )
         if (backend == "vlc" && com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT) {
             VlcExperimentSettings(state.vlcExperimentalFeaturesEnabled, model::onVlcExperimentChanged)
+            if (state.vlcExperimentalFeaturesEnabled) {
+                com.ambient.tv.ui.common.TvSettingRow(
+                    title = stringResource(R.string.settings_vlc_hdr_gpu),
+                    body = stringResource(R.string.settings_vlc_hdr_gpu_hint),
+                    checked = state.vlcHdrGpuEnabled,
+                    onCheckedChange = model::onVlcHdrGpuChanged,
+                )
+                if (android.os.Build.VERSION.SDK_INT < 34 || (caps.checked && !caps.vlcVulkanOutput))
+                    ImageHint(stringResource(R.string.settings_vlc_hdr_gpu_unavailable))
+            }
         }
         if (backend in setOf("mpv", "vlc", "media3")) GpuOutputPreferenceSettings(mpv = backend == "mpv", state, model)
         if (com.ambient.tv.ui.player.sparsamGpuOutputHeadsUp(backend == "mpv", state.mpvVideoOutputModeKey,

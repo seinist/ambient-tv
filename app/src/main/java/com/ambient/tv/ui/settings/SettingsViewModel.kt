@@ -512,6 +512,7 @@ class SettingsViewModel @Inject constructor(
             renderResolutionKey = appPreferences.uiRenderResolutionKey,
             mousePointerHideSeconds = appPreferences.mousePointerHideSeconds,
             vlcExperimentalFeaturesEnabled = appPreferences.vlcExperimentalFeaturesEnabled,
+            vlcHdrGpuEnabled = appPreferences.vlcHdrGpuEnabled,
         ),
         accentColorKey = appPreferences.accentColorKey,
         customAccentHex = appPreferences.customAccentHex,
@@ -2622,6 +2623,10 @@ class SettingsViewModel @Inject constructor(
         _uiState.update { it.copy(mpvHdrGpuEnabled = value) }
     }
 
+    fun onVlcHdrGpuChanged(enabled: Boolean) = _uiState.update {
+        it.copy(uiDisplay = it.uiDisplay.copy(vlcHdrGpuEnabled = enabled))
+    }
+
     fun onVlcExperimentChanged(enabled: Boolean) = _uiState.update {
         it.copy(uiDisplay = it.uiDisplay.copy(vlcExperimentalFeaturesEnabled = enabled))
     }
@@ -3124,6 +3129,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.mpvHdrGpuEnabled = state.mpvHdrGpuEnabled
         appPreferences.vlcVideoOutputModeKey = state.vlcVideoOutputModeKey
         appPreferences.vlcExperimentalFeaturesEnabled = state.vlcExperimentalFeaturesEnabled
+        appPreferences.vlcHdrGpuEnabled = state.vlcHdrGpuEnabled
         appPreferences.autoPictureInPicture = state.autoPictureInPicture
         appPreferences.visibleBackgroundVideoPlayback = state.visibleBackgroundVideoPlayback
         appPreferences.backgroundVideoDimPercent = state.backgroundVideoDimPercent

@@ -654,6 +654,7 @@ class SettingsBackupManager @Inject constructor(
                     imageCacheMb = preferences.imageCacheMb,
                     cardImages1080 = preferences.cardImages1080,
                     vlcExperimentalFeaturesEnabled = preferences.vlcExperimentalFeaturesEnabled,
+                    vlcHdrGpuEnabled = preferences.vlcHdrGpuEnabled,
                 ),
                 connections = ConnectionSettingsExtras(
                     tvheadendHtspPort = preferences.tvheadendHtspPort,
@@ -1223,6 +1224,7 @@ class SettingsBackupManager @Inject constructor(
             }
             settings.cardImages1080?.let { preferences.cardImages1080 = it }
             settings.vlcExperimentalFeaturesEnabled?.let { preferences.vlcExperimentalFeaturesEnabled = it }
+            settings.vlcHdrGpuEnabled?.let { preferences.vlcHdrGpuEnabled = it }
         }
         extras?.connections?.tvheadendHtspPort?.let { preferences.tvheadendHtspPort = it }
         extras?.connections?.let { connections ->
