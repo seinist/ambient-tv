@@ -74,6 +74,15 @@ line = "\t$(APPLY) $(SRC)/ffmpeg/ambient-dovi-parser.patch\n"
 if line not in s:
     if s.count(anchor) != 1:
         raise SystemExit("Expected reviewed FFmpeg 9 production patch before experimental staging")
-    p.write_text(s.replace(anchor, anchor + line))
+    s = s.replace(anchor, anchor + line)
+# VLC contrib disables almost all bitstream filters. Keep the EL splitter
+# available only in the isolated experimental native build.
+bsf_anchor = "--enable-bsf=vp9_superframe"
+bsf_flag = "--enable-bsf=dovi_split"
+if bsf_flag not in s:
+    if s.count(bsf_anchor) != 1:
+        raise SystemExit("Expected pinned FFmpeg bitstream filter configuration")
+    s = s.replace(bsf_anchor, bsf_anchor + " " + bsf_flag)
+p.write_text(s)
 PY
 echo "Staged experimental VLC AHB display integration (runtime flag remains off by default)"
