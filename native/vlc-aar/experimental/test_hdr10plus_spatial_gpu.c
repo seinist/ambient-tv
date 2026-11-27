@@ -9,7 +9,14 @@
 // The result is checked against GPU output, including overlap and feathering.
 static float reference_curve(const struct ambient_hdrplus_spatial *s,unsigned i,float v)
 {
-    float x=fminf(1.f,fmaxf(0.f,sqrtf(v)/s->domains[i]))*(AMBIENT_HDRPLUS_LUT_SIZE-1);
+    float u=fminf(1.f,fmaxf(0.f,sqrtf(v)/s->domains[i]));
+    const float *k=s->authored[i];
+    if(k[3]>0.f){
+        float x=u*u;
+        if(k[0]==1.f||x<k[0])return k[2]*k[1]*x/k[0];
+        u=(x-k[0])/(1.f-k[0]);
+    }
+    float x=u*(AMBIENT_HDRPLUS_LUT_SIZE-1);
     unsigned n=(unsigned)x, next=n+1<AMBIENT_HDRPLUS_LUT_SIZE?n+1:n;
     return s->curves[i][n]+(s->curves[i][next]-s->curves[i][n])*(x-n);
 }
@@ -199,8 +206,65 @@ int main(void)
     pl_shader_sample_direct(sh,pl_sample_src(.tex=state.output));
     assert(pl_dispatch_finish(state.dispatch,pl_dispatch_params(.shader=&sh,.target=readback)));
     assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=readback,.ptr=pixels)));
-    float expected=state.output_min+(state.output_max-state.output_min)*0.3f;
+    float expected=state.output_max*0.3f;
     assert(fabsf(pl_hdr_rescale(PL_HDR_PQ,PL_HDR_NITS,pixels[0])-expected)<0.6f);
+    // Steep authored knee: independent analytic values on either side.
+    // In particular a tiny first segment must not be smeared into the LUT.
+    const float near_nits[4]={0.f,0.12f,1000.f/4095.f,0.5f};
+    m.windows[0].knee_x=1.f/4095.f;m.windows[0].knee_y=0.25f;
+    m.windows[0].anchor_count=1;m.windows[0].anchors[0]=0.5f;
+    for(int i=0;i<width*height;i++){
+        float p=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_PQ,near_nits[i%4]);
+        pixels[i*4]=pixels[i*4+1]=pixels[i*4+2]=p;pixels[i*4+3]=1.f;
+    }
+    pl_tex near=pl_tex_create(gpu,pl_tex_params(.w=width,.h=height,.format=fmt,
+        .sampleable=true,.initial_data=pixels));
+    assert(near);
+    img.planes[0].texture=near;img.color=pl_color_space_hdr10;
+    assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
+    sh=pl_dispatch_begin(state.dispatch);
+    pl_shader_sample_direct(sh,pl_sample_src(.tex=state.output));
+    assert(pl_dispatch_finish(state.dispatch,pl_dispatch_params(.shader=&sh,.target=readback)));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=readback,.ptr=pixels)));
+    for(unsigned i=0;i<4;i++){
+        float x=near_nits[i]/1000.f,k=1.f/4095.f;
+        float y=x==0.f?0.f:x<k?0.25f*x/k:0.25f+0.75f*(x-k)/(1.f-k);
+        float ref=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_PQ,y*state.output_max);
+        assert(fabsf(pixels[4*i]-ref)<0.0015f);
+    }
+    pl_gpu_finish(gpu);pl_tex_destroy(gpu,&near);
+    // Saturation: evaluate B.8-B.12 independently, with ideal-black BT.1886.
+    const float channels[3]={600.f,250.f,120.f};
+    for(int i=0;i<width*height;i++){
+        for(unsigned j=0;j<3;j++)pixels[4*i+j]=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_PQ,channels[j]);
+        pixels[4*i+3]=1.f;
+    }
+    pl_tex sat_input=pl_tex_create(gpu,pl_tex_params(.w=width,.h=height,.format=fmt,
+        .sampleable=true,.initial_data=pixels));
+    assert(sat_input);
+    m.windows[0].knee_x=1.f;m.windows[0].knee_y=0.5f;m.windows[0].anchor_count=0;
+    m.windows[0].saturation_mapping=true;m.windows[0].saturation_weight=8;
+    img.planes[0].texture=sat_input;img.color=pl_color_space_hdr10;img.color.hdr.max_luma=1000.f;
+    assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
+    sh=pl_dispatch_begin(state.dispatch);
+    pl_shader_sample_direct(sh,pl_sample_src(.tex=state.output));
+    assert(pl_dispatch_finish(state.dispatch,pl_dispatch_params(.shader=&sh,.target=readback)));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=readback,.ptr=pixels)));
+    float e[3];
+    for(unsigned j=0;j<3;j++)e[j]=powf(channels[j]/2000.f,1.f/2.4f);
+    float lum=0.2627f*e[0]+0.6780f*e[1]+0.0593f*e[2];
+    float gain=1.f+fmaxf(0.f,logf(600.f)/logf(state.output_max*0.3f)-1.f);
+    for(unsigned j=0;j<3;j++){
+        float d=e[j]-lum;
+        if(d>0.f)gain=fminf(gain,(1.f-lum)/d);
+        if(d<0.f)gain=fminf(gain,-lum/d);
+    }
+    for(unsigned j=0;j<3;j++){
+        float nits=powf(fmaxf(0.f,lum+gain*(e[j]-lum)),2.4f)*state.output_max;
+        assert(fabsf(pixels[j]-pl_hdr_rescale(PL_HDR_NITS,PL_HDR_PQ,nits))<0.0015f);
+    }
+    pl_gpu_finish(gpu);pl_tex_destroy(gpu,&sat_input);
+    m.windows[0].saturation_mapping=false;
     // Legal no-OOTF input uses scene statistics, not an uninitialized curve.
     m.windows[0].tone_mapping=false;m.target_nits=0.f;
     m.windows[0].maxscl[0]=m.windows[0].maxscl[1]=m.windows[0].maxscl[2]=0.f;
