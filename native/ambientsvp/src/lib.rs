@@ -13,6 +13,8 @@ use svpflow1_vs::{Analyser, SuperBuilder, SuperFrame};
 #[cfg(feature = "vulkan")]
 mod gpu;
 #[cfg(feature = "vulkan")]
+pub mod resident;
+#[cfg(feature = "vulkan")]
 mod pipeline_cache;
 // Experimental reusable exact metric; not a replacement for the upstream analyser.
 #[cfg(feature = "vulkan")]
