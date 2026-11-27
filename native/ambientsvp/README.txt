@@ -1002,3 +1002,33 @@ Prior head 390ad9cd6683c28cd332aac1592371318f06aefd passed the complete
 SVP native workflow 46064619928; the general and SmartTube checks
 were canceled by later commits. Fresh exact-head CI is required.
 No hardware speed, upstream GPU parity, or HDR support claim.
+
+
+Explicit SurfaceControl consumer-fence allocation reuse
+-------------------------------------------------------
+The optional Android stream output lease ABI retains an independent
+AHardwareBuffer reference and duplicate producer sync_file. VLC's
+picture context holds the lease and a shared dynamic-library reference
+until its final destruction, including callbacks after filter close.
+The pinned SurfaceControl replacement transaction supplies the actual
+previous-buffer release fence. Only an output prepared once with an
+explicit consumer FD qualifies; repeated prepares, failed/unconfirmed
+presentation, a negative release FD, and missing optional symbols
+retain the safe discard/fresh-allocation path.
+
+The stream's bounded pool retains at most eight candidate allocations.
+Before reimport, both producer and consumer sync_files must report
+successful completion (poll and SYNC_IOC_FILE_INFO), and the previous
+Vulkan image must have retired and been destroyed. Reimport creates
+fresh VkImage/memory/view/semaphore objects, so this saves the AHB
+allocation, not every Vulkan import operation. No compositor callback
+accesses the stream or owns Vulkan objects. A closed pool drops late
+leases safely and never calls into an unloaded engine. Old ABI
+structures remain unchanged. The last visible frame on surface teardown
+is deliberately not recycled without explicit release evidence.
+
+Android tests cover dual readiness, rejection of non-sync-file
+descriptors, closed-pool late release, actual GPU sync-file export and
+AHB reimport (device-only). Full native VLC build and a real
+SurfaceControl replacement/presentation/consumer-fence device test
+are still required. No measured reuse rate or hardware speed claim.
