@@ -34,6 +34,29 @@ class VlcVulkanOutputWatchTest {
         assertFalse(watch.shouldSample(11000))
     }
 
+    @Test fun experimentalDecoderStarvationWithoutCounterProgressIsBounded() {
+        val watch = VlcVulkanOutputWatch()
+        assertNull(watch.observe(0, 100, 90, continuous = true))
+        assertNull(watch.observe(8000, 100, 90, continuous = true))
+        assertEquals(VlcVulkanOutputVerdict.STALLED, watch.observe(15000, 100, 90, continuous = true))
+        watch.reset()
+        assertNull(watch.observe(0, null, null, continuous = true))
+        assertNull(watch.observe(19000, null, null, continuous = true))
+        assertEquals(VlcVulkanOutputVerdict.STALLED, watch.observe(20000, null, null, continuous = true))
+    }
+
+    @Test fun experimentalOpeningDeadlineTracksProgressAndPlaybackIntent() {
+        val watch = VlcAhbOpeningWatch()
+        assertFalse(watch.observe(0, 0, true))
+        assertFalse(watch.observe(29000, 1, true))
+        assertFalse(watch.observe(58000, 1, true))
+        assertTrue(watch.observe(59000, 1, true))
+        assertFalse(watch.observe(60000, 1, false))
+        assertFalse(watch.observe(120000, 1, true))
+        assertFalse(watch.observe(130000, 2, true))
+        assertTrue(watch.observe(160000, 2, true))
+    }
+
     @Test fun bufferingAndMissingOrResetCountersRestartObservation() {
         val watch = VlcVulkanOutputWatch()
         assertNull(watch.observe(0, 100, 90))
