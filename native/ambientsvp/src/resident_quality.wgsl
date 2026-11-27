@@ -34,7 +34,8 @@ fn texel(t:texture_2d<f32>,p:vec2i,hi:vec2i,channel:u32)->i32{
 // Use integer bilinear weights so negative displacement and phase
 // rounding are deterministic. Exact endpoints require only one fetch.
 fn sample_plane(t:texture_2d<f32>,p:vec2i,hi:vec2i,channel:u32)->i32{
-    let base=(p-(p%PEL+vec2i(PEL))%PEL)/PEL;
+    let divisor=vec2i(PEL);
+    let base=(p-(p%divisor+divisor)%divisor)/divisor;
     let f=p-base*PEL;
     let a=texel(t,base,hi,channel);
     if all(f==vec2i(0)){return a;}
