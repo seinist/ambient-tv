@@ -353,7 +353,7 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
         || svp_vk_matrix(a)!=svp_vk_matrix(b) || a->params.color.transfer!=b->params.color.transfer
         || a->params.color.primaries!=b->params.color.primaries) return false;
     if (s->mode && (a->params.color.transfer==PL_COLOR_TRC_PQ || a->params.color.transfer==PL_COLOR_TRC_HLG) &&
-        memcmp(&a->params.color.hdr,&b->params.color.hdr,sizeof(a->params.color.hdr))) return false;
+        !pl_hdr_metadata_equal(&a->params.color.hdr,&b->params.color.hdr)) return false;
     svp_vk_reap(s,false);
     unsigned slot=0;while(slot<SVP_VK_JOBS && s->jobs[slot]) slot++;
     if (slot==SVP_VK_JOBS) return false;
