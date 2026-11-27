@@ -435,16 +435,25 @@ pub fn ambient_capture_range_bounded<T>(
 // The complete-preview mode is deliberately distinct from playback ranges.
 std::thread_local! {
     static AMBIENT_PREVIEW_SIZE: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    static AMBIENT_PREVIEW_EOF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 pub fn ambient_prepare_preview(size: Option<i64>, inline: bool) -> Result<(), MtprotoError> {
     AMBIENT_PREVIEW_SIZE.with(|slot| {
         if slot.get().is_none() { return Ok(()); }
-        let size = size.filter(|size| *size > 0 && *size <= (2 * AMBIENT_RANGE_LIMIT) as i64)
-            .filter(|_| !inline)
-            .ok_or_else(|| MtprotoError::Message("ambient preview requires file sink".into()))?;
-        slot.set(Some(size as u64));
+        // Display MediaRef intentionally has file_size=None upstream. Do not invent
+        // a size from the full video/document. Unknown sizes require explicit EOF.
+        if inline || size.is_some_and(|size| size > (2 * AMBIENT_RANGE_LIMIT) as i64) {
+            return Err(MtprotoError::Message("ambient preview requires file sink".into()));
+        }
+        slot.set(Some(size.filter(|size| *size > 0).unwrap_or(0) as u64));
         Ok(())
     })
+}
+pub fn ambient_complete_preview_active() -> bool {
+    AMBIENT_PREVIEW_SIZE.with(|slot| slot.get().is_some())
+}
+fn ambient_note_preview_eof() {
+    AMBIENT_PREVIEW_EOF.with(|slot| slot.set(true));
 }
 pub fn ambient_capture_complete_preview<T>(
     destination: &std::path::Path,
@@ -455,17 +464,23 @@ pub fn ambient_capture_complete_preview<T>(
             return Err(MtprotoError::Message("nested preview capture".into()));
         }
         slot.set(Some(0));
+        AMBIENT_PREVIEW_EOF.with(|eof| eof.set(false));
         Ok(())
     })?;
     struct Reset;
     impl Drop for Reset {
-        fn drop(&mut self) { AMBIENT_PREVIEW_SIZE.with(|slot| slot.set(None)); }
+        fn drop(&mut self) {
+            AMBIENT_PREVIEW_SIZE.with(|slot| slot.set(None));
+            AMBIENT_PREVIEW_EOF.with(|slot| slot.set(false));
+        }
     }
     let _reset = Reset;
     let (_, payload) = ambient_capture_range_bounded(destination, 2 * AMBIENT_RANGE_LIMIT, work)?;
     let expected = AMBIENT_PREVIEW_SIZE.with(|slot| slot.get().unwrap_or(0));
     let bytes = payload.ok_or_else(|| MtprotoError::Message("ambient preview requires file sink".into()))?;
-    if expected == 0 || bytes.len() as u64 != expected {
+    let eof = AMBIENT_PREVIEW_EOF.with(|slot| slot.get());
+    if bytes.is_empty() || (expected != 0 && bytes.len() as u64 != expected) ||
+        (expected == 0 && !eof) {
         return Err(MtprotoError::Message("incomplete captured preview".into()));
     }
     Ok(bytes)
@@ -499,6 +514,7 @@ fn ambient_begin_range(destination: &std::path::Path) -> bool {
         if let Some(capture) = slot.as_mut().filter(|c| c.destination.as_path() == destination) {
             capture.staged = None;
             capture.published = false;
+            AMBIENT_PREVIEW_EOF.with(|slot| slot.set(false));
             true
         } else { false }
     })
@@ -689,8 +705,18 @@ mod ambient_range_tests {
         let dest = std::path::Path::new("ambient-preview-test");
         assert!(ambient_capture_complete_preview(dest, || {
             ambient_prepare_preview(None, false)?;
+            ambient_stage_range(dest, dest, vec![1, 2, 3]);
+            assert!(ambient_publish_range(dest, dest));
             Ok(())
         }).is_err());
+        let unknown = ambient_capture_complete_preview(dest, || {
+            ambient_prepare_preview(None, false)?;
+            ambient_note_preview_eof();
+            ambient_stage_range(dest, dest, vec![1, 2, 3]);
+            assert!(ambient_publish_range(dest, dest));
+            Ok(())
+        }).unwrap();
+        assert_eq!(unknown, vec![1, 2, 3]);
         assert!(ambient_capture_complete_preview(dest, || {
             ambient_prepare_preview(Some(4), false)?;
             ambient_stage_range(dest, dest, vec![1, 2, 3]);
@@ -788,13 +814,26 @@ amend(range_output,
 amend(range_output,
       """                    .min((FAST_CHUNK / chunk).max(1) as usize)""",
       """                    .min(((origin.saturating_add(if ambient_range { capture_limit as i64 } else { i64::from(FAST_CHUNK) }) - next)
-                        .max(1) / i64::from(chunk)).max(1) as usize)""")
+                        .max(1) / i64::from(chunk)).max(1) as usize)
+                    .min(if ambient_complete_preview_active() { 1 } else { usize::MAX })""")
 amend(range_output,
       """                if stream {
                     break 'download;
                 }
                 if last_part {""",
       """                if stream {
+                    if ambient_range && ambient_complete_preview_active() {
+                        // One wire request at a time: an actual short/empty getFile
+                        // response proves EOF. Reject holes and a full unknown-size cap.
+                        if downloaded_bytes != written_end - origin {
+                            return Err(MtprotoError::Message("incomplete captured preview".into()));
+                        }
+                        if last_part { ambient_note_preview_eof(); }
+                        if written_end >= origin.saturating_add(capture_limit as i64)
+                            && !last_part && media.file_size.is_none_or(|size| size <= 0) {
+                            return Err(MtprotoError::Message("ambient preview requires file sink".into()));
+                        }
+                    }
                     if !ambient_range || last_part || written_end >= origin.saturating_add(capture_limit as i64)
                         || media.file_size.is_some_and(|size| size > 0 && written_end >= size) {
                         break 'download;
@@ -813,7 +852,9 @@ amend(range_output,
       "                let (flags, cdn_supported) = cdn_fields_for_seek(origin);",
       """                // CDN's whole-file receiver is inappropriate for a bounded range.
                 let (flags, cdn_supported) = if ambient_range {
-                    if ambient_cdn_ranges() { crate::media_cdn::getfile_cdn_fields() } else { (0, None) }
+                    if ambient_cdn_ranges() && !ambient_complete_preview_active() {
+                        crate::media_cdn::getfile_cdn_fields()
+                    } else { (0, None) }
                 } else { cdn_fields_for_seek(origin) };""")
 # Keep small and unknown-size transfers at one wire request (old latency fix).
 profile_source = "vendor/mono-rs/crates/mono-proto-media/src/profile.rs"
@@ -851,6 +892,9 @@ amend(client_download,
       """                drop(admission);
                 if let Some(start) = offset
                     && mono_proto_media::download::ambient_capture_active(dest) {
+                    if mono_proto_media::download::ambient_complete_preview_active() {
+                        return Err(MtprotoError::Message("ambient preview requires file sink".into()));
+                    }
                     // A reduced wire retry may redirect after the requested start.
                     // Never publish that suffix as if it were the complete range.
                     return cdn_or_origin(
