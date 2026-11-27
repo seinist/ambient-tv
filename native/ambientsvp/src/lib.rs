@@ -396,7 +396,14 @@ impl AmbientSvp {
         self.stats.queued_frames = self.frames.len() as u32;
         // Fail fast on grossly inadequate decoding+analysis devices; do not
         // wait several source-seconds while processing them far below real time.
-        if self.input > 1 && cost > (self.source_time(1) as u64 * 2).max(75_000) {
+        let adaptive = self.config.preset == ADAPTIVE_PRESET
+            && self.adaptive_level < MAX_ADAPTIVE_LEVEL && self.stats.bypass_reason == 0;
+        let analysis_limit = if adaptive {
+            (self.source_time(1) as u64 * 4 / 5).max(5_000)
+        } else {
+            (self.source_time(1) as u64 * 2).max(75_000)
+        };
+        if self.input > 1 && cost > analysis_limit {
             self.slow_inputs += 1;
             if cost > 500_000 {
                 // Keep the existing absolute safety ceiling even in adaptive mode.
@@ -417,7 +424,8 @@ impl AmbientSvp {
             } else {
                 self.slow_windows = 0;
             }
-            if self.slow_windows >= 2 && !self.reduce_analysis_effort() {
+            if (self.slow_windows >= 2 || adaptive && self.slow_windows >= 1)
+                && !self.reduce_analysis_effort() {
                 self.bypass(1);
             }
             self.window_inputs = 0;
