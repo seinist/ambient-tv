@@ -30,8 +30,9 @@ distribute the experiment as a validated production build.
   and release, producer sync-fd import, conservative VLC picture lease.
   AHardwareBuffer references do not substitute for the decoder picture lease.
   The decoder requests GPU_SAMPLED_IMAGE even for unrotated output. Stable
-  AHardwareBuffer IDs prevent aliasing across in-flight slots. Dropped pictures
-  pass the original producer fence back via the VLC-owned AImage context.
+  AHardwareBuffer IDs prevent aliasing across in-flight slots. All discarded
+  pictures retain their original producer fence in the VLC-owned context;
+  its destructor transfers it to AImage_deleteAsync when no consumer fence exists.
 - Three bounded reusable slots, command buffers, device-local RGB targets,
   immutable sampler, descriptors and pipeline. Exact buffer identity reuses
   the import. Distinct buffers with identical driver format/conversion and
@@ -70,7 +71,7 @@ distribute the experiment as a validated production build.
 `bash scripts/test_vlc_ahb_import.sh` runs host ASan/UBSan regressions,
 including format identity and device-loss ownership, GLSL compilation,
 four Android ABI owner syntax/link checks, pinned libplacebo API and
-patched display/instance translation unit checks when the source paths are
+patched display/instance/MediaCodec translation unit checks when the source paths are
 provided. The CI stages the exact patches twice and checks the isolated build
 hashes. Native contract job 140316567169 in run 45941465294 passed all
 four ABI checks before the latest decoder/HDR/recovery changes. The full
@@ -87,7 +88,7 @@ test. No hardware performance or correctness claim is made yet.
   negotiation on the actual driver, descriptor allocation, ownership/layout
   validation, color range/crop, orientation, subtitles and rendering.
 - On Shield and phone test long playback, seeks, pause, surface recreation,
-  format changes, SDR/PQ/HLG color accuracy, HDR10+/DV fallback, restart to
+  format changes, SDR/PQ/HLG color accuracy, HDR10+ metadata and unsupported HDR10+/DV fallback, restart to
   copy-back, device loss and close.
   Confirm no validation errors or retained AImages and measure startup,
   frame times, dropped frames, decoder backlog and memory versus copy-back.

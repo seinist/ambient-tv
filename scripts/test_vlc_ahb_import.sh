@@ -65,8 +65,19 @@ if [[ -n "${LIBPLACEBO_SOURCE:-}" ]]; then
                     -I "$VLC_SOURCE/include" \
                     -fsyntax-only "$VLC_SOURCE/modules/video_output/libplacebo/$module.c"
             done
+            # Validate the actual decoder and NDK per-buffer metadata reader,
+            # rather than relying solely on display/instance syntax checks.
+            for module in mediacodec mediacodec_ndk; do
+                "$NDK/toolchains/llvm/prebuilt/$host/bin/${triple}29-clang" \
+                    -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 \
+                    -DMODULE_NAME=mediacodec '-DN_(s)=s' \
+                    -Werror=implicit-function-declaration -Werror=incompatible-pointer-types -Werror=int-conversion \
+                    -I "$VLC_SOURCE/include" -I "$VLC_SOURCE/modules/codec" \
+                    -I "$VLC_SOURCE/modules/codec/omxil" \
+                    -fsyntax-only "$VLC_SOURCE/modules/codec/omxil/$module.c"
+            done
         fi
     done
-    echo "Pinned libplacebo C API checks passed for four Android ABIs"
+    echo "Pinned libplacebo and MediaCodec C API checks passed for four Android ABIs"
 fi
 echo "AHB lifetime tests, shaders and four Android ABI syntax checks passed (no GPU execution)"

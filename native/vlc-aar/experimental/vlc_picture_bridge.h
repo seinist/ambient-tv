@@ -75,20 +75,10 @@ static inline bool ambient_vlc_hold_picture(picture_t *pic, struct ambient_vlc_p
 // it cannot be used with an early GPU release-fence handoff.
 static inline void ambient_vlc_release_picture(void *held, int duplicated_fd)
 {
-    picture_t *pic = held;
-    // Unsubmitted/abandoned frame: the callback receives its producer fence.
-    // Return it through VLC's AImage release fence rather than discarding it.
-    // A completed GPU frame receives -1, so it never installs a fake fence.
-    if (duplicated_fd >= 0 && pic && pic->context) {
-        struct android_picture_ctx *apctx =
-            container_of(pic->context, struct android_picture_ctx, s);
-        if (apctx->read_fence_fd < 0) {
-            apctx->read_fence_fd = duplicated_fd;
-            duplicated_fd = -1;
-        }
-        // An existing read fence already subsumes this same picture's
-        // producer fence; retain it rather than replacing it on a drop.
-    }
+    // The VLC AImage context owns its original producer fence. Its patched
+    // destructor passes it to AImage_deleteAsync when no consumer fence exists,
+    // including drops before bridge entry. Do not mutate shared read_fence_fd
+    // from the Vulkan owner: this fd is merely our private duplicate.
     if (duplicated_fd >= 0) close(duplicated_fd);
-    if (pic) picture_Release(pic);
+    if (held) picture_Release((picture_t *)held);
 }
