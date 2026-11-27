@@ -236,16 +236,17 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
         }
         // A downloaded Spotify receiver must be probed before its UI becomes available.
         // Merely probing the native library does not log in or start the receiver.
-        // Disabled bundled providers retain their existing lazy initialization.
+        // The opt-in bundled receiver is also probed, without creating a repository.
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             runCatching {
                 val selected = com.ambient.tv.modules.SystemModuleHost.selected(com.ambient.tv.modules.SystemModule.SPOTIFY)
-                if (selected != null || preferences.spotifyEnabled) {
-                    val spotify = spotifyRepository.get()
-                    if (spotify.nativeAvailable && preferences.spotifyEnabled &&
+                if (selected != null || com.ambient.tv.modules.SystemModuleAvailability.bundled(
+                        com.ambient.tv.modules.SystemModule.SPOTIFY)) {
+                    val ready = com.ambient.tv.spotify.playback.probeSpotifyNativeReceiver()
+                    if (ready && preferences.spotifyEnabled &&
                         com.ambient.tv.ui.mobile.isTelevision(this@AmbientTvApplication) &&
                         com.ambient.tv.util.LocalNetworkAccess.isGranted(this@AmbientTvApplication)) {
-                        spotify.start()
+                        spotifyRepository.get().start()
                     }
                 }
             }.onFailure { Timber.w(it, "Spotify startup failed") }
