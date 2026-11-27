@@ -76,7 +76,10 @@ internal class TelegramSeekableMedia(
         checkOpen()
         return copied
         } finally {
-            synchronized(lifecycle) { readingThread = null }
+            synchronized(lifecycle) {
+                readingThread = null
+                if (closed) { part = ByteArray(0); partStart = -1L }
+            }
         }
     }
 
@@ -90,6 +93,12 @@ internal class TelegramSeekableMedia(
         previousPart = offset
         val pending = prefetch.remove(offset)
         if (pending != null) {
+            // The production foreground loader coalesces with an active RPC,
+            // without waiting for speculative admission. Standalone callers with
+            // a single loader retain the original one-request behavior.
+            if (!pending.isDone && partLoader !== prefetchLoader) {
+                try { checkOpen(); return partLoader(offset) } finally { pending.cancel(true) }
+            }
             try { return pending.get() }
             catch (interrupted: InterruptedException) {
                 Thread.currentThread().interrupt()
@@ -129,6 +138,7 @@ internal class TelegramSeekableMedia(
             cancelPrefetch()
             prefetcher.shutdownNow()
             readingThread?.takeIf { it !== Thread.currentThread() }?.interrupt()
+            if (readingThread == null) { part = ByteArray(0); partStart = -1L }
         }
         // Never acquire the read monitor here: a native RPC can be blocked.
         // The last read owns its byte array until it observes the closed flag.

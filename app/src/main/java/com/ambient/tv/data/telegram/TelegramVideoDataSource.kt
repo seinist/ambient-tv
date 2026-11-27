@@ -21,14 +21,17 @@ class TelegramVideoDataSource(
     private val repository: TelegramRepository,
     private val media: TelegramMedia,
     private val accountRevision: Long = repository.playbackRevision(),
+    private val mediaRevision: Long = repository.playbackMediaRevision(media),
 ) : BaseDataSource(false) {
     class Factory(private val repository: TelegramRepository, private val media: TelegramMedia) :
         DataSource.Factory {
         private val revision = repository.playbackRevision()
-        override fun createDataSource(): DataSource = TelegramVideoDataSource(repository, media, revision)
+        private val mediaRevision = repository.playbackMediaRevision(media)
+        override fun createDataSource(): DataSource = TelegramVideoDataSource(repository, media, revision, mediaRevision)
     }
     private fun requireCurrentAccount() {
-        if (!repository.isPlaybackRevisionCurrent(accountRevision)) throw IOException("Monogram account changed")
+        if (!repository.isPlaybackMediaCurrent(media, accountRevision, mediaRevision))
+            throw IOException("Monogram account or media changed")
     }
 
     private var sourceUri: Uri? = null
@@ -98,10 +101,16 @@ class TelegramVideoDataSource(
         return try {
             runBlocking {
                 // A failed read-ahead is retried directly instead of failing playback.
-                val buffered = pending?.let { runCatching { it.await() }.getOrNull() }
+                // An unfinished speculative job may be queued on the two-lane
+                // gate. Join the repository from the foreground instead.
+                val buffered = pending?.takeIf { it.isCompleted }?.let { runCatching { it.await() }.getOrNull() }
                 coroutineContext.ensureActive()
                 requireCurrentAccount()
-                buffered ?: repository.mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset), accountRevision, nativeMediaKey = media.nativeMediaKey)
+                try {
+                    buffered ?: repository.mediaPart(media.chatId, media.messageId, offset,
+                        telegramExpectedPartSize(media.fileSize, offset), accountRevision,
+                        nativeMediaKey = media.nativeMediaKey, expectedMediaRevision = mediaRevision)
+                } finally { pending?.cancel() }
             }
         } catch (error: Exception) {
             throw IOException("Telegram media read failed", error)
@@ -114,7 +123,7 @@ class TelegramVideoDataSource(
             if (offset >= media.fileSize || offset >= position + remaining) break
             if (offset !in prefetch) prefetch[offset] = prefetchScope.async {
                 requireCurrentAccount()
-                repository.mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset), accountRevision, speculative = true, nativeMediaKey = media.nativeMediaKey)
+                repository.mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset), accountRevision, speculative = true, nativeMediaKey = media.nativeMediaKey, expectedMediaRevision = mediaRevision)
             }
         }
     }

@@ -84,6 +84,54 @@ class TelegramSeekableMediaTest {
         } finally { source.close() }
     }
 
+    @Test fun closeInterruptsBlockedReadWithoutWaitingForReadMonitor() {
+        val started = java.util.concurrent.CountDownLatch(1)
+        val interrupted = java.util.concurrent.CountDownLatch(1)
+        val source = TelegramSeekableMedia(media(3), {
+            started.countDown()
+            try {
+                java.util.concurrent.CountDownLatch(1).await()
+                byteArrayOf(1, 2, 3)
+            } catch (failure: InterruptedException) {
+                interrupted.countDown()
+                throw failure
+            }
+        }, { true })
+        val workers = java.util.concurrent.Executors.newFixedThreadPool(2)
+        try {
+            val reading = workers.submit<Boolean> {
+                runCatching { source.read(0, ByteArray(1), 1) }.isFailure
+            }
+            assertTrue(started.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            workers.submit { source.close() }.get(2, java.util.concurrent.TimeUnit.SECONDS)
+            assertTrue(interrupted.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue(reading.get(2, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue(runCatching { source.read(0, ByteArray(1), 1) }.isFailure)
+        } finally { workers.shutdownNow(); source.close() }
+    }
+
+    @Test fun foregroundReadDoesNotWaitForSpeculativeAdmission() {
+        val count = TELEGRAM_MEDIA_PART_BYTES
+        val prefetchStarted = java.util.concurrent.CountDownLatch(1)
+        val source = TelegramSeekableMedia(
+            media(count.toLong() + 1),
+            partLoader = { offset -> if (offset == 0L) ByteArray(count) else byteArrayOf(7) },
+            authorized = { true },
+            prefetchLoader = {
+                prefetchStarted.countDown()
+                java.util.concurrent.CountDownLatch(1).await()
+                byteArrayOf(8)
+            },
+        )
+        val worker = java.util.concurrent.Executors.newSingleThreadExecutor()
+        try {
+            assertEquals(1, source.read(0, ByteArray(1), 1))
+            assertTrue(prefetchStarted.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            val result = worker.submit<Byte> { ByteArray(1).also { source.read(count.toLong(), it, 1) }[0] }
+            assertEquals(7.toByte(), result.get(2, java.util.concurrent.TimeUnit.SECONDS))
+        } finally { source.close(); worker.shutdownNow() }
+    }
+
     @Test fun invalidAndProtectedMediaNeverStartLoopbackStream() {
         val protected = media(100).copy(protectedContent = true)
         assertTrue(runCatching {

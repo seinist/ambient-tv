@@ -117,6 +117,21 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     private val historyLocks = Array(32) { Any() }
     // Guarded by historyPages; never publish an RPC begun before an invalidation.
     private var historyRevision = 0L
+    private val mediaRevisions = LinkedHashMap<Pair<Long, Int>, Long>()
+    private var mediaRevisionCounter = 0L
+    private var mediaRevisionFloor = 0L
+
+    override fun mediaRevision(chatId: Long, messageId: Int): Long =
+        synchronized(mediaRevisions) { mediaRevisions[chatId to messageId] ?: mediaRevisionFloor }
+
+    private fun invalidateMediaRevisions(messages: Set<Pair<Long, Int>>, everything: Boolean) =
+        synchronized(mediaRevisions) {
+            val revision = ++mediaRevisionCounter
+            if (everything || mediaRevisions.size + messages.size > 4096) {
+                mediaRevisions.clear()
+                mediaRevisionFloor = revision
+            } else messages.forEach { mediaRevisions[it] = revision }
+        }
 
     private fun historyPage(h: Long, chatId: Long, size: Int, offset: Int): List<MessageDto> {
         val key = chatId to offset
@@ -209,7 +224,6 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         val touched = HashSet<Long>()
         var everything = false
         val changedMessages = HashSet<Pair<Long, Int>>()
-        val changedChannels = HashSet<Long>()
         val latest = HashMap<Long, Pair<Long, Int>>()
         for (event in events) {
             when (event) {
@@ -223,9 +237,13 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     touched += event.message.chatId
                     changedMessages += event.message.chatId to event.message.id
                 }
-                is UpdateEventDto.MessagesDeleted -> event.chatId?.let {
-                    touched += it
-                    changedChannels += it
+                is UpdateEventDto.MessageContentInvalidated -> {
+                    touched += event.chatId
+                    changedMessages += event.chatId to event.messageId
+                }
+                is UpdateEventDto.MessagesDeleted -> event.chatId?.let { chat ->
+                    touched += chat
+                    event.messageIds.forEach { changedMessages += chat to it }
                 } ?: run { everything = true }
                 else -> Unit
             }
@@ -235,14 +253,14 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             if (everything) historyPages.clear()
             else historyPages.keys.removeAll { it.first in touched }
         }
-        if (everything || changedMessages.isNotEmpty() || changedChannels.isNotEmpty()) {
+        if (everything || changedMessages.isNotEmpty()) {
             synchronized(diskChunkLock) {
-                // In-flight chunk publications from before an edit are discarded.
+                // Existing player buffers and in-flight chunk publications are fenced.
+                invalidateMediaRevisions(changedMessages, everything)
                 invalidateChunksLocked()
                 fun affected(file: File): Boolean {
                     val name = file.name.removePrefix("thumb-")
-                    return everything || changedChannels.any { name.startsWith("$it-") } ||
-                        changedMessages.any { (chat, message) ->
+                    return everything || changedMessages.any { (chat, message) ->
                             name.startsWith("$chat-$message-") || name.substringBeforeLast('.') == "$chat-$message"
                         }
                 }

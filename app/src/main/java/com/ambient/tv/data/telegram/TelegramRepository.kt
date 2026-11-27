@@ -74,6 +74,8 @@ interface TelegramClientPort {
     suspend fun photoFile(chatId: Long, messageId: Int): String? = null
     /** Called once when Telegram reports the session as revoked or unknown ([TelegramSessionLostException]). */
     fun setSessionLostListener(listener: ((String) -> Unit)?) = Unit
+    /** Revision of the media at this post, changed by native edit/delete updates. */
+    fun mediaRevision(chatId: Long, messageId: Int): Long = 0L
     /** Telegram's real (non-inline) thumbnail of a post as a local file URI, or null. */
     suspend fun thumbnail(chatId: Long, messageId: Int): String? = null
     /** A byte range from a Telegram file; Monogram downloadMessageMediaChunk does the MTProto I/O. */
@@ -316,6 +318,15 @@ class TelegramRepository @Inject constructor(
     internal fun isPlaybackRevisionCurrent(revision: Long): Boolean =
         client != null && streamEpoch.get() == revision
 
+    internal fun playbackMediaRevision(media: TelegramMedia): Long =
+        client?.mediaRevision(media.chatId, media.messageId) ?: -1L
+
+    internal fun isPlaybackMediaCurrent(media: TelegramMedia, accountRevision: Long, mediaRevision: Long): Boolean {
+        val selected = client ?: return false
+        return streamEpoch.get() == accountRevision && selected.mediaRevision(media.chatId, media.messageId) == mediaRevision &&
+            client === selected && streamEpoch.get() == accountRevision && media.chatId !in blockedChannels
+    }
+
     /** Install only an already authenticated Monogram client, never a partially signed-in one. */
     fun installAuthorized(port: TelegramClientPort) {
         port.setSessionLostListener { type -> scope.launch { sessionLost(port, type) } }
@@ -406,7 +417,8 @@ class TelegramRepository @Inject constructor(
             media.fileSize > 0L) { appContext.getString(R.string.monogram_error_not_streamable) }
         val authenticated = checkNotNull(client) { appContext.getString(R.string.monogram_error_not_authorized) }
         val generation = streamEpoch.get()
-        val key = "${authenticated.cacheIdentity}:${media.mediaKey}:${media.nativeMediaKey.orEmpty()}"
+        val mediaRevision = authenticated.mediaRevision(media.chatId, media.messageId)
+        val key = "${authenticated.cacheIdentity}:${media.mediaKey}:${media.nativeMediaKey.orEmpty()}:$mediaRevision"
         synchronized(playbackUrls) { playbackUrls[key] }?.let { return@withContext it }
         val url = mediaFileServer.register(
             sourceId = MONOGRAM_LOCAL_MEDIA_SOURCE,
@@ -415,18 +427,18 @@ class TelegramRepository @Inject constructor(
         ) { TelegramSeekableMedia(
             media = media,
             partLoader = { offset -> kotlinx.coroutines.runBlocking {
-                check(client === authenticated && streamEpoch.get() == generation) {
+                check(client === authenticated && isPlaybackMediaCurrent(media, generation, mediaRevision)) {
                     appContext.getString(R.string.monogram_error_account_changed)
                 }
-                mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset), generation, nativeMediaKey = media.nativeMediaKey)
+                mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset), generation, nativeMediaKey = media.nativeMediaKey, expectedMediaRevision = mediaRevision)
             } },
             prefetchLoader = { offset -> kotlinx.coroutines.runBlocking {
-                mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset), generation, speculative = true, nativeMediaKey = media.nativeMediaKey)
+                mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset), generation, speculative = true, nativeMediaKey = media.nativeMediaKey, expectedMediaRevision = mediaRevision)
             } },
-            authorized = { client === authenticated && streamEpoch.get() == generation },
+            authorized = { client === authenticated && isPlaybackMediaCurrent(media, generation, mediaRevision) },
         ) }
         // An account may be logged out while the URL is being registered on a worker.
-        if (client !== authenticated || streamEpoch.get() != generation) {
+        if (client !== authenticated || !isPlaybackMediaCurrent(media, generation, mediaRevision)) {
             mediaFileServer.revoke(MONOGRAM_LOCAL_MEDIA_SOURCE)
             error(appContext.getString(R.string.monogram_error_account_changed))
         }
@@ -758,7 +770,7 @@ class TelegramRepository @Inject constructor(
     private val mediaPartPermits = kotlinx.coroutines.sync.Semaphore(4)
     // At most two speculative RPCs globally; two lanes remain for actual reads.
     private val speculativePartPermits = kotlinx.coroutines.sync.Semaphore(2)
-    private data class PartKey(val epoch: Long, val chatId: Long, val messageId: Int, val offset: Long, val expectedBytes: Int?, val nativeMediaKey: String?)
+    private data class PartKey(val epoch: Long, val chatId: Long, val messageId: Int, val offset: Long, val expectedBytes: Int?, val nativeMediaKey: String?, val mediaRevision: Long)
     private class PartLoad(val deferred: kotlinx.coroutines.Deferred<ByteArray>, var waiters: Int)
     private val partLoads = HashMap<PartKey, PartLoad>()
 
@@ -781,29 +793,32 @@ class TelegramRepository @Inject constructor(
     suspend fun mediaPart(
         chatId: Long, messageId: Int, offset: Long, expectedBytes: Int? = null,
         expectedRevision: Long? = null, speculative: Boolean = false, nativeMediaKey: String? = null,
+        expectedMediaRevision: Long? = null,
     ): ByteArray {
         // Acquire speculative admission before creating the shared deferred, so a
         // foreground waiter never joins a deferred queued on the speculative gate.
         if (speculative) return speculativePartPermits.withPermit {
-            loadMediaPart(chatId, messageId, offset, expectedBytes, expectedRevision, nativeMediaKey)
+            loadMediaPart(chatId, messageId, offset, expectedBytes, expectedRevision, nativeMediaKey, expectedMediaRevision)
         }
-        return interactive { loadMediaPart(chatId, messageId, offset, expectedBytes, expectedRevision, nativeMediaKey) }
+        return interactive { loadMediaPart(chatId, messageId, offset, expectedBytes, expectedRevision, nativeMediaKey, expectedMediaRevision) }
     }
 
     private suspend fun loadMediaPart(chatId: Long, messageId: Int, offset: Long,
-        expectedBytes: Int?, expectedRevision: Long?, nativeMediaKey: String?): ByteArray {
+        expectedBytes: Int?, expectedRevision: Long?, nativeMediaKey: String?, expectedMediaRevision: Long?): ByteArray {
         val selected = checkNotNull(client) { appContext.getString(R.string.monogram_error_not_authorized) }
         check(chatId !in blockedChannels) { appContext.getString(R.string.monogram_error_channel_left) }
         val generation = streamEpoch.get()
         val identity = selected.cacheIdentity
+        val mediaRevision = expectedMediaRevision ?: selected.mediaRevision(chatId, messageId)
         fun verify() {
             check((expectedRevision == null || expectedRevision == generation) &&
-                sameAccount(selected, identity, generation) && chatId !in blockedChannels) {
+                sameAccount(selected, identity, generation) && chatId !in blockedChannels &&
+                selected.mediaRevision(chatId, messageId) == mediaRevision) {
                 appContext.getString(R.string.monogram_error_account_changed)
             }
         }
         verify()
-        val key = PartKey(generation, chatId, messageId, offset, expectedBytes, nativeMediaKey)
+        val key = PartKey(generation, chatId, messageId, offset, expectedBytes, nativeMediaKey, mediaRevision)
         val load = synchronized(partLoads) {
             val existing = partLoads[key]?.takeUnless { it.deferred.isCancelled }
             if (existing != null) {
