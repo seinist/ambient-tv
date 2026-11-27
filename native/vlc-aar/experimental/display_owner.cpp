@@ -193,7 +193,7 @@ struct ambient_ahb_owner {
             in.release_picture(in.picture, in.acquire_fd);
             return VK_ERROR_DEVICE_LOST;
         }
-        const VkFormat format = in.high_precision ? VK_FORMAT_R16G16B16A16_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
+        const VkFormat format = in.high_precision ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
         // VLC redisplays pictures during pause/subtitle updates. A different
         // AHB wrapper can refer to the same allocation. Do not acquire the
         // same foreign image in another slot until its prior GPU use retires.
