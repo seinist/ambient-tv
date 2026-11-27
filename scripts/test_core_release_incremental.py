@@ -212,7 +212,12 @@ class IncrementalCoreReleaseTest(unittest.TestCase):
         single = (root / "cores.yml").read_text()
         all_profiles = (root / "cores-all.yml").read_text()
         self.assertNotIn("\n  push:", single)
-        self.assertNotIn("\n  pull_request:", single)
+        # Catalog changes must build on PRs, but automatic publication stays on main.
+        self.assertIn("\n  pull_request:\n    paths:\n      - cores/cores.json\n", single)
+        publication = single.split("\n  publish:\n", 1)[1].split("\n    steps:", 1)[0]
+        self.assertIn("github.ref == 'refs/heads/main'", publication)
+        self.assertIn("needs.plan.outputs.publish == 'true'", publication)
+        self.assertNotIn("pull_request", publication)
         self.assertIn("\n  push:", all_profiles)
         self.assertNotIn("\n  pull_request:", all_profiles)
         self.assertNotIn("mupen-validation", all_profiles)
