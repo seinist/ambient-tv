@@ -95,6 +95,7 @@ interface TelegramClientPort {
     suspend fun photoFile(chatId: Long, messageId: Int): String? = null
     /** Called once when Telegram reports the session as revoked or unknown ([TelegramSessionLostException]). */
     fun setSessionLostListener(listener: ((String) -> Unit)?) = Unit
+    fun setArtworkChangedListener(listener: (() -> Unit)?) = Unit
     /** Revision of the media at this post, changed by native edit/delete updates. */
     fun mediaRevision(chatId: Long, messageId: Int): Long = 0L
     /** Local authenticated sharp thumbnail, without native RPC or download admission. */
@@ -352,6 +353,23 @@ class TelegramRepository @Inject constructor(
     }
     private val mutableCatalogRevision = MutableStateFlow(0L)
     val catalogRevision: StateFlow<Long> = mutableCatalogRevision.asStateFlow()
+    private val mutableArtworkRevision = MutableStateFlow(0L)
+    val artworkRevision: StateFlow<Long> = mutableArtworkRevision.asStateFlow()
+
+    private fun notifyArtworkChanged() {
+        synchronized(mutableArtworkRevision) { mutableArtworkRevision.value++ }
+    }
+
+    /** In-memory Coil identity; the fallback URL is not the sharp image's identity. */
+    internal fun artworkCacheKey(model: String): String? {
+        val selected = client ?: return null
+        val generation = streamEpoch.get()
+        val identity = selected.cacheIdentity
+        val ref = parseMonogramThumbModel(model) ?: return null
+        if (ref.chatId in blockedChannels) return null
+        val key = monogramSharpCacheKey(model, generation, selected.mediaRevision(ref.chatId, ref.messageId))
+        return key.takeIf { sameAccount(selected, identity, generation) && ref.chatId !in blockedChannels }
+    }
     /** A channel exit revokes local content immediately, before disk cleanup completes. */
     private val blockedChannels = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
 
@@ -391,6 +409,7 @@ class TelegramRepository @Inject constructor(
     /** Install only an already authenticated Monogram client, never a partially signed-in one. */
     fun installAuthorized(port: TelegramClientPort) {
         port.setSessionLostListener { type -> scope.launch { sessionLost(port, type) } }
+        port.setArtworkChangedListener { if (client === port) notifyArtworkChanged() }
         if (client !== port) {
             // Close admission for the previous port before publishing a new epoch.
             client = null
@@ -401,6 +420,7 @@ class TelegramRepository @Inject constructor(
         }
         client = port
         mutableAuthorized.value = true
+        notifyArtworkChanged()
     }
 
     /**
@@ -428,6 +448,7 @@ class TelegramRepository @Inject constructor(
         blockedChannels.clear()
         clearResumePositions()
         mutableAuthorized.value = false
+        notifyArtworkChanged()
     }
 
     /**
@@ -595,6 +616,7 @@ class TelegramRepository @Inject constructor(
             clearResumePositions()
             account.cacheIdentity?.let { diskCache.clearAccount(it) }
             mutableCatalogRevision.value++
+            notifyArtworkChanged()
         }
         return left
     }
@@ -775,6 +797,19 @@ class TelegramRepository @Inject constructor(
         val priority: TelegramTransferPriority)
     private val thumbnailLoads = HashMap<String, ThumbnailLoad>()
     private val thumbnailMisses = ThumbnailMissCache()
+
+    /** Cache-only requests must not start native media RPCs. */
+    internal suspend fun cachedArtworkFile(chatId: Long, messageId: Int): String? = withContext(Dispatchers.IO) {
+        val selected = client ?: return@withContext null
+        val generation = streamEpoch.get()
+        val identity = selected.cacheIdentity
+        val revision = selected.mediaRevision(chatId, messageId)
+        if (chatId in blockedChannels) return@withContext null
+        selected.cachedThumbnail(chatId, messageId).takeIf {
+            sameAccount(selected, identity, generation) && chatId !in blockedChannels &&
+                selected.mediaRevision(chatId, messageId) == revision
+        }
+    }
 
     /** Real thumbnail for a visible card (see [TelegramMedia.cardImageUrl]); null when unavailable. */
     suspend fun thumbnailFile(chatId: Long, messageId: Int, speculative: Boolean = false,

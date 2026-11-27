@@ -210,3 +210,10 @@ fun parseMonogramThumbModel(value: String): MonogramThumbRef? {
     val messageId = parts[1].toIntOrNull()?.takeIf { it >= 0 } ?: return null
     return MonogramThumbRef(chatId, messageId, fallback)
 }
+
+/** Stable for identical sharp art even if the embedded local fallback URL changes. */
+internal fun monogramSharpCacheKey(model: String, accountEpoch: Long, mediaRevision: Long): String? {
+    if (!model.startsWith("$MONOGRAM_THUMB_SCHEME://")) return null
+    val ref = parseMonogramThumbModel(model) ?: return null
+    return "monogram-sharp-v1:$accountEpoch:$mediaRevision:${ref.chatId}:${ref.messageId}"
+}

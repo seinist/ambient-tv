@@ -527,7 +527,18 @@ fun ArtworkImage(
             .distinct()
     }
     val primaryNetwork = rememberArtworkNetworkAccess(candidates.firstOrNull(), artworkHeadersForModel(candidates.firstOrNull(), headers))
-    var candidateIndex by remember(candidates, primaryNetwork.recovery) { mutableStateOf(0) }
+    val sharpModel = (candidates.firstOrNull() as? String)?.takeIf {
+        it.startsWith(com.ambient.tv.data.telegram.MONOGRAM_THUMB_SCHEME + "://")
+    }
+    val monogramRepository = remember(context, sharpModel != null) {
+        if (sharpModel != null) (context.applicationContext as? com.ambient.tv.AmbientTvApplication)?.telegramRepository?.get()
+        else null
+    }
+    val artworkRevision = monogramRepository?.artworkRevision?.collectAsState()?.value
+    val sharpKey = remember(sharpModel, artworkRevision, monogramRepository) {
+        sharpModel?.let { monogramRepository?.artworkCacheKey(it) }
+    }
+    var candidateIndex by remember(candidates, primaryNetwork.recovery, sharpKey) { mutableStateOf(0) }
     val currentModel = candidates.getOrNull(candidateIndex)
     val effectiveHeaders = remember(currentModel, headers) { artworkHeadersForModel(currentModel, headers) }
     val network = rememberArtworkNetworkAccess(currentModel, effectiveHeaders)
@@ -539,10 +550,12 @@ fun ArtworkImage(
     }
     val cacheIdentity = address?.let { refresh?.cachedIdentity(it) }
     val refreshRevision = rememberArtworkRefresh(currentModel, refresh, address)
-    val hasModel = currentModel != null
+    val hasModel = currentModel != null && (sharpModel == null || sharpKey != null)
+    val scopedSharpKey = sharpKey.takeIf { currentModel == sharpModel }
+    val indexModel = scopedSharpKey ?: currentModel
     val continuity = remember { ArtworkRequestContinuity() }
-    val requestIdentity = remember(currentModel, refreshRevision, address?.imageKey, headerKey) {
-        listOf(com.ambient.tv.data.browse.artworkRequestIdentity(currentModel), address?.imageKey, headerKey, refreshRevision)
+    val requestIdentity = remember(currentModel, refreshRevision, address?.imageKey, headerKey, sharpKey) {
+        listOf(scopedSharpKey ?: com.ambient.tv.data.browse.artworkRequestIdentity(currentModel), address?.imageKey, headerKey, refreshRevision, sharpKey)
     }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     val constrainDecode = LocalPerformanceProfile.current.constrainImageDecodeSize
@@ -551,6 +564,7 @@ fun ArtworkImage(
     // the last successful load is served as placeholder before the size is resolved.
     val imageLoader = if (backdrop) com.ambient.tv.backdropImageLoader(context) else coil3.SingletonImageLoader.get(context)
     fun currentMemoryKey(key: coil3.memory.MemoryCache.Key): Boolean =
+        (sharpModel == null || sharpKey != null) && (scopedSharpKey == null || key.key == scopedSharpKey) &&
         (if (address != null) com.ambient.tv.network.mediaArtworkMemoryKeyMatches(key.extras, cacheIdentity)
          else key.extras[com.ambient.tv.network.MEDIA_ARTWORK_IDENTITY_EXTRA] == null &&
              key.extras[com.ambient.tv.network.MEDIA_ARTWORK_HEADERS_EXTRA] == headerKey) &&
@@ -564,8 +578,8 @@ fun ArtworkImage(
             currentMemoryKey(key)
     }
     val keyIndex = if (backdrop) BackdropArtworkKeys else CardArtworkKeys
-    val cachedKey = remember(currentModel, continuityKey, backdrop, refreshRevision, cacheIdentity, headerKey) {
-        currentModel?.let { model -> keyIndex.cachedKey(model, ::currentMemoryKey) }
+    val cachedKey = remember(indexModel, sharpKey, continuityKey, backdrop, refreshRevision, cacheIdentity, headerKey) {
+        indexModel?.let { model -> keyIndex.cachedKey(model, ::currentMemoryKey) }
             ?: continuityKey
     }
     // The key can outlive the bitmap. A miss must still show the pulse; Coil's placeholder
@@ -578,10 +592,10 @@ fun ArtworkImage(
         !com.ambient.tv.ui.mobile.LocalHandheldUi.current && hasModel && !shownFromMemory
     // Keep admission once granted. A focus change restarts only a request still waiting in the
     // gate, which lets the newly focused card jump ahead without restarting an active load.
-    var loadAdmitted by remember(currentModel) {
+    var loadAdmitted by remember(currentModel, sharpKey) {
         mutableStateOf(shownFromMemory || loadUncached && !staggerThisLoad)
     }
-    LaunchedEffect(currentModel, staggerThisLoad, prioritizeUncached, loadUncached, shownFromMemory) {
+    LaunchedEffect(currentModel, sharpKey, staggerThisLoad, prioritizeUncached, loadUncached, shownFromMemory) {
         if (shownFromMemory) {
             loadAdmitted = true
         } else if (!loadAdmitted && loadUncached) {
@@ -606,7 +620,7 @@ fun ArtworkImage(
     val cardSize = remember(cap1080, density) { if (cap1080) CardImage1080SizeResolver(density) else null }
     // A successful painter keeps its request during an outage/recovery. Only failed/in-flight
     // images retry; otherwise every visible poster would briefly re-enter its loading state.
-    var successfulNetwork by remember(currentModel, refreshRevision, address?.imageKey, headerKey) {
+    var successfulNetwork by remember(currentModel, sharpKey, refreshRevision, address?.imageKey, headerKey) {
         mutableStateOf<com.ambient.tv.network.ArtworkNetworkState?>(null)
     }
     val requestNetwork = successfulNetwork ?: network
@@ -615,7 +629,7 @@ fun ArtworkImage(
         reducedEffects = LocalPerformanceProfile.current.reducedEffects,
         cachedInMemory = shownFromMemory,
     )
-    val request = remember(currentModel, context, headers, constrainDecode, cardSize, fadeMillis, refreshRevision, address?.imageKey, headerKey, requestNetwork, cacheOnly) {
+    val request = remember(currentModel, sharpKey, context, headers, constrainDecode, cardSize, fadeMillis, refreshRevision, address?.imageKey, headerKey, requestNetwork, cacheOnly) {
         ImageRequest.Builder(context).data(currentModel)
             .apply { if (fadeMillis > 0) crossfade(fadeMillis) else crossfade(false) }
             .placeholderMemoryCacheKey(cachedKey)
@@ -624,6 +638,8 @@ fun ArtworkImage(
                 // identical layout constraints; global URL aliases could incorrectly reuse a
                 // small tile bitmap for a large detail/backdrop request.
                 if (continuityKey != null) memoryCacheKey(continuityKey)
+                // Changes to the sharp key must restart the painter even for the same URL.
+                scopedSharpKey?.let { memoryCacheKey(it) }
                 artworkRefreshRevision(refreshRevision)
                 memoryCacheKeyExtra(com.ambient.tv.network.MEDIA_ARTWORK_IDENTITY_EXTRA, address?.imageKey)
                 memoryCacheKeyExtra(com.ambient.tv.network.MEDIA_ARTWORK_HEADERS_EXTRA, headerKey)
@@ -639,17 +655,17 @@ fun ArtworkImage(
             .artworkNetworkAccess(requestNetwork, cacheOnly)
             .build()
     }
-    var loading by remember(currentModel) { mutableStateOf(hasModel && !shownFromMemory) }
+    var loading by remember(currentModel, sharpKey) { mutableStateOf(hasModel && !shownFromMemory) }
     // Keep the existing pulse *behind* the newly decoded image while Coil fades it in.
     // Otherwise dismissing the pulse on success exposes a dark frame at fade alpha = 0.
-    var fadeBackground by remember(currentModel, refreshRevision, address?.imageKey, headerKey) { mutableStateOf(false) }
+    var fadeBackground by remember(currentModel, sharpKey, refreshRevision, address?.imageKey, headerKey) { mutableStateOf(false) }
     if (fadeBackground) {
         LaunchedEffect(currentModel, fadeMillis) {
             delay(fadeMillis.toLong())
             fadeBackground = false
         }
     }
-    var failed by remember(candidates) { mutableStateOf(false) }
+    var failed by remember(candidates, sharpKey) { mutableStateOf(false) }
     var visibleFraction by remember(currentModel, headers, refreshRevision, address?.imageKey) { mutableStateOf<Float?>(null) }
     var focusRevision by remember(currentModel, headers, refreshRevision, address?.imageKey) { mutableStateOf<String?>(null) }
     val focusModel = (currentModel as? String)?.takeIf { focusCrop && contentScale == ContentScale.Crop }
@@ -683,7 +699,7 @@ fun ArtworkImage(
                     val pictureIdentity = (currentModel as? String)?.substringBefore('?') ?: requestIdentity
                     if (!backdrop && source != coil3.decode.DataSource.MEMORY_CACHE &&
                         source != coil3.decode.DataSource.MEMORY) {
-                        val known = keyIndex.keys(currentModel)
+                        val known = keyIndex.keys(indexModel ?: currentModel)
                         val urlChanged = keyIndex.modelChanged(pictureIdentity, currentModel)
                         if (known.isNotEmpty() || urlChanged) {
                             val cache = imageLoader.memoryCache
@@ -699,7 +715,7 @@ fun ArtworkImage(
                         }
                     } else keyIndex.modelChanged(pictureIdentity, currentModel)
                     if (key != null) {
-                        keyIndex.remember(currentModel, key)
+                        keyIndex.remember(indexModel ?: currentModel, key)
                         continuity.model = currentModel
                         continuity.identity = requestIdentity
                         continuity.memoryKey = key

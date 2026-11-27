@@ -337,6 +337,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 }
             }
         }
+        if (everything || changedMessages.isNotEmpty()) artworkChangedListener?.invoke()
         // Newer last-message dates for loaded dialogs. The catalog's last entry is the paging
         // offset for loadMoreChats and stays untouched.
         val lastIndex = chats.size - 1
@@ -349,6 +350,9 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             }
         }
     }
+
+    @Volatile private var artworkChangedListener: (() -> Unit)? = null
+    override fun setArtworkChangedListener(listener: (() -> Unit)?) { artworkChangedListener = listener }
 
     @Volatile private var sessionLostListener: ((String) -> Unit)? = null
     override fun setSessionLostListener(listener: ((String) -> Unit)?) { sessionLostListener = listener }
