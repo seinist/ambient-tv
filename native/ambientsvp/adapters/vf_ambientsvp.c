@@ -117,6 +117,15 @@ static bool packed_output(struct mp_image *out, int w, int h, size_t bytes) {
     return (uintptr_t)out->planes[1] == y+luma
         && (uintptr_t)out->planes[2] == y+luma+luma/4;
 }
+static void visit_output(void *context, const uint8_t *data, size_t len) {
+    struct mp_image *out = context;
+    if (len != (size_t)out->w * out->h * 3 / 2) return;
+    for (int plane = 0, offset = 0; plane < 3; plane++) {
+        int w = out->w >> (plane != 0), h = out->h >> (plane != 0);
+        svp_copy_plane(out->planes[plane], out->stride[plane], data + offset, w, w, h);
+        offset += w*h;
+    }
+}
 static bool receive(struct mp_filter *f) {
     struct priv *p = f->priv;
     if (!p->engine || !p->reference) return false;
@@ -124,18 +133,16 @@ static bool receive(struct mp_filter *f) {
     if (!out) { p->api.bypass(p->engine, 3); return false; }
     bool direct = packed_output(out, p->width, p->height, p->bytes);
     int64_t pts;
-    int r = p->api.receive(p->engine, direct ? out->planes[0] : p->buffer, p->bytes, &pts, p->eof);
+    bool visit = !direct && p->api.receive_visit;
+    int r = visit ? p->api.receive_visit(p->engine, out, visit_output, &pts, p->eof)
+                  : p->api.receive(p->engine, direct ? out->planes[0] : p->buffer, p->bytes, &pts, p->eof);
     if (r <= 0) {
         talloc_free(out);
         if (r < 0) p->api.bypass(p->engine, 3);
         return false;
     }
     mp_image_copy_attributes(out, p->reference);
-    if (!direct) for (int plane = 0, offset = 0; plane < 3; plane++) {
-        int w = p->width >> (plane != 0), h = p->height >> (plane != 0);
-        svp_copy_plane(out->planes[plane], out->stride[plane], p->buffer + offset, w, w, h);
-        offset += w*h;
-    }
+    if (!direct && !visit) visit_output(out, p->buffer, p->bytes);
     out->pts = pts / 1000000.0;
     AmbientSvpStats stats = {0}; p->api.stats(p->engine, &stats);
     out->pkt_duration = 1.0 / (stats.bypass_reason ? p->opts->source : p->opts->fps);
