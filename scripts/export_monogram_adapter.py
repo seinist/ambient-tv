@@ -14,7 +14,7 @@ CLASSES = tuple("com/ambient/tv/data/telegram/" + name for name in (
     "AmbientMonogramJni", "AmbientMonogramJniFailure",
 ))
 ENTRY = CLASSES[0] + ".class"
-REQUIRED = (ENTRY, CLASSES[1] + ".class", "com/sun/jna/Native.class",
+REQUIRED = (ENTRY, CLASSES[1] + ".class", CLASSES[3] + ".class", "com/sun/jna/Native.class",
             "org/monogram/mtproto/MtprotoNativeLoader.class")
 
 
