@@ -60,6 +60,12 @@ int main() {
     assert(raw_p010_format(VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16));
     assert(!raw_p010_format(VK_FORMAT_UNDEFINED));
     assert(!raw_p010_format(VK_FORMAT_G8_B8R8_2PLANE_420_UNORM));
+    assert(raw_p010_extent_valid(1920, 1088));
+    assert(raw_p010_extent_valid(3840, 2160));
+    assert(!raw_p010_extent_valid(0, 1080));
+    assert(!raw_p010_extent_valid(1920, 0));
+    assert(!raw_p010_extent_valid(1919, 1080));
+    assert(!raw_p010_extent_valid(1920, 1079));
     const auto features = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_MIDPOINT_CHROMA_SAMPLES_BIT;
     assert(raw_p010_features(features, VK_CHROMA_LOCATION_MIDPOINT, VK_CHROMA_LOCATION_MIDPOINT));
     assert(!raw_p010_features(features, VK_CHROMA_LOCATION_MIDPOINT, VK_CHROMA_LOCATION_COSITED_EVEN));
