@@ -161,6 +161,82 @@ mod android{
             }
         })).unwrap_or(-1)
     }
+
+    #[cfg(test)]
+    mod device_tests{
+        use super::*;
+        #[link(name="android")]
+        unsafe extern "C"{
+            fn AHardwareBuffer_allocate(desc:*const Desc,out:*mut *mut c_void)->i32;
+        }
+
+        #[test]
+        #[ignore="requires Android API29+ and CPU-mappable YUV420 AHardwareBuffer allocation"]
+        fn hardware_buffer_roundtrip_matches_native_i420_stream(){
+            let c=crate::Config{abi:crate::AMBIENTSVP_ABI,width:96,height:66,
+                source_num:24,source_den:1,target_num:48,target_den:1,preset:1,backend:1,
+                threads:2,artifacts:0,scene:0,algo:13,block:16,overlap:2,pel:1,search:1};
+            let desc=Desc{width:100,height:70,layers:1,format:FORMAT_YUV420,
+                usage:3|0x30,stride:0,rfu0:0,rfu1:0};
+            let allocate=||{
+                let mut raw=ptr::null_mut();
+                assert_eq!(unsafe{AHardwareBuffer_allocate(&desc,&mut raw)},0,
+                    "device cannot allocate CPU-mappable YUV420");
+                assert!(!raw.is_null());
+                Buffer(raw)
+            };
+            let input=allocate();
+            let output=allocate();
+            let mut reference=AmbientSvp::new(c).unwrap();
+            let mut hardware=AmbientSvp::new(c).unwrap();
+            let mut expected=vec![0;reference.frame_len()];
+            let mut actual=expected.clone();
+            let mut received=0u32;
+
+            // Unsignaled borrowed producer fence must not advance input.
+            let mut fds=[-1;2];
+            assert_eq!(unsafe{libc::pipe(fds.as_mut_ptr())},0);
+            let r=unsafe{ambient_svp_push_ahardwarebuffer(&mut hardware,input.0,2,2,fds[0],0)};
+            assert_eq!(r,UNAVAILABLE);
+            assert_eq!(hardware.stats().input_frames,0);
+            // The caller still owns both descriptors.
+            assert_eq!(unsafe{libc::close(fds[0])},0);
+            assert_eq!(unsafe{libc::close(fds[1])},0);
+
+            let mut drain=|reference:&mut AmbientSvp,hardware:&mut AmbientSvp,eof:bool|{
+                loop{
+                    let mut pts=0;
+                    let result=reference.receive(&mut expected,eof).unwrap();
+                    let hw_result=unsafe{ambient_svp_receive_ahardwarebuffer(hardware,output.0,
+                        2,2,-1,ptr::null_mut(),&mut pts,i32::from(eof))};
+                    let Some(expected_pts)=result else{assert_eq!(hw_result,0);break;};
+                    assert_eq!(hw_result,1);
+                    assert_eq!(pts,expected_pts);
+                    let mut lock=unsafe{Lock::new(output.0,-1,2,2,c.width,c.height,false)}.unwrap();
+                    assert!(unsafe{transfer(&lock.planes,lock.regions,actual.as_mut_ptr(),actual.len(),false)});
+                    assert!(lock.unlock(ptr::null_mut()));
+                    assert!(expected==actual,"hardware output differs at {pts}");
+                    received+=1;
+                }
+            };
+            for n in 0..4{
+                let pts=i64::from(n)*1_000_000/24;
+                let mut raw=vec![128;reference.frame_len()];
+                for y in 0..c.height as usize{for x in 0..c.width as usize{
+                    raw[y*c.width as usize+x]=((x*3+y*5+n as usize*7)%220+16) as u8;
+                }}
+                let mut lock=unsafe{Lock::new(input.0,-1,2,2,c.width,c.height,true)}.unwrap();
+                assert!(unsafe{transfer(&lock.planes,lock.regions,raw.as_mut_ptr(),raw.len(),true)});
+                assert!(lock.unlock(ptr::null_mut()));
+                reference.push(&raw,pts).unwrap();
+                assert_eq!(unsafe{ambient_svp_push_ahardwarebuffer(&mut hardware,input.0,2,2,-1,pts)},0);
+                drain(&mut reference,&mut hardware,false);
+            }
+            drain(&mut reference,&mut hardware,true);
+            assert_eq!(received,8);
+            assert_eq!(hardware.stats().bypass_reason,0);
+        }
+    }
 }
 
 #[cfg(test)]
