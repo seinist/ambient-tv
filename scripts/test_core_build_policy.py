@@ -57,24 +57,59 @@ class CoreBuildPolicyTest(unittest.TestCase):
                 audit_commands(log.replace(flag, ""), "optimized-a57")
 
     def test_mupen_native_offset_helper(self):
+        import subprocess
         marker = "ASM_DEFINES_OBJ := $(LOCAL_OBJS_DIR)/$(call get-object-name,$(CORE_DIR)/src/asm_defines/asm_defines.c)"
         generator = "\t\t-f $(CORE_DIR)/tools/gen_asm_defines.awk"
         original = marker + "\n$(ASM_DEFINES_NASM): $(ASM_DEFINES_OBJ)\n" + generator + "\n"
+        # Reproduce the NDK's delayed evaluation: Android.mk is parsed first,
+        # then ev-compile-c-source creates actual target-specific flags.
+        template = """define ev-compile-c-source
+_SRC := $(1)
+_OBJ := $(2)
+_FLAGS := -O3 -flto=thin -mtune=cortex-a57 -c
+_TEXT := Compile $$(notdir $$(_SRC))
+$$(eval $$(call ev-build-source-file))
+endef
+
+define ev-build-source-file
+$(_OBJ): PRIVATE_CFLAGS := $(_FLAGS)
+$(_OBJ):
+	@echo $$(PRIVATE_CFLAGS)
+endef
+"""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "jni").mkdir()
             recipe = root / "jni/Android.mk"
-            for profile in ("baseline", "optimized", "optimized-a57", "thinlto"):
+            definitions = root / "build/core/definitions.mk"
+            definitions.parent.mkdir(parents=True)
+            with patch.dict("os.environ", {"NDK": str(root)}):
+                for profile in ("baseline", "optimized", "optimized-a57", "thinlto"):
+                    recipe.write_text(original)
+                    definitions.write_text(template)
+                    prepare_ndk(root, "mupen64plus_next_gles3", profile)
+                    if profile == "baseline":
+                        self.assertEqual(recipe.read_text(), original)
+                        self.assertEqual(definitions.read_text(), template)
+                    else:
+                        self.assertIn("test -s $(ASM_DEFINES_NASM) && test -s $(ASM_DEFINES_GAS)", recipe.read_text())
+                    makefile = root / "Makefile"
+                    makefile.write_text(definitions.read_text() + """
+$(eval $(call ev-compile-c-source,/repo/mupen64plus-core/src/asm_defines/asm_defines.c,offsets))
+$(eval $(call ev-compile-c-source,/repo/mupen64plus-core/src/device/core.c,emulator))
+$(eval $(call ev-compile-c-source,/repo/other/asm_defines.c,unrelated))
+all: offsets emulator unrelated
+""")
+                    output = subprocess.check_output(["make", "--no-print-directory", "-f", str(makefile), "all"], text=True).splitlines()
+                    common = "-O3 -flto=thin -mtune=cortex-a57 -c"
+                    self.assertEqual(output, [common + (" -fno-lto" if profile != "baseline" else ""), common, common])
                 recipe.write_text(original)
-                prepare_ndk(root, "mupen64plus_next_gles3", profile)
-                if profile == "baseline":
-                    self.assertEqual(recipe.read_text(), original)
-                else:
-                    self.assertIn("$(ASM_DEFINES_OBJ): private PRIVATE_CFLAGS += -fno-lto", recipe.read_text())
-                    self.assertIn("test -s $(ASM_DEFINES_NASM) && test -s $(ASM_DEFINES_GAS)", recipe.read_text())
-            recipe.write_text("changed")
-            with self.assertRaises(ValueError):
-                prepare_ndk(root, "mupen64plus_next_gles3", "optimized")
+                definitions.write_text("changed")
+                with self.assertRaisesRegex(ValueError, "NDK C compilation template"):
+                    prepare_ndk(root, "mupen64plus_next_gles3", "optimized")
+                recipe.write_text("changed")
+                with self.assertRaises(ValueError):
+                    prepare_ndk(root, "mupen64plus_next_gles3", "optimized")
         for profile in ("optimized", "optimized-a57"):
             flags = "-O3 -flto=thin" + (" -mtune=cortex-a57" if profile == "optimized-a57" else "")
             helper = f"clang {flags} -fno-lto -c src/mupen64plus-core/src/asm_defines/asm_defines.c -o offsets.o\n"

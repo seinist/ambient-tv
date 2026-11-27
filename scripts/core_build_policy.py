@@ -316,18 +316,40 @@ def prepare_cmake(root, core, profile):
 
 
 def prepare_mupen_offsets(root):
+    import os
     path = root / "jni" / "Android.mk"
     source = path.read_text()
     marker = "ASM_DEFINES_OBJ := $(LOCAL_OBJS_DIR)/$(call get-object-name,$(CORE_DIR)/src/asm_defines/asm_defines.c)"
     generator = "\t\t-f $(CORE_DIR)/tools/gen_asm_defines.awk"
     if source.count(marker) != 1 or source.count(generator) != 1:
         raise ValueError("Mupen64Plus native offset generation recipe changed; inspect pinned source")
-    # ndk-build sets PRIVATE_CFLAGS on each object in BUILD_SHARED_LIBRARY.
-    # Append only on this target, without propagating to its prerequisites.
-    source = source.replace(marker, marker + "\n"
-        "$(ASM_DEFINES_OBJ): private PRIVATE_CFLAGS += -fno-lto")
+    # Android.mk is read before ndk-build emits its object-specific flags.
+    # Appending PRIVATE_CFLAGS here was overwritten by ev-build-file.
+    # Patch the isolated runner's NDK C compile template before it emits
+    # either its direct command or response file. All other sources are unchanged.
+    ndk = os.environ.get("NDK")
+    if not ndk:
+        raise ValueError("NDK must point to the installed Android NDK for Mupen64Plus offset generation")
+    definitions = Path(ndk) / "build" / "core" / "definitions.mk"
+    contents = definitions.read_text()
+    opening = "define ev-compile-c-source\n"
+    if contents.count(opening) != 1:
+        raise ValueError("NDK C compilation template changed")
+    start = contents.index(opening)
+    end = contents.index("\nendef", start)
+    template = contents[start:end]
+    anchor = "_TEXT := Compile "
+    if template.count(anchor) != 1 or "_FLAGS :=" not in template or "ev-build-source-file" not in template:
+        raise ValueError("NDK C compiler flag recipe changed")
+    # The double dollars survive make's call/eval pass, so _SRC refers
+    # to this specific invocation, not the last compiled file.
+    flags = "_FLAGS += $$(if $$(filter %/mupen64plus-core/src/asm_defines/asm_defines.c,$$(_SRC)),-fno-lto)"
+    if flags not in template:
+        template = template.replace(anchor, flags + "\n" + anchor)
+        definitions.write_text(contents[:start] + template + contents[end:])
     source = source.replace(generator, generator + "\n"
-        "\t@test -s $(ASM_DEFINES_NASM) && test -s $(ASM_DEFINES_GAS)")
+        "\t@test -s $(ASM_DEFINES_NASM) && test -s $(ASM_DEFINES_GAS) || "
+        "{ echo 'Mupen64Plus native offset headers missing' >&2; exit 1; }")
     path.write_text(source)
 
 
