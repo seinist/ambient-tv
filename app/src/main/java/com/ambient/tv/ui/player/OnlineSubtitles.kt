@@ -300,6 +300,8 @@ private fun OnlineSubtitleDialog(viewModel: OnlineSubtitlesViewModel, info: Subt
 
 /** Settings › Playback › Subtitles: the user's own OpenSubtitles API key and account. */
 @Composable
+// Keep value-based password masking while the field uses the existing editing API.
+@Suppress("DEPRECATION")
 fun OpenSubtitlesSettingsGroup(content: @Composable (title: String, subtitle: String, body: @Composable () -> Unit) -> Unit) {
     val viewModel: OnlineSubtitlesViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
     val settings by viewModel.settings.collectAsState()

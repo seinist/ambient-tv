@@ -638,6 +638,7 @@ internal class UiRenderResolutionAudit(
     }
 
     @Composable
+    @Suppress("DEPRECATION") // Exercise an editor that uses the value-based text API.
     private fun CompanionAuditEditor(text: MutableState<String>, onFocusChanged: (Boolean) -> Unit) {
         val focus = remember { FocusRequester() }
         val keyboard = LocalSoftwareKeyboardController.current

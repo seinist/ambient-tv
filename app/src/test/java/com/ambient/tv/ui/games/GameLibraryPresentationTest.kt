@@ -29,7 +29,7 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import com.ambient.tv.util.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -323,9 +323,7 @@ class GameLibraryPresentationTest {
         // Sorting follows layout, density and title controls in the scrollable common panel.
         rule.onNodeWithText(rule.activity.getString(R.string.library_sort)).performScrollTo().assertIsDisplayed()
         rule.onNode(action(R.string.library_filter_bar)).performScrollTo()
-            .performSemanticsAction(SemanticsActions.RequestFocus) { it() }
-        rule.waitForIdle()
-        press(AndroidKeyEvent.KEYCODE_DPAD_CENTER)
+            .performSemanticsAction(SemanticsActions.OnClick) { it() }
         rule.runOnIdle { assertTrue(fixture.filterBarShown) }
         rule.onNodeWithTag("games-sort-bar").assertIsDisplayed()
         rule.runOnUiThread { rule.activity.onBackPressedDispatcher.onBackPressed() }

@@ -141,6 +141,8 @@ internal fun GamesPlay(includeRumble: Boolean = true) {
 
 /** RetroAchievements account (token only, in encrypted storage) and play options. */
 @Composable
+// Keep value-based password masking while the field uses the existing editing API.
+@Suppress("DEPRECATION")
 internal fun GamesRetroAchievements() {
     val client = gamesEntryPoint().retroAchievements()
     val scope = rememberCoroutineScope()

@@ -175,7 +175,7 @@ class TvheadendPlayerViewModel @Inject constructor(
         if (ready == null || sourceSystem != "tvheadend" || kind != "channel" || ready.playingRecording != null ||
             ready.channel?.kind == LiveTvChannelKind.RADIO || !ready.source.isLive ||
             route == null || snapshot.metadata?.route != route ||
-            snapshot.metadata?.sourceAccessIdentity != sourceIdentity || snapshot.replacingSource ||
+            snapshot.metadata.sourceAccessIdentity != sourceIdentity || snapshot.replacingSource ||
             changingChannel || seekJob?.isActive == true || recoveryJob?.isActive == true ||
             fallbackJob?.isActive == true || handle == null || !snapshot.wantsToPlay ||
             !handle.requestedPlayIntent() || com.ambient.tv.ui.player.playbackProfileAudio(handle)?.audioOnly == true ||

@@ -9,6 +9,8 @@ import com.ambient.tv.R
 import com.ambient.tv.ui.common.TvActionButton
 
 @Composable
+// Keep the controlled slider value across remote updates and drag events.
+@Suppress("DEPRECATION")
 internal fun CompanionPlaybackOptions(manager: CompanionManager, frame: CompanionFrame) {
     com.ambient.tv.ui.mobile.DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         if ("previous" in frame.capabilities) TvActionButton(stringResource(R.string.companion_previous), { manager.playbackCommand("previous", frame) })

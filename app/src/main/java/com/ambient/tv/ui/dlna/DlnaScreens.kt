@@ -566,7 +566,7 @@ private fun DlnaNodeRow(
     val size = resource?.size?.takeIf { it > 0 }?.let(formatSize).orEmpty()
     if (LocalHandheldUi.current) {
         androidx.compose.material3.ListItem(
-            headlineContent = { Text(node.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            content = { Text(node.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
             supportingContent = duration.takeIf { it.isNotEmpty() }?.let { value -> { Text(value) } },
             leadingContent = { DlnaRowArtwork(node, Modifier.size(56.dp, 36.dp)) },
             trailingContent = size.takeIf { it.isNotEmpty() }?.let { value -> { Text(value, style = MaterialTheme.typography.bodySmall) } },

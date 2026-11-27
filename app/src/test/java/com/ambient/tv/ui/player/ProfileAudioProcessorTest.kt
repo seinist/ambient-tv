@@ -11,6 +11,8 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ProfileAudioProcessorTest {
+    // Exercise the legacy API explicitly.
+    @Suppress("DEPRECATION")
     private fun process(samples: ShortArray, channels: Int, options: AudioOptions, routeChannels: Int = 8, channelMask: Int = -1): Pair<Int, ShortArray> {
         val session = AudioSession(AppPreferences(memoryPreferences()), "media3", false)
         session.route = AudioRouteCapabilities(pcmChannels = routeChannels)

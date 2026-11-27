@@ -529,7 +529,7 @@ class TvheadendRepository @Inject constructor(
                 Socket().use { socket ->
                     // The watcher owns cancellation of this exact probe, including a
                     // blocked connect/read/write. The ordinary HTSP path remains unchanged.
-                    BrowseWorkBudget.interruptOnGameStart({ runCatching { socket.close() }; Unit }, epoch) {
+                    BrowseWorkBudget.interruptOnGameStart({ runCatching { socket.close() } }, epoch) {
                         TvheadendHtspHbbtv.discover(socket, host, port, username,
                             password, shouldContinue = shouldContinue)
                             .mapValues { (_, apps) ->

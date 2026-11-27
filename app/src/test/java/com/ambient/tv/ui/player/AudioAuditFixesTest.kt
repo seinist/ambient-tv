@@ -135,6 +135,8 @@ class AudioAuditFixesTest {
     }
 
     // A-G4
+    // Exercise the legacy API explicitly.
+    @Suppress("DEPRECATION")
     @Test fun dtsXIsNotSentAsDtsHd() {
         assertNull(Media3AudioProcessing.codecKey(MimeTypes.AUDIO_DTS_X))
         assertEquals("dts-hd", Media3AudioProcessing.codecKey(MimeTypes.AUDIO_DTS_HD))
