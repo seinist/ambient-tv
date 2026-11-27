@@ -32,8 +32,10 @@ Kotlin facades and `tlottie`/`rxing`/`flate2` dependency declarations
 The actual MTProto `mono-rs` transport, auth, session, chat metadata and
 media fetching remain intact; broader mono-rs functionality cannot all be
 safely removed without independent, reviewed upstream feature work. The
-upstream Rust release already uses `opt-level="z"`, full LTO, stripping and
-`panic="abort"`. R8 also shrinks Kotlin/Java code in release APKs.
+upstream Rust release uses `opt-level="z"`. Ambient TV selects a portable
+speed-oriented `opt-level=2` by default (compare `MONOGRAM_OPT_LEVEL=3` or
+`z`), retaining full LTO, one codegen unit, stripping and `panic="abort"`.
+R8 also shrinks Kotlin/Java code in release APKs.
 The saved native bytes from this trim must be confirmed by a passing four-ABI
 CI rebuild and compared with the previously recorded raw ELF figures.
 
@@ -113,8 +115,10 @@ an arbitrary commit. Upstream publishes every release as a *pre-release*
 
 `scripts/build_monogram_native.sh` fetches only the tag, and fails if the tag
 no longer points to `MONOGRAM_REF` or the submodule is not at
-`MONOGRAM_MONO_RS_REF`. The AAR stamp records `version=`, `ref=`, `abis=` and
-`patch=`; the app build fails if the AAR was built for another release.
+`MONOGRAM_MONO_RS_REF`. The AAR stamp records `version=`, `ref=`, `abis=`, `patch=`,
+`builder=`, `build_config=` and `opt_level=`; stale builds are rejected.
+The build configuration includes the Rust compiler and effective Rust flags.
+Do not globally enable optional CPU instructions on portable ABI builds.
 `./build.sh libs-check` asks the GitHub releases API for the newest published
 release (pre-releases included) and prints its tag, commit, mono-rs commit and
 rustls version together with the other managed libraries. `./build.sh libs-update`
@@ -289,3 +293,26 @@ of the optional Rust/UniFFI path, full Android device playback, ABI size or
 licensing approval. Before release: build arm64/armv7/x86/x86_64; instrument
 QR, code, 2FA, logout, session restore and media seeking; inspect ABI APK
 size with `apkanalyzer`; test background playback and session/cache cleanup.
+
+
+## Native streaming performance
+
+Ambient TV's versioned source patch adds a bounded 512 KiB in-memory origin
+range sink to mono-rs, preserving existing authentication, file-reference
+refresh, migration, flood handling, cancellation and session-lease publication.
+Inline and CDN responses retain the existing file fallback. The UniFFI
+byte-array export avoids a native payload write and Kotlin payload re-read;
+the app can persist a single atomic cache copy. A direct JNI buffer is not
+required for correctness and should be considered only after measuring the
+remaining UniFFI marshalling cost. No global CPU-feature assumptions are added.
+
+A sequential read grows a bounded prefetch window from one to three parts;
+a discontinuous seek discards it. Preview and individual streaming ranges
+use single wire requests per lane, while known large complete user downloads
+may pipeline up to four parts. The chunk cache tracks LRU order incrementally.
+The encrypted metadata snapshot retains a bounded in-memory parsed cache.
+
+Benchmark on Shield and a phone: first frame, random and forward seek latency,
+sustained 1080p/4K throughput, concurrent thumbnail load, native and Java heap,
+GC, disk writes, and release APK delta per ABI. Compare the three compiler
+profiles before raising the portable default; keep the existing APK size gate.

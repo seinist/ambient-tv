@@ -16,7 +16,7 @@ changes = {}
 
 # GPL-3.0 section 5a: modified files carry a prominent notice with a relevant date.
 # The date is fixed (not the build date) so repeated builds stay reproducible.
-MODIFICATION_DATE = "2026-11-01"
+MODIFICATION_DATE = "2026-11-27"
 NOTICE_MARKER = "Modified by Ambient TV, "
 COMMENT_PREFIX = {".rs": "//", ".kt": "//", ".toml": "#"}
 MODIFICATIONS = {
@@ -27,7 +27,15 @@ MODIFICATIONS = {
     "vendor/mono-rs/crates/mono-proto-client/src/dispatch.rs":
         "added leave_chat and search_global_channels dispatch",
     "native/mtproto-rs/src/ffi.rs":
-        "added leave_chat and search_global_filtered exports; removed sticker, VPX, waveform and QR exports",
+        "added leave_chat, search_global_filtered and bounded in-memory media ranges; removed unused exports",
+    "vendor/mono-rs/crates/mono-proto-media/src/download.rs":
+        "added scoped bounded in-memory range output with existing session publication",
+    "vendor/mono-rs/crates/mono-proto-media/src/profile.rs":
+        "bounded preview and playing request windows independently of full file downloads",
+    "vendor/mono-rs/crates/mono-proto-client/src/media_download.rs":
+        "kept unknown-size and small full downloads on a single request window",
+    "vendor/mono-rs/crates/mono-proto-crypto/src/message.rs":
+        "removed fixed-size KDF heap allocations and reused authenticated plaintext allocation",
     "native/mtproto-rs/src/lib.rs":
         "removed sticker, VPX, waveform and QR modules",
     "native/mtproto-rs/Cargo.toml":
@@ -327,6 +335,304 @@ for relative, expected in unused_wrappers.items():
     if wrapper.exists() and expected not in wrapper.read_text(encoding="utf-8"):
         raise SystemExit(f"Unexpected pinned Kotlin facade in {relative}")
 
+
+# Native performance patch: the original range RPC, reference refresh, DC migration,
+# CDN fallback and session-lease checks remain authoritative. Only the bounded
+# origin range's output sink changes; file downloads keep their original path.
+range_output = "vendor/mono-rs/crates/mono-proto-media/src/download.rs"
+add_before(range_output, "pub struct StagedDownload {", """// Scoped to a single synchronous range RPC and its exact private destination.
+struct AmbientRangeCapture {
+    destination: std::path::PathBuf,
+    staged: Option<(std::path::PathBuf, Vec<u8>)>,
+    published: bool,
+}
+std::thread_local! {
+    static AMBIENT_RANGE: std::cell::RefCell<Option<AmbientRangeCapture>> =
+        const { std::cell::RefCell::new(None) };
+}
+pub fn ambient_capture_range<T>(
+    destination: &std::path::Path,
+    work: impl FnOnce() -> Result<T, MtprotoError>,
+) -> Result<(T, Option<Vec<u8>>), MtprotoError> {
+    AMBIENT_RANGE.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_some() {
+            return Err(MtprotoError::Message("nested media range capture".into()));
+        }
+        *slot = Some(AmbientRangeCapture {
+            destination: destination.to_owned(), staged: None, published: false,
+        });
+        Ok(())
+    })?;
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) { AMBIENT_RANGE.with(|slot| { slot.borrow_mut().take(); }); }
+    }
+    let _reset = Reset;
+    let result = work()?;
+    let payload = AMBIENT_RANGE.with(|slot| {
+        slot.borrow_mut().take().and_then(|capture| {
+            if capture.published { capture.staged.map(|(_, bytes)| bytes) } else { None }
+        })
+    });
+    Ok((result, payload))
+}
+fn ambient_begin_range(destination: &std::path::Path) -> bool {
+    AMBIENT_RANGE.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if let Some(capture) = slot.as_mut().filter(|c| c.destination == destination) {
+            capture.staged = None;
+            capture.published = false;
+            true
+        } else { false }
+    })
+}
+fn ambient_stage_range(destination: &std::path::Path, stage: &std::path::Path, bytes: Vec<u8>) {
+    AMBIENT_RANGE.with(|slot| {
+        if let Some(capture) = slot.borrow_mut().as_mut().filter(|c| c.destination == destination) {
+            capture.staged = Some((stage.to_owned(), bytes));
+        }
+    });
+}
+// Called only within the existing publish_media session/connection/request guards.
+fn ambient_publish_range(destination: &std::path::Path, stage: &std::path::Path) -> bool {
+    AMBIENT_RANGE.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if let Some(capture) = slot.as_mut().filter(|c| c.destination == destination)
+            && capture.staged.as_ref().is_some_and(|(path, _)| path == stage) {
+            capture.published = true;
+            return true;
+        }
+        false
+    })
+}
+const AMBIENT_RANGE_LIMIT: u64 = 512 * 1024;
+enum AmbientRangeOutput {
+    File(std::fs::File),
+    Memory(std::io::Cursor<Vec<u8>>),
+}
+impl AmbientRangeOutput {
+    fn set_len(&mut self, len: u64) -> std::io::Result<()> {
+        match self {
+            Self::File(file) => file.set_len(len),
+            Self::Memory(cursor) if len <= AMBIENT_RANGE_LIMIT => {
+                cursor.get_mut().resize(len as usize, 0);
+                Ok(())
+            }
+            Self::Memory(_) => Err(std::io::Error::other("oversized captured media range")),
+        }
+    }
+}
+impl std::io::Seek for AmbientRangeOutput {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        match self {
+            Self::File(file) => std::io::Seek::seek(file, pos),
+            Self::Memory(cursor) => std::io::Seek::seek(cursor, pos),
+        }
+    }
+}
+impl std::io::Write for AmbientRangeOutput {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Self::File(file) => std::io::Write::write(file, bytes),
+            Self::Memory(cursor) => {
+                if cursor.position().checked_add(bytes.len() as u64)
+                    .is_none_or(|end| end > AMBIENT_RANGE_LIMIT) {
+                    return Err(std::io::Error::other("oversized captured media range"));
+                }
+                std::io::Write::write(cursor, bytes)
+            }
+        }
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::File(file) => std::io::Write::flush(file),
+            Self::Memory(_) => Ok(()),
+        }
+    }
+}
+#[cfg(test)]
+mod ambient_range_tests {
+    use super::*;
+    #[test]
+    fn only_published_exact_destination_and_stage_are_returned() {
+        let dest = std::path::Path::new("ambient-range");
+        let stage = std::path::Path::new("ambient-stage");
+        let (_, payload) = ambient_capture_range(dest, || {
+            assert!(ambient_begin_range(dest));
+            ambient_stage_range(dest, stage, vec![1, 2, 3]);
+            assert!(!ambient_publish_range(dest, std::path::Path::new("other-stage")));
+            assert!(ambient_publish_range(dest, stage));
+            Ok(())
+        }).unwrap();
+        assert_eq!(payload, Some(vec![1, 2, 3]));
+        let (_, payload) = ambient_capture_range(dest, || {
+            assert!(ambient_begin_range(dest));
+            ambient_stage_range(dest, stage, vec![1]);
+            assert!(ambient_begin_range(dest)); // retry invalidates old staging
+            Ok(())
+        }).unwrap();
+        assert!(payload.is_none());
+        assert!(!ambient_begin_range(dest));
+    }
+    #[test]
+    fn captured_output_is_bounded() {
+        use std::io::{Seek, SeekFrom, Write};
+        let mut out = AmbientRangeOutput::Memory(std::io::Cursor::new(Vec::new()));
+        out.seek(SeekFrom::Start(AMBIENT_RANGE_LIMIT - 1)).unwrap();
+        assert!(out.write_all(&[1, 2]).is_err());
+        assert!(out.set_len(AMBIENT_RANGE_LIMIT + 1).is_err());
+    }
+}
+""", "struct AmbientRangeCapture")
+amend(range_output,
+      "        remove_staging_sidecars(&self.path);\n        fs::rename(&self.path, destination)",
+      """        if ambient_publish_range(destination, &self.path) {
+            // The empty private staging file is cleaned by Drop; the authenticated
+            // payload has never been written to it.
+            return Ok(destination.display().to_string());
+        }
+        remove_staging_sidecars(&self.path);
+        fs::rename(&self.path, destination)""")
+amend(range_output,
+      "        let mut out = if !stream && file_len > 0 {",
+      """        let mut out = if stream && ambient_begin_range(cancellation_path) {
+            AmbientRangeOutput::Memory(std::io::Cursor::new(Vec::new()))
+        } else if !stream && file_len > 0 {""")
+amend(range_output,
+      """            file
+        } else {
+            fs::File::create(dest_path).map_err(|e| MtprotoError::Message(e.to_string()))?
+        };
+        let window""",
+      """            AmbientRangeOutput::File(file)
+        } else {
+            AmbientRangeOutput::File(fs::File::create(dest_path).map_err(|e| MtprotoError::Message(e.to_string()))?)
+        };
+        let window""")
+amend(range_output,
+      """        out.flush()
+            .map_err(|e| MtprotoError::Message(e.to_string()))?;
+        Ok(())
+    })();""",
+      """        out.flush()
+            .map_err(|e| MtprotoError::Message(e.to_string()))?;
+        if let AmbientRangeOutput::Memory(cursor) = out {
+            ambient_stage_range(cancellation_path, dest_path, cursor.into_inner());
+        }
+        Ok(())
+    })();""")
+# Kotlin asks for a 512 KiB aligned range; LIMIT_INVALID may reduce the wire part
+# to 128 KiB. Keep collecting until the requested range is full or EOF is proven.
+amend(range_output,
+      """                    .min((FAST_CHUNK / chunk).max(1) as usize)""",
+      """                    .min(((origin.saturating_add(i64::from(FAST_CHUNK)) - next)
+                        .max(1) / i64::from(chunk)).max(1) as usize)""")
+amend(range_output,
+      """                if stream {
+                    break 'download;
+                }
+                if last_part {""",
+      """                if stream {
+                    if last_part || written_end >= origin.saturating_add(i64::from(FAST_CHUNK)) {
+                        break 'download;
+                    }
+                    if written_end <= next {
+                        return Err(MtprotoError::Message("incomplete media range".into()));
+                    }
+                    next = written_end;
+                    continue 'download;
+                }
+                if last_part {""")
+# Keep small and unknown-size transfers at one wire request (old latency fix).
+profile_source = "vendor/mono-rs/crates/mono-proto-media/src/profile.rs"
+amend(profile_source,
+      "        in_flight: maximum.in_flight.min(policy.pipeline_parts()),",
+      """        in_flight: match profile {
+            DownloadProfile::User => maximum.in_flight.min(policy.pipeline_parts()),
+            _ => 1,
+        },""")
+client_download = "vendor/mono-rs/crates/mono-proto-client/src/media_download.rs"
+amend(client_download,
+      "    let dest = Path::new(&dest_path);\n    let first = download_media_range_on_lane",
+      """    // Only known large, complete user downloads benefit from a wide pipeline.
+    // Preview and unknown-size requests must not send speculative requests past EOF.
+    let _small_file = (profile == media::DownloadProfile::User
+        && media.file_size.is_none_or(|size| size < 2 * 1024 * 1024))
+        .then(|| media::bind_download_profile(media::DownloadProfile::Ordinary));
+    let dest = Path::new(&dest_path);
+    let first = download_media_range_on_lane""")
+# Add the byte-returning bridge. Inline/CDN paths retain the existing file sink
+# and are read with an explicit bound; all failures propagate normally.
+add_before(ffi, "#[uniffi::export]\npub fn download_message_thumb(", """#[uniffi::export]
+pub fn download_message_media_chunk_bytes(
+    handle: u64, chat_id: i64, message_id: i32, dest_path: String, offset: i64,
+) -> Result<Vec<u8>, MtprotoError> {
+    use std::io::Read;
+    const LIMIT: usize = 512 * 1024;
+    if offset < 0 || offset % LIMIT as i64 != 0 {
+        return Err(MtprotoError::Message("invalid media range offset".into()));
+    }
+    let destination = std::path::Path::new(&dest_path);
+    let (path, captured) = proto_media::download::ambient_capture_range(destination, || {
+        mono_proto_client::media_download::download_message_media_range(
+            handle, chat_id, message_id, dest_path.clone(),
+            proto_media::location::MediaDownloadKind::Full, Some(offset),
+        )
+    })?;
+    let bytes = if let Some(bytes) = captured { bytes } else {
+        if std::path::Path::new(&path) != destination {
+            return Err(MtprotoError::Message("unexpected range destination".into()));
+        }
+        let mut bytes = Vec::with_capacity(LIMIT);
+        std::fs::File::open(destination)
+            .map_err(|e| MtprotoError::Message(e.to_string()))?
+            .take((LIMIT + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|e| MtprotoError::Message(e.to_string()))?;
+        bytes
+    };
+    if bytes.is_empty() || bytes.len() > LIMIT {
+        return Err(MtprotoError::Message("invalid captured media range size".into()));
+    }
+    Ok(bytes)
+}
+""", "pub fn download_message_media_chunk_bytes(")
+# Crypto: KDF inputs have a fixed 52-byte size and need no heap allocation.
+crypto_message = "vendor/mono-rs/crates/mono-proto-crypto/src/message.rs"
+amend(crypto_message,
+      """    let mut a_input = Vec::with_capacity(52);
+    a_input.extend_from_slice(msg_key);
+    a_input.extend_from_slice(&auth_key[x..x + 36]);
+    let a = sha256(&a_input);
+    let mut b_input = Vec::with_capacity(52);
+    b_input.extend_from_slice(&auth_key[40 + x..76 + x]);
+    b_input.extend_from_slice(msg_key);""",
+      """    let mut a_input = [0_u8; 52];
+    a_input[..16].copy_from_slice(msg_key);
+    a_input[16..].copy_from_slice(&auth_key[x..x + 36]);
+    let a = sha256(&a_input);
+    let mut b_input = [0_u8; 52];
+    b_input[..36].copy_from_slice(&auth_key[40 + x..76 + x]);
+    b_input[36..].copy_from_slice(msg_key);""")
+amend(crypto_message,
+      "    let plaintext = aes_ige_decrypt(&packet[24..], &aes_key, &aes_iv)?;",
+      "    let mut plaintext = aes_ige_decrypt(&packet[24..], &aes_key, &aes_iv)?;")
+amend(crypto_message,
+      """    Ok(DecryptedMessage {
+        server_salt,""",
+      """    // Authentication and all envelope checks precede reuse of the allocation.
+    let padding = plaintext[body_end..].to_vec();
+    plaintext.copy_within(32..body_end, 0);
+    plaintext.truncate(body_length);
+    Ok(DecryptedMessage {
+        server_salt,""")
+amend(crypto_message,
+      """        body: plaintext[32..body_end].to_vec(),
+        padding: plaintext[body_end..].to_vec(),""",
+      """        body: plaintext,
+        padding,""")
+
 # Commit files only after every source contract has been checked.
 for path, result in changes.items():
     current = path.read_text(encoding="utf-8")
@@ -337,4 +643,4 @@ for path, result in changes.items():
         path.write_text(result, encoding="utf-8")
 for relative in unused_wrappers:
     (root / relative).unlink(missing_ok=True)
-print("Applied pinned channel leave, filtered global search and size-focused MTProto-only source patch")
+print("Applied pinned Monogram media-only and native performance patches")

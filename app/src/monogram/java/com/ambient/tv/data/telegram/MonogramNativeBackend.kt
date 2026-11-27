@@ -327,8 +327,9 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     // Measured on a phone: with upstream's pipelined parts (several getFile parts
                     // in flight) a ~15 KiB card preview took 6-17 s, in steps of the native 5 s
                     // silent-response grace: parts past the end of a tiny file go unanswered.
-                    // One part per lane, four lanes: 0.2-2.8 s. A video chunk is one part anyway.
-                    runCatching { native.setDownloadConcurrency(4, 1) }
+                    // Patched profiles keep thumbnails and individual ranges at one part.
+                    // Only known large full-file downloads may use a wider native pipeline.
+                    runCatching { native.setDownloadConcurrency(4, 4) }
                     connected = false
                 }
                 if (connect && !connected) {
@@ -1118,15 +1119,14 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             }
             if (cached != null) return@nativeCall cached
             val temp = File.createTempFile("part-", ".bin", dir)
-            var actual: File? = null
             try {
-                actual = File(mediaClass(DISPATCH_USER) { native.downloadMessageMediaChunk(
-                    h, chatId, messageId, temp.absolutePath, offset) }).canonicalFile
-                require(actual.parentFile == dir) { "Monogram chunk escaped private cache" }
-                require(actual.length() in 1..TELEGRAM_MEDIA_PART_BYTES.toLong()) {
+                val payload = mediaClass(DISPATCH_USER) {
+                    uniffi.monogram_mtproto.downloadMessageMediaChunkBytes(
+                        h.toULong(), chatId, messageId, temp.absolutePath, offset)
+                }
+                require(payload.size in 1..TELEGRAM_MEDIA_PART_BYTES) {
                     "Invalid Monogram chunk size"
                 }
-                val payload = actual.readBytes()
                 // An account switch/log-out invalidates in-flight native file results.
                 check(accountId == currentIdentity && cacheGeneration == generation && native.isAuthorized(h) &&
                     chatId !in leftChannels) {
@@ -1138,15 +1138,18 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     }
                     prepareChunkIndex(dir)
                     if (!cacheFile.isFile) {
-                        // Same directory: publish atomically without writing another 512 KiB.
-                        if (actual.renameTo(cacheFile)) rememberChunk(cacheFile)
+                        // Origin RPCs return bytes directly. Inline/CDN fallback may have
+                        // already populated the private temp file; never rewrite it.
+                        runCatching {
+                            if (temp.length() != payload.size.toLong()) temp.writeBytes(payload)
+                            if (temp.renameTo(cacheFile)) rememberChunk(cacheFile)
+                        }
                     }
                     trimChunkCache()
                 }
                 payload
             } finally {
                 temp.delete()
-                actual?.takeIf { it.parentFile == dir }?.delete()
             }
         }
 
