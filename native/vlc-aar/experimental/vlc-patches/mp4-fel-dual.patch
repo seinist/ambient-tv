@@ -43,7 +43,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +static bool MP4_FEL_SameEdits(const mp4_track_t *a,const mp4_track_t *b)
 +{
 +    if (!a->p_elst || !b->p_elst) return !a->p_elst && !b->p_elst;
-+    const MP4_Box_data_elst_t *x=BOXDATA(a->p_elst), *y=BOXDATA(b->p_elst);
++    const MP4_Box_data_elst_t *x=a->p_elst->data.p_elst, *y=b->p_elst->data.p_elst;
 +    if (!x || !y || x->i_entry_count!=y->i_entry_count) return false;
 +    for (unsigned i=0;i<x->i_entry_count;i++) {
 +        const MP4_Box_data_elst_entry_t *u=&x->entries[i], *v=&y->entries[i];
