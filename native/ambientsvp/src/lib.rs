@@ -1201,6 +1201,23 @@ mod pipelining_tests {
             let (gpu,gt)=run(true);
             assert_eq!(cpu.pixels,gpu.pixels);
             assert_eq!(cpu.nearest_squared,gpu.nearest_squared);
+            // Protect the observed quality of all five deterministic cases.
+            // Permit a small margin for GPU synthesis rounding, not a
+            // degradation to repeated source frames or below CPU quality.
+            if name=="reverse-horizontal"{
+                assert_eq!(gpu.squared,0,"{name}: exact translation regressed");
+            }else{
+                let (min_psnr,max_mae)=match name{
+                    "vertical"=>(34.5,2.8),
+                    "diagonal"=>(43.3,0.8),
+                    "subpixel-grid"=>(39.2,1.7),
+                    "local-occluding-object"=>(25.6,4.7),
+                    _=>unreachable!(),
+                };
+                assert!(gpu.psnr(gpu.squared)>=min_psnr,"{name}: PSNR regression");
+                assert!(gpu.absolute as f64/gpu.pixels as f64<=max_mae,"{name}: MAE regression");
+            }
+            assert!(gpu.squared<gpu.nearest_squared,"{name}: interpolation worse than nearest source");
             println!("quality matrix {name} pel={pel} cpu_psnr={:.3} gpu_psnr={:.3} cpu_mae={:.3} gpu_mae={:.3} nearest_psnr={:.3} cpu_analysis_us={ct} gpu_analysis_us={gt}",
                 cpu.psnr(cpu.squared),gpu.psnr(gpu.squared),cpu.absolute as f64/cpu.pixels as f64,
                 gpu.absolute as f64/gpu.pixels as f64,gpu.psnr(gpu.nearest_squared));
