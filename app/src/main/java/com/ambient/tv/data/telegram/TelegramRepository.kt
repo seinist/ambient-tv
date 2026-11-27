@@ -61,19 +61,19 @@ class TelegramTransferPriority(foreground: Boolean) {
         private set
     private var promoteNative: (() -> Unit)? = null
 
-    fun promote() = synchronized(lock) {
+    fun promote(): Unit = synchronized(lock) {
         if (!foreground) {
             foreground = true
             promoteNative?.invoke()
         }
     }
 
-    fun bind(callback: () -> Unit) = synchronized(lock) {
+    fun bind(callback: () -> Unit): Unit = synchronized(lock) {
         promoteNative = callback
         if (foreground) callback()
     }
 
-    fun unbind() = synchronized(lock) { promoteNative = null }
+    fun unbind(): Unit = synchronized(lock) { promoteNative = null }
 }
 
 interface TelegramClientPort {

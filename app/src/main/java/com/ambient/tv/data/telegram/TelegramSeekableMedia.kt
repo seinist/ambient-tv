@@ -33,6 +33,7 @@ internal class TelegramSeekableMedia(
         if (closed || !authorized()) throw IOException("Monogram session is no longer authorized")
     }
     private var previousPart = -1L
+    private val readAhead = TelegramReadAhead(media)
     private var window = 1
 
     init {
@@ -88,9 +89,16 @@ internal class TelegramSeekableMedia(
         val sequential = previousPart >= 0L && offset - previousPart == TELEGRAM_MEDIA_PART_BYTES.toLong()
         if (!sequential) {
             cancelPrefetch()
-            window = 1
-        } else window = (window + 1).coerceAtMost(3)
+            readAhead.reset()
+        }
         previousPart = offset
+        val began = System.nanoTime()
+        val loaded = loadCurrentPart(offset)
+        window = readAhead.observe(sequential, System.nanoTime() - began)
+        return loaded
+    }
+
+    private fun loadCurrentPart(offset: Long): ByteArray {
         val pending = prefetch.remove(offset)
         if (pending != null) {
             // The production foreground loader coalesces with an active RPC,

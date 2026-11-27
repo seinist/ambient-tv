@@ -44,6 +44,7 @@ class TelegramVideoDataSource(
     private val prefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val prefetch = LinkedHashMap<Long, Deferred<ByteArray>>()
     private var previousPart = -1L
+    private val readAhead = TelegramReadAhead(media)
     private var window = 1
 
     override fun open(dataSpec: DataSpec): Long {
@@ -58,6 +59,7 @@ class TelegramVideoDataSource(
         }
         cancelPrefetch()
         previousPart = -1L
+        readAhead.reset()
         window = 1
         position = dataSpec.position
         remaining = if (dataSpec.length == C.LENGTH_UNSET.toLong()) media.fileSize - position
@@ -100,10 +102,11 @@ class TelegramVideoDataSource(
         val sequential = previousPart >= 0L && offset - previousPart == TELEGRAM_MEDIA_PART_BYTES.toLong()
         if (!sequential) {
             cancelPrefetch()
-            window = 1
-        } else window = (window + 1).coerceAtMost(3)
+            readAhead.reset()
+        }
         previousPart = offset
         val pending = prefetch.remove(offset)
+        val began = System.nanoTime()
         return try {
             runBlocking {
                 // A failed read-ahead is retried directly instead of failing playback.
@@ -117,7 +120,7 @@ class TelegramVideoDataSource(
                         telegramExpectedPartSize(media.fileSize, offset), accountRevision,
                         nativeMediaKey = media.nativeMediaKey, expectedMediaRevision = mediaRevision)
                 } finally { pending?.cancel() }
-            }
+            }.also { window = readAhead.observe(sequential, System.nanoTime() - began) }
         } catch (error: Exception) {
             throw IOException("Telegram media read failed", error)
         }
@@ -159,3 +162,37 @@ fun telegramPartOffset(position: Long): Long {
 
 internal fun telegramExpectedPartSize(size: Long, offset: Long): Int =
     (size - offset).coerceIn(0L, TELEGRAM_MEDIA_PART_BYTES.toLong()).toInt()
+
+
+/**
+ * A small bounded adaptive window. Use the actual consumption bitrate when
+ * available and foreground wait time, rather than blindly opening more lanes
+ * on every sequential part. Random seeks reset the estimator.
+ */
+internal class TelegramReadAhead(
+    media: TelegramMedia,
+    private val maxWindow: Int = if (Runtime.getRuntime().maxMemory() < 192L * 1024 * 1024) 2 else 3,
+) {
+    private val bytesPerSecond = if (media.durationMs > 0L && media.fileSize > 0L)
+        media.fileSize.toDouble() * 1000.0 / media.durationMs else 0.0
+    private var waitMs = 0.0
+    private var consecutive = 0
+
+    fun reset() { waitMs = 0.0; consecutive = 0 }
+
+    fun observe(sequential: Boolean, elapsedNanos: Long): Int {
+        if (!sequential) {
+            reset()
+            return 1
+        }
+        val sample = (elapsedNanos.coerceAtLeast(0L) / 1_000_000.0).coerceAtMost(2_000.0)
+        waitMs = if (consecutive == 0) sample else waitMs * 0.75 + sample * 0.25
+        consecutive++
+        // A 350ms cushion plus twice the observed wait. Keep two-part
+        // read-ahead for sustained unknown-bitrate sequential streams.
+        val requested = if (bytesPerSecond > 0.0) {
+            kotlin.math.ceil(bytesPerSecond * (0.35 + waitMs / 500.0) / TELEGRAM_MEDIA_PART_BYTES).toInt()
+        } else if (consecutive >= 2 && waitMs >= 20.0) 3 else 2
+        return requested.coerceIn(1, maxWindow.coerceIn(1, 3))
+    }
+}

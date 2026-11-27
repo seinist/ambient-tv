@@ -132,6 +132,33 @@ class TelegramSeekableMediaTest {
         } finally { source.close(); worker.shutdownNow() }
     }
 
+    @Test fun readAheadUsesBitrateAndWaitButResetsOnSeek() {
+        val low = TelegramReadAhead(media(1024 * 1024L).copy(durationMs = 60_000), 3)
+        val high = TelegramReadAhead(media(100 * 1024 * 1024L).copy(durationMs = 10_000), 3)
+        assertEquals(1, low.observe(true, 5_000_000))
+        assertEquals(3, high.observe(true, 150_000_000))
+        assertEquals(1, high.observe(false, 500_000_000))
+        val bounded = TelegramReadAhead(media(100 * 1024 * 1024L).copy(durationMs = 10_000), 2)
+        assertEquals(2, bounded.observe(true, 150_000_000))
+    }
+
+    @Test fun priorityPromotionWorksBeforeAndAfterNativeBinding() {
+        val first = TelegramTransferPriority(false)
+        var promoted = 0
+        first.promote()
+        first.bind { promoted++ }
+        assertEquals(1, promoted)
+        first.promote()
+        assertEquals(1, promoted)
+        first.unbind()
+        val second = TelegramTransferPriority(false)
+        second.bind { promoted++ }
+        assertEquals(1, promoted)
+        second.promote()
+        assertEquals(2, promoted)
+        second.unbind()
+    }
+
     @Test fun invalidAndProtectedMediaNeverStartLoopbackStream() {
         val protected = media(100).copy(protectedContent = true)
         assertTrue(runCatching {

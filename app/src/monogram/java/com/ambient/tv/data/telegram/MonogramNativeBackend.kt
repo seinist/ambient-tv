@@ -59,8 +59,13 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     private val chunkIndex = LinkedHashMap<File, Long>(128, 0.75f, true)
     private var chunkIndexGeneration = -1L
     private var chunkIndexBytes = 0L
-    // Immutable-to-callers byte arrays, at most 4 MiB, scoped to one cache generation.
-    private val hotChunks = LinkedHashMap<File, ByteArray>(8, 0.75f, true)
+    // Cap memory by heap class and use a stricter ceiling on low-RAM devices.
+    private val hotChunkLimit = run {
+        val manager = app.getSystemService(android.app.ActivityManager::class.java)
+        if (manager?.isLowRamDevice == true) 4
+        else (Runtime.getRuntime().maxMemory() / (32L * TELEGRAM_MEDIA_PART_BYTES)).toInt().coerceIn(4, 24)
+    }
+    private val hotChunks = LinkedHashMap<File, ByteArray>(hotChunkLimit, 0.75f, true)
     private val mediaDigests = LinkedHashMap<String, String>(64, 0.75f, true)
     private fun mediaDigest(key: String): String = synchronized(mediaDigests) {
         mediaDigests[key] ?: run {
@@ -79,7 +84,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     }
     private fun rememberHotChunk(file: File, bytes: ByteArray) {
         hotChunks[file] = bytes
-        while (hotChunks.size > 8) hotChunks.remove(hotChunks.keys.first())
+        while (hotChunks.size > hotChunkLimit) hotChunks.remove(hotChunks.keys.first())
     }
     private fun invalidateChunksLocked() {
         cacheGeneration++
@@ -209,8 +214,13 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             while (true) {
                 kotlinx.coroutines.delay(backoffMs)
                 backoffMs = try {
-                    val events = nativeCall { h -> drainUpdateEvents(h) }
-                    applyUpdates(events)
+                    val generation = cacheGeneration
+                    val identity = accountId
+                    val events = nativeCall { h ->
+                        if (generation != cacheGeneration || identity != accountId) emptyList()
+                        else drainUpdateEvents(h)
+                    }
+                    if (generation == cacheGeneration && identity == accountId) applyUpdates(events)
                     if (events.isEmpty()) (backoffMs + UPDATES_POLL_MS).coerceAtMost(15_000L)
                     else UPDATES_POLL_MS
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
