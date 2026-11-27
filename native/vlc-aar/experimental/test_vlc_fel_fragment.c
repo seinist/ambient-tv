@@ -254,6 +254,59 @@ static void test_exact_sample_read(demux_t *d)
     assert(MP4_FEL_SeekExact(d->s,128));
     assert(!MP4_FEL_ReadExact(d->s,128,5)&&position==132&&!blocks);
 }
+/* Keep the actual generic VLC trun indexer in the host link, including
+ * its unused clock-recovery branches. This fixture supplies explicit
+ * clocks, so falling back to an external fragment index is a test error. */
+stime_t MP4_Fragment_Index_GetTrackStartTime(mp4_fragments_index_t *index,
+                                            unsigned track,uint64_t offset)
+{
+    (void)index;(void)track;(void)offset;
+    assert(!"unexpected fragment index lookup");
+    return 0;
+}
+void vlc_Log(struct vlc_logger *const *logger,int priority,const char *type,
+             const char *module,const char *file,unsigned line,const char *func,
+             const char *format,...)
+{
+    (void)logger;(void)priority;(void)type;(void)module;(void)file;
+    (void)line;(void)func;(void)format;
+}
+static void test_generic_trun_index(void)
+{
+    for(unsigned strict=0;strict<2;strict++){
+        mp4_track_t track={.i_track_ID=1,.b_ok=true,.i_timescale=1000,
+            .i_time=7,.ambient_fel_el_id=strict?2:0};
+        demux_sys_t sys={.i_tracks=1,.track=&track};
+        demux_t d={.s=&fixture_stream,.p_sys=&sys};
+        MP4_Box_data_tfhd_t tfhd={.i_track_ID=1,
+            .i_flags=MP4_TFHD_DEFAULT_BASE_IS_MOOF|MP4_TFHD_DFLT_SAMPLE_SIZE|
+                MP4_TFHD_DFLT_SAMPLE_DURATION,
+            .i_default_sample_size=4,.i_default_sample_duration=3};
+        MP4_Box_data_trun_t tr[2]={{.i_flags=MP4_TRUN_DATA_OFFSET,
+            .i_sample_count=1,.i_data_offset=108},{.i_sample_count=2}};
+        MP4_Box_t run[2]={{.i_type=ATOM_trun,.data.p_trun=&tr[0]},
+            {.i_type=ATOM_trun,.data.p_trun=&tr[1]}};
+        run[0].p_next=&run[1];
+        MP4_Box_t header={.i_type=ATOM_tfhd,.data.p_tfhd=&tfhd,.p_next=&run[0]};
+        MP4_Box_t traf={.i_type=ATOM_traf,.p_first=&header};
+        MP4_Box_t moof={.i_type=ATOM_moof,.i_pos=0,.i_size=100,.p_first=&traf};
+        assert(FragCreateTrunIndex(&d,&moof,NULL,INVALID_SEGMENT_TIME)==VLC_SUCCESS);
+        assert(track.context.runs.i_count==2&&track.context.runs.p_array);
+        assert(track.context.i_default_sample_size==4);
+        assert(track.context.i_default_sample_duration==3);
+        assert(track.context.runs.p_array[0].i_offset==108);
+        assert(track.context.runs.p_array[1].i_offset==112);
+        assert(track.context.runs.p_array[0].i_first_dts==7);
+        assert(track.context.runs.p_array[1].i_first_dts==10);
+        assert(track.context.runs.p_array[1].p_trun==&run[1]);
+        /* The indexer resets old runs on every new fragment. An unknown
+         * track is ignored in ordinary MP4, but is invalid in FEL mode. */
+        tfhd.i_track_ID=9;
+        assert(FragCreateTrunIndex(&d,&moof,NULL,INVALID_SEGMENT_TIME)==
+            (strict?VLC_EGENERIC:VLC_SUCCESS));
+        assert(!track.context.runs.i_count&&!track.context.runs.p_array);
+    }
+}
 static void test_adjacent_lookahead(void)
 {
     for(unsigned mode=0;mode<2;mode++){
@@ -329,6 +382,7 @@ int main(void)
     test_empty_mdat_gaps(&demux,&sys);
     test_leading_empty_mdats(&demux,&sys);
     test_exact_sample_read(&demux);
+    test_generic_trun_index();
     test_adjacent_lookahead();
     MP4_Box_data_tfhd_t tfhd={.i_track_ID=1,
         .i_flags=MP4_TFHD_DEFAULT_BASE_IS_MOOF|MP4_TFHD_DFLT_SAMPLE_SIZE|
