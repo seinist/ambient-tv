@@ -221,7 +221,7 @@ impl Job{
         let mut props=vk::AndroidHardwareBufferPropertiesANDROID::default().push_next(&mut fmt);
         unsafe{self.core.ahb.get_android_hardware_buffer_properties(self.buffer.cast_const(),&mut props)}.map_err(err)?;
         let (size,bits)=(props.allocation_size,props.memory_type_bits);
-        if size==0 || fmt.external_format==0 || !fmt.format_features.contains(vk::FormatFeatureFlags::SAMPLED_IMAGE){
+        if size==0 || (!self.high_depth() && fmt.external_format==0) || !fmt.format_features.contains(vk::FormatFeatureFlags::SAMPLED_IMAGE){
             return Err("AHB external format unavailable".into());
         }
         let mut desc=Desc::default();
@@ -231,14 +231,17 @@ impl Job{
         }
         // Use the external-format path even if a conventional VkFormat
         // also exists. Preserve the allocator/decoder's actual format.
+        let external=fmt.external_format!=0;
+        let source_format=if external{vk::Format::UNDEFINED}else{fmt.format};
         let mut ext_format=vk::ExternalFormatANDROID::default().external_format(fmt.external_format);
         let mut ext_memory=vk::ExternalMemoryImageCreateInfo::default().handle_types(MEMORY);
-        let image=vk::ImageCreateInfo::default().push_next(&mut ext_memory).push_next(&mut ext_format)
-            .image_type(vk::ImageType::TYPE_2D).format(vk::Format::UNDEFINED)
+        let mut image=vk::ImageCreateInfo::default().push_next(&mut ext_memory)
+            .image_type(vk::ImageType::TYPE_2D).format(source_format)
             .extent(vk::Extent3D{width:self.info.buffer_width,height:self.info.buffer_height,depth:1})
             .mip_levels(1).array_layers(1).samples(vk::SampleCountFlags::TYPE_1)
             .tiling(vk::ImageTiling::OPTIMAL).usage(vk::ImageUsageFlags::SAMPLED)
             .sharing_mode(vk::SharingMode::EXCLUSIVE).initial_layout(vk::ImageLayout::UNDEFINED);
+        if external{image=image.push_next(&mut ext_format);}
         unsafe{
             self.source=d.create_image(&image,None).map_err(err)?;
             // AHB allocation size and memory type bits come directly from
@@ -252,15 +255,16 @@ impl Job{
                 .memory_type_index(index).push_next(&mut dedicated).push_next(&mut import),None).map_err(err)?;
             d.bind_image_memory(self.source,self.source_memory,0).map_err(err)?;
             let mut conversion_format=vk::ExternalFormatANDROID::default().external_format(fmt.external_format);
-            let conversion=vk::SamplerYcbcrConversionCreateInfo::default().push_next(&mut conversion_format)
-                .format(vk::Format::UNDEFINED).ycbcr_model(fmt.suggested_ycbcr_model)
+            let mut conversion=vk::SamplerYcbcrConversionCreateInfo::default()
+                .format(source_format).ycbcr_model(fmt.suggested_ycbcr_model)
                 .ycbcr_range(fmt.suggested_ycbcr_range).components(fmt.sampler_ycbcr_conversion_components)
                 .x_chroma_offset(fmt.suggested_x_chroma_offset).y_chroma_offset(fmt.suggested_y_chroma_offset)
                 .chroma_filter(vk::Filter::NEAREST).force_explicit_reconstruction(false);
+            if external{conversion=conversion.push_next(&mut conversion_format);}
             self.conversion=d.create_sampler_ycbcr_conversion(&conversion,None).map_err(err)?;
             let mut attach=vk::SamplerYcbcrConversionInfo::default().conversion(self.conversion);
             self.source_view=d.create_image_view(&vk::ImageViewCreateInfo::default().push_next(&mut attach)
-                .image(self.source).view_type(vk::ImageViewType::TYPE_2D).format(vk::Format::UNDEFINED)
+                .image(self.source).view_type(vk::ImageViewType::TYPE_2D).format(source_format)
                 .subresource_range(range()),None).map_err(err)?;
             let mut attach=vk::SamplerYcbcrConversionInfo::default().conversion(self.conversion);
             self.sampler=d.create_sampler(&vk::SamplerCreateInfo::default().push_next(&mut attach)
