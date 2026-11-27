@@ -54,6 +54,13 @@ public:
 """
 
 
+BSNES_ARM_SWAP_OLD = "static void (*co_swap)(cothread_t, cothread_t) = 0;\n\n#ifdef LIBCO_MPROTECT\n  alignas(4096)\n#else\n  section(text)\n#endif\nstatic const unsigned long co_swap_function[1024] = {\n  0xe8a16ff0,  /* stmia r1!, {r4-r11,sp,lr} */\n  0xe8b0aff0,  /* ldmia r0!, {r4-r11,sp,pc} */\n  0xe12fff1e,  /* bx lr                     */\n};\n\nstatic void co_init() {\n  #ifdef LIBCO_MPROTECT\n  unsigned long addr = (unsigned long)co_swap_function;\n  unsigned long base = addr - (addr % sysconf(_SC_PAGESIZE));\n  unsigned long size = (addr - base) + sizeof co_swap_function;\n  mprotect((void*)base, size, PROT_READ | PROT_EXEC);\n  #endif\n}\n\n"
+BSNES_ARM_SWAP_NEW = "/* The original ARM instructions, emitted as an ELF function instead of data.\n * Explicit ARM mode permits correct Thumb interworking even after ThinLTO. */\n__attribute__((naked, noinline, target(\"arm\")))\nstatic void co_swap_function(cothread_t next, cothread_t previous) {\n  __asm__ volatile(\"stmia r1!, {r4-r11,sp,lr}\\n\\t\"\n                   \"ldmia r0!, {r4-r11,sp,pc}\\n\\t\");\n}\n\n"
+BSNES_ARM_INIT_OLD = "  if(!co_swap) {\n    co_init();\n    co_swap = (void (*)(cothread_t, cothread_t))co_swap_function;\n  }\n"
+BSNES_ARM_CALL_OLD = "  co_swap(co_active_handle = handle, co_previous_handle);"
+BSNES_ARM_CALL_NEW = "  co_active_handle = handle;\n  co_swap_function(handle, co_previous_handle);"
+
+
 def prepare_bsnes(root):
     libretro = root / "bsnes/target-libretro/libretro.cpp"
     program = libretro.with_name("program.cpp")
@@ -76,8 +83,18 @@ def prepare_bsnes(root):
                             "return input_state(libretro_port, libretro_device, libretro_index, libretro_id);",
                             "return ambientJoypad.state(input_state, libretro_port, libretro_device, libretro_index, libretro_id);",
                             "bsnes device dispatch")
+    # This file is selected only by libco's ARM32 backend. All other ABI
+    # implementations and the baseline profile remain untouched.
+    arm = root / "libco/arm.c"
+    coroutine = arm.read_text()
+    coroutine = replace_once(coroutine, BSNES_ARM_SWAP_OLD, BSNES_ARM_SWAP_NEW,
+                             "bsnes ARM libco code symbol")
+    coroutine = replace_once(coroutine, BSNES_ARM_INIT_OLD, "", "bsnes ARM libco init")
+    coroutine = replace_once(coroutine, BSNES_ARM_CALL_OLD, BSNES_ARM_CALL_NEW,
+                             "bsnes ARM libco switch")
     libretro.write_bytes(source.encode("utf-8"))
     program.write_bytes(platform.encode("utf-8"))
+    arm.write_text(coroutine)
 
 
 MESEN_OLD = """\t\tstring saveStateData = ss.str();
