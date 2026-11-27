@@ -40,10 +40,13 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
     private val alias = "ambient.monogram.feed-cache.v1"
     // Accessed only under lock. Never persisted outside the encrypted snapshot.
     private var cachedKey: SecretKey? = null
-    private data class Snapshot(val modified: Long, val rows: JSONArray)
+    private data class Snapshot(val modified: Long, val rows: JSONArray,
+        var media: List<TelegramMedia>? = null, var channels: List<TelegramChannel>? = null)
     private val snapshots = LinkedHashMap<File, Snapshot>(16, 0.75f, true)
     private fun remember(target: File, rows: JSONArray) {
-        snapshots[target] = Snapshot(target.lastModified(), rows)
+        val previous = snapshots[target]
+        snapshots[target] = if (previous != null && previous.rows === rows)
+            previous.copy(modified = target.lastModified()) else Snapshot(target.lastModified(), rows)
         while (snapshots.size > 12) snapshots.remove(snapshots.keys.first())
     }
 
@@ -104,7 +107,8 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
             }?.optJSONArray("rows")?.also { remember(target, it) }
         }.getOrNull()
     }
-    private fun write(account: String, section: String, entries: JSONArray) {
+    private fun write(account: String, section: String, entries: JSONArray, stillAuthorized: () -> Boolean) {
+        if (!stillAuthorized()) return
         val destination = file(account, section)
         // A refresh with identical contents need not compress/encrypt/write again.
         if (destination.isFile && System.currentTimeMillis() - destination.lastModified() <= ttlMillis &&
@@ -112,8 +116,8 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
                 ?.rows?.toString() == entries.toString()) {
             // A successful network refresh renews the offline cache TTL even when
             // the content is unchanged. Fall through to an atomic write if touch fails.
-            if (destination.setLastModified(System.currentTimeMillis())) {
-                remember(destination, entries)
+            if (stillAuthorized() && destination.setLastModified(System.currentTimeMillis())) {
+                snapshots[destination]?.let { remember(destination, it.rows) }
                 return
             }
         }
@@ -121,8 +125,14 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
         val json = JSONObject().put("version", 1).put("section", section)
             .put("rows", entries).toString().toByteArray(Charsets.UTF_8)
         val bytes = encrypt(json)
+        if (!stillAuthorized()) return
         val out = target.startWrite()
-        try { out.write(bytes); target.finishWrite(out); remember(destination, entries) }
+        try {
+            out.write(bytes)
+            if (!stillAuthorized()) { target.failWrite(out); return }
+            target.finishWrite(out)
+            remember(destination, entries)
+        }
         catch (failure: Exception) { target.failWrite(out); throw failure }
     }
 
@@ -132,46 +142,39 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
 
     private fun youtubeLinks(item: JSONObject): List<String> {
         val values = item.optJSONArray("youtubeLinks") ?: return emptyList()
-        return (0 until values.length()).mapNotNull { index ->
+        return java.util.Collections.unmodifiableList((0 until values.length()).mapNotNull { index ->
             values.optString(index).takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
-        }
+        })
     }
 
     suspend fun media(account: String, section: String): List<TelegramMedia> =
         withContext(Dispatchers.IO) { lock.withLock {
-            val array = read(account, "media:$section") ?: return@withLock emptyList()
-            (0 until array.length()).mapNotNull { i -> runCatching {
-                val o = array.getJSONObject(i)
-                TelegramMedia(
-                    chatId = o.getLong("chat"), messageId = o.getInt("message"),
-                    channel = o.getString("channel"), title = o.getString("title"),
-                    kind = TelegramMediaKind.valueOf(o.getString("kind")),
-                    summary = o.optString("summary").takeIf(String::isNotBlank),
-                    thumbnailUrl = safePreview(o.optString("thumb")),
-                    durationMs = o.optLong("duration"), fileSize = o.optLong("size"),
-                    publishedAtMs = o.optLong("published"),
-                    youtubeVideoId = o.optString("youtube").takeIf(String::isNotBlank),
-                    protectedContent = o.optBoolean("protected"),
-                    linkedYouTubeVideoIds = youtubeLinks(o),
-                    width = o.optInt("width").coerceAtLeast(0),
-                    height = o.optInt("height").coerceAtLeast(0),
-                    fileName = o.optString("file").takeIf(String::isNotBlank),
-                    nativeMediaKey = o.optString("nativeMediaKey").takeIf(String::isNotBlank),
-                )
-            }.getOrNull() }
+            mediaUnsafe(account, section).map { entry ->
+                val thumb = safePreview(entry.thumbnailUrl)
+                if (thumb == entry.thumbnailUrl) entry else entry.copy(thumbnailUrl = thumb)
+            }
         } }
+
+    private fun channelsUnsafe(account: String): List<TelegramChannel> {
+        val array = read(account, "channels") ?: return emptyList()
+        val snapshot = snapshots[file(account, "channels")]
+        snapshot?.channels?.let { return it }
+        val decoded = (0 until array.length()).mapNotNull { i -> runCatching {
+            val o = array.getJSONObject(i)
+            TelegramChannel(o.getLong("chat"), o.getString("title"),
+                description = o.optString("description").takeIf(String::isNotBlank),
+                thumbnailUrl = o.optString("thumb").takeIf(String::isNotBlank),
+                subscribed = if (o.has("member")) o.optBoolean("member") else null)
+        }.getOrNull() }
+        return java.util.Collections.unmodifiableList(decoded).also { snapshot?.channels = it }
+    }
 
     suspend fun channels(account: String): List<TelegramChannel> =
         withContext(Dispatchers.IO) { lock.withLock {
-            val array = read(account, "channels") ?: return@withLock emptyList()
-            (0 until array.length()).mapNotNull { i -> runCatching {
-                val o = array.getJSONObject(i)
-                TelegramChannel(
-                    chatId = o.getLong("chat"), title = o.getString("title"),
-                    description = o.optString("description").takeIf(String::isNotBlank),
-                    thumbnailUrl = safePreview(o.optString("thumb")),
-                    subscribed = if (o.has("member")) o.optBoolean("member") else null)
-            }.getOrNull() }
+            channelsUnsafe(account).map { entry ->
+                val thumb = safePreview(entry.thumbnailUrl)
+                if (thumb == entry.thumbnailUrl) entry else entry.copy(thumbnailUrl = thumb)
+            }
         } }
 
     suspend fun saveMedia(account: String, section: String, items: List<TelegramMedia>, replace: Boolean,
@@ -196,18 +199,20 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
                     .put("width", m.width).put("height", m.height).put("file", m.fileName)
                     .put("nativeMediaKey", m.nativeMediaKey))
                 }
-                if (stillAuthorized()) write(account, "media:$section", array)
+                if (stillAuthorized()) write(account, "media:$section", array, stillAuthorized)
             }
         } }
 
     private fun mediaUnsafe(account: String, section: String): List<TelegramMedia> {
         val array = read(account, "media:$section") ?: return emptyList()
-        return (0 until array.length()).mapNotNull { i -> runCatching {
+        val snapshot = snapshots[file(account, "media:$section")]
+        snapshot?.media?.let { return it }
+        val decoded = (0 until array.length()).mapNotNull { i -> runCatching {
             val o = array.getJSONObject(i)
             TelegramMedia(o.getLong("chat"), o.getInt("message"), o.getString("channel"),
                 o.getString("title"), TelegramMediaKind.valueOf(o.getString("kind")),
                 summary = o.optString("summary").takeIf(String::isNotBlank),
-                thumbnailUrl = safePreview(o.optString("thumb")),
+                thumbnailUrl = o.optString("thumb").takeIf(String::isNotBlank),
                 durationMs = o.optLong("duration"), fileSize = o.optLong("size"),
                 publishedAtMs = o.optLong("published"),
                 youtubeVideoId = o.optString("youtube").takeIf(String::isNotBlank),
@@ -218,6 +223,7 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
                 fileName = o.optString("file").takeIf(String::isNotBlank),
                 nativeMediaKey = o.optString("nativeMediaKey").takeIf(String::isNotBlank))
         }.getOrNull() }
+        return java.util.Collections.unmodifiableList(decoded).also { snapshot?.media = it }
     }
 
     suspend fun saveChannels(account: String, entries: List<TelegramChannel>, replace: Boolean,
@@ -225,23 +231,14 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
         withContext(Dispatchers.IO) { lock.withLock {
             runCatching {
                 if (!stillAuthorized()) return@runCatching
-                val past = if (replace) emptyList() else {
-                    val array = read(account, "channels")
-                    (0 until (array?.length() ?: 0)).mapNotNull { i -> runCatching {
-                        val o = array!!.getJSONObject(i)
-                        TelegramChannel(o.getLong("chat"), o.getString("title"),
-                            description = o.optString("description").takeIf(String::isNotBlank),
-                            thumbnailUrl = safePreview(o.optString("thumb")),
-                            subscribed = if (o.has("member")) o.optBoolean("member") else null)
-                    }.getOrNull() }
-                }
+                val past = if (replace) emptyList() else channelsUnsafe(account)
                 val array = JSONArray()
                 (past + entries).distinctBy(TelegramChannel::chatId).take(240).forEach { c ->
                     array.put(JSONObject().put("chat", c.chatId).put("title", c.title)
                         .put("description", c.description).put("thumb", c.thumbnailUrl)
                         .also { obj -> c.subscribed?.let { obj.put("member", it) } })
                 }
-                if (stillAuthorized()) write(account, "channels", array)
+                if (stillAuthorized()) write(account, "channels", array, stillAuthorized)
             }
         } }
 
