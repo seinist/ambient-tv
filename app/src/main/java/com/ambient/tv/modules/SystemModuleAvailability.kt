@@ -27,7 +27,7 @@ internal object SystemModuleAvailability {
     fun bundled(module: SystemModule): Boolean = when (module) {
         SystemModule.MONOGRAM -> BuildConfig.MONOGRAM_NATIVE
         SystemModule.SPOTIFY -> BuildConfig.SPOTIFY_ENABLED && BuildConfig.MODULE_PACKAGING == "full"
-        SystemModule.PROJECTM -> BuildConfig.MODULE_PACKAGING == "full"
+        SystemModule.PROJECTM, SystemModule.MPV -> BuildConfig.MODULE_PACKAGING == "full"
         SystemModule.SHADERS -> BuildConfig.MODULE_PACKAGING == "full"
         // These engines are not yet removed from the base build.
         else -> true
