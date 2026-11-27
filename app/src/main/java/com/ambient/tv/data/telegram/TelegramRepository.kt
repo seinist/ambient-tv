@@ -673,10 +673,12 @@ class TelegramRepository @Inject constructor(
 
     /** Real thumbnail for a visible card (see [TelegramMedia.cardImageUrl]); null when unavailable. */
     suspend fun thumbnailFile(chatId: Long, messageId: Int): String? {
-        val key = "$chatId:$messageId"
+        val key = "${streamEpoch.get()}:$chatId:$messageId"
         val load = thumbnailLoads.computeIfAbsent(key) {
-            scope.async { try { loadThumbnailFile(chatId, messageId) } finally { thumbnailLoads.remove(key) } }
+            // Lazy start prevents a fast cache hit from removing the entry before insertion.
+            scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) { loadThumbnailFile(chatId, messageId) }
         }
+        load.invokeOnCompletion { thumbnailLoads.remove(key, load) }
         return load.await()
     }
 
@@ -691,7 +693,7 @@ class TelegramRepository @Inject constructor(
             .forEach { item ->
                 scope.launch {
                     // A card already loading this image shares its download without the permit.
-                    if (thumbnailLoads.containsKey("${item.chatId}:${item.messageId}")) return@launch
+                    if (thumbnailLoads.containsKey("${streamEpoch.get()}:${item.chatId}:${item.messageId}")) return@launch
                     prefetchPermits.withPermit { runCatching { thumbnailFile(item.chatId, item.messageId) } }
                 }
             }

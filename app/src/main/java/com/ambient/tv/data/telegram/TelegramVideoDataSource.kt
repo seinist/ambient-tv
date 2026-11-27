@@ -30,14 +30,19 @@ class TelegramVideoDataSource(
     private var remaining = 0L
     private var partStart = -1L
     private var part = ByteArray(0)
-    /** One-part read-ahead: the next 512 KiB MTProto part downloads while this one is decoded. */
+    /** Bounded sequential read-ahead; random seeks discard the previous window. */
     private val prefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var prefetch: Pair<Long, Deferred<ByteArray>>? = null
+    private val prefetch = LinkedHashMap<Long, Deferred<ByteArray>>()
+    private var previousPart = -1L
+    private var window = 1
 
     override fun open(dataSpec: DataSpec): Long {
         if (!media.playableOnTelegram) throw IOException("Protected or externally hosted media")
         if (media.fileSize <= 0) throw IOException("Telegram media size unknown")
         if (dataSpec.position > media.fileSize) throw IOException("Seek beyond Telegram file end")
+        cancelPrefetch()
+        previousPart = -1L
+        window = 1
         position = dataSpec.position
         remaining = if (dataSpec.length == C.LENGTH_UNSET.toLong()) media.fileSize - position
         else minOf(dataSpec.length, media.fileSize - position)
@@ -58,7 +63,7 @@ class TelegramVideoDataSource(
             part = fetchPart(partStart)
             if (part.isEmpty() || part.size > TELEGRAM_MEDIA_PART_BYTES)
                 throw IOException("Invalid Telegram media part")
-            schedulePrefetch(partStart + TELEGRAM_MEDIA_PART_BYTES)
+            schedulePrefetch(partStart)
         }
         val relative = (position - partStart).toInt()
         val count = minOf(length, part.size - relative, remaining.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
@@ -71,8 +76,13 @@ class TelegramVideoDataSource(
     }
 
     private fun fetchPart(offset: Long): ByteArray {
-        val pending = prefetch?.takeIf { it.first == offset }?.second
-        if (pending == null) cancelPrefetch() else prefetch = null
+        val sequential = previousPart >= 0L && offset - previousPart == TELEGRAM_MEDIA_PART_BYTES.toLong()
+        if (!sequential) {
+            cancelPrefetch()
+            window = 1
+        } else window = (window + 1).coerceAtMost(3)
+        previousPart = offset
+        val pending = prefetch.remove(offset)
         return try {
             runBlocking {
                 // A failed read-ahead is retried directly instead of failing playback.
@@ -84,16 +94,19 @@ class TelegramVideoDataSource(
         }
     }
 
-    private fun schedulePrefetch(offset: Long) {
-        if (offset >= media.fileSize || offset >= position + remaining) return
-        prefetch = offset to prefetchScope.async {
-            repository.mediaPart(media.chatId, media.messageId, offset)
+    private fun schedulePrefetch(start: Long) {
+        for (i in 1..window) {
+            val offset = start + i.toLong() * TELEGRAM_MEDIA_PART_BYTES
+            if (offset >= media.fileSize || offset >= position + remaining) break
+            if (offset !in prefetch) prefetch[offset] = prefetchScope.async {
+                repository.mediaPart(media.chatId, media.messageId, offset)
+            }
         }
     }
 
     private fun cancelPrefetch() {
-        prefetch?.second?.cancel()
-        prefetch = null
+        prefetch.values.forEach { it.cancel() }
+        prefetch.clear()
     }
 
     override fun getUri(): Uri? = sourceUri

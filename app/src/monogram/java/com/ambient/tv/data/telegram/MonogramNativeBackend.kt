@@ -53,11 +53,15 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     private val browsePermits = kotlinx.coroutines.sync.Semaphore(2)
     private val catalogLock = Any()
     private val diskChunkLock = Any()
+    // Access-ordered index, rebuilt only once per account/cache generation.
+    private val chunkIndex = LinkedHashMap<File, Long>(128, 0.75f, true)
+    private var chunkIndexGeneration = -1L
+    private var chunkIndexBytes = 0L
     /** Account-generation fences prevent older thumbnail RPCs repopulating a new account's cache. */
     @Volatile private var cacheGeneration = 0L
     private var previewWrites = 0
     private val accountIdFile = File(session.parentFile, "account.id")
-    private var accountId: Long? = accountIdFile.takeIf { it.isFile }?.let {
+    @Volatile private var accountId: Long? = accountIdFile.takeIf { it.isFile }?.let {
         runCatching { it.readText().trim().toLongOrNull() }.getOrNull()
     }
     private var handle = 0L
@@ -134,8 +138,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             while (true) {
                 kotlinx.coroutines.delay(backoffMs)
                 backoffMs = try {
-                    applyUpdates(nativeCall { h -> drainUpdateEvents(h) })
-                    UPDATES_POLL_MS
+                    val events = nativeCall { h -> drainUpdateEvents(h) }
+                    applyUpdates(events)
+                    if (events.isEmpty()) (backoffMs + UPDATES_POLL_MS).coerceAtMost(15_000L)
+                    else UPDATES_POLL_MS
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                     throw cancelled
                 } catch (lost: TelegramSessionLostException) {
@@ -1100,14 +1106,17 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             require(offset >= 0L && offset % TELEGRAM_MEDIA_PART_BYTES == 0L)
             val dir = File(cache, "chunks").apply { mkdirs() }.canonicalFile
             val cacheFile = File(dir, "$chatId-$messageId-$offset.bin")
+            val generation = cacheGeneration
+            val currentIdentity = accountId
             val cached = synchronized(diskChunkLock) {
+                prepareChunkIndex(dir)
                 if (cacheFile.isFile && cacheFile.length() in 1..TELEGRAM_MEDIA_PART_BYTES.toLong()) {
+                    rememberChunk(cacheFile)
                     cacheFile.setLastModified(System.currentTimeMillis())
                     cacheFile.readBytes()
                 } else null
             }
             if (cached != null) return@nativeCall cached
-            val currentIdentity = accountId
             val temp = File.createTempFile("part-", ".bin", dir)
             var actual: File? = null
             try {
@@ -1119,17 +1128,20 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 }
                 val payload = actual.readBytes()
                 // An account switch/log-out invalidates in-flight native file results.
-                check(accountId == currentIdentity && native.isAuthorized(h) &&
+                check(accountId == currentIdentity && cacheGeneration == generation && native.isAuthorized(h) &&
                     chatId !in leftChannels) {
                     app.getString(R.string.monogram_error_account_changed)
                 }
                 synchronized(diskChunkLock) {
-                    if (accountId == currentIdentity && chatId !in leftChannels) {
-                        if (!cacheFile.isFile) runCatching {
-                            actual.copyTo(cacheFile, overwrite = false)
-                        }
-                        trimChunkCache(dir)
+                    check(accountId == currentIdentity && cacheGeneration == generation && chatId !in leftChannels) {
+                        app.getString(R.string.monogram_error_account_changed)
                     }
+                    prepareChunkIndex(dir)
+                    if (!cacheFile.isFile) {
+                        // Same directory: publish atomically without writing another 512 KiB.
+                        if (actual.renameTo(cacheFile)) rememberChunk(cacheFile)
+                    }
+                    trimChunkCache()
                 }
                 payload
             } finally {
@@ -1138,17 +1150,31 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             }
         }
 
-    private fun trimChunkCache(dir: File) {
-        // part-*.bin are temp files of downloads still in flight; only completed chunks count.
-        val files = dir.listFiles()?.filter {
+    /** All index operations are under diskChunkLock, including account invalidation. */
+    private fun prepareChunkIndex(dir: File) {
+        if (chunkIndexGeneration == cacheGeneration) return
+        chunkIndex.clear()
+        chunkIndexBytes = 0L
+        dir.listFiles().orEmpty().filter {
             it.isFile && it.name.endsWith(".bin") && !it.name.startsWith("part-")
-        }
-            ?.sortedBy { it.lastModified() } ?: return
-        var bytes = files.sumOf { it.length() }
-        for (item in files) {
-            if (bytes <= 64L * 1024L * 1024L) break
-            bytes -= item.length()
-            item.delete()
+        }.sortedBy { it.lastModified() }.forEach { rememberChunk(it) }
+        chunkIndexGeneration = cacheGeneration
+        trimChunkCache()
+    }
+
+    private fun rememberChunk(file: File) {
+        val size = file.length()
+        chunkIndexBytes += size - (chunkIndex.put(file, size) ?: 0L)
+    }
+
+    private fun trimChunkCache() {
+        val iterator = chunkIndex.entries.iterator()
+        while (chunkIndexBytes > 64L * 1024 * 1024 && iterator.hasNext()) {
+            val entry = iterator.next()
+            if (entry.key.delete() || !entry.key.exists()) {
+                chunkIndexBytes -= entry.value
+                iterator.remove()
+            }
         }
     }
 

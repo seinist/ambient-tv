@@ -21,10 +21,12 @@ internal class TelegramSeekableMedia(
      * served. Without it VLC/MPV got one part per round trip (the file server's parallel readers
      * serialised on the single part above), a few MB/s at most for a large file.
      */
-    private val prefetcher = java.util.concurrent.Executors.newSingleThreadExecutor { work ->
+    private val prefetcher = java.util.concurrent.Executors.newFixedThreadPool(3) { work ->
         Thread(work, "monogram-media-prefetch").apply { isDaemon = true }
     }
-    private var prefetch: Pair<Long, java.util.concurrent.Future<ByteArray>>? = null
+    private val prefetch = LinkedHashMap<Long, java.util.concurrent.Future<ByteArray>>()
+    private var previousPart = -1L
+    private var window = 1
 
     init {
         require(size > 0L && media.playableOnTelegram) { "Unavailable Monogram media" }
@@ -50,7 +52,7 @@ internal class TelegramSeekableMedia(
                 if (part.isEmpty() || part.size > TELEGRAM_MEDIA_PART_BYTES) {
                     throw IOException("Incomplete Monogram media range")
                 }
-                schedulePrefetch(partStart + TELEGRAM_MEDIA_PART_BYTES)
+                schedulePrefetch(partStart)
             }
             val within = (at - partStart).toInt()
             val amount = minOf(wanted - copied, part.size - within)
@@ -64,25 +66,42 @@ internal class TelegramSeekableMedia(
 
     /** The prefetched part when it is the wanted one; a failed read-ahead is simply loaded again. */
     private fun loadPart(offset: Long): ByteArray {
-        val pending = prefetch
-        prefetch = null
-        if (pending != null && pending.first == offset) {
-            runCatching { pending.second.get() }.getOrNull()?.let { return it }
-        } else {
-            pending?.second?.cancel(true)
+        val sequential = previousPart >= 0L && offset - previousPart == TELEGRAM_MEDIA_PART_BYTES.toLong()
+        if (!sequential) {
+            cancelPrefetch()
+            window = 1
+        } else window = (window + 1).coerceAtMost(3)
+        previousPart = offset
+        val pending = prefetch.remove(offset)
+        if (pending != null) {
+            try { return pending.get() }
+            catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw interrupted
+            }
+            catch (_: java.util.concurrent.ExecutionException) { }
+            catch (_: java.util.concurrent.CancellationException) { }
         }
         return partLoader(offset)
     }
 
-    private fun schedulePrefetch(offset: Long) {
-        if (offset >= size || prefetcher.isShutdown) return
-        prefetch = offset to prefetcher.submit(java.util.concurrent.Callable { partLoader(offset) })
+    private fun schedulePrefetch(start: Long) {
+        if (prefetcher.isShutdown) return
+        for (i in 1..window) {
+            val offset = start + i.toLong() * TELEGRAM_MEDIA_PART_BYTES
+            if (offset >= size) break
+            if (offset !in prefetch) prefetch[offset] = prefetcher.submit(java.util.concurrent.Callable { partLoader(offset) })
+        }
+    }
+
+    private fun cancelPrefetch() {
+        prefetch.values.forEach { it.cancel(true) }
+        prefetch.clear()
     }
 
     @Synchronized
     override fun close() {
-        prefetch?.second?.cancel(true)
-        prefetch = null
+        cancelPrefetch()
         prefetcher.shutdownNow()
         part = ByteArray(0)
         partStart = -1L

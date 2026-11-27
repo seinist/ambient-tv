@@ -17,6 +17,16 @@ output="$root/app/libs/monogram-mtproto.aar"
 stamp="$root/app/libs/.monogram-native-version"
 patch_script="$root/scripts/patch_monogram_leave.py"
 patch_digest="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$patch_script")"
+# Keep a portable ABI baseline; Cargo/RustCrypto can dispatch optional CPU features
+# at runtime. Never pass -C target-cpu=native from the build host.
+profile="${MONOGRAM_OPT_LEVEL:-2}"
+case "$profile" in 2|3|z) ;; *) echo "MONOGRAM_OPT_LEVEL must be 2, 3 or z" >&2; exit 1;; esac
+export CARGO_PROFILE_RELEASE_OPT_LEVEL="$profile"
+export CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
+export CARGO_PROFILE_RELEASE_STRIP=true CARGO_PROFILE_RELEASE_PANIC=abort
+builder_digest="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "${BASH_SOURCE[0]}")"
+# Changing host toolchain, effective flags, or Cargo profile invalidates the AAR.
+build_config="$(printf '%s\n' "$profile" "${RUSTFLAGS:-}" "${CARGO_ENCODED_RUSTFLAGS:-}" "$(rustc -Vv)" "${ANDROID_NDK_HOME:-}" "${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}" | sha256sum | cut -d' ' -f1)"
 abis=(${MONOGRAM_ABIS:-arm64-v8a armeabi-v7a x86 x86_64})
 [[ "${#abis[@]}" -gt 0 ]] || exit 1
 for abi in "${abis[@]}"; do
@@ -27,7 +37,9 @@ if [[ "${REBUILD_MONOGRAM:-0}" != "1" && -s "$output" && -f "$stamp" ]] &&
     grep -Fx "version=$version" "$stamp" >/dev/null &&
     grep -Fx "ref=$ref" "$stamp" >/dev/null &&
     grep -Fx "abis=$requested" "$stamp" >/dev/null &&
-    grep -Fx "patch=$patch_digest" "$stamp" >/dev/null; then
+    grep -Fx "patch=$patch_digest" "$stamp" >/dev/null &&
+    grep -Fx "builder=$builder_digest" "$stamp" >/dev/null &&
+    grep -Fx "build_config=$build_config" "$stamp" >/dev/null; then
     echo "Reusing pinned Monogram MTProto-only AAR ($requested)"
     exit 0
 fi
@@ -77,7 +89,8 @@ for abi in "${abis[@]}"; do
     rustup target add "$target"
     echo "Building Monogram :native:mtproto ONLY for $abi"
     ( cd "$source_dir"
-      ./gradlew --no-daemon --no-configuration-cache :native:mtproto:assembleRelease -PtargetAbi="$abi"
+      # Upstream's native task does not fingerprint Cargo profile environment.
+      ./gradlew --no-daemon --no-configuration-cache --rerun-tasks :native:mtproto:assembleRelease -PtargetAbi="$abi"
     )
     aar="$source_dir/native/mtproto/build/outputs/aar/mtproto-release.aar"
     [[ -s "$aar" ]] || { echo "Missing $aar" >&2; exit 1; }
@@ -86,5 +99,5 @@ done
 args=()
 for abi in "${abis[@]}"; do args+=("$abi=$scratch/$abi.aar"); done
 python3 "$root/scripts/merge_monogram_aars.py" "$output" "${args[@]}"
-printf 'version=%s\nref=%s\nabis=%s\npatch=%s\n' "$version" "$ref" "$requested" "$patch_digest" > "$stamp"
+printf 'version=%s\nref=%s\nabis=%s\npatch=%s\nbuilder=%s\nbuild_config=%s\nopt_level=%s\n' "$version" "$ref" "$requested" "$patch_digest" "$builder_digest" "$build_config" "$profile" > "$stamp"
 echo "Only the upstream Monogram MTProto native module was compiled; GPL terms apply to the opt-in build."

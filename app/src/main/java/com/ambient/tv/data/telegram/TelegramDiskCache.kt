@@ -38,17 +38,26 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
     private val lock = Mutex()
     private val ttlMillis = 7L * 24 * 60 * 60 * 1000
     private val alias = "ambient.monogram.feed-cache.v1"
+    // Accessed only under lock. Never persisted outside the encrypted snapshot.
+    private var cachedKey: SecretKey? = null
+    private data class Snapshot(val modified: Long, val rows: JSONArray)
+    private val snapshots = LinkedHashMap<File, Snapshot>(16, 0.75f, true)
+    private fun remember(target: File, rows: JSONArray) {
+        snapshots[target] = Snapshot(target.lastModified(), rows)
+        while (snapshots.size > 12) snapshots.remove(snapshots.keys.first())
+    }
 
     private fun key(): SecretKey {
+        cachedKey?.let { return it }
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        return (store.getKey(alias, null) as? SecretKey)
+        return ((store.getKey(alias, null) as? SecretKey)
             ?: KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
                 init(KeyGenParameterSpec.Builder(alias,
                     KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
                     .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                     .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                     .setKeySize(256).build())
-            }.generateKey()
+            }.generateKey()).also { cachedKey = it }
     }
 
     private fun hash(raw: String) = MessageDigest.getInstance("SHA-256")
@@ -74,21 +83,26 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
 
     private fun read(account: String, section: String): JSONArray? {
         val target = file(account, section)
-        if (!target.isFile || System.currentTimeMillis() - target.lastModified() > ttlMillis) return null
+        if (!target.isFile || System.currentTimeMillis() - target.lastModified() > ttlMillis) {
+            snapshots.remove(target)
+            return null
+        }
+        snapshots[target]?.takeIf { it.modified == target.lastModified() }?.let { return it.rows }
         return runCatching {
             val data = AtomicFile(target).readFully()
             JSONObject(String(decrypt(data), Charsets.UTF_8)).takeIf {
                 it.optInt("version") == 1 && it.optString("section") == section
-            }?.optJSONArray("rows")
+            }?.optJSONArray("rows")?.also { remember(target, it) }
         }.getOrNull()
     }
     private fun write(account: String, section: String, entries: JSONArray) {
-        val target = AtomicFile(file(account, section))
+        val destination = file(account, section)
+        val target = AtomicFile(destination)
         val json = JSONObject().put("version", 1).put("section", section)
             .put("rows", entries).toString().toByteArray(Charsets.UTF_8)
         val bytes = encrypt(json)
         val out = target.startWrite()
-        try { out.write(bytes); target.finishWrite(out) }
+        try { out.write(bytes); target.finishWrite(out); remember(destination, entries) }
         catch (failure: Exception) { target.failWrite(out); throw failure }
     }
 
@@ -206,6 +220,7 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
     suspend fun clearAccount(account: String) =
         withContext(Dispatchers.IO) { lock.withLock {
             val prefix = hash(account) + "-"
+            snapshots.keys.removeAll { it.name.startsWith(prefix) }
             root.listFiles()?.filter { it.name.startsWith(prefix) }?.forEach { it.delete() }
         } }
 }

@@ -195,6 +195,14 @@ if (monogramEnabled) {
     require(stamp.readLines().contains("patch=$patchHash")) {
         "Monogram Native patch changed; rebuild the MTProto AAR"
     }
+    val builderHash = MessageDigest.getInstance("SHA-256")
+        .digest(file("../scripts/build_monogram_native.sh").readBytes())
+        .joinToString("") { "%02x".format(it) }
+    require(stampLines.contains("builder=$builderHash") &&
+        stampLines.any { it.startsWith("build_config=") } &&
+        stampLines.contains("opt_level=" + (providers.environmentVariable("MONOGRAM_OPT_LEVEL").orNull ?: "2"))) {
+        "Monogram native compiler configuration changed; rebuild with ./build.sh monogram"
+    }
     ZipFile(monogramAar).use { aar ->
         val missing = selectedAbis.filter { aar.getEntry("jni/$it/libmonogram_mtproto.so") == null }
         require(missing.isEmpty()) {
