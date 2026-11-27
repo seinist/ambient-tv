@@ -3,8 +3,10 @@
 The native runtime is pinned in `gradle/external-versions.properties`. Patches under
 `native/ambientprojectm/patches` are reapplied to a clean pinned checkout.
 The normal build uses O3/ThinLTO, the driver-keyed bounded shader cache and indexed
-warp mesh. `PROJECTM_DIRECT_CLASSIC_COMPOSITE=ON` is an opt-in until real output
-comparisons have been reviewed.
+warp mesh. `PROJECTM_DIRECT_CLASSIC_COMPOSITE=ON` is now the default after the Mesa
+GLES pixel-equivalence test passed on head `fa31c56` (62,437,824 channels;
+maximum byte difference 4, mean rounded to 0.00000). Set it to `OFF` to build
+the reference fallback if a device-specific rendering issue is found.
 
 ## Host regression checks
 
