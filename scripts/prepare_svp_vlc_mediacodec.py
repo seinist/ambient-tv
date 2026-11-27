@@ -34,8 +34,63 @@ insert(utils, "    AImage *image;\n    int fence_fd;",
 
 decoder = "modules/codec/omxil/mediacodec.c"
 shutil.copyfile(svp / "include/svp_sdr_profile.h", source / "modules/codec/omxil/svp_sdr_profile.h")
+shutil.copyfile(svp / "include/svp_av1_config.h", source / "modules/codec/omxil/svp_av1_config.h")
+insert("modules/codec/Makefile.am",
+       "libmediacodec_plugin_la_SOURCES = codec/omxil/mediacodec.c codec/omxil/mediacodec.h",
+       "libmediacodec_plugin_la_SOURCES = packetizer/av1_obu.c packetizer/av1_obu.h \\\n"
+       "\tcodec/omxil/mediacodec.c codec/omxil/mediacodec.h",
+       "libmediacodec_plugin_la_SOURCES = packetizer/av1_obu.c")
 insert(decoder, '#include <vlc_common.h>', '#include <vlc_common.h>\n#include "svp_sdr_profile.h" // SVP profile allowlist',
        '"svp_sdr_profile.h" // SVP')
+insert(decoder, '#include "mediacodec.h"', '#include "mediacodec.h"\n#include "svp_av1_config.h"\n#include "../../packetizer/av1_obu.h" // SVP AV1 parser',
+       '"../../packetizer/av1_obu.h" // SVP AV1 parser')
+insert(decoder, "static int ParseExtra(decoder_t *p_dec)",
+       """/* SVP AV1: validate both av1C and actual sequence syntax. */
+static bool SvpAv1ConfigSDR8(const es_format_t *fmt, SvpAv1Config *config)
+{
+    if (!svp_av1_config(fmt->p_extra, fmt->i_extra, config))
+        return false;
+    av1_OBU_sequence_header_t *seq = AV1_OBU_parse_sequence_header(
+        config->sequence.data, config->sequence.size);
+    if (!seq) return false;
+    int profile, level, tier;
+    AV1_get_profile_level(seq, &profile, &level, &tier);
+    bool ok = profile == 0 && AV1_get_chroma(seq) == VLC_CODEC_I420;
+    AV1_release_sequence_header(seq);
+    return ok;
+}
+
+static int SvpAv1_OnNewBlock(decoder_t *p_dec, block_t **pp_block)
+{
+    SvpAv1Config config;
+    if (!SvpAv1ConfigSDR8(p_dec->fmt_in, &config) ||
+        !svp_av1_same_sequence(&config, (*pp_block)->p_buffer, (*pp_block)->i_buffer))
+        return VLC_EGENERIC; /* changed sequence: normal decoder fallback */
+    return Video_OnNewBlock(p_dec, pp_block);
+}
+
+static int ParseExtra(decoder_t *p_dec)""",
+       "/* SVP AV1: validate both")
+insert(decoder,
+       "    case VLC_CODEC_HEVC:\n        return ParseVideoExtraHEVC(p_dec, p_extra, i_extra);",
+       "    case VLC_CODEC_HEVC:\n        return ParseVideoExtraHEVC(p_dec, p_extra, i_extra);\n"
+       "    case VLC_CODEC_AV1: {\n"
+       "        SvpAv1Config config;\n"
+       "        if (!SvpAv1ConfigSDR8(p_dec->fmt_in, &config)) return VLC_EGENERIC;\n"
+       "        p_sys->pf_on_new_block = SvpAv1_OnNewBlock;\n"
+       "        return CSDDup(p_sys, config.csd, config.csd_size);\n"
+       "    }",
+       "p_sys->pf_on_new_block = SvpAv1_OnNewBlock")
+insert(decoder, "        case VLC_CODEC_APV:\n            mime = \"video/avp\"; break;",
+       "        case VLC_CODEC_AV1: {\n"
+       "            SvpAv1Config config;\n"
+       "            if (!var_InheritBool(p_dec, CFG_PREFIX \"svp-vulkan\") ||\n"
+       "                !var_InheritBool(p_dec, CFG_PREFIX \"dr\") ||\n"
+       "                !SvpAv1ConfigSDR8(p_dec->fmt_in, &config)) return VLC_EGENERIC;\n"
+       "            i_profile = 0; mime = \"video/av01\"; break;\n"
+       "        }\n"
+       "        case VLC_CODEC_APV:\n            mime = \"video/avp\"; break;",
+       'mime = "video/av01"')
 insert(decoder, '    add_bool(CFG_PREFIX "dr", true,',
        '    add_bool(CFG_PREFIX "svp-vulkan", false, N_("Experimental GPU-resident SVP Surface"), NULL)\n'
        '    add_bool(CFG_PREFIX "dr", true,',
@@ -53,7 +108,8 @@ insert(decoder, "        p_sys->video.use_air = false;",
        "        case VLC_CODEC_VP9: svp_codec = SVP_CODEC_VP9; break;\n"
        "        default: break;\n"
        "        }\n"
-       "        p_sys->video.svp_sdr8 = svp_sdr8_profile(svp_codec, i_profile);",
+       "        p_sys->video.svp_sdr8 = svp_sdr8_profile(svp_codec, i_profile) ||\n"
+       "            p_dec->fmt_in->i_codec == VLC_CODEC_AV1; /* validated in MIME selection */",
        "p_sys->video.svp_sdr8 =")
 insert(decoder, "    if (need_gpu)\n        usage |= AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;",
        "    // SVP explicitly selects the same PRIVATE reader with GPU usage.\n"
