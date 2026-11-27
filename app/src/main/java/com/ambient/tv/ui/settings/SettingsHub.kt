@@ -142,8 +142,7 @@ internal fun SettingsHub(
 ) {
     val moduleStates by com.ambient.tv.modules.SystemModuleAvailability.states.collectAsState()
     val spotifyRuntime = moduleStates.getValue(com.ambient.tv.modules.SystemModule.SPOTIFY)
-    val spotifyOffered = spotifyRuntime.usable ||
-        spotifyRuntime.runtime == com.ambient.tv.modules.ModuleRuntimeState.BUNDLED_UNVERIFIED
+    val spotifyOffered = spotifyRuntime.usable
     val monogramOffered = com.ambient.tv.modules.SystemModuleAvailability.monogramOffered
     fun pageAvailable(category: SettingsCategory?) = when (category) {
         SettingsCategory.SPOTIFY, SettingsCategory.ADVANCED -> spotifyOffered
@@ -1185,7 +1184,7 @@ internal fun sourceConfigured(category: SettingsCategory, state: SettingsUiState
     SettingsCategory.YOUTUBE -> state.youtubeEnabled
     SettingsCategory.TELEGRAM -> com.ambient.tv.modules.SystemModuleAvailability.monogramOffered && state.telegramEnabled
     SettingsCategory.TRAILERS -> state.trailersConfigured
-    SettingsCategory.SPOTIFY -> state.spotifyEnabled && state.spotifyWebAuthorized
+    SettingsCategory.SPOTIFY -> com.ambient.tv.modules.SystemModuleAvailability.spotifyOffered && state.spotifyEnabled && state.spotifyWebAuthorized
     SettingsCategory.RADIO -> state.radioEnabled
     SettingsCategory.FILES -> state.filesEnabled && state.fileSourceCount > 0
     SettingsCategory.DLNA -> state.dlnaServerCount > 0
