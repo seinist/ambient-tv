@@ -16,6 +16,10 @@ mod gpu;
 pub mod resident;
 #[cfg(feature = "vulkan")]
 mod resident_vulkan;
+#[cfg(all(target_os="android",feature="vulkan"))]
+mod mediacodec_reader;
+#[cfg(all(target_os="android",feature="vulkan"))]
+mod ahb_vulkan;
 #[cfg(feature = "vulkan")]
 mod pipeline_cache;
 // Experimental reusable exact metric; not a replacement for the upstream analyser.
