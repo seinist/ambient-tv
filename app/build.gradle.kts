@@ -147,6 +147,10 @@ require(appDisplayName.isNotBlank() && appDisplayName.none { it == '\n' || it ==
 
 val externalVersions = loadProjectProperties("gradle/external-versions.properties")
 val vulkanVlcAar = file("libs/libvlc-vulkan.aar")
+val modulePackaging = providers.gradleProperty("MODULE_PACKAGING")
+    .orElse(providers.environmentVariable("MODULE_PACKAGING")).orElse("full").get()
+require(modulePackaging in setOf("full", "modular-preview")) { "Unknown MODULE_PACKAGING: $modulePackaging" }
+val modularPreview = modulePackaging == "modular-preview"
 val monogramEnabled = (providers.gradleProperty("MONOGRAM_NATIVE").orElse(
     providers.environmentVariable("MONOGRAM_NATIVE")
 ).orElse("0").get()).let { it == "1" || it.equals("true", true) }
@@ -279,6 +283,7 @@ android {
         // ndk.abiFilters here: AGP 8.11+ rejects using both mechanisms together.
 
         buildConfigField("String", "APP_DISPLAY_NAME", quotedBuildConfigString(appDisplayName))
+        buildConfigField("String", "MODULE_PACKAGING", quotedBuildConfigString(modulePackaging))
         buildConfigField("boolean", "MONOGRAM_NATIVE", monogramEnabled.toString())
         buildConfigField("boolean", "MONOGRAM_CDN_RANGES", (providers.environmentVariable("MONOGRAM_CDN_RANGES").orNull == "1").toString())
         val monogramPgoGenerate = monogramEnabled && providers.environmentVariable("MONOGRAM_PGO_MODE").orNull == "generate"
@@ -434,6 +439,8 @@ android {
             pickFirsts += selectedAbis.map { "**/$it/libc++_shared.so" }
             // JNA (Monogram) bundles libjnidispatch for ABIs Android no longer supports.
             excludes += setOf("**/mips/libjnidispatch.so", "**/mips64/libjnidispatch.so", "**/armeabi/libjnidispatch.so")
+            // Preview only: omit the two projectM libraries that the module host can load.
+            if (modularPreview) excludes += setOf("**/libprojectM-4.so", "**/libambientprojectm.so")
             // An earlier build may have left the Spotify core in jniLibs: never ship it when disabled.
             if (!spotifyEnabled) excludes += "**/libspotify_receiver_core.so"
             // An earlier full Vulkan build may leave a 6+ MB native library in
@@ -449,6 +456,22 @@ android {
                 "**/libandroidx.graphics.path.so",
                 "**/libcronet*.so",
             )
+        }
+    }
+}
+
+if (modularPreview) {
+    // Use a generated filtered asset directory, never delete tracked assets.
+    val filteredAssets = layout.buildDirectory.dir("generated/modularPreview/assets")
+    val prepareModularAssets = tasks.register<Sync>("prepareModularPreviewAssets") {
+        from("src/main/assets")
+        exclude("games/slang/**")
+        into(filteredAssets)
+    }
+    android.sourceSets.getByName("main").assets.setSrcDirs(listOf(filteredAssets.get().asFile))
+    tasks.configureEach {
+        if (name == "preBuild" || (name.startsWith("merge") && name.endsWith("Assets"))) {
+            dependsOn(prepareModularAssets)
         }
     }
 }
