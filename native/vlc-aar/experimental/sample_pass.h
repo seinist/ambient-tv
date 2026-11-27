@@ -216,6 +216,22 @@ public:
         return VK_SUCCESS;
     }
 
+    // Only on a fully retired slot, with an image view using the identical
+    // immutable YCbCr conversion. Retain the pipeline and framebuffer.
+    bool rebind_input(VkImageView input) {
+        if (!set_ || !input || !pipeline_) return false;
+        VkDescriptorImageInfo image{};
+        image.imageView = input;
+        image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = set_;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &image;
+        d_.update_sets(device_, 1, &write, 0, nullptr);
+        return true;
+    }
+
     // Normalized crop covers exactly the visible decoder image. No hidden GL flip.
     // Orientation/display scaling remain in VLC/libplacebo, not this conversion.
     bool record(VkCommandBuffer cmd, const float (&crop)[4]) const {
