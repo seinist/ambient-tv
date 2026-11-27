@@ -121,7 +121,9 @@ fun ProjectMVisualizer(
         val data = withContext(Dispatchers.IO) { browser.presetData(preset) } ?: return
         if (loadGeneration.get() != generation) return
         browser.currentPath = preset.assetPath
-        nativeLifecycleLock.withLock {
+        val view = glView ?: return
+        view.queueEvent {
+            if (loadGeneration.get() != generation || nativeReleased.get()) return@queueEvent
             val handle = nativeHandle.get()
             if (handle != 0L) ProjectMNativeBridge.nativeLoadPreset(handle, data, smooth)
         }
@@ -286,6 +288,13 @@ fun ProjectMVisualizer(
                     setRenderer(object : GLSurfaceView.Renderer {
                         override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
                             if (nativeReleased.get() || !ProjectMAvailability.isAvailable) return
+                            // A recreated EGL context may reuse numeric GL object names.
+                            // Retire the old engine before allocating any resources in the new one.
+                            nativeLifecycleLock.withLock {
+                                val previous = nativeHandle.getAndSet(0L)
+                                if (previous != 0L) ProjectMNativeBridge.nativeDestroy(previous)
+                            }
+                            if (nativeReleased.get()) return
                             val handle = ProjectMNativeBridge.nativeCreate()
                             if (handle != 0L && hostActive.get() && currentAudioSource.value != 0)
                                 ProjectMNativeBridge.nativeSetAudioSource(handle, currentAudioSource.value)
@@ -296,8 +305,7 @@ fun ProjectMVisualizer(
                                     if (handle != 0L) ProjectMNativeBridge.nativeDestroy(handle)
                                     return@withLock
                                 }
-                                val previous = nativeHandle.getAndSet(handle)
-                                if (previous != 0L) ProjectMNativeBridge.nativeDestroy(previous)
+                                nativeHandle.set(handle)
                                 if (handle != 0L) {
                                     val activeBrowser = currentBrowser.value
                                     texturePath?.let { ProjectMNativeBridge.nativeSetTexturePath(handle, it) }
