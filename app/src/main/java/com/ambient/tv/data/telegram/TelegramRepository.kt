@@ -932,7 +932,7 @@ class TelegramRepository @Inject constructor(
                 else {
                     val priority = TelegramTransferPriority(false)
                     val results = keys.map { kotlinx.coroutines.CompletableDeferred<ByteArray>() }
-                    val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                    val job = scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
                         mediaPartPermits.withPermit {
                             verify()
                             val data = selected.mediaWindow(media.chatId, media.messageId, offset,

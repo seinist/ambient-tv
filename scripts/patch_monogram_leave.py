@@ -20,6 +20,12 @@ MODIFICATION_DATE = "2026-11-27"
 NOTICE_MARKER = "Modified by Ambient TV, "
 COMMENT_PREFIX = {".rs": "//", ".kt": "//", ".kts": "//", ".toml": "#"}
 MODIFICATIONS = {
+    "vendor/mono-rs/crates/mono-proto-socket/src/tcp.rs":
+        "detach an individual completed request socket without closing the client connection",
+    "vendor/mono-rs/crates/mono-proto-runtime/src/request_control.rs":
+        "unregister only the completed socket from request cancellation",
+    "vendor/mono-rs/crates/mono-proto-runtime/src/rpc/supervisor.rs":
+        "park a completed connection only after detaching request cancellation",
     "vendor/mono-rs/crates/mono-proto-transport/src/framing.rs":
         "consume large padded intermediate frames by ownership and preserve trailing input",
     "settings.gradle.kts":
@@ -1593,6 +1599,48 @@ mod ambient_owned_framing_tests {
     }
 }
 """, "mod ambient_owned_framing_tests")
+
+
+# A successfully completed RPC has reached a verified frame boundary. Remove
+# that socket (not the whole shared request binding) before returning its lane
+# to the pool. A late cancellation must not shut down a healthy parked socket.
+socket_tcp = "vendor/mono-rs/crates/mono-proto-socket/src/tcp.rs"
+add_before(socket_tcp, "    pub fn detach_sockets(&self) {", """    pub fn detach_socket(&self, stream: &Arc<TcpStream>) -> Result<(), TransportError> {
+        let mut state = self.state.lock();
+        if state.closed || state.closing { return Err(closed_error()); }
+        let weak = Arc::downgrade(stream);
+        state.streams.retain(|entry| !entry.ptr_eq(&weak));
+        Ok(())
+    }
+""", "pub fn detach_socket(&self,")
+request_control = "vendor/mono-rs/crates/mono-proto-runtime/src/request_control.rs"
+add_before(request_control, "pub fn detach_sockets() {", """pub fn detach_socket(stream: &Arc<TcpStream>) -> Result<(), Error> {
+    CURRENT.with(|cell| match &cell.borrow().1 {
+        Some(control) => control.detach_socket(stream),
+        None => Ok(()),
+    }).map_err(|_| Error::Connection("request cancelled".into()))
+}
+""", "pub fn detach_socket(stream:")
+amend(tcp, """impl ObfuscatedTcp {
+    pub fn set_io_timeout(&mut self, secs: u64) {""",
+      """impl ObfuscatedTcp {
+    pub fn detach_completed_request(&self) -> Result<(), TransportError> {
+        crate::request_control::detach_socket(&self.stream)
+    }
+    pub fn set_io_timeout(&mut self, secs: u64) {""")
+supervisor = "vendor/mono-rs/crates/mono-proto-runtime/src/rpc/supervisor.rs"
+amend(supervisor,
+      """        if let Some(transport) = self.transport.take() {
+            put_live(transport);
+        }""",
+      """        if let Some(transport) = self.transport.take() {
+            if transport.conn.detach_completed_request().is_ok() {
+                put_live(transport);
+            } else {
+                // Cancellation won the race; never park its closed socket.
+                self.state = ConnectionState::Disconnected;
+            }
+        }""")
 
 # Commit files only after every source contract has been checked.
 for path, result in changes.items():

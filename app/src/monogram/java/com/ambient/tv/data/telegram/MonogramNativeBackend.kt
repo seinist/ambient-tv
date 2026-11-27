@@ -1405,10 +1405,15 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     require(parts.indices.all { validSize(it, parts[it].size) }) { "Invalid or incomplete Monogram chunk" }
                     verifyGeneration()
                     requireAuthorized(h)
-                    val stages = parts.indices.map { index -> File(dir, "${temp.name}-$index.bin") }
+                    val stages = parts.indices.map { index ->
+                        if (parts.size == 1) temp else File(dir, "${temp.name}-$index.bin")
+                    }
                     try {
                         val staged = parts.indices.map { index ->
-                            digest != null && runCatching { dir.mkdirs(); stages[index].writeBytes(parts[index]) }.isSuccess
+                            digest != null && runCatching {
+                                dir.mkdirs()
+                                if (stages[index].length() != parts[index].size.toLong()) stages[index].writeBytes(parts[index])
+                            }.isSuccess
                         }
                         synchronized(diskChunkLock) {
                             verifyGeneration()
