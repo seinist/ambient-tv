@@ -89,3 +89,8 @@ insert("video/out/vulkan/context.c",
        "        .uniformAndStorageBuffer16BitAccess = true,\n#ifdef __ANDROID__\n"
        "        .samplerYcbcrConversion = true, // SVP optional Android sampling\n#endif",
        "SVP optional Android sampling")
+insert("video/out/vulkan/context.c",
+       "            .shaderInt16 = true,",
+       "            .shaderInt16 = true,\n#ifdef __ANDROID__\n"
+       "            .shaderStorageImageExtendedFormats = true, // SVP optional raw YUV storage\n#endif",
+       "SVP optional raw YUV storage")
