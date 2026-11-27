@@ -1411,7 +1411,10 @@ internal class MpvPlaybackEngine(
                             else -> 0.0
                         },
                         svpBypassReason = if (svpNow) bypass else 0,
-                        svpNativeCostUs = if (svpNow && sampleElapsed > 0) costDelta else 0L,
+                        // The explicitly adaptive native preset has its own cost
+                        // ladder. Keep decoder/render-drop and actual bypass
+                        // checks, but don't interrupt its first cost adjustment.
+                        svpNativeCostUs = if (svpNow && sampleElapsed > 0 && effective.svpMode != "adaptive") costDelta else 0L,
                     )
                 ) {
                     if (sdrToHdr.engaged) {
