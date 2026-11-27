@@ -321,6 +321,15 @@ class TelegramRepository @Inject constructor(
     internal fun playbackMediaRevision(media: TelegramMedia): Long =
         client?.mediaRevision(media.chatId, media.messageId) ?: -1L
 
+    internal suspend fun validatePlaybackMedia(media: TelegramMedia, accountRevision: Long, mediaRevision: Long) {
+        val selected = checkNotNull(client)
+        check(isPlaybackMediaCurrent(media, accountRevision, mediaRevision)) { "Monogram account or media changed" }
+        val fresh = selected.media(media.chatId, media.messageId)
+        check(fresh != null && fresh.playableOnTelegram && fresh.fileSize == media.fileSize &&
+            (media.nativeMediaKey == null || fresh.nativeMediaKey == media.nativeMediaKey) &&
+            isPlaybackMediaCurrent(media, accountRevision, mediaRevision)) { "Monogram media identity changed" }
+    }
+
     internal fun isPlaybackMediaCurrent(media: TelegramMedia, accountRevision: Long, mediaRevision: Long): Boolean {
         val selected = client ?: return false
         return streamEpoch.get() == accountRevision && selected.mediaRevision(media.chatId, media.messageId) == mediaRevision &&
@@ -418,6 +427,7 @@ class TelegramRepository @Inject constructor(
         val authenticated = checkNotNull(client) { appContext.getString(R.string.monogram_error_not_authorized) }
         val generation = streamEpoch.get()
         val mediaRevision = authenticated.mediaRevision(media.chatId, media.messageId)
+        validatePlaybackMedia(media, generation, mediaRevision)
         val key = "${authenticated.cacheIdentity}:${media.mediaKey}:${media.nativeMediaKey.orEmpty()}:$mediaRevision"
         synchronized(playbackUrls) { playbackUrls[key] }?.let { return@withContext it }
         val url = mediaFileServer.register(

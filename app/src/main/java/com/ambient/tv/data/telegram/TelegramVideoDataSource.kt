@@ -35,6 +35,7 @@ class TelegramVideoDataSource(
     }
 
     private var sourceUri: Uri? = null
+    private var identityValidated = false
     private var position = 0L
     private var remaining = 0L
     private var partStart = -1L
@@ -50,6 +51,11 @@ class TelegramVideoDataSource(
         if (!media.playableOnTelegram) throw IOException("Protected or externally hosted media")
         if (media.fileSize <= 0) throw IOException("Telegram media size unknown")
         if (dataSpec.position > media.fileSize) throw IOException("Seek beyond Telegram file end")
+        if (!identityValidated) {
+            try { runBlocking { repository.validatePlaybackMedia(media, accountRevision, mediaRevision) } }
+            catch (failure: Exception) { throw IOException("Monogram media identity validation failed", failure) }
+            identityValidated = true
+        }
         cancelPrefetch()
         previousPart = -1L
         window = 1

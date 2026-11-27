@@ -117,7 +117,7 @@ internal class TelegramSeekableMedia(
         for (i in 1..window) {
             val offset = start + i.toLong() * TELEGRAM_MEDIA_PART_BYTES
             if (offset >= size) break
-            if (offset !in prefetch) prefetch[offset] = prefetcher.submit(java.util.concurrent.Callable {
+            if (!prefetch.containsKey(offset)) prefetch[offset] = prefetcher.submit(java.util.concurrent.Callable {
                 checkOpen()
                 prefetchLoader(offset)
             })

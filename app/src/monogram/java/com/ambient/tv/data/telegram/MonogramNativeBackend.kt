@@ -61,6 +61,22 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     private var chunkIndexBytes = 0L
     // Immutable-to-callers byte arrays, at most 4 MiB, scoped to one cache generation.
     private val hotChunks = LinkedHashMap<File, ByteArray>(8, 0.75f, true)
+    private val mediaDigests = LinkedHashMap<String, String>(64, 0.75f, true)
+    private fun mediaDigest(key: String): String = synchronized(mediaDigests) {
+        mediaDigests[key] ?: run {
+            val bytes = java.security.MessageDigest.getInstance("SHA-256").digest(key.toByteArray(Charsets.UTF_8))
+            val hex = "0123456789abcdef"
+            buildString(64) {
+                bytes.forEach { byte ->
+                    val n = byte.toInt() and 255
+                    append(hex[n ushr 4]); append(hex[n and 15])
+                }
+            }.also {
+                mediaDigests[key] = it
+                if (mediaDigests.size > 128) mediaDigests.remove(mediaDigests.keys.first())
+            }
+        }
+    }
     private fun rememberHotChunk(file: File, bytes: ByteArray) {
         hotChunks[file] = bytes
         while (hotChunks.size > 8) hotChunks.remove(hotChunks.keys.first())
@@ -68,6 +84,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     private fun invalidateChunksLocked() {
         cacheGeneration++
         hotChunks.clear()
+        synchronized(mediaDigests) { mediaDigests.clear() }
         chunkIndex.clear()
         chunkIndexBytes = 0L
         chunkIndexGeneration = -1L
@@ -117,6 +134,21 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     private val historyLocks = Array(32) { Any() }
     // Guarded by historyPages; never publish an RPC begun before an invalidation.
     private var historyRevision = 0L
+    private var historyFloor = 0L
+    private val channelHistoryRevisions = LinkedHashMap<Long, Long>()
+    // Access only under historyPages.
+    private fun historyRevisionFor(chatId: Long) = channelHistoryRevisions[chatId] ?: historyFloor
+    private fun invalidateHistoryLocked(touched: Set<Long>, everything: Boolean) {
+        val revision = ++historyRevision
+        if (everything || channelHistoryRevisions.size + touched.size > 4096) {
+            channelHistoryRevisions.clear()
+            historyFloor = revision
+            historyPages.clear()
+        } else {
+            touched.forEach { channelHistoryRevisions[it] = revision }
+            historyPages.keys.removeAll { it.first in touched }
+        }
+    }
     private val mediaRevisions = LinkedHashMap<Pair<Long, Int>, Long>()
     private var mediaRevisionCounter = 0L
     private var mediaRevisionFloor = 0L
@@ -141,12 +173,12 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 historyPages[key]?.takeIf { now - it.atMs < HISTORY_PAGE_TTL_MS &&
                     (it.requested >= size || it.messages.size < it.requested) }
                     ?.let { return it.messages.take(size) }
-                historyRevision
+                historyRevisionFor(chatId)
             }
             val requested = maxOf(size, HISTORY_SHARED_PAGE).coerceAtMost(100)
             val fetched = native.getHistoryPage(h, chatId, requested, offset, 0, 0)
             synchronized(historyPages) {
-                if (revision == historyRevision && chatId !in leftChannels) {
+                if (revision == historyRevisionFor(chatId) && chatId !in leftChannels) {
                     historyPages[key] = HistoryPage(requested, fetched, android.os.SystemClock.elapsedRealtime())
                     while (historyPages.size > HISTORY_PAGE_LIMIT) historyPages.remove(historyPages.keys.first())
                 }
@@ -156,8 +188,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     }
 
     private fun clearHistoryPages() = synchronized(historyPages) {
-        historyRevision++
-        historyPages.clear()
+        invalidateHistoryLocked(emptySet(), true)
     }
 
     /**
@@ -249,20 +280,28 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             }
         }
         synchronized(historyPages) {
-            if (everything || touched.isNotEmpty()) historyRevision++
-            if (everything) historyPages.clear()
-            else historyPages.keys.removeAll { it.first in touched }
+            if (everything || touched.isNotEmpty()) invalidateHistoryLocked(touched, everything)
         }
         if (everything || changedMessages.isNotEmpty()) {
             synchronized(diskChunkLock) {
                 // Existing player buffers and in-flight chunk publications are fenced.
                 invalidateMediaRevisions(changedMessages, everything)
-                invalidateChunksLocked()
                 fun affected(file: File): Boolean {
                     val name = file.name.removePrefix("thumb-")
                     return everything || changedMessages.any { (chat, message) ->
                             name.startsWith("$chat-$message-") || name.substringBeforeLast('.') == "$chat-$message"
                         }
+                }
+                // Account generation is unchanged: unrelated playback and hot
+                // chunks survive. Remove just affected index and memory entries.
+                hotChunks.keys.removeAll(::affected)
+                val entries = chunkIndex.entries.iterator()
+                while (entries.hasNext()) {
+                    val entry = entries.next()
+                    if (affected(entry.key)) {
+                        chunkIndexBytes -= entry.value
+                        entries.remove()
+                    }
                 }
                 listOf(chunkDirectory, File(cache, "previews"), File(cache, "photos"), cache).forEach { dir ->
                     dir.listFiles()?.filter { it.isFile && affected(it) }?.forEach { it.delete() }
@@ -733,12 +772,13 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     private fun preview(h: Long, chat: Long, id: Int, peer: Boolean = false): String? {
         val expectedGeneration = cacheGeneration
         val expectedAccount = accountId
+        val revision = mediaRevision(chat, id)
         val bytes = if (peer) native.peekPeerInlineThumb(h, chat)
             else native.peekMessageInlineThumb(h, chat, id)
         if (bytes == null || bytes.isEmpty() || bytes.size > 512 * 1024) return null
         synchronized(diskChunkLock) {
             if (expectedAccount == null || accountId != expectedAccount ||
-                cacheGeneration != expectedGeneration) return null
+                cacheGeneration != expectedGeneration || revision != mediaRevision(chat, id)) return null
             val out = File(cache, if (peer) "channel-$chat.bin" else "thumb-$chat-$id.bin")
             if (!out.isFile || out.length() != bytes.size.toLong()) {
                 out.writeBytes(bytes)
@@ -1070,13 +1110,15 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         if (output.isFile && output.length() > 0L) return@nativeCall output.toURI().toString()
         val generation = cacheGeneration
         val identity = accountId
+        val revision = mediaRevision(chatId, messageId)
         val stage = File(dir, "pending-${java.util.UUID.randomUUID()}.media")
         try {
             val actual = File(mediaClass(DISPATCH_USER) { native.downloadMessageDisplay(h, chatId, messageId, stage.path) })
                 .canonicalFile
             require(actual == stage.canonicalFile && actual.length() > 0L) { "Monogram full-resolution photo unavailable" }
             synchronized(diskChunkLock) {
-                check(generation == cacheGeneration && identity != null && identity == accountId && chatId !in leftChannels)
+                check(generation == cacheGeneration && identity != null && identity == accountId && chatId !in leftChannels &&
+                    revision == mediaRevision(chatId, messageId))
                 check(actual.renameTo(output)) { "Monogram photo publication failed" }
             }
             output.toURI().toString()
@@ -1108,6 +1150,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         if (chatId in leftChannels) return@nativeCall null
         val expectedGeneration = cacheGeneration
         val expectedAccount = accountId
+        val revision = mediaRevision(chatId, messageId)
         // "thumbs-hd" held the inline previews the old Thumb download returned: never reuse it.
         File(cache, "thumbs-hd").takeIf { it.isDirectory }?.deleteRecursively()
         val dir = File(cache, "previews").apply { mkdirs() }.canonicalFile
@@ -1161,7 +1204,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         }
         synchronized(diskChunkLock) {
             // A logout or account switch meanwhile: never keep the old account's image.
-            if (expectedAccount == null || accountId != expectedAccount || cacheGeneration != expectedGeneration) {
+            if (expectedAccount == null || accountId != expectedAccount || cacheGeneration != expectedGeneration ||
+                revision != mediaRevision(chatId, messageId)) {
                 actual.delete()
                 return@nativeCall null
             }
@@ -1227,37 +1271,40 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             (expectedBytes == null || size == expectedBytes)
         val generation = cacheGeneration
         val currentIdentity = accountId
+        val revision = mediaRevision(chatId, messageId)
         fun verifyGeneration() {
-            check(accountId == currentIdentity && cacheGeneration == generation && chatId !in leftChannels) {
+            check(accountId == currentIdentity && cacheGeneration == generation && chatId !in leftChannels &&
+                revision == mediaRevision(chatId, messageId)) {
                 app.getString(R.string.monogram_error_account_changed)
             }
         }
         val dir = withContext(Dispatchers.IO) { chunkDirectory.canonicalFile }
         val mediaIdentity = nativeMediaKey?.takeIf { it.isNotBlank() }
-        val digest = mediaIdentity?.let { key ->
-            java.security.MessageDigest.getInstance("SHA-256").digest(key.toByteArray(Charsets.UTF_8))
-                .joinToString("") { "%02x".format(it.toInt() and 255) }
-        }
+        val digest = mediaIdentity?.let(::mediaDigest)
         val cacheFile = File(dir, "$chatId-$messageId-$digest-$offset.bin")
-        fun lookup(): ByteArray? = synchronized(diskChunkLock) {
-            verifyGeneration()
-            if (digest == null) return@synchronized null
-            prepareChunkIndex(dir)
-            val hot = hotChunks[cacheFile]
-            if (hot != null && validSize(hot.size)) {
-                chunkIndex[cacheFile]
-                hot
-            } else if (cacheFile.isFile && cacheFile.length() <= TELEGRAM_MEDIA_PART_BYTES &&
-                validSize(cacheFile.length().toInt())) {
-                rememberChunk(cacheFile)
-                cacheFile.setLastModified(System.currentTimeMillis())
-                runCatching { cacheFile.readBytes() }.getOrNull()
-                    ?.takeIf { validSize(it.size) }?.also { rememberHotChunk(cacheFile, it) }
-            } else {
-                // Older builds could cache a reduced wire part as a complete range.
-                hotChunks.remove(cacheFile)
-                if (cacheFile.delete() || !cacheFile.exists()) chunkIndexBytes -= chunkIndex.remove(cacheFile) ?: 0L
-                null
+        fun lookup(): ByteArray? {
+            if (digest == null) return null
+            val candidate = synchronized(diskChunkLock) {
+                verifyGeneration()
+                prepareChunkIndex(dir)
+                hotChunks[cacheFile]?.takeIf { validSize(it.size) }?.let {
+                    chunkIndex[cacheFile]
+                    return it
+                }
+                // Files are published atomically and never modified in place.
+                chunkIndex[cacheFile]?.takeIf { it <= TELEGRAM_MEDIA_PART_BYTES && validSize(it.toInt()) }
+            } ?: return null
+            // Do not block unrelated hot-cache lookups or update publication on disk IO.
+            val bytes = runCatching { cacheFile.readBytes() }.getOrNull()
+            return synchronized(diskChunkLock) {
+                verifyGeneration()
+                if (bytes != null && bytes.size.toLong() == candidate && validSize(bytes.size)) {
+                    rememberHotChunk(cacheFile, bytes)
+                    bytes
+                } else {
+                    if (cacheFile.delete() || !cacheFile.exists()) chunkIndexBytes -= chunkIndex.remove(cacheFile) ?: 0L
+                    null
+                }
             }
         }
         // Cache hits still validate the local authenticated native handle, but do
