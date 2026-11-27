@@ -842,6 +842,16 @@ mod gpu_tests{
                     let pair=ambient_svp_vk_begin(engine,cmd,&a,&b);
                     assert!(!pair.is_null());
                     assert_eq!(ambient_svp_vk_render(pair,phase,4,high[4].view),0);
+                    let windows=[
+                        HdrWindow{rect:[0,0,w,h],count:3,percentages:[1,50,99,0,0,0,0,0,0,0,0,0,0,0,0]},
+                        HdrWindow{rect:[0,0,w/2,h/2],count:1,percentages:[99,0,0,0,0,0,0,0,0,0,0,0,0,0,0]},
+                        HdrWindow{rect:[w/3,h/3,w,h],count:2,percentages:[50,100,0,0,0,0,0,0,0,0,0,0,0,0,0]},
+                    ];
+                    let mut stats=[HdrResult::default();3];
+                    if mode==3{
+                        assert_eq!(ambient_svp_vk_hdr_stats(pair,0,windows.as_ptr(),3),0);
+                        assert_eq!(ambient_svp_vk_hdr_read(pair,0,stats.as_mut_ptr(),3),-1);
+                    }
                     transition(&d,cmd,high[4].image,vk::ImageLayout::GENERAL,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                         vk::AccessFlags::SHADER_WRITE,vk::AccessFlags::TRANSFER_READ,
                         vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::TRANSFER);
@@ -852,6 +862,16 @@ mod gpu_tests{
                     d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
                     assert_eq!(ambient_svp_vk_seal(pair,fence),0);
                     d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
+                    if mode==3{
+                        assert_eq!(ambient_svp_vk_hdr_read(pair,0,stats.as_mut_ptr(),3),1);
+                        for (r,window) in stats.iter().zip(windows){
+                            assert_eq!(r.pixels,(window.rect[2]-window.rect[0])*(window.rect[3]-window.rect[1]));
+                            assert_eq!(r.brightest,r.pixels);
+                            assert_eq!(r.maxscl,[r.average;3]);
+                            assert!(r.average>800 && r.average<1100,"PQ luminance {:?}",r);
+                            for &pct in &r.percentiles[..window.count as usize]{assert_eq!(pct,r.average);}
+                        }
+                    }
                     assert_eq!(ambient_svp_vk_release(pair),1);
                     let mapped=d.map_memory(readback_memory,0,bytes*2,vk::MemoryMapFlags::empty()).unwrap();
                     let data=std::slice::from_raw_parts(mapped.cast::<u8>(),(bytes*2) as usize);
