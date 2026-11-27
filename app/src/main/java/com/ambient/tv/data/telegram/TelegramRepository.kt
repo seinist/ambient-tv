@@ -192,7 +192,7 @@ class TelegramRepository @Inject constructor(
     // or on an ordinary no-Monogram build. Only enabled systems restore sessions.
     private val appContext = context.applicationContext
     private val backend: MonogramAuthClientPort? by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        if (!BuildConfig.MONOGRAM_NATIVE) null
+        if (!com.ambient.tv.modules.SystemModuleAvailability.monogramOffered) null
         else runCatching {
             val factory = Class.forName("com.ambient.tv.data.telegram.MonogramNativeBackend")
             factory.getConstructor(Context::class.java, TokenStore::class.java)
@@ -201,9 +201,9 @@ class TelegramRepository @Inject constructor(
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutableLogin = MutableStateFlow(MonogramLoginState(
-        if (BuildConfig.MONOGRAM_NATIVE) MonogramLoginStep.READY else MonogramLoginStep.UNAVAILABLE))
+        if (com.ambient.tv.modules.SystemModuleAvailability.monogramOffered) MonogramLoginStep.READY else MonogramLoginStep.UNAVAILABLE))
     val login: StateFlow<MonogramLoginState> = mutableLogin.asStateFlow()
-    val nativeAvailable: Boolean get() = BuildConfig.MONOGRAM_NATIVE
+    val nativeAvailable: Boolean get() = com.ambient.tv.modules.SystemModuleAvailability.monogramOffered
     val configuredApiId: String get() = tokenStore.monogramApiId
     val configuredApiHash: String get() = tokenStore.monogramApiHash
     val apiCredentialsReady: Boolean get() = tokenStore.monogramCredentials() != null
@@ -886,7 +886,7 @@ class TelegramRepository @Inject constructor(
      * but the screen no longer waits for it.
      */
     suspend fun search(query: String, limit: Int = TELEGRAM_SEARCH_LIMIT): List<TelegramMedia> {
-        if (!BuildConfig.MONOGRAM_NATIVE) return emptyList()
+        if (!com.ambient.tv.modules.SystemModuleAvailability.monogramOffered) return emptyList()
         val selected = client ?: return emptyList()
         val trimmed = query.trim()
         if (trimmed.length < 2) return emptyList()
