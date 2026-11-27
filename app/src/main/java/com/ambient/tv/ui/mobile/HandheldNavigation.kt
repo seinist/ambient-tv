@@ -98,7 +98,7 @@ fun HandheldNavigationHost(
         spotifyCanSearch = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized && sidebarState.spotifyNativeAvailable,
         radioEnabled = sidebarState.radioEnabled,
         telegramCanSearch = com.ambient.tv.data.telegram.telegramSearchAvailable(
-            com.ambient.tv.BuildConfig.MONOGRAM_NATIVE, sidebarState.telegramEnabled, sidebarState.telegramAuthorized),
+            com.ambient.tv.modules.SystemModuleAvailability.monogramOffered, sidebarState.telegramEnabled, sidebarState.telegramAuthorized),
     )
     val companion: com.ambient.tv.companion.CompanionViewModel = hiltViewModel()
     // Phone companion pages (pairing, remote, "Handy & TV") cover the content area, in this priority.
