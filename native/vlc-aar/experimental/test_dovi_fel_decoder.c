@@ -147,9 +147,35 @@ static void test_reorder(const char *stream,const char *timestamps,const char *r
     puts("Reordered Main10 GOP matched independent reference, exact PTS, early/late drop and two epochs");
 }
 
+/* A real HEVC SPS conformance window, modified by independent FFmpeg
+ * hevc_metadata: padding at right/bottom is valid, shifted origin isn't. */
+static void test_crop(const char *file,bool shifted)
+{
+    FILE *f=fopen(file,"rb");assert(f);
+    assert(fseek(f,0,SEEK_END)==0);
+    long n=ftell(f);assert(n>0&&n<1024*1024);rewind(f);
+    uint8_t *input=malloc((size_t)n);assert(input);
+    assert(fread(input,1,(size_t)n,f)==(size_t)n);fclose(f);
+    struct ambient_fel_session *session=av_ambient_fel_open();assert(session);
+    AVPacket *p=wrap(input,(size_t)n,100000);
+    int ret=av_ambient_fel_submit(session,p->data,p->size,100000,100000);
+    if(ret>=0)ret=av_ambient_fel_drain(session);
+    if(shifted){
+        assert(ret<0&&!av_ambient_fel_may_receive(session));
+        assert(!av_ambient_fel_take(session,100000));
+    }else{
+        assert(ret==0);
+        struct ambient_fel_picture *pic=av_ambient_fel_take(session,100000);
+        assert(pic&&pic->width==62&&pic->height==60);
+        for(unsigned i=0;i<62*60+2*31*30;i++)assert(pic->samples[i]<=1023);
+        free(pic);
+    }
+    av_packet_free(&p);av_ambient_fel_close(session);free(input);
+}
+
 int main(int argc,char **argv)
 {
-    assert(argc==2||argc==5);
+    assert(argc==2||argc==5||argc==7);
     FILE *f=fopen(argv[1],"rb");assert(f);
     assert(fseek(f,0,SEEK_END)==0);
     long n=ftell(f);assert(n>0&&n<1024*1024);
@@ -222,5 +248,6 @@ int main(int argc,char **argv)
     av_packet_free(&wrapped);
     free(input);
     puts("Decoded real HEVC EL codewords; exact PTS, drain and flush verified");
-    if(argc==5)test_reorder(argv[2],argv[3],argv[4]);
+    if(argc>=5)test_reorder(argv[2],argv[3],argv[4]);
+    if(argc==7){test_crop(argv[5],false);test_crop(argv[6],true);}
 }
