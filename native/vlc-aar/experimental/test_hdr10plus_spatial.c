@@ -69,6 +69,13 @@ int main(void) {
     assert(fabsf(ambient_hdrplus_weight(&masks[0],100,130)-0.5f)<1e-5f);
     m.windows[1].geometry.overlap=1;
     assert(!ambient_hdrplus_spatial_supported(&m,200,200,masks,&layering));
+    // Different modes are valid when the rotated selector bounds are disjoint.
+    m.windows[1].geometry.center_x=40;
+    m.windows[2].geometry.center_x=150;
+    assert(ambient_hdrplus_spatial_supported(&m,200,200,masks,&layering)&&layering);
+    assert(ambient_hdrplus_weight(&masks[0],40,100)==1.f);
+    assert(ambient_hdrplus_weight(&masks[1],40,100)==0.f);
+    m.windows[1].geometry.center_x=m.windows[2].geometry.center_x=100;
     m.windows[2].geometry.overlap=1;
     assert(ambient_hdrplus_spatial_supported(&m,200,200,masks,&layering)&&layering);
     m.targeted_grid.rows=2;
