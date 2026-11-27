@@ -51,5 +51,6 @@
     <string name="svp_reason_passthrough">no interpolated frames</string>
     <string name="svp_reason_starting">starting …</string>
     <string name="svp_reason_overload">too slow, off for this playback</string>
-    <string name="svp_mode_adaptive">Adaptive (reduce quality under load)</string>
+    <string name="svp_mode_adaptive">Adaptive</string>
+    <string name="svp_adaptive_hint">Starts with light analysis and reduces motion analysis quality under load. Frame rate and timestamps stay unchanged.</string>
 </resources>
