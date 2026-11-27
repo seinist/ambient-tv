@@ -79,6 +79,12 @@ impl MotionSearch{
             levels.push((a,b,grid));
         }
         if levels.is_empty(){return Err("no supported motion levels".into());}
+        // Reject oversized jobs before uploading any frame or submitting
+        // compute, rather than doing partial work and falling back late.
+        let max_candidates=levels.iter().rev().enumerate().try_fold(0usize,|sum,(index,(_,_,grid))|
+            sum.checked_add(grid.count().checked_mul(if index==0 {162}else{100})?))
+            .ok_or("experimental motion candidate estimate overflow")?;
+        if max_candidates>MAX_TOTAL_CANDIDATES{return Err("experimental motion candidate budget".into());}
         let mut previous:[Option<LevelField>;2]=[None,None];
         let mut total=0usize;
         for (a,b,grid) in levels.into_iter().rev(){
@@ -95,7 +101,8 @@ impl MotionSearch{
                 let max_per=((2*radius+1)*(2*radius+1)+25) as usize;
                 let batch_limit=MAX_BATCH.min(device.limits().max_compute_workgroups_per_dimension as usize)
                     .min((device.limits().max_storage_buffer_binding_size/32) as usize);
-                let blocks=(batch_limit/max_per).max(1);
+                if batch_limit<max_per{return Err("insufficient motion dispatch capacity".into());}
+                let blocks=batch_limit/max_per;
                 for start in (0..grid.count()).step_by(blocks){
                     let end=(start+blocks).min(grid.count());
                     let mut metrics=Vec::with_capacity((end-start)*max_per);
@@ -139,8 +146,12 @@ impl MotionSearch{
                     let costs=self.metric.encode(device,&mut encoder,&at,&bt,a.width,a.height,&metrics)?;
                     let selected=self.selection.encode(device,&mut encoder,&costs,&searches,&candidates)?;
                     let batch=read_choices(device,queue,encoder,&selected,deadline)?;
-                    if batch.len()!=end-start || batch.iter().zip(&searches).any(|(c,s)|
-                        c.winner<s.start as i32 || c.winner>=(s.start+s.count) as i32 || c.sad<0){
+                    if batch.len()!=end-start || batch.iter().zip(&searches).any(|(c,s)|{
+                        if c.winner<s.start as i32 || c.winner>=(s.start+s.count) as i32
+                            || c.sad<0 || c.sad>3*(bw*bh*255) as i32{return true;}
+                        let selected=candidates[c.winner as usize];
+                        c.dx!=selected.dx || c.dy!=selected.dy || c.raw_sad != -1
+                    }){
                         return Err("invalid GPU motion winner".into());
                     }
                     choices.extend(batch);
