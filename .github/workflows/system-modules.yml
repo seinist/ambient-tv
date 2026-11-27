@@ -1,0 +1,89 @@
+name: System module packages
+
+on:
+  pull_request:
+    paths:
+      - 'app/src/main/java/com/ambient/tv/modules/**'
+      - 'app/src/main/assets/games/slang/**'
+      - 'scripts/package_system_modules.py'
+      - '.github/workflows/system-modules.yml'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish verified shader assets (main only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: system-modules-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package-shaders:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate bundled shader sources
+        run: python3 scripts/check_game_slang.py
+      - name: Build reproducible module package
+        run: |
+          set -euo pipefail
+          tag="modules-shaders-v${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ID}"
+          python3 scripts/package_system_modules.py --module shaders --tag "$tag" --version "$GITHUB_RUN_NUMBER" --output module-release
+          python3 scripts/package_system_modules.py --module shaders --tag "$tag" --version "$GITHUB_RUN_NUMBER" --output module-repeat
+          diff -r module-release module-repeat
+          python3 -m zipfile -t module-release/shaders--any--baseline.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shader-module-candidate
+          path: module-release/
+          if-no-files-found: error
+
+  publish-shaders:
+    needs: package-shaders
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: shader-module-candidate
+          path: module-release
+      - name: Sign and publish module
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$SIGNING_KEY"
+          umask 077
+          key="$(mktemp)"
+          pub="$(mktemp)"
+          trap 'rm -f "$key" "$pub"' EXIT
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          openssl pkey -in "$key" -pubout -out "$pub"
+          cmp "$pub" cores/signing-public.pem
+          tag="modules-shaders-v${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ID}"
+          python3 - "$tag" <<'PY'
+          import hashlib, json, pathlib, sys
+          root = pathlib.Path("module-release")
+          manifest = json.loads((root / "manifest.json").read_text())
+          assert manifest["tag"] == sys.argv[1]
+          assert len(manifest["modules"]) == 1
+          entry = manifest["modules"][0]
+          assert entry["module"] == "shaders" and entry["asset"] == "shaders--any--baseline.zip"
+          blob = (root / entry["asset"]).read_bytes()
+          assert len(blob) == entry["size"] and hashlib.sha256(blob).hexdigest() == entry["sha256"]
+          PY
+          # Never publish a stale candidate after main moves.
+          git fetch origin main
+          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
+          openssl dgst -sha256 -sign "$key" -out module-release/manifest.json.sig module-release/manifest.json
+          openssl dgst -sha256 -verify cores/signing-public.pem -signature module-release/manifest.json.sig module-release/manifest.json
+          gh release create "$tag" module-release/* --draft --title "System library: Vulkan shaders" --target "$GITHUB_SHA" --notes "Signed optional shader assets."
+          gh release edit "$tag" --draft=false --latest=false
