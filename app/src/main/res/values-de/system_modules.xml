@@ -12,4 +12,10 @@
     <string name="module_settings_restart">Auswahl gespeichert. App neu starten, um sie anzuwenden.</string>
     <string name="module_settings_no_candidate">Kein kompatibles Paket oder keine vorherige Version verfügbar.</string>
     <string name="module_settings_error">Modulvorgang fehlgeschlagen. Die bestehende Auswahl wurde nicht absichtlich ersetzt.</string>
+    <string name="module_state_missing">Nicht installiert</string>
+    <string name="module_state_bundled">Integriert – noch nicht initialisiert</string>
+    <string name="module_state_external">Heruntergeladen – noch nicht initialisiert</string>
+    <string name="module_state_active_bundled">Aktiv (integriert)</string>
+    <string name="module_state_active_external">Aktiv (heruntergeladen)</string>
+    <string name="module_state_failed">Modul nicht verfügbar oder inkompatibel</string>
 </resources>
