@@ -188,6 +188,7 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
 
     override fun onCreate() {
         super.onCreate()
+        com.ambient.tv.modules.SystemModuleHost.initialize(this)
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
         }
