@@ -142,6 +142,8 @@ data class SvpOptions(
     val maxHeight: Int = 1080,
     /** Interpolate only sources up to 30 fps (film and TV), not 50/60 fps video. */
     val filmOnly: Boolean = true,
+    /** Experimental GPU-only decoder transport; old profiles default to copy-back. */
+    val hardwareResident: Boolean = false,
 ) {
     fun normalized() = copy(
         rateDivisor = rateDivisor.takeIf { it in 1..3 } ?: 1,
