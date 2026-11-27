@@ -70,6 +70,17 @@ class TelegramVideoDataSource(
         partStart = -1L
         transferInitializing(dataSpec)
         transferStarted(dataSpec)
+        // Warm the exact requested first block as the extractor starts.
+        // On an immediate read the repository coalesces or promotes it.
+        if (remaining > 0) {
+            val first = telegramPartOffset(position)
+            prefetch[first] = prefetchScope.async {
+                requireCurrentAccount()
+                repository.mediaPart(media.chatId, media.messageId, first,
+                    telegramExpectedPartSize(media.fileSize, first), accountRevision, speculative = true,
+                    nativeMediaKey = media.nativeMediaKey, expectedMediaRevision = mediaRevision)
+            }
+        }
         return remaining
     }
 
@@ -101,12 +112,12 @@ class TelegramVideoDataSource(
 
     private fun fetchPart(offset: Long): ByteArray {
         val sequential = previousPart >= 0L && offset - previousPart == TELEGRAM_MEDIA_PART_BYTES.toLong()
+        val pending = prefetch.remove(offset)
         if (!sequential) {
             cancelPrefetch()
             readAhead.reset()
         }
         previousPart = offset
-        val pending = prefetch.remove(offset)
         val began = System.nanoTime()
         return try {
             runBlocking {

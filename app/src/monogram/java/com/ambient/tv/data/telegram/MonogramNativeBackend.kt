@@ -1301,7 +1301,19 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     runCatching { uniffi.monogram_mtproto.releaseRequestControl(request) }
                 }
                 continuation.invokeOnCancellation {
-                    runCatching { uniffi.monogram_mtproto.cancelRequestControl(request) }
+                    if (priority.foreground) {
+                        runCatching { uniffi.monogram_mtproto.cancelRequestControl(request) }
+                    } else {
+                        // A speculative request already near a verified boundary may
+                        // finish within this small grace period and keep its TCP.
+                        // A blocked or obsolete transfer still gets hard-cancelled.
+                        val timer = speculativeCancellation.schedule({
+                            if (!worker.isCompleted) runCatching {
+                                uniffi.monogram_mtproto.cancelRequestControl(request)
+                            }
+                        }, 80L, java.util.concurrent.TimeUnit.MILLISECONDS)
+                        worker.invokeOnCompletion { timer.cancel(false) }
+                    }
                     worker.cancel()
                 }
                 worker.start()
@@ -1482,6 +1494,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     }
 
     private companion object {
+        val speculativeCancellation by lazy {
+            java.util.concurrent.ScheduledThreadPoolExecutor(1) { task ->
+                Thread(task, "monogram-cancel").apply { isDaemon = true }
+            }.apply { removeOnCancelPolicy = true }
+        }
         /** Pause between per-channel search requests (Telegram FLOOD_WAIT). */
         const val CATALOG_ROUND_PAUSE_MS = 300L
         /** Channels added to the recent timeline per catalog step. */

@@ -206,6 +206,26 @@ class TelegramRepository @Inject constructor(
     }
     @Volatile private var client: TelegramClientPort? = null
     private val playbackUrls = LinkedHashMap<String, String>()
+    private val playbackWarmupLock = Any()
+    private var playbackWarmup: kotlinx.coroutines.Job? = null
+
+    private fun warmLoopback(media: TelegramMedia, generation: Long, revision: Long) {
+        synchronized(playbackWarmupLock) {
+            playbackWarmup?.cancel()
+            playbackWarmup = scope.launch {
+                // Warm the actual header block. A resumed seek still needs container
+                // metadata; demand joins this exact key instead of opening another lane.
+                try {
+                    kotlinx.coroutines.withTimeout(2_000L) {
+                        mediaPart(media.chatId, media.messageId, 0,
+                            telegramExpectedPartSize(media.fileSize, 0), generation, speculative = true,
+                            nativeMediaKey = media.nativeMediaKey, expectedMediaRevision = revision)
+                    }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) { /* Demand retries independently. */ }
+            }
+        }
+    }
     private val streamEpoch = java.util.concurrent.atomic.AtomicLong()
 
     private fun applyLogin(state: MonogramLoginState) {
@@ -459,7 +479,10 @@ class TelegramRepository @Inject constructor(
         val mediaRevision = authenticated.mediaRevision(media.chatId, media.messageId)
         validatePlaybackMedia(media, generation, mediaRevision)
         val key = "${authenticated.cacheIdentity}:${media.mediaKey}:${media.nativeMediaKey.orEmpty()}:$mediaRevision"
-        synchronized(playbackUrls) { playbackUrls[key] }?.let { return@withContext it }
+        synchronized(playbackUrls) { playbackUrls[key] }?.let {
+            warmLoopback(media, generation, mediaRevision)
+            return@withContext it
+        }
         val url = mediaFileServer.register(
             sourceId = MONOGRAM_LOCAL_MEDIA_SOURCE,
             mime = "application/octet-stream",
@@ -491,10 +514,12 @@ class TelegramRepository @Inject constructor(
             // references smaller, so no evicted token is reused by a future renderer.
             while (playbackUrls.size > 24) playbackUrls.remove(playbackUrls.keys.first())
         }
+        warmLoopback(media, generation, mediaRevision)
         url
     }
 
     private fun revokePlaybackUrls() {
+        synchronized(playbackWarmupLock) { playbackWarmup?.cancel(); playbackWarmup = null }
         synchronized(playbackUrls) { playbackUrls.clear() }
         mediaFileServer.revoke(MONOGRAM_LOCAL_MEDIA_SOURCE)
     }
@@ -805,6 +830,7 @@ class TelegramRepository @Inject constructor(
     ): String? {
         if (!sameAccount(selected, identity, generation) || chatId in blockedChannels) return null
         val file = try {
+            if (!priority.foreground) awaitInteractiveIdle()
             thumbnailPermits.withPermit {
                 if (!sameAccount(selected, identity, generation) || chatId in blockedChannels) null
                 else selected.thumbnail(chatId, messageId, priority)
