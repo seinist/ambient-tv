@@ -1,0 +1,109 @@
+name: Monogram native performance checks
+
+on:
+  pull_request:
+    paths:
+      - 'app/src/**/telegram/**'
+      - 'app/build.gradle.kts'
+      - 'scripts/*monogram*'
+      - 'scripts/tests/*monogram*'
+      - 'gradle/external-versions.properties'
+      - '.github/workflows/monogram-native-abi.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'app/src/**/telegram/**'
+      - 'app/build.gradle.kts'
+      - 'scripts/*monogram*'
+      - 'gradle/external-versions.properties'
+      - '.github/workflows/monogram-native-abi.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monogram-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            app_abi: arm64
+          - abi: armeabi-v7a
+            app_abi: arm
+          - abi: x86
+            app_abi: x86
+          - abi: x86_64
+            app_abi: x86_64
+    env:
+      NDK_VERSION: '30.0.16248370'
+      MONOGRAM_OPT_LEVEL: '2'
+      CARGO_BUILD_JOBS: '2'
+      SKIP_MPV_NATIVE: '1'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install Rust and Android native toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          cargo install cargo-ndk --locked
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses >/dev/null 2>&1 || true
+          "$sdkmanager" --channel=3 'platforms;android-37.1' 'platforms;android-37.0' "ndk;$NDK_VERSION" 'cmake;3.22.1'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - name: Check builder and patch syntax
+        run: |
+          bash -n scripts/build_monogram_native.sh
+          python3 -m py_compile scripts/patch_monogram_leave.py
+          python3 -m unittest discover -s scripts/tests -p 'test_monogram*.py'
+      - name: Build patched MTProto and generated UniFFI bindings
+        env:
+          MONOGRAM_ABIS: ${{ matrix.abi }}
+        run: bash scripts/build_monogram_native.sh
+      - name: Check exact patched Rust contracts on host
+        if: matrix.abi == 'arm64-v8a'
+        run: |
+          python3 scripts/patch_monogram_leave.py third_party/monogram
+          cargo test --manifest-path third_party/monogram/vendor/mono-rs/Cargo.toml -p mono-proto-media --lib ambient_range_tests
+          cargo test --manifest-path third_party/monogram/vendor/mono-rs/Cargo.toml -p mono-proto-crypto --lib
+      - name: Verify native ABI and report raw size
+        env:
+          ABI: ${{ matrix.abi }}
+        run: |
+          set -euo pipefail
+          mkdir -p monogram-report
+          unzip -p app/libs/monogram-mtproto.aar "jni/$ABI/libmonogram_mtproto.so" > monogram-report/libmonogram_mtproto.so
+          test -s monogram-report/libmonogram_mtproto.so
+          readelf="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          "$readelf" -h monogram-report/libmonogram_mtproto.so
+          python3 scripts/check_elf_page_alignment.py "$readelf" monogram-report/libmonogram_mtproto.so
+          cp app/libs/.monogram-native-version monogram-report/stamp.txt
+          printf 'ABI: %s\nRaw ELF bytes: %s\nAAR bytes: %s\n' "$ABI" "$(stat -c%s monogram-report/libmonogram_mtproto.so)" "$(stat -c%s app/libs/monogram-mtproto.aar)" | tee monogram-report/sizes.txt >> "$GITHUB_STEP_SUMMARY"
+          rm monogram-report/libmonogram_mtproto.so
+      - name: Compile opt-in Android adapter and test streaming
+        if: matrix.abi == 'arm64-v8a'
+        env:
+          MONOGRAM_NATIVE: '1'
+        run: |
+          ./scripts/fetch_libretrodroid.sh
+          ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest -PAPK_ABI=arm64 -PMONOGRAM_NATIVE=1 --tests 'com.ambient.tv.data.telegram.*'
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: monogram-native-report-${{ matrix.abi }}
+          path: monogram-report/
+          if-no-files-found: ignore

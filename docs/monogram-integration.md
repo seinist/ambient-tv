@@ -143,9 +143,9 @@ are identical.
 
 ## Size budget and release APK measurement
 
-An optional native CI workflow (recording the **raw MTProto ELF** and compressed
-AAR size per ABI with an early **12 MB raw ELF budget**) is not part of this
-change; it is proposed separately for workflow approval. A raw ELF budget alone
+The native CI workflow builds all four ABIs, records the **raw MTProto ELF**
+and compressed AAR size per ABI, checks ELF page alignment, exercises the
+patched Rust range/crypto tests and compiles the opt-in Android adapter. A raw ELF budget alone
 does **not** show that the final APK fits: Android can store native libraries
 uncompressed, and Monogram also needs UniFFI, JNA and Rustls dependencies.
 
@@ -327,3 +327,5 @@ Benchmark on Shield and a phone: first frame, random and forward seek latency,
 sustained 1080p/4K throughput, concurrent thumbnail load, native and Java heap,
 GC, disk writes, and release APK delta per ABI. Compare the three compiler
 profiles before raising the portable default; keep the existing APK size gate.
+
+For compiler profile size comparisons, run `MONOGRAM_ABIS=arm64-v8a bash scripts/measure_monogram_native_profiles.sh`. This reports actual AAR and raw ELF bytes, not APK overhead or device throughput.
