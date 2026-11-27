@@ -284,7 +284,6 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          pl_swapchain_swap_buffers(sys->pl->swapchain);
          vlc_placebo_ReleaseCurrent(sys->pl);
      }
-
 @@ -516,6 +665,22 @@
          break;
      }
