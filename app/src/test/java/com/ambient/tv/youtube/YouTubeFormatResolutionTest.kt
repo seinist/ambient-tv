@@ -90,6 +90,19 @@ class YouTubeFormatResolutionTest {
         assertEquals(3, switches)
     }
 
+    @Test fun `native score uses the rendition the device can actually open`() {
+        val low = YouTubeAdaptiveFormat("video/mp4; codecs=\"avc1.4d401e\"", "https://g/360", width = 640, height = 360)
+        val high = YouTubeAdaptiveFormat("video/mp4; codecs=\"av01.0.08M.08\"", "https://g/1080", width = 1920, height = 1080)
+        val audio = YouTubeAdaptiveFormat("audio/mp4", "https://g/audio")
+        val formats = listOf(low, high, audio)
+        val decode: YouTubeDecodeCheck = { family, _, _, _, _ -> family == "avc" }
+        val pair = youtubeAdaptivePair(formats, YouTubeVideoPreset(1080, 60, "av1"), decode)
+        assertEquals(low.url to audio.url, pair)
+        assertEquals(3, youtubePlayableFormatScore(false, false, false, formats, selectedNativePair = pair) { false })
+        assertEquals(4, youtubePlayableFormatScore(false, false, false, formats,
+            requestedMaxHeight = 360, selectedNativePair = pair) { false })
+    }
+
     @Test fun `complete DASH returns without a client switch`() {
         assertEquals(Info(4), resolveYouTubeFormatInfo(load = { Info(4) },
             switchClient = { error("Already ready") }, score = { it.quality }))

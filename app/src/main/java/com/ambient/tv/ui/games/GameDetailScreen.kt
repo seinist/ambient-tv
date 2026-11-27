@@ -43,6 +43,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.ambient.tv.R
+import com.ambient.tv.games.GameCoreExperiment
 import com.ambient.tv.games.GameSystems
 import com.ambient.tv.games.library.LibraryGame
 import com.ambient.tv.games.library.coverAspectRatio
@@ -72,6 +73,7 @@ fun GameDetailScreen(
     onBack: () -> Unit,
     onPlay: (LibraryGame) -> Unit,
     onPlayFresh: (LibraryGame) -> Unit = onPlay,
+    onPlayExperiment: (LibraryGame, GameCoreExperiment) -> Unit,
     model: GameDetailViewModel = hiltViewModel(),
 ) {
     val state by model.state.collectAsState()
@@ -186,6 +188,7 @@ fun GameDetailScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                    item("core-tests") { GameCoreExperimentOptions(game, onPlayExperiment) }
                     item("description") {
                         DetailSummary(state.metadata.summary.ifBlank {
                             stringResource(R.string.game_detail_no_summary)

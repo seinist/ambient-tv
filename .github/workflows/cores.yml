@@ -247,7 +247,7 @@ jobs:
             echo "::warning::Compiler cache unavailable; compiling without it"
             echo "CORE_CCACHE=" >> "$GITHUB_ENV"
           fi
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         if: env.CORE_CCACHE != ''
         with:
           path: ~/.cache/ccache
@@ -343,14 +343,14 @@ jobs:
           cat reports/build.json
           if [ -n "${CORE_CCACHE:-}" ]; then ccache --show-stats || true; fi
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: out/*.so
           if-no-files-found: error
           retention-days: 14
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: report-${{ matrix.artifact }}
@@ -374,7 +374,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v7
         if: needs.plan.outputs.count != '0'
         with:
           pattern: ${{ inputs.publish_experimental && format('candidate-{0}-*', inputs.profile) || 'core-*' }}

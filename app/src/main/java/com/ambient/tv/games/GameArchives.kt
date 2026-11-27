@@ -6,7 +6,9 @@ import com.ambient.tv.games.library.GameRomChecksums
 import com.github.junrar.Archive
 import com.github.junrar.exception.UnsupportedRarV5Exception
 import org.apache.commons.compress.archivers.sevenz.SevenZFile
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
 import org.apache.commons.compress.archivers.zip.ZipFile
+import org.apache.commons.compress.archivers.zip.ZipMethod
 import java.io.File
 import java.io.IOException
 import java.io.FilterOutputStream
@@ -38,6 +40,14 @@ object GameArchives {
     /** Bound both decompressed header reads and the number of archive entries inspected. */
     internal const val MAX_PROBE_HEADER = 72 * 1024
     internal const val MAX_PROBE_ENTRIES = 5_000
+    private const val SEVEN_ZIP_PROBE_MEMORY_LIMIT_KIB = 48 * 1024
+
+    // Commons Compress delegates these ZIP methods to the optional zstd-jni runtime.
+    private fun ZipArchiveEntry.usesZstandard(): Boolean =
+        method == ZipMethod.ZSTD.code || method == ZipMethod.ZSTD_DEPRECATED.code
+
+    private fun ZipFile.canReadGameEntry(entry: ZipArchiveEntry): Boolean =
+        !entry.usesZstandard() && canReadEntryData(entry)
 
     private fun prefixLength(system: GameSystem?, name: String): Int = when {
         // Disc signatures must also constrain explicit assignments of packed ISO files.
@@ -86,7 +96,8 @@ object GameArchives {
             val candidates = zip.entries.asSequence().filter { !it.isDirectory }
                 .take(MAX_PROBE_ENTRIES + 1).toList()
             if (candidates.size > MAX_PROBE_ENTRIES) return@use null
-            val entry = choose(candidates.filter(zip::canReadEntryData), systemId) { it.name } ?: return@use null
+            val readable = candidates.filter { zip.canReadGameEntry(it) }
+            val entry = choose(readable, systemId) { it.name } ?: return@use null
             val byName = GameSystems.forAssignedFile(entry.name, systemId,
                 GameSystems.forSourceFile(entry.name, entry.name))
             val length = prefixLength(byName, entry.name)
@@ -102,7 +113,7 @@ object GameArchives {
                 datCrc32 = GameRomChecksums.forRom(system?.id.orEmpty(), entry.size, prefix, crc).datCrc32)
         }
         "7z" -> SevenZFile.builder().setSeekableByteChannel(MediaChannel(media))
-            .setMaxMemoryLimitKb(48 * 1024).get().use { seven ->
+            .setMaxMemoryLimitKiB(SEVEN_ZIP_PROBE_MEMORY_LIMIT_KIB).get().use { seven ->
             val candidates = seven.entries.take(MAX_PROBE_ENTRIES + 1)
             if (candidates.size > MAX_PROBE_ENTRIES) return@use null
             val entry = choose(candidates.filterNot { it.isDirectory }, systemId) { it.name } ?: return@use null
@@ -256,12 +267,15 @@ object GameArchives {
         when (GameSystems.extension(archive.name)) {
             "zip" -> ZipFile.builder().setFile(archive).get().use { zip ->
                 zip.entries.asSequence().filter { !it.isDirectory }.forEach { entry ->
+                    if (entry.usesZstandard()) {
+                        throw GameArchiveException("${archive.name}: Zstandard ZIP entry is not supported: ${entry.name}")
+                    }
                     val out = target(entry.name, entry.size) ?: return@forEach
                     zip.getInputStream(entry).use { input -> out.outputStream().use { copyChecked(input, it) } }
                 }
             }
             "7z" -> SevenZFile.builder().setFile(archive)
-                .setMaxMemoryLimitKb(128 * 1024).get().use { seven ->
+                .setMaxMemoryLimitKiB(128 * 1024).get().use { seven ->
                 while (true) {
                     val entry = seven.nextEntry ?: break
                     if (entry.isDirectory || !entry.hasStream()) continue
@@ -373,13 +387,13 @@ object GameArchives {
                 if (files.size > MAX_PROBE_ENTRIES) return@use null
                 if (files.any { GameSystems.extension(it.name) in setOf("cue", "gdi", "m3u") }) return@use null
                 val roms = files.filter { eligible(it.name) }
-                if (roms.size != 1 || !zip.canReadEntryData(roms.single())) return@use null
-                val rom = roms.single()
+                val rom = roms.singleOrNull() ?: return@use null
+                if (!zip.canReadGameEntry(rom)) return@use null
                 write(rom.name, rom.size, zip.getInputStream(rom),
                     rom.crc.takeIf { it in 0..0xffffffffL })
             }
             "7z" -> SevenZFile.builder().setSeekableByteChannel(MediaChannel(media))
-            .setMaxMemoryLimitKb(48 * 1024).get().use { seven ->
+                .setMaxMemoryLimitKiB(SEVEN_ZIP_PROBE_MEMORY_LIMIT_KIB).get().use { seven ->
                 val files = seven.entries.take(MAX_PROBE_ENTRIES + 1)
                 if (files.size > MAX_PROBE_ENTRIES) return@use null
                 if (files.any { !it.isDirectory && GameSystems.extension(it.name) in setOf("cue", "gdi", "m3u") }) return@use null
@@ -454,7 +468,7 @@ object GameArchives {
                 .takeIf { it.size <= MAX_PROBE_ENTRIES }
         }
         "7z" -> SevenZFile.builder().setSeekableByteChannel(MediaChannel(media))
-            .setMaxMemoryLimitKb(48 * 1024).get().use { seven ->
+            .setMaxMemoryLimitKiB(SEVEN_ZIP_PROBE_MEMORY_LIMIT_KIB).get().use { seven ->
             seven.entries.filter { !it.isDirectory }.take(MAX_PROBE_ENTRIES + 1)
                 .map { it.name }.takeIf { it.size <= MAX_PROBE_ENTRIES }
         }

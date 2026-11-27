@@ -9,7 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.isDialog
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import com.ambient.tv.util.createAndroidComposeRule
 import com.ambient.tv.ui.theme.AmbientTvTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull

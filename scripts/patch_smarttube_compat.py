@@ -1230,21 +1230,41 @@ def patch_auth_header_snapshots(msc: Path, check: bool) -> list[Path]:
         ],
         signin: [
             ("private String mCachedAuthorizationHeader;",
-             "private String mCachedAuthorizationHeader;\n    private Account mCachedAuthAccount;"),
-            ("if (mCachedAuthorizationHeader != null && Helpers.equals(",
-             "if (mCachedAuthAccount == getSelectedAccount() && mCachedAuthorizationHeader != null && Helpers.equals("),
+             "private String mCachedAuthorizationHeader;\n    private kotlin.Pair<String, String> mCachedAuthKey;"),
+            ("""        if (mCachedAuthorizationHeader != null && Helpers.equals(mCachedAuthorizationHeader, RetrofitOkHttpHelper.getAuthHeaders().get("Authorization"))
+                && System.currentTimeMillis() - mCacheUpdateTime < TOKEN_REFRESH_PERIOD_MS) {""",
+             """        Map<String, String> snapshot = RetrofitOkHttpHelper.getAuthHeaders();
+        kotlin.Pair<String, String> key = authKey(getSelectedAccount());
+        if (mCachedAuthorizationHeader != null && java.util.Objects.equals(mCachedAuthKey, key)
+                && Helpers.equals(mCachedAuthorizationHeader, snapshot.get("Authorization"))
+                && Helpers.equals(key != null ? key.getSecond() : null, snapshot.get("X-Goog-Pageid"))
+                && System.currentTimeMillis() - mCacheUpdateTime < TOKEN_REFRESH_PERIOD_MS) {"""),
             ("        mCachedAuthorizationHeader = createAuthorizationHeader(refreshToken);\n        syncWithRetrofit();",
-             "        long generation = RetrofitOkHttpHelper.beginAuthRefresh();\n        String authorization = createAuthorizationHeader(refreshToken);\n        if (account != getSelectedAccount()) {\n            mCachedAuthorizationHeader = null;\n            mCachedAuthAccount = null;\n            return;\n        }\n        mCachedAuthorizationHeader = authorization;\n        mCachedAuthAccount = account;\n        syncWithRetrofit(account, generation);"),
+             "        kotlin.Pair<String, String> key = authKey(account);\n        long generation = RetrofitOkHttpHelper.beginAuthRefresh();\n        String authorization = createAuthorizationHeader(refreshToken);\n        if (!java.util.Objects.equals(key, authKey(getSelectedAccount()))) {\n            mCachedAuthorizationHeader = null;\n            mCachedAuthKey = null;\n            return;\n        }\n        mCachedAuthorizationHeader = authorization;\n        mCachedAuthKey = key;\n        syncWithRetrofit(account, generation);"),
             ("public void invalidateCache() {\n        mCachedAuthorizationHeader = null;",
-             "public synchronized void invalidateCache() {\n        RetrofitOkHttpHelper.replaceAuthHeaders(java.util.Collections.emptyMap());\n        mCachedAuthAccount = null;\n        mCachedAuthorizationHeader = null;"),
+             "public synchronized void invalidateCache() {\n        RetrofitOkHttpHelper.replaceAuthHeaders(java.util.Collections.emptyMap());\n        mCachedAuthKey = null;\n        mCachedAuthorizationHeader = null;"),
             ("private void syncWithRetrofit() {",
-             "private void syncWithRetrofit(Account selectedAccount, long generation) {"),
+             """public static kotlin.Pair<String, String> authKey(Account account) {
+        if (!(account instanceof YouTubeAccount)) return null;
+        YouTubeAccount youtube = (YouTubeAccount) account;
+        return new kotlin.Pair<>(youtube.getRefreshToken(), youtube.getPageIdToken());
+    }
+
+    private void syncWithRetrofit(Account selectedAccount, long generation) {"""),
             ("        Map<String, String> headers = RetrofitOkHttpHelper.getAuthHeaders();\n        headers.clear();",
              "        Map<String, String> headers = new java.util.HashMap<>();"),
             ("        Account selectedAccount = getSelectedAccount();\n\n        if (mCachedAuthorizationHeader != null && selectedAccount != null) {",
              "        // Use the account captured before refreshing the token.\n        if (mCachedAuthorizationHeader != null && selectedAccount != null) {"),
             ("        }\n    }\n\n    @Override\n    public void addOnAccountChange",
-             "        }\n        if (selectedAccount == getSelectedAccount()) {\n            RetrofitOkHttpHelper.publishAuthHeaders(generation, headers);\n        }\n    }\n\n    @Override\n    public void addOnAccountChange"),
+             "        }\n        if (java.util.Objects.equals(mCachedAuthKey, authKey(getSelectedAccount()))) {\n            RetrofitOkHttpHelper.publishAuthHeaders(generation, headers);\n        }\n    }\n\n    @Override\n    public void addOnAccountChange"),
+            ("            mAccountManager.init();",
+             "            reloadStoredAccounts();"),
+            ("    public void checkAuth() {",
+             """    public synchronized void reloadStoredAccounts() {
+        mAccountManager.init();
+    }
+
+    public void checkAuth() {"""),
         ],
         oauth: [
             ("private String mCachedAuthorizationHeader;",
@@ -1271,10 +1291,15 @@ def patch_auth_header_snapshots(msc: Path, check: bool) -> list[Path]:
              "                headers.put(\"X-Goog-Pageid\", pageIdToken);\n            }\n        }\n        if (selectedAccount == getSelectedAccount()) {\n            RetrofitOkHttpHelper.publishAuthHeaders(generation, headers);\n        }\n    }"),
         ],
     }
+    return patch_exact_sources(edits, check)
+
+
+def patch_exact_sources(edits: dict[Path, list[tuple[str, str]]], check: bool) -> list[Path]:
+    """Validate all requested source edits before writing any of them."""
     pending = {}
     for path, replacements in edits.items():
         if not path.is_file():
-            die(f"SmartTube auth header source missing: {path}")
+            die(f"SmartTube source missing: {path}")
         original = path.read_bytes()
         newline = "\r\n" if b"\r\n" in original else "\n"
         text = original.decode("utf-8").replace("\r\n", "\n")
@@ -1282,16 +1307,142 @@ def patch_auth_header_snapshots(msc: Path, check: bool) -> list[Path]:
             if new in text:
                 continue
             if check or text.count(old) != 1:
-                die(f"Unsupported SmartTube auth header layout: {path}: {old}")
+                die(f"Unsupported SmartTube source layout: {path}: {old}")
             text = text.replace(old, new, 1)
-        if path in (signin, oauth) and "Account selectedAccount = getSelectedAccount();" in text:
-            die(f"Unexpected account re-read in SmartTube auth source: {path}")
         updated = text.replace("\n", newline).encode("utf-8")
         if updated != original:
             pending[path] = updated
     for path, updated in pending.items():
         path.write_bytes(updated)
     return list(pending)
+
+
+def patch_account_changes(msc: Path, check: bool) -> list[Path]:
+    root = msc / "youtubeapi/src/main/java/com/liskovsoft"
+    manager = root / "youtubeapi/service/internal/YouTubeAccountManager.java"
+    oauth = root / "googleapi/oauth2/manager/OAuth2AccountManager.java"
+    edits = {
+        manager: [
+            ("    private void persistRefreshToken(String refreshToken) {",
+             """    private void persistRefreshToken(String refreshToken) {
+        synchronized (mSignInService) {
+            applyRefreshToken(refreshToken);
+        }
+    }
+
+    private void applyRefreshToken(String refreshToken) {"""),
+            ("""        // Remove initial account (with only refresh key)
+        mAccounts.remove(tempAccount); // multi thread fix
+
+        List<AccountInt> accountsInt = getAuthService().getAccounts(); // runs under auth header from above""",
+             """        List<AccountInt> accountsInt = getAuthService().getAccounts(); // runs under auth header from above
+        mSignInService.invalidateCache();
+        mAccounts.remove(tempAccount);"""),
+            ("""    private void addAccount(Account newAccount) {
+        if (newAccount.isSelected()) {""",
+             """    private void addAccount(Account newAccount) {
+        if (newAccount.isSelected()) {
+            Account previous = getSelectedAccount();
+            if (newAccount.equals(previous)) ((YouTubeAccount) newAccount).merge(previous);
+            if (!java.util.Objects.equals(YouTubeSignInService.authKey(previous), YouTubeSignInService.authKey(newAccount))) {
+                mSignInService.invalidateCache();
+                FormatInfoWrapper.invalidateCache();
+            }"""),
+            ("""        for (Account account : mAccounts) {
+            ((YouTubeAccount) account).setSelected(newAccount != null && newAccount.equals(account));""",
+             """        mSignInService.invalidateCache();
+        FormatInfoWrapper.invalidateCache();
+        for (Account account : mAccounts) {
+            ((YouTubeAccount) account).setSelected(newAccount != null && newAccount.equals(account));"""),
+            ("            mAccounts.remove(account);\n            persistAccounts();",
+             """            if (account.equals(getSelectedAccount())) {
+                mSignInService.invalidateCache();
+                FormatInfoWrapper.invalidateCache();
+            }
+            mAccounts.remove(account);
+            persistAccounts();"""),
+            ("            String[] split = Helpers.splitArray(data);\n            mAccounts.clear();",
+             """            String[] split = Helpers.splitArray(data);
+            mSignInService.invalidateCache();
+            FormatInfoWrapper.invalidateCache();
+            mAccounts.clear();"""),
+            ("    private void onAccountChanged() {\n        mSignInService.invalidateCache();",
+             "    private void onAccountChanged() {\n        FormatInfoWrapper.invalidateCache();"),
+        ],
+        oauth: [
+            ("    public void selectAccount(Account newAccount) {",
+             "    public synchronized void selectAccount(Account newAccount) {"),
+            ("""        for (Account account : mAccounts) {
+            ((YouTubeAccount) account).setSelected(newAccount != null && newAccount.equals(account));""",
+             """        invalidateCache();
+        for (Account account : mAccounts) {
+            ((YouTubeAccount) account).setSelected(newAccount != null && newAccount.equals(account));"""),
+            ("""    public void removeAccount(Account account) {
+        if (account != null && mAccounts.contains(account)) {
+            mAccounts.remove(account);""",
+             """    public synchronized void removeAccount(Account account) {
+        if (account != null && mAccounts.contains(account)) {
+            if (account.equals(getSelectedAccount())) invalidateCache();
+            mAccounts.remove(account);"""),
+            ("            String[] split = Helpers.splitArray(data);\n            mAccounts.clear();",
+             """            String[] split = Helpers.splitArray(data);
+            invalidateCache();
+            mAccounts.clear();"""),
+        ],
+    }
+    return patch_exact_sources(edits, check)
+
+
+def patch_format_client_restoration(msc: Path, check: bool) -> list[Path]:
+    service = msc / "youtubeapi/src/main/java/com/liskovsoft/youtubeapi/service"
+    edits = {
+        service / "YouTubeServiceManager.java": [
+            ("    @Override\n    public void invalidateFormatCache() {",
+             """    public boolean restoreSavedFormatClient() {
+        return FormatInfoWrapper.restoreSavedClient(
+            com.liskovsoft.youtubeapi.service.internal.MediaServiceData.instance().getClientType());
+    }
+
+    @Override
+    public void invalidateFormatCache() {"""),
+        ],
+        service / "internal/FormatInfoWrapper.kt": [
+            ("    private var mCachedFormatInfo: MediaItemFormatInfo? = null",
+             """    private data class CachedFormat(val generation: Long, val info: MediaItemFormatInfo)
+    private val formatGeneration = java.util.concurrent.atomic.AtomicLong()
+    @Volatile private var mCachedFormatInfo: CachedFormat? = null"""),
+            ("                checkSigned()\n\n                val formatInfo",
+             "                val generation = formatGeneration.get()\n                checkSigned()\n\n                val formatInfo"),
+            ("                setCachedFormatInfo(formatInfo, clickTrackingParams)",
+             "                setCachedFormatInfo(formatInfo, clickTrackingParams, generation)"),
+            ("    fun invalidateCache() {\n        mCachedFormatInfo = null",
+             "    fun invalidateCache() {\n        formatGeneration.incrementAndGet()\n        mCachedFormatInfo = null"),
+            ("        return mCachedFormatInfo?.takeIf { videoId != null && it.getVideoId() == videoId && it.isCacheActual() }",
+             """        val cached = mCachedFormatInfo ?: return null
+        return cached.info.takeIf {
+            cached.generation == formatGeneration.get() && videoId != null &&
+                it.getVideoId() == videoId && it.isCacheActual()
+        }"""),
+            ("    private fun setCachedFormatInfo(formatInfo: MediaItemFormatInfo?, clickTrackingParams: String?) {",
+             """    private fun setCachedFormatInfo(formatInfo: MediaItemFormatInfo?, clickTrackingParams: String?, generation: Long) {
+        if (generation != formatGeneration.get()) return"""),
+            ("        mCachedFormatInfo = formatInfo\n        formatInfo.setClickTrackingParams(clickTrackingParams)",
+             "        formatInfo.setClickTrackingParams(clickTrackingParams)\n        mCachedFormatInfo = CachedFormat(generation, formatInfo)"),
+            ("    @JvmStatic\n    fun switchNextClient(force: Boolean) {",
+             """    @JvmStatic
+    fun restoreSavedClient(ordinal: Int): Boolean = synchronized(lock) {
+        if (mActualClient != null || mNextClient != null) return@synchronized false
+        val saved = CLIENT_LIST.firstOrNull { it.first.ordinal == ordinal } ?: return@synchronized false
+        mActualClient = saved
+        mNextClient = saved
+        true
+    }
+
+    @JvmStatic
+    fun switchNextClient(force: Boolean) {"""),
+        ],
+    }
+    return patch_exact_sources(edits, check)
 
 
 def main() -> int:
@@ -1336,6 +1487,8 @@ def main() -> int:
     if patch_defer_device_user_agent(default_headers, args.check):
         changed.append(default_headers)
     changed.extend(patch_auth_header_snapshots(msc, args.check))
+    changed.extend(patch_account_changes(msc, args.check))
+    changed.extend(patch_format_client_restoration(msc, args.check))
 
     v8_utils = shared / "j2v8/src/main/java/com/eclipsesource/v8/utils/V8ObjectUtils.java"
     if patch_v8_object_utils_double(v8_utils, args.check):

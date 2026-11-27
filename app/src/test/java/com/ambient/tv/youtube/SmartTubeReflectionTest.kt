@@ -90,37 +90,45 @@ class SmartTubeReflectionTest {
     @Test fun compareCachedAndUncachedReflectionThroughput() {
         val target = Fixture()
         val iterations = 20000
-        fun uncached(): Int {
-            val method = target.javaClass.methods.first { it.name == "choose" &&
-                it.parameterCount == 1 && it.parameterTypes[0] == Int::class.javaPrimitiveType }
-            return method.invoke(target, 7) as Int
+        fun uncached(name: String, vararg args: Any): Any? {
+            val candidates = target.javaClass.methods.filter { it.name == name && it.parameterTypes.size == args.size }
+            val method = candidates.firstOrNull { candidate ->
+                candidate.parameterTypes.indices.all { index ->
+                    val type = candidate.parameterTypes[index]
+                    val wrapped = if (type == Int::class.javaPrimitiveType) Int::class.javaObjectType else type
+                    wrapped.isAssignableFrom(args[index].javaClass)
+                }
+            } ?: candidates.firstOrNull() ?: return null
+            return method.invoke(target, *args)
         }
-        fun cached(): Int = target.cachedMethod("choose", arrayOf(7), false)!!.invoke(target, 7) as Int
-        repeat(2000) { uncached(); cached() }
-        var baselineChecksum = 0
-        var cachedChecksum = 0
-        val baseline = LongArray(5)
-        val optimized = LongArray(5)
-        for (round in baseline.indices) {
-            fun measureBaseline() = kotlin.system.measureNanoTime {
-                repeat(iterations) { baselineChecksum += uncached() }
+        fun compare(label: String, baselineCall: () -> Int, cachedCall: () -> Int) {
+            repeat(5000) { baselineCall(); cachedCall() }
+            var baselineChecksum = 0
+            var cachedChecksum = 0
+            val baseline = LongArray(5)
+            val optimized = LongArray(5)
+            for (round in baseline.indices) {
+                fun measureBaseline() = kotlin.system.measureNanoTime {
+                    repeat(iterations) { baselineChecksum += baselineCall() }
+                }
+                fun measureCached() = kotlin.system.measureNanoTime {
+                    repeat(iterations) { cachedChecksum += cachedCall() }
+                }
+                if (round % 2 == 0) {
+                    baseline[round] = measureBaseline()
+                    optimized[round] = measureCached()
+                } else {
+                    optimized[round] = measureCached()
+                    baseline[round] = measureBaseline()
+                }
             }
-            fun measureCached() = kotlin.system.measureNanoTime {
-                repeat(iterations) { cachedChecksum += cached() }
-            }
-            if (round % 2 == 0) {
-                baseline[round] = measureBaseline()
-                optimized[round] = measureCached()
-            } else {
-                optimized[round] = measureCached()
-                baseline[round] = measureBaseline()
-            }
+            assertEquals(baselineChecksum, cachedChecksum)
+            println("SmartTube reflection diagnostic ($label): uncached median ns/op=" +
+                baseline.sorted()[2] / iterations + ", cached median ns/op=" +
+                optimized.sorted()[2] / iterations)
         }
-        assertEquals(baselineChecksum, cachedChecksum)
-        assertEquals(iterations * 5 * 7, cachedChecksum)
-        println("SmartTube reflection diagnostic: uncached median ns/op=" +
-            baseline.sorted()[2] / iterations + ", cached median ns/op=" +
-            optimized.sorted()[2] / iterations)
+        compare("getter", { (uncached("getter") as String).length }, { (target.call("getter") as String).length })
+        compare("Int argument", { uncached("choose", 7) as Int }, { target.call("choose", 7) as Int })
     }
 
     @Test fun concurrentResolutionPreservesResults() {

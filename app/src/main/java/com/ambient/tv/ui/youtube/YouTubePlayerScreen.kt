@@ -288,12 +288,16 @@ fun YouTubePlayerScreen(
             // presets must not force a lower-quality stream or strip HDR before tone mapping.
             val hdrAllowed = PlaybackBackendResolver.resolve(rendererKey) in
                 setOf(PlaybackBackend.MPV, PlaybackBackend.VLC)
-            val externalPlayback = remember(enginePlayback, videoChoice, audioChoice, hdrAllowed) {
-                youtubeWithStreamChoice(context, enginePlayback, videoChoice, audioChoice, prefs.youtubeVideoPreset, prefs.youtubeMaxVideoHeight, hdrAllowed)
+            val preferredAudioLanguage = com.ambient.tv.youtube.youtubePreferredAudioLanguage(prefs.playbackAudioLanguage)
+            val externalPlayback = remember(enginePlayback, videoChoice, audioChoice, hdrAllowed, preferredAudioLanguage) {
+                if (hdrAllowed) youtubeWithStreamChoice(context, enginePlayback, videoChoice, audioChoice,
+                    prefs.youtubeVideoPreset, prefs.youtubeMaxVideoHeight, preferredAudioLanguage) else enginePlayback
             }
-            val streamPanel = rememberYouTubeStreamPanel(playback, videoChoice, audioChoice, prefs.youtubeVideoPreset, prefs.youtubeMaxVideoHeight, hdrAllowed,
-                onVideo = { BackgroundPlaybackSession.cancelResumeRewind(); allowLateResume = false; videoChoice = it },
-                onAudio = { BackgroundPlaybackSession.cancelResumeRewind(); allowLateResume = false; audioChoice = it })
+            val streamPanel = if (hdrAllowed) {
+                rememberYouTubeStreamPanel(externalPlayback, videoChoice, audioChoice, prefs.youtubeVideoPreset, prefs.youtubeMaxVideoHeight,
+                    onVideo = { BackgroundPlaybackSession.cancelResumeRewind(); allowLateResume = false; videoChoice = it },
+                    onAudio = { BackgroundPlaybackSession.cancelResumeRewind(); allowLateResume = false; audioChoice = it })
+            } else null
             fun switchRenderer(key: String, positionMs: Long, global: Boolean) {
                 val normalized = key.takeIf { it in setOf("auto", "media3", "vlc", "mpv") } ?: "auto"
                 if (normalized == "mpv" && !MpvBackendAvailability.isAvailable) return
@@ -373,8 +377,11 @@ fun YouTubePlayerScreen(
             val sourceVideoUri = if (vlcSelected) com.ambient.tv.youtube.youtubeVlcVideoUri(externalPlayback)
                 else externalPlayback.adaptiveVideoUri
             val sourceVideoFormat = externalPlayback.adaptiveFormats.firstOrNull { it.url == sourceVideoUri }
-            val sourceVideoMimeType = if (vlcSelected) com.ambient.tv.youtube.youtubeVlcVideoMimeType(externalPlayback)
-                else sourceVideoFormat?.mimeType
+            val sourceVideoMimeType = when {
+                vlcSelected -> com.ambient.tv.youtube.youtubeVlcVideoMimeType(externalPlayback)
+                hdrAllowed -> sourceVideoFormat?.mimeType
+                else -> null // Media3 reports its own tracks and output format.
+            }
             // VLC/MPV: YouTube captions as local, centered WebVTT files. The shared subtitle policy loads
             // them into the player and applies the subtitle mode, language and fallback settings.
             // Media3 reads the same captions from the MPD and needs no copies.
@@ -484,15 +491,15 @@ fun YouTubePlayerScreen(
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { PlayerBufferingSpinner(visible = true) }
                     } else if (media3.uri.isBlank()) {
                         val message = stringResource(R.string.youtube_no_compatible_format)
-                        LaunchedEffect(media3.videoId) {
-                            val snapshot = BackgroundPlaybackSession.snapshot.value
-                            if (snapshot.replacingSource && viewModel.ownsCompanionMedia(snapshot.metadata?.companionMedia)) {
-                                BackgroundPlaybackSession.failSourceReplacement(snapshot.generation, message)
-                            } else if (snapshot.metadata?.route == route) BackgroundPlaybackSession.pause()
+                        val retryFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+                        LaunchedEffect(media3.videoId, media3.startupStartedNs) {
+                            viewModel.onManifestUnavailable(media3, message)
+                            retryFocus.requestFocus()
                         }
                         Column(Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.9f)).padding(24.dp)) {
                             Text(message)
-                            com.ambient.tv.ui.common.TvActionButton(stringResource(R.string.home_retry), viewModel::retry)
+                            com.ambient.tv.ui.common.TvActionButton(stringResource(R.string.home_retry), viewModel::retry,
+                                modifier = Modifier.focusRequester(retryFocus))
                             com.ambient.tv.ui.common.TvActionButton(stringResource(R.string.back), onBack)
                         }
                     } else YouTubeMedia3Playback(
@@ -599,16 +606,19 @@ private fun youtubeWithStreamChoice(
     audioKey: String,
     presetKey: String,
     maxHeightPreference: Int,
-    hdrAllowed: Boolean,
+    preferredAudioLanguage: String?,
 ): YouTubePlayback {
     val auto = com.ambient.tv.youtube.YOUTUBE_STREAM_AUTO
-    // The engine's pick is SDR; with HDR allowed "automatic" is chosen again here.
-    if (playback.isLive || (videoKey == auto && audioKey == auto && !hdrAllowed)) return playback
-    val decode = com.ambient.tv.youtube.YouTubeDeviceVideo.decodeCheck(context, hdrAllowed)
-    val limit = com.ambient.tv.youtube.YouTubeDeviceVideo.displayLimit(context)
-    val target = com.ambient.tv.youtube.YouTubeDeviceVideo.videoTarget(presetKey, maxHeightPreference, limit, com.ambient.tv.youtube.YouTubeDeviceVideo.decodeCheck())
-    val video = com.ambient.tv.youtube.youtubePickVideo(playback.adaptiveFormats, videoKey, target, decode, limit)?.url
-    val audio = com.ambient.tv.youtube.youtubePickAudio(playback.adaptiveFormats, audioKey)?.url
+    if (playback.isLive || (videoKey == auto && audioKey == auto)) return playback
+    val video = if (videoKey == auto) playback.adaptiveVideoUri else {
+        val device = com.ambient.tv.youtube.YouTubeDeviceVideo
+        val limit = device.displayLimit(context)
+        val target = device.videoTarget(presetKey, maxHeightPreference, limit, device.decodeCheck())
+        com.ambient.tv.youtube.youtubePickVideo(playback.adaptiveFormats, videoKey, target,
+            device.decodeCheck(context, allowHdr = true), limit)?.url
+    }
+    val audio = playback.adaptiveAudioUri.takeIf { audioKey == auto }
+        ?: com.ambient.tv.youtube.youtubePickAudio(playback.adaptiveFormats, audioKey, preferredAudioLanguage)?.url
     return if (video != null && audio != null) playback.copy(adaptiveVideoUri = video, adaptiveAudioUri = audio) else playback
 }
 
@@ -619,7 +629,6 @@ private fun rememberYouTubeStreamPanel(
     audioKey: String,
     presetKey: String,
     maxHeightPreference: Int,
-    hdrAllowed: Boolean,
     onVideo: (String) -> Unit,
     onAudio: (String) -> Unit,
 ): YouTubeStreamPanel? {
@@ -627,8 +636,8 @@ private fun rememberYouTubeStreamPanel(
     val context = LocalContext.current
     val displayLocale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
     val auto = com.ambient.tv.youtube.YOUTUBE_STREAM_AUTO
-    val choices = remember(playback.adaptiveFormats, presetKey, maxHeightPreference, hdrAllowed) {
-        val decode = com.ambient.tv.youtube.YouTubeDeviceVideo.decodeCheck(context, hdrAllowed)
+    val choices = remember(playback.adaptiveFormats, presetKey, maxHeightPreference) {
+        val decode = com.ambient.tv.youtube.YouTubeDeviceVideo.decodeCheck(context, allowHdr = true)
         val limit = com.ambient.tv.youtube.YouTubeDeviceVideo.displayLimit(context)
         val target = com.ambient.tv.youtube.YouTubeDeviceVideo.videoTarget(presetKey, maxHeightPreference, limit, com.ambient.tv.youtube.YouTubeDeviceVideo.decodeCheck())
         Triple(
@@ -650,8 +659,8 @@ private fun rememberYouTubeStreamPanel(
         selectedQuality = videoKey,
         onQuality = onVideo,
         audioOptions = audioLabels,
-        // Automatic plays the original language: show it as selected.
-        selectedAudio = if (audioKey == auto) audioOptions.firstOrNull { it.original }?.key ?: audioOptions.firstOrNull()?.key ?: auto else audioKey,
+        selectedAudio = com.ambient.tv.youtube.youtubeSelectedAudioKey(playback.adaptiveFormats, playback.adaptiveAudioUri)
+            ?: audioKey,
         onAudio = onAudio,
     )
 }

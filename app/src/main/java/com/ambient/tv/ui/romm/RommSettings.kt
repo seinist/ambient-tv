@@ -40,6 +40,8 @@ import com.ambient.tv.ui.settings.SettingsSubheader
  * options are the ones every system page has ([nameField]).
  */
 @Composable
+// Keep value-based password masking while the field uses the existing editing API.
+@Suppress("DEPRECATION")
 fun RommSettingsSection(
     nameField: @Composable () -> Unit,
     model: RommSettingsViewModel = hiltViewModel(),

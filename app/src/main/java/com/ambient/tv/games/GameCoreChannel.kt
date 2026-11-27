@@ -30,7 +30,7 @@ enum class GameCoreSource(val key: String, val experimentalProfile: String? = nu
     BUILDBOT("buildbot"),
     OPTIMIZED("experiment-optimized", "optimized"),
     OPTIMIZED_A57("experiment-optimized-a57", "optimized-a57"),
-    // Legacy values retained for isolated on-disk data and rollback compatibility.
+    // Legacy profiles remain addressable for old isolated data and saved routes.
     HOTPATHS("experiment-hotpaths", "core-hotpaths"),
     O3("experiment-o3", "o3"),
     THINLTO("experiment-thinlto", "thinlto"),
@@ -41,11 +41,32 @@ enum class GameCoreSource(val key: String, val experimentalProfile: String? = nu
     ;
 
     companion object {
-        val selectable = listOf(AUTO, AMBIENT, BUILDBOT, OPTIMIZED, OPTIMIZED_A57)
-        fun fromKey(key: String?): GameCoreSource = when (val saved = entries.firstOrNull { it.key == key }) {
-            TUNE_A57 -> OPTIMIZED_A57
-            HOTPATHS, O3, THINLTO, O3_THINLTO, PICODRIVE_SH2, SNES_THREADED -> OPTIMIZED
-            else -> saved ?: AUTO
+        val regular = listOf(AUTO, AMBIENT, BUILDBOT)
+        val publicExperiments = listOf(OPTIMIZED, OPTIMIZED_A57)
+
+        fun fromKey(key: String?) = entries.firstOrNull { it.key == key } ?: AUTO
+    }
+
+    fun supportsExperiment(core: GameCore, abi: String): Boolean =
+        (core.supportedAbis.isEmpty() || abi in core.supportedAbis) && when (this) {
+            PICODRIVE_SH2 -> core.id == "picodrive" && abi == "arm64-v8a"
+            SNES_THREADED -> core.id == "snes9x2010"
+            TUNE_A57, OPTIMIZED_A57 -> abi == "arm64-v8a"
+            OPTIMIZED -> true
+            HOTPATHS, O3, THINLTO, O3_THINLTO -> true
+            AUTO, AMBIENT, BUILDBOT -> false
+        }
+}
+
+/** A test signed for one core, selected explicitly for this player route. */
+data class GameCoreExperiment(val coreId: String, val source: GameCoreSource) {
+    val key: String get() = "$coreId:${source.key}"
+
+    companion object {
+        fun fromKey(key: String): GameCoreExperiment? {
+            val coreId = key.substringBefore(':', "").takeIf(String::isNotEmpty) ?: return null
+            val source = GameCoreSource.fromKey(key.substringAfter(':'))
+            return source.experimentalProfile?.let { GameCoreExperiment(coreId, source) }
         }
     }
 }

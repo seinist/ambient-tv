@@ -172,6 +172,31 @@ class YouTubeLocalProgressPersistenceTest {
         assertEquals(12_345L, YouTubeLocalProgress.resumePositionMs("new-video", 100_000))
     }
 
+    @Test fun liveBeforeHydrationDiscardsThePersistedPositionAndTheQueuedServerProgress() = runBlocking {
+        val live = "live"
+        val vod = "vod"
+        val legacy = JSONObject().put(live, JSONObject().put("p", 41).put("t", 123)
+            .put("position", 41_555).put("duration", 100_000))
+        assertTrue(preferences.edit().putString("entries", legacy.toString()).commit())
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        database.load("hold", 1, { entered.countDown(); check(release.await(5, java.util.concurrent.TimeUnit.SECONDS)); emptyList() },
+            {}, {}, { throw it })
+        assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        try {
+            YouTubeLocalProgress.init(context, database)
+            YouTubeLocalProgress.observeRemote(live, 75)
+            YouTubeLocalProgress.observeRemote(vod, 25)
+            YouTubeLocalProgress.discardLive(live)
+            release.countDown()
+            YouTubeLocalProgress.awaitReady()
+            assertNull(YouTubeLocalProgress.resumePositionMs(live, 100_000))
+            assertEquals(25_000L, YouTubeLocalProgress.resumePositionMs(vod, 100_000))
+            reloadFromPreferences()
+            assertNull(YouTubeLocalProgress.resumePositionMs(live, 100_000))
+        } finally { release.countDown() }
+    }
+
     private suspend fun initProgress() {
         YouTubeLocalProgress.init(context, database)
         YouTubeLocalProgress.awaitReady()

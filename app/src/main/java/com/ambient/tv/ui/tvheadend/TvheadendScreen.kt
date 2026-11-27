@@ -676,7 +676,7 @@ internal fun ChannelRow(
 ) {
     if (LocalHandheldUi.current) {
         androidx.compose.material3.ListItem(
-            headlineContent = { Text(channel.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            content = { Text(channel.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
             supportingContent = {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     com.ambient.tv.companion.PlaybackBadge(livePlaybackIndicator("channel", channel.uuid))

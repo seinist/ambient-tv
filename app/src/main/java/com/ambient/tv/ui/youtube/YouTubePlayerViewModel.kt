@@ -20,6 +20,13 @@ import kotlinx.coroutines.sync.withLock
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.navigation.Destinations
 
+internal fun failYouTubeSourceTransition(token: Long?, message: String): Boolean {
+    if (token == null || !BackgroundPlaybackSession.isSourceReplacement(token)) return false
+    BackgroundPlaybackSession.pause()
+    BackgroundPlaybackSession.failSourceReplacement(token, message)
+    return true
+}
+
 data class YouTubePlayerState(
     val loading: Boolean = true,
     val playback: YouTubePlayback? = null,
@@ -89,6 +96,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
 
     fun retry() {
         savedResumeRequest.skip()
+        transitionToken = transitionToken?.takeIf(BackgroundPlaybackSession::isSourceReplacement)
         if (transitionToken != null) {
             transitionToken = BackgroundPlaybackSession.beginItemTransition()
             trailerLifetime?.replacing(requireNotNull(transitionToken))
@@ -100,10 +108,15 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
         trailerLifetime?.stopIfOwned()
     }
 
-    private fun failTransition(message: String) {
-        transitionToken?.let {
+    internal fun onManifestUnavailable(playback: YouTubePlayback, message: String) {
+        val state = _uiState.value
+        val current = state.playback ?: return
+        if (state.loading || current.videoId != playback.videoId ||
+            current.startupStartedNs != playback.startupStartedNs) return
+        val route = if (isTrailer) Destinations.trailerPlayer(current.videoId) else Destinations.youtubePlayer(current.videoId)
+        if (!failYouTubeSourceTransition(transitionToken, message) &&
+            BackgroundPlaybackSession.snapshot.value.metadata?.route == route) {
             BackgroundPlaybackSession.pause()
-            BackgroundPlaybackSession.failSourceReplacement(it, message)
         }
     }
 
@@ -145,13 +158,13 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                 _uiState.update { it.copy(loading = true, error = null) }
                 val cached = if (fresh || isTrailer) null else BackgroundPlaybackSession.cached(Destinations.youtubePlayer(videoId)) as? YouTubePlayback
                 if (cached == null && !playbackAvailability.network()) {
-                    failTransition("Source unavailable")
+                    failYouTubeSourceTransition(requestToken, "Source unavailable")
                     _uiState.update { it.copy(loading = false, waitingForLive = false, error = context.getString(com.ambient.tv.R.string.browse_playback_unavailable)) }
                     return@launch
                 }
                 // Keep even rapid retries serialized until cancelled blocking calls finish.
                 val result = loadMutex.withLock {
-                    suspendResult { cached ?: if (fresh) engine.refreshLivePlayback(videoId, isTrailer, launchStarted) else engine.playback(videoId, isTrailer, launchStarted) }
+                    suspendResult { cached ?: engine.playback(videoId, isTrailer, launchStarted, forceRefresh = fresh) }
                 }
                 ready = result.getOrNull()
                 if (ready != null) {
@@ -166,7 +179,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                     fresh = true
                 } else {
                     availability.notifyBlocked()
-                    failTransition(error?.message ?: "YouTube playback failed")
+                    failYouTubeSourceTransition(requestToken, error?.message ?: "YouTube playback failed")
                     _uiState.update { it.copy(loading = false, waitingForLive = false,
                         error = error?.message ?: "YouTube playback failed") }
                     return@launch
@@ -182,7 +195,6 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                 durationMs = playback.durationMs, isLive = playback.isLive,
             ))) return@launch
             trailerLifetime?.loaded(playback.videoId)
-            transitionToken = null
             val chapterStart = YouTubeStartRequest.take(videoId)
             val rewindSeconds = savedResumeRequest.takeSeconds(preferences.resumeRewindSeconds,
                 eligible = !isTrailer && chapterStart == null && !reusedSession && !playback.isLive)

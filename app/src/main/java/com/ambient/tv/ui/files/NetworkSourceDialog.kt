@@ -329,6 +329,8 @@ internal fun parseWebDavAddress(value: String): WebDavAddress? {
 }
 
 @Composable
+// Keep value-based password masking while the field uses the existing editing API.
+@Suppress("DEPRECATION")
 private fun SourceField(label: Int, value: String, onChange: (String) -> Unit, enabled: Boolean, modifier: Modifier = Modifier, secret: Boolean = false) {
     // TvTextField keeps the IME closed until the field is clicked/activated, unlike a raw OutlinedTextField.
     TvTextField(value, { if (enabled) onChange(it) }, stringResource(label), modifier.fillMaxWidth(), requireExplicitEditing = true,

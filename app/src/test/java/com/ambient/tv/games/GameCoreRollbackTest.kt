@@ -77,8 +77,9 @@ class GameCoreRollbackTest {
             val stable = elf(1, manager.abi)
             val candidate = elf(2, manager.abi)
             manager.install(core, stable.inputStream(), false, "stable")
-            manager.install(core, candidate.inputStream(), false, "candidate", profile)
-            manager.install(core, elf(3, manager.abi).inputStream(), false, "new", profile)
+            val origin = "${GameCoreManager.SOURCE_EXPERIMENT_PREFIX}core-experiments-core-hotpaths--"
+            manager.install(core, candidate.inputStream(), false, "${origin}1", profile)
+            manager.install(core, elf(3, manager.abi).inputStream(), false, "${origin}2", profile)
             assertTrue(manager.rollback(core, profile))
             assertArrayEquals(candidate, manager.installed(core, profile)!!.readBytes())
             assertArrayEquals(stable, manager.installed(core)!!.readBytes())
@@ -88,6 +89,28 @@ class GameCoreRollbackTest {
             assertArrayEquals(stable, manager.installed(core)!!.readBytes())
         } finally {
             manager.remove(core, profile)
+            manager.remove(core)
+        }
+    }
+
+    @Test fun explicitSourcesRejectOtherOriginsForPlaybackAndRollback() = runBlocking {
+        val manager = GameCoreManager(ApplicationProvider.getApplicationContext<Context>(), GameCoreChannel())
+        val core = GameCore("source_fixture", "Source fixture", "MIT")
+        val signed = GameCoreSource.AMBIENT
+        val buildbot = GameCoreSource.BUILDBOT
+        try {
+            manager.install(core, elf(1, manager.abi).inputStream(), false, GameCoreManager.SOURCE_BUILDBOT)
+            assertTrue(manager.installed(core, buildbot) != null)
+            assertTrue(manager.installed(core, signed) == null)
+            assertTrue(manager.info(core, signed)?.origin == GameCoreManager.SOURCE_BUILDBOT)
+
+            manager.install(core, elf(2, manager.abi).inputStream(), false, "${GameCoreManager.SOURCE_AMBIENT_PREFIX}cores-2")
+            assertTrue(manager.installed(core, signed) != null)
+            assertTrue(manager.installed(core, buildbot) == null)
+            assertFalse(manager.rollback(core, signed))
+            assertTrue(manager.rollback(core, buildbot))
+            assertTrue(manager.installed(core, buildbot) != null)
+        } finally {
             manager.remove(core)
         }
     }

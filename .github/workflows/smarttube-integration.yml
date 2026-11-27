@@ -10,6 +10,10 @@ on:
       - '**/*.gradle.kts'
       - 'app/src/main/java/com/ambient/tv/youtube/**'
       - 'app/src/test/java/com/ambient/tv/youtube/**'
+      - 'app/src/main/java/com/ambient/tv/ui/youtube/**'
+      - 'app/src/test/java/com/ambient/tv/ui/youtube/**'
+      - 'app/src/main/java/com/ambient/tv/ui/player/RenewingMedia3DataSource.kt'
+      - 'app/src/test/java/com/ambient/tv/ui/player/RenewingMedia3DataSourceTest.kt'
   workflow_dispatch:
 
 permissions:
@@ -38,23 +42,25 @@ jobs:
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
           yes | "$sdkmanager" --licenses >/dev/null 2>&1 || true
-          "$sdkmanager" "platforms;android-37.0" "ndk;30.0.16248370" "cmake;3.22.1" ||
-            "$sdkmanager" --channel=3 "platforms;android-37.0" "ndk;30.0.16248370" "cmake;3.22.1"
+          "$sdkmanager" "platforms;android-37.1" "platforms;android-37.0" "ndk;30.0.16248370" "cmake;3.22.1" ||
+            "$sdkmanager" --channel=3 "platforms;android-37.1" "platforms;android-37.0" "ndk;30.0.16248370" "cmake;3.22.1"
       - uses: gradle/actions/setup-gradle@v4
       - name: Fetch and patch pinned upstream sources
         run: |
           bash scripts/fetch_smarttube_engine.sh
           bash scripts/fetch_libretrodroid.sh
           python3 scripts/patch_smarttube_compat.py --check --root third_party/smarttube
-      - name: Compile real SmartTube modules and exercise header snapshots
+      - name: Test the patched SmartTube account and format paths
         run: |
-          ./gradlew :youtubeapi:testDebugUnitTest --tests '*AuthHeaderSnapshotTest' -PAPK_ABI=arm64
+          ./gradlew :youtubeapi:testDebugUnitTest --tests '*AuthHeaderSnapshotTest' --tests '*SmartTubeFormatBridgeTest' -PAPK_ABI=arm64
       - name: Verify the application runtime dependency graph
         run: |
           ./gradlew :app:dependencies --configuration debugRuntimeClasspath -PAPK_ABI=arm64
-      - name: Verify app integration and reflection regression tests
+      - name: Test SmartTube playback, relay and reflection
         run: |
-          ./gradlew :app:testDebugUnitTest --tests '*SmartTubeReflectionTest' -PAPK_ABI=arm64
+          ./gradlew :app:testDebugUnitTest -PAPK_ABI=arm64 \
+            --tests '*SmartTube*' --tests '*YouTube*' \
+            --tests '*ChunkedStreamRelayTest' --tests '*RenewingMedia3DataSourceTest'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
