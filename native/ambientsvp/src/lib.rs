@@ -1055,8 +1055,33 @@ mod pipelining_tests {
         };
         let a=experimental.builder.build(&make(0)).unwrap();
         let b=experimental.builder.build(&make(1)).unwrap();
-        experimental.gpu.as_mut().unwrap().experimental_motion(
-            &experimental.builder,&a,&b,&experimental.analyser.vector_header(),None).unwrap();
+        let header=experimental.analyser.vector_header();
+        let gpu_packet=experimental.gpu.as_mut().unwrap().experimental_motion(
+            &experimental.builder,&a,&b,&header,None).unwrap();
+        let cpu_packet=baseline.analyser.analyse(&a,&b).unwrap();
+        // Inspect the exact first pair before synthesis. A field difference
+        // identifies motion estimation error independently of the smoother.
+        use svpflow_core::metadata::{self,VectorRecord};
+        let header_bytes:Vec<u8>=header.iter().flat_map(|x|x.to_le_bytes()).collect();
+        let VectorRecord::Ready(data)=metadata::vector_data(&header_bytes)else{panic!("invalid translation header");};
+        let cpu_field=metadata::decode_vectors(&cpu_packet,data.flags,data.grid,3).unwrap();
+        let gpu_field=metadata::decode_vectors(&gpu_packet,data.flags,data.grid,3).unwrap();
+        for (name,cpu,gpu) in [
+            ("previous",cpu_field.previous.unwrap(),gpu_field.previous.unwrap()),
+            ("current",cpu_field.current.unwrap(),gpu_field.current.unwrap())
+        ]{
+            assert_eq!(cpu.len(),gpu.len());
+            let mismatched=cpu.iter().zip(&gpu).filter(|(a,b)|a.dx!=b.dx||a.dy!=b.dy).count();
+            let score_mismatch=cpu.iter().zip(&gpu).filter(|(a,b)|a.score!=b.score).count();
+            let luma_mismatch=cpu.iter().zip(&gpu).filter(|(a,b)|a.luma!=b.luma).count();
+            let histogram=|field:&[metadata::DecodedVector]|{
+                let mut counts=std::collections::BTreeMap::new();
+                for v in field{*counts.entry((v.dx,v.dy)).or_insert(0usize)+=1;}
+                counts
+            };
+            println!("translation field {name}: vectors={} motion_mismatch={mismatched} score_mismatch={score_mismatch} luma_mismatch={luma_mismatch} CPU={:?} GPU={:?}",
+                cpu.len(),histogram(&cpu),histogram(&gpu));
+        }
         let mut out=vec![0;baseline.frame_len()];
         let count=8u32;
         let run=|engine:&mut AmbientSvp,out:&mut [u8]|{
@@ -1083,11 +1108,11 @@ mod pipelining_tests {
         assert_eq!(experimental.experimental_motion_stats(),(u64::from(count-1),0));
         assert_eq!(cpu.pixels,gpu.pixels);
         assert_eq!(cpu.nearest_squared,gpu.nearest_squared);
-        // Protect the measured previous experimental baseline (33.357 dB,
-        // MAE 1.846 on this exact fixture), not a claim of general parity.
+        // Protect the measured previous experimental baseline (38.280 dB,
+        // MAE 0.742 on this exact fixture), not a claim of general parity.
         // Leave a small margin for floating-point synthesis differences.
-        assert!(gpu.psnr(gpu.squared)>=33.0,"experimental translation PSNR regressed: {}",gpu.psnr(gpu.squared));
-        assert!(gpu.absolute as f64/gpu.pixels as f64<=2.0,"experimental translation MAE regressed");
+        assert!(gpu.psnr(gpu.squared)>=38.0,"experimental translation PSNR regressed: {}",gpu.psnr(gpu.squared));
+        assert!(gpu.absolute as f64/gpu.pixels as f64<=0.8,"experimental translation MAE regressed");
         assert!(gpu.squared<gpu.nearest_squared,"interpolation is worse than source-frame repetition");
         // Report objective quality relative to a known in-between image.
         // No assertion of upstream equivalence or superiority from one
