@@ -143,6 +143,31 @@ int main(void) {
     assert(!ambient_fel_mdat_slice(mdat,sizeof(mdat),UINT64_MAX-2,UINT64_MAX-1,1,&slice));
     assert(!ambient_fel_mdat_slice(mdat,AMBIENT_FEL_MAX_MDAT+1u,100,100,1,&slice));
     assert(!ambient_fel_mdat_slice(mdat,sizeof(mdat),100,100,0,&slice));
+    // Identical AU with each legal explicit prefix width. Payloads
+    // retain their order and original vendor framing after EL stripping.
+    for(unsigned width=1;width<=4;width*=2){
+        uint8_t framed[32]={0},annex[32]={0},original[32]={0};
+        size_t pos=0,converted=0;
+        const uint8_t base_nal[]={0x26,1,0x80};
+        const uint8_t el_nal[]={0x7e,1,0x26,1,0x80};
+        const uint8_t expected[]={0,0,0,1,0x26,1,0x80,0,0,0,1,0x7e,1,0x26,1,0x80};
+        framed[pos+width-1]=sizeof(base_nal);pos+=width;
+        memcpy(framed+pos,base_nal,sizeof(base_nal));pos+=sizeof(base_nal);
+        size_t base_size=pos;
+        framed[pos+width-1]=sizeof(el_nal);pos+=width;
+        memcpy(framed+pos,el_nal,sizeof(el_nal));pos+=sizeof(el_nal);
+        memcpy(original,framed,pos);
+        assert(ambient_fel_to_annexb(framed,pos,width,NULL,0,&converted)&&converted==sizeof(expected));
+        assert(ambient_fel_to_annexb(framed,pos,width,annex,sizeof(annex),&converted));
+        assert(!memcmp(annex,expected,sizeof(expected)));
+        assert(!ambient_fel_to_annexb(framed,pos,width,annex,converted-1,&converted));
+        assert(!ambient_fel_to_annexb(framed,pos-1,width,NULL,0,&converted));
+        size_t broken=pos-1;
+        assert(!ambient_fel_strip_el_framed(framed,&broken,width));
+        assert(broken==pos-1&&!memcmp(original,framed,pos));
+        assert(ambient_fel_strip_el_framed(framed,&pos,width));
+        assert(pos==base_size&&!memcmp(original,framed,pos));
+    }
     struct ambient_rpu_pts_queue q={0};
     int a=1,b=2,c=3;
     assert(ambient_rpu_pts_insert(&q,30,&a));
