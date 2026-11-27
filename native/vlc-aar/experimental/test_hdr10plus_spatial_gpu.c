@@ -440,11 +440,78 @@ int main(void)
     assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&pq_target,&m));
     pq_target.color.hdr.max_luma=10001.f;
     assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&pq_target,&m));
-    pq_target.color.hdr.max_luma=600.f;
-    m.windows[1].saturation_mapping=true;m.windows[1].saturation_weight=8;
-    assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&pq_target,&m));
-    m.windows[1].saturation_mapping=false;
+    pq_target.color.hdr.max_luma=600.f;m.target_nits=600.f;
+    pq_target.color.hdr.min_luma=0.005f;
+    // Annex B.5 is a reversible BT.1886 *working* transform. Verify
+    // colored PQ output against a CPU calculation in that domain.
+    const float hdr_channels[3]={600.f,400.f,200.f};
+    for(int i=0;i<width*height;i++){
+        for(unsigned j=0;j<3;j++)
+            pixels[4*i+j]=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_PQ,hdr_channels[j]);
+        pixels[4*i+3]=1.f;
+    }
+    pl_tex hdr_colored=pl_tex_create(gpu,pl_tex_params(.w=width,.h=height,.format=fmt,
+        .sampleable=true,.initial_data=pixels));
+    assert(hdr_colored);
+    img.planes[0].texture=hdr_colored;img.color=pl_color_space_hdr10;img.color.hdr.max_luma=1000.f;
+    m.windows[0].saturation_mapping=true;m.windows[0].saturation_weight=8;
+    assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&pq_target,&m));
+    sh=pl_dispatch_begin(state.dispatch);
+    pl_shader_sample_direct(sh,pl_sample_src(.tex=state.output));
+    assert(pl_dispatch_finish(state.dispatch,pl_dispatch_params(.shader=&sh,.target=readback)));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=readback,.ptr=pixels)));
+    float ec[3];
+    for(unsigned j=0;j<3;j++)ec[j]=powf(hdr_channels[j]/2000.f,1.f/2.4f);
+    float luma=0.2627f*ec[0]+0.6780f*ec[1]+0.0593f*ec[2];
+    float g=fminf(4.f,logf(600.f)/logf(180.f));
+    for(unsigned j=0;j<3;j++){
+        float delta=ec[j]-luma;
+        if(delta>0.f)g=fminf(g,(1.f-luma)/delta);
+        if(delta<0.f)g=fminf(g,-luma/delta);
+    }
+    for(unsigned j=0;j<3;j++){
+        float value=600.f*powf(fmaxf(0.f,luma+g*(ec[j]-luma)),2.4f);
+        assert(fabsf(pixels[j]-pl_hdr_rescale(PL_HDR_NITS,PL_HDR_PQ,value))<0.002f);
+    }
+    pl_gpu_finish(gpu);pl_tex_destroy(gpu,&hdr_colored);
+    // HLG target: keep the prepass in display-referred PQ, then use the
+    // actual final renderer's inverse OOTF/OETF and compare neutral pixels
+    // against the analytic BT.2100 equation for this characterized display.
+    m.windows[0].saturation_mapping=false;
     pq_target.color.transfer=PL_COLOR_TRC_HLG;
+    img.planes[0].texture=input;img.color=pl_color_space_hdr10;
+    assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&pq_target,&m));
+    assert(img.color.transfer==PL_COLOR_TRC_PQ && state.output_max==600.f);
+    pl_renderer renderer=pl_renderer_create(log,gpu);
+    assert(renderer);
+    pq_target.num_planes=1;pq_target.repr=pl_color_repr_rgb;
+    pq_target.planes[0]=(struct pl_plane){.texture=readback,.components=3,.component_mapping={0,1,2,-1}};
+    pq_target.crop=(struct pl_rect2df){0,0,width,height};
+    struct pl_color_map_params cm=pl_color_map_default_params;
+    cm.metadata=PL_HDR_METADATA_HDR10;cm.tone_mapping_function=&pl_tone_map_clip;
+    cm.tone_mapping_algo=0;cm.inverse_tone_mapping=false;
+    struct pl_render_params rp=pl_render_default_params;
+    rp.color_map_params=&cm;rp.peak_detect_params=NULL;
+    assert(pl_render_image(renderer,&img,&pq_target,&rp));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=readback,.ptr=pixels)));
+    const float gamma=fmaxf(1.f,1.2f+0.42f*log10f(0.6f));
+    const float beta=sqrtf(3.f*powf(0.005f/600.f,1.f/gamma));
+    for(unsigned j=0;j<2;j++){
+        float nits=j?288.f:180.f;
+        float scene=12.f*powf(nits/600.f,1.f/gamma);
+        float signal=scene<=1.f?0.5f*sqrtf(scene):0.17883277f*logf(scene-0.28466892f)+0.55991073f;
+        signal=(signal-beta)/(1.f-beta);
+        unsigned idx=j?4*(32*width+32):0;
+        assert(isfinite(pixels[idx])&&fabsf(pixels[idx]-signal)<0.012f);
+    }
+    pl_renderer_destroy(&renderer);
+    img.planes[0].texture=input;img.color=pl_color_space_hdr10;
+    pq_target.color.hdr.max_luma=0.f;
+    assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&pq_target,&m));
+    pq_target.color.hdr.max_luma=600.f;pq_target.color.hdr.min_luma=500.f;
+    assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&pq_target,&m));
+    pq_target.color.transfer=PL_COLOR_TRC_PQ;pq_target.color.hdr.max_luma=50.f;
+    pq_target.color.hdr.min_luma=0.f;
     assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&pq_target,&m));
     assert(img.planes[0].texture==input && img.color.transfer==PL_COLOR_TRC_PQ);
     // A crop changes local coordinates; preserve the ordinary renderer path.

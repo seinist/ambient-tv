@@ -58,8 +58,8 @@ jobs:
           echo "sdkmanager: $sdkmanager"
           yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
           "$sdkmanager" "ndk;30.0.16248370" || "$sdkmanager" --channel=3 "ndk;30.0.16248370"
-          sudo apt-get update -o Acquire::Retries=3
-          sudo apt-get install -y glslc libvulkan-dev
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update -o Acquire::Retries=3
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y glslc libvulkan-dev
       - name: Stage experimental display module and embedded shaders
         run: |
           touch .ci/vlc/.ambient-ahb-experimental
@@ -93,8 +93,8 @@ jobs:
           persist-credentials: false
       - name: Install encoder for synthetic Main10 EL fixture
         run: |
-          sudo apt-get update -o Acquire::Retries=3
-          sudo apt-get install -y ffmpeg
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update -o Acquire::Retries=3
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y ffmpeg
       - name: Compile and exercise the real pinned FFmpeg RPU parser
         run: |
           cd .ci/ffmpeg
@@ -144,8 +144,8 @@ jobs:
             modules/video_output/opengl
       - name: Install host Vulkan and libplacebo build dependencies
         run: |
-          sudo apt-get update -o Acquire::Retries=3
-          sudo apt-get install -y meson ninja-build python3-jinja2 libvulkan-dev vulkan-validationlayers mesa-vulkan-drivers libshaderc-dev
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update -o Acquire::Retries=3
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y meson ninja-build python3-jinja2 libvulkan-dev vulkan-validationlayers mesa-vulkan-drivers libshaderc-dev
       - name: Build pinned libplacebo and render local-window reference fixture
         run: |
           git -C .ci/libplacebo apply "$GITHUB_WORKSPACE/native/vlc-aar/experimental/libplacebo-patches/ambient-mmr-order3.patch"
@@ -197,8 +197,8 @@ jobs:
           java-version: '21'
       - name: Install native build dependencies
         run: |
-          sudo apt-get update -o Acquire::Retries=3
-          sudo apt-get install -y build-essential autoconf automake autopoint gettext libtool libtool-bin \
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update -o Acquire::Retries=3
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y build-essential autoconf automake autopoint gettext libtool libtool-bin \
             pkg-config ninja-build cmake gperf nasm yasm bison flex texinfo \
             curl wget unzip zip xz-utils patch perl python3 python3-venv libssl-dev glslang-tools glslc
           rustup toolchain install stable --profile minimal

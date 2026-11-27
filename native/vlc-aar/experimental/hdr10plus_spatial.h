@@ -3,8 +3,8 @@
  * LUT generator and GPU-side elliptical weighting. No claim of conformance
  * for complete ST2094-40 conformance. Scene LUTs and saturation use an
  * adapted display peak with the existing libplacebo curve generator.
- * RGB PQ or native packed P010 AHB frames -> SDR or explicit PQ targets,
- * no Dolby Vision. HDR target saturation adaptation is not yet supported. */
+ * RGB PQ or native packed P010 AHB frames -> SDR or explicit PQ/HLG
+ * targets, no Dolby Vision. Keep display-linear light until PQ re-encoding. */
 #include <libplacebo/dispatch.h>
 #include <libplacebo/shaders/custom.h>
 #include <libplacebo/shaders/colorspace.h>
@@ -190,10 +190,11 @@ static const char ambient_hdrplus_mask_glsl[] =
     "  }\n"
     "  return pow(clamp(vec3(y)+gain*d,0.0,1.0),vec3(2.4))*ahp_sat_peak[i];\n"
     "}\n";
-/* Annex B.5 inspired saturation compensation in BT.2020 non-linear RGB.
- * The adapted curve supplies the actual mapped light, not raw PQ code values.
- * Use BT.1886's ideal-black 2.4 power and cap gain at 4 and the RGB gamut
- * as specified by Annex B.12.
+/* ST 2094-40:2020 informative Annex B.5 uses BT.1886 as an intermediate
+ * color transform (B.6/B.10), NOT the final display transfer function.
+ * The adapted curve supplies display-linear light, not PQ/HLG code values.
+ * Use ideal-black 2.4 power, bounded gain and RGB gamut (B.12), then return
+ * linear light. The ordinary renderer handles final PQ/HLG/SDR encoding.
  * Guard logarithm singularities and leave blacks/neutral colors unchanged. */
 static const char ambient_hdrplus_map_glsl[] =
     "vec2 p=floor(ahp_uv*ahp_size);\n"
@@ -241,23 +242,25 @@ static inline bool ambient_hdrplus_spatial_render(pl_gpu gpu, pl_log log,
     bool layering;
     if (!ambient_hdrplus_spatial_supported(m,w,h,masks,&layering)) return false;
     struct pl_color_space src=img->color,dst=target->color;
-    // Do not mistake a transfer-function default or inferred source peak
-    // for a measured/configured PQ display capability. HLG is relative
-    // to its system gamma and needs a separate adaptation policy.
-    const bool pq_target=dst.transfer==PL_COLOR_TRC_PQ;
-    if(pq_target && (!(dst.hdr.max_luma>0.f && dst.hdr.max_luma<=10000.f) ||
+    // Do not mistake an inferred nominal peak for a characterized target.
+    // Pinned libplacebo ignores static peak metadata below 100 nits.
+    const bool hdr_target=dst.transfer==PL_COLOR_TRC_PQ || dst.transfer==PL_COLOR_TRC_HLG;
+    if(hdr_target && (!(dst.hdr.max_luma>=100.f && dst.hdr.max_luma<=10000.f) ||
         !(dst.hdr.min_luma>=0.f && dst.hdr.min_luma<dst.hdr.max_luma))) return false;
-    if(pq_target)for(unsigned i=0;i<m->window_count;i++)
-        // The current saturation model uses ideal-black BT.1886. Do not
-        // apply this SDR approximation to PQ output. Preserve global fallback.
-        if(m->windows[i].saturation_mapping && m->windows[i].saturation_weight) return false;
+    if(dst.transfer==PL_COLOR_TRC_HLG){
+        // The pinned HLG inverse OOTF uses beta and 1/(1-beta). Reject
+        // impossible contrast before the final renderer reaches it.
+        const float gamma=fmaxf(1.f,1.2f+0.42f*log10f(dst.hdr.max_luma/1000.f));
+        const float beta=sqrtf(3.f*powf(dst.hdr.min_luma/dst.hdr.max_luma,1.f/gamma));
+        if(!(beta>=0.f && beta<1.f)) return false;
+    }
     pl_color_space_infer_map(&src,&dst);
-    if (pl_color_space_is_hdr(&dst) && !pq_target) return false;
+    if (pl_color_space_is_hdr(&dst) && !hdr_target) return false;
     float out_min=0.f,out_max=0.f;
     pl_color_space_nominal_luma_ex(pl_nominal_luma_params(
         .color=&dst,.metadata=PL_HDR_METADATA_HDR10,.scaling=PL_HDR_NITS,
         .out_min=&out_min,.out_max=&out_max));
-    if (!(out_min>=0.f && out_max>out_min && out_max<=(pq_target?10000.f:1000.f))) return false;
+    if (!(out_min>=0.f && out_max>out_min && out_max<=(hdr_target?10000.f:1000.f))) return false;
     if (!ambient_hdrplus_spatial_curves(gpu,s,m,out_min,out_max)) return false;
     pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,16,0,PL_FMT_CAP_SAMPLEABLE | PL_FMT_CAP_RENDERABLE | PL_FMT_CAP_LINEAR);
     if (!fmt || !pl_tex_recreate(gpu,&s->output,pl_tex_params(

@@ -724,3 +724,22 @@ Native Android HDR passthrough preference and application gating remain
 unchanged. This is native renderer capability, not a new default HDR
 output policy or certification. Host GPU fixtures compare absolute nits
 on 600 and 1500 nit targets and test rejected configurations.
+
+
+### HDR saturation working space and HLG target support
+
+ST 2094-40:2020 Annex B.5 (informative, equations B.6–B.10)
+uses BT.1886 as an intermediate nonlinear RGB transform, returning to
+linear RGB after saturation processing. It does not prescribe BT.1886
+as the final display transfer function. The same ideal-black working
+transform is now allowed for explicit PQ and HLG target luminances.
+The spatial prepass remains PQ-encoded display-referred light; the
+pinned libplacebo renderer performs the final HLG inverse OOTF/OETF.
+No unknown target peak is inferred. Peaks below 100 nits are excluded
+for HDR because pinned libplacebo ignores that static metadata range;
+HLG contrast must also keep the inverse OOTF black parameter below one.
+Host tests cover nonneutral PQ saturation against independent arithmetic
+and final HLG rendering of local neutral pixels against BT.2100 math.
+This is an experimental adaptation, not normative conformance or a
+change to native Android HDR routing.
+Reference: https://pub.smpte.org/pub/st2094-40/st2094-40-2020.pdf
