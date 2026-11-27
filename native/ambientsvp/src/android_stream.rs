@@ -288,6 +288,11 @@ pub unsafe extern "C" fn ambient_svp_android_stream_push(stream:*mut Stream,buff
             if !frame.is_null(){unsafe{drop(Box::from_raw(frame))};}
             return -4;
         }
+        if !unsafe{(&mut *next).ensure_external_handoff()}{
+            // Original picture must not be presented; the retained token
+            // will be returned safely when this conversion retires.
+            s.retired.push(next);return -5;
+        }
         if count!=0{
             let phases=unsafe{std::slice::from_raw_parts(phases,count as usize)};
             if s.render(s.previous,next,phases,out).is_err(){s.retired.push(next);return -4;}
