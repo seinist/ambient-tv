@@ -1,6 +1,56 @@
 use ambientsvp::{Config, AmbientSvp};
 use std::time::Instant;
 
+// Exact synthetic 4-pixel translation per source frame. No external
+// ground-truth clip, decoder timing or scene labels are required.
+fn translation_pixel(w:u32,x:u32,y:u32,shift:u64)->u8{
+    let x=((u64::from(x)+shift)%u64::from(w)) as u32;
+    let triangle=|v:u32,period:u32|{let r=v%period;r.min(period-r)};
+    let a=triangle(x*3+y*2,62);
+    let b=triangle(x*7+y*5,94);
+    let c=triangle(x*13+y*11,46);
+    (24+a*3+b*2+c).min(235) as u8
+}
+
+#[derive(Default)]
+struct Quality{
+    frames:u64,
+    pixels:u64,
+    squared:u128,
+    absolute:u128,
+    nearest_squared:u128,
+}
+impl Quality{
+    fn observe(&mut self,out:&[u8],w:u32,h:u32,index:u64,count:u32){
+        // Measure only genuine halfway positions, before the final
+        // source frame. Exclude the frame edges where motion is clipped.
+        if index%2==0 || index>=2*u64::from(count-1){return;}
+        let shift=index*2;
+        let mut (before,after)=(0u128,0u128);
+        for y in 16..h-16{
+            for x in 16..w-16{
+                let target=i32::from(translation_pixel(w,x,y,shift));
+                let actual=i32::from(out[(y*w+x) as usize]);
+                let d=(actual-target).unsigned_abs() as u128;
+                self.squared+=d*d;
+                self.absolute+=d;
+                let b=(i32::from(translation_pixel(w,x,y,shift-2))-target).unsigned_abs() as u128;
+                let a=(i32::from(translation_pixel(w,x,y,shift+2))-target).unsigned_abs() as u128;
+                before+=b*b;after+=a*a;
+                self.pixels+=1;
+            }
+        }
+        self.nearest_squared+=before.min(after);
+        self.frames+=1;
+    }
+
+    fn psnr(&self,squared:u128)->f64{
+        if self.pixels==0{return f64::NAN;}
+        if squared==0{return f64::INFINITY;}
+        10.0*(255.0f64.powi(2)*self.pixels as f64/squared as f64).log10()
+    }
+}
+
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let arg = |i: usize, default: u32| {
@@ -25,6 +75,9 @@ fn main() {
     let no_checksum = a.iter().any(|s| s == "--no-checksum");
     let realtime = a.iter().any(|s| s == "--require-realtime");
     let experimental_motion = a.iter().any(|s| s == "--experimental-motion");
+    let quality_translation=a.iter().any(|s|s=="--quality-translation");
+    assert!(!quality_translation || (target_fps==source_fps.saturating_mul(2) && count>=3 && w>=64 && h>=64 && !realtime),
+        "quality translation requires 2x cadence, >=3 frames, >=64x64 and a separate non-realtime run");
     assert!(!experimental_motion || (backend==2 && count>=2), "experimental motion requires explicit Vulkan backend and at least two frames");
     assert!(count > 0 && cycles > 0, "frames and cycles must be positive");
     for cycle in 0..cycles {
@@ -62,21 +115,31 @@ fn main() {
     let mut outputs = 0u64;
     let mut last_pts = None;
     let mut monotonic = true;
+    let mut quality=Quality::default();
+    let mut quality_us=0u128;
     let mut record = |pts: i64| {
         if last_pts.is_some_and(|last| pts <= last) { monotonic = false; }
         last_pts = Some(pts);
+        let index=outputs;
         outputs += 1;
+        index
     };
     for n in 0..count {
         for y in 0..h {
             for x in 0..w {
-                input[(y * w + x) as usize] = (((x + n * 3) / 12 ^ y / 12) % 2 * 160 + 40) as u8;
+                input[(y * w + x) as usize] = if quality_translation {translation_pixel(w,x,y,u64::from(n)*4)}
+                    else {(((x + n * 3) / 12 ^ y / 12) % 2 * 160 + 40) as u8};
             }
         }
         let processing = Instant::now();
         engine.push(&input, n as i64 * 1_000_000 / source_fps as i64).unwrap();
         while let Some(pts) = engine.receive(&mut output, false).unwrap() {
-            record(pts);
+            let index=record(pts);
+            if quality_translation {
+                let t=Instant::now();
+                quality.observe(&output,w,h,index,count);
+                quality_us+=t.elapsed().as_micros();
+            }
             if !no_checksum {
                 checksum = checksum.wrapping_add(output.iter().map(|x| *x as u64).sum::<u64>());
             }
@@ -87,7 +150,12 @@ fn main() {
     }
     let drain = Instant::now();
     while let Some(pts) = engine.receive(&mut output, true).unwrap() {
-        record(pts);
+        let index=record(pts);
+        if quality_translation {
+            let t=Instant::now();
+            quality.observe(&output,w,h,index,count);
+            quality_us+=t.elapsed().as_micros();
+        }
         if !no_checksum {
             checksum = checksum.wrapping_add(output.iter().map(|x| *x as u64).sum::<u64>());
         }
@@ -106,6 +174,15 @@ fn main() {
         start.elapsed().as_millis(), stats
     );
     println!("outputs={outputs}/{expected} output_fps={output_fps:.2} push_drain_p50_ms={:.2} p95_ms={:.2} p99_ms={:.2} monotonic={monotonic}", percentile(50), percentile(95), percentile(99));
+    if quality_translation {
+        assert_eq!(quality.frames,u64::from(count-1),"missing halfway quality frames");
+        assert!(monotonic && outputs==expected && stats.bypass_reason==0,"invalid quality run");
+        if backend!=0{assert_eq!(stats.backend,backend,"quality run backend fallback");}
+        println!("translation_quality frames={} pixels={} luma_psnr_db={:.3} luma_mae={:.3} nearest_source_psnr_db={:.3} quality_evaluation_ms={:.3} (timing includes quality evaluation; use a separate performance run)",
+            quality.frames,quality.pixels,quality.psnr(quality.squared),
+            quality.absolute as f64/quality.pixels.max(1) as f64,
+            quality.psnr(quality.nearest_squared),quality_us as f64/1000.0);
+    }
     if experimental_motion {
         let (pairs,failures)=engine.experimental_motion_stats();
         println!("experimental_motion=true pairs={pairs} failures={failures} quality_parity_with_upstream=unverified");
@@ -130,5 +207,28 @@ fn main() {
         assert!(engine.stats().interpolated_frames > 0, "no novel output frames");
         assert_eq!(engine.stats().bypass_reason, 0, "unexpected bypass");
     }
+    }
+}
+
+
+#[cfg(test)]
+mod tests{
+    use super::*;
+    #[test]
+    fn exact_halfway_translation_has_zero_error_and_skips_source_positions(){
+        let (w,h)=(96,66);
+        let mut out=vec![128;(w*h*3/2) as usize];
+        let mut q=Quality::default();
+        for y in 0..h{for x in 0..w{out[(y*w+x) as usize]=translation_pixel(w,x,y,2);}}
+        q.observe(&out,w,h,0,3);
+        q.observe(&out,w,h,1,3);
+        q.observe(&out,w,h,5,3);
+        assert_eq!(q.frames,1);
+        assert_eq!(q.pixels,u64::from((w-32)*(h-32)));
+        assert_eq!(q.squared,0);
+        assert_eq!(q.absolute,0);
+        assert!(q.psnr(q.squared).is_infinite());
+        assert!(q.nearest_squared>0);
+        assert!(q.psnr(q.nearest_squared).is_finite());
     }
 }
