@@ -784,6 +784,13 @@ static void test_interleave_clock_limits(void)
     mp4_track_t a={.i_time=1,.i_timescale=4000000},
                 b={.i_time=1,.i_timescale=2000000};
     assert(MP4_FEL_DtsBefore(&a,&b)&&!MP4_FEL_DtsBefore(&b,&a));
+    demux_sys_t sys={0};
+    a.context.i_trun_sample_pos=200;b.context.i_trun_sample_pos=100;
+    assert(MP4_FEL_PreferTrack(&sys,&b,&a));
+    sys.context.ambient_fel_interleaved=true;
+    assert(MP4_FEL_PreferTrack(&sys,&a,&b));
+    assert(!MP4_FEL_PreferTrack(&sys,&b,&a));
+    assert(MP4_FEL_PreferTrack(&sys,&a,NULL));
     a.i_time=2;
     assert(!MP4_FEL_DtsBefore(&a,&b)&&!MP4_FEL_DtsBefore(&b,&a));
     a.i_time=INT64_MAX-1;a.i_timescale=UINT32_MAX;
@@ -855,6 +862,14 @@ int main(void)
     MP4_Box_t moof={.i_type=ATOM_moof,.i_pos=0,.i_size=100,.p_first=&traf};
     uint64_t required;
     assert(MP4_FEL_PreflightMoof(&demux,&moof,&required)&&required==132);
+    uint64_t budget_runs=65534,budget_samples=1048574;
+    assert(MP4_FEL_PreflightBudget(&demux,&moof,&required,&budget_runs,&budget_samples));
+    assert(budget_runs==65536&&budget_samples==1048576);
+    assert(!MP4_FEL_PreflightBudget(&demux,&moof,&required,&budget_runs,&budget_samples));
+    assert(budget_runs==65536&&budget_samples==1048576);
+    budget_runs=0;budget_samples=1048575;
+    assert(!MP4_FEL_PreflightBudget(&demux,&moof,&required,&budget_runs,&budget_samples));
+    assert(budget_runs==0&&budget_samples==1048575);
     tr[1].i_data_offset=-1;
     assert(!MP4_FEL_PreflightMoof(&demux,&moof,&required));
     tr[1].i_data_offset=128;
