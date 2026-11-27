@@ -16,6 +16,7 @@ on:
       - 'scripts/prepare_vlc_ahb_experimental.sh'
       - 'scripts/build_vlc_vulkan.sh'
       - 'scripts/run_vlc_seek_e2e.sh'
+      - 'scripts/audit_profile7_stream.sh'
       - 'native/vlc-aar/seek-audit/**'
       - '.github/workflows/vlc-ahb-experimental.yml'
   workflow_dispatch:
@@ -178,6 +179,12 @@ jobs:
             include
             modules/video_output/libplacebo
             modules/video_output/opengl
+      - uses: actions/checkout@v5
+        with:
+          repository: FFmpeg/FFmpeg
+          ref: 946fcce07b6dcd0331c8cc609192aeff5e1924f8
+          path: .ci/profile7-ffmpeg
+          persist-credentials: false
       - uses: actions/download-artifact@v5
         with:
           name: external-fel-rpu-snapshot
@@ -225,6 +232,23 @@ jobs:
             .ci/vlc-hdr/modules/video_output/libplacebo/utils.c native/vlc-aar/experimental/test_vlc_hdr_units.c \
             -Wl,--gc-sections -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-vlc-hdr-units
           .ci/test-vlc-hdr-units
+      - name: Decode original FFmpeg FATE Profile 7 streams and compare native GPU frames
+        timeout-minutes: 18
+        run: |
+          set -euo pipefail
+          (
+            cd .ci/profile7-ffmpeg
+            git apply "$GITHUB_WORKSPACE/native/vlc-aar/experimental/ffmpeg-patches/ambient-dovi-parser.patch"
+            ./configure --disable-everything --disable-autodetect --disable-programs --disable-doc --disable-network --disable-x86asm --disable-shared --enable-static --enable-avformat --enable-demuxer=matroska,mov --enable-protocol=file --enable-parser=hevc --enable-decoder=hevc --enable-bsf=dovi_split --disable-avdevice --disable-avfilter --disable-swscale --disable-swresample
+            make -j2 libavformat/libavformat.a libavcodec/libavcodec.a libavutil/libavutil.a
+          )
+          export FFMPEG_SOURCE="$PWD/.ci/profile7-ffmpeg" PL_SOURCE="$PWD/.ci/libplacebo" PL_BUILD="$PWD/.ci/pl-build"
+          for entry in mkv/dovi-p7-hvce.mkv mov/dovi-p7-hvce.mp4; do
+            clip="$(mktemp)"
+            curl --fail --location --retry 3 --max-time 120 "https://fate-suite.ffmpeg.org/$entry" -o "$clip"
+            bash scripts/audit_profile7_stream.sh "$clip"
+            rm -f "$clip"
+          done
       - name: Compare official AOM HDR10+ conformance picture against independent reference
         if: github.event_name == 'workflow_dispatch' && inputs.aom_reference
         run: |

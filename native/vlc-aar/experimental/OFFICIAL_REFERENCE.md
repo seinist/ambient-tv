@@ -88,3 +88,16 @@ Signalled BL resampling now extracts the original native nearest-sampled P010 pl
 The integer reconstruction regression now includes MMR orders 1–3, coefficient denominators 15 and 32, negative terms and large cancelling coefficients, quadratic mapping, multiple pivots and signed NLQ saturation. The GPU's reconstructed native planes must exactly equal the independent __int128 CPU oracle. The production Annex C output shader is additionally checked before RGB conversion against a separately materialized signed vertical intermediate (8192 chroma codes, zero differences). These are engineering test gates; they are not results until the current CI passes.
 
 Odd visible BL and EL dimensions now preserve the ceil-divided input chroma grid. The filter produces exactly the target chroma width and height: for odd source luma extents the extra right/bottom chroma output sample is omitted, without changing input taps or the origin. The production renderer is exercised at 31x29, 31x30, 32x29 and 1x1 visible source sizes, with both resampling flags, independently calculated BL/EL filter planes and zero-error native Y/UV reconstruction. Even physical P010 allocations and even crop origins remain the import contract; odd visible extents are not evidence that a vendor decoder accepts odd coded allocations.
+
+### Original Profile 7 stream validation (local commercial inputs and FATE)
+
+The FATE corpus provides unmodified single-frame Profile-7 samples in MKV and MP4 with hvcE and RPU configuration, at https://fate-suite.ffmpeg.org/mkv/dovi-p7-hvce.mkv and https://fate-suite.ffmpeg.org/mov/dovi-p7-hvce.mp4 . Upstream pinned FATE reports BL 3840x2160 and EL 1920x1080. The sample origin is not attested to be a commercial disc. The new CI downloads both original containers, records SHA-256, uses pinned FFmpeg demux and dovi_split with independent Main10 decoders, parses the original RPU with the patched parser, matches exact original packet/frame PTS including zero, and runs the actual renderer plus the separate scalar ETSI reference on all reconstructed native Y and UV codes (zero LSB). No input/decoded pictures are uploaded. CI uses the FATE fixtures without requiring a BL-upscale flag, because that flag must be measured, not assumed. This is a software-decoded host GPU test, not Android MediaCodec proof.
+
+For an authorized, already accessible commercial P7 MKV/MP4 (for example a permitted Spears & Munsil Benchmark extract), build the pinned FFmpeg as above with avformat/mov/matroska/file, and use the same local harness:
+
+```sh
+FFMPEG_SOURCE=/path/to/patched-ffmpeg PL_SOURCE=/path/to/patched-libplacebo PL_BUILD=/path/to/pl-build \\
+  bash scripts/audit_profile7_stream.sh /path/to/authorized-profile7.mkv --require-fel --require-bl-upscale
+````
+
+Omit --require-bl-upscale to validate typical full-resolution BL FEL. With it present, no frame without the original BL flag can pass. The bounded first-match audit fails if no qualifying matched frame is found, and never modifies a flag or synthesizes missing data. Keep any commercial data local, verify usage permission and source identity, and retain only numerical results. No access to commercial content is assumed. The actual commercial BL-upscale validation remains open until an authorized matching source has been run.
