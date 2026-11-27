@@ -53,7 +53,7 @@ impl MotionSearch{
 
     pub fn supported(header:&[i32])->bool{
         PacketLayout::from_header(header).is_ok() && header[1]==3
-            && header[13]==0 && u64::from(header[7] as u32)*u64::from(header[8] as u32)<=MAX_PIXELS
+            && matches!(header[13],0|1) && u64::from(header[7] as u32)*u64::from(header[8] as u32)<=MAX_PIXELS
             && Grid::new(header[7] as u32,header[8] as u32,header[2] as u32,header[3] as u32,
                 header[9] as u32,header[10] as u32).is_some_and(|g|g.w==header[11] as u32 && g.h==header[12] as u32)
     }
