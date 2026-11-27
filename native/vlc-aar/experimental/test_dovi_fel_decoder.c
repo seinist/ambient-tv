@@ -67,9 +67,90 @@ static AVPacket *dual(const uint8_t *input,size_t size,int64_t pts)
     return p;
 }
 
+/* Real reordered HEVC GOP with exact container packet timestamps.
+ * Compare owned EL codewords against an independently decoded reference
+ * in presentation order, including both early and late discard. */
+static void test_reorder(const char *stream,const char *timestamps,const char *reference)
+{
+    enum { FRAMES=8, WORDS=64*64+2*32*32 };
+    int64_t pts[FRAMES],dts[FRAMES];
+    unsigned display[FRAMES];
+    FILE *ts=fopen(timestamps,"r");assert(ts);
+    bool reordered=false;
+    for(unsigned i=0;i<FRAMES;i++){
+        long long p,d;
+        assert(fscanf(ts,"%lld,%lld",&p,&d)==2);
+        pts[i]=p+1000000;dts[i]=d+1000000;
+        assert(pts[i]>0&&dts[i]>0);
+        if(i){assert(dts[i]>dts[i-1]);if(pts[i]<pts[i-1])reordered=true;}
+        display[i]=i;
+    }
+    fclose(ts);assert(reordered);
+    for(unsigned i=1;i<FRAMES;i++){
+        unsigned v=display[i],j=i;
+        while(j&&pts[display[j-1]]>pts[v]){display[j]=display[j-1];j--;}
+        display[j]=v;
+    }
+    for(unsigned i=1;i<FRAMES;i++)assert(pts[display[i]]>pts[display[i-1]]);
+    FILE *f=fopen(stream,"rb");assert(f);
+    assert(fseek(f,0,SEEK_END)==0);
+    long size=ftell(f);assert(size>0&&size<1024*1024);rewind(f);
+    uint8_t *input=malloc((size_t)size);assert(input);
+    assert(fread(input,1,(size_t)size,f)==(size_t)size);fclose(f);
+    size_t starts[FRAMES+1]={0},cursor=0;
+    unsigned auds=0;
+    while(cursor<(size_t)size){
+        size_t prefix,next;
+        size_t start=ambient_rpu_start_code(input,(size_t)size,cursor,&prefix);
+        assert(prefix);
+        size_t payload=start+prefix,end=ambient_rpu_start_code(input,(size_t)size,payload,&next);
+        assert(end-payload>=2);
+        if(((input[payload]>>1)&63)==35){
+            assert(auds<FRAMES);
+            if(auds)starts[auds]=start;
+            auds++;
+        }
+        cursor=end;
+    }
+    assert(auds==FRAMES);
+    starts[FRAMES]=(size_t)size;
+    f=fopen(reference,"rb");assert(f);
+    uint16_t *expected=malloc(FRAMES*WORDS*sizeof(*expected));assert(expected);
+    assert(fread(expected,sizeof(*expected),FRAMES*WORDS,f)==FRAMES*WORDS);
+    assert(fgetc(f)==EOF);fclose(f);
+    struct ambient_fel_session *session=av_ambient_fel_open();assert(session);
+    for(unsigned pass=0;pass<2;pass++){
+        int64_t epoch=(int64_t)pass*10000000;
+        // A hardware BL drop may happen before the matching EL is decoded.
+        av_ambient_fel_discard(session,pts[display[2]]+epoch);
+        for(unsigned i=0;i<FRAMES;i++){
+            AVPacket *p=wrap(input+starts[i],starts[i+1]-starts[i],pts[i]+epoch);
+            assert(av_ambient_fel_submit(session,p->data,p->size,pts[i]+epoch,dts[i]+epoch)==0);
+            av_packet_free(&p);
+        }
+        assert(av_ambient_fel_drain(session)==0);
+        // A second drop happens after EL output is already available.
+        av_ambient_fel_discard(session,pts[display[5]]+epoch);
+        for(unsigned i=0;i<FRAMES;i++){
+            int64_t key=pts[display[i]]+epoch;
+            struct ambient_fel_picture *p=av_ambient_fel_take(session,key);
+            if(i==2||i==5){assert(!p);continue;}
+            assert(p&&p->pts==key&&p->width==64&&p->height==64);
+            assert(!memcmp(p->samples,expected+(size_t)i*WORDS,WORDS*sizeof(*expected)));
+            free(p);
+            assert(!av_ambient_fel_take(session,key));
+        }
+        av_ambient_fel_flush(session);
+        for(unsigned i=0;i<FRAMES;i++)assert(!av_ambient_fel_take(session,pts[i]+epoch));
+    }
+    av_ambient_fel_close(session);
+    free(expected);free(input);
+    puts("Reordered Main10 GOP matched independent reference, exact PTS, early/late drop and two epochs");
+}
+
 int main(int argc,char **argv)
 {
-    assert(argc==2);
+    assert(argc==2||argc==5);
     FILE *f=fopen(argv[1],"rb");assert(f);
     assert(fseek(f,0,SEEK_END)==0);
     long n=ftell(f);assert(n>0&&n<1024*1024);
@@ -132,4 +213,5 @@ int main(int argc,char **argv)
     av_packet_free(&wrapped);
     free(input);
     puts("Decoded real HEVC EL codewords; exact PTS, drain and flush verified");
+    if(argc==5)test_reorder(argv[2],argv[3],argv[4]);
 }
