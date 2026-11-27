@@ -524,7 +524,7 @@ internal class MpvPlaybackEngine(
             setOption("gpu-api", "vulkan")
             setOption("gpu-context", "androidvk")
             setOption("vulkan-device", VideoAccelerationRuntime.capabilities.value.device.device)
-            if (acceleration.svpResident) {
+            if (acceleration.svpResident && acceleration.decoder == "mediacodec") {
                 setOption("gpu-hwdec-interop", "mediacodec-svp-vulkan")
             }
             setOption("hwdec", acceleration.hwdec)
@@ -1043,7 +1043,7 @@ internal class MpvPlaybackEngine(
             effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context), mpvCheapDefaults(context)),
             sdrImageProcessing,
         )
-        val cpuFramesNeeded = (desiredFilters.keys + activeCpuImageFilters.keys).any { it != "plex-svp" || !acceleration.svpResident }
+        // A live edit can turn resident transport off; use the actual requested filter,\n        // not merely the startup decoder plan, to decide if readable frames are needed.\n        val cpuFramesNeeded = (activeCpuImageFilters + desiredFilters).any { (label, filter) ->\n            label != "plex-svp" || !filter.endsWith(":hwresident=1")\n        }
         val copyBackNeeded = mpvCopyBackNeeded(
             loadedShaderKeys,
             cpuFramesNeeded,
@@ -1673,7 +1673,7 @@ internal class MpvPlaybackEngine(
     }
 
     private fun updateGpuDecoder(): Boolean {
-        val cpu = activeCpuImageFilters.keys.any { it != "plex-svp" || !acceleration.svpResident }
+        val cpu = activeCpuImageFilters.any { (label, filter) ->\n            label != "plex-svp" || !filter.endsWith(":hwresident=1")\n        }
         return gpuQualityMode && trySetGpuDecoder(
             mpvCopyBackNeeded(loadedShaderKeys, cpu, deinterlaceRequested), cpuFrames = cpu,
         )
@@ -1815,7 +1815,7 @@ internal class MpvPlaybackEngine(
             val tuning = if (o.svpMode == "quality" && mode != "quality") svpProbeOptions(o.svp) else o.svp
             val size = sourceDimensions()
             mpvSvpFilter(mode, pipelineFps(), displayFps() ?: svpDisplayFps(context), tuning, size?.first, size?.second,
-                hardwareResident = acceleration.svpResident && !deinterlaceRequested)?.let {
+                hardwareResident = acceleration.svpResident && !deinterlaceRequested && o.denoise == "off" && o.deblock == "off")?.let {
                 put("plex-svp", it)
             }
         }
