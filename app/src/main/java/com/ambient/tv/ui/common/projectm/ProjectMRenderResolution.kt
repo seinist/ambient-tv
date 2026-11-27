@@ -55,10 +55,13 @@ object ProjectMRenderResolution {
         windowHeight: Int,
         displayLines: Int,
         throttled: Boolean,
+        adaptiveCap: Int? = null,
     ): Pair<Int, Int>? {
         if (viewWidth <= 0 || viewHeight <= 0 || windowWidth <= 0 || windowHeight <= 0) return null
         val windowLines = minOf(windowWidth, windowHeight)
-        val scale = effectiveLines(key, displayLines, throttled).toFloat() / windowLines
+        val lines = effectiveLines(key, displayLines, throttled)
+        val capped = if (normalize(key) == AUTO && adaptiveCap != null) minOf(lines, adaptiveCap) else lines
+        val scale = capped.toFloat() / windowLines
         return even(viewWidth * scale) to even(viewHeight * scale)
     }
 
