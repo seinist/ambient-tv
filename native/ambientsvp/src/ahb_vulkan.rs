@@ -439,3 +439,197 @@ pub unsafe extern "C" fn ambient_svp_ahb_release(job:*mut Job,consumer:vk::Fence
     unsafe{drop(Box::from_raw(job))};
     1
 }
+
+
+#[cfg(test)]
+mod device_tests{
+    use super::*;
+    use crate::{mediacodec_reader::*,resident_vulkan::*};
+    use std::{thread,time::{Duration,Instant}};
+    // Original generated 64x64 gray IDR, AVC baseline 8-bit 4:2:0,
+    // Y=126, U=V=128. Includes AUD/SPS/PPS/IDR, no external media.
+    const AVC:&[u8]=&[
+        0x00,0x00,0x00,0x01,0x09,0x10,0x00,0x00,0x00,0x01,0x67,0x42,0xc0,0x0a,0xdc,0x42,
+        0x6c,0x04,0x40,0x00,0x00,0x03,0x00,0x40,0x00,0x00,0x0c,0x23,0xc4,0x89,0xe0,0x00,
+        0x00,0x00,0x01,0x68,0xce,0x0f,0xc8,0x00,0x00,0x01,0x65,0x88,0x84,0x3a,0x26,0x28,
+        0x0c,0x9c,0x9c,0x9d,0x75,0xd7,0x5d,0x75,0xd7,0x5d,0x75,0xd7,0x5e,
+    ];
+    #[repr(C)]
+    #[derive(Default)]
+    struct BufferInfo{offset:i32,size:i32,pts_us:i64,flags:u32}
+    #[link(name="mediandk")]
+    unsafe extern "C"{
+        fn AMediaCodec_createDecoderByType(mime:*const c_char)->*mut c_void;
+        fn AMediaCodec_createCodecByName(name:*const c_char)->*mut c_void;
+        fn AMediaCodec_configure(codec:*mut c_void,format:*const c_void,surface:*mut c_void,crypto:*mut c_void,flags:u32)->i32;
+        fn AMediaCodec_start(codec:*mut c_void)->i32;
+        fn AMediaCodec_stop(codec:*mut c_void)->i32;
+        fn AMediaCodec_delete(codec:*mut c_void)->i32;
+        fn AMediaCodec_dequeueInputBuffer(codec:*mut c_void,timeout:i64)->isize;
+        fn AMediaCodec_getInputBuffer(codec:*mut c_void,index:usize,size:*mut usize)->*mut u8;
+        fn AMediaCodec_queueInputBuffer(codec:*mut c_void,index:usize,offset:libc::off_t,size:usize,time:u64,flags:u32)->i32;
+        fn AMediaCodec_dequeueOutputBuffer(codec:*mut c_void,info:*mut BufferInfo,timeout:i64)->isize;
+        fn AMediaCodec_releaseOutputBuffer(codec:*mut c_void,index:usize,render:bool)->i32;
+        fn AMediaFormat_new()->*mut c_void;
+        fn AMediaFormat_delete(format:*mut c_void)->i32;
+        fn AMediaFormat_setString(format:*mut c_void,name:*const c_char,value:*const c_char);
+        fn AMediaFormat_setInt32(format:*mut c_void,name:*const c_char,value:i32);
+    }
+    #[test]
+    #[ignore="requires Android API29+, a MediaCodec decoder and actual Vulkan AHB/sync_file interop"]
+    fn mediacodec_surface_external_memory_reaches_resident_synthesis(){
+        unsafe{
+            let entry=ash::Entry::load().unwrap();
+            let app=vk::ApplicationInfo::default().api_version(vk::API_VERSION_1_1);
+            let instance=entry.create_instance(&vk::InstanceCreateInfo::default().application_info(&app),None).unwrap();
+            let names=[c"VK_ANDROID_external_memory_android_hardware_buffer",c"VK_EXT_queue_family_foreign",c"VK_KHR_external_semaphore_fd"];
+            let (physical,family)=instance.enumerate_physical_devices().unwrap().into_iter().find_map(|p|{
+                if instance.get_physical_device_properties(p).api_version<vk::API_VERSION_1_1{return None;}
+                let extensions=instance.enumerate_device_extension_properties(p).ok()?;
+                if !names.iter().all(|n|extensions.iter().any(|e|CStr::from_ptr(e.extension_name.as_ptr())==*n)){return None;}
+                let mut y=vk::PhysicalDeviceSamplerYcbcrConversionFeatures::default();
+                let mut f=vk::PhysicalDeviceFeatures2::default().push_next(&mut y);
+                instance.get_physical_device_features2(p,&mut f);
+                if y.sampler_ycbcr_conversion==0{return None;}
+                instance.get_physical_device_queue_family_properties(p).iter().position(|q|
+                    q.queue_count>0&&q.queue_flags.contains(vk::QueueFlags::COMPUTE)).map(|i|(p,i as u32))
+            }).expect("device lacks Android external memory, sync FD or YCbCr conversion");
+            let pointers=names.map(|n|n.as_ptr());
+            let priorities=[1.0];
+            let queues=[vk::DeviceQueueCreateInfo::default().queue_family_index(family).queue_priorities(&priorities)];
+            let mut ycbcr=vk::PhysicalDeviceSamplerYcbcrConversionFeatures::default().sampler_ycbcr_conversion(true);
+            let d=instance.create_device(physical,&vk::DeviceCreateInfo::default().queue_create_infos(&queues)
+                .enabled_extension_names(&pointers).push_next(&mut ycbcr),None).unwrap();
+            let queue=d.get_device_queue(family,0);
+            let importer=ambient_svp_ahb_importer_create(instance.handle(),physical,d.handle(),
+                Some(entry.static_fn().get_instance_proc_addr),queue,family,pointers.as_ptr(),pointers.len() as u32,1);
+            assert!(!importer.is_null(),"external memory capability contract rejected");
+            let reader=ambient_svp_mediacodec_reader_create(64,64);
+            assert!(!reader.is_null(),"PRIVATE AImageReader unavailable");
+            let mut frame=ptr::null_mut();
+            assert_eq!(ambient_svp_mediacodec_acquire(reader,&mut frame),0);
+            let codec=if let Ok(name)=std::env::var("SVP_TEST_MEDIACODEC_NAME"){
+                let name=std::ffi::CString::new(name).unwrap();AMediaCodec_createCodecByName(name.as_ptr())
+            }else{AMediaCodec_createDecoderByType(c"video/avc".as_ptr())};
+            assert!(!codec.is_null());
+            let format=AMediaFormat_new();
+            assert!(!format.is_null());
+            AMediaFormat_setString(format,c"mime".as_ptr(),c"video/avc".as_ptr());
+            AMediaFormat_setInt32(format,c"width".as_ptr(),64);
+            AMediaFormat_setInt32(format,c"height".as_ptr(),64);
+            AMediaFormat_setInt32(format,c"color-standard".as_ptr(),1);
+            AMediaFormat_setInt32(format,c"color-range".as_ptr(),2);
+            AMediaFormat_setInt32(format,c"color-transfer".as_ptr(),3);
+            assert_eq!(AMediaCodec_configure(codec,format,ambient_svp_mediacodec_reader_window(reader),ptr::null_mut(),0),0);
+            AMediaFormat_delete(format);
+            assert_eq!(AMediaCodec_start(codec),0);
+            let index=AMediaCodec_dequeueInputBuffer(codec,2_000_000);
+            assert!(index>=0);
+            let mut len=0;
+            let data=AMediaCodec_getInputBuffer(codec,index as usize,&mut len);
+            assert!(!data.is_null()&&len>=AVC.len());
+            ptr::copy_nonoverlapping(AVC.as_ptr(),data,AVC.len());
+            assert_eq!(AMediaCodec_queueInputBuffer(codec,index as usize,0,AVC.len(),1_000_000,4),0);
+            let deadline=Instant::now()+Duration::from_secs(8);
+            while Instant::now()<deadline{
+                let mut info=BufferInfo::default();
+                let index=AMediaCodec_dequeueOutputBuffer(codec,&mut info,10_000);
+                if index>=0{
+                    let render=info.pts_us==1_000_000 && info.flags&2==0;
+                    assert_eq!(AMediaCodec_releaseOutputBuffer(codec,index as usize,render),0);
+                }
+                let acquired=ambient_svp_mediacodec_acquire(reader,&mut frame);
+                if acquired==1{break;}
+                assert_eq!(acquired,0);
+                thread::sleep(Duration::from_millis(2));
+            }
+            assert!(!frame.is_null(),"decoder produced no PRIVATE AImage");
+            let mut info=FrameInfo::default();
+            assert_eq!(ambient_svp_mediacodec_frame_info(frame,&mut info),0);
+            assert_eq!((info.width,info.height),(64,64));
+            let mut job=ptr::null_mut();
+            // The real frame must remain caller-owned on unsupported HDR.
+            assert_eq!(ambient_svp_ahb_submit(importer,&mut frame,0,&mut job),-4);
+            assert!(!frame.is_null()&&job.is_null());
+            assert_eq!(ambient_svp_ahb_submit(importer,&mut frame,1,&mut job),0);
+            assert!(frame.is_null()&&!job.is_null());
+            let mut out:Output=std::mem::zeroed();
+            assert_eq!(ambient_svp_ahb_output(job,&mut out),0);
+            assert_eq!(out.device,d.handle());assert_eq!(out.queue,queue);
+            let resident=ambient_svp_vk_create(instance.handle(),physical,d.handle(),
+                Some(entry.static_fn().get_instance_proc_addr),64,64);
+            assert!(!resident.is_null());
+            let pool=d.create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(family),None).unwrap();
+            let cmd=d.allocate_command_buffers(&vk::CommandBufferAllocateInfo::default().command_pool(pool)
+                .level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(1)).unwrap()[0];
+            // Use an allocated GPU destination; this test maps only a final
+            // readback buffer, never the decoder AHardwareBuffer.
+            let dst=d.create_image(&vk::ImageCreateInfo::default().image_type(vk::ImageType::TYPE_2D)
+                .format(vk::Format::R8G8B8A8_UNORM).extent(vk::Extent3D{width:64,height:64,depth:1})
+                .mip_levels(1).array_layers(1).samples(vk::SampleCountFlags::TYPE_1)
+                .tiling(vk::ImageTiling::OPTIMAL).usage(vk::ImageUsageFlags::STORAGE|vk::ImageUsageFlags::TRANSFER_SRC)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE).initial_layout(vk::ImageLayout::UNDEFINED),None).unwrap();
+            let core=&(*importer).0;
+            let req=d.get_image_memory_requirements(dst);
+            let memory=d.allocate_memory(&vk::MemoryAllocateInfo::default().allocation_size(req.size)
+                .memory_type_index(memory_type(core,req.memory_type_bits,true).unwrap()),None).unwrap();
+            d.bind_image_memory(dst,memory,0).unwrap();
+            let view=d.create_image_view(&vk::ImageViewCreateInfo::default().image(dst)
+                .view_type(vk::ImageViewType::TYPE_2D).format(vk::Format::R8G8B8A8_UNORM).subresource_range(range()),None).unwrap();
+            let bytes=64*64*4u64;
+            let read=d.create_buffer(&vk::BufferCreateInfo::default().size(bytes)
+                .usage(vk::BufferUsageFlags::TRANSFER_DST).sharing_mode(vk::SharingMode::EXCLUSIVE),None).unwrap();
+            let req=d.get_buffer_memory_requirements(read);
+            let mem_type=(0..core.memory.memory_type_count).find(|&i|req.memory_type_bits&(1<<i)!=0
+                &&core.memory.memory_types[i as usize].property_flags.contains(
+                    vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)).unwrap();
+            let read_mem=d.allocate_memory(&vk::MemoryAllocateInfo::default().allocation_size(req.size).memory_type_index(mem_type),None).unwrap();
+            d.bind_buffer_memory(read,read_mem,0).unwrap();
+            let fence=d.create_fence(&Default::default(),None).unwrap();
+            d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).unwrap();
+            let barrier=[vk::ImageMemoryBarrier::default().image(dst).subresource_range(range())
+                .old_layout(vk::ImageLayout::UNDEFINED).new_layout(vk::ImageLayout::GENERAL)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_access_mask(vk::AccessFlags::SHADER_WRITE)];
+            d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::TOP_OF_PIPE,vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::DependencyFlags::empty(),&[],&[],&barrier);
+            let pair=ambient_svp_vk_begin_ahb(resident,cmd,queue,job,job);
+            assert!(!pair.is_null());
+            assert_eq!(ambient_svp_ahb_release(job,vk::Fence::null()),0,"resident pair must retain job");
+            assert_eq!(ambient_svp_vk_render(pair,0.5,3,view),0);
+            let barrier=[vk::ImageMemoryBarrier::default().image(dst).subresource_range(range())
+                .old_layout(vk::ImageLayout::GENERAL).new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(vk::AccessFlags::TRANSFER_READ)];
+            d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),&[],&[],&barrier);
+            let region=[vk::BufferImageCopy::default().image_subresource(vk::ImageSubresourceLayers::default()
+                .aspect_mask(vk::ImageAspectFlags::COLOR).layer_count(1)).image_extent(vk::Extent3D{width:64,height:64,depth:1})];
+            d.cmd_copy_image_to_buffer(cmd,dst,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,read,&region);
+            let host=[vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::HOST_READ)];
+            d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::HOST,
+                vk::DependencyFlags::empty(),&host,&[],&[]);
+            d.end_command_buffer(cmd).unwrap();
+            d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
+            assert_eq!(ambient_svp_vk_seal(pair,fence),0);
+            d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
+            assert_eq!(ambient_svp_ahb_release(job,vk::Fence::null()),0);
+            assert_eq!(ambient_svp_vk_release(pair),1);
+            assert_eq!(ambient_svp_ahb_release(job,vk::Fence::null()),1);
+            let mapped=d.map_memory(read_mem,0,bytes,vk::MemoryMapFlags::empty()).unwrap();
+            let pixels=std::slice::from_raw_parts(mapped.cast::<u8>(),bytes as usize);
+            for p in pixels.chunks_exact(4){
+                assert!(p[..3].iter().all(|v|(120..=136).contains(v)) && p[3]==255,"unexpected decoded gray: {p:?}");
+            }
+            d.unmap_memory(read_mem);
+            d.destroy_fence(fence,None);d.destroy_command_pool(pool,None);
+            d.destroy_buffer(read,None);d.free_memory(read_mem,None);
+            d.destroy_image_view(view,None);d.destroy_image(dst,None);d.free_memory(memory,None);
+            ambient_svp_vk_destroy(resident);
+            ambient_svp_ahb_importer_destroy(importer);
+            assert_eq!(AMediaCodec_stop(codec),0);AMediaCodec_delete(codec);
+            ambient_svp_mediacodec_reader_destroy(reader);
+            d.destroy_device(None);instance.destroy_instance(None);
+        }
+    }
+}
