@@ -60,6 +60,11 @@ internal object SvpNative {
     external fun enabled(): Boolean
     external fun interpolatedFrames(): Long
     external fun gpuFrames(): Long
+    private external fun residentOutputs(): Long
+
+    /** Missing entry means an older engine; never enable its experimental transport. */
+    @Synchronized
+    fun residentOutputsOrNull(): Long? = if (loaded) runCatching { residentOutputs() }.getOrNull() else null
 
     /** Process-wide synthesized frames, or null while the library is not loaded. */
     @Synchronized
