@@ -1,0 +1,85 @@
+diff --git a/src/libprojectM/Audio/PCM.cpp b/src/libprojectM/Audio/PCM.cpp
+--- a/src/libprojectM/Audio/PCM.cpp
++++ b/src/libprojectM/Audio/PCM.cpp
+@@ -54,6 +54,10 @@
+ 
+     // 2. Update spectrum analyzer data for both channels
+-    UpdateSpectrum(m_waveformL, m_spectrumL);
+-    UpdateSpectrum(m_waveformR, m_spectrumR);
++    UpdateSpectrum(m_waveformL, m_spectrumL);
++    // Identical unaligned channels need only one FFT; keep separate alignment state.
++    if (m_waveformL == m_waveformR)
++        m_spectrumR = m_spectrumL;
++    else
++        UpdateSpectrum(m_waveformR, m_spectrumR);
+ 
+     // 3. Align waveforms
+@@ -93,6 +97,6 @@
+ void PCM::UpdateSpectrum(const WaveformBuffer& waveformData, SpectrumBuffer& spectrumData)
+ {
+-    std::vector<float> waveformSamples(AudioBufferSamples);
+-    std::vector<float> spectrumValues;
++    auto& waveformSamples = m_fftWaveformScratch;
++    auto& spectrumValues = m_fftSpectrumScratch;
+ 
+     size_t oldI{0};
+diff --git a/src/libprojectM/Audio/PCM.hpp b/src/libprojectM/Audio/PCM.hpp
+--- a/src/libprojectM/Audio/PCM.hpp
++++ b/src/libprojectM/Audio/PCM.hpp
+@@ -103,5 +103,7 @@
+     SpectrumBuffer m_spectrumR{0.f}; //!< Right-channel spectrum data.
+ 
+-    MilkdropFFT m_fft{WaveformSamples, SpectrumSamples, true}; //!< Spectrum analyzer instance.
++    MilkdropFFT m_fft{WaveformSamples, SpectrumSamples, true}; //!< Spectrum analyzer instance.
++    std::vector<float> m_fftWaveformScratch = std::vector<float>(AudioBufferSamples);
++    std::vector<float> m_fftSpectrumScratch = std::vector<float>(SpectrumSamples);
+ 
+     // Alignment data
+diff --git a/src/libprojectM/Audio/MilkdropFFT.cpp b/src/libprojectM/Audio/MilkdropFFT.cpp
+--- a/src/libprojectM/Audio/MilkdropFFT.cpp
++++ b/src/libprojectM/Audio/MilkdropFFT.cpp
+@@ -157,5 +157,6 @@
+ 
+     // 1. Set up input to the FFT
+-    std::vector<std::complex<float>> spectrumData(m_numFrequencies, std::complex<float>());
++    auto& spectrumData = m_spectrumScratch;
++    spectrumData.assign(m_numFrequencies, std::complex<float>());
+     for (size_t i = 0; i < m_numFrequencies; i++)
+     {
+diff --git a/src/libprojectM/Audio/MilkdropFFT.hpp b/src/libprojectM/Audio/MilkdropFFT.hpp
+--- a/src/libprojectM/Audio/MilkdropFFT.hpp
++++ b/src/libprojectM/Audio/MilkdropFFT.hpp
+@@ -152,5 +152,6 @@
+     std::vector<size_t> m_bitRevTable; //!< Index table for frequency-specific waveform data lookups.
+     std::vector<float> m_envelope; //!< Equalizer envelope table.
+-    std::vector<float> m_equalize; //!< Equalization values.
++    std::vector<float> m_equalize; //!< Equalization values.
++    std::vector<std::complex<float>> m_spectrumScratch;
+     std::vector<std::complex<float>> m_cosSinTable; //!< Table with complex polar coordinates for the different frequency domains used in the FFT.
+ };
+diff --git a/src/libprojectM/Renderer/TextureManager.cpp b/src/libprojectM/Renderer/TextureManager.cpp
+--- a/src/libprojectM/Renderer/TextureManager.cpp
++++ b/src/libprojectM/Renderer/TextureManager.cpp
+@@ -112,7 +112,10 @@
+     }
+ 
+-    // Clear file cache
+-    m_scannedTextureFiles.clear();
+-    m_filesScanned = false;
++    // Android ships immutable extracted texture packs. Retain the directory index
++    // for the lifetime of the manager (path changes create a new manager).
++#ifndef __ANDROID__
++    m_scannedTextureFiles.clear();
++    m_filesScanned = false;
++#endif
+ 
+     // Only purge textures with an age of 2 or higher, so we don't evict textures used by the preset being blended out
+@@ -141,5 +144,7 @@
+         if (stat.second.sizeBytes > 0 && stat.second.age > 1)
+         {
+-            auto sizeMultiplicator = 1.0f + static_cast<float>(stat.second.age - newest) / static_cast<float>(oldest - newest);
++            auto sizeMultiplicator = 1.0f;
++            if (oldest > newest)
++                sizeMultiplicator += static_cast<float>(stat.second.age - newest) / static_cast<float>(oldest - newest);
+             auto scaledSize = static_cast<uint32_t>(stat.second.sizeBytes * sizeMultiplicator);
+             if (scaledSize > biggestBytes)
