@@ -47,14 +47,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("application_id")
     parser.add_argument("--serial", help="adb device serial")
-    parser.add_argument("--clear", action="store_true",
-                        help="clear only the app-independent log buffer before a deliberate benchmark (requires device permission)")
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9._]+", args.application_id):
         parser.error("invalid Android application ID")
     adb = ["adb"] + (["-s", args.serial] if args.serial else [])
-    if args.clear:
-        parser.error("do not clear shared device logs; restart the app for a fresh PID instead")
     pid = subprocess.check_output(adb + ["shell", "pidof", args.application_id], text=True).split()
     if len(pid) != 1 or not pid[0].isdigit():
         parser.error("expected a single active application process")
