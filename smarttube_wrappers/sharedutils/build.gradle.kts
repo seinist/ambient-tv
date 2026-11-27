@@ -63,8 +63,6 @@ dependencies {
         exclude(group = "com.squareup.okhttp3", module = "okhttp")
     }
 
-    implementation(libs.chromium.cronet.api)
-    implementation(libs.chromium.cronet.embedded)
     implementation(libs.gson)
     implementation(libs.rxandroid2)
     implementation(libs.rxjava2)

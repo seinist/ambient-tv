@@ -63,11 +63,11 @@ dependencies {
             because("json-smart 2.3 from json-path 2.4.0 has known DoS vulnerabilities")
         }
     }
-    implementation(libs.smarttube.cronet.adapter)
-    implementation(libs.chromium.cronet.api)
     implementation(libs.rxandroid2)
     implementation(libs.rxjava2)
     implementation(libs.androidx.annotation)
+    // Upstream Java PoToken and random-string sources use JSR-305 nullability annotations.
+    compileOnly(libs.jsr305)
     implementation(libs.smarttube.core.ktx)
     implementation(libs.smarttube.coroutines)
     implementation(libs.smarttube.regex)
@@ -87,4 +87,13 @@ tasks.withType<org.gradle.api.tasks.compile.JavaCompile>().configureEach {
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEach {
     compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     jvmTargetValidationMode.set(org.jetbrains.kotlin.gradle.dsl.jvm.JvmTargetValidationMode.ERROR)
+}
+
+// Keep CI failures diagnosable without downloading test-report artifacts.
+tasks.withType<Test>().configureEach {
+    testLogging {
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showCauses = true
+        showStackTraces = true
+    }
 }

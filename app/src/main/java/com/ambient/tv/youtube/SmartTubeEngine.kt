@@ -26,6 +26,7 @@ import timber.log.Timber
 import com.ambient.tv.util.withoutUrlQueries
 import java.lang.reflect.Method
 import java.lang.reflect.Proxy
+import java.util.concurrent.ConcurrentHashMap
 import java.io.InputStream
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -1614,11 +1615,84 @@ class SmartTubeEngine @Inject constructor(
     }
 }
 
-private fun Any.call(name: String, vararg args: Any?): Any? {
-    val candidates = javaClass.methods.filter { it.name == name && it.parameterTypes.size == args.size }
-    val method = candidates.firstOrNull { m -> m.parameterTypes.indices.all { i -> args[i] == null || wrap(m.parameterTypes[i]).isAssignableFrom(args[i]!!.javaClass) } }
-        ?: candidates.firstOrNull() ?: return null
-    return runCatching { method.invoke(this, *args) }.onFailure { Timber.d(it, "SmartTube reflection: %s", name) }.getOrNull()
+private data class ReflectionNameKey(val name: String, val arity: Int)
+private data class ReflectionMethodKey(
+    val name: String,
+    val firstType: Class<*>?,
+    val secondType: Class<*>?,
+    val arity: Int,
+    val remainingTypes: List<Class<*>?>,
+    val allowArityFallback: Boolean,
+)
+private data class CachedReflectionMethod(val method: Method?)
+
+/** FIFO on misses only; cache hits do not acquire a monitor or update recency. */
+internal class BoundedReflectionCache<K : Any, V : Any>(private val capacity: Int) {
+    init { require(capacity > 0) }
+    private val values = ConcurrentHashMap<K, V>()
+    private val insertionOrder = java.util.ArrayDeque<K>()
+
+    val size: Int get() = values.size
+
+    fun getOrPut(key: K, create: () -> V): V =
+        values[key] ?: synchronized(insertionOrder) {
+            values[key] ?: create().also { value ->
+                if (values.size >= capacity) {
+                    values.remove(insertionOrder.removeFirst())
+                }
+                values[key] = value
+                insertionOrder.addLast(key)
+            }
+        }
+}
+
+private const val MAX_REFLECTION_CLASSES = 256
+private const val MAX_REFLECTION_SIGNATURES = 256
+private class ReflectionClassIndex(type: Class<*>) {
+    val methods = type.methods.groupBy { ReflectionNameKey(it.name, it.parameterCount) }
+    val zeroArgumentMethods = methods.filterKeys { it.arity == 0 }
+        .mapKeys { it.key.name }.mapValues { it.value.first() }
+    val resolved = BoundedReflectionCache<ReflectionMethodKey, CachedReflectionMethod>(MAX_REFLECTION_SIGNATURES)
+}
+private val reflectionIndexes = BoundedReflectionCache<Class<*>, ReflectionClassIndex>(MAX_REFLECTION_CLASSES)
+
+internal fun reflectionClassCacheSize(): Int = reflectionIndexes.size
+
+private fun reflectionIndex(type: Class<*>): ReflectionClassIndex =
+    reflectionIndexes.getOrPut(type) { ReflectionClassIndex(type) }
+
+private fun wrap(c: Class<*>) = when (c) {
+    Int::class.javaPrimitiveType -> Int::class.javaObjectType
+    Long::class.javaPrimitiveType -> Long::class.javaObjectType
+    Float::class.javaPrimitiveType -> Float::class.javaObjectType
+    Double::class.javaPrimitiveType -> Double::class.javaObjectType
+    Boolean::class.javaPrimitiveType -> Boolean::class.javaObjectType
+    else -> c
+}
+
+internal fun Any.cachedMethod(name: String, args: Array<out Any?>, allowArityFallback: Boolean): Method? {
+    val index = reflectionIndex(javaClass)
+    if (args.isEmpty()) return index.zeroArgumentMethods[name]
+    val key = ReflectionMethodKey(
+        name, args[0]?.javaClass, args.getOrNull(1)?.javaClass, args.size,
+        if (args.size <= 2) emptyList() else (2 until args.size).map { args[it]?.javaClass },
+        allowArityFallback,
+    )
+    fun resolve(): CachedReflectionMethod {
+        val candidates = index.methods[ReflectionNameKey(name, args.size)].orEmpty()
+        val compatible = candidates.firstOrNull { method ->
+            val types = method.parameterTypes
+            types.indices.all { i -> args[i] == null || wrap(types[i]).isAssignableFrom(args[i]!!.javaClass) }
+        }
+        return CachedReflectionMethod(compatible ?: if (allowArityFallback) candidates.firstOrNull() else null)
+    }
+    return index.resolved.getOrPut(key) { resolve() }.method
+}
+
+internal fun Any.call(name: String, vararg args: Any?): Any? {
+    val method = cachedMethod(name, args, allowArityFallback = true) ?: return null
+    return runCatching { method.invoke(this, *args) }
+        .onFailure { Timber.d(it, "SmartTube reflection: %s", name) }.getOrNull()
 }
 private fun Any.callFirst(vararg names: String): Any? {
     for (name in names) {
@@ -1632,21 +1706,11 @@ private fun Any.callLong(name: String) = (call(name) as? Number)?.toLong()
 private fun Any.callInt(name: String) = (call(name) as? Number)?.toInt()
 private fun Any.callDouble(name: String) = (call(name) as? Number)?.toDouble()
 private fun Any.callBool(name: String) = call(name) as? Boolean
-private fun wrap(c: Class<*>) = when (c) {
-    Int::class.javaPrimitiveType -> Int::class.javaObjectType
-    Long::class.javaPrimitiveType -> Long::class.javaObjectType
-    Float::class.javaPrimitiveType -> Float::class.javaObjectType
-    Double::class.javaPrimitiveType -> Double::class.javaObjectType
-    Boolean::class.javaPrimitiveType -> Boolean::class.javaObjectType
-    else -> c
-}
 
-private data class DetailedReflectionInvocation(val found: Boolean, val value: Any?, val error: Throwable?)
-private fun Any.invokeDetailed(name: String, vararg args: Any?): DetailedReflectionInvocation {
-    val candidates = javaClass.methods.filter { it.name == name && it.parameterTypes.size == args.size }
-    val method = candidates.firstOrNull { m ->
-        m.parameterTypes.indices.all { i -> args[i] == null || wrap(m.parameterTypes[i]).isAssignableFrom(args[i]!!.javaClass) }
-    } ?: candidates.firstOrNull() ?: return DetailedReflectionInvocation(false, null, null)
+internal data class DetailedReflectionInvocation(val found: Boolean, val value: Any?, val error: Throwable?)
+internal fun Any.invokeDetailed(name: String, vararg args: Any?): DetailedReflectionInvocation {
+    val method = cachedMethod(name, args, allowArityFallback = true)
+        ?: return DetailedReflectionInvocation(false, null, null)
     return try {
         DetailedReflectionInvocation(true, method.invoke(this, *args), null)
     } catch (t: Throwable) {
@@ -1655,15 +1719,16 @@ private fun Any.invokeDetailed(name: String, vararg args: Any?): DetailedReflect
     }
 }
 
-private data class ReflectionInvocation(val invoked: Boolean, val value: Any?)
-private fun Any.invokeCompatible(name: String, vararg args: Any?): ReflectionInvocation {
-    val candidates = javaClass.methods.filter { it.name == name && it.parameterTypes.size == args.size }
-    val method = candidates.firstOrNull { m -> m.parameterTypes.indices.all { i -> args[i] == null || wrap(m.parameterTypes[i]).isAssignableFrom(args[i]!!.javaClass) } }
+internal data class ReflectionInvocation(val invoked: Boolean, val value: Any?)
+internal fun Any.invokeCompatible(name: String, vararg args: Any?): ReflectionInvocation {
+    val method = cachedMethod(name, args, allowArityFallback = false)
         ?: return ReflectionInvocation(false, null)
     return try { ReflectionInvocation(true, method.invoke(this, *args)) }
     catch (t: Throwable) { Timber.d(t, "SmartTube reflection: %s", name); ReflectionInvocation(false, null) }
 }
-private fun Any.hasMethod(name: String, arity: Int): Boolean = javaClass.methods.any { it.name == name && it.parameterTypes.size == arity }
+internal fun Any.hasMethod(name: String, arity: Int): Boolean =
+    if (arity == 0) reflectionIndex(javaClass).zeroArgumentMethods.containsKey(name)
+    else reflectionIndex(javaClass).methods.containsKey(ReflectionNameKey(name, arity))
 private fun Any.hasAnyMethod(vararg names: String): Boolean = names.any { hasMethod(it, 0) }
 
 /** Feed/search key whose loads record row continuation handles in [SmartTubeEngine]. */

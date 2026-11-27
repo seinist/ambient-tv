@@ -8,6 +8,9 @@ whatever upstream commit is currently checked out.
 from __future__ import annotations
 
 import argparse
+import os
+import stat
+import tempfile
 import re
 import sys
 from pathlib import Path
@@ -312,22 +315,6 @@ def patch_ytcfg_json_parser(path: Path, check: bool) -> bool:
     return True
 
 
-def patch_cronet_experimental_import(path: Path, check: bool) -> bool:
-    """Drop the unused ExperimentalCronetEngine import (the call sites are commented out)."""
-    if not path.is_file():
-        return False
-    text = path.read_text()
-    legacy = "import org.chromium.net.ExperimentalCronetEngine\n"
-    if check:
-        if legacy in text:
-            die(f"unused ExperimentalCronetEngine import remains in {path}")
-        return False
-    if legacy not in text:
-        return False
-    path.write_text(text.replace(legacy, "", 1))
-    return True
-
-
 def patch_okhttp_manager_request_body(path: Path, check: bool) -> bool:
     """Swap RequestBody.create(mediaType, body) to the non-deprecated (body, mediaType) overload."""
     if not path.is_file():
@@ -427,20 +414,25 @@ private fun String.withValidPercentEscapes(): String = replace(INVALID_PERCENT_E
 
 
 def patch_okhttp_debug_dump(path: Path, check: bool) -> bool:
-    """Debug builds must not dump YouTube HTTP traffic (OAuth tokens, cookies) to logcat."""
+    """Fail closed if upstream changes the HTTP logging setup."""
     if not path.is_file():
-        return False
-    text = path.read_text()
+        die(f"SmartTube OkHttp commons missing: {path}")
+    original = path.read_bytes()
+    newline = "\r\n" if b"\r\n" in original else "\n"
+    text = original.decode("utf-8").replace("\r\n", "\n")
     legacy = "    private static void debugSetup(OkHttpClient.Builder okBuilder) {\n        if (BuildConfig.DEBUG) {"
     replacement = "    private static void debugSetup(OkHttpClient.Builder okBuilder) {\n        if (false) { // Ambient TV: no HTTP bodies/headers in logcat"
-    if check:
-        if legacy in text:
+    if legacy in text:
+        if check or text.count(legacy) != 1:
             die(f"HTTP debug dump to logcat is still enabled in {path}")
-        return False
-    if legacy not in text:
-        return False
-    path.write_text(text.replace(legacy, replacement, 1))
-    return True
+        text = text.replace(legacy, replacement, 1)
+    if text.count(replacement) != 1:
+        die(f"Unsupported SmartTube HTTP logging layout: {path}")
+    updated = text.replace("\n", newline).encode("utf-8")
+    if updated != original:
+        path.write_bytes(updated)
+        return True
+    return False
 
 
 def patch_logger_quiet(path: Path, check: bool) -> bool:
@@ -1045,6 +1037,263 @@ def patch_upcoming_streams(msc: Path, check: bool) -> list[Path]:
     return changed
 
 
+
+def patch_disable_legacy_tls_bypass(path: Path, check: bool) -> bool:
+    if not path.is_file():
+        die(f"SmartTube OkHttp commons missing: {path}")
+    raw = path.read_bytes()
+    newline = "\r\n" if b"\r\n" in raw else "\n"
+    text = raw.decode("utf-8").replace("\r\n", "\n")
+    legacy = "        configureToIgnoreCertificate(okBuilder);"
+    replacement = "        // Ambient TV requires normal TLS certificate validation."
+    if legacy not in text:
+        if replacement not in text:
+            die(f"Unsupported SmartTube TLS setup: {path}")
+        return False
+    if check:
+        die(f"Legacy TLS bypass still enabled: {path}")
+    path.write_bytes(text.replace(legacy, replacement).replace("\n", newline).encode("utf-8"))
+    return True
+
+
+def patch_disable_unused_cronet(msc: Path, shared: Path, check: bool) -> list[Path]:
+    """Remove SmartTube's dormant embedded-Cronet adapter; Ambient TV uses Media3's GMS Cronet."""
+    changed: list[Path] = []
+    manager = shared / "sharedutils/src/main/java/com/liskovsoft/sharedutils/cronet/CronetManager.kt"
+    wrapper = manager.with_name("CronetEngineWrapper.java")
+    dormant = [path for path in (manager, wrapper) if path.exists()]
+    if check and dormant:
+        die(f"unused embedded Cronet sources must not be compiled: {dormant}")
+
+    # Reject new upstream dependencies before modifying any files.
+    for source_root in (shared / "sharedutils/src/main", msc / "youtubeapi/src/main"):
+        for path in source_root.rglob("*"):
+            if path.suffix not in (".java", ".kt") or path in dormant or path.name == "RetrofitOkHttpHelper.kt":
+                continue
+            if re.search(r"(?m)^\s*import\s+(?:org\.chromium\.net|com\.google\.net\.cronet|com\.liskovsoft\.sharedutils\.cronet)\b", path.read_text(encoding="utf-8")):
+                die(f"Unexpected SmartTube Cronet dependency: {path}")
+
+    helper = msc / "youtubeapi/src/main/java/com/liskovsoft/googlecommon/common/helpers/RetrofitOkHttpHelper.kt"
+    if not helper.is_file():
+        die(f"SmartTube Retrofit helper moved or disappeared: {helper}")
+    original_bytes = helper.read_bytes()
+    newline = "\r\n" if b"\r\n" in original_bytes else "\n"
+    text = original_bytes.decode("utf-8").replace("\r\n", "\n")
+    original = text
+    if check:
+        if any(token in text for token in ("CronetInterceptor", "CronetManager", "addCronetInterceptor")):
+            die(f"dormant SmartTube Cronet adapter remains in {helper}")
+        return changed
+    # Never remove an adapter that upstream has activated.
+    if re.search(r"(?m)^\s*addCronetInterceptor\s*\(", text):
+        die(f"active SmartTube Cronet adapter in {helper}")
+    for line in (
+        "import com.google.net.cronet.okhttptransport.CronetInterceptor\n",
+        "import com.liskovsoft.sharedutils.cronet.CronetManager\n",
+        "        //addCronetInterceptor(builder)\n",
+    ):
+        text = text.replace(line, "")
+    text, _ = re.subn(
+        r"\n    private fun addCronetInterceptor\(builder: OkHttpClient\.Builder\) \{.*?\n    \}\n(?=\})",
+        "",
+        text,
+        count=1,
+        flags=re.DOTALL,
+    )
+    if any(token in text for token in ("CronetInterceptor", "CronetManager", "addCronetInterceptor")):
+        die(f"unsupported SmartTube Cronet adapter layout in {helper}")
+    # Stage the rewrite before touching either source. If deleting the dormant
+    # manager fails, restore the original helper. Two independent files cannot
+    # be committed as one atomic filesystem transaction.
+    def replace_helper(data: bytes) -> None:
+        fd, tmp_name = tempfile.mkstemp(prefix=".ambient-cronet-", dir=helper.parent)
+        tmp = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(data)
+            tmp.chmod(stat.S_IMODE(helper.stat().st_mode))
+            os.replace(tmp, helper)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    backups = [(path, path.read_bytes(), stat.S_IMODE(path.stat().st_mode)) for path in dormant]
+    removed = []
+    if text != original:
+        replace_helper(text.replace("\n", newline).encode("utf-8"))
+        changed.append(helper)
+    try:
+        for path in dormant:
+            path.unlink()
+            removed.append(path)
+        changed[0:0] = removed
+    except OSError:
+        for path, data, mode in backups:
+            if path in removed:
+                path.write_bytes(data)
+                path.chmod(mode)
+        if helper in changed:
+            replace_helper(original_bytes)
+        raise
+    return changed
+
+
+def patch_okhttp_manager_thread_safety(path: Path, check: bool) -> bool:
+    """Publish initialized clients safely; serialize cold paths and reset on the class monitor."""
+    if not path.is_file():
+        die(f"SmartTube OkHttp manager moved or disappeared: {path}")
+    raw = path.read_bytes()
+    newline = "\r\n" if b"\r\n" in raw else "\n"
+    text = raw.decode("utf-8").replace("\r\n", "\n")
+    original = text
+    replacements = [
+        ("private static OkHttpManager sInstance;", "private static volatile OkHttpManager sInstance;"),
+        ("private OkHttpClient mClient;", "private volatile OkHttpClient mClient;"),
+        ("public static void unhold()", "public static synchronized void unhold()"),
+        ("""public static OkHttpManager instance(boolean enableProfiler) {
+        if (sInstance == null) {
+            sInstance = new OkHttpManager(enableProfiler);
+        }
+
+        return sInstance;
+    }""", """public static OkHttpManager instance(boolean enableProfiler) {
+        OkHttpManager current = sInstance;
+        if (current != null) return current;
+        synchronized (OkHttpManager.class) {
+            if (sInstance == null) {
+                sInstance = new OkHttpManager(enableProfiler);
+            }
+            return sInstance;
+        }
+    }"""),
+        ("""public OkHttpClient getClient() {
+        if (mClient == null) {
+            OkHttpCommons.enableProfiler = mEnableProfiler;
+            mClient = OkHttpCommons.setupBuilder(new OkHttpClient.Builder()).build();
+        }
+
+        return mClient;
+    }""", """public OkHttpClient getClient() {
+        OkHttpClient current = mClient;
+        if (current != null) return current;
+        synchronized (OkHttpManager.class) {
+            if (mClient == null) {
+                // Ambient TV disables upstream HTTP profiling in every build.
+                mClient = OkHttpCommons.setupBuilder(new OkHttpClient.Builder()).build();
+            }
+            return mClient;
+        }
+    }"""),
+    ]
+    for old, new in replacements:
+        if new in text:
+            continue
+        if check or old not in text:
+            die(f"Unsupported or unpatched OkHttp manager layout: {path}: {old.splitlines()[0]}")
+        text = text.replace(old, new, 1)
+    if text != original:
+        path.write_bytes(text.replace("\n", newline).encode("utf-8"))
+        return True
+    return False
+
+
+def patch_defer_device_user_agent(path: Path, check: bool) -> bool:
+    """Do not initialize Android device helpers for an unused alternative user agent."""
+    if not path.is_file():
+        die(f"SmartTube default headers moved or disappeared: {path}")
+    raw = path.read_bytes()
+    newline = "\r\n" if b"\r\n" in raw else "\n"
+    text = raw.decode("utf-8").replace("\r\n", "\n")
+    old = "    private val USER_AGENT_ATV_COMBINED =\n        \"Mozilla/5.0 (Linux ${DeviceHelpers.getPrimaryAbi()}; Android ${Build.VERSION.RELEASE}) Cobalt/$COBALT_VER (unlike Gecko) v8/$V8_VER gles Starboard/$STARBOARD_VER, ${Build.BRAND}_ATV_${Build.HARDWARE}_0/${Build.ID} (${Build.BRAND}, ${Build.MODEL}) com.google.android.youtube.tv/$APK_VER\""
+    new = "    private val USER_AGENT_ATV_COMBINED by lazy {\n        \"Mozilla/5.0 (Linux ${DeviceHelpers.getPrimaryAbi()}; Android ${Build.VERSION.RELEASE}) Cobalt/$COBALT_VER (unlike Gecko) v8/$V8_VER gles Starboard/$STARBOARD_VER, ${Build.BRAND}_ATV_${Build.HARDWARE}_0/${Build.ID} (${Build.BRAND}, ${Build.MODEL}) com.google.android.youtube.tv/$APK_VER\"\n    }"
+    if text.count(new) == 1 and old not in text:
+        return False
+    if check or text.count(old) != 1 or new in text:
+        die(f"Unsupported or eager SmartTube device user agent: {path}")
+    path.write_bytes(text.replace(old, new, 1).replace("\n", newline).encode("utf-8"))
+    return True
+
+
+def patch_auth_header_snapshots(msc: Path, check: bool) -> list[Path]:
+    """Publish complete account headers once; every interceptor reads one snapshot."""
+    root = msc / "youtubeapi/src/main/java"
+    helper = root / "com/liskovsoft/googlecommon/common/helpers/RetrofitOkHttpHelper.kt"
+    signin = root / "com/liskovsoft/youtubeapi/service/YouTubeSignInService.java"
+    oauth = root / "com/liskovsoft/googleapi/oauth2/manager/OAuth2AccountManagerBase.java"
+    edits = {
+        helper: [
+            ("    @JvmStatic\n    val authHeaders = mutableMapOf<String, String>()",
+             "    @Volatile\n    private var authHeaderSnapshot: Map<String, String> = emptyMap()\n    private var authGeneration = 0L\n\n    @JvmStatic\n    val authHeaders: Map<String, String>\n        get() = authHeaderSnapshot\n\n    @JvmStatic\n    @Synchronized\n    fun beginAuthRefresh(): Long = ++authGeneration\n\n    @JvmStatic\n    @Synchronized\n    fun publishAuthHeaders(generation: Long, headers: Map<String, String>): Boolean {\n        if (generation != authGeneration) return false\n        authHeaderSnapshot = java.util.Collections.unmodifiableMap(HashMap(headers))\n        return true\n    }\n\n    @JvmStatic\n    @Synchronized\n    fun replaceAuthHeaders(headers: Map<String, String>) {\n        ++authGeneration\n        authHeaderSnapshot = java.util.Collections.unmodifiableMap(HashMap(headers))\n    }"),
+            ("                if (authHeaders.isEmpty() || doSkipAuth) {",
+             "                val requestAuthHeaders = authHeaders\n                if (requestAuthHeaders.isEmpty() || doSkipAuth) {"),
+            ("                    applyHeaders(authHeaders, headers, requestBuilder)",
+             "                    applyHeaders(requestAuthHeaders, headers, requestBuilder)"),
+        ],
+        signin: [
+            ("private String mCachedAuthorizationHeader;",
+             "private String mCachedAuthorizationHeader;\n    private Account mCachedAuthAccount;"),
+            ("if (mCachedAuthorizationHeader != null && Helpers.equals(",
+             "if (mCachedAuthAccount == getSelectedAccount() && mCachedAuthorizationHeader != null && Helpers.equals("),
+            ("        mCachedAuthorizationHeader = createAuthorizationHeader(refreshToken);\n        syncWithRetrofit();",
+             "        long generation = RetrofitOkHttpHelper.beginAuthRefresh();\n        String authorization = createAuthorizationHeader(refreshToken);\n        if (account != getSelectedAccount()) {\n            mCachedAuthorizationHeader = null;\n            mCachedAuthAccount = null;\n            return;\n        }\n        mCachedAuthorizationHeader = authorization;\n        mCachedAuthAccount = account;\n        syncWithRetrofit(account, generation);"),
+            ("public void invalidateCache() {\n        mCachedAuthorizationHeader = null;",
+             "public synchronized void invalidateCache() {\n        RetrofitOkHttpHelper.replaceAuthHeaders(java.util.Collections.emptyMap());\n        mCachedAuthAccount = null;\n        mCachedAuthorizationHeader = null;"),
+            ("private void syncWithRetrofit() {",
+             "private void syncWithRetrofit(Account selectedAccount, long generation) {"),
+            ("        Map<String, String> headers = RetrofitOkHttpHelper.getAuthHeaders();\n        headers.clear();",
+             "        Map<String, String> headers = new java.util.HashMap<>();"),
+            ("        Account selectedAccount = getSelectedAccount();\n\n        if (mCachedAuthorizationHeader != null && selectedAccount != null) {",
+             "        // Use the account captured before refreshing the token.\n        if (mCachedAuthorizationHeader != null && selectedAccount != null) {"),
+            ("        }\n    }\n\n    @Override\n    public void addOnAccountChange",
+             "        }\n        if (selectedAccount == getSelectedAccount()) {\n            RetrofitOkHttpHelper.publishAuthHeaders(generation, headers);\n        }\n    }\n\n    @Override\n    public void addOnAccountChange"),
+        ],
+        oauth: [
+            ("private String mCachedAuthorizationHeader;",
+             "private String mCachedAuthorizationHeader;\n    private Account mCachedAuthAccount;"),
+            ("if (mCachedAuthorizationHeader != null && Helpers.equals(",
+             "if (mCachedAuthAccount == getSelectedAccount() && mCachedAuthorizationHeader != null && Helpers.equals("),
+            ("        mCachedAuthorizationHeader = createAuthorizationHeader(refreshToken);\n        syncWithRetrofit();",
+             "        long generation = RetrofitOkHttpHelper.beginAuthRefresh();\n        String authorization = createAuthorizationHeader(refreshToken);\n        if (account != getSelectedAccount()) {\n            mCachedAuthorizationHeader = null;\n            mCachedAuthAccount = null;\n            return;\n        }\n        mCachedAuthorizationHeader = authorization;\n        mCachedAuthAccount = account;\n        syncWithRetrofit(account, generation);"),
+            ("public void invalidateCache() {\n        mCachedAuthorizationHeader = null;",
+             "public synchronized void invalidateCache() {\n        RetrofitOkHttpHelper.replaceAuthHeaders(java.util.Collections.emptyMap());\n        mCachedAuthAccount = null;\n        mCachedAuthorizationHeader = null;"),
+            ("private void syncWithRetrofit() {",
+             "private void syncWithRetrofit(Account selectedAccount, long generation) {"),
+            ("        Map<String, String> headers = RetrofitOkHttpHelper.getAuthHeaders();\n        headers.clear();",
+             "        Map<String, String> headers = new java.util.HashMap<>();"),
+            ("protected void updateAuthHeadersIfNeeded()",
+             "protected synchronized void updateAuthHeadersIfNeeded()"),
+            ("public void setAuthorizationHeader(String authorizationHeader) {\n        mCachedAuthorizationHeader = authorizationHeader;\n        mCacheUpdateTime = System.currentTimeMillis();\n\n        syncWithRetrofit();",
+             "public synchronized void setAuthorizationHeader(String authorizationHeader) {\n        long generation = RetrofitOkHttpHelper.beginAuthRefresh();\n        Account account = getSelectedAccount();\n        mCachedAuthorizationHeader = authorizationHeader;\n        mCachedAuthAccount = account;\n        mCacheUpdateTime = System.currentTimeMillis();\n\n        syncWithRetrofit(account, generation);"),
+            ("        if (mCachedAuthorizationHeader != null && getSelectedAccount() != null) {",
+             "        if (mCachedAuthorizationHeader != null && selectedAccount != null) {"),
+            ("String pageIdToken = ((YouTubeAccount) getSelectedAccount()).getPageIdToken();",
+             "String pageIdToken = ((YouTubeAccount) selectedAccount).getPageIdToken();"),
+            ("                headers.put(\"X-Goog-Pageid\", pageIdToken);\n            }\n        }\n    }",
+             "                headers.put(\"X-Goog-Pageid\", pageIdToken);\n            }\n        }\n        if (selectedAccount == getSelectedAccount()) {\n            RetrofitOkHttpHelper.publishAuthHeaders(generation, headers);\n        }\n    }"),
+        ],
+    }
+    pending = {}
+    for path, replacements in edits.items():
+        if not path.is_file():
+            die(f"SmartTube auth header source missing: {path}")
+        original = path.read_bytes()
+        newline = "\r\n" if b"\r\n" in original else "\n"
+        text = original.decode("utf-8").replace("\r\n", "\n")
+        for old, new in replacements:
+            if new in text:
+                continue
+            if check or text.count(old) != 1:
+                die(f"Unsupported SmartTube auth header layout: {path}: {old}")
+            text = text.replace(old, new, 1)
+        if path in (signin, oauth) and "Account selectedAccount = getSelectedAccount();" in text:
+            die(f"Unexpected account re-read in SmartTube auth source: {path}")
+        updated = text.replace("\n", newline).encode("utf-8")
+        if updated != original:
+            pending[path] = updated
+    for path, updated in pending.items():
+        path.write_bytes(updated)
+    return list(pending)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
@@ -1071,16 +1320,22 @@ def main() -> int:
         changed.append(doh)
 
     okhttp_commons = shared / "sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/OkHttpCommons.java"
+    if patch_disable_legacy_tls_bypass(okhttp_commons, args.check):
+        changed.append(okhttp_commons)
     if patch_okhttp_debug_dump(okhttp_commons, args.check):
         changed.append(okhttp_commons)
 
     okhttp_manager = shared / "sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/OkHttpManager.java"
     if patch_okhttp_manager_request_body(okhttp_manager, args.check):
         changed.append(okhttp_manager)
+    if patch_okhttp_manager_thread_safety(okhttp_manager, args.check):
+        changed.append(okhttp_manager)
 
-    cronet = shared / "sharedutils/src/main/java/com/liskovsoft/sharedutils/cronet/CronetManager.kt"
-    if patch_cronet_experimental_import(cronet, args.check):
-        changed.append(cronet)
+    changed.extend(patch_disable_unused_cronet(msc, shared, args.check))
+    default_headers = msc / "youtubeapi/src/main/java/com/liskovsoft/googlecommon/common/helpers/DefaultHeaders.kt"
+    if patch_defer_device_user_agent(default_headers, args.check):
+        changed.append(default_headers)
+    changed.extend(patch_auth_header_snapshots(msc, args.check))
 
     v8_utils = shared / "j2v8/src/main/java/com/eclipsesource/v8/utils/V8ObjectUtils.java"
     if patch_v8_object_utils_double(v8_utils, args.check):
