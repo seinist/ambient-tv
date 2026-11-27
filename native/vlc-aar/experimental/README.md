@@ -891,3 +891,11 @@ all partially constructed indexes and stops demux rather than attempting
 to use the replaced context. The cached fragmented scheduler limits each
 track to its current sample per iteration instead of reading an entire
 run ahead on forward-only inputs.
+
+Before VLC's generic trun indexing, paired moofs now validate run/sample
+counts, mandatory sample tables and the uint32_t run-size accumulator,
+including unrelated tracks whose bytes affect implicit offsets. Implicit
+FEL clocks require both the previous and current sequence headers; missing
+headers invalidate inherited anchors, and explicit timeline jumps flag
+BL discontinuity even when sequence numbers are consecutive. Added host
+boundary tests and fixed the duplicate-range fixture's variable name.

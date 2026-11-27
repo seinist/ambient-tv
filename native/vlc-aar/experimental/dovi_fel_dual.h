@@ -105,6 +105,22 @@ static inline bool ambient_fel_fragment_start(bool bl_explicit,uint64_t bl_time,
     *bl_start=b;*el_start=e;return true;
 }
 
+/* An explicit new anchor can legitimately jump even when mfhd is
+ * consecutive. Reset decoder history rather than joining unrelated GOPs. */
+static inline bool ambient_fel_clock_break(bool contiguous,bool prior_valid,
+    int64_t prior_bl,int64_t prior_el,int64_t bl_start,int64_t el_start)
+{
+    return !contiguous || (prior_valid &&
+        (prior_bl!=bl_start || prior_el!=el_start));
+}
+/* VLC's generic indexer accumulates run sizes in uint32_t. Check before
+ * invoking it, rather than detecting its wrapped offsets afterwards. */
+static inline bool ambient_fel_run_add(uint64_t *bytes,uint32_t sample)
+{
+    if(!bytes||*bytes>UINT32_MAX||sample>UINT32_MAX-*bytes)return false;
+    *bytes+=sample;return true;
+}
+
 /* Exact decode/presentation timing in the common track timescale. Do
  * not compare rounded microseconds or silently substitute another sample. */
 static inline bool ambient_fel_fragment_timing(int64_t el_dts,int64_t el_cts,
