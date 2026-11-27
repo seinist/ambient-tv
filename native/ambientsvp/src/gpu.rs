@@ -78,6 +78,8 @@ pub struct Gpu {
     driver_cache: Option<(String, wgpu::PipelineCache)>,
     cache_dirty: bool,
     cache_updated: bool,
+    #[cfg(test)]
+    pub(super) force_clear_output: bool,
     compact_fields: bool,
     sources: BTreeMap<i32, Source>,
     recycled_sources: Vec<Source>,
@@ -285,6 +287,8 @@ impl Gpu {
             driver_cache,
             cache_dirty: true,
             cache_updated: false,
+            #[cfg(test)]
+            force_clear_output: false,
             compact_fields,
             sources: BTreeMap::new(),
             recycled_sources: Vec::new(),
@@ -629,7 +633,13 @@ impl Gpu {
             base
         };
         let mask = &self.mask.as_ref().unwrap().texture;
-        encoder.clear_buffer(&self.output, 0, None);
+        // Every Y/U/V output word is overwritten by the managed shader.
+        // Unaligned plane boundaries preserve only the earlier plane's bytes;
+        // the first plane starts at zero and the last zeros its trailing lanes.
+        // No full-frame GPU clear is needed. Retain the old clear in tests
+        // for exact A/B parity, including a reused unaligned output buffer.
+        #[cfg(test)]
+        if self.force_clear_output { encoder.clear_buffer(&self.output, 0, None); }
         for (plane, p) in job.params.iter().enumerate() {
             let key = [
                 p.algorithm,
