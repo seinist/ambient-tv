@@ -93,10 +93,11 @@ pub struct VulkanPicture{
     y:vk::ImageView,u:vk::ImageView,v:vk::ImageView,
     // 0: separate R8 U/V; 1: RG8 interleaved UV (v ignored).
     nv12:u32,
+    chroma_location:u32,
 }
 impl VulkanPicture{
     fn valid(self)->bool{
-        self.nv12<=1 && self.y!=vk::ImageView::null() && self.u!=vk::ImageView::null()
+        self.nv12<=1 && self.chroma_location<=2 && self.y!=vk::ImageView::null() && self.u!=vk::ImageView::null()
             && (self.nv12==1 || self.v!=vk::ImageView::null())
     }
     fn views(self)->[vk::ImageView;3]{[self.y,self.u,if self.nv12==1{self.u}else{self.v}]}
@@ -194,7 +195,7 @@ impl VulkanPair{
         self.field(set,6);
         self.image(set,7,output,vk::DescriptorType::STORAGE_IMAGE);
         let c=&self.core;
-        unsafe{c.synthesis.dispatch(self.command,set,[phase.to_bits(),self.a.nv12|(self.b.nv12<<1),matrix,c.gw],
+        unsafe{c.synthesis.dispatch(self.command,set,[phase.to_bits(),self.a.nv12|(self.b.nv12<<1)|(self.a.chroma_location<<2)|(self.b.chroma_location<<4),matrix,c.width|(c.height<<16)],
             c.width.div_ceil(8),c.height.div_ceil(8));}
         self.phases+=1;
         Ok(())
@@ -202,7 +203,7 @@ impl VulkanPair{
 }
 
 fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Device,width:u32,height:u32)->Result<VulkanResident>{
-    if width<32 || height<32 || (width|height)&1!=0 || u64::from(width)*u64::from(height)>MAX_PIXELS{
+    if width<32 || height<32 || width>3840 || height>2160 || (width|height)&1!=0 || u64::from(width)*u64::from(height)>MAX_PIXELS{
         return Err("unsupported resident dimensions".into());
     }
     let properties=unsafe{instance.get_physical_device_properties(physical)};
@@ -398,8 +399,8 @@ mod gpu_tests{
                         vk::PipelineStageFlags::TOP_OF_PIPE,vk::PipelineStageFlags::COMPUTE_SHADER);
                 }
             }
-            let a=VulkanPicture{y:images[0].view,u:images[2].view,v:vk::ImageView::null(),nv12:1};
-            let b=VulkanPicture{y:images[1].view,u:images[3].view,v:images[4].view,nv12:0};
+            let a=VulkanPicture{y:images[0].view,u:images[2].view,v:vk::ImageView::null(),nv12:1,chroma_location:1};
+            let b=VulkanPicture{y:images[1].view,u:images[3].view,v:images[4].view,nv12:0,chroma_location:2};
             let pair=ambient_svp_vk_begin(engine,cmd,&a,&b);
             assert!(!pair.is_null());
             assert_eq!(ambient_svp_vk_release(pair),-1);
