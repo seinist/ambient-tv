@@ -622,3 +622,38 @@ FFmpeg HDR10+ syntax fixture and GPU tests passed at 81fda87
 Final-head CI and actual playback remain unconfirmed.
 No certification or proprietary bit-exact FEL reconstruction
 claim is made. Experimental defaults remain off.
+
+
+### Global HDR10+ fallback and EL crop-origin audit
+
+The full private HDR10+ metadata snapshot remains unchanged. Its
+projection into VLC's global ancillary now excludes nonmonotone
+curves and invalid CFD distributions. When all MaxSCL components
+are absent, the last valid CFD percentile supplies an estimated
+global peak (not independently measured per-component MaxSCL).
+Reserved markers and malformed distributions cannot supply this
+peak. An authored degree-one curve with no intermediate anchors
+is represented exactly by degree elevation to [0, 0.5, 1], since
+the pinned libplacebo fitter treats zero anchors as absent metadata.
+Endpoint knees remain supported by the exact spatial path; the
+global fitter instead receives scene-statistics-only metadata to
+avoid its endpoint singularities. The shared spatial and fallback
+validation uses the same helpers. Host tests check that none of
+these projections alters the raw snapshot.
+
+The EL software decoder disables automatic FFmpeg frame cropping
+until it can check the original crop origin. It accepts right/bottom
+padding and explicitly applies the crop, but rejects shifted left/top
+origins rather than silently mixing misaligned pictures. New actual
+HEVC conformance-window fixtures are produced by independent
+hevc_metadata processing; they test accepted 62x60 visible dimensions
+and terminal rejection of shifted-origin input. Full shifted crop
+phase reconstruction is still unsupported.
+
+At fffb7f2, the FFmpeg and GPU contracts passed (45968705455),
+including the actual VLC shared HDR adapter UBSan test and corrected
+saturation cap. Its NDK and app jobs were canceled by newer pushes.
+The latest changes need their final CI. Full linked packaged AAR,
+arbitrary shifted crop support, real-device playback, certification
+and proprietary bit-exact reference reconstruction remain unconfirmed.
+Default-off unchanged.
