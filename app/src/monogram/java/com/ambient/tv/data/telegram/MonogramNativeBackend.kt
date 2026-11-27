@@ -786,19 +786,39 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         val bytes = if (peer) native.peekPeerInlineThumb(h, chat)
             else native.peekMessageInlineThumb(h, chat, id)
         if (bytes == null || bytes.isEmpty() || bytes.size > 512 * 1024) return null
+        // Content-addressed inline art survives unchanged feed refreshes and
+        // cannot alias a different preview of exactly the same byte length.
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+        val hex = "0123456789abcdef"
+        val key = buildString(64) {
+            digest.forEach { byte ->
+                val n = byte.toInt() and 255
+                append(hex[n ushr 4]); append(hex[n and 15])
+            }
+        }
+        val out = File(cache, if (peer) "channel-$chat-$key.bin" else "thumb-$chat-$id-$key.bin")
+        fun valid() = expectedAccount != null && accountId == expectedAccount &&
+            cacheGeneration == expectedGeneration && revision == mediaRevision(chat, id) && chat !in leftChannels
         synchronized(diskChunkLock) {
-            if (expectedAccount == null || accountId != expectedAccount ||
-                cacheGeneration != expectedGeneration || revision != mediaRevision(chat, id)) return null
-            val out = File(cache, if (peer) "channel-$chat.bin" else "thumb-$chat-$id.bin")
-            if (!out.isFile || out.length() != bytes.size.toLong()) {
-                out.writeBytes(bytes)
-                // Avoid per-image directory scans while still bounding the native preview cache.
+            if (!valid()) return null
+            if (out.isFile && out.length() == bytes.size.toLong()) {
+                // Touch only occasionally rather than on every card conversion.
+                val now = System.currentTimeMillis()
+                if (now - out.lastModified() > 60_000L) out.setLastModified(now)
+                return out.toURI().toString()
+            }
+        }
+        val stage = File(cache, "pending-inline-${java.util.UUID.randomUUID()}.bin")
+        try {
+            // Neither the JNI data copy nor the file write holds the chunk lock.
+            stage.writeBytes(bytes)
+            synchronized(diskChunkLock) {
+                if (!valid()) return null
+                if ((!out.isFile || out.length() != bytes.size.toLong()) && !stage.renameTo(out)) return null
                 if (++previewWrites % 16 == 1) trimPreviewCache()
-            } else {
-                out.setLastModified(System.currentTimeMillis())
             }
             return out.toURI().toString()
-        }
+        } finally { stage.delete() }
     }
 
     /** Enforce both age and byte/count limits without touching media chunk/photo caches. */
