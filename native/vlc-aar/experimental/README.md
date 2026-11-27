@@ -372,3 +372,35 @@ yet confirmed. Actual dual-track MP4 playback, seek/reorder tests,
 fragmented MP4 and streams with different edit/timing tables remain
 unvalidated or outside this restricted implementation. HDR10+
 full reference equivalence remains unproven; production is unchanged.
+
+
+### Dual-track audit and fragmented MP4
+
+Sequential variable-size EL sample offsets now use a bounded cursor;
+backward seeks and chunk changes restart from the indexed chunk. Invalid
+sample sizes, duplicate first slices, missing matched random access and
+terminal pairing errors are rejected, without repeatedly selecting the
+same corrupt ES.
+
+Seekable pure fragmented MP4 with separate DV profile-7 tracks now also
+uses the experimental FEL route if both tracks have one stable sample
+description, matching timescale and no edit lists. Each relevant moof
+must contain one traf per layer with explicit matching tfdt. Both
+trun indices and sample counts must match, and each sample is checked
+for exact decode/presentation time and duration in raw track ticks
+(including signed composition offsets). EL bytes are read only inside
+the current mdat payload. The BL stream position is restored before
+continuing the normal trun loop. Hidden-track state is refreshed on
+fragment boundaries and seeks, and explicit discontinuities re-inject
+EL configuration. Host tests exercise cursor seek/overflow, NAL
+boundaries and fragment time/byte-range validation.
+
+Both MP4 patches were checked against the exact pinned VLC source
+contexts at 9ffb7f0. The earlier FFmpeg and HDR10+ GPU jobs passed
+(45958323181); the Android ABI job was canceled by subsequent pushes,
+and the latest complete AAR build and app checks remain unconfirmed.
+This is not validation with a real fragmented Dolby Vision title.
+Nonseekable streams, hybrid moov+moof tracks, audio-only/missing-layer
+fragments, differing trun layouts or timescales and alternate container
+carriage remain outside the restricted route. HDR10+ full reference
+equivalence remains unproven; production configuration is unchanged.
