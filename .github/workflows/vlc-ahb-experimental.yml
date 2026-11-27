@@ -148,6 +148,7 @@ jobs:
           sudo apt-get install -y meson ninja-build python3-jinja2 libvulkan-dev vulkan-validationlayers mesa-vulkan-drivers libshaderc-dev
       - name: Build pinned libplacebo and render local-window reference fixture
         run: |
+          git -C .ci/libplacebo apply "$GITHUB_WORKSPACE/native/vlc-aar/experimental/libplacebo-patches/ambient-mmr-order3.patch"
           meson setup .ci/pl-build .ci/libplacebo -Dvulkan=enabled -Dshaderc=enabled -Dglslang=disabled -Dopengl=disabled -Ddemos=false -Dtests=false -Dlcms=disabled -Dlibdovi=disabled -Dunwind=disabled
           meson compile -C .ci/pl-build -j2
           cc -std=c11 -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \

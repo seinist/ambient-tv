@@ -88,4 +88,18 @@ if bsf_flag not in s:
     s = s.replace(bsf_anchor, bsf_anchor + " " + bsf_flag)
 p.write_text(s)
 PY
+# The pinned libplacebo shader generator has a missing ')' for mixed MMR
+# orders reaching order 3. Apply only inside the isolated experimental tree.
+cp "$SRC/libplacebo-patches/ambient-mmr-order3.patch" "$VLC/contrib/src/libplacebo/ambient-mmr-order3.patch"
+python3 - "$VLC/contrib/src/libplacebo/rules.mak" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+anchor = "\t$(APPLY) $(SRC)/libplacebo/0001-vulkan-utils_gen-fix-for-python-3.14.patch\n"
+line = "\t$(APPLY) $(SRC)/libplacebo/ambient-mmr-order3.patch\n"
+if line not in s:
+    if s.count(anchor) != 1:
+        raise SystemExit("Expected pinned libplacebo contrib patch")
+    p.write_text(s.replace(anchor, anchor + line))
+PY
 echo "Staged experimental VLC AHB display integration (runtime flag remains off by default)"

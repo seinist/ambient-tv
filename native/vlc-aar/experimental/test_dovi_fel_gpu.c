@@ -89,6 +89,36 @@ int main(void)
             fprintf(stderr,"FEL pixel %u: actual %f expected %f\n",k,pixels[k],expected);
         assert(isfinite(pixels[k])&&fabs(pixels[k]-expected)<0.0001);
     }
+    // Exercise one component with polynomial, order-1 MMR and order-3
+    // MMR segments. The pinned shader generator previously emitted
+    // invalid GLSL for the mixed MMR order-3 branch.
+    struct pl_dovi_metadata mixed=reshape;
+    struct pl_reshape_data *mc=&mixed.comp[0];
+    mc->num_pivots=4;mc->pivots[0]=0.f;mc->pivots[1]=0.3f;
+    mc->pivots[2]=0.8f;mc->pivots[3]=1.f;
+    mc->method[0]=0;mc->method[1]=1;mc->method[2]=1;
+    mc->mmr_order[1]=1;mc->mmr_order[2]=3;
+    for(unsigned j=1;j<=2;j++){
+        mc->mmr_constant[j]=0.1f;
+        for(unsigned order=0;order<mc->mmr_order[j];order++)
+            for(unsigned term=0;term<7;term++)
+                mc->mmr_coeffs[j][order][term]=0.03f*(order+1)/(term+1);
+    }
+    assert(ambient_fel_compose(gpu,dp,bl,el,out,&mixed,&nlq));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=out,.ptr=pixels)));
+    for(unsigned i=0;i<4;i++){
+        const double y=base[4*i],u=base[4*i+1],v=base[4*i+2];
+        double mapped=0.1+0.9*y;
+        if(y>=0.3){
+            unsigned orders=y>=0.8?3:1;
+            const double terms[]={y,u,v,y*u,y*v,u*v,y*u*v};
+            mapped=0.1;
+            for(unsigned o=1;o<=orders;o++)for(unsigned t=0;t<7;t++)
+                mapped+=0.03*o/(t+1)*pow(terms[t],o);
+        }
+        double expected=fmin(1.0,fmax(0.0,mapped+ambient_fel_residual(&nlq,0,residual[4*i])));
+        assert(isfinite(pixels[4*i])&&fabs(pixels[4*i]-expected)<0.0001);
+    }
     // A canonical MEL-like RPU can prove the residual is zero without
     // sampling any EL texture. Also cover zero-maximum components.
     struct ambient_fel_nlq mel=nlq;
