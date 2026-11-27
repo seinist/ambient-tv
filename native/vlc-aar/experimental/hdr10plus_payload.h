@@ -137,9 +137,16 @@ static inline bool ambient_hdrplus_global_projection(const struct ambient_hdrplu
         float peak=ambient_hdrplus_cfd_peak(&w,m->version);
         for(unsigned i=0;i<3;i++)w.maxscl[i]=peak;
     }
-    if(!ambient_hdrplus_usable_curve(&w,m->target_nits)){
+    // The pinned global fitter divides by the knee coordinates and
+    // treats zero anchors as absent metadata. Endpoint curves remain
+    // available to the exact spatial renderer, not this fitter.
+    if(!ambient_hdrplus_usable_curve(&w,m->target_nits)||
+       w.knee_x<=0.f||w.knee_x>=1.f||w.knee_y<=0.f||w.knee_y>=1.f){
         w.tone_mapping=false;w.knee_x=w.knee_y=0.f;w.anchor_count=0;
         memset(w.anchors,0,sizeof(w.anchors));
+    }else if(!w.anchor_count){
+        // Degree elevation of B(t)=t is exact: quadratic [0,1/2,1].
+        w.anchor_count=1;w.anchors[0]=0.5f;
     }
     *out=w;
     return true;
