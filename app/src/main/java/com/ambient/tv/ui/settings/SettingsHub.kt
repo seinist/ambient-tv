@@ -140,10 +140,20 @@ internal fun SettingsHub(
     onRequestAppExit: (() -> Unit)? = null,
     content: @Composable (SettingsCategory, LazyListState, Modifier, () -> Unit, ((() -> Unit) -> Unit)) -> Unit,
 ) {
+    val moduleStates by com.ambient.tv.modules.SystemModuleAvailability.states.collectAsState()
+    val spotifyRuntime = moduleStates.getValue(com.ambient.tv.modules.SystemModule.SPOTIFY)
+    val spotifyOffered = spotifyRuntime.usable ||
+        spotifyRuntime.runtime == com.ambient.tv.modules.ModuleRuntimeState.BUNDLED_UNVERIFIED
+    val monogramOffered = com.ambient.tv.modules.SystemModuleAvailability.monogramOffered
+    fun pageAvailable(category: SettingsCategory?) = when (category) {
+        SettingsCategory.SPOTIFY, SettingsCategory.ADVANCED -> spotifyOffered
+        SettingsCategory.TELEGRAM -> monogramOffered
+        else -> true
+    }
     val handheld = LocalHandheldUi.current
     val sideIndex = settingsUsesSideIndex(isTabletUi(), LocalConfiguration.current.screenWidthDp)
     val initialPage = remember(initialCategoryKey, handheld) {
-        settingsShortcutCategory(initialCategoryKey)?.let {
+        settingsShortcutCategory(initialCategoryKey)?.takeIf(::pageAvailable)?.let {
             if (!handheld && it == SettingsCategory.TRANSFER) SettingsCategory.COMPANION else it
         }
     }
@@ -283,6 +293,7 @@ internal fun SettingsHub(
             !handheld && target == SettingsCategory.TRANSFER -> SettingsCategory.COMPANION
             else -> target
         }
+        if (!pageAvailable(resolved)) return
         searchLandingQuery = query.takeIf { !fromLink && search && it.isNotBlank() }
         returnToSearch = !fromLink && search
         returnToAdd = !fromLink && addingSystems && !search
@@ -348,7 +359,13 @@ internal fun SettingsHub(
         exitGuardCallback { action -> requestExit(action) }
         onDispose { exitGuardCallback(null) }
     }
-    LaunchedEffect(page) { viewModel.onPageOpened(page) }
+    LaunchedEffect(page, spotifyOffered, monogramOffered) {
+        if (!pageAvailable(page)) {
+            page = null
+            directEntry = false
+            settlingPageFocus = false
+        } else viewModel.onPageOpened(page)
+    }
     DisposableEffect(viewModel) { onDispose { viewModel.onPageOpened(null) } }
     LaunchedEffect(navigationKey) {
         // One page only. Sparsam cuts; otherwise the incoming view eases in. A second page
@@ -368,8 +385,8 @@ internal fun SettingsHub(
         // The UPnP receiver only runs on TVs; phones are senders.
         if (category == SettingsCategory.RECEIVER && handheld) return@filter false
         // Monogram needs the optional native core; normal builds show no Telegram page at all.
-        if (category == SettingsCategory.TELEGRAM && !com.ambient.tv.modules.SystemModuleAvailability.monogramOffered) return@filter false
-        if (category == SettingsCategory.SPOTIFY && !com.ambient.tv.modules.SystemModuleAvailability.spotifyOffered) return@filter false
+        if (category == SettingsCategory.TELEGRAM && !monogramOffered) return@filter false
+        if (category == SettingsCategory.SPOTIFY && !spotifyOffered) return@filter false
         // A renamed system is still found under its provider name.
         val haystack = buildString {
             append(title); append(' '); append(hint); append(' ')
