@@ -33,6 +33,8 @@ import com.ambient.tv.ui.player.backend.AudioSpectrumAnalyzer
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 import kotlinx.coroutines.delay
@@ -63,7 +65,7 @@ fun ProjectMVisualizer(
     val throttleProjectM = performance.throttleProjectM
     val lifecycleOwner = LocalLifecycleOwner.current
     val nativeHandle = remember { AtomicLong(0L) }
-    val nativeLifecycleLock = remember { Any() }
+    val nativeLifecycleLock = remember { ReentrantLock() }
     val nativeReleased = remember { AtomicBoolean(false) }
     var glView by remember { mutableStateOf<GLSurfaceView?>(null) }
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
@@ -81,6 +83,8 @@ fun ProjectMVisualizer(
     // AndroidView creates its Renderer once. Surface recreation must read the live browser,
     // including a later manual selection, instead of replaying a captured startup preset.
     val currentBrowser = rememberUpdatedState(browser)
+    val currentQuality = rememberUpdatedState(qualityKey)
+    val currentAudioSource = rememberUpdatedState(nativeAudioSource)
 
     // The MilkDrop texture pack can contain many files. Extract it off the GL thread so the
     // first visualizer frame is not blocked by APK I/O. Once ready, queue the path onto the
@@ -89,7 +93,7 @@ fun ProjectMVisualizer(
         val path = withContext(Dispatchers.IO) { browser.textureDirectory()?.absolutePath }
         texturePath = path
         if (path != null) {
-            val handle = synchronized(nativeLifecycleLock) { nativeHandle.get() }
+            val handle = nativeLifecycleLock.withLock { nativeHandle.get() }
             val view = glView
             if (handle != 0L && view != null) {
                 view.queueEvent {
@@ -102,7 +106,7 @@ fun ProjectMVisualizer(
     fun load(preset: ProjectMPreset, smooth: Boolean) {
         val data = browser.presetData(preset) ?: return
         browser.currentPath = preset.assetPath
-        synchronized(nativeLifecycleLock) {
+        nativeLifecycleLock.withLock {
             val handle = nativeHandle.get()
             if (handle != 0L) ProjectMNativeBridge.nativeLoadPreset(handle, data, smooth)
         }
@@ -124,12 +128,12 @@ fun ProjectMVisualizer(
         val view = glView
         val locked = browser.locked
         if (view == null) {
-            synchronized(nativeLifecycleLock) {
+            nativeLifecycleLock.withLock {
                 nativeHandle.get().takeIf { it != 0L }?.let { ProjectMNativeBridge.nativeSetLocked(it, locked) }
             }
         } else {
             view.queueEvent {
-                synchronized(nativeLifecycleLock) {
+                nativeLifecycleLock.withLock {
                     nativeHandle.get().takeIf { it != 0L }?.let { ProjectMNativeBridge.nativeSetLocked(it, locked) }
                 }
             }
@@ -142,9 +146,9 @@ fun ProjectMVisualizer(
         val width = surfaceWidth.get()
         val height = surfaceHeight.get()
         view.queueEvent {
-            synchronized(nativeLifecycleLock) {
+            nativeLifecycleLock.withLock {
                 val handle = nativeHandle.get()
-                if (handle == 0L) return@synchronized
+                if (handle == 0L) return@withLock
                 ProjectMNativeBridge.nativeSetPresetDuration(handle, intervalSeconds.toDouble())
                 ProjectMNativeBridge.nativeSetSoftCutDuration(handle, transitionSeconds.coerceIn(0, 10).toDouble())
                 if (width > 0 && height > 0) {
@@ -163,6 +167,14 @@ fun ProjectMVisualizer(
             com.ambient.tv.ui.player.SdrHdrSizeBudget.UHD
         } else {
             com.ambient.tv.ui.player.SdrHdrSizeBudget.FULL_HD
+        }
+    }
+
+    LaunchedEffect(glView, nativeAudioSource) {
+        val view = glView ?: return@LaunchedEffect
+        view.queueEvent {
+            val handle = nativeHandle.get()
+            if (handle != 0L) ProjectMNativeBridge.nativeSetAudioSource(handle, nativeAudioSource)
         }
     }
 
@@ -203,7 +215,7 @@ fun ProjectMVisualizer(
     DisposableEffect(Unit) {
         onDispose {
             val view = glView
-            val handle = synchronized(nativeLifecycleLock) {
+            val handle = nativeLifecycleLock.withLock {
                 nativeReleased.set(true)
                 nativeHandle.getAndSet(0L)
             }
@@ -218,9 +230,14 @@ fun ProjectMVisualizer(
 
     DisposableEffect(analyzer) {
         val sink = AudioPcmSink { samples ->
-            synchronized(nativeLifecycleLock) {
-                val handle = nativeHandle.get()
-                if (handle != 0L) ProjectMNativeBridge.nativeFeedPcm(handle, samples)
+            // Never make the playback audio thread wait for surface creation or preset loading.
+            if (nativeLifecycleLock.tryLock()) {
+                try {
+                    val handle = nativeHandle.get()
+                    if (handle != 0L) ProjectMNativeBridge.nativeFeedPcm(handle, samples)
+                } finally {
+                    nativeLifecycleLock.unlock()
+                }
             }
         }
         analyzer?.addPcmSink(sink)
@@ -237,14 +254,14 @@ fun ProjectMVisualizer(
                         override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
                             if (nativeReleased.get() || !ProjectMAvailability.isAvailable) return
                             val handle = ProjectMNativeBridge.nativeCreate()
-                            if (handle != 0L && nativeAudioSource != 0)
-                                ProjectMNativeBridge.nativeSetAudioSource(handle, nativeAudioSource)
-                            synchronized(nativeLifecycleLock) {
+                            if (handle != 0L && currentAudioSource.value != 0)
+                                ProjectMNativeBridge.nativeSetAudioSource(handle, currentAudioSource.value)
+                            nativeLifecycleLock.withLock {
                                 // nativeCreate may finish after disposal cleared the published
                                 // handle. Destroy that late result here on its GL thread.
                                 if (nativeReleased.get()) {
                                     if (handle != 0L) ProjectMNativeBridge.nativeDestroy(handle)
-                                    return@synchronized
+                                    return@withLock
                                 }
                                 val previous = nativeHandle.getAndSet(handle)
                                 if (previous != 0L) ProjectMNativeBridge.nativeDestroy(previous)
@@ -267,7 +284,7 @@ fun ProjectMVisualizer(
                             surfaceHeight.set(height)
                             val handle = nativeHandle.get()
                             if (handle == 0L) return
-                            val mesh = projectMMesh(browser.qualityKey)
+                            val mesh = projectMMesh(currentQuality.value)
                             ProjectMNativeBridge.nativeResize(handle, width, height, mesh.first, mesh.second)
                         }
 
