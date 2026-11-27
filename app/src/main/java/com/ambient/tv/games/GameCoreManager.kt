@@ -59,7 +59,7 @@ class GameCoreManager @Inject constructor(
 
     /** For presentation and management of an already installed preferred variant. */
     fun installedPreferredSource(core: GameCore, source: GameCoreSource): GameCoreSource? =
-        abi?.let { currentAbi -> source.preferredSources(core, currentAbi).firstOrNull { installed(core, it) != null } }
+        abi?.let { currentAbi -> source.preferredSources(core, currentAbi, includeInstalledBuildbot = true).firstOrNull { installed(core, it) != null } }
 
     /**
      * Resolve normal optimized playback or a management download to the actual signed channel.
@@ -75,8 +75,10 @@ class GameCoreManager @Inject constructor(
         val currentAbi = abi ?: throw GameCoreIncompatibleException("No core build for this ABI")
         if (core.supportedAbis.isNotEmpty() && currentAbi !in core.supportedAbis)
             throw GameCoreIncompatibleException("${core.name} is not available for $currentAbi")
-        return firstAvailableCoreSource(source.preferredSources(core, currentAbi)) { candidate ->
-            (preferInstalled && installed(core, candidate) != null) ||
+        return firstAvailableCoreSource(source.preferredSources(core, currentAbi, includeInstalledBuildbot = preferInstalled)) { candidate ->
+            // Reuse a previously accepted local buildbot binary, never automatically download one.
+            if (candidate == GameCoreSource.BUILDBOT) installed(core, candidate) != null
+            else (preferInstalled && installed(core, candidate) != null) ||
                 (channel.available && channel.build(core, currentAbi, candidate) != null)
         } ?: throw GameCoreBuildbotConsentRequired(
             "No signed ${core.id} build for $currentAbi. Confirm the unsigned buildbot source explicitly."
