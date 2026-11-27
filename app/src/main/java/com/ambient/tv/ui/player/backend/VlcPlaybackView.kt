@@ -256,8 +256,11 @@ class VlcPlaybackController(
                 "--vk-device=${VideoAccelerationRuntime.capabilities.value.device.device}",
                 if (ahbExperimentActive) "--vk-ambient-ahb" else "--no-mediacodec-dr",
             ))
-            if (ahbExperimentActive && sourceHdrStandard == HdrStandard.HDR10_PLUS)
+            if (ahbExperimentActive && sourceHdrStandard == HdrStandard.HDR10_PLUS) {
                 add("--vk-ambient-hdr10plus")
+                if (com.ambient.tv.BuildConfig.VLC_HDR10PLUS_SPATIAL_EXPERIMENT && toneMappingRequired)
+                    add("--vk-ambient-hdr10plus-spatial")
+            }
             if (doviAhbActive) add("--vk-ambient-dovi-ahb")
             // MediaCodec copy-back lacks VLC's DOVI picture ancillary. Use
             // avcodec's RPU-aware software decoder, but keep the GPU renderer.
