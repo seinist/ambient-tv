@@ -82,6 +82,8 @@ MODIFICATIONS = {
         "removed rxing (QR) and tlottie (sticker) dependencies",
     "vendor/mono-rs/crates/mono-proto-messages/src/messages/search_rpc.rs":
         "added search_global_channels (messages.searchGlobal with media filter, channels only)",
+    "native/mtproto/src/main/java/org/monogram/mtproto/MtprotoNativeLoader.kt":
+        "use the verified absolute UniFFI library override for platform-verifier JNI",
     "native/mtproto/src/main/java/org/monogram/mtproto/MtprotoNative.kt":
         "added leaveChat",
     "native/mtproto/src/main/java/org/monogram/mtproto/MtprotoNativeUniFfi.kt":
@@ -2501,6 +2503,20 @@ amend(media_lane,
                 Some(media::download_in_flight().min(4))
             } else { None },
             |_init_first, requests, on_chunk| {""")
+
+# UniFFI's generated namespace loader honors this property. Keep the explicit
+# JNI load on the exact same absolute path so a Full APK cannot load a second
+# bundled copy of the Rust runtime after selecting an external package.
+native_loader = "native/mtproto/src/main/java/org/monogram/mtproto/MtprotoNativeLoader.kt"
+amend(native_loader,
+      '        System.loadLibrary("monogram_mtproto")',
+      '''        val override = System.getProperty("uniffi.component.monogram_mtproto.libraryOverride")
+        if (override == null) System.loadLibrary("monogram_mtproto")
+        else {
+            val library = File(override)
+            require(library.isAbsolute && library.isFile && library.name == "libmonogram_mtproto.so")
+            System.load(library.absolutePath)
+        }''')
 
 # Commit files only after every source contract has been checked.
 for path, result in changes.items():
