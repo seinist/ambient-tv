@@ -1107,7 +1107,7 @@ fun TvChip(
                     selectedLeadingIconColor = foreground,
                     selectedTrailingIconColor = foreground,
                 ),
-                label = { androidx.compose.material3.Text(text, maxLines = textMaxLines, overflow = TextOverflow.Ellipsis) },
+                label = { androidx.compose.material3.Text(text, color = foreground, maxLines = textMaxLines, overflow = TextOverflow.Ellipsis) },
                 leadingIcon = if (showLoading) {
                     { ButtonProgress(foreground, Modifier.size(18.dp)) }
                 } else leadingContent ?: icon?.let { image -> { androidx.compose.material3.Icon(image, null, Modifier.size(18.dp)) } },
@@ -1664,7 +1664,7 @@ fun TvActionButton(
             ) {
                 if (loading) ButtonProgress(foreground, Modifier.padding(end = 6.dp).size(20.dp))
                 else if (icon != null) androidx.compose.material3.Icon(icon, null, Modifier.size(20.dp).padding(end = if (text.isEmpty()) 0.dp else 4.dp))
-                if (text.isNotEmpty()) androidx.compose.material3.Text(text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (text.isNotEmpty()) androidx.compose.material3.Text(text, color = foreground, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
         return
