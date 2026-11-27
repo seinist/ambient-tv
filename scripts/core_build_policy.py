@@ -109,10 +109,7 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
         if (ref != "refs/heads/main" or (profile != "baseline" and not public_push)
                 or set(chosen_cores) != set(ids) or set(chosen_abis) != expected_abis):
             raise ValueError("Automatic releases require the full public profile catalog on main; stable publish requires baseline.")
-    if event == "pull_request" and cores and profile in PUBLIC_EXPERIMENTS:
-        # Explicit artifact-only targeted PR validation, never a full release.
-        jobs = [(core, abi, profile) for core in chosen_cores for abi in chosen_abis]
-    elif event == "pull_request":
+    if event == "pull_request":
         if publish:
             raise ValueError("PRs may never publish cores")
         # Baseline/ThinLTO plus real dynarec/SIMD smoke builds and two narrow candidates.

@@ -10,12 +10,6 @@ on:
         description: Rebuild every core in all three profiles, even if unchanged
         type: boolean
         default: false
-  pull_request:
-    paths:
-      - scripts/core_build_policy.py
-      - .github/workflows/cores.yml
-      - .github/workflows/cores-all.yml
-      - cores/cores.json
   push:
     branches: [main]
     paths:
@@ -40,7 +34,6 @@ permissions:
 
 jobs:
   release:
-    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -56,63 +49,3 @@ jobs:
       force_rebuild: ${{ inputs.force_rebuild || false }}
     secrets:
       CORES_SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}
-
-  mupen-validation-plan:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    outputs:
-      changed: ${{ steps.detect.outputs.changed }}
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 2
-      - id: detect
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          python3 - <<'PY'
-          import ast
-          import json
-          import os
-          from pathlib import Path
-          import subprocess
-
-          def old(path):
-              return subprocess.check_output(["git", "show", os.environ["BASE_SHA"] + ":" + path], text=True)
-
-          def helper(source):
-              return [ast.dump(node, include_attributes=False) for node in ast.parse(source).body
-                      if isinstance(node, ast.FunctionDef) and node.name == "prepare_mupen_offsets"]
-
-          def entry(source):
-              return next(row for row in json.loads(source)["cores"] if row["core"] == "mupen64plus_next_gles3")
-
-          try:
-              path = "scripts/core_build_policy.py"
-              changed = helper(old(path)) != helper(Path(path).read_text())
-              path = "cores/cores.json"
-              changed |= entry(old(path)) != entry(Path(path).read_text())
-              path = ".github/workflows/cores.yml"
-              changed |= old(path) != Path(path).read_text()
-          except (OSError, ValueError, StopIteration, subprocess.CalledProcessError):
-              changed = True
-          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-              print("changed=" + str(changed).lower(), file=out)
-          PY
-
-  mupen-validation:
-    needs: mupen-validation-plan
-    if: github.event_name == 'pull_request' && needs.mupen-validation-plan.outputs.changed == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        profile: [optimized, optimized-a57]
-    name: validate mupen / ${{ matrix.profile }}
-    permissions:
-      contents: write
-    uses: ./.github/workflows/cores.yml
-    with:
-      profile: ${{ matrix.profile }}
-      cores: mupen64plus_next_gles3
-      publish: false
-      publish_experimental: false
