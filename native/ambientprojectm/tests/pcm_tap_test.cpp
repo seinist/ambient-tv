@@ -45,4 +45,23 @@ int main() {
     for (size_t i = 0; i < output.size(); ++i)
         assert(output[i] == ramp[3000 - output.size() + i]);
     assert(ring.drainLatest(output.data(), output.size()) == 0);
+
+    // Independent renderers can read the same latest samples without consuming each other's history.
+    ring.clear();
+    uint64_t firstCursor = 0, secondCursor = 0;
+    ring.append(ramp, 1000);
+    assert(ring.readLatestSince(output.data(), 576, firstCursor) == 576);
+    assert(output[0] == ramp[424]);
+    assert(ring.readLatestSince(output.data(), 576, firstCursor) == 0);
+    assert(ring.readLatestSince(output.data(), 576, secondCursor) == 576);
+    ring.append(ramp + 1000, 100);
+    assert(ring.readLatestSince(output.data(), 576, firstCursor) == 100);
+    assert(output[0] == ramp[1000] && output[99] == ramp[1099]);
+    assert(ring.readLatestSince(output.data(), 576, secondCursor) == 100);
+    pcm.clear();
+    nativeAudio[1].maxFrames = 576;
+    ambient_projectm_pcm_v1(1, ramp, 3000, 1, 4);
+    assert(pcm.count == 576);
+    assert(pcm.drainLatest(output.data(), 576) == 576);
+    assert(output[0] == ramp[2424] && output[575] == ramp[2999]);
 }
