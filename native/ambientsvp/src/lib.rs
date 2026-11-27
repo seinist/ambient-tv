@@ -501,6 +501,19 @@ impl AmbientSvp {
         else { plan[1].max(plan[3]) }
     }
 
+    // Cheap preflight for adapters that must allocate an output picture
+    // before visiting. Bypass may need to retire stale queued frames, so
+    // conservatively return ready while any remain.
+    fn ready(&mut self, eof: bool) -> bool {
+        self.eof |= eof;
+        if self.input == 0 { return false; }
+        if self.stats.bypass_reason != 0 { return !self.frames.is_empty(); }
+        let offset = (self.output as i128 * 1_000_000 * self.config.target_den as i128
+            / self.config.target_num as i128) as i64;
+        if self.eof { return offset < self.source_time(self.input); }
+        self.required_input(self.smoother.plan(self.output)) < self.input
+    }
+
     pub fn receive(&mut self, out: &mut [u8], eof: bool) -> Result<Option<i64>, String> {
         if out.len() != self.frame_len() {
             return Err("invalid output size".into());
@@ -540,6 +553,8 @@ impl AmbientSvp {
         if self.eof && offset >= self.source_time(self.input) {
             return Ok(None);
         }
+        // Validate timestamp before emitting into a caller-owned picture.
+        let pts = self.origin.unwrap().checked_add(offset).ok_or("timestamp overflow")?;
         let plan = self.smoother.plan(self.output);
         // Algo 13 with flags=0 uses only the current pair. The upstream plan is
         // conservative and also requests neighbor vectors; waiting for those
@@ -556,8 +571,8 @@ impl AmbientSvp {
             let begin = Instant::now();
             let mut novel = false;
             let is_novel = |data: &[u8]| {
-                self.frames.get(&plan[0]).is_some_and(|s| s.data.as_slice() != data)
-                    && self.frames.get(&plan[1]).is_some_and(|s| s.data.as_slice() != data)
+                self.frames.get(&plan[0]).is_some_and(|s| s.data.as_ptr() != data.as_ptr() && s.data.as_slice() != data)
+                    && self.frames.get(&plan[1]).is_some_and(|s| s.data.as_ptr() != data.as_ptr() && s.data.as_slice() != data)
             };
             #[cfg(feature = "vulkan")]
             let mut emit = |data: &[u8]| {
@@ -660,11 +675,6 @@ impl AmbientSvp {
                 INTERPOLATED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
-        let pts = self
-            .origin
-            .unwrap()
-            .checked_add(offset)
-            .ok_or("timestamp overflow")?;
         self.output += 1;
         self.stats.output_frames += 1;
         self.last_output = Some(pts);
@@ -869,6 +879,18 @@ pub unsafe extern "C" fn ambient_svp_receive(
     }))
     .unwrap_or(-1)
 }
+/// Optional allocation preflight, serialized with receive/push. Applies
+/// the same process gate and EOF latch as receive; does not consume output.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_ready(s: *mut AmbientSvp, eof: i32) -> i32 {
+    if s.is_null() { return -1; }
+    catch_unwind(AssertUnwindSafe(|| {
+        let s = unsafe { &mut *s };
+        if ambient_svp_enabled() == 0 { s.bypass(2); }
+        i32::from(s.ready(eof != 0))
+    })).unwrap_or(-1)
+}
+
 /// Optional output visitor. Data is read-only and valid only during the
 /// synchronous callback. The consumer must not retain it or re-enter SVP.
 #[unsafe(no_mangle)]
