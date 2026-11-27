@@ -489,7 +489,7 @@ class AppPreferences @Inject constructor(
 
     var spotifyEnabled: Boolean
         // Off in builds without Spotify (SPOTIFY_NATIVE): every menu, row and search checks this.
-        get() = com.ambient.tv.BuildConfig.SPOTIFY_ENABLED && prefs.getBoolean(KEY_SPOTIFY_ENABLED, false)
+        get() = com.ambient.tv.modules.SystemModuleAvailability.spotifyOffered && prefs.getBoolean(KEY_SPOTIFY_ENABLED, false)
         set(value) = prefs.edit { putBoolean(KEY_SPOTIFY_ENABLED, value) }
 
     var radioEnabled: Boolean
@@ -716,7 +716,7 @@ class AppPreferences @Inject constructor(
     }
 
     val needsInitialSetup: Boolean
-        get() = !initialSetupCompleted && !filesEnabled && fileSources.isEmpty() && !radioEnabled && !(com.ambient.tv.BuildConfig.MONOGRAM_NATIVE && telegramEnabled) && !isConfigured && !isJellyfinConfigured && !isEmbyConfigured && !isTvheadendConfigured && !isRommConfigured
+        get() = !initialSetupCompleted && !filesEnabled && fileSources.isEmpty() && !radioEnabled && !(com.ambient.tv.modules.SystemModuleAvailability.monogramOffered && telegramEnabled) && !isConfigured && !isJellyfinConfigured && !isEmbyConfigured && !isTvheadendConfigured && !isRommConfigured
 
     var host: String
         get() = prefs.getString(KEY_HOST, "") ?: ""
