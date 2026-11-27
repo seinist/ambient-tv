@@ -19,6 +19,8 @@ const SATD:bool=SVP_SATD;
 const CHROMA:bool=SVP_CHROMA;
 const LAMBDA:u32=SVP_LAMBDA;
 const PNEW:u32=SVP_PNEW;
+const SCENE:u32=SVP_SCENE;
+var<workgroup> scene_bad:array<u32,64>;
 var<workgroup> scores:array<u32,64>;
 var<workgroup> raws:array<u32,64>;
 var<workgroup> ranks:array<u32,64>;
@@ -92,13 +94,13 @@ fn tile(origin:vec2i,offset:vec2i,mv:vec2i,plane:u32,reverse:bool)->vec2u{
     for(var y=0;y<4;y++){
         var row=vec4i(0);
         for(var x=0;x<4;x++){row[x]=diff(origin,offset+vec2i(x,y),mv,plane,reverse);}
-        raw+=u32(dot(abs(row),vec4i(1)));
+        raw+=u32((abs(row.x)+abs(row.y)+abs(row.z)+abs(row.w)));
         rows[y]=had(row);
     }
     var value=0u;
     for(var x=0;x<4;x++){
         let col=had(vec4i(rows[0][x],rows[1][x],rows[2][x],rows[3][x]));
-        value+=u32(dot(abs(col),vec4i(1)));
+        value+=u32((abs(col.x)+abs(col.y)+abs(col.z)+abs(col.w)));
     }
     return vec2u(value,raw);
 }
@@ -121,7 +123,7 @@ fn plane_metric(origin:vec2i,mv:vec2i,plane:u32,reverse:bool,satd:bool)->vec2u{
 }
 fn metric(origin:vec2i,mv:vec2i,seed:vec2i,reverse:bool,satd:bool,bound:u32,gate:u32)->vec2u{
     let d=mv-seed;
-    let motion=LAMBDA*u32(dot(d,d))/256u;
+    let motion=LAMBDA*u32((d.x*d.x+d.y*d.y))/256u;
     if motion>=bound{return vec2u(0xffffffffu);}
     let y=plane_metric(origin,mv,0u,reverse,satd);
     if gate!=0xffffffffu && y.y*4u>gate*5u{return vec2u(0xffffffffu);}
@@ -191,4 +193,22 @@ fn analyse(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:
         let normalized=(raw*64u/u32(select(1,4,CODE_MAX==1023)))/n;
         fields[index]=vec4i(vectors[0],i32(normalized),PEL);
     }
+}
+
+// Global scene gate on device. Both directional residuals must be
+// considered before synthesizing; no field or image readback.
+@compute @workgroup_size(64)
+fn scene(@builtin(local_invocation_index) lane:u32){
+    let n=geometry.z*(geometry.w&0xffffu);
+    var bad=0u;
+    for(var i=lane;i<n;i+=64u){
+        if fields[i].z>64*48||fields[i+n].z>64*48{bad+=1u;}
+    }
+    scene_bad[lane]=bad;
+    workgroupBarrier();
+    for(var stride=32u;stride>0u;stride/=2u){
+        if lane<stride{scene_bad[lane]+=scene_bad[lane+stride];}
+        workgroupBarrier();
+    }
+    if lane==0u{fields[2u*n]=vec4i(select(0,1,scene_bad[0]*100u>=n*SCENE),i32(scene_bad[0]),i32(n),0);}
 }
