@@ -25,7 +25,7 @@ utils = "modules/video_output/android/utils.h"
 insert(utils, "#include <assert.h>", "#include <assert.h>\n#include <stdatomic.h> // SVP consumer fence state",
        "stdatomic.h> // SVP")
 insert(utils, "    AImageReader *air;",
-       "    AImageReader *air;\n    bool svp_surface; // SVP selected GPU-readable PRIVATE producer\n    bool svp_hdr10; // explicit Main10 PQ/HLG",
+       "    AImageReader *air;\n    bool svp_surface; // SVP selected GPU-readable PRIVATE producer\n    bool svp_hdr10; // explicit Main10 PQ/HLG\n    atomic_bool svp_dynamic_hdr; // sticky dynamic metadata guard",
        "bool svp_surface; // SVP")
 insert(utils, "    AImage *image;\n    int fence_fd;",
        "    AImage *image;\n    AHardwareBuffer *svp_buffer; // SVP compositor-owned RGB output\n"
@@ -35,6 +35,7 @@ insert(utils, "    AImage *image;\n    int fence_fd;",
 decoder = "modules/codec/omxil/mediacodec.c"
 shutil.copyfile(svp / "include/svp_sdr_profile.h", source / "modules/codec/omxil/svp_sdr_profile.h")
 shutil.copyfile(svp / "include/svp_av1_config.h", source / "modules/codec/omxil/svp_av1_config.h")
+shutil.copyfile(svp / "include/svp_hevc_hdr_guard.h", source / "modules/codec/omxil/svp_hevc_hdr_guard.h")
 insert("modules/codec/Makefile.am",
        "libmediacodec_plugin_la_SOURCES = codec/omxil/mediacodec.c codec/omxil/mediacodec.h",
        "libmediacodec_plugin_la_SOURCES = packetizer/av1_obu.c packetizer/av1_obu.h \\\n"
@@ -42,7 +43,7 @@ insert("modules/codec/Makefile.am",
        "libmediacodec_plugin_la_SOURCES = packetizer/av1_obu.c")
 insert(decoder, '#include <vlc_common.h>', '#include <vlc_common.h>\n#include "svp_sdr_profile.h" // SVP profile allowlist',
        '"svp_sdr_profile.h" // SVP')
-insert(decoder, '#include "mediacodec.h"', '#include "mediacodec.h"\n#include "svp_av1_config.h"\n#include "../../packetizer/av1_obu.h" // SVP AV1 parser',
+insert(decoder, '#include "mediacodec.h"', '#include "mediacodec.h"\n#include "svp_av1_config.h"\n#include "svp_hevc_hdr_guard.h"\n#include "../../packetizer/av1_obu.h" // SVP AV1 parser',
        '"../../packetizer/av1_obu.h" // SVP AV1 parser')
 insert(decoder, "static int ParseExtra(decoder_t *p_dec)",
        """/* SVP AV1: validate both av1C and actual sequence syntax. */
@@ -112,7 +113,7 @@ insert(decoder, '    add_bool(CFG_PREFIX "dr", true,',
        '    add_bool(CFG_PREFIX "dr", true,',
        'add_bool(CFG_PREFIX "svp-vulkan"')
 insert(decoder, "            bool use_air;",
-       "            bool use_air;\n            bool svp_sdr8; // SVP explicit 8-bit codec profile\n            bool svp_hdr10;",
+       "            bool use_air;\n            bool svp_sdr8; // SVP explicit 8-bit codec profile\n            bool svp_hdr10;\n            bool svp_dynamic_hdr;",
        "bool svp_sdr8;")
 insert(decoder, "        p_sys->video.use_air = false;",
        "        p_sys->video.use_air = false;\n"
@@ -140,11 +141,24 @@ insert(decoder, "    if (need_gpu)\n        usage |= AHARDWAREBUFFER_USAGE_GPU_S
        "    if (need_gpu || svp_surface)\n        usage |= AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;",
        "bool svp_surface = !need_gpu")
 insert(decoder, "    avctx->air = reader;",
-       "    avctx->air = reader;\n    avctx->svp_surface = svp_surface;\n    avctx->svp_hdr10 = svp_surface && p_sys->video.svp_hdr10;",
+       "    avctx->air = reader;\n    avctx->svp_surface = svp_surface;\n    avctx->svp_hdr10 = svp_surface && p_sys->video.svp_hdr10;\n    atomic_init(&avctx->svp_dynamic_hdr, p_sys->video.svp_dynamic_hdr);",
        "avctx->svp_surface = svp_surface;")
 insert(decoder, "    avctx->air = NULL;",
-       "    avctx->air = NULL;\n    avctx->svp_surface = false;\n    avctx->svp_hdr10 = false;",
+       "    avctx->air = NULL;\n    avctx->svp_surface = false;\n    avctx->svp_hdr10 = false;\n    atomic_init(&avctx->svp_dynamic_hdr, false);",
        "avctx->svp_surface = false;")
+insert(decoder, "    *pp_block = hxxx_helper_process_block(hh, *pp_block);\n    if (!*pp_block)\n        return 0;",
+       "    *pp_block = hxxx_helper_process_block(hh, *pp_block);\n    if (!*pp_block)\n        return 0;\n"
+       "    // SVP dynamic HDR requires a metadata-aware renderer, not static ASC.\n"
+       "    if (p_sys->video.svp_hdr10 && !p_sys->video.svp_dynamic_hdr &&\n"
+       "        svp_hevc_dynamic_hdr((*pp_block)->p_buffer, (*pp_block)->i_buffer)) {\n"
+       "        p_sys->video.svp_dynamic_hdr = true;\n"
+       "        if (p_sys->video.ctx) {\n"
+       "            android_video_context_t *svpctx = vlc_video_context_GetPrivate(p_sys->video.ctx, VLC_VIDEO_CONTEXT_AWINDOW);\n"
+       "            atomic_store(&svpctx->svp_dynamic_hdr, true);\n"
+       "        }\n"
+       "        msg_Warn(p_dec, \"SVP dynamic HDR detected; disabling static HDR interpolation\");\n"
+       "    }",
+       "SVP dynamic HDR requires")
 insert(decoder, "    apctx->image = image;\n    apctx->fence_fd = fence_fd;",
        "    apctx->image = image;\n    apctx->svp_buffer = NULL; // SVP source picture\n    apctx->fence_fd = fence_fd;",
        "apctx->svp_buffer = NULL; // SVP")
