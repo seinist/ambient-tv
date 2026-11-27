@@ -56,6 +56,12 @@ struct UploadPool {
     submitted: Vec<wgpu::Buffer>,
 }
 
+struct PendingReadback {
+    buffer: wgpu::Buffer,
+    result: mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+    deadline: std::time::Instant,
+}
+
 pub struct Gpu {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -78,6 +84,7 @@ pub struct Gpu {
     uploads: Mutex<UploadPool>,
     output: wgpu::Buffer,
     readback: wgpu::Buffer,
+    readback_next: Option<wgpu::Buffer>,
     width: u32,
     height: u32,
     bytes: u64,
@@ -252,6 +259,7 @@ impl Gpu {
             uploads: Mutex::new(UploadPool::default()),
             output,
             readback,
+            readback_next: None,
             width,
             height,
             bytes,
@@ -432,10 +440,48 @@ impl Gpu {
         next: &[u8],
         output: &mut [u8],
     ) -> Result<(), String> {
+        let pending = self.submit(job, current, next, self.readback.clone())?;
+        self.finish(pending, output)
+    }
+
+    /// Two outputs from the same source pair, ordered on one Vulkan queue.
+    /// The second command reuses source/field/output resources only after the
+    /// first copy-to-readback command; it has its own readback allocation.
+    /// Both jobs are submitted before waiting for either mapped result.
+    pub fn render_pair(
+        &mut self,
+        first: &GpuJob,
+        second: &GpuJob,
+        current: &[u8],
+        next: &[u8],
+        output: &mut [u8],
+        output_next: &mut [u8],
+    ) -> Result<(), String> {
+        if first.n != second.n { return Err("different source pairs".into()); }
+        let second_buffer = self.readback_next.get_or_insert_with(|| self.device.create_buffer(
+            &wgpu::BufferDescriptor {
+                label: Some("SVP second in-flight readback"),
+                size: self.bytes,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })).clone();
+        let pending = self.submit(first, current, next, self.readback.clone())?;
+        let pending_next = self.submit(second, current, next, second_buffer)?;
+        self.finish(pending, output)?;
+        self.finish(pending_next, output_next)
+    }
+
+    fn submit(
+        &mut self,
+        job: &GpuJob,
+        current: &[u8],
+        next: &[u8],
+        readback: wgpu::Buffer,
+    ) -> Result<PendingReadback, String> {
         self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let mut encoder = self.device.create_command_encoder(&Default::default());
         // Retire old sources before allocating new ones; queue ordering makes
-        // reuse safe, and render waits for the previous readback before returning.
+        // reuse safe, including when a second output is submitted in flight.
         let retained = self.sources.split_off(&job.n);
         self.recycled_sources.extend(std::mem::replace(&mut self.sources, retained).into_values());
         self.recycled_sources.truncate(2);
@@ -571,39 +617,44 @@ impl Gpu {
                 );
             }
         }
-        encoder.copy_buffer_to_buffer(&self.output, 0, &self.readback, 0, self.bytes);
+        encoder.copy_buffer_to_buffer(&self.output, 0, &readback, 0, self.bytes);
         self.queue.submit([encoder.finish()]);
         self.recycle_uploads();
+        // Validation scope belongs to this submission. Resolve it before
+        // opening a second scope; no wait for the GPU readback is needed here.
+        if let Some(e) = pollster::block_on(self.device.pop_error_scope()) {
+            return Err(e.to_string());
+        }
         let (tx, rx) = mpsc::sync_channel(1);
-        self.readback
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |r| {
-                let _ = tx.send(r);
-            });
+        readback.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        Ok(PendingReadback {
+            buffer: readback,
+            result: rx,
+            deadline: std::time::Instant::now() + Duration::from_secs(3),
+        })
+    }
+
+    fn finish(&mut self, pending: PendingReadback, output: &mut [u8]) -> Result<(), String> {
         // Poll without an unbounded vkWaitForFences: seek/stop must recover from a lost GPU.
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
         let mapped = loop {
             self.device.poll(wgpu::Maintain::Poll);
-            match rx.try_recv() {
+            match pending.result.try_recv() {
                 Ok(result) => break result.map_err(|e| e.to_string()),
                 Err(mpsc::TryRecvError::Disconnected) => break Err("GPU map disconnected".into()),
-                Err(_) if std::time::Instant::now() >= deadline => {
+                Err(_) if std::time::Instant::now() >= pending.deadline => {
                     break Err("GPU compute timeout".into());
                 }
                 Err(_) => std::thread::sleep(Duration::from_micros(200)),
             }
         };
-        let validation = pollster::block_on(self.device.pop_error_scope());
         mapped?;
-        if let Some(e) = validation {
-            self.readback.unmap();
-            return Err(e.to_string());
-        }
         {
-            let mapped = self.readback.slice(..).get_mapped_range();
+            let mapped = pending.buffer.slice(..).get_mapped_range();
             output.copy_from_slice(&mapped[..output.len()]);
         }
-        self.readback.unmap();
+        pending.buffer.unmap();
         if self.cache_dirty {
             if let Some((key, cache)) = &self.driver_cache {
                 remember_cache_data(key, cache);
