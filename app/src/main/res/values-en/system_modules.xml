@@ -12,4 +12,10 @@
     <string name="module_settings_restart">Selection saved. Restart the app to apply.</string>
     <string name="module_settings_no_candidate">No compatible package or previous version available.</string>
     <string name="module_settings_error">Module operation failed. Existing selection was not intentionally replaced.</string>
+    <string name="module_state_missing">Not installed</string>
+    <string name="module_state_bundled">Bundled — not initialized</string>
+    <string name="module_state_external">Downloaded — not initialized</string>
+    <string name="module_state_active_bundled">Active (bundled)</string>
+    <string name="module_state_active_external">Active (downloaded)</string>
+    <string name="module_state_failed">Module unavailable or incompatible</string>
 </resources>
