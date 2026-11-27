@@ -4,7 +4,7 @@
 //! All command submission, image transitions and external-memory acquire/
 //! release remain the caller's responsibility. See ambientsvp_vulkan.h.
 use ash::vk;
-use std::{sync::{Arc,atomic::{AtomicU32,Ordering}},panic::{catch_unwind,AssertUnwindSafe},ptr};
+use std::{sync::{Arc,Mutex,atomic::{AtomicBool,AtomicU32,Ordering}},panic::{catch_unwind,AssertUnwindSafe},ptr};
 use crate::resident::{MOTION,SYNTHESIS};
 
 const MAX_PHASES:usize=8;
@@ -79,12 +79,27 @@ impl Pipeline{
     }
 }
 
+// Descriptor sets and device-local fields are private to one pair until
+// its exact submission fence retires. Cache only fully initialized bundles.
+struct PairResources{
+    device:ash::Device,pool:vk::DescriptorPool,field:vk::Buffer,
+    memory:vk::DeviceMemory,sets:Vec<vk::DescriptorSet>,
+}
+impl Drop for PairResources{
+    fn drop(&mut self){unsafe{
+        self.device.destroy_descriptor_pool(self.pool,None);
+        self.device.destroy_buffer(self.field,None);
+        self.device.free_memory(self.memory,None);
+    }}
+}
 struct Core{
     device:ash::Device,
     memory:vk::PhysicalDeviceMemoryProperties,
     motion:Pipeline,synthesis:Pipeline,
     width:u32,height:u32,gw:u32,gh:u32,field_size:u64,
     in_flight:AtomicU32,
+    idle:Mutex<Vec<PairResources>>,
+    lost:AtomicBool,
 }
 pub struct VulkanResident(Arc<Core>);
 #[repr(C)]
@@ -133,13 +148,21 @@ impl Drop for VulkanPair{
 }
 impl VulkanPair{
     fn new(core:Arc<Core>,command:vk::CommandBuffer,a:VulkanPicture,b:VulkanPicture)->Result<Self>{
-        if command==vk::CommandBuffer::null() || !a.valid() || !b.valid() || a.rgb()!=b.rgb(){return Err("invalid resident pictures".into());}
+        if core.lost.load(Ordering::Acquire) || command==vk::CommandBuffer::null() || !a.valid() || !b.valid() || a.rgb()!=b.rgb(){return Err("invalid resident pictures".into());}
         core.in_flight.fetch_update(Ordering::AcqRel,Ordering::Acquire,|n|
             (n<MAX_IN_FLIGHT).then_some(n+1)).map_err(|_|"resident in-flight budget")?;
         let mut p=Self{core,pool:vk::DescriptorPool::null(),field:vk::Buffer::null(),
             memory:vk::DeviceMemory::null(),sets:Vec::new(),command,a,b,phases:0,fence:vk::Fence::null(),
             #[cfg(target_os="android")]
             ahb_inputs:None};
+        let cached=p.core.idle.lock().unwrap_or_else(|e|e.into_inner()).pop();
+        if let Some(mut cached)=cached{
+            p.pool=std::mem::replace(&mut cached.pool,vk::DescriptorPool::null());
+            p.field=std::mem::replace(&mut cached.field,vk::Buffer::null());
+            p.memory=std::mem::replace(&mut cached.memory,vk::DeviceMemory::null());
+            p.sets=std::mem::take(&mut cached.sets);
+            return Ok(p);
+        }
         let c=&p.core;
         let d=&c.device;
         unsafe{
@@ -165,6 +188,20 @@ impl VulkanPair{
                 .set_layouts(&layouts)).map_err(err)?;
         }
         Ok(p)
+    }
+    // Called only after successful fence retirement or explicit cancellation
+    // of a discarded command buffer. The next pair rewrites every used set.
+    fn recycle(&mut self){
+        if self.core.lost.load(Ordering::Acquire){return;}
+        let mut idle=self.core.idle.lock().unwrap_or_else(|e|e.into_inner());
+        if idle.len()>=MAX_IN_FLIGHT as usize{return;}
+        idle.push(PairResources{
+            device:self.core.device.clone(),
+            pool:std::mem::replace(&mut self.pool,vk::DescriptorPool::null()),
+            field:std::mem::replace(&mut self.field,vk::Buffer::null()),
+            memory:std::mem::replace(&mut self.memory,vk::DeviceMemory::null()),
+            sets:std::mem::take(&mut self.sets),
+        });
     }
     fn image(&self,set:vk::DescriptorSet,binding:u32,view:vk::ImageView,ty:vk::DescriptorType){
         let info=[vk::DescriptorImageInfo::default().image_view(view).image_layout(vk::ImageLayout::GENERAL)];
@@ -242,7 +279,7 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
     let mut types=vec![vk::DescriptorType::SAMPLED_IMAGE;6];
     types.extend([vk::DescriptorType::STORAGE_BUFFER,vk::DescriptorType::STORAGE_IMAGE]);
     let synthesis=Pipeline::new(&device,&types,&synthesis_spirv()?,c"synthesize")?;
-    Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,width,height,gw,gh,field_size,in_flight:AtomicU32::new(0)})))
+    Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,width,height,gw,gh,field_size,in_flight:AtomicU32::new(0),idle:Mutex::new(Vec::new()),lost:AtomicBool::new(false)})))
 }
 
 #[unsafe(no_mangle)]
@@ -316,10 +353,10 @@ pub unsafe extern "C" fn ambient_svp_vk_release(pair:*mut VulkanPair)->i32{
     let p=unsafe{&*pair};
     if p.fence==vk::Fence::null(){return -1;}
     match unsafe{p.core.device.get_fence_status(p.fence)}{
-        Ok(true)=>{unsafe{drop(Box::from_raw(pair))};1}
+        Ok(true)=>{let mut p=unsafe{Box::from_raw(pair)};p.recycle();drop(p);1}
         Ok(false)=>0,
         // A confirmed lost device no longer executes the submission.
-        Err(vk::Result::ERROR_DEVICE_LOST)=>{unsafe{drop(Box::from_raw(pair))};1}
+        Err(vk::Result::ERROR_DEVICE_LOST)=>{p.core.lost.store(true,Ordering::Release);unsafe{drop(Box::from_raw(pair))};1}
         Err(_)=>-1,
     }
 }
@@ -328,7 +365,7 @@ pub unsafe extern "C" fn ambient_svp_vk_release(pair:*mut VulkanPair)->i32{
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_cancel(pair:*mut VulkanPair)->i32{
     if pair.is_null() || unsafe{(*pair).fence}!=vk::Fence::null(){return -1;}
-    unsafe{drop(Box::from_raw(pair))};0
+    let mut p=unsafe{Box::from_raw(pair)};p.recycle();drop(p);0
 }
 
 #[cfg(test)]
@@ -498,6 +535,7 @@ mod gpu_tests{
             let a=rgb(images[5].view);let b=rgb(images[7].view);
             let pair=ambient_svp_vk_begin(engine,cmd,&a,&b);
             assert!(!pair.is_null());
+            let handles=((*pair).field,(*pair).pool,(*pair).sets.clone());
             // Matrix=limited BT601 intentionally: RGB must not be converted again.
             assert_eq!(ambient_svp_vk_render(pair,0.5,0,images[6].view),0);
             transition(&d,cmd,images[6].image,vk::ImageLayout::GENERAL,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
@@ -516,6 +554,36 @@ mod gpu_tests{
             let mapped=d.map_memory(readback_memory,0,bytes,vk::MemoryMapFlags::empty()).unwrap();
             for pixel in std::slice::from_raw_parts(mapped.cast::<u8>(),bytes as usize).chunks_exact(4){
                 assert!(pixel[..3].iter().all(|&v|v.abs_diff(80)<=1)&&pixel[3]==255,"RGB resident result {pixel:?}");
+            }
+            d.unmap_memory(readback_memory);
+            // The completed pair's entire bundle is reusable, but no
+            // in-flight bundle can be borrowed by another pair.
+            assert_eq!((*engine).0.idle.lock().unwrap().len(),1);
+            d.reset_fences(&[fence]).unwrap();
+            d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
+            d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).unwrap();
+            transition(&d,cmd,images[6].image,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,vk::ImageLayout::GENERAL,
+                vk::AccessFlags::TRANSFER_READ,vk::AccessFlags::SHADER_WRITE,
+                vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::COMPUTE_SHADER);
+            let stationary=ambient_svp_vk_begin(engine,cmd,&a,&a);
+            assert!(!stationary.is_null());
+            assert_eq!(((*stationary).field,(*stationary).pool,&(*stationary).sets),(handles.0,handles.1,&handles.2));
+            assert_eq!((*engine).0.idle.lock().unwrap().len(),0);
+            assert_eq!(ambient_svp_vk_render(stationary,0.5,0,images[6].view),0);
+            transition(&d,cmd,images[6].image,vk::ImageLayout::GENERAL,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                vk::AccessFlags::SHADER_WRITE,vk::AccessFlags::TRANSFER_READ,
+                vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::TRANSFER);
+            d.cmd_copy_image_to_buffer(cmd,images[6].image,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,readback,&region);
+            d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::HOST,
+                vk::DependencyFlags::empty(),&host,&[],&[]);
+            d.end_command_buffer(cmd).unwrap();
+            d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
+            assert_eq!(ambient_svp_vk_seal(stationary,fence),0);
+            d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
+            assert_eq!(ambient_svp_vk_release(stationary),1);
+            let mapped=d.map_memory(readback_memory,0,bytes,vk::MemoryMapFlags::empty()).unwrap();
+            for pixel in std::slice::from_raw_parts(mapped.cast::<u8>(),bytes as usize).chunks_exact(4){
+                assert!(pixel[..3].iter().all(|&v|v.abs_diff(64)<=1)&&pixel[3]==255,"reused resident result {pixel:?}");
             }
             d.unmap_memory(readback_memory);
             ambient_svp_vk_destroy(engine);
