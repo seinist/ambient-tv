@@ -117,6 +117,8 @@ pub struct AmbientSvp {
     prefetched: Option<i32>,
     #[cfg(feature = "vulkan")]
     prefetch_buffer: Vec<u8>,
+    #[cfg(all(test, feature = "vulkan"))]
+    disable_prefetch: bool,
 }
 
 impl AmbientSvp {
@@ -241,6 +243,8 @@ impl AmbientSvp {
             prefetched: None,
             #[cfg(feature = "vulkan")]
             prefetch_buffer: Vec::new(),
+            #[cfg(all(test, feature = "vulkan"))]
+            disable_prefetch: false,
         })
     }
 
@@ -313,7 +317,7 @@ impl AmbientSvp {
             // frame and the analysis of an identical pair. No sampled hashes,
             // luma-only comparison or guessed static vectors are used.
             let repeated = self.previous.is_some()
-                && self.frames.get(&(self.input - 1)).is_some_and(|frame| frame.data == data);
+                && self.frames.get(&(self.input - 1)).is_some_and(|frame| frame.data.as_slice() == data);
             if repeated {
                 let previous = self.previous.as_ref().unwrap();
                 if self.repeated_vectors.is_none() {
@@ -471,6 +475,8 @@ impl AmbientSvp {
                     && next_plan[0] == plan[0]
                     && self.required_input(next_plan) < self.input
                     && (!self.eof || next_offset < self.source_time(self.input));
+                #[cfg(test)]
+                let can_prefetch = can_prefetch && !self.disable_prefetch;
                 use svpflow_core::smooth_engine::Output;
                 match self.smoother.prepare_gpu(self.output) {
                     Output::Copy(k) => {
@@ -717,5 +723,76 @@ pub unsafe extern "C" fn ambient_svp_bypass(s: *mut AmbientSvp, reason: u32) {
         let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
             (*s).bypass(reason);
         }));
+    }
+}
+
+#[cfg(all(test, feature = "vulkan"))]
+mod pipelining_tests {
+    use super::*;
+
+    fn config() -> Config {
+        Config {
+            abi: AMBIENTSVP_ABI, width: 96, height: 66,
+            source_num: 24, source_den: 1, target_num: 120, target_den: 1,
+            preset: 1, backend: 2, threads: 2, artifacts: 2, scene: 1,
+            algo: 13, block: 16, overlap: 2, pel: 1, search: 1,
+        }
+    }
+
+    fn image(n: usize) -> Vec<u8> {
+        let mut data = vec![128; 96 * 66 * 3 / 2];
+        for y in 0..66 {
+            for x in 0..96 {
+                data[y*96+x] = if (x + 96 - n*2 % 96) % 96 < 32 { 180 } else { 40 };
+            }
+        }
+        data
+    }
+
+    #[test]
+    #[ignore = "requires hardware Vulkan"]
+    fn dual_output_matches_single_and_drops_prefetch_on_seek() {
+        let mut pipelined = AmbientSvp::new(config()).unwrap();
+        let mut serial = AmbientSvp::new(config()).unwrap();
+        serial.disable_prefetch = true;
+        let mut a = vec![0; pipelined.frame_len()];
+        let mut b = a.clone();
+        let mut saw_prefetch = false;
+        for origin in [0, 9_000_000] {
+            pipelined.reset().unwrap();
+            serial.reset().unwrap();
+            assert!(pipelined.prefetched.is_none());
+            'feed: for n in 0..16 {
+                let input = image(n);
+                let pts = origin + n as i64 * 1_000_000 / 24;
+                pipelined.push(&input, pts).unwrap();
+                serial.push(&input, pts).unwrap();
+                loop {
+                    let ap = pipelined.receive(&mut a, false).unwrap();
+                    let bp = serial.receive(&mut b, false).unwrap();
+                    assert_eq!(ap, bp);
+                    if ap.is_none() { break; }
+                    assert_eq!(a, b, "different output at {ap:?}");
+                    if pipelined.prefetched.is_some() {
+                        saw_prefetch = true;
+                        // Seek with an already computed but not delivered frame.
+                        if origin == 0 { break 'feed; }
+                    }
+                }
+            }
+            if origin != 0 {
+                loop {
+                    let ap = pipelined.receive(&mut a, true).unwrap();
+                    let bp = serial.receive(&mut b, true).unwrap();
+                    assert_eq!(ap, bp);
+                    if ap.is_none() { break; }
+                    assert_eq!(a, b);
+                }
+            }
+            assert_eq!(pipelined.stats.backend, 2);
+            assert_eq!(serial.stats.backend, 2);
+            assert_eq!(pipelined.stats.bypass_reason, 0);
+        }
+        assert!(saw_prefetch, "test must exercise two in-flight jobs");
     }
 }
