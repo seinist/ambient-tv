@@ -117,6 +117,8 @@ pub struct VulkanPair{
     a:VulkanPicture,b:VulkanPicture,
     phases:usize,
     fence:vk::Fence,
+    #[cfg(target_os="android")]
+    ahb_inputs:Option<[*const crate::ahb_vulkan::Job;2]>,
 }
 impl Drop for VulkanPair{
     fn drop(&mut self){unsafe{
@@ -124,6 +126,8 @@ impl Drop for VulkanPair{
         d.destroy_descriptor_pool(self.pool,None);
         d.destroy_buffer(self.field,None);
         d.free_memory(self.memory,None);
+        #[cfg(target_os="android")]
+        if let Some(inputs)=self.ahb_inputs.take(){for p in inputs{(&*p).release_consumer();}}
         self.core.in_flight.fetch_sub(1,Ordering::AcqRel);
     }}
 }
@@ -133,7 +137,9 @@ impl VulkanPair{
         core.in_flight.fetch_update(Ordering::AcqRel,Ordering::Acquire,|n|
             (n<MAX_IN_FLIGHT).then_some(n+1)).map_err(|_|"resident in-flight budget")?;
         let mut p=Self{core,pool:vk::DescriptorPool::null(),field:vk::Buffer::null(),
-            memory:vk::DeviceMemory::null(),sets:Vec::new(),command,a,b,phases:0,fence:vk::Fence::null()};
+            memory:vk::DeviceMemory::null(),sets:Vec::new(),command,a,b,phases:0,fence:vk::Fence::null(),
+            #[cfg(target_os="android")]
+            ahb_inputs:None};
         let c=&p.core;
         let d=&c.device;
         unsafe{
@@ -261,6 +267,30 @@ pub unsafe extern "C" fn ambient_svp_vk_begin(s:*const VulkanResident,command:vk
     catch_unwind(AssertUnwindSafe(||{
         let core=unsafe{(*s).0.clone()};
         let Ok(pair)=VulkanPair::new(core,command,unsafe{*a},unsafe{*b})else{return ptr::null_mut();};
+        unsafe{pair.analyse();}
+        Box::into_raw(Box::new(pair))
+    })).unwrap_or(ptr::null_mut())
+}
+/// Begin a GPU-only resident pair directly from converted MediaCodec jobs.
+/// Same queue/device and geometry are checked. The caller must record and
+/// submit on that queue after the converter submissions. Each job remains
+/// pinned until the pair fence retires (or an unsubmitted pair is canceled).
+#[cfg(target_os="android")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_begin_ahb(s:*const VulkanResident,command:vk::CommandBuffer,
+    queue:vk::Queue,a:*const crate::ahb_vulkan::Job,b:*const crate::ahb_vulkan::Job)->*mut VulkanPair{
+    if s.is_null() || a.is_null() || b.is_null() || queue==vk::Queue::null(){return ptr::null_mut();}
+    catch_unwind(AssertUnwindSafe(||{
+        let core=unsafe{(*s).0.clone()};
+        let convert=|p:*const crate::ahb_vulkan::Job|{
+            let (device,q,w,h,view)=unsafe{(&*p).picture()};
+            if device!=core.device.handle() || q!=queue || (w,h)!=(core.width,core.height){return None;}
+            Some(VulkanPicture{y:view,u:vk::ImageView::null(),v:vk::ImageView::null(),nv12:2,chroma_location:0})
+        };
+        let (Some(pa),Some(pb))=(convert(a),convert(b))else{return ptr::null_mut();};
+        let Ok(mut pair)=VulkanPair::new(core,command,pa,pb)else{return ptr::null_mut();};
+        unsafe{(&*a).retain_consumer();(&*b).retain_consumer();}
+        pair.ahb_inputs=Some([a,b]);
         unsafe{pair.analyse();}
         Box::into_raw(Box::new(pair))
     })).unwrap_or(ptr::null_mut())
