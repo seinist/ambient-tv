@@ -51,7 +51,7 @@ public:
             VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_FORMAT_PROPERTIES_ANDROID};
         VkAndroidHardwareBufferPropertiesANDROID properties{
             VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_PROPERTIES_ANDROID};
-        VkResult result = query(buffer, desc, format, properties);
+        VkResult result = query(buffer, desc, format, properties, raw_yuv);
         if (result != VK_SUCCESS) return result;
 
         raw_yuv_ = raw_yuv;
@@ -107,7 +107,7 @@ public:
             VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_FORMAT_PROPERTIES_ANDROID};
         VkAndroidHardwareBufferPropertiesANDROID properties{
             VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_PROPERTIES_ANDROID};
-        VkResult result = query(buffer, desc, format, properties);
+        VkResult result = query(buffer, desc, format, properties, raw_yuv_);
         if (result != VK_SUCCESS) return result;
         if (!same_conversion_format(format_, format)) return VK_SUCCESS;
         if (raw_yuv_ && !raw_supported(format, desc)) return VK_ERROR_FORMAT_NOT_SUPPORTED;
@@ -144,7 +144,7 @@ private:
 
     VkResult query(AHardwareBuffer *buffer, AHardwareBuffer_Desc &desc,
                    VkAndroidHardwareBufferFormatPropertiesANDROID &format,
-                   VkAndroidHardwareBufferPropertiesANDROID &properties) const {
+                   VkAndroidHardwareBufferPropertiesANDROID &properties, bool raw_yuv) const {
         AHardwareBuffer_describe(buffer, &desc);
         if (!desc.width || !desc.height || desc.layers != 1 ||
             !(desc.usage & AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE) ||
@@ -156,10 +156,17 @@ private:
         // Vulkan allows external-format images even when an equivalent VkFormat
         // exists. formatFeatures describes this external route, not the native
         // VkFormat. Keep the equivalent format for precision/identity checks.
-        if (!supported_decoder_format(format.format, false) || !format.externalFormat ||
-            !(format.formatFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) ||
-            !properties.memoryTypeBits || !properties.allocationSize)
+        if (!properties.memoryTypeBits || !properties.allocationSize)
             return VK_ERROR_FORMAT_NOT_SUPPORTED;
+        if (raw_yuv) {
+            // Native P010 is independently validated with physical-device
+            // format/import queries. Do not require external-format features
+            // for a route that does not use VkExternalFormatANDROID.
+            if (!raw_p010_format(format.format)) return VK_ERROR_FORMAT_NOT_SUPPORTED;
+        } else if (!supported_decoder_format(format.format, false) || !format.externalFormat ||
+                   !(format.formatFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) {
+            return VK_ERROR_FORMAT_NOT_SUPPORTED;
+        }
         return VK_SUCCESS;
     }
 

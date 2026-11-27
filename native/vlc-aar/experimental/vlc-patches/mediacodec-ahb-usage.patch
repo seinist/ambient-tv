@@ -205,7 +205,55 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
          return VLC_EGENERIC;
  
      int32_t width = 1, height = 1; /* Ignored by MediaCodec */
-@@ -988,13 +1075,6 @@
+@@ -967,14 +1054,41 @@
+     if (need_gpu)
+         usage |= AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
+ 
+-    AImageReader *reader;
+-    int32_t status = air_api->AImageReader.newWithUsage(width, height, format,
+-                                                        usage, max_images,
+-                                                        &reader);
++    AImageReader *reader = NULL;
++    int32_t status = AMEDIA_ERROR_UNSUPPORTED;
++    const video_format_t *f = &p_dec->fmt_out.video;
++    const bool hdr = f->transfer == TRANSFER_FUNC_SMPTE_ST2084 ||
++                     f->transfer == TRANSFER_FUNC_HLG;
++    const bool request_p010 = p_sys->video.ambient_ahb &&
++        (p_sys->video.ambient_dovi || (hdr && var_InheritBool(p_dec, "vk-ambient-raw-p010")));
++    if (request_p010 && air_api->AImageReader.newWithDataSpace &&
++        f->i_width && f->i_height && f->i_width <= INT32_MAX && f->i_height <= INT32_MAX) {
++        const int32_t standard = f->primaries == COLOR_PRIMARIES_BT2020 ?
++            ADATASPACE_STANDARD_BT2020 : ADATASPACE_STANDARD_UNSPECIFIED;
++        const int32_t transfer = f->transfer == TRANSFER_FUNC_HLG ?
++            ADATASPACE_TRANSFER_HLG : ADATASPACE_TRANSFER_ST2084;
++        const int32_t range = f->color_range == COLOR_RANGE_FULL ?
++            ADATASPACE_RANGE_FULL : ADATASPACE_RANGE_LIMITED;
++        status = air_api->AImageReader.newWithDataSpace(f->i_width, f->i_height,
++            usage, max_images, AHARDWAREBUFFER_FORMAT_YCbCr_P010,
++            standard | transfer | range, &reader);
++        if (status == AMEDIA_OK && reader)
++            msg_Info(p_dec, "Experimental explicit P010 AImageReader selected");
++    }
++    // Some vendor decoders only accept an implementation-defined surface.
++    // The PRIVATE fallback must still pass the actual native P010 format,
++    // component, precision and per-image dataspace checks at GPU import.
++    if (status != AMEDIA_OK || !reader) {
++        if (reader) air_api->AImageReader.delete(reader);
++        reader = NULL;
++        status = air_api->AImageReader.newWithUsage(width, height, format,
++                                                    usage, max_images, &reader);
++    }
+ 
+-    if (status != 0)
++    if (status != AMEDIA_OK || !reader)
+     {
+-        msg_Warn(p_dec, "AImageReader_newWithUsage failed: %d", status);
++        if (reader) air_api->AImageReader.delete(reader);
++        msg_Warn(p_dec, "AImageReader creation failed: %d", status);
+         return VLC_EGENERIC;
+     }
+ 
+@@ -988,13 +1102,6 @@
          return VLC_EGENERIC;
      }
  
@@ -219,7 +267,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      static const struct vlc_video_context_operations ops =
      {
          .destroy = CleanFromVideoContext,
-@@ -1013,7 +1093,9 @@
+@@ -1013,7 +1120,9 @@
          vlc_video_context_GetPrivate(p_sys->video.ctx, VLC_VIDEO_CONTEXT_AWINDOW);
      avctx->dec_opaque = NULL;
      avctx->air_api = air_api;
@@ -230,7 +278,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      avctx->air = reader;
      avctx->render = NULL;
      avctx->render_ts = NULL;
-@@ -1022,6 +1104,21 @@
+@@ -1022,6 +1131,21 @@
      p_sys->video.p_surface = window;
      p_sys->video.use_air = true;
      p_sys->video.air_waiting_count = 0;
@@ -252,7 +300,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      assert(window != NULL);
      return VLC_SUCCESS;
  }
-@@ -1123,10 +1220,20 @@
+@@ -1123,10 +1247,20 @@
          || (!p_sys->api.b_support_rotation && p_dec->fmt_out.video.orientation != ORIENT_NORMAL)
          || !can_set_video_layout;
  
@@ -273,7 +321,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      if (ret == VLC_SUCCESS)
      {
          vlc_decoder_device_Release(dec_dev);
-@@ -1165,6 +1272,12 @@
+@@ -1165,6 +1299,12 @@
      int i_ret;
      int i_profile = p_dec->fmt_in->i_profile;
      const char *mime = NULL;
@@ -286,7 +334,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
      /* Video or Audio if "mediacodec-audio" bool is true */
      if (p_dec->fmt_in->i_cat != VIDEO_ES && (p_dec->fmt_in->i_cat != AUDIO_ES
-@@ -1195,7 +1308,10 @@
+@@ -1195,7 +1335,10 @@
              /* Single-layer DV retains HEVC CSD/NAL handling, but must select
               * the vendor DV decoder rather than the HEVC base-layer decoder.
               * Android CodecProfileLevel uses one bit per Dolby Vision profile. */
@@ -298,7 +346,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
                  p_dec->fmt_in->video.dovi.bl_present &&
                  !p_dec->fmt_in->video.dovi.el_present &&
                  (p_dec->fmt_in->video.dovi.profile == 5 ||
-@@ -1272,6 +1388,10 @@
+@@ -1272,6 +1415,10 @@
      if ((p_sys = calloc(1, sizeof(*p_sys))) == NULL)
          return VLC_ENOMEM;
  
@@ -309,9 +357,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      p_sys->api.p_obj = p_this;
      p_sys->api.i_codec = p_dec->fmt_in->i_codec;
      p_sys->api.i_cat = p_dec->fmt_in->i_cat;
-@@ -1314,9 +1434,10 @@
-     vlc_cond_init(&p_sys->cond);
-     vlc_cond_init(&p_sys->dec_cond);
+@@ -1316,6 +1463,7 @@
  
      if (p_dec->fmt_in->i_cat == VIDEO_ES)
      {
@@ -319,8 +365,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
          vlc_cond_init(&p_sys->video.air_cond);
          p_sys->video.use_air = false;
          p_sys->video.air_waiting_count = 0;
- 
-@@ -1465,21 +1586,36 @@
+@@ -1465,21 +1613,36 @@
      {
          p_sys->b_aborted = true;
          vlc_cond_broadcast(&p_sys->cond);
@@ -359,7 +404,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
              if (p_sys->video.surfacetexture)
                  vlc_asurfacetexture_Delete(p_sys->video.surfacetexture);
  
-@@ -1503,6 +1639,9 @@
+@@ -1503,6 +1666,9 @@
  
      vlc_mutex_lock(&p_sys->lock);
      p_sys->b_decoder_dead = true;
@@ -369,7 +414,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      vlc_mutex_unlock(&p_sys->lock);
  
      if (p_sys->cat == VIDEO_ES && p_sys->video.ctx)
-@@ -1519,8 +1658,9 @@
+@@ -1519,8 +1685,9 @@
          }
          android_video_context_t *avctx =
              vlc_video_context_GetPrivate(p_sys->video.ctx, VLC_VIDEO_CONTEXT_AWINDOW);
@@ -381,7 +426,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      }
  
      vlc_mutex_lock(&p_sys->lock);
-@@ -1546,6 +1686,7 @@
+@@ -1546,6 +1713,7 @@
      if (p_out->type == MC_OUT_TYPE_BUF)
      {
          if (!p_sys->b_has_format) {
@@ -389,7 +434,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
              msg_Warn(p_dec, "Buffers returned before output format is set, dropping frame");
              timestamp_FifoGet(p_sys->video.timestamp_fifo); /* Remove timestamp */
              return p_sys->api.release_out(&p_sys->api, p_out->buf.i_index, false);
-@@ -1553,6 +1694,7 @@
+@@ -1553,6 +1721,7 @@
  
          if (p_out->buf.i_ts <= p_sys->i_preroll_end)
          {
@@ -397,7 +442,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
              timestamp_FifoGet(p_sys->video.timestamp_fifo); /* Remove timestamp */
              return p_sys->api.release_out(&p_sys->api, p_out->buf.i_index, false);
          }
-@@ -1571,9 +1713,27 @@
+@@ -1571,9 +1740,27 @@
              {
                  /* We need to wait for AImageReader. Otherwise, we might
                   * overwrite a picture (even when using acquireNextImageAsync) */
@@ -426,7 +471,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
                  if (p_sys->b_flush_out)
                  {
-@@ -1582,10 +1742,54 @@
+@@ -1582,10 +1769,54 @@
                      return 0;
                  }
  
@@ -483,7 +528,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
                  /* picture will be wrapped from AImageReader callback */
                  assert(*pp_out_pic  == NULL);
              }
-@@ -1944,9 +2148,12 @@
+@@ -1944,9 +2175,12 @@
  
          /* Wait for an output buffer. This function returns when a new output
           * is available or if output is flushed. */
@@ -497,7 +542,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
          /* Ignore dequeue_out errors caused by flush, or late picture being
           * dequeued after close. */
-@@ -1973,7 +2180,9 @@
+@@ -1973,7 +2207,9 @@
          if (i_index >= 0 || i_index == MC_API_INFO_OUTPUT_FORMAT_CHANGED
           || i_index == MC_API_INFO_OUTPUT_BUFFERS_CHANGED)
          {
@@ -508,7 +553,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
              int i_ret = p_sys->api.get_out(&p_sys->api, i_index, &out);
  
              if (i_ret == 1)
-@@ -2042,8 +2251,15 @@
+@@ -2042,8 +2278,15 @@
      while (b_drain || (p_block = GetNextBlock(p_sys, p_in_block)))
      {
          vlc_mutex_unlock(&p_sys->lock);
@@ -525,7 +570,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
          if (p_sys->b_aborted)
              return VLC_EGENERIC;
-@@ -2066,6 +2282,41 @@
+@@ -2066,6 +2309,41 @@
                      if (!i_ts && p_block->i_dts)
                          i_ts = p_block->i_dts;
                  }
@@ -567,7 +612,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
                  p_buf = p_block->p_buffer;
                  i_size = p_block->i_buffer;
              }
-@@ -2174,6 +2425,23 @@
+@@ -2174,6 +2452,23 @@
          goto reload;
      }
  
@@ -591,7 +636,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      /* Parse input block */
      if ((i_ret = p_sys->pf_on_new_block(p_dec, &p_in_block)) != 1)
      {
-@@ -2345,6 +2613,10 @@
+@@ -2345,6 +2640,10 @@
  static void Video_OnFlush(decoder_sys_t *p_sys)
  {
      timestamp_FifoEmpty(p_sys->video.timestamp_fifo);
@@ -602,7 +647,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      /* Invalidate all pictures that are currently in flight
       * since flushing make all previous indices returned by
       * MediaCodec invalid. */
-@@ -2352,10 +2624,21 @@
+@@ -2352,10 +2651,21 @@
  
      if (p_sys->video.use_air)
      {

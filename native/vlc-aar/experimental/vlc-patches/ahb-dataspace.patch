@@ -1,8 +1,7 @@
 diff --git a/modules/video_output/android/utils.h b/modules/video_output/android/utils.h
 --- a/modules/video_output/android/utils.h
 +++ b/modules/video_output/android/utils.h
-@@ -39,7 +39,8 @@
- #include <media/NdkImageReader.h>
+@@ -40,6 +40,7 @@
  
  #include <vlc_vout_display.h>
  #include <vlc_common.h>
@@ -10,7 +9,16 @@ diff --git a/modules/video_output/android/utils.h b/modules/video_output/android
  
  /* AWH using a VideoLAN AWindow helpers */
  #define AWH_CAPS_SET_VIDEO_LAYOUT 0x1
-@@ -142,6 +143,7 @@
+@@ -130,6 +131,8 @@
+     /* AImageReader, API 31+ (because AHardwareBuffer) */
+     struct {
+         pfn_AImageReader_newWithUsage newWithUsage;
++        media_status_t (*newWithDataSpace)(int32_t, int32_t, uint64_t, int32_t,
++                                           uint32_t, int32_t, AImageReader **);
+         pfn_AImageReader_delete delete;
+         pfn_AImageReader_getWindow getWindow;
+         pfn_AImageReader_acquireNextImageAsync acquireNextImageAsync;
+@@ -142,6 +145,7 @@
          pfn_AImage_getCropRect getCropRect;
          pfn_AImage_getWidth getWidth;
          pfn_AImage_getHeight getHeight;
@@ -18,7 +26,7 @@ diff --git a/modules/video_output/android/utils.h b/modules/video_output/android
      } AImage;
      pfn_sync_merge sync_merge;
      struct {
-@@ -210,6 +212,8 @@
+@@ -210,6 +214,8 @@
      struct aimage_reader_api *air_api;
      struct asurface_control_api *asc_api;
      AImageReader *air;
@@ -27,7 +35,7 @@ diff --git a/modules/video_output/android/utils.h b/modules/video_output/android
  
      struct vlc_asurfacetexture *texture;
      void *dec_opaque;
-@@ -305,6 +309,10 @@
+@@ -305,6 +311,10 @@
  struct aimage_reader_api *
  AWindowHandler_getAImageReaderApi(AWindowHandler *p_awh);
  
@@ -51,7 +59,16 @@ diff --git a/modules/video_output/android/utils.c b/modules/video_output/android
      LOAD(AHardwareBuffer, describe);
  
  #undef LOAD
-@@ -421,6 +422,8 @@
+@@ -410,6 +411,8 @@
+ 
+     /* API 29+ */
+     LOAD(AImageReader, newWithUsage);
++    // API 34: optional explicit hardware-buffer format and dataspace request.
++    p_awh->ndk_air_api.AImageReader.newWithDataSpace = dlsym(p_library, "AImageReader_newWithDataSpace");
+     LOAD(AImageReader, delete);
+     LOAD(AImageReader, getWindow);
+     LOAD(AImageReader, acquireNextImageAsync);
+@@ -421,6 +424,8 @@
      LOAD(AImage, getCropRect);
      LOAD(AImage, getWidth);
      LOAD(AImage, getHeight);
@@ -60,7 +77,7 @@ diff --git a/modules/video_output/android/utils.c b/modules/video_output/android
  
  #undef LOAD
  
-@@ -838,10 +841,17 @@
+@@ -838,10 +843,17 @@
  struct aimage_reader_api *
  AWindowHandler_getAImageReaderApi(AWindowHandler *p_awh)
  {
