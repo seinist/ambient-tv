@@ -378,7 +378,7 @@ class SettingsBackupManager @Inject constructor(
                 expiresAtMs = tokenStore.spotifyWebAccessTokenExpiresAtMs,
                 scopes = tokenStore.spotifyWebScopes.orEmpty(),
             ),
-            spotifyEnabled = preferences.spotifyEnabled,
+            spotifyEnabled = preferences.spotifyRequestedEnabled,
             radioEnabled = preferences.radioEnabled,
             weather = preferences.weatherSettings,
             telegramEnabled = preferences.telegramEnabled,
