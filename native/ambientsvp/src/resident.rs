@@ -163,9 +163,9 @@ var<workgroup> vectors:array<vec2i,64>;
 var<workgroup> zero_score:u32;
 var<workgroup> predictor_score:u32;
 var<workgroup> source_samples:array<i32,64>;
-const HEX2:array<vec2i,6>=array<vec2i,6>(vec2i(-2,0),vec2i(-1,2),vec2i(1,2),
+const HEX2:array<vec2i,6> = array<vec2i,6>(vec2i(-2,0),vec2i(-1,2),vec2i(1,2),
     vec2i(2,0),vec2i(1,-2),vec2i(-1,-2));
-const HEX4:array<vec2i,16>=array<vec2i,16>(vec2i(-4,2),vec2i(-4,1),vec2i(-4,0),
+const HEX4:array<vec2i,16> = array<vec2i,16>(vec2i(-4,2),vec2i(-4,1),vec2i(-4,0),
     vec2i(-4,-1),vec2i(-4,-2),vec2i(4,-2),vec2i(4,-1),vec2i(4,0),vec2i(4,1),
     vec2i(4,2),vec2i(2,3),vec2i(0,4),vec2i(-2,3),vec2i(-2,-3),vec2i(0,-4),vec2i(2,-3));
 fn px(t:texture_2d<f32>,p:vec2i)->i32{
@@ -308,14 +308,15 @@ fn analyse(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:
             // blocks: odd-radius cross and scaled HEX4, then iterative
             // HEX2 and a final exhaustive one-pixel ring. Retain the
             // current minimum at every stage; no speculative winner.
+            var hex2=HEX2;var hex4=HEX4;
             let center=vectors[0];let old=scores[0];
             workgroupBarrier();
             scores[lane]=0xffffffffu;vectors[lane]=vec2i(0);
             if lane==0u{choose(lane,center,old);}
             if old>zero/3u && old>0u && lane>0u && lane<49u{
                 var delta=vec2i(0);
-                if lane<=16u{delta=HEX4[lane-1u];}
-                else if lane<=32u{delta=HEX4[lane-17u]*2;}
+                if lane<=16u{delta=hex4[lane-1u];}
+                else if lane<=32u{delta=hex4[lane-17u]*2;}
                 else{
                     let n=lane-33u;
                     let radius=i32(n%4u)*2+1;
@@ -336,7 +337,7 @@ fn analyse(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:
                 scores[lane]=0xffffffffu;vectors[lane]=vec2i(0);
                 if lane==0u{choose(lane,hex_center,hex_best);}
                 if hex_best>0u && lane>0u && lane<=6u{
-                    let candidate=clamp(hex_center+HEX2[lane-1u],vec2i(-64),vec2i(64));
+                    let candidate=clamp(hex_center+hex2[lane-1u],vec2i(-64),vec2i(64));
                     choose(lane,candidate,cost(origin,candidate,reverse,hex_best));
                 }
                 reduce(lane);
