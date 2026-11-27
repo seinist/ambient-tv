@@ -388,7 +388,7 @@ impl AmbientSvp {
                 match self.smoother.prepare_gpu(self.output) {
                     Output::Copy(k) => {
                         out.copy_from_slice(&self.frames.get(&k).ok_or("missing copy")?.data);
-                        (true, true)
+                        (true, k == plan[0] || k == plan[1])
                     }
                     Output::Gpu(job) => {
                         let current = &self.frames.get(&job.n).ok_or("missing current")?.data;
