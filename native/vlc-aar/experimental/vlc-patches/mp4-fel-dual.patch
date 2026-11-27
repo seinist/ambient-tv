@@ -1,7 +1,7 @@
 diff --git a/modules/demux/mp4/mp4.h b/modules/demux/mp4/mp4.h
 --- a/modules/demux/mp4/mp4.h
 +++ b/modules/demux/mp4/mp4.h
-@@ -65,7 +65,10 @@
+@@ -66,7 +66,10 @@
  typedef struct
  {
      uint64_t i_offset;
@@ -1664,7 +1664,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
                      tk = tk_tmp;
              }
              i_minnzdts = __MIN(i_minnzdts, i_nzdts);
-@@ -1842,7 +3253,9 @@
+@@ -5177,7 +6588,9 @@
          }
  
 +        if(p_sys->context.ambient_fel_interleaved && i_minnzdts!=VLC_TICK_MAX)
