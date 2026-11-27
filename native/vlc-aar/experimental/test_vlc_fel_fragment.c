@@ -122,12 +122,49 @@ static void test_segment_header(demux_t *d,demux_sys_t *sys)
     }
 }
 
+static void test_empty_mdat_gaps(demux_t *d,demux_sys_t *sys)
+{
+    for(unsigned mode=0;mode<2;mode++){
+        reset_stream(mode!=0);sys->b_seekable=mode!=0;
+        box(112,8,"mdat");
+        box(120,1,"mdat");SetQWBE(bytes+128,16);
+        box(136,8,"free");
+        box(144,12,"mdat");memcpy(bytes+152,"WXYZ",4);visible=156;
+        uint64_t end=0,padding=0,total=0;
+        unsigned count=0,boxes=0;
+        struct ambient_fel_byte_range ranges[AMBIENT_FEL_MAX_MDAT_BOXES];
+        if(mode)
+            assert(MP4_FEL_ScanMdats(d,ranges,&count,&end,156,&padding,&boxes));
+        else
+            assert(MP4_FEL_BufferMdats(d,ranges,sys->context.ambient_fel_bl_cache,
+                &count,&end,&total,156,&padding,&boxes));
+        assert(count==2&&end==156&&padding==32&&boxes==3&&peek_at_end==0);
+        assert(ranges[0].start==108&&ranges[1].start==152);
+        assert(!ambient_fel_payload_contains(ranges,count,120,1));
+        assert(!ambient_fel_payload_contains(ranges,count,128,8));
+        if(!mode){
+            assert(total==8&&blocks==2);
+            MP4_FEL_ReleaseCaches(sys);
+        }
+        assert(!blocks);
+        position=112;padding=boxes=0;
+        assert(MP4_FEL_SkipGap(d,&padding,&boxes,true));
+        assert(position==144&&padding==32&&boxes==3);
+        position=112;padding=AMBIENT_FEL_MAX_PADDING-7;boxes=0;
+        assert(!MP4_FEL_SkipGap(d,&padding,&boxes,true)&&position==112);
+        position=112;padding=boxes=0;
+        assert(MP4_FEL_SkipPadding(d,&padding,&boxes)&&position==112);
+        position=112;box(112,0,"mdat");padding=boxes=0;
+        assert(!MP4_FEL_SkipGap(d,&padding,&boxes,true)&&position==112);
+    }
+}
 int main(void)
 {
     mp4_track_t track={.i_track_ID=1,.b_ok=true,.i_timescale=1000};
     demux_sys_t sys={.i_tracks=1,.track=&track};
     demux_t demux={.s=&fixture_stream,.p_sys=&sys};
     test_segment_header(&demux,&sys);
+    test_empty_mdat_gaps(&demux,&sys);
     MP4_Box_data_tfhd_t tfhd={.i_track_ID=1,
         .i_flags=MP4_TFHD_DEFAULT_BASE_IS_MOOF|MP4_TFHD_DFLT_SAMPLE_SIZE|
             MP4_TFHD_DFLT_SAMPLE_DURATION,
