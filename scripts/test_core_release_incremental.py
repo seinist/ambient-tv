@@ -1,11 +1,12 @@
 import json
+import shutil
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from core_build_policy import plan
-from core_release_incremental import fingerprint, key, select, stage_reuse, signed_history
+from core_release_incremental import fingerprint, key, select, stage_reuse, signed_history, assert_current_recipe
 
 
 class IncrementalCoreReleaseTest(unittest.TestCase):
@@ -149,6 +150,53 @@ class IncrementalCoreReleaseTest(unittest.TestCase):
             # published patched recipes are unaffected.
             self.assertEqual(changed, {"mupen64plus_next_gles3"})
 
+    def test_publish_freshness_ignores_workflow_cleanup_but_rejects_build_changes(self):
+        source = Path(__file__).resolve().parents[1]
+        from core_release_incremental import SHARED
+        paths = ("cores/cores.json", "cores/signing-public.pem",
+                 ".github/workflows/cores.yml", ".github/workflows/cores-all.yml",
+                 *("scripts/" + name for name in (*SHARED, "core_hotpath_patches.py",
+                   "core_hotpath_remaining.py", "core_release_incremental.py")))
+        with tempfile.TemporaryDirectory() as tmp:
+            current = Path(tmp)
+            for path in paths:
+                (current / path).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source / path, current / path)
+            workflow = current / ".github/workflows/cores.yml"
+            original = workflow.read_text()
+            workflow.write_text(original.replace("required: true", "required: false", 1)
+                                .replace("cancel-in-progress:", "cancel-in-progress:"))
+            caller = current / ".github/workflows/cores-all.yml"
+            caller.write_text(caller.read_text() + "\n# temporary validation removed\n")
+            policy = current / "scripts/core_build_policy.py"
+            previous = policy.read_text()
+            policy.write_text(previous.replace("def plan(", "# scheduling cleanup\n def plan(".lstrip()))
+            for profile in ("baseline", "optimized", "optimized-a57"):
+                assert_current_recipe(source, current, profile, self.ndk)
+            # A change in one core recipe invalidates only the profiles affected.
+            policy.write_text(previous.replace("test -s $(ASM_DEFINES_NASM)", "test -f $(ASM_DEFINES_NASM)"))
+            assert_current_recipe(source, current, "baseline", self.ndk)
+            with self.assertRaisesRegex(ValueError, "mupen64plus_next_gles3/arm64-v8a"):
+                assert_current_recipe(source, current, "optimized-a57", self.ndk)
+            policy.write_text(previous)
+            catalog = current / "cores/cores.json"
+            changed = json.loads(catalog.read_text())
+            next(row for row in changed["cores"] if row["core"] == "mgba")["commit"] = "0" * 40
+            catalog.write_text(json.dumps(changed))
+            with self.assertRaisesRegex(ValueError, "mgba/"):
+                assert_current_recipe(source, current, "baseline", self.ndk)
+            shutil.copyfile(source / "cores/cores.json", catalog)
+            workflow.write_text(original.replace(self.ndk, "99.0.0"))
+            with self.assertRaisesRegex(ValueError, "NDK version"):
+                assert_current_recipe(source, current, "baseline", self.ndk)
+            workflow.write_text(original.replace("gh release edit", "gh release delete"))
+            with self.assertRaisesRegex(ValueError, "signing/publication"):
+                assert_current_recipe(source, current, "baseline", self.ndk)
+            workflow.write_text(original)
+            (current / "cores/signing-public.pem").write_text("different key")
+            with self.assertRaisesRegex(ValueError, "trust/planning"):
+                assert_current_recipe(source, current, "baseline", self.ndk)
+
     def test_only_all_profiles_has_automatic_core_trigger(self):
         root = Path(__file__).resolve().parents[1] / ".github/workflows"
         single = (root / "cores.yml").read_text()
@@ -160,6 +208,8 @@ class IncrementalCoreReleaseTest(unittest.TestCase):
         self.assertNotIn("mupen-validation", all_profiles)
         self.assertNotIn("cores: mupen64plus_next_gles3", all_profiles)
         self.assertIn("profile: [baseline, optimized, optimized-a57]", all_profiles)
+        self.assertIn("pattern: ${{ needs.plan.outputs.artifact_pattern }}", single)
+        self.assertNotIn("format('candidate-{0}-*'", single)
         self.assertIn("force_rebuild: ${{ inputs.force_rebuild || false }}", all_profiles)
         self.assertFalse((root / "cores-experimental.yml").exists())
 

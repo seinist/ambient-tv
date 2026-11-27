@@ -3,9 +3,11 @@ import argparse
 import ast
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -107,6 +109,182 @@ def fingerprint(job, ndk, root=ROOT):
     payload = {"schema": 2, "ndk": ndk, "job": job,
                "build": digest(build_recipe.encode()), "files": files}
     return digest(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode())
+
+
+def profile_snapshot(root, profile, ndk):
+    """Use the planner belonging to each checkout; compare the entire channel."""
+    workflow = (root / ".github/workflows/cores.yml").read_text()
+    versions = re.findall(r'(?m)^  NDK_VERSION: "([^"]+)"\s*
+    return subprocess.check_output(["gh", *args], text=True)
+
+
+def signed_history(repo, profile, desired, root=ROOT):
+    pages = json.loads(gh("api", "--paginate", "--slurp",
+                          f"repos/{repo}/releases?per_page=100"))
+    releases = [r for page in pages for r in page if not r["draft"] and
+                ((profile == "baseline" and not r["prerelease"] and r["tag_name"].startswith("cores-"))
+                 or (profile != "baseline" and r["prerelease"] and
+                     r["tag_name"].startswith(f"core-experiments-{profile}--")))]
+    releases.sort(key=lambda r: (r.get("published_at") or "", r["id"]), reverse=True)
+    records = {}
+    latest_keys = None
+    for release in releases:
+        tag = release["tag_name"]
+        assets = {a["name"]: a for a in release["assets"]}
+        if len(assets) != len(release["assets"]):
+            raise ValueError(f"{tag}: duplicate release assets")
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            gh("release", "download", tag, "--repo", repo, "--dir", tmp,
+               "--pattern", "manifest.json", "--pattern", "manifest.json.sig")
+            subprocess.run(["openssl", "dgst", "-sha256", "-verify", str(root / "cores/signing-public.pem"),
+                            "-signature", str(directory / "manifest.json.sig"),
+                            str(directory / "manifest.json")], check=True, stdout=subprocess.DEVNULL)
+            manifest = json.loads((directory / "manifest.json").read_text())
+        if manifest.get("version") != 1 or manifest.get("tag") != tag or manifest.get("profile", "baseline") != profile:
+            raise ValueError(f"{tag}: signed manifest channel mismatch")
+        entries = manifest["cores"]
+        keys = {key(e) for e in entries}
+        if len(keys) != len(entries):
+            raise ValueError(f"{tag}: duplicate signed core entries")
+        if latest_keys is None:
+            latest_keys = keys
+        for e in entries:
+            k = key(e)
+            if k not in desired or k in records:
+                continue
+            # Remember the newest signed entry even if its binary was removed;
+            # never quietly reuse an older version of that core.
+            expected = f"{k[1]}--{k[0]}_libretro_android.so.zip"
+            asset = assets.get(expected)
+            if (e.get("asset") != expected or not HEX.fullmatch(e.get("sha256", ""))
+                    or not isinstance(e.get("size"), int) or e["size"] <= 0):
+                raise ValueError(f"{tag}: invalid signed asset")
+            records[k] = ({"tag": tag, "entry": e} if asset and asset["size"] == e["size"] else None)
+        if profile == "baseline" or desired <= records.keys():
+            break
+    return records, latest_keys
+
+
+def select(matrix, records, latest_keys, profile, ndk, force=False, root=ROOT):
+    desired = {key(j) for j in matrix["include"]}
+    build, reuse = [], []
+    for job in matrix["include"]:
+        job = dict(job)
+        fp = fingerprint(job, ndk, root)
+        job["fingerprint"] = fp
+        previous = records.get(key(job))
+        if not force and previous and previous["entry"].get("fingerprint") == fp:
+            if profile == "baseline":
+                reuse.append(previous)
+        else:
+            build.append(job)
+    # Stable snapshots retain the entire current catalog for older clients;
+    # removal-only catalog changes need publication too.
+    changed = bool(build) or (profile == "baseline" and latest_keys != desired)
+    return {"matrix": {"include": build}, "reuse": reuse, "publish": changed,
+            "total": len(desired), "rebuilt": len(build)}
+
+
+def stage_reuse(repo, reuse, destination):
+    destination.mkdir(parents=True, exist_ok=True)
+    entries = []
+    groups = {}
+    for record in reuse:
+        entry = record["entry"]
+        name = entry["asset"]
+        if name != f"{entry['abi']}--{entry['core']}_libretro_android.so.zip" or Path(name).name != name:
+            raise ValueError("Invalid reuse asset")
+        groups.setdefault(record["tag"], []).append(entry)
+    for tag, group in groups.items():
+        patterns = [arg for entry in group for arg in ("--pattern", entry["asset"])]
+        gh("release", "download", tag, "--repo", repo, "--dir", str(destination), *patterns)
+        for entry in group:
+            name = entry["asset"]
+            target = destination / name
+            with target.open("rb") as stream:
+                actual = hashlib.file_digest(stream, "sha256").hexdigest()
+            if actual != entry["sha256"] or target.stat().st_size != entry["size"]:
+                raise ValueError(f"Reused asset failed signature-bound hash/size: {name}")
+            entries.append(entry)
+    return entries
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="action", required=True)
+    p = sub.add_parser("plan")
+    for flag in ("repo", "profile", "ndk", "matrix"):
+        p.add_argument("--" + flag, required=True)
+    p.add_argument("--force", action="store_true")
+    p = sub.add_parser("assert-current")
+    p.add_argument("--profile", required=True, choices=("baseline", "optimized", "optimized-a57"))
+    p.add_argument("--ndk", required=True)
+    p.add_argument("--current-root", type=Path, required=True)
+    p = sub.add_parser("reuse")
+    p.add_argument("--repo", required=True)
+    p.add_argument("--records", required=True)
+    p.add_argument("--destination", type=Path, required=True)
+    args = parser.parse_args()
+    if args.action == "assert-current":
+        assert_current_recipe(ROOT, args.current_root.resolve(), args.profile, args.ndk)
+        print("Current profile build fingerprints and release trust rules match.")
+        return
+    if args.action == "plan":
+        matrix = json.loads(args.matrix)
+        desired = {key(j) for j in matrix["include"]}
+        records, latest = ({}, None) if args.force else signed_history(args.repo, args.profile, desired)
+        result = select(matrix, records, latest, args.profile, args.ndk, args.force)
+    else:
+        result = stage_reuse(args.repo, json.loads(args.records), args.destination)
+    print(json.dumps(result, separators=(",", ":")))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (ValueError, OSError, subprocess.CalledProcessError) as error:
+        sys.exit(f"Core release: {error}")
+, workflow)
+    if len(versions) != 1 or versions[0] != ndk:
+        raise ValueError("Core NDK version changed on main")
+    # Do not expose release signing credentials to a subprocess.
+    matrix = json.loads(subprocess.check_output(
+        [sys.executable, str(root / "scripts/core_build_policy.py"), "plan",
+         "--catalog", str(root / "cores/cores.json"), "--event", "push",
+         "--ref", "refs/heads/main", "--publish", "true" if profile == "baseline" else "false",
+         "--profile", profile], cwd=root,
+        env={"PATH": os.defpath, "LC_ALL": "C", "PYTHONDONTWRITEBYTECODE": "1"}, text=True))
+    jobs = matrix["include"]
+    if not jobs or len({key(j) for j in jobs}) != len(jobs) or any(j["profile"] != profile for j in jobs):
+        raise ValueError("Invalid current core profile catalog")
+    return {key(j): fingerprint(j, ndk, root) for j in jobs}
+
+
+def assert_current_recipe(root, current, profile, ndk):
+    """Permit scheduling-only changes, never stale binaries or changed trust rules."""
+    for path in ("cores/signing-public.pem", "scripts/core_release_incremental.py"):
+        if (root / path).read_bytes() != (current / path).read_bytes():
+            raise ValueError(f"Core release trust/planning rules changed on main: {path}")
+    before = (root / ".github/workflows/cores.yml").read_text()
+    after = (current / ".github/workflows/cores.yml").read_text()
+    # Protect runner/checkout and publication logic not covered by the per-job
+    # fingerprint. Trigger/concurrency/PR matrix metadata is intentionally ignored.
+    for start, end in (("\n  build:\n", "      - name: Install NDK"),
+                       ("      - uses: actions/upload-artifact", "\n  publish:\n")):
+        def section(source):
+            pos = source.index(start)
+            return source[pos:source.index(end, pos)]
+        if section(before) != section(after):
+            raise ValueError("Core build runner/artifact contract changed on main")
+    if before[before.index("\n  publish:\n"):] != after[after.index("\n  publish:\n"):]:
+        raise ValueError("Core signing/publication rules changed on main")
+    original = profile_snapshot(root, profile, ndk)
+    latest = profile_snapshot(current, profile, ndk)
+    changed = sorted(k for k in original.keys() | latest.keys() if original.get(k) != latest.get(k))
+    if changed:
+        details = ", ".join(f"{core}/{abi}" for core, abi in changed)
+        raise ValueError(f"Core release inputs changed on main ({profile}): {details}; dispatch a fresh release")
 
 
 def gh(*args):
