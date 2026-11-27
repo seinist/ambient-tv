@@ -793,8 +793,28 @@ static void test_mixed_terminal(void)
         }
     }
 }
+static void test_interleave_clock_limits(void)
+{
+    assert(!MP4_FEL_ClockFits(-1,1000));
+    assert(!MP4_FEL_ClockFits(0,0));
+    assert(MP4_FEL_ClockFits(48000,48000));
+    assert(!MP4_FEL_ClockFits(INT64_MAX,1));
+    assert(!MP4_FEL_ClockFits(INT64_MAX,CLOCK_FREQ));
+    const stime_t limit=VLC_TICK_MAX-VLC_TICK_0-2*DEMUX_INCREMENT;
+    assert(MP4_FEL_ClockFits(limit,CLOCK_FREQ));
+    assert(!MP4_FEL_ClockFits(limit+1,CLOCK_FREQ));
+    mp4_track_t track={.i_timescale=CLOCK_FREQ,.context.i_default_sample_duration=2};
+    MP4_Box_data_trun_t tr={.i_sample_count=1};
+    MP4_Box_t box={.i_type=ATOM_trun,.data.p_trun=&tr};
+    mp4_run_t run={.i_first_dts=limit-2,.p_trun=&box};
+    stime_t end;
+    assert(MP4_FEL_RunEnd(&track,&run,&end)&&end==limit);
+    run.i_first_dts++;
+    assert(!MP4_FEL_RunEnd(&track,&run,&end));
+}
 int main(void)
 {
+    test_interleave_clock_limits();
     mp4_track_t track={.i_track_ID=1,.b_ok=true,.i_timescale=1000};
     demux_sys_t sys={.i_tracks=1,.track=&track};
     demux_t demux={.s=&fixture_stream,.p_sys=&sys};
