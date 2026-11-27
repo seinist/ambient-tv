@@ -21,6 +21,11 @@ fn remember_cache_data(key: &str, cache: &wgpu::PipelineCache) {
     }
 }
 
+struct PlaneBinding {
+    textures: [wgpu::Texture; 5],
+    group: wgpu::BindGroup,
+}
+
 struct Source {
     packed: wgpu::Texture,
     linear: Option<wgpu::Texture>,
@@ -69,6 +74,7 @@ pub struct Gpu {
     ext_field: Option<FieldCache>,
     mask: Option<MaskCache>,
     uniforms: [wgpu::Buffer; 3],
+    plane_bindings: [Option<PlaneBinding>; 3],
     uploads: Mutex<UploadPool>,
     output: wgpu::Buffer,
     readback: wgpu::Buffer,
@@ -81,6 +87,7 @@ impl Gpu {
     pub fn clear_sources(&mut self) {
         self.recycled_sources.extend(std::mem::take(&mut self.sources).into_values());
         self.recycled_sources.truncate(2);
+        self.plane_bindings = std::array::from_fn(|_| None);
     }
     pub fn new(width: u32, height: u32) -> Result<Self, String> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
@@ -241,6 +248,7 @@ impl Gpu {
             ext_field: None,
             mask: None,
             uniforms,
+            plane_bindings: std::array::from_fn(|_| None),
             uploads: Mutex::new(UploadPool::default()),
             output,
             readback,
@@ -475,9 +483,7 @@ impl Gpu {
         } else {
             base
         };
-        let base_view = base.create_view(&Default::default());
-        let ext_view = ext.create_view(&Default::default());
-        let mask_view = self.mask.as_ref().unwrap().texture.create_view(&Default::default());
+        let mask = &self.mask.as_ref().unwrap().texture;
         encoder.clear_buffer(&self.output, 0, None);
         for (plane, p) in job.params.iter().enumerate() {
             let key = [
@@ -522,40 +528,42 @@ impl Gpu {
             let (stride_words, groups_x, groups_y) = dispatch_geometry(start, p.width as u32, p.height as u32);
             let params = &self.uniforms[plane];
             self.queue.write_buffer(params, 0, &params_bytes(p, start, stride_words));
-            let view = |n| {
+            let source_texture = |n| {
                 let source = &self.sources[&n];
                 if plane == 0 && job.linear {
                     source.linear.as_ref().expect("linear source prepared")
                 } else {
                     &source.packed
                 }
-                .create_view(&Default::default())
             };
-            let current_view = view(job.n);
-            let next_view = view(job.n + 1);
-            let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &self.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: params.as_entire_binding(),
-                    },
-                    texture_binding(1, &current_view),
-                    texture_binding(2, &next_view),
-                    texture_binding(3, &base_view),
-                    texture_binding(4, &ext_view),
-                    texture_binding(5, &mask_view),
-                    wgpu::BindGroupEntry {
-                        binding: 6,
-                        resource: self.output.as_entire_binding(),
-                    },
-                ],
-            });
+            let textures = [source_texture(job.n), source_texture(job.n + 1), base, ext, mask];
+            let cached = self.plane_bindings[plane].as_ref().is_some_and(|binding|
+                binding.textures.iter().zip(textures.iter()).all(|(old, new)| old == *new));
+            if !cached {
+                let views = textures.map(|texture| texture.create_view(&Default::default()));
+                let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("SVP cached plane bindings"),
+                    layout: &self.layout,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: params.as_entire_binding() },
+                        texture_binding(1, &views[0]),
+                        texture_binding(2, &views[1]),
+                        texture_binding(3, &views[2]),
+                        texture_binding(4, &views[3]),
+                        texture_binding(5, &views[4]),
+                        wgpu::BindGroupEntry { binding: 6, resource: self.output.as_entire_binding() },
+                    ],
+                });
+                self.plane_bindings[plane] = Some(PlaneBinding {
+                    textures: textures.map(|texture| (*texture).clone()),
+                    group,
+                });
+            }
+            let group = &self.plane_bindings[plane].as_ref().unwrap().group;
             {
                 let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.set_pipeline(&self.pipelines[&key]);
-                pass.set_bind_group(0, &group, &[]);
+                pass.set_bind_group(0, group, &[]);
                 pass.dispatch_workgroups(
                     groups_x,
                     groups_y,
