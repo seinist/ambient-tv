@@ -27,6 +27,33 @@ struct Core{
     in_flight:AtomicU32,
 }
 pub struct Importer(Arc<Core>);
+fn valid_source_format(mode:u32,ahb:u32,format:vk::Format,model:vk::SamplerYcbcrModelConversion,range:vk::SamplerYcbcrRange)->bool{
+    let p010=format==vk::Format::G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16;
+    match mode{
+        0=>ahb!=0x36 && !p010,
+        4|6=>ahb==0x36 && p010 && model==vk::SamplerYcbcrModelConversion::YCBCR_2020 &&
+            range==if mode==6{vk::SamplerYcbcrRange::ITU_FULL}else{vk::SamplerYcbcrRange::ITU_NARROW},
+        _=>false,
+    }
+}
+#[cfg(test)]
+#[test]
+fn explicit_p010_requires_matching_storage_matrix_and_range(){
+    let p=vk::Format::G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16;
+    let m=vk::SamplerYcbcrModelConversion::YCBCR_2020;
+    let n=vk::SamplerYcbcrRange::ITU_NARROW;
+    let f=vk::SamplerYcbcrRange::ITU_FULL;
+    assert!(valid_source_format(4,0x36,p,m,n));
+    assert!(valid_source_format(6,0x36,p,m,f));
+    assert!(!valid_source_format(4,0x36,p,m,f));
+    assert!(!valid_source_format(4,0x22,p,m,n));
+    assert!(!valid_source_format(4,0x36,vk::Format::UNDEFINED,m,n));
+    assert!(!valid_source_format(4,0x36,p,vk::SamplerYcbcrModelConversion::YCBCR_709,n));
+    assert!(!valid_source_format(0,0x36,p,m,n));
+    assert!(!valid_source_format(0,0x22,p,m,n));
+    assert!(valid_source_format(0,0x22,vk::Format::UNDEFINED,m,n));
+}
+
 fn memory_type(core:&Core,bits:u32,local:bool)->Option<u32>{
     (0..core.memory.memory_type_count).find(|&i|{
         let flags=core.memory.memory_types[i as usize].property_flags;
@@ -199,14 +226,9 @@ impl Job{
         }
         let mut desc=Desc::default();
         unsafe{AHardwareBuffer_describe(self.buffer,&mut desc);}
-        let p010=fmt.format==vk::Format::G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16;
-        if self.high_depth(){
-            // Require explicit agreement on ten-bit storage and decoder
-            // color metadata. Opaque vendor layouts are not proof.
-            let range=if self.mode==6{vk::SamplerYcbcrRange::ITU_FULL}else{vk::SamplerYcbcrRange::ITU_NARROW};
-            if desc.format!=0x36 || !p010 || fmt.suggested_ycbcr_model!=vk::SamplerYcbcrModelConversion::YCBCR_2020
-                || fmt.suggested_ycbcr_range!=range{return Err("unproven P010 BT2020 external format".into());}
-        }else if desc.format==0x36 || p010{return Err("P010 cannot enter RGBA8 converter".into());}
+        if !valid_source_format(self.mode,desc.format,fmt.format,fmt.suggested_ycbcr_model,fmt.suggested_ycbcr_range){
+            return Err("unproven P010 BT2020 external format or incompatible SDR input".into());
+        }
         // Use the external-format path even if a conventional VkFormat
         // also exists. Preserve the allocator/decoder's actual format.
         let mut ext_format=vk::ExternalFormatANDROID::default().external_format(fmt.external_format);
