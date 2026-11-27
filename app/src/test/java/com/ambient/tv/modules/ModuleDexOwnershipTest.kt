@@ -1,0 +1,33 @@
+package com.ambient.tv.modules
+
+import org.junit.Assert.*
+import org.junit.Test
+
+class ModuleDexOwnershipTest {
+    @Test fun monogramOwnsImplementationsButNeverHostPorts() {
+        val owner = ModuleDexOwnership.MONOGRAM
+        assertTrue(owner.owns("com.ambient.tv.data.telegram.MonogramNativeBackend"))
+        assertTrue(owner.owns("com.ambient.tv.data.telegram.MonogramNativeBackend\$Inner"))
+        assertTrue(owner.owns("com.sun.jna.Native"))
+        assertFalse(owner.owns("com.ambient.tv.data.telegram.MonogramNativeBackendOther"))
+        assertFalse(owner.owns("com.ambient.tv.data.telegram.MonogramModuleFactory"))
+        assertFalse(owner.owns("com.ambient.tv.data.telegram.TelegramMedia"))
+        assertFalse(owner.owns("kotlin.Unit"))
+    }
+
+    @Test fun completeAdapterMustContainAllMandatoryImplementationsAndNoForeignTypes() {
+        val owner = ModuleDexOwnership.MONOGRAM
+        val complete = setOf(
+            "com.ambient.tv.data.telegram.MonogramModuleAdapter",
+            "com.ambient.tv.data.telegram.MonogramNativeBackend",
+            "com.ambient.tv.data.telegram.AmbientMonogramJni",
+            "org.monogram.mtproto.MtprotoNativeLoader",
+            "com.sun.jna.Native",
+            "org.rustls.platformverifier.Verifier",
+            "uniffi.monogram_mtproto.UniffiLib",
+        )
+        assertTrue(owner.accepts(complete))
+        assertFalse(owner.accepts(complete - "com.sun.jna.Native"))
+        assertFalse(owner.accepts(complete + "com.ambient.tv.data.telegram.MonogramModuleFactory"))
+    }
+}
