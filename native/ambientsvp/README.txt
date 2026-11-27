@@ -303,8 +303,9 @@ occurs on a changed source, seek/reset, adaptive analysis change and bypass.
 
 For <=1080p, consecutive GPU outputs from the same ready source pair can
 use two independent readback buffers. Both ordered queue submissions are
-issued before waiting for either result. One completed output may be held
-for the next receive; reset, safety bypass and GPU fallback discard it.
+issued before waiting for either result. The second mapped readback is held
+until the next receive and copied directly to the caller's output; reset,
+safety bypass and GPU fallback discard it.
 The existing timestamp plan, queue bounds and CPU fallback remain in use.
 This is not yet a multi-source CPU/GPU pipeline or a zero-copy renderer path.
 
@@ -361,3 +362,27 @@ device playback with the same source revision, Rust/LLVM and target;
 profile generation and measurement are separate from release packaging.
 The profile digest and flags are included in the per-ABI build key.
 No profile is generated or applied by default; no PGO gain is asserted.
+
+
+Vulkan motion estimation primitives (PR #528)
+--------------------------------------------
+The Vulkan-only motion module implements batched integer SAD and 4x4 tiled
+SATD on the same packed R8Unorm I420 source texture layout used by synthesis.
+Each workgroup evaluates a candidate, reduces per-plane costs and writes
+the resulting Y/U/V values to a storage buffer. The CPU reference includes
+the upstream I420 chroma weight (4x). Supported interior integer-pel blocks
+are 8/16/32 pixels per dimension, with both directions and positive or
+negative candidate displacements. Invalid geometry, texture layout, batch
+size and storage/dispatch limits are rejected.
+
+The new Vulkan test compares 540 candidate geometry/offset/direction/metric
+combinations to the scalar reference. Native CI explicitly runs this test
+using software Vulkan, plus the paired-output and compact-field synthesis
+tests. Software adapters remain rejected in production. These tests are
+correctness checks, not throughput measurements.
+
+The candidate kernel does not yet replace the portable upstream Analyser.
+Predictor-dependent search ordering, pyramids, border extension, subpixel
+sampling, SATD gating, penalty/recalculation stages and vector serialization
+still need integration and parity tests. Do not select this module as a
+production motion-analysis backend until those stages are complete.
