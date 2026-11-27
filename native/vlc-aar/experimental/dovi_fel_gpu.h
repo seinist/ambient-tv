@@ -40,7 +40,8 @@ static inline bool ambient_fel_planes_upload(pl_gpu gpu,struct ambient_fel_plane
 /* GPU composition of aligned packed Y/Cb/Cr BL and EL textures.
  * Input must already be chroma-aligned, normalized raw codewords. Output is
  * reconstructed codewords, NOT RGB; a downstream DV matrix stage is required.
- * No claim of bit-exact reference decoder or complete playback integration. */
+ * decode_rgb optionally applies the Dolby matrix and returns nonlinear PQ RGB.
+ * No claim of bit-exact reference-decoder equivalence. */
 static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
     pl_tex bl, pl_tex el, pl_tex output, const struct pl_dovi_metadata *reshape,
     const struct ambient_fel_nlq *n, bool packed_cr_y_cb, bool decode_rgb,
@@ -63,7 +64,9 @@ static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
     float layer_ratio[2]={1.f,1.f},layer_shift[2]={0.f,0.f},chroma_shift[2]={0.f,0.f};
     int luma_direct=0;
     if(planes){
-        if(!planes->tex[0]||!planes->tex[1]||!planes->tex[2]||n->el_bits!=10)return false;
+        if(!planes->tex[0]||!planes->tex[1]||!planes->tex[2]||n->el_bits!=10||
+            !isfinite(planes->chroma_x)||!isfinite(planes->chroma_y)||
+            fabsf(planes->chroma_x)>0.5f||fabsf(planes->chroma_y)>0.5f)return false;
         const int ew=planes->tex[0]->params.w,eh=planes->tex[0]->params.h;
         if(ew<=0||eh<=0||
             (bl->params.w!=ew && bl->params.w!=2*ew)||
@@ -110,6 +113,9 @@ static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
         {.var=pl_var_vec2("fel_chroma_shift"),.data=chroma_shift,.dynamic=true},
         {.var=pl_var_int("fel_luma_direct"),.data=&luma_direct,.dynamic=true},
     };
+    // This dispatch is dedicated to the FEL prepass, one invocation per
+    // frame. Retire per-frame temporary state and reuse compiled shaders.
+    pl_dispatch_reset_frame(dispatch);
     pl_shader sh=pl_dispatch_begin(dispatch);
     if (!sh) return false;
     if (!pl_shader_custom(sh,&(struct pl_custom_shader){
