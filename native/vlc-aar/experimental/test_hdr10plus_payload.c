@@ -46,12 +46,35 @@ int main(void) {
                 struct writer w = fixture(windows,grids==2?25:grids==1?2:0,saturation);
                 size_t size = (w.pos + 7) / 8;
                 assert(ambient_hdrplus_parse(w.data,size,&m));
-                assert(m.version == 1 && m.target_nits == 1000 && m.anchor_count == 2);
+                const struct ambient_hdrplus_window *global = &m.windows[0];
+                assert(m.version == 1 && m.target_nits == 1000 && global->anchor_count == 2);
                 assert(m.window_count == windows);
                 assert(m.global_projection == (windows>1 || grids || saturation));
-                assert(fabsf(m.maxscl[0] - 0.1f) < 0.00001f);
-                assert(m.histogram_count == 2 && m.histogram[1].percentage == 99);
-                assert(m.tone_mapping && fabsf(m.average - 0.025f) < 0.00001f);
+                assert(fabsf(global->maxscl[0] - 0.1f) < 0.00001f);
+                assert(global->histogram_count == 2 && global->histogram[1].percentage == 99);
+                assert(global->tone_mapping && fabsf(global->average - 0.025f) < 0.00001f);
+                for (unsigned i=0;i<windows;++i) {
+                    const struct ambient_hdrplus_window *local=&m.windows[i];
+                    assert(fabsf(local->maxscl[0]-(10000+i)/100000.0f)<0.000001f);
+                    assert(fabsf(local->knee_x-(2048+i)/4095.0f)<0.000001f);
+                    assert(local->saturation_mapping==!!saturation);
+                    assert(local->saturation_weight==(saturation?8:0));
+                    if(i) {
+                        assert(local->geometry.left==10 && local->geometry.center_x==50);
+                        assert(local->geometry.semimajor_outer==40 && local->geometry.angle==90);
+                    }
+                }
+                unsigned dim=grids==2?25:grids==1?2:0;
+                assert(m.targeted_grid.rows==dim && m.mastering_grid.cols==dim);
+                if(dim) {
+                    assert(m.targeted_grid.values[dim-1][dim-1]==(dim*dim-1)%16);
+                    assert(m.mastering_grid.values[dim-1][dim-1]==(dim*dim-1)%16);
+                }
+                w.data[6]=0;
+                assert(ambient_hdrplus_parse(w.data,size,&m) && m.version==0);
+                w.data[6]=2;
+                assert(!ambient_hdrplus_parse(w.data,size,&m));
+                w.data[6]=1;
                 // Reject every byte-truncated fixture, including the last local window.
                 for(size_t n=0;n<size;++n) assert(!ambient_hdrplus_parse(w.data,n,&m));
                 assert(!ambient_hdrplus_parse(w.data,size+1,&m));
