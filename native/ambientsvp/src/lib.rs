@@ -5,6 +5,8 @@ use std::{
     time::Instant,
 };
 mod smoother;
+#[cfg(any(test,target_os="android"))]
+mod hardware_buffer;
 use smoother::Smoother;
 use std::sync::Arc;
 use svpflow1_vs::{Analyser, SuperBuilder, SuperFrame};
