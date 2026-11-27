@@ -8,6 +8,8 @@ use svpflow_wasm::Smoother;
 use svpflow1_vs::{Analyser, SuperBuilder, SuperFrame};
 #[cfg(feature = "vulkan")]
 mod gpu;
+#[cfg(feature = "vulkan")]
+mod pipeline_cache;
 // Experimental reusable exact metric; not a replacement for the upstream analyser.
 #[cfg(feature = "vulkan")]
 pub mod motion;
@@ -653,6 +655,31 @@ pub extern "C" fn ambient_svp_enabled() -> i32 {
 pub extern "C" fn ambient_svp_set_enabled(enabled: i32) {
     ENABLED.store(enabled != 0, std::sync::atomic::Ordering::Release);
 }
+// Kotlin passes the app-private directory as UTF-8 bytes, not a C string.
+// The JNI handle never escapes this call. No public C API accepts cache files.
+#[cfg(all(target_os = "android", feature = "vulkan"))]
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_com_ambient_tv_ui_player_backend_SvpNative_setCacheDirectory(
+    env: *mut jni_sys::JNIEnv,
+    _this: jni_sys::jobject,
+    path: jni_sys::jbyteArray,
+) -> jni_sys::jboolean {
+    if env.is_null() || path.is_null() { return 0; }
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: JNI supplies a live thread-local env and array for this call.
+        let Some(table) = (unsafe { (*env).as_ref() }) else { return 0; };
+        let (Some(len), Some(read), Some(exception)) =
+            (table.GetArrayLength, table.GetByteArrayRegion, table.ExceptionCheck)
+        else { return 0; };
+        let size = unsafe { len(env, path) };
+        if !(1..=4096).contains(&size) || unsafe { exception(env) } != 0 { return 0; }
+        let mut bytes = vec![0u8; size as usize];
+        unsafe { read(env, path, 0, size, bytes.as_mut_ptr().cast()) };
+        if unsafe { exception(env) } != 0 { return 0; }
+        pipeline_cache::configure(&bytes) as jni_sys::jboolean
+    })).unwrap_or(0)
+}
+
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_ambient_tv_ui_player_backend_SvpNative_setEnabled(
     _env: *mut std::ffi::c_void,
