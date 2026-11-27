@@ -56,6 +56,40 @@ class CoreBuildPolicyTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 audit_commands(log.replace(flag, ""), "optimized-a57")
 
+    def test_mupen_native_offset_helper(self):
+        marker = "ASM_DEFINES_OBJ := $(LOCAL_OBJS_DIR)/$(call get-object-name,$(CORE_DIR)/src/asm_defines/asm_defines.c)"
+        generator = "\t\t-f $(CORE_DIR)/tools/gen_asm_defines.awk"
+        original = marker + "\n$(ASM_DEFINES_NASM): $(ASM_DEFINES_OBJ)\n" + generator + "\n"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "jni").mkdir()
+            recipe = root / "jni/Android.mk"
+            for profile in ("baseline", "optimized", "optimized-a57", "thinlto"):
+                recipe.write_text(original)
+                prepare_ndk(root, "mupen64plus_next_gles3", profile)
+                if profile == "baseline":
+                    self.assertEqual(recipe.read_text(), original)
+                else:
+                    self.assertIn("$(ASM_DEFINES_OBJ): private PRIVATE_CFLAGS += -fno-lto", recipe.read_text())
+                    self.assertIn("test -s $(ASM_DEFINES_NASM) && test -s $(ASM_DEFINES_GAS)", recipe.read_text())
+            recipe.write_text("changed")
+            with self.assertRaises(ValueError):
+                prepare_ndk(root, "mupen64plus_next_gles3", "optimized")
+        for profile in ("optimized", "optimized-a57"):
+            flags = "-O3 -flto=thin" + (" -mtune=cortex-a57" if profile == "optimized-a57" else "")
+            helper = f"clang {flags} -fno-lto -c src/mupen64plus-core/src/asm_defines/asm_defines.c -o offsets.o\n"
+            dyn = f"clang {flags} -DNEW_DYNAREC=4 -DDYNAREC -DHAVE_PARALLEL_RDP -c new_dynarec/new_dynarec.c -o dyn.o\n"
+            rsp = f"clang++ {flags} -DHAVE_PARALLEL_RSP -c parallel.cpp -o rsp.o\n"
+            link = "clang++ -shared -flto=thin offsets.o dyn.o rsp.o -o libretro.so\n"
+            log = helper + dyn + rsp + link
+            result = audit_commands(log, profile, core="mupen64plus_next_gles3", abi="arm64-v8a")
+            self.assertEqual(result["native_offset_helpers"], 1)
+            self.assertEqual(result["thinlto_compiles"], 2)
+            for bad in (log.replace("-fno-lto ", ""), log.replace(" -DNEW_DYNAREC", " -fno-lto -DNEW_DYNAREC"),
+                        log.replace("src/mupen64plus-core/src/asm_defines/asm_defines.c", "src/other/asm_defines.c")):
+                with self.assertRaises(ValueError):
+                    audit_commands(bad, profile, core="mupen64plus_next_gles3", abi="arm64-v8a")
+
     def test_auto_experimental_full_catalogs(self):
         for profile in ("optimized", "optimized-a57"):
             automatic = plan(self.catalog, "push", "refs/heads/main", False, profile=profile)

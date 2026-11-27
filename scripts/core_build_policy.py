@@ -239,6 +239,7 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scope
     link_count = 0
     opt_levels = {}
     thin_compiles = 0
+    native_offset_helpers = 0
     thin_links = 0
     compile_lto_modes = {}
     link_lto_modes = {}
@@ -259,6 +260,15 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scope
             level = levels[-1] if levels else "(implicit)"
             opt_levels[level] = opt_levels.get(level, 0) + 1
             lto = [token for token in args if token.startswith("-flto") or token == "-fno-lto"]
+            # The pinned Mupen64Plus offset generator is read by llvm-strings.
+            # LLVM bitcode does not contain its assembled @ASM_DEFINE records.
+            offset_helper = (core == "mupen64plus_next_gles3"
+                             and source.endswith("/mupen64plus-core/src/asm_defines/asm_defines.c")
+                             and "-flto=thin" in PROFILES[profile][0])
+            if offset_helper:
+                if not lto or lto[-1] != "-fno-lto":
+                    raise ValueError("Mupen64Plus offset helper must be compiled as native ELF")
+                native_offset_helpers += 1
             thin_compiles += bool(lto and lto[-1] == "-flto=thin")
             mode = lto[-1] if lto else "(implicit)"
             compile_lto_modes[mode] = compile_lto_modes.get(mode, 0) + 1
@@ -276,14 +286,16 @@ def audit_commands(log, profile, cwd=None, root=None, core=None, abi=None, scope
         raise ValueError("Candidate lacks auditable C/C++ compile or shared link commands")
     if "-O3" in PROFILES[profile][0] and opt_levels != {"-O3": compile_count}:
         raise ValueError(f"Core overrides requested -O3: {opt_levels}")
-    if "-flto=thin" in PROFILES[profile][0] and (thin_compiles != compile_count or thin_links != link_count):
-        raise ValueError(f"ThinLTO not effective everywhere: compile {thin_compiles}/{compile_count}, link {thin_links}/{link_count}")
+    if native_offset_helpers > 1:
+        raise ValueError("More than one Mupen64Plus native offset helper in linked inputs")
+    if "-flto=thin" in PROFILES[profile][0] and (thin_compiles != compile_count - native_offset_helpers or thin_links != link_count):
+        raise ValueError(f"ThinLTO not effective everywhere: compile {thin_compiles}/{compile_count - native_offset_helpers}, link {thin_links}/{link_count}")
     if profile in {"tune-a57", "optimized-a57"} and tuning_count != compile_count:
         raise ValueError(f"Cortex-A57 tuning not effective: {tuning_count}/{compile_count}")
     acceleration = audit_acceleration(commands, core, abi, profile) if core else {}
     return {"compile_commands": compile_count, "shared_link_commands": link_count,
             "optimization_levels": opt_levels, "codegen_flag_occurrences": codegen_flags, "thinlto_compiles": thin_compiles,
-            "thinlto_links": thin_links, "cortex_a57_compiles": tuning_count,
+            "thinlto_links": thin_links, "native_offset_helpers": native_offset_helpers, "cortex_a57_compiles": tuning_count,
             "compile_lto_modes": compile_lto_modes, "link_lto_modes": link_lto_modes,
             "shared_link_outputs": shared_outputs, "acceleration": acceleration}
 
@@ -304,6 +316,21 @@ def prepare_cmake(root, core, profile):
 
 
 def prepare_ndk(root, core, profile):
+    if core == "mupen64plus_next_gles3" and "-flto=thin" in PROFILES[profile][0]:
+        path = root / "jni" / "Android.mk"
+        source = path.read_text()
+        marker = "ASM_DEFINES_OBJ := $(LOCAL_OBJS_DIR)/$(call get-object-name,$(CORE_DIR)/src/asm_defines/asm_defines.c)"
+        generator = "\t\t-f $(CORE_DIR)/tools/gen_asm_defines.awk"
+        if source.count(marker) != 1 or source.count(generator) != 1:
+            raise ValueError("Mupen64Plus native offset generation recipe changed; inspect pinned source")
+        # ndk-build sets PRIVATE_CFLAGS on each object in BUILD_SHARED_LIBRARY.
+        # Append only on this target, without propagating to its prerequisites.
+        source = source.replace(marker, marker + "\n"
+            "$(ASM_DEFINES_OBJ): private PRIVATE_CFLAGS += -fno-lto")
+        source = source.replace(generator, generator + "\n"
+            "\t@test -s $(ASM_DEFINES_NASM) && test -s $(ASM_DEFINES_GAS)")
+        path.write_text(source)
+        return
     if profile != "snes9x2010-threaded" and not (profile in PUBLIC_EXPERIMENTS and core == "snes9x2010"):
         return
     if core != "snes9x2010":
