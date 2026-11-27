@@ -151,10 +151,29 @@ val modulePackaging = providers.gradleProperty("MODULE_PACKAGING")
     .orElse(providers.environmentVariable("MODULE_PACKAGING")).orElse("full").get()
 require(modulePackaging in setOf("full", "modular-preview")) { "Unknown MODULE_PACKAGING: $modulePackaging" }
 val modularPreview = modulePackaging == "modular-preview"
-val monogramEnabled = (providers.gradleProperty("MONOGRAM_NATIVE").orElse(
+val monogramEnabled = !modularPreview && (providers.gradleProperty("MONOGRAM_NATIVE").orElse(
     providers.environmentVariable("MONOGRAM_NATIVE")
 ).orElse("0").get()).let { it == "1" || it.equals("true", true) }
 val monogramAar = file("libs/monogram-mtproto.aar")
+// Exact host ABI source fingerprint shared by the DEX exporter and both APK variants.
+// Include the boundary's DTOs, Kotlin internal method names and runtime dependency pins.
+val monogramAdapterInputs = fileTree("src/main/java/com/ambient/tv/data/telegram") {
+    include("**/*.kt")
+}.files + setOf(
+    file("src/main/java/com/ambient/tv/data/local/TokenStore.kt"),
+    file("src/main/java/com/ambient/tv/modules/SystemModuleRuntime.kt"),
+    file("src/main/java/com/ambient/tv/modules/OwnedModuleDexClassLoader.kt"),
+    rootProject.file("gradle/libs.versions.toml"),
+)
+val monogramAdapterSha = MessageDigest.getInstance("SHA-256").let { digest ->
+    monogramAdapterInputs.sortedBy { it.relativeTo(rootProject.projectDir).invariantSeparatorsPath }.forEach {
+        digest.update(it.relativeTo(rootProject.projectDir).invariantSeparatorsPath.toByteArray(Charsets.UTF_8))
+        digest.update(0.toByte())
+        digest.update(it.readBytes())
+        digest.update(0.toByte())
+    }
+    digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+}
 // Spotify's in-app playback (librespot) is off: Spotify refuses its audio keys (librespot#1649).
 // SPOTIFY_NATIVE=1 brings the whole Spotify system back (core build, menus, settings).
 val spotifyEnabled = (providers.gradleProperty("SPOTIFY_NATIVE").orElse(
@@ -300,6 +319,7 @@ android {
             hash.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
         } else ""
         buildConfigField("String", "MONOGRAM_BINDING_SHA256", quotedBuildConfigString(monogramBindingSha))
+        buildConfigField("String", "MONOGRAM_ADAPTER_SHA256", quotedBuildConfigString(monogramAdapterSha))
         buildConfigField("boolean", "MONOGRAM_CDN_RANGES", (providers.environmentVariable("MONOGRAM_CDN_RANGES").orNull == "1").toString())
         val monogramPgoGenerate = monogramEnabled && providers.environmentVariable("MONOGRAM_PGO_MODE").orNull == "generate"
         buildConfigField("boolean", "MONOGRAM_PGO_GENERATE", monogramPgoGenerate.toString())
