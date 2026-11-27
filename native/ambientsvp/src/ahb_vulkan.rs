@@ -96,15 +96,18 @@ pub struct Job{
     set_layout:vk::DescriptorSetLayout,pipeline_layout:vk::PipelineLayout,pipeline:vk::Pipeline,
     pool:vk::DescriptorPool,commands:vk::CommandPool,fence:vk::Fence,
     wait:vk::Semaphore,signal:vk::Semaphore,
-    frame:Option<Box<Frame>>,submitted:bool,
+    frame:Option<Box<Frame>>,submitted:bool,completed:bool,
+    consumers:AtomicU32,
 }
 impl Drop for Job{
     fn drop(&mut self){
         // Construction failure (never submitted) or confirmed completion.
         // On failed release-fence export keep the AImage until this point.
-        if self.submitted{
+        if self.completed{
             if let Some(frame)=self.frame.as_mut(){frame.return_after_gpu(-1);}
         }
+        // If a device is lost before its acquire wait completes, Frame's
+        // Drop returns the original producer fence rather than -1.
         let d=&self.core.device;
         unsafe{
             d.destroy_command_pool(self.commands,None);
@@ -145,7 +148,8 @@ impl Job{
             output:vk::Image::null(),output_memory:vk::DeviceMemory::null(),output_view:vk::ImageView::null(),
             set_layout:vk::DescriptorSetLayout::null(),pipeline_layout:vk::PipelineLayout::null(),pipeline:vk::Pipeline::null(),
             pool:vk::DescriptorPool::null(),commands:vk::CommandPool::null(),fence:vk::Fence::null(),
-            wait:vk::Semaphore::null(),signal:vk::Semaphore::null(),frame:None,submitted:false};
+            wait:vk::Semaphore::null(),signal:vk::Semaphore::null(),frame:None,submitted:false,
+            completed:false,consumers:AtomicU32::new(0)};
         unsafe{AHardwareBuffer_acquire(j.buffer)};
         j.import()?;
         j.create_output()?;
@@ -153,6 +157,11 @@ impl Job{
         j.fences(frame.acquire_fd)?;
         Ok(j)
     }
+    pub(crate) fn picture(&self)->(vk::Device,vk::Queue,u32,u32,vk::ImageView){
+        (self.core.device.handle(),self.core.queue,self.info.width,self.info.height,self.output_view)
+    }
+    pub(crate) fn retain_consumer(&self){self.consumers.fetch_add(1,Ordering::AcqRel);}
+    pub(crate) fn release_consumer(&self){self.consumers.fetch_sub(1,Ordering::AcqRel);}
     fn import(&mut self)->Result<()>{
         let d=&self.core.device;
         let mut fmt=vk::AndroidHardwareBufferFormatPropertiesANDROID::default();
@@ -418,11 +427,12 @@ pub unsafe extern "C" fn ambient_svp_ahb_output(job:*const Job,out:*mut Output)-
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_ahb_release(job:*mut Job,consumer:vk::Fence)->i32{
     if job.is_null(){return -1;}
-    let j=unsafe{&*job};
+    let j=unsafe{&mut *job};
+    if j.consumers.load(Ordering::Acquire)!=0{return 0;}
     for fence in [j.fence,consumer]{
         if fence==vk::Fence::null(){continue;}
         match unsafe{j.core.device.get_fence_status(fence)}{
-            Ok(true)=>{},Ok(false)=>return 0,
+            Ok(true)=>{if fence==j.fence{j.completed=true;}},Ok(false)=>return 0,
             Err(vk::Result::ERROR_DEVICE_LOST)=>break,Err(_)=>return -1,
         }
     }
