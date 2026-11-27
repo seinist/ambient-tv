@@ -126,13 +126,17 @@ jobs:
           (cd "$tmp/ffmpeg" && ./configure --disable-all --disable-autodetect --disable-x86asm --disable-programs --disable-doc > "$tmp/configure.log" 2>&1) || { cat "$tmp/configure.log"; exit 1; }
           cc -std=c11 -Wall -Wextra -Werror -Wno-unused-function -fsyntax-only -I "$tmp/ffmpeg" \
             -I native/ambientsvp/include native/ambientsvp/tests/svp_mpv_vulkan_compile_test.c
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Wno-unused-function -ffunction-sections -fdata-sections \
+            -DSVP_METADATA_TEST -I "$tmp/ffmpeg" -I native/ambientsvp/include \
+            native/ambientsvp/tests/svp_mpv_vulkan_compile_test.c -Wl,--gc-sections -ldl -o "$tmp/metadata"
+          "$tmp/metadata"
       - name: Test C adapters' shared helpers
         run: |
           set -euo pipefail
           bash -n scripts/prepare_svp_sources.sh
           bash -n scripts/build_svp_android.sh
           bash -n scripts/profile_svp_android.sh
-          for test in svp_retry_test svp_planes_test svp_sdr_profile_test svp_av1_config_test; do
+          for test in svp_retry_test svp_planes_test svp_sdr_profile_test svp_av1_config_test svp_hevc_hdr_guard_test; do
             cc -std=c11 -O2 -Wall -Wextra -Werror -I native/ambientsvp/include "native/ambientsvp/tests/$test.c" -o "/tmp/$test"
             "/tmp/$test"
           done
