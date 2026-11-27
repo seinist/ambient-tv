@@ -455,3 +455,36 @@ on the same main base 30095218ec87b6213eab030916d8db0f974f44c7 without
 these SVP changes (run 46004250901, unit-tests job 140523738465).
 Current-head native/Android checks and physical MPV/VLC playback still
 need validation.
+
+
+Subpixel candidate costs and cross-pair synthesis scheduling
+-----------------------------------------------------------
+The experimental motion cost kernel now accepts 1, 4 or 16 texture-array
+layers, corresponding to exact integer, half- or quarter-pixel phases.
+SuperLevel borrows the pinned SuperBuilder's actual Y/U/V phase planes
+and reduced pyramid levels, respecting each plane's original row pitch.
+It uploads directly to a bounded mapped staging buffer and compacts only
+the selected level, not the entire superframe. Both CPU and Vulkan metric
+references shift signed I420 chroma motion before splitting integer and
+fractional coordinates. Negative offsets, pel=1/2/4, pyramid dimensions,
+both vector directions and SAD/SATD are covered by parity tests.
+Unsupported geometry and budget limits reject the batch; no approximate
+edge sampling is silently introduced.
+
+Paired synthesis now permits adjacent source pairs when both are already
+available, never requiring additional input or extending the latency
+window. The second queue submission follows the first readback copy;
+texture reuse remains ordered. The extra readback is still bounded to
+1080p and a single future output. A 24->36 fps batched-input regression
+requires actual cross-pair scheduling and compares serial output bytes.
+
+Native loader fixtures also exercise old ABI-2 runtimes without optional
+symbols, new runtimes with direct input/output symbols, ABI mismatch and
+missing required symbols.
+
+The previous direct-output head 37023d7c had passing CPU tests, but its
+Vulkan check was canceled by newer commits. New-head parity, Android
+checks and renderer builds are required. The motion metric still does not
+replace the upstream predictor-dependent search pipeline; complete GPU
+motion estimation and decoder-to-renderer hardware-buffer zero-copy remain
+unfinished. No device performance gain has been measured.
