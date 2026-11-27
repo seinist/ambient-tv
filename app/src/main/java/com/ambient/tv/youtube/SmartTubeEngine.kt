@@ -151,10 +151,11 @@ class SmartTubeEngine @Inject constructor(
             runCatching {
                 val started = System.nanoTime()
                 // Account restoration must never hold the shared format-client slot.
-                service("getMediaItemService")
+                val serviceManager = manager()
+                checkNotNull(serviceManager.call("getMediaItemService")) { "SmartTube media item service unavailable" }
                 // Actual playback wins: it restores the client itself if already in the slot.
                 if (formatClientMutex.tryLock()) {
-                    try { restoreFormatClientOnce() } finally { formatClientMutex.unlock() }
+                    try { restoreFormatClientOnce(serviceManager) } finally { formatClientMutex.unlock() }
                 }
                 com.ambient.tv.ui.player.logPlaybackStartup("youtube", "format_warmup", started)
             }.onFailure {
@@ -264,9 +265,7 @@ class SmartTubeEngine @Inject constructor(
         playbackMetadata.clear()
         rowContinuations.clear()
         val signIn = service("getSignInService")
-        Class.forName("com.liskovsoft.youtubeapi.service.internal.YouTubeAccountManager")
-            .getMethod("instance", signIn.javaClass).invoke(null, signIn)?.call("init")
-        signIn.call("invalidateCache")
+        check(signIn.invokeCompatible("reloadStoredAccounts").invoked) { "SmartTube account reload unavailable" }
     }
 
     private data class StoredAccount(val id: String, val name: String, val spec: String)
@@ -540,10 +539,7 @@ class SmartTubeEngine @Inject constructor(
 
     suspend fun metadata(videoId: String, forceRefresh: Boolean = false): YouTubeMetadata {
         YouTubeLocalProgress.awaitReady()
-        if (forceRefresh) {
-            io { service("getMediaItemService").call("invalidateCache") }
-            playbackMetadata.invalidate(videoId)
-        }
+        if (forceRefresh) playbackMetadata.invalidate(videoId)
         val generation = playbackMetadata.generation
         playbackMetadata.get(videoId)?.let { return it }
         // A post-reconnect request must not join work started against the old connection/account.
@@ -579,13 +575,15 @@ class SmartTubeEngine @Inject constructor(
         }
     }
 
-    suspend fun playback(videoId: String, isTrailer: Boolean = false, started: Long = System.nanoTime()): YouTubePlayback {
+    suspend fun playback(
+        videoId: String, isTrailer: Boolean = false, started: Long = System.nanoTime(), forceRefresh: Boolean = false,
+    ): YouTubePlayback {
         val cached = playbackMetadata.get(videoId)
         return prepareYouTubePlayback(cached,
             loadMetadata = { com.ambient.tv.util.suspendResult { metadata(videoId) }.getOrNull() },
             loadStream = {
                 // Network resolution overlaps local SQL priming; resume is still canonical.
-                val stream = resolvePlaybackStream(videoId, isTrailer, started)
+                val stream = resolvePlaybackStream(videoId, isTrailer, started, forceRefresh)
                 val progressStarted = System.nanoTime()
                 YouTubeLocalProgress.awaitReady()
                 com.ambient.tv.ui.player.logPlaybackStartup("youtube", "progress_ready", started,
@@ -597,17 +595,14 @@ class SmartTubeEngine @Inject constructor(
         }
     }
 
-    suspend fun refreshLivePlayback(videoId: String, isTrailer: Boolean = false, started: Long = System.nanoTime()): YouTubePlayback {
-        io { service("getMediaItemService").call("invalidateCache") }
-        return playback(videoId, isTrailer, started)
-    }
-
-    private suspend fun resolvePlaybackStream(videoId: String, isTrailer: Boolean, started: Long): YouTubePlayback = io {
+    private suspend fun resolvePlaybackStream(
+        videoId: String, isTrailer: Boolean, started: Long, forceRefresh: Boolean,
+    ): YouTubePlayback = io {
         val serviceStarted = System.nanoTime()
         val media = service("getMediaItemService")
         com.ambient.tv.ui.player.logPlaybackStartup("youtube", "service_ready", started,
             "stage_ms=${(System.nanoTime() - serviceStarted) / 1_000_000}")
-        val candidate = loadPlayableFormatInfo(media, videoId, isTrailer, started)
+        val candidate = loadPlayableFormatInfo(media, videoId, isTrailer, started, forceRefresh = forceRefresh)
         val info = candidate.info
         synchronized(playbackFormatInfos) { playbackFormatInfos[videoId] = info }
         if (info.callBool("isLiveOffline") == true) {
@@ -699,7 +694,7 @@ class SmartTubeEngine @Inject constructor(
         val candidate = com.ambient.tv.util.suspendResult {
             loadPlayableFormatInfo(media, videoId, expiredUrl = expiredUrl)
         }.getOrNull() ?: return@io null
-        youtubeRenewedUrl(expiredUrl, candidate.renewalUrls).also { renewed ->
+        youtubeRenewedUrl(expiredUrl, candidate.renewalUrls)?.takeIf { it != expiredUrl }.also { renewed ->
             com.ambient.tv.diagnostics.DiagnosticLog.log(
                 com.ambient.tv.diagnostics.DiagnosticLevel.INFO, "youtube-relay",
                 if (renewed != null) "Expired stream link renewed" else "Expired stream link could not be renewed",
@@ -714,75 +709,55 @@ class SmartTubeEngine @Inject constructor(
      * process at the TV client again, which often answers with SABR only: one wasted request
      * (1–5 s) before the client switch on the first video after each app start.
      */
-    private fun restoreFormatClientOnce() {
+    private fun restoreFormatClientOnce(serviceManager: Any) {
         if (formatClientRestored) return
-        runCatching {
-            val data = Class.forName("com.liskovsoft.youtubeapi.service.internal.MediaServiceData").getMethod("instance").invoke(null)
-            val ordinal = data?.callInt("getVideoInfoType")?.takeIf { it >= 0 } ?: return@runCatching
-            val service = Class.forName("com.liskovsoft.youtubeapi.videoinfo.V2.VideoInfoService").getMethod("instance").invoke(null)
-            val client = Class.forName("com.liskovsoft.youtubeapi.common.helpers.AppClient").enumConstants?.getOrNull(ordinal) ?: return@runCatching
-            val known = service.javaClass.getDeclaredField("VIDEO_INFO_TYPE_LIST").apply { isAccessible = true }.get(null) as? Array<*>
-            if (known?.contains(client) != true) return@runCatching
-            val fields = listOf("mNextInfoType", "mActualInfoType").map {
-                service.javaClass.getDeclaredField(it).apply { isAccessible = true }
-            }
-            fields.forEach { it.set(service, client) }
-            Timber.i("SmartTube format client restored: %s", client)
-        }.onSuccess { formatClientRestored = true }
-            .onFailure { Timber.d(it, "SmartTube format client restore") }
+        val result = serviceManager.invokeCompatible("restoreSavedFormatClient")
+        formatClientRestored = result.invoked
+        if (result.value == true) Timber.i("SmartTube saved format client restored")
     }
 
     private suspend fun loadPlayableFormatInfo(
         media: Any, videoId: String, isTrailer: Boolean = false, launchStarted: Long = 0L,
-        expiredUrl: String? = null,
+        expiredUrl: String? = null, forceRefresh: Boolean = false,
     ): PlaybackFormatCandidate {
         val queuedAt = System.nanoTime()
         return formatClientMutex.withLock {
-        val trace = launchStarted.takeIf { it != 0L } ?: queuedAt
-        com.ambient.tv.ui.player.logPlaybackStartup("youtube", "format_slot", trace,
-            "stage_ms=${(System.nanoTime() - queuedAt) / 1_000_000}")
-        val caller = kotlin.coroutines.coroutineContext
-        restoreFormatClientOnce()
-        // Do not overwrite a client selected by an actual format request with an old saved one.
-        formatClientRestored = true
-        if (expiredUrl != null) media.call("invalidateCache")
-        resolveYouTubeFormatInfo(
-            load = { allowInnertube ->
-                PlaybackFormatCandidate(loadFormatInfo(media, videoId, allowInnertube), videoId, isTrailer)
-            },
-            switchClient = {
-                val switched = manager().invokeCompatible("switchNextClientNow")
-                val available = if (switched.invoked) true else {
-                    val videoInfo = runCatching {
-                        Class.forName("com.liskovsoft.youtubeapi.videoinfo.V2.VideoInfoService")
-                            .getMethod("instance").invoke(null)
-                    }.getOrNull()
-                    videoInfo?.invokeCompatible("switchNextFormat", true)?.invoked == true
+            val trace = launchStarted.takeIf { it != 0L } ?: queuedAt
+            com.ambient.tv.ui.player.logPlaybackStartup("youtube", "format_slot", trace,
+                "stage_ms=${(System.nanoTime() - queuedAt) / 1_000_000}")
+            val caller = kotlin.coroutines.coroutineContext
+            val serviceManager = manager()
+            restoreFormatClientOnce(serviceManager)
+            if (forceRefresh || expiredUrl != null) {
+                check(serviceManager.invokeCompatible("invalidateFormatCache").invoked) {
+                    "SmartTube format cache cannot be invalidated"
                 }
-                if (available) media.call("invalidateCache")
-                available
-            },
-            // Renewal serves an already selected representation, possibly after a renderer
-            // switch. Match its itag/audio track rather than reselecting startup quality.
-            score = { candidate ->
-                if (expiredUrl == null) formatInfoScore(candidate)
-                else if (candidate.info.callBool("isUnplayable") == true) 0
-                else {
-                    val renewed = youtubeRenewedUrl(expiredUrl, candidate.renewalUrls)
-                    when {
-                        renewed == null -> 0
-                        renewed == expiredUrl -> 2
-                        else -> 4
+            }
+            resolveYouTubeFormatInfo(
+                load = { allowInnertube ->
+                    PlaybackFormatCandidate(loadFormatInfo(media, videoId, allowInnertube), videoId, isTrailer)
+                },
+                // The service manager also invalidates its format cache when switching clients.
+                switchClient = { serviceManager.invokeCompatible("switchNextClientNow").invoked },
+                score = { candidate ->
+                    if (expiredUrl == null) formatInfoScore(candidate)
+                    else if (candidate.info.callBool("isUnplayable") == true) 0
+                    else {
+                        val renewed = youtubeRenewedUrl(expiredUrl, candidate.renewalUrls)
+                        when {
+                            renewed == null -> 0
+                            renewed == expiredUrl -> 2
+                            else -> 4
+                        }
                     }
-                }
-            },
-            isTerminal = { it.info.callBool("isLiveOffline") == true },
-            checkActive = { caller.ensureActive() },
-            onAttempt = { attempt, score, started ->
-                com.ambient.tv.ui.player.logPlaybackStartup("youtube", "format_response", trace,
-                    "attempt=$attempt score=$score stage_ms=${(System.nanoTime() - started) / 1_000_000}")
-            },
-        )
+                },
+                isTerminal = { it.info.callBool("isLiveOffline") == true },
+                checkActive = { caller.ensureActive() },
+                onAttempt = { attempt, score, started ->
+                    com.ambient.tv.ui.player.logPlaybackStartup("youtube", "format_response", trace,
+                        "attempt=$attempt score=$score stage_ms=${(System.nanoTime() - started) / 1_000_000}")
+                },
+            )
         }
     }
 
@@ -790,7 +765,7 @@ class SmartTubeEngine @Inject constructor(
         if (formats.isEmpty()) null else youtubeAdaptivePair(
             formats,
             YouTubeDeviceVideo.videoTarget(context, appPreferences.youtubeVideoPreset, appPreferences.youtubeMaxVideoHeight),
-            YouTubeDeviceVideo.decodeCheck(),
+            YouTubeDeviceVideo.decodeCheck(context, allowHdr = true),
             youtubePreferredAudioLanguage(appPreferences.playbackAudioLanguage),
         )
 
@@ -845,6 +820,7 @@ class SmartTubeEngine @Inject constructor(
             preferLiveHls = renderer != com.ambient.tv.ui.player.backend.PlaybackBackend.VLC,
             allowOtf = media3,
             requestedMaxHeight = cap.takeIf { selectedHeight == it } ?: 0,
+            selectedNativePair = candidate.pair.takeUnless { media3 },
             hasProgressive = { candidate.direct != null },
         )
         // Try for native-compatible formats, but do not lose the only playable Media3 response.

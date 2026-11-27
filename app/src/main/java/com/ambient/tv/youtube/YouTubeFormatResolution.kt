@@ -25,6 +25,7 @@ internal fun youtubePlayableFormatScore(
     preferLiveHls: Boolean = true,
     allowOtf: Boolean = false,
     requestedMaxHeight: Int = 0,
+    selectedNativePair: Pair<String, String>? = null,
     hasProgressive: () -> Boolean,
 ): Int {
     if (unplayable) return 0
@@ -32,8 +33,11 @@ internal fun youtubePlayableFormatScore(
     // live fallback instead of calling an HLS-only response playable for that renderer.
     if (live && !preferLiveHls) return if (hasProgressive()) 4 else 0
     if (live && hasHls) return 4
-    if (youtubeHasPlayableDashTracks(formats, allowOtf)) {
-        val playableVideos = formats.filter {
+    val selectedFormats = selectedNativePair?.let { (video, audio) ->
+        formats.filter { it.url == video || it.url == audio }
+    } ?: formats
+    if (youtubeHasPlayableDashTracks(selectedFormats, allowOtf)) {
+        val playableVideos = selectedFormats.filter {
             it.mimeType?.startsWith("video/", ignoreCase = true) == true &&
                 !it.url.isNullOrBlank() && (allowOtf || !it.isOtf)
         }

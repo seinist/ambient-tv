@@ -1,5 +1,7 @@
 package com.liskovsoft.googlecommon.common.helpers
 
+import com.liskovsoft.googlecommon.service.oauth.YouTubeAccount
+import com.liskovsoft.youtubeapi.service.YouTubeSignInService
 import org.junit.Assert.*
 import org.junit.Test
 import java.util.concurrent.CountDownLatch
@@ -7,6 +9,46 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class AuthHeaderSnapshotTest {
+    @Test fun credentialKeySurvivesAccountMetadataReplacement() {
+        fun account(page: String) = object : YouTubeAccount() {
+            override fun getRefreshToken() = "fixture-refresh"
+            override fun getPageIdToken() = page
+        }
+        assertEquals(YouTubeSignInService.authKey(account("page-a")), YouTubeSignInService.authKey(account("page-a")))
+        assertNotEquals(YouTubeSignInService.authKey(account("page-a")), YouTubeSignInService.authKey(account("page-b")))
+    }
+
+    @Test fun selectingAnotherAccountClearsHeadersBeforeChangingSelection() {
+        val signIn = YouTubeSignInService.instance()
+        val accounts = signIn.accounts
+        val previous = RetrofitOkHttpHelper.authHeaders
+        val selectionReached = IllegalStateException("selection reached")
+        val old = object : YouTubeAccount() {
+            override fun isSelected() = true
+            override fun getName() = "old fixture"
+            override fun setSelected(selected: Boolean) {
+                assertTrue(RetrofitOkHttpHelper.authHeaders.isEmpty())
+                throw selectionReached
+            }
+        }
+        val next = object : YouTubeAccount() {
+            override fun getName() = "next fixture"
+            override fun getRefreshToken() = "next refresh"
+        }
+        try {
+            accounts.add(old)
+            accounts.add(next)
+            val pending = RetrofitOkHttpHelper.beginAuthRefresh()
+            assertTrue(RetrofitOkHttpHelper.publishAuthHeaders(pending, mapOf("Authorization" to "old fixture")))
+            assertSame(selectionReached, assertThrows(IllegalStateException::class.java) { signIn.selectAccount(next) })
+            assertFalse(RetrofitOkHttpHelper.publishAuthHeaders(pending, mapOf("Authorization" to "obsolete fixture")))
+        } finally {
+            accounts.remove(old)
+            accounts.remove(next)
+            RetrofitOkHttpHelper.replaceAuthHeaders(previous)
+        }
+    }
+
     @Test fun obsoleteRefreshCannotOverwriteNewAccount() {
         val previous = RetrofitOkHttpHelper.authHeaders
         try {

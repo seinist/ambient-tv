@@ -402,6 +402,9 @@ internal fun youtubeAdaptivePair(
     return (video.url ?: return null) to (audio.url ?: return null)
 }
 
+internal fun youtubeSelectedAudioKey(formats: List<YouTubeAdaptiveFormat>, url: String?): String? =
+    url?.let { selected -> formats.firstOrNull { it.url == selected }?.let(::audioKey) }
+
 /** A googlevideo parameter, either as query (`?itag=22`) or as path segment (`/itag/22/`). */
 private fun queryParam(url: String, name: String): String? =
     Regex("""[?&]${Regex.escape(name)}=([^&#]*)""").find(url)?.groupValues?.get(1)
