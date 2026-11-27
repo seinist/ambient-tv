@@ -74,6 +74,16 @@ static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
             }else return false;
         }
     }
+    // The RGB path is also callable independently of the metadata bridge.
+    // Reject malformed matrix inputs before emitting shader constants.
+    if (decode_rgb) {
+        for (unsigned i=0;i<3;i++) {
+            if (!isfinite(reshape->nonlinear_offset[i])) return false;
+            for (unsigned j=0;j<3;j++)
+                if (!isfinite(reshape->nonlinear.m[i][j]) ||
+                    !isfinite(reshape->linear.m[i][j])) return false;
+        }
+    }
     float layer_ratio[2]={1.f,1.f},layer_shift[2]={0.f,0.f},chroma_shift[2]={0.f,0.f};
     int luma_direct=0;
     if(planes){

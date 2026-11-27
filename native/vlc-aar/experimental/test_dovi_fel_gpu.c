@@ -225,6 +225,64 @@ int main(void)
     assert(ambient_fel_compose_ex(gpu,dp,neutral_bl,zero_el,out,&identity,&nlq,false,true,NULL));
     assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=out,.ptr=pixels)));
     for(unsigned i=0;i<16;i++)if(i%4!=3)assert(fabsf(pixels[i]-0.5f)<0.0002f);
+    // Nonneutral packed P010 channel order, reshape + signed residual,
+    // followed by the actual Dolby color conversion. Construct the reference
+    // codewords on the CPU, then apply only the shared color conversion in
+    // a separate dispatch. A neutral-axis test cannot detect Cr/Y/Cb swaps.
+    struct pl_dovi_metadata colored=reshape;
+    colored.nonlinear=identity.nonlinear;
+    colored.linear=identity.linear;
+    colored.nonlinear.m[0][1]=0.05f;
+    colored.linear.m[1][2]=0.04f;
+    colored.nonlinear_offset[0]=0.02f;
+    float packed[16],reconstructed[16],expected_rgb[16];
+    for(unsigned i=0;i<4;i++){
+        unsigned k=i*4;
+        packed[k]=base[k+2];packed[k+1]=base[k];packed[k+2]=base[k+1];
+        packed[k+3]=reconstructed[k+3]=1.f;
+        for(unsigned j=0;j<3;j++){
+            double v=6554.0/65536.0+58982.0/65536.0*base[k+j];
+            reconstructed[k+j]=(float)fmin(1.0,fmax(0.0,v+
+                ambient_fel_residual(&nlq,j,residual[k+j])));
+        }
+    }
+    pl_tex packed_bl=pl_tex_create(gpu,pl_tex_params(.w=2,.h=2,.format=fmt,
+        .sampleable=true,.initial_data=packed));
+    pl_tex reference_bl=pl_tex_create(gpu,pl_tex_params(.w=2,.h=2,.format=fmt,
+        .sampleable=true,.initial_data=reconstructed));
+    assert(packed_bl&&reference_bl);
+    pl_dispatch_reset_frame(dp);
+    pl_shader ref_sh=pl_dispatch_begin(dp);
+    assert(ref_sh);
+    const struct pl_shader_desc ref_desc={
+        .desc={.name="reference_bl",.type=PL_DESC_SAMPLED_TEX},
+        .binding={.object=reference_bl}};
+    assert(pl_shader_custom(ref_sh,&(struct pl_custom_shader){
+        .input=PL_SHADER_SIG_NONE,.output=PL_SHADER_SIG_COLOR,
+        .descriptors=&ref_desc,.num_descriptors=1,
+        .body="color=texelFetch(reference_bl,ivec2(gl_FragCoord.xy),0);"}));
+    struct pl_dovi_metadata matrix_only=colored;
+    for(unsigned i=0;i<3;i++)matrix_only.comp[i].num_pivots=0;
+    struct pl_color_repr reference_repr={
+        .sys=PL_COLOR_SYSTEM_DOLBYVISION,.levels=PL_COLOR_LEVELS_LIMITED,
+        .bits={.sample_depth=10,.color_depth=10},.dovi=&matrix_only};
+    pl_shader_decode_color(ref_sh,&reference_repr,NULL);
+    assert(pl_dispatch_finish(dp,pl_dispatch_params(.shader=&ref_sh,.target=out)));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=out,.ptr=expected_rgb)));
+    assert(ambient_fel_compose_ex(gpu,dp,packed_bl,el,out,&colored,&nlq,true,true,NULL));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=out,.ptr=pixels)));
+    for(unsigned i=0;i<16;i++)if(i%4!=3){
+        assert(isfinite(expected_rgb[i])&&isfinite(pixels[i]));
+        assert(fabsf(pixels[i]-expected_rgb[i])<0.0005f);
+    }
+    struct pl_dovi_metadata bad_matrix=colored;
+    bad_matrix.nonlinear_offset[0]=NAN;
+    assert(!ambient_fel_compose_ex(gpu,dp,packed_bl,el,out,&bad_matrix,&nlq,true,true,NULL));
+    bad_matrix=colored;bad_matrix.nonlinear.m[0][1]=INFINITY;
+    assert(!ambient_fel_compose_ex(gpu,dp,packed_bl,el,out,&bad_matrix,&nlq,true,true,NULL));
+    bad_matrix=colored;bad_matrix.linear.m[1][2]=NAN;
+    assert(!ambient_fel_compose_ex(gpu,dp,packed_bl,el,out,&bad_matrix,&nlq,true,true,NULL));
+    pl_tex_destroy(gpu,&reference_bl);pl_tex_destroy(gpu,&packed_bl);
     // Exercise the exact owned-picture handoff used by display.c.
     struct ambient_fel_picture *pic=calloc(1,sizeof(*pic)+6*sizeof(uint16_t));
     assert(pic);
