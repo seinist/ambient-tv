@@ -92,11 +92,42 @@ static void reset_stream(bool can_seek)
     short_read_at=SIZE_MAX;peek_at_end=0;
 }
 
+static void test_segment_header(demux_t *d,demux_sys_t *sys)
+{
+    for(unsigned mode=0;mode<2;mode++){
+        reset_stream(mode!=0);sys->b_seekable=mode!=0;
+        box(100,8,"free");
+        box(108,20,"styp");
+        memcpy(bytes+116,"msdh",4);SetDWBE(bytes+120,0);
+        memcpy(bytes+124,"msix",4);
+        box(128,8,"skip");box(136,8,"moof");visible=144;
+        uint64_t padding=0;unsigned count=0;
+        assert(MP4_FEL_SkipSegmentHeader(d,&padding,&count));
+        assert(position==136&&padding==36&&count==3);
+        uint64_t payload,end;
+        assert(MP4_FEL_PeekBox(d->s,ATOM_moof,&payload,&end)&&end==144);
+
+        position=108;box(108,15,"styp");padding=count=0;
+        assert(!MP4_FEL_SkipSegmentHeader(d,&padding,&count)&&position==108);
+        box(108,17,"styp");padding=count=0;
+        assert(!MP4_FEL_SkipSegmentHeader(d,&padding,&count)&&position==108);
+        box(108,20,"styp");padding=AMBIENT_FEL_MAX_PADDING-19;count=0;
+        assert(!MP4_FEL_SkipSegmentHeader(d,&padding,&count)&&position==108);
+        box(108,20,"emsg");padding=count=0;
+        assert(MP4_FEL_SkipSegmentHeader(d,&padding,&count)&&position==108);
+        assert(!MP4_FEL_PeekBox(d->s,ATOM_moof,&payload,&end));
+        box(108,20,"styp");box(128,16,"styp");visible=144;
+        assert(MP4_FEL_SkipSegmentHeader(d,&padding,&count)&&position==128);
+        assert(!MP4_FEL_PeekBox(d->s,ATOM_moof,&payload,&end));
+    }
+}
+
 int main(void)
 {
     mp4_track_t track={.i_track_ID=1,.b_ok=true,.i_timescale=1000};
     demux_sys_t sys={.i_tracks=1,.track=&track};
     demux_t demux={.s=&fixture_stream,.p_sys=&sys};
+    test_segment_header(&demux,&sys);
     MP4_Box_data_tfhd_t tfhd={.i_track_ID=1,
         .i_flags=MP4_TFHD_DEFAULT_BASE_IS_MOOF|MP4_TFHD_DFLT_SAMPLE_SIZE|
             MP4_TFHD_DFLT_SAMPLE_DURATION,
