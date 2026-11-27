@@ -48,10 +48,15 @@ jobs:
           export AMBIENTSVP_TEST_SOFTWARE_VULKAN=1
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::dual_output_matches_single_and_drops_prefetch_on_seek -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::compact_motion_fields_match_float_fields -- --ignored --exact
+      - name: Cross-check Android JNI and private Vulkan cache
+        run: |
+          rustup target add --toolchain stable aarch64-linux-android
+          RUSTFLAGS="" cargo +stable check --manifest-path native/ambientsvp/Cargo.toml --release --locked --target aarch64-linux-android --lib
       - name: Test C adapters' shared helpers
         run: |
           set -euo pipefail
-          bash -n scripts/prepare_svp_sources.sh scripts/build_svp_android.sh
+          bash -n scripts/prepare_svp_sources.sh
+          bash -n scripts/build_svp_android.sh
           for test in svp_retry_test svp_planes_test; do
             cc -std=c11 -O2 -Wall -Wextra -Werror -I native/ambientsvp/include "native/ambientsvp/tests/$test.c" -o "/tmp/$test"
             "/tmp/$test"
