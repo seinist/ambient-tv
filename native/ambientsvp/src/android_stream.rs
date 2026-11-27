@@ -403,8 +403,8 @@ pub unsafe extern "C" fn ambient_svp_android_stream_push(stream:*mut Stream,buff
     })).unwrap_or(-4)
 }
 // Optional ABI: the caller holds its normal output AHB ref separately.
- // Only one lease may be obtained for an exported output. The original
- // producer fence is duplicated here and remains caller-owned.
+// Only one lease may be obtained for an exported output. The original
+// producer fence is duplicated here and remains caller-owned.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_android_stream_lease_output(stream:*mut Stream,buffer:*mut c_void,producer:i32)->*mut OutputLease{
     if stream.is_null()||buffer.is_null()||producer< -1{return ptr::null_mut();}
@@ -425,12 +425,12 @@ pub unsafe extern "C" fn ambient_svp_android_stream_lease_output(stream:*mut Str
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_android_output_release(lease:*mut OutputLease,consumer:i32){
     if lease.is_null(){if consumer>=0{unsafe{libc::close(consumer);}}return;}
-    let mut lease=unsafe{Box::from_raw(lease)};
-    lease.buffer.consumer=consumer;
+    let OutputLease{pool,mut buffer}=*unsafe{Box::from_raw(lease)};
+    buffer.consumer=consumer;
     if consumer<0{return;}
-    let mut pool=lease.pool.lock().unwrap_or_else(|e|e.into_inner());
+    let mut pool=pool.lock().unwrap_or_else(|e|e.into_inner());
     if !pool.closed&&pool.buffers.len()<MAX_RECYCLED_BUFFERS{
-        pool.buffers.push(lease.buffer);
+        pool.buffers.push(buffer);
     }
 }
 #[unsafe(no_mangle)]
@@ -469,6 +469,30 @@ pub unsafe extern "C" fn ambient_svp_android_stream_destroy(stream:*mut Stream)-
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn recycled_buffer_requires_both_explicit_ready_fences(){
+        // eventfd acts as a pollable readiness fixture; actual sync_file
+        // export/consumption is exercised only on Android hardware.
+        unsafe{
+            let producer=libc::eventfd(0,libc::EFD_CLOEXEC|libc::EFD_NONBLOCK);
+            let consumer=libc::eventfd(0,libc::EFD_CLOEXEC|libc::EFD_NONBLOCK);
+            assert!(producer>=0&&consumer>=0);
+            let signal=|fd|{let v=1u64;assert_eq!(libc::write(fd,(&v as *const u64).cast(),8),8);};
+            let b=RecycledBuffer{buffer:0,producer,consumer};
+            assert!(!b.ready());signal(producer);assert!(!b.ready());
+            signal(consumer);assert!(b.ready());
+            let missing=RecycledBuffer{buffer:0,producer:-1,consumer:-1};
+            assert!(!missing.ready());
+            let pool=Arc::new(Mutex::new(OutputPool{closed:true,buffers:Vec::new()}));
+            let fd=libc::eventfd(1,libc::EFD_CLOEXEC);
+            assert!(fd>=0);
+            let lease=Box::into_raw(Box::new(OutputLease{pool:pool.clone(),
+                buffer:RecycledBuffer{buffer:0,producer:-1,consumer:-1}}));
+            ambient_svp_android_output_release(lease,fd);
+            assert!(pool.lock().unwrap().buffers.is_empty());
+            assert_eq!(libc::fcntl(fd,libc::F_GETFD),-1);
+        }
+    }
     #[test]
     #[ignore="requires a physical Android Vulkan device with compositor AHB extensions"]
     fn compositor_command_bundle_reuses_only_signaled_fences(){
