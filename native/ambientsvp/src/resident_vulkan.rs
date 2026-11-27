@@ -6,6 +6,9 @@
 use ash::vk;
 use std::{sync::{Arc,Mutex,atomic::{AtomicBool,AtomicU32,Ordering}},panic::{catch_unwind,AssertUnwindSafe},ptr};
 use crate::resident::{MOTION,SYNTHESIS};
+#[path="resident_hdr_stats.rs"]
+mod hdr_stats;
+use hdr_stats::{HdrWindow,HdrResult,StatsJob,StatsPipelines};
 
 const MAX_PHASES:usize=8;
 const MAX_IN_FLIGHT:u32=4;
@@ -194,6 +197,8 @@ struct Core{
     in_flight:AtomicU32,
     idle:Mutex<Vec<PairResources>>,
     lost:AtomicBool,
+    stats_supported:bool,
+    stats:Mutex<Option<Arc<StatsPipelines>>>,
 }
 pub struct VulkanResident(Arc<Core>);
 #[repr(C)]
@@ -225,6 +230,8 @@ pub struct VulkanPair{
     command:vk::CommandBuffer,
     a:VulkanPicture,b:VulkanPicture,
     phases:usize,
+    rgb_outputs:[vk::ImageView;MAX_PHASES],
+    hdr_jobs:[Option<StatsJob>;MAX_PHASES],
     fence:vk::Fence,
     #[cfg(target_os="android")]
     ahb_inputs:Option<[*const crate::ahb_vulkan::Job;2]>,
@@ -249,7 +256,8 @@ impl VulkanPair{
         core.in_flight.fetch_update(Ordering::AcqRel,Ordering::Acquire,|n|
             (n<MAX_IN_FLIGHT).then_some(n+1)).map_err(|_|"resident in-flight budget")?;
         let mut p=Self{core,pool:vk::DescriptorPool::null(),field:vk::Buffer::null(),
-            memory:vk::DeviceMemory::null(),sets:Vec::new(),command,a,b,phases:0,fence:vk::Fence::null(),
+            memory:vk::DeviceMemory::null(),sets:Vec::new(),command,a,b,phases:0,
+            rgb_outputs:[vk::ImageView::null();MAX_PHASES],hdr_jobs:std::array::from_fn(|_|None),fence:vk::Fence::null(),
             #[cfg(target_os="android")]
             ahb_inputs:None};
         let cached=p.core.idle.lock().unwrap_or_else(|e|e.into_inner()).pop();
@@ -351,6 +359,7 @@ impl VulkanPair{
         let flags=if self.a.rgb(){64}else{self.a.nv12|(self.b.nv12<<1)|(self.a.chroma_location<<2)|(self.b.chroma_location<<4)};
         unsafe{c.synthesis.dispatch(self.command,set,[phase.to_bits(),flags,matrix,c.width|(c.height<<16)],
             c.width.div_ceil(8),c.height.div_ceil(8));}
+        self.rgb_outputs[self.phases]=output;
         self.phases+=1;
         Ok(())
     }
@@ -417,7 +426,10 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
     types.extend(std::iter::repeat_n(vk::DescriptorType::STORAGE_IMAGE,raw_planes(mode)));
     let synthesis_words=if mode==0{synthesis_spirv()?}else if mode>=4{raw_synthesis_spirv(mode)?}else{high_synthesis_spirv(mode)?};
     let synthesis=Pipeline::new(&device,&types,&synthesis_words,c"synthesize")?;
-    Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,width,height,gw,gh,field_size,mode,in_flight:AtomicU32::new(0),idle:Mutex::new(Vec::new()),lost:AtomicBool::new(false)})))
+    Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,width,height,gw,gh,field_size,mode,in_flight:AtomicU32::new(0),idle:Mutex::new(Vec::new()),lost:AtomicBool::new(false),
+        stats_supported:matches!(mode,1..=3)&&limits.max_per_stage_descriptor_storage_buffers>=2&&
+            limits.max_storage_buffer_range>=100001*4*3,
+        stats:Mutex::new(None)})))
 }
 
 #[unsafe(no_mangle)]
@@ -487,6 +499,36 @@ pub unsafe extern "C" fn ambient_svp_vk_render_raw(pair:*mut VulkanPair,phase:f3
     if pair.is_null() || outputs.is_null() || !(2..=3).contains(&count){return -1;}
     catch_unwind(AssertUnwindSafe(||unsafe{(&mut *pair).render_raw(phase,std::slice::from_raw_parts(outputs,count as usize))}
         .map_or(-1,|_|0))).unwrap_or(-1)
+}
+// Record metadata statistics immediately after the selected RGB phase.
+// Only the pair's recorded view is sampled, not an arbitrary image.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_hdr_stats(pair:*mut VulkanPair,phase:u32,
+    windows:*const HdrWindow,count:u32)->i32{
+    if pair.is_null()||windows.is_null()||!(1..=3).contains(&count){return -1;}
+    catch_unwind(AssertUnwindSafe(||{
+        let p=unsafe{&mut *pair};let i=phase as usize;
+        if p.fence!=vk::Fence::null()||i>=p.phases||p.hdr_jobs[i].is_some()||
+            p.rgb_outputs[i]==vk::ImageView::null(){return -1;}
+        let windows=unsafe{std::slice::from_raw_parts(windows,count as usize)};
+        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],windows)else{return -1;};
+        unsafe{job.record(p.command,p.core.width,p.core.height);}
+        p.hdr_jobs[i]=Some(job);0
+    })).unwrap_or(-1)
+}
+// Read compact metadata only once the real submission fence signals.
+// Never read GPU-produced data before completion or after pair release.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_hdr_read(pair:*const VulkanPair,phase:u32,
+    results:*mut HdrResult,count:u32)->i32{
+    if pair.is_null()||results.is_null()||!(1..=3).contains(&count){return -1;}
+    catch_unwind(AssertUnwindSafe(||{
+        let p=unsafe{&*pair};let i=phase as usize;
+        if p.fence==vk::Fence::null()||i>=p.phases{return -1;}
+        match unsafe{p.core.device.get_fence_status(p.fence)}{Ok(true)=>{},Ok(false)=>return 0,Err(_)=>return -1}
+        let Some(job)=p.hdr_jobs[i].as_ref()else{return -1;};
+        job.read(unsafe{std::slice::from_raw_parts_mut(results,count as usize)}).map_or(-1,|_|1)
+    })).unwrap_or(-1)
 }
 // The caller must pass the fence of the successful submission containing
 // this exact command buffer. The fence is borrowed and must not be reset
