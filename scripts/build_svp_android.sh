@@ -8,6 +8,7 @@ export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/S
 RUSTC_BIN="$(rustup which --toolchain stable rustc)"
 export PATH="$(dirname "$RUSTC_BIN"):$HOME/.cargo/bin:$PATH"
 export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-z,max-page-size=16384"
+source "$ROOT/scripts/svp_pgo_metadata.sh"
 TOOLCHAIN_KEY="$(rustc --version)|$(<"$ANDROID_NDK_HOME/source.properties")|$RUSTFLAGS|${CARGO_ENCODED_RUSTFLAGS:-}"
 cd "$ROOT/native/ambientsvp"
 
@@ -40,7 +41,7 @@ for abi in ${SVP_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
         profile_hash="$(sha256sum "$profile" | cut -d ' ' -f1)"
         meta="$PGO_DIR/$abi.meta"
         [[ -s "$meta" ]] || { echo "Missing SVP PGO provenance: $meta (generate with profile_svp_android.sh)" >&2; exit 2; }
-        expected_meta="$(printf '%s\n' "source=$SOURCE_HASH" "rustc=$(rustc --version)" "abi=$abi" "sha256=$profile_hash")"
+        expected_meta="$(svp_pgo_metadata "$SOURCE_HASH" "$abi" "$profile" "$RUSTFLAGS")"
         [[ "$(<"$meta")" == "$expected_meta" ]] || { echo "SVP PGO profile source, toolchain, ABI or digest mismatch: $profile" >&2; exit 2; }
         # Cargo's encoded flags take precedence over RUSTFLAGS; fail rather
         # than claim a PGO build in a configuration that would ignore it.
