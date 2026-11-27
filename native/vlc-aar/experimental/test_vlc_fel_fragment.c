@@ -1062,7 +1062,21 @@ static void test_timed_boxes(void)
         assert(MP4_FEL_EmitMetadata(&d,true)&&meta_sent==3);
         MP4_FEL_ClearReplay(&s);assert(!blocks);
         position=208;s.ambient_fel_collect_meta=true;
-        assert(!MP4_FEL_SkipGap(&d,&padding,&count,true)); // no EPT anchor
+        assert(MP4_FEL_SkipGap(&d,&padding,&count,true));
+        assert(s.ambient_fel_meta_count==1&&s.ambient_fel_meta[0].relative);
+        assert(!MP4_FEL_ResolveMetadata(&s)); // no proven fragment yet
+        MP4_Box_t moof={.i_type=ATOM_moof,.i_pos=240,.i_size=8};
+        MP4_Box_data_trun_t tr={.i_sample_count=2};
+        MP4_Box_t trun={.i_type=ATOM_trun,.data.p_trun=&tr};
+        mp4_run_t run={.i_first_dts=3000,.p_trun=&trun};
+        s.context.p_fragment_atom=&moof;s.context.i_post_mdat_offset=248;
+        track.context.runs.p_array=&run;track.context.runs.i_count=1;
+        track.context.i_default_sample_duration=40;
+        assert(MP4_FEL_ResolveMetadata(&s));
+        assert(!s.ambient_fel_meta[0].relative&&
+            s.ambient_fel_meta[0].block->i_pts==VLC_TICK_0+13*CLOCK_FREQ/4);
+        track.context.runs.p_array=NULL;track.context.runs.i_count=0;
+        s.context.p_fragment_atom=NULL;
         MP4_FEL_ClearReplay(&s);assert(!blocks);
         position=100;s.ambient_fel_collect_meta=true;bytes[108]=2;
         assert(!MP4_FEL_SkipGap(&d,&padding,&count,true));
