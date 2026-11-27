@@ -543,7 +543,7 @@ static bool svp_vk_sync_features(const AVVulkanDeviceContext *ctx)
     }
     return timeline && sync2;
 }
-static struct svp_vk_mpv *svp_vk_new(void *library,struct mp_image *img,double source,double target)
+static struct svp_vk_mpv *svp_vk_new(void *library,struct mp_image *img,double source,double target,const AmbientSvpVkTuning *tuning)
 {
     if (!library || !svp_vk_eligible(img) || !(source>0 && target>source && target/source<=SVP_VK_PHASES))
         return NULL;
@@ -602,7 +602,13 @@ static struct svp_vk_mpv *svp_vk_new(void *library,struct mp_image *img,double s
         if (!s->render_raw) goto fail;
     }
     s->output_format=s->mode?VK_FORMAT_R16G16B16A16_SFLOAT:VK_FORMAT_R8G8B8A8_UNORM;
-    if (s->mode) {
+    if(tuning){
+        AmbientSvpVk *(*create_config)(VkInstance,VkPhysicalDevice,VkDevice,PFN_vkGetInstanceProcAddr,
+            uint32_t,uint32_t,uint32_t,const AmbientSvpVkTuning *)=dlsym(library,"ambient_svp_vk_create_config");
+        if(!create_config)goto fail;
+        s->engine=create_config(s->vkdev->inst,s->vkdev->phys_dev,s->device,s->vkdev->get_proc_addr,
+            s->width,s->height,s->mode,tuning);
+    }else if (s->mode) {
         s->create_format=dlsym(library,"ambient_svp_vk_create_format");
         if (!s->create_format) goto fail;
         s->engine=s->create_format(s->vkdev->inst,s->vkdev->phys_dev,s->device,s->vkdev->get_proc_addr,s->width,s->height,s->mode);
