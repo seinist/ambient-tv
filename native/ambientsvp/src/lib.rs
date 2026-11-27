@@ -713,7 +713,11 @@ impl AmbientSvp {
                                 GPU_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                 true
                             }
-                            Err(_) => {
+                            Err(error) => {
+                                #[cfg(test)]
+                                eprintln!("SVP Vulkan synthesis fallback at output {}: {error}",self.output);
+                                #[cfg(not(test))]
+                                let _=error;
                                 self.gpu = None;
                                 self.prefetched = None;
                                 self.stats.backend = 1;
@@ -1323,7 +1327,18 @@ mod pipelining_tests {
                 let bp = float.receive(&mut b, false).unwrap();
                 assert_eq!(ap, bp);
                 if ap.is_none() { break; }
-                assert_eq!(a, b, "compact field changed output at {ap:?}");
+                assert_eq!(compact.stats.backend,2,"compact synthesis fell back at {ap:?}");
+                assert_eq!(float.stats.backend,2,"float synthesis fell back at {bp:?}");
+                assert_eq!(compact.stats.bypass_reason,0,"compact synthesis bypass at {ap:?}");
+                assert_eq!(float.stats.bypass_reason,0,"float synthesis bypass at {bp:?}");
+                // Keep exact equality, but print a useful compact diagnostic
+                // instead of dumping the complete I420 pictures into logs.
+                if a!=b{
+                    let differences=a.iter().zip(&b).enumerate().filter(|(_, (a,b))|a!=b);
+                    let count=differences.clone().count();
+                    let first=differences.take(8).map(|(i,(a,b))|(i,*a,*b)).collect::<Vec<_>>();
+                    panic!("compact field changed {count} pixels at {ap:?}; first differences: {first:?}");
+                }
                 compared += 1;
             }
         }
