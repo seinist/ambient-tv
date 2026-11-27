@@ -26,6 +26,16 @@ int main(void) {
     assert(ambient_rpu_find(duplicate,sizeof duplicate,0,&au)==AMBIENT_RPU_INVALID);
     const uint8_t invalid_escape[]={25,8,0,0,3,4};
     assert(!ambient_rpu_unescape(invalid_escape,sizeof invalid_escape,rbsp,sizeof rbsp,&n));
+    uint8_t combined[]={0,0,1,0x26,1,0x80,0,0,1,0x7e,1,0x02,1,0x90,0,0,1,0x50,1,0x80};
+    const uint8_t expected_bl[]={0,0,1,0x26,1,0x80,0,0,1,0x50,1,0x80};
+    size_t combined_size=sizeof(combined);
+    assert(ambient_fel_strip_el(combined,&combined_size));
+    assert(combined_size==sizeof(expected_bl)&&!memcmp(combined,expected_bl,combined_size));
+    uint8_t bad[]={0,0,1,0x26,1,0x80,0,0,1,0x7e,1,0x02,0,0x90};
+    uint8_t saved[sizeof(bad)];memcpy(saved,bad,sizeof(bad));
+    size_t bad_size=sizeof(bad);
+    assert(!ambient_fel_strip_el(bad,&bad_size));
+    assert(bad_size==sizeof(bad)&&!memcmp(saved,bad,sizeof(bad)));
     struct ambient_rpu_pts_queue q={0};
     int a=1,b=2,c=3;
     assert(ambient_rpu_pts_insert(&q,30,&a));
