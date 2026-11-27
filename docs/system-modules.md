@@ -188,3 +188,28 @@ and backed up independently of runtime eligibility. Other legacy modules still
 need their actual runtime migration and UI audit (including Android Auto,
 background tasks, direct routes, and all player OSD panels). Native/device
 and CI validation remain required.
+
+### Spotify receiver and expanded preview
+
+Spotify now has a native-only module contract, an external-first JNI load path,
+and package generation from matching Spotify-enabled Full APKs. At process
+start, the bundled opt-in or downloaded native receiver is probed on IO
+without constructing a repository or starting a session. Its UI eligibility
+requires a successful native load. TV/phone settings observe availability;
+sidebar and Home observers receive the provider availability signal. Android
+Auto requires the actual receiver as well as an authorized account. Stored
+preferences and credentials are not deleted. Spotify remains experimental:
+the upstream service's audio-key rejection is not fixed by moving the library,
+and normal Full builds retain the existing SPOTIFY_NATIVE opt-in policy.
+
+The modular preview also omits MPV and Spotify native roots. Shared FFmpeg
+and C++ libraries remain packaged. The build audits all four ABI APKs for
+excluded payloads and required shared libraries. No complete stable Modular
+release is implied. Native package candidates undergo host contract, ELF/DEX,
+and shared fingerprint preflight before installation or rollback commits a
+selection. A damaged selected archive can be reinstalled at the same signed
+version while retaining the prior rollback pointer. Tests cover these cases.
+
+Native package release publication, remaining engine migration (including
+Monogram and SmartTube's Java/native boundaries), and real-device validation
+remain outstanding.
