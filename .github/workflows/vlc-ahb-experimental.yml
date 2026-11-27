@@ -10,6 +10,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: vlc-ahb-experimental-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   ndk-contract:
     runs-on: ubuntu-latest
