@@ -90,6 +90,52 @@ int main(void)
     assert(!svp_vk_hdr_metadata_same(&a,&b));
     h2=h;y.size--;assert(!svp_vk_hdr_metadata_same(&a,&b));y.size++;
     b.num_ff_side_data=0;assert(!svp_vk_hdr_metadata_same(&a,&b));b.num_ff_side_data=1;
+    // Three valid windows with matched topology, local geometry,
+    // percentiles, OOTF anchors, saturation and peak grids.
+    memset(&h,0,sizeof(h));h.itu_t_t35_country_code=0xb5;
+    h.num_windows=3;h.targeted_system_display_maximum_luminance=(AVRational){1000,1};
+    for(unsigned w=0;w<3;w++){
+        AVHDRPlusColorTransformParams *p=&h.params[w];
+        for(unsigned c=0;c<3;c++)p->maxscl[c]=(AVRational){10000,100000};
+        p->average_maxrgb=(AVRational){5000,100000};
+        p->fraction_bright_pixels=(AVRational){100,1000};
+        p->num_distribution_maxrgb_percentiles=1;
+        p->distribution_maxrgb[0]=(AVHDRPlusPercentile){99,{8000,100000}};
+        p->tone_mapping_flag=1;p->knee_point_x=(AVRational){1000,4095};
+        p->knee_point_y=(AVRational){1200,4095};p->num_bezier_curve_anchors=1;
+        p->bezier_curve_anchors[0]=(AVRational){500,1023};
+        p->color_saturation_mapping_flag=1;p->color_saturation_weight=(AVRational){8,8};
+        if(w){
+            p->window_upper_left_corner_x=(AVRational){20*w,127};
+            p->window_upper_left_corner_y=(AVRational){8,63};
+            p->window_lower_right_corner_x=(AVRational){20*w+30,127};
+            p->window_lower_right_corner_y=(AVRational){50,63};
+            p->center_of_ellipse_x=20*w+15;p->center_of_ellipse_y=29;
+            p->semimajor_axis_internal_ellipse=10;p->semimajor_axis_external_ellipse=15;
+            p->semiminor_axis_external_ellipse=8;
+        }
+    }
+    h.targeted_system_display_actual_peak_luminance_flag=1;
+    h.num_rows_targeted_system_display_actual_peak_luminance=2;
+    h.num_cols_targeted_system_display_actual_peak_luminance=2;
+    for(unsigned j=0;j<2;j++)for(unsigned k=0;k<2;k++)
+        h.targeted_system_display_actual_peak_luminance[j][k]=(AVRational){4,15};
+    memcpy(&h2,&h,sizeof(h));
+    h2.params[1].maxscl[0]=(AVRational){30000,100000};
+    h2.params[2].center_of_ellipse_x+=4;
+    h2.params[2].bezier_curve_anchors[0]=(AVRational){700,1023};
+    h2.targeted_system_display_actual_peak_luminance[1][1]=(AVRational){10,15};
+    AVDynamicHDRPlus mid;
+    assert(svp_hdrplus_lerp(&mid,&x,&y,.5,128,64));
+    assert(mid.num_windows==3 && mid.params[1].maxscl[0].num==20000);
+    assert(mid.params[2].center_of_ellipse_x==h.params[2].center_of_ellipse_x+2);
+    assert(mid.params[2].bezier_curve_anchors[0].num==600);
+    assert(mid.targeted_system_display_actual_peak_luminance[1][1].num==7);
+    h2.params[1].overlap_process_option=AV_HDR_PLUS_OVERLAP_PROCESS_LAYERING;
+    assert(!svp_hdrplus_lerp(&mid,&x,&y,.5,128,64));
+    h2.params[1].overlap_process_option=h.params[1].overlap_process_option;
+    h2.num_cols_targeted_system_display_actual_peak_luminance=3;
+    assert(!svp_hdrplus_lerp(&mid,&x,&y,.5,128,64));
     struct dovi_fixture d=make_dovi(),d2;
     memcpy(&d2,&d,sizeof(d));
     x.data=(uint8_t *)&d;x.size=sizeof(d);y.data=(uint8_t *)&d2;y.size=sizeof(d2);
