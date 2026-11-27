@@ -14,6 +14,7 @@ pub struct Candidate {
     pub width: u32,
     pub height: u32,
     pub reverse: bool,
+    pub satd: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,7 +43,25 @@ impl Candidate {
     }
 }
 
-/// CPU reference for the raw per-plane metric, not upstream vector selection.
+impl Cost {
+    // Upstream I420 full_sad scales chroma by 2^(shift_x+shift_y).
+    pub fn weighted(self, chroma: bool) -> u32 {
+        self.y + if chroma { 4 * (self.u + self.v) } else { 0 }
+    }
+}
+
+fn hadamard(p: [i32; 4]) -> [i32; 4] {
+    let (a,b,c,d)=(p[0]+p[1],p[2]+p[3],p[0]-p[1],p[2]-p[3]);
+    [a+b,a-b,c+d,c-d]
+}
+
+fn tile_satd(mut diff: impl FnMut(usize,usize)->i32) -> u32 {
+    let rows: [[i32;4];4]=std::array::from_fn(|y|hadamard(std::array::from_fn(|x|diff(x,y))));
+    (0..4).map(|x|hadamard(std::array::from_fn(|y|rows[y][x]))
+        .into_iter().map(i32::unsigned_abs).sum::<u32>()).sum()
+}
+
+/// CPU reference for the raw per-plane metrics, not upstream vector selection.
 pub fn reference_cost(a: &[u8], b: &[u8], width: u32, height: u32, c: Candidate) -> Option<Cost> {
     let len = (width as usize).checked_mul(height as usize)?.checked_mul(3)?.checked_div(2)?;
     if a.len() != len || b.len() != len || !c.valid(width, height) { return None; }
@@ -57,11 +76,22 @@ pub fn reference_cost(a: &[u8], b: &[u8], width: u32, height: u32, c: Candidate)
         let sy = c.y as i64 >> shift;
         let rx = (i64::from(c.x) + i64::from(c.dx)) >> shift;
         let ry = (i64::from(c.y) + i64::from(c.dy)) >> shift;
-        for y in 0..(c.height as usize >> shift) {
-            for x in 0..(c.width as usize >> shift) {
-                let left = a[base + (sy as usize+y)*pitch + sx as usize+x];
-                let right = b[base + (ry as usize+y)*pitch + rx as usize+x];
-                result[plane] += u32::from(left.abs_diff(right));
+        let diff = |x:usize,y:usize| {
+            let left = a[base + (sy as usize+y)*pitch + sx as usize+x];
+            let right = b[base + (ry as usize+y)*pitch + rx as usize+x];
+            i32::from(left)-i32::from(right)
+        };
+        let (bw,bh)=(c.width as usize >> shift,c.height as usize >> shift);
+        if c.satd {
+            for y in (0..bh).step_by(4) {
+                for x in (0..bw).step_by(4) {
+                    result[plane]+=tile_satd(|tx,ty|diff(x+tx,y+ty));
+                }
+            }
+            result[plane]/=2;
+        } else {
+            for y in 0..bh {
+                for x in 0..bw { result[plane]+=diff(x,y).unsigned_abs(); }
             }
         }
     }
@@ -107,7 +137,7 @@ impl MotionCostKernel {
         { return Err("unsupported motion candidate batch".into()); }
         let bytes: Vec<u8> = candidates.iter().flat_map(|c| {
             [c.x as i32,c.y as i32,c.dx,c.dy,c.width as i32,c.height as i32,
-             i32::from(c.reverse),0].into_iter().flat_map(i32::to_le_bytes)
+             i32::from(c.reverse),i32::from(c.satd)].into_iter().flat_map(i32::to_le_bytes)
         }).collect();
         let input = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("SVP candidate descriptors"), contents: &bytes,
@@ -141,7 +171,7 @@ impl MotionCostKernel {
 }
 
 const WGSL: &str = r#"
-struct Candidate { x:i32,y:i32,dx:i32,dy:i32,w:i32,h:i32,reverse:i32,pad:i32 };
+struct Candidate { x:i32,y:i32,dx:i32,dy:i32,w:i32,h:i32,reverse:i32,satd:i32 };
 @group(0) @binding(0) var a: texture_2d<f32>;
 @group(0) @binding(1) var b: texture_2d<f32>;
 @group(0) @binding(2) var<storage,read> candidates: array<Candidate>;
@@ -151,9 +181,36 @@ var<workgroup> partial: array<vec3u,64>;
 fn pixel(tex: texture_2d<f32>, p:vec2i) -> i32 {
     return i32(round(textureLoad(tex,p,0).x*255.0));
 }
+fn signed_diff(p:vec2i,q:vec2i,reverse:bool) -> i32 {
+    if reverse { return pixel(b,p)-pixel(a,q); }
+    return pixel(a,p)-pixel(b,q);
+}
 fn diff(p:vec2i,q:vec2i,reverse:bool) -> u32 {
-    if reverse { return u32(abs(pixel(b,p)-pixel(a,q))); }
-    return u32(abs(pixel(a,p)-pixel(b,q)));
+    return u32(abs(signed_diff(p,q,reverse)));
+}
+fn hadamard(p:vec4i)->vec4i {
+    let a=p.x+p.y;
+    let b=p.z+p.w;
+    let c=p.x-p.y;
+    let d=p.z-p.w;
+    return vec4i(a+b,a-b,c+d,c-d);
+}
+fn satd_tile(p:vec2i,q:vec2i,reverse:bool)->u32 {
+    var rows:array<vec4i,4>;
+    for(var y=0;y<4;y++){
+        var row=vec4i(0);
+        for(var x=0;x<4;x++){
+            let offset=vec2i(x,y);
+            row[x]=signed_diff(p+offset,q+offset,reverse);
+        }
+        rows[y]=hadamard(row);
+    }
+    var sum=0u;
+    for(var x=0;x<4;x++){
+        let col=vec4u(abs(hadamard(vec4i(rows[0][x],rows[1][x],rows[2][x],rows[3][x]))));
+        sum+=col.x+col.y+col.z+col.w;
+    }
+    return sum;
 }
 @compute @workgroup_size(64)
 fn cost(@builtin(workgroup_id) group:vec3u,@builtin(local_invocation_index) lane:u32) {
@@ -163,19 +220,33 @@ fn cost(@builtin(workgroup_id) group:vec3u,@builtin(local_invocation_index) lane
     let src=vec2i(c.x,c.y);
     let dst=src+vec2i(c.dx,c.dy);
     var sum=vec3u(0);
-    for(var i=lane;i<u32(c.w*c.h);i+=64u){
-        let offset=vec2i(i32(i)%c.w,i32(i)/c.w);
-        sum.x+=diff(src+offset,dst+offset,c.reverse!=0);
-    }
-    let chroma_width=c.w/2;
-    for(var i=lane;i<u32(chroma_width*(c.h/2));i+=64u){
-        let offset=vec2i(i32(i)%chroma_width,i32(i)/chroma_width);
-        // Validated nonnegative coordinates: division rounds toward zero,
-        // which equals floor for both source and reference coordinates.
-        let p=src/2+offset+vec2i(0,height);
-        let q=dst/2+offset+vec2i(0,height);
-        sum.y+=diff(p,q,c.reverse!=0);
-        sum.z+=diff(p+vec2i(size.x/2,0),q+vec2i(size.x/2,0),c.reverse!=0);
+    if c.satd!=0 {
+        let tiles=c.w/4;
+        for(var i=lane;i<u32(tiles*(c.h/4));i+=64u){
+            let offset=vec2i(i32(i)%tiles,i32(i)/tiles)*4;
+            sum.x+=satd_tile(src+offset,dst+offset,c.reverse!=0);
+        }
+        let ct=c.w/8;
+        for(var i=lane;i<u32(ct*(c.h/8));i+=64u){
+            let offset=vec2i(i32(i)%ct,i32(i)/ct)*4;
+            let p=src/2+offset+vec2i(0,height);
+            let q=dst/2+offset+vec2i(0,height);
+            sum.y+=satd_tile(p,q,c.reverse!=0);
+            sum.z+=satd_tile(p+vec2i(size.x/2,0),q+vec2i(size.x/2,0),c.reverse!=0);
+        }
+    } else {
+        for(var i=lane;i<u32(c.w*c.h);i+=64u){
+            let offset=vec2i(i32(i)%c.w,i32(i)/c.w);
+            sum.x+=diff(src+offset,dst+offset,c.reverse!=0);
+        }
+        let chroma_width=c.w/2;
+        for(var i=lane;i<u32(chroma_width*(c.h/2));i+=64u){
+            let offset=vec2i(i32(i)%chroma_width,i32(i)/chroma_width);
+            let p=src/2+offset+vec2i(0,height);
+            let q=dst/2+offset+vec2i(0,height);
+            sum.y+=diff(p,q,c.reverse!=0);
+            sum.z+=diff(p+vec2i(size.x/2,0),q+vec2i(size.x/2,0),c.reverse!=0);
+        }
     }
     partial[lane]=sum;
     workgroupBarrier();
@@ -184,7 +255,8 @@ fn cost(@builtin(workgroup_id) group:vec3u,@builtin(local_invocation_index) lane
         workgroupBarrier();
     }
     if lane==0u {
-        let s=partial[0];
+        var s=partial[0];
+        if c.satd!=0 { s/=vec3u(2); }
         costs[group.x]=vec4u(s,s.x+s.y+s.z);
     }
 }
@@ -198,8 +270,11 @@ mod tests {
         let (w,h)=(64,64);
         let a=vec![0;w*h*3/2];
         let b=vec![255;a.len()];
-        let c=Candidate{x:16,y:16,dx:-3,dy:5,width:32,height:16,reverse:false};
+        let c=Candidate{x:16,y:16,dx:-3,dy:5,width:32,height:16,reverse:false,satd:false};
         assert_eq!(reference_cost(&a,&b,w as u32,h as u32,c),Some(Cost{y:32*16*255,u:8*16*255,v:8*16*255}));
+        let satd=reference_cost(&a,&b,w as u32,h as u32,Candidate{satd:true,..c}).unwrap();
+        assert_eq!(satd,Cost{y:32*16*255/2,u:8*16*255/2,v:8*16*255/2});
+        assert_eq!(satd.weighted(true),satd.y+4*(satd.u+satd.v));
         assert_eq!(reference_cost(&a,&a,w as u32,h as u32,c),Some(Cost{y:0,u:0,v:0}));
         assert!(reference_cost(&a,&b,w as u32,h as u32,Candidate{dx:-17,..c}).is_none());
         assert!(reference_cost(&a,&b,w as u32,h as u32,Candidate{x:15,..c}).is_none());
@@ -254,7 +329,9 @@ mod tests {
                 for dx in [-7,-2,0,1,6] {
                     for dy in [-5,0,3] {
                         for reverse in [false,true] {
-                            candidates.push(Candidate{x:16,y:16,dx,dy,width:bw,height:bh,reverse});
+                            for satd in [false,true] {
+                                candidates.push(Candidate{x:16,y:16,dx,dy,width:bw,height:bh,reverse,satd});
+                            }
                         }
                     }
                 }
