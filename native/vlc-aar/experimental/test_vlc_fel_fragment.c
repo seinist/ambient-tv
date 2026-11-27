@@ -1077,7 +1077,7 @@ static void test_timed_boxes(void)
         // SIDX v0 direct segment reference, EPT 3 s.
         box(164,44,"sidx");memset(bytes+172,0,36);
         SetDWBE(bytes+176,1);SetDWBE(bytes+180,1000);SetDWBE(bytes+184,3000);
-        bytes[195]=1;SetDWBE(bytes+196,40);
+        bytes[195]=1;SetDWBE(bytes+196,40);SetDWBE(bytes+200,1000);
         // EMSG v0: scheme/value then delta 250 ms inside indexed segment.
         box(208,32,"emsg");memset(bytes+216,0,24);
         bytes[220]='s';bytes[222]='v';

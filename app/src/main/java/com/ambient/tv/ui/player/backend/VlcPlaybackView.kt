@@ -327,6 +327,16 @@ class VlcPlaybackController(
     private val libVlcRelease = VlcLibraryReleaseGate<LibVLC> { it.release() }
     var player = MediaPlayer(libVlc)
         private set
+    private val timedMetadataInbox = VlcTimedMetadataInbox()
+    private var timedMetadataReceiver: VlcTimedMetadataReceiver? = null
+    /** Timestamped raw boxes, scoped to this controller and current media. */
+    val timedMetadata = timedMetadataInbox.events
+
+    private fun closeTimedMetadataReceiver() {
+        timedMetadataInbox.beginSession()
+        timedMetadataReceiver?.close()
+        timedMetadataReceiver = null
+    }
     internal var trackAccess = VlcTrackAccess(player)
         private set
     // libVLC exposes only a small native HTTP-header subset. Relay arbitrary supplied
@@ -1348,6 +1358,12 @@ class VlcPlaybackController(
             return
         }
         val media = Media(libVlc, Uri.parse(if (playbackUrl == url) authProxy?.url ?: url else playbackUrl))
+        closeTimedMetadataReceiver()
+        if (com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT) {
+            val generation = timedMetadataInbox.beginSession()
+            timedMetadataReceiver = VlcTimedMetadataReceiver.open { timedMetadataInbox.offer(generation, it) }
+            timedMetadataReceiver?.let { media.addOption(":mp4-ambient-metadata-socket=" + it.socketName) }
+        }
         if (!preferOriginalAudio) media.addOption(":audio-language=" + com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(
             videoImagePreferences(context).playbackAudioLanguage).joinToString(","))
         media.addOption(":sub-language=" + com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(
@@ -1789,6 +1805,7 @@ class VlcPlaybackController(
             }
         } else positionMs.coerceIn(0L, length)
         frameDropSamples.discontinuity()
+        timedMetadataInbox.clearForSeek()
         if (ended) {
             ended = false
             prepare(target, desiredPlayWhenReady)
@@ -2286,6 +2303,7 @@ class VlcPlaybackController(
         fun cleanup(action: () -> Unit) {
             runCatching(action).onFailure { Timber.w(it, "VLC ancillary release failed") }
         }
+        cleanup { closeTimedMetadataReceiver() }
         cleanup { audioSession.release() }
         cleanup { detachVideoOutput() }
         cleanup { hdrOutput.release() }
