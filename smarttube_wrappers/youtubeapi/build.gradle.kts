@@ -66,6 +66,8 @@ dependencies {
     implementation(libs.rxandroid2)
     implementation(libs.rxjava2)
     implementation(libs.androidx.annotation)
+    // Upstream Java PoToken and random-string sources use JSR-305 nullability annotations.
+    compileOnly(libs.jsr305)
     implementation(libs.smarttube.core.ktx)
     implementation(libs.smarttube.coroutines)
     implementation(libs.smarttube.regex)

@@ -510,7 +510,7 @@ youtube_engine_ready() {
     local shared="$ROOT_DIR/third_party/smarttube/SharedModules"
     [[ -f "$engine_version" ]] || return 1
     [[ -d "$msc/.git" && -d "$shared/.git" ]] || return 1
-    grep -Fx 'COMPAT_PATCHSET=live-v110' "$engine_version" >/dev/null || return 1
+    grep -Fx 'COMPAT_PATCHSET=live-v111' "$engine_version" >/dev/null || return 1
     grep -Fx 'BUILD_INTEGRATION=host-wrappers-live-patch' "$engine_version" >/dev/null || return 1
     grep -Fx 'JVM_TARGET=17' "$engine_version" >/dev/null || return 1
     grep -Fx 'CRONET=143.7445.0' "$engine_version" >/dev/null || return 1

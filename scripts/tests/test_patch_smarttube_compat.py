@@ -476,6 +476,7 @@ class SmartTubeDeprecationPatchesTest(unittest.TestCase):
             self.assertIn("publishAuthHeaders(generation, headers);", path.read_text())
             self.assertIn("syncWithRetrofit(account, generation);", path.read_text())
             self.assertIn("if (account != getSelectedAccount())", path.read_text())
+            self.assertNotIn("Account selectedAccount = getSelectedAccount();", path.read_text())
         for path in paths:
             raw = path.read_bytes()
             self.assertNotIn(b"\n", raw.replace(b"\r\n", b""))

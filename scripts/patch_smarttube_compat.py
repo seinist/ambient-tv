@@ -1225,7 +1225,7 @@ def patch_auth_header_snapshots(msc: Path, check: bool) -> list[Path]:
             ("        Map<String, String> headers = RetrofitOkHttpHelper.getAuthHeaders();\n        headers.clear();",
              "        Map<String, String> headers = new java.util.HashMap<>();"),
             ("        Account selectedAccount = getSelectedAccount();\n\n        if (mCachedAuthorizationHeader != null && selectedAccount != null) {",
-             "        if (mCachedAuthorizationHeader != null && selectedAccount != null) {"),
+             "        // Use the account captured before refreshing the token.\n        if (mCachedAuthorizationHeader != null && selectedAccount != null) {"),
             ("        }\n    }\n\n    @Override\n    public void addOnAccountChange",
              "        }\n        if (selectedAccount == getSelectedAccount()) {\n            RetrofitOkHttpHelper.publishAuthHeaders(generation, headers);\n        }\n    }\n\n    @Override\n    public void addOnAccountChange"),
         ],
@@ -1267,6 +1267,8 @@ def patch_auth_header_snapshots(msc: Path, check: bool) -> list[Path]:
             if check or text.count(old) != 1:
                 die(f"Unsupported SmartTube auth header layout: {path}: {old}")
             text = text.replace(old, new, 1)
+        if path in (signin, oauth) and "Account selectedAccount = getSelectedAccount();" in text:
+            die(f"Unexpected account re-read in SmartTube auth source: {path}")
         updated = text.replace("\n", newline).encode("utf-8")
         if updated != original:
             pending[path] = updated
