@@ -25,6 +25,7 @@ import kotlin.math.sin
  * Analysis runs off the audio renderer thread so playback cannot be stalled by drawing work.
  */
 fun interface AudioPcmSink {
+    /** Borrowed audio-thread buffer, valid only during the callback. Copy if retention is needed. */
     fun onPcm(samples: FloatArray)
 }
 
@@ -38,6 +39,7 @@ class AudioSpectrumAnalyzer : TeeAudioProcessor.AudioBufferSink {
     private val pending = AtomicBoolean(false)
     private val latest = AtomicReference(FloatArray(BAND_COUNT))
     private val accumulator = FloatArray(FFT_SIZE)
+    private val fftInput = FloatArray(FFT_SIZE)
     private val lock = Any()
     private var accumulatorSize = 0
     private var sampleRate = 48_000
@@ -53,13 +55,20 @@ class AudioSpectrumAnalyzer : TeeAudioProcessor.AudioBufferSink {
     private val pcmTap = FloatArray(512)
     private var pcmTapSize = 0
     private val spectrumConsumers = java.util.concurrent.atomic.AtomicInteger(0)
+    private val resetSpectrum = AtomicBoolean(false)
+    private val resetTap = AtomicBoolean(false)
 
     fun addPcmSink(sink: AudioPcmSink) { pcmSinks += sink }
-    fun removePcmSink(sink: AudioPcmSink) { pcmSinks -= sink }
+    fun removePcmSink(sink: AudioPcmSink) {
+        pcmSinks -= sink
+        if (pcmSinks.isEmpty()) resetTap.set(true)
+    }
 
     /** Spectrum UI acquires while visible so FFT/tap work is skipped when hidden. */
     fun addSpectrumConsumer() { spectrumConsumers.incrementAndGet() }
-    fun removeSpectrumConsumer() { spectrumConsumers.updateAndGet { (it - 1).coerceAtLeast(0) } }
+    fun removeSpectrumConsumer() {
+        if (spectrumConsumers.updateAndGet { (it - 1).coerceAtLeast(0) } == 0) resetSpectrum.set(true)
+    }
 
     private fun hasActiveConsumers(): Boolean =
         spectrumConsumers.get() > 0 || pcmSinks.isNotEmpty()
@@ -71,25 +80,30 @@ class AudioSpectrumAnalyzer : TeeAudioProcessor.AudioBufferSink {
             sampleRate = sampleRateHz.coerceAtLeast(8_000)
             channelCount = 1
             encoding = C.ENCODING_PCM_FLOAT
-            for (mono in samples) {
-                pushMonoSample(mono.coerceIn(-1f, 1f))
-            }
+            val tap = pcmSinks.isNotEmpty()
+            val spectrum = spectrumConsumers.get() > 0
+            prepareConsumers(tap, spectrum)
+            for (mono in samples) pushMonoSample(mono.coerceIn(-1f, 1f), tap, spectrum)
         }
     }
 
-    private fun pushMonoSample(mono: Float) {
-        if (pcmSinks.isNotEmpty()) {
+    private fun prepareConsumers(tap: Boolean, spectrum: Boolean) {
+        if (resetTap.getAndSet(false) || !tap) pcmTapSize = 0
+        if (resetSpectrum.getAndSet(false) || !spectrum) accumulatorSize = 0
+    }
+
+    private fun pushMonoSample(mono: Float, tap: Boolean, spectrum: Boolean) {
+        if (tap) {
             pcmTap[pcmTapSize++] = mono
             if (pcmTapSize == pcmTap.size) {
-                val frame = pcmTap.copyOf()
-                pcmSinks.forEach { sink -> runCatching { sink.onPcm(frame) } }
+                pcmSinks.forEach { sink -> runCatching { sink.onPcm(pcmTap) } }
                 pcmTapSize = 0
             }
         } else {
             pcmTapSize = 0
         }
         // projectM computes its own FFT; PCM-only sinks must not trigger ours.
-        if (spectrumConsumers.get() > 0) {
+        if (spectrum) {
             accumulator[accumulatorSize++] = mono
             if (accumulatorSize == FFT_SIZE) {
                 accumulatorSize = 0
@@ -114,46 +128,51 @@ class AudioSpectrumAnalyzer : TeeAudioProcessor.AudioBufferSink {
         if (!hasActiveConsumers()) return
         val copy = buffer.asReadOnlyBuffer().order(ByteOrder.nativeOrder())
         synchronized(lock) {
-            while (copy.hasRemaining()) {
-                val mono = readFrame(copy) ?: break
-                pushMonoSample(mono)
+            val bytesPerSample = when (encoding) {
+                C.ENCODING_PCM_8BIT -> 1
+                C.ENCODING_PCM_16BIT -> 2
+                C.ENCODING_PCM_24BIT -> 3
+                C.ENCODING_PCM_32BIT, C.ENCODING_PCM_FLOAT -> 4
+                else -> return
+            }
+            val frameBytes = bytesPerSample.toLong() * channelCount
+            val tap = pcmSinks.isNotEmpty()
+            val spectrum = spectrumConsumers.get() > 0
+            prepareConsumers(tap, spectrum)
+            while (copy.remaining() >= frameBytes) {
+                pushMonoSample(readFrame(copy), tap, spectrum)
             }
         }
     }
 
     fun snapshot(): FloatArray = latest.get().copyOf()
 
-    private fun readFrame(buffer: ByteBuffer): Float? {
+    private fun readFrame(buffer: ByteBuffer): Float {
         var sum = 0f
-        var readChannels = 0
         repeat(channelCount) {
-            val sample = when (encoding) {
-                C.ENCODING_PCM_8BIT -> if (buffer.remaining() >= 1) ((buffer.get().toInt() and 0xff) - 128) / 128f else return@repeat
-                C.ENCODING_PCM_16BIT -> if (buffer.remaining() >= 2) buffer.short / 32768f else return@repeat
+            sum += when (encoding) {
+                C.ENCODING_PCM_8BIT -> ((buffer.get().toInt() and 0xff) - 128) / 128f
+                C.ENCODING_PCM_16BIT -> buffer.short / 32768f
                 C.ENCODING_PCM_24BIT -> {
-                    if (buffer.remaining() < 3) return@repeat
                     val b0 = buffer.get().toInt() and 0xff
                     val b1 = buffer.get().toInt() and 0xff
                     val b2 = buffer.get().toInt()
-                    val raw = b0 or (b1 shl 8) or (b2 shl 16)
-                    raw / 8_388_608f
+                    (b0 or (b1 shl 8) or (b2 shl 16)) / 8_388_608f
                 }
-                C.ENCODING_PCM_32BIT -> if (buffer.remaining() >= 4) buffer.int / 2_147_483_648f else return@repeat
-                C.ENCODING_PCM_FLOAT -> if (buffer.remaining() >= 4) buffer.float.coerceIn(-1f, 1f) else return@repeat
-                else -> return null
+                C.ENCODING_PCM_32BIT -> buffer.int / 2_147_483_648f
+                C.ENCODING_PCM_FLOAT -> buffer.float.coerceIn(-1f, 1f)
+                else -> 0f // Encoding validated before processing the complete frames.
             }
-            sum += sample
-            readChannels++
         }
-        return if (readChannels == channelCount) sum / readChannels else null
+        return sum / channelCount
     }
 
     private fun submit(rate: Int) {
         if (!pending.compareAndSet(false, true)) return
-        val frame = accumulator.copyOf()
+        accumulator.copyInto(fftInput)
         executor.execute {
             try {
-                if (spectrumConsumers.get() > 0) latest.set(analyse(frame, rate))
+                if (spectrumConsumers.get() > 0) latest.set(analyse(fftInput, rate))
             } finally {
                 pending.set(false)
             }
