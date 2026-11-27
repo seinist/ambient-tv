@@ -59,8 +59,13 @@ internal class SystemModuleStore(
         val build = SystemModuleChannel.select(
             manifest, module, processAbi, hostApi, sdk, profile, maxOf(1, state.highWater),
         ) ?: return@locked null
-        state.current?.takeIf { it.build == build }?.let {
-            return@locked verify(directory, module, it)
+        var currentVerified = false
+        state.current?.let {
+            val verified = try { verify(directory, module, it) } catch (_: IOException) { null }
+            if (verified != null) {
+                currentVerified = true
+                if (it.build == build) return@locked verified
+            }
         }
 
         val id = UUID.randomUUID().toString()
@@ -79,7 +84,7 @@ internal class SystemModuleStore(
             // Once publication starts, retain the payload even if the directory
             // sync fails after rename. Never delete a possibly referenced package.
             publicationStarted = true
-            writeState(directory, State(pointer, state.current, maxOf(state.highWater, build.version)))
+            writeState(directory, State(pointer, if (currentVerified) state.current else state.previous, maxOf(state.highWater, build.version)))
             result
         } finally {
             if (!publicationStarted) packageDir.deleteRecursively()
