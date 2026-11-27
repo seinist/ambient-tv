@@ -255,8 +255,11 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
     suspend fun invalidateMedia(account: String, messages: Set<Pair<Long, Int>>, all: Boolean) =
         withContext(Dispatchers.IO) { lock.withLock {
             val prefix = hash(account) + "-"
-            root.listFiles().orEmpty().filter { it.name.startsWith(prefix) && it.name.endsWith(".bin") }
-                .forEach { target ->
+            // Include AtomicFile recovery artifacts after a process interruption.
+            root.listFiles().orEmpty().mapNotNull { item ->
+                val base = item.name.removeSuffix(".bak").removeSuffix(".new")
+                if (base.startsWith(prefix) && base.endsWith(".bin")) File(root, base) else null
+            }.distinct().forEach { target ->
                     val decoded = runCatching {
                         JSONObject(String(decrypt(AtomicFile(target).readFully()), Charsets.UTF_8))
                     }.getOrNull()
