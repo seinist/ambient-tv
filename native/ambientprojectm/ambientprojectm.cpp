@@ -54,9 +54,15 @@ Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeDestroy(JNIEnv
 extern "C" JNIEXPORT void JNICALL
 Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeSetAudioSource(JNIEnv*, jobject, jlong handle, jint source) {
     auto* state = ptr(handle);
-    if (!state || source < 0 || source > 2 || state->audioSource == source) return;
-    if (state->audioSource) nativeAudio[state->audioSource].consumers.fetch_sub(1);
-    state->audioSource = source;
+    if (!state || source < 0 || source > 2) return;
+    {
+        std::lock_guard<std::mutex> guard(state->mutex);
+        if (state->audioSource == source) return;
+        if (state->audioSource) nativeAudio[state->audioSource].consumers.fetch_sub(1);
+        state->audioSource = source;
+        // Never replay PCM from the old player after switching back to the JNI feed.
+        state->pcm.clear();
+    }
     if (source) {
         auto& tap = nativeAudio[source];
         std::lock_guard<std::mutex> lock(tap.mutex);
@@ -86,7 +92,7 @@ Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeFeedPcm(JNIEnv
     env->GetFloatArrayRegion(samples, count - size, size, incoming.data());
     if (env->ExceptionCheck()) return;
     std::unique_lock<std::mutex> guard(state->mutex, std::try_to_lock);
-    if (guard.owns_lock()) state->pcm.append(incoming.data(), size);
+    if (guard.owns_lock() && state->audioSource == 0) state->pcm.append(incoming.data(), size);
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -163,7 +169,7 @@ Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeRender(JNIEnv*
     bool lockedDirty = false;
     {
         std::lock_guard<std::mutex> guard(state->mutex);
-        pcmCount = state->pcm.drainLatest(pcm.data(), maxSamples);
+        if (state->audioSource == 0) pcmCount = state->pcm.drainLatest(pcm.data(), maxSamples);
         preset.swap(state->pendingPreset);
         texturePath.swap(state->pendingTexturePath);
         smooth = state->pendingSmooth;
