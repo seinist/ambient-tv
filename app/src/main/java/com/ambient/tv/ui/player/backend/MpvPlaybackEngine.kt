@@ -99,9 +99,11 @@ internal fun initialMpvAccelerationPlan(
         nativeHdrPreferred = nativeHdrPreferred,
         hdrPassthrough = hdrGpuPassthrough, toneMappingRequired = toneMappingRequired,
         zeroCopy = !videoImagePreferences(context).mpvZeroCopyFailed && !mpvStartupRequiresCopyBack(effective))
-        .withSvpResident(effective, MpvNativeFeatures.SVP_RESIDENT in MpvNativeFeatures.current,
-            nativeHdrPreferred || hdrGpuPassthrough || toneMappingRequired,
-            hdrResidentAllowed = svpStaticHdrResident(sourceHdr) || sourceHdr == HdrStandard.HDR10_PLUS && decoderMode == "vulkan")
+        .let { plan ->
+            plan.withSvpResident(effective, MpvNativeFeatures.SVP_RESIDENT in MpvNativeFeatures.current,
+                nativeHdrPreferred || hdrGpuPassthrough || toneMappingRequired || sourceHdr != null,
+                hdrResidentAllowed = svpMpvHdrResident(sourceHdr, plan.decoder))
+        }
 }
 
 internal class MpvPlaybackEngine(
@@ -1817,16 +1819,16 @@ internal class MpvPlaybackEngine(
 
     private fun hdrResidentAllowed(o: MpvImageOptions): Boolean = acceleration.svpResident &&
         !deinterlaceRequested && o.denoise == "off" && o.deblock == "off" && svpResidentRequested(o.svp) &&
-        !dolbyVisionDetected && declaredHdr != HdrStandard.DOLBY_VISION &&
-        (svpStaticHdrResident(declaredHdr ?: sourceHdrStandard) ||
-            (declaredHdr ?: sourceHdrStandard) == HdrStandard.HDR10_PLUS && acceleration.decoder == "vulkan")
+        svpMpvHdrResident(if (dolbyVisionDetected) HdrStandard.DOLBY_VISION else declaredHdr ?: sourceHdrStandard,
+            acceleration.decoder)
 
     private fun desiredCopyBackImageFilters(o: MpvImageOptions, sdr: Boolean): Map<String, String> = buildMap {
         // The GPU hook replaces, never stacks with, FFmpeg's CPU filter.
         // When shader loading failed, retain the existing CPU fallback.
         putAll(mpvCpuImageFilters(o, sdr,
             hardwareDeblock = sdr && o.deblock != "off" && "deblock_${o.deblock}" in loadedShaderKeys))
-        if ((sdr || hdrImageTransfer && hdrResidentAllowed(o)) && !svpOverloaded && svpAllowed(context)) {
+        if (((sdr && declaredHdr == null && !dolbyVisionDetected) ||
+                ((hdrImageTransfer || declaredHdr != null || dolbyVisionDetected) && hdrResidentAllowed(o))) && !svpOverloaded && svpAllowed(context)) {
             // Quality waits on light. Sparsam already forced svpMode off above this call.
             val mode = mpvSvpAppliedMode(o.svpMode, svpQualityCleared && !svpQualityProbeFailed)
             val tuning = if (o.svpMode == "quality" && mode != "quality") svpProbeOptions(o.svp) else o.svp
