@@ -115,6 +115,20 @@ int main(void) {
     wrong_rap[2]=0x26;wrong_rap[4]=0x10;
     assert(!ambient_fel_dual_sample(bl4,sizeof(bl4),4,wrong_rap,sizeof(wrong_rap),2,
         NULL,0,false,NULL,0,&merged_size));
+    // Fragmented MP4 raw timestamp and byte-range contracts, including
+    // negative composition offsets used by reordered pictures.
+    assert(ambient_fel_fragment_timing(9000,-3000,3000,9000,6000,3000));
+    assert(ambient_fel_fragment_timing(9000,0,3000,9000,9000,3000));
+    assert(!ambient_fel_fragment_timing(9001,-3001,3000,9000,6000,3000));
+    assert(!ambient_fel_fragment_timing(9000,-2999,3000,9000,6000,3000));
+    assert(!ambient_fel_fragment_timing(9000,-3000,3001,9000,6000,3000));
+    assert(!ambient_fel_fragment_timing(INT64_MAX,1,1,INT64_MAX,0,1));
+    assert(!ambient_fel_fragment_timing(0,0,0,0,0,0));
+    assert(ambient_fel_fragment_range(1008,2000,1100,900));
+    assert(!ambient_fel_fragment_range(1008,2000,1007,100));
+    assert(!ambient_fel_fragment_range(1008,2000,1100,901));
+    assert(!ambient_fel_fragment_range(2000,1008,1100,1));
+    assert(!ambient_fel_fragment_range(0,UINT64_MAX,UINT64_MAX-1,2));
     struct ambient_rpu_pts_queue q={0};
     int a=1,b=2,c=3;
     assert(ambient_rpu_pts_insert(&q,30,&a));
