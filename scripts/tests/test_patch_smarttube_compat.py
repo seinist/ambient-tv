@@ -219,6 +219,32 @@ class SmartTubeDeprecationPatchesTest(unittest.TestCase):
         self.assertEqual(before, (helper.read_bytes(), manager.read_bytes()))
         self.assertFalse(list(helper.parent.glob(".ambient-cronet-*")))
 
+    def test_cronet_wrapper_delete_failure_rolls_back_all_sources(self) -> None:
+        root = Path(self.temporary.name)
+        msc = root / "MediaServiceCore"
+        shared = root / "SharedModules"
+        helper = msc / "youtubeapi/src/main/java/com/liskovsoft/googlecommon/common/helpers/RetrofitOkHttpHelper.kt"
+        manager = shared / "sharedutils/src/main/java/com/liskovsoft/sharedutils/cronet/CronetManager.kt"
+        for path in (helper, manager):
+            path.parent.mkdir(parents=True, exist_ok=True)
+        helper.write_bytes(b"import com.liskovsoft.sharedutils.cronet.CronetManager\r\n")
+        manager.write_text("object CronetManager")
+        wrapper = manager.with_name("CronetEngineWrapper.java")
+        wrapper.write_text("class CronetEngineWrapper {}")
+        before = (helper.read_bytes(), manager.read_bytes(), wrapper.read_bytes())
+        original_unlink = Path.unlink
+
+        def fail_manager(path, *args, **kwargs):
+            if path == wrapper:
+                raise PermissionError("injected manager deletion failure")
+            return original_unlink(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", fail_manager):
+            with self.assertRaises(PermissionError):
+                patcher.patch_disable_unused_cronet(msc, shared, check=False)
+        self.assertEqual(before, (helper.read_bytes(), manager.read_bytes(), wrapper.read_bytes()))
+        self.assertFalse(list(helper.parent.glob(".ambient-cronet-*")))
+
     def test_auth_headers_publish_complete_snapshots(self) -> None:
         root = Path(self.temporary.name)
         source = root / "youtubeapi/src/main/java"

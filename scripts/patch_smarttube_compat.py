@@ -1065,6 +1065,14 @@ def patch_disable_unused_cronet(msc: Path, shared: Path, check: bool) -> list[Pa
     if check and dormant:
         die(f"unused embedded Cronet sources must not be compiled: {dormant}")
 
+    # Reject new upstream dependencies before modifying any files.
+    for source_root in (shared / "sharedutils/src/main", msc / "youtubeapi/src/main"):
+        for path in source_root.rglob("*"):
+            if path.suffix not in (".java", ".kt") or path in dormant or path.name == "RetrofitOkHttpHelper.kt":
+                continue
+            if re.search(r"(?m)^\s*import\s+(?:org\.chromium\.net|com\.google\.net\.cronet|com\.liskovsoft\.sharedutils\.cronet)\b", path.read_text(encoding="utf-8")):
+                die(f"Unexpected SmartTube Cronet dependency: {path}")
+
     helper = msc / "youtubeapi/src/main/java/com/liskovsoft/googlecommon/common/helpers/RetrofitOkHttpHelper.kt"
     if not helper.is_file():
         die(f"SmartTube Retrofit helper moved or disappeared: {helper}")
