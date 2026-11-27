@@ -464,7 +464,14 @@ class TelegramRepository @Inject constructor(
     /** Install only an already authenticated Monogram client, never a partially signed-in one. */
     fun installAuthorized(port: TelegramClientPort) {
         port.setSessionLostListener { type -> scope.launch { sessionLost(port, type) } }
-        port.setArtworkChangedListener { if (client === port) notifyArtworkChanged() }
+        port.setArtworkChangedListener {
+            if (client === port) {
+                notifyArtworkChanged()
+                // The native update fence has now been released; refreshing earlier
+                // would race the durable invalidation and reject the new browse.
+                synchronized(mutableCatalogRevision) { mutableCatalogRevision.value++ }
+            }
+        }
         port.setContentChangedListener { identity, messages, all ->
             if (client === port && port.cacheIdentity == identity) {
                 contentInvalidations.incrementAndGet()
@@ -476,7 +483,6 @@ class TelegramRepository @Inject constructor(
                     }
                 } finally {
                     contentInvalidations.decrementAndGet()
-                    synchronized(mutableCatalogRevision) { mutableCatalogRevision.value++ }
                 }
                 true
             } else false
