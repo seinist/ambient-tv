@@ -264,11 +264,14 @@ stime_t MP4_Fragment_Index_GetTrackStartTime(mp4_fragments_index_t *index,
     assert(!"unexpected fragment index lookup");
     return 0;
 }
-void vlc_Log(struct vlc_logger *const *logger,int priority,const char *type,
-             const char *module,const char *file,unsigned line,const char *func,
-             const char *format,...)
+/* The generic indexer emits debug messages in assertion-enabled builds.
+ * Match the pinned VLC object-logging ABI, not the generic logger API. */
+const char vlc_module_name[]="mp4";
+void vlc_object_Log(vlc_object_t *obj,int priority,const char *module,
+                    const char *file,unsigned line,const char *func,
+                    const char *format,...)
 {
-    (void)logger;(void)priority;(void)type;(void)module;(void)file;
+    (void)obj;(void)priority;(void)module;(void)file;
     (void)line;(void)func;(void)format;
 }
 static void test_generic_trun_index(void)
