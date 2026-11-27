@@ -666,3 +666,30 @@ portable Vulkan and actual Mesa tests (run 46040903207), including
 hierarchical fields and streaming interpolation. The remaining JNI/C
 checks were canceled by superseding commits. Current-head texture
 reuse, integer-anchor and quality-comparison tests await validation.
+
+
+Measured translation quality and batched direction execution
+------------------------------------------------------------
+Native CI run 46045383181, exact head
+64bdf8c5a16289132d5f17eb5ca3ab8bb04ebdca, passed every native check
+including actual Mesa execution, Android JNI and C adapter helpers.
+On the unchanged 96x66 24-to-48 fps translation fixture the experimental
+search improved from 33.357 dB PSNR / 1.846 luma MAE to 38.280 dB /
+0.742 MAE; upstream CPU analysis remained exact (infinite PSNR,
+zero MAE). The nearest-source baseline is 17.692 dB. The cumulative
+analysis time was 55640 us for software Vulkan and 1626 us for CPU.
+These are correctness/quality measurements, not physical GPU speedups.
+
+The subsequent revision combines independent forward/backward search
+jobs within bounded GPU batches, preserving per-block candidate order,
+and retains a single unmapped winner-readback buffer for reuse. Map
+timeouts/errors retire the buffer; only a successfully unmapped buffer
+is returned to the reuse slot. Tests compare serialized packets against
+separately submitted directions, and assert fewer batch readbacks
+on the small fixtures. The measured improved quality becomes a
+regression gate (>=38 dB, <=0.8 MAE for this fixture). New diagnostic
+logs compare decoded motion vectors, scores and luma against the
+upstream first-pair packet to localize remaining quality differences.
+Actual hardware performance, broader video quality and full upstream
+search parity still need validation; regular player presets remain
+unchanged.
