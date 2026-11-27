@@ -23,29 +23,37 @@ public:
     ConversionCacheEntry(const ConversionCacheEntry &) = delete;
     ConversionCacheEntry &operator=(const ConversionCacheEntry &) = delete;
 
+    bool same_buffer(AHardwareBuffer *buffer, uint64_t id = 0, bool id_valid = false) const {
+        return buffer && buffer_ && (id_valid && buffer_id_valid_ ?
+            id == buffer_id_ : buffer_ == buffer);
+    }
+
     bool matches(AHardwareBuffer *buffer, uint32_t width, uint32_t height,
-                 VkFormat format, uint32_t descriptors) const {
-        return pass_.has_value() && buffer && buffer_ == buffer &&
+                 VkFormat format, uint32_t descriptors, uint64_t id = 0,
+                 bool id_valid = false) const {
+        return pass_.has_value() && same_buffer(buffer, id, id_valid) &&
             width_ == width && height_ == height && format_ == format &&
             descriptors_ == descriptors;
     }
 
     VkResult prepare_retired(AHardwareBuffer *buffer, uint32_t width, uint32_t height,
-                             VkFormat format, uint32_t descriptors) {
+                             VkFormat format, uint32_t descriptors, uint64_t id = 0,
+                             bool id_valid = false) {
         if (!buffer || !width || !height || !descriptors)
             return VK_ERROR_INITIALIZATION_FAILED;
-        if (matches(buffer, width, height, format, descriptors)) return VK_SUCCESS;
+        if (matches(buffer, width, height, format, descriptors, id, id_valid)) return VK_SUCCESS;
 
         // Different AHB, same output geometry and exact conversion format:
         // import just the replacement image and update its descriptor, not
         // the immutable sampler, render pass, framebuffer or graphics pipeline.
-        if (pass_ && imported_ && buffer_ != buffer && width_ == width &&
+        if (pass_ && imported_ && !same_buffer(buffer, id, id_valid) && width_ == width &&
             height_ == height && format_ == format && descriptors_ == descriptors) {
             bool reused = false;
             VkResult result = imported_->try_rebind(buffer, reused);
             if (result != VK_SUCCESS) return result;
             if (reused) {
                 buffer_ = buffer;
+                buffer_id_ = id; buffer_id_valid_ = id_valid;
                 if (pass_->rebind_input(imported_->view())) return VK_SUCCESS;
                 pass_.reset();
                 return VK_ERROR_INITIALIZATION_FAILED;
@@ -55,9 +63,10 @@ public:
         // Framebuffer/descriptor/pipeline reference the target and immutable
         // sampler. Destroy the pass FIRST, before changing either dependency.
         pass_.reset();
-        if (buffer_ != buffer || !imported_) {
+        if (!same_buffer(buffer, id, id_valid) || !imported_) {
             imported_.reset();
             buffer_ = nullptr;
+            buffer_id_valid_ = false;
             imported_.emplace(device_, image_dispatch_);
             VkResult result = imported_->import(buffer);
             if (result != VK_SUCCESS) {
@@ -65,6 +74,7 @@ public:
                 return result;
             }
             buffer_ = buffer;
+            buffer_id_ = id; buffer_id_valid_ = id_valid;
         }
 
         VkResult result = target_.ensure(width, height, format);
@@ -88,6 +98,7 @@ public:
         pass_.reset();
         imported_.reset();
         buffer_ = nullptr;
+        buffer_id_valid_ = false;
     }
     const ImportedImage *imported() const { return pass_ ? &*imported_ : nullptr; }
     const SamplePass *pass() const { return pass_ ? &*pass_ : nullptr; }
@@ -104,6 +115,8 @@ private:
     std::optional<ImportedImage> imported_;
     std::optional<SamplePass> pass_;
     AHardwareBuffer *buffer_{};
+    uint64_t buffer_id_{};
+    bool buffer_id_valid_{};
     uint32_t width_{}, height_{}, descriptors_{};
     VkFormat format_ = VK_FORMAT_UNDEFINED;
 };
