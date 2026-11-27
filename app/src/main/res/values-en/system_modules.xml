@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="module_settings_title">System libraries</string>
+    <string name="module_settings_description">Download optional components. Changes take effect after restarting Ambient TV.</string>
+    <string name="module_settings_shaders">Vulkan shader presets</string>
+    <string name="module_settings_installed">Downloaded version: %1$d</string>
+    <string name="module_settings_no_override">No downloaded override</string>
+    <string name="module_settings_no_key">Downloads unavailable: release verification key is missing.</string>
+    <string name="module_settings_install">Download / update</string>
+    <string name="module_settings_rollback">Previous version</string>
+    <string name="module_settings_remove">Remove download</string>
+    <string name="module_settings_restart">Selection saved. Restart the app to apply.</string>
+    <string name="module_settings_no_candidate">No compatible package or previous version available.</string>
+    <string name="module_settings_error">Module operation failed. Existing selection was not intentionally replaced.</string>
+</resources>
