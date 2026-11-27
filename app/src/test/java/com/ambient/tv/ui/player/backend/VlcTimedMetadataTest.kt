@@ -51,6 +51,30 @@ class VlcTimedMetadataTest {
         assertTrue(runCatching { VlcTimedMetadataPacket.read(barrier(2, 8).inputStream()) }.isFailure)
     }
 
+    @Test fun epochAcknowledgmentPreservesUnsignedWireValue() {
+        val out = ByteArrayOutputStream()
+        VlcTimedMetadataPacket.acknowledgeEpoch(out, 0xfedcba98L)
+        val data = java.io.DataInputStream(out.toByteArray().inputStream())
+        assertEquals(0x41464131, data.readInt())
+        assertEquals(0xfedcba98L, data.readInt().toLong() and 0xffffffffL)
+        assertEquals(-1, data.read())
+        assertTrue(runCatching { VlcTimedMetadataPacket.acknowledgeEpoch(out, -1) }.isFailure)
+        assertTrue(runCatching { VlcTimedMetadataPacket.acknowledgeEpoch(out, 0x100000000L) }.isFailure)
+    }
+
+    @Test fun lostBarrierIsRecoveredByNewerEventAndDuplicateBarrierIsIdempotent() {
+        val inbox = VlcTimedMetadataInbox()
+        val session = inbox.beginSession()
+        val first = readEvent(packet(1).inputStream())
+        inbox.offer(session, first)
+        inbox.clearForSeek()
+        val latest = first.copy(seekEpoch = 3)
+        inbox.offer(session, latest)
+        inbox.offer(session, VlcTimedMetadataPacket.Message.Epoch(2))
+        inbox.offer(session, VlcTimedMetadataPacket.Message.Epoch(3))
+        assertEquals(listOf(latest), inbox.events.value)
+    }
+
     @Test fun packetPreservesOpaqueBoxAndClock() {
         val event = readEvent(packet(2).inputStream())
         assertEquals(VlcTimedMetadata.Kind.EVENT_MESSAGE, event.kind)

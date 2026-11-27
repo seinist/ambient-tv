@@ -1,6 +1,8 @@
 package com.ambient.tv.ui.player.backend
 
 import java.io.DataInputStream
+import java.io.DataOutputStream
+import java.io.OutputStream
 import java.io.InputStream
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,6 +26,15 @@ internal object VlcTimedMetadataPacket {
     sealed interface Message {
         data class Event(val event: VlcTimedMetadata) : Message
         data class Epoch(val epoch: Long) : Message
+    }
+
+    // Acknowledge only after the receiver has applied the epoch barrier.
+    fun acknowledgeEpoch(output: OutputStream, epoch: Long) {
+        require(epoch in 0L..0xffffffffL)
+        val data = DataOutputStream(output)
+        data.writeInt(0x41464131) // AFA1
+        data.writeInt(epoch.toInt())
+        data.flush()
     }
 
     fun read(input: InputStream): Message {

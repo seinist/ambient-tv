@@ -39,7 +39,12 @@ internal class VlcTimedMetadataReceiver private constructor(
                         if (closed.get() || it.peerCredentials.uid != Process.myUid()) return@use
                         it.soTimeout = 500
                         val event = VlcTimedMetadataPacket.read(it.inputStream)
-                        if (!closed.get()) onEvent(event)
+                        if (!closed.get()) {
+                            onEvent(event)
+                            if (event is VlcTimedMetadataPacket.Message.Epoch && !closed.get()) {
+                                VlcTimedMetadataPacket.acknowledgeEpoch(it.outputStream, event.epoch)
+                            }
+                        }
                     }
                 } catch (_: Exception) {
                     // Incomplete or invalid event: discard only this connection.
