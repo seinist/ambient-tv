@@ -14,6 +14,7 @@ typedef struct VulkanPair AmbientSvpVkPair;
 typedef struct {
     VkImageView y, u, v;
     uint32_t nv12; /* 0 I420 R8/R8/R8, 1 NV12 R8/RG8 (v ignored) */
+    uint32_t chroma_location; /* 0 top-left, 1 left, 2 center */
 } AmbientSvpVkPicture;
 enum {
     AMBIENT_SVP_VK_BT601_LIMITED=0, AMBIENT_SVP_VK_BT709_LIMITED=1,
@@ -24,7 +25,8 @@ enum {
  * Requires 8-bit SDR planes, sampled R8_UNORM/R8G8_UNORM image views,
  * even visible dimensions and <=1920x1080 pixels. Native RGBA8_UNORM
  * output needs STORAGE usage and a nonaliasing distinct allocation.
- * No protected memory, HDR, cropping, foreign queue ownership or
+ * Padding beyond visible width/height is permitted, nonzero crop origin is not.
+ * No protected memory, HDR, foreign queue ownership or
  * Android external-format conversion is implicit in this contract.
  * Caller must establish correct views, layout GENERAL, ownership,
  * producer waits and output barriers; use the same device throughout.
