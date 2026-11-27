@@ -33,16 +33,26 @@ internal object SystemModuleAvailability {
         else -> true
     }
 
+    private val registry = ModuleAvailabilityRegistry(::bundled)
+    val states get() = registry.states
+    fun state(module: SystemModule) = registry.state(module)
+    fun observeSelection(module: SystemModule, version: Long?) = registry.observeSelection(module, version)
+    fun selectionChanged(module: SystemModule, version: Long?) = registry.selectionChanged(module, version)
+    fun reportProbe(module: SystemModule, external: Boolean, success: Boolean) = registry.reportProbe(module, external, success)
+    fun reportFailure(module: SystemModule) = registry.reportFailure(module)
+
+    /** Legacy providers retain their compile-time behavior until their loader is migrated. */
+    val monogramOffered: Boolean get() = bundled(SystemModule.MONOGRAM)
+    val spotifyOffered: Boolean get() = bundled(SystemModule.SPOTIFY)
+}
+
+internal class ModuleAvailabilityRegistry(private val bundled: (SystemModule) -> Boolean) {
     private val mutable = MutableStateFlow(SystemModule.entries.associateWith {
         ModuleAvailability(if (bundled(it)) ModuleRuntimeState.BUNDLED_UNVERIFIED else ModuleRuntimeState.MISSING)
     })
     val states: StateFlow<Map<SystemModule, ModuleAvailability>> = mutable.asStateFlow()
 
     fun state(module: SystemModule): ModuleAvailability = mutable.value.getValue(module)
-
-    /** Legacy providers retain their compile-time behavior until their loader is migrated. */
-    val monogramOffered: Boolean get() = bundled(SystemModule.MONOGRAM)
-    val spotifyOffered: Boolean get() = bundled(SystemModule.SPOTIFY)
 
     fun observeSelection(module: SystemModule, version: Long?) = change(module) { previous ->
         if (previous.restartRequired) previous.copy(installedVersion = version)
@@ -64,7 +74,8 @@ internal object SystemModuleAvailability {
         it.copy(runtime = when {
             success && external -> ModuleRuntimeState.ACTIVE_EXTERNAL
             success -> ModuleRuntimeState.ACTIVE_BUNDLED
-            !external && !bundled(module) && it.installedVersion == null -> ModuleRuntimeState.MISSING
+            it.runtime == ModuleRuntimeState.FAILED -> ModuleRuntimeState.FAILED
+            !external && !bundled(module) && (it.installedVersion == null || it.restartRequired) -> ModuleRuntimeState.MISSING
             else -> ModuleRuntimeState.FAILED
         })
     }
