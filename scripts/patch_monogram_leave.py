@@ -1291,6 +1291,62 @@ pub extern "system" fn downloadMediaRange<'caller>(
     }).resolve::<jni::errors::ThrowRuntimeExAndDefault>()
 }
 """, "pub extern \"system\" fn downloadMediaRange")
+# Write directly into two final JVM part arrays; retain the old symbol as a compatibility fallback.
+add_before(ffi, "#[uniffi::export]\\npub fn download_message_thumb(", """#[cfg(target_os = "android")]
+#[allow(unsafe_code)]
+#[jni::jni_mangle("com.ambient.tv.data.telegram.AmbientMonogramJni")]
+pub extern "system" fn downloadMediaParts<'caller>(
+    mut unowned_env: jni::EnvUnowned<'caller>,
+    _this: jni::objects::JObject<'caller>,
+    handle: jni::sys::jlong,
+    chat_id: jni::sys::jlong,
+    message_id: jni::sys::jint,
+    destination: jni::objects::JString<'caller>,
+    offset: jni::sys::jlong,
+    expected_key: jni::objects::JString<'caller>,
+    first: jni::objects::JByteArray<'caller>,
+    second: jni::objects::JByteArray<'caller>,
+) -> jni::sys::jint {
+    unowned_env.with_env(|env| -> jni::errors::Result<_> {
+        const PART: usize = 512 * 1024;
+        let first_len = env.get_array_length(&first)? as usize;
+        let second_len = env.get_array_length(&second)? as usize;
+        let path = destination.try_to_string(env)?;
+        let expected = expected_key.try_to_string(env)?;
+        let result = if first_len != PART || !(1..=PART).contains(&second_len) {
+            Err(MtprotoError::Message("invalid media part array lengths".into()))
+        } else {
+            download_message_media_window_bytes(handle as u64, chat_id, message_id, path, offset, expected, 2)
+                .and_then(|bytes| {
+                    if bytes.len() == first_len + second_len { Ok(bytes) }
+                    else { Err(MtprotoError::Message("incomplete media window".into())) }
+                })
+        };
+        match result {
+            Ok(bytes) => {
+                // SAFETY: u8 and JNI jbyte (i8) have identical size/alignment;
+                // every bit pattern is valid and the borrowed slice stays live.
+                let signed = unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<jni::sys::jbyte>(), bytes.len()) };
+                env.set_byte_array_region(&first, 0, &signed[..first_len])?;
+                env.set_byte_array_region(&second, 0, &signed[first_len..])?;
+                Ok(bytes.len() as jni::sys::jint)
+            }
+            Err(error) => {
+                let code = match &error {
+                    MtprotoError::UnknownClient => "unknown-client",
+                    MtprotoError::PasswordRequired => "password-required",
+                    MtprotoError::RegistrationRequired => "registration-required",
+                    MtprotoError::Message(message) if message.eq_ignore_ascii_case("cancelled") => "cancelled",
+                    MtprotoError::Message(_) => "rpc",
+                };
+                let description = format!("{code}:{error}");
+                env.throw_new(jni::jni_str!("com/ambient/tv/data/telegram/AmbientMonogramJniFailure"), jni::strings::JNIString::from(description.as_str()))?;
+                Ok(0)
+            }
+        }
+    }).resolve::<jni::errors::ThrowRuntimeExAndDefault>()
+}
+""", "pub extern \"system\" fn downloadMediaParts")
 # Crypto: KDF inputs have a fixed 52-byte size and need no heap allocation.
 crypto_message = "vendor/mono-rs/crates/mono-proto-crypto/src/message.rs"
 amend(crypto_message,
