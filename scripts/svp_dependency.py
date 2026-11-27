@@ -73,6 +73,7 @@ def fingerprint(root: Path) -> str:
     paths += sorted((crate / "include").glob("*.h"))
     paths += [root / "scripts" / name for name in (
         "build_svp_android.sh", "vendor_svp_licenses.sh", "svp_dependency.py",
+        "svp_pgo_metadata.sh", "profile_svp_android.sh",
     )]
     digest = hashlib.sha256(revision.encode())
     for path in paths:
