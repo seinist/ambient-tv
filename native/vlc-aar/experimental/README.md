@@ -971,3 +971,14 @@ cover boundaries and overflow. Ordinary MP4 is unchanged. Forward-only
 multi-mdat input, interleaved timed moofs and padding between successive
 mdats remain outside this extension; the existing 64 MiB buffered route
 is unchanged. Latest linked build and real media fixtures remain pending.
+
+Forward-only paired carriage now buffers up to 64 consecutive mdats per
+layer in separate owned blocks. A single checked 64 MiB total payload
+budget covers both BL and EL; no concatenation or header bytes are copied.
+Binary-search cache lookup uses actual physical extents. Partial acquisition
+is released on any failure, and all owned blocks are released at reset or
+fragment completion. Added cumulative-budget boundary tests. This needs
+one next-box header lookahead after the last mdat, so a live stream can wait
+for the next header; padding between successive mdats and timed moofs
+between layers remain unsupported. Latest linked build and real streaming
+fixtures remain to be verified.

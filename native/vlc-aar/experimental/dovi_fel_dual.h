@@ -18,6 +18,14 @@ static inline bool ambient_fel_padding_budget(uint64_t *bytes,unsigned *count,ui
         *bytes>AMBIENT_FEL_MAX_PADDING||size>AMBIENT_FEL_MAX_PADDING-*bytes)return false;
     *bytes+=size;++*count;return true;
 }
+/* Cumulative physical payload bytes, across both layers and all mdats.
+ * Charge before allocation; failure leaves the budget unchanged. */
+static inline bool ambient_fel_mdat_charge(uint64_t *total,uint64_t size)
+{
+    if(!total||!size||*total>AMBIENT_FEL_MAX_MDAT||
+       size>AMBIENT_FEL_MAX_MDAT-*total)return false;
+    *total+=size;return true;
+}
 /* Both adjacent payloads share the existing cap. */
 static inline bool ambient_fel_mdat_pair_budget(uint64_t bl,uint64_t el)
 {

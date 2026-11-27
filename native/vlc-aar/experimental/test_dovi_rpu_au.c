@@ -161,6 +161,16 @@ int main(void) {
     assert(!ambient_fel_payload_contains(payloads,3,316,UINT64_MAX));
     assert(!ambient_fel_payload_contains(payloads,3,400,1));
     assert(!ambient_fel_payload_contains(payloads,0,108,1));
+    uint64_t charged=0;
+    assert(ambient_fel_mdat_charge(&charged,1024));
+    assert(ambient_fel_mdat_charge(&charged,AMBIENT_FEL_MAX_MDAT-1024));
+    assert(charged==AMBIENT_FEL_MAX_MDAT);
+    assert(!ambient_fel_mdat_charge(&charged,1));
+    assert(!ambient_fel_mdat_charge(&charged,UINT64_MAX));
+    assert(charged==AMBIENT_FEL_MAX_MDAT);
+    charged=0;
+    assert(!ambient_fel_mdat_charge(&charged,0));
+    assert(!ambient_fel_mdat_charge(NULL,1));
     uint64_t padding_bytes=0;
     unsigned padding_boxes=0;
     assert(ambient_fel_padding_budget(&padding_bytes,&padding_boxes,8));
