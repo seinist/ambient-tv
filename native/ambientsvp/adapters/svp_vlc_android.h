@@ -16,7 +16,7 @@
 typedef struct {
     atomic_uint refs;
     void *lib;
-    void (*release)(void *,int);
+    void (*release)(AmbientSvpOutputLease *,int);
 } SvpRecycle;
 static void svp_recycle_unref(SvpRecycle *r)
 {
@@ -32,7 +32,7 @@ typedef struct {
     int (*drain)(AmbientSvpAndroidStream *,const float *,uint32_t,AmbientSvpDisplayOutput *);
     void (*reset)(AmbientSvpAndroidStream *);
     int (*destroy)(AmbientSvpAndroidStream *);
-    void *(*lease_output)(AmbientSvpAndroidStream *,AHardwareBuffer *,int);
+    AmbientSvpOutputLease *(*lease_output)(AmbientSvpAndroidStream *,AHardwareBuffer *,int);
     SvpRecycle *recycle;
     picture_t *previous;
     double source,target;
