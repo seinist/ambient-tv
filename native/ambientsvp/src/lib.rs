@@ -8,6 +8,9 @@ use svpflow_wasm::Smoother;
 use svpflow1_vs::{Analyser, SuperBuilder, SuperFrame};
 #[cfg(feature = "vulkan")]
 mod gpu;
+// Experimental reusable exact metric; not a replacement for the upstream analyser.
+#[cfg(feature = "vulkan")]
+pub mod motion;
 
 const MAX_QUEUE: usize = 10;
 const MAX_FRAMES: i32 = 100_000_000;
