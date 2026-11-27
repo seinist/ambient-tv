@@ -22,6 +22,8 @@ cat >> "$src/src/libprojectM/MilkdropPreset/CMakeLists.txt" <<'CMAKE'
 
 if(AMBIENT_CLASSIC_TEST_DIRECT)
     set_source_files_properties(VideoEcho.cpp MilkdropPreset.cpp PROPERTIES COMPILE_DEFINITIONS AMBIENT_PROJECTM_DIRECT_CLASSIC_COMPOSITE=1)
+else()
+    set_source_files_properties(BlurTexture.cpp PROPERTIES COMPILE_DEFINITIONS AMBIENT_PROJECTM_FORCE_BLUR_COPY=1)
 endif()
 CMAKE
 cat >> "$src/src/libprojectM/CMakeLists.txt" <<'CMAKE'
@@ -42,7 +44,7 @@ for mode in OFF ON; do
         -DENABLE_SDL_UI=OFF -DBUILD_TESTING=OFF \
         -DAMBIENT_CLASSIC_TEST_DIRECT="$mode"
     cmake --build "$work/build" --target ambient_classic_test --parallel 4
-    "$work/build/src/libprojectM/ambient_classic_test" "$work/$mode.rgba"
+    "$work/build/src/libprojectM/ambient_classic_test" "$work/$mode.rgba" "$work/$mode.blur"
 done
 python3 - "$work/OFF.rgba" "$work/ON.rgba" <<'PY'
 import sys
@@ -54,4 +56,15 @@ error = np.abs(a - b)
 print(f"Classic composite comparison: {a.size} channels, max={error.max()}, mean={error.mean():.5f}, >2={np.mean(error > 2):.7f}")
 # Preserve byte-level color apart from small floating-point interpolation differences.
 assert error.mean() <= 0.15 and np.mean(error > 2) <= 0.001 and error.max() <= 12, "classic composite visual regression"
+PY
+
+python3 - "$work/OFF.blur" "$work/ON.blur" <<'PY'
+import sys
+import numpy as np
+a, b = [np.fromfile(path, dtype=np.uint8).astype(np.int16) for path in sys.argv[1:]]
+assert a.size == b.size and a.size > 10_000, "incomplete blur corpus"
+assert np.ptp(a) > 100 and np.ptp(b) > 100, "degenerate blur output"
+error = np.abs(a - b)
+print(f"Blur FBO comparison: {a.size} channels, max={error.max()}, mean={error.mean():.5f}, >2={np.mean(error > 2):.7f}")
+assert error.mean() <= 0.15 and np.mean(error > 2) <= 0.001 and error.max() <= 12, "blur visual regression"
 PY
