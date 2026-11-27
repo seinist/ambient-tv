@@ -18,7 +18,7 @@ fn spirv(source:&str,uniform:&str,entry:&str)->Result<Vec<u32>>{
     let source=source.replace(uniform,&format!("var<push_constant> {name}:vec4u;"));
     let module=naga::front::wgsl::parse_str(&source).map_err(|e|e.emit_to_string(&source))?;
     let info=naga::valid::Validator::new(naga::valid::ValidationFlags::all(),
-        naga::valid::Capabilities::PUSH_CONSTANT).validate(&module).map_err(|e|e.to_string())?;
+        naga::valid::Capabilities::PUSH_CONSTANT|naga::valid::Capabilities::STORAGE_TEXTURE_16BIT_NORM_FORMATS).validate(&module).map_err(|e|e.to_string())?;
     naga::back::spv::write_vec(&module,&info,&Default::default(),Some(&naga::back::spv::PipelineOptions{
         shader_stage:naga::ShaderStage::Compute,entry_point:entry.into(),
     })).map_err(|e|e.to_string())
@@ -33,7 +33,7 @@ fn synthesis_spirv()->Result<Vec<u32>>{
 // per-frame interpretation of the legacy RGBA8 ABI. R16 UNORM stores
 // P010 in the high ten bits and planar 10-bit in the low ten bits.
 fn high_motion_spirv(mode:u32)->Result<Vec<u32>>{
-    let scale=match mode{1=>"65535.0/64.0",2=>"65535.0",3=>"1023.0",_=>return Err("unknown high-depth mode".into())};
+    let scale=match mode{1|4=>"65535.0/64.0",2|5=>"65535.0",3=>"1023.0",_=>return Err("unknown high-depth mode".into())};
     for anchor in ["luminance*255.0","sad+=255u;","i32(scores[0]/128u)"]{
         if MOTION.matches(anchor).count()!=1{return Err("high-depth motion shader contract changed".into());}
     }
@@ -74,6 +74,56 @@ fn high_synthesis_spirv(mode:u32)->Result<Vec<u32>>{
     spirv(&source,"@group(0) @binding(8) var<uniform> params:vec4u;","synthesize")
 }
 
+fn raw_synthesis_spirv(mode:u32)->Result<Vec<u32>>{
+    if !matches!(mode,4|5){return Err("invalid raw YUV format".into());}
+    // Reuse the exact bilinear sampler and motion-field layout. Do not
+    // use any RGB conversion, transfer function or Dolby reshaping here.
+    let prefix=SYNTHESIS.find("fn yuv(").ok_or("missing bilinear shader")?;
+    let mut source=SYNTHESIS[..prefix].replace(
+        "@group(0) @binding(7) var dst:texture_storage_2d<rgba8unorm,write>;",
+        if mode==4{
+            "@group(0) @binding(7) var dy:texture_storage_2d<r16unorm,write>;\n@group(0) @binding(8) var du:texture_storage_2d<rg16unorm,write>;"
+        }else{
+            "@group(0) @binding(7) var dy:texture_storage_2d<r16unorm,write>;\n@group(0) @binding(8) var du:texture_storage_2d<r16unorm,write>;\n@group(0) @binding(9) var dv:texture_storage_2d<r16unorm,write>;"
+        }).replace("@group(0) @binding(8) var<uniform> params:vec4u;",
+            "@group(0) @binding(10) var<uniform> params:vec4u;");
+    let quant=if mode==4{"round(clamp(value*65535.0/64.0,vec4f(0),vec4f(1023)))*64.0/65535.0"}
+        else{"round(clamp(value*65535.0,vec4f(0),vec4f(1023)))/65535.0"};
+    source.push_str(&format!("fn pack10(value:vec4f)->vec4f{{return {quant};}}\n"));
+    source.push_str(r#"
+fn sample_pair(a:texture_2d<f32>,b:texture_2d<f32>,ap:vec2f,bp:vec2f,blend:f32,visible:vec2u)->vec4f{
+    if blend==0.0{return bilinear(a,ap,visible);}
+    if blend==1.0{return bilinear(b,bp,visible);}
+    return mix(bilinear(a,ap,visible),bilinear(b,bp,visible),blend);
+}
+@compute @workgroup_size(8,8)
+fn synthesize(@builtin(global_invocation_id) id:vec3u){
+    let visible=vec2u(params.w&65535u,params.w>>16u);
+    if any(id.xy>=visible)||any(id.xy>=textureDimensions(dy)){return;}
+    let grid=(visible+vec2u(15))/16u;
+    let index=id.x/16u+id.y/16u*grid.x;
+    let f=fields[index];
+    let r=fields[index+grid.x*grid.y];
+    let phase=bitcast<f32>(params.x);
+    let p=vec2f(id.xy);
+    var ap=p-vec2f(f.xy)*phase;
+    var bp=p-vec2f(r.xy)*(1.0-phase);
+    var blend=phase;
+    if f.z>64*48||r.z>64*48||abs(f.x+r.x)+abs(f.y+r.y)>6{
+        ap=p;bp=p;blend=select(0.0,1.0,phase>=0.5);
+    }
+    textureStore(dy,vec2i(id.xy),pack10(sample_pair(ay,by,ap,bp,blend,visible)));
+    // Identical 4:2:0 chroma siting on both sources and output. The
+    // sample-center offsets cancel, so only motion is scaled by 1/2.
+    if all((id.xy&vec2u(1))==vec2u(0)){
+        let cp=id.xy/2u;
+        textureStore(du,vec2i(cp),pack10(sample_pair(au,bu,ap*0.5,bp*0.5,blend,visible/2u)));
+"#);
+    if mode==5{source.push_str("        textureStore(dv,vec2i(cp),pack10(sample_pair(av,bv,ap*0.5,bp*0.5,blend,visible/2u)));\n");}
+    source.push_str("    }\n}\n");
+    spirv(&source,"@group(0) @binding(10) var<uniform> params:vec4u;","synthesize")
+}
+fn raw_planes(mode:u32)->usize{match mode{4=>2,5=>3,_=>1}}
 struct Pipeline{
     device:ash::Device,
     set:vk::DescriptorSetLayout,
@@ -193,7 +243,8 @@ impl Drop for VulkanPair{
 impl VulkanPair{
     fn new(core:Arc<Core>,command:vk::CommandBuffer,a:VulkanPicture,b:VulkanPicture)->Result<Self>{
         if core.lost.load(Ordering::Acquire) || command==vk::CommandBuffer::null() || !a.valid() || !b.valid() || a.rgb()!=b.rgb()
-            || (core.mode==1&&(a.nv12!=1||b.nv12!=1)) || (core.mode==2&&(a.nv12!=0||b.nv12!=0)) || (core.mode==3&&!a.rgb())
+            || (matches!(core.mode,1|4)&&(a.nv12!=1||b.nv12!=1)) || (matches!(core.mode,2|5)&&(a.nv12!=0||b.nv12!=0)) || (core.mode==3&&!a.rgb())
+            || (core.mode>=4&&a.chroma_location!=b.chroma_location)
         {return Err("invalid resident pictures".into());}
         core.in_flight.fetch_update(Ordering::AcqRel,Ordering::Acquire,|n|
             (n<MAX_IN_FLIGHT).then_some(n+1)).map_err(|_|"resident in-flight budget")?;
@@ -225,7 +276,7 @@ impl VulkanPair{
             let pool_sizes=[
                 vk::DescriptorPoolSize::default().ty(vk::DescriptorType::SAMPLED_IMAGE).descriptor_count(2+6*MAX_PHASES as u32),
                 vk::DescriptorPoolSize::default().ty(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1+MAX_PHASES as u32),
-                vk::DescriptorPoolSize::default().ty(vk::DescriptorType::STORAGE_IMAGE).descriptor_count(MAX_PHASES as u32),
+                vk::DescriptorPoolSize::default().ty(vk::DescriptorType::STORAGE_IMAGE).descriptor_count(MAX_PHASES as u32*raw_planes(c.mode) as u32),
             ];
             p.pool=d.create_descriptor_pool(&vk::DescriptorPoolCreateInfo::default().max_sets(1+MAX_PHASES as u32)
                 .pool_sizes(&pool_sizes),None).map_err(err)?;
@@ -252,13 +303,13 @@ impl VulkanPair{
     // One driver call per descriptor set, with stack-backed write
     // storage. No per-binding update or heap allocation on each phase.
     fn descriptors(&self,set:vk::DescriptorSet,images:&[(u32,vk::ImageView,vk::DescriptorType)],field_binding:u32){
-        assert!(images.len()<=7);
-        let mut info=[vk::DescriptorImageInfo::default();7];
+        assert!(images.len()<=9);
+        let mut info=[vk::DescriptorImageInfo::default();9];
         for (i,&(_,view,_)) in images.iter().enumerate(){
             info[i]=vk::DescriptorImageInfo::default().image_view(view).image_layout(vk::ImageLayout::GENERAL);
         }
         let field=[vk::DescriptorBufferInfo::default().buffer(self.field).offset(0).range(self.core.field_size)];
-        let mut writes=[vk::WriteDescriptorSet::default();8];
+        let mut writes=[vk::WriteDescriptorSet::default();10];
         for (i,&(binding,_,ty)) in images.iter().enumerate(){
             writes[i]=vk::WriteDescriptorSet::default().dst_set(set).dst_binding(binding)
                 .descriptor_type(ty).image_info(std::slice::from_ref(&info[i]));
@@ -283,7 +334,7 @@ impl VulkanPair{
         }
     }
     unsafe fn render(&mut self,phase:f32,matrix:u32,output:vk::ImageView)->Result<()>{
-        if self.fence!=vk::Fence::null() || self.phases>=MAX_PHASES || !phase.is_finite()
+        if self.core.mode>=4 || self.fence!=vk::Fence::null() || self.phases>=MAX_PHASES || !phase.is_finite()
             || !(0.0..=1.0).contains(&phase) || (matrix>3 && (self.core.mode==0 || !matches!(matrix,4|6))) || output==vk::ImageView::null()
             || self.a.views().contains(&output) || self.b.views().contains(&output)
         {return Err("invalid resident output phase/view".into());}
@@ -300,6 +351,26 @@ impl VulkanPair{
         self.phases+=1;
         Ok(())
     }
+    unsafe fn render_raw(&mut self,phase:f32,outputs:&[vk::ImageView])->Result<()>{
+        if self.core.mode<4 || outputs.len()!=raw_planes(self.core.mode) || self.fence!=vk::Fence::null()
+            || self.phases>=MAX_PHASES || !phase.is_finite() || !(0.0..=1.0).contains(&phase)
+            || outputs.iter().enumerate().any(|(i,v)|*v==vk::ImageView::null()||outputs[..i].contains(v)
+                ||self.a.views().contains(v)||self.b.views().contains(v)){
+            return Err("invalid raw resident output".into());
+        }
+        let set=self.sets[1+self.phases];
+        let [ay,au,av]=self.a.views();let [by,bu,bv]=self.b.views();
+        let sampled=vk::DescriptorType::SAMPLED_IMAGE;
+        let storage=vk::DescriptorType::STORAGE_IMAGE;
+        let images=[(0,ay,sampled),(1,au,sampled),(2,av,sampled),(3,by,sampled),(4,bu,sampled),(5,bv,sampled),
+            (7,outputs[0],storage),(8,outputs[1],storage),(9,outputs.get(2).copied().unwrap_or(vk::ImageView::null()),storage)];
+        self.descriptors(set,&images[..6+outputs.len()],6);
+        let c=&self.core;
+        unsafe{c.synthesis.dispatch(self.command,set,[phase.to_bits(),0,0,c.width|(c.height<<16)],
+            c.width.div_ceil(8),c.height.div_ceil(8));}
+        self.phases+=1;
+        Ok(())
+    }
 }
 
 fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Device,width:u32,height:u32,mode:u32)->Result<VulkanResident>{
@@ -312,7 +383,7 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
     let (gw,gh)=(width.div_ceil(16),height.div_ceil(16));
     let field_size=u64::from(gw)*u64::from(gh)*32;
     if width>limits.max_image_dimension2_d || height>limits.max_image_dimension2_d
-        || limits.max_per_stage_descriptor_sampled_images<6 || limits.max_per_stage_descriptor_storage_images<1
+        || limits.max_per_stage_descriptor_sampled_images<6 || limits.max_per_stage_descriptor_storage_images<raw_planes(mode) as u32
         || limits.max_per_stage_descriptor_storage_buffers<1 || limits.max_push_constants_size<16
         || limits.max_compute_work_group_invocations<64 || limits.max_compute_work_group_size[0]<64
         || limits.max_compute_work_group_size[1]<8 || gw>limits.max_compute_work_group_count[0]
@@ -324,11 +395,13 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
         1=>([vk::Format::R16_UNORM,vk::Format::R16G16_UNORM,vk::Format::R16G16B16A16_SFLOAT],vk::Format::R16G16B16A16_SFLOAT),
         2=>([vk::Format::R16_UNORM,vk::Format::R16_UNORM,vk::Format::R16G16B16A16_SFLOAT],vk::Format::R16G16B16A16_SFLOAT),
         3=>([vk::Format::R16G16B16A16_SFLOAT;3],vk::Format::R16G16B16A16_SFLOAT),
+        4=>([vk::Format::R16_UNORM,vk::Format::R16G16_UNORM,vk::Format::R16_UNORM],vk::Format::R16_UNORM),
+        5=>([vk::Format::R16_UNORM;3],vk::Format::R16_UNORM),
         _=>return Err("unknown native resident mode".into())
     };
     for format in formats{
         let f=unsafe{instance.get_physical_device_format_properties(physical,format)};
-        let needed=if format==output{
+        let needed=if mode>=4 || format==output{
             vk::FormatFeatureFlags::STORAGE_IMAGE|vk::FormatFeatureFlags::SAMPLED_IMAGE
         }else{vk::FormatFeatureFlags::SAMPLED_IMAGE};
         if !f.optimal_tiling_features.contains(needed){return Err("resident image format unsupported".into());}
@@ -337,8 +410,9 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
     let motion=Pipeline::new(&device,&[vk::DescriptorType::SAMPLED_IMAGE,vk::DescriptorType::SAMPLED_IMAGE,
         vk::DescriptorType::STORAGE_BUFFER],&motion_words,c"analyse")?;
     let mut types=vec![vk::DescriptorType::SAMPLED_IMAGE;6];
-    types.extend([vk::DescriptorType::STORAGE_BUFFER,vk::DescriptorType::STORAGE_IMAGE]);
-    let synthesis_words=if mode==0{synthesis_spirv()?}else{high_synthesis_spirv(mode)?};
+    types.push(vk::DescriptorType::STORAGE_BUFFER);
+    types.extend(std::iter::repeat_n(vk::DescriptorType::STORAGE_IMAGE,raw_planes(mode)));
+    let synthesis_words=if mode==0{synthesis_spirv()?}else if mode>=4{raw_synthesis_spirv(mode)?}else{high_synthesis_spirv(mode)?};
     let synthesis=Pipeline::new(&device,&types,&synthesis_words,c"synthesize")?;
     Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,width,height,gw,gh,field_size,mode,in_flight:AtomicU32::new(0),idle:Mutex::new(Vec::new()),lost:AtomicBool::new(false)})))
 }
@@ -352,7 +426,7 @@ pub unsafe extern "C" fn ambient_svp_vk_create(instance:vk::Instance,physical:vk
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_create_format(instance:vk::Instance,physical:vk::PhysicalDevice,device:vk::Device,
     get_proc:Option<vk::PFN_vkGetInstanceProcAddr>,width:u32,height:u32,mode:u32)->*mut VulkanResident{
-    if instance==vk::Instance::null() || physical==vk::PhysicalDevice::null() || device==vk::Device::null() || get_proc.is_none() || mode>3{return ptr::null_mut();}
+    if instance==vk::Instance::null() || physical==vk::PhysicalDevice::null() || device==vk::Device::null() || get_proc.is_none() || mode>5{return ptr::null_mut();}
     catch_unwind(AssertUnwindSafe(||{
         let f=ash::StaticFn{get_instance_proc_addr:get_proc.unwrap()};
         let instance=unsafe{ash::Instance::load(&f,instance)};
@@ -405,6 +479,12 @@ pub unsafe extern "C" fn ambient_svp_vk_render(pair:*mut VulkanPair,phase:f32,ma
     if pair.is_null(){return -1;}
     catch_unwind(AssertUnwindSafe(||unsafe{(&mut *pair).render(phase,matrix,output)}.map_or(-1,|_|0))).unwrap_or(-1)
 }
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_render_raw(pair:*mut VulkanPair,phase:f32,outputs:*const vk::ImageView,count:u32)->i32{
+    if pair.is_null() || outputs.is_null() || !(2..=3).contains(&count){return -1;}
+    catch_unwind(AssertUnwindSafe(||unsafe{(&mut *pair).render_raw(phase,std::slice::from_raw_parts(outputs,count as usize))}
+        .map_or(-1,|_|0))).unwrap_or(-1)
+}
 // The caller must pass the fence of the successful submission containing
 // this exact command buffer. The fence is borrowed and must not be reset
 // or destroyed before release. Never free in-flight descriptors/images.
@@ -447,6 +527,10 @@ mod tests{
         for mode in [1,2,3]{
             assert_eq!(super::high_motion_spirv(mode).unwrap()[0],0x07230203);
             assert_eq!(super::high_synthesis_spirv(mode).unwrap()[0],0x07230203);
+        }
+        for mode in [4,5]{
+            assert_eq!(super::high_motion_spirv(mode).unwrap()[0],0x07230203);
+            assert_eq!(super::raw_synthesis_spirv(mode).unwrap()[0],0x07230203);
         }
     }
 }
