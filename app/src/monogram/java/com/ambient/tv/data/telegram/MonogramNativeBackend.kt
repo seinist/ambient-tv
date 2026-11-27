@@ -34,6 +34,9 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         parentFile?.mkdirs()
     }
     private val cache = File(app.cacheDir, "monogram").apply { mkdirs() }
+    // A previous process may have missed edit/delete updates. Stream chunks are
+    // session-local until a stable server-side media identity is available.
+    private val chunkDirectory = File(cache, "chunks").apply { deleteRecursively() }
     /** The upstream MTProto handle supports overlapping RPCs. Only handle creation and
      * connecting are serialized: an artwork request must never block video seeking. */
     private val mutex = Mutex()
@@ -112,26 +115,36 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
      * (account change, logout, manual refresh, leaving a channel).
      */
     private val historyPages = LinkedHashMap<Pair<Long, Int>, HistoryPage>(64, 0.75f, true)
+    private val historyLocks = Array(32) { Any() }
+    // Guarded by historyPages; never publish an RPC begun before an invalidation.
+    private var historyRevision = 0L
 
     private fun historyPage(h: Long, chatId: Long, size: Int, offset: Int): List<MessageDto> {
         val key = chatId to offset
-        val now = android.os.SystemClock.elapsedRealtime()
-        synchronized(historyPages) {
-            historyPages[key]?.takeIf { now - it.atMs < HISTORY_PAGE_TTL_MS &&
-                (it.requested >= size || it.messages.size < it.requested) }
-                ?.let { return it.messages.take(size) }
+        return synchronized(historyLocks[(key.hashCode() and Int.MAX_VALUE) % historyLocks.size]) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            val revision = synchronized(historyPages) {
+                historyPages[key]?.takeIf { now - it.atMs < HISTORY_PAGE_TTL_MS &&
+                    (it.requested >= size || it.messages.size < it.requested) }
+                    ?.let { return it.messages.take(size) }
+                historyRevision
+            }
+            val requested = maxOf(size, HISTORY_SHARED_PAGE).coerceAtMost(100)
+            val fetched = native.getHistoryPage(h, chatId, requested, offset, 0, 0)
+            synchronized(historyPages) {
+                if (revision == historyRevision && chatId !in leftChannels) {
+                    historyPages[key] = HistoryPage(requested, fetched, android.os.SystemClock.elapsedRealtime())
+                    while (historyPages.size > HISTORY_PAGE_LIMIT) historyPages.remove(historyPages.keys.first())
+                }
+            }
+            fetched.take(size)
         }
-        // One shared, slightly larger page serves the smaller requests of other categories.
-        val requested = maxOf(size, HISTORY_SHARED_PAGE).coerceAtMost(100)
-        val fetched = native.getHistoryPage(h, chatId, requested, offset, 0, 0)
-        synchronized(historyPages) {
-            historyPages[key] = HistoryPage(requested, fetched, now)
-            while (historyPages.size > HISTORY_PAGE_LIMIT) historyPages.remove(historyPages.keys.first())
-        }
-        return fetched.take(size)
     }
 
-    private fun clearHistoryPages() = synchronized(historyPages) { historyPages.clear() }
+    private fun clearHistoryPages() = synchronized(historyPages) {
+        historyRevision++
+        historyPages.clear()
+    }
 
     /**
      * Telegram's update stream, like the Monogram app's UpdatesPump but only for what Ambient TV
@@ -196,6 +209,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         if (events.isEmpty()) return
         val touched = HashSet<Long>()
         var everything = false
+        val changedMessages = HashSet<Pair<Long, Int>>()
+        val changedChannels = HashSet<Long>()
         val latest = HashMap<Long, Pair<Long, Int>>()
         for (event in events) {
             when (event) {
@@ -205,14 +220,37 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     if ((latest[event.message.chatId]?.first ?: Long.MIN_VALUE) < date)
                         latest[event.message.chatId] = date to event.message.id
                 }
-                is UpdateEventDto.MessageEdited -> touched += event.message.chatId
-                is UpdateEventDto.MessagesDeleted -> event.chatId?.let { touched += it } ?: run { everything = true }
+                is UpdateEventDto.MessageEdited -> {
+                    touched += event.message.chatId
+                    changedMessages += event.message.chatId to event.message.id
+                }
+                is UpdateEventDto.MessagesDeleted -> event.chatId?.let {
+                    touched += it
+                    changedChannels += it
+                } ?: run { everything = true }
                 else -> Unit
             }
         }
         synchronized(historyPages) {
+            if (everything || touched.isNotEmpty()) historyRevision++
             if (everything) historyPages.clear()
             else historyPages.keys.removeAll { it.first in touched }
+        }
+        if (everything || changedMessages.isNotEmpty() || changedChannels.isNotEmpty()) {
+            synchronized(diskChunkLock) {
+                // In-flight chunk publications from before an edit are discarded.
+                invalidateChunksLocked()
+                fun affected(file: File): Boolean {
+                    val name = file.name.removePrefix("thumb-")
+                    return everything || changedChannels.any { name.startsWith("$it-") } ||
+                        changedMessages.any { (chat, message) ->
+                            name.startsWith("$chat-$message-") || name.substringBeforeLast('.') == "$chat-$message"
+                        }
+                }
+                listOf(chunkDirectory, File(cache, "previews"), File(cache, "photos"), cache).forEach { dir ->
+                    dir.listFiles()?.filter { it.isFile && affected(it) }?.forEach { it.delete() }
+                }
+            }
         }
         // Newer last-message dates for loaded dialogs. The catalog's last entry is the paging
         // offset for loadMoreChats and stays untouched.
@@ -261,7 +299,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 noteFloodWait(flood.seconds)
                 throw flood
             } catch (failure: Exception) {
-                when (classifyTelegramFailure(failure.message)) {
+                if (failure is AmbientMonogramJniFailure && failure.code == "cancelled")
+                    throw kotlinx.coroutines.CancellationException("Monogram media request cancelled", failure)
+                val failureKind = if (failure is AmbientMonogramJniFailure && failure.code == "unknown-client")
+                    TelegramFailureKind.SESSION else classifyTelegramFailure(failure.message)
+                when (failureKind) {
                     TelegramFailureKind.FLOOD -> {
                         val seconds = telegramFloodWaitSeconds(failure.message) ?: throw failure
                         noteFloodWait(seconds)
@@ -1008,13 +1050,19 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         val dir = File(cache, "photos").apply { mkdirs() }.canonicalFile
         val output = File(dir, "$chatId-$messageId.media")
         if (output.isFile && output.length() > 0L) return@nativeCall output.toURI().toString()
-        val actual = File(mediaClass(DISPATCH_USER) { native.downloadMessageDisplay(h, chatId, messageId, output.path) })
-            .canonicalFile
-        require(actual.parentFile == dir && actual.length() > 0L &&
-            chatId !in leftChannels) {
-            "Monogram full-resolution photo unavailable"
-        }
-        actual.toURI().toString()
+        val generation = cacheGeneration
+        val identity = accountId
+        val stage = File(dir, "pending-${java.util.UUID.randomUUID()}.media")
+        try {
+            val actual = File(mediaClass(DISPATCH_USER) { native.downloadMessageDisplay(h, chatId, messageId, stage.path) })
+                .canonicalFile
+            require(actual == stage.canonicalFile && actual.length() > 0L) { "Monogram full-resolution photo unavailable" }
+            synchronized(diskChunkLock) {
+                check(generation == cacheGeneration && identity != null && identity == accountId && chatId !in leftChannels)
+                check(actual.renameTo(output)) { "Monogram photo publication failed" }
+            }
+            output.toURI().toString()
+        } finally { stage.delete() }
     }
 
     /**
@@ -1036,7 +1084,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         return downloadThumbnail(chatId, messageId)
     }
 
-    private suspend fun downloadThumbnail(chatId: Long, messageId: Int): String? = nativeCall { h ->
+    private suspend fun downloadThumbnail(chatId: Long, messageId: Int): String? = cancellableMediaRequest { request ->
+        nativeCall { h ->
         requireAuthorized(h)
         if (chatId in leftChannels) return@nativeCall null
         val expectedGeneration = cacheGeneration
@@ -1049,10 +1098,13 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             output.setLastModified(System.currentTimeMillis())
             return@nativeCall output.toURI().toString()
         }
+        val stage = File(dir, "pending-${java.util.UUID.randomUUID()}.img")
+        val previous = uniffi.monogram_mtproto.bindRequestControl(request)
+        try {
         // Upstream's MtprotoNativeUniFfi.downloadMessageDisplay calls the FULL media download
         // (a whole video for one card); the UniFFI export itself fetches the display size.
         fun display() = File(mediaClass(DISPATCH_ORDINARY) {
-            uniffi.monogram_mtproto.downloadMessageDisplay(h.toULong(), chatId, messageId, output.path)
+            uniffi.monogram_mtproto.downloadMessageDisplay(h.toULong(), chatId, messageId, stage.path)
         }).canonicalFile
         val returned = runCatching {
             // The first file request after connecting may be cancelled by the media session
@@ -1063,9 +1115,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         }.getOrElse { failure ->
             // A FLOOD_WAIT or network error is the caller's to handle; only a post without a
             // display size falls back to its Thumb.
-            if (classifyTelegramFailure(failure.message) != TelegramFailureKind.OTHER) throw failure
+            if (failure.message?.contains("cancel", ignoreCase = true) == true ||
+                classifyTelegramFailure(failure.message) != TelegramFailureKind.OTHER) throw failure
             val inline = native.peekMessageInlineThumb(h, chatId, messageId)
-            val thumb = File(mediaClass(DISPATCH_VISIBLE) { native.downloadMessageThumb(h, chatId, messageId, output.path) }).canonicalFile
+            val thumb = File(mediaClass(DISPATCH_VISIBLE) { native.downloadMessageThumb(h, chatId, messageId, stage.path) }).canonicalFile
             if (inline != null && thumb.isFile && thumb.length() == inline.size.toLong()) {
                 thumb.delete()
                 return@nativeCall null
@@ -1075,9 +1128,9 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         // The native layer may keep the file in its own cache or add an extension: copy it into
         // our bounded cache instead of discarding a valid thumbnail.
         val actual = when {
-            returned.parentFile == dir -> returned
+            returned == stage.canonicalFile -> returned
             returned.isFile && returned.length() in 1L..(2L * 1024 * 1024) ->
-                runCatching { returned.copyTo(output, overwrite = true) }.getOrNull() ?: return@nativeCall null
+                runCatching { returned.copyTo(stage, overwrite = true) }.getOrNull() ?: return@nativeCall null
             else -> return@nativeCall null
         }
         // A thumbnail no larger than the inline preview (the Thumb fallback can return the
@@ -1094,14 +1147,20 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 actual.delete()
                 return@nativeCall null
             }
+            if (!actual.renameTo(output)) return@nativeCall null
             if (++previewWrites % 16 == 1) trimThumbnailCache(dir)
         }
-        actual.toURI().toString()
+        output.toURI().toString()
+        } finally {
+            uniffi.monogram_mtproto.bindRequestControl(previous)
+            stage.delete()
+        }
+        }
     }
 
     /** Same bounds as the inline previews: 7 days, 500 files, 64 MiB. */
     private fun trimThumbnailCache(dir: File) {
-        val files = dir.listFiles().orEmpty().filter { it.isFile }.sortedBy { it.lastModified() }
+        val files = dir.listFiles().orEmpty().filter { it.isFile && !it.name.startsWith("pending-") }.sortedBy { it.lastModified() }
         val expiry = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
         var bytes = files.sumOf { it.length() }
         var count = files.size
@@ -1152,7 +1211,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 app.getString(R.string.monogram_error_account_changed)
             }
         }
-        val dir = withContext(Dispatchers.IO) { File(cache, "chunks").canonicalFile }
+        val dir = withContext(Dispatchers.IO) { chunkDirectory.canonicalFile }
         val cacheFile = File(dir, "$chatId-$messageId-$offset.bin")
         fun lookup(): ByteArray? = synchronized(diskChunkLock) {
             verifyGeneration()
@@ -1308,4 +1367,10 @@ internal object AmbientMonogramJni {
         return uniffi.monogram_mtproto.downloadMessageMediaChunkBytes(
             handle.toULong(), chatId, messageId, destination, offset)
     }
+}
+
+// JNI constructs this exact exception using ThrowNew; keep its name and constructor.
+@androidx.annotation.Keep
+internal class AmbientMonogramJniFailure(message: String) : RuntimeException(message.substringAfter(':')) {
+    val code: String = message.substringBefore(':')
 }

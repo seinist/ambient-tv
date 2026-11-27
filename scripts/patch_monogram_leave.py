@@ -707,8 +707,16 @@ pub extern "system" fn downloadMediaRange<'caller>(
         match download_message_media_chunk_bytes(handle as u64, chat_id, message_id, path, offset) {
             Ok(bytes) => env.byte_array_from_slice(&bytes),
             Err(error) => {
-                let message = jni::strings::JNIString::from(error.to_string().as_str());
-                env.throw_new(jni::jni_str!("java/lang/RuntimeException"), message)?;
+                let code = match &error {
+                    MtprotoError::UnknownClient => "unknown-client",
+                    MtprotoError::PasswordRequired => "password-required",
+                    MtprotoError::RegistrationRequired => "registration-required",
+                    MtprotoError::Message(message) if message.eq_ignore_ascii_case("cancelled") => "cancelled",
+                    MtprotoError::Message(_) => "rpc",
+                };
+                let description = format!("{code}:{error}");
+                let message = jni::strings::JNIString::from(description.as_str());
+                env.throw_new(jni::jni_str!("com/ambient/tv/data/telegram/AmbientMonogramJniFailure"), message)?;
                 Ok(jni::objects::JByteArray::null())
             }
         }

@@ -687,7 +687,8 @@ class TelegramRepository @Inject constructor(
     private val prefetchPermits = kotlinx.coroutines.sync.Semaphore(2)
 
     /** One download per card, shared by the prefetch and the card's own image request. */
-    private val thumbnailLoads = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<String?>>()
+    private class ThumbnailLoad(val deferred: kotlinx.coroutines.Deferred<String?>, var waiters: Int)
+    private val thumbnailLoads = HashMap<String, ThumbnailLoad>()
 
     /** Real thumbnail for a visible card (see [TelegramMedia.cardImageUrl]); null when unavailable. */
     suspend fun thumbnailFile(chatId: Long, messageId: Int): String? {
@@ -695,14 +696,23 @@ class TelegramRepository @Inject constructor(
         val identity = selected.cacheIdentity
         val generation = streamEpoch.get()
         val key = "$generation:$chatId:$messageId"
-        val load = thumbnailLoads.computeIfAbsent(key) {
-            // Lazy start prevents a fast cache hit from removing the entry before insertion.
-            scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
-                loadThumbnailFile(selected, identity, generation, chatId, messageId)
-            }
+        val load = synchronized(thumbnailLoads) {
+            thumbnailLoads[key]?.takeUnless { it.deferred.isCancelled }?.also { it.waiters++ }
+                ?: ThumbnailLoad(scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                    loadThumbnailFile(selected, identity, generation, chatId, messageId)
+                }, 1).also { thumbnailLoads[key] = it }
         }
-        load.invokeOnCompletion { thumbnailLoads.remove(key, load) }
-        return load.await().takeIf { sameAccount(selected, identity, generation) && chatId !in blockedChannels }
+        try {
+            return load.deferred.await().takeIf { sameAccount(selected, identity, generation) && chatId !in blockedChannels }
+        } finally {
+            val cancel = synchronized(thumbnailLoads) {
+                if (--load.waiters == 0) {
+                    if (thumbnailLoads[key] === load) thumbnailLoads.remove(key)
+                    !load.deferred.isCompleted
+                } else false
+            }
+            if (cancel) load.deferred.cancel()
+        }
     }
 
     /**
@@ -719,7 +729,7 @@ class TelegramRepository @Inject constructor(
             .forEach { item ->
                 scope.launch {
                     // A card already loading this image shares its download without the permit.
-                    if (thumbnailLoads.containsKey("$generation:${item.chatId}:${item.messageId}")) return@launch
+                    if (synchronized(thumbnailLoads) { thumbnailLoads.containsKey("$generation:${item.chatId}:${item.messageId}") }) return@launch
                     prefetchPermits.withPermit {
                         if (sameAccount(selected, identity, generation)) thumbnailFile(item.chatId, item.messageId)
                     }
@@ -758,9 +768,12 @@ class TelegramRepository @Inject constructor(
             old.values.map { it.deferred }
         }
         obsoleteParts.forEach { it.cancel() }
-        thumbnailLoads.entries.forEach { (key, load) ->
-            if (!key.startsWith("$epoch:") && thumbnailLoads.remove(key, load)) load.cancel()
+        val obsoleteThumbnails = synchronized(thumbnailLoads) {
+            val old = thumbnailLoads.filterKeys { !it.startsWith("$epoch:") }
+            old.keys.forEach { thumbnailLoads.remove(it) }
+            old.values.map { it.deferred }
         }
+        obsoleteThumbnails.forEach { it.cancel() }
     }
 
     suspend fun mediaPart(
