@@ -213,3 +213,28 @@ version while retaining the prior rollback pointer. Tests cover these cases.
 Native package release publication, remaining engine migration (including
 Monogram and SmartTube's Java/native boundaries), and real-device validation
 remain outstanding.
+
+### Monogram native-first migration
+
+The native Rust payload is now optional in the modular preview. A
+Monogram-enabled APK still includes the existing Kotlin adapter, generated
+UniFFI bindings, JNA and TLS verifier Java code; builds with
+MONOGRAM_NATIVE=0 do not offer this module yet. The signed
+hostBindingSha256 field pins the exact classes.jar from the matching patched
+Monogram AAR. The runtime verifies it before installation, rollback and
+activation. The native package is built directly from that AAR for all four
+ABIs, with required license notices and no unapproved native dependencies.
+
+The repository chooses the external absolute library before constructing the
+backend. The pinned upstream UniFFI generator already honors the namespace
+libraryOverride property; its JNI TLS verifier is patched to load that same
+absolute file. The build checks that regenerated bindings still honor it.
+Neither loader may mix an external and bundled Rust copy. A successful backend
+probe on IO unlocks Monogram settings/navigation; account restoration remains
+conditional on the existing user preference. Session/cache paths and
+credentials are unchanged.
+
+This is a native-first intermediate step, not a fully independent Monogram
+DEX adapter. Native release signing/publication and corresponding GPL source
+distribution, ABI/device validation, matching-artifact release selection,
+and removal of the Java/JNA payload from the base APK remain outstanding.
