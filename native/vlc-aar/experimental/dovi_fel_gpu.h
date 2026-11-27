@@ -1,5 +1,6 @@
 #pragma once
 #include "dovi_fel_nlq.h"
+#include "dovi_fel_geometry.h"
 #include <libplacebo/dispatch.h>
 #include <libplacebo/shaders/custom.h>
 #include <libplacebo/shaders/colorspace.h>
@@ -69,8 +70,8 @@ static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
             fabsf(planes->chroma_x)>0.5f||fabsf(planes->chroma_y)>0.5f)return false;
         const int ew=planes->tex[0]->params.w,eh=planes->tex[0]->params.h;
         if(ew<=0||eh<=0||
-            (bl->params.w!=ew && bl->params.w!=2*ew)||
-            (bl->params.h!=eh && bl->params.h!=2*eh)) return false;
+            !ambient_fel_layer_ratio(bl->params.w,ew)||
+            !ambient_fel_layer_ratio(bl->params.h,eh)) return false;
         for(unsigned i=0;i<3;i++){
             pl_tex t=planes->tex[i];
             if(t==output||!t->params.sampleable||t->params.format->type!=PL_FMT_UNORM||
