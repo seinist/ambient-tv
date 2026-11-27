@@ -17,6 +17,8 @@ mod pipeline_cache;
 pub mod motion;
 #[cfg(feature = "vulkan")]
 pub mod motion_select;
+#[cfg(feature = "vulkan")]
+pub mod motion_packet;
 
 const MAX_QUEUE: usize = 10;
 const MAX_FRAMES: i32 = 100_000_000;
