@@ -252,6 +252,8 @@ class VlcPlaybackController(
     // Once the experimental opaque path fails, do not try it again for this controller.
     private var ahbCopyBackRetried = false
     private var ahbFallbackPending = false
+    // Serialize the posted fallback with Surface callbacks and other reopens.
+    private var vulkanFallbackPosted = false
     private val ahbExperimentActive: Boolean get() = vlcAhbExperimentEligible(
         com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT, vulkanOutput, preserveHdrSource,
         configuredSoftwareProcessing, configuredSvpMode, configuredDeinterlaceMode, ahbCopyBackRetried,
@@ -1082,7 +1084,7 @@ class VlcPlaybackController(
         desiredPlayWhenReady = playing
         openingOrRestarting = true
         ended = false
-        if (restartStop != null || dvRetirementPending) return
+        if (vulkanFallbackPosted || restartStop != null || dvRetirementPending) return
         if (!nativeMediaOpened) {
             prepare(position, playing)
             return
@@ -1142,8 +1144,11 @@ class VlcPlaybackController(
     }
 
     private fun prepare(resumePositionMs: Long = pendingRestorePositionMs ?: startPositionMs, resumePlaying: Boolean = desiredPlayWhenReady) {
-        if (released || restartStopFailed || headerRelayFailed || restartStop != null || dvRetirementPending) return
+        if (released || restartStopFailed || headerRelayFailed || vulkanFallbackPosted ||
+            restartStop != null || dvRetirementPending) return
         if (ahbExperimentActive && hdrPlusDisplayChanged()) {
+            pendingRestorePositionMs = resumePositionMs.takeUnless { liveStream }
+            desiredPlayWhenReady = resumePlaying
             fallbackVulkan("hdr_target_changed_before_open")
             return
         }
@@ -1392,7 +1397,7 @@ class VlcPlaybackController(
 
     private fun fallbackVulkan(reason: String): Boolean {
         if (released) return false
-        if (ahbFallbackPending) return true // Coalesce duplicate error events before the posted reopen.
+        if (vulkanFallbackPosted || ahbFallbackPending) return true // Coalesce duplicate error events before the posted reopen.
         if (!vulkanOutput) return false
         // A failed explicit HDR swapchain must return to the original native
         // HDR/SDR policy, not a copy-back Vulkan route with no target proof.
@@ -1433,7 +1438,9 @@ class VlcPlaybackController(
         )
         rememberTrackSelection()
         forceOutputRebuild = true
-        android.os.Handler(android.os.Looper.getMainLooper()).post {
+        vulkanFallbackPosted = true
+        pendingSeekHandler.post {
+            vulkanFallbackPosted = false
             if (!released) restartAfterStop(pendingRestorePositionMs ?: position, desiredPlayWhenReady)
         }
         return true
@@ -1624,7 +1631,7 @@ class VlcPlaybackController(
         if (released) return
         if (!desiredPlayWhenReady) frameDropSamples.discontinuity()
         desiredPlayWhenReady = true
-        if (restartStopFailed || restartStop != null || dvRetirementPending) return
+        if (restartStopFailed || vulkanFallbackPosted || restartStop != null || dvRetirementPending) return
         if (!dvPrimeActive) restorePausedSeekVolume()
         hdrOutput.discontinuity()
         pauseAfterRestorePositionMs = null
@@ -1712,7 +1719,7 @@ class VlcPlaybackController(
         // Live no longer means unseekable: YouTube HLS/DASH can advertise a real DVR window.
         // Still reject streams without a native seek index (ordinary live channels).
         if (released || restartStopFailed || (liveStream && !canSeekNow())) return
-        if (restartStop != null || dvRetirementPending) {
+        if (vulkanFallbackPosted || restartStop != null || dvRetirementPending) {
             pendingRestorePositionMs = positionMs.coerceAtLeast(0L)
             return
         }
