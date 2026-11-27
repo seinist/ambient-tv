@@ -38,7 +38,7 @@ internal object SvpNative {
             // Never use external storage or accept an imported pipeline blob.
             // Older ABI-compatible engines may lack the optional JNI method.
             runCatching {
-                val dir = File(context.applicationContext.cacheDir, "svp-pipelines-v1")
+                val dir = File(context.applicationContext.cacheDir.canonicalFile, "svp-pipelines-v1")
                 if (!dir.exists()) dir.mkdir()
                 if (dir.isDirectory && dir.canonicalFile == dir.absoluteFile) {
                     Os.chmod(dir.path, 448) // 0700
