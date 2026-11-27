@@ -95,6 +95,7 @@ jobs:
       publish: ${{ steps.plan.outputs.publish }}
       count: ${{ steps.plan.outputs.count }}
       total: ${{ steps.plan.outputs.total }}
+      artifact_pattern: ${{ steps.plan.outputs.artifact_pattern }}
     steps:
       - uses: actions/checkout@v5
       - name: Test core build policy
@@ -140,12 +141,15 @@ jobs:
             publish=$(jq -r '.publish' <<< "$result")
           fi
           count=$(jq '.include | length' <<< "$matrix")
+          # Exact names prevent optimized from matching optimized-a57 artifacts.
+          artifact_pattern=$(jq -r '[.include[].artifact] | if length == 0 then "" elif length == 1 then .[0] else "{" + join(",") + "}" end' <<< "$matrix")
           {
             echo "matrix=$matrix"
             echo "reuse=$reuse"
             echo "publish=$publish"
             echo "count=$count"
             echo "total=$total"
+            echo "artifact_pattern=$artifact_pattern"
           } >> "$GITHUB_OUTPUT"
           echo "Building $count of $total core/ABI combinations."
           echo "$matrix" | jq -r '.include[] | "\(.core) \(.abi) \(.profile)"'
@@ -349,7 +353,7 @@ jobs:
       - uses: actions/download-artifact@v7
         if: needs.plan.outputs.count != '0'
         with:
-          pattern: ${{ inputs.publish_experimental && format('candidate-{0}-*', inputs.profile) || 'core-*' }}
+          pattern: ${{ needs.plan.outputs.artifact_pattern }}
           path: artifacts
 
       - name: Package, sign and release
@@ -365,17 +369,26 @@ jobs:
           set -euo pipefail
           [ -n "$SIGNING_KEY" ] || { echo "::error::CORES_SIGNING_KEY is not set (scripts/cores_signing_key.sh)"; exit 1; }
           [ -f cores/signing-public.pem ] || { echo "::error::cores/signing-public.pem is missing (scripts/cores_signing_key.sh)"; exit 1; }
-          # Reject a stale queued/retried release when main's build inputs changed.
-          # Unrelated application commits do not invalidate a core release.
+          # Compare the real profile build inputs rather than whole workflow files.
+          # A scheduling-only change must not discard successfully built cores.
           assert_current_recipe() {
+            local current
             git fetch --no-tags --depth=1 origin refs/heads/main
-            if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- cores/cores.json cores/signing-public.pem \
-                .github/workflows/cores.yml .github/workflows/cores-all.yml scripts/core_build_policy.py scripts/core_acceleration_audit.py \
+            if [ "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA" ]; then
+              return
+            fi
+            current=$(mktemp -d "$RUNNER_TEMP/core-current.XXXXXX")
+            git archive FETCH_HEAD -- cores/cores.json cores/signing-public.pem \
+                .github/workflows/cores.yml scripts/core_build_policy.py scripts/core_acceleration_audit.py \
                 scripts/core_link_evidence.py scripts/check_elf_pages.py scripts/core_release_incremental.py \
-                scripts/core_hotpath_patches.py scripts/core_hotpath_remaining.py; then
-              echo "::error::Core release inputs changed on main; dispatch a fresh release"
+                scripts/core_hotpath_patches.py scripts/core_hotpath_remaining.py | tar -xf - -C "$current"
+            if ! python3 scripts/core_release_incremental.py assert-current \
+                --profile "$PROFILE" --ndk "$NDK_VERSION" --current-root "$current"; then
+              rm -rf "$current"
+              echo "::error::Core release inputs or trust rules changed on main; dispatch a fresh release"
               exit 1
             fi
+            rm -rf "$current"
           }
           assert_current_recipe
           # Require every planned artifact, and ensure the profile cannot cross channels.
