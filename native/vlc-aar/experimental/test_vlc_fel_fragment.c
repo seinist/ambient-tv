@@ -310,6 +310,75 @@ static void test_generic_trun_index(void)
         assert(!track.context.runs.i_count&&!track.context.runs.p_array);
     }
 }
+/* Exercise the actual FragPrepareChunk transaction, not just its individual
+ * arithmetic helpers. The independent layer timescales must map exactly. */
+static void test_prepare_paired_fragment(void)
+{
+    reset_stream(true);
+    mp4_track_t track[2]={{.i_track_ID=1,.b_ok=true,.i_timescale=1000,
+        .ambient_fel_el_id=2},{.i_track_ID=2,.b_ok=true,.i_timescale=2000,
+        .ambient_fel_hidden=true}};
+    demux_sys_t sys={.i_tracks=2,.track=track,.b_seekable=true};
+    demux_t d={.s=&fixture_stream,.p_sys=&sys};
+    MP4_Box_data_mfhd_t mh={.i_sequence_number=7};
+    MP4_Box_data_tfhd_t tf[2]={{.i_track_ID=1,
+        .i_flags=MP4_TFHD_DEFAULT_BASE_IS_MOOF|MP4_TFHD_DFLT_SAMPLE_SIZE|
+            MP4_TFHD_DFLT_SAMPLE_DURATION,
+        .i_default_sample_size=4,.i_default_sample_duration=3},
+        {.i_track_ID=2,.i_flags=MP4_TFHD_DEFAULT_BASE_IS_MOOF|
+            MP4_TFHD_DFLT_SAMPLE_SIZE|MP4_TFHD_DFLT_SAMPLE_DURATION,
+        .i_default_sample_size=4,.i_default_sample_duration=6}};
+    MP4_Box_data_tfdt_t dt[2]={{.i_base_media_decode_time=10},
+        {.i_base_media_decode_time=20}};
+    MP4_Box_data_trun_t tr[2]={{.i_flags=MP4_TRUN_DATA_OFFSET,
+        .i_sample_count=1,.i_data_offset=108},
+        {.i_flags=MP4_TRUN_DATA_OFFSET,.i_sample_count=1,.i_data_offset=128}};
+    MP4_Box_t run[2]={{.i_type=ATOM_trun,.data.p_trun=&tr[0]},
+        {.i_type=ATOM_trun,.data.p_trun=&tr[1]}};
+    MP4_Box_t clock[2]={{.i_type=ATOM_tfdt,.data.p_tfdt=&dt[0],.p_next=&run[0]},
+        {.i_type=ATOM_tfdt,.data.p_tfdt=&dt[1],.p_next=&run[1]}};
+    MP4_Box_t header[2]={{.i_type=ATOM_tfhd,.data.p_tfhd=&tf[0],.p_next=&clock[0]},
+        {.i_type=ATOM_tfhd,.data.p_tfhd=&tf[1],.p_next=&clock[1]}};
+    MP4_Box_t traf[2]={{.i_type=ATOM_traf,.p_first=&header[0]},
+        {.i_type=ATOM_traf,.p_first=&header[1]}};
+    traf[0].p_next=&traf[1];
+    MP4_Box_t mfhd={.i_type=ATOM_mfhd,.data.p_mfhd=&mh,.p_next=&traf[0]};
+    MP4_Box_t moof={.i_type=ATOM_moof,.i_pos=0,.i_size=100,.p_first=&mfhd};
+    assert(FragPrepareChunk(&d,&moof,NULL,INVALID_SEGMENT_TIME,true)==VLC_SUCCESS);
+    assert(track[0].ambient_fel_clock_valid&&track[0].ambient_fel_sequence_proven);
+    assert(track[0].i_time==10&&track[1].i_time==20);
+    assert(track[0].ambient_fel_bl_end==13&&track[0].ambient_fel_el_end==26);
+    assert(track[0].context.i_trun_sample_pos==108&&track[1].context.i_trun_sample_pos==128);
+    assert(sys.context.ambient_fel_required_end==132);
+    assert(track[0].i_next_block_flags&BLOCK_FLAG_DISCONTINUITY);
+
+    /* A contiguous segment may omit both tfdt boxes and inherit the proven
+     * independent clock ends, not the generic movie-time estimate. */
+    ++mh.i_sequence_number;
+    header[0].p_next=&run[0];header[1].p_next=&run[1];
+    track[0].i_next_block_flags=0;
+    assert(FragPrepareChunk(&d,&moof,NULL,INVALID_SEGMENT_TIME,false)==VLC_SUCCESS);
+    assert(track[0].i_time==13&&track[1].i_time==26);
+    assert(track[0].ambient_fel_bl_end==16&&track[0].ambient_fel_el_end==32);
+    assert(!(track[0].i_next_block_flags&BLOCK_FLAG_DISCONTINUITY));
+
+    /* Without explicit clocks a discontinuous fragment must fail closed. */
+    ++mh.i_sequence_number;
+    assert(FragPrepareChunk(&d,&moof,NULL,INVALID_SEGMENT_TIME,true)!=VLC_SUCCESS);
+    assert(!track[0].ambient_fel_clock_valid);
+    header[0].p_next=&clock[0];header[1].p_next=&clock[1];
+    dt[0].i_base_media_decode_time=100;dt[1].i_base_media_decode_time=201;
+    assert(FragPrepareChunk(&d,&moof,NULL,INVALID_SEGMENT_TIME,true)!=VLC_SUCCESS);
+    dt[1].i_base_media_decode_time=200;
+    tf[1].i_default_sample_duration=7;
+    assert(FragPrepareChunk(&d,&moof,NULL,INVALID_SEGMENT_TIME,true)!=VLC_SUCCESS);
+    tf[1].i_default_sample_duration=6;
+    assert(FragPrepareChunk(&d,&moof,NULL,INVALID_SEGMENT_TIME,true)==VLC_SUCCESS);
+    assert(track[0].ambient_fel_bl_end==103&&track[0].ambient_fel_el_end==206);
+    assert(track[0].i_next_block_flags&BLOCK_FLAG_DISCONTINUITY);
+    free(track[0].context.runs.p_array);free(track[1].context.runs.p_array);
+}
+
 static void test_adjacent_lookahead(void)
 {
     for(unsigned mode=0;mode<2;mode++){
@@ -386,6 +455,7 @@ int main(void)
     test_leading_empty_mdats(&demux,&sys);
     test_exact_sample_read(&demux);
     test_generic_trun_index();
+    test_prepare_paired_fragment();
     test_adjacent_lookahead();
     MP4_Box_data_tfhd_t tfhd={.i_track_ID=1,
         .i_flags=MP4_TFHD_DEFAULT_BASE_IS_MOOF|MP4_TFHD_DFLT_SAMPLE_SIZE|
