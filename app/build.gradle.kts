@@ -147,19 +147,20 @@ require(appDisplayName.isNotBlank() && appDisplayName.none { it == '\n' || it ==
 
 val externalVersions = loadProjectProperties("gradle/external-versions.properties")
 // Explicit test build only; never auto-select a stale experimental AAR.
-val vlcAhbExperiment = providers.gradleProperty("VLC_AHB_EXPERIMENT").orElse("0").get() == "1"
-val vlcDoviAhbExperiment = providers.gradleProperty("VLC_DOVI_AHB_EXPERIMENT").orElse("0").get() == "1"
-require(!vlcDoviAhbExperiment || vlcAhbExperiment) { "VLC_DOVI_AHB_EXPERIMENT requires VLC_AHB_EXPERIMENT=1" }
-val vlcDoviFelExperiment = providers.gradleProperty("VLC_DOVI_FEL_EXPERIMENT").orElse("0").get() == "1"
-require(!vlcDoviFelExperiment || vlcDoviAhbExperiment) { "VLC_DOVI_FEL_EXPERIMENT requires VLC_DOVI_AHB_EXPERIMENT=1" }
-val vlcHdrplusSpatialExperiment = providers.gradleProperty("VLC_HDR10PLUS_SPATIAL_EXPERIMENT").orElse("0").get() == "1"
-require(!vlcHdrplusSpatialExperiment || vlcAhbExperiment) { "VLC_HDR10PLUS_SPATIAL_EXPERIMENT requires VLC_AHB_EXPERIMENT=1" }
-val vulkanVlcAar = if (vlcAhbExperiment)
+// Normal APKs use the extended AAR produced by build.sh. The explicit
+// property still selects the isolated AAR for native CI and developer tests.
+val isolatedVlc = providers.gradleProperty("VLC_AHB_EXPERIMENT").orElse("0").get() == "1"
+val vulkanVlcAar = if (isolatedVlc)
     rootProject.file("native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar")
 else file("libs/libvlc-vulkan.aar")
-require(!vlcAhbExperiment || vulkanVlcAar.isFile) {
-    "Build the isolated AHB AAR first with VLC_EXPERIMENTAL_AHB=1 bash scripts/build_vlc_vulkan.sh"
+val extendedVlc = vulkanVlcAar.isFile && ZipFile(vulkanVlcAar).use {
+    it.getEntry("assets/ambient-vlc-extended-v1") != null
 }
+require(!isolatedVlc || extendedVlc) { "Build the isolated extended AAR first with VLC_EXPERIMENTAL_AHB=1 bash scripts/build_vlc_vulkan.sh" }
+val vlcAhbExperiment = extendedVlc
+val vlcDoviAhbExperiment = extendedVlc
+val vlcDoviFelExperiment = extendedVlc
+val vlcHdrplusSpatialExperiment = extendedVlc
 val monogramEnabled = (providers.gradleProperty("MONOGRAM_NATIVE").orElse(
     providers.environmentVariable("MONOGRAM_NATIVE")
 ).orElse("0").get()).let { it == "1" || it.equals("true", true) }

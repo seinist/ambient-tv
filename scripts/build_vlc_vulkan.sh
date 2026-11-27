@@ -2,7 +2,15 @@
 # Vulkan-enabled VLC 4 / JNI build. Isolated from the stable Maven LibVLC artifact.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EXPERIMENTAL_AHB="${VLC_EXPERIMENTAL_AHB:-0}"
+# Normal builds include all native modules. Explicit experimental CI builds
+# remain isolated unless the caller deliberately requests installation.
+if [[ -v VLC_EXPERIMENTAL_AHB ]]; then
+    EXPERIMENTAL_AHB="$VLC_EXPERIMENTAL_AHB"
+    INSTALL_APP="${VLC_INSTALL_APP:-$((1-EXPERIMENTAL_AHB))}"
+else
+    EXPERIMENTAL_AHB=1
+    INSTALL_APP="${VLC_INSTALL_APP:-1}"
+fi
 [[ "$EXPERIMENTAL_AHB" == 0 || "$EXPERIMENTAL_AHB" == 1 ]] || { echo "Invalid VLC_EXPERIMENTAL_AHB" >&2; exit 1; }
 # Include pins, build flags and both patch sets in the per-ABI cache identity.
 if [[ "${1:-}" == "--hash" ]]; then
@@ -14,7 +22,7 @@ if [[ "${1:-}" == "--hash" ]]; then
     ) | sha256sum | cut -d ' ' -f1
     exit 0
 fi
-SOURCE_HASH="$(bash "$0" --hash)"
+SOURCE_HASH="$(VLC_EXPERIMENTAL_AHB="$EXPERIMENTAL_AHB" bash "$0" --hash)"
 # A native-link receipt is opt-in and is never an AAR success marker.
 if [[ -n "${VLC_NATIVE_LINK_RECEIPT:-}" ]]; then
     [[ "$EXPERIMENTAL_AHB" == 1 ]] || { echo "Native-link receipt requires experimental build" >&2; exit 1; }
@@ -22,7 +30,7 @@ if [[ -n "${VLC_NATIVE_LINK_RECEIPT:-}" ]]; then
 fi
 if [[ "$EXPERIMENTAL_AHB" == 1 ]]; then
     JNI="${VLC_BUILD_ROOT:-$ROOT/.native/libvlcjni-ahb-experimental}"
-    # Never reuse a normal build tree or write an experimental AAR into app/libs.
+    # Never reuse a legacy build tree; installation is separately controlled.
     if [[ -d "$JNI/vlc/.git" && ! -f "$JNI/vlc/.ambient-ahb-experimental" ]]; then
         echo "Refusing to use unmarked VLC tree for AHB experiment" >&2
         exit 1
@@ -150,12 +158,6 @@ if ! command -v autopoint >/dev/null; then
 fi
 for abi in ${VLC_VULKAN_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
     env -u DEBUG "$JNI/buildsystem/compile-libvlc.sh" -a "$abi" --release
-    if [[ "$EXPERIMENTAL_AHB" == 0 ]]; then
-        mkdir -p "$ROOT/app/libs"
-        bash "$ROOT/scripts/prepare_svp_sources.sh" --hash vlc > "$ROOT/app/libs/.svp-vlc-$abi"
-        touch "$ROOT/app/libs/.projectm-pcm-vlc-$abi"
-        printf '%s\n' "$SOURCE_HASH" > "$ROOT/app/libs/.vlc-source-$abi"
-    fi
 done
 # Record native linkage only after every requested ABI has succeeded.
 if [[ -n "${VLC_NATIVE_LINK_RECEIPT:-}" ]]; then
@@ -200,12 +202,31 @@ rm -f "$package_log"
 if [[ "$package_status" != 0 ]]; then
     exit "$package_status"
 fi
+aar="$ROOT/native/vlc-aar/build/outputs/aar/libvlc-vulkan-release.aar"
 if [[ "$EXPERIMENTAL_AHB" == 1 ]]; then
+    # Embed an artifact capability marker. Old or Maven AARs must never
+    # advertise native options that are not compiled into their libraries.
+    python3 - "$aar" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "a", compression=zipfile.ZIP_DEFLATED) as z:
+    name = "assets/ambient-vlc-extended-v1"
+    if name not in z.namelist():
+        z.writestr(name, "AHB DOVI FEL HDR10PLUS\n")
+PY
     mkdir -p "$ROOT/native/vlc-aar/build/experimental"
-    cp "$ROOT/native/vlc-aar/build/outputs/aar/libvlc-vulkan-release.aar" "$ROOT/native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar"
-    echo "Built isolated experimental AHB AAR; app/libs unchanged"
-else
+    cp "$aar" "$ROOT/native/vlc-aar/build/experimental/libvlc-vulkan-ahb-experimental.aar"
+fi
+if [[ "$INSTALL_APP" == 1 ]]; then
     mkdir -p "$ROOT/app/libs"
-    cp "$ROOT/native/vlc-aar/build/outputs/aar/libvlc-vulkan-release.aar" "$ROOT/app/libs/libvlc-vulkan.aar"
-    echo "Installed Vulkan-enabled LibVLC AAR (Java + JNI from $JNI_REF, VLC $VLC_REF)"
+    # Publish successful package before updating cache receipts.
+    cp "$aar" "$ROOT/app/libs/libvlc-vulkan.aar.tmp"
+    mv "$ROOT/app/libs/libvlc-vulkan.aar.tmp" "$ROOT/app/libs/libvlc-vulkan.aar"
+    for abi in ${VLC_VULKAN_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
+        bash "$ROOT/scripts/prepare_svp_sources.sh" --hash vlc > "$ROOT/app/libs/.svp-vlc-$abi"
+        touch "$ROOT/app/libs/.projectm-pcm-vlc-$abi"
+        printf '%s\n' "$SOURCE_HASH" > "$ROOT/app/libs/.vlc-source-$abi"
+    done
+    echo "Installed Vulkan-enabled LibVLC AAR (extended=$EXPERIMENTAL_AHB)"
+else
+    echo "Built isolated experimental AHB AAR; app/libs unchanged"
 fi

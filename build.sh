@@ -733,7 +733,8 @@ ensure_vlc_vulkan() {
     if [[ "${REBUILD_VLC_VULKAN:-0}" != 1 && -s "$artifact" ]]; then
         local abi complete=1
         local vlc_source_hash
-        vlc_source_hash="$(bash "$ROOT_DIR/scripts/build_vlc_vulkan.sh" --hash)"
+        vlc_source_hash="$(VLC_EXPERIMENTAL_AHB=1 bash "$ROOT_DIR/scripts/build_vlc_vulkan.sh" --hash)"
+        unzip -l "$artifact" "assets/ambient-vlc-extended-v1" | grep -q "assets/ambient-vlc-extended-v1" || complete=0
         for abi in "${SUPPORTED_ABIS[@]}"; do
             [[ -f "$ROOT_DIR/app/libs/.vlc-source-$abi" && "$(<"$ROOT_DIR/app/libs/.vlc-source-$abi")" == "$vlc_source_hash" ]] || complete=0
             unzip -l "$artifact" "jni/$abi/libvlcjni.so" | grep -q "jni/$abi/libvlcjni.so" || complete=0
@@ -743,7 +744,7 @@ ensure_vlc_vulkan() {
         [[ "$complete" == 1 ]] && return 0
     fi
     log "Building Vulkan-enabled LibVLC for ${SUPPORTED_ABIS[*]}"
-    bash "$ROOT_DIR/scripts/build_vlc_vulkan.sh"
+    VLC_EXPERIMENTAL_AHB=1 VLC_INSTALL_APP=1 bash "$ROOT_DIR/scripts/build_vlc_vulkan.sh"
 }
 
 svp_adapter_hash() {
