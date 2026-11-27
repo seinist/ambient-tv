@@ -1257,6 +1257,7 @@ fun TvTextField(
     requireExplicitEditing: Boolean = true,
     visualTransformation: androidx.compose.ui.text.input.VisualTransformation = androidx.compose.ui.text.input.VisualTransformation.None,
     keyboardOptions: androidx.compose.foundation.text.KeyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default,
+    keyboardActions: androidx.compose.foundation.text.KeyboardActions = androidx.compose.foundation.text.KeyboardActions.Default,
     inputFormatter: (androidx.compose.ui.text.input.TextFieldValue) -> androidx.compose.ui.text.input.TextFieldValue = { it },
 ) {
     var editorValue by remember { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(value)) }
@@ -1287,7 +1288,8 @@ fun TvTextField(
         androidx.compose.material3.OutlinedTextField(
             value = displayedEditorValue, onValueChange = onEditorValueChange, label = if (label.isEmpty()) null else ({ androidx.compose.material3.Text(label) }),
             modifier = modifier, singleLine = singleLine, visualTransformation = effectiveVisualTransformation,
-            keyboardOptions = keyboardOptions, shape = RoundedCornerShape(LocalUiTokens.current.controlRadius),
+            keyboardOptions = keyboardOptions, keyboardActions = keyboardActions,
+            shape = RoundedCornerShape(LocalUiTokens.current.controlRadius),
             trailingIcon = if (passwordField) {
                 {
                     androidx.compose.material3.IconButton(onClick = togglePasswordVisibility) {
@@ -1457,6 +1459,7 @@ fun TvTextField(
                     singleLine = singleLine,
                     visualTransformation = effectiveVisualTransformation,
                     keyboardOptions = keyboardOptions,
+                    keyboardActions = keyboardActions,
                     textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                     modifier = Modifier
                         .fillMaxWidth()
