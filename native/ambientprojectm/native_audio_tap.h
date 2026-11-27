@@ -46,6 +46,42 @@ struct NativeAudioTap {
 };
 static NativeAudioTap nativeAudio[3]; // 1 = VLC, 2 = MPV
 
+// Format and common channel-count dispatch occur once per callback. The compiler can
+// unroll/vectorize the fixed mono/stereo loops without changing floating-point semantics.
+template<int Encoding>
+inline float readPcmSample(const unsigned char* sample) {
+    if constexpr (Encoding == 4) {
+        float value;
+        std::memcpy(&value, sample, sizeof(value));
+        return value;
+    } else if constexpr (Encoding == 2) {
+        int16_t value;
+        std::memcpy(&value, sample, sizeof(value));
+        return value / 32768.f;
+    } else {
+        return (int(*sample) - 128) / 128.f;
+    }
+}
+
+template<int Encoding, int FixedChannels>
+inline void downmix(const unsigned char* data, float* output, size_t count, int channelCount) {
+    const int channels = FixedChannels ? FixedChannels : channelCount;
+    const size_t stride = channels * Encoding;
+    for (size_t frame = 0; frame < count; ++frame) {
+        float mono = 0.f;
+        for (int ch = 0; ch < channels; ++ch)
+            mono += readPcmSample<Encoding>(data + frame * stride + ch * Encoding);
+        output[frame] = mono / channels;
+    }
+}
+
+template<int Encoding>
+inline void downmixChannels(const unsigned char* data, float* output, size_t count, int channels) {
+    if (channels == 1) downmix<Encoding, 1>(data, output, count, channels);
+    else if (channels == 2) downmix<Encoding, 2>(data, output, count, channels);
+    else downmix<Encoding, 0>(data, output, count, channels);
+}
+
 extern "C" __attribute__((visibility("default"))) void
 ambient_projectm_pcm_v1(int source, const void* data, size_t frames, int channels, int encoding) {
     if (source < 1 || source > 2 || !data || frames == 0 || channels < 1 || channels > 32 ||
@@ -59,15 +95,10 @@ ambient_projectm_pcm_v1(int source, const void* data, size_t frames, int channel
     const auto* bytes = static_cast<const unsigned char*>(data);
     const size_t stride = channels * encoding;
     bytes += (frames - count) * stride;
-    for (size_t frame = 0; frame < count; ++frame) {
-        float mono = 0;
-        for (int ch = 0; ch < channels; ++ch) {
-            const auto* sample = bytes + frame * stride + ch * encoding;
-            if (encoding == 4) { float value; std::memcpy(&value, sample, 4); mono += value; }
-            else if (encoding == 2) { int16_t value; std::memcpy(&value, sample, 2); mono += value / 32768.f; }
-            else mono += (int(*sample) - 128) / 128.f;
-        }
-        tap.pcm.push(mono / channels);
-    }
+    std::array<float, PcmRing::capacity> converted;
+    if (encoding == 4) downmixChannels<4>(bytes, converted.data(), count, channels);
+    else if (encoding == 2) downmixChannels<2>(bytes, converted.data(), count, channels);
+    else downmixChannels<1>(bytes, converted.data(), count, channels);
+    tap.pcm.append(converted.data(), count);
 }
 
