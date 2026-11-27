@@ -201,6 +201,7 @@ class VlcPlaybackController(
     private val ahbExperimentActive: Boolean get() = vlcAhbExperimentEligible(
         com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT, vulkanOutput, preserveHdrSource,
         configuredSoftwareProcessing, configuredSvpMode, configuredDeinterlaceMode, ahbCopyBackRetried,
+        supportedHdrGpu = !nativeHdrPreferred && (sourceHdrStandard == HdrStandard.HDR10 || sourceHdrStandard == HdrStandard.HLG),
     )
     override val usesFrameInterpolation: Boolean
         get() = effectiveImage().svpMode != "off"
@@ -1224,9 +1225,9 @@ class VlcPlaybackController(
         // Respect VLC/device codec blacklists and retain software fallback.
         // Sparsam forces hardware/direct (no hqdn3d/gradfun software path) without mutating prefs.
         media.setHWDecoderEnabled(!effectiveImage.softwareProcessing, false)
-        if (vulkanOutput && !ahbExperimentActive || toneMappingRequired) {
+        if ((vulkanOutput || toneMappingRequired) && !ahbExperimentActive) {
             // Normal Vulkan and HDR processing keep CPU-accessible MediaCodec output.
-            // The separately built SDR experiment may negotiate opaque AImage input.
+            // The isolated experiment may negotiate opaque AImage input for eligible SDR/PQ/HLG.
             media.addOption(":no-mediacodec-dr")
         }
         applyDeinterlaceOptions(media)
