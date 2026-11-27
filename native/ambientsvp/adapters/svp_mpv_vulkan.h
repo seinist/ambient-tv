@@ -106,6 +106,7 @@ static int svp_vk_mode(enum AVPixelFormat format)
     case AV_PIX_FMT_RGBA: case AV_PIX_FMT_NV12: case AV_PIX_FMT_YUV420P: return 0;
     case AV_PIX_FMT_P010: return 1;
     case AV_PIX_FMT_YUV420P10: return 2;
+    case AV_PIX_FMT_RGBAF16: return 3;
     default: return -1;
     }
 }
@@ -129,10 +130,10 @@ static bool svp_vk_eligible(struct mp_image *img)
         || svp_vk_mode(fc->sw_format)<0
         || fc->width<img->w || fc->height<img->h)
         return false;
-    if ((fc->sw_format==AV_PIX_FMT_RGBA)!=(img->params.repr.sys==PL_COLOR_SYSTEM_RGB)) return false;
+    if ((fc->sw_format==AV_PIX_FMT_RGBA||fc->sw_format==AV_PIX_FMT_RGBAF16)!=(img->params.repr.sys==PL_COLOR_SYSTEM_RGB)) return false;
     int mode=svp_vk_mode(fc->sw_format);
     bool hdr=img->params.color.transfer==PL_COLOR_TRC_PQ || img->params.color.transfer==PL_COLOR_TRC_HLG;
-    if ((!mode && (hdr || svp_vk_matrix(img)>3)) || (hdr && img->params.repr.sys!=PL_COLOR_SYSTEM_BT_2020_NC)) return false;
+    if ((!mode && (hdr || svp_vk_matrix(img)>3)) || (hdr && img->params.repr.sys!=PL_COLOR_SYSTEM_BT_2020_NC && !(mode==3 && img->params.repr.sys==PL_COLOR_SYSTEM_RGB))) return false;
     for (int i=0;i<img->num_ff_side_data;i++)
         if (img->ff_side_data[i].type==AV_FRAME_DATA_DYNAMIC_HDR_PLUS ||
             img->ff_side_data[i].type==AV_FRAME_DATA_DOVI_METADATA ||
@@ -297,7 +298,7 @@ static bool svp_vk_ref(AVFrame *frame,bool write,struct svp_vk_ref *out)
     AVVkFrame *vkf=(AVVkFrame *)frame->data[0];
     unsigned count=0;
     while(count<AV_NUM_DATA_POINTERS && vkf->img[count]) count++;
-    unsigned expected=(write||fc->sw_format==AV_PIX_FMT_RGBA)?1:(fc->sw_format==AV_PIX_FMT_NV12||fc->sw_format==AV_PIX_FMT_P010)?2:3;
+    unsigned expected=(write||fc->sw_format==AV_PIX_FMT_RGBA||fc->sw_format==AV_PIX_FMT_RGBAF16)?1:(fc->sw_format==AV_PIX_FMT_NV12||fc->sw_format==AV_PIX_FMT_P010)?2:3;
     if (!count || (count!=1 && count!=expected) || !vfc->lock_frame || !vfc->unlock_frame)
         return false;
     *out=(struct svp_vk_ref){fc,vfc,vkf,write,count};
@@ -316,9 +317,10 @@ static VkImageView svp_vk_view(struct svp_vk_mpv *s,struct svp_vk_job *j,VkImage
 static bool svp_vk_picture(struct svp_vk_mpv *s,struct svp_vk_job *j,
     struct svp_vk_ref *r,int chroma,AmbientSvpVkPicture *p)
 {
-    if (r->fc->sw_format==AV_PIX_FMT_RGBA) {
-        if (r->count!=1 || r->vfc->format[0]!=VK_FORMAT_R8G8B8A8_UNORM) return false;
-        VkImageView view=svp_vk_view(s,j,r->frame->img[0],VK_FORMAT_R8G8B8A8_UNORM,VK_IMAGE_ASPECT_COLOR_BIT);
+    if (r->fc->sw_format==AV_PIX_FMT_RGBA || r->fc->sw_format==AV_PIX_FMT_RGBAF16) {
+        VkFormat format=r->fc->sw_format==AV_PIX_FMT_RGBAF16?VK_FORMAT_R16G16B16A16_SFLOAT:VK_FORMAT_R8G8B8A8_UNORM;
+        if (r->count!=1 || r->vfc->format[0]!=format) return false;
+        VkImageView view=svp_vk_view(s,j,r->frame->img[0],format,VK_IMAGE_ASPECT_COLOR_BIT);
         if (!view) return false;
         *p=(AmbientSvpVkPicture){view,VK_NULL_HANDLE,VK_NULL_HANDLE,2,0};
         return true;
