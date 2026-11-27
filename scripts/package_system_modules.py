@@ -177,7 +177,7 @@ def monogram_dex(out, version, dex_dir, apks, licenses):
     dex = {path.name: path.read_bytes() for path in dex_dir.glob("*.dex")}
     expected = {"classes.dex"} | {f"classes{i}.dex" for i in range(2, len(dex) + 1)}
     if not dex or set(dex) != expected or any(
-            len(data) < 112 or not data.startswith(b"dex\\n") for data in dex.values()):
+            len(data) < 112 or not data.startswith(b"dex\n") for data in dex.values()):
         raise ValueError("invalid or noncontiguous Monogram adapter DEX")
     roots = {"libmonogram_mtproto.so", "libjnidispatch.so"}
     entries = []
