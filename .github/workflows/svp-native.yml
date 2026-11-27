@@ -60,7 +60,7 @@ jobs:
       - name: Validate integer GPU motion costs using Mesa software Vulkan
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan-dev
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan-dev glslang-tools
           export XDG_RUNTIME_DIR="$RUNNER_TEMP"
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident_vulkan::gpu_tests::native_resident_commands_keep_images_on_shared_device -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib motion::tests::vulkan_candidate_costs_match_cpu -- --ignored --exact
@@ -78,8 +78,10 @@ jobs:
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::adjacent_ready_source_pairs_match_serial_output -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::compact_motion_fields_match_float_fields -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::complete_output_overwrite_matches_clear_on_unaligned_planes -- --ignored --exact
-      - name: Cross-check Android JNI and private Vulkan cache
+      - name: Cross-check Android JNI, MediaCodec external memory and private Vulkan cache
         run: |
+          glslangValidator -V --target-env vulkan1.1 -S comp -o "$RUNNER_TEMP/ahb_convert.spv" native/ambientsvp/shaders/ahb_convert.comp
+          spirv-val --target-env vulkan1.1 "$RUNNER_TEMP/ahb_convert.spv"
           rustup target add --toolchain stable aarch64-linux-android
           RUSTFLAGS="" cargo +stable check --manifest-path native/ambientsvp/Cargo.toml --release --locked --target aarch64-linux-android --lib --tests
       - name: Cross-check MPV native Vulkan adapter against pinned FFmpeg headers
