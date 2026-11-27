@@ -492,6 +492,10 @@ pub unsafe extern "C" fn ambient_svp_ahb_submit_into_format(importer:*const Impo
     if destination.is_null() || !matches!(mode,4|6){if !out.is_null(){unsafe{*out=ptr::null_mut();}}return -4;}
     unsafe{submit_impl(importer,frame,mode,Some(*destination),out)}
 }
+pub(crate) unsafe fn submit_high_local(importer:*const Importer,frame:*mut *mut Frame,mode:u32,out:*mut *mut Job)->i32{
+    if !matches!(mode,4|6){if !out.is_null(){unsafe{*out=ptr::null_mut();}}return -4;}
+    unsafe{submit_impl(importer,frame,mode,None,out)}
+}
 unsafe fn submit_impl(importer:*const Importer,frame:*mut *mut Frame,mode:u32,
     destination:Option<Destination>,out:*mut *mut Job)->i32{
     if out.is_null(){return -4;}
