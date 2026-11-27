@@ -24,6 +24,8 @@ fn main() {
     assert!(matches!(algo, 0 | 13 | 21 | 23) && min_novel_percent <= 100);
     let no_checksum = a.iter().any(|s| s == "--no-checksum");
     let realtime = a.iter().any(|s| s == "--require-realtime");
+    let experimental_motion = a.iter().any(|s| s == "--experimental-motion");
+    assert!(!experimental_motion || (backend==2 && count>=2), "experimental motion requires explicit Vulkan backend and at least two frames");
     assert!(count > 0 && cycles > 0, "frames and cycles must be positive");
     for cycle in 0..cycles {
     let c = Config {
@@ -47,6 +49,9 @@ fn main() {
     };
     let init = Instant::now();
     let mut engine = AmbientSvp::new(c).expect("engine initialization failed");
+    if experimental_motion {
+        engine.enable_experimental_motion().expect("unsupported experimental motion configuration");
+    }
     let init_ms = init.elapsed().as_secs_f64() * 1000.0;
     let mut input = vec![128; engine.frame_len()];
     let mut output = input.clone();
@@ -101,6 +106,15 @@ fn main() {
         start.elapsed().as_millis(), stats
     );
     println!("outputs={outputs}/{expected} output_fps={output_fps:.2} push_drain_p50_ms={:.2} p95_ms={:.2} p99_ms={:.2} monotonic={monotonic}", percentile(50), percentile(95), percentile(99));
+    if experimental_motion {
+        let (pairs,failures)=engine.experimental_motion_stats();
+        println!("experimental_motion=true pairs={pairs} failures={failures} quality_parity_with_upstream=unverified");
+        assert_eq!(failures,0,"experimental analyser failed");
+        assert_eq!(pairs,u64::from(count-1),"experimental analyser did not process all changing pairs");
+        assert_eq!(stats.backend,2,"experimental session fell back to CPU synthesis");
+        assert_eq!(stats.bypass_reason,0,"experimental session entered bypass");
+        assert!(monotonic && outputs==expected && stats.interpolated_frames>0,"experimental output cadence/novelty failed");
+    }
     if realtime {
         assert!(no_checksum, "--require-realtime requires --no-checksum");
         assert_eq!(stats.bypass_reason, 0, "protective bypass is not real-time SVP");
