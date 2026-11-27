@@ -11,6 +11,7 @@ template<class T> T handle(uintptr_t value) {
 }
 int sem_created, sem_destroyed, fence_destroyed, released, fence_resets;
 bool completed, fail_submit;
+int last_released_fd = -2;
 VKAPI_ATTR VkResult VKAPI_CALL create_sem(VkDevice, const VkSemaphoreCreateInfo *,
     const VkAllocationCallbacks *, VkSemaphore *out) {
     *out = handle<VkSemaphore>(++sem_created + 10);
@@ -46,6 +47,7 @@ VKAPI_ATTR VkResult VKAPI_CALL reset_fences(VkDevice, uint32_t count, const VkFe
     assert(count == 1); ++fence_resets; completed = false; return VK_SUCCESS;
 }
 void release(void *, int fd) {
+    last_released_fd = fd;
     if (fd >= 0) close(fd);
     ++released;
 }
@@ -117,5 +119,23 @@ int main() {
         assert(fence_resets == 9);
         assert(submit.drain_after_idle(true));
         assert(sem_destroyed == destroyed + 2 && fence_destroyed == fences + 1);
+    }
+    {
+        int fds[2];
+        assert(pipe(fds) == 0);
+        const int before = released;
+        FrameLease lease(&picture, fds[0], release, false);
+        Submission submit(device, dispatch);
+        fail_submit = true;
+        assert(submit.submit(queue, cmd, lease) == VK_ERROR_DEVICE_LOST);
+        assert(submit.uncertain());
+        assert(!submit.drain_after_idle(false));
+        assert(released == before);
+        assert(submit.drain_after_idle(true));
+        assert(submit.can_retire() && released == before + 1);
+        // No producer wait was proven by a failed submit. The original
+        // unsignaled fence must be returned, never replaced by -1.
+        assert(last_released_fd == fds[0]);
+        close(fds[1]);
     }
 }
