@@ -254,3 +254,42 @@ paused changes, reset, position preservation, performance gates, reactivation,
 seek, rendered video and audio checks. Both production panels also passed a
 D-pad target-rate change and restore. These interaction tests use the small
 128x72 clip; physical-TV playback and sustained HD/4K speed remain unverified.
+
+
+Native performance work (PR #528)
+---------------------------------
+The current native pipeline changes batch source/field uploads and synthesis
+into one submission, pool mapped staging buffers with a 48 MiB retained
+budget, cache motion fields by exact contents and cache bind groups by texture
+identity. Linear-luma textures are created and filled only when needed.
+The CPU spare-frame pool has a separate 32 MiB retained budget. Automatic
+worker counts scale with the frame size and CPU availability, reserving CPU
+capacity for playback; explicitly chosen thread counts remain authoritative.
+
+Driver pipeline caches are reused across engine instances in the same process
+when the adapter supports PIPELINE_CACHE. The bounded cache is keyed by the
+wgpu adapter cache key and driver identity. No arbitrary disk blob is passed
+to the unsafe pipeline-cache API; cross-process persistence is not implemented.
+
+Use the native benchmark with its existing positional arguments plus:
+  benchmark 1280 720 240 2 24 1 --threads=3 --preset=1 --no-checksum
+  benchmark 1280 720 240 2 24 1 --threads=0 --preset=1 --no-checksum --require-realtime
+  benchmark 1920 1080 240 2 24 1 --target=48 --no-checksum
+
+Compare identical source clips, settings and device thermal conditions.
+Processing time excludes synthetic source generation; checksum is optional
+because it adds a full CPU pass per output. A protective bypass is not an
+SVP speed success. --require-realtime rejects bypass, absent novel images or
+processing below the source cadence. Use --verify when the exact backend
+must remain active. Neither flag constitutes a display or audio-sync test.
+
+Remaining architecture work: GPU motion analysis, multi-frame asynchronous
+scheduling and cross-renderer hardware-buffer zero-copy. At the pinned
+upstream revision, svpflow1's analyse/mod.rs has a native OpenCL path, but the
+portable Analyser::analyse wrapper calls it with keys=None, disabling the
+keyed GPU branches. The Android portable path therefore remains CPU analysis.
+A Vulkan implementation must preserve the upstream vector header, multi-stage
+search semantics, forward/backward regions, scene-cut decisions and CPU
+fallback; a standalone block-matching demo is not an equivalent replacement.
+Do not enable a new analysis backend before motion-vector and output parity
+tests. Physical-device benchmarks and native integration remain required.
