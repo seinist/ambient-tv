@@ -7,6 +7,20 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ImageProcessingPolicyTest {
+    @Test fun vlcHdrResidentRequiresOptInAndNativePresentation() {
+        val requested = VlcImageOptions(svpMode = "balanced",
+            svp = com.ambient.tv.data.local.SvpOptions(hardwareResident = true), softwareProcessing = true)
+        val hdr10 = com.ambient.tv.ui.player.HdrStandard.HDR10
+        val selected = vlcOptionsForNativeHdr(requested, true, hdr10, hdrResidentAvailable = true)
+        assertEquals("balanced", selected.svpMode)
+        assertFalse(selected.softwareProcessing)
+        assertEquals("off", vlcOptionsForNativeHdr(requested, false, hdr10, true).svpMode)
+        assertEquals("off", vlcOptionsForNativeHdr(requested, true, hdr10, false).svpMode)
+        assertEquals("off", vlcOptionsForNativeHdr(requested.copy(svp = requested.svp.copy(hardwareResident = false)), true, hdr10, true).svpMode)
+        assertEquals("off", vlcOptionsForNativeHdr(requested, true, com.ambient.tv.ui.player.HdrStandard.HDR10_PLUS, true).svpMode)
+        assertEquals("off", vlcOptionsForNativeHdr(requested, true, com.ambient.tv.ui.player.HdrStandard.DOLBY_VISION, true).svpMode)
+    }
+
     @Test fun overloadedSharpeningOnlyReducesTheShaderActuallyRunning() {
         assertEquals("cas", mpvSharpeningAfterOverload("adaptive", listOf("adaptive")))
         assertEquals("off", mpvSharpeningAfterOverload("cas", listOf("cas")))
