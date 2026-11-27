@@ -1,6 +1,5 @@
 package com.ambient.tv.data.telegram
 
-import com.ambient.tv.R
 import android.content.Context
 import android.util.Base64
 import com.ambient.tv.data.local.TokenStore
@@ -121,7 +120,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     private val displayAliases = LinkedHashMap<String, File>(128, .75f, true)
     private val measuredWindows = java.util.concurrent.atomic.AtomicInteger()
     private fun recordRead(path: String, data: List<ByteArray>, started: Long): List<ByteArray> {
-        if (com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS) {
+        if (MonogramHostBindings.perfCounters) {
             val micros = (System.nanoTime() - started).coerceAtLeast(0L) / 1_000L
             // No chat/message/file identity or payload ever enters diagnostics.
             android.util.Log.i("MonogramPerf", "media-read path=$path bytes=${data.sumOf { it.size }} us=$micros")
@@ -130,17 +129,17 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     }
 
     private fun recordNativeWindow() {
-        if (!com.ambient.tv.BuildConfig.MONOGRAM_PGO_GENERATE && !com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS) return
+        if (!MonogramHostBindings.pgoGenerate && !MonogramHostBindings.perfCounters) return
         if (measuredWindows.incrementAndGet() % 16 != 0) return
-        if (com.ambient.tv.BuildConfig.MONOGRAM_PGO_GENERATE) {
+        if (MonogramHostBindings.pgoGenerate) {
             val result = runCatching {
                 val status = AmbientMonogramJni.flushPgoProfile(File(app.filesDir, "monogram-pgo.profraw").absolutePath)
-                if (status == 0) File(app.filesDir, "monogram-pgo.stamp").writeText(com.ambient.tv.BuildConfig.MONOGRAM_PGO_STAMP)
+                if (status == 0) File(app.filesDir, "monogram-pgo.stamp").writeText(MonogramHostBindings.pgoStamp)
                 status
             }
             android.util.Log.i("MonogramPerf", "PGO profile flush: ${result.getOrNull() ?: "unavailable"}")
         }
-        if (com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS) {
+        if (MonogramHostBindings.perfCounters) {
             runCatching { uniffi.monogram_mtproto.perfSnapshot(true) }.getOrNull()?.let {
                 android.util.Log.d("MonogramPerf", it)
             }
@@ -589,7 +588,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             val current = mutex.withLock {
                 if (handle == 0L) {
                     val (id, hash) = checkNotNull(tokenStore.monogramCredentials()) {
-                        app.getString(R.string.monogram_api_required)
+                        MonogramHostBindings.error(app, "api_required")
                     }
                     // Telegram's session list names the app by the API ID's registered title;
                     // device and version are ours to report, so the session reads "Ambient TV".
@@ -599,7 +598,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                             deviceModel = listOf(android.os.Build.MANUFACTURER, android.os.Build.MODEL)
                                 .filter(String::isNotBlank).distinct().joinToString(" ").ifBlank { "Android TV" },
                             systemVersion = "Android ${android.os.Build.VERSION.RELEASE}",
-                            appVersion = "Ambient TV ${com.ambient.tv.BuildConfig.VERSION_NAME}",
+                            appVersion = "Ambient TV ${MonogramHostBindings.versionName}",
                             systemLangCode = lang,
                             langPack = "android",
                             langCode = lang,
@@ -613,11 +612,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     // Patched profiles keep thumbnails and individual ranges at one part.
                     // Only known large full-file downloads may use a wider native pipeline.
                     uniffi.monogram_mtproto.setAmbientMediaMode(true)
-                    if (com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS) {
+                    if (MonogramHostBindings.perfCounters) {
                         uniffi.monogram_mtproto.perfSetEnabled(true)
                         android.util.Log.i("MonogramPerf", "CPU features: ${uniffi.monogram_mtproto.ambientCpuFeatures()}")
                     }
-                    uniffi.monogram_mtproto.setAmbientCdnRanges(com.ambient.tv.BuildConfig.MONOGRAM_CDN_RANGES)
+                    uniffi.monogram_mtproto.setAmbientCdnRanges(MonogramHostBindings.cdnRanges)
                     refreshNativePipelineLocked(force = true)
                     connected = false
                 }
@@ -638,7 +637,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     override suspend fun resetForCredentials() = withContext(Dispatchers.IO) {
         mutex.withLock {
             if (handle != 0L) {
-                check(!native.isAuthorized(handle)) { app.getString(R.string.monogram_error_signout_first) }
+                check(!native.isAuthorized(handle)) { MonogramHostBindings.error(app, "signout_first") }
             }
             wipeLocalLocked()
         }
@@ -757,7 +756,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
 
     override suspend fun sendPhoneCode(phone: String): MonogramLoginState =
         nativeCall(connect = false) { h ->
-            require(phone.startsWith("+") && phone.length in 7..19) { app.getString(R.string.monogram_error_phone) }
+            require(phone.startsWith("+") && phone.length in 7..19) { MonogramHostBindings.error(app, "phone") }
             val sent = native.sendAuthCode(h, phone)
             this.phone = sent.phone
             codeHash = sent.phoneCodeHash
@@ -766,8 +765,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
 
     override suspend fun resendPhoneCode(): MonogramLoginState =
         nativeCall(connect = false) { h ->
-            val previous = checkNotNull(phone) { app.getString(R.string.monogram_error_code_first) }
-            val hash = checkNotNull(codeHash) { app.getString(R.string.monogram_error_code_first) }
+            val previous = checkNotNull(phone) { MonogramHostBindings.error(app, "code_first") }
+            val hash = checkNotNull(codeHash) { MonogramHostBindings.error(app, "code_first") }
             val sent = native.resendAuthCode(h, previous, hash)
             phone = sent.phone
             codeHash = sent.phoneCodeHash
@@ -817,7 +816,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     }
 
     private fun requireAuthorized(h: Long) {
-        check(native.isAuthorized(h)) { app.getString(R.string.monogram_error_not_authorized) }
+        check(native.isAuthorized(h)) { MonogramHostBindings.error(app, "not_authorized") }
     }
 
     private fun knownChannels(h: Long, count: Int): List<ChatDto> =
@@ -1306,7 +1305,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         cachedPhotoFile(chatId, messageId) ?: cancellableMediaRequest(TelegramTransferPriority(true)) { request ->
             nativeCall { h ->
                 requireAuthorized(h)
-                check(chatId !in leftChannels) { app.getString(R.string.monogram_error_channel_left) }
+                check(chatId !in leftChannels) { MonogramHostBindings.error(app, "channel_left") }
                 val dir = File(cache, "photos").apply { mkdirs() }.canonicalFile
                 val output = File(dir, "$chatId-$messageId.media")
                 val generation = cacheGeneration
@@ -1565,7 +1564,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
 
     private suspend fun loadMediaWindow(chatId: Long, messageId: Int, offset: Long, lengths: List<Int?>,
         nativeMediaKey: String?, priority: TelegramTransferPriority): List<ByteArray> {
-        val started = if (com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS) System.nanoTime() else 0L
+        val started = if (MonogramHostBindings.perfCounters) System.nanoTime() else 0L
         noteInteractiveActivity()
         require(offset >= 0L && offset % TELEGRAM_MEDIA_PART_BYTES == 0L)
         require(lengths.size in 1..2 && lengths.all { it == null || it in 1..TELEGRAM_MEDIA_PART_BYTES })
@@ -1578,7 +1577,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         fun verifyGeneration() {
             check(accountId == currentIdentity && cacheGeneration == generation && chatId !in leftChannels &&
                 revision == mediaRevision(chatId, messageId)) {
-                app.getString(R.string.monogram_error_account_changed)
+                MonogramHostBindings.error(app, "account_changed")
             }
         }
         // The parent was canonicalized at initialization; all children are private, fixed names.
