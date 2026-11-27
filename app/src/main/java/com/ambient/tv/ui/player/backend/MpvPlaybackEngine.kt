@@ -1833,8 +1833,12 @@ internal class MpvPlaybackEngine(
             val mode = mpvSvpAppliedMode(o.svpMode, svpQualityCleared && !svpQualityProbeFailed)
             val tuning = if (o.svpMode == "quality" && mode != "quality") svpProbeOptions(o.svp) else o.svp
             val size = sourceDimensions()
+            val resident = acceleration.svpResident && !deinterlaceRequested && o.denoise == "off" && o.deblock == "off" &&
+                svpResidentRequested(tuning, size?.first, size?.second)
+            // Unsupported HDR geometry must never select the old SDR CPU filter.
+            if ((!sdr || declaredHdr != null || dolbyVisionDetected) && !resident) return@buildMap
             mpvSvpFilter(mode, pipelineFps(), displayFps() ?: svpDisplayFps(context), tuning, size?.first, size?.second,
-                hardwareResident = acceleration.svpResident && !deinterlaceRequested && o.denoise == "off" && o.deblock == "off")?.let {
+                hardwareResident = resident)?.let {
                 put("plex-svp", it)
             }
         }
