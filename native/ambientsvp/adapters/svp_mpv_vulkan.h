@@ -62,7 +62,7 @@ struct svp_vk_mpv {
     struct mp_image *outputs[SVP_VK_PHASES];
     unsigned next_output, output_count;
     double origin, source_rate, target_rate;
-    uint64_t tick;
+    uint64_t tick, input_frames, output_frames, generated_frames;
 };
 struct svp_vk_ref {
     AVHWFramesContext *fc;
@@ -138,10 +138,14 @@ static unsigned svp_vk_reap(struct svp_vk_mpv *s,bool wait)
 {
     unsigned outstanding=0;
     if (!s) return 0;
+    if (wait) {
+        VkFence fences[SVP_VK_JOBS];unsigned count=0;
+        for (unsigned i=0;i<SVP_VK_JOBS;i++) if (s->jobs[i]) fences[count++]=s->jobs[i]->fence;
+        if (count) s->wait_fences(s->device,count,fences,VK_TRUE,3000000000ULL);
+    }
     for (unsigned i=0;i<SVP_VK_JOBS;i++) {
         struct svp_vk_job *j=s->jobs[i];
         if (!j) continue;
-        if (wait) s->wait_fences(s->device,1,&j->fence,VK_TRUE,3000000000ULL);
         // A submitted pair must be released by its own fence check.
         if (j->sealed && s->release(j->pair)==1) {
             j->pair=NULL;
@@ -453,7 +457,7 @@ static struct mp_image *svp_vk_take_output(struct svp_vk_mpv *s)
     struct mp_image *img=s->outputs[s->next_output];
     s->outputs[s->next_output++]=NULL;
     if (s->next_output==s->output_count) s->next_output=s->output_count=0;
-    return img;
+    s->output_frames++;return img;
 }
 static struct mp_image *svp_vk_take_previous(struct svp_vk_mpv *s)
 {
@@ -474,19 +478,20 @@ static bool svp_vk_pair_frames(struct svp_vk_mpv *s,struct mp_image *next,double
         times[count]=time;phases[count++]=(float)fmax(0.0,phase);
     }
     if (!count || !svp_vk_interpolate(s,s->previous,next,times,phases,count,s->outputs)) return false;
-    s->tick=tick;s->output_count=count;s->next_output=0;return true;
+    s->tick=tick;s->output_count=count;s->next_output=0;
+    s->generated_frames+=count;return true;
 }
 // On success consumes img; on rejection caller still owns it.
 static bool svp_vk_feed(struct svp_vk_mpv *s,struct mp_image *img)
 {
     if (!s || !svp_vk_matches(s,img) || s->output_count) return false;
     if (!s->previous) {
-        s->previous=img;s->origin=img->pts;s->tick=0;return true;
+        s->previous=img;s->origin=img->pts;s->tick=0;s->input_frames++;return true;
     }
     double expected=1.0/s->source_rate,delta=img->pts-s->previous->pts;
     if (fabs(delta-expected)>fmax(0.003,expected*0.25)
         || !svp_vk_pair_frames(s,img,img->pts)) return false;
-    mp_image_unrefp(&s->previous);s->previous=img;return true;
+    mp_image_unrefp(&s->previous);s->previous=img;s->input_frames++;return true;
 }
 static void svp_vk_eof(struct svp_vk_mpv *s)
 {
