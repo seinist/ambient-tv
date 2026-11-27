@@ -138,11 +138,21 @@ jobs:
           ffmpeg -hide_banner -loglevel error -i test-el.hevc -c copy -bsf:v hevc_metadata=crop_right=2:crop_bottom=4 -f hevc -y test-el-pad.hevc
           ffmpeg -hide_banner -loglevel error -i test-el.hevc -c copy -bsf:v hevc_metadata=crop_left=2:crop_top=4 -f hevc -y test-el-shift.hevc
           ./test-fel-decoder test-el.hevc test-el-reorder.hevc test-el-reorder.csv test-el-reorder.yuv test-el-pad.hevc test-el-shift.hevc
+          # Actual HEVC-decoded samples for the independent spatial oracle.
+          # Different generated pictures; the public RPU coefficients are
+          # intentionally applied to both, not claimed to be their original metadata.
+          ffmpeg -hide_banner -loglevel error -i test-el-reorder.mp4 -frames:v 1 -pix_fmt yuv420p10le -f rawvideo -y real-bl-plane.yuv
+          ffmpeg -hide_banner -loglevel error -i test-el.hevc -frames:v 1 -pix_fmt yuv420p10le -f rawvideo -y real-el-plane.yuv
+          test "$(wc -c < real-bl-plane.yuv)" = 12288
+          test "$(wc -c < real-el-plane.yuv)" = 12288
 
       - uses: actions/upload-artifact@v5
         with:
           name: external-fel-rpu-snapshot
-          path: .ci/ffmpeg/real-fel-snapshot.bin
+          path: |
+            .ci/ffmpeg/real-fel-snapshot.bin
+            .ci/ffmpeg/real-bl-plane.yuv
+            .ci/ffmpeg/real-el-plane.yuv
           if-no-files-found: error
           retention-days: 1
 
@@ -198,6 +208,8 @@ jobs:
             native/vlc-aar/experimental/test_etsi_external_fel_gpu.c \
             -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-etsi-fel
           VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-etsi-fel .ci/real-fel/real-fel-snapshot.bin
+          VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-etsi-fel .ci/real-fel/real-fel-snapshot.bin \
+            .ci/real-fel/real-bl-plane.yuv .ci/real-fel/real-el-plane.yuv
           # Compile the real-data validator even when no licensed corpus is available.
           python3 -m py_compile native/vlc-aar/experimental/run_official_hdr_reference.py
           python3 native/vlc-aar/experimental/audit_public_hdr10plus.py --self-test

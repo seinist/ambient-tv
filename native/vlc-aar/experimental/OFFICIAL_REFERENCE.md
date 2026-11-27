@@ -66,3 +66,5 @@ python3 native/vlc-aar/experimental/audit_public_hdr10plus.py /path/to/DVB_2160p
 ```
 
 This path provides official source material plus a standards-derived independent output, not an official golden rendered image. The separate official golden intake remains a distinct higher-level validation gate. Do not mark missing Dolby reference pictures or unexecuted CI as passed.
+
+The external RPU gate now also evaluates two actual HEVC-decoded 64x64 Main10 4:2:0 frames, using the native R16 EL texture uploads and the spatial GPU composition path. A separate integer oracle computes equal-resolution centered chroma interpolation (quarter-pixel weights, signed half-away rounding), followed by the ETSI-derived fixed-point reconstruction. Both tests retain the one-code maximum error limit. The decoded pictures are generated in CI; the public RPU was not authored for these pictures. This adds coverage of the renderer's spatial approximation, not normative Dolby resampling or licensed golden imagery. Previous aligned external-RPU CI (f4fe619) passed with 12005/12288 exact and all within one code.

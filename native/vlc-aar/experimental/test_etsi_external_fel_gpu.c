@@ -71,10 +71,42 @@ static unsigned oracle(const struct ambient_dovi_metadata *m,const unsigned bl[3
     // Reconstruct Q16 and quantize to 12-bit output as for a PQ BL.
     return clip(floor_shift((wide)fixed_prediction(m,bl,c)+residual+8,4),4095);
 }
-enum { W=64,H=64,N=W*H };
+enum { W=64,H=64,N=W*H,C=N/4,YUV=N+2*C };
+/* Independent integer bilinear oracle for the implementation's centered
+ * equal-resolution EL sampler, NOT the normative Dolby resampling filter.
+ * Fractions at luma pixel centers are quarters, so the weights sum to 16. */
+static unsigned at_chroma(const uint16_t *p,int x,int y)
+{
+    x=x<0?0:x>=W/2?W/2-1:x;
+    y=y<0?0:y>=H/2?H/2-1:y;
+    return p[y*(W/2)+x];
+}
+static unsigned aligned_el(const uint16_t *el,unsigned x,unsigned y,unsigned c,unsigned offset)
+{
+    if(!c)return el[y*W+x];
+    const uint16_t *p=el+N+(c-1)*C;
+    int ix=(int)x/2-(x%2==0),iy=(int)y/2-(y%2==0);
+    unsigned fx=x%2?1:3,fy=y%2?1:3;
+    int weighted=(int)((4-fx)*(4-fy)*at_chroma(p,ix,iy)+
+        fx*(4-fy)*at_chroma(p,ix+1,iy)+(4-fx)*fy*at_chroma(p,ix,iy+1)+
+        fx*fy*at_chroma(p,ix+1,iy+1));
+    int delta=weighted-(int)(16*offset);
+    int rounded=delta<0?-((-delta+8)/16):(delta+8)/16;
+    return clip((int)offset+rounded,1023);
+}
+static void read_frame(const char *path,uint16_t p[YUV])
+{
+    FILE *f=fopen(path,"rb");assert(f);
+    assert(fread(p,sizeof(*p),YUV,f)==YUV&&fgetc(f)==EOF&&!ferror(f));
+    fclose(f);
+    for(unsigned i=0;i<YUV;i++)assert(p[i]<=1023);
+}
 int main(int argc,char **argv)
 {
-    assert(argc==2);
+    assert(argc==2||argc==4);
+    bool decoded=argc==4;
+    uint16_t bl_frame[YUV],el_frame[YUV];
+    if(decoded){read_frame(argv[2],bl_frame);read_frame(argv[3],el_frame);}
     struct ambient_dovi_metadata m={0};
     FILE *f=fopen(argv[1],"rb");assert(f);
     assert(fread(&m,sizeof(m),1,f)==1&&fgetc(f)==EOF&&!ferror(f));fclose(f);
@@ -97,12 +129,18 @@ int main(int argc,char **argv)
             if(i%16==1)b[k]=0;
             if(i%16==2)b[k]=1023;
         }
+        if(decoded){
+            unsigned x=i%W,y=i/W;
+            b[0]=bl_frame[i];
+            b[1]=bl_frame[N+(y/2)*(W/2)+x/2];
+            b[2]=bl_frame[N+C+(y/2)*(W/2)+x/2];
+        }
         for(unsigned k=0;k<3;k++){
             int e=(int)m.nlq_offset[k]+(int)((i*(17+2*k))%129)-64;
             if(i%8==0)e=0;
             if(i%8==1)e=1023;
             if(i%8==2)e=m.nlq_offset[k];
-            unsigned ec=clip(e,1023);
+            unsigned ec=decoded?aligned_el(el_frame,i%W,i/W,k,m.nlq_offset[k]):clip(e,1023);
             bl_code[i][k]=b[k];el_code[i][k]=ec;
             bl[4*i+k]=b[k]/1023.f;el[4*i+k]=ec/1023.f;
             expected[i][k]=oracle(&m,b,ec,k);
@@ -110,10 +148,16 @@ int main(int argc,char **argv)
         bl[4*i+3]=el[4*i+3]=1;
     }
     pl_tex b=pl_tex_create(gpu,pl_tex_params(.w=W,.h=H,.format=fmt,.sampleable=true,.initial_data=bl));
-    pl_tex e=pl_tex_create(gpu,pl_tex_params(.w=W,.h=H,.format=fmt,.sampleable=true,.initial_data=el));
+    struct ambient_fel_planes planes={0};
+    pl_tex e=NULL;
+    if(decoded){
+        const uint16_t *data[3]={el_frame,el_frame+N,el_frame+N+C};
+        const size_t pitch[3]={W*2,W,W};
+        assert(ambient_fel_planes_upload(gpu,&planes,W,H,data,pitch,0,0));
+    }else e=pl_tex_create(gpu,pl_tex_params(.w=W,.h=H,.format=fmt,.sampleable=true,.initial_data=el));
     pl_tex out=pl_tex_create(gpu,pl_tex_params(.w=W,.h=H,.format=fmt,.renderable=true,.host_readable=true));
-    pl_dispatch dp=pl_dispatch_create(log,gpu);assert(b&&e&&out&&dp);
-    assert(ambient_fel_compose_domain(gpu,dp,b,e,out,&reshape,&nlq,false,false,NULL,true));
+    pl_dispatch dp=pl_dispatch_create(log,gpu);assert(b&&(e||decoded)&&out&&dp);
+    assert(ambient_fel_compose_domain(gpu,dp,b,e,out,&reshape,&nlq,false,false,decoded?&planes:NULL,true));
     assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=out,.ptr=pixels)));
     unsigned max=0,exact=0,within=0,wi=0,wc=0,actual=0;
     double sum=0;
@@ -124,9 +168,9 @@ int main(int argc,char **argv)
         exact+=err==0;within+=err<=1;sum+=(double)err*err;
         if(err>max){max=err;wi=i;wc=c;actual=got;}
     }
-    fprintf(stderr,"ETSI fixed-point / real RPU: %u samples, exact %u, within one %u, max %u, RMS %.6f; worst pixel %u component %u BL %u EL %u actual %u expected %u\n",
-        3u*N,exact,within,max,sqrt(sum/(3*N)),wi,wc,bl_code[wi][wc],el_code[wi][wc],actual,expected[wi][wc]);
-    pl_gpu_finish(gpu);pl_dispatch_destroy(&dp);
+    fprintf(stderr,"ETSI fixed-point / real RPU (%s): %u samples, exact %u, within one %u, max %u, RMS %.6f; worst pixel %u component %u BL %u EL %u actual %u expected %u\n",
+        decoded?"decoded 4:2:0 planes":"aligned stress vectors",3u*N,exact,within,max,sqrt(sum/(3*N)),wi,wc,bl_code[wi][wc],el_code[wi][wc],actual,expected[wi][wc]);
+    pl_gpu_finish(gpu);pl_dispatch_destroy(&dp);ambient_fel_planes_destroy(gpu,&planes);
     pl_tex_destroy(gpu,&out);pl_tex_destroy(gpu,&e);pl_tex_destroy(gpu,&b);
     pl_vulkan_destroy(&vk);pl_log_destroy(&log);
     // Allow at most one 12-bit code for the float approximation, never
