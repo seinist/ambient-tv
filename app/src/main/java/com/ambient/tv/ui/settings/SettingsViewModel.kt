@@ -3010,7 +3010,8 @@ class SettingsViewModel @Inject constructor(
         appPreferences.filesEnabled = state.filesEnabled
         if (state.systemNames != baseline.systemNames) appPreferences.systemNames = state.systemNames
         appPreferences.youtubeEnabled = state.youtubeEnabled
-        appPreferences.spotifyEnabled = state.spotifyEnabled
+        if (com.ambient.tv.modules.SystemModuleAvailability.spotifyOffered)
+            appPreferences.spotifyEnabled = state.spotifyEnabled
         appPreferences.radioEnabled = state.radioEnabled
         appPreferences.telegramEnabled = state.telegramEnabled
         appPreferences.telegramSubmenuKeys = state.telegramSubmenuKeys
