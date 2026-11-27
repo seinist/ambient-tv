@@ -4,8 +4,8 @@
 copy-back path are unchanged. The experiment is restricted to opaque
 AImageReader BT.709 SDR or explicit BT.2020 HDR10/HLG on Android API 34+
 with a matching driver-reported matrix, range and actual AImage dataspace,
-one graphics queue, and no CPU picture filters. HDR10+/Dolby Vision,
-explicit VkFormat, protected images and unsupported extensions/features
+one graphics queue, and no CPU picture filters. HDR10+ with validated single-window dynamic metadata is experimental;
+Dolby Vision, other HDR10+ payloads, explicit VkFormat, protected images and unsupported extensions/features
 remain on the existing copy-back or native HDR routes.
 
 ## Build and validate
@@ -58,8 +58,12 @@ distribute the experiment as a validated production build.
   primaries, transfer and mastering/light metadata remain attached for
   libplacebo tone mapping. Actual AImage dataspace must agree; the API is
   dynamically resolved, so old Android devices retain SDR support. Opaque
-  input alone cannot prove decoder bit depth. Dynamic HDR metadata and DV
-  reshaping are not claimed to be supported.
+  input alone cannot prove decoder bit depth. HDR10+ obtains per-buffer T.35 metadata from MediaCodec, accepts only the
+  representable single-window subset, binds it to the exact AImage timestamp,
+  and rejects missing/mismatched/unsupported metadata when HDR10+ is requested.
+  The source ST 2086 units and normalized HDR10+ luminance are converted to
+  libplacebo units. Dolby Vision is rejected using native format flags as well
+  as app classification; opaque converted RGB cannot safely carry raw RPU reshape.
 
 ## Validation
 

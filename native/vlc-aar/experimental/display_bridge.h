@@ -66,7 +66,7 @@ static inline bool ambient_display_hdr(const video_format_t *fmt)
 static inline struct ambient_ahb_owner *
 ambient_display_open(pl_gpu gpu, const video_format_t *fmt, vlc_video_context *context)
 {
-    if (!fmt || fmt->i_chroma != VLC_CODEC_ANDROID_OPAQUE ||
+    if (!fmt || fmt->i_chroma != VLC_CODEC_ANDROID_OPAQUE || fmt->dovi.profile || fmt->dovi.rpu_present || fmt->dovi.el_present ||
         (!ambient_display_sdr(fmt) && !ambient_display_hdr(fmt)) || !context)
         return NULL;
     android_video_context_t *avctx =
@@ -97,8 +97,10 @@ static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
     if (owner) ambient_ahb_poll(owner);
     if (!owner || !pic ||
         (!ambient_display_sdr(&pic->format) && !ambient_display_hdr(&pic->format)) ||
+        pic->format.dovi.profile || pic->format.dovi.rpu_present || pic->format.dovi.el_present ||
         picture_GetAncillary(pic, VLC_ANCILLARY_ID_DOVI) ||
-        picture_GetAncillary(pic, VLC_ANCILLARY_ID_HDR10PLUS))
+        (picture_GetAncillary(pic, VLC_ANCILLARY_ID_HDR10PLUS) &&
+         pic->format.transfer != TRANSFER_FUNC_SMPTE_ST2084))
         return VK_ERROR_FORMAT_NOT_SUPPORTED;
     struct ambient_vlc_picture held;
     if (!ambient_vlc_hold_picture(pic, &held)) return VK_ERROR_FORMAT_NOT_SUPPORTED;

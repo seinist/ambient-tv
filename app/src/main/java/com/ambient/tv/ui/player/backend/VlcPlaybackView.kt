@@ -208,7 +208,8 @@ class VlcPlaybackController(
         com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT, vulkanOutput, preserveHdrSource,
         configuredSoftwareProcessing, configuredSvpMode, configuredDeinterlaceMode, ahbCopyBackRetried,
         supportedHdrGpu = android.os.Build.VERSION.SDK_INT >= 34 && !nativeHdrPreferred &&
-            (sourceHdrStandard == HdrStandard.HDR10 || sourceHdrStandard == HdrStandard.HLG),
+            (sourceHdrStandard == HdrStandard.HDR10 || sourceHdrStandard == HdrStandard.HLG ||
+             sourceHdrStandard == HdrStandard.HDR10_PLUS),
     )
     override val usesFrameInterpolation: Boolean
         get() = effectiveImage().svpMode != "off"
@@ -245,6 +246,8 @@ class VlcPlaybackController(
                 "--vk-device=${VideoAccelerationRuntime.capabilities.value.device.device}",
                 if (ahbExperimentActive) "--vk-ambient-ahb" else "--no-mediacodec-dr",
             ))
+            if (ahbExperimentActive && sourceHdrStandard == HdrStandard.HDR10_PLUS)
+                add("--vk-ambient-hdr10plus")
         },
     )
     private var libVlc = createLibVlc()

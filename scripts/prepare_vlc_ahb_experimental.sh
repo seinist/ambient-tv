@@ -53,4 +53,5 @@ for file in ahb_import.h conversion_cache.h conversion_key.h display_bridge.h di
     cp "$SRC/$file" "$dest/$file"
 done
 cp "$TMP/ambient_sample_spv.h" "$dest/ambient_sample_spv.h"
+cp "$SRC/hdr10plus_payload.h" "$VLC/modules/codec/omxil/hdr10plus_payload.h"
 echo "Staged experimental VLC AHB display integration (runtime flag remains off by default)"

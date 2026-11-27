@@ -1,27 +1,107 @@
 diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
 --- a/modules/codec/omxil/mediacodec.c
 +++ b/modules/codec/omxil/mediacodec.c
-@@ -140,8 +140,9 @@
-             timestamp_fifo_t *timestamp_fifo;
+@@ -32,6 +32,7 @@
+ #include <assert.h>
+ 
+ #include <vlc_common.h>
++#include <vlc_ancillary.h>
+ #include <vlc_aout.h>
+ #include <vlc_plugin.h>
+ #include <vlc_codec.h>
+@@ -141,6 +142,10 @@
              int i_mpeg_dar_num, i_mpeg_dar_den;
              struct vlc_asurfacetexture *surfacetexture;
--            bool use_air;
--            vlc_cond_t air_cond;
-+            bool use_air;
+             bool use_air;
 +            bool ambient_ahb;
-+            vlc_cond_t air_cond;
++            bool hdrplus_required, hdrplus_pending;
++            vlc_tick_t hdrplus_ts;
++            struct ambient_hdrplus hdrplus;
+             vlc_cond_t air_cond;
              unsigned air_waiting_count;
          } video;
-         struct {
-@@ -930,11 +931,23 @@
+@@ -839,10 +844,14 @@
+     android_video_context_t *avctx =
+         vlc_video_context_GetPrivate(apctx->s.vctx, VLC_VIDEO_CONTEXT_AWINDOW);
+ 
+-    if (apctx->fence_fd >= 0)
++    // If no consumer fence exists, the original producer fence still
++    // protects an image that was never sampled (including rejected frames).
++    int release_fd = apctx->read_fence_fd;
++    if (release_fd < 0)
++        release_fd = apctx->fence_fd;
++    else if (apctx->fence_fd >= 0)
+         close(apctx->fence_fd);
+-
+-    avctx->air_api->AImage.deleteAsync(apctx->image, apctx->read_fence_fd);
++    avctx->air_api->AImage.deleteAsync(apctx->image, release_fd);
+ 
+     free(apctx);
+ }
+@@ -868,8 +877,16 @@
+     int32_t status = avctx->air_api->AImage.getTimestamp(image, &timestamp);
+ 
+     vlc_tick_t date = status == 0 ? VLC_TICK_FROM_NS(timestamp) : 0;
+-
+-    picture_t *p_pic = NewPicture(p_dec, date);
++    const bool hdrplus = p_sys->video.hdrplus_pending;
++    p_sys->video.hdrplus_pending = false;
++    picture_t *p_pic = NULL;
++    if (p_sys->video.ambient_ahb && ((hdrplus && (status != 0 || date != p_sys->video.hdrplus_ts)) ||
++        (p_sys->video.hdrplus_required && !hdrplus))) {
++        msg_Err(p_dec, "Experimental HDR10+ image timestamp/metadata mismatch");
++        AbortDecoderLocked(p_sys);
++        goto error;
++    }
++    p_pic = NewPicture(p_dec, date);
+     if (p_pic == NULL)
+         goto error;
+ 
+@@ -879,6 +896,29 @@
+         goto error;
+     }
+ 
++    if (hdrplus) {
++        const struct ambient_hdrplus *m = &p_sys->video.hdrplus;
++        vlc_video_hdr_dynamic_metadata_t *dst =
++            picture_AttachNewAncillary(p_pic, VLC_ANCILLARY_ID_HDR10PLUS, sizeof(*dst));
++        if (!dst) { AbortDecoderLocked(p_sys); goto error; }
++        *dst = (vlc_video_hdr_dynamic_metadata_t){0};
++        dst->country_code = 0xb5;
++        dst->application_version = m->version;
++        dst->targeted_luminance = m->target_nits;
++        for (unsigned i = 0; i < 3; ++i) dst->maxscl[i] = m->maxscl[i];
++        dst->average_maxrgb = m->average;
++        dst->fraction_bright_pixels = m->fraction;
++        dst->num_histogram = m->histogram_count;
++        for (unsigned i = 0; i < m->histogram_count; ++i) {
++            dst->histogram[i].percentage = m->histogram[i].percentage;
++            dst->histogram[i].percentile = m->histogram[i].percentile;
++        }
++        dst->tone_mapping_flag = m->tone_mapping;
++        dst->knee_point_x = m->knee_x;
++        dst->knee_point_y = m->knee_y;
++        dst->num_bezier_anchors = m->anchor_count;
++        for (unsigned i = 0; i < m->anchor_count; ++i) dst->bezier_curve_anchors[i] = m->anchors[i];
++    }
+     struct android_picture_ctx *apctx = malloc(sizeof(*apctx));
+     if (apctx == NULL)
+         goto error;
+@@ -901,9 +941,7 @@
+ error:
+     if (p_pic != NULL)
+         picture_Release(p_pic);
+-    if (fence_fd > 0)
+-        close(fence_fd);
+-    avctx->air_api->AImage.deleteAsync(image, -1);
++    avctx->air_api->AImage.deleteAsync(image, fence_fd);
+     return VLC_EGENERIC;
+ }
+ 
+@@ -930,11 +968,25 @@
          return;
      }
      vlc_mutex_lock(&p_sys->lock);
--    assert(p_sys->video.air_waiting_count > 0);
--    p_sys->video.air_waiting_count--;
--    vlc_cond_broadcast(&p_sys->video.air_cond);
--    if (p_sys->b_flush_out)
--        avctx->air_api->AImage.deleteAsync(image, fence_fd);
 +    // A callback can arrive after abort/flush. Never underflow the counter
 +    // or feed a late image back into a retired decoder epoch.
 +    if (p_sys->video.ambient_ahb &&
@@ -34,65 +114,69 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
 +        vlc_mutex_unlock(&p_sys->lock);
 +        return;
 +    }
-+    assert(p_sys->video.air_waiting_count > 0);
-+    p_sys->video.air_waiting_count--;
-+    vlc_cond_broadcast(&p_sys->video.air_cond);
-+    if (p_sys->b_flush_out)
-+        avctx->air_api->AImage.deleteAsync(image, fence_fd);
+     assert(p_sys->video.air_waiting_count > 0);
+     p_sys->video.air_waiting_count--;
+     vlc_cond_broadcast(&p_sys->video.air_cond);
+-    if (p_sys->b_flush_out)
++    if (p_sys->b_flush_out) {
++        p_sys->video.hdrplus_pending = false;
+         avctx->air_api->AImage.deleteAsync(image, fence_fd);
++    }
      else
          QueueAImagePicture(p_dec, avctx, image, fence_fd);
      vlc_mutex_unlock(&p_sys->lock);
-@@ -1114,11 +1127,19 @@
+@@ -1114,10 +1166,20 @@
          || (!p_sys->api.b_support_rotation && p_dec->fmt_out.video.orientation != ORIENT_NORMAL)
          || !can_set_video_layout;
  
--    bool use_surfacetexture = need_gpu_transform && can_use_surfacetexture;
--
--    int ret = CreateSurfaceFromAImageReader(p_dec, dec_dev, awh,
--                                            need_gpu_transform);
--    if (ret == VLC_SUCCESS)
 +    p_sys->video.ambient_ahb = var_InheritBool(p_dec, "vk-ambient-ahb");
++    p_sys->video.hdrplus_required = p_sys->video.ambient_ahb &&
++        var_InheritBool(p_dec, "vk-ambient-hdr10plus");
 +    need_gpu_transform |= p_sys->video.ambient_ahb;
-+    bool use_surfacetexture = need_gpu_transform && can_use_surfacetexture;
-+
-+    int ret = CreateSurfaceFromAImageReader(p_dec, dec_dev, awh,
-+                                            need_gpu_transform);
+     bool use_surfacetexture = need_gpu_transform && can_use_surfacetexture;
+ 
+     int ret = CreateSurfaceFromAImageReader(p_dec, dec_dev, awh,
+                                             need_gpu_transform);
 +    if (ret != VLC_SUCCESS && p_sys->video.ambient_ahb)
 +    {
 +        // A legacy SurfaceTexture cannot be imported by this Vulkan path.
 +        vlc_decoder_device_Release(dec_dev);
 +        return ret;
 +    }
-+    if (ret == VLC_SUCCESS)
+     if (ret == VLC_SUCCESS)
      {
          vlc_decoder_device_Release(dec_dev);
-         return VLC_SUCCESS;
-@@ -1478,8 +1499,11 @@
-     decoder_sys_t *p_sys = p_dec->p_sys;
+@@ -1441,8 +1503,10 @@
+     {
+         p_sys->b_aborted = true;
+         vlc_cond_broadcast(&p_sys->cond);
+-        if (p_sys->cat == VIDEO_ES && p_sys->video.use_air)
+-            vlc_cond_signal(&p_sys->video.air_cond);
++        if (p_sys->cat == VIDEO_ES && p_sys->video.use_air) {
++            vlc_cond_broadcast(&p_sys->video.air_cond);
++            if (p_sys->video.ambient_ahb) vlc_cond_broadcast(&p_sys->dec_cond);
++        }
+     }
+ }
+ 
+@@ -1479,6 +1543,9 @@
  
      vlc_mutex_lock(&p_sys->lock);
--    p_sys->b_decoder_dead = true;
--    vlc_mutex_unlock(&p_sys->lock);
-+    p_sys->b_decoder_dead = true;
+     p_sys->b_decoder_dead = true;
 +    // Wake output/flush waits before unregistering the AImage callback.
 +    if (p_sys->cat == VIDEO_ES && p_sys->video.ambient_ahb)
 +        AbortDecoderLocked(p_sys);
-+    vlc_mutex_unlock(&p_sys->lock);
+     vlc_mutex_unlock(&p_sys->lock);
  
      if (p_sys->cat == VIDEO_ES && p_sys->video.ctx)
-     {
-@@ -1547,11 +1571,29 @@
+@@ -1547,9 +1614,27 @@
              {
                  /* We need to wait for AImageReader. Otherwise, we might
                   * overwrite a picture (even when using acquireNextImageAsync) */
--                while (p_sys->video.air_waiting_count != 0
--                       && !p_sys->b_aborted && !p_sys->b_flush_out)
--                    vlc_cond_wait(&p_sys->video.air_cond, &p_sys->lock);
--
--                if (p_sys->b_flush_out)
 +                const vlc_tick_t deadline = vlc_tick_now() + VLC_TICK_FROM_SEC(3);
-+                while (p_sys->video.air_waiting_count != 0
-+                       && !p_sys->b_aborted && !p_sys->b_flush_out)
+                 while (p_sys->video.air_waiting_count != 0
+                        && !p_sys->b_aborted && !p_sys->b_flush_out)
+-                    vlc_cond_wait(&p_sys->video.air_cond, &p_sys->lock);
 +                {
 +                    if (!p_sys->video.ambient_ahb)
 +                        vlc_cond_wait(&p_sys->video.air_cond, &p_sys->lock);
@@ -111,36 +195,68 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
 +                    p_sys->api.release_out(&p_sys->api, p_out->buf.i_index, false);
 +                    return VLC_EGENERIC;
 +                }
-+
-+                if (p_sys->b_flush_out)
+ 
+                 if (p_sys->b_flush_out)
                  {
-                     /* Drop this buffer so OutThread can acknowledge the flush. */
-                     p_sys->api.release_out(&p_sys->api, p_out->buf.i_index, false);
-@@ -1920,9 +1962,12 @@
+@@ -1558,10 +1643,34 @@
+                     return 0;
+                 }
+ 
++                if (p_sys->video.ambient_ahb) {
++                    const enum ambient_hdrplus_status status = p_out->buf.hdrplus_status;
++                    if (status == AMBIENT_HDRPLUS_UNSUPPORTED ||
++                        (p_sys->video.hdrplus_required && status != AMBIENT_HDRPLUS_VALID)) {
++                        p_sys->api.release_out(&p_sys->api, p_out->buf.i_index, false);
++                        if (!p_out->b_eos) {
++                            msg_Err(p_dec, "Experimental HDR10+ metadata unavailable/unsupported");
++                            AbortDecoderLocked(p_sys);
++                            return VLC_EGENERIC;
++                        }
++                        return 0;
++                    }
++                    p_sys->video.hdrplus_pending = status == AMBIENT_HDRPLUS_VALID;
++                    if (p_sys->video.hdrplus_pending) {
++                        p_sys->video.hdrplus = p_out->buf.hdrplus;
++                        p_sys->video.hdrplus_ts = p_out->buf.i_ts;
++                    }
++                }
+                 p_sys->video.air_waiting_count++;
+ 
+-                p_sys->api.release_out(&p_sys->api, p_out->buf.i_index,
+-                                       !p_sys->b_aborted);
++                int release = p_sys->api.release_out(&p_sys->api, p_out->buf.i_index,
++                                                     !p_sys->b_aborted);
++                if (release != 0 && p_sys->video.ambient_ahb) {
++                    p_sys->video.air_waiting_count--;
++                    p_sys->video.hdrplus_pending = false;
++                    AbortDecoderLocked(p_sys);
++                    return VLC_EGENERIC;
++                }
+                 /* picture will be wrapped from AImageReader callback */
+                 assert(*pp_out_pic  == NULL);
+             }
+@@ -1920,9 +2029,12 @@
  
          /* Wait for an output buffer. This function returns when a new output
           * is available or if output is flushed. */
 -        i_index = p_sys->api.dequeue_out(&p_sys->api, -1);
--
--        vlc_mutex_lock(&p_sys->lock);
 +        const bool ambient_ahb = p_sys->cat == VIDEO_ES && p_sys->video.ambient_ahb;
 +        i_index = p_sys->api.dequeue_out(&p_sys->api, ambient_ahb ? VLC_TICK_FROM_MS(100) : -1);
-+
-+        vlc_mutex_lock(&p_sys->lock);
+ 
+         vlc_mutex_lock(&p_sys->lock);
 +        if (ambient_ahb && i_index == MC_API_INFO_TRYAGAIN)
 +            continue; // idle decoder is normal; check abort/flush again
  
          /* Ignore dequeue_out errors caused by flush, or late picture being
           * dequeued after close. */
-@@ -2018,8 +2063,15 @@
+@@ -2018,8 +2130,15 @@
      while (b_drain || (p_block = GetNextBlock(p_sys, p_in_block)))
      {
          vlc_mutex_unlock(&p_sys->lock);
 -        int i_index = p_sys->api.dequeue_in(&p_sys->api, -1);
--        vlc_mutex_lock(&p_sys->lock);
 +        const bool ambient_ahb = p_sys->cat == VIDEO_ES && p_sys->video.ambient_ahb;
 +        int i_index = p_sys->api.dequeue_in(&p_sys->api, ambient_ahb ? VLC_TICK_FROM_SEC(3) : -1);
-+        vlc_mutex_lock(&p_sys->lock);
+         vlc_mutex_lock(&p_sys->lock);
 +        if (ambient_ahb && i_index == MC_API_INFO_TRYAGAIN)
 +        {
 +            msg_Err(p_dec, "Experimental MediaCodec input timed out");
@@ -150,14 +266,16 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
          if (p_sys->b_aborted)
              return VLC_EGENERIC;
-@@ -2330,8 +2382,18 @@
+@@ -2328,10 +2447,21 @@
+ 
+     if (p_sys->video.use_air)
      {
++        p_sys->video.hdrplus_pending = false;
          /* Drain AImageReader callbacks before AMediaCodec_flush() invalidates
           * output buffer indices, or air_waiting_count may stay stuck. */
--        while (p_sys->video.air_waiting_count != 0 && !p_sys->b_aborted)
--            vlc_cond_wait(&p_sys->video.air_cond, &p_sys->lock);
 +        const vlc_tick_t deadline = vlc_tick_now() + VLC_TICK_FROM_SEC(3);
-+        while (p_sys->video.air_waiting_count != 0 && !p_sys->b_aborted)
+         while (p_sys->video.air_waiting_count != 0 && !p_sys->b_aborted)
+-            vlc_cond_wait(&p_sys->video.air_cond, &p_sys->lock);
 +        {
 +            if (!p_sys->video.ambient_ahb)
 +                vlc_cond_wait(&p_sys->video.air_cond, &p_sys->lock);
@@ -171,3 +289,72 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      }
  }
  
+diff --git a/modules/codec/omxil/mediacodec.h b/modules/codec/omxil/mediacodec.h
+--- a/modules/codec/omxil/mediacodec.h
++++ b/modules/codec/omxil/mediacodec.h
+@@ -27,6 +27,7 @@
+ typedef struct mc_api mc_api;
+ typedef struct mc_api_sys mc_api_sys;
+ typedef struct mc_api_out mc_api_out;
++#include "hdr10plus_payload.h"
+ 
+ typedef int (*pf_MediaCodecApi_init)(mc_api*);
+ 
+@@ -106,6 +107,8 @@
+             vlc_tick_t i_ts;
+             const uint8_t *p_ptr;
+             size_t i_size;
++            enum ambient_hdrplus_status hdrplus_status;
++            struct ambient_hdrplus hdrplus;
+         } buf;
+         union
+         {
+diff --git a/modules/codec/omxil/mediacodec_ndk.c b/modules/codec/omxil/mediacodec_ndk.c
+--- a/modules/codec/omxil/mediacodec_ndk.c
++++ b/modules/codec/omxil/mediacodec_ndk.c
+@@ -31,6 +31,7 @@
+ #include <assert.h>
+ 
+ #include <vlc_common.h>
++#include <vlc_variables.h>
+ 
+ #include <media/NdkMediaCodec.h>
+ #include <OMX_Core.h>
+@@ -119,6 +120,7 @@
+     AMediaCodec* p_codec;
+     AMediaFormat* p_format;
+     AMediaCodecBufferInfo info;
++    bool ambient_pq;
+ };
+ 
+ /*****************************************************************************
+@@ -187,6 +189,10 @@
+     }
+ 
+     api->b_direct_rendering = !!p_anw;
++    p_sys->ambient_pq = api->i_cat == VIDEO_ES && api->b_direct_rendering &&
++        var_InheritBool(api->p_obj, "vk-ambient-ahb") &&
++        (p_args->video.color.transfer == MC_COLOR_TRANSFER_ST2084 ||
++         var_InheritBool(api->p_obj, "vk-ambient-hdr10plus"));
+ 
+     return 0;
+ }
+@@ -354,6 +360,18 @@
+ 
+         p_out->buf.i_ts = p_sys->info.presentationTimeUs;
+         p_out->b_eos = p_sys->info.flags & AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM;
++        p_out->buf.hdrplus_status = AMBIENT_HDRPLUS_NONE;
++        if (p_sys->ambient_pq) {
++            AMediaFormat *format = AMediaCodec_getBufferFormat(p_sys->p_codec, i_index);
++            if (format) {
++                void *payload = NULL;
++                size_t size = 0;
++                if (AMediaFormat_getBuffer(format, "hdr10-plus-info", &payload, &size))
++                    p_out->buf.hdrplus_status = ambient_hdrplus_parse(payload, size, &p_out->buf.hdrplus) ?
++                        AMBIENT_HDRPLUS_VALID : AMBIENT_HDRPLUS_UNSUPPORTED;
++                AMediaFormat_delete(format);
++            }
++        }
+ 
+         if (api->b_direct_rendering)
+         {
