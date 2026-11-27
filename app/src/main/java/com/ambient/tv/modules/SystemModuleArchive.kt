@@ -19,7 +19,7 @@ import java.util.zip.ZipFile
 internal object SystemModuleArchive {
     private const val MAX_ENTRIES = 4096
     private const val MAX_EXPANDED = 512L * 1024 * 1024
-    private val segment = Regex("[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
+    private val segment = Regex("[A-Za-z0-9_][A-Za-z0-9_. -]{0,127}")
     private val digest = Regex("[0-9a-f]{64}")
 
     fun stage(input: InputStream, target: File, build: SystemModuleBuild) {
@@ -92,7 +92,7 @@ internal object SystemModuleArchive {
                 val parts = name.split('/')
                 val folded = name.lowercase(java.util.Locale.ROOT)
                 if (entry.isDirectory || name.length > 512 || parts.size !in 2..12 ||
-                    parts.any { !segment.matches(it) || it.endsWith('.') } ||
+                    parts.any { !segment.matches(it) || (it.endsWith('.') || it.endsWith(' ')) } ||
                     !names.add(folded) || names.size > MAX_ENTRIES ||
                     entry.size < 0 || entry.size > MAX_EXPANDED - expanded ||
                     entry.method !in setOf(java.util.zip.ZipEntry.STORED, java.util.zip.ZipEntry.DEFLATED)) {
