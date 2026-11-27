@@ -438,6 +438,9 @@ static bool svp_vk_hdrplus_measured(struct mp_image *img,const AmbientSvpHdrResu
         memset(hdr->scene_max,0,sizeof(hdr->scene_max));hdr->scene_avg=hdr->max_pq_y=hdr->avg_pq_y=0;
         memset(&hdr->ootf,0,sizeof(hdr->ootf));
         pl_map_hdr_metadata(hdr,&(struct pl_av_hdr_metadata){.dhp=m});
+#ifndef SVP_METADATA_TEST
+        img->ambient_svp_hdr_generated=true;
+#endif
         return true;
     }
     return false;
