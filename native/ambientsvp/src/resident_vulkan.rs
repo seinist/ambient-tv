@@ -480,6 +480,45 @@ mod gpu_tests{
                 }
             }
             d.unmap_memory(readback_memory);
+            // Simulate the RGB textures produced by Android external-format
+            // conversion, without uploading or mapping any source pixels.
+            // Reuse the two GPU endpoint outputs as the next input pair.
+            let engine=ambient_svp_vk_create(instance.handle(),physical,d.handle(),
+                Some(entry.static_fn().get_instance_proc_addr),w,h);
+            assert!(!engine.is_null());
+            d.reset_fences(&[fence]).unwrap();
+            d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
+            d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).unwrap();
+            for (i,img) in images[5..].iter().enumerate(){
+                transition(&d,cmd,img.image,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,vk::ImageLayout::GENERAL,
+                    vk::AccessFlags::TRANSFER_READ,if i==1{vk::AccessFlags::SHADER_WRITE}else{vk::AccessFlags::SHADER_READ},
+                    vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::COMPUTE_SHADER);
+            }
+            let rgb=|view|VulkanPicture{y:view,u:vk::ImageView::null(),v:vk::ImageView::null(),nv12:2,chroma_location:0};
+            let a=rgb(images[5].view);let b=rgb(images[7].view);
+            let pair=ambient_svp_vk_begin(engine,cmd,&a,&b);
+            assert!(!pair.is_null());
+            // Matrix=limited BT601 intentionally: RGB must not be converted again.
+            assert_eq!(ambient_svp_vk_render(pair,0.5,0,images[6].view),0);
+            transition(&d,cmd,images[6].image,vk::ImageLayout::GENERAL,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                vk::AccessFlags::SHADER_WRITE,vk::AccessFlags::TRANSFER_READ,
+                vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::TRANSFER);
+            let region=[vk::BufferImageCopy::default().image_subresource(vk::ImageSubresourceLayers::default()
+                .aspect_mask(vk::ImageAspectFlags::COLOR).layer_count(1)).image_extent(vk::Extent3D{width:w,height:h,depth:1})];
+            d.cmd_copy_image_to_buffer(cmd,images[6].image,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,readback,&region);
+            d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::HOST,
+                vk::DependencyFlags::empty(),&host,&[],&[]);
+            d.end_command_buffer(cmd).unwrap();
+            d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
+            assert_eq!(ambient_svp_vk_seal(pair,fence),0);
+            d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
+            assert_eq!(ambient_svp_vk_release(pair),1);
+            let mapped=d.map_memory(readback_memory,0,bytes,vk::MemoryMapFlags::empty()).unwrap();
+            for pixel in std::slice::from_raw_parts(mapped.cast::<u8>(),bytes as usize).chunks_exact(4){
+                assert!(pixel[..3].iter().all(|&v|v.abs_diff(80)<=1)&&pixel[3]==255,"RGB resident result {pixel:?}");
+            }
+            d.unmap_memory(readback_memory);
+            ambient_svp_vk_destroy(engine);
             d.destroy_fence(fence,None);d.destroy_command_pool(pool,None);
             d.destroy_buffer(readback,None);d.free_memory(readback_memory,None);
             for img in images{
