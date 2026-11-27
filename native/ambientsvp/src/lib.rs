@@ -4,7 +4,9 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     time::Instant,
 };
-use svpflow_wasm::Smoother;
+mod smoother;
+use smoother::Smoother;
+use std::sync::Arc;
 use svpflow1_vs::{Analyser, SuperBuilder, SuperFrame};
 #[cfg(feature = "vulkan")]
 mod gpu;
@@ -120,7 +122,7 @@ pub struct AmbientSvp {
     smoother: Smoother,
     pool: rayon::ThreadPool,
     previous: Option<SuperFrame>,
-    repeated_vectors: Option<Vec<u8>>,
+    repeated_vectors: Option<Arc<Vec<u8>>>,
     frames: BTreeMap<i32, Source>,
     recycled_frames: Vec<Vec<u8>>,
     input: i32,
@@ -394,13 +396,11 @@ impl AmbientSvp {
                 if self.repeated_vectors.is_none() {
                     let vectors = self.pool.install(|| self.analyser.analyse(previous, previous))
                         .map_err(|_| -1)?;
-                    self.repeated_vectors = Some(vectors);
+                    self.repeated_vectors = Some(Arc::new(vectors));
                 }
-                self.smoother.set_vectors(self.input - 1, self.repeated_vectors.as_ref().unwrap());
-                if self.smoother.uses_super() {
-                    self.smoother.set_super(self.input, previous).map_err(|_| -1)?;
-                } else {
-                    self.smoother.set_source(self.input, data).map_err(|_| -1)?;
+                self.smoother.set_vectors(self.input - 1, self.repeated_vectors.as_ref().unwrap().clone());
+                if self.stats.backend == 1 && self.smoother.uses_super() {
+                    self.smoother.repeat_super(self.input, previous).map_err(|_| -1)?;
                 }
             } else {
                 self.repeated_vectors = None;
@@ -413,12 +413,10 @@ impl AmbientSvp {
                     Ok::<_, i32>((current, vectors))
                 })?;
                 if let Some(vectors) = vectors {
-                    self.smoother.set_vectors(self.input - 1, &vectors);
+                    self.smoother.set_vectors(self.input - 1, Arc::new(vectors));
                 }
-                if self.smoother.uses_super() {
+                if self.stats.backend == 1 && self.smoother.uses_super() {
                     self.smoother.set_super(self.input, &current).map_err(|_| -1)?;
-                } else {
-                    self.smoother.set_source(self.input, data).map_err(|_| -1)?;
                 }
                 self.previous = Some(current);
             }
@@ -654,13 +652,13 @@ impl AmbientSvp {
             if !gpu_done {
                 match &mut target {
                     OutputTarget::Slice(out) => {
-                        self.pool.install(|| self.smoother.render_into(self.output, out))?;
+                        self.pool.install(|| self.smoother.render_into(self.output, out, &self.frames, &self.builder))?;
                         novel = is_novel(out);
                     }
                     OutputTarget::Visit(visit) => {
                         let mut scratch = self.recycled_frames.pop().unwrap_or_default();
                         scratch.resize(self.frame_len(), 0);
-                        let result = self.pool.install(|| self.smoother.render_into(self.output, &mut scratch));
+                        let result = self.pool.install(|| self.smoother.render_into(self.output, &mut scratch, &self.frames, &self.builder));
                         if result.is_ok() {
                             novel = is_novel(&scratch);
                             visit(&scratch);
