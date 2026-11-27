@@ -5,6 +5,39 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+// CPU reference of the experimental blend, using the exact generated LUTs.
+// The result is checked against GPU output, including overlap and feathering.
+static float reference_curve(const struct ambient_hdrplus_spatial *s,unsigned i,float v)
+{
+    float x=fminf(1.f,fmaxf(0.f,sqrtf(v)/s->domains[i]))*(AMBIENT_HDRPLUS_LUT_SIZE-1);
+    unsigned n=(unsigned)x, next=n+1<AMBIENT_HDRPLUS_LUT_SIZE?n+1:n;
+    return s->curves[i][n]+(s->curves[i][next]-s->curves[i][n])*(x-n);
+}
+static void check_blend(const struct ambient_hdrplus_spatial *s,const struct ambient_hdrplus *m,
+    const float *pixels,unsigned width,unsigned height,float nits)
+{
+    struct ambient_hdrplus_mask masks[2];
+    bool layering;
+    assert(ambient_hdrplus_spatial_supported(m,width,height,masks,&layering));
+    float v=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_NORM,nits);
+    float g=reference_curve(s,0,v),l=reference_curve(s,1,v),r=reference_curve(s,2,v);
+    unsigned overlaps=0, feathers=0;
+    for(unsigned y=0;y<height;++y) for(unsigned x=0;x<width;++x) {
+        float a=ambient_hdrplus_weight(&masks[0],x,y),b=ambient_hdrplus_weight(&masks[1],x,y);
+        if(a>0.f && b>0.f) ++overlaps;
+        if((a>0.f && a<1.f)||(b>0.f && b<1.f)) ++feathers;
+        float expected=layering?((g*(1.f-a)+l*a)*(1.f-b)+r*b):
+            (g*fmaxf(0.f,1.f-a-b)+l*a+r*b)/fmaxf(1.f,a+b);
+        float pq=pl_hdr_rescale(PL_HDR_NORM,PL_HDR_PQ,expected);
+        for(unsigned k=0;k<3;++k) {
+            float actual=pixels[4*(y*width+x)+k];
+            // FP16 PQ target and floating shader arithmetic are not bit exact.
+            assert(isfinite(actual) && fabsf(actual-pq)<0.0015f);
+        }
+    }
+    assert(overlaps && feathers);
+}
+
 int main(void)
 {
     pl_log log=pl_log_create(PL_API_VER,&(struct pl_log_params){
@@ -98,6 +131,31 @@ int main(void)
     m.windows[1].saturation_mapping=true;
     assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
     assert(img.planes[0].texture==input);
+    m.windows[1].saturation_mapping=false;
+    // Three windows: both local regions overlap and have different curves.
+    m.window_count=3;
+    m.windows[2]=m.windows[0];
+    m.windows[2].geometry=m.windows[1].geometry;
+    m.windows[2].geometry.center_x=24;
+    for(unsigned mode=0;mode<2;++mode) {
+        m.windows[1].geometry.overlap=mode;
+        m.windows[2].geometry.overlap=mode;
+        img.planes[0].texture=input;img.color=pl_color_space_hdr10;
+        assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
+        sh=pl_dispatch_begin(state.dispatch);
+        pl_shader_sample_direct(sh,pl_sample_src(.tex=state.output));
+        assert(pl_dispatch_finish(state.dispatch,pl_dispatch_params(.shader=&sh,.target=readback)));
+        assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=readback,.ptr=pixels)));
+        check_blend(&state,&m,pixels,width,height,600.f);
+        // Reject accidental target-as-source feedback.
+        assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
+        assert(img.planes[0].texture==state.output);
+    }
+    // A crop changes local coordinates; preserve the ordinary renderer path.
+    img.planes[0].texture=input;img.color=pl_color_space_hdr10;
+    img.crop.x0=1.f;
+    assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
+    assert(img.planes[0].texture==input && img.crop.x0==1.f);
     pl_gpu_finish(gpu);
     pl_tex_destroy(gpu,&readback);
     ambient_hdrplus_spatial_destroy(gpu,&state);
