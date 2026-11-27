@@ -138,6 +138,8 @@ val externalVersions = loadProjectProperties("gradle/external-versions.propertie
 val vlcAhbExperiment = providers.gradleProperty("VLC_AHB_EXPERIMENT").orElse("0").get() == "1"
 val vlcDoviAhbExperiment = providers.gradleProperty("VLC_DOVI_AHB_EXPERIMENT").orElse("0").get() == "1"
 require(!vlcDoviAhbExperiment || vlcAhbExperiment) { "VLC_DOVI_AHB_EXPERIMENT requires VLC_AHB_EXPERIMENT=1" }
+val vlcDoviFelExperiment = providers.gradleProperty("VLC_DOVI_FEL_EXPERIMENT").orElse("0").get() == "1"
+require(!vlcDoviFelExperiment || vlcDoviAhbExperiment) { "VLC_DOVI_FEL_EXPERIMENT requires VLC_DOVI_AHB_EXPERIMENT=1" }
 val vlcHdrplusSpatialExperiment = providers.gradleProperty("VLC_HDR10PLUS_SPATIAL_EXPERIMENT").orElse("0").get() == "1"
 require(!vlcHdrplusSpatialExperiment || vlcAhbExperiment) { "VLC_HDR10PLUS_SPATIAL_EXPERIMENT requires VLC_AHB_EXPERIMENT=1" }
 val vulkanVlcAar = if (vlcAhbExperiment)
@@ -288,6 +290,7 @@ android {
         buildConfigField("boolean", "VLC_SVP", vulkanVlcAar.isFile.toString())
         buildConfigField("boolean", "VLC_AHB_EXPERIMENT", vlcAhbExperiment.toString())
         buildConfigField("boolean", "VLC_DOVI_AHB_EXPERIMENT", vlcDoviAhbExperiment.toString())
+        buildConfigField("boolean", "VLC_DOVI_FEL_EXPERIMENT", vlcDoviFelExperiment.toString())
         buildConfigField("boolean", "VLC_HDR10PLUS_SPATIAL_EXPERIMENT", vlcHdrplusSpatialExperiment.toString())
         buildConfigField("String", "LIBVLC_VERSION", quotedBuildConfigString(if (vulkanVlcAar.isFile) "4.0.0-dev-vulkan+c84ef1e" else libs.versions.libvlc.get()))
         buildConfigField("String", "MEDIA3_VERSION", quotedBuildConfigString(libs.versions.media3.get()))
