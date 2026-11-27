@@ -17,8 +17,42 @@ class VlcTimedMetadataTest {
             }
         }.toByteArray()
 
+    private fun readEvent(input: java.io.InputStream): VlcTimedMetadata =
+        (VlcTimedMetadataPacket.read(input) as VlcTimedMetadataPacket.Message.Event).event
+
+    private fun barrier(epoch: Int, size: Int = 0): ByteArray =
+        ByteArrayOutputStream().also { out ->
+            DataOutputStream(out).use {
+                it.writeInt(0x41464d31); it.writeInt(2)
+                it.writeLong(0); it.writeLong(0)
+                it.writeInt(size); it.writeInt(epoch)
+            }
+        }.toByteArray()
+
+    @Test fun initialSeekRejectsEpochZeroBeforeFirstMetadataAndAcceptsBarrier() {
+        val inbox = VlcTimedMetadataInbox()
+        val session = inbox.beginSession()
+        inbox.clearForSeek()
+        val old = readEvent(packet().inputStream())
+        inbox.offer(session, old)
+        assertTrue(inbox.events.value.isEmpty())
+        val marker = VlcTimedMetadataPacket.read(barrier(1).inputStream())
+        assertEquals(VlcTimedMetadataPacket.Message.Epoch(1), marker)
+        inbox.offer(session, marker)
+        val current = old.copy(seekEpoch = 1)
+        inbox.offer(session, current)
+        inbox.offer(session, marker)
+        inbox.offer(session, old)
+        assertEquals(listOf(current), inbox.events.value)
+        inbox.offer(session, VlcTimedMetadataPacket.Message.Epoch(2))
+        assertTrue(inbox.events.value.isEmpty())
+        inbox.offer(session, current)
+        assertTrue(inbox.events.value.isEmpty())
+        assertTrue(runCatching { VlcTimedMetadataPacket.read(barrier(2, 8).inputStream()) }.isFailure)
+    }
+
     @Test fun packetPreservesOpaqueBoxAndClock() {
-        val event = VlcTimedMetadataPacket.read(packet(2).inputStream())
+        val event = readEvent(packet(2).inputStream())
         assertEquals(VlcTimedMetadata.Kind.EVENT_MESSAGE, event.kind)
         assertEquals(250000L, event.presentationTimeUs)
         assertEquals(100000L, event.durationUs)
@@ -27,15 +61,15 @@ class VlcTimedMetadataTest {
     }
 
     @Test fun rejectsOversizeWrongTypeAndTruncation() {
-        assertTrue(runCatching { VlcTimedMetadataPacket.read(packet(size = 2 * 1024 * 1024).inputStream()) }.isFailure)
-        assertTrue(runCatching { VlcTimedMetadataPacket.read(packet(type = 0x70726674).inputStream()) }.isFailure)
-        assertTrue(runCatching { VlcTimedMetadataPacket.read(packet().copyOf(34).inputStream()) }.isFailure)
+        assertTrue(runCatching { readEvent(packet(size = 2 * 1024 * 1024).inputStream()) }.isFailure)
+        assertTrue(runCatching { readEvent(packet(type = 0x70726674).inputStream()) }.isFailure)
+        assertTrue(runCatching { readEvent(packet().copyOf(34).inputStream()) }.isFailure)
     }
 
     @Test fun seekRejectsInFlightRetiredEpochWithoutPredictingNativeRetries() {
         val inbox = VlcTimedMetadataInbox()
         val session = inbox.beginSession()
-        val old = VlcTimedMetadataPacket.read(packet(3).inputStream())
+        val old = readEvent(packet(3).inputStream())
         inbox.offer(session, old)
         inbox.clearForSeek()
         inbox.offer(session, old)
@@ -50,7 +84,7 @@ class VlcTimedMetadataTest {
     @Test fun rejectedSeekRestoresCurrentEpochButCannotUndoNewSessionOrEpoch() {
         val inbox = VlcTimedMetadataInbox()
         val session = inbox.beginSession()
-        val old = VlcTimedMetadataPacket.read(packet(3).inputStream())
+        val old = readEvent(packet(3).inputStream())
         inbox.offer(session, old)
         inbox.rejectSeek(inbox.clearForSeek())
         inbox.offer(session, old)
@@ -73,7 +107,7 @@ class VlcTimedMetadataTest {
         val inbox = VlcTimedMetadataInbox()
         val old = inbox.beginSession()
         val current = inbox.beginSession()
-        val event = VlcTimedMetadataPacket.read(packet(1).inputStream())
+        val event = readEvent(packet(1).inputStream())
         inbox.offer(old, event)
         assertTrue(inbox.events.value.isEmpty())
         repeat(70) { inbox.offer(current, event.copy(presentationTimeUs = it.toLong())) }

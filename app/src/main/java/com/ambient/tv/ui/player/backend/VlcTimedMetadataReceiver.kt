@@ -14,7 +14,7 @@ import kotlin.concurrent.thread
 internal class VlcTimedMetadataReceiver private constructor(
     val socketName: String,
     private val server: LocalServerSocket,
-    private val onEvent: (VlcTimedMetadata) -> Unit,
+    private val onEvent: (VlcTimedMetadataPacket.Message) -> Unit,
 ) : Closeable {
     private val closed = AtomicBoolean(false)
     private val connectionLock = Any()
@@ -58,7 +58,7 @@ internal class VlcTimedMetadataReceiver private constructor(
     }
 
     companion object {
-        fun open(onEvent: (VlcTimedMetadata) -> Unit): VlcTimedMetadataReceiver? = runCatching {
+        fun open(onEvent: (VlcTimedMetadataPacket.Message) -> Unit): VlcTimedMetadataReceiver? = runCatching {
             val name = "ambient-fel-" + UUID.randomUUID().toString().replace("-", "")
             VlcTimedMetadataReceiver(name, LocalServerSocket(name), onEvent).also { it.start() }
         }.getOrNull()

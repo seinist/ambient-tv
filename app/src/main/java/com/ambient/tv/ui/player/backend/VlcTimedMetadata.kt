@@ -21,18 +21,28 @@ data class VlcTimedMetadata(
 
 internal object VlcTimedMetadataPacket {
     const val MAX_BOX = 1024 * 1024
-    fun read(input: InputStream): VlcTimedMetadata {
+    sealed interface Message {
+        data class Event(val event: VlcTimedMetadata) : Message
+        data class Epoch(val epoch: Long) : Message
+    }
+
+    fun read(input: InputStream): Message {
         val data = DataInputStream(input)
         require(data.readInt() == 0x41464d31) // AFM1
-        val kind = when (data.readInt()) {
-            0 -> VlcTimedMetadata.Kind.EVENT_MESSAGE
-            1 -> VlcTimedMetadata.Kind.PRODUCER_REFERENCE_TIME
-            else -> throw IllegalArgumentException("Invalid timed metadata kind")
-        }
+        val wireKind = data.readInt()
         val pts = data.readLong()
         val duration = data.readLong()
         val size = data.readInt()
         val epoch = data.readInt().toLong() and 0xffffffffL
+        if (wireKind == 2) {
+            require(pts == 0L && duration == 0L && size == 0)
+            return Message.Epoch(epoch)
+        }
+        val kind = when (wireKind) {
+            0 -> VlcTimedMetadata.Kind.EVENT_MESSAGE
+            1 -> VlcTimedMetadata.Kind.PRODUCER_REFERENCE_TIME
+            else -> throw IllegalArgumentException("Invalid timed metadata kind")
+        }
         require(pts >= 0 && duration >= 0 && duration <= Long.MAX_VALUE - pts && size in 8..MAX_BOX)
         val box = ByteArray(size)
         data.readFully(box)
@@ -41,7 +51,7 @@ internal object VlcTimedMetadataPacket {
         val type = header.readInt()
         require(type == if (kind == VlcTimedMetadata.Kind.EVENT_MESSAGE) 0x656d7367 else 0x70726674)
         require(if (boxSize == 1L) size >= 16 && header.readLong() == size.toLong() else boxSize == size.toLong())
-        return VlcTimedMetadata(kind, pts, duration, box, epoch)
+        return Message.Event(VlcTimedMetadata(kind, pts, duration, box, epoch))
     }
 }
 
@@ -50,12 +60,12 @@ internal class VlcTimedMetadataInbox {
     private val mutable = MutableStateFlow<List<VlcTimedMetadata>>(emptyList())
     val events: StateFlow<List<VlcTimedMetadata>> = mutable.asStateFlow()
     private var generation = 0L
-    private var epoch = -1L
+    private var epoch = 0L
     private var discardedThroughEpoch = -1L
     private var bytes = 0
     @Synchronized fun beginSession(): Long {
         generation++
-        epoch = -1
+        epoch = 0
         discardedThroughEpoch = -1
         bytes = 0
         mutable.value = emptyList()
@@ -80,14 +90,25 @@ internal class VlcTimedMetadataInbox {
         }
     }
 
-    @Synchronized fun offer(session: Long, event: VlcTimedMetadata) {
-        if (session != generation || event.seekEpoch < epoch ||
-            event.seekEpoch <= discardedThroughEpoch) return
-        if (event.seekEpoch != epoch) {
-            epoch = event.seekEpoch
+    @Synchronized fun offer(session: Long, message: VlcTimedMetadataPacket.Message) {
+        when (message) {
+            is VlcTimedMetadataPacket.Message.Epoch -> advanceEpoch(session, message.epoch)
+            is VlcTimedMetadataPacket.Message.Event -> offer(session, message.event)
+        }
+    }
+
+    private fun advanceEpoch(session: Long, incoming: Long): Boolean {
+        if (session != generation || incoming < epoch || incoming <= discardedThroughEpoch) return false
+        if (incoming != epoch) {
+            epoch = incoming
             bytes = 0
             mutable.value = emptyList()
         }
+        return true
+    }
+
+    @Synchronized fun offer(session: Long, event: VlcTimedMetadata) {
+        if (!advanceEpoch(session, event.seekEpoch)) return
         if (event.box.size > VlcTimedMetadataPacket.MAX_BOX) return
         val next = mutable.value.toMutableList()
         while (next.isNotEmpty() && (next.size >= 64 || bytes + event.box.size > 4 * 1024 * 1024)) {
