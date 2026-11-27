@@ -194,10 +194,21 @@ struct ambient_ahb_owner {
             return VK_ERROR_DEVICE_LOST;
         }
         const VkFormat format = in.high_precision ? VK_FORMAT_R16G16B16A16_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
+        // VLC redisplays pictures during pause/subtitle updates. A different
+        // AHB wrapper can refer to the same allocation. Do not acquire the
+        // same foreign image in another slot until its prior GPU use retires.
+        for (size_t i = 0; i < slot_count; ++i) {
+            if (pool.state(i) != State::Free && slots[i].cache->same_buffer(
+                in.buffer, in.buffer_id, in.buffer_id_valid)) {
+                in.release_picture(in.picture, in.acquire_fd);
+                return VK_NOT_READY;
+            }
+        }
         size_t preferred = slot_count;
         for (size_t i = 0; i < slot_count; ++i) {
             if (pool.state(i) == State::Free && slots[i].cache->matches(
-                in.buffer, in.width, in.height, format, c.descriptor_count)) {
+                in.buffer, in.width, in.height, format, c.descriptor_count,
+                in.buffer_id, in.buffer_id_valid)) {
                 preferred = i;
                 break;
             }
@@ -216,7 +227,8 @@ struct ambient_ahb_owner {
             // changing the target. GPU work for this slot is already retired.
             clear_texture(s);
         }
-        VkResult result = s.cache->prepare_retired(in.buffer, in.width, in.height, format, c.descriptor_count);
+        VkResult result = s.cache->prepare_retired(in.buffer, in.width, in.height, format, c.descriptor_count,
+                                                    in.buffer_id, in.buffer_id_valid);
         if (result != VK_SUCCESS) { cancel(s); return result; }
         if (!s.cache->imported()->color_matches(in.model, in.range)) {
             cancel(s);
