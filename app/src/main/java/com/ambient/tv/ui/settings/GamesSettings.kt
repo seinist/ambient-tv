@@ -454,7 +454,7 @@ internal fun GamesCores(onlyCoreId: String? = null) {
                             loading = downloading,
                             enabled = !downloading && cores.abi?.let { core.supportedAbis.isEmpty() || it in core.supportedAbis } == true &&
                                 (source == GameCoreSource.AUTO || source == GameCoreSource.BUILDBOT || entry.channel().available) &&
-                                (source.experimentalProfile == null || cores.abi?.let { source.supportsExperiment(core, it) } == true),
+                                (source.experimentalProfile == null || cores.abi.let { source.supportsExperiment(core, it) } == true),
                             onClick = { download(core, source) },
                         )
                         if (remember(version, source) { cores.canRollback(core, source) }) TvActionButton(
