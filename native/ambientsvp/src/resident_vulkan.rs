@@ -8,7 +8,7 @@ use std::{sync::{Arc,Mutex,atomic::{AtomicBool,AtomicU32,Ordering}},panic::{catc
 use crate::resident::{MOTION,SYNTHESIS};
 #[path="resident_hdr_stats.rs"]
 mod hdr_stats;
-use hdr_stats::{HdrWindow,HdrResult,StatsJob,StatsPipelines};
+use hdr_stats::{HdrWindow,HdrResult,HdrTrack,StatsJob,StatsPipelines};
 
 const MAX_PHASES:usize=8;
 const MAX_IN_FLIGHT:u32=4;
@@ -436,7 +436,7 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
     let synthesis_words=if mode==0{synthesis_spirv()?}else if mode>=4{raw_synthesis_spirv(mode)?}else{high_synthesis_spirv(mode)?};
     let synthesis=Pipeline::new(&device,&types,&synthesis_words,c"synthesize")?;
     Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,width,height,gw,gh,field_size,mode,in_flight:AtomicU32::new(0),idle:Mutex::new(Vec::new()),lost:AtomicBool::new(false),
-        stats_supported:matches!(mode,1..=3)&&limits.max_per_stage_descriptor_storage_buffers>=2&&
+        stats_supported:matches!(mode,1..=3)&&limits.max_per_stage_descriptor_storage_buffers>=3&&
             limits.max_storage_buffer_range>=100001*4*3,
         stats:Mutex::new(None)})))
 }
@@ -520,7 +520,7 @@ pub unsafe extern "C" fn ambient_svp_vk_hdr_stats(pair:*mut VulkanPair,phase:u32
         if p.fence!=vk::Fence::null()||i>=p.phases||p.hdr_jobs[i].is_some()||
             p.rgb_outputs[i]==vk::ImageView::null(){return -1;}
         let windows=unsafe{std::slice::from_raw_parts(windows,count as usize)};
-        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],windows)else{return -1;};
+        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,None)else{return -1;};
         unsafe{job.record(p.command,p.core.width,p.core.height);}
         p.hdr_jobs[i]=Some(job);0
     })).unwrap_or(-1)
@@ -536,7 +536,36 @@ pub unsafe extern "C" fn ambient_svp_vk_hdr_read(pair:*const VulkanPair,phase:u3
         if p.fence==vk::Fence::null()||i>=p.phases{return -1;}
         match unsafe{p.core.device.get_fence_status(p.fence)}{Ok(true)=>{},Ok(false)=>return 0,Err(_)=>return -1}
         let Some(job)=p.hdr_jobs[i].as_ref()else{return -1;};
-        job.read(unsafe{std::slice::from_raw_parts_mut(results,count as usize)}).map_or(-1,|_|1)
+        job.read(unsafe{std::slice::from_raw_parts_mut(results,count as usize)},None).map_or(-1,|_|1)
+    })).unwrap_or(-1)
+}
+// Separate optional ABI preserves the existing stats structure layout.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_hdr_stats_track(pair:*mut VulkanPair,phase:u32,
+    windows:*const HdrWindow,tracks:*const HdrTrack,t:f32,count:u32)->i32{
+    if pair.is_null()||windows.is_null()||tracks.is_null()||!(1..=3).contains(&count){return -1;}
+    catch_unwind(AssertUnwindSafe(||{
+        let p=unsafe{&mut *pair};let i=phase as usize;
+        if p.fence!=vk::Fence::null()||i>=p.phases||p.hdr_jobs[i].is_some()||
+            p.rgb_outputs[i]==vk::ImageView::null(){return -1;}
+        let windows=unsafe{std::slice::from_raw_parts(windows,count as usize)};
+        let tracks=unsafe{std::slice::from_raw_parts(tracks,count as usize)};
+        let Ok(job)=StatsJob::new(&p.core,p.rgb_outputs[i],p.field,windows,Some((tracks,t)))else{return -1;};
+        unsafe{job.record(p.command,p.core.width,p.core.height);}
+        p.hdr_jobs[i]=Some(job);0
+    })).unwrap_or(-1)
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_hdr_read_track(pair:*const VulkanPair,phase:u32,
+    results:*mut HdrResult,shifts:*mut [i32;2],count:u32)->i32{
+    if pair.is_null()||results.is_null()||shifts.is_null()||!(1..=3).contains(&count){return -1;}
+    catch_unwind(AssertUnwindSafe(||{
+        let p=unsafe{&*pair};let i=phase as usize;
+        if p.fence==vk::Fence::null()||i>=p.phases{return -1;}
+        match unsafe{p.core.device.get_fence_status(p.fence)}{Ok(true)=>{},Ok(false)=>return 0,Err(_)=>return -1}
+        let Some(job)=p.hdr_jobs[i].as_ref()else{return -1;};
+        job.read(unsafe{std::slice::from_raw_parts_mut(results,count as usize)},
+            Some(unsafe{std::slice::from_raw_parts_mut(shifts,count as usize)})).map_or(-1,|_|1)
     })).unwrap_or(-1)
 }
 // The caller must pass the fence of the successful submission containing
