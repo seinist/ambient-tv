@@ -1,0 +1,24 @@
+diff --git a/src/libprojectM/ProjectMCWrapper.cpp b/src/libprojectM/ProjectMCWrapper.cpp
+--- a/src/libprojectM/ProjectMCWrapper.cpp
++++ b/src/libprojectM/ProjectMCWrapper.cpp
+@@ -7,6 +7,20 @@
+ #include <cstring>
+ #include <sstream>
+ 
++#if defined(AMBIENT_PROJECTM_PGO_GENERATE)
++// Only instrumented developer builds expose the profile writer. Keep the
++// compiler runtime in the same DSO as the instrumented code.
++extern "C" void __llvm_profile_set_filename(const char*);
++extern "C" int __llvm_profile_write_file();
++
++extern "C" PROJECTM_EXPORT int ambient_projectm_write_profile(const char* path)
++{
++    if (!path || !*path) return -1;
++    __llvm_profile_set_filename(path);
++    return __llvm_profile_write_file();
++}
++#endif
++
+ namespace libprojectM {
+ 
+ void projectMWrapper::PresetSwitchRequestedEvent(bool isHardCut) const

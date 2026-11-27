@@ -63,13 +63,38 @@ internal interface GamesSettingsEntryPoint {
     fun metadata(): com.ambient.tv.games.metadata.GameMetadataSettings
 }
 
-private fun GameCoreSource.titleRes(): Int = when (this) {
+internal fun GameCoreSource.titleRes(): Int = when (this) {
     GameCoreSource.AUTO -> R.string.games_core_source_auto
     GameCoreSource.AMBIENT -> R.string.games_core_source_ambient
     GameCoreSource.BUILDBOT -> R.string.games_core_source_buildbot
     GameCoreSource.OPTIMIZED -> R.string.games_core_source_optimized
     GameCoreSource.OPTIMIZED_A57 -> R.string.games_core_source_optimized_a57
     else -> error("Expected a regular core source")
+}
+
+/** Null means inherit; AUTO is an explicit choice and must not be conflated with inheritance. */
+@Composable
+internal fun GameCoreSourceOverrideSelect(
+    own: GameCoreSource?,
+    inherited: GameCoreSource,
+    onSelect: (GameCoreSource?) -> Unit,
+) {
+    val channelAvailable = gamesEntryPoint().channel().available
+    SettingsSelect(
+        label = stringResource(R.string.games_core_source_default),
+        options = listOf(SettingsSelectOption(
+            text = stringResource(R.string.games_core_source_inherit, stringResource(inherited.titleRes())),
+            selected = own == null,
+            onClick = { onSelect(null) },
+        )) + GameCoreSource.regular.map { source ->
+            SettingsSelectOption(
+                text = stringResource(source.titleRes()),
+                selected = own == source,
+                enabled = source == GameCoreSource.AUTO || source == GameCoreSource.BUILDBOT || channelAvailable,
+                onClick = { onSelect(source) },
+            )
+        },
+    )
 }
 
 /** Removing a file or core always asks first, like save states and shader packs. */
@@ -323,7 +348,7 @@ internal fun GamesShaderPacks() {
 }
 
 @Composable
-internal fun GamesCores(onlyCoreId: String? = null) {
+internal fun GamesCores(onlyCoreId: String? = null, system: com.ambient.tv.games.GameSystem? = null) {
     val context = LocalContext.current
     val entry = gamesEntryPoint()
     val cores = entry.cores()
@@ -341,7 +366,8 @@ internal fun GamesCores(onlyCoreId: String? = null) {
         downloads[core.id] = null
         scope.launch {
             try {
-                cores.download(core, source) { value -> downloads[core.id] = value }
+                val resolved = cores.resolvePreferredSource(core, source, preferInstalled = false)
+                cores.download(core, resolved) { value -> downloads[core.id] = value }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: GameCoreBuildbotConsentRequired) {
@@ -382,7 +408,7 @@ internal fun GamesCores(onlyCoreId: String? = null) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsSubheader(stringResource(R.string.games_cores))
         SettingsHint(stringResource(R.string.games_cores_hint))
-        val source = GameSettings.state.coreSource
+        val source = system?.let { GameSettings.state.systemCoreSource(it) } ?: GameSettings.state.coreSource
         if (onlyCoreId == null) {
             SettingsSelect(
                 label = stringResource(R.string.games_core_source),
@@ -390,35 +416,31 @@ internal fun GamesCores(onlyCoreId: String? = null) {
                     GameCoreSource.AUTO -> stringResource(R.string.games_core_source_auto_hint)
                     GameCoreSource.AMBIENT -> stringResource(if (entry.channel().available)
                         R.string.games_core_source_ambient_hint else R.string.games_core_source_unavailable)
+                    GameCoreSource.OPTIMIZED -> stringResource(R.string.games_core_source_optimized_hint)
+                    GameCoreSource.OPTIMIZED_A57 -> stringResource(R.string.games_core_source_a57_hint)
                     else -> null
                 },
                 options = GameCoreSource.regular.map { option ->
                     SettingsSelectOption(
                         text = stringResource(option.titleRes()),
                         selected = option == source,
-                        enabled = (option == GameCoreSource.AUTO || option == GameCoreSource.BUILDBOT || entry.channel().available) &&
-                            (option != GameCoreSource.OPTIMIZED_A57 || cores.abi == "arm64-v8a"),
+                        enabled = option == GameCoreSource.AUTO || option == GameCoreSource.BUILDBOT || entry.channel().available,
                         onClick = { GameSettings.update { it.withCoreSource(option) } },
                     )
                 },
-            )
-            TvSettingRow(
-                title = stringResource(R.string.games_core_tests_enable),
-                body = stringResource(R.string.games_core_tests_enable_hint),
-                checked = GameSettings.state.coreExperimentsEnabled,
-                onCheckedChange = { enabled -> GameSettings.update { it.withCoreExperimentsEnabled(enabled) } },
             )
         }
         failed?.let { SettingsHint(it) }
         val ordered = remember(version, source) {
             GameSystems.cores.filter { onlyCoreId == null || it.id == onlyCoreId }
-                .sortedWith(compareBy<GameCore>({ cores.info(it, source) == null }, { it.name.lowercase() }))
+                .sortedWith(compareBy<GameCore>({ cores.info(it, cores.installedPreferredSource(it, source) ?: source) == null }, { it.name.lowercase() }))
         }
         ordered.forEach { core ->
             key(core.id) {
                 val systems = GameSystems.alphabetical.filter { system -> system.cores.any { it.id == core.id } }.joinToString(", ") { it.name }
-                val info = remember(version, source) { cores.info(core, source) }
-                val matchesSource = remember(version, source) { cores.installed(core, source) != null }
+                val actualSource = remember(version, source) { cores.installedPreferredSource(core, source) ?: source }
+                val info = remember(version, actualSource) { cores.info(core, actualSource) }
+                val matchesSource = remember(version, actualSource) { cores.installed(core, actualSource) != null }
                 val progress = downloads[core.id]
                 val downloading = core.id in downloads
                 SettingsGroup(
@@ -445,6 +467,9 @@ internal fun GamesCores(onlyCoreId: String? = null) {
                     collapsible = onlyCoreId == null,
                 ) {
                     SettingsHint(stringResource(R.string.games_core_summary, systems, core.license))
+                    if (info != null && actualSource != source) SettingsHint(stringResource(
+                        R.string.games_core_source_fallback, stringResource(actualSource.titleRes()),
+                    ))
                     if (info != null && !matchesSource) SettingsHint(stringResource(
                         R.string.games_core_source_mismatch, stringResource(source.titleRes()),
                     ))
@@ -453,15 +478,14 @@ internal fun GamesCores(onlyCoreId: String? = null) {
                             text = stringResource(if (matchesSource) R.string.games_core_update else R.string.game_core_load),
                             loading = downloading,
                             enabled = !downloading && cores.abi?.let { core.supportedAbis.isEmpty() || it in core.supportedAbis } == true &&
-                                (source == GameCoreSource.AUTO || source == GameCoreSource.BUILDBOT || entry.channel().available) &&
-                                (source.experimentalProfile == null || cores.abi.let { source.supportsExperiment(core, it) } == true),
+                                (source == GameCoreSource.AUTO || source == GameCoreSource.BUILDBOT || entry.channel().available),
                             onClick = { download(core, source) },
                         )
-                        if (remember(version, source) { cores.canRollback(core, source) }) TvActionButton(
+                        if (remember(version, actualSource) { cores.canRollback(core, actualSource) }) TvActionButton(
                             text = stringResource(R.string.games_core_rollback),
                             enabled = !downloading,
                             onClick = {
-                                if (!cores.rollback(core, source)) {
+                                if (!cores.rollback(core, actualSource)) {
                                     failed = context.getString(R.string.games_core_rollback_failed, core.name)
                                 }
                                 version++
@@ -470,7 +494,7 @@ internal fun GamesCores(onlyCoreId: String? = null) {
                         if (info != null) TvActionButton(
                             text = stringResource(R.string.game_core_remove),
                             enabled = !downloading,
-                            onClick = { removing = core to source },
+                            onClick = { removing = core to actualSource },
                         )
                     }
                     if (info != null) GameCoreOptionsSettings(core, cores.declaredOptions(core))

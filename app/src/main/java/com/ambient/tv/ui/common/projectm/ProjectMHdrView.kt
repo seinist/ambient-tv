@@ -105,12 +105,12 @@ internal class ProjectMHdrView(context: Context) : GLSurfaceView(context) {
         }
     }
 
-    fun updateHdr(request: SdrToHdrRequest?, enabled: Boolean): SdrToHdrStatus {
+    fun updateHdr(request: SdrToHdrRequest?, enabled: Boolean, producerFps: Float = display?.refreshRate ?: 0f): SdrToHdrStatus {
         if (request == null || !enabled || released || unsafe || !hostRunning || Build.VERSION.SDK_INT < 34)
             return stopHdr()
         val frame = holder.surfaceFrame
         return output.update(request.copy(peakNits = 300, referenceWhiteNits = 0), VulkanNativeProbe.available,
-            frame.width(), frame.height(), display?.refreshRate ?: 0f)
+            frame.width(), frame.height(), producerFps)
     }
 
     fun releaseHdr() {

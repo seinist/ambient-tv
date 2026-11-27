@@ -374,6 +374,20 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
     fun withCoreSource(source: GameCoreSource): GameSettingsState =
         set("core_source", source.key.takeIf { source != GameCoreSource.AUTO && source in GameCoreSource.regular })
 
+    private fun ownCoreSource(key: String): GameCoreSource? =
+        values[key]?.let(GameCoreSource::fromKey)?.takeIf { it in GameCoreSource.regular }
+
+    fun ownSystemCoreSource(system: GameSystem): GameCoreSource? = ownCoreSource("syscoresource.${system.id}")
+    fun systemCoreSource(system: GameSystem): GameCoreSource = ownSystemCoreSource(system) ?: coreSource
+    fun withSystemCoreSource(system: GameSystem, source: GameCoreSource?): GameSettingsState =
+        set("syscoresource.${system.id}", source?.takeIf { it in GameCoreSource.regular }?.key)
+
+    fun ownGameCoreSource(gameKey: String): GameCoreSource? = ownCoreSource("gamecoresource.$gameKey")
+    fun gameCoreSource(system: GameSystem, gameKey: String): GameCoreSource =
+        ownGameCoreSource(gameKey) ?: systemCoreSource(system)
+    fun withGameCoreSource(gameKey: String, source: GameCoreSource?): GameSettingsState =
+        set("gamecoresource.$gameKey", source?.takeIf { it in GameCoreSource.regular }?.key)
+
     internal fun migrateCoreSource(): GameSettingsState =
         if (GameCoreSource.fromKey(values["core_source"]) !in GameCoreSource.regular) {
             withCoreSource(GameCoreSource.AUTO).withCoreExperimentsEnabled(true)

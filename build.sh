@@ -468,6 +468,9 @@ projectm_libs_ready() {
     [[ -f "$marker" ]] || return 1
     grep -Fx "projectm_ref=${expected_ref}" "$marker" >/dev/null || return 1
     grep -Fx "pcm_tap_api=1" "$marker" >/dev/null || return 1
+    local fingerprint
+    fingerprint="$(bash "$PROJECTM_SCRIPT" --fingerprint)" || return 1
+    grep -Fx "fingerprint=${fingerprint}" "$marker" >/dev/null || return 1
     for abi in "${SUPPORTED_ABIS[@]}"; do
         local dir="$ROOT_DIR/app/src/main/jniLibs/$abi"
         [[ -s "$dir/libprojectM-4.so" && -s "$dir/libambientprojectm.so" ]] || return 1

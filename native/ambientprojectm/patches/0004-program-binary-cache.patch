@@ -1,0 +1,165 @@
+diff --git a/src/libprojectM/Renderer/Shader.cpp b/src/libprojectM/Renderer/Shader.cpp
+--- a/src/libprojectM/Renderer/Shader.cpp
++++ b/src/libprojectM/Renderer/Shader.cpp
+@@ -3,10 +3,111 @@
+ #include <glm/gtc/type_ptr.hpp>
+ 
+ #include <vector>
++#if defined(__ANDROID__) && defined(AMBIENT_PROJECTM_PROGRAM_CACHE)
++#include <algorithm>
++#include <list>
++#include <memory>
++#include <mutex>
++#endif
+ 
+ namespace libprojectM {
+ namespace Renderer {
+ 
++#if defined(__ANDROID__) && defined(AMBIENT_PROJECTM_PROGRAM_CACHE)
++namespace {
++struct ProgramBinary {
++    GLenum format{};
++    std::vector<unsigned char> data;
++};
++
++struct CacheEntry {
++    std::string key;
++    std::shared_ptr<const ProgramBinary> binary;
++};
++
++class ProgramCache {
++public:
++    struct Probe {
++        bool repeated{};
++        std::shared_ptr<const ProgramBinary> binary;
++    };
++
++    Probe Find(const std::string& key) {
++        std::lock_guard<std::mutex> guard(m_mutex);
++        auto it = FindLocked(key);
++        if (it == m_entries.end()) {
++            m_entries.push_front({key, {}});
++            TrimLocked();
++            return {};
++        }
++        m_entries.splice(m_entries.begin(), m_entries, it);
++        return {true, m_entries.front().binary};
++    }
++
++    void Store(const std::string& key, std::shared_ptr<const ProgramBinary> binary) {
++        std::lock_guard<std::mutex> guard(m_mutex);
++        auto it = FindLocked(key);
++        if (it != m_entries.end()) m_entries.erase(it);
++        m_entries.push_front({key, std::move(binary)});
++        TrimLocked();
++    }
++
++    void Reject(const std::string& key, const std::shared_ptr<const ProgramBinary>& binary) {
++        std::lock_guard<std::mutex> guard(m_mutex);
++        auto it = FindLocked(key);
++        if (it != m_entries.end() && it->binary == binary) it->binary.reset();
++    }
++
++private:
++    using Entries = std::list<CacheEntry>;
++    Entries::iterator FindLocked(const std::string& key) {
++        return std::find_if(m_entries.begin(), m_entries.end(),
++            [&key](const CacheEntry& entry) { return entry.key == key; });
++    }
++
++    void TrimLocked() {
++        size_t bytes = 0;
++        for (const auto& entry : m_entries)
++            bytes += entry.key.size() + (entry.binary ? entry.binary->data.size() : 0);
++        while (m_entries.size() > 64 || bytes > 16 * 1024 * 1024) {
++            const auto& entry = m_entries.back();
++            bytes -= entry.key.size() + (entry.binary ? entry.binary->data.size() : 0);
++            m_entries.pop_back();
++        }
++    }
++
++    std::mutex m_mutex;
++    Entries m_entries;
++};
++
++ProgramCache& BinaryCache() {
++    static ProgramCache cache;
++    return cache;
++}
++
++// GL program binaries are opaque driver data. Never share across different GL
++// implementations or source strings, and never cache unbounded preset source text.
++std::string BinaryKey(const std::string& vertex, const std::string& fragment) {
++    if (vertex.size() + fragment.size() > 128 * 1024) return {};
++    GLint formats = 0;
++    glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &formats);
++    if (formats <= 0) return {};
++    std::string key;
++    for (GLenum name : {GL_VENDOR, GL_RENDERER, GL_VERSION, GL_SHADING_LANGUAGE_VERSION}) {
++        auto value = glGetString(name);
++        if (!value) return {};
++        key.append(reinterpret_cast<const char*>(value));
++        key.push_back('\0');
++    }
++    key.append(std::to_string(vertex.size()));
++    key.push_back('\0');
++    key.append(vertex);
++    key.append(fragment);
++    return key;
++}
++} // namespace
++#endif
++
+ Shader::Shader()
+     : m_shaderProgram(glCreateProgram())
+ {
+@@ -23,6 +124,26 @@
+ void Shader::CompileProgram(const std::string& vertexShaderSource,
+                             const std::string& fragmentShaderSource)
+ {
++#if defined(__ANDROID__) && defined(AMBIENT_PROJECTM_PROGRAM_CACHE)
++    const auto key = BinaryKey(vertexShaderSource, fragmentShaderSource);
++    ProgramCache::Probe cached;
++    if (!key.empty()) {
++        cached = BinaryCache().Find(key);
++        if (cached.binary) {
++            m_uniformLocations.clear();
++            glProgramBinary(m_shaderProgram, cached.binary->format, cached.binary->data.data(),
++                static_cast<GLsizei>(cached.binary->data.size()));
++            GLint linked = GL_FALSE;
++            glGetProgramiv(m_shaderProgram, GL_LINK_STATUS, &linked);
++            if (linked == GL_TRUE) return;
++            BinaryCache().Reject(key, cached.binary);
++        }
++        // Avoid paying extraction cost for one-off preset shaders. Only programs
++        // encountered again qualify, and each binary is bounded to 4 MiB.
++        if (cached.repeated)
++            glProgramParameteri(m_shaderProgram, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
++    }
++#endif
+     auto vertexShader = CompileShader(vertexShaderSource, GL_VERTEX_SHADER);
+     auto fragmentShader = CompileShader(fragmentShaderSource, GL_FRAGMENT_SHADER);
+ 
+@@ -42,6 +163,22 @@
+     glGetProgramiv(m_shaderProgram, GL_LINK_STATUS, &programLinked);
+     if (programLinked == GL_TRUE)
+     {
++#if defined(__ANDROID__) && defined(AMBIENT_PROJECTM_PROGRAM_CACHE)
++        if (!key.empty() && cached.repeated) {
++            GLint bytes = 0;
++            glGetProgramiv(m_shaderProgram, GL_PROGRAM_BINARY_LENGTH, &bytes);
++            if (bytes > 0 && bytes <= 4 * 1024 * 1024) {
++                auto binary = std::make_shared<ProgramBinary>();
++                binary->data.resize(static_cast<size_t>(bytes));
++                GLsizei written = 0;
++                glGetProgramBinary(m_shaderProgram, bytes, &written, &binary->format, binary->data.data());
++                if (written > 0 && written <= bytes) {
++                    binary->data.resize(static_cast<size_t>(written));
++                    BinaryCache().Store(key, std::move(binary));
++                }
++            }
++        }
++#endif
+         return;
+     }
+ 
