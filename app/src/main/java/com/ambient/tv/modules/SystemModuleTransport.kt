@@ -33,6 +33,43 @@ internal class SystemModuleTransport {
         }
     }
 
+    /** Discover a named release; the selected manifest is authenticated by install(). */
+    fun latestTag(module: SystemModule): String? {
+        for (page in 1..10) {
+            val url = HttpUrl.Builder().scheme("https").host("api.github.com")
+                .addPathSegments("repos/seinist/ambient-tv/releases")
+                .addQueryParameter("per_page", "100").addQueryParameter("page", page.toString()).build()
+            val request = Request.Builder().url(url).header("Accept", "application/vnd.github+json")
+                .header("Accept-Encoding", "identity").build()
+            val raw = client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw IOException("Module catalog HTTP ${response.code}")
+                val body = response.body ?: throw IOException("Missing release catalog")
+                if (body.contentLength() > 8 * 1024 * 1024) throw IOException("Release catalog too large")
+                val out = java.io.ByteArrayOutputStream()
+                body.byteStream().use { input ->
+                    val buffer = ByteArray(16384)
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n == -1) break
+                        if (n == 0 || n > 8 * 1024 * 1024 - out.size()) throw IOException("Release catalog exceeds bounds")
+                        out.write(buffer, 0, n)
+                    }
+                }
+                out.toString("UTF-8")
+            }
+            val releases = org.json.JSONArray(raw)
+            for (i in 0 until releases.length()) {
+                val item = releases.getJSONObject(i)
+                val tag = item.optString("tag_name")
+                if (!item.optBoolean("draft") && !item.optBoolean("prerelease") &&
+                    tag.startsWith("modules-${module.id}-") &&
+                    Regex("modules-[A-Za-z0-9][A-Za-z0-9._-]{0,100}").matches(tag)) return tag
+            }
+            if (releases.length() < 100) return null
+        }
+        throw IOException("Module release history exceeds search limit")
+    }
+
     private fun releaseUrl(tag: String, asset: String): HttpUrl = HttpUrl.Builder()
         .scheme("https").host("github.com")
         .addPathSegments("seinist/ambient-tv/releases/download")
