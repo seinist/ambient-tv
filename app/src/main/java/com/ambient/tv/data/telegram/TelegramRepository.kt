@@ -21,6 +21,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 
 /** Current native sign-in stage. Phone codes/passwords are NEVER persisted or logged. */
 enum class MonogramLoginStep { UNAVAILABLE, READY, QR, CODE, PASSWORD, AUTHORIZED, ERROR }
@@ -60,10 +61,12 @@ class TelegramTransferPriority(foreground: Boolean) {
     @Volatile var foreground = foreground
         private set
     private var promoteNative: (() -> Unit)? = null
+    private var promoteAdmission: (() -> Unit)? = null
 
     fun promote(): Unit = synchronized(lock) {
         if (!foreground) {
             foreground = true
+            promoteAdmission?.invoke()
             promoteNative?.invoke()
         }
     }
@@ -74,6 +77,47 @@ class TelegramTransferPriority(foreground: Boolean) {
     }
 
     fun unbind(): Unit = synchronized(lock) { promoteNative = null }
+    internal fun bindAdmission(callback: (() -> Unit)?) = synchronized(lock) { promoteAdmission = callback }
+}
+
+/** Demand-first bounded admission. Promotion wakes a queued speculative request.
+ * No monitor is held across suspension or native calls. */
+internal class MonogramThumbnailAdmission(private val capacity: Int = 6, private val speculativeCapacity: Int = 2) {
+    private val lock = Any()
+    private val changed = MutableStateFlow(0L)
+    private val queued = ArrayList<TelegramTransferPriority>()
+    private val running = ArrayList<TelegramTransferPriority>()
+
+    private fun signal() = synchronized(lock) { changed.value++ }
+
+    suspend fun <T> withPermit(priority: TelegramTransferPriority, block: suspend () -> T): T {
+        synchronized(lock) { queued.add(priority); changed.value++ }
+        priority.bindAdmission { signal() }
+        try {
+            while (true) {
+                val revision = synchronized(lock) {
+                    val next = queued.firstOrNull { it.foreground }
+                        ?: queued.firstOrNull()?.takeIf { running.count { !it.foreground } < speculativeCapacity }
+                    if (next === priority && running.size < capacity) {
+                        queued.remove(priority)
+                        running.add(priority)
+                        changed.value++
+                        null
+                    } else changed.value
+                }
+                if (revision == null) break
+                changed.first { it != revision }
+            }
+            return block()
+        } finally {
+            priority.bindAdmission(null)
+            synchronized(lock) {
+                queued.remove(priority)
+                running.remove(priority)
+                changed.value++
+            }
+        }
+    }
 }
 
 interface TelegramClientPort {
@@ -854,7 +898,7 @@ class TelegramRepository @Inject constructor(
      * Card images load a few at a time: two made a scrolled grid fill very slowly; the native
      * media lanes spread six, and getFile of preview sizes rarely hits FLOOD_WAIT.
      */
-    private val thumbnailPermits = kotlinx.coroutines.sync.Semaphore(6)
+    private val thumbnailPermits = MonogramThumbnailAdmission()
 
     /** Of those six, the page prefetch may hold two: the cards being drawn always get the rest. */
     private val prefetchPermits = kotlinx.coroutines.sync.Semaphore(
@@ -995,7 +1039,7 @@ class TelegramRepository @Inject constructor(
             val key = "$generation:$chatId:$messageId:$revision:$target"
             if (thumbnailMisses.isRecent(key)) return null
             if (!priority.foreground) awaitInteractiveIdle { !priority.foreground }
-            thumbnailPermits.withPermit {
+            thumbnailPermits.withPermit(priority) {
                 if (!valid() || thumbnailMisses.isRecent(key)) null else {
                     val result = selected.thumbnail(chatId, messageId, priority, target)
                     // Only an ordinary null result, never a cancelled request or thrown
