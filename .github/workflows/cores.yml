@@ -1,4 +1,4 @@
-name: Cores
+name: Cores (PR and single profile)
 
 # Builds the pinned libretro cores of cores/cores.json from source with the app's NDK (16 KB
 # pages checked) and, when publishing, puts them into a signed "cores-…" release. The app's
@@ -66,7 +66,7 @@ on:
     paths:
       - cores/cores.json
       - .github/workflows/cores.yml
-      - .github/workflows/cores-experimental.yml
+      - .github/workflows/cores-all.yml
       - cores/signing-public.pem
       - scripts/core_build_policy.py
       - scripts/core_release_incremental.py
@@ -79,24 +79,6 @@ on:
       - scripts/test_core_hotpath_patches.py
       - scripts/test_core_build_policy.py
       - scripts/check_elf_pages.py
-  push:
-    branches: [main]
-    paths:
-      - cores/cores.json
-      - .github/workflows/cores.yml
-      - .github/workflows/cores-experimental.yml
-      - cores/signing-public.pem
-      - scripts/check_elf_pages.py
-      - scripts/core_build_policy.py
-      - scripts/core_release_incremental.py
-      - scripts/test_core_release_incremental.py
-      - scripts/core_acceleration_audit.py
-      - scripts/core_link_evidence.py
-      - scripts/core_hotpath_patches.py
-      - scripts/core_hotpath_remaining.py
-      - scripts/test_core_hotpath_remaining.py
-      - scripts/test_core_hotpath_patches.py
-      - scripts/test_core_build_policy.py
 
 concurrency:
   group: cores-${{ github.ref }}-${{ inputs.publish_experimental && format('release-experimental-{0}', inputs.profile) || ((github.event_name == 'push' || inputs.publish) && 'release' || (github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || 'pr')) }}
@@ -111,7 +93,7 @@ env:
 jobs:
   rename-releases:
     # Normalize existing display titles on main only, without modifying signed assets or tags.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !inputs.publish_experimental
+    if: github.ref == 'refs/heads/main' && !inputs.publish_experimental && (github.event_name == 'push' || inputs.publish)
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -398,7 +380,7 @@ jobs:
           assert_current_recipe() {
             git fetch --no-tags --depth=1 origin refs/heads/main
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- cores/cores.json cores/signing-public.pem \
-                .github/workflows/cores.yml .github/workflows/cores-experimental.yml scripts/core_build_policy.py scripts/core_acceleration_audit.py \
+                .github/workflows/cores.yml .github/workflows/cores-all.yml scripts/core_build_policy.py scripts/core_acceleration_audit.py \
                 scripts/core_link_evidence.py scripts/check_elf_pages.py scripts/core_release_incremental.py \
                 scripts/core_hotpath_patches.py scripts/core_hotpath_remaining.py; then
               echo "::error::Core release inputs changed on main; dispatch a fresh release"
@@ -414,7 +396,7 @@ jobs:
           else
             [ "$PROFILE" = baseline ] || exit 1
             prefix="core-"
-            tag="cores-$(date -u +%Y%m%d)-$GITHUB_RUN_NUMBER-$GITHUB_RUN_ATTEMPT"
+            tag="cores-$(date -u +%Y%m%d)-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           fi
           jq -e --arg p "$PROFILE" 'all(.include[]; .profile == $p)' <<< "$EXPECTED_MATRIX" >/dev/null
           mapfile -t expected < <(jq -r '.include[] | "\(.artifact)/\(.core)_libretro_android.so"' <<< "$EXPECTED_MATRIX")
