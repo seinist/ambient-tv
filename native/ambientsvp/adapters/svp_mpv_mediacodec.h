@@ -35,6 +35,7 @@ struct svp_mc_state {
     VkQueue queue;
     uint32_t family;
     unsigned width,height;
+    bool high_depth;
     jobject surface;
     JavaVM *vm;
     AmbientSvpMediaReader *(*reader_create)(uint32_t,uint32_t);
@@ -49,6 +50,8 @@ struct svp_mc_state {
     int (*submit)(const AmbientSvpAhbImporter *,AmbientSvpMediaFrame **,uint32_t,
         const AmbientSvpAhbDestination *,AmbientSvpAhbJob **);
     int (*release)(AmbientSvpAhbJob *,VkFence);
+    int (*submit_format)(const AmbientSvpAhbImporter *,AmbientSvpMediaFrame **,uint32_t,
+        const AmbientSvpAhbDestination *,AmbientSvpAhbJob **);
     PFN_vkCreateImageView create_view;
     PFN_vkDestroyImageView destroy_view;
     struct svp_mc_job jobs[MC_SLOTS];
@@ -177,7 +180,10 @@ static int svp_mc_init(struct ra_hwdec *hw)
         s->vkdev->nb_enabled_dev_extensions,1);
     if (!s->importer) goto fail;
     // PRIVATE reader dimensions are placeholders until MediaCodec connects.
-    s->reader=s->reader_create(64,64);
+    AmbientSvpMediaReader *(*create_format)(uint32_t,uint32_t,uint32_t)=
+        dlsym(s->lib,"ambient_svp_mediacodec_reader_create_format");
+    s->submit_format=dlsym(s->lib,"ambient_svp_ahb_submit_into_format");
+    s->reader=(create_format && s->submit_format)?create_format(64,64,1):s->reader_create(64,64);
     if (!s->reader) goto fail;
     JNIEnv *env=MP_JNI_GET_ENV(hw);
     if (!env || (*env)->GetJavaVM(env,&s->vm)!=JNI_OK) goto fail;
@@ -209,13 +215,13 @@ static void svp_mc_uninit(struct ra_hwdec *hw)
     av_buffer_unref(&p->mc.av_device_ref);
     vulkan_uninit(hw);
 }
-static bool svp_mc_pool(struct svp_mc_state *s,unsigned w,unsigned h)
+static bool svp_mc_pool(struct svp_mc_state *s,unsigned w,unsigned h,bool high)
 {
-    if (s->frames && s->width==w && s->height==h) return true;
+    if (s->frames && s->width==w && s->height==h && s->high_depth==high) return true;
     AVBufferRef *ref=av_hwframe_ctx_alloc(s->vkref);
     if (!ref) return false;
     AVHWFramesContext *fc=(AVHWFramesContext *)ref->data;
-    fc->format=AV_PIX_FMT_VULKAN;fc->sw_format=AV_PIX_FMT_RGBA;
+    fc->format=AV_PIX_FMT_VULKAN;fc->sw_format=high?AV_PIX_FMT_RGBAF16:AV_PIX_FMT_RGBA;
     fc->width=w;fc->height=h;
     AVVulkanFramesContext *v=fc->hwctx;
     v->usage=VK_IMAGE_USAGE_STORAGE_BIT|VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -224,7 +230,7 @@ static bool svp_mc_pool(struct svp_mc_state *s,unsigned w,unsigned h)
         av_buffer_unref(&ref);return false;
     }
     av_buffer_unref(&s->frames);
-    s->frames=ref;s->width=w;s->height=h;
+    s->frames=ref;s->width=w;s->height=h;s->high_depth=high;
     return true;
 }
 
@@ -239,23 +245,29 @@ int mp_svp_mediacodec_convert(AVBufferRef *device,AVCodecContext *avctx,AVFrame 
     AVHWDeviceContext *mc=(AVHWDeviceContext *)device->data;
     if (mc->type!=AV_HWDEVICE_TYPE_MEDIACODEC || mc->free!=svp_mc_device_free) return 0;
     struct svp_mc_state *s=mc->user_opaque;
-    // Only explicit 8-bit SDR stream metadata. No HDR reinterpretation.
     const AVPixFmtDescriptor *desc=av_pix_fmt_desc_get(avctx->sw_pix_fmt);
+    bool high=desc && desc->comp[0].depth==10;
+    bool hdr=src->color_trc==AVCOL_TRC_SMPTE2084 || src->color_trc==AVCOL_TRC_ARIB_STD_B67;
+    bool sdr=(src->color_trc==AVCOL_TRC_BT709 || src->color_trc==AVCOL_TRC_SMPTE170M ||
+              src->color_trc==AVCOL_TRC_IEC61966_2_1);
+    bool standard_sdr=(src->color_primaries==AVCOL_PRI_BT709 || src->color_primaries==AVCOL_PRI_BT470BG ||
+                       src->color_primaries==AVCOL_PRI_SMPTE170M) &&
+                      (src->colorspace==AVCOL_SPC_BT709 || src->colorspace==AVCOL_SPC_BT470BG ||
+                       src->colorspace==AVCOL_SPC_SMPTE170M);
+    int depth=high?10:8;
     if (!desc || desc->nb_components!=3 || (desc->flags&AV_PIX_FMT_FLAG_RGB) ||
-        desc->comp[0].depth!=8 || desc->comp[1].depth!=8 || desc->comp[2].depth!=8 ||
+        desc->comp[0].depth!=depth || desc->comp[1].depth!=depth || desc->comp[2].depth!=depth ||
         desc->log2_chroma_w!=1 || desc->log2_chroma_h!=1 ||
-        (src->color_trc!=AVCOL_TRC_BT709 && src->color_trc!=AVCOL_TRC_SMPTE170M &&
-         src->color_trc!=AVCOL_TRC_IEC61966_2_1) ||
-        (src->color_primaries!=AVCOL_PRI_BT709 && src->color_primaries!=AVCOL_PRI_BT470BG &&
-         src->color_primaries!=AVCOL_PRI_SMPTE170M) ||
-        (src->colorspace!=AVCOL_SPC_BT709 && src->colorspace!=AVCOL_SPC_BT470BG &&
-         src->colorspace!=AVCOL_SPC_SMPTE170M) ||
+        (high?(!s->submit_format || !hdr || src->color_primaries!=AVCOL_PRI_BT2020 ||
+               src->colorspace!=AVCOL_SPC_BT2020_NCL):(!sdr || !standard_sdr)) ||
         (src->color_range!=AVCOL_RANGE_MPEG && src->color_range!=AVCOL_RANGE_JPEG) ||
         src->pts==AV_NOPTS_VALUE ||
         src->pts<0 || !src->data[3] || src->width<32 || src->height<32 ||
         (src->width|src->height)&1 || (uint64_t)src->width*src->height>1920u*1080u ||
         (src->flags&AV_FRAME_FLAG_INTERLACED) ||
-        av_frame_get_side_data(src,AV_FRAME_DATA_DOVI_METADATA)) return -1;
+        av_frame_get_side_data(src,AV_FRAME_DATA_DOVI_METADATA) ||
+        av_frame_get_side_data(src,AV_FRAME_DATA_DOVI_RPU_BUFFER) ||
+        av_frame_get_side_data(src,AV_FRAME_DATA_DYNAMIC_HDR_PLUS)) return -1;
     // Reserve a slot and prepare the output pool before consuming decoder
     // output. A bounded wait is only for backpressure, not a per-frame wait.
     unsigned slot=MC_SLOTS;
@@ -264,7 +276,7 @@ int mp_svp_mediacodec_convert(AVBufferRef *device,AVCodecContext *avctx,AVFrame 
         for (unsigned k=0;k<MC_SLOTS;k++) if (!s->jobs[k].job) {slot=k;break;}
         if (slot==MC_SLOTS) svp_mc_sleep();
     }
-    if (slot==MC_SLOTS || !svp_mc_pool(s,src->width,src->height)) return -1;
+    if (slot==MC_SLOTS || !svp_mc_pool(s,src->width,src->height,high)) return -1;
     AVFrame *out=av_frame_alloc(),*retained=NULL;
     VkImageView view=VK_NULL_HANDLE;
     AmbientSvpMediaFrame *frame=NULL;
@@ -273,9 +285,10 @@ int mp_svp_mediacodec_convert(AVBufferRef *device,AVCodecContext *avctx,AVFrame 
     AVHWFramesContext *fc=(AVHWFramesContext *)out->hw_frames_ctx->data;
     AVVulkanFramesContext *v=fc->hwctx;
     AVVkFrame *vkf=(AVVkFrame *)out->data[0];
-    if (!vkf || !vkf->img[0] || vkf->img[1] || v->format[0]!=VK_FORMAT_R8G8B8A8_UNORM) goto fail;
+    VkFormat format=high?VK_FORMAT_R16G16B16A16_SFLOAT:VK_FORMAT_R8G8B8A8_UNORM;
+    if (!vkf || !vkf->img[0] || vkf->img[1] || v->format[0]!=format) goto fail;
     VkImageViewCreateInfo vi={.sType=VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,.image=vkf->img[0],
-        .viewType=VK_IMAGE_VIEW_TYPE_2D,.format=VK_FORMAT_R8G8B8A8_UNORM,
+        .viewType=VK_IMAGE_VIEW_TYPE_2D,.format=format,
         .subresourceRange={.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT,.levelCount=1,.layerCount=1}};
     if (s->create_view(s->vkdev->act_dev,&vi,NULL,&view)!=VK_SUCCESS) goto fail;
     retained=av_frame_clone(out);
@@ -301,7 +314,8 @@ int mp_svp_mediacodec_convert(AVBufferRef *device,AVCodecContext *avctx,AVFrame 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     s->vkdev->lock_queue(s->avdev,s->family,0);
-    int rc=s->submit(s->importer,&frame,1,&dest,&job);
+    int rc=high?s->submit_format(s->importer,&frame,src->color_range==AVCOL_RANGE_JPEG?6:4,&dest,&job):
+        s->submit(s->importer,&frame,1,&dest,&job);
     s->vkdev->unlock_queue(s->avdev,s->family,0);
 #pragma GCC diagnostic pop
     if (!rc) {
