@@ -18,8 +18,8 @@ def replacement(core, needle):
 
 class RemainingCoreHotpathTests(unittest.TestCase):
     def test_exact_anchor_application_and_atomic_rejection(self):
-        self.assertEqual(len(PATCHES), 31)
-        self.assertEqual(sum(map(len, PATCHES.values())), 62)
+        self.assertEqual(len(PATCHES), 39)
+        self.assertEqual(sum(map(len, PATCHES.values())), 88)
         for core, changes in PATCHES.items():
             with self.subTest(core=core), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)

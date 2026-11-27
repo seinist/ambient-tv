@@ -372,6 +372,152 @@ PATCHES = {
       "    bool bitmasks = false;\n    if (cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, &bitmasks))\n        core.use_input_bitmasks = bitmasks;",
       "    // GET_INPUT_BITMASKS returns support in the return value, not through data.\n    core.use_input_bitmasks = cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, nullptr);"
     ]
+  ],
+  "a5200": [
+    [
+      "libretro/libretro.c",
+      "#include <math.h>",
+      "#include <math.h>\n#if defined(__ARM_NEON) || defined(__aarch64__)\n#include <arm_neon.h>\n#endif"
+    ],
+    [
+      "libretro/libretro.c",
+      "static void blend_frames_mix(void)\n{\n   uint16_t *curr = video_buffer;\n   uint16_t *prev = video_buffer_prev;\n   size_t x, y;\n\n   for (y = 0; y < A5200_VIDEO_HEIGHT; y++)\n   {\n      for (x = 0; x < A5200_VIDEO_WIDTH; x++)",
+      "static void blend_frames_mix(void)\n{\n   uint16_t *curr = video_buffer;\n   uint16_t *prev = video_buffer_prev;\n   size_t x, y;\n\n   for (y = 0; y < A5200_VIDEO_HEIGHT; y++)\n   {\n      x = 0;\n#if defined(__ARM_NEON) || defined(__aarch64__)\n      const uint16x8_t lsb = vdupq_n_u16(0x0821);\n      const uint16x8_t rest = vdupq_n_u16(0xF7DE);\n      for (; x + 8 <= A5200_VIDEO_WIDTH; x += 8) {\n         const uint16x8_t a = vld1q_u16(curr), b = vld1q_u16(prev);\n         const uint16x8_t diff = veorq_u16(a, b);\n         const uint16x8_t mixed = vaddq_u16(vaddq_u16(vandq_u16(a, b), vshrq_n_u16(vandq_u16(diff, rest), 1)), vandq_u16(diff, lsb));\n         vst1q_u16(prev, a); vst1q_u16(curr, mixed);\n         prev += 8; curr += 8;\n      }\n#endif\n      for (; x < A5200_VIDEO_WIDTH; x++)"
+    ],
+    [
+      "libretro/libretro.c",
+      "         /* Convert 8u mono to 16s stereo */\n         int16_t sample_16 = (int16_t)((*(samples_ptr++) - 128) << 8);\n\n         /* Apply low-pass filter */",
+      "         /* Multiplication avoids a left shift of a negative signed value. */\n         int16_t sample_16 = (int16_t)((*(samples_ptr++) - 128) * 256);\n\n         /* Apply low-pass filter */"
+    ],
+    [
+      "libretro/libretro.c",
+      "      for(i = 0; i < A5200_AUDIO_BUFFER_SIZE; i++)\n      {\n         /* Convert 8u mono to 16s stereo */\n         int16_t sample_16 = (int16_t)((*(samples_ptr++) - 128) << 8);\n\n         /* Update output buffer */",
+      "      i = 0;\n#if defined(__ARM_NEON) || defined(__aarch64__)\n      for (; i + 8 <= A5200_AUDIO_BUFFER_SIZE; i += 8) {\n         const uint16x8_t raw = vshll_n_u8(vld1_u8(samples_ptr), 8);\n         const int16x8_t samples = vreinterpretq_s16_u16(veorq_u16(raw, vdupq_n_u16(0x8000)));\n         int16x8x2_t stereo; stereo.val[0] = samples; stereo.val[1] = samples;\n         vst2q_s16(out_ptr, stereo);\n         samples_ptr += 8; out_ptr += 16;\n      }\n#endif\n      for(; i < A5200_AUDIO_BUFFER_SIZE; i++)\n      {\n         int16_t sample_16 = (int16_t)((*(samples_ptr++) - 128) * 256);\n\n         /* Update output buffer */"
+    ]
+  ],
+  "citra2018": [
+    [
+      "src/audio_core/libretro_sink.cpp",
+      "    std::vector<s16> buffer(frames * 2);\n\n    this->impl->cb(buffer.data(), buffer.size() / 2);\n\n    LibRetro::SubmitAudio(buffer.data(), buffer.size() / 2);",
+      "    // Typical submissions fit on the stack. Preserve the zero-filled buffer\n    // and allocate only for exceptional block sizes; no shared scratch state.\n    s16 local[2048];\n    if (frames <= 1024) {\n        std::fill_n(local, frames * 2, s16{0});\n        this->impl->cb(local, frames);\n        LibRetro::SubmitAudio(local, frames);\n    } else {\n        std::vector<s16> buffer(frames * 2);\n        this->impl->cb(buffer.data(), frames);\n        LibRetro::SubmitAudio(buffer.data(), frames);\n    }"
+    ],
+    [
+      "src/audio_core/libretro_sink.cpp",
+      "#include <list>",
+      "#include <algorithm>\n#include <list>"
+    ]
+  ],
+  "dolphin": [
+    [
+      "Source/Core/DolphinLibretro/Input.cpp",
+      "#include <array>",
+      "#include <array>\n#include <atomic>"
+    ],
+    [
+      "Source/Core/DolphinLibretro/Input.cpp",
+      "static retro_input_state_t input_cb = nullptr;",
+      "static retro_input_state_t input_cb = nullptr;\nstatic bool ambient_input_bitmasks = false;\n// One snapshot per port, published by Update() for the emulation thread.\n// A negative value means no snapshot, not an all-buttons-pressed mask.\nstatic std::atomic<int> ambient_joypad[8]{{-1}, {-1}, {-1}, {-1}, {-1}, {-1}, {-1}, {-1}};\nstatic void AmbientInvalidateJoypads()\n{\n  for (auto& mask : ambient_joypad)\n    mask.store(-1, std::memory_order_relaxed);\n}"
+    ],
+    [
+      "Source/Core/DolphinLibretro/Input.cpp",
+      "    ControlState GetState() const override { return input_cb(m_port, m_device, m_index, m_id); }",
+      "    ControlState GetState() const override\n    {\n      if (m_device == RETRO_DEVICE_JOYPAD && m_index == 0 && m_id < 16 && m_port < 8)\n      {\n        const int mask = ambient_joypad[m_port].load(std::memory_order_relaxed);\n        if (mask >= 0)\n          return (mask >> m_id) & 1;\n      }\n      return input_cb(m_port, m_device, m_index, m_id);\n    }"
+    ],
+    [
+      "Source/Core/DolphinLibretro/Input.cpp",
+      "void Init(const WindowSystemInfo& wsi)\n{",
+      "void Init(const WindowSystemInfo& wsi)\n{\n  AmbientInvalidateJoypads();\n  ambient_input_bitmasks = environ_cb && environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, nullptr);"
+    ],
+    [
+      "Source/Core/DolphinLibretro/Input.cpp",
+      "void Shutdown()\n{",
+      "void Shutdown()\n{\n  AmbientInvalidateJoypads();"
+    ],
+    [
+      "Source/Core/DolphinLibretro/Input.cpp",
+      "#endif\n\n  for (int i = 0; i < port_max; ++i)\n  {\n    UpdateAccelerometer(i);",
+      "#endif\n\n  if (ambient_input_bitmasks && input_cb)\n  {\n    for (int i = 0; i < 8; ++i)\n      ambient_joypad[i].store(i < port_max ? static_cast<uint16_t>(input_cb(i, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK)) : -1,\n                             std::memory_order_relaxed);\n  }\n  else\n    AmbientInvalidateJoypads();\n\n  for (int i = 0; i < port_max; ++i)\n  {\n    UpdateAccelerometer(i);"
+    ]
+  ],
+  "flycast": [
+    [
+      "shell/libretro/audiostream.cpp",
+      "static int16_t *audio_out_buffer = nullptr;",
+      "static std::vector<int16_t> audio_out_buffer;"
+    ],
+    [
+      "shell/libretro/audiostream.cpp",
+      "\taudio_out_buffer = (int16_t*)malloc(audio_buffer_size * sizeof(int16_t));",
+      "\taudio_out_buffer.resize(audio_buffer_size);"
+    ],
+    [
+      "shell/libretro/audiostream.cpp",
+      "\tif (audio_out_buffer != nullptr)\r\n\t\tfree(audio_out_buffer);\r\n\r\n\taudio_out_buffer = nullptr;",
+      "\tstd::vector<int16_t>().swap(audio_out_buffer);"
+    ],
+    [
+      "shell/libretro/audiostream.cpp",
+      "\tfor (size_t i = 0; i < audio_buffer_idx; i++)\r\n\t\taudio_out_buffer[i] = audio_buffer[i];",
+      "\t// Both vectors have the same fixed size; transfer ownership instead of copying.\r\n\taudio_out_buffer.swap(audio_buffer);"
+    ],
+    [
+      "shell/libretro/audiostream.cpp",
+      "\tint16_t *audio_out_buffer_ptr = audio_out_buffer;",
+      "\tint16_t *audio_out_buffer_ptr = audio_out_buffer.data();"
+    ]
+  ],
+  "mednafen_saturn": [
+    [
+      "mednafen/ss/vdp2_render.c",
+      "   const uint64_t mxor = masks[0] ^ masks[1];\n   for(; MDFN_LIKELY(x < WinPieces[piece]); x++)",
+      "   const uint64_t mxor = masks[0] ^ masks[1];\n#if defined(__aarch64__)\n   const uint64x2_t vmor = vdupq_n_u64(mor);\n   const uint64x2_t vmxor = vdupq_n_u64(mxor);\n   for (; x + 2 <= WinPieces[piece]; x += 2)\n   {\n    const uint64x2_t spr = vld1q_u64(LB.spr + x);\n    const uint64x2_t sel = vreinterpretq_u64_s64(vshrq_n_s64(vreinterpretq_s64_u64(vshlq_n_u64(spr, 63 - PIX_SWBIT_SHIFT)), 63));\n    const uint64x2_t value = vld1q_u64(buf + x);\n    vst1q_u64(buf + x, vandq_u64(value, veorq_u64(vmor, vandq_u64(sel, vmxor))));\n   }\n#endif\n   for(; MDFN_LIKELY(x < WinPieces[piece]); x++)"
+    ]
+  ],
+  "melondsds": [
+    [
+      "src/libretro/render/software.cpp",
+      "    for (uint32_t y = start.y; y < end.y; y++) {\n        for (uint32_t x = start.x; x < end.x; x++) {\n            // TODO: Replace with SIMD (does GLM have a SIMD version of this?)\n            uint32_t& pixel = buffer[uvec2(x, y)];\n            pixel = (0xFFFFFF - pixel) | 0xFF000000;\n        }\n    }",
+      "    // Contiguous rows let Clang vectorize the exact RGB inversion without\n    // repeating address calculations. The alpha byte remains forced to 0xff.\n    for (uint32_t y = start.y; y < end.y; y++) {\n        uint32_t* row = buffer[y];\n        for (uint32_t x = start.x; x < end.x; x++)\n            row[x] = ~row[x] | 0xFF000000u;\n    }"
+    ]
+  ],
+  "ppsspp": [
+    [
+      "libretro/libretro.cpp",
+      "} output_audio_buffer = {NULL, 0, 0};",
+      "} output_audio_buffer = {NULL, 0, 0};\n// Owned by the libretro thread between swaps; the producer never writes it.\nstatic decltype(output_audio_buffer) ambient_upload_buffer = {NULL, 0, 0};"
+    ],
+    [
+      "libretro/libretro.cpp",
+      "      output_audio_buffer.data = NULL;\n      output_audio_buffer.size = 0;\n      output_audio_buffer.capacity = 0;\n      ensure_output_audio_buffer_capacity(capacity);",
+      "      free(output_audio_buffer.data);\n      output_audio_buffer = {NULL, 0, 0};\n      free(ambient_upload_buffer.data);\n      ambient_upload_buffer = {NULL, 0, 0};\n      ensure_output_audio_buffer_capacity(capacity);\n      ambient_upload_buffer.data = static_cast<int16_t*>(malloc(capacity * sizeof(int16_t)));\n      if (ambient_upload_buffer.data)\n         ambient_upload_buffer.capacity = capacity;"
+    ],
+    [
+      "libretro/libretro.cpp",
+      "      free(output_audio_buffer.data);\n      output_audio_buffer.data = NULL;\n      output_audio_buffer.size = 0;\n      output_audio_buffer.capacity = 0;",
+      "      free(output_audio_buffer.data);\n      output_audio_buffer = {NULL, 0, 0};\n      free(ambient_upload_buffer.data);\n      ambient_upload_buffer = {NULL, 0, 0};"
+    ],
+    [
+      "libretro/libretro.cpp",
+      "      std::lock_guard<std::mutex> lock(output_audio_buffer_mutex);\n      if (output_audio_buffer.data && output_audio_buffer.size > 0)\n         audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);\n      output_audio_buffer.size = 0;",
+      "      {\n         std::lock_guard<std::mutex> lock(output_audio_buffer_mutex);\n         if (!output_audio_buffer.data || output_audio_buffer.size <= 0)\n            return;\n         auto filled = output_audio_buffer;\n         output_audio_buffer = ambient_upload_buffer;\n         ambient_upload_buffer = filled;\n         output_audio_buffer.size = 0;\n      }\n      // Do not block the emulation thread while the frontend consumes audio.\n      audio_batch_cb(ambient_upload_buffer.data, ambient_upload_buffer.size / 2);\n      ambient_upload_buffer.size = 0;"
+    ]
+  ],
+  "prosystem": [
+    [
+      "core/libretro.c",
+      "#include <math.h>",
+      "#include <math.h>\n#if defined(__ARM_NEON) || defined(__aarch64__)\n#include <arm_neon.h>\n#endif"
+    ],
+    [
+      "core/libretro.c",
+      "      for(j = 0; j < tia_size; j++)\n         *(pokey_mix_buf++) = (*(tia_samples_buf++) + *(pokey_samples_buf++)) >> 1;",
+      "      j = 0;\n#if defined(__ARM_NEON) || defined(__aarch64__)\n      for (; j + 16 <= tia_size; j += 16) {\n         vst1q_u8(pokey_mix_buf, vhaddq_u8(vld1q_u8(tia_samples_buf), vld1q_u8(pokey_samples_buf)));\n         pokey_mix_buf += 16; tia_samples_buf += 16; pokey_samples_buf += 16;\n      }\n#endif\n      for(; j < tia_size; j++)\n         *(pokey_mix_buf++) = (*(tia_samples_buf++) + *(pokey_samples_buf++)) >> 1;"
+    ],
+    [
+      "core/libretro.c",
+      "      for(i = 0; i < tia_size; i++)\n      {\n         int16_t sample_16 = (int16_t)(*(tia_samples_buf++) << 8);\n\n         *(audio_out_buf++) = sample_16;\n         *(audio_out_buf++) = sample_16;\n      }",
+      "      i = 0;\n#if defined(__ARM_NEON) || defined(__aarch64__)\n      for (; i + 8 <= tia_size; i += 8) {\n         const int16x8_t samples = vreinterpretq_s16_u16(vshll_n_u8(vld1_u8(tia_samples_buf), 8));\n         int16x8x2_t stereo; stereo.val[0] = samples; stereo.val[1] = samples;\n         vst2q_s16(audio_out_buf, stereo);\n         tia_samples_buf += 8; audio_out_buf += 16;\n      }\n#endif\n      for(; i < tia_size; i++)\n      {\n         int16_t sample_16 = (int16_t)(*(tia_samples_buf++) << 8);\n         *(audio_out_buf++) = sample_16;\n         *(audio_out_buf++) = sample_16;\n      }"
+    ]
   ]
 }
 
