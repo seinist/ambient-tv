@@ -1950,6 +1950,20 @@ mod ambient_detach_tests {
 
 """, "mod ambient_detach_tests")
 
+
+# Prevent the raw and typed batch result vectors from retaining an entire
+# multi-gigabyte file. Keep the sliding window full for bounded refills, then
+# continue on the same live lane/session with the next missing offset.
+amend(media_lane,
+      """            media::download_in_flight(),
+            None,
+            |_init_first, requests, on_chunk| {""",
+      """            media::download_in_flight(),
+            if mono_proto_media::profile::ambient_media_mode() {
+                Some(media::download_in_flight().min(4))
+            } else { None },
+            |_init_first, requests, on_chunk| {""")
+
 # Commit files only after every source contract has been checked.
 for path, result in changes.items():
     current = path.read_text(encoding="utf-8")

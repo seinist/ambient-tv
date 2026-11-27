@@ -102,7 +102,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         if (!com.ambient.tv.BuildConfig.MONOGRAM_PGO_GENERATE && !com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS) return
         if (measuredWindows.incrementAndGet() % 16 != 0) return
         if (com.ambient.tv.BuildConfig.MONOGRAM_PGO_GENERATE) {
-            val result = runCatching { AmbientMonogramJni.flushPgoProfile(File(app.filesDir, "monogram-pgo.profraw").absolutePath) }
+            val result = runCatching {
+                val status = AmbientMonogramJni.flushPgoProfile(File(app.filesDir, "monogram-pgo.profraw").absolutePath)
+                if (status == 0) File(app.filesDir, "monogram-pgo.stamp").writeText(com.ambient.tv.BuildConfig.MONOGRAM_PGO_STAMP)
+                status
+            }
             android.util.Log.i("MonogramPerf", "PGO profile flush: ${result.getOrNull() ?: "unavailable"}")
         }
         if (com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS) {

@@ -281,7 +281,10 @@ android {
         buildConfigField("String", "APP_DISPLAY_NAME", quotedBuildConfigString(appDisplayName))
         buildConfigField("boolean", "MONOGRAM_NATIVE", monogramEnabled.toString())
         buildConfigField("boolean", "MONOGRAM_CDN_RANGES", (providers.environmentVariable("MONOGRAM_CDN_RANGES").orNull == "1").toString())
-        buildConfigField("boolean", "MONOGRAM_PGO_GENERATE", (providers.environmentVariable("MONOGRAM_PGO_MODE").orNull == "generate").toString())
+        val monogramPgoGenerate = monogramEnabled && providers.environmentVariable("MONOGRAM_PGO_MODE").orNull == "generate"
+        buildConfigField("boolean", "MONOGRAM_PGO_GENERATE", monogramPgoGenerate.toString())
+        buildConfigField("String", "MONOGRAM_PGO_STAMP", quotedBuildConfigString(
+            if (monogramPgoGenerate) file("libs/.monogram-native-version").readText() else ""))
         buildConfigField("boolean", "MONOGRAM_PERF_COUNTERS", (providers.environmentVariable("MONOGRAM_PERF_COUNTERS").orNull == "1").toString())
         buildConfigField("boolean", "SPOTIFY_ENABLED", spotifyEnabled.toString())
         buildConfigField("boolean", "LIBRASHADER_NATIVE", (
