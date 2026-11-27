@@ -1,9 +1,11 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
+#include "config.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <libavutil/rational.h>
 #include <libavutil/buffer.h>
+#include <libavutil/version.h>
 #include "common/common.h"
 #include "common/msg.h"
 #include "common/tags.h"
@@ -16,14 +18,24 @@
 #include "ambientsvp_loader.h"
 #include "svp_retry.h"
 #include "svp_planes.h"
+#if HAVE_VULKAN && LIBAVUTIL_VERSION_MAJOR == 61
+#include "svp_mpv_vulkan.h"
+#define SVP_MPV_RESIDENT 1
+#else
+#define SVP_MPV_RESIDENT 0
+#endif
 
-struct opts { double fps, source; int preset, backend, threads, artifacts, scene, algo, block, overlap, pel, search; };
+struct opts { double fps, source; int preset, backend, threads, artifacts, scene, algo, block, overlap, pel, search, hwresident; };
 struct priv {
     struct opts *opts; SvpApi api; AmbientSvp *engine;
     struct mp_image *reference; uint8_t *buffer; size_t bytes;
     struct mp_image_pool *output_pool;
     struct mp_image_pool *download_pool;
     unsigned output_pool_count;
+#if SVP_MPV_RESIDENT
+    struct svp_vk_mpv *vk;
+    bool vk_disabled;
+#endif
     bool eof, bypass; int width, height;
     /* Why frames pass through unchanged (metadata "passthrough"); 0 while the engine runs.
      * Kept separate from the engine's bypass_reason so only a real overload reads as one. */
@@ -38,6 +50,9 @@ int mpv_ambient_svp_abi(void) { return AMBIENTSVP_ABI; }
 
 static void reset(struct mp_filter *f) {
     struct priv *p = f->priv;
+#if SVP_MPV_RESIDENT
+    svp_vk_reset_history(p->vk);
+#endif
     if (p->engine) p->api.destroy(p->engine);
     p->engine = NULL; mp_image_unrefp(&p->reference);
     free(p->buffer); p->buffer = NULL; p->bytes = 0;
@@ -51,6 +66,10 @@ static void reset(struct mp_filter *f) {
  * resources. A bypassed engine keeps the old explicit-seek retry behavior. */
 static void seek_reset(struct mp_filter *f) {
     struct priv *p = f->priv;
+#if SVP_MPV_RESIDENT
+    svp_vk_reset_history(p->vk);
+    p->vk_disabled = false;
+#endif
     AmbientSvpStats stats = {0};
     if (p->engine && !p->bypass && p->api.enabled()
         && !p->api.stats(p->engine, &stats) && !stats.bypass_reason
@@ -62,7 +81,16 @@ static void seek_reset(struct mp_filter *f) {
     svp_retry_clear(&p->retry);
 }
 static void destroy(struct mp_filter *f) {
-    struct priv *p = f->priv; reset(f); if (p->api.lib) dlclose(p->api.lib);
+    struct priv *p = f->priv; reset(f);
+#if SVP_MPV_RESIDENT
+    if (!svp_vk_destroy_state(p->vk)) {
+        // Do not unload the library or free GPU resources still in flight.
+        MP_WARN(f, "SVP resident GPU did not retire; retaining its resources until process teardown\\n");
+        return;
+    }
+    p->vk = NULL;
+#endif
+    if (p->api.lib) dlclose(p->api.lib);
 }
 static bool eligible(struct mp_image *img) {
     return !(img->fields & MP_IMGFIELD_INTERLACED) && img->pts != MP_NOPTS_VALUE
@@ -178,15 +206,61 @@ static bool receive(struct mp_filter *f) {
 static void process(struct mp_filter *f) {
     struct priv *p = f->priv;
     if (!mp_pin_in_needs_data(f->ppins[1])) return;
+#if SVP_MPV_RESIDENT
+    if (p->vk) {
+        svp_vk_reap(p->vk, false);
+        struct mp_image *out = svp_vk_take_output(p->vk);
+        if (out) { mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, out)); return; }
+    }
+#endif
     if (receive(f)) return;
     if (p->eof) { mp_pin_in_write(f->ppins[1], MP_EOF_FRAME); p->eof = false; return; }
     struct mp_frame frame = mp_pin_out_read(f->ppins[0]);
     if (!frame.type) return;
+#if SVP_MPV_RESIDENT
+    if (frame.type == MP_FRAME_EOF && p->vk && p->vk->previous) {
+        svp_vk_eof(p->vk);
+        p->eof = true; mp_filter_internal_mark_progress(f); return;
+    }
+#endif
     if (frame.type == MP_FRAME_EOF && p->engine) {
         p->eof = true; mp_filter_internal_mark_progress(f); return;
     }
     if (frame.type != MP_FRAME_VIDEO) { mp_pin_in_write(f->ppins[1], frame); return; }
     struct mp_image *img = frame.data;
+#if SVP_MPV_RESIDENT
+    // Explicitly opt-in until the independent resident search has device
+    // quality/performance validation. Never route MediaCodec surface handles
+    // here; only actual FFmpeg Vulkan frames with supported plane views.
+    if (p->opts->hwresident && !p->vk_disabled && !p->bypass
+        && p->api.lib && p->api.enabled() && svp_vk_eligible(img)) {
+        if (p->engine) reset(f);
+        if (p->vk && !svp_vk_matches(p->vk, img) && !p->vk->previous
+            && !svp_vk_reap(p->vk, false)) {
+            if (svp_vk_destroy_state(p->vk)) p->vk = NULL;
+        }
+        if (!p->vk) {
+            p->vk = svp_vk_new(p->api.lib, img, p->opts->source, p->opts->fps);
+            if (p->vk) MP_INFO(f, "SVP native Vulkan resident path %dx%d %.6f -> %.6f\n",
+                               img->w, img->h, p->opts->source, p->opts->fps);
+        }
+        if (p->vk && svp_vk_feed(p->vk, img)) {
+            p->passthrough = PASS_NONE;
+            mp_filter_internal_mark_progress(f); return;
+        }
+        p->vk_disabled = true;
+        MP_WARN(f, "SVP native Vulkan path unavailable; using existing transfer/passthrough\n");
+    }
+    if (p->vk && p->vk->previous) {
+        // Preserve the last source frame at a transition/failure. Put the
+        // new frame back so the existing path can handle it next time.
+        struct mp_image *previous = svp_vk_take_previous(p->vk);
+        p->vk_disabled = true;
+        mp_pin_out_unread(f->ppins[0], frame);
+        mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, previous));
+        return;
+    }
+#endif
     if (p->engine && (img->w != p->width || img->h != p->height || !eligible(img))) reset(f);
     if (!p->bypass && p->passthrough == PASS_TIMING && svp_retry_waiting(&p->retry)) {
         mp_pin_in_write(f->ppins[1], frame); return;
@@ -251,7 +325,12 @@ static bool command(struct mp_filter *f, struct mp_filter_command *cmd) {
     if (cmd->type != MP_FILTER_COMMAND_GET_META) return false;
     struct mp_tags *tags = talloc_zero(NULL, struct mp_tags);
     AmbientSvpStats s = {0}; if (p->engine) p->api.stats(p->engine, &s);
-    mp_tags_set_str(tags, "backend", s.backend == 2 ? "vulkan" : s.backend == 1 ? "cpu" : "off");
+    bool resident = false;
+#if SVP_MPV_RESIDENT
+    resident = p->vk && p->vk->previous && !p->vk_disabled;
+#endif
+    mp_tags_set_str(tags, "backend", resident || s.backend == 2 ? "vulkan" : s.backend == 1 ? "cpu" : "off");
+    mp_tags_set_str(tags, "transport", resident ? "hardware-resident" : "host-i420");
     /* bypass: engine reason only (1 overload, 2 gate, 3 engine error); passthrough: adapter reason. */
     mp_tags_set_str(tags, "bypass", talloc_asprintf(tags, "%u", p->engine ? s.bypass_reason : 0u));
     mp_tags_set_str(tags, "passthrough", talloc_asprintf(tags, "%d", p->passthrough));
@@ -283,6 +362,7 @@ static const m_option_t options[] = {
     {"overlap", OPT_INT(overlap), M_RANGE(0, 4)},
     {"pel", OPT_INT(pel), M_RANGE(0, 4)},
     {"search", OPT_INT(search), M_RANGE(0, 3)},
+    {"hwresident", OPT_INT(hwresident), M_RANGE(0, 1)},
     {0}
 };
 const struct mp_user_filter_entry vf_ambientsvp = {
