@@ -1005,7 +1005,7 @@ api_invoke = "vendor/mono-rs/crates/mono-proto-runtime/src/api_invoke.rs"
 amend(api_invoke,
       """    invoke_api_batch_without_updates_streaming(snapshot, api_id, requests, &mut |_, _| None)
 }""",
-      """    invoke_api_batch_impl(snapshot, api_id, requests, None)
+      """    invoke_api_batch_impl(snapshot, api_id, requests, None, None, false)
 }""")
 amend(api_invoke,
       """    if requests.is_empty() {
@@ -1013,7 +1013,25 @@ amend(api_invoke,
     }
     let replay_safe = replay_safe_method(Req::CONSTRUCTOR_ID);
     let span = crate::perf::span("rpc:pipeline");""",
-      """    invoke_api_batch_impl(snapshot, api_id, requests, Some(on_chunk))
+      """    invoke_api_batch_impl(snapshot, api_id, requests, Some(on_chunk), None, false)
+}
+
+pub fn invoke_api_batch_without_updates_streaming_borrowed<Req, Res>(
+    snapshot: &mut Snapshot, api_id: i32, requests: Vec<Req>,
+    on_chunk: &mut dyn FnMut(usize, &Result<Res, MtprotoError>) -> Option<Req>,
+) -> Result<Vec<Result<Res, MtprotoError>>, MtprotoError>
+where Req: TlEncode + Boxed + Clone, Res: BoxedDecode {
+    invoke_api_batch_impl(snapshot, api_id, requests, None, Some(on_chunk), false)
+}
+
+// The dual-lane coordinator already owns every decoded response sent over its
+// channel. Do not decode the raw return vector a second time just to discard it.
+pub fn invoke_api_batch_without_updates_streaming_consumed<Req, Res>(
+    snapshot: &mut Snapshot, api_id: i32, requests: Vec<Req>,
+    on_chunk: &mut dyn FnMut(usize, Result<Res, MtprotoError>) -> Option<Req>,
+) -> Result<Vec<Result<Res, MtprotoError>>, MtprotoError>
+where Req: TlEncode + Boxed + Clone, Res: BoxedDecode {
+    invoke_api_batch_impl(snapshot, api_id, requests, Some(on_chunk), None, true)
 }
 
 fn invoke_api_batch_impl<Req, Res>(
@@ -1021,6 +1039,8 @@ fn invoke_api_batch_impl<Req, Res>(
     api_id: i32,
     requests: Vec<Req>,
     mut on_chunk: Option<&mut dyn FnMut(usize, Result<Res, MtprotoError>) -> Option<Req>>,
+    mut borrowed: Option<&mut dyn FnMut(usize, &Result<Res, MtprotoError>) -> Option<Req>>,
+    discard_results: bool,
 ) -> Result<Vec<Result<Res, MtprotoError>>, MtprotoError>
 where
     Req: TlEncode + Boxed + Clone,
@@ -1035,7 +1055,7 @@ amend(api_invoke,
       """        &mut |index, raw_res| {
             let res = match raw_res {""",
       """        &mut |index, raw_res| {
-            let on_chunk = on_chunk.as_deref_mut()?;
+            if on_chunk.is_none() && borrowed.is_none() { return None; }
             let res = match raw_res {""")
 media_lane = "vendor/mono-rs/crates/mono-proto-client/src/media_lane.rs"
 amend(media_lane,
@@ -1641,6 +1661,154 @@ amend(supervisor,
                 self.state = ConnectionState::Disconnected;
             }
         }""")
+
+
+amend(api_invoke,
+      """    let span = crate::perf::span("rpc:pipeline");
+    let raw = rpc::invoke_batch_raw_with_retry_streaming(""",
+      """    let span = crate::perf::span("rpc:pipeline");
+    let decoded = std::cell::RefCell::new(Vec::<Option<Result<Res, MtprotoError>>>::new());
+    let raw = rpc::invoke_batch_raw_with_retry_streaming(""")
+amend(api_invoke,
+      """        |reused| {
+            let mut bodies = Vec::with_capacity(requests.len());""",
+      """        |reused| {
+            // An RPC retry may reuse response indices. Only the successful
+            // attempt's decoded vector may be returned to the caller.
+            decoded.borrow_mut().clear();
+            let mut bodies = Vec::with_capacity(requests.len());""")
+amend(api_invoke,
+      """            let refill = on_chunk(index, res)?;
+            rpc::encode_boxed_bytes(&wrap_without_updates(refill)).ok()
+        },
+    );
+    drop(span);
+    Ok(raw?
+        .into_iter()
+        .map(|entry| entry.and_then(|body| decode_response::<Res>(&body)))
+        .collect())""",
+      """            let refill = if let Some(callback) = borrowed.as_deref_mut() {
+                let refill = callback(index, &res);
+                let mut values = decoded.borrow_mut();
+                if values.len() <= index { values.resize_with(index + 1, || None); }
+                values[index] = Some(res);
+                refill
+            } else {
+                on_chunk.as_deref_mut()?(index, res)
+            }?;
+            rpc::encode_boxed_bytes(&wrap_without_updates(refill)).ok()
+        },
+    );
+    drop(span);
+    let raw = raw?;
+    if discard_results { return Ok(Vec::new()); }
+    let mut decoded = decoded.into_inner();
+    Ok(raw.into_iter().enumerate().map(|(index, entry)| {
+        decoded.get_mut(index).and_then(Option::take)
+            .unwrap_or_else(|| entry.and_then(|body| decode_response::<Res>(&body)))
+    }).collect())""")
+# Preserve the old owned callback API for pinned upstream tests and external
+# callers; the production download sink only needs to borrow each response.
+amend(range_output,
+      """    let _chunk_guard = preserve_download_window();
+    let chunk = resolve_chunk(offset);
+    if offset.is_some_and(|value| value < 0 || value % i64::from(chunk) != 0) {""",
+      """    download_media_range_batched_streaming_borrowed(
+        dc_id, media, dest_path, cancellation_path, offset, parts_in_flight, refill_limit,
+        |first, requests, callback| fetch_batch(first, requests, &mut |index, value| callback(index, &value)),
+    )
+}
+
+pub fn download_media_range_batched_streaming_borrowed(
+    dc_id: i32,
+    media: &MediaRef,
+    dest_path: &Path,
+    cancellation_path: &Path,
+    offset: Option<i64>,
+    parts_in_flight: usize,
+    refill_limit: Option<usize>,
+    mut fetch_batch: impl FnMut(
+        bool, Vec<UploadGetFileRequest>,
+        &mut dyn FnMut(usize, &Result<UploadFile, MtprotoError>) -> Option<UploadGetFileRequest>,
+    ) -> Result<Vec<Result<UploadFile, MtprotoError>>, MtprotoError>,
+) -> Result<String, MtprotoError> {
+    let _chunk_guard = preserve_download_window();
+    let chunk = resolve_chunk(offset);
+    if offset.is_some_and(|value| value < 0 || value % i64::from(chunk) != 0) {""")
+amend(range_output,
+      """                                        res: Result<UploadFile, MtprotoError>|
+                     -> Option<UploadGetFileRequest> {""",
+      """                                        res: &Result<UploadFile, MtprotoError>|
+                     -> Option<UploadGetFileRequest> {""")
+# The media crate re-exports its download API; use the explicit module for the
+# new borrowed entry point, so no change to the crate's public re-export list.
+amend(media_lane,
+      """    let result = invoke_parallel_media_batches(
+        [""",
+      """    let result = invoke_parallel_media_batches_borrowed(
+        [""")
+amend(media_lane,
+      """    on_chunk: &mut dyn FnMut(usize, Result<Res, MtprotoError>) -> Option<Req>,
+) -> Result<Vec<Result<Res, MtprotoError>>, MtprotoError> {
+    use std::sync::mpsc::{Sender, sync_channel};""",
+      """    on_chunk: &mut dyn FnMut(usize, Result<Res, MtprotoError>) -> Option<Req>,
+) -> Result<Vec<Result<Res, MtprotoError>>, MtprotoError> {
+    invoke_parallel_media_batches_borrowed(batches, invoke_a, invoke_b, &mut |index, result| {
+        on_chunk(index, result.clone())
+    })
+}
+
+pub fn invoke_parallel_media_batches_borrowed<Req: Send, Res: Send>(
+    batches: [Vec<(usize, Req)>; 2],
+    invoke_a: impl FnOnce(Vec<Req>, &mut dyn FnMut(usize, Result<Res, MtprotoError>) -> Option<Req>)
+        -> Result<Vec<Result<Res, MtprotoError>>, MtprotoError> + Send,
+    invoke_b: impl FnOnce(Vec<Req>, &mut dyn FnMut(usize, Result<Res, MtprotoError>) -> Option<Req>)
+        -> Result<Vec<Result<Res, MtprotoError>>, MtprotoError> + Send,
+    on_chunk: &mut dyn FnMut(usize, &Result<Res, MtprotoError>) -> Option<Req>,
+) -> Result<Vec<Result<Res, MtprotoError>>, MtprotoError> {
+    use std::sync::mpsc::{Sender, sync_channel};""")
+amend(media_lane,
+      "            let refill = on_chunk(index, result.clone())",
+      "            let refill = on_chunk(index, &result)")
+amend(media_lane,
+      """        mono_proto_runtime::api_invoke::invoke_api_batch_without_updates_streaming::<
+            _,
+            mono_proto::latest::api::UploadFile,""",
+      """        mono_proto_runtime::api_invoke::invoke_api_batch_without_updates_streaming_consumed::<
+            _,
+            mono_proto::latest::api::UploadFile,""")
+amend(media_lane,
+      """    on_chunk: &mut dyn FnMut(
+        usize,
+        Result<mono_proto::latest::api::UploadFile, MtprotoError>,
+    ) -> Option<mono_proto::latest::api::UploadGetFileRequest>,
+) -> Result<Vec<Result<mono_proto::latest::api::UploadFile, MtprotoError>>, MtprotoError> {
+    let Some(first) = requests.first()""",
+      """    on_chunk: &mut dyn FnMut(
+        usize,
+        &Result<mono_proto::latest::api::UploadFile, MtprotoError>,
+    ) -> Option<mono_proto::latest::api::UploadGetFileRequest>,
+) -> Result<Vec<Result<mono_proto::latest::api::UploadFile, MtprotoError>>, MtprotoError> {
+    let Some(first) = requests.first()""")
+amend(media_lane,
+      """            mono_proto_runtime::api_invoke::invoke_api_batch_without_updates_streaming(
+                snap_a, api_id, requests, on_chunk,""",
+      """            mono_proto_runtime::api_invoke::invoke_api_batch_without_updates_streaming_borrowed(
+                snap_a, api_id, requests, on_chunk,""")
+amend(media_lane,
+      "        media::download_media_range_batched_streaming_capped(",
+      "        mono_proto_media::download::download_media_range_batched_streaming_borrowed(")
+amend(media_lane,
+      """let mut stream_chunk = |index, result: Result<mono_proto::latest::api::UploadFile, MtprotoError>|""",
+      """let mut stream_chunk = |index, result: &Result<mono_proto::latest::api::UploadFile, MtprotoError>|""")
+amend(client_download,
+      "        let downloaded = media::download_media_range_batched_streaming_capped(",
+      "        let downloaded = mono_proto_media::download::download_media_range_batched_streaming_borrowed(")
+amend(client_download,
+      """                            mono_proto_runtime::api_invoke::invoke_api_batch_without_updates_streaming::<
+                                _, mono_proto::latest::api::UploadFile,""",
+      """                            mono_proto_runtime::api_invoke::invoke_api_batch_without_updates_streaming_borrowed::<
+                                _, mono_proto::latest::api::UploadFile,""")
 
 # Commit files only after every source contract has been checked.
 for path, result in changes.items():
