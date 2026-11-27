@@ -19,13 +19,13 @@ import kotlinx.coroutines.runBlocking
 class TelegramVideoDataSource(
     private val repository: TelegramRepository,
     private val media: TelegramMedia,
+    private val accountRevision: Long = repository.playbackRevision(),
 ) : BaseDataSource(false) {
     class Factory(private val repository: TelegramRepository, private val media: TelegramMedia) :
         DataSource.Factory {
-        override fun createDataSource(): DataSource = TelegramVideoDataSource(repository, media)
+        private val revision = repository.playbackRevision()
+        override fun createDataSource(): DataSource = TelegramVideoDataSource(repository, media, revision)
     }
-
-    private val accountRevision = repository.playbackRevision()
     private fun requireCurrentAccount() {
         if (repository.playbackRevision() != accountRevision) throw IOException("Monogram account changed")
     }
@@ -98,7 +98,7 @@ class TelegramVideoDataSource(
             runBlocking {
                 // A failed read-ahead is retried directly instead of failing playback.
                 pending?.let { runCatching { it.await() }.getOrNull() }
-                    ?: repository.mediaPart(media.chatId, media.messageId, offset)
+                    ?: repository.mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset))
             }
         } catch (error: Exception) {
             throw IOException("Telegram media read failed", error)
@@ -111,7 +111,7 @@ class TelegramVideoDataSource(
             if (offset >= media.fileSize || offset >= position + remaining) break
             if (offset !in prefetch) prefetch[offset] = prefetchScope.async {
                 requireCurrentAccount()
-                repository.mediaPart(media.chatId, media.messageId, offset)
+                repository.mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset))
             }
         }
     }

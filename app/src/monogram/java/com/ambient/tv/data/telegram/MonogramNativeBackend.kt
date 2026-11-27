@@ -1135,11 +1135,20 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         }
 
     override suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray =
+        loadMediaPart(chatId, messageId, offset, null)
+
+    override suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int): ByteArray =
+        loadMediaPart(chatId, messageId, offset, expectedBytes)
+
+    private suspend fun loadMediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int?): ByteArray =
         cancellableMediaRequest { request ->
         nativeCall(maxFloodWaitSeconds = PLAYBACK_FLOOD_WAIT_SECONDS) { h ->
             requireAuthorized(h)
             check(chatId !in leftChannels) { app.getString(R.string.monogram_error_channel_left) }
             require(offset >= 0L && offset % TELEGRAM_MEDIA_PART_BYTES == 0L)
+            require(expectedBytes == null || expectedBytes in 1..TELEGRAM_MEDIA_PART_BYTES)
+            fun validSize(size: Int) = size in 1..TELEGRAM_MEDIA_PART_BYTES &&
+                (expectedBytes == null || size == expectedBytes)
             val dir = File(cache, "chunks").apply { mkdirs() }.canonicalFile
             val cacheFile = File(dir, "$chatId-$messageId-$offset.bin")
             val generation = cacheGeneration
@@ -1149,11 +1158,22 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     app.getString(R.string.monogram_error_account_changed)
                 }
                 prepareChunkIndex(dir)
-                hotChunks[cacheFile]?.also { chunkIndex[cacheFile] } ?: if (cacheFile.isFile && cacheFile.length() in 1..TELEGRAM_MEDIA_PART_BYTES.toLong()) {
+                val hot = hotChunks[cacheFile]
+                if (hot != null && validSize(hot.size)) {
+                    chunkIndex[cacheFile]
+                    hot
+                } else if (cacheFile.isFile && cacheFile.length() <= TELEGRAM_MEDIA_PART_BYTES &&
+                    validSize(cacheFile.length().toInt())) {
                     rememberChunk(cacheFile)
                     cacheFile.setLastModified(System.currentTimeMillis())
-                    cacheFile.readBytes().also { rememberHotChunk(cacheFile, it) }
-                } else null
+                    cacheFile.readBytes().takeIf { validSize(it.size) }?.also { rememberHotChunk(cacheFile, it) }
+                } else {
+                    // Older builds could cache a reduced wire part as a complete 512 KiB range.
+                    // Never let a short interior part poison retries after the upgrade.
+                    hotChunks.remove(cacheFile)
+                    if (cacheFile.delete() || !cacheFile.exists()) chunkIndexBytes -= chunkIndex.remove(cacheFile) ?: 0L
+                    null
+                }
             }
             if (cached != null) return@nativeCall cached
             val temp = File.createTempFile("part-", ".bin", dir)
@@ -1167,9 +1187,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 } finally {
                     uniffi.monogram_mtproto.bindRequestControl(previous)
                 }
-                require(payload.size in 1..TELEGRAM_MEDIA_PART_BYTES) {
-                    "Invalid Monogram chunk size"
-                }
+                require(validSize(payload.size)) { "Invalid or incomplete Monogram chunk" }
                 // An account switch/log-out invalidates in-flight native file results.
                 check(accountId == currentIdentity && cacheGeneration == generation && native.isAuthorized(h) &&
                     chatId !in leftChannels) {

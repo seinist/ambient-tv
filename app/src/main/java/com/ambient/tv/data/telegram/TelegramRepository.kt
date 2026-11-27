@@ -78,6 +78,10 @@ interface TelegramClientPort {
     suspend fun thumbnail(chatId: Long, messageId: Int): String? = null
     /** A byte range from a Telegram file; Monogram downloadMessageMediaChunk does the MTProto I/O. */
     suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray
+    suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int): ByteArray =
+        mediaPart(chatId, messageId, offset).also {
+            check(it.size == expectedBytes) { "Incomplete Telegram media part" }
+        }
     /**
      * Playable video/audio posts from subscribed channels matching [query]. One request per
      * submitted search; throws [TelegramFloodWaitException] when Telegram asks to wait.
@@ -402,7 +406,10 @@ class TelegramRepository @Inject constructor(
         ) { TelegramSeekableMedia(
             media = media,
             partLoader = { offset -> kotlinx.coroutines.runBlocking {
-                mediaPart(media.chatId, media.messageId, offset)
+                check(client === authenticated && streamEpoch.get() == generation) {
+                    appContext.getString(R.string.monogram_error_account_changed)
+                }
+                mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset))
             } },
             authorized = { client === authenticated && streamEpoch.get() == generation },
         ) }
@@ -719,11 +726,11 @@ class TelegramRepository @Inject constructor(
 
     // Bound all players and cancelled seek windows to the native media lane budget.
     private val mediaPartPermits = kotlinx.coroutines.sync.Semaphore(4)
-    private data class PartKey(val epoch: Long, val chatId: Long, val messageId: Int, val offset: Long)
+    private data class PartKey(val epoch: Long, val chatId: Long, val messageId: Int, val offset: Long, val expectedBytes: Int?)
     private class PartLoad(val deferred: kotlinx.coroutines.Deferred<ByteArray>, var waiters: Int)
     private val partLoads = HashMap<PartKey, PartLoad>()
 
-    suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray = interactive {
+    suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int? = null): ByteArray = interactive {
         val selected = checkNotNull(client) { appContext.getString(R.string.monogram_error_not_authorized) }
         check(chatId !in blockedChannels) { appContext.getString(R.string.monogram_error_channel_left) }
         val generation = streamEpoch.get()
@@ -734,7 +741,7 @@ class TelegramRepository @Inject constructor(
             }
         }
         verify()
-        val key = PartKey(generation, chatId, messageId, offset)
+        val key = PartKey(generation, chatId, messageId, offset, expectedBytes)
         val load = synchronized(partLoads) {
             val existing = partLoads[key]?.takeUnless { it.deferred.isCancelled }
             if (existing != null) {
@@ -746,7 +753,8 @@ class TelegramRepository @Inject constructor(
                 val deferred = scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
                     mediaPartPermits.withPermit {
                         verify()
-                        selected.mediaPart(chatId, messageId, offset).also { verify() }
+                        (if (expectedBytes == null) selected.mediaPart(chatId, messageId, offset)
+                        else selected.mediaPart(chatId, messageId, offset, expectedBytes)).also { verify() }
                     }
                 }
                 PartLoad(deferred, 1).also { partLoads[key] = it }
@@ -755,12 +763,13 @@ class TelegramRepository @Inject constructor(
         try {
             load.deferred.await().also { verify() }
         } finally {
-            synchronized(partLoads) {
+            val cancel = synchronized(partLoads) {
                 if (--load.waiters == 0) {
                     if (partLoads[key] === load) partLoads.remove(key)
-                    if (!load.deferred.isCompleted) load.deferred.cancel()
-                }
+                    !load.deferred.isCompleted
+                } else false
             }
+            if (cancel) load.deferred.cancel()
         }
     }
 
