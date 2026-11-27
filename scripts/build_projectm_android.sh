@@ -14,6 +14,7 @@ set -euo pipefail
 #   PROJECTM_LTO=ON|OFF (default: ON, Clang ThinLTO)
 #   PROJECTM_ARM64_TUNE=generic|cortex-a57 (default: generic, ISA unchanged)
 #   PROJECTM_SHADER_CACHE=ON|OFF (default: ON, bounded driver-keyed cache)
+#   PROJECTM_DIRECT_CLASSIC_COMPOSITE=ON|OFF (default: OFF pending visual equivalence tests)
 #
 # Usage:
 #   ./scripts/build_projectm_android.sh
@@ -34,6 +35,8 @@ PROJECTM_OPT_LEVEL="${PROJECTM_OPT_LEVEL:-3}"
 PROJECTM_LTO="${PROJECTM_LTO:-ON}"
 PROJECTM_ARM64_TUNE="${PROJECTM_ARM64_TUNE:-generic}"
 PROJECTM_SHADER_CACHE="${PROJECTM_SHADER_CACHE:-ON}"
+PROJECTM_DIRECT_CLASSIC_COMPOSITE="${PROJECTM_DIRECT_CLASSIC_COMPOSITE:-OFF}"
+[[ "$PROJECTM_DIRECT_CLASSIC_COMPOSITE" == ON || "$PROJECTM_DIRECT_CLASSIC_COMPOSITE" == OFF ]] || { echo "Invalid PROJECTM_DIRECT_CLASSIC_COMPOSITE" >&2; exit 2; }
 [[ "$PROJECTM_SHADER_CACHE" == ON || "$PROJECTM_SHADER_CACHE" == OFF ]] || { echo "Invalid PROJECTM_SHADER_CACHE" >&2; exit 2; }
 [[ "$PROJECTM_OPT_LEVEL" =~ ^[23]$ ]] || { echo "PROJECTM_OPT_LEVEL must be 2 or 3" >&2; exit 2; }
 [[ "$PROJECTM_LTO" == ON || "$PROJECTM_LTO" == OFF ]] || { echo "PROJECTM_LTO must be ON or OFF" >&2; exit 2; }
@@ -42,7 +45,7 @@ CLEAN=0
 PROJECTM_PATCH_DIR="$ROOT_DIR/native/ambientprojectm/patches"
 
 projectm_fingerprint() {
-  { grep '^PROJECTM_' "$EXTERNAL_VERSIONS"; printf '%s\n' "$PROJECTM_REF" "$PROJECTM_PRESET_PACK" "$PROJECTM_FETCH_ASSETS" "$ANDROID_API" "$PROJECTM_OPT_LEVEL" "$PROJECTM_LTO" "$PROJECTM_ARM64_TUNE" "$PROJECTM_SHADER_CACHE"; git hash-object "$ROOT_DIR/scripts/build_projectm_android.sh" "$ROOT_DIR/native/ambientprojectm/ambientprojectm.cpp" "$ROOT_DIR/native/ambientprojectm/native_audio_tap.h" "$PROJECTM_PATCH_DIR"/*.patch; } | git hash-object --stdin
+  { grep '^PROJECTM_' "$EXTERNAL_VERSIONS"; printf '%s\n' "$PROJECTM_REF" "$PROJECTM_PRESET_PACK" "$PROJECTM_FETCH_ASSETS" "$ANDROID_API" "$PROJECTM_OPT_LEVEL" "$PROJECTM_LTO" "$PROJECTM_ARM64_TUNE" "$PROJECTM_SHADER_CACHE" "$PROJECTM_DIRECT_CLASSIC_COMPOSITE"; git hash-object "$ROOT_DIR/scripts/build_projectm_android.sh" "$ROOT_DIR/native/ambientprojectm/ambientprojectm.cpp" "$ROOT_DIR/native/ambientprojectm/native_audio_tap.h" "$PROJECTM_PATCH_DIR"/*.patch; } | git hash-object --stdin
 }
 
 for arg in "$@"; do
@@ -111,6 +114,7 @@ build_abi() {
   if [[ "$PROJECTM_LTO" == ON ]]; then bridge_lto=(-flto=thin); fi
   local shader_cache_flag=""
   if [[ "$PROJECTM_SHADER_CACHE" == ON ]]; then shader_cache_flag="-DAMBIENT_PROJECTM_PROGRAM_CACHE=1"; fi
+  if [[ "$PROJECTM_DIRECT_CLASSIC_COMPOSITE" == ON ]]; then shader_cache_flag+=" -DAMBIENT_PROJECTM_DIRECT_CLASSIC_COMPOSITE=1"; fi
 
   cmake -S "$PROJECTM_SRC" -B "$build" \
     -DCMAKE_TOOLCHAIN_FILE="$NDK_DIR/build/cmake/android.toolchain.cmake" \
