@@ -62,8 +62,10 @@ jobs:
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib motion_select::tests::vulkan_ordered_selection_matches_cpu -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib motion_select::tests::chained_cost_and_selection_without_intermediate_readback -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib motion_select::tests::selected_complete_fields_enter_upstream_smoother -- --ignored --exact
+          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib motion_search::tests::hierarchical_search_produces_complete_valid_fields -- --ignored --exact
           # Allow software Vulkan only in the Rust test build.
           export AMBIENTSVP_TEST_SOFTWARE_VULKAN=1
+          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::experimental_hierarchical_motion_reaches_streaming_synthesis -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::dual_output_matches_single_and_drops_prefetch_on_seek -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::adjacent_ready_source_pairs_match_serial_output -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::compact_motion_fields_match_float_fields -- --ignored --exact
