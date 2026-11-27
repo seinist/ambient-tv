@@ -646,7 +646,12 @@ static void test_multiple_timed_intermediates(void)
                     stime_t end;
                     assert(MP4_FEL_RunEnd(&tracks[2],r,&end)&&end==time);
                 }
+                // The fixture did not consume the track cursor: retirement
+                // still advances the implicit clock and marks the gap.
+                tracks[2].i_next_block_flags=0;
                 assert(MP4_FEL_FinishInterleave(&d));
+                assert(tracks[2].i_time==time);
+                assert(tracks[2].i_next_block_flags&BLOCK_FLAG_DISCONTINUITY);
                 assert(position==visible&&sys.context.i_lastseqnumber==8+n);
                 assert(!blocks&&el_frees==1&&!sys.ambient_fel_replay_count);
                 for(unsigned i=0;i<n;i++)assert(extra_frees[i]==1);
@@ -761,7 +766,12 @@ static void test_mixed_terminal(void)
                 assert(audio&&!memcmp(audio->p_buffer,"AUD1",4));
                 block_Release(audio);
                 assert(sys.context.ambient_fel_el_moof==&look_el);
+                // A fully consumed audio track keeps its ordinary
+                // continuity flag; only skipped samples mark a gap.
+                track[2].context.runs.i_current=track[2].context.runs.i_count;
+                track[2].i_next_block_flags=0;
                 assert(MP4_FEL_FinishInterleave(&d)&&position==168&&sys.context.i_lastseqnumber==8);
+                assert(track[2].i_time==49024&&!track[2].i_next_block_flags);
                 assert(!blocks&&el_frees==1);
                 continue;
             }
