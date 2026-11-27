@@ -28,6 +28,7 @@ copy_current_apk() {
 import json
 import shutil
 import sys
+import zipfile
 from pathlib import Path
 
 metadata = Path(sys.argv[1])
@@ -37,6 +38,13 @@ matches = [e for e in outputs if abi in [
     f.get("value", f.get("identifier")) for f in e.get("filters", [])
     if f.get("filterType") == "ABI"
 ]]
+if not matches and len(outputs) == 1 and not outputs[0].get("filters"):
+    candidate = metadata.parent / outputs[0]["outputFile"]
+    with zipfile.ZipFile(candidate) as apk:
+        abis = {name.split("/")[1] for name in apk.namelist()
+                if name.startswith("lib/") and name.endswith(".so")}
+    if abis == {abi}:
+        matches = outputs
 if len(matches) != 1:
     raise SystemExit(f"Expected one ABI={abi} APK in {metadata}; got {len(matches)}")
 source = metadata.parent / matches[0]["outputFile"]

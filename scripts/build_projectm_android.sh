@@ -116,10 +116,15 @@ build_abi() {
   echo "projectM ready for $abi"
 }
 
-build_abi arm64-v8a aarch64-linux-android
-build_abi armeabi-v7a armv7a-linux-androideabi
-build_abi x86 i686-linux-android
-build_abi x86_64 x86_64-linux-android
+for abi in ${PROJECTM_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
+  case "$abi" in
+    arm64-v8a) build_abi "$abi" aarch64-linux-android ;;
+    armeabi-v7a) build_abi "$abi" armv7a-linux-androideabi ;;
+    x86) build_abi "$abi" i686-linux-android ;;
+    x86_64) build_abi "$abi" x86_64-linux-android ;;
+    *) echo "Unsupported projectM ABI: $abi" >&2; exit 2 ;;
+  esac
+done
 
 # A shallow checkout, but of the pinned commit (GitHub serves single commits by hash).
 checkout_pinned_asset_repo() {

@@ -102,6 +102,7 @@ jobs:
           cargo test --manifest-path third_party/monogram/vendor/mono-rs/Cargo.toml -p mono-proto-runtime --lib
           cargo test --manifest-path third_party/monogram/vendor/mono-rs/Cargo.toml -p mono-proto-transport --lib
           cargo test --manifest-path third_party/monogram/vendor/mono-rs/Cargo.toml -p mono-proto-client --lib
+          cargo test --manifest-path third_party/monogram/vendor/mono-rs/Cargo.toml -p mono-proto-socket --lib ambient_detach_tests
       - name: Verify native ABI and report raw size
         env:
           ABI: ${{ matrix.abi }}
@@ -137,7 +138,7 @@ jobs:
           MONOGRAM_ABIS: ${{ matrix.abi }}
         run: |
           ./scripts/fetch_libretrodroid.sh
-          bash scripts/build_projectm_android.sh
+          PROJECTM_ABIS="${{ matrix.abi }}" bash scripts/build_projectm_android.sh
           SVP_ABIS="${{ matrix.abi }}" bash scripts/build_svp_android.sh
           bash scripts/measure_monogram_apk.sh "${{ matrix.abi }}"
           cp dist/monogram-size-* monogram-report/

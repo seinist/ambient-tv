@@ -159,6 +159,38 @@ class TelegramSeekableMediaTest {
         second.unbind()
     }
 
+    @Test fun sequentialReadAheadUsesAdjacentWindowAndDoesNotRefetchItsSecondPart() {
+        val count = TELEGRAM_MEDIA_PART_BYTES
+        val calls = java.util.Collections.synchronizedList(mutableListOf<Long>())
+        val grouped = java.util.concurrent.CountDownLatch(1)
+        val loader: (Long) -> ByteArray = { at ->
+            calls.add(at)
+            ByteArray(count) { (at / count).toByte() }
+        }
+        val source = TelegramSeekableMedia(
+            media(100L * count).copy(durationMs = 10_000),
+            partLoader = loader,
+            authorized = { true },
+            prefetchWindow = { at ->
+                grouped.countDown()
+                listOf(ByteArray(count) { (at / count).toByte() },
+                    ByteArray(count) { (at / count + 1).toByte() })
+            },
+        )
+        try {
+            val out = ByteArray(1)
+            assertEquals(1, source.read(0, out, 1))
+            assertEquals(1, source.read(count.toLong(), out, 1))
+            assertTrue(grouped.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            assertEquals(1, source.read(2L * count, out, 1))
+            assertEquals(2.toByte(), out[0])
+            assertEquals(1, source.read(3L * count, out, 1))
+            assertEquals(3.toByte(), out[0])
+            assertFalse(calls.contains(2L * count))
+            assertFalse(calls.contains(3L * count))
+        } finally { source.close() }
+    }
+
     @Test fun invalidAndProtectedMediaNeverStartLoopbackStream() {
         val protected = media(100).copy(protectedContent = true)
         assertTrue(runCatching {

@@ -1142,12 +1142,11 @@ pub fn aes_ige_encrypt_in_place(payload: &mut [u8], key: &[u8], iv: &[u8]) -> Re
     let mut previous_plaintext = <[u8; 16]>::try_from(&iv[16..]).expect("validated IV");
     for plaintext in payload.as_chunks_mut::<16>().0 {
         let original = *plaintext;
-        let mut block = [0_u8; 16];
-        for i in 0..16 { block[i] = original[i] ^ previous_ciphertext[i]; }
+        let block = (u128::from_ne_bytes(original) ^ u128::from_ne_bytes(previous_ciphertext)).to_ne_bytes();
         let mut aes_block = Block::<Aes256>::from(block);
         cipher.encrypt_block(&mut aes_block);
-        block = aes_block.into();
-        for i in 0..16 { block[i] ^= previous_plaintext[i]; }
+        let block: [u8; 16] = aes_block.into();
+        let block = (u128::from_ne_bytes(block) ^ u128::from_ne_bytes(previous_plaintext)).to_ne_bytes();
         *plaintext = block;
         previous_ciphertext = block;
         previous_plaintext = original;
@@ -1162,12 +1161,11 @@ pub fn aes_ige_decrypt_in_place(payload: &mut [u8], key: &[u8], iv: &[u8]) -> Re
     let mut previous_plaintext = <[u8; 16]>::try_from(&iv[16..]).expect("validated IV");
     for ciphertext in payload.as_chunks_mut::<16>().0 {
         let original = *ciphertext;
-        let mut block = [0_u8; 16];
-        for i in 0..16 { block[i] = original[i] ^ previous_plaintext[i]; }
+        let block = (u128::from_ne_bytes(original) ^ u128::from_ne_bytes(previous_plaintext)).to_ne_bytes();
         let mut aes_block = Block::<Aes256>::from(block);
         cipher.decrypt_block(&mut aes_block);
-        block = aes_block.into();
-        for i in 0..16 { block[i] ^= previous_ciphertext[i]; }
+        let block: [u8; 16] = aes_block.into();
+        let block = (u128::from_ne_bytes(block) ^ u128::from_ne_bytes(previous_ciphertext)).to_ne_bytes();
         *ciphertext = block;
         previous_plaintext = block;
         previous_ciphertext = original;
@@ -1498,7 +1496,7 @@ fn receive_cdn_parts_bounded(
         }
         let mut reuploads = 0;
         let mut part = loop {
-            if mono_proto_runtime::request_control::check().is_err() {
+            if media::download_cancelled(dest) || mono_proto_runtime::request_control::check().is_err() {
                 return Err(MtprotoError::Message("cancelled".into()));
             }
             match fetch(offset)? {
@@ -1512,7 +1510,7 @@ fn receive_cdn_parts_bounded(
                 }
             }
         };
-        if mono_proto_runtime::request_control::check().is_err() {
+        if media::download_cancelled(dest) || mono_proto_runtime::request_control::check().is_err() {
             return Err(MtprotoError::Message("cancelled".into()));
         }
         media::decrypt_cdn_part(&job.encryption_key, &job.encryption_iv, offset, &mut part)?;
@@ -1850,6 +1848,107 @@ pub extern "system" fn flushPgoProfile<'caller>(
     }).resolve::<jni::errors::ThrowRuntimeExAndDefault>()
 }
 """, "pub extern \"system\" fn flushPgoProfile")
+
+
+add_before(ffi, "#[uniffi::export]\npub fn set_download_concurrency(", """#[uniffi::export]
+pub fn ambient_cpu_features() -> String {
+    #[cfg(target_arch = "aarch64")]
+    { return format!("aarch64 neon={} aes={} sha2={}",
+        std::arch::is_aarch64_feature_detected!("neon"),
+        std::arch::is_aarch64_feature_detected!("aes"),
+        std::arch::is_aarch64_feature_detected!("sha2")); }
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    { return format!("{} aes={} sha={} ssse3={} avx2={}", std::env::consts::ARCH,
+        std::arch::is_x86_feature_detected!("aes"),
+        std::arch::is_x86_feature_detected!("sha"),
+        std::arch::is_x86_feature_detected!("ssse3"),
+        std::arch::is_x86_feature_detected!("avx2")); }
+    #[allow(unreachable_code)]
+    std::env::consts::ARCH.to_owned()
+}
+""", "pub fn ambient_cpu_features(")
+add_before(media_lane, "fn receive_cdn_parts(", """#[cfg(test)]
+mod ambient_bounded_cdn_tests {
+    use super::*;
+    use mono_proto::latest::api::FileHashConstructor;
+    use sha2::{Digest, Sha256};
+    #[test]
+    fn bounded_cdn_nonzero_offset_never_returns_unverified_bytes() {
+        let start = 512 * 1024_i64;
+        let part_size = media::CHUNK as usize;
+        let total = 512 * 1024;
+        let plain = vec![37_u8; total];
+        let job = media::CdnRedirect {
+            dc_id: 203, file_token: vec![1], encryption_key: vec![7; 32],
+            encryption_iv: vec![9; 16], offset: start,
+            file_hashes: plain.chunks(part_size).enumerate().map(|(i, part)| {
+                FileHash::FileHash(FileHashConstructor {
+                    offset: start + (i * part_size) as i64,
+                    limit: part.len() as i32, hash: Sha256::digest(part).to_vec(),
+                })
+            }).collect(),
+        };
+        let root = std::env::temp_dir().join(format!("ambient-cdn-bounded-{}-{:?}", std::process::id(), std::thread::current().id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let dest = root.join("chunk");
+        for corrupt in [false, true] {
+            let mut offsets = Vec::new();
+            let result = mono_proto_media::download::ambient_capture_range(&dest, || {
+                let staged = media::StagedDownload::new(&dest)?;
+                receive_cdn_parts_bounded(&job, &dest, &staged, true, |offset| {
+                    let at = usize::try_from(offset - start).unwrap();
+                    assert!(at < total);
+                    offsets.push(offset);
+                    let mut encrypted = plain[at..(at + part_size).min(total)].to_vec();
+                    media::decrypt_cdn_part(&job.encryption_key, &job.encryption_iv, offset, &mut encrypted)?;
+                    if corrupt { encrypted[0] ^= 1; }
+                    Ok(Ok(encrypted))
+                }, |_| panic!("unexpected reupload"))?;
+                assert!(!staged.path().exists());
+                staged.publish(&dest)
+            });
+            if corrupt {
+                assert!(result.is_err());
+            } else {
+                assert_eq!(result.unwrap().1.unwrap(), plain);
+                assert_eq!(offsets.len(), total.div_ceil(part_size));
+            }
+            assert!(!dest.exists());
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+""", "mod ambient_bounded_cdn_tests")
+add_before(socket_tcp, "fn closed_error() -> TransportError {", """#[cfg(test)]
+mod ambient_detach_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    #[test]
+    fn completed_socket_survives_late_request_cancel() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let first = Arc::new(TcpStream::connect(addr).unwrap());
+        let (mut peer_a, _) = listener.accept().unwrap();
+        let second = Arc::new(TcpStream::connect(addr).unwrap());
+        let (mut peer_b, _) = listener.accept().unwrap();
+        peer_a.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        peer_b.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let control = ConnectionControl::default();
+        control.register(&first).unwrap();
+        control.register(&second).unwrap();
+        control.detach_socket(&first).unwrap();
+        control.close();
+        (&*first).write_all(b"a").unwrap();
+        let mut value = [0_u8; 1];
+        peer_a.read_exact(&mut value).unwrap();
+        assert_eq!(value, *b"a");
+        assert_eq!(peer_b.read(&mut value).unwrap(), 0);
+        assert!(control.detach_socket(&second).is_err());
+    }
+}
+
+""", "mod ambient_detach_tests")
 
 # Commit files only after every source contract has been checked.
 for path, result in changes.items():

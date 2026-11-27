@@ -465,8 +465,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     // Patched profiles keep thumbnails and individual ranges at one part.
                     // Only known large full-file downloads may use a wider native pipeline.
                     uniffi.monogram_mtproto.setAmbientMediaMode(true)
-                    if (com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS)
+                    if (com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS) {
                         uniffi.monogram_mtproto.perfSetEnabled(true)
+                        android.util.Log.i("MonogramPerf", "CPU features: ${uniffi.monogram_mtproto.ambientCpuFeatures()}")
+                    }
                     uniffi.monogram_mtproto.setAmbientCdnRanges(com.ambient.tv.BuildConfig.MONOGRAM_CDN_RANGES)
                     native.setDownloadConcurrency(4, 4)
                     connected = false
