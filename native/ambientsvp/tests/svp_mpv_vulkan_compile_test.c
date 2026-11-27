@@ -10,20 +10,24 @@
 #include <libavutil/frame.h>
 enum { IMGFMT_VULKAN=1, MP_IMGFIELD_INTERLACED=1 };
 #define MP_NOPTS_VALUE (-1e20)
-enum { PL_COLOR_SYSTEM_BT_601=1,PL_COLOR_SYSTEM_BT_709,PL_COLOR_SYSTEM_RGB };
+enum { PL_COLOR_SYSTEM_BT_601=1,PL_COLOR_SYSTEM_BT_709,PL_COLOR_SYSTEM_RGB,PL_COLOR_SYSTEM_BT_2020_NC };
 enum { PL_COLOR_LEVELS_LIMITED=1,PL_COLOR_LEVELS_FULL };
 enum { PL_CHROMA_UNKNOWN=0,PL_CHROMA_LEFT,PL_CHROMA_CENTER,PL_CHROMA_TOP_LEFT };
 enum { PL_COLOR_TRC_UNKNOWN=0,PL_COLOR_TRC_PQ,PL_COLOR_TRC_HLG };
 enum { PL_ALPHA_NONE=3 };
+struct pl_bit_encoding { int sample_depth,color_depth,bit_shift; };
+struct mp_ff_side_data { int type; AVBufferRef *buf; };
 struct mp_image {
     int imgfmt,w,h,fields;
     double pts,pkt_duration,nominal_fps;
-    AVBufferRef *hwctx,*film_grain;
+    AVBufferRef *hwctx,*film_grain,*dovi;
+    struct mp_ff_side_data *ff_side_data;
+    int num_ff_side_data;
     struct mp_image *enhancement_layer;
     struct {
         struct { int x0,y0,x1,y1; } crop;
-        struct { int sys,levels,alpha; } repr;
-        struct { int transfer,primaries; } color;
+        struct { int sys,levels,alpha; struct pl_bit_encoding bits; } repr;
+        struct { int transfer,primaries; struct { float min_luma,max_luma; } hdr; } color;
         int chroma_location;
     } params;
 };
