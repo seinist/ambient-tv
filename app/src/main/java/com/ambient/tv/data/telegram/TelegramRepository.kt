@@ -368,8 +368,10 @@ class TelegramRepository @Inject constructor(
         val identity = selected.cacheIdentity
         val ref = parseMonogramThumbModel(model) ?: return null
         if (ref.chatId in blockedChannels) return null
-        val key = monogramSharpCacheKey(model, generation, selected.mediaRevision(ref.chatId, ref.messageId))
-        return key.takeIf { sameAccount(selected, identity, generation) && ref.chatId !in blockedChannels }
+        val revision = selected.mediaRevision(ref.chatId, ref.messageId)
+        val key = monogramArtworkCacheKey(model, generation, revision)
+        return key.takeIf { sameAccount(selected, identity, generation) && ref.chatId !in blockedChannels &&
+            selected.mediaRevision(ref.chatId, ref.messageId) == revision }
     }
     /** A channel exit revokes local content immediately, before disk cleanup completes. */
     private val blockedChannels = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
@@ -744,9 +746,10 @@ class TelegramRepository @Inject constructor(
         check(chatId !in blockedChannels) { appContext.getString(R.string.monogram_error_channel_left) }
         val generation = streamEpoch.get()
         val identity = selected.cacheIdentity
+        val revision = selected.mediaRevision(chatId, messageId)
         val result = selected.photoFile(chatId, messageId)
         return result.takeIf { sameAccount(selected, identity, generation) &&
-            chatId !in blockedChannels }
+            chatId !in blockedChannels && selected.mediaRevision(chatId, messageId) == revision }
     }
     /** Monotonic end of a FLOOD_WAIT: until then, search answers without contacting Telegram. */
     @Volatile private var searchBlockedUntilMs = 0L

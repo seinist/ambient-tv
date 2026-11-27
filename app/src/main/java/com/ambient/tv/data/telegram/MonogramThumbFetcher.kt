@@ -27,9 +27,9 @@ class MonogramThumbFetcher(
         // card composable draws the inline preview itself and ArtworkImage retries the inline
         // model as its next candidate. Returning the preview here would cache the pixelated
         // image under the sharp thumbnail's key, and the sharp one would not be tried again.
-        val uri = (if (fullPhoto && !options.networkCachePolicy.readEnabled) repository().cachedPhotoArtworkFile(ref.chatId, ref.messageId) ?: ref.fallback
+        val uri = (if (fullPhoto && !options.networkCachePolicy.readEnabled) repository().cachedPhotoArtworkFile(ref.chatId, ref.messageId)
             else if (fullPhoto) runCatching { repository().photoFile(ref.chatId, ref.messageId) }
-                .getOrElse { if (it is kotlinx.coroutines.CancellationException) throw it; null } ?: ref.fallback
+                .getOrElse { if (it is kotlinx.coroutines.CancellationException) throw it; null }
             else if (!options.networkCachePolicy.readEnabled) repository().cachedArtworkFile(ref.chatId, ref.messageId)
             else repository().thumbnailFile(ref.chatId, ref.messageId)) ?: return null
         val file = runCatching { java.io.File(java.net.URI(uri)) }.getOrNull()?.takeIf { it.isFile } ?: return null
@@ -51,7 +51,7 @@ class MonogramThumbFetcher(
 
 internal const val MONOGRAM_RETRY_EXTRA = "ambient.monogram.retry"
 
-/** Normalize only sharp card requests; full photo and inline preview keys stay separate. */
+/** Scope full photos and sharp card requests separately; inline art uses its own key. */
 internal class MonogramSharpCacheInterceptor(
     private val repository: () -> TelegramRepository,
 ) : coil3.intercept.Interceptor {
@@ -62,12 +62,13 @@ internal class MonogramSharpCacheInterceptor(
             is Uri -> data.toString()
             else -> return chain.proceed()
         }
-        if (!model.startsWith("$MONOGRAM_THUMB_SCHEME://")) return chain.proceed()
+        if (!model.startsWith("$MONOGRAM_THUMB_SCHEME://") && !model.startsWith("$MONOGRAM_PHOTO_SCHEME://")) return chain.proceed()
         val repo = repository()
         val key = repo.artworkCacheKey(model)
         // Do not rebind an old Compose request (and its placeholder) to a newer session.
         val requestedKey = request.memoryCacheKey
-        if (requestedKey?.startsWith("monogram-sharp-v1:") == true && requestedKey != key)
+        if (requestedKey != null && (requestedKey.startsWith("monogram-sharp-v1:") ||
+            requestedKey.startsWith("monogram-photo-v1:")) && requestedKey != key)
             throw kotlinx.coroutines.CancellationException("Monogram artwork request became obsolete")
         val result = chain.withRequest(request.newBuilder().apply {
             memoryCacheKeyExtra(MONOGRAM_RETRY_EXTRA, null)

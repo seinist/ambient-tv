@@ -219,3 +219,11 @@ internal fun monogramSharpCacheKey(model: String, accountEpoch: Long, mediaRevis
     val ref = parseMonogramThumbModel(model) ?: return null
     return "monogram-sharp-v1:$accountEpoch:$mediaRevision:${ref.chatId}:${ref.messageId}"
 }
+
+/** Full photos and sharp thumbnails must never alias, even at the same decode size. */
+internal fun monogramArtworkCacheKey(model: String, accountEpoch: Long, mediaRevision: Long): String? {
+    if (!model.startsWith("$MONOGRAM_PHOTO_SCHEME://")) return monogramSharpCacheKey(model, accountEpoch, mediaRevision)
+    val ref = parseMonogramThumbModel(model) ?: return null
+    if (ref.messageId == 0) return null
+    return "monogram-photo-v1:$accountEpoch:$mediaRevision:${ref.chatId}:${ref.messageId}"
+}

@@ -25,3 +25,24 @@ internal fun rememberArtworkNetworkAccess(model: Any?, headers: Map<String, Stri
     }
     return state.value
 }
+
+/** A revision of another post does not invalidate this tile's composition. */
+@Composable
+internal fun rememberMonogramArtworkKey(model: String?): String? {
+    val context = LocalContext.current
+    val repository = remember(context, model != null) {
+        if (model != null) (context.applicationContext as? AmbientTvApplication)?.telegramRepository?.get() else null
+    }
+    val state = remember(model, repository) {
+        mutableStateOf(model?.let { repository?.artworkCacheKey(it) })
+    }
+    LaunchedEffect(model, repository) {
+        if (model != null && repository != null) {
+            repository.artworkRevision.collect {
+                val key = repository.artworkCacheKey(model)
+                if (state.value != key) state.value = key
+            }
+        }
+    }
+    return state.value
+}

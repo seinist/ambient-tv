@@ -51,4 +51,14 @@ class MonogramThumbModelTest {
         assertEquals(monogramSharpCacheKey(monogramThumbModel(5, 7, null), 1, 2),
             monogramSharpCacheKey(malformed, 1, 2))
     }
+    @Test fun fullPhotoHasIndependentAccountAndRevisionScopedKey() {
+        val thumb = monogramThumbModel(5, 7, null)
+        val photo = monogramPhotoModel(5, 7, thumb)
+        val key = monogramArtworkCacheKey(photo, 1, 2)
+        assertEquals("monogram-photo-v1:1:2:5:7", key)
+        org.junit.Assert.assertNotEquals(key, monogramArtworkCacheKey(thumb, 1, 2))
+        org.junit.Assert.assertNotEquals(key, monogramArtworkCacheKey(photo, 2, 2))
+        org.junit.Assert.assertNotEquals(key, monogramArtworkCacheKey(photo, 1, 3))
+        assertEquals(key, monogramArtworkCacheKey(monogramPhotoModel(5, 7, null), 1, 2))
+    }
 }

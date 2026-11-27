@@ -536,14 +536,7 @@ fun ArtworkImage(
     val sharpModel = (candidates.firstOrNull() as? String)?.takeIf {
         it.startsWith(com.ambient.tv.data.telegram.MONOGRAM_THUMB_SCHEME + "://")
     }
-    val monogramRepository = remember(context, sharpModel != null) {
-        if (sharpModel != null) (context.applicationContext as? com.ambient.tv.AmbientTvApplication)?.telegramRepository?.get()
-        else null
-    }
-    val artworkRevision = monogramRepository?.artworkRevision?.collectAsState()?.value
-    val sharpKey = remember(sharpModel, artworkRevision, monogramRepository) {
-        sharpModel?.let { monogramRepository?.artworkCacheKey(it) }
-    }
+    val sharpKey = rememberMonogramArtworkKey(sharpModel)
     var candidateIndex by remember(candidates, primaryNetwork.recovery, sharpKey) { mutableStateOf(0) }
     val currentModel = candidates.getOrNull(candidateIndex)
     val effectiveHeaders = remember(currentModel, headers) { artworkHeadersForModel(currentModel, headers) }

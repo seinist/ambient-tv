@@ -159,7 +159,8 @@ fun PhotoViewerScreen(
         listOf(1, -1).mapNotNull { state.neighbour(it) }.forEach { entry ->
             val model = entry.imageModel(widthPx, heightPx) ?: entry.thumbModel() ?: return@forEach
             // Full-screen photos live in the backdrop cache; the album's thumbnails stay put.
-            com.ambient.tv.backdropImageLoader(context).enqueue(ImageRequest.Builder(context).data(model).size(widthPx, heightPx).scale(Scale.FIT).build())
+            // The request is owned by this viewport effect, not a detached enqueue.
+            com.ambient.tv.backdropImageLoader(context).execute(ImageRequest.Builder(context).data(model).size(widthPx, heightPx).scale(Scale.FIT).build())
         }
     }
 
@@ -447,9 +448,23 @@ private fun PhotoStage(
 ) {
     val context = LocalContext.current
     val model = if (entry.kind == PhotoKind.PHOTO) entry.imageModel(widthPx, heightPx) else entry.thumbModel()
-    val request = remember(model, widthPx, heightPx) {
+    val monogramModel = model?.takeIf { it.startsWith(com.ambient.tv.data.telegram.MONOGRAM_PHOTO_SCHEME + "://") }
+    val scopedKey = com.ambient.tv.ui.common.rememberMonogramArtworkKey(monogramModel)
+    val network = com.ambient.tv.ui.common.rememberArtworkNetworkAccess(monogramModel)
+    var previewOnly by remember(model, scopedKey, network.recovery) { mutableStateOf(false) }
+    val effectiveModel = when {
+        monogramModel != null && scopedKey == null -> null
+        previewOnly -> entry.thumbModel()
+        else -> model
+    }
+    val request = remember(effectiveModel, widthPx, heightPx, scopedKey, network.recovery) {
         // FIT keeps portrait photos at screen height instead of filling the width (4x the pixels).
-        ImageRequest.Builder(context).data(model).size(widthPx, heightPx).scale(Scale.FIT).build()
+        ImageRequest.Builder(context).data(effectiveModel).size(widthPx, heightPx).scale(Scale.FIT)
+            .apply {
+                if (monogramModel != null && effectiveModel == monogramModel && scopedKey != null)
+                    memoryCacheKey(scopedKey)
+                if (monogramModel != null && network.blocked) networkCachePolicy(coil3.request.CachePolicy.DISABLED)
+            }.build()
     }
     // Ken Burns: slow zoom towards a per-photo corner over the slideshow interval.
     val progress = remember(entry.id) { Animatable(0f) }
@@ -462,6 +477,7 @@ private fun PhotoStage(
     AsyncImage(
         model = request,
         contentDescription = entry.title,
+        onError = { if (monogramModel != null && scopedKey != null && !previewOnly) previewOnly = true },
         imageLoader = com.ambient.tv.backdropImageLoader(context),
         contentScale = ContentScale.Fit,
         colorFilter = com.ambient.tv.ui.display.uiHdrBitmapColorFilter(
