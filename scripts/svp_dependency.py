@@ -41,8 +41,13 @@ def pinned_revision(root: Path) -> str:
 def verify(crate: Path, revision: str) -> None:
     manifest = tomllib.loads((crate / "Cargo.toml").read_text())
     for name in CRATES:
-        dep = manifest["dependencies"][name]
-        if dep.get("git") != GIT_URL or dep.get("rev") != revision:
+        # The upstream WASM smoother is now a test-only parity reference.
+        # Verify its immutable pin too; reject missing/duplicated declarations.
+        section = "dev-dependencies" if name == "svpflow-wasm" else "dependencies"
+        other = "dependencies" if section == "dev-dependencies" else "dev-dependencies"
+        dep = manifest.get(section, {}).get(name)
+        if (not isinstance(dep, dict) or name in manifest.get(other, {})
+                or dep.get("git") != GIT_URL or dep.get("rev") != revision):
             raise RuntimeError(f"SVP {name} pin mismatch; use ./build.sh libs-update svp")
     packages = tomllib.loads((crate / "Cargo.lock").read_text())["package"]
     locked = [p for p in packages if p.get("source", "").startswith(f"git+{GIT_URL}?")]
