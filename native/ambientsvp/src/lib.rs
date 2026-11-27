@@ -91,6 +91,19 @@ pub struct Stats {
     pub preset: u32,
 }
 
+enum OutputTarget<'a> {
+    Slice(&'a mut [u8]),
+    Visit(&'a mut dyn FnMut(&[u8])),
+}
+impl OutputTarget<'_> {
+    fn write(&mut self, data: &[u8]) {
+        match self {
+            Self::Slice(out) => out.copy_from_slice(data),
+            Self::Visit(visit) => visit(data),
+        }
+    }
+}
+
 struct Source {
     data: Vec<u8>,
     pts: i64,
@@ -492,6 +505,17 @@ impl AmbientSvp {
         if out.len() != self.frame_len() {
             return Err("invalid output size".into());
         }
+        self.receive_target(OutputTarget::Slice(out), eof)
+    }
+
+    /// The consumer is invoked exactly once per output, synchronously.
+    /// GPU readback/source storage is borrowed directly. CPU synthesis
+    /// uses a recycled packed buffer only when the caller has no slice.
+    pub fn receive_visit(&mut self, mut visit: impl FnMut(&[u8]), eof: bool) -> Result<Option<i64>, String> {
+        self.receive_target(OutputTarget::Visit(&mut visit), eof)
+    }
+
+    fn receive_target(&mut self, mut target: OutputTarget<'_>, eof: bool) -> Result<Option<i64>, String> {
         self.eof |= eof;
         if self.input == 0 {
             return Ok(None);
@@ -502,7 +526,7 @@ impl AmbientSvp {
                     self.recycle_frame(source.data);
                     continue;
                 }
-                out.copy_from_slice(&source.data);
+                target.write(&source.data);
                 self.recycle_frame(source.data);
                 self.last_output = Some(source.pts);
                 self.stats.output_frames += 1;
@@ -527,18 +551,28 @@ impl AmbientSvp {
         // At EOF there are no future vectors. Copy the last known frame for the
         // short tail; never manufacture motion across an absent future frame.
         if self.eof && required >= self.input {
-            out.copy_from_slice(&self.frames.last_key_value().ok_or("empty tail")?.1.data);
+            target.write(&self.frames.last_key_value().ok_or("empty tail")?.1.data);
         } else {
             let begin = Instant::now();
+            let mut novel = false;
+            let is_novel = |data: &[u8]| {
+                self.frames.get(&plan[0]).is_some_and(|s| s.data.as_slice() != data)
+                    && self.frames.get(&plan[1]).is_some_and(|s| s.data.as_slice() != data)
+            };
             #[cfg(feature = "vulkan")]
-            let (gpu_done, known_copy) = if self.prefetched.take() == Some(self.output) {
-                if self.gpu.as_mut().is_some_and(|gpu| gpu.finish_prefetched(out).is_ok()) {
+            let mut emit = |data: &[u8]| {
+                novel = is_novel(data);
+                target.write(data);
+            };
+            #[cfg(feature = "vulkan")]
+            let gpu_done = if self.prefetched.take() == Some(self.output) {
+                if self.gpu.as_mut().is_some_and(|gpu| gpu.finish_prefetched(&mut emit).is_ok()) {
                     GPU_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    (true, false)
+                    true
                 } else {
                     self.gpu = None;
                     self.stats.backend = 1;
-                    (false, false)
+                    false
                 }
             } else if self.gpu.is_some() {
                 // Only prefetch a ready consecutive output from the same
@@ -557,8 +591,8 @@ impl AmbientSvp {
                 use svpflow_core::smooth_engine::Output;
                 match self.smoother.prepare_gpu(self.output) {
                     Output::Copy(k) => {
-                        out.copy_from_slice(&self.frames.get(&k).ok_or("missing copy")?.data);
-                        (true, k == plan[0] || k == plan[1])
+                        emit(&self.frames.get(&k).ok_or("missing copy")?.data);
+                        true
                     }
                     Output::Gpu(job) => {
                         let current = &self.frames.get(&job.n).ok_or("missing current")?.data;
@@ -571,50 +605,57 @@ impl AmbientSvp {
                         } else { None };
                         let gpu = self.gpu.as_mut().unwrap();
                         let result = if let Some(next_job) = next_job {
-                            let result = gpu.render_pair(&job, &next_job, current, next, out);
+                            let result = gpu.render_pair(&job, &next_job, current, next, &mut emit);
                             if result.is_ok() { self.prefetched = Some(next_index); }
                             result
                         } else {
-                            gpu.render(&job, current, next, out)
+                            gpu.render(&job, current, next, &mut emit)
                         };
                         match result {
                             Ok(()) => {
                                 GPU_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                (true, false)
+                                true
                             }
                             Err(_) => {
                                 self.gpu = None;
                                 self.prefetched = None;
-                                                    self.stats.backend = 1;
-                                (false, false)
+                                self.stats.backend = 1;
+                                false
                             }
                         }
                     }
-                    _ => (false, false),
+                    _ => false,
                 }
             } else {
-                (false, false)
+                false
             };
             #[cfg(not(feature = "vulkan"))]
-            let (gpu_done, known_copy) = (false, false);
+            let gpu_done = false;
             if !gpu_done {
-                self.pool
-                    .install(|| self.smoother.render_into(self.output, out))?;
+                match &mut target {
+                    OutputTarget::Slice(out) => {
+                        self.pool.install(|| self.smoother.render_into(self.output, out))?;
+                        novel = is_novel(out);
+                    }
+                    OutputTarget::Visit(visit) => {
+                        let mut scratch = self.recycled_frames.pop().unwrap_or_default();
+                        scratch.resize(self.frame_len(), 0);
+                        let result = self.pool.install(|| self.smoother.render_into(self.output, &mut scratch));
+                        if result.is_ok() {
+                            novel = is_novel(&scratch);
+                            visit(&scratch);
+                        }
+                        self.recycle_frame(scratch);
+                        result?;
+                    }
+                }
             }
             let cost = begin.elapsed().as_micros() as u64;
             self.stats.synthesis_us += cost;
             self.window_cost_us += cost;
             // Count novel pictures, not merely fractional output timestamps:
             // scene cuts and unchanged images can legitimately be copies.
-            if !known_copy && self
-                .frames
-                .get(&plan[0])
-                .is_some_and(|s| s.data.as_slice() != out)
-                && self
-                    .frames
-                    .get(&plan[1])
-                    .is_some_and(|s| s.data.as_slice() != out)
-            {
+            if novel {
                 self.stats.interpolated_frames += 1;
                 INTERPOLATED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
@@ -828,6 +869,30 @@ pub unsafe extern "C" fn ambient_svp_receive(
     }))
     .unwrap_or(-1)
 }
+/// Optional output visitor. Data is read-only and valid only during the
+/// synchronous callback. The consumer must not retain it or re-enter SVP.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_receive_visit(
+    s: *mut AmbientSvp,
+    context: *mut std::ffi::c_void,
+    visit: Option<unsafe extern "C" fn(*mut std::ffi::c_void, *const u8, usize)>,
+    pts: *mut i64,
+    eof: i32,
+) -> i32 {
+    if s.is_null() || pts.is_null() || visit.is_none() { return -1; }
+    catch_unwind(AssertUnwindSafe(|| {
+        let s = unsafe { &mut *s };
+        if ambient_svp_enabled() == 0 { s.bypass(2); }
+        match s.receive_visit(|data| unsafe {
+            visit.unwrap()(context, data.as_ptr(), data.len());
+        }, eof != 0) {
+            Ok(Some(p)) => { unsafe { *pts = p; } 1 }
+            Ok(None) => 0,
+            Err(_) => -1,
+        }
+    })).unwrap_or(-1)
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_stats(s: *const AmbientSvp, stats: *mut Stats) -> i32 {
     if s.is_null() || stats.is_null() {
