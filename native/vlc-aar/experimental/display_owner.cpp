@@ -160,6 +160,14 @@ struct ambient_ahb_owner {
         s.ticket = {};
     }
 
+    VkResult cancel_before_submit(Slot &s, VkResult result) {
+        // No queue work was submitted, so the original producer fence can
+        // be returned. Device loss is terminal even before submission.
+        cancel(s);
+        if (result == VK_ERROR_DEVICE_LOST) failed = true;
+        return result;
+    }
+
     void poll() {
         for (auto &s : slots) {
             if (!s.ticket || pool.state(s.ticket.index) == State::Quarantined) continue;
@@ -190,7 +198,11 @@ struct ambient_ahb_owner {
     VkResult prepare(const ambient_ahb_input &in, ambient_ahb_output &out) {
         out = {};
         // Own the picture before any error path, including backpressure.
-        if (failed || !in.picture || !in.buffer || in.acquire_fd < -1 ||
+        if (failed) {
+            in.release_picture(in.picture, in.acquire_fd);
+            return VK_ERROR_DEVICE_LOST;
+        }
+        if (!in.picture || !in.buffer || in.acquire_fd < -1 ||
             !in.width || !in.height) {
             in.release_picture(in.picture, in.acquire_fd);
             return VK_ERROR_INITIALIZATION_FAILED;
@@ -242,7 +254,7 @@ struct ambient_ahb_owner {
         }
         VkResult result = s.cache->prepare_retired(in.buffer, in.width, in.height, format, c.descriptor_count,
                                                     in.buffer_id, in.buffer_id_valid, in.raw_yuv);
-        if (result != VK_SUCCESS) { cancel(s); return result; }
+        if (result != VK_SUCCESS) return cancel_before_submit(s, result);
         if (in.raw_yuv ? !s.cache->imported()->raw_yuv() :
             !s.cache->imported()->color_matches(in.model, in.range, in.high_precision)) {
             cancel(s);
@@ -254,17 +266,17 @@ struct ambient_ahb_owner {
             if (!s.texture) { cancel(s); return VK_ERROR_FORMAT_NOT_SUPPORTED; }
             s.width = in.width; s.height = in.height; s.format = format;
         }
-        if ((result = commands.reset(s.cmd, 0)) != VK_SUCCESS) { cancel(s); return result; }
+        if ((result = commands.reset(s.cmd, 0)) != VK_SUCCESS) return cancel_before_submit(s, result);
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        if ((result = commands.begin(s.cmd, &begin)) != VK_SUCCESS) { cancel(s); return result; }
+        if ((result = commands.begin(s.cmd, &begin)) != VK_SUCCESS) return cancel_before_submit(s, result);
         auto image = s.cache->imported()->image();
         if (!record_foreign_acquire(commands.barrier, s.cmd, image, c.family) ||
             !s.cache->pass()->record(s.cmd, in.crop) ||
             !record_foreign_release(commands.barrier, s.cmd, image, c.family)) {
             cancel(s); return VK_ERROR_INITIALIZATION_FAILED;
         }
-        if ((result = commands.end(s.cmd)) != VK_SUCCESS) { cancel(s); return result; }
+        if ((result = commands.end(s.cmd)) != VK_SUCCESS) return cancel_before_submit(s, result);
         if (!s.submission) s.submission.emplace(c.device, sync, true);
         {
             QueueLock lock(c);
@@ -274,7 +286,7 @@ struct ambient_ahb_owner {
             if (s.submission->uncertain()) {
                 pool.submitted(ticket);
                 quarantine(s);
-            } else cancel(s);
+            } else return cancel_before_submit(s, result);
             return result;
         }
         if (!pool.submitted(ticket) || !pool.begin_render_waiting_conversion(ticket)) {
