@@ -523,7 +523,7 @@ impl Gpu {
         job: &GpuJob,
         current: &[u8],
         next: &[u8],
-        output: &mut [u8],
+        output: impl FnOnce(&[u8]),
     ) -> Result<(), String> {
         self.cancel_prefetch();
         let pending = self.submit(job, current, next, self.readback.clone())?;
@@ -542,7 +542,7 @@ impl Gpu {
         second: &GpuJob,
         current: &[u8],
         next: &[u8],
-        output: &mut [u8],
+        output: impl FnOnce(&[u8]),
     ) -> Result<(), String> {
         if first.n != second.n { return Err("different source pairs".into()); }
         self.cancel_prefetch();
@@ -559,7 +559,7 @@ impl Gpu {
         self.finish(pending, output)
     }
 
-    pub fn finish_prefetched(&mut self, output: &mut [u8]) -> Result<(), String> {
+    pub fn finish_prefetched(&mut self, output: impl FnOnce(&[u8])) -> Result<(), String> {
         let pending = self.pending_next.take().ok_or("missing prefetched readback")?;
         self.finish(pending, output)
     }
@@ -745,7 +745,7 @@ impl Gpu {
         })
     }
 
-    fn finish(&mut self, pending: PendingReadback, output: &mut [u8]) -> Result<(), String> {
+    fn finish(&mut self, pending: PendingReadback, output: impl FnOnce(&[u8])) -> Result<(), String> {
         // Poll without an unbounded vkWaitForFences: seek/stop must recover from a lost GPU.
         let mapped = loop {
             self.device.poll(wgpu::Maintain::Poll);
@@ -761,7 +761,9 @@ impl Gpu {
         mapped?;
         {
             let mapped = pending.buffer.slice(..).get_mapped_range();
-            output.copy_from_slice(&mapped[..output.len()]);
+            // The caller can deliver directly to a padded player picture
+            // while this readback is mapped; the borrowed slice cannot escape.
+            output(&mapped[..self.width as usize * self.height as usize * 3 / 2]);
         }
         pending.buffer.unmap();
         if self.cache_dirty {
