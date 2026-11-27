@@ -79,6 +79,7 @@ struct ambient_ahb_owner {
         images.format_properties = targets.format_properties;
         I(images, image_format_properties, GetPhysicalDeviceImageFormatProperties2);
         I(targets, memory_properties, GetPhysicalDeviceMemoryProperties);
+        images.memory_properties = targets.memory_properties;
         targets.create_image = images.create_image; targets.destroy_image = images.destroy_image;
         targets.allocate_memory = images.allocate_memory; targets.free_memory = images.free_memory;
         targets.bind_image = images.bind_image; targets.create_view = images.create_view;

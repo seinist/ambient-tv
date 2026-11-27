@@ -8,7 +8,8 @@ namespace ambient::vlc_ahb {
 
 // One bounded cache entry per conversion slot, on the libplacebo device.
 // Only call prepare_retired after BOTH the conversion and libplacebo hold
-// completion, with no live pl_tex wrapper referencing the target. A cache hit
+// completion. A held pl_tex wrapper may survive when the target geometry and
+// format are unchanged; destroy it before replacing the target. A cache hit
 // still requires a fresh decoder picture lease and fresh acquire/release fences.
 // The imported image keeps an AHB reference, so pointer identity cannot be
 // recycled while this entry exists. It does NOT retain a decoder picture.

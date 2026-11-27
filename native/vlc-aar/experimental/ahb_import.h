@@ -24,11 +24,12 @@ struct Dispatch {
     PFN_vkDestroySampler destroy_sampler{};
     PFN_vkGetPhysicalDeviceFormatProperties format_properties{};
     PFN_vkGetPhysicalDeviceImageFormatProperties2 image_format_properties{};
+    PFN_vkGetPhysicalDeviceMemoryProperties memory_properties{};
 
     bool valid() const {
         return properties && create_image && destroy_image && allocate_memory && free_memory &&
             bind_image && create_conversion && destroy_conversion && create_view && destroy_view &&
-            create_sampler && destroy_sampler;
+            create_sampler && destroy_sampler && memory_properties;
     }
 };
 
@@ -44,7 +45,7 @@ public:
     ~ImportedImage() { reset(); } // caller must guarantee GPU completion before destruction
 
     VkResult import(AHardwareBuffer *buffer, bool raw_yuv = false) {
-        if (!device_ || !d_.valid() || !buffer || allocation_.buffer)
+        if (!physical_ || !device_ || !d_.valid() || !buffer || allocation_.buffer)
             return VK_ERROR_INITIALIZATION_FAILED;
         AHardwareBuffer_Desc desc{};
         VkAndroidHardwareBufferFormatPropertiesANDROID format{
@@ -220,6 +221,10 @@ private:
                             const VkAndroidHardwareBufferFormatPropertiesANDROID &format,
                             const VkAndroidHardwareBufferPropertiesANDROID &properties,
                             Allocation &out) {
+        VkPhysicalDeviceMemoryProperties memory{};
+        d_.memory_properties(physical_, &memory);
+        const uint32_t memory_type = ahb_memory_type(properties.memoryTypeBits, memory);
+        if (memory_type == VK_MAX_MEMORY_TYPES) return VK_ERROR_FORMAT_NOT_SUPPORTED;
         AHardwareBuffer_acquire(buffer);
         out.buffer = buffer;
         VkExternalFormatANDROID external{VK_STRUCTURE_TYPE_EXTERNAL_FORMAT_ANDROID};
@@ -253,12 +258,7 @@ private:
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         allocation.pNext = &dedicated;
         allocation.allocationSize = properties.allocationSize;
-        for (uint32_t i = 0; i < 32; ++i) {
-            if (properties.memoryTypeBits & (uint32_t{1} << i)) {
-                allocation.memoryTypeIndex = i;
-                break;
-            }
-        }
+        allocation.memoryTypeIndex = memory_type;
         result = d_.allocate_memory(device_, &allocation, nullptr, &out.memory);
         if (result != VK_SUCCESS) return result;
         result = d_.bind_image(device_, out.image, out.memory, 0);

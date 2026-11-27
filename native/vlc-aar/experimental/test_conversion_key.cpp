@@ -56,6 +56,19 @@ void test_target_extent() {
 }
 int main() {
     test_target_extent();
+    VkPhysicalDeviceMemoryProperties memory{};
+    memory.memoryTypeCount = 4;
+    memory.memoryTypes[0].propertyFlags = VK_MEMORY_PROPERTY_PROTECTED_BIT | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    memory.memoryTypes[1].propertyFlags = VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    memory.memoryTypes[2].propertyFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+    memory.memoryTypes[3].propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    assert(ahb_memory_type(15, memory) == 2);
+    assert(ahb_memory_type(11, memory) == 3);
+    assert(ahb_memory_type(3, memory) == VK_MAX_MEMORY_TYPES);
+    assert(ahb_memory_type(1u << 31, memory) == VK_MAX_MEMORY_TYPES);
+    assert(ahb_memory_type(0, memory) == VK_MAX_MEMORY_TYPES);
+    memory.memoryTypeCount = VK_MAX_MEMORY_TYPES;
+    assert(ahb_memory_type(1u << 31, memory) == 31);
     VkAndroidHardwareBufferFormatPropertiesANDROID a{};
     a.sType = VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_FORMAT_PROPERTIES_ANDROID;
     a.format = VK_FORMAT_UNDEFINED;

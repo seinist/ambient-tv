@@ -4,6 +4,18 @@
 
 namespace ambient::vlc_ahb {
 
+// Import must use an AHB-advertised memory type compatible with an
+// unprotected, non-transient sampled image. No device-local assumption:
+// a valid imported allocation may be host visible on unified-memory GPUs.
+inline uint32_t ahb_memory_type(uint32_t bits, const VkPhysicalDeviceMemoryProperties &memory) {
+    for (uint32_t i = 0; i < memory.memoryTypeCount && i < VK_MAX_MEMORY_TYPES; ++i)
+        if ((bits & (uint32_t{1} << i)) &&
+            !(memory.memoryTypes[i].propertyFlags &
+              (VK_MEMORY_PROPERTY_PROTECTED_BIT | VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT)))
+            return i;
+    return VK_MAX_MEMORY_TYPES;
+}
+
 // Known Vulkan formats also have a nonzero Android external format identifier.
  // Use the external-format import consistently (including P010); never assume
  // that an RGB/depth format contains decoder YCbCr samples.
