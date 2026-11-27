@@ -80,6 +80,8 @@ pub struct Gpu {
     cache_updated: bool,
     #[cfg(test)]
     pub(super) force_clear_output: bool,
+    #[cfg(test)]
+    pub(super) cross_pair_submissions: u64,
     compact_fields: bool,
     sources: BTreeMap<i32, Source>,
     recycled_sources: Vec<Source>,
@@ -289,6 +291,8 @@ impl Gpu {
             cache_updated: false,
             #[cfg(test)]
             force_clear_output: false,
+            #[cfg(test)]
+            cross_pair_submissions: 0,
             compact_fields,
             sources: BTreeMap::new(),
             recycled_sources: Vec::new(),
@@ -530,7 +534,7 @@ impl Gpu {
         self.finish(pending, output)
     }
 
-    /// Two outputs from the same source pair, ordered on one Vulkan queue.
+    /// Two outputs from the same or adjacent ready source pairs, ordered on one Vulkan queue.
     /// The second command reuses source/field/output resources only after the
     /// first copy-to-readback command; it has its own readback allocation.
     /// Both jobs are submitted before waiting for either mapped result.
@@ -540,11 +544,11 @@ impl Gpu {
         &mut self,
         first: &GpuJob,
         second: &GpuJob,
-        current: &[u8],
-        next: &[u8],
+        first_sources: [&[u8]; 2],
+        second_sources: [&[u8]; 2],
         output: impl FnOnce(&[u8]),
     ) -> Result<(), String> {
-        if first.n != second.n { return Err("different source pairs".into()); }
+        if second.n < first.n || second.n > first.n + 1 { return Err("nonconsecutive source pairs".into()); }
         self.cancel_prefetch();
         let second_buffer = self.readback_next.get_or_insert_with(|| self.device.create_buffer(
             &wgpu::BufferDescriptor {
@@ -553,9 +557,11 @@ impl Gpu {
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             })).clone();
-        let pending = self.submit(first, current, next, self.readback.clone())?;
-        let pending_next = self.submit(second, current, next, second_buffer)?;
+        let pending = self.submit(first, first_sources[0], first_sources[1], self.readback.clone())?;
+        let pending_next = self.submit(second, second_sources[0], second_sources[1], second_buffer)?;
         self.pending_next = Some(pending_next);
+        #[cfg(test)]
+        if first.n != second.n { self.cross_pair_submissions += 1; }
         self.finish(pending, output)
     }
 
