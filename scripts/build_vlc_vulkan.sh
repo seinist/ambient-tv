@@ -79,6 +79,9 @@ done
 ffmpeg_commit="$(sed -n 's/^FFMPEG_COMMIT=//p' "$ROOT/gradle/external-versions.properties")"
 [[ "$ffmpeg_commit" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid FFmpeg commit' >&2; exit 1; }
 sed -i "s/^FFMPEG_HASH=.*/FFMPEG_HASH=$ffmpeg_commit/" "$JNI/vlc/contrib/src/ffmpeg/rules.mak"
+if [[ -f "$JNI/vlc/.ambient-ahb-experimental" ]]; then
+    python3 "$ROOT/scripts/prepare_svp_vlc_hdr_bridge.py" "$JNI/vlc"
+fi
 # The app minimum is API 29. Vulkan's system loader is available from API 24.
 sed -i 's/ANDROID_API=21/ANDROID_API=29/' "$JNI"/buildsystem/{compile-libvlc,build-libvlc,build-libvlcjni}.sh
 perl -i -pe 's/\[ "\$REL" != 29 \](?: && \[ "\$REL" != 30 \])*/[ "\$REL" != 29 ] && [ "\$REL" != 30 ]/' "$JNI"/buildsystem/{compile-libvlc,build-libvlc,build-libvlcjni}.sh
