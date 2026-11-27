@@ -646,6 +646,14 @@ static void test_multiple_timed_intermediates(void)
                     stime_t end;
                     assert(MP4_FEL_RunEnd(&tracks[2],r,&end)&&end==time);
                 }
+                // Seek into the second retained fragment using its own defaults.
+                assert(MP4_FEL_SeekIndexedTrack(&tracks[2],48001));
+                assert(tracks[2].context.runs.i_current==1&&tracks[2].i_time==48001);
+                assert(tracks[2].context.i_trun_sample_pos==212);
+                assert(MP4_FEL_SeekIndexedTrack(&tracks[2],time));
+                assert(tracks[2].context.runs.i_current==n&&tracks[2].i_time==time);
+                assert(MP4_FEL_SeekIndexedTrack(&tracks[2],48000));
+                assert(tracks[2].context.runs.i_current==0);
                 // The fixture did not consume the track cursor: retirement
                 // still advances the implicit clock and marks the gap.
                 tracks[2].i_next_block_flags=0;
@@ -766,6 +774,11 @@ static void test_mixed_terminal(void)
                 assert(audio&&!memcmp(audio->p_buffer,"AUD1",4));
                 block_Release(audio);
                 assert(sys.context.ambient_fel_el_moof==&look_el);
+                sys.context.ambient_fel_seek_pending=true;
+                sys.context.ambient_fel_seek_time=CLOCK_FREQ;
+                assert(MP4_FEL_ApplyInterleaveSeek(&sys));
+                assert(!sys.context.ambient_fel_seek_pending&&track[2].i_time==48000);
+                assert(track[2].context.i_trun_sample_pos==164);
                 // A fully consumed audio track keeps its ordinary
                 // continuity flag; only skipped samples mark a gap.
                 track[2].context.runs.i_current=track[2].context.runs.i_count;
