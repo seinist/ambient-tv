@@ -14,6 +14,7 @@ struct ambient_fel_picture {
     struct ambient_dovi_metadata rpu;
     int64_t pts;
     unsigned width,height;
+    unsigned crop_x,crop_y; /* origin of the visible EL in its coded picture */
     float chroma_x,chroma_y;
     // Tightly packed 16-bit Y, Cb, Cr codewords, ceil chroma dimensions.
     uint16_t samples[];
