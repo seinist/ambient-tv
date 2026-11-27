@@ -13,6 +13,7 @@
 #include "video/img_format.h"
 #include "ambientsvp_loader.h"
 #include "svp_retry.h"
+#include "svp_planes.h"
 
 struct opts { double fps, source; int preset, backend, threads, artifacts, scene, algo, block, overlap, pel, search; };
 struct priv {
@@ -54,11 +55,14 @@ static bool supported(struct mp_image *img) {
 }
 static void pack(struct mp_image *img, uint8_t *dst) {
     int w = img->w, h = img->h;
-    for (int y = 0; y < h; y++) memcpy(dst + y*w, img->planes[0] + y*img->stride[0], w);
-    for (int plane = 1; plane < 3; plane++) for (int y = 0; y < h/2; y++) {
-        uint8_t *d = dst + w*h + (plane-1)*w*h/4 + y*w/2;
-        if (img->imgfmt == IMGFMT_420P) memcpy(d, img->planes[plane] + y*img->stride[plane], w/2);
-        else for (int x = 0; x < w/2; x++) d[x] = img->planes[1][y*img->stride[1] + 2*x + plane-1];
+    svp_copy_plane(dst, w, img->planes[0], img->stride[0], w, h);
+    uint8_t *u = dst + w*h, *v = u + w*h/4;
+    if (img->imgfmt == IMGFMT_420P) {
+        svp_copy_plane(u, w/2, img->planes[1], img->stride[1], w/2, h/2);
+        svp_copy_plane(v, w/2, img->planes[2], img->stride[2], w/2, h/2);
+    } else for (int y = 0; y < h/2; y++) {
+        svp_split_uv(u + y*w/2, v + y*w/2,
+                     img->planes[1] + (ptrdiff_t)y*img->stride[1], w/2);
     }
 }
 static bool receive(struct mp_filter *f) {
@@ -73,7 +77,7 @@ static bool receive(struct mp_filter *f) {
     mp_image_copy_attributes(out, p->reference);
     for (int plane = 0, offset = 0; plane < 3; plane++) {
         int w = p->width >> (plane != 0), h = p->height >> (plane != 0);
-        for (int y = 0; y < h; y++) memcpy(out->planes[plane] + y*out->stride[plane], p->buffer + offset + y*w, w);
+        svp_copy_plane(out->planes[plane], out->stride[plane], p->buffer + offset, w, w, h);
         offset += w*h;
     }
     out->pts = pts / 1000000.0;
