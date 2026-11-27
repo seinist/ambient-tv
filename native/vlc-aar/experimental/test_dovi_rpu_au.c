@@ -168,6 +168,20 @@ int main(void) {
         assert(ambient_fel_strip_el_framed(framed,&pos,width));
         assert(pos==base_size&&!memcmp(original,framed,pos));
     }
+    // Independent 90 kHz / 48 kHz media clocks: no rounding or overflow.
+    int64_t mapped;
+    assert(ambient_fel_rescale_exact(9000,90000,48000,&mapped)&&mapped==4800);
+    assert(ambient_fel_rescale_exact(-3000,90000,48000,&mapped)&&mapped==-1600);
+    assert(ambient_fel_rescale_exact(4800,48000,90000,&mapped)&&mapped==9000);
+    assert(!ambient_fel_rescale_exact(1,90000,48000,&mapped));
+    assert(!ambient_fel_rescale_exact(1,0,48000,&mapped));
+    assert(!ambient_fel_rescale_exact(INT64_MAX,1,2,&mapped));
+    assert(!ambient_fel_rescale_exact(INT64_MIN,1,2,&mapped));
+    assert(ambient_fel_rescale_exact(INT64_MIN,1,1,&mapped)&&mapped==INT64_MIN);
+    assert(ambient_fel_rescale_exact(INT64_MAX,UINT32_MAX,UINT32_MAX,&mapped)&&mapped==INT64_MAX);
+    size_t converted_dummy;
+    const uint8_t embedded_start[]={5,0x26,1,0,0,1};
+    assert(!ambient_fel_to_annexb(embedded_start,sizeof(embedded_start),1,NULL,0,&converted_dummy));
     struct ambient_rpu_pts_queue q={0};
     int a=1,b=2,c=3;
     assert(ambient_rpu_pts_insert(&q,30,&a));
