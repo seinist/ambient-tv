@@ -25,6 +25,18 @@ int ambient_svp_android_stream_push(AmbientSvpAndroidStream *,AHardwareBuffer *,
     uint32_t left,uint32_t top,uint32_t width,uint32_t height,void *,AmbientSvpSourceRelease,
     const float *phases,uint32_t count,AmbientSvpDisplayOutput *);
 int ambient_svp_android_stream_drain(AmbientSvpAndroidStream *,const float *,uint32_t,AmbientSvpDisplayOutput *);
+/* Optional allocation reuse extension, not a change to the original ABI.
+ * Acquire once for a successful output before the next stream call.
+ * The caller still owns its original AHB reference and producer fence.
+ * The lease independently retains both; NULL means no recycling.
+ * Release may run on a different thread after stream destruction.
+ * Pass ownership of a positive/zero explicit consumer sync_file fd;
+ * -1 discards the lease (including uncertain or repeated presentation).
+ * Reuse requires both fences signaled and old Vulkan import retired.
+ * Keep the library loaded until release returns. */
+typedef struct OutputLease AmbientSvpOutputLease;
+AmbientSvpOutputLease *ambient_svp_android_stream_lease_output(AmbientSvpAndroidStream *,AHardwareBuffer *,int);
+void ambient_svp_android_output_release(AmbientSvpOutputLease *,int);
 void ambient_svp_android_stream_reset(AmbientSvpAndroidStream *);
 /* 1 destroyed, 0 still in flight: retain stream/library/callbacks. */
 int ambient_svp_android_stream_destroy(AmbientSvpAndroidStream *);
