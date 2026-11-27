@@ -33,6 +33,9 @@ insert(utils, "    AImage *image;\n    int fence_fd;",
        "AHardwareBuffer *svp_buffer; // SVP")
 
 decoder = "modules/codec/omxil/mediacodec.c"
+shutil.copyfile(svp / "include/svp_sdr_profile.h", source / "modules/codec/omxil/svp_sdr_profile.h")
+insert(decoder, '#include <vlc_common.h>', '#include <vlc_common.h>\n#include "svp_sdr_profile.h" // SVP profile allowlist',
+       '"svp_sdr_profile.h" // SVP')
 insert(decoder, '    add_bool(CFG_PREFIX "dr", true,',
        '    add_bool(CFG_PREFIX "svp-vulkan", false, N_("Experimental GPU-resident SVP Surface"), NULL)\n'
        '    add_bool(CFG_PREFIX "dr", true,',
@@ -42,9 +45,15 @@ insert(decoder, "            bool use_air;",
        "bool svp_sdr8;")
 insert(decoder, "        p_sys->video.use_air = false;",
        "        p_sys->video.use_air = false;\n"
-       "        // Restrict initial opt-in to verified 8-bit AVC profiles.\n"
-       "        p_sys->video.svp_sdr8 = p_dec->fmt_in->i_codec == VLC_CODEC_H264 &&\n"
-       "            (i_profile == 66 || i_profile == 77 || i_profile == 100);",
+       "        // Explicit elementary-stream profiles that guarantee 8-bit 4:2:0.\n"
+       "        SvpSdrCodec svp_codec = SVP_CODEC_UNSUPPORTED;\n"
+       "        switch (p_dec->fmt_in->i_codec) {\n"
+       "        case VLC_CODEC_H264: svp_codec = SVP_CODEC_AVC; break;\n"
+       "        case VLC_CODEC_HEVC: svp_codec = SVP_CODEC_HEVC; break;\n"
+       "        case VLC_CODEC_VP9: svp_codec = SVP_CODEC_VP9; break;\n"
+       "        default: break;\n"
+       "        }\n"
+       "        p_sys->video.svp_sdr8 = svp_sdr8_profile(svp_codec, i_profile);",
        "p_sys->video.svp_sdr8 =")
 insert(decoder, "    if (need_gpu)\n        usage |= AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;",
        "    // SVP explicitly selects the same PRIVATE reader with GPU usage.\n"
