@@ -74,6 +74,7 @@ private fun ModuleDialog(dismiss: () -> Unit) {
                 val label = when (module) {
                     SystemModule.SHADERS -> stringResource(R.string.module_settings_shaders)
                     SystemModule.PROJECTM -> "ProjectM"
+                    SystemModule.MPV -> "MPV"
                     else -> module.id
                 }
                 TvActionButton(
