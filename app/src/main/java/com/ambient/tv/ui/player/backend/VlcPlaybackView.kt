@@ -158,6 +158,14 @@ class VlcPlaybackController(
             caps.desiredMinLuminance, caps.desiredMaxLuminance)
     }.getOrNull()
 
+    private var lastHdrTargetCheckMs = Long.MIN_VALUE
+    private fun hdrPlusDisplayChanged(): Boolean {
+        val expected = hdrPlusTarget ?: return false
+        val id = attachedView?.display?.displayId ?: return false
+        return vlcHdrPlusTargetChanged(expected, id, android.view.Display.DEFAULT_DISPLAY,
+            if (id == android.view.Display.DEFAULT_DISPLAY) readHdrPlusDisplayTarget() else null)
+    }
+
     private var vulkanOutput = !audioOnly && useVlcVulkan(videoOutputMode, VideoAccelerationRuntime.current(context),
         gpuProcessing = toneMappingRequired || initialImageOptions.softwareProcessing && !reducedVideoEffects(context),
         nativeHdrPreferred = nativeHdrPreferred && hdrPlusTarget == null)
@@ -1128,6 +1136,10 @@ class VlcPlaybackController(
 
     private fun prepare(resumePositionMs: Long = pendingRestorePositionMs ?: startPositionMs, resumePlaying: Boolean = desiredPlayWhenReady) {
         if (released || restartStopFailed || headerRelayFailed || restartStop != null || dvRetirementPending) return
+        if (ahbExperimentActive && hdrPlusDisplayChanged()) {
+            fallbackVulkan("hdr_target_changed_before_open")
+            return
+        }
         frameDropSamples.prepare()
         if (previousReleaseOutcome == null && previousAudioRelease.isDone) {
             // Nothing to wait for: open in this call, not one main-thread round trip later.
@@ -1372,8 +1384,9 @@ class VlcPlaybackController(
 
 
     private fun fallbackVulkan(reason: String): Boolean {
-        if (!vulkanOutput || released) return false
+        if (released) return false
         if (ahbFallbackPending) return true // Coalesce duplicate error events before the posted reopen.
+        if (!vulkanOutput) return false
         // A failed explicit HDR swapchain must return to the original native
         // HDR/SDR policy, not a copy-back Vulkan route with no target proof.
         val hdrTargetFailed = ahbExperimentActive && hdrPlusTarget != null
@@ -1415,6 +1428,16 @@ class VlcPlaybackController(
     fun checkVulkanOutput() {
         if (!vulkanOutput || released) return
         val now = android.os.SystemClock.elapsedRealtime()
+        // Check the display even while opening/paused; frame progress may
+        // never become ready if the new display cannot present this format.
+        if (!ahbFallbackPending && ahbExperimentActive && hdrPlusTarget != null &&
+            (lastHdrTargetCheckMs == Long.MIN_VALUE || now - lastHdrTargetCheckMs >= 1000L)) {
+            lastHdrTargetCheckMs = now
+            if (hdrPlusDisplayChanged()) {
+                fallbackVulkan("hdr_target_changed")
+                return
+            }
+        }
         val eligible = !ahbFallbackPending && prepared && vulkanSurfaceChecked && restartStop == null &&
             !restartStopFailed && !dvRetirementPending && !userVideoDisabled && !audioOnly &&
             attachedView?.holder?.surface?.isValid == true && !ended && errorMessage == null
@@ -1433,12 +1456,6 @@ class VlcPlaybackController(
             return
         }
         if (!vulkanOutputWatch.shouldSample(now)) return
-        if (hdrPlusTarget != null && ahbExperimentActive &&
-            (attachedView?.display?.displayId != android.view.Display.DEFAULT_DISPLAY ||
-                readHdrPlusDisplayTarget() != hdrPlusTarget)) {
-            fallbackVulkan("hdr_target_changed")
-            return
-        }
         val stats = runtimeStats()
         when (vulkanOutputWatch.observe(now, stats?.decodedVideo, stats?.displayedPictures, continuous = ahbExperimentActive)) {
             VlcVulkanOutputVerdict.CONFIRMED -> VideoAccelerationRuntime.reportOutput("vlc", frames = true)

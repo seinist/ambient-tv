@@ -31,6 +31,16 @@ class VlcAhbExperimentPolicyTest {
         org.junit.Assert.assertNull(vlcHdrPlusTarget(true, true, true, 34, false, true, 500f, 600f))
     }
 
+    @Test fun hdrTargetRevalidationHandlesDisplayReplacementAndMissingCaps() {
+        val pq = VlcHdrPlusTarget(1, 0.005f, 600f)
+        assertFalse(vlcHdrPlusTargetChanged(null, 2, 0, null))
+        assertFalse(vlcHdrPlusTargetChanged(pq, null, 0, null))
+        assertFalse(vlcHdrPlusTargetChanged(pq, 0, 0, pq))
+        assertTrue(vlcHdrPlusTargetChanged(pq, 2, 0, pq))
+        assertTrue(vlcHdrPlusTargetChanged(pq, 0, 0, null))
+        assertTrue(vlcHdrPlusTargetChanged(pq, 0, 0, pq.copy(maxNits = 1000f)))
+    }
+
     @Test fun onlyExplicitSdrGpuPathIsEligible() {
         assertTrue(vlcAhbExperimentEligible(true, true, false, false, "off", "off", false))
         assertFalse(vlcAhbExperimentEligible(false, true, false, false, "off", "off", false))

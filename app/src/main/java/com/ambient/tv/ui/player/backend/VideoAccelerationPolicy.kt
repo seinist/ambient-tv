@@ -296,6 +296,13 @@ internal fun vlcHdrPlusTarget(
     return if (beta < 1.0) VlcHdrPlusTarget(2, minNits, maxNits) else null
 }
 
+/** Validate a previously negotiated target on the actual attached display.
+ * No display is not a confirmed mismatch (surface replacement can be pending). */
+internal fun vlcHdrPlusTargetChanged(expected: VlcHdrPlusTarget?, displayId: Int?,
+    defaultDisplayId: Int, actual: VlcHdrPlusTarget?): Boolean =
+    expected != null && displayId != null &&
+        (displayId != defaultDisplayId || actual != expected)
+
 /** Opaque SDR or explicitly supported HDR GPU processing, with no CPU filters. */
 internal fun vlcAhbExperimentEligible(
     experiment: Boolean,

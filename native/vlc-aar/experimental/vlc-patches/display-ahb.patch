@@ -14,7 +14,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
  
  typedef struct vout_display_sys_t
  {
-@@ -47,6 +53,16 @@
+@@ -47,6 +53,18 @@
      pl_renderer renderer;
      pl_tex plane_tex[4];
      pl_tex fbo;
@@ -25,17 +25,32 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +    bool ahb_raw_p010;
 +    bool ahb_dovi;
 +    bool ahb_hdrplus_spatial;
++    int hdr_target_mode;
++    float hdr_target_min,hdr_target_max;
 +    struct ambient_hdrplus_spatial spatial;
 +    struct ambient_fel_render fel;
 +#endif
  
      // Pool of textures for the subpictures
      struct pl_overlay *overlays;
-@@ -129,9 +145,31 @@
+@@ -129,9 +145,44 @@
      if (!sys->renderer)
          goto error;
  
 +#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
++    sys->hdr_target_mode = var_InheritInteger(vd,"vk-ambient-hdr-target-transfer");
++    sys->hdr_target_min = var_InheritFloat(vd,"vk-ambient-hdr-target-min");
++    sys->hdr_target_max = var_InheritFloat(vd,"vk-ambient-hdr-target-max");
++    if (sys->hdr_target_mode &&
++        (!var_InheritBool(vd,"vk-ambient-ahb") ||
++         !var_InheritBool(vd,"vk-ambient-hdr10plus-spatial") ||
++         vd->source->i_chroma != VLC_CODEC_ANDROID_OPAQUE ||
++         !ambient_hdrplus_target_luma_valid(sys->hdr_target_mode,
++            sys->hdr_target_min,sys->hdr_target_max))) {
++        msg_Err(vd,"Explicit HDR target requires supported opaque input");
++        vlc_placebo_ReleaseCurrent(sys->pl);
++        goto error;
++    }
 +    if (var_InheritBool(vd, "vk-ambient-ahb") && vd->source->i_chroma == VLC_CODEC_ANDROID_OPAQUE) {
 +        sys->ahb_dovi = var_InheritBool(vd, "vk-ambient-dovi-ahb") && ambient_dovi_format(vd->source) &&
 +            (vd->source->dovi.profile != 7 || var_InheritBool(vd, "vk-ambient-dovi-fel"));
@@ -193,7 +208,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
      struct pl_plane_data data[4];
      if (!vlc_placebo_PlaneData(pic, data)) {
          // This should never happen, in theory
-@@ -287,6 +390,23 @@
+@@ -287,6 +390,22 @@
                                        &plane->shift_y);
      }
  
@@ -204,10 +219,9 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
      pl_frame_from_swapchain(&target, &frame);
 +#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
 +    if (ahb_output.texture && sys->ahb_hdrplus_spatial) {
-+        int mode=var_InheritInteger(vd,"vk-ambient-hdr-target-transfer");
++        int mode=sys->hdr_target_mode;
 +        if (mode ? !ambient_hdrplus_characterize_target(&target,mode,
-+                    var_InheritFloat(vd,"vk-ambient-hdr-target-min"),
-+                    var_InheritFloat(vd,"vk-ambient-hdr-target-max")) :
++                    sys->hdr_target_min,sys->hdr_target_max) :
 +                   pl_color_space_is_hdr(&target.color)) {
 +            if (!sys->ahb_error_logged)
 +                msg_Err(vd,"Experimental HDR target swapchain/capability mismatch");
