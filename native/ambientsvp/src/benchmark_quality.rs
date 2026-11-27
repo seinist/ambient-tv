@@ -19,20 +19,26 @@ pub(crate) struct Quality{
 }
 impl Quality{
     pub(crate) fn observe(&mut self,out:&[u8],w:u32,h:u32,index:u64,count:u32){
+        self.observe_with(out,w,h,index,count,|x,y,t|translation_pixel(w,x,y,t*2));
+    }
+
+    /// The generator receives time in half-source-frame units, so a
+    /// synthetic clip can specify an exact image at every output tick.
+    pub(crate) fn observe_with(&mut self,out:&[u8],w:u32,h:u32,index:u64,count:u32,
+        sample:impl Fn(u32,u32,u64)->u8){
         // Measure only genuine halfway positions, before the final
         // source frame. Exclude the frame edges where motion is clipped.
-        if index%2==0 || index>=2*u64::from(count-1){return;}
-        let shift=index*2;
+        if index%2==0 || count<2 || index>=2*u64::from(count-1){return;}
         let (mut before,mut after)=(0u128,0u128);
         for y in 16..h-16{
             for x in 16..w-16{
-                let target=i32::from(translation_pixel(w,x,y,shift));
+                let target=i32::from(sample(x,y,index));
                 let actual=i32::from(out[(y*w+x) as usize]);
                 let d=(actual-target).unsigned_abs() as u128;
                 self.squared+=d*d;
                 self.absolute+=d;
-                let b=(i32::from(translation_pixel(w,x,y,shift-2))-target).unsigned_abs() as u128;
-                let a=(i32::from(translation_pixel(w,x,y,shift+2))-target).unsigned_abs() as u128;
+                let b=(i32::from(sample(x,y,index-1))-target).unsigned_abs() as u128;
+                let a=(i32::from(sample(x,y,index+1))-target).unsigned_abs() as u128;
                 before+=b*b;after+=a*a;
                 self.pixels+=1;
             }
