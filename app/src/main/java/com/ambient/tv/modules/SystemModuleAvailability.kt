@@ -26,7 +26,7 @@ internal data class ModuleAvailability(
 internal object SystemModuleAvailability {
     fun bundled(module: SystemModule): Boolean = when (module) {
         SystemModule.MONOGRAM -> BuildConfig.MONOGRAM_NATIVE
-        SystemModule.SPOTIFY -> BuildConfig.SPOTIFY_ENABLED
+        SystemModule.SPOTIFY -> BuildConfig.SPOTIFY_ENABLED && BuildConfig.MODULE_PACKAGING == "full"
         SystemModule.PROJECTM -> BuildConfig.MODULE_PACKAGING == "full"
         SystemModule.SHADERS -> BuildConfig.MODULE_PACKAGING == "full"
         // These engines are not yet removed from the base build.
@@ -38,12 +38,19 @@ internal object SystemModuleAvailability {
     fun state(module: SystemModule) = registry.state(module)
     fun observeSelection(module: SystemModule, version: Long?) = registry.observeSelection(module, version)
     fun selectionChanged(module: SystemModule, version: Long?) = registry.selectionChanged(module, version)
-    fun reportProbe(module: SystemModule, external: Boolean, success: Boolean) = registry.reportProbe(module, external, success)
+    fun reportProbe(module: SystemModule, external: Boolean, success: Boolean) {
+        val offered = spotifyOffered
+        registry.reportProbe(module, external, success)
+        if (module == SystemModule.SPOTIFY && offered != spotifyOffered)
+            com.ambient.tv.data.local.LoginStateSignal.changed()
+    }
     fun reportFailure(module: SystemModule) = registry.reportFailure(module)
 
     /** Legacy providers retain their compile-time behavior until their loader is migrated. */
     val monogramOffered: Boolean get() = bundled(SystemModule.MONOGRAM)
-    val spotifyOffered: Boolean get() = bundled(SystemModule.SPOTIFY)
+    val spotifyOffered: Boolean get() = state(SystemModule.SPOTIFY).let {
+        it.usable || it.runtime == ModuleRuntimeState.BUNDLED_UNVERIFIED
+    }
 }
 
 internal class ModuleAvailabilityRegistry(private val bundled: (SystemModule) -> Boolean) {
