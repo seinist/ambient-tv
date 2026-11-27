@@ -1,5 +1,5 @@
 #include "dovi_rpu_au.h"
-#include "dovi_fel_hvce.h"
+#include "dovi_fel_dual.h"
 #include <assert.h>
 #include <stdlib.h>
 static unsigned freed;
@@ -65,6 +65,31 @@ int main(void) {
     assert(has_el&&irap&&el_offset==7);
     assert(!ambient_fel_mp4_sample(sample+7,sizeof(sample)-7,4,&has_el,&irap,&el_offset));
     assert(!ambient_fel_mp4_sample(sample,sizeof(sample)-1,4,&has_el,&irap,&el_offset));
+    // Dual-track sample: different NAL prefix widths, RPU stays unwrapped.
+    const uint8_t bl4[]={0,0,0,3,0x26,1,0x80};
+    const uint8_t el2[]={0,3,0x26,1,0x90,0,3,0x7c,1,0xa0};
+    const uint8_t merged_expected[]={0,0,0,3,0x26,1,0x80,
+        0,0,0,5,0x7e,1,0x26,1,0x90,0,0,0,3,0x7c,1,0xa0};
+    uint8_t merged[128];size_t merged_size;
+    assert(ambient_fel_dual_sample(bl4,sizeof(bl4),4,el2,sizeof(el2),2,NULL,0,
+        false,NULL,0,&merged_size));
+    assert(merged_size==sizeof(merged_expected));
+    assert(ambient_fel_dual_sample(bl4,sizeof(bl4),4,el2,sizeof(el2),2,NULL,0,
+        false,merged,sizeof(merged),&merged_size));
+    assert(!memcmp(merged,merged_expected,merged_size));
+    assert(ambient_fel_dual_sample(bl4,sizeof(bl4),4,el2,sizeof(el2),2,hvce,sizeof(hvce),
+        true,merged,sizeof(merged),&merged_size));
+    assert(merged_size==sizeof(merged_expected)+27);
+    assert(!memcmp(merged,bl4,sizeof(bl4)));
+    assert(!memcmp(merged+sizeof(bl4)+27,merged_expected+sizeof(bl4),
+        sizeof(merged_expected)-sizeof(bl4)));
+    assert(!ambient_fel_dual_sample(bl4,sizeof(bl4),4,el2,5,2,NULL,0,
+        false,NULL,0,&merged_size)); // no RPU
+    for(size_t i=0;i<sizeof(el2);i++)
+        assert(!ambient_fel_dual_sample(bl4,sizeof(bl4),4,el2,i,2,NULL,0,
+            false,NULL,0,&merged_size));
+    assert(!ambient_fel_dual_sample(bl4,sizeof(bl4),4,el2,sizeof(el2),2,NULL,0,
+        false,merged,20,&merged_size));
     struct ambient_rpu_pts_queue q={0};
     int a=1,b=2,c=3;
     assert(ambient_rpu_pts_insert(&q,30,&a));
