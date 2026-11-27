@@ -303,3 +303,151 @@ mod tests{
         assert!(m.len()>100 && s.len()>100);
     }
 }
+
+#[cfg(test)]
+mod gpu_tests{
+    use super::*;
+    struct Image{image:vk::Image,view:vk::ImageView,memory:vk::DeviceMemory}
+    fn memory_index(props:&vk::PhysicalDeviceMemoryProperties,bits:u32,flags:vk::MemoryPropertyFlags)->u32{
+        (0..props.memory_type_count).find(|&i|bits&(1<<i)!=0&&props.memory_types[i as usize].property_flags.contains(flags)).unwrap()
+    }
+    unsafe fn image(d:&ash::Device,props:&vk::PhysicalDeviceMemoryProperties,w:u32,h:u32,format:vk::Format,usage:vk::ImageUsageFlags)->Image{
+        let image=unsafe{d.create_image(&vk::ImageCreateInfo::default().image_type(vk::ImageType::TYPE_2D)
+            .format(format).extent(vk::Extent3D{width:w,height:h,depth:1}).mip_levels(1).array_layers(1)
+            .samples(vk::SampleCountFlags::TYPE_1).tiling(vk::ImageTiling::OPTIMAL)
+            .usage(usage).sharing_mode(vk::SharingMode::EXCLUSIVE).initial_layout(vk::ImageLayout::UNDEFINED),None)}.unwrap();
+        let req=unsafe{d.get_image_memory_requirements(image)};
+        let memory=unsafe{d.allocate_memory(&vk::MemoryAllocateInfo::default().allocation_size(req.size)
+            .memory_type_index(memory_index(props,req.memory_type_bits,vk::MemoryPropertyFlags::DEVICE_LOCAL)),None)}.unwrap();
+        unsafe{d.bind_image_memory(image,memory,0)}.unwrap();
+        let view=unsafe{d.create_image_view(&vk::ImageViewCreateInfo::default().image(image).view_type(vk::ImageViewType::TYPE_2D)
+            .format(format).subresource_range(range()),None)}.unwrap();
+        Image{image,view,memory}
+    }
+    fn range()->vk::ImageSubresourceRange{
+        vk::ImageSubresourceRange::default().aspect_mask(vk::ImageAspectFlags::COLOR).level_count(1).layer_count(1)
+    }
+    unsafe fn transition(d:&ash::Device,cmd:vk::CommandBuffer,img:vk::Image,
+        old:vk::ImageLayout,new:vk::ImageLayout,src:vk::AccessFlags,dst:vk::AccessFlags,
+        stage_src:vk::PipelineStageFlags,stage_dst:vk::PipelineStageFlags){
+        let barriers=[vk::ImageMemoryBarrier::default().image(img).old_layout(old).new_layout(new)
+            .src_access_mask(src).dst_access_mask(dst)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .subresource_range(range())];
+        unsafe{d.cmd_pipeline_barrier(cmd,stage_src,stage_dst,vk::DependencyFlags::empty(),&[],&[],&barriers)}
+    }
+    #[test]
+    #[ignore="requires Vulkan, including Mesa software Vulkan"]
+    fn native_resident_commands_keep_images_on_shared_device(){
+        unsafe{
+            let entry=ash::Entry::load().unwrap();
+            let app=vk::ApplicationInfo::default().api_version(vk::API_VERSION_1_1);
+            let instance=entry.create_instance(&vk::InstanceCreateInfo::default().application_info(&app),None).unwrap();
+            let (physical,family)=instance.enumerate_physical_devices().unwrap().into_iter()
+                .find_map(|p|instance.get_physical_device_queue_family_properties(p).iter().position(|q|
+                    q.queue_count>0&&q.queue_flags.contains(vk::QueueFlags::COMPUTE)).map(|i|(p,i as u32))).unwrap();
+            let priorities=[1.0];
+            let queues=[vk::DeviceQueueCreateInfo::default().queue_family_index(family).queue_priorities(&priorities)];
+            let d=instance.create_device(physical,&vk::DeviceCreateInfo::default().queue_create_infos(&queues),None).unwrap();
+            let queue=d.get_device_queue(family,0);
+            let props=instance.get_physical_device_memory_properties(physical);
+            let (w,h)=(66u32,34u32);
+            let engine=ambient_svp_vk_create(instance.handle(),physical,d.handle(),
+                Some(entry.static_fn().get_instance_proc_addr),w,h);
+            assert!(!engine.is_null(),"native resident initialization failed");
+            let pool=d.create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(family)
+                .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER),None).unwrap();
+            let cmd=d.allocate_command_buffers(&vk::CommandBufferAllocateInfo::default().command_pool(pool)
+                .level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(1)).unwrap()[0];
+            let src=vk::ImageUsageFlags::SAMPLED|vk::ImageUsageFlags::TRANSFER_DST;
+            let out=vk::ImageUsageFlags::STORAGE|vk::ImageUsageFlags::SAMPLED|vk::ImageUsageFlags::TRANSFER_SRC;
+            let images=[
+                image(&d,&props,w,h,vk::Format::R8_UNORM,src),
+                image(&d,&props,w,h,vk::Format::R8_UNORM,src),
+                image(&d,&props,w/2,h/2,vk::Format::R8G8_UNORM,src),
+                image(&d,&props,w/2,h/2,vk::Format::R8_UNORM,src),
+                image(&d,&props,w/2,h/2,vk::Format::R8_UNORM,src),
+                image(&d,&props,w,h,vk::Format::R8G8B8A8_UNORM,out),
+                image(&d,&props,w,h,vk::Format::R8G8B8A8_UNORM,out),
+                image(&d,&props,w,h,vk::Format::R8G8B8A8_UNORM,out),
+            ];
+            let bytes=u64::from(w*h*4);
+            let readback=d.create_buffer(&vk::BufferCreateInfo::default().size(bytes*3)
+                .usage(vk::BufferUsageFlags::TRANSFER_DST).sharing_mode(vk::SharingMode::EXCLUSIVE),None).unwrap();
+            let req=d.get_buffer_memory_requirements(readback);
+            let readback_memory=d.allocate_memory(&vk::MemoryAllocateInfo::default().allocation_size(req.size)
+                .memory_type_index(memory_index(&props,req.memory_type_bits,
+                    vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)),None).unwrap();
+            d.bind_buffer_memory(readback,readback_memory,0).unwrap();
+            let fence=d.create_fence(&Default::default(),None).unwrap();
+            d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).unwrap();
+            for (i,img) in images.iter().enumerate(){
+                if i<5{
+                    transition(&d,cmd,img.image,vk::ImageLayout::UNDEFINED,vk::ImageLayout::GENERAL,
+                        vk::AccessFlags::empty(),vk::AccessFlags::TRANSFER_WRITE,
+                        vk::PipelineStageFlags::TOP_OF_PIPE,vk::PipelineStageFlags::TRANSFER);
+                    let value=[64.0,96.0,128.0,128.0,128.0][i]/255.0;
+                    d.cmd_clear_color_image(cmd,img.image,vk::ImageLayout::GENERAL,
+                        &vk::ClearColorValue{float32:[value,value,0.0,1.0]},&[range()]);
+                    transition(&d,cmd,img.image,vk::ImageLayout::GENERAL,vk::ImageLayout::GENERAL,
+                        vk::AccessFlags::TRANSFER_WRITE,vk::AccessFlags::SHADER_READ,
+                        vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::COMPUTE_SHADER);
+                }else{
+                    transition(&d,cmd,img.image,vk::ImageLayout::UNDEFINED,vk::ImageLayout::GENERAL,
+                        vk::AccessFlags::empty(),vk::AccessFlags::SHADER_WRITE,
+                        vk::PipelineStageFlags::TOP_OF_PIPE,vk::PipelineStageFlags::COMPUTE_SHADER);
+                }
+            }
+            let a=VulkanPicture{y:images[0].view,u:images[2].view,v:vk::ImageView::null(),nv12:1};
+            let b=VulkanPicture{y:images[1].view,u:images[3].view,v:images[4].view,nv12:0};
+            let pair=ambient_svp_vk_begin(engine,cmd,&a,&b);
+            assert!(!pair.is_null());
+            assert_eq!(ambient_svp_vk_release(pair),-1);
+            assert_eq!(ambient_svp_vk_render(pair,0.5,3,a.y),-1);
+            assert_eq!(ambient_svp_vk_render(pair,f32::NAN,3,images[5].view),-1);
+            for (i,phase) in [0.0,0.5,1.0].into_iter().enumerate(){
+                assert_eq!(ambient_svp_vk_render(pair,phase,3,images[5+i].view),0);
+            }
+            // Readback belongs exclusively to this test. Production API
+            // has no pixel upload, buffer map, copy or queue wait.
+            for (i,img) in images[5..].iter().enumerate(){
+                transition(&d,cmd,img.image,vk::ImageLayout::GENERAL,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                    vk::AccessFlags::SHADER_WRITE,vk::AccessFlags::TRANSFER_READ,
+                    vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::TRANSFER);
+                let region=[vk::BufferImageCopy::default().buffer_offset(bytes*i as u64)
+                    .image_subresource(vk::ImageSubresourceLayers::default().aspect_mask(vk::ImageAspectFlags::COLOR).layer_count(1))
+                    .image_extent(vk::Extent3D{width:w,height:h,depth:1})];
+                d.cmd_copy_image_to_buffer(cmd,img.image,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,readback,&region);
+            }
+            let host=[vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                .dst_access_mask(vk::AccessFlags::HOST_READ)];
+            d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::HOST,
+                vk::DependencyFlags::empty(),&host,&[],&[]);
+            d.end_command_buffer(cmd).unwrap();
+            d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
+            assert_eq!(ambient_svp_vk_seal(pair,fence),0);
+            assert_eq!(ambient_svp_vk_cancel(pair),-1);
+            assert_eq!(ambient_svp_vk_render(pair,0.25,3,images[5].view),-1);
+            // Destroy the session handle before completion: pair Arc
+            // retains pipelines until the actual fence is signaled.
+            ambient_svp_vk_destroy(engine);
+            d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
+            assert_eq!(ambient_svp_vk_release(pair),1);
+            let mapped=d.map_memory(readback_memory,0,bytes*3,vk::MemoryMapFlags::empty()).unwrap();
+            let data=std::slice::from_raw_parts(mapped.cast::<u8>(),(bytes*3) as usize);
+            for (i,expected) in [64u8,80,96].into_iter().enumerate(){
+                for pixel in data[i*bytes as usize..(i+1)*bytes as usize].chunks_exact(4){
+                    assert!(pixel[..3].iter().all(|&v|v.abs_diff(expected)<=1)&&pixel[3]==255,
+                        "unexpected resident output phase {i}: {pixel:?}");
+                }
+            }
+            d.unmap_memory(readback_memory);
+            d.destroy_fence(fence,None);d.destroy_command_pool(pool,None);
+            d.destroy_buffer(readback,None);d.free_memory(readback_memory,None);
+            for img in images{
+                d.destroy_image_view(img.view,None);d.destroy_image(img.image,None);d.free_memory(img.memory,None);
+            }
+            d.destroy_device(None);instance.destroy_instance(None);
+        }
+    }
+}
