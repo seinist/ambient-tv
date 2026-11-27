@@ -6,6 +6,9 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.RandomAccessFile
 import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.StandardOpenOption
+import java.nio.channels.FileChannel
 import java.nio.file.StandardCopyOption
 import java.util.UUID
 import kotlinx.serialization.Serializable
@@ -63,7 +66,7 @@ internal class SystemModuleStore(
         val id = UUID.randomUUID().toString()
         val packageDir = File(directory, id)
         if (!packageDir.mkdir()) throw IOException("Cannot create module staging directory")
-        var published = false
+        var publicationStarted = false
         try {
             val archive = File(packageDir, "package.zip")
             openArchive(build).use { SystemModuleArchive.stage(it, archive, build) }
@@ -71,11 +74,15 @@ internal class SystemModuleStore(
             writeSynced(File(packageDir, "manifest.sig"), signature)
             val pointer = Pointer(id, tag, build)
             val result = verify(directory, module, pointer)
+            syncDirectory(packageDir)
+            syncDirectory(directory)
+            // Once publication starts, retain the payload even if the directory
+            // sync fails after rename. Never delete a possibly referenced package.
+            publicationStarted = true
             writeState(directory, State(pointer, state.current, maxOf(state.highWater, build.version)))
-            published = true
             result
         } finally {
-            if (!published) packageDir.deleteRecursively()
+            if (!publicationStarted) packageDir.deleteRecursively()
         }
     }
 
@@ -106,6 +113,8 @@ internal class SystemModuleStore(
     private fun verify(directory: File, module: SystemModule, pointer: Pointer): Package {
         if (!idPattern.matches(pointer.id)) throw SystemModuleTrustException("Invalid package pointer")
         val dir = File(directory, pointer.id)
+        if (!Files.isDirectory(dir.toPath(), LinkOption.NOFOLLOW_LINKS))
+            throw SystemModuleTrustException("Invalid stored module directory")
         val manifest = SystemModuleChannel.authenticate(
             readBounded(File(dir, "manifest.json"), SystemModuleChannel.MAX_MANIFEST_BYTES),
             readBounded(File(dir, "manifest.sig"), 256), publicKey, pointer.tag,
@@ -122,7 +131,7 @@ internal class SystemModuleStore(
 
     private fun readState(directory: File): State {
         val file = File(directory, "state.json")
-        if (!file.exists()) return State()
+        if (!Files.exists(file.toPath(), LinkOption.NOFOLLOW_LINKS)) return State()
         val state = try {
             json.decodeFromString<State>(readBounded(file, 64 * 1024).decodeToString(throwOnInvalidSequence = true))
         } catch (_: IllegalArgumentException) {
@@ -143,6 +152,7 @@ internal class SystemModuleStore(
         try {
             writeSynced(temp, json.encodeToString(state).encodeToByteArray())
             Files.move(temp.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            syncDirectory(directory)
         } finally {
             temp.delete()
         }
@@ -155,7 +165,14 @@ internal class SystemModuleStore(
         }
     }
 
-    private fun readBounded(file: File, max: Int): ByteArray = file.inputStream().use { input ->
+    private fun syncDirectory(directory: File) {
+        FileChannel.open(directory.toPath(), StandardOpenOption.READ).use { it.force(true) }
+    }
+
+    private fun readBounded(file: File, max: Int): ByteArray {
+        if (!Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS))
+            throw SystemModuleTrustException("Invalid stored metadata file")
+        return file.inputStream().use { input ->
         val buffer = ByteArray(max + 1)
         var count = 0
         while (count < buffer.size) {
@@ -166,12 +183,24 @@ internal class SystemModuleStore(
         }
         if (count !in 1..max) throw SystemModuleTrustException("Stored metadata exceeds bounds")
         buffer.copyOf(count)
+        }
     }
 
     private fun <T> locked(module: SystemModule, action: (File) -> T): T = synchronized(processLock) {
         val directory = File(root, module.id)
-        if (!directory.mkdirs() && !directory.isDirectory) throw IOException("Cannot open module directory")
-        RandomAccessFile(File(directory, ".lock"), "rw").use { file ->
+        if (!root.mkdirs() && !Files.isDirectory(root.toPath(), LinkOption.NOFOLLOW_LINKS))
+            throw IOException("Cannot open private module root")
+        if (!directory.mkdir()) {
+            if (!Files.isDirectory(directory.toPath(), LinkOption.NOFOLLOW_LINKS))
+                throw IOException("Cannot open module directory")
+        } else {
+            syncDirectory(root)
+        }
+        val lock = File(directory, ".lock")
+        if (Files.exists(lock.toPath(), LinkOption.NOFOLLOW_LINKS) &&
+            !Files.isRegularFile(lock.toPath(), LinkOption.NOFOLLOW_LINKS))
+            throw SystemModuleTrustException("Invalid module lock")
+        RandomAccessFile(lock, "rw").use { file ->
             file.channel.lock().use { action(directory) }
         }
     }
