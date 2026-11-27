@@ -15,7 +15,9 @@ int main(void)
     pl_log log=pl_log_create(PL_API_VER,&(struct pl_log_params){
         .log_cb=pl_log_color,.log_level=PL_LOG_WARN});
     pl_vulkan vk=pl_vulkan_create(log,&(struct pl_vulkan_params){
-        .allow_software=true,.queue_count=1});
+        .allow_software=true,.queue_count=1,
+        .instance_params=pl_vk_inst_params(.debug=true,
+            .extensions=(const char *const[]){"VK_EXT_debug_utils"},.num_extensions=1)});
     assert(vk);
     pl_gpu gpu=vk->gpu;
     pl_dispatch dp=pl_dispatch_create(log,gpu);
