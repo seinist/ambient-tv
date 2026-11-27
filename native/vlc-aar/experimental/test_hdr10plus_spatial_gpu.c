@@ -73,6 +73,28 @@ int main(void)
     assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
     assert(state.lut==old_lut&&state.output==old_out);
     img.planes[0].texture=input;img.color=pl_color_space_hdr10;
+    // Geometry and histogram changes are shader inputs, not LUT inputs.
+    m.windows[1].geometry.center_x=16;
+    m.windows[1].histogram_count=1;
+    m.windows[1].histogram[0].percentage=50;
+    m.windows[1].histogram[0].percentile=0.03f;
+    assert(ambient_hdrplus_curve_key_equal(&state.previous,&m));
+    assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
+    assert(state.previous.windows[1].geometry.center_x==32);
+    assert(state.lut==old_lut&&state.output==old_out);
+    sh=pl_dispatch_begin(state.dispatch);
+    pl_shader_sample_direct(sh,pl_sample_src(.tex=state.output));
+    assert(pl_dispatch_finish(state.dispatch,pl_dispatch_params(.shader=&sh,.target=readback)));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=readback,.ptr=pixels)));
+    assert(pixels[4*(32*width+16)]>pixels[4*(32*width+32)]+0.001f);
+    // Actual changes to tone-curve inputs must invalidate the cache.
+    img.planes[0].texture=input;img.color=pl_color_space_hdr10;
+    m.windows[1].anchors[0]=0.7f;
+    assert(!ambient_hdrplus_curve_key_equal(&state.previous,&m));
+    assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
+    assert(state.previous.windows[1].anchors[0]==0.7f);
+    assert(state.previous.windows[1].geometry.center_x==16);
+    img.planes[0].texture=input;img.color=pl_color_space_hdr10;
     m.windows[1].saturation_mapping=true;
     assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
     assert(img.planes[0].texture==input);
