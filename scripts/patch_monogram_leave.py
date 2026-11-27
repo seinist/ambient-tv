@@ -1084,7 +1084,7 @@ amend(client_download,
                                 _, mono_proto::latest::api::UploadFile,
                             >(&mut state.snapshot, api_id, requests)
                         } else {
-                            mono_proto_runtime::api_invoke::invoke_api_batch_without_updates_streaming::<
+                            mono_proto_runtime::api_invoke::invoke_api_batch_without_updates_streaming_borrowed::<
                                 _, mono_proto::latest::api::UploadFile,
                             >(&mut state.snapshot, api_id, requests, on_chunk)
                         }""")
@@ -1710,10 +1710,24 @@ amend(api_invoke,
 # Preserve the old owned callback API for pinned upstream tests and external
 # callers; the production download sink only needs to borrow each response.
 amend(range_output,
-      """    let _chunk_guard = preserve_download_window();
+      """    refill_limit: Option<usize>,
+    mut fetch_batch: impl FnMut(
+        bool,
+        Vec<UploadGetFileRequest>,
+        &mut dyn FnMut(usize, Result<UploadFile, MtprotoError>) -> Option<UploadGetFileRequest>,
+    ) -> Result<Vec<Result<UploadFile, MtprotoError>>, MtprotoError>,
+) -> Result<String, MtprotoError> {
+    let _chunk_guard = preserve_download_window();
     let chunk = resolve_chunk(offset);
     if offset.is_some_and(|value| value < 0 || value % i64::from(chunk) != 0) {""",
-      """    download_media_range_batched_streaming_borrowed(
+      """    refill_limit: Option<usize>,
+    mut fetch_batch: impl FnMut(
+        bool,
+        Vec<UploadGetFileRequest>,
+        &mut dyn FnMut(usize, Result<UploadFile, MtprotoError>) -> Option<UploadGetFileRequest>,
+    ) -> Result<Vec<Result<UploadFile, MtprotoError>>, MtprotoError>,
+) -> Result<String, MtprotoError> {
+    download_media_range_batched_streaming_borrowed(
         dc_id, media, dest_path, cancellation_path, offset, parts_in_flight, refill_limit,
         |first, requests, callback| fetch_batch(first, requests, &mut |index, value| callback(index, &value)),
     )
@@ -1804,11 +1818,6 @@ amend(media_lane,
 amend(client_download,
       "        let downloaded = media::download_media_range_batched_streaming_capped(",
       "        let downloaded = mono_proto_media::download::download_media_range_batched_streaming_borrowed(")
-amend(client_download,
-      """                            mono_proto_runtime::api_invoke::invoke_api_batch_without_updates_streaming::<
-                                _, mono_proto::latest::api::UploadFile,""",
-      """                            mono_proto_runtime::api_invoke::invoke_api_batch_without_updates_streaming_borrowed::<
-                                _, mono_proto::latest::api::UploadFile,""")
 
 # Commit files only after every source contract has been checked.
 for path, result in changes.items():
