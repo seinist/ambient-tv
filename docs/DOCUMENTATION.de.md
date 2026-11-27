@@ -2,7 +2,7 @@
 
 **Sprachen:** [English](DOCUMENTATION.md) · **Deutsch**
 
-**App:** Ambient TV (`com.ambient.tv`) · Version `1.0` (versionCode siehe `version.properties`) · minSdk 29, target/compileSdk 37 · Backup-Schema 80
+**App:** Ambient TV (`com.ambient.tv`) · Version `1.0` (versionCode siehe `version.properties`) · minSdk 29, targetSdk 37, compileSdk 37.1 · Backup-Schema 80
 **Lizenz:** [CC0 1.0 Universal](../LICENSE)
 
 Dieses Kompendium beschreibt, was die App heute kann: jede Einstellungsseite, die Video- und Audio-Panels im Player und die Medienquellen. Die Bezeichnungen sind die echten Oberflächentexte aus `app/src/main/res/values*/`. Standardwerte stammen aus dem Code (`AppPreferences`, `AudioOptions`, `VideoImageOptions`, `SettingsUiState`). Geplante Funktionen stehen hier nicht.
@@ -879,7 +879,7 @@ Am TV öffnet **Details** in der Verbindungsanzeige die Geräteübersicht; die S
 
 | Voraussetzung | Wert |
 | --- | --- |
-| Android | minSdk 29, target/compileSdk 37 |
+| Android | minSdk 29, targetSdk 37, compileSdk 37.1 |
 | Gerät | Android TV / Leanback und/oder Handy/Tablet |
 | Netzwerk | LAN zu den Medienservern; Internet für SmartTube, Plex-Link, TMDB |
 | Lokaler Netzwerkzugriff | Android fragt ggf. für lokale Server, SMB/NFS, WOL, UPnP-Receiver |

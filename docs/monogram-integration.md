@@ -47,7 +47,8 @@ than silently ship an unusable x86 APK.
 
 ## Reproducible build
 
-Install Android SDK 37, NDK, JDK 17, Rust >= 1.98 and `cargo-ndk`.
+Install Android SDK platforms 37.1 (app) and 37.0 (library modules),
+NDK, JDK 17, Rust >= 1.98 and `cargo-ndk`.
 **Builds require no Telegram application credentials**, and there are no
 `MONOGRAM_API_ID`/`MONOGRAM_API_HASH` BuildConfig constants.
 
