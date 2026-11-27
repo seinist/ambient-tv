@@ -183,6 +183,11 @@ for abi in "${abis[@]}"; do
           sleep "$delay"
       done
     )
+    # Reject future generated bindings which no longer honor the verified
+    # absolute override before publishing any incompatible AAR.
+    generated="$source_dir/native/mtproto/src/main/java/uniffi/monogram_mtproto/monogram_mtproto.kt"
+    grep -Fq 'System.getProperty("uniffi.component.$componentName.libraryOverride")' "$generated"
+    grep -Fq 'findLibraryName(componentName = "monogram_mtproto")' "$generated"
     aar="$source_dir/native/mtproto/build/outputs/aar/mtproto-release.aar"
     [[ -s "$aar" ]] || { echo "Missing $aar" >&2; exit 1; }
     cp "$aar" "$scratch/$abi.aar"
