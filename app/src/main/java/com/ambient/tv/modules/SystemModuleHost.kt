@@ -92,6 +92,15 @@ internal object SystemModuleHost {
         if (app == null || BuildConfig.CORES_PUBLIC_KEY.isBlank()) null
         else session.store.current(module)?.build
 
+    val downloadsEnabled: Boolean get() = BuildConfig.CORES_PUBLIC_KEY.isNotBlank()
+
+    fun installLatest(module: SystemModule): SystemModuleBuild? {
+        require(module in supported && downloadsEnabled)
+        val transport = SystemModuleTransport()
+        val tag = transport.latestTag(module) ?: return null
+        return transport.install(session.store, module, tag)?.build
+    }
+
     fun install(module: SystemModule, tag: String): SystemModuleBuild? {
         require(module in supported && BuildConfig.CORES_PUBLIC_KEY.isNotBlank())
         return SystemModuleTransport().install(session.store, module, tag)?.build
