@@ -86,6 +86,11 @@ internal class SystemModuleStore(
         }
     }
 
+    /** Selection metadata only, for recovery actions; never use as executable trust evidence. */
+    fun selectedMetadata(module: SystemModule): SystemModuleBuild? = locked(module) { directory ->
+        readState(directory).current?.build
+    }
+
     /** Re-authenticate the stored manifest and archive before exposing it. */
     fun current(module: SystemModule): Package? = locked(module) { directory ->
         readState(directory).current?.let { verify(directory, module, it) }
