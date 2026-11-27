@@ -3,7 +3,8 @@ package com.ambient.tv.ui.player.backend
 internal enum class VlcVulkanOutputVerdict { CONFIRMED, STALLED }
 
 /** Startup evidence is scoped to one media/window; cumulative counters alone cannot prove
- * that a recreated surface is actually presenting. Once confirmed, stop querying statistics. */
+ * that a recreated surface is actually presenting. Ordinary output stops querying after confirmation;
+ * experimental output requires continuous evidence of presentation progress. */
 internal class VlcVulkanOutputWatch(
     private val intervalMs: Long = 1_000L,
     private val stallMs: Long = 8_000L,
@@ -16,7 +17,7 @@ internal class VlcVulkanOutputWatch(
     private var baselineAt: Long? = null
     private var baselineDecoded: Int? = null
     private var baselineDisplayed: Int? = null
-    private var missingSince: Long? = null
+    private var unverifiedSince: Long? = null
 
     fun reset() {
         finished = false
@@ -30,7 +31,7 @@ internal class VlcVulkanOutputWatch(
         baselineAt = null
         baselineDecoded = null
         baselineDisplayed = null
-        missingSince = null
+        unverifiedSince = null
     }
 
     fun shouldSample(now: Long): Boolean =
@@ -39,23 +40,23 @@ internal class VlcVulkanOutputWatch(
     fun observe(now: Long, decoded: Int?, displayed: Int?, continuous: Boolean = false): VlcVulkanOutputVerdict? {
         if (!shouldSample(now)) return null
         sampledAt = now
+        // Only observed presentation progress (or an explicit suspension)
+        // renews the experimental deadline. Intermittent missing statistics
+        // and counter resets must not indefinitely mask a black screen.
+        val unverifiedAt = if (continuous) unverifiedSince ?: now.also { unverifiedSince = it }
+            else null
         if (decoded == null || displayed == null || decoded < 0 || displayed < 0) {
-            baselineAt = null
-            baselineDecoded = null
-            baselineDisplayed = null
-            // No presentation statistics means this experimental path
-            // cannot be verified. Fall back once after a longer interval,
-            // but only during eligible, active video playback.
-            if (continuous) {
-                val since = missingSince ?: now.also { missingSince = it }
-                if (now - since >= missingCountersMs) {
-                    finished = true
-                    return VlcVulkanOutputVerdict.STALLED
-                }
+            if (!continuous) {
+                baselineAt = null
+                baselineDecoded = null
+                baselineDisplayed = null
+            }
+            if (unverifiedAt != null && now - unverifiedAt >= missingCountersMs) {
+                finished = true
+                return VlcVulkanOutputVerdict.STALLED
             }
             return null
         }
-        missingSince = null
         val firstDecoded = baselineDecoded
         val firstDisplayed = baselineDisplayed
         val firstAt = baselineAt
@@ -64,6 +65,10 @@ internal class VlcVulkanOutputWatch(
             baselineAt = now
             baselineDecoded = decoded
             baselineDisplayed = displayed
+            if (unverifiedAt != null && now - unverifiedAt >= starvationMs) {
+                finished = true
+                return VlcVulkanOutputVerdict.STALLED
+            }
             return null
         }
         if (displayed > firstDisplayed) {
@@ -73,12 +78,13 @@ internal class VlcVulkanOutputWatch(
             baselineAt = now
             baselineDecoded = decoded
             baselineDisplayed = displayed
+            if (continuous) unverifiedSince = now
             if (confirmed) return null
             confirmed = true
             return VlcVulkanOutputVerdict.CONFIRMED
         }
         val stalled = now - firstAt >= stallMs && decoded > firstDecoded
-        val starved = continuous && now - firstAt >= starvationMs
+        val starved = unverifiedAt != null && now - unverifiedAt >= starvationMs
         if (stalled || starved) {
             finished = true
             return VlcVulkanOutputVerdict.STALLED
