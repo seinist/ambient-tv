@@ -45,6 +45,7 @@ class SystemModuleStoreTest {
         signedArchive: ByteArray,
         received: ByteArray = signedArchive,
         onOpen: () -> Unit = {},
+        validateCandidate: (SystemModuleStore.Package) -> Unit = {},
     ): SystemModuleStore.Package? {
         val digest = MessageDigest.getInstance("SHA-256").digest(signedArchive)
             .joinToString("") { "%02x".format(it.toInt() and 255) }
@@ -58,7 +59,7 @@ class SystemModuleStoreTest {
             update(bytes)
             sign()
         }
-        return store.install(module, tag, bytes, signature) { onOpen(); received.inputStream() }
+        return store.install(module, tag, bytes, signature, validateCandidate = validateCandidate) { onOpen(); received.inputStream() }
     }
 
     private fun reject(block: () -> Unit) {
@@ -186,6 +187,33 @@ class SystemModuleStoreTest {
         assertTrue(installed.delete())
         java.nio.file.Files.createSymbolicLink(installed.toPath(), outside.toPath())
         reject { manager.current(module) }
+    }
+
+    @Test fun incompatibleCandidateDoesNotPublishOrAdvanceVersionFloor() {
+        val manager = store()
+        val one = zip("lib/libone.so")
+        val two = zip("lib/libtwo.so")
+        install(manager, 1, one)
+        reject {
+            install(manager, 9, two, validateCandidate = { throw SystemModuleTrustException("Incompatible ELF") })
+        }
+        assertEquals(1L, manager.current(module)?.build?.version)
+        assertEquals(2L, install(manager, 2, two)?.build?.version)
+        assertEquals(1L, manager.rollback(module)?.build?.version)
+    }
+
+    @Test fun corruptedCurrentVersionCanBeRepairedWithoutLosingRollback() {
+        val manager = store()
+        val one = zip("lib/libone.so")
+        val two = zip("lib/libtwo.so")
+        install(manager, 1, one)
+        val current = install(manager, 2, two)!!.archive
+        current.writeBytes(byteArrayOf(0))
+        reject { manager.current(module) }
+        val repaired = install(manager, 2, two)!!
+        assertNotEquals(current, repaired.archive)
+        assertEquals(2L, manager.current(module)?.build?.version)
+        assertEquals(1L, manager.rollback(module)?.build?.version)
     }
 
 }
