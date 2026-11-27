@@ -47,14 +47,25 @@ print(f"Captured {abi} release APK: {source.name} ({dest.stat().st_size} bytes)"
 PY
 }
 
+build_variant() {
+    local enabled="$1"
+    if [[ "${MONOGRAM_SIZE_GRADLE_ONLY:-0}" == 1 ]]; then
+        # Both release APKs use the same local dependencies, R8 and ABI.
+        # CI prepares the native AAR and the shared engine dependencies once.
+        CI=1 MONOGRAM_NATIVE="$enabled" ./gradlew :app:packageRelease -PAPK_ABI="$abi" -PMONOGRAM_NATIVE="$enabled"
+    else
+        env CI=1 MONOGRAM_NATIVE="$enabled" bash "$root/build.sh" "$mode"
+    fi
+}
+
 # CI=1 prevents the local versionCode auto-increment between the two variants.
 # Both builds use identical source, ABI, version and release/R8 configuration.
 echo "Building normal release baseline for $abi (Monogram disabled)..."
-env CI=1 MONOGRAM_NATIVE=0 bash "$root/build.sh" "$mode"
+build_variant 0
 copy_current_apk "$scratch/baseline.apk"
 
 echo "Building optional Monogram release for $abi..."
-env CI=1 MONOGRAM_NATIVE=1 bash "$root/build.sh" "$mode"
+build_variant 1
 copy_current_apk "$scratch/monogram.apk"
 
 python3 "$root/scripts/monogram_size_audit.py" \

@@ -112,6 +112,15 @@ jobs:
         run: |
           ./scripts/fetch_libretrodroid.sh
           ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest -PAPK_ABI=arm64 -PMONOGRAM_NATIVE=1 --tests 'com.ambient.tv.data.telegram.*'
+      - name: Gate exact matched release APK size delta
+        if: matrix.cpu == 'generic'
+        env:
+          MONOGRAM_SIZE_GRADLE_ONLY: '1'
+          MONOGRAM_ABIS: ${{ matrix.abi }}
+        run: |
+          ./scripts/fetch_libretrodroid.sh
+          bash scripts/measure_monogram_apk.sh "${{ matrix.abi }}"
+          cp dist/monogram-size-* monogram-report/
       - uses: actions/upload-artifact@v5
         if: always()
         with:

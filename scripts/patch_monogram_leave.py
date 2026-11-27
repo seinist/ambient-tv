@@ -379,6 +379,9 @@ pub fn ambient_capture_range<T>(
     });
     Ok((result, payload))
 }
+fn ambient_capture_active(destination: &std::path::Path) -> bool {
+    AMBIENT_RANGE.with(|slot| slot.borrow().as_ref().is_some_and(|capture| capture.destination.as_path() == destination))
+}
 fn ambient_begin_range(destination: &std::path::Path) -> bool {
     AMBIENT_RANGE.with(|slot| {
         let mut slot = slot.borrow_mut();
@@ -517,7 +520,7 @@ mod ambient_range_tests {
                     }))])
                 },
             )?;
-            assert_eq!(std::fs::metadata(staged.path()).unwrap().len(), 0);
+            assert!(!staged.path().exists());
             staged.publish(&dest)
         }).unwrap();
         assert_eq!(offsets, (0..4).map(|i| i64::from(i * DEFAULT_CHUNK)).collect::<Vec<_>>());
@@ -538,12 +541,41 @@ mod ambient_range_tests {
 amend(range_output,
       "        remove_staging_sidecars(&self.path);\n        fs::rename(&self.path, destination)",
       """        if ambient_publish_range(destination, &self.path) {
-            // The empty private staging file is cleaned by Drop; the authenticated
-            // payload has never been written to it.
+            // No staging file was created: preserve avoids cleanup syscalls.
+            self.preserve = true;
             return Ok(destination.display().to_string());
         }
         remove_staging_sidecars(&self.path);
         fs::rename(&self.path, destination)""")
+# Reserve a unique logical stage path without opening a file for RAM ranges.
+# Inline and exceptional paths can still create the stage and publish it normally.
+amend(range_output,
+      """            let path = PathBuf::from(name);
+            match fs::OpenOptions::new()""",
+      """            let path = PathBuf::from(name);
+            if !resume && ambient_capture_active(destination) {
+                return Ok(Self { path, preserve: false, _lock: lock });
+            }
+            match fs::OpenOptions::new()""")
+amend(range_output,
+      """        let lock = DestinationLock::acquire(destination);
+        if let Some(parent) = destination""",
+      """        let lock = DestinationLock::acquire(destination);
+        if !ambient_capture_active(destination)
+            && let Some(parent) = destination""")
+amend(range_output,
+      """    let location = input_location(&media.location)?;
+    if let Some(parent) = dest_path.parent() {""",
+      """    let location = input_location(&media.location)?;
+    if !ambient_capture_active(cancellation_path)
+        && let Some(parent) = dest_path.parent() {""")
+amend(range_output,
+      """        let mut file_len = fs::metadata(dest_path)
+            .map(|meta| meta.len() as i64)
+            .unwrap_or(0);""",
+      """        let mut file_len = if stream { 0 } else {
+            fs::metadata(dest_path).map(|meta| meta.len() as i64).unwrap_or(0)
+        };""")
 amend(range_output,
       "        let mut out = if !stream && file_len > 0 {",
       """        let ambient_range = stream && ambient_begin_range(cancellation_path);

@@ -1257,8 +1257,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 lookup()?.let { return@nativeCall it }
                 val temp = synchronized(diskChunkLock) {
                     verifyGeneration()
-                    dir.mkdirs()
-                    File.createTempFile("part-", ".bin", dir)
+                    // A unique destination name does not create an empty file.
+                    File(dir, "part-${java.util.UUID.randomUUID()}.bin")
                 }
                 try {
                     val previous = uniffi.monogram_mtproto.bindRequestControl(request)
@@ -1274,6 +1274,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     requireAuthorized(h)
                     // The single optional disk copy happens outside the shared index lock.
                     val staged = digest != null && runCatching {
+                        dir.mkdirs()
                         if (temp.length() != payload.size.toLong()) temp.writeBytes(payload)
                     }.isSuccess
                     synchronized(diskChunkLock) {
