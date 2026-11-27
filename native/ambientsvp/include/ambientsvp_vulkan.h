@@ -18,7 +18,8 @@ typedef struct {
 } AmbientSvpVkPicture;
 enum {
     AMBIENT_SVP_VK_BT601_LIMITED=0, AMBIENT_SVP_VK_BT709_LIMITED=1,
-    AMBIENT_SVP_VK_BT601_FULL=2, AMBIENT_SVP_VK_BT709_FULL=3
+    AMBIENT_SVP_VK_BT601_FULL=2, AMBIENT_SVP_VK_BT709_FULL=3,
+    AMBIENT_SVP_VK_BT2020_LIMITED=4, AMBIENT_SVP_VK_BT2020_FULL=6
 };
 /* Borrow the player's actual instance, physical device, logical device.
  * Do not destroy them until all sessions and pairs have been released.
@@ -34,6 +35,18 @@ enum {
  * Calls per session/pair must be serialized. */
 AmbientSvpVk *ambient_svp_vk_create(VkInstance,VkPhysicalDevice,VkDevice,
     PFN_vkGetInstanceProcAddr,uint32_t width,uint32_t height);
+/* Optional format-specific ABI; legacy create remains unchanged.
+ * Mode 1: P010 high ten bits in separate R16/RG16 UNORM views (nv12=1).
+ * Mode 2: planar low ten bits in separate R16 UNORM views (nv12=0).
+ * Both output RGBA16F (R16G16B16A16_SFLOAT) and allow BT2020 NCL.
+ * No EOTF or tone mapping; encoded RGB and headroom are preserved.
+ * Caller must preserve compatible transfer/primaries/static metadata.
+ * Motion remains an 8-bit proxy. No dynamic HDR/Dolby metadata processing.
+ * The legacy picture struct and render call remain unchanged. */
+enum { AMBIENT_SVP_VK_FORMAT_SDR8=0, AMBIENT_SVP_VK_FORMAT_P010=1,
+       AMBIENT_SVP_VK_FORMAT_I420_10=2 };
+AmbientSvpVk *ambient_svp_vk_create_format(VkInstance,VkPhysicalDevice,VkDevice,
+    PFN_vkGetInstanceProcAddr,uint32_t width,uint32_t height,uint32_t mode);
 void ambient_svp_vk_destroy(AmbientSvpVk *);
 /* Record motion analysis into an already-recording command buffer
  * outside a render pass; no submit. Pair retains its private resources.
@@ -44,7 +57,8 @@ AmbientSvpVkPair *ambient_svp_vk_begin(const AmbientSvpVk *,VkCommandBuffer,
 /* Record up to eight output phases in [0,1] into the same command buffer.
  * Each output requires its own live nonaliasing GENERAL storage view.
  * Caller orders repeated uses of the same output via image barriers.
- * Output is encoded SDR RGB, full range. 0 success, -1 rejected. */
+ * Output is encoded full-range RGB, in the session's configured format.
+ * 0 success, -1 rejected. */
 int ambient_svp_vk_render(AmbientSvpVkPair *,float phase,uint32_t matrix,VkImageView output);
 /* After SUCCESSFUL submission of that command buffer, register its
  * unsignaled-at-submit fence. Caller must not destroy/reset the fence
