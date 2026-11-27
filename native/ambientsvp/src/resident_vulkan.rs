@@ -1,0 +1,305 @@
+//! Native Vulkan entry points for the GPU-resident interpolation kernels.
+//! The player supplies real VkImageViews on its existing VkDevice. No
+//! wgpu re-wrapping, external layout guessing, pixel mapping or readback.
+//! All command submission, image transitions and external-memory acquire/
+//! release remain the caller's responsibility. See ambientsvp_vulkan.h.
+use ash::vk;
+use std::{sync::{Arc,atomic::{AtomicU32,Ordering}},panic::{catch_unwind,AssertUnwindSafe},ptr};
+use crate::resident::{MOTION,SYNTHESIS};
+
+const MAX_PHASES:usize=8;
+const MAX_IN_FLIGHT:u32=4;
+const MAX_PIXELS:u64=1920*1080;
+type Result<T>=std::result::Result<T,String>;
+fn err(e:vk::Result)->String{format!("Vulkan result {}",e.as_raw())}
+fn spirv(source:&str,uniform:&str,entry:&str)->Result<Vec<u32>>{
+    if source.matches(uniform).count()!=1{return Err("invalid resident uniform contract".into());}
+    let name=if entry=="analyse"{"geometry"}else{"params"};
+    let source=source.replace(uniform,&format!("var<push_constant> {name}:vec4u;"));
+    let module=naga::front::wgsl::parse_str(&source).map_err(|e|e.emit_to_string(&source))?;
+    let info=naga::valid::Validator::new(naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::PUSH_CONSTANT).validate(&module).map_err(|e|e.to_string())?;
+    naga::back::spv::write_vec(&module,&info,&Default::default(),Some(&naga::back::spv::PipelineOptions{
+        shader_stage:naga::ShaderStage::Compute,entry_point:entry.into(),
+    })).map_err(|e|e.to_string())
+}
+fn motion_spirv()->Result<Vec<u32>>{
+    spirv(MOTION,"@group(0) @binding(3) var<uniform> geometry:vec4u;","analyse")
+}
+fn synthesis_spirv()->Result<Vec<u32>>{
+    spirv(SYNTHESIS,"@group(0) @binding(8) var<uniform> params:vec4u;","synthesize")
+}
+
+struct Pipeline{
+    device:ash::Device,
+    set:vk::DescriptorSetLayout,
+    layout:vk::PipelineLayout,
+    pipeline:vk::Pipeline,
+}
+impl Drop for Pipeline{
+    fn drop(&mut self){unsafe{
+        self.device.destroy_pipeline(self.pipeline,None);
+        self.device.destroy_pipeline_layout(self.layout,None);
+        self.device.destroy_descriptor_set_layout(self.set,None);
+    }}
+}
+impl Pipeline{
+    fn new(device:&ash::Device,types:&[vk::DescriptorType],words:&[u32],entry:&std::ffi::CStr)->Result<Self>{
+        let mut p=Self{device:device.clone(),set:vk::DescriptorSetLayout::null(),
+            layout:vk::PipelineLayout::null(),pipeline:vk::Pipeline::null()};
+        let bindings=types.iter().enumerate().map(|(i,&t)|vk::DescriptorSetLayoutBinding::default()
+            .binding(i as u32).descriptor_count(1).descriptor_type(t).stage_flags(vk::ShaderStageFlags::COMPUTE)
+        ).collect::<Vec<_>>();
+        unsafe{
+            p.set=device.create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),None).map_err(err)?;
+            let layouts=[p.set];
+            let ranges=[vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(16)];
+            p.layout=device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts)
+                .push_constant_ranges(&ranges),None).map_err(err)?;
+            let shader=device.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(words),None).map_err(err)?;
+            let stage=vk::PipelineShaderStageCreateInfo::default().stage(vk::ShaderStageFlags::COMPUTE).module(shader).name(entry);
+            let result=device.create_compute_pipelines(vk::PipelineCache::null(),
+                &[vk::ComputePipelineCreateInfo::default().stage(stage).layout(p.layout)],None);
+            device.destroy_shader_module(shader,None);
+            p.pipeline=match result{
+                Ok(pipelines)=>pipelines[0],
+                Err((partial,e))=>{for pipeline in partial{device.destroy_pipeline(pipeline,None);}return Err(err(e));}
+            };
+        }
+        Ok(p)
+    }
+    unsafe fn dispatch(&self,cmd:vk::CommandBuffer,set:vk::DescriptorSet,words:[u32;4],x:u32,y:u32){
+        let bytes:Vec<u8>=words.into_iter().flat_map(u32::to_ne_bytes).collect();
+        unsafe{
+            self.device.cmd_bind_pipeline(cmd,vk::PipelineBindPoint::COMPUTE,self.pipeline);
+            self.device.cmd_bind_descriptor_sets(cmd,vk::PipelineBindPoint::COMPUTE,self.layout,0,&[set],&[]);
+            self.device.cmd_push_constants(cmd,self.layout,vk::ShaderStageFlags::COMPUTE,0,&bytes);
+            self.device.cmd_dispatch(cmd,x,y,1);
+        }
+    }
+}
+
+struct Core{
+    device:ash::Device,
+    memory:vk::PhysicalDeviceMemoryProperties,
+    motion:Pipeline,synthesis:Pipeline,
+    width:u32,height:u32,gw:u32,gh:u32,field_size:u64,
+    in_flight:AtomicU32,
+}
+pub struct VulkanResident(Arc<Core>);
+#[repr(C)]
+#[derive(Clone,Copy)]
+pub struct VulkanPicture{
+    y:vk::ImageView,u:vk::ImageView,v:vk::ImageView,
+    // 0: separate R8 U/V; 1: RG8 interleaved UV (v ignored).
+    nv12:u32,
+}
+impl VulkanPicture{
+    fn valid(self)->bool{
+        self.nv12<=1 && self.y!=vk::ImageView::null() && self.u!=vk::ImageView::null()
+            && (self.nv12==1 || self.v!=vk::ImageView::null())
+    }
+    fn views(self)->[vk::ImageView;3]{[self.y,self.u,if self.nv12==1{self.u}else{self.v}]}
+}
+
+pub struct VulkanPair{
+    core:Arc<Core>,
+    pool:vk::DescriptorPool,
+    field:vk::Buffer,
+    memory:vk::DeviceMemory,
+    sets:Vec<vk::DescriptorSet>,
+    command:vk::CommandBuffer,
+    a:VulkanPicture,b:VulkanPicture,
+    phases:usize,
+    fence:vk::Fence,
+}
+impl Drop for VulkanPair{
+    fn drop(&mut self){unsafe{
+        let d=&self.core.device;
+        d.destroy_descriptor_pool(self.pool,None);
+        d.destroy_buffer(self.field,None);
+        d.free_memory(self.memory,None);
+        self.core.in_flight.fetch_sub(1,Ordering::AcqRel);
+    }}
+}
+impl VulkanPair{
+    fn new(core:Arc<Core>,command:vk::CommandBuffer,a:VulkanPicture,b:VulkanPicture)->Result<Self>{
+        if command==vk::CommandBuffer::null() || !a.valid() || !b.valid(){return Err("invalid resident pictures".into());}
+        core.in_flight.fetch_update(Ordering::AcqRel,Ordering::Acquire,|n|
+            (n<MAX_IN_FLIGHT).then_some(n+1)).map_err(|_|"resident in-flight budget")?;
+        let mut p=Self{core,pool:vk::DescriptorPool::null(),field:vk::Buffer::null(),
+            memory:vk::DeviceMemory::null(),sets:Vec::new(),command,a,b,phases:0,fence:vk::Fence::null()};
+        let c=&p.core;
+        let d=&c.device;
+        unsafe{
+            p.field=d.create_buffer(&vk::BufferCreateInfo::default().size(c.field_size)
+                .usage(vk::BufferUsageFlags::STORAGE_BUFFER).sharing_mode(vk::SharingMode::EXCLUSIVE),None).map_err(err)?;
+            let req=d.get_buffer_memory_requirements(p.field);
+            let memory_type=(0..c.memory.memory_type_count).find(|&i|
+                req.memory_type_bits&(1u32<<i)!=0 &&
+                c.memory.memory_types[i as usize].property_flags.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL))
+                .ok_or("no device-local motion field memory")?;
+            p.memory=d.allocate_memory(&vk::MemoryAllocateInfo::default().allocation_size(req.size)
+                .memory_type_index(memory_type),None).map_err(err)?;
+            d.bind_buffer_memory(p.field,p.memory,0).map_err(err)?;
+            let pool_sizes=[
+                vk::DescriptorPoolSize::default().ty(vk::DescriptorType::SAMPLED_IMAGE).descriptor_count(2+6*MAX_PHASES as u32),
+                vk::DescriptorPoolSize::default().ty(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1+MAX_PHASES as u32),
+                vk::DescriptorPoolSize::default().ty(vk::DescriptorType::STORAGE_IMAGE).descriptor_count(MAX_PHASES as u32),
+            ];
+            p.pool=d.create_descriptor_pool(&vk::DescriptorPoolCreateInfo::default().max_sets(1+MAX_PHASES as u32)
+                .pool_sizes(&pool_sizes),None).map_err(err)?;
+            let mut layouts=vec![c.synthesis.set;MAX_PHASES+1];layouts[0]=c.motion.set;
+            p.sets=d.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo::default().descriptor_pool(p.pool)
+                .set_layouts(&layouts)).map_err(err)?;
+        }
+        Ok(p)
+    }
+    fn image(&self,set:vk::DescriptorSet,binding:u32,view:vk::ImageView,ty:vk::DescriptorType){
+        let info=[vk::DescriptorImageInfo::default().image_view(view).image_layout(vk::ImageLayout::GENERAL)];
+        let write=[vk::WriteDescriptorSet::default().dst_set(set).dst_binding(binding).descriptor_type(ty).image_info(&info)];
+        unsafe{self.core.device.update_descriptor_sets(&write,&[]);}
+    }
+    fn field(&self,set:vk::DescriptorSet,binding:u32){
+        let info=[vk::DescriptorBufferInfo::default().buffer(self.field).offset(0).range(self.core.field_size)];
+        let write=[vk::WriteDescriptorSet::default().dst_set(set).dst_binding(binding)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info)];
+        unsafe{self.core.device.update_descriptor_sets(&write,&[]);}
+    }
+    unsafe fn analyse(&self){
+        let c=&self.core;
+        let set=self.sets[0];
+        self.image(set,0,self.a.y,vk::DescriptorType::SAMPLED_IMAGE);
+        self.image(set,1,self.b.y,vk::DescriptorType::SAMPLED_IMAGE);
+        self.field(set,2);
+        unsafe{
+            c.motion.dispatch(self.command,set,[c.width,c.height,c.gw,c.gh],c.gw,c.gh*2);
+            let barrier=[vk::BufferMemoryBarrier::default().src_access_mask(vk::AccessFlags::SHADER_WRITE)
+                .dst_access_mask(vk::AccessFlags::SHADER_READ)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .buffer(self.field).offset(0).size(c.field_size)];
+            c.device.cmd_pipeline_barrier(self.command,vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::COMPUTE_SHADER,vk::DependencyFlags::empty(),&[],&barrier,&[]);
+        }
+    }
+    unsafe fn render(&mut self,phase:f32,matrix:u32,output:vk::ImageView)->Result<()>{
+        if self.fence!=vk::Fence::null() || self.phases>=MAX_PHASES || !phase.is_finite()
+            || !(0.0..=1.0).contains(&phase) || matrix>3 || output==vk::ImageView::null()
+            || self.a.views().contains(&output) || self.b.views().contains(&output)
+        {return Err("invalid resident output phase/view".into());}
+        let set=self.sets[1+self.phases];
+        for (binding,view) in self.a.views().into_iter().chain(self.b.views()).enumerate(){
+            self.image(set,binding as u32,view,vk::DescriptorType::SAMPLED_IMAGE);
+        }
+        self.field(set,6);
+        self.image(set,7,output,vk::DescriptorType::STORAGE_IMAGE);
+        let c=&self.core;
+        unsafe{c.synthesis.dispatch(self.command,set,[phase.to_bits(),self.a.nv12|(self.b.nv12<<1),matrix,c.gw],
+            c.width.div_ceil(8),c.height.div_ceil(8));}
+        self.phases+=1;
+        Ok(())
+    }
+}
+
+fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Device,width:u32,height:u32)->Result<VulkanResident>{
+    if width<32 || height<32 || (width|height)&1!=0 || u64::from(width)*u64::from(height)>MAX_PIXELS{
+        return Err("unsupported resident dimensions".into());
+    }
+    let properties=unsafe{instance.get_physical_device_properties(physical)};
+    let memory=unsafe{instance.get_physical_device_memory_properties(physical)};
+    let limits=properties.limits;
+    let (gw,gh)=(width.div_ceil(16),height.div_ceil(16));
+    let field_size=u64::from(gw)*u64::from(gh)*32;
+    if width>limits.max_image_dimension2_d || height>limits.max_image_dimension2_d
+        || limits.max_per_stage_descriptor_sampled_images<6 || limits.max_per_stage_descriptor_storage_images<1
+        || limits.max_per_stage_descriptor_storage_buffers<1 || limits.max_push_constants_size<16
+        || limits.max_compute_work_group_invocations<64 || limits.max_compute_work_group_size[0]<64
+        || limits.max_compute_work_group_size[1]<8 || gw>limits.max_compute_work_group_count[0]
+        || gh*2>limits.max_compute_work_group_count[1] || width.div_ceil(8)>limits.max_compute_work_group_count[0]
+        || height.div_ceil(8)>limits.max_compute_work_group_count[1] || field_size>u64::from(limits.max_storage_buffer_range)
+    {return Err("native Vulkan resident limits".into());}
+    for format in [vk::Format::R8_UNORM,vk::Format::R8G8_UNORM,vk::Format::R8G8B8A8_UNORM]{
+        let f=unsafe{instance.get_physical_device_format_properties(physical,format)};
+        let needed=if format==vk::Format::R8G8B8A8_UNORM{
+            vk::FormatFeatureFlags::STORAGE_IMAGE|vk::FormatFeatureFlags::SAMPLED_IMAGE
+        }else{vk::FormatFeatureFlags::SAMPLED_IMAGE};
+        if !f.optimal_tiling_features.contains(needed){return Err("resident image format unsupported".into());}
+    }
+    let motion=Pipeline::new(&device,&[vk::DescriptorType::SAMPLED_IMAGE,vk::DescriptorType::SAMPLED_IMAGE,
+        vk::DescriptorType::STORAGE_BUFFER],&motion_spirv()?,c"analyse")?;
+    let mut types=vec![vk::DescriptorType::SAMPLED_IMAGE;6];
+    types.extend([vk::DescriptorType::STORAGE_BUFFER,vk::DescriptorType::STORAGE_IMAGE]);
+    let synthesis=Pipeline::new(&device,&types,&synthesis_spirv()?,c"synthesize")?;
+    Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,width,height,gw,gh,field_size,in_flight:AtomicU32::new(0)})))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_create(instance:vk::Instance,physical:vk::PhysicalDevice,device:vk::Device,
+    get_proc:Option<vk::PFN_vkGetInstanceProcAddr>,width:u32,height:u32)->*mut VulkanResident{
+    if instance==vk::Instance::null() || physical==vk::PhysicalDevice::null() || device==vk::Device::null() || get_proc.is_none(){return ptr::null_mut();}
+    catch_unwind(AssertUnwindSafe(||{
+        let f=ash::StaticFn{get_instance_proc_addr:get_proc.unwrap()};
+        let instance=unsafe{ash::Instance::load(&f,instance)};
+        let device=unsafe{ash::Device::load(instance.fp_v1_0(),device)};
+        new_core(&instance,physical,device,width,height).map_or(ptr::null_mut(),|s|Box::into_raw(Box::new(s)))
+    })).unwrap_or(ptr::null_mut())
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_destroy(s:*mut VulkanResident){
+    if !s.is_null(){let _=catch_unwind(AssertUnwindSafe(||unsafe{drop(Box::from_raw(s))}));}
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_begin(s:*const VulkanResident,command:vk::CommandBuffer,
+    a:*const VulkanPicture,b:*const VulkanPicture)->*mut VulkanPair{
+    if s.is_null() || a.is_null() || b.is_null(){return ptr::null_mut();}
+    catch_unwind(AssertUnwindSafe(||{
+        let core=unsafe{(*s).0.clone()};
+        let Ok(pair)=VulkanPair::new(core,command,unsafe{*a},unsafe{*b})else{return ptr::null_mut();};
+        unsafe{pair.analyse();}
+        Box::into_raw(Box::new(pair))
+    })).unwrap_or(ptr::null_mut())
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_render(pair:*mut VulkanPair,phase:f32,matrix:u32,output:vk::ImageView)->i32{
+    if pair.is_null(){return -1;}
+    catch_unwind(AssertUnwindSafe(||unsafe{(&mut *pair).render(phase,matrix,output)}.map_or(-1,|_|0))).unwrap_or(-1)
+}
+// The caller must pass the fence of the successful submission containing
+// this exact command buffer. The fence is borrowed and must not be reset
+// or destroyed before release. Never free in-flight descriptors/images.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_seal(pair:*mut VulkanPair,fence:vk::Fence)->i32{
+    if pair.is_null() || fence==vk::Fence::null(){return -1;}
+    let p=unsafe{&mut *pair};
+    if p.fence!=vk::Fence::null() || p.phases==0{return -1;}
+    p.fence=fence;0
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_release(pair:*mut VulkanPair)->i32{
+    if pair.is_null(){return -1;}
+    let p=unsafe{&*pair};
+    if p.fence==vk::Fence::null(){return -1;}
+    match unsafe{p.core.device.get_fence_status(p.fence)}{
+        Ok(true)=>{unsafe{drop(Box::from_raw(pair))};1}
+        Ok(false)=>0,
+        Err(_)=>-1,
+    }
+}
+// Only after discarding/resetting the UNSUBMITTED command buffer. Never
+// cancel a submitted pair. Device-lost teardown is explicit at the caller.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_vk_cancel(pair:*mut VulkanPair)->i32{
+    if pair.is_null() || unsafe{(*pair).fence}!=vk::Fence::null(){return -1;}
+    unsafe{drop(Box::from_raw(pair))};0
+}
+
+#[cfg(test)]
+mod tests{
+    #[test]
+    fn resident_native_shaders_compile_to_spirv(){
+        let m=super::motion_spirv().unwrap();
+        let s=super::synthesis_spirv().unwrap();
+        assert_eq!(m[0],0x07230203);assert_eq!(s[0],0x07230203);
+        assert!(m.len()>100 && s.len()>100);
+    }
+}
