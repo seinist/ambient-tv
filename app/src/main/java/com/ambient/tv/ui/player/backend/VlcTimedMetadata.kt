@@ -51,20 +51,38 @@ internal class VlcTimedMetadataInbox {
     val events: StateFlow<List<VlcTimedMetadata>> = mutable.asStateFlow()
     private var generation = 0L
     private var epoch = -1L
+    private var discardedThroughEpoch = -1L
     private var bytes = 0
     @Synchronized fun beginSession(): Long {
         generation++
         epoch = -1
+        discardedThroughEpoch = -1
         bytes = 0
         mutable.value = emptyList()
         return generation
     }
-    @Synchronized fun clearForSeek() {
+    internal data class SeekFence(val session: Long, val epoch: Long, val previous: Long)
+
+    @Synchronized fun clearForSeek(): SeekFence {
+        val fence = SeekFence(generation, epoch, discardedThroughEpoch)
+        // The native worker may already be sending one packet from the retired epoch.
+        // Do not advance speculatively: retries can occur before VLC actually seeks.
+        discardedThroughEpoch = maxOf(discardedThroughEpoch, epoch)
         bytes = 0
         mutable.value = emptyList()
+        return fence
     }
+
+    @Synchronized fun rejectSeek(fence: SeekFence) {
+        // Do not undo a new media session or a native epoch observed during the call.
+        if (generation == fence.session && epoch == fence.epoch) {
+            discardedThroughEpoch = fence.previous
+        }
+    }
+
     @Synchronized fun offer(session: Long, event: VlcTimedMetadata) {
-        if (session != generation || event.seekEpoch < epoch) return
+        if (session != generation || event.seekEpoch < epoch ||
+            event.seekEpoch <= discardedThroughEpoch) return
         if (event.seekEpoch != epoch) {
             epoch = event.seekEpoch
             bytes = 0

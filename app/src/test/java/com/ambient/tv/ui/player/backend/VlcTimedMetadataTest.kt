@@ -32,6 +32,43 @@ class VlcTimedMetadataTest {
         assertTrue(runCatching { VlcTimedMetadataPacket.read(packet().copyOf(34).inputStream()) }.isFailure)
     }
 
+    @Test fun seekRejectsInFlightRetiredEpochWithoutPredictingNativeRetries() {
+        val inbox = VlcTimedMetadataInbox()
+        val session = inbox.beginSession()
+        val old = VlcTimedMetadataPacket.read(packet(3).inputStream())
+        inbox.offer(session, old)
+        inbox.clearForSeek()
+        inbox.offer(session, old)
+        assertTrue(inbox.events.value.isEmpty())
+        inbox.clearForSeek()
+        val current = old.copy(seekEpoch = 4)
+        inbox.offer(session, current)
+        inbox.offer(session, old)
+        assertEquals(listOf(current), inbox.events.value)
+    }
+
+    @Test fun rejectedSeekRestoresCurrentEpochButCannotUndoNewSessionOrEpoch() {
+        val inbox = VlcTimedMetadataInbox()
+        val session = inbox.beginSession()
+        val old = VlcTimedMetadataPacket.read(packet(3).inputStream())
+        inbox.offer(session, old)
+        inbox.rejectSeek(inbox.clearForSeek())
+        inbox.offer(session, old)
+        assertEquals(listOf(old), inbox.events.value)
+        val fence = inbox.clearForSeek()
+        val current = old.copy(seekEpoch = 4)
+        inbox.offer(session, current)
+        inbox.rejectSeek(fence)
+        inbox.offer(session, old)
+        assertEquals(listOf(current), inbox.events.value)
+        val retired = inbox.clearForSeek()
+        val next = inbox.beginSession()
+        inbox.rejectSeek(retired)
+        val initial = old.copy(seekEpoch = 0)
+        inbox.offer(next, initial)
+        assertEquals(listOf(initial), inbox.events.value)
+    }
+
     @Test fun isolatesMediaSessionsSeekEpochsAndBoundsHistory() {
         val inbox = VlcTimedMetadataInbox()
         val old = inbox.beginSession()

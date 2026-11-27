@@ -1805,7 +1805,6 @@ class VlcPlaybackController(
             }
         } else positionMs.coerceIn(0L, length)
         frameDropSamples.discontinuity()
-        timedMetadataInbox.clearForSeek()
         if (ended) {
             ended = false
             prepare(target, desiredPlayWhenReady)
@@ -1840,7 +1839,9 @@ class VlcPlaybackController(
         if (!seekState.shouldSubmit(prepared && !openingOrRestarting && player.isSeekable, now)) return
         val target = pendingRestorePositionMs ?: return
         // Precise seeking avoids exposing a preceding keyframe as the requested landing.
+        val metadataFence = timedMetadataInbox.clearForSeek()
         val accepted = runCatching { player.setTime(target, false) >= 0L }.getOrDefault(false)
+        if (!accepted) timedMetadataInbox.rejectSeek(metadataFence)
         seekState.submitted(accepted, now)
         // VLC 4 can keep its native clock frozen on a paused seek, especially zero.
         // Decode silently until the requested native clock is confirmed, then pause again.
