@@ -856,3 +856,17 @@ storage and complete containment in the EL mdat. Signed offsets and
 box extents have host tests. Forward-only separate fragments, multiple
 EL tracks in the adjacent fragment, and non-adjacent layouts remain
 unsupported; full container playback is not yet demonstrated.
+
+
+### Forward-only adjacent fragments
+
+For the same strict adjacent BL/EL layout, forward-only input consumes
+both mdats once and retains distinct payload buffers within a combined
+64 MiB limit. The bounded EL moof is parsed between them. The normal
+fragment scheduler reads BL/audio/subtitle samples from the first
+buffer and exact dependent samples from the second. After consumption,
+advance the sequence number without seeking backwards, and release
+both buffers at fragment end/reset. Partial reads and budget violations
+are terminal for forward-only input; no unbounded buffering or guessing.
+Fixed a missing addition marker and recomputed unified diff offsets;
+actual container playback and final linked build remain to be verified.

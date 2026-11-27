@@ -131,6 +131,12 @@ int main(void) {
     assert(!ambient_fel_fragment_start(false,0,false,0,true,true,18000,9601,90000,48000,&bs,&es));
     assert(!ambient_fel_fragment_start(true,UINT64_MAX,true,0,true,true,0,0,90000,48000,&bs,&es));
     uint64_t payload,box_end,run_offset;
+    assert(ambient_fel_mdat_pair_budget(1,AMBIENT_FEL_MAX_MDAT-1));
+    assert(!ambient_fel_mdat_pair_budget(0,1));
+    assert(!ambient_fel_mdat_pair_budget(1,0));
+    assert(!ambient_fel_mdat_pair_budget(AMBIENT_FEL_MAX_MDAT,1));
+    assert(!ambient_fel_mdat_pair_budget(1,UINT64_MAX));
+    assert(!ambient_fel_mdat_pair_budget(UINT64_MAX,1));
     assert(ambient_fel_box_extent(100,32,8,&payload,&box_end)&&payload==108&&box_end==132);
     assert(ambient_fel_box_extent(100,32,16,&payload,&box_end)&&payload==116&&box_end==132);
     assert(!ambient_fel_box_extent(100,0,8,&payload,&box_end));

@@ -7,6 +7,11 @@
  * The entire payload is owned by the demuxer until that fragment ends;
  * callers receive a view only while the owner is alive. */
 #define AMBIENT_FEL_MAX_MDAT (64u*1024u*1024u)
+/* Both adjacent payloads share the existing cap. */
+static inline bool ambient_fel_mdat_pair_budget(uint64_t bl,uint64_t el)
+{
+    return bl>0&&el>0&&bl<AMBIENT_FEL_MAX_MDAT&&el<=AMBIENT_FEL_MAX_MDAT-bl;
+}
 static inline bool ambient_fel_mdat_slice(const uint8_t *data,size_t bytes,
     uint64_t start,uint64_t offset,size_t size,const uint8_t **slice)
 {
