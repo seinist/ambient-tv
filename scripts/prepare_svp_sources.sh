@@ -48,6 +48,7 @@ vlc)
     if [[ -f "$SOURCE/.ambient-ahb-experimental" ]]; then
         # PR510 owns the decoder and AHB lifetime in this isolated build.
         # Do not apply the competing SurfaceControl decoder patches.
+        python3 "$ROOT/scripts/prepare_svp_vlc_hdr_bridge.py" "$SOURCE" --restore
         cp "$SVP/adapters/svp_vlc_hdr_schedule.h" "$SOURCE/modules/video_filter/svp_vlc_android.h"
         cp "$SVP/adapters/svp_vlc_hdr_pair.h" "$SOURCE/modules/video_filter/"
     else
