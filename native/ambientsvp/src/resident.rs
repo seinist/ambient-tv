@@ -150,7 +150,7 @@ impl Pair<'_,'_>{
 // computes a complete candidate on a deterministic 2x2 sample grid.
 // Workgroup reduction uses cost and stable candidate order; no CPU
 // predictor or intermediate readback. A full-pixel zero vector wins ties.
-const MOTION:&str=r#"
+pub(crate) const MOTION:&str=r#"
 @group(0) @binding(0) var a:texture_2d<f32>;
 @group(0) @binding(1) var b:texture_2d<f32>;
 @group(0) @binding(2) var<storage,read_write> fields:array<vec4i>;
@@ -226,7 +226,7 @@ fn analyse(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:
 // Texture-only output. Bilinear luma/chroma sampling is explicit so
 // unfilterable imported plane views can be accepted by the same layout.
 // The output renderer samples the resulting RGBA texture directly.
-const SYNTHESIS:&str=r#"
+pub(crate) const SYNTHESIS:&str=r#"
 @group(0) @binding(0) var ay:texture_2d<f32>;
 @group(0) @binding(1) var au:texture_2d<f32>;
 @group(0) @binding(2) var av:texture_2d<f32>;
