@@ -54,7 +54,7 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
      });
      free(device_name);
      if (!sys->vulkan)
-@@ -196,6 +224,15 @@
+@@ -196,6 +224,17 @@
              ALLOWSW_TEXT, ALLOWSW_LONGTEXT)
  
      set_section("Performance tuning", NULL)
@@ -66,6 +66,8 @@ diff --git a/modules/video_output/libplacebo/instance_vulkan.c b/modules/video_o
 +            "Reject opaque HDR10+ when dynamic metadata cannot be verified.")
 +    add_bool("vk-ambient-raw-p010", false, "Experimental raw P010 handoff",
 +            "Verify native P010 identity sampling before libplacebo color conversion.")
++    add_bool("vk-ambient-dovi-ahb", false, "Experimental Dolby Vision profile 8 AHB",
++            "Decode single-layer Main10 base layer and apply timestamp-bound RPU before RGB conversion.")
 +#endif
      add_bool("vk-async-xfer", pl_vulkan_default_params.async_transfer,
              ASYNC_XFER_TEXT, ASYNC_XFER_LONGTEXT)

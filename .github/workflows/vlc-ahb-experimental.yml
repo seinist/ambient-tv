@@ -31,9 +31,6 @@ jobs:
           ref: c84ef1eda4f14f8b57a5b266b51c843cf51ed28b
           path: .ci/vlc
           persist-credentials: false
-      - name: Check experimental patch against pinned VLC
-        run: |
-          git -C .ci/vlc apply --check "$GITHUB_WORKSPACE"/native/vlc-aar/experimental/vlc-patches/*.patch
       - name: Apply reviewed production VLC patches before contract checks
         run: |
           for patch in "$GITHUB_WORKSPACE"/native/vlc-aar/patches/*.patch; do

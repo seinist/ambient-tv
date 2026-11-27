@@ -1,27 +1,32 @@
 diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
 --- a/modules/codec/omxil/mediacodec.c
 +++ b/modules/codec/omxil/mediacodec.c
-@@ -32,6 +32,8 @@
+@@ -32,6 +32,9 @@
  #include <assert.h>
  
  #include <vlc_common.h>
 +#include <vlc_ancillary.h>
 +#include "dovi_rpu_au.h"
++#include "dovi_vlc_bridge.h"
  #include <vlc_aout.h>
  #include <vlc_plugin.h>
  #include <vlc_codec.h>
-@@ -141,6 +143,10 @@
+@@ -141,6 +144,14 @@
              int i_mpeg_dar_num, i_mpeg_dar_den;
              struct vlc_asurfacetexture *surfacetexture;
              bool use_air;
-+            bool ambient_ahb;
++            bool ambient_ahb, ambient_dovi;
++            struct ambient_dovi_parser *dovi_parser;
++            struct ambient_rpu_pts_queue dovi_pts;
++            struct ambient_dovi_metadata *dovi_pending;
++            vlc_tick_t dovi_pending_ts;
 +            bool hdrplus_required, hdrplus_pending, hdrplus_projection_logged;
 +            vlc_tick_t hdrplus_ts;
 +            struct ambient_hdrplus hdrplus;
              vlc_cond_t air_cond;
              unsigned air_waiting_count;
          } video;
-@@ -839,10 +845,14 @@
+@@ -839,10 +850,14 @@
      android_video_context_t *avctx =
          vlc_video_context_GetPrivate(apctx->s.vctx, VLC_VIDEO_CONTEXT_AWINDOW);
  
@@ -39,12 +44,14 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
      free(apctx);
  }
-@@ -868,8 +878,16 @@
+@@ -868,8 +883,23 @@
      int32_t status = avctx->air_api->AImage.getTimestamp(image, &timestamp);
  
      vlc_tick_t date = status == 0 ? VLC_TICK_FROM_NS(timestamp) : 0;
 -
 -    picture_t *p_pic = NewPicture(p_dec, date);
++    struct ambient_dovi_metadata *dovi = p_sys->video.dovi_pending;
++    p_sys->video.dovi_pending = NULL;
 +    const bool hdrplus = p_sys->video.hdrplus_pending;
 +    p_sys->video.hdrplus_pending = false;
 +    picture_t *p_pic = NULL;
@@ -54,14 +61,27 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
 +        AbortDecoderLocked(p_sys);
 +        goto error;
 +    }
++    if (p_sys->video.ambient_dovi && (!dovi || status != 0 || date != p_sys->video.dovi_pending_ts || hdrplus)) {
++        msg_Err(p_dec, "Dolby Vision RPU/image timestamp mismatch");
++        AbortDecoderLocked(p_sys);
++        goto error;
++    }
 +    p_pic = NewPicture(p_dec, date);
      if (p_pic == NULL)
          goto error;
  
-@@ -879,6 +897,29 @@
+@@ -879,6 +909,37 @@
          goto error;
      }
  
++    if (dovi) {
++        vlc_video_dovi_metadata_t *dst =
++            picture_AttachNewAncillary(p_pic, VLC_ANCILLARY_ID_DOVI, sizeof(*dst));
++        if (!dst) { AbortDecoderLocked(p_sys); goto error; }
++        ambient_dovi_map(dst, dovi);
++        free(dovi);
++        dovi = NULL;
++    }
 +    if (hdrplus) {
 +        const struct ambient_hdrplus *m = &p_sys->video.hdrplus;
 +        vlc_video_hdr_dynamic_metadata_t *dst =
@@ -88,8 +108,11 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      struct android_picture_ctx *apctx = malloc(sizeof(*apctx));
      if (apctx == NULL)
          goto error;
-@@ -901,9 +942,7 @@
+@@ -899,11 +960,10 @@
+     return VLC_SUCCESS;
+ 
  error:
++    free(dovi);
      if (p_pic != NULL)
          picture_Release(p_pic);
 -    if (fence_fd > 0)
@@ -99,7 +122,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      return VLC_EGENERIC;
  }
  
-@@ -930,11 +969,25 @@
+@@ -930,11 +990,27 @@
          return;
      }
      vlc_mutex_lock(&p_sys->lock);
@@ -120,13 +143,18 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      vlc_cond_broadcast(&p_sys->video.air_cond);
 -    if (p_sys->b_flush_out)
 +    if (p_sys->b_flush_out) {
++        free(p_sys->video.dovi_pending);
++        p_sys->video.dovi_pending = NULL;
 +        p_sys->video.hdrplus_pending = false;
          avctx->air_api->AImage.deleteAsync(image, fence_fd);
 +    }
      else
          QueueAImagePicture(p_dec, avctx, image, fence_fd);
      vlc_mutex_unlock(&p_sys->lock);
-@@ -948,6 +1001,7 @@
+@@ -954,9 +1030,10 @@
+         msg_Warn(p_dec, "Using Surface output for MediaTek Codec2 HEVC");
+         return VLC_EGENERIC;
+     }
 -    struct aimage_reader_api *air_api = AWindowHandler_getAImageReaderApi(awh);
 +    struct aimage_reader_api *air_api = p_sys->video.ambient_ahb ?
 +        AWindowHandler_getGpuAImageReaderApi(awh) : AWindowHandler_getAImageReaderApi(awh);
@@ -136,7 +164,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
          return VLC_EGENERIC;
  
      int32_t width = 1, height = 1; /* Ignored by MediaCodec */
-@@ -1004,7 +1058,9 @@
+@@ -1013,7 +1090,9 @@
          vlc_video_context_GetPrivate(p_sys->video.ctx, VLC_VIDEO_CONTEXT_AWINDOW);
      avctx->dec_opaque = NULL;
      avctx->air_api = air_api;
@@ -147,7 +175,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      avctx->air = reader;
      avctx->render = NULL;
      avctx->render_ts = NULL;
-@@ -1114,10 +1170,20 @@
+@@ -1123,10 +1202,20 @@
          || (!p_sys->api.b_support_rotation && p_dec->fmt_out.video.orientation != ORIENT_NORMAL)
          || !can_set_video_layout;
  
@@ -168,7 +196,40 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      if (ret == VLC_SUCCESS)
      {
          vlc_decoder_device_Release(dec_dev);
-@@ -1441,8 +1507,10 @@
+@@ -1165,6 +1254,12 @@
+     int i_ret;
+     int i_profile = p_dec->fmt_in->i_profile;
+     const char *mime = NULL;
++    const bool dovi_ahb_requested = p_dec->fmt_in->i_cat == VIDEO_ES &&
++        var_InheritBool(p_dec, "vk-ambient-ahb") &&
++        var_InheritBool(p_dec, "vk-ambient-dovi-ahb") &&
++        var_InheritBool(p_dec, CFG_PREFIX "dr") &&
++        p_dec->fmt_in->i_codec == VLC_CODEC_HEVC &&
++        ambient_dovi_format(&p_dec->fmt_in->video);
+ 
+     /* Video or Audio if "mediacodec-audio" bool is true */
+     if (p_dec->fmt_in->i_cat != VIDEO_ES && (p_dec->fmt_in->i_cat != AUDIO_ES
+@@ -1195,7 +1290,10 @@
+             /* Single-layer DV retains HEVC CSD/NAL handling, but must select
+              * the vendor DV decoder rather than the HEVC base-layer decoder.
+              * Android CodecProfileLevel uses one bit per Dolby Vision profile. */
+-            if (p_dec->fmt_in->video.dovi.rpu_present &&
++            if (dovi_ahb_requested) {
++                i_profile = 2; // HEVC Main10 base layer, not vendor DV RGB
++                msg_Info(p_dec, "Experimental Dolby Vision HEVC base-layer decoder requested");
++            } else if (p_dec->fmt_in->video.dovi.rpu_present &&
+                 p_dec->fmt_in->video.dovi.bl_present &&
+                 !p_dec->fmt_in->video.dovi.el_present &&
+                 (p_dec->fmt_in->video.dovi.profile == 5 ||
+@@ -1272,6 +1370,7 @@
+     if ((p_sys = calloc(1, sizeof(*p_sys))) == NULL)
+         return VLC_ENOMEM;
+ 
++    if (dovi_ahb_requested) p_sys->video.ambient_dovi = true;
+     p_sys->api.p_obj = p_this;
+     p_sys->api.i_codec = p_dec->fmt_in->i_codec;
+     p_sys->api.i_cat = p_dec->fmt_in->i_cat;
+@@ -1465,8 +1564,10 @@
      {
          p_sys->b_aborted = true;
          vlc_cond_broadcast(&p_sys->cond);
@@ -181,7 +242,17 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      }
  }
  
-@@ -1479,6 +1547,9 @@
+@@ -1480,6 +1581,9 @@
+     switch (p_sys->cat)
+     {
+         case VIDEO_ES:
++            ambient_rpu_pts_clear(&p_sys->video.dovi_pts, free);
++            free(p_sys->video.dovi_pending);
++            av_ambient_dovi_free(p_sys->video.dovi_parser);
+             if (p_sys->video.surfacetexture)
+                 vlc_asurfacetexture_Delete(p_sys->video.surfacetexture);
+ 
+@@ -1503,6 +1607,9 @@
  
      vlc_mutex_lock(&p_sys->lock);
      p_sys->b_decoder_dead = true;
@@ -191,7 +262,23 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      vlc_mutex_unlock(&p_sys->lock);
  
      if (p_sys->cat == VIDEO_ES && p_sys->video.ctx)
-@@ -1547,9 +1618,27 @@
+@@ -1546,6 +1653,7 @@
+     if (p_out->type == MC_OUT_TYPE_BUF)
+     {
+         if (!p_sys->b_has_format) {
++            if (p_sys->video.ambient_dovi) free(ambient_rpu_pts_take(&p_sys->video.dovi_pts, p_out->buf.i_ts));
+             msg_Warn(p_dec, "Buffers returned before output format is set, dropping frame");
+             timestamp_FifoGet(p_sys->video.timestamp_fifo); /* Remove timestamp */
+             return p_sys->api.release_out(&p_sys->api, p_out->buf.i_index, false);
+@@ -1553,6 +1661,7 @@
+ 
+         if (p_out->buf.i_ts <= p_sys->i_preroll_end)
+         {
++            if (p_sys->video.ambient_dovi) free(ambient_rpu_pts_take(&p_sys->video.dovi_pts, p_out->buf.i_ts));
+             timestamp_FifoGet(p_sys->video.timestamp_fifo); /* Remove timestamp */
+             return p_sys->api.release_out(&p_sys->api, p_out->buf.i_index, false);
+         }
+@@ -1571,9 +1680,27 @@
              {
                  /* We need to wait for AImageReader. Otherwise, we might
                   * overwrite a picture (even when using acquireNextImageAsync) */
@@ -220,10 +307,24 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
                  if (p_sys->b_flush_out)
                  {
-@@ -1558,10 +1647,38 @@
+@@ -1582,10 +1709,54 @@
                      return 0;
                  }
  
++                if (p_sys->video.ambient_dovi) {
++                    struct ambient_dovi_metadata *m =
++                        ambient_rpu_pts_take(&p_sys->video.dovi_pts, p_out->buf.i_ts);
++                    if (!m || p_sys->video.dovi_pending) {
++                        free(m);
++                        p_sys->api.release_out(&p_sys->api, p_out->buf.i_index, false);
++                        if (p_out->b_eos && !p_sys->video.dovi_pending) return 0;
++                        msg_Err(p_dec, "Dolby Vision output has no exact RPU timestamp");
++                        AbortDecoderLocked(p_sys);
++                        return VLC_EGENERIC;
++                    }
++                    p_sys->video.dovi_pending = m;
++                    p_sys->video.dovi_pending_ts = p_out->buf.i_ts;
++                }
 +                if (p_sys->video.ambient_ahb) {
 +                    const enum ambient_hdrplus_status status = p_out->buf.hdrplus_status;
 +                    if (status == AMBIENT_HDRPLUS_UNSUPPORTED ||
@@ -254,6 +355,8 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
 +                                                     !p_sys->b_aborted);
 +                if (release != 0 && p_sys->video.ambient_ahb) {
 +                    p_sys->video.air_waiting_count--;
++                    free(p_sys->video.dovi_pending);
++                    p_sys->video.dovi_pending = NULL;
 +                    p_sys->video.hdrplus_pending = false;
 +                    AbortDecoderLocked(p_sys);
 +                    return VLC_EGENERIC;
@@ -261,7 +364,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
                  /* picture will be wrapped from AImageReader callback */
                  assert(*pp_out_pic  == NULL);
              }
-@@ -1920,9 +2037,12 @@
+@@ -1944,9 +2115,12 @@
  
          /* Wait for an output buffer. This function returns when a new output
           * is available or if output is flushed. */
@@ -275,7 +378,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
          /* Ignore dequeue_out errors caused by flush, or late picture being
           * dequeued after close. */
-@@ -2018,8 +2138,15 @@
+@@ -2042,8 +2216,15 @@
      while (b_drain || (p_block = GetNextBlock(p_sys, p_in_block)))
      {
          vlc_mutex_unlock(&p_sys->lock);
@@ -292,17 +395,57 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
          if (p_sys->b_aborted)
              return VLC_EGENERIC;
-@@ -2150,8 +2277,25 @@
+@@ -2066,6 +2247,41 @@
+                     if (!i_ts && p_block->i_dts)
+                         i_ts = p_block->i_dts;
+                 }
++                if (!b_config && p_sys->cat == VIDEO_ES && p_sys->video.ambient_dovi) {
++                    struct ambient_rpu_au au = {0};
++                    enum ambient_rpu_status found = ambient_rpu_find(p_block->p_buffer,
++                        p_block->i_buffer, p_sys->video.hh.i_output_nal_length_size, &au);
++                    if (found == AMBIENT_RPU_INVALID || (au.has_vcl && found != AMBIENT_RPU_FOUND) ||
++                        (!au.has_vcl && found == AMBIENT_RPU_FOUND)) {
++                        msg_Err(p_dec, "Unsupported Dolby Vision access unit");
++                        goto error;
++                    }
++                    if (found == AMBIENT_RPU_FOUND) {
++                        if (p_block->i_pts <= 0) goto error; // real PTS, never DTS
++                        if (!p_sys->video.dovi_parser)
++                            p_sys->video.dovi_parser = av_ambient_dovi_alloc();
++                        uint8_t *rbsp = malloc(au.payload_size);
++                        struct ambient_dovi_metadata *m = malloc(sizeof(*m));
++                        size_t n = 0;
++                        bool ok = rbsp && m && p_sys->video.dovi_parser &&
++                            ambient_rpu_unescape(p_block->p_buffer + au.payload_start,
++                                au.payload_size, rbsp, au.payload_size, &n) &&
++                            av_ambient_dovi_parse(p_sys->video.dovi_parser, rbsp, n, m) == 0 &&
++                            !m->full_range &&
++                            ambient_rpu_pts_insert(&p_sys->video.dovi_pts, i_ts, m);
++                        free(rbsp);
++                        if (!ok) {
++                            free(m);
++                            msg_Err(p_dec, "Invalid or unsupported Dolby Vision RPU/PTS");
++                            goto error;
++                        }
++                        // Prevent vendor reshape before our P010 sampling.
++                        memmove(p_block->p_buffer + au.nal_start,
++                                p_block->p_buffer + au.nal_end,
++                                p_block->i_buffer - au.nal_end);
++                        p_block->i_buffer -= au.nal_end - au.nal_start;
++                    }
++                }
+                 p_buf = p_block->p_buffer;
+                 i_size = p_block->i_buffer;
+             }
+@@ -2174,6 +2390,23 @@
          goto reload;
      }
  
--    /* Parse input block */
--    if ((i_ret = p_sys->pf_on_new_block(p_dec, &p_in_block)) != 1)
 +    // Detect HEVC Dolby Vision even when the demuxer's format flags are
 +    // absent. The RGB AHB route cannot carry an RPU. Request a decoder reload
 +    // before modifying the input so avcodec receives the original access unit.
 +    if (p_sys->cat == VIDEO_ES && p_dec->fmt_in->i_codec == VLC_CODEC_HEVC &&
-+        p_sys->video.ambient_ahb) {
++        p_sys->video.ambient_ahb && !p_sys->video.ambient_dovi) {
 +        struct ambient_rpu_au rpu;
 +        enum ambient_rpu_status status = ambient_rpu_find(p_in_block->p_buffer,
 +            p_in_block->i_buffer, p_sys->video.hh.i_input_nal_length_size, &rpu);
@@ -315,12 +458,21 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
 +        }
 +    }
 +
-+    /* Parse input block */
-+    if ((i_ret = p_sys->pf_on_new_block(p_dec, &p_in_block)) != 1)
+     /* Parse input block */
+     if ((i_ret = p_sys->pf_on_new_block(p_dec, &p_in_block)) != 1)
      {
-         if (i_ret != 0)
-         {
-@@ -2328,10 +2472,21 @@
+@@ -2345,6 +2578,10 @@
+ static void Video_OnFlush(decoder_sys_t *p_sys)
+ {
+     timestamp_FifoEmpty(p_sys->video.timestamp_fifo);
++    ambient_rpu_pts_clear(&p_sys->video.dovi_pts, free);
++    free(p_sys->video.dovi_pending);
++    p_sys->video.dovi_pending = NULL;
++    av_ambient_dovi_flush(p_sys->video.dovi_parser);
+     /* Invalidate all pictures that are currently in flight
+      * since flushing make all previous indices returned by
+      * MediaCodec invalid. */
+@@ -2352,10 +2589,21 @@
  
      if (p_sys->video.use_air)
      {

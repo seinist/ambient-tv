@@ -4,6 +4,7 @@
 #include "placebo_bridge.h"
 #include "vlc_picture_bridge.h"
 #include "ambient_sample_spv.h"
+#include "dovi_vlc_bridge.h"
 
 static inline void ambient_display_lock(void *opaque)
 {
@@ -64,9 +65,13 @@ static inline bool ambient_display_hdr(const video_format_t *fmt)
         (fmt->color_range == COLOR_RANGE_FULL || fmt->color_range == COLOR_RANGE_LIMITED);
 }
 static inline struct ambient_ahb_owner *
-ambient_display_open(pl_gpu gpu, const video_format_t *fmt, vlc_video_context *context)
+ambient_display_open(pl_gpu gpu, const video_format_t *fmt, vlc_video_context *context, bool dovi)
 {
-    if (!fmt || fmt->i_chroma != VLC_CODEC_ANDROID_OPAQUE || fmt->dovi.profile || fmt->dovi.rpu_present || fmt->dovi.el_present ||
+#ifndef PL_HAVE_DOVI
+    if (dovi) return NULL;
+#endif
+    if (!fmt || fmt->i_chroma != VLC_CODEC_ANDROID_OPAQUE ||
+        (dovi ? !ambient_dovi_format(fmt) : (fmt->dovi.profile || fmt->dovi.rpu_present || fmt->dovi.el_present)) ||
         (!ambient_display_sdr(fmt) && !ambient_display_hdr(fmt)) || !context)
         return NULL;
     android_video_context_t *avctx =
@@ -94,13 +99,16 @@ ambient_display_open(pl_gpu gpu, const video_format_t *fmt, vlc_video_context *c
 
 static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
                                               picture_t *pic, struct ambient_ahb_output *out,
-                                              bool raw_p010)
+                                              bool raw_p010, bool dovi)
 {
     if (owner) ambient_ahb_poll(owner);
     if (!owner || !pic ||
         (!ambient_display_sdr(&pic->format) && !ambient_display_hdr(&pic->format)) ||
-        pic->format.dovi.profile || pic->format.dovi.rpu_present || pic->format.dovi.el_present ||
-        picture_GetAncillary(pic, VLC_ANCILLARY_ID_DOVI) ||
+        (dovi ? (!raw_p010 || !ambient_dovi_format(&pic->format) ||
+                 !picture_GetAncillary(pic, VLC_ANCILLARY_ID_DOVI) ||
+                 picture_GetAncillary(pic, VLC_ANCILLARY_ID_HDR10PLUS)) :
+                (pic->format.dovi.profile || pic->format.dovi.rpu_present || pic->format.dovi.el_present ||
+                 picture_GetAncillary(pic, VLC_ANCILLARY_ID_DOVI))) ||
         (picture_GetAncillary(pic, VLC_ANCILLARY_ID_HDR10PLUS) &&
          pic->format.transfer != TRANSFER_FUNC_SMPTE_ST2084))
         return VK_ERROR_FORMAT_NOT_SUPPORTED;

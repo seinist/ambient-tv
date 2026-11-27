@@ -50,6 +50,7 @@ if [[ -n "${LIBPLACEBO_SOURCE:-}" ]]; then
     mkdir -p "$TMP/pl-headers/libplacebo"
     sed -e 's/@majorver@/5/g' -e 's/@apiver@/264/g' -e 's/@extra_defs@/#define PL_HAVE_VULKAN 1/g' \
         "$LIBPLACEBO_SOURCE/src/include/libplacebo/config.h.in" > "$TMP/pl-headers/libplacebo/config.h"
+    printf '\n#define PL_HAVE_DOVI 1\n' >> "$TMP/pl-headers/libplacebo/config.h"
     for triple in aarch64-linux-android armv7a-linux-androideabi i686-linux-android x86_64-linux-android; do
         "$NDK/toolchains/llvm/prebuilt/$host/bin/${triple}29-clang" \
             -std=c11 -Wall -Wextra -Werror -Wno-missing-field-initializers \

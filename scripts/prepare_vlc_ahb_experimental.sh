@@ -55,7 +55,10 @@ done
 cp "$TMP/ambient_sample_spv.h" "$dest/ambient_sample_spv.h"
 cp "$SRC/hdr10plus_payload.h" "$VLC/modules/codec/omxil/hdr10plus_payload.h"
 cp "$SRC/dovi_rpu_au.h" "$VLC/modules/codec/omxil/dovi_rpu_au.h"
-cp "$SRC/ambient_dovi_parser.h" "$VLC/modules/codec/omxil/ambient_dovi_parser.h"
+for file in ambient_dovi_parser.h dovi_vlc_bridge.h; do
+    cp "$SRC/$file" "$VLC/modules/codec/omxil/$file"
+    cp "$SRC/$file" "$dest/$file"
+done
 # The reviewed production FFmpeg 9 patch is already applied in the linked
 # build. Keep the additional private RPU interface isolated to this tree.
 cp "$SRC/ffmpeg-patches/ambient-dovi-parser.patch" "$VLC/contrib/src/ffmpeg/ambient-dovi-parser.patch"
