@@ -1,17 +1,22 @@
 //! A bounded cache envelope; Android accepts disk data only from the
 //! application's own private cache directory. The checksum detects accidental
 //! corruption, not an attacker with the application's UID.
+#[cfg(any(target_os = "android", test))]
 const MAGIC: &[u8; 8] = b"ASVPC001";
 pub const MAX_BYTES: usize = 8 * 1024 * 1024;
+#[cfg(any(target_os = "android", test))]
 const MAX_KEY: usize = 4096;
+#[cfg(any(target_os = "android", test))]
 const MAX_FILE: usize = MAX_BYTES + MAX_KEY + 24;
 
+#[cfg(any(target_os = "android", test))]
 fn checksum(data: &[u8]) -> u64 {
     // Stable FNV-1a checksum across Rust versions; not authentication.
     data.iter().fold(0xcbf29ce484222325u64, |h, b|
         (h ^ u64::from(*b)).wrapping_mul(0x100000001b3))
 }
 
+#[cfg(any(target_os = "android", test))]
 fn encode(key: &str, data: &[u8]) -> Option<Vec<u8>> {
     if key.is_empty() || key.len() > MAX_KEY || data.is_empty() || data.len() > MAX_BYTES {
         return None;
@@ -27,6 +32,7 @@ fn encode(key: &str, data: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
+#[cfg(any(target_os = "android", test))]
 fn decode<'a>(key: &str, bytes: &'a [u8]) -> Option<&'a [u8]> {
     if bytes.len() < 24 || bytes.len() > MAX_FILE || bytes.get(..8)? != MAGIC { return None; }
     let k = u32::from_le_bytes(bytes.get(8..12)?.try_into().ok()?) as usize;
