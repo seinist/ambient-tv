@@ -31,7 +31,7 @@ on:
         default: none
     secrets:
       CORES_SIGNING_KEY:
-        required: false
+        required: true
   workflow_dispatch:
     inputs:
       publish:
@@ -64,7 +64,7 @@ on:
         default: none
 
 concurrency:
-  group: cores-${{ github.ref }}-${{ inputs.publish_experimental && format('release-experimental-{0}', inputs.profile) || ((github.event_name == 'push' || inputs.publish) && 'release' || (github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || format('pr-{0}-{1}', inputs.profile || 'baseline', inputs.cores || 'all'))) }}
+  group: cores-${{ github.ref }}-${{ inputs.publish_experimental && format('release-experimental-{0}', inputs.profile) || ((github.event_name == 'push' || inputs.publish) && 'release' || (github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || 'pr')) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:

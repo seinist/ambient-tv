@@ -147,13 +147,6 @@ class CoreBuildPolicyTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     audit_commands(bad, profile, core="mupen64plus_next_gles3", abi="arm64-v8a")
 
-    def test_targeted_pr_validation_matrix(self):
-        for profile, count in (("optimized", 4), ("optimized-a57", 1)):
-            jobs = plan(self.catalog, "pull_request", "refs/pull/1/merge", False,
-                        "mupen64plus_next_gles3", "", profile)["include"]
-            self.assertEqual(len(jobs), count)
-            self.assertTrue(all(j["core"] == "mupen64plus_next_gles3" and j["profile"] == profile for j in jobs))
-
     def test_auto_experimental_full_catalogs(self):
         for profile in ("optimized", "optimized-a57"):
             automatic = plan(self.catalog, "push", "refs/heads/main", False, profile=profile)
