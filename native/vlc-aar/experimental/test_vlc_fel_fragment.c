@@ -329,10 +329,10 @@ static void test_generic_trun_index(void)
 static void test_prepare_paired_fragment(void)
 {
     reset_stream(true);
-    mp4_track_t track[2]={{.i_track_ID=1,.b_ok=true,.i_timescale=1000,
+    mp4_track_t track[3]={{.i_track_ID=1,.b_ok=true,.i_timescale=1000,
         .ambient_fel_el_id=2},{.i_track_ID=2,.b_ok=true,.i_timescale=2000,
-        .ambient_fel_hidden=true}};
-    demux_sys_t sys={.i_tracks=2,.track=track,.b_seekable=true};
+        .ambient_fel_hidden=true},{.i_track_ID=3,.b_ok=true,.i_timescale=48000}};
+    demux_sys_t sys={.i_tracks=3,.track=track,.b_seekable=true};
     demux_t d={.s=&fixture_stream,.p_sys=&sys};
     MP4_Box_data_mfhd_t mh={.i_sequence_number=7};
     MP4_Box_data_tfhd_t tf[2]={{.i_track_ID=1,
@@ -390,7 +390,31 @@ static void test_prepare_paired_fragment(void)
     assert(FragPrepareChunk(&d,&moof,NULL,INVALID_SEGMENT_TIME,true)==VLC_SUCCESS);
     assert(track[0].ambient_fel_bl_end==103&&track[0].ambient_fel_el_end==206);
     assert(track[0].i_next_block_flags&BLOCK_FLAG_DISCONTINUITY);
-    free(track[0].context.runs.p_array);free(track[1].context.runs.p_array);
+    // A contiguous paired moof with independent audio must still honor
+    // an explicit tfdt, even when the previous audio clock was valid.
+    MP4_Box_data_tfhd_t atf={.i_track_ID=3,
+        .i_flags=MP4_TFHD_DEFAULT_BASE_IS_MOOF|MP4_TFHD_DFLT_SAMPLE_SIZE|
+            MP4_TFHD_DFLT_SAMPLE_DURATION,
+        .i_default_sample_size=4,.i_default_sample_duration=1024};
+    MP4_Box_data_tfdt_t adt={.i_base_media_decode_time=48000};
+    MP4_Box_data_trun_t atr={.i_flags=MP4_TRUN_DATA_OFFSET,
+        .i_sample_count=1,.i_data_offset=144};
+    MP4_Box_t arun={.i_type=ATOM_trun,.data.p_trun=&atr};
+    MP4_Box_t aclock={.i_type=ATOM_tfdt,.data.p_tfdt=&adt,.p_next=&arun};
+    MP4_Box_t ah={.i_type=ATOM_tfhd,.data.p_tfhd=&atf,.p_next=&aclock};
+    MP4_Box_t atraf={.i_type=ATOM_traf,.p_first=&ah};
+    traf[1].p_next=&atraf;
+    ++mh.i_sequence_number;dt[0].i_base_media_decode_time=103;dt[1].i_base_media_decode_time=206;
+    track[2].i_time=7;track[2].context.b_resync_time_offset=false;
+    assert(FragPrepareChunk(&d,&moof,NULL,INVALID_SEGMENT_TIME,false)==VLC_SUCCESS);
+    assert(track[2].i_time==48000&&track[2].context.runs.i_count==1);
+    assert(track[2].context.runs.p_array[0].i_first_dts==48000);
+    assert(track[2].i_next_block_flags&BLOCK_FLAG_DISCONTINUITY);
+    assert(sys.context.ambient_fel_required_end==148);
+    ++mh.i_sequence_number;dt[0].i_base_media_decode_time=106;dt[1].i_base_media_decode_time=212;
+    adt.i_base_media_decode_time=UINT64_MAX;
+    assert(FragPrepareChunk(&d,&moof,NULL,INVALID_SEGMENT_TIME,false)!=VLC_SUCCESS);
+    FragResetContext(&sys);
 }
 
 static void test_adjacent_lookahead(void)
@@ -779,9 +803,30 @@ static void test_interleave_clock_limits(void)
     run.i_first_dts++;
     assert(!MP4_FEL_RunEnd(&track,&run,&end));
 }
+static void test_interleave_seek_gap(void)
+{
+    MP4_Box_data_trun_t tr[2]={{.i_sample_count=2},{.i_sample_count=2}};
+    MP4_Box_t box[2]={{.i_type=ATOM_trun,.data.p_trun=&tr[0]},
+                     {.i_type=ATOM_trun,.data.p_trun=&tr[1]}};
+    mp4_run_t runs[2]={{.i_offset=100,.i_first_dts=10,.p_trun=&box[0]},
+        {.i_offset=200,.i_first_dts=30,.p_trun=&box[1],.ambient_fel_source=1,
+         .ambient_fel_size=7,.ambient_fel_duration=3,.ambient_fel_discontinuity=true}};
+    mp4_track_t t={.i_timescale=1000,.context.i_default_sample_size=4,
+        .context.i_default_sample_duration=5,.context.runs.p_array=runs,.context.runs.i_count=2};
+    assert(MP4_FEL_SeekIndexedTrack(&t,15)&&t.context.runs.i_current==0);
+    assert(t.context.i_trun_sample==1&&t.context.i_trun_sample_pos==104);
+    assert(MP4_FEL_SeekIndexedTrack(&t,25)&&t.context.runs.i_current==1);
+    assert(t.i_time==30&&t.context.i_trun_sample_pos==200);
+    assert(MP4_FEL_SeekIndexedTrack(&t,33)&&t.context.i_trun_sample==1);
+    assert(t.i_time==33&&t.context.i_trun_sample_pos==207);
+    assert(MP4_FEL_SeekIndexedTrack(&t,36)&&t.context.runs.i_current==2);
+    assert(t.i_time==36&&t.context.i_trun_sample_pos==214);
+    assert(!MP4_FEL_SeekIndexedTrack(&t,-1));
+}
 int main(void)
 {
     test_interleave_clock_limits();
+    test_interleave_seek_gap();
     mp4_track_t track={.i_track_ID=1,.b_ok=true,.i_timescale=1000};
     demux_sys_t sys={.i_tracks=1,.track=&track};
     demux_t demux={.s=&fixture_stream,.p_sys=&sys};
