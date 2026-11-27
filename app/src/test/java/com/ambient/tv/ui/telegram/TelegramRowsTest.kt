@@ -54,4 +54,16 @@ class TelegramRowsTest {
         assertEquals(listOf(3L to 0), monogramPrefetchTargets(rows, 1).map { it.chatId to it.messageId })
         assertEquals(listOf(3L to 0, 1L to 10), monogramPrefetchTargets(rows).map { it.chatId to it.messageId })
     }
+
+    @Test fun viewportPrioritizesVisibleThenAheadAndBehind() {
+        assertEquals(listOf(4, 5, 6, 7, 3, 2),
+            monogramViewportItems((0..9).toList(), 4, 5, ahead = 2, behind = 2))
+    }
+
+    @Test fun viewportIgnoresPlaceholdersAndClampsEdges() {
+        assertEquals(listOf(8, 9, 7),
+            monogramViewportItems((0..9).toList(), 8, 14, ahead = 8, behind = 1))
+        assertTrue(monogramViewportItems((0..9).toList(), 10, 11, 8, 2).isEmpty())
+        assertTrue(monogramViewportItems(emptyList<Int>(), 0, 0, 8, 2).isEmpty())
+    }
 }

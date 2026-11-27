@@ -134,6 +134,8 @@ import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.mobile.deviceDp
 import com.ambient.tv.ui.theme.screenGutter
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 
@@ -339,6 +341,42 @@ fun TelegramScreen(
             else flatList.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
         }.distinctUntilChanged().collect { last ->
             if (last >= 0 && last >= flat.size - 10) loadMoreVisible()
+        }
+    }
+    // Observe indices, not pixel offsets: scrolling within the same tile does not restart
+    // downloads. A short quiet period avoids competing with D-pad/touch navigation.
+    LaunchedEffect(sectionKey, state.section, state.available, layout, currentRows, flat,
+        rowList, flatList, grid, showViewOptions, gridColumns) {
+        if (!state.available || state.section != sectionKey || showViewOptions) return@LaunchedEffect
+        snapshotFlow {
+            val refs = if (layout == MonogramBrowseLayout.ROWS) {
+                val visibleRows = rowList.layoutInfo.visibleItemsInfo.map { it.index }
+                val windows = visibleRows.mapNotNull { index ->
+                    currentRows.getOrNull(index)?.let { row ->
+                        val focusedIndex = row.items.indexOfFirst { it.ratingKey == focusMemory.key }
+                        val first = focusedIndex.coerceAtLeast(0)
+                        row.copy(items = monogramViewportItems(row.items, first, first,
+                            ahead = monogramRowVisibleColumns(gridColumns) + 2, behind = 1))
+                    }
+                }
+                monogramPrefetchTargets(windows, limit = 16)
+            } else {
+                val visible = if (layout == MonogramBrowseLayout.GRID)
+                    grid.layoutInfo.visibleItemsInfo.map { it.index }
+                else flatList.layoutInfo.visibleItemsInfo.map { it.index }
+                val valid = visible.filter { it in flat.indices }
+                val window = if (valid.isEmpty()) emptyList() else monogramViewportItems(
+                    flat, valid.min(), valid.max(), ahead = 8, behind = 2)
+                monogramPrefetchTargets(listOf(ContentRowData(
+                    id = "monogram.viewport", title = "", style = com.ambient.tv.ui.common.MediaTileStyle.LANDSCAPE,
+                    items = window)), limit = 24)
+            }
+            refs
+        }.distinctUntilChanged().collectLatest { refs ->
+            if (refs.isNotEmpty()) {
+                delay(100)
+                viewModel.prefetchViewport(sectionKey, refs)
+            }
         }
     }
     com.ambient.tv.ui.navigation.ReportSidebarContentReady(
