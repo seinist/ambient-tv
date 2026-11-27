@@ -35,6 +35,7 @@ struct Slot {
     VkFence reclaim_fence{};
     void *texture{};
     uint32_t width{}, height{};
+    VkFormat format = VK_FORMAT_UNDEFINED;
     bool converted{};
 };
 struct QueueLock {
@@ -192,7 +193,7 @@ struct ambient_ahb_owner {
             in.release_picture(in.picture, in.acquire_fd);
             return VK_ERROR_DEVICE_LOST;
         }
-        constexpr VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
+        const VkFormat format = in.high_precision ? VK_FORMAT_R16G16B16A16_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
         size_t preferred = slot_count;
         for (size_t i = 0; i < slot_count; ++i) {
             if (pool.state(i) == State::Free && slots[i].cache->matches(
@@ -210,7 +211,7 @@ struct ambient_ahb_owner {
         s.ticket = ticket;
         s.converted = false;
         s.lease.emplace(in.picture, in.acquire_fd, in.release_picture, false);
-        if (s.texture && (s.width != in.width || s.height != in.height)) {
+        if (s.texture && (s.width != in.width || s.height != in.height || s.format != format)) {
             // The held wrapper may still own image views; destroy it before
             // changing the target. GPU work for this slot is already retired.
             clear_texture(s);
@@ -225,7 +226,7 @@ struct ambient_ahb_owner {
             s.texture = c.wrap(c.opaque, s.cache->target().image(), format,
                                in.width, in.height, RgbTarget::usage);
             if (!s.texture) { cancel(s); return VK_ERROR_FORMAT_NOT_SUPPORTED; }
-            s.width = in.width; s.height = in.height;
+            s.width = in.width; s.height = in.height; s.format = format;
         }
         if ((result = commands.reset(s.cmd, 0)) != VK_SUCCESS) { cancel(s); return result; }
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
