@@ -14,6 +14,8 @@ struct ambient_vlc_picture {
     AHardwareBuffer *buffer; // borrowed while held is alive
     uint64_t buffer_id;
     bool buffer_id_valid;
+    int32_t data_space;
+    bool data_space_valid;
     AImageCropRect crop;
     int64_t timestamp_ns;
     uint32_t width, height;
@@ -53,6 +55,9 @@ static inline bool ambient_vlc_hold_picture(picture_t *pic, struct ambient_vlc_p
         return false;
     result.buffer_id_valid = api->AHardwareBuffer.getId &&
         api->AHardwareBuffer.getId(result.buffer, &result.buffer_id) == 0;
+    result.data_space_valid = api->AImage.getDataSpace &&
+        api->AImage.getDataSpace(apctx->image, &result.data_space) == AMEDIA_OK &&
+        result.data_space != ADATASPACE_UNKNOWN;
     result.width = desc.width;
     result.height = desc.height;
     // Do not mistake a failed dup() for an already signaled producer fence.
