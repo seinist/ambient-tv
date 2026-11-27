@@ -100,6 +100,146 @@ pub fn reference_cost(a: &[u8], b: &[u8], width: u32, height: u32, c: Candidate)
     Some(Cost {y:result[0],u:result[1],v:result[2]})
 }
 
+/// One exact upstream superframe level. The public SuperBuilder owns the
+/// layout and filtering; this view does not approximate bicubic/Wiener
+/// phases or substitute an independently downsampled pyramid.
+///
+/// The builder must be the one that produced the frame. Base dimensions
+/// are always even I420 dimensions; reduced levels must also have even
+/// dimensions and nonzero chroma.
+pub struct SuperLevel<'a> {
+    planes: [&'a [u8]; 3],
+    bases: [usize; 3],
+    pitches: [usize; 3],
+    pub width: u32,
+    pub height: u32,
+    pub pel: u32,
+}
+
+impl<'a> SuperLevel<'a> {
+    pub fn new(builder: &svpflow1_vs::SuperBuilder, frame: &'a svpflow1_vs::SuperFrame, level: u32)
+        -> Option<Self> {
+        if builder.levels() <= 0 || level >= builder.levels() as u32 || frame.len() != builder.output_len() {
+            return None;
+        }
+        let (w,h)=(u32::try_from(builder.width()).ok()?,u32::try_from(builder.height()).ok()?);
+        let full_pel=u32::try_from(builder.pel()).ok()?;
+        if !matches!(full_pel,1|2|4) || w==0 || h==0 || w%2!=0 || h%2!=0 { return None; }
+        let reduce=|v:u32|2*(v/4);
+        let (mut width,mut height)=(w,h);
+        let mut preceding_rows=[0usize;3];
+        let pitches=[w as usize,w as usize/2,w as usize/2];
+        for i in 0..level {
+            let phases=if i==0 {full_pel*full_pel} else {1};
+            for plane in 0..3 {
+                let rows=(height>>usize::from(plane!=0)) as usize;
+                preceding_rows[plane]=preceding_rows[plane].checked_add(rows.checked_mul(phases as usize)?)?;
+            }
+            width=reduce(width);
+            height=reduce(height);
+        }
+        if width==0 || height==0 || width%2!=0 || height%2!=0 { return None; }
+        let pel=if level==0 {full_pel} else {1};
+        let planes=frame.planes();
+        let mut bases=[0usize;3];
+        for plane in 0..3 {
+            let ph=(height>>usize::from(plane!=0)) as usize;
+            bases[plane]=preceding_rows[plane].checked_mul(pitches[plane])?;
+            let end=bases[plane].checked_add(ph.checked_mul((pel*pel) as usize)?.checked_mul(pitches[plane])?)?;
+            if end>planes[plane].len() { return None; }
+        }
+        Some(Self {planes,bases,pitches,width,height,pel})
+    }
+
+    fn row(&self, plane:usize, phase:u32, y:usize)->&[u8] {
+        let shift=usize::from(plane!=0);
+        let height=(self.height as usize)>>shift;
+        let width=(self.width as usize)>>shift;
+        let start=self.bases[plane]+(phase as usize*height+y)*self.pitches[plane];
+        &self.planes[plane][start..start+width]
+    }
+
+    /// Compact the original upstream planar/pitched storage directly into
+    /// a bounded mapped staging allocation. Each phase occupies one array
+    /// layer: Y rows, then side-by-side U/V. No CPU-side intermediate image
+    /// and no runtime-dependent shader interpolation.
+    pub fn upload(&self, device:&wgpu::Device, encoder:&mut wgpu::CommandEncoder)
+        -> Result<wgpu::Texture,String> {
+        let width=self.width;
+        let rows=self.height*3/2;
+        let layers=self.pel*self.pel;
+        let pitch=width.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)*wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let bytes=u64::from(pitch)*u64::from(rows)*u64::from(layers);
+        let limits=device.limits();
+        if width>limits.max_texture_dimension_2d || rows>limits.max_texture_dimension_2d
+            || layers>limits.max_texture_array_layers || bytes>limits.max_buffer_size
+            || bytes>64*1024*1024 {
+            return Err("superframe level exceeds motion upload budget".into());
+        }
+        let extent=wgpu::Extent3d{width,height:rows,depth_or_array_layers:layers};
+        let texture=device.create_texture(&wgpu::TextureDescriptor{
+            label:Some("SVP exact motion superframe level"),size:extent,
+            mip_level_count:1,sample_count:1,dimension:wgpu::TextureDimension::D2,
+            format:wgpu::TextureFormat::R8Unorm,view_formats:&[],
+            usage:wgpu::TextureUsages::TEXTURE_BINDING|wgpu::TextureUsages::COPY_DST,
+        });
+        let staging=device.create_buffer(&wgpu::BufferDescriptor{
+            label:Some("SVP superframe phase upload"),size:bytes,
+            usage:wgpu::BufferUsages::COPY_SRC,mapped_at_creation:true,
+        });
+        {
+            let mut mapped=staging.slice(..).get_mapped_range_mut();
+            let (pitch,w,h)=(pitch as usize,width as usize,self.height as usize);
+            for (index,dst) in mapped.chunks_exact_mut(pitch).enumerate() {
+                let phase=(index/rows as usize) as u32;
+                let row=index%rows as usize;
+                if row<h {dst[..w].copy_from_slice(self.row(0,phase,row));}
+                else {
+                    dst[..w/2].copy_from_slice(self.row(1,phase,row-h));
+                    dst[w/2..w].copy_from_slice(self.row(2,phase,row-h));
+                }
+            }
+        }
+        staging.unmap();
+        encoder.copy_buffer_to_texture(wgpu::TexelCopyBufferInfo{
+            buffer:&staging,layout:wgpu::TexelCopyBufferLayout{
+                offset:0,bytes_per_row:Some(pitch),rows_per_image:Some(rows),
+            },
+        },texture.as_image_copy(),extent);
+        Ok(texture)
+    }
+}
+
+/// Exact CPU reference over the upstream phase planes. Both candidates
+/// use phase zero for the source block; reference coordinates are split
+/// into integer and fractional components after chroma motion scaling.
+pub fn reference_super_cost(a:&SuperLevel<'_>,b:&SuperLevel<'_>,c:Candidate)->Option<Cost>{
+    let (width,height,pel)=(a.width,a.height,a.pel);
+    if (b.width,b.height,b.pel)!=(width,height,pel) || !c.valid(width,height,pel){return None;}
+    let (a,b)=if c.reverse{(b,a)}else{(a,b)};
+    let mut result=[0u32;3];
+    for plane in 0..3 {
+        let shift=usize::from(plane!=0);
+        let sx=(c.x as usize)>>shift;
+        let sy=(c.y as usize)>>shift;
+        let (dx,dy)=(c.dx>>shift,c.dy>>shift);
+        let rx=(sx as i64+i64::from(dx).div_euclid(i64::from(pel))) as usize;
+        let ry=(sy as i64+i64::from(dy).div_euclid(i64::from(pel))) as usize;
+        let phase=dx.rem_euclid(pel as i32) as u32+dy.rem_euclid(pel as i32) as u32*pel;
+        let diff=|x:usize,y:usize|i32::from(a.row(plane,0,sy+y)[sx+x])-i32::from(b.row(plane,phase,ry+y)[rx+x]);
+        let (bw,bh)=(c.width as usize>>shift,c.height as usize>>shift);
+        if c.satd {
+            for y in (0..bh).step_by(4){for x in (0..bw).step_by(4){
+                result[plane]+=tile_satd(|tx,ty|diff(x+tx,y+ty));
+            }}
+            result[plane]/=2;
+        }else{
+            for y in 0..bh{for x in 0..bw{result[plane]+=diff(x,y).unsigned_abs();}}
+        }
+    }
+    Some(Cost{y:result[0],u:result[1],v:result[2]})
+}
+
 pub struct MotionCostKernel {
     pipeline: wgpu::ComputePipeline,
 }
