@@ -10,8 +10,10 @@
 static inline void ambient_hdrplus_project_global(vlc_video_hdr_dynamic_metadata_t *dst,
                                                   const struct ambient_hdrplus *m)
 {
-    const struct ambient_hdrplus_window *w = &m->windows[0];
     *dst = (vlc_video_hdr_dynamic_metadata_t){0};
+    struct ambient_hdrplus_window projected;
+    if (!ambient_hdrplus_global_projection(m,&projected)) return;
+    const struct ambient_hdrplus_window *w = &projected;
     dst->country_code = 0xb5;
     dst->application_version = m->version;
     dst->targeted_luminance = m->target_nits;
