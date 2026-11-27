@@ -13,7 +13,7 @@ typedef struct AmbientSvp AmbientSvp;
 int ambient_svp_reset(AmbientSvp *);
 /* All frames are tightly packed 8-bit I420. Timestamps are microseconds.
  * Calls for an instance must be serialized. Input is copied, output is caller-owned.
- * backend: 0 auto, 1 CPU, 2 Vulkan; preset: 0 auto, 1 light, 2 balanced, 3 quality.
+ * backend: 0 auto, 1 CPU, 2 Vulkan; preset: 0 auto, 1 light, 2 balanced, 3 quality, 4 adaptive.
  * Every preset bypasses interpolation on sustained overload. Queue size is bounded.
  */
 typedef struct {
