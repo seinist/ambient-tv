@@ -15,8 +15,17 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 ABIS = ("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
 SEGMENT = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_. -]{0,127}\Z")
-PROJECTM = ("libprojectM-4.so", "libambientprojectm.so")
-SHARED = "libc++_shared.so"
+NATIVE_ROOTS = {
+    "projectm": ("libprojectM-4.so", "libambientprojectm.so"),
+    "mpv": ("libmpv.so", "libambientmpv.so"),
+}
+HOST_LIBRARIES = {
+    "projectm": {"libc++_shared.so"},
+    "mpv": {"libc++_shared.so", "libavcodec.so", "libavdevice.so", "libavfilter.so",
+            "libavformat.so", "libavutil.so", "libswresample.so", "libswscale.so",
+            "libpostproc.so", "libass.so", "libplacebo.so", "libfreetype.so",
+            "libharfbuzz.so", "libfribidi.so", "libssl.so", "libcrypto.so"},
+}
 PLATFORM = {
     "libc.so", "libm.so", "libdl.so", "liblog.so", "libandroid.so",
     "libjnigraphics.so", "libz.so", "libEGL.so", "libGLESv1_CM.so",
@@ -70,10 +79,24 @@ def shaders(out, version):
     return [write_package(out, "shaders", "any", version, files)]
 
 
-def projectm(out, version, apks, licenses):
+def native_dependencies(data, name):
     import tempfile
+    with tempfile.NamedTemporaryFile() as f:
+        f.write(data)
+        f.flush()
+        dynamic = subprocess.check_output(["readelf", "-d", f.name], text=True)
+    needed = set(re.findall(r"\(NEEDED\).*?\[(.*?)\]", dynamic))
+    sonames = re.findall(r"\(SONAME\).*?\[(.*?)\]", dynamic)
+    if sonames and sonames != [name]:
+        raise ValueError(f"unexpected SONAME: {name}: {sonames}")
+    return needed
+
+
+def native_module(out, module, version, apks, licenses):
     entries = []
     seen = set()
+    roots = NATIVE_ROOTS[module]
+    allowed = HOST_LIBRARIES[module]
     for apk in apks:
         with zipfile.ZipFile(apk) as archive:
             names = archive.namelist()
@@ -81,35 +104,45 @@ def projectm(out, version, apks, licenses):
                 raise ValueError(f"duplicate APK entries: {apk}")
             for abi in ABIS:
                 prefix = f"lib/{abi}/"
-                if prefix + PROJECTM[0] not in names:
+                if prefix + roots[0] not in names:
                     continue
                 if abi in seen:
                     raise ValueError(f"duplicate APK ABI: {abi}")
                 seen.add(abi)
-                files = {"lib/" + name: archive.read(prefix + name) for name in PROJECTM}
-                shared = {SHARED: digest(archive.read(prefix + SHARED))}
-                for name, data in list(files.items()):
-                    with tempfile.NamedTemporaryFile() as f:
-                        f.write(data)
-                        f.flush()
-                        dynamic = subprocess.check_output(["readelf", "-d", f.name], text=True)
-                        needed = set(re.findall(r"\(NEEDED\).*?\[(.*?)\]", dynamic))
-                        if needed - PLATFORM - set(PROJECTM) - {SHARED}:
-                            raise ValueError(f"unresolved native dependencies: {name}: {needed}")
-                        sonames = re.findall(r"\(SONAME\).*?\[(.*?)\]", dynamic)
-                        if sonames and sonames != [name.split("/")[-1]]:
-                            raise ValueError(f"unexpected SONAME: {name}: {sonames}")
+                files = {"lib/" + name: archive.read(prefix + name) for name in roots}
+                shared = {}
+                visited = set()
+
+                def visit(name):
+                    if name in PLATFORM or name in visited:
+                        return
+                    visited.add(name)
+                    if name not in roots and name not in allowed:
+                        raise ValueError(f"unapproved native dependency: {name}")
+                    data = archive.read(prefix + name)
+                    if name not in roots:
+                        shared[name] = digest(data)
+                    for dependency in native_dependencies(data, name):
+                        if name not in roots and dependency in roots:
+                            raise ValueError(f"host dependency links back into module: {name}")
+                        visit(dependency)
+
+                for name in roots:
+                    visit(name)
                 for license in licenses:
-                    files["licenses/" + license.name] = license.read_bytes()
-                entries.append(write_package(out, "projectm", abi, version, files, shared))
+                    path = "licenses/" + license.name
+                    if path in files:
+                        raise ValueError("duplicate license filename")
+                    files[path] = license.read_bytes()
+                entries.append(write_package(out, module, abi, version, files, shared))
     if seen != set(ABIS):
-        raise ValueError("ProjectM publication requires matching Full APKs for all four ABIs")
+        raise ValueError(f"{module} publication requires matching Full APKs for all four ABIs")
     return entries
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--module", choices=("shaders", "projectm"), required=True)
+    parser.add_argument("--module", choices=("shaders", "projectm", "mpv"), required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--version", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -123,8 +156,8 @@ def main():
         entries = shaders(args.output, args.version)
     else:
         if not args.apk or not args.license:
-            parser.error("ProjectM requires verified Full APKs and corresponding license notices")
-        entries = projectm(args.output, args.version, args.apk, args.license)
+            parser.error("Native modules require verified Full APKs and corresponding license notices")
+        entries = native_module(args.output, args.module, args.version, args.apk, args.license)
     manifest = dict(schema=1, tag=args.tag, modules=entries)
     (args.output / "manifest.json").write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
 
