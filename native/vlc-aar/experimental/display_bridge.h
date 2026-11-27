@@ -105,7 +105,8 @@ static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
     if (!owner || !pic ||
         (!dovi && !ambient_display_sdr(&pic->format) && !ambient_display_hdr(&pic->format)) ||
         (dovi ? (!raw_p010 || !ambient_dovi_format(&pic->format) ||
-                 !picture_GetAncillary(pic, VLC_ANCILLARY_ID_DOVI) ||
+                 !picture_GetAncillary(pic, pic->format.dovi.profile == 7 ?
+                     AMBIENT_FEL_ID : VLC_ANCILLARY_ID_DOVI) ||
                  picture_GetAncillary(pic, VLC_ANCILLARY_ID_HDR10PLUS)) :
                 (pic->format.dovi.profile || pic->format.dovi.rpu_present || pic->format.dovi.el_present ||
                  picture_GetAncillary(pic, VLC_ANCILLARY_ID_DOVI))) ||
