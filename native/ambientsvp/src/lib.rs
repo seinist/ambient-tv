@@ -918,6 +918,58 @@ mod pipelining_tests {
     }
 
     #[test]
+    #[ignore = "requires Vulkan"]
+    fn complete_output_overwrite_matches_clear_on_unaligned_planes() {
+        for (width,height) in [(66u32,66u32),(130,98)] {
+            let c = Config { width, height, block: 16, ..config() };
+            let mut fast = AmbientSvp::new(c).unwrap();
+            let mut reference = AmbientSvp::new(c).unwrap();
+            reference.gpu.as_mut().unwrap().force_clear_output = true;
+            fast.disable_prefetch = true;
+            reference.disable_prefetch = true;
+            let mut a = vec![0; fast.frame_len()];
+            let mut b = a.clone();
+            for origin in [0, 9_000_000] {
+                fast.reset().unwrap();
+                reference.reset().unwrap();
+                for n in 0..12usize {
+                    let luma = (width * height) as usize;
+                    let mut data = vec![0; fast.frame_len()];
+                    for y in 0..height as usize {
+                        for x in 0..width as usize {
+                            data[y*width as usize+x] = if (x + width as usize - n*2 % width as usize) % (width as usize) < 24 { 180 } else { 40 };
+                        }
+                    }
+                    data[luma..luma*5/4].fill(96 + n as u8);
+                    data[luma*5/4..].fill(160 - n as u8);
+                    let pts = origin + n as i64 * 1_000_000 / 24;
+                    fast.push(&data,pts).unwrap();
+                    reference.push(&data,pts).unwrap();
+                    loop {
+                        let ap=fast.receive(&mut a,false).unwrap();
+                        let bp=reference.receive(&mut b,false).unwrap();
+                        assert_eq!(ap,bp);
+                        if ap.is_none() { break; }
+                        assert_eq!(a,b,"unaligned {width}x{height}, {ap:?}");
+                    }
+                }
+                loop {
+                    let ap=fast.receive(&mut a,true).unwrap();
+                    let bp=reference.receive(&mut b,true).unwrap();
+                    assert_eq!(ap,bp);
+                    if ap.is_none() { break; }
+                    assert_eq!(a,b);
+                }
+                assert_eq!(fast.stats.backend,2);
+                assert_eq!(reference.stats.backend,2);
+                assert_eq!(fast.stats.bypass_reason,0);
+                assert_eq!(reference.stats.bypass_reason,0);
+                assert!(fast.stats.interpolated_frames > 0);
+            }
+        }
+    }
+
+    #[test]
     #[ignore = "requires hardware Vulkan with optional 16-bit normalized textures"]
     fn compact_motion_fields_match_float_fields() {
         let c = config();
