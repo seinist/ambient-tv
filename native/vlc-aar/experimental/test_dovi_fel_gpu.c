@@ -210,11 +210,19 @@ int main(void)
     struct ambient_fel_render render={0};
     struct pl_frame frame={.num_planes=1};
     frame.planes[0].texture=neutral_bl;
-    assert(!ambient_fel_render_picture(gpu,log,&render,&frame,pic,1235));
+    assert(!ambient_fel_render_picture(gpu,log,&render,&frame,pic,1235,0,0));
     assert(frame.planes[0].texture==neutral_bl);
-    assert(ambient_fel_render_picture(gpu,log,&render,&frame,pic,1234));
+    assert(ambient_fel_render_picture(gpu,log,&render,&frame,pic,1234,0,0));
     assert(frame.planes[0].texture==render.output && frame.repr.sys==PL_COLOR_SYSTEM_RGB);
     assert(frame.color.transfer==PL_COLOR_TRC_PQ);
+    // Cropped visible textures are in local coordinates; admit only
+    // matched even origins, never silently accept a different EL phase.
+    pic->crop_x=2;pic->crop_y=4;
+    frame.planes[0].texture=neutral_bl;
+    assert(!ambient_fel_render_picture(gpu,log,&render,&frame,pic,1234,0,0));
+    assert(!ambient_fel_render_picture(gpu,log,&render,&frame,pic,1234,2,2));
+    assert(ambient_fel_render_picture(gpu,log,&render,&frame,pic,1234,2,4));
+    pic->crop_x=pic->crop_y=0;
     // Exercise transition from nonzero -> zero -> nonzero metadata.
     // The first MEL frame must not allocate any EL GPU planes.
     struct ambient_fel_render mel_render={0};
@@ -223,11 +231,11 @@ int main(void)
         pic->rpu.nlq_slope[i]=0;pic->rpu.nlq_threshold[i]=0;
     }
     frame.planes[0].texture=neutral_bl;
-    assert(ambient_fel_render_picture(gpu,log,&mel_render,&frame,pic,1234));
+    assert(ambient_fel_render_picture(gpu,log,&mel_render,&frame,pic,1234,0,0));
     assert(!mel_render.planes.tex[0]&&!mel_render.planes.tex[1]&&!mel_render.planes.tex[2]);
     pic->rpu=original_rpu;
     frame.planes[0].texture=neutral_bl;
-    assert(ambient_fel_render_picture(gpu,log,&mel_render,&frame,pic,1234));
+    assert(ambient_fel_render_picture(gpu,log,&mel_render,&frame,pic,1234,0,0));
     assert(mel_render.planes.tex[0]&&mel_render.planes.tex[1]&&mel_render.planes.tex[2]);
     pl_gpu_finish(gpu);ambient_fel_render_destroy(gpu,&mel_render);
     free(pic);
