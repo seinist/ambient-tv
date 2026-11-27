@@ -65,6 +65,12 @@ static void pack(struct mp_image *img, uint8_t *dst) {
                      img->planes[1] + (ptrdiff_t)y*img->stride[1], w/2);
     }
 }
+static int fill_input(void *context, uint8_t *dst, size_t len) {
+    struct mp_image *img = context;
+    if (len != (size_t)img->w * img->h * 3 / 2) return -1;
+    pack(img, dst);
+    return 0;
+}
 static bool receive(struct mp_filter *f) {
     struct priv *p = f->priv;
     if (!p->engine) return false;
@@ -124,8 +130,13 @@ static void process(struct mp_filter *f) {
         p->passthrough = PASS_NONE;
         MP_INFO(f, "Open-SVPFlow %dx%d %.6f -> %.6f\n", img->w, img->h, p->opts->source, p->opts->fps);
     }
-    pack(img, p->buffer);
-    int r = p->api.push(p->engine, p->buffer, p->bytes, llround(img->pts * 1000000.0));
+    int64_t pts = llround(img->pts * 1000000.0);
+    int r;
+    if (p->api.push_fill) r = p->api.push_fill(p->engine, pts, img, fill_input);
+    else {
+        pack(img, p->buffer);
+        r = p->api.push(p->engine, p->buffer, p->bytes, pts);
+    }
     if (r == -3) {
         reset(f); svp_retry_gap(&p->retry); p->passthrough = PASS_TIMING;
         MP_WARN(f, "SVP timing gap #%d; passing through for %d frames, then retrying\n", p->retry.gaps, p->retry.cooldown);
