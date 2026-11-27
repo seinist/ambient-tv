@@ -24,11 +24,12 @@ internal class SystemModuleTransport {
         module: SystemModule,
         tag: String,
         profile: String = "baseline",
+        validateCandidate: (SystemModuleStore.Package) -> Unit = {},
     ): SystemModuleStore.Package? {
         require(Regex("modules-[A-Za-z0-9][A-Za-z0-9._-]{0,100}").matches(tag))
         val manifest = readMetadata(releaseUrl(tag, "manifest.json"), SystemModuleChannel.MAX_MANIFEST_BYTES)
         val signature = readMetadata(releaseUrl(tag, "manifest.json.sig"), 256)
-        return store.install(module, tag, manifest, signature, profile) { build ->
+        return store.install(module, tag, manifest, signature, profile, validateCandidate) { build ->
             open(releaseUrl(tag, build.asset), build.size, exactSize = true)
         }
     }
