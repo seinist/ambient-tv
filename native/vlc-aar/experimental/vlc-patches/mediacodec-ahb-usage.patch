@@ -1,7 +1,48 @@
 diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
 --- a/modules/codec/omxil/mediacodec.c
 +++ b/modules/codec/omxil/mediacodec.c
-@@ -1114,11 +1114,22 @@
+@@ -140,8 +140,9 @@
+             timestamp_fifo_t *timestamp_fifo;
+             int i_mpeg_dar_num, i_mpeg_dar_den;
+             struct vlc_asurfacetexture *surfacetexture;
+-            bool use_air;
+-            vlc_cond_t air_cond;
++            bool use_air;
++            bool ambient_ahb;
++            vlc_cond_t air_cond;
+             unsigned air_waiting_count;
+         } video;
+         struct {
+@@ -930,11 +931,23 @@
+         return;
+     }
+     vlc_mutex_lock(&p_sys->lock);
+-    assert(p_sys->video.air_waiting_count > 0);
+-    p_sys->video.air_waiting_count--;
+-    vlc_cond_broadcast(&p_sys->video.air_cond);
+-    if (p_sys->b_flush_out)
+-        avctx->air_api->AImage.deleteAsync(image, fence_fd);
++    // A callback can arrive after abort/flush. Never underflow the counter
++    // or feed a late image back into a retired decoder epoch.
++    if (p_sys->video.ambient_ahb &&
++        (!p_sys->video.air_waiting_count || p_sys->b_aborted || p_sys->b_decoder_dead))
++    {
++        if (p_sys->video.air_waiting_count)
++            p_sys->video.air_waiting_count--;
++        vlc_cond_broadcast(&p_sys->video.air_cond);
++        avctx->air_api->AImage.deleteAsync(image, fence_fd);
++        vlc_mutex_unlock(&p_sys->lock);
++        return;
++    }
++    assert(p_sys->video.air_waiting_count > 0);
++    p_sys->video.air_waiting_count--;
++    vlc_cond_broadcast(&p_sys->video.air_cond);
++    if (p_sys->b_flush_out)
++        avctx->air_api->AImage.deleteAsync(image, fence_fd);
+     else
+         QueueAImagePicture(p_dec, avctx, image, fence_fd);
+     vlc_mutex_unlock(&p_sys->lock);
+@@ -1114,11 +1127,19 @@
          || (!p_sys->api.b_support_rotation && p_dec->fmt_out.video.orientation != ORIENT_NORMAL)
          || !can_set_video_layout;
  
@@ -10,18 +51,15 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
 -    int ret = CreateSurfaceFromAImageReader(p_dec, dec_dev, awh,
 -                                            need_gpu_transform);
 -    if (ret == VLC_SUCCESS)
-+    // The experimental libplacebo Vulkan display needs an AImageReader
-+    // whose buffers are sampleable even for ordinary, unrotated video.
-+    const bool ambient_ahb = var_InheritBool(p_dec, "vk-ambient-ahb");
-+    need_gpu_transform |= ambient_ahb;
++    p_sys->video.ambient_ahb = var_InheritBool(p_dec, "vk-ambient-ahb");
++    need_gpu_transform |= p_sys->video.ambient_ahb;
 +    bool use_surfacetexture = need_gpu_transform && can_use_surfacetexture;
 +
 +    int ret = CreateSurfaceFromAImageReader(p_dec, dec_dev, awh,
 +                                            need_gpu_transform);
-+    if (ret != VLC_SUCCESS && ambient_ahb)
++    if (ret != VLC_SUCCESS && p_sys->video.ambient_ahb)
 +    {
 +        // A legacy SurfaceTexture cannot be imported by this Vulkan path.
-+        // Fail negotiation instead of silently constructing an unusable context.
 +        vlc_decoder_device_Release(dec_dev);
 +        return ret;
 +    }
@@ -29,3 +67,107 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      {
          vlc_decoder_device_Release(dec_dev);
          return VLC_SUCCESS;
+@@ -1478,8 +1499,11 @@
+     decoder_sys_t *p_sys = p_dec->p_sys;
+ 
+     vlc_mutex_lock(&p_sys->lock);
+-    p_sys->b_decoder_dead = true;
+-    vlc_mutex_unlock(&p_sys->lock);
++    p_sys->b_decoder_dead = true;
++    // Wake output/flush waits before unregistering the AImage callback.
++    if (p_sys->cat == VIDEO_ES && p_sys->video.ambient_ahb)
++        AbortDecoderLocked(p_sys);
++    vlc_mutex_unlock(&p_sys->lock);
+ 
+     if (p_sys->cat == VIDEO_ES && p_sys->video.ctx)
+     {
+@@ -1547,11 +1571,29 @@
+             {
+                 /* We need to wait for AImageReader. Otherwise, we might
+                  * overwrite a picture (even when using acquireNextImageAsync) */
+-                while (p_sys->video.air_waiting_count != 0
+-                       && !p_sys->b_aborted && !p_sys->b_flush_out)
+-                    vlc_cond_wait(&p_sys->video.air_cond, &p_sys->lock);
+-
+-                if (p_sys->b_flush_out)
++                const vlc_tick_t deadline = vlc_tick_now() + VLC_TICK_FROM_SEC(3);
++                while (p_sys->video.air_waiting_count != 0
++                       && !p_sys->b_aborted && !p_sys->b_flush_out)
++                {
++                    if (!p_sys->video.ambient_ahb)
++                        vlc_cond_wait(&p_sys->video.air_cond, &p_sys->lock);
++                    else if (vlc_cond_timedwait(&p_sys->video.air_cond, &p_sys->lock, deadline))
++                    {
++                        if (p_sys->video.air_waiting_count != 0 && !p_sys->b_flush_out)
++                        {
++                            msg_Err(p_dec, "Experimental AImageReader output timed out");
++                            AbortDecoderLocked(p_sys);
++                        }
++                        break;
++                    }
++                }
++                if (p_sys->video.ambient_ahb && p_sys->b_aborted)
++                {
++                    p_sys->api.release_out(&p_sys->api, p_out->buf.i_index, false);
++                    return VLC_EGENERIC;
++                }
++
++                if (p_sys->b_flush_out)
+                 {
+                     /* Drop this buffer so OutThread can acknowledge the flush. */
+                     p_sys->api.release_out(&p_sys->api, p_out->buf.i_index, false);
+@@ -1920,9 +1962,12 @@
+ 
+         /* Wait for an output buffer. This function returns when a new output
+          * is available or if output is flushed. */
+-        i_index = p_sys->api.dequeue_out(&p_sys->api, -1);
+-
+-        vlc_mutex_lock(&p_sys->lock);
++        const bool ambient_ahb = p_sys->cat == VIDEO_ES && p_sys->video.ambient_ahb;
++        i_index = p_sys->api.dequeue_out(&p_sys->api, ambient_ahb ? VLC_TICK_FROM_MS(100) : -1);
++
++        vlc_mutex_lock(&p_sys->lock);
++        if (ambient_ahb && i_index == MC_API_INFO_TRYAGAIN)
++            continue; // idle decoder is normal; check abort/flush again
+ 
+         /* Ignore dequeue_out errors caused by flush, or late picture being
+          * dequeued after close. */
+@@ -2018,8 +2063,15 @@
+     while (b_drain || (p_block = GetNextBlock(p_sys, p_in_block)))
+     {
+         vlc_mutex_unlock(&p_sys->lock);
+-        int i_index = p_sys->api.dequeue_in(&p_sys->api, -1);
+-        vlc_mutex_lock(&p_sys->lock);
++        const bool ambient_ahb = p_sys->cat == VIDEO_ES && p_sys->video.ambient_ahb;
++        int i_index = p_sys->api.dequeue_in(&p_sys->api, ambient_ahb ? VLC_TICK_FROM_SEC(3) : -1);
++        vlc_mutex_lock(&p_sys->lock);
++        if (ambient_ahb && i_index == MC_API_INFO_TRYAGAIN)
++        {
++            msg_Err(p_dec, "Experimental MediaCodec input timed out");
++            AbortDecoderLocked(p_sys);
++            return VLC_EGENERIC;
++        }
+ 
+         if (p_sys->b_aborted)
+             return VLC_EGENERIC;
+@@ -2330,8 +2382,18 @@
+     {
+         /* Drain AImageReader callbacks before AMediaCodec_flush() invalidates
+          * output buffer indices, or air_waiting_count may stay stuck. */
+-        while (p_sys->video.air_waiting_count != 0 && !p_sys->b_aborted)
+-            vlc_cond_wait(&p_sys->video.air_cond, &p_sys->lock);
++        const vlc_tick_t deadline = vlc_tick_now() + VLC_TICK_FROM_SEC(3);
++        while (p_sys->video.air_waiting_count != 0 && !p_sys->b_aborted)
++        {
++            if (!p_sys->video.ambient_ahb)
++                vlc_cond_wait(&p_sys->video.air_cond, &p_sys->lock);
++            else if (vlc_cond_timedwait(&p_sys->video.air_cond, &p_sys->lock, deadline))
++            {
++                if (p_sys->video.air_waiting_count != 0)
++                    AbortDecoderLocked(p_sys);
++                break;
++            }
++        }
+     }
+ }
+ 
