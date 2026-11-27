@@ -53,38 +53,65 @@ class GameCoreManager @Inject constructor(
 
     fun file(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO): File = File(directory(source), "${core.id}_libretro_android.so")
 
-    fun installed(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO): File? = file(core, source).takeIf { it.isFile && it.length() > 0 }
+    @Synchronized
+    fun installed(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO): File? =
+        file(core, source).takeIf { it.isFile && it.length() > 0 && sourceMatches(source, infoFile(core, source)) }
+
+    private fun sourceMatches(source: GameCoreSource, metadata: File): Boolean =
+        source == GameCoreSource.AUTO || source.acceptsOrigin(readInfo(metadata)?.origin)
+
+    private fun GameCoreSource.acceptsOrigin(origin: String?): Boolean = when (this) {
+        GameCoreSource.AUTO -> true
+        GameCoreSource.AMBIENT -> origin?.startsWith("${SOURCE_AMBIENT_PREFIX}cores-") == true
+        GameCoreSource.BUILDBOT -> origin == SOURCE_BUILDBOT
+        else -> origin?.startsWith("${SOURCE_EXPERIMENT_PREFIX}core-experiments-$experimentalProfile--") == true
+    }
 
     fun sourceUrl(core: GameCore): String? = abi
         ?.takeIf { core.supportedAbis.isEmpty() || it in core.supportedAbis }
         ?.let { "$BUILDBOT/$it/${core.id}_libretro_android.so.zip" }
 
-    fun remove(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO) {
+    @Synchronized
+    fun remove(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO, keepPrevious: Boolean = false) {
         file(core, source).let { it.setWritable(true); it.delete() }
-        rollbackFile(core, source).delete()
         infoFile(core, source).delete()
-        rollbackInfoFile(core, source).delete()
+        if (!keepPrevious) {
+            rollbackFile(core, source).delete()
+            rollbackInfoFile(core, source).delete()
+        }
     }
 
     /** The previous working binary is kept until a replacement has been tested. */
-    fun canRollback(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO): Boolean = rollbackFile(core, source).isFile
+    @Synchronized
+    fun canRollback(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO): Boolean =
+        rollbackFile(core, source).isFile && sourceMatches(source, rollbackInfoFile(core, source))
 
     /**
      * Recover the previous installed core after a failed library load. One prior build is retained,
      * without relying on the libretro buildbot preserving its overwritten nightly archives.
      */
+    @Synchronized
     fun rollback(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO): Boolean {
         val old = rollbackFile(core, source)
         val current = file(core, source)
-        if (!old.isFile) return false
+        if (!canRollback(core, source)) return false
         if (runCatching { checkElf(old, pageSize(), abi) }.isFailure) return false
         val oldInfo = rollbackInfoFile(core, source)
+        val currentInfo = infoFile(core, source)
         val stagedInfo = File(directory(source), "${core.id}.rollback-info.tmp")
+        val savedCurrentInfo = File(directory(source), "${core.id}.rollback-active-info.tmp")
+        var movedCurrentInfo = false
         try {
             // Prepare metadata before touching either binary. A full disk leaves the running
             // core and the previous core untouched.
             stagedInfo.delete()
             if (oldInfo.isFile) oldInfo.copyTo(stagedInfo)
+            // Clear the origin before publishing another binary, including across process death.
+            savedCurrentInfo.delete()
+            if (currentInfo.exists()) {
+                Files.move(currentInfo.toPath(), savedCurrentInfo.toPath(), StandardCopyOption.ATOMIC_MOVE)
+                movedCurrentInfo = true
+            }
             // The source and target live on the same app-private filesystem.
             // ATOMIC_MOVE with REPLACE_EXISTING maps to a single filesystem rename.
             // Never unlink the installed executable before the replacement succeeds.
@@ -95,22 +122,22 @@ class GameCoreManager @Inject constructor(
             )
         } catch (_: Exception) {
             stagedInfo.delete()
+            if (movedCurrentInfo) savedCurrentInfo.renameTo(currentInfo)
             return false
         }
         current.setReadOnly()
-        // A metadata write failure must not report a failed binary rollback: the old
-        // executable is already installed and remains loadable. Retain the old metadata
-        // until a successful replace, allowing recovery after a storage error.
+        savedCurrentInfo.delete()
+        // A failed metadata move must not leave the replaced build's origin on the binary.
         if (oldInfo.isFile) {
             if (runCatching {
                 Files.move(
-                    stagedInfo.toPath(), infoFile(core, source).toPath(),
+                    stagedInfo.toPath(), currentInfo.toPath(),
                     StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING,
                 )
             }.isSuccess) {
                 oldInfo.delete()
             }
-        } else infoFile(core, source).delete()
+        }
         stagedInfo.delete()
         return true
     }
@@ -194,8 +221,7 @@ class GameCoreManager @Inject constructor(
     suspend fun install(core: GameCore, input: InputStream, zipped: Boolean, origin: String, source: GameCoreSource = GameCoreSource.AUTO): File = withContext(Dispatchers.IO) {
         val directory = directory(source)
         directory.mkdirs()
-        val partial = File(directory, "${core.id}.download")
-        partial.delete()
+        val partial = File.createTempFile("core-${core.id}-", ".download", directory)
         val job = currentCoroutineContext()[kotlinx.coroutines.Job]
         try {
             fun copy(from: InputStream) = partial.outputStream().use { out ->
@@ -244,42 +270,48 @@ class GameCoreManager @Inject constructor(
                 if (!found) throw GameCoreIncompatibleException("No matching ${core.id} library in archive")
             } else input.use(::copy)
             checkElf(partial, pageSize(), abi)
-            val target = file(core, source)
-            val previous = rollbackFile(core, source)
-            val oldInfo = rollbackInfoFile(core, source)
-            val info = infoFile(core, source)
-            val installed = target.isFile
-            // Save one known previous version for rollback BEFORE replacing the core atomically.
-            if (installed) {
-                previous.delete()
-                oldInfo.delete()
-                if (!target.renameTo(previous)) throw IOException("Cannot back up previous ${core.id}")
-                try {
-                    if (info.isFile) info.copyTo(oldInfo, overwrite = true)
-                } catch (error: Exception) {
-                    previous.renameTo(target)
-                    target.setReadOnly()
-                    throw error
-                }
-            }
-            try {
-                if (!partial.renameTo(target)) throw IOException("Cannot install ${core.id}")
-                // Android 14 refuses writable files for loaded code; never reopen the core writable.
-                target.setReadOnly()
-                info.writeText(json.encodeToString(GameCoreInfo.serializer(), GameCoreInfo(origin, System.currentTimeMillis())))
-            } catch (error: Exception) {
-                target.delete()
-                if (installed) {
-                    previous.renameTo(target)
-                    target.setReadOnly()
-                    if (oldInfo.isFile) oldInfo.copyTo(info, overwrite = true)
-                }
-                throw error
-            }
-            target
+            job?.ensureActive()
+            replaceInstalled(core, source, partial, origin)
         } finally {
             partial.delete()
         }
+    }
+
+    @Synchronized
+    private fun replaceInstalled(core: GameCore, source: GameCoreSource, partial: File, origin: String): File {
+        val target = file(core, source)
+        val previous = rollbackFile(core, source)
+        val oldInfo = rollbackInfoFile(core, source)
+        val info = infoFile(core, source)
+        val installed = target.isFile
+        // Save one known previous version for rollback before replacing the core.
+        if (installed) {
+            previous.delete()
+            oldInfo.delete()
+            if (!target.renameTo(previous)) throw IOException("Cannot back up previous ${core.id}")
+            try {
+                if (info.isFile) info.copyTo(oldInfo, overwrite = true)
+            } catch (error: Exception) {
+                previous.renameTo(target)
+                throw error
+            }
+        }
+        try {
+            if (info.exists() && !info.delete()) throw IOException("Cannot clear the previous source of ${core.id}")
+            if (!partial.renameTo(target)) throw IOException("Cannot install ${core.id}")
+            // Android 14 refuses writable files for loaded code.
+            target.setReadOnly()
+            info.writeText(json.encodeToString(GameCoreInfo.serializer(), GameCoreInfo(origin, System.currentTimeMillis())))
+        } catch (error: Exception) {
+            target.delete()
+            info.delete()
+            if (installed) {
+                previous.renameTo(target)
+                if (oldInfo.isFile) oldInfo.copyTo(info, overwrite = true)
+            }
+            throw error
+        }
+        return target
     }
 
     /**
@@ -328,10 +360,15 @@ class GameCoreManager @Inject constructor(
     }
 
     /** Where the installed core came from and when, or null (older installs, none). */
-    fun info(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO): GameCoreInfo? = installed(core, source)?.let {
-        runCatching { json.decodeFromString(GameCoreInfo.serializer(), infoFile(core, source).readText()) }.getOrNull()
-            ?: GameCoreInfo(SOURCE_BUILDBOT, it.lastModified())
-    }
+    @Synchronized
+    fun info(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO): GameCoreInfo? = file(core, source)
+        .takeIf { it.isFile && it.length() > 0 }?.let {
+            readInfo(infoFile(core, source)) ?: GameCoreInfo(SOURCE_UNKNOWN, it.lastModified())
+        }
+
+    private fun readInfo(path: File): GameCoreInfo? = runCatching {
+        json.decodeFromString(GameCoreInfo.serializer(), path.readText())
+    }.getOrNull()
 
     /** The options [core] declared when it last ran (key → description), for settings outside a game. */
     fun saveDeclaredOptions(core: GameCore, options: List<Pair<String, String?>>) {
@@ -355,6 +392,7 @@ class GameCoreManager @Inject constructor(
     companion object {
         /** [GameCoreInfo.origin] of cores from the libretro buildbot. */
         const val SOURCE_BUILDBOT = "buildbot"
+        const val SOURCE_UNKNOWN = "unknown"
         /** [GameCoreInfo.origin] prefix of cores from the app's own signed build, followed by the release tag. */
         const val SOURCE_AMBIENT_PREFIX = "ambient:"
         const val SOURCE_EXPERIMENT_PREFIX = "experiment:"

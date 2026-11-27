@@ -1557,6 +1557,13 @@ private fun AmbientTvApp(
             openDetails = { game -> navController.navigate(Destinations.gameDetail(game.fileId)) { launchSingleTop = true } },
             launch = { game, complete -> launchGameOnTarget.value(game, false, complete) },
             launchFresh = { game, complete -> launchGameOnTarget.value(game, true, complete) },
+            launchExperiment = { game, experiment, complete ->
+                complete {
+                    navController.navigate(Destinations.gamePlayer(game.fileId, game.systemId, experiment = experiment.key)) {
+                        launchSingleTop = true
+                    }
+                }
+            },
         )
     }
     val gameSelectionState by gameSelections.state.collectAsState()
@@ -3343,6 +3350,7 @@ private fun AmbientTvApp(
                             onBack = { if (navController.currentBackStackEntry === entry) navigateBack() },
                             onPlay = { game -> gameSelections.play(game.fileId) },
                             onPlayFresh = { game -> gameSelections.playFresh(game.fileId) },
+                            onPlayExperiment = { game, experiment -> gameSelections.play(game.fileId, experiment) },
                         )
                     }
                     composable(
@@ -3351,6 +3359,7 @@ private fun AmbientTvApp(
                             navArgument("fileId") { type = NavType.StringType },
                             navArgument("system") { type = NavType.StringType; defaultValue = "" },
                             navArgument("fresh") { type = NavType.BoolType; defaultValue = false },
+                            navArgument("experiment") { type = NavType.StringType; defaultValue = "" },
                         ),
                     ) { entry ->
                         com.ambient.tv.ui.games.GamePlayerScreen(
@@ -3679,6 +3688,12 @@ private fun AmbientTvApp(
                             onPlay = { game -> playRommGame(game, false) },
                             onPlayFresh = { game -> playRommGame(game, true) },
                             onOpenSettings = { openSystemSettings(com.ambient.tv.ui.common.MediaSystem.ROMM.key) },
+                            onPlayExperiment = { game, experiment ->
+                                browseSelectionIntents.begin()
+                                navController.navigate(Destinations.gamePlayer(game.fileId, game.systemId, experiment = experiment.key)) {
+                                    launchSingleTop = true
+                                }
+                            },
                         )
                     }
                     listOf(Destinations.FILES to "browse", Destinations.FILE_FAVORITES to "favorites",

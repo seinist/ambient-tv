@@ -5,6 +5,7 @@ import com.ambient.tv.data.files.FileSource
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.local.MediaSelectionPreferences
 import com.ambient.tv.data.local.TokenStore
+import com.ambient.tv.games.GameCoreExperiment
 import com.ambient.tv.games.library.LibraryGame
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -83,6 +84,7 @@ internal class GameSelectionCoordinator(
     private val launch: (game: LibraryGame, complete: (() -> Unit) -> Unit) -> Unit,
     /** Like [launch], but the game starts over instead of continuing its automatic state. */
     private val launchFresh: ((game: LibraryGame, complete: (() -> Unit) -> Unit) -> Unit)? = null,
+    private val launchExperiment: ((LibraryGame, GameCoreExperiment, (() -> Unit) -> Unit) -> Unit)? = null,
 ) {
     private class Request(
         val fileId: String,
@@ -90,6 +92,7 @@ internal class GameSelectionCoordinator(
         val source: GameSelectionSource?,
         val behavior: String,
         var fresh: Boolean = false,
+        val experiment: GameCoreExperiment? = null,
         var game: LibraryGame? = null,
         var completing: Boolean = false,
     )
@@ -113,15 +116,15 @@ internal class GameSelectionCoordinator(
 
     fun sourceChanged() { active?.let(::current) }
 
-    fun select(fileId: String, behavior: String, fresh: Boolean = false) {
+    fun select(fileId: String, behavior: String, fresh: Boolean = false, experiment: GameCoreExperiment? = null) {
         val currentSource = source(fileId)
         val normalizedBehavior = MediaSelectionPreferences.normalize(behavior)
         if (active?.let { it.fileId == fileId && it.origin == origin() && it.source == currentSource &&
-                it.behavior == normalizedBehavior && it.fresh == fresh } == true) return
+                it.behavior == normalizedBehavior && it.fresh == fresh && it.experiment == experiment } == true) return
         // Only a new intent retires other media; repeated OK must keep its own launch gate.
         onNewSelection()
         cancel()
-        val request = Request(fileId, origin(), currentSource, normalizedBehavior, fresh)
+        val request = Request(fileId, origin(), currentSource, normalizedBehavior, fresh, experiment)
         active = request
         mutable.value = GameSelectionUiState(GameSelectionPhase.RESOLVING)
         job = scope.launch {
@@ -137,7 +140,8 @@ internal class GameSelectionCoordinator(
         }
     }
 
-    fun play(fileId: String) = select(fileId, MediaSelectionPreferences.PLAY)
+    fun play(fileId: String, experiment: GameCoreExperiment? = null) =
+        select(fileId, MediaSelectionPreferences.PLAY, experiment = experiment)
 
     /** Starts over: the automatic state is kept only as the undo state, like a reset in the game. */
     fun playFresh(fileId: String) = select(fileId, MediaSelectionPreferences.PLAY, fresh = true)
@@ -228,6 +232,12 @@ internal class GameSelectionCoordinator(
         }
         show(request, GameSelectionPhase.LAUNCHING)
         if (!current(request)) return
+        val experiment = request.experiment
+        if (experiment != null) {
+            val start = launchExperiment ?: return fail(request, GameSelectionFailure.UNAVAILABLE)
+            start(requireNotNull(request.game), experiment) { navigate -> complete(request, navigate) }
+            return
+        }
         val start = launchFresh?.takeIf { request.fresh } ?: launch
         start(requireNotNull(request.game)) { navigate -> complete(request, navigate) }
     }

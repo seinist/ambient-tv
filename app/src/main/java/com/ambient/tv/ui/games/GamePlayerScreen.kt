@@ -212,8 +212,8 @@ fun GamePlayerScreen(onBack: () -> Unit, model: GamePlayerViewModel = hiltViewMo
                     ),
                     actionLabel = stringResource(R.string.game_core_load),
                     onAction = model::downloadCore,
-                    secondaryActionLabel = stringResource(R.string.back),
-                    onSecondaryAction = onBack,
+                    secondaryActionLabel = stringResource(if (model.testingCore) R.string.games_core_test_play_regular else R.string.back),
+                    onSecondaryAction = if (model.testingCore) model::startRegular else onBack,
                     icon = Icons.Filled.SportsEsports,
                     modifier = center, centered = true,
                 )
@@ -242,16 +242,18 @@ fun GamePlayerScreen(onBack: () -> Unit, model: GamePlayerViewModel = hiltViewMo
                     else -> current.detail
                 },
                 actionLabel = stringResource(when {
+                    model.testingCore -> R.string.games_core_test_play_regular
                     current.reason == GameFailure.PREVIOUS_SESSION -> R.string.back
                     model.canUseCache -> R.string.game_cache_fallback
                     else -> R.string.game_retry
                 }),
                 onAction = when {
+                    model.testingCore -> model::startRegular
                     current.reason == GameFailure.PREVIOUS_SESSION -> onBack
                     model.canUseCache -> model::retryWithCache
                     else -> model::retry
                 },
-                secondaryActionLabel = if (current.reason == GameFailure.PREVIOUS_SESSION) null else stringResource(R.string.back),
+                secondaryActionLabel = if (!model.testingCore && current.reason == GameFailure.PREVIOUS_SESSION) null else stringResource(R.string.back),
                 onSecondaryAction = onBack,
                 modifier = center, centered = true,
             )
@@ -1237,7 +1239,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 .filter { it.visible }
                     }
                 }.onSuccess { (declared, parsed) ->
-                    model.saveDeclaredOptions(core, declared)
+                    if (session.coreSource.experimentalProfile == null) model.saveDeclaredOptions(core, declared)
                     coreOptionsSnapshot = parsed
                 }
                 (0 until RetroPorts.COUNT).forEach { port ->
@@ -1268,7 +1270,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     model.restart()
                     return@collect
                 }
-                model.removeCore(core, session.coreSource)
+                model.removeCore(core, session.coreSource, keepPrevious = true)
             }
             model.failed(context.getString(R.string.game_error_code, code))
         }
@@ -1709,6 +1711,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     PlayerTechBadgeRow {
                         MetaBadge("libretro", emphasized = true)
                         MetaBadge(core.name)
+                        if (session.coreSource.experimentalProfile != null) {
+                            MetaBadge(stringResource(session.coreSource.experimentTitle))
+                        }
                         if (game.direct) MetaBadge(stringResource(R.string.game_direct_source))
                         if (core.hardware) MetaBadge(vulkanFrameStatus.badge(session.vulkan))
                         if (sdrToHdrSession && retroView.sdrToHdrActive) MetaBadge(stringResource(R.string.game_badge_sdr_to_hdr))
@@ -1929,6 +1934,15 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             if (availability.discs) GameDiscSelector(discCount, currentDisc, ::changeDisc)
                             GamePanelChoice(stringResource(R.string.game_panel_info), selected = false,
                                 icon = Icons.Filled.Info, onClick = { openSettingsPanel(GamePanel.INFO) })
+                            if (session.coreSource.experimentalProfile != null) GamePanelChoice(
+                                stringResource(R.string.games_core_test_play_regular), selected = false,
+                                enabled = !exiting && !stateBusy && !netplay.busy,
+                                onClick = {
+                                    exiting = true
+                                    destroy()
+                                    model.startRegular()
+                                },
+                            )
                             GamePanelChoice(stringResource(R.string.game_exit), selected = false,
                                 icon = Icons.Filled.Stop, onClick = exit)
                         }
@@ -2160,7 +2174,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             }
                         }
                         open == GamePanel.CORE -> {
-                            if (category == null && system.alternatives.isNotEmpty()) {
+                            if (category == null && session.coreSource.experimentalProfile == null && system.alternatives.isNotEmpty()) {
                                 // Which core plays this game; switching saves and starts it again.
                                 GamePanelHeading(stringResource(R.string.game_info_core_choice))
                                 val own = settings.ownGameCore(system, game.saveKey)

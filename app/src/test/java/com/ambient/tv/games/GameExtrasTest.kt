@@ -138,7 +138,34 @@ class GameCoreChannelTest {
         org.junit.Assert.assertTrue(GameCoreChannel.matchesManifest(manifest, tag, "core-hotpaths"))
         org.junit.Assert.assertFalse(GameCoreChannel.matchesManifest(manifest, tag, "baseline"))
         org.junit.Assert.assertFalse(GameCoreChannel.matchesManifest(manifest, "other", "core-hotpaths"))
-        assertEquals(GameCoreSource.HOTPATHS, GameSettingsState().withCoreSource(GameCoreSource.HOTPATHS).coreSource)
+        assertEquals(GameCoreSource.AUTO, GameSettingsState().withCoreSource(GameCoreSource.HOTPATHS).coreSource)
+    }
+
+    @Test fun aLegacyGlobalTestProfileMigratesToAutomaticAndKeepsTestAccess() {
+        val legacy = GameSettingsState(mapOf("core_source" to GameCoreSource.HOTPATHS.key, "rumble" to "0"))
+        assertEquals(GameCoreSource.AUTO, legacy.coreSource)
+        val migrated = legacy.migrateCoreSource()
+        assertEquals(GameCoreSource.AUTO, migrated.coreSource)
+        org.junit.Assert.assertTrue(migrated.coreExperimentsEnabled)
+        assertNull(migrated.values["core_source"])
+        assertEquals("0", migrated.values["rumble"])
+        assertEquals(migrated, migrated.migrateCoreSource())
+        org.junit.Assert.assertFalse(GameSettingsState().coreExperimentsEnabled)
+    }
+
+    @Test fun specializedTestBuildsFollowCoreAndAbi() {
+        val picoDrive = GameSystems.byId("sega32x")!!.core
+        val snes = GameSystems.byId("snes")!!
+        val threaded = snes.core("snes9x2010")!!
+        assertEquals(listOf(GameCoreSource.AUTO, GameCoreSource.AMBIENT, GameCoreSource.BUILDBOT), GameCoreSource.regular)
+        org.junit.Assert.assertTrue(GameCoreSource.PICODRIVE_SH2.supportsExperiment(picoDrive, "arm64-v8a"))
+        org.junit.Assert.assertFalse(GameCoreSource.PICODRIVE_SH2.supportsExperiment(picoDrive, "armeabi-v7a"))
+        org.junit.Assert.assertFalse(GameCoreSource.PICODRIVE_SH2.supportsExperiment(snes.core, "arm64-v8a"))
+        org.junit.Assert.assertTrue(GameCoreSource.SNES_THREADED.supportsExperiment(threaded, "arm64-v8a"))
+        org.junit.Assert.assertFalse(GameCoreSource.SNES_THREADED.supportsExperiment(snes.core, "arm64-v8a"))
+        val experiment = GameCoreExperiment(threaded.id, GameCoreSource.SNES_THREADED)
+        assertEquals(experiment, GameCoreExperiment.fromKey(experiment.key))
+        assertNull(GameCoreExperiment.fromKey("snes9x2010:ambient"))
     }
 
     @Test fun signedManifestsVerifyAndTamperedOnesDoNot() {
