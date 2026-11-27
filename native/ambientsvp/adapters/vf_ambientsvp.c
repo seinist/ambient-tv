@@ -185,8 +185,9 @@ static void process(struct mp_filter *f) {
             p->opts->preset, p->opts->backend, p->opts->threads, p->opts->artifacts, p->opts->scene, p->opts->algo, p->opts->block, p->opts->overlap, p->opts->pel, p->opts->search};
         p->engine = p->api.create(&cfg);
         p->width = img->w; p->height = img->h; p->bytes = (size_t)img->w * img->h * 3 / 2;
-        p->buffer = p->engine ? malloc(p->bytes) : NULL;
-        if (!p->engine || !p->buffer) {
+        const bool legacy_buffer = !p->api.push_fill || !p->api.receive_visit;
+        p->buffer = p->engine && legacy_buffer ? malloc(p->bytes) : NULL;
+        if (!p->engine || (legacy_buffer && !p->buffer)) {
             reset(f); p->bypass = true; p->passthrough = PASS_UNAVAILABLE;
             MP_WARN(f, "SVP unavailable for this format/device; passing through\n");
             mp_pin_in_write(f->ppins[1], frame); return;
