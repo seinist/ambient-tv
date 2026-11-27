@@ -90,6 +90,8 @@ jobs:
           cargo test --manifest-path third_party/monogram/vendor/mono-rs/Cargo.toml -p mono-proto-crypto --lib
           cargo test --manifest-path third_party/monogram/vendor/mono-rs/Cargo.toml -p mono-proto-engine --lib
           cargo test --manifest-path third_party/monogram/vendor/mono-rs/Cargo.toml -p mono-proto-runtime --lib
+          cargo test --manifest-path third_party/monogram/vendor/mono-rs/Cargo.toml -p mono-proto-transport --lib
+          cargo test --manifest-path third_party/monogram/vendor/mono-rs/Cargo.toml -p mono-proto-client --lib
       - name: Verify native ABI and report raw size
         env:
           ABI: ${{ matrix.abi }}

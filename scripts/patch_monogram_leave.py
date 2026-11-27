@@ -20,6 +20,8 @@ MODIFICATION_DATE = "2026-11-27"
 NOTICE_MARKER = "Modified by Ambient TV, "
 COMMENT_PREFIX = {".rs": "//", ".kt": "//", ".kts": "//", ".toml": "#"}
 MODIFICATIONS = {
+    "vendor/mono-rs/crates/mono-proto-transport/src/framing.rs":
+        "consume large padded intermediate frames by ownership and preserve trailing input",
     "settings.gradle.kts":
         "removed external Foojay toolchain resolver for the JDK-provisioned native build",
     "vendor/mono-rs/crates/mono-proto-engine/src/rpc.rs":
@@ -753,6 +755,8 @@ amend(client_download,
                             follow_cdn_redirect_bounded(handle, api_id, dest, &job, true)
                         },
                         || {
+                            mono_proto_runtime::request_control::check()
+                                .map_err(|e| MtprotoError::Message(e.to_string()))?;
                             let _admission = client.policy.admit_download(target_dc, large)?;
                             download_media_range_on_lane_dc(
                                 handle, client, home, api_id, media, dest, offset, target_dc,
@@ -1463,6 +1467,79 @@ pub fn set_ambient_cdn_ranges(enabled: bool) {
     proto_media::download::set_ambient_cdn_ranges(enabled);
 }
 """, "pub fn set_ambient_cdn_ranges(")
+
+
+transport_framing = "vendor/mono-rs/crates/mono-proto-transport/src/framing.rs"
+add_before(transport_framing,
+      "    /// Encode with explicit padding for deterministic and official fixtures.",
+      """    /// Consume an owned receive buffer with the same checks as Framing::decode.
+    /// A large complete packet moves its allocation; a small frame preceding
+    /// a large suffix takes the existing copying path to avoid moving the suffix.
+    pub fn decode_consuming(&mut self, input: &mut Vec<u8>) -> Result<Packet, Error> {
+        if input.len() < 4 {
+            return Err(Error::Incomplete { needed: 4, available: input.len() });
+        }
+        let length = u32::from_le_bytes(input[..4].try_into().expect("four bytes")) as usize;
+        let maximum = self.max_packet + 15;
+        checked_length(length, maximum)?;
+        let total = 4_usize.checked_add(length).ok_or(Error::InvalidLength { length, maximum })?;
+        if input.len() < total {
+            return Err(Error::Incomplete { needed: total, available: input.len() });
+        }
+        let suffix_len = input.len() - total;
+        if length >= 64 * 1024 && suffix_len <= length / 4 {
+            let suffix = input.split_off(total);
+            let mut payload = std::mem::replace(input, suffix);
+            payload.copy_within(4..total, 0);
+            payload.truncate(length);
+            Ok(Packet { payload, consumed: total })
+        } else {
+            let decoded = packet(input, 4, length, maximum)?;
+            input.drain(..total);
+            Ok(decoded)
+        }
+    }
+
+""", "pub fn decode_consuming(")
+amend_count(framing,
+      """        match framing.decode(input) {
+            Ok(packet) => {
+                let consumed = packet.consumed;
+                let payload = packet.payload;
+                input.drain(..consumed);""",
+      """        match framing.decode_consuming(input) {
+            Ok(packet) => {
+                let payload = packet.payload;""", 2)
+add_before(transport_framing, "impl Intermediate {", """#[cfg(test)]
+mod ambient_owned_framing_tests {
+    use super::*;
+    #[test]
+    fn owned_decode_retains_suffix_and_reuses_large_allocation() {
+        let mut framing = PaddedIntermediate::default();
+        let data = vec![7; 512 * 1024];
+        let mut input = framing.encode_with_padding(&data, &[1, 2]).unwrap();
+        let suffix = framing.encode_with_padding(&[3, 4, 5, 6], &[]).unwrap();
+        input.extend_from_slice(&suffix);
+        let before = input.as_ptr();
+        let packet = framing.decode_consuming(&mut input).unwrap();
+        assert_eq!(packet.payload.as_ptr(), before);
+        assert_eq!(&packet.payload[..data.len()], data.as_slice());
+        assert_eq!(&packet.payload[data.len()..], &[1, 2]);
+        assert_eq!(input, suffix);
+        assert_eq!(framing.decode_consuming(&mut input).unwrap().payload, vec![3,4,5,6]);
+        assert!(input.is_empty());
+    }
+    #[test]
+    fn incomplete_and_invalid_length_do_not_consume() {
+        let mut framing = PaddedIntermediate::new(1024);
+        for mut input in [vec![1,2], vec![8,0,0,0,1], vec![0,0,0,0], vec![0xff;4]] {
+            let original = input.clone();
+            assert!(framing.decode_consuming(&mut input).is_err());
+            assert_eq!(input, original);
+        }
+    }
+}
+""", "mod ambient_owned_framing_tests")
 
 # Commit files only after every source contract has been checked.
 for path, result in changes.items():
