@@ -61,7 +61,7 @@ class SettingsNavigationTest {
         assertEquals(
             listOf(MediaSystem.PLEX, MediaSystem.JELLYFIN, MediaSystem.EMBY, MediaSystem.DLNA, MediaSystem.ROMM, MediaSystem.TVHEADEND, MediaSystem.IPTV, MediaSystem.YOUTUBE, MediaSystem.TELEGRAM, MediaSystem.SPOTIFY, MediaSystem.RADIO, MediaSystem.TRAILERS, MediaSystem.FILES)
                 // Monogram is only offered by builds that contain its native core.
-                .filter { it != MediaSystem.TELEGRAM || com.ambient.tv.BuildConfig.MONOGRAM_NATIVE }
+                .filter { it != MediaSystem.TELEGRAM || com.ambient.tv.modules.SystemModuleAvailability.monogramOffered }
                 // Native Spotify must have passed its actual runtime probe.
                 .filter { it != MediaSystem.SPOTIFY || com.ambient.tv.modules.SystemModuleAvailability.spotifyOffered },
             MediaSystem.addOrder,
@@ -128,7 +128,7 @@ class SettingsNavigationTest {
 
     @Test fun directSettingsEntryBackReturnsStraightToSource() {
         SettingsCategory.entries.forEach { category ->
-            if (category == SettingsCategory.TELEGRAM && !com.ambient.tv.BuildConfig.MONOGRAM_NATIVE) {
+            if (category == SettingsCategory.TELEGRAM && !com.ambient.tv.modules.SystemModuleAvailability.monogramOffered) {
                 assertNull(SettingsCategory.fromKey(category.name))
                 return@forEach
             }
