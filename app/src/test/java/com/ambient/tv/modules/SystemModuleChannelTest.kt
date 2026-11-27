@@ -82,8 +82,18 @@ class SystemModuleChannelTest {
         rejected { authenticate(manifest(build().copy(module = "radio"))) }
         rejected { authenticate(manifest(build().copy(size = Long.MAX_VALUE))) }
         rejected { authenticate(manifest(build().copy(sha256 = "not-a-digest"))) }
+        rejected { authenticate(manifest(build().copy(hostBindingSha256 = "not-a-digest"))) }
         rejected { authenticate(manifest(build(abi = "x86", profile = "optimized-a57"))) }
         rejected { authenticate(manifest(build(abi = "any", profile = "optimized"))) }
+    }
+
+    @Test fun hostBindingFingerprintIsCoveredBySignature() {
+        val pinned = build().copy(hostBindingSha256 = "b".repeat(64))
+        assertEquals(pinned, authenticate(manifest(pinned)).modules.single())
+        val bytes = Json.encodeToString(manifest(pinned)).encodeToByteArray()
+        val signature = sign(bytes)
+        val changed = Json.encodeToString(manifest(pinned.copy(hostBindingSha256 = "c".repeat(64)))).encodeToByteArray()
+        rejected { SystemModuleChannel.authenticate(changed, signature, publicKey, tag) }
     }
 
     @Test fun architectureIndependentPackageIsFallbackOnly() {
