@@ -44,6 +44,8 @@ struct svp_vk_mpv {
     int (*render_raw)(AmbientSvpVkPair *,float,const VkImageView *,uint32_t);
     int (*hdr_stats)(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,uint32_t);
     int (*hdr_read)(const AmbientSvpVkPair *,uint32_t,AmbientSvpHdrResult *,uint32_t);
+    int (*hdr_stats_track)(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,float,uint32_t);
+    int (*hdr_read_track)(const AmbientSvpVkPair *,uint32_t,AmbientSvpHdrResult *,int32_t (*)[2],uint32_t);
     int (*seal)(AmbientSvpVkPair *,VkFence);
     int (*release)(AmbientSvpVkPair *);
     int (*cancel)(AmbientSvpVkPair *);
@@ -350,7 +352,43 @@ static bool svp_vk_hdrplus_windows(const struct mp_image *img,AmbientSvpHdrWindo
     }
     return true;
 }
-static bool svp_vk_hdrplus_measured(struct mp_image *img,const AmbientSvpHdrResult results[3],uint32_t count)
+static bool svp_vk_hdrplus_tracks(const struct mp_image *a,const struct mp_image *b,
+    const struct mp_image *out,AmbientSvpHdrTrack tracks[3],uint32_t count)
+{
+    AmbientSvpHdrWindow aw[3],bw[3];uint32_t ac,bc;
+    if(!svp_vk_hdrplus_windows(a,aw,&ac)||!svp_vk_hdrplus_windows(b,bw,&bc)||ac!=count||bc!=count)return false;
+    const AVBufferRef *ref=svp_vk_hdr10plus(out);
+    if(!ref||ref->size!=sizeof(AVDynamicHDRPlus))return false;
+    const AVDynamicHDRPlus *m=(const AVDynamicHDRPlus *)ref->data;
+    memset(tracks,0,3*sizeof(*tracks));
+    for(unsigned w=1;w<count;w++){
+        memcpy(tracks[w].a,aw[w].rect,sizeof(aw[w].rect));
+        memcpy(tracks[w].b,bw[w].rect,sizeof(bw[w].rect));
+        tracks[w].ellipse[0]=m->params[w].center_of_ellipse_x;
+        tracks[w].ellipse[1]=m->params[w].center_of_ellipse_y;
+    }
+    return true;
+}
+static bool svp_vk_hdrplus_shift(AVHDRPlusColorTransformParams *p,const int32_t shift[2],int width,int height)
+{
+    if(!shift||(!shift[0]&&!shift[1]))return true;
+    if(width<2||height<2||abs(shift[0])>16||abs(shift[1])>16)return false;
+    AVRational *q[]={&p->window_upper_left_corner_x,&p->window_upper_left_corner_y,
+        &p->window_lower_right_corner_x,&p->window_lower_right_corner_y};
+    for(unsigned k=0;k<4;k++){
+        int extent=(k%2?height:width)-1;
+        if(q[k]->den<=0||q[k]->num<0||q[k]->num>q[k]->den)return false;
+        int n=(int)llround((double)q[k]->num*extent/q[k]->den)+shift[k%2];
+        if(n<0||n>extent)return false;
+        *q[k]=(AVRational){n,extent};
+    }
+    int x=(int)p->center_of_ellipse_x+shift[0],y=(int)p->center_of_ellipse_y+shift[1];
+    if(x<0||x>=width||y<0||y>=height)return false;
+    p->center_of_ellipse_x=x;p->center_of_ellipse_y=y;
+    return true;
+}
+static bool svp_vk_hdrplus_measured(struct mp_image *img,const AmbientSvpHdrResult results[3],
+    const int32_t (*shifts)[2],uint32_t count)
 {
     for(int i=0;i<img->num_ff_side_data;i++){
         if(img->ff_side_data[i].type!=AV_FRAME_DATA_DYNAMIC_HDR_PLUS)continue;
@@ -361,6 +399,7 @@ static bool svp_vk_hdrplus_measured(struct mp_image *img,const AmbientSvpHdrResu
         for(unsigned w=0;w<count;w++){
             const AmbientSvpHdrResult *r=&results[w];
             AVHDRPlusColorTransformParams *p=&m->params[w];
+            if(w&&shifts&&!svp_vk_hdrplus_shift(p,shifts[w],img->w,img->h))return false;
             if(!r->pixels||r->brightest>r->pixels||r->average>100000||p->num_distribution_maxrgb_percentiles>15)return false;
             for(unsigned c=0;c<3;c++){
                 if(r->maxscl[c]>100000)return false;
@@ -514,6 +553,8 @@ static struct svp_vk_mpv *svp_vk_new(void *library,struct mp_image *img,double s
     LOAD_API(seal); LOAD_API(release); LOAD_API(cancel);
     s->hdr_stats=dlsym(library,"ambient_svp_vk_hdr_stats");
     s->hdr_read=dlsym(library,"ambient_svp_vk_hdr_read");
+    s->hdr_stats_track=dlsym(library,"ambient_svp_vk_hdr_stats_track");
+    s->hdr_read_track=dlsym(library,"ambient_svp_vk_hdr_read_track");
 #undef LOAD_API
     AVHWFramesContext *fc=(AVHWFramesContext *)img->hwctx->data;
     s->device_ref=av_buffer_ref(fc->device_ref);
@@ -655,6 +696,7 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
     bool dynamic=s->mode>0 && s->mode<4 && svp_vk_hdrplus_pair(a,b);
     if(dynamic && (!s->hdr_stats||!s->hdr_read))return false;
     uint32_t hdr_counts[SVP_VK_PHASES]={0};
+    bool tracked[SVP_VK_PHASES]={0};
     if (s->mode && (s->mode>=4 || a->params.color.transfer==PL_COLOR_TRC_PQ || a->params.color.transfer==PL_COLOR_TRC_HLG) &&
         !dynamic && !svp_vk_hdr_metadata_same(a,b)) return false;
     svp_vk_reap(s,false);
@@ -777,8 +819,13 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
         if (rc) goto fail;
         if(dynamic && phases[i]>0.0f){
             AmbientSvpHdrWindow windows[3];
-            if(!svp_vk_hdrplus_windows(outputs[i],windows,&hdr_counts[i])||
-                s->hdr_stats(j->pair,i,windows,hdr_counts[i]))goto fail;
+            if(!svp_vk_hdrplus_windows(outputs[i],windows,&hdr_counts[i]))goto fail;
+            if(hdr_counts[i]>1&&s->hdr_stats_track&&s->hdr_read_track){
+                AmbientSvpHdrTrack tracks[3];
+                if(!svp_vk_hdrplus_tracks(a,b,outputs[i],tracks,hdr_counts[i])||
+                    s->hdr_stats_track(j->pair,i,windows,tracks,phases[i],hdr_counts[i]))goto fail;
+                tracked[i]=true;
+            }else if(s->hdr_stats(j->pair,i,windows,hdr_counts[i]))goto fail;
         }
     }
     if (s->end_commands(cmd)!=VK_SUCCESS) goto fail;
@@ -816,8 +863,10 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
         if(!j->sealed||s->wait_fences(s->device,1,&j->fence,VK_TRUE,250000000ULL)!=VK_SUCCESS)goto submitted_fail;
         for(unsigned i=0;i<count;i++)if(hdr_counts[i]){
             AmbientSvpHdrResult results[3];
-            if(s->hdr_read(j->pair,i,results,hdr_counts[i])!=1||
-                !svp_vk_hdrplus_measured(outputs[i],results,hdr_counts[i]))goto submitted_fail;
+            int32_t shifts[3][2]={{0}};
+            int rc=tracked[i]?s->hdr_read_track(j->pair,i,results,shifts,hdr_counts[i]):
+                s->hdr_read(j->pair,i,results,hdr_counts[i]);
+            if(rc!=1||!svp_vk_hdrplus_measured(outputs[i],results,tracked[i]?shifts:NULL,hdr_counts[i]))goto submitted_fail;
         }
     }
     return true;
