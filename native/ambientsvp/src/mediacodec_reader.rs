@@ -71,12 +71,12 @@ impl Frame{
     /// callback, not the AImage itself. The caller transfers the token
     /// even if validation fails. A duplicate producer FD belongs to us.
     pub(crate) unsafe fn borrowed(buffer:*mut c_void,fd:i32,crop:Crop,timestamp:i64,
-        context:*mut c_void,release:ReleaseSource)->Option<Self>{
+        context:*mut c_void,release:ReleaseSource,allow_p010:bool)->Option<Self>{
         let reject=||{unsafe{release(context,-1)};None};
         if buffer.is_null() || fd< -1{return reject();}
         let mut d=Desc::default();
         unsafe{AHardwareBuffer_describe(buffer,&mut d);}
-        let Some(info)=checked_info(crop,d,PRIVATE,timestamp)else{return reject();};
+        let Some(info)=checked_info_format(crop,d,PRIVATE,timestamp,allow_p010)else{return reject();};
         let acquire_fd=if fd>=0{
             let dup=unsafe{libc::fcntl(fd,libc::F_DUPFD_CLOEXEC,0)};
             if dup<0{return reject();}dup
