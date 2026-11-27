@@ -325,6 +325,21 @@ def prepare_mupen_offsets(root):
     generator = "\t\t-f $(CORE_DIR)/tools/gen_asm_defines.awk"
     if source.count(marker) != 1 or source.count(generator) != 1:
         raise ValueError("Mupen64Plus native offset generation recipe changed; inspect pinned source")
+    # amd64 libco's file-scope assembly refers to a static C symbol by name.
+    # Keep the native context switch, but pass both handles via the ABI;
+    # all C and assembly can then retain ThinLTO without symbol-name coupling.
+    amd64 = root.parent / "libretro-common/libco/amd64.c"
+    coroutine = amd64.read_text()
+    replacements = (
+        ("__asm__(\n\".intel_syntax noprefix         \\n\"\n\".globl \" ASM_PREFIX \"co_switch              \\n\"\nASM_PREFIX \"co_switch:                     \\n\"\n\"mov rsi, [rip+\" ASM_PREFIX \"co_active_handle]\\n\"", "/* Let the C compiler own the active-context variable (including TLS).\n * The assembly routine only exchanges registers/stacks using the SysV ABI.\n * ThinLTO may internalize or rename static C symbols. */\nextern void ambient_mupen_co_swap(cothread_t, cothread_t)\n    __attribute__((visibility(\"hidden\")));\n\nvoid co_switch(cothread_t handle)\n{\n   cothread_t previous = co_active_handle;\n   co_active_handle = handle;\n   ambient_mupen_co_swap(handle, previous);\n}\n\n__asm__(\n\".intel_syntax noprefix         \\n\"\n\".globl \" ASM_PREFIX \"ambient_mupen_co_swap\\n\"\n\".hidden \" ASM_PREFIX \"ambient_mupen_co_swap\\n\"\n\".type \" ASM_PREFIX \"ambient_mupen_co_swap,@function\\n\"\nASM_PREFIX \"ambient_mupen_co_swap:\\n\""),
+        ("\"mov [rip+\" ASM_PREFIX \"co_active_handle], rdi\\n\"\n", ""),
+        ("\".att_syntax                    \\n\"", "\".size \" ASM_PREFIX \"ambient_mupen_co_swap, .-\" ASM_PREFIX \"ambient_mupen_co_swap\\n\"\n\".att_syntax                    \\n\""),
+    )
+    for before, after in replacements:
+        if coroutine.count(before) != 1:
+            raise ValueError("Mupen64Plus amd64 libco assembly recipe changed; inspect pinned source")
+        coroutine = coroutine.replace(before, after)
+    amd64.write_text(coroutine)
     # Use the public NDK_CCACHE launcher hook instead of editing the installed
     # NDK make templates or attempting to override delayed target variables.
     # Print the actual executed command so the existing link/flag audit sees

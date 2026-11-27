@@ -63,20 +63,41 @@ class CoreBuildPolicyTest(unittest.TestCase):
         generator = "\t\t-f $(CORE_DIR)/tools/gen_asm_defines.awk"
         original = marker + "\n$(ASM_DEFINES_NASM): $(ASM_DEFINES_OBJ)\n" + generator + "\n"
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "jni").mkdir()
+            root = Path(directory) / "libretro"
+            (root / "jni").mkdir(parents=True)
+            amd64 = root.parent / "libretro-common/libco/amd64.c"
+            amd64.parent.mkdir(parents=True)
+            coroutine = "#include <stdlib.h>\n#include <assert.h>\ntypedef void *cothread_t;\n#define ASM_PREFIX \"\"\nstatic long long co_active_buffer[64];\nstatic cothread_t co_active_handle = 0;\ncothread_t co_active(void) { if (!co_active_handle) co_active_handle = &co_active_buffer; return co_active_handle; }\nstatic void crash(void) { abort(); }\ncothread_t co_create(unsigned int size, void (*entrypoint)(void)) {\n    co_active(); size += 512; size &= ~15;\n    void *h = malloc(size);\n    long long *p = (long long*)((char*)h + size);\n    *--p = (long long)crash; *--p = (long long)entrypoint; *(long long*)h = (long long)p;\n    return h;\n}\nvoid co_delete(cothread_t h) { free(h); }\n__asm__(\n\".intel_syntax noprefix         \\n\"\n\".globl \" ASM_PREFIX \"co_switch              \\n\"\nASM_PREFIX \"co_switch:                     \\n\"\n\"mov rsi, [rip+\" ASM_PREFIX \"co_active_handle]\\n\"\n\"mov [rsi],rsp                  \\n\"\n\"mov [rsi+0x08],rbp             \\n\"\n\"mov [rsi+0x10],rbx             \\n\"\n\"mov [rsi+0x18],r12             \\n\"\n\"mov [rsi+0x20],r13             \\n\"\n\"mov [rsi+0x28],r14             \\n\"\n\"mov [rsi+0x30],r15             \\n\"\n\"mov [rip+\" ASM_PREFIX \"co_active_handle], rdi\\n\"\n\"mov rsp,[rdi]                  \\n\"\n\"mov rbp,[rdi+0x08]             \\n\"\n\"mov rbx,[rdi+0x10]             \\n\"\n\"mov r12,[rdi+0x18]             \\n\"\n\"mov r13,[rdi+0x20]             \\n\"\n\"mov r14,[rdi+0x28]             \\n\"\n\"mov r15,[rdi+0x30]             \\n\"\n\"ret                            \\n\"\n\".att_syntax                    \\n\"\n);\n"
             recipe = root / "jni/Android.mk"
             launcher = root / "jni/ambient-mupen-cc"
             for profile in ("baseline", "optimized", "optimized-a57", "thinlto"):
                 recipe.write_text(original)
+                amd64.write_text(coroutine)
                 launcher.unlink(missing_ok=True)
                 prepare_ndk(root, "mupen64plus_next_gles3", profile)
                 if profile == "baseline":
                     self.assertEqual(recipe.read_text(), original)
                     self.assertFalse(launcher.exists())
+                    self.assertEqual(amd64.read_text(), coroutine)
                 else:
                     self.assertTrue(launcher.is_file())
+                    self.assertNotIn("mov rsi, [rip+", amd64.read_text())
+                    self.assertNotIn("mov [rip+", amd64.read_text())
+                    self.assertIn("ambient_mupen_co_swap(handle, previous)", amd64.read_text())
                     self.assertIn("test -s $(ASM_DEFINES_NASM) && test -s $(ASM_DEFINES_GAS)", recipe.read_text())
+            # Real shared-library ThinLTO link and repeated stack switches on x86_64.
+            import platform
+            if platform.machine() == "x86_64" and shutil.which("clang") and shutil.which("ld.lld"):
+                driver = shutil.which("clang")
+                library = root / "libco-test.so"
+                harness = root / "coroutine-test.c"
+                harness.write_text("#include <assert.h>\ntypedef void *cothread_t;\nextern cothread_t co_active(void), co_create(unsigned, void (*)(void));\nextern void co_switch(cothread_t), co_delete(cothread_t);\nstatic cothread_t main_co, child_co;\nstatic int phase;\nstatic void child(void) {\n    for (int i = 0; i < 10000; ++i) {\n        assert(co_active() == child_co); ++phase; co_switch(main_co);\n    }\n    __builtin_trap();\n}\nint main(void) {\n    main_co = co_active(); child_co = co_create(65536, child);\n    for (int i = 0; i < 10000; ++i) {\n        co_switch(child_co); assert(co_active() == main_co); assert(phase == i + 1);\n    }\n    co_delete(child_co);\n}\n")
+                subprocess.run([driver, "-O3", "-flto=thin", "-fPIC", "-shared", "-fuse-ld=lld",
+                                "-Wl,--no-undefined", str(amd64), "-o", str(library)], check=True)
+                executable = root / "coroutine-test"
+                subprocess.run([driver, "-O3", "-flto=thin", "-fuse-ld=lld", str(harness),
+                                str(library), "-Wl,-rpath," + str(root), "-o", str(executable)], check=True)
+                subprocess.run([str(executable)], check=True, timeout=10)
             recipe.write_text("changed")
             with self.assertRaises(ValueError):
                 prepare_ndk(root, "mupen64plus_next_gles3", "optimized")
