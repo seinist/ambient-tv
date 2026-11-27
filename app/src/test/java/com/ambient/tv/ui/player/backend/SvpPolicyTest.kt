@@ -6,6 +6,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SvpPolicyTest {
+    @Test fun adaptiveIsExplicitAndReachesBothNativePlayers() {
+        assertEquals("light", MpvImageOptions(svpMode = "auto").normalized().svpMode)
+        assertEquals("adaptive", MpvImageOptions(svpMode = "adaptive").normalized().svpMode)
+        assertEquals("adaptive", VlcImageOptions(svpMode = "adaptive").normalized().svpMode)
+        assertEquals("off", effectiveMpvImageOptions(MpvImageOptions(svpMode = "adaptive"), true, true).svpMode)
+        assertTrue(mpvSvpFilter("adaptive", 24.0, 60.0)!!.contains("preset=4"))
+        assertTrue(vlcImageMediaOptions(VlcImageOptions(svpMode = "adaptive"), 60.0).joinToString().contains("preset=4"))
+    }
+
     @Test fun changedDisplayTargetRestartsActiveSvpOnly() {
         assertTrue(svpTargetChanged("light", 24.0, 60.0))
         assertTrue(svpTargetChanged("quality", 60.0, 59.94))
