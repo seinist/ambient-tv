@@ -24,7 +24,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
  
  #include <vlc_arrays.h>
  #include <vlc_demux.h>
-@@ -934,9 +935,49 @@
+@@ -934,9 +935,52 @@
  {
      demux_sys_t *p_sys = p_demux->p_sys;
  
@@ -45,8 +45,9 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +            unsigned length = ambient_fel_hvcc_length(bl->data.p_binary->p_blob,
 +                                                     bl->data.p_binary->i_blob);
 +            bool wrapped, irap;
++            size_t el_offset;
 +            if (ambient_fel_mp4_sample(p_block->p_buffer, p_block->i_buffer,
-+                                       length, &wrapped, &irap) && wrapped &&
++                                       length, &wrapped, &irap, &el_offset) && wrapped &&
 +                (irap || ((p_block->i_flags | p_track->i_next_block_flags) &
 +                          BLOCK_FLAG_DISCONTINUITY))) {
 +                const uint8_t *config = el->data.p_binary->p_blob;
@@ -55,8 +56,10 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +                    p_block->i_buffer <= SIZE_MAX - prefix) {
 +                    block_t *merged = block_Alloc(prefix + p_block->i_buffer);
 +                    if (merged && ambient_fel_hvce_prefix(config, size, length,
-+                                                          merged->p_buffer, prefix, &prefix)) {
-+                        memcpy(merged->p_buffer + prefix, p_block->p_buffer, p_block->i_buffer);
++                                                          merged->p_buffer + el_offset, prefix, &prefix)) {
++                        memcpy(merged->p_buffer, p_block->p_buffer, el_offset);
++                        memcpy(merged->p_buffer + el_offset + prefix, p_block->p_buffer + el_offset,
++                               p_block->i_buffer - el_offset);
 +                        block_CopyProperties(merged, p_block);
 +                        block_Release(p_block);
 +                        p_block = merged;
