@@ -17,7 +17,7 @@ import java.util.zip.ZipFile
 internal object SystemModuleMaterializer {
     private const val MAX_EXPANDED = 512L * 1024 * 1024
     private const val MAX_ENTRIES = 4096
-    private val segment = Regex("[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
+    private val segment = Regex("[A-Za-z0-9_][A-Za-z0-9_. -]{0,127}")
 
     data class Materialized(
         val build: SystemModuleBuild,
@@ -32,7 +32,7 @@ internal object SystemModuleMaterializer {
         }
     }
 
-    fun prepare(pkg: SystemModuleStore.Package, root: File, pageSize: Long): Materialized {
+    fun prepare(pkg: SystemModuleStore.Package, root: File, pageSize: Long, hostLibraries: Set<String> = emptySet()): Materialized {
         SystemModuleArchive.verify(pkg.archive, pkg.build)
         if (!root.mkdirs() && !Files.isDirectory(root.toPath(), LinkOption.NOFOLLOW_LINKS))
             throw IOException("Cannot create private materialization root")
@@ -51,7 +51,7 @@ internal object SystemModuleMaterializer {
                     val entry = entries.nextElement()
                     val parts = entry.name.split('/')
                     if (entry.isDirectory || parts.size !in 2..12 ||
-                        parts.any { !segment.matches(it) || it.endsWith('.') } ||
+                        parts.any { !segment.matches(it) || (it.endsWith('.') || it.endsWith(' ')) } ||
                         hashes.size >= MAX_ENTRIES || entry.name in hashes ||
                         entry.size < 0 || entry.size > MAX_EXPANDED - expanded)
                         throw SystemModuleTrustException("Invalid materialization entry")
@@ -117,7 +117,7 @@ internal object SystemModuleMaterializer {
             if (orderedDex.map { it.name } != orderedDex.indices.map {
                     if (it == 0) "classes.dex" else "classes${it + 1}.dex"
                 }) throw SystemModuleTrustException("Non-contiguous module DEX sequence")
-            validateNativeDependencies(native)
+            validateNativeDependencies(native, hostLibraries)
             val result = Materialized(pkg.build, dir, orderedDex, native.toMap(), hashes.toMap())
             complete = true
             return result
@@ -138,11 +138,11 @@ internal object SystemModuleMaterializer {
         "libsync.so",
     )
 
-    internal fun validateNativeDependencies(native: Map<String, SystemModuleBinary.Native>) {
-        if (native.keys.any { it in platform })
+    internal fun validateNativeDependencies(native: Map<String, SystemModuleBinary.Native>, hostLibraries: Set<String> = emptySet()) {
+        if (native.keys.any { it in platform || it in hostLibraries })
             throw SystemModuleTrustException("Package attempts to replace Android platform library")
         native.forEach { (_, binary) ->
-            if (binary.needed.any { it !in native && it !in platform })
+            if (binary.needed.any { it !in native && it !in platform && it !in hostLibraries })
                 throw SystemModuleTrustException("Missing or forbidden native dependency")
         }
     }
