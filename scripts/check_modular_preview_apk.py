@@ -6,7 +6,7 @@ import zipfile
 
 ABIS = {"arm64-v8a", "armeabi-v7a", "x86", "x86_64"}
 EXTERNAL = {"libprojectM-4.so", "libambientprojectm.so",
-            "libmpv.so", "libambientmpv.so", "libspotify_receiver_core.so"}
+            "libmpv.so", "libambientmpv.so", "libspotify_receiver_core.so", "libmonogram_mtproto.so"}
 SHARED = {"libc++_shared.so", "libavcodec.so", "libavutil.so", "libswresample.so"}
 
 
