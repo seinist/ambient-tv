@@ -665,7 +665,7 @@ internal fun DescriptionLinkButtons(
         }
         // Public names need a signed-in Monogram to resolve; without it they stay text.
         val telegram = remember(context) {
-            if (!com.ambient.tv.BuildConfig.MONOGRAM_NATIVE) null else EntryPointAccessors.fromApplication(
+            if (!com.ambient.tv.modules.SystemModuleAvailability.monogramOffered) null else EntryPointAccessors.fromApplication(
                 context.applicationContext, PlayerDetailTelegramEntryPoint::class.java).telegram()
         }
         val notFound = stringResource(com.ambient.tv.R.string.monogram_link_not_found)
