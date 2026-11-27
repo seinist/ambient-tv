@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include "svp_hdr_curve.h"
 
 #define SVP_VK_PHASES 8
 #define SVP_VK_JOBS 4
@@ -366,10 +367,29 @@ static bool svp_vk_hdrplus_measured(struct mp_image *img,const AmbientSvpHdrResu
                 p->maxscl[c]=(AVRational){r->maxscl[c],100000};
             }
             p->average_maxrgb=(AVRational){r->average,100000};
+            uint32_t peak=fmax(r->maxscl[0],fmax(r->maxscl[1],r->maxscl[2]));
+            uint32_t highlight=peak;
+            bool reserved=m->application_version==1&&p->num_distribution_maxrgb_percentiles==9&&
+                p->distribution_maxrgb[1].percentage==5&&p->distribution_maxrgb[2].percentage==10;
             for(unsigned j=0;j<p->num_distribution_maxrgb_percentiles;j++){
-                if(r->percentiles[j]>100000||(j&&r->percentiles[j]<r->percentiles[j-1]))return false;
+                if(r->percentiles[j]>peak||(j&&r->percentiles[j]<r->percentiles[j-1]))return false;
+                if(reserved&&(j==1||j==2)){
+                    p->distribution_maxrgb[j].percentile=(AVRational){j==1?0:255,100000};continue;
+                }
                 p->distribution_maxrgb[j].percentile=(AVRational){r->percentiles[j],100000};
+                if(p->distribution_maxrgb[j].percentage>=90)highlight=r->percentiles[j];
             }
+            // Recompute the knee and shoulder from the actual rendered
+            // pixels; target capability remains authored display metadata.
+            AVRational target=m->targeted_system_display_maximum_luminance;
+            SvpHdrCurve curve;
+            if(target.den<=0||!svp_hdr_curve(peak,r->average,highlight,(double)target.num/target.den,&curve))return false;
+            p->tone_mapping_flag=curve.count!=0;
+            p->num_bezier_curve_anchors=curve.count;
+            p->knee_point_x=(AVRational){curve.knee_x,4095};
+            p->knee_point_y=(AVRational){curve.knee_y,4095};
+            memset(p->bezier_curve_anchors,0,sizeof(p->bezier_curve_anchors));
+            for(unsigned j=0;j<curve.count;j++)p->bezier_curve_anchors[j]=(AVRational){curve.anchors[j],1023};
             // Preserve the reserved zero value of application version 1.
             // Legacy statistics count ties at the quantized maximum.
             p->fraction_bright_pixels=(AVRational){m->application_version==1?0:
