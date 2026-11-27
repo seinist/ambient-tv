@@ -76,7 +76,9 @@ internal class SystemModuleRuntime(
                     }
                     if (id in active) continue
                     val contract = contracts[id] ?: throw SystemModuleTrustException("No host module contract")
-                    val files = SystemModuleMaterializer.prepare(pkg, root, pageSize, contract.hostLibraries)
+                    if (!contract.hostLibraries.containsAll(pkg.build.hostNativeSha256.keys))
+                        throw SystemModuleTrustException("Unapproved host native dependency")
+                    val files = SystemModuleMaterializer.prepare(pkg, root, pageSize, pkg.build.hostNativeSha256.keys)
                     prepared[id] = files
                     validateContract(contract, files)
                     for (name in files.native.keys) {
@@ -130,7 +132,7 @@ internal class SystemModuleRuntime(
                         name !in contract.bundledOverrides &&
                         bundled?.findLibrary(name.removePrefix("lib").removeSuffix(".so")) != null
                     }) throw SystemModuleTrustException("Native-only module conflicts with bundled library")
-                if (files.build.hostNativeSha256.keys != contract.hostLibraries)
+                if (!contract.hostLibraries.containsAll(files.build.hostNativeSha256.keys))
                     throw SystemModuleTrustException("Host native fingerprint contract mismatch")
                 for ((name, hash) in files.build.hostNativeSha256) {
                     val location = bundled?.findLibrary(name.removePrefix("lib").removeSuffix(".so"))
@@ -192,7 +194,7 @@ internal class SystemModuleRuntime(
             return Loaded(files.build, assets, entry, loader)
         }
         if (contract.nativeRoots.isNotEmpty()) {
-            for (name in contract.hostLibraries.sorted()) {
+            for (name in files.build.hostNativeSha256.keys.sorted()) {
                 System.loadLibrary(name.removePrefix("lib").removeSuffix(".so"))
             }
             for (name in nativeOrder(files.native, contract.nativeRoots)) {
