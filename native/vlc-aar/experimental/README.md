@@ -442,3 +442,39 @@ build started. At 5d09306 the independent new HDR10+ GPU fixtures passed
 No real title/device playback, bit-exact Dolby Vision FEL reconstruction
 or full HDR10+ certification is established. Experimental defaults
 remain off.
+
+
+### FEL numeric precision and output ownership audit
+
+The FEL sequence (resample EL integer codewords, inverse LINEAR_DZ
+quantization, add to reshaped BL, Dolby color decoding) was compared with
+libplacebo v7.387.0, src/renderer.c sample_el and
+src/shaders/colorspace.c sh_dovi_compose_nlq:
+https://github.com/haasn/libplacebo/tree/v7.387.0/src
+
+The manual bilinear path now converts each R16 UNORM fetch back to its
+integer code before interpolation, avoiding normalized texture rounding
+noise at half-code boundaries. Round the signed difference from the NLQ
+offset, with a deterministic symmetric half-away-from-zero tie policy
+(the upstream GLSL round tie direction is implementation-dependent).
+The full-resolution luma path needs only one fetch instead of four.
+Chroma siting is independently validated and all six signaled locations
+are tested. The dedicated FEL dispatch is reset each frame.
+The parser and shader bridge preserve unsigned 64-bit NLQ coefficients;
+all scaled values fit floating-point range. A generated RPU exercises
+the 32-bit fractional denominator and values above UINT32_MAX.
+These changes do not replace the bilinear filter with a proprietary
+Dolby reference resampler or establish bit-exact equivalence.
+
+The output path now retires pending FEL/RPU snapshots on metadata
+rejection, rejects unexpected EL ownership at the AImage callback,
+and observes decoder close during the exact-PTS wait. No asynchronous
+FEL decoder worker or unbounded queue was introduced.
+
+All three native contract jobs passed at 5321d55 (45963085341).
+At 51dc2cc the new GPU tests for signed ties, direct luma, all six
+chroma sitings and wide coefficients passed (45964029537). The later
+RPU generator test, MediaCodec ownership changes and final ABI
+contracts need their own CI. Full linked ARM64 AAR and real-device
+Dolby Vision playback remain unconfirmed. The experimental flags
+remain off by default.
