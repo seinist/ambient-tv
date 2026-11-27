@@ -29,7 +29,9 @@ MODIFICATIONS = {
     "vendor/mono-rs/crates/mono-proto-transport/src/framing.rs":
         "consume large padded intermediate frames by ownership and preserve trailing input",
     "settings.gradle.kts":
-        "removed external Foojay toolchain resolver for the JDK-provisioned native build",
+        "restrict Gradle to the MTProto module and use the provisioned JDK",
+    "build.gradle.kts":
+        "remove unused application, Compose, serialization, KSP and Google Services plugin resolution",
     "vendor/mono-rs/crates/mono-proto-engine/src/rpc.rs":
         "accept owned inbound packets and move raw RPC responses",
     "vendor/mono-rs/crates/mono-proto-runtime/src/rpc/invoke.rs":
@@ -1853,6 +1855,56 @@ upstream_settings = "settings.gradle.kts"
 amend(upstream_settings,
       '    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"',
       '    // Ambient TV provisions the required JDK before invoking Gradle.')
+# The selected native library has no Gradle project dependencies. Avoid configuring
+# the whole Android app or resolving its unrelated plugin markers, including Compose.
+amend(upstream_settings,
+      """include(":app")
+
+include(":core:common")
+include(":core:models")
+include(":core:ui")
+include(":core:database")
+include(":core:markup")
+
+include(":feature:auth")
+include(":feature:chats")
+include(":feature:dialog")
+include(":feature:folders")
+include(":feature:profile")
+include(":feature:settings")
+
+include(":network:http")
+include(":network:bridge")
+
+include(":native:mtproto")
+include(":native:markup")""",
+      '// Ambient TV: only the native library participates in this build.\ninclude(":native:mtproto")')
+amend("build.gradle.kts",
+      """plugins {
+    alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.android.library) apply false
+    alias(libs.plugins.kotlin.compose) apply false
+    alias(libs.plugins.kotlin.serialization) apply false
+    alias(libs.plugins.ksp) apply false
+    alias(libs.plugins.google.services) apply false
+}
+
+// Compose compiler stability/skipping reports for the recomposition work, off unless asked for:
+//   ./gradlew.bat :core:ui:compileDebugKotlin :feature:chats:compileDebugKotlin -PcomposeReports
+// Writes <module>/build/compose-reports/*-composables.txt and *-classes.txt.
+subprojects {
+    plugins.withId("org.jetbrains.kotlin.plugin.compose") {
+        if (providers.gradleProperty("composeReports").isPresent) {
+            extensions.configure<org.jetbrains.kotlin.compose.compiler.gradle.ComposeCompilerGradlePluginExtension> {
+                reportsDestination.set(layout.buildDirectory.dir("compose-reports"))
+                metricsDestination.set(layout.buildDirectory.dir("compose-metrics"))
+            }
+        }
+    }
+}""",
+      """plugins {
+    alias(libs.plugins.android.library) apply false
+}""")
 
 
 # Opt-in bounded CDN receiver. No whole-file fallback for a range. Every byte

@@ -356,3 +356,5 @@ Full-file media batches retain at most one initial window plus four bounded refi
 - These are bounded optimizations, not measured speedup claims. PGO profile-use and architecture-specific changes still require representative device traces and release size checks.
 
 - Full-photo requests share one account/revision-scoped transfer with reference-counted cancellation, independent two-request admission and a separate 24-file / 128 MiB cache. Photo and sharp-preview transfers also contribute to opt-in PGO flush cadence, so an artwork-only training session can produce profiles.
+
+- The pinned upstream Gradle build is limited to `:native:mtproto`; unused application/Compose/KSP/serialization/Google Services plugins and project configuration are removed by exact-source patches. Native Android library plugin, dependency repositories and Rust pins are unchanged.

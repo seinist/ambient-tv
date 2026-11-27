@@ -448,7 +448,7 @@ private fun PhotoStage(
 ) {
     val context = LocalContext.current
     val model = if (entry.kind == PhotoKind.PHOTO) entry.imageModel(widthPx, heightPx) else entry.thumbModel()
-    val monogramModel = model?.takeIf { it.startsWith(com.ambient.tv.data.telegram.MONOGRAM_PHOTO_SCHEME + "://") }
+    val monogramModel = (model as? String)?.takeIf { it.startsWith(com.ambient.tv.data.telegram.MONOGRAM_PHOTO_SCHEME + "://") }
     val scopedKey = com.ambient.tv.ui.common.rememberMonogramArtworkKey(monogramModel)
     val network = com.ambient.tv.ui.common.rememberArtworkNetworkAccess(monogramModel)
     var previewOnly by remember(model, scopedKey, network.recovery) { mutableStateOf(false) }
@@ -457,7 +457,7 @@ private fun PhotoStage(
         previewOnly -> entry.thumbModel()
         else -> model
     }
-    val request = remember(effectiveModel, widthPx, heightPx, scopedKey, network.recovery) {
+    val request = remember(effectiveModel, widthPx, heightPx, scopedKey, network.blocked, network.recovery) {
         // FIT keeps portrait photos at screen height instead of filling the width (4x the pixels).
         ImageRequest.Builder(context).data(effectiveModel).size(widthPx, heightPx).scale(Scale.FIT)
             .apply {
