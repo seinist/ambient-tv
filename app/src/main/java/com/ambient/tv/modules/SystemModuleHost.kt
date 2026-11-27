@@ -46,14 +46,25 @@ internal object SystemModuleHost {
             hostLibraries = setOf("libc++_shared.so"),
             bundledOverrides = setOf("libprojectM-4.so", "libambientprojectm.so"),
         ),
-    ) + if (BuildConfig.MONOGRAM_NATIVE && BuildConfig.MONOGRAM_BINDING_SHA256.isNotBlank()) {
-        mapOf(SystemModule.MONOGRAM to SystemModuleRuntime.Contract(
-            nativeRoots = setOf("libmonogram_mtproto.so"),
-            hostLibraries = setOf("libc++_shared.so"),
-            bundledOverrides = setOf("libmonogram_mtproto.so"),
-            hostBindingSha256 = BuildConfig.MONOGRAM_BINDING_SHA256,
-        ))
-    } else emptyMap()
+    ) + mapOf(SystemModule.MONOGRAM to monogramContract())
+    
+    private fun monogramContract(): SystemModuleRuntime.Contract {
+        val dex = SystemModuleRuntime.Contract(
+            entryClass = "com.ambient.tv.data.telegram.MonogramModuleAdapter",
+            hostBindingSha256 = BuildConfig.MONOGRAM_ADAPTER_SHA256,
+            dexOwnership = ModuleDexOwnership.MONOGRAM,
+            dexNativeRoots = setOf("libmonogram_mtproto.so", "libjnidispatch.so"),
+        )
+        return if (BuildConfig.MONOGRAM_NATIVE && BuildConfig.MONOGRAM_BINDING_SHA256.isNotBlank())
+            SystemModuleRuntime.Contract(
+                nativeRoots = setOf("libmonogram_mtproto.so"),
+                hostLibraries = setOf("libc++_shared.so"),
+                bundledOverrides = setOf("libmonogram_mtproto.so"),
+                hostBindingSha256 = BuildConfig.MONOGRAM_BINDING_SHA256,
+                dexAlternative = dex,
+            )
+        else dex
+    }
     val supported: Set<SystemModule> get() = contracts.keys
 
     fun initialize(context: Context) {
