@@ -60,6 +60,51 @@ static inline bool ambient_hdrplus_grid_factor(const struct ambient_hdrplus_grid
     *factor=(p*(1.f-a)+q*a)/15.f;
     return *factor>0.f;
 }
+/* ST 2094-40:2020 section 8.7.4, equations 1, 3-5. A stable de
+ * Casteljau evaluation handles degree 1 through 16 and exact knee endpoints.
+ * This is the normalized specified curve, not a display adaptation policy. */
+static inline float ambient_hdrplus_bezier(const struct ambient_hdrplus_window *w,float s)
+{
+    if(!w||!w->tone_mapping||w->anchor_count>15||
+       !(w->knee_x>=0.f&&w->knee_x<=1.f)||
+       !(w->knee_y>=0.f&&w->knee_y<=1.f)||!isfinite(s))return NAN;
+    s=fmaxf(0.f,fminf(1.f,s));
+    if(w->knee_x==1.f)return w->knee_y*s;
+    if(s<w->knee_x)return w->knee_y*s/w->knee_x;
+    float t=(s-w->knee_x)/(1.f-w->knee_x);
+    float v[17]={0};
+    unsigned degree=w->anchor_count+1;
+    v[degree]=1.f;
+    for(unsigned i=0;i<w->anchor_count;i++){
+        if(!(w->anchors[i]>=0.f&&w->anchors[i]<=1.f))return NAN;
+        v[i+1]=w->anchors[i];
+    }
+    for(unsigned n=degree;n>0;n--)
+        for(unsigned i=0;i<n;i++)v[i]=v[i]+t*(v[i+1]-v[i]);
+    return w->knee_y+(1.f-w->knee_y)*v[0];
+}
+
+/* Section 8.7.4 permits a percentile source normalization when MaxSCL
+ * is zero. Reserved v1 distribution markers are never scene statistics. */
+static inline float ambient_hdrplus_source_peak(const struct ambient_hdrplus_window *w,unsigned version)
+{
+    if(!w||w->histogram_count>15)return 0.f;
+    float peak=0.f;
+    for(unsigned i=0;i<3;i++){
+        if(!(w->maxscl[i]>=0.f&&w->maxscl[i]<=1.f))return 0.f;
+        peak=fmaxf(peak,w->maxscl[i]);
+    }
+    if(peak>0.f)return peak;
+    bool reserved=version==1&&w->histogram_count==9&&
+        w->histogram[1].percentage==5&&w->histogram[2].percentage==10;
+    for(unsigned i=0;i<w->histogram_count;i++){
+        if(reserved&&(i==1||i==2))continue;
+        float v=w->histogram[i].percentile;
+        if(!(v>=0.f&&v<=1.f))return 0.f;
+        peak=fmaxf(peak,v);
+    }
+    return peak;
+}
 static inline bool ambient_hdrplus_spatial_supported(const struct ambient_hdrplus *m,
     unsigned width, unsigned height, struct ambient_hdrplus_mask masks[2], bool *layering)
 {
@@ -75,9 +120,9 @@ static inline bool ambient_hdrplus_spatial_supported(const struct ambient_hdrplu
             !ambient_hdrplus_grid_factor(&m->targeted_grid,w,&target_factor) ||
             (w->saturation_mapping && w->saturation_weight>63) ||
             !w->tone_mapping ||
-            w->anchor_count>15 || !(w->knee_x>0.f && w->knee_x<1.f) ||
-            !(w->knee_y>0.f && w->knee_y<1.f) ||
-            !(w->maxscl[0]>0.f || w->maxscl[1]>0.f || w->maxscl[2]>0.f)) return false;
+            w->anchor_count>15 || !(w->knee_x>=0.f && w->knee_x<=1.f) ||
+            !(w->knee_y>=0.f && w->knee_y<=1.f) ||
+            ambient_hdrplus_source_peak(w,m->version)<=0.f) return false;
         float last=0.f;
         for (unsigned j=0;j<w->anchor_count;++j) {
             if (!(w->anchors[j]>=last && w->anchors[j]<=1.f)) return false;
