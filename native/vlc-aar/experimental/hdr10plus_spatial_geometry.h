@@ -101,8 +101,7 @@ static inline float ambient_hdrplus_source_peak(const struct ambient_hdrplus_win
     // Section 8.7.4 uses the final CFD element, not the maximum of
     // possibly malformed metadata. Reserved markers cannot be the last
     // element of a valid v1 distribution.
-    if(!w->histogram_count||!ambient_hdrplus_distribution_ordered(w,version))return 0.f;
-    return w->histogram[w->histogram_count-1].percentile;
+    return ambient_hdrplus_cfd_peak(w,version);
 }
 /* Annex B.3 normalizes linear light by M_RP (relative to 10000 nits)
  * when available, otherwise by scene MaxSCL / the highest percentile.
@@ -205,10 +204,7 @@ static inline bool ambient_hdrplus_spatial_supported(const struct ambient_hdrplu
             !ambient_hdrplus_grid_factor(&m->targeted_grid,w,&target_factor) ||
             (w->saturation_mapping && w->saturation_weight>63) ||
             ambient_hdrplus_normalization_nits(m,w)<=0.f) return false;
-        if(w->tone_mapping && (m->target_nits<=0.f || w->anchor_count>15 ||
-            !(w->knee_x>=0.f && w->knee_x<=1.f) ||
-            !(w->knee_y>=0.f && w->knee_y<=1.f))) return false;
-        if(w->tone_mapping && !ambient_hdrplus_curve_monotone(w))return false;
+        if(w->tone_mapping && !ambient_hdrplus_usable_curve(w,m->target_nits))return false;
         if (i && !ambient_hdrplus_mask_init(&masks[i-1],&w->geometry,width,height))
             return false;
     }
