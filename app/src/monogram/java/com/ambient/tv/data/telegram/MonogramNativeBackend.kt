@@ -284,12 +284,24 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 backoffMs = try {
                     val generation = cacheGeneration
                     val identity = accountId
-                    val events = nativeCall { h ->
-                        if (generation != cacheGeneration || identity != accountId) emptyList()
+                    val drained = nativeCall { h ->
+                        if (generation != cacheGeneration || identity != accountId) DrainedUpdates(emptyList(), null)
                         else drainUpdateEvents(h)
                     }
-                    if (generation == cacheGeneration && identity == accountId) applyUpdates(events)
-                    if (events.isEmpty()) (backoffMs + UPDATES_POLL_MS).coerceAtMost(15_000L)
+                    if (generation == cacheGeneration && identity == accountId) {
+                        val changes = applyUpdates(drained.events)
+                        if (changes != null && identity != null && generation == cacheGeneration && identity == accountId) {
+                            contentChangedListener?.invoke(identity.toString(), changes.messages, changes.all)
+                            artworkChangedListener?.invoke()
+                        }
+                        // A durable batch is acknowledged only after the local invalidation.
+                        drained.acknowledge?.let { acknowledge ->
+                            nativeCallOnce(connect = false) { h ->
+                                if (generation == cacheGeneration && identity == accountId) acknowledge(h)
+                            }
+                        }
+                    }
+                    if (drained.events.isEmpty()) (backoffMs + UPDATES_POLL_MS).coerceAtMost(15_000L)
                     else UPDATES_POLL_MS
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                     throw cancelled
@@ -310,9 +322,12 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         updatesStarted = false
     }
 
-    /** Drains and acknowledges the delivered batches; replays pending ones when asked to. */
-    private fun drainUpdateEvents(h: Long): List<UpdateEventDto> {
-        if (!native.isAuthorized(h)) return emptyList()
+    private data class DrainedUpdates(val events: List<UpdateEventDto>, val acknowledge: ((Long) -> Unit)?)
+    private data class ContentChanges(val messages: Set<Pair<Long, Int>>, val all: Boolean)
+
+    /** Drain first; acknowledge durable batches after local cache invalidation succeeds. */
+    private fun drainUpdateEvents(h: Long): DrainedUpdates {
+        if (!native.isAuthorized(h)) return DrainedUpdates(emptyList(), null)
         if (!updatesStarted) {
             native.startUpdates(h)
             updatesStarted = true
@@ -321,15 +336,16 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         val batches = if (drained.replayRequired)
             (drained.batches + native.pendingUpdateBatches(h)).distinctBy { it.batchId }
         else drained.batches
-        // Nothing is stored durably here: acknowledge so the native side does not redeliver.
-        batches.forEach { batch ->
-            runCatching { native.acknowledgeUpdateBatch(h, batch.accountGeneration, batch.batchId) }
+        val acknowledge: ((Long) -> Unit)? = if (batches.isEmpty()) null else { handle ->
+            batches.forEach { batch ->
+                native.acknowledgeUpdateBatch(handle, batch.accountGeneration, batch.batchId)
+            }
         }
-        return batches.flatMap { it.events } + drained.liveEvents
+        return DrainedUpdates(batches.flatMap { it.events } + drained.liveEvents, acknowledge)
     }
 
-    private suspend fun applyUpdates(events: List<UpdateEventDto>) {
-        if (events.isEmpty()) return
+    private fun applyUpdates(events: List<UpdateEventDto>): ContentChanges? {
+        if (events.isEmpty()) return null
         val touched = HashSet<Long>()
         var everything = false
         val changedMessages = HashSet<Pair<Long, Int>>()
@@ -393,10 +409,6 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 }
             }
         }
-        if (everything || changedMessages.isNotEmpty()) {
-            contentChangedListener?.invoke(changedMessages, everything)
-            artworkChangedListener?.invoke()
-        }
         // Newer last-message dates for loaded dialogs. The catalog's last entry is the paging
         // offset for loadMoreChats and stays untouched.
         val lastIndex = chats.size - 1
@@ -408,10 +420,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     chats[index] = chat.copy(lastMessageDate = newest.first, lastMessageId = newest.second)
             }
         }
+        return if (everything || changedMessages.isNotEmpty()) ContentChanges(changedMessages, everything) else null
     }
 
-    @Volatile private var contentChangedListener: (suspend (Set<Pair<Long, Int>>, Boolean) -> Unit)? = null
-    override fun setContentChangedListener(listener: (suspend (Set<Pair<Long, Int>>, Boolean) -> Unit)?) {
+    @Volatile private var contentChangedListener: (suspend (String, Set<Pair<Long, Int>>, Boolean) -> Unit)? = null
+    override fun setContentChangedListener(listener: (suspend (String, Set<Pair<Long, Int>>, Boolean) -> Unit)?) {
         contentChangedListener = listener
     }
     @Volatile private var artworkChangedListener: (() -> Unit)? = null
