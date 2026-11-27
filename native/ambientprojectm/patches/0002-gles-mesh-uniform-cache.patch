@@ -1,0 +1,300 @@
+diff --git a/src/libprojectM/MilkdropPreset/PerPixelMesh.cpp b/src/libprojectM/MilkdropPreset/PerPixelMesh.cpp
+--- a/src/libprojectM/MilkdropPreset/PerPixelMesh.cpp
++++ b/src/libprojectM/MilkdropPreset/PerPixelMesh.cpp
+@@ -16,8 +16,6 @@
+ namespace libprojectM {
+ namespace MilkdropPreset {
+ 
+-static constexpr uint32_t VerticesPerDrawCall = 1024 * 3;
+-
+ PerPixelMesh::PerPixelMesh()
+     : RenderItem()
+ {
+@@ -28,15 +26,16 @@
+                                         staticShaders->GetPresetWarpFragmentShader());
+ }
+ 
+-void PerPixelMesh::InitVertexAttrib()
++PerPixelMesh::~PerPixelMesh()
+ {
+-    m_drawVertices.resize(VerticesPerDrawCall); // Fixed size, may scale it later depending on GPU caps.
+-
+-    glGenVertexArrays(1, &m_vaoID);
+-    glGenBuffers(1, &m_vboID);
++    glDeleteBuffers(1, &m_elementBuffer);
++}
+ 
+-    glBindVertexArray(m_vaoID);
+-    glBindBuffer(GL_ARRAY_BUFFER, m_vboID);
++void PerPixelMesh::InitVertexAttrib()
++{
++    // RenderItem::Init already created and bound the VAO and VBO.
++    glGenBuffers(1, &m_elementBuffer);
++    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_elementBuffer);
+ 
+     glEnableVertexAttribArray(0);
+     glEnableVertexAttribArray(1);
+@@ -53,8 +52,7 @@
+     glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), reinterpret_cast<void*>(offsetof(MeshVertex, distanceX))); // Distance
+     glVertexAttribPointer(5, 2, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), reinterpret_cast<void*>(offsetof(MeshVertex, stretchX)));  // Stretch
+ 
+-    // Pre-allocate vertex buffer
+-    glBufferData(GL_ARRAY_BUFFER, sizeof(MeshVertex) * m_drawVertices.size(), m_drawVertices.data(), GL_STREAM_DRAW);
++    // Storage is allocated when the mesh is initialized.
+ 
+     glBindVertexArray(0);
+     glBindBuffer(GL_ARRAY_BUFFER, 0);
+@@ -146,7 +144,9 @@
+         m_listIndices.resize(m_gridSizeX * m_gridSizeY * 6);
+     }
+     else if (m_viewportWidth == presetState.renderContext.viewportSizeX &&
+-             m_viewportHeight == presetState.renderContext.viewportSizeY)
++             m_viewportHeight == presetState.renderContext.viewportSizeY &&
++             m_aspectX == presetState.renderContext.aspectX &&
++             m_aspectY == presetState.renderContext.aspectY)
+     {
+         // Nothing changed, just go on to the dynamic calculation.
+         return;
+@@ -215,6 +215,18 @@
+             }
+         }
+     }
++    m_viewportWidth = presetState.renderContext.viewportSizeX;
++    m_viewportHeight = presetState.renderContext.viewportSizeY;
++    m_aspectX = presetState.renderContext.aspectX;
++    m_aspectY = presetState.renderContext.aspectY;
++
++    glBindVertexArray(m_vaoID);
++    glBindBuffer(GL_ARRAY_BUFFER, m_vboID);
++    glBufferData(GL_ARRAY_BUFFER, sizeof(MeshVertex) * m_vertices.size(), nullptr, GL_STREAM_DRAW);
++    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_elementBuffer);
++    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(uint32_t) * m_listIndices.size(), m_listIndices.data(), GL_STATIC_DRAW);
++    glBindVertexArray(0);
++    glBindBuffer(GL_ARRAY_BUFFER, 0);
+ }
+ 
+ void PerPixelMesh::CalculateMesh(const PresetState& presetState, const PerFrameContext& perFrameContext, PerPixelContext& perPixelContext)
+@@ -354,31 +366,9 @@
+     glBindVertexArray(m_vaoID);
+     glBindBuffer(GL_ARRAY_BUFFER, m_vboID);
+ 
+-    int trianglesPerBatch = static_cast<int>(m_drawVertices.size() / 3 - 4);
+-    int triangleCount = m_gridSizeX * m_gridSizeY * 2; // Two triangles per quad/grid cell.
+-    int sourceIndex = 0;
+-
+-    while (sourceIndex < triangleCount * 3)
+-    {
+-        int trianglesQueued = 0;
+-        int vertex = 0;
+-        while (trianglesQueued < trianglesPerBatch && sourceIndex < triangleCount * 3)
+-        {
+-            // Copy one triangle/3 vertices
+-            for (int i = 0; i < 3; i++)
+-            {
+-                m_drawVertices[vertex++] = m_vertices[m_listIndices[sourceIndex++]];
+-            }
+-
+-            trianglesQueued++;
+-        }
+-
+-        if (trianglesQueued > 0)
+-        {
+-            glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(MeshVertex) * trianglesQueued * 3, m_drawVertices.data());
+-            glDrawArrays(GL_TRIANGLES, 0, trianglesQueued * 3);
+-        }
+-    }
++    // Preserve triangle order while uploading each unique vertex only once.
++    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(MeshVertex) * m_vertices.size(), m_vertices.data());
++    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(m_listIndices.size()), GL_UNSIGNED_INT, nullptr);
+ 
+     glBindVertexArray(0);
+     glBindBuffer(GL_ARRAY_BUFFER, 0);
+diff --git a/src/libprojectM/MilkdropPreset/PerPixelMesh.hpp b/src/libprojectM/MilkdropPreset/PerPixelMesh.hpp
+--- a/src/libprojectM/MilkdropPreset/PerPixelMesh.hpp
++++ b/src/libprojectM/MilkdropPreset/PerPixelMesh.hpp
+@@ -31,6 +31,7 @@
+ {
+ public:
+     PerPixelMesh();
++    ~PerPixelMesh();
+ 
+     void InitVertexAttrib() override;
+ 
+@@ -116,11 +117,13 @@
+ 
+     int m_viewportWidth{};  //!< Last known viewport width.
+     int m_viewportHeight{}; //!< Last known viewport height.
++    float m_aspectX{};
++    float m_aspectY{};
+ 
+     VertexList m_vertices; //!< The calculated mesh vertices.
+ 
+-    std::vector<int> m_listIndices; //!< List of vertex indices to render.
+-    VertexList m_drawVertices;      //!< Temp data buffer for the vertices to be drawn.
++    std::vector<uint32_t> m_listIndices; //!< List of vertex indices to render.
++    GLuint m_elementBuffer{};
+ 
+     Renderer::Shader m_perPixelMeshShader;                            //!< Special shader which calculates the per-pixel UV coordinates.
+     std::unique_ptr<MilkdropShader> m_warpShader;           //!< The warp shader. Either preset-defined or a default shader.
+diff --git a/src/libprojectM/MilkdropPreset/FinalComposite.cpp b/src/libprojectM/MilkdropPreset/FinalComposite.cpp
+--- a/src/libprojectM/MilkdropPreset/FinalComposite.cpp
++++ b/src/libprojectM/MilkdropPreset/FinalComposite.cpp
+@@ -154,7 +154,9 @@
+ void FinalComposite::InitializeMesh(const PresetState& presetState)
+ {
+     if (m_viewportWidth == presetState.renderContext.viewportSizeX &&
+-        m_viewportHeight == presetState.renderContext.viewportSizeY)
++        m_viewportHeight == presetState.renderContext.viewportSizeY &&
++        m_aspectX == presetState.renderContext.aspectX &&
++        m_aspectY == presetState.renderContext.aspectY)
+     {
+         return;
+     }
+@@ -304,6 +306,11 @@
+         }
+     }
+ 
++    m_viewportWidth = presetState.renderContext.viewportSizeX;
++    m_viewportHeight = presetState.renderContext.viewportSizeY;
++    m_aspectX = presetState.renderContext.aspectX;
++    m_aspectY = presetState.renderContext.aspectY;
++
+     // Store indices.
+     // ToDo: Probably don't need to store m_indices
+     glBindVertexArray(m_vaoID);
+diff --git a/src/libprojectM/MilkdropPreset/FinalComposite.hpp b/src/libprojectM/MilkdropPreset/FinalComposite.hpp
+--- a/src/libprojectM/MilkdropPreset/FinalComposite.hpp
++++ b/src/libprojectM/MilkdropPreset/FinalComposite.hpp
+@@ -96,6 +96,8 @@
+ 
+     int m_viewportWidth{};  //!< Last known viewport width.
+     int m_viewportHeight{}; //!< Last known viewport height.
++    float m_aspectX{};
++    float m_aspectY{};
+ 
+     std::unique_ptr<MilkdropShader> m_compositeShader; //!< The composite shader. Either preset-defined or empty.
+     std::unique_ptr<VideoEcho> m_videoEcho; //!< Video echo effect. Used if no composite shader is loaded and video echo is enabled.
+diff --git a/src/libprojectM/Renderer/Shader.cpp b/src/libprojectM/Renderer/Shader.cpp
+--- a/src/libprojectM/Renderer/Shader.cpp
++++ b/src/libprojectM/Renderer/Shader.cpp
+@@ -29,6 +29,7 @@
+     glAttachShader(m_shaderProgram, vertexShader);
+     glAttachShader(m_shaderProgram, fragmentShader);
+ 
++    m_uniformLocations.clear();
+     glLinkProgram(m_shaderProgram);
+ 
+     // Shader objects are no longer needed after linking, free the memory.
+@@ -84,9 +85,18 @@
+     glUseProgram(0);
+ }
+ 
++auto Shader::UniformLocation(const char* uniform) const -> GLint
++{
++    auto entry = m_uniformLocations.find(uniform);
++    if (entry != m_uniformLocations.end()) return entry->second;
++    const GLint location = glGetUniformLocation(m_shaderProgram, uniform);
++    m_uniformLocations.emplace(uniform, location);
++    return location;
++}
++
+ void Shader::SetUniformFloat(const char* uniform, float value) const
+ {
+-    auto location = glGetUniformLocation(m_shaderProgram, uniform);
++    auto location = UniformLocation(uniform);
+     if (location < 0)
+     {
+         return;
+@@ -96,7 +106,7 @@
+ 
+ void Shader::SetUniformInt(const char* uniform, int value) const
+ {
+-    auto location = glGetUniformLocation(m_shaderProgram, uniform);
++    auto location = UniformLocation(uniform);
+     if (location < 0)
+     {
+         return;
+@@ -106,7 +116,7 @@
+ 
+ void Shader::SetUniformFloat2(const char* uniform, const glm::vec2& values) const
+ {
+-    auto location = glGetUniformLocation(m_shaderProgram, uniform);
++    auto location = UniformLocation(uniform);
+     if (location < 0)
+     {
+         return;
+@@ -116,7 +126,7 @@
+ 
+ void Shader::SetUniformInt2(const char* uniform, const glm::ivec2& values) const
+ {
+-    auto location = glGetUniformLocation(m_shaderProgram, uniform);
++    auto location = UniformLocation(uniform);
+     if (location < 0)
+     {
+         return;
+@@ -126,7 +136,7 @@
+ 
+ void Shader::SetUniformFloat3(const char* uniform, const glm::vec3& values) const
+ {
+-    auto location = glGetUniformLocation(m_shaderProgram, uniform);
++    auto location = UniformLocation(uniform);
+     if (location < 0)
+     {
+         return;
+@@ -136,7 +146,7 @@
+ 
+ void Shader::SetUniformInt3(const char* uniform, const glm::ivec3& values) const
+ {
+-    auto location = glGetUniformLocation(m_shaderProgram, uniform);
++    auto location = UniformLocation(uniform);
+     if (location < 0)
+     {
+         return;
+@@ -146,7 +156,7 @@
+ 
+ void Shader::SetUniformFloat4(const char* uniform, const glm::vec4& values) const
+ {
+-    auto location = glGetUniformLocation(m_shaderProgram, uniform);
++    auto location = UniformLocation(uniform);
+     if (location < 0)
+     {
+         return;
+@@ -156,7 +166,7 @@
+ 
+ void Shader::SetUniformInt4(const char* uniform, const glm::ivec4& values) const
+ {
+-    auto location = glGetUniformLocation(m_shaderProgram, uniform);
++    auto location = UniformLocation(uniform);
+     if (location < 0)
+     {
+         return;
+@@ -166,7 +176,7 @@
+ 
+ void Shader::SetUniformMat3x4(const char* uniform, const glm::mat3x4& values) const
+ {
+-    auto location = glGetUniformLocation(m_shaderProgram, uniform);
++    auto location = UniformLocation(uniform);
+     if (location < 0)
+     {
+         return;
+@@ -176,7 +186,7 @@
+ 
+ void Shader::SetUniformMat4x4(const char* uniform, const glm::mat4x4& values) const
+ {
+-    auto location = glGetUniformLocation(m_shaderProgram, uniform);
++    auto location = UniformLocation(uniform);
+     if (location < 0)
+     {
+         return;
+diff --git a/src/libprojectM/Renderer/Shader.hpp b/src/libprojectM/Renderer/Shader.hpp
+--- a/src/libprojectM/Renderer/Shader.hpp
++++ b/src/libprojectM/Renderer/Shader.hpp
+@@ -189,6 +189,8 @@
+      */
+     auto CompileShader(const std::string& source, GLenum type) -> GLuint;
+ 
++    auto UniformLocation(const char* uniform) const -> GLint;
++    mutable std::map<std::string, GLint, std::less<>> m_uniformLocations;
+     GLuint m_shaderProgram{}; //!< The program ID.
+ };
+ 
