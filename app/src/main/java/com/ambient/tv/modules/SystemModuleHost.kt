@@ -26,6 +26,11 @@ internal object SystemModuleHost {
     // are added as their actual adapter/build/release pipeline is migrated.
     private val contracts = mapOf(
         SystemModule.SHADERS to SystemModuleRuntime.Contract(assetOnly = true),
+        SystemModule.SPOTIFY to SystemModuleRuntime.Contract(
+            nativeRoots = setOf("libspotify_receiver_core.so"),
+            hostLibraries = setOf("libc++_shared.so"),
+            bundledOverrides = setOf("libspotify_receiver_core.so"),
+        ),
         SystemModule.MPV to SystemModuleRuntime.Contract(
             nativeRoots = setOf("libmpv.so", "libambientmpv.so"),
             hostLibraries = setOf(
