@@ -66,6 +66,7 @@ impl Drop for ExternalLease{
     }
 }
 impl Frame{
+    pub(crate) fn external_pending(&self)->bool{self.external.is_some()}
     /// Adopt an additional reference to a decoder picture via its owner
     /// callback, not the AImage itself. The caller transfers the token
     /// even if validation fails. A duplicate producer FD belongs to us.
