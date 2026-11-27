@@ -254,25 +254,206 @@ class SmartTubeDeprecationPatchesTest(unittest.TestCase):
                 if (authHeaders.isEmpty() || doSkipAuth) {
                     applyHeaders(authHeaders, headers, requestBuilder)
 """,
-            "com/liskovsoft/youtubeapi/service/YouTubeSignInService.java": """        Map<String, String> headers = RetrofitOkHttpHelper.getAuthHeaders();
-        headers.clear();
-        if (selectedAccount != null) {
-            headers.put("Authorization", mCachedAuthorizationHeader);
+            "com/liskovsoft/youtubeapi/service/YouTubeSignInService.java": """    private String mCachedAuthorizationHeader;
+    private long mCacheUpdateTime;
+
+    private YouTubeSignInService() {
+        mAccountManager = YouTubeAccountManager.instance(this);
+
+        GlobalPreferences.setOnInit(() -> {
+            mAccountManager.init();
+            try {
+                updateAuthHeadersIfNeeded();
+            } catch (Exception e) {
+                // Host not found
+                e.printStackTrace();
+            }
+        });
+    }
+
+    public static YouTubeSignInService instance() {
+        if (sInstance == null) {
+            sInstance = new YouTubeSignInService();
         }
+
+        return sInstance;
     }
 
     @Override
-    public void addOnAccountChange
-""",
-            "com/liskovsoft/googleapi/oauth2/manager/OAuth2AccountManagerBase.java": """        Map<String, String> headers = RetrofitOkHttpHelper.getAuthHeaders();
+    public Observable<String> signInObserve() {
+        return mAccountManager.signInObserve();
+    }
+
+    public void checkAuth() {
+        updateAuthHeadersIfNeeded();
+    }
+
+    private synchronized void updateAuthHeadersIfNeeded() {
+        if (mCachedAuthorizationHeader != null && Helpers.equals(mCachedAuthorizationHeader, RetrofitOkHttpHelper.getAuthHeaders().get("Authorization"))
+                && System.currentTimeMillis() - mCacheUpdateTime < TOKEN_REFRESH_PERIOD_MS) {
+            return;
+        }
+
+        updateAuthHeaders();
+
+        mCacheUpdateTime = System.currentTimeMillis();
+    }
+
+    private void updateAuthHeaders() {
+        Account account = mAccountManager.getSelectedAccount();
+        String refreshToken = account != null ? ((YouTubeAccount) account).getRefreshToken() : null;
+        // get or create authorization on fly
+        mCachedAuthorizationHeader = createAuthorizationHeader(refreshToken);
+        syncWithRetrofit();
+        mAccountManager.syncStorage();
+    }
+
+    @Override
+    public boolean isSigned() {
+        // Condition created for the case when a device in offline mode.
+        return mAccountManager.getSelectedAccount() != null;
+    }
+
+    @Override
+    public List<Account> getAccounts() {
+        return mAccountManager.getAccounts();
+    }
+
+    @Nullable
+    @Override
+    public Account getSelectedAccount() {
+        return mAccountManager.getSelectedAccount();
+    }
+
+    public void invalidateCache() {
+        mCachedAuthorizationHeader = null;
+        mCacheUpdateTime = 0;
+    }
+
+    // Fix empty content when quickly switch accounts???
+    @Override
+    public synchronized void selectAccount(Account account) {
+        mAccountManager.selectAccount(account);
+    }
+
+    @Override
+    public synchronized void removeAccount(Account account) {
+        mAccountManager.removeAccount(account);
+    }
+
+    @Override
+    public String printDebugInfo() {
+        String name = "none";
+        String header = "none";
+        String token = "none";
+
+        if (mCachedAuthorizationHeader != null) {
+            header = "ok";
+        }
+
+        Account account = getSelectedAccount();
+
+        if (account instanceof YouTubeAccount) {
+            if (account.getName() != null) {
+                name = "ok";
+            }
+            if (((YouTubeAccount) account).getRefreshToken() != null) {
+                token = "ok";
+            }
+        }
+
+        return String.format("name=%s;header=%s;token=%s", name, header, token);
+    }
+
+
+    private void syncWithRetrofit() {
+        if (Helpers.isJUnitTest()) {
+            return;
+        }
+
+        Map<String, String> headers = RetrofitOkHttpHelper.getAuthHeaders();
         headers.clear();
-        if (mCachedAuthorizationHeader != null && getSelectedAccount() != null) {
-            String pageIdToken = ((YouTubeAccount) getSelectedAccount()).getPageIdToken();
+
+        Account selectedAccount = getSelectedAccount();
+
+        if (mCachedAuthorizationHeader != null && selectedAccount != null) {
+            headers.put("Authorization", mCachedAuthorizationHeader);
+            String pageIdToken = ((YouTubeAccount) selectedAccount).getPageIdToken();
             if (pageIdToken != null) {
+                // Apply branded account rights (restricted videos). Branded refresh token with current account page id.
                 headers.put("X-Goog-Pageid", pageIdToken);
             }
         }
     }
+
+    @Override
+    public void addOnAccountChange(OnAccountChange listener) {
+        mAccountManager.addOnAccountChange(listener);
+    }
+
+""",
+            "com/liskovsoft/googleapi/oauth2/manager/OAuth2AccountManagerBase.java": """    private String mCachedAuthorizationHeader;
+    private long mCacheUpdateTime;
+
+    protected abstract Account getSelectedAccount();
+    protected abstract AccessToken obtainAccessToken(String refreshToken);
+
+    public void checkAuth() {
+        updateAuthHeadersIfNeeded();
+    }
+
+    protected void updateAuthHeadersIfNeeded() {
+        if (mCachedAuthorizationHeader != null && Helpers.equals(mCachedAuthorizationHeader, RetrofitOkHttpHelper.getAuthHeaders().get("Authorization"))
+                && System.currentTimeMillis() - mCacheUpdateTime < TOKEN_REFRESH_PERIOD_MS) {
+            return;
+        }
+
+        updateAuthHeaders();
+
+        mCacheUpdateTime = System.currentTimeMillis();
+    }
+
+    private void updateAuthHeaders() {
+        Account account = getSelectedAccount();
+        String refreshToken = account != null ? ((YouTubeAccount) account).getRefreshToken() : null;
+        // get or create authorization on fly
+        mCachedAuthorizationHeader = createAuthorizationHeader(refreshToken);
+        syncWithRetrofit();
+    }
+
+    /**
+     * For testing purposes
+     */
+    public void setAuthorizationHeader(String authorizationHeader) {
+        mCachedAuthorizationHeader = authorizationHeader;
+        mCacheUpdateTime = System.currentTimeMillis();
+
+        syncWithRetrofit();
+    }
+
+    public void invalidateCache() {
+        mCachedAuthorizationHeader = null;
+    }
+
+
+    private void syncWithRetrofit() {
+        if (Helpers.isJUnitTest()) {
+            return;
+        }
+
+        Map<String, String> headers = RetrofitOkHttpHelper.getAuthHeaders();
+        headers.clear();
+
+        if (mCachedAuthorizationHeader != null && getSelectedAccount() != null) {
+            headers.put("Authorization", mCachedAuthorizationHeader);
+            String pageIdToken = ((YouTubeAccount) getSelectedAccount()).getPageIdToken();
+            if (pageIdToken != null) {
+                // Apply branded account rights (restricted videos). Branded refresh token with current account page id.
+                headers.put("X-Goog-Pageid", pageIdToken);
+            }
+        }
+    }
+}
 """,
         }
         paths = []
@@ -292,7 +473,9 @@ class SmartTubeDeprecationPatchesTest(unittest.TestCase):
         self.assertIn("applyHeaders(requestAuthHeaders", helper)
         for path in paths[1:]:
             self.assertNotIn("headers.clear()", path.read_text())
-            self.assertIn("replaceAuthHeaders(headers);", path.read_text())
+            self.assertIn("publishAuthHeaders(generation, headers);", path.read_text())
+            self.assertIn("syncWithRetrofit(account, generation);", path.read_text())
+            self.assertIn("if (account != getSelectedAccount())", path.read_text())
         for path in paths:
             raw = path.read_bytes()
             self.assertNotIn(b"\n", raw.replace(b"\r\n", b""))

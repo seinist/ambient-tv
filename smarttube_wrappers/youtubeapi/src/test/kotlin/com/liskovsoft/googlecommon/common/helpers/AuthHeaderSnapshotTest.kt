@@ -7,6 +7,24 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class AuthHeaderSnapshotTest {
+    @Test fun obsoleteRefreshCannotOverwriteNewAccount() {
+        val previous = RetrofitOkHttpHelper.authHeaders
+        try {
+            val old = RetrofitOkHttpHelper.beginAuthRefresh()
+            val latest = RetrofitOkHttpHelper.beginAuthRefresh()
+            val headers = mapOf("Authorization" to "new", "X-Goog-Pageid" to "new-page")
+            assertTrue(RetrofitOkHttpHelper.publishAuthHeaders(latest, headers))
+            assertFalse(RetrofitOkHttpHelper.publishAuthHeaders(old, mapOf("Authorization" to "old")))
+            assertEquals(headers, RetrofitOkHttpHelper.authHeaders)
+            val pending = RetrofitOkHttpHelper.beginAuthRefresh()
+            RetrofitOkHttpHelper.replaceAuthHeaders(emptyMap())
+            assertFalse(RetrofitOkHttpHelper.publishAuthHeaders(pending, headers))
+            assertTrue(RetrofitOkHttpHelper.authHeaders.isEmpty())
+        } finally {
+            RetrofitOkHttpHelper.replaceAuthHeaders(previous)
+        }
+    }
+
     @Test fun snapshotsAreImmutableAndAccountUpdatesAreAtomic() {
         val previous = RetrofitOkHttpHelper.authHeaders
         val input = mutableMapOf("Authorization" to "test-A", "X-Goog-Pageid" to "page-A")

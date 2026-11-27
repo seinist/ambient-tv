@@ -1202,44 +1202,56 @@ def patch_auth_header_snapshots(msc: Path, check: bool) -> list[Path]:
     helper = root / "com/liskovsoft/googlecommon/common/helpers/RetrofitOkHttpHelper.kt"
     signin = root / "com/liskovsoft/youtubeapi/service/YouTubeSignInService.java"
     oauth = root / "com/liskovsoft/googleapi/oauth2/manager/OAuth2AccountManagerBase.java"
-    publish = '        RetrofitOkHttpHelper.replaceAuthHeaders(headers);'
     edits = {
         helper: [
-            ('    @JvmStatic\n    val authHeaders = mutableMapOf<String, String>()',
-             '''    @Volatile
-    private var authHeaderSnapshot: Map<String, String> = emptyMap()
-
-    @JvmStatic
-    val authHeaders: Map<String, String>
-        get() = authHeaderSnapshot
-
-    @JvmStatic
-    fun replaceAuthHeaders(headers: Map<String, String>) {
-        authHeaderSnapshot = java.util.Collections.unmodifiableMap(HashMap(headers))
-    }'''),
-            ('                if (authHeaders.isEmpty() || doSkipAuth) {',
-             '                val requestAuthHeaders = authHeaders\n'
-             '                if (requestAuthHeaders.isEmpty() || doSkipAuth) {'),
-            ('                    applyHeaders(authHeaders, headers, requestBuilder)',
-             '                    applyHeaders(requestAuthHeaders, headers, requestBuilder)'),
+            ("    @JvmStatic\n    val authHeaders = mutableMapOf<String, String>()",
+             "    @Volatile\n    private var authHeaderSnapshot: Map<String, String> = emptyMap()\n    private var authGeneration = 0L\n\n    @JvmStatic\n    val authHeaders: Map<String, String>\n        get() = authHeaderSnapshot\n\n    @JvmStatic\n    @Synchronized\n    fun beginAuthRefresh(): Long = ++authGeneration\n\n    @JvmStatic\n    @Synchronized\n    fun publishAuthHeaders(generation: Long, headers: Map<String, String>): Boolean {\n        if (generation != authGeneration) return false\n        authHeaderSnapshot = java.util.Collections.unmodifiableMap(HashMap(headers))\n        return true\n    }\n\n    @JvmStatic\n    @Synchronized\n    fun replaceAuthHeaders(headers: Map<String, String>) {\n        ++authGeneration\n        authHeaderSnapshot = java.util.Collections.unmodifiableMap(HashMap(headers))\n    }"),
+            ("                if (authHeaders.isEmpty() || doSkipAuth) {",
+             "                val requestAuthHeaders = authHeaders\n                if (requestAuthHeaders.isEmpty() || doSkipAuth) {"),
+            ("                    applyHeaders(authHeaders, headers, requestBuilder)",
+             "                    applyHeaders(requestAuthHeaders, headers, requestBuilder)"),
         ],
         signin: [
-            ('        Map<String, String> headers = RetrofitOkHttpHelper.getAuthHeaders();\n        headers.clear();',
-             '        Map<String, String> headers = new java.util.HashMap<>();'),
-            ('        }\n    }\n\n    @Override\n    public void addOnAccountChange',
-             '        }\n' + publish + '\n    }\n\n    @Override\n    public void addOnAccountChange'),
+            ("private String mCachedAuthorizationHeader;",
+             "private String mCachedAuthorizationHeader;\n    private Account mCachedAuthAccount;"),
+            ("if (mCachedAuthorizationHeader != null && Helpers.equals(",
+             "if (mCachedAuthAccount == getSelectedAccount() && mCachedAuthorizationHeader != null && Helpers.equals("),
+            ("        mCachedAuthorizationHeader = createAuthorizationHeader(refreshToken);\n        syncWithRetrofit();",
+             "        long generation = RetrofitOkHttpHelper.beginAuthRefresh();\n        String authorization = createAuthorizationHeader(refreshToken);\n        if (account != getSelectedAccount()) {\n            mCachedAuthorizationHeader = null;\n            mCachedAuthAccount = null;\n            return;\n        }\n        mCachedAuthorizationHeader = authorization;\n        mCachedAuthAccount = account;\n        syncWithRetrofit(account, generation);"),
+            ("public void invalidateCache() {\n        mCachedAuthorizationHeader = null;",
+             "public synchronized void invalidateCache() {\n        RetrofitOkHttpHelper.replaceAuthHeaders(java.util.Collections.emptyMap());\n        mCachedAuthAccount = null;\n        mCachedAuthorizationHeader = null;"),
+            ("private void syncWithRetrofit() {",
+             "private void syncWithRetrofit(Account selectedAccount, long generation) {"),
+            ("        Map<String, String> headers = RetrofitOkHttpHelper.getAuthHeaders();\n        headers.clear();",
+             "        Map<String, String> headers = new java.util.HashMap<>();"),
+            ("        Account selectedAccount = getSelectedAccount();\n\n        if (mCachedAuthorizationHeader != null && selectedAccount != null) {",
+             "        if (mCachedAuthorizationHeader != null && selectedAccount != null) {"),
+            ("        }\n    }\n\n    @Override\n    public void addOnAccountChange",
+             "        }\n        if (selectedAccount == getSelectedAccount()) {\n            RetrofitOkHttpHelper.publishAuthHeaders(generation, headers);\n        }\n    }\n\n    @Override\n    public void addOnAccountChange"),
         ],
         oauth: [
-            ('        Map<String, String> headers = RetrofitOkHttpHelper.getAuthHeaders();\n        headers.clear();',
-             '        Map<String, String> headers = new java.util.HashMap<>();'),
-            ('        if (mCachedAuthorizationHeader != null && getSelectedAccount() != null) {',
-             '        Account selectedAccount = getSelectedAccount();\n'
-             '        if (mCachedAuthorizationHeader != null && selectedAccount != null) {'),
-            ('String pageIdToken = ((YouTubeAccount) getSelectedAccount()).getPageIdToken();',
-             'String pageIdToken = ((YouTubeAccount) selectedAccount).getPageIdToken();'),
-            ('                headers.put("X-Goog-Pageid", pageIdToken);\n            }\n        }\n    }',
-             '                headers.put("X-Goog-Pageid", pageIdToken);\n            }\n        }\n'
-             + publish + '\n    }'),
+            ("private String mCachedAuthorizationHeader;",
+             "private String mCachedAuthorizationHeader;\n    private Account mCachedAuthAccount;"),
+            ("if (mCachedAuthorizationHeader != null && Helpers.equals(",
+             "if (mCachedAuthAccount == getSelectedAccount() && mCachedAuthorizationHeader != null && Helpers.equals("),
+            ("        mCachedAuthorizationHeader = createAuthorizationHeader(refreshToken);\n        syncWithRetrofit();",
+             "        long generation = RetrofitOkHttpHelper.beginAuthRefresh();\n        String authorization = createAuthorizationHeader(refreshToken);\n        if (account != getSelectedAccount()) {\n            mCachedAuthorizationHeader = null;\n            mCachedAuthAccount = null;\n            return;\n        }\n        mCachedAuthorizationHeader = authorization;\n        mCachedAuthAccount = account;\n        syncWithRetrofit(account, generation);"),
+            ("public void invalidateCache() {\n        mCachedAuthorizationHeader = null;",
+             "public synchronized void invalidateCache() {\n        RetrofitOkHttpHelper.replaceAuthHeaders(java.util.Collections.emptyMap());\n        mCachedAuthAccount = null;\n        mCachedAuthorizationHeader = null;"),
+            ("private void syncWithRetrofit() {",
+             "private void syncWithRetrofit(Account selectedAccount, long generation) {"),
+            ("        Map<String, String> headers = RetrofitOkHttpHelper.getAuthHeaders();\n        headers.clear();",
+             "        Map<String, String> headers = new java.util.HashMap<>();"),
+            ("protected void updateAuthHeadersIfNeeded()",
+             "protected synchronized void updateAuthHeadersIfNeeded()"),
+            ("public void setAuthorizationHeader(String authorizationHeader) {\n        mCachedAuthorizationHeader = authorizationHeader;\n        mCacheUpdateTime = System.currentTimeMillis();\n\n        syncWithRetrofit();",
+             "public synchronized void setAuthorizationHeader(String authorizationHeader) {\n        long generation = RetrofitOkHttpHelper.beginAuthRefresh();\n        Account account = getSelectedAccount();\n        mCachedAuthorizationHeader = authorizationHeader;\n        mCachedAuthAccount = account;\n        mCacheUpdateTime = System.currentTimeMillis();\n\n        syncWithRetrofit(account, generation);"),
+            ("        if (mCachedAuthorizationHeader != null && getSelectedAccount() != null) {",
+             "        if (mCachedAuthorizationHeader != null && selectedAccount != null) {"),
+            ("String pageIdToken = ((YouTubeAccount) getSelectedAccount()).getPageIdToken();",
+             "String pageIdToken = ((YouTubeAccount) selectedAccount).getPageIdToken();"),
+            ("                headers.put(\"X-Goog-Pageid\", pageIdToken);\n            }\n        }\n    }",
+             "                headers.put(\"X-Goog-Pageid\", pageIdToken);\n            }\n        }\n        if (selectedAccount == getSelectedAccount()) {\n            RetrofitOkHttpHelper.publishAuthHeaders(generation, headers);\n        }\n    }"),
         ],
     }
     pending = {}
