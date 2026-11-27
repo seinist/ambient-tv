@@ -88,11 +88,31 @@ unsafe fn make_importer(instance:vk::Instance,physical:vk::PhysicalDevice,device
     Ok(Importer(Arc::new(Core{device:d,ahb,fd,memory,limits:properties.limits,queue,family,in_flight:AtomicU32::new(0)})))
 }
 
+/// Borrowed player-owned storage image. The caller locks the AVVkFrame,
+/// submits on the configured queue, and retains its image/view until this
+/// job retires. Timeline semaphore is waited at value and signaled at +1.
+#[repr(C)]
+#[derive(Clone,Copy)]
+pub struct Destination{
+    image:vk::Image,view:vk::ImageView,semaphore:vk::Semaphore,
+    value:u64,layout:vk::ImageLayout,family:u32,width:u32,height:u32,
+}
+impl Destination{
+    fn valid(self,core:&Core,info:FrameInfo)->bool{
+        self.image!=vk::Image::null()&&self.view!=vk::ImageView::null()
+            &&self.semaphore!=vk::Semaphore::null()&&self.value<u64::MAX
+            &&matches!(self.layout,vk::ImageLayout::UNDEFINED|vk::ImageLayout::GENERAL|vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+                |vk::ImageLayout::TRANSFER_SRC_OPTIMAL|vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            &&(self.family==vk::QUEUE_FAMILY_IGNORED||self.family==core.family)
+            &&(self.width,self.height)==(info.width,info.height)
+    }
+}
 pub struct Job{
     core:Arc<Core>,info:FrameInfo,
     buffer:*mut c_void,source:vk::Image,source_memory:vk::DeviceMemory,source_view:vk::ImageView,
     conversion:vk::SamplerYcbcrConversion,sampler:vk::Sampler,
     output:vk::Image,output_memory:vk::DeviceMemory,output_view:vk::ImageView,
+    destination:Option<Destination>,
     set_layout:vk::DescriptorSetLayout,pipeline_layout:vk::PipelineLayout,pipeline:vk::Pipeline,
     pool:vk::DescriptorPool,commands:vk::CommandPool,fence:vk::Fence,
     wait:vk::Semaphore,signal:vk::Semaphore,
@@ -120,9 +140,11 @@ impl Drop for Job{
             d.destroy_sampler_ycbcr_conversion(self.conversion,None);
             d.destroy_image(self.source,None);
             d.free_memory(self.source_memory,None);
-            d.destroy_image_view(self.output_view,None);
-            d.destroy_image(self.output,None);
-            d.free_memory(self.output_memory,None);
+            if self.destination.is_none(){
+                d.destroy_image_view(self.output_view,None);
+                d.destroy_image(self.output,None);
+                d.free_memory(self.output_memory,None);
+            }
             d.destroy_semaphore(self.wait,None);d.destroy_semaphore(self.signal,None);
             d.destroy_fence(self.fence,None);
             if !self.buffer.is_null(){AHardwareBuffer_release(self.buffer);}
@@ -131,9 +153,9 @@ impl Drop for Job{
     }
 }
 impl Job{
-    fn new(core:Arc<Core>,frame:&Frame)->Result<Self>{
+    fn new(core:Arc<Core>,frame:&Frame,destination:Option<Destination>)->Result<Self>{
         let info=frame.info;
-        if frame.buffer.is_null() || info.buffer_width>core.limits.max_image_dimension2_d
+        if destination.is_some_and(|dst|!dst.valid(&core,info)) || frame.buffer.is_null() || info.buffer_width>core.limits.max_image_dimension2_d
             || info.buffer_height>core.limits.max_image_dimension2_d
             || core.limits.max_push_constants_size<24
             || core.limits.max_compute_work_group_invocations<64
@@ -145,13 +167,14 @@ impl Job{
             .map_err(|_|"AHB outstanding job budget")?;
         let mut j=Self{core,info,buffer:frame.buffer,source:vk::Image::null(),source_memory:vk::DeviceMemory::null(),
             source_view:vk::ImageView::null(),conversion:vk::SamplerYcbcrConversion::null(),sampler:vk::Sampler::null(),
-            output:vk::Image::null(),output_memory:vk::DeviceMemory::null(),output_view:vk::ImageView::null(),
+            output:vk::Image::null(),output_memory:vk::DeviceMemory::null(),output_view:vk::ImageView::null(),destination,
             set_layout:vk::DescriptorSetLayout::null(),pipeline_layout:vk::PipelineLayout::null(),pipeline:vk::Pipeline::null(),
             pool:vk::DescriptorPool::null(),commands:vk::CommandPool::null(),fence:vk::Fence::null(),
             wait:vk::Semaphore::null(),signal:vk::Semaphore::null(),frame:None,completed:false,consumers:AtomicU32::new(0)};
         unsafe{AHardwareBuffer_acquire(j.buffer)};
         j.import()?;
-        j.create_output()?;
+        if let Some(dst)=destination{j.output=dst.image;j.output_view=dst.view;}
+        else{j.create_output()?;}
         j.pipeline()?;
         j.fences(frame.acquire_fd)?;
         Ok(j)
@@ -320,7 +343,7 @@ impl Job{
                     .src_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT).dst_queue_family_index(self.core.family)
                     .dst_access_mask(vk::AccessFlags::SHADER_READ),
                 vk::ImageMemoryBarrier::default().image(self.output).subresource_range(range())
-                    .old_layout(vk::ImageLayout::UNDEFINED).new_layout(vk::ImageLayout::GENERAL)
+                    .old_layout(self.destination.map_or(vk::ImageLayout::UNDEFINED,|d|d.layout)).new_layout(vk::ImageLayout::GENERAL)
                     .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                     .dst_access_mask(vk::AccessFlags::SHADER_WRITE),
             ];
@@ -346,11 +369,20 @@ impl Job{
             d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::ALL_COMMANDS,
                 vk::DependencyFlags::empty(),&[],&[],&ready);
             d.end_command_buffer(cmd).map_err(err)?;
-            let waits=[self.wait];
-            let stages=[vk::PipelineStageFlags::ALL_COMMANDS];
-            let cmds=[cmd];let signals=[self.signal];
+            let mut waits=Vec::with_capacity(2);let mut wait_values=Vec::with_capacity(2);
+            let mut signals=vec![self.signal];let mut signal_values=vec![0];
+            if self.wait!=vk::Semaphore::null(){waits.push(self.wait);wait_values.push(0);}
+            if let Some(dst)=self.destination{
+                waits.push(dst.semaphore);wait_values.push(dst.value);
+                signals.push(dst.semaphore);signal_values.push(dst.value+1);
+            }
+            let stages=vec![vk::PipelineStageFlags::ALL_COMMANDS;waits.len()];
+            let cmds=[cmd];
+            let mut timeline=vk::TimelineSemaphoreSubmitInfo::default()
+                .wait_semaphore_values(&wait_values).signal_semaphore_values(&signal_values);
             let mut submit=vk::SubmitInfo::default().command_buffers(&cmds).signal_semaphores(&signals);
-            if self.wait!=vk::Semaphore::null(){submit=submit.wait_semaphores(&waits).wait_dst_stage_mask(&stages);}
+            if !waits.is_empty(){submit=submit.wait_semaphores(&waits).wait_dst_stage_mask(&stages);}
+            if self.destination.is_some(){submit=submit.push_next(&mut timeline);}
             // Caller owns external synchronization of this exact queue.
             d.queue_submit(self.core.queue,&[submit],self.fence).map_err(err)?;
         }
@@ -393,6 +425,18 @@ pub unsafe extern "C" fn ambient_svp_ahb_importer_destroy(importer:*mut Importer
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_ahb_submit(importer:*const Importer,frame:*mut *mut Frame,
     sdr8:u32,out:*mut *mut Job)->i32{
+    unsafe{submit_impl(importer,frame,sdr8,None,out)}
+}
+/// Same import, directly into the renderer's native storage image.
+/// Requires an actually enabled timeline semaphore feature.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_ahb_submit_into(importer:*const Importer,frame:*mut *mut Frame,
+    sdr8:u32,destination:*const Destination,out:*mut *mut Job)->i32{
+    if destination.is_null(){if !out.is_null(){unsafe{*out=ptr::null_mut();}}return -4;}
+    unsafe{submit_impl(importer,frame,sdr8,Some(*destination),out)}
+}
+unsafe fn submit_impl(importer:*const Importer,frame:*mut *mut Frame,sdr8:u32,
+    destination:Option<Destination>,out:*mut *mut Job)->i32{
     if out.is_null(){return -4;}
     unsafe{*out=ptr::null_mut();}
     if importer.is_null() || frame.is_null() || sdr8!=1{return -4;}
@@ -400,7 +444,7 @@ pub unsafe extern "C" fn ambient_svp_ahb_submit(importer:*const Importer,frame:*
     catch_unwind(AssertUnwindSafe(||{
         let core=unsafe{(&*importer).0.clone()};
         if core.in_flight.load(Ordering::Acquire)>=MAX_JOBS{return -2;}
-        let Ok(mut j)=Job::new(core,unsafe{&**frame})else{return -4;};
+        let Ok(mut j)=Job::new(core,unsafe{&**frame},destination)else{return -4;};
         if j.record_submit().is_err(){return -4;}
         // No fallible work between successful submit and publishing the
         // owned job; frame cannot be discarded by the caller after this.
