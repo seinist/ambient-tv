@@ -105,8 +105,13 @@ internal object SystemModuleHost {
 
     // Only absent packages fall back. Do not mix bundled and downloaded JNI
     // after an override fails: native constructors may already have executed.
+    private val processSelections = mutableMapOf<SystemModule, Result<SystemModuleRuntime.Loaded?>>()
+    @Synchronized
     fun loadSelected(module: SystemModule): SystemModuleRuntime.Loaded? {
-        if (selected(module) == null) return null
-        return session.runtime.load(module)
+        return processSelections.getOrPut(module) {
+            runCatching {
+                if (selected(module) == null) null else session.runtime.load(module)
+            }
+        }.getOrThrow()
     }
 }
