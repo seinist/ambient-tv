@@ -562,7 +562,9 @@ static void test_timed_intermediate_lookahead(void)
  * audio fragment with a changing duration and an implicit next clock. */
 static void test_multiple_timed_intermediates(void)
 {
-    for(unsigned mode=0;mode<2;mode++){
+    for(unsigned variant=0;variant<4;variant++){
+        unsigned mode=variant%2;
+        bool interleave=variant>=2;
         for(unsigned n=2;n<=9;n+=(n==2?6:1)){
             reset_stream(mode!=0);extra_count=n;
             mp4_track_t tracks[3]={{.i_track_ID=1,.b_ok=true,.i_timescale=1000,
@@ -614,6 +616,35 @@ static void test_multiple_timed_intermediates(void)
             sys.context.i_lastseqnumber=7;
             tracks[0].ambient_fel_clock_valid=tracks[0].ambient_fel_sequence_proven=true;
             tracks[0].ambient_fel_bl_end=tracks[0].ambient_fel_el_end=1;
+            if(interleave){
+                assert(MP4_FEL_IndexAdjacent(&d));
+                assert(MP4_FEL_InterleaveReplay(&d));
+                assert(!MP4_FEL_InterleaveReplay(&d));
+                assert(tracks[1].context.runs.i_count==1);
+                assert(tracks[2].context.runs.i_count==n&&tracks[2].i_time==48000);
+                stime_t time=48000;
+                for(unsigned i=0;i<n;i++){
+                    mp4_run_t *r=&tracks[2].context.runs.p_array[i];
+                    uint64_t offset=160+52*i;
+                    assert(r->ambient_fel_source==i+1&&r->i_first_dts==time);
+                    assert(r->ambient_fel_size==4&&r->ambient_fel_duration==i+1);
+                    assert(r->ambient_fel_discontinuity==(i==0));
+                    assert(MP4_FEL_RunContains(&sys,r,offset,4));
+                    assert(!MP4_FEL_RunContains(&sys,r,108,4));
+                    if(mode)assert(MP4_FEL_SeekExact(d.s,offset));
+                    block_t *audio=MP4_FEL_ReadRun(&d,r,offset,4);
+                    assert(audio&&audio->i_buffer==4&&audio->p_buffer[0]==i+1);
+                    block_Release(audio);
+                    time+=i+1;
+                    stime_t end;
+                    assert(MP4_FEL_RunEnd(&tracks[2],r,&end)&&end==time);
+                }
+                assert(MP4_FEL_FinishInterleave(&d));
+                assert(position==visible&&sys.context.i_lastseqnumber==8+n);
+                assert(!blocks&&el_frees==1&&!sys.ambient_fel_replay_count);
+                for(unsigned i=0;i<n;i++)assert(extra_frees[i]==1);
+                continue;
+            }
             assert(!MP4_FEL_ReplayNext(&d));
             assert(MP4_FEL_AdvanceReplay(&d));
             assert(!MP4_FEL_AdvanceReplay(&d));
@@ -651,7 +682,9 @@ static void test_multiple_timed_intermediates(void)
  * the preceding hidden traf, which must not be indexed a second time. */
 static void test_mixed_terminal(void)
 {
-    for(unsigned mode=0;mode<2;mode++){
+    for(unsigned variant=0;variant<4;variant++){
+        unsigned mode=variant%2;
+        bool interleave=variant>=2;
         for(unsigned overlap=0;overlap<2;overlap++){
             reset_stream(mode!=0);
             mp4_track_t track[3]={{.i_track_ID=1,.b_ok=true,.i_timescale=1000,
@@ -706,6 +739,21 @@ static void test_mixed_terminal(void)
             sys.context.i_lastseqnumber=7;
             track[0].ambient_fel_clock_valid=track[0].ambient_fel_sequence_proven=true;
             track[0].ambient_fel_bl_end=track[0].ambient_fel_el_end=1;
+            if(interleave){
+                assert(MP4_FEL_InterleaveReplay(&d));
+                assert(track[1].context.runs.i_count==1&&track[2].context.runs.i_count==1);
+                mp4_run_t *r=&track[2].context.runs.p_array[0];
+                assert(r->ambient_fel_source==1&&r->ambient_fel_duration==1024);
+                assert(r->i_offset==164&&r->i_first_dts==48000);
+                if(mode)assert(MP4_FEL_SeekExact(d.s,164));
+                block_t *audio=MP4_FEL_ReadRun(&d,r,164,4);
+                assert(audio&&!memcmp(audio->p_buffer,"AUD1",4));
+                block_Release(audio);
+                assert(sys.context.ambient_fel_el_moof==&look_el);
+                assert(MP4_FEL_FinishInterleave(&d)&&position==168&&sys.context.i_lastseqnumber==8);
+                assert(!blocks&&el_frees==1);
+                continue;
+            }
             assert(MP4_FEL_AdvanceReplay(&d));
             assert(!sys.context.ambient_fel_el_moof&&sys.ambient_fel_replay[0].moof==&look_el);
             MP4_FEL_ReleaseCaches(&sys);
