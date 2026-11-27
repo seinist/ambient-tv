@@ -82,6 +82,10 @@ jobs:
           ref: 946fcce07b6dcd0331c8cc609192aeff5e1924f8
           path: .ci/ffmpeg
           persist-credentials: false
+      - name: Install encoder for synthetic Main10 EL fixture
+        run: |
+          sudo apt-get update -o Acquire::Retries=3
+          sudo apt-get install -y ffmpeg
       - name: Compile and exercise the real pinned FFmpeg RPU parser
         run: |
           cd .ci/ffmpeg
@@ -92,6 +96,11 @@ jobs:
           ./test-ambient-dovi
           cc -I . "$GITHUB_WORKSPACE/native/vlc-aar/experimental/test_dovi_split.c" libavcodec/libavcodec.a libavutil/libavutil.a -lm -pthread -o test-dovi-split
           ./test-dovi-split
+          # Real independently encoded Main10 picture, wrapped as type-63 EL.
+          # The system encoder is only for a test fixture; decoding uses the pinned static FFmpeg.
+          ffmpeg -hide_banner -loglevel error -f lavfi -i color=c=gray:s=64x64:r=1 -frames:v 1 -pix_fmt yuv420p10le -c:v libx265 -x265-params 'pools=1:frame-threads=1:repeat-headers=1:log-level=error' -f hevc -y test-el.hevc
+          cc -I . "$GITHUB_WORKSPACE/native/vlc-aar/experimental/test_dovi_fel_decoder.c" libavcodec/libavcodec.a libavutil/libavutil.a -lm -pthread -o test-fel-decoder
+          ./test-fel-decoder test-el.hevc
 
   hdrplus-spatial-gpu:
     runs-on: ubuntu-24.04
