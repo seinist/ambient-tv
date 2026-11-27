@@ -1,4 +1,5 @@
 #include "dovi_fel_gpu.h"
+#include "dovi_fel_metadata.h"
 #include <libplacebo/vulkan.h>
 #include <assert.h>
 #include <stdio.h>
@@ -47,6 +48,26 @@ int main(void)
         reshape.comp[i].poly_coeffs[0][0]=0.1f;
         reshape.comp[i].poly_coeffs[0][1]=0.9f;
     }
+    // The renderer consumes value snapshots from the actual RPU parser, not
+    // pointers into decoder state. Exercise the bridge with the same curve.
+    struct ambient_dovi_metadata metadata={
+        .residual_present=1,.bl_bit_depth=10,.el_bit_depth=10,.vdr_bit_depth=12,
+        .coef_log2_denom=16,.nlq_pivots={0,1023}
+    };
+    for(unsigned i=0;i<3;i++){
+        metadata.nlq_offset[i]=nlq.offset[i];
+        metadata.nlq_slope[i]=nlq.slope[i];
+        metadata.nlq_threshold[i]=nlq.threshold[i];
+        metadata.nlq_maximum[i]=nlq.maximum[i];
+        metadata.curves[i].num_pivots=2;
+        metadata.curves[i].pivots[1]=1023;
+        metadata.curves[i].poly_order[0]=1;
+        metadata.curves[i].poly_coef[0][0]=6554;
+        metadata.curves[i].poly_coef[0][1]=58982;
+    }
+    assert(ambient_fel_metadata(&metadata,&reshape,&nlq));
+    metadata.residual_present=0;
+    assert(!ambient_fel_metadata(&metadata,&reshape,&nlq));
     assert(!ambient_fel_compose(gpu,dp,bl,el,bl,&reshape,&nlq));
     assert(ambient_fel_compose(gpu,dp,bl,el,out,&reshape,&nlq));
     assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=out,.ptr=pixels)));
