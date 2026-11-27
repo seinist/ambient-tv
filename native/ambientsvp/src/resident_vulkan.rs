@@ -661,19 +661,20 @@ mod gpu_tests{
             ambient_svp_vk_destroy(engine);
             // Actual R16 plane / RGBA16F Vulkan execution. Adjacent
             // 10-bit luma codes must stay distinguishable at source ticks.
-            for mode in [1,2]{
+            for mode in [1,2,3]{
                 let engine=ambient_svp_vk_create_format(instance.handle(),physical,d.handle(),
                     Some(entry.static_fn().get_instance_proc_addr),w,h,mode);
                 assert!(!engine.is_null(),"high depth resident mode {mode}");
+                let input_format=if mode==3{vk::Format::R16G16B16A16_SFLOAT}else{vk::Format::R16_UNORM};
                 let high=[
-                    image(&d,&props,w,h,vk::Format::R16_UNORM,src),
-                    image(&d,&props,w,h,vk::Format::R16_UNORM,src),
+                    image(&d,&props,w,h,input_format,src),
+                    image(&d,&props,w,h,input_format,src),
                     image(&d,&props,w/2,h/2,if mode==1{vk::Format::R16G16_UNORM}else{vk::Format::R16_UNORM},src),
                     image(&d,&props,w/2,h/2,vk::Format::R16_UNORM,src),
                     image(&d,&props,w,h,vk::Format::R16G16B16A16_SFLOAT,out),
                 ];
-                let pic=|y|VulkanPicture{y,u:high[2].view,v:if mode==1{vk::ImageView::null()}else{high[3].view},
-                    nv12:if mode==1{1}else{0},chroma_location:1};
+                let pic=|y|if mode==3{rgb(y)}else{VulkanPicture{y,u:high[2].view,v:if mode==1{vk::ImageView::null()}else{high[3].view},
+                    nv12:if mode==1{1}else{0},chroma_location:1}};
                 let a=pic(high[0].view);let b=pic(high[1].view);
                 let mut observed=[0u16;2];
                 for (i,phase) in [0.0,1.0].into_iter().enumerate(){
@@ -686,9 +687,9 @@ mod gpu_tests{
                                 vk::AccessFlags::empty(),vk::AccessFlags::TRANSFER_WRITE,
                                 vk::PipelineStageFlags::TOP_OF_PIPE,vk::PipelineStageFlags::TRANSFER);
                             let code=[502.0,503.0,512.0,512.0][j];
-                            let value=code*if mode==1{64.0/65535.0}else{1.0/65535.0};
+                            let value=if mode==3 && j<2{(code-64.0)/876.0}else{code*if mode==1{64.0/65535.0}else{1.0/65535.0}};
                             d.cmd_clear_color_image(cmd,img.image,vk::ImageLayout::GENERAL,
-                                &vk::ClearColorValue{float32:[value,value,0.0,1.0]},&[range()]);
+                                &vk::ClearColorValue{float32:[value,value,if mode==3 && j<2{value}else{0.0},1.0]},&[range()]);
                             transition(&d,cmd,img.image,vk::ImageLayout::GENERAL,vk::ImageLayout::GENERAL,
                                 vk::AccessFlags::TRANSFER_WRITE,vk::AccessFlags::SHADER_READ,
                                 vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::COMPUTE_SHADER);
