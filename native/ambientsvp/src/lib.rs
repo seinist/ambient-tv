@@ -976,7 +976,7 @@ mod pipelining_tests {
                 pipelined.push(&input, pts).unwrap();
                 serial.push(&input, pts).unwrap();
                 loop {
-                    let ap = pipelined.receive(&mut a, false).unwrap();
+                    let ap = pipelined.receive_visit(|data| a.copy_from_slice(data), false).unwrap();
                     let bp = serial.receive(&mut b, false).unwrap();
                     assert_eq!(ap, bp);
                     if ap.is_none() { break; }
@@ -990,7 +990,7 @@ mod pipelining_tests {
             }
             if origin != 0 {
                 loop {
-                    let ap = pipelined.receive(&mut a, true).unwrap();
+                    let ap = pipelined.receive_visit(|data| a.copy_from_slice(data), true).unwrap();
                     let bp = serial.receive(&mut b, true).unwrap();
                     assert_eq!(ap, bp);
                     if ap.is_none() { break; }
@@ -1105,6 +1105,51 @@ mod adaptive_tests {
             source_num: 24, source_den: 1, target_num: 60, target_den: 1,
             preset, backend: 1, threads: 2, artifacts: 0, scene: 0,
             algo: 0, block: 0, overlap: 0, pel: 0, search: 0,
+        }
+    }
+
+    #[test]
+    fn output_visitor_matches_slice_through_seek_bypass_and_eof() {
+        let mut direct = AmbientSvp::new(config(1)).unwrap();
+        let mut normal = AmbientSvp::new(config(1)).unwrap();
+        let mut out_a = vec![0; direct.frame_len()];
+        let mut out_b = out_a.clone();
+        let len = out_a.len();
+        for (origin, bypass) in [(0, false), (9_000_000, true)] {
+            direct.reset().unwrap();
+            normal.reset().unwrap();
+            assert!(!direct.ready(false));
+            for n in 0..12 {
+                let pts = origin + n * 1_000_000 / 24;
+                let data = vec![80 + n as u8; len];
+                direct.push(&data,pts).unwrap();
+                normal.push(&data,pts).unwrap();
+                if bypass && n == 4 { direct.bypass(3); normal.bypass(3); }
+                loop {
+                    let ready = direct.ready(false);
+                    let mut calls = 0;
+                    let a = direct.receive_visit(|data| { calls += 1; out_a.copy_from_slice(data); }, false).unwrap();
+                    let b = normal.receive(&mut out_b,false).unwrap();
+                    assert_eq!(a,b);
+                    assert_eq!(calls,usize::from(a.is_some()));
+                    assert!(ready || a.is_none());
+                    if a.is_none() { break; }
+                    assert_eq!(out_a,out_b);
+                }
+            }
+            loop {
+                let ready = direct.ready(true);
+                let mut calls = 0;
+                let a = direct.receive_visit(|data| { calls += 1; out_a.copy_from_slice(data); },true).unwrap();
+                let b = normal.receive(&mut out_b,true).unwrap();
+                assert_eq!(a,b);
+                assert_eq!(calls,usize::from(a.is_some()));
+                assert!(ready || a.is_none());
+                if a.is_none() { break; }
+                assert_eq!(out_a,out_b);
+            }
+            assert_eq!(direct.stats.interpolated_frames,normal.stats.interpolated_frames);
+            assert_eq!(direct.stats.output_frames,normal.stats.output_frames);
         }
     }
 
