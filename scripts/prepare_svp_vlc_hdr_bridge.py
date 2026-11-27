@@ -56,7 +56,8 @@ replace('    if (hdrplus) {\n        vlc_video_hdr_dynamic_metadata_t *hdm',
         '    } else\n#endif\n'
         '    if (hdrplus) {\n        vlc_video_hdr_dynamic_metadata_t *hdm')
 replace('    if (!ahb_output.texture) {', '    if (!ahb_output.texture && !svp_generated) {')
-replace('(ahb_output.texture && sys->ahb_hdrplus_spatial)', '((ahb_output.texture || svp_generated) && sys->ahb_hdrplus_spatial)')
+replace('if (sys->hdr_target_mode || (ahb_output.texture && sys->ahb_hdrplus_spatial))',
+        'if (sys->hdr_target_mode || ((ahb_output.texture || svp_generated) && sys->ahb_hdrplus_spatial))')
 replace('(!ahb_output.texture || !pl_color_space_is_hdr(&img.color)',
         '((!ahb_output.texture && !svp_generated) || !pl_color_space_is_hdr(&img.color)')
 replace('    if (ahb_output.texture && sys->ahb_hdrplus_spatial) {',
