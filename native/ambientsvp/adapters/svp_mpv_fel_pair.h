@@ -1,0 +1,118 @@
+/* SPDX-License-Identifier: LGPL-2.1-or-later
+ * Private mp_image attachment, never exported as FFmpeg side data.
+ * Both original BL/EL pairs keep their timestamps until VO reconstruction.
+ */
+#ifndef AMBIENTSVP_MPV_FEL_PAIR_H
+#define AMBIENTSVP_MPV_FEL_PAIR_H
+#include <math.h>
+#include <stdatomic.h>
+#include <stdlib.h>
+#include <libavutil/buffer.h>
+#include "video/mp_image.h"
+#define SVP_FEL_PHASES 8
+struct svp_fel_pair {
+    struct mp_image *source[2];
+    uint64_t ids[2];
+    float phase;
+};
+static inline const struct svp_fel_pair *svp_fel_get(const struct mp_image *img)
+{
+    if(!img||!img->ambient_svp_pair||img->ambient_svp_pair->size!=sizeof(struct svp_fel_pair))return NULL;
+    return (const struct svp_fel_pair *)img->ambient_svp_pair->data;
+}
+static inline void svp_fel_pair_free(void *opaque,uint8_t *data)
+{
+    (void)opaque;
+    struct svp_fel_pair *p=(struct svp_fel_pair *)data;
+    mp_image_unrefp(&p->source[0]);mp_image_unrefp(&p->source[1]);free(p);
+}
+static inline bool svp_fel_eligible(const struct mp_image *a)
+{
+#if PL_API_VER >= 367
+    if(!a||!a->enhancement_layer||!a->dovi||a->ambient_svp_pair||a->film_grain||
+        a->icc_profile||a->params.no_dovi||a->params.no_enhancement_layer||
+        a->params.repr.sys!=PL_COLOR_SYSTEM_DOLBYVISION||!a->params.repr.dovi||
+        !a->params.repr.dovi->nlq_active||a->params.rotate||a->params.vflip||
+        a->fields&MP_IMGFIELD_INTERLACED||!isfinite(a->pts)||a->pts==MP_NOPTS_VALUE||
+        a->w<32||a->h<32||((a->w|a->h)&1)||(uint64_t)a->w*a->h>1920u*1080u||
+        a->params.crop.x0||a->params.crop.y0||
+        (a->params.crop.x1&&a->params.crop.x1!=a->w)||
+        (a->params.crop.y1&&a->params.crop.y1!=a->h))return false;
+    const struct mp_image *el=a->enhancement_layer;
+    // Use only pairs matched by MPV's pinned f_enhancement_pair.
+    return !el->enhancement_layer&&!el->ambient_svp_pair&&!el->film_grain&&
+        !(el->fields&MP_IMGFIELD_INTERLACED)&&isfinite(el->pts)&&fabs(a->pts-el->pts)<=1e-6&&
+        ((el->w==a->w&&el->h==a->h)||(el->w*2==a->w&&el->h*2==a->h));
+#else
+    (void)a;return false;
+#endif
+}
+struct svp_fel_schedule {
+    struct mp_image *previous,*outputs[SVP_FEL_PHASES];
+    uint64_t previous_id,tick,output_ticks;
+    double origin;
+    unsigned next,count;
+};
+static inline void svp_fel_reset(struct svp_fel_schedule *s)
+{
+    mp_image_unrefp(&s->previous);
+    for(unsigned i=0;i<SVP_FEL_PHASES;i++)mp_image_unrefp(&s->outputs[i]);
+    s->previous_id=s->tick=0;s->next=s->count=0;
+}
+static inline struct mp_image *svp_fel_take(struct svp_fel_schedule *s)
+{
+    if(s->next>=s->count)return NULL;
+    struct mp_image *out=s->outputs[s->next];
+    s->outputs[s->next++]=NULL;s->output_ticks++;
+    if(s->next==s->count)s->next=s->count=0;
+    return out;
+}
+static inline struct mp_image *svp_fel_previous(struct svp_fel_schedule *s)
+{
+    struct mp_image *out=s->previous;s->previous=NULL;s->previous_id=s->tick=0;
+    return out;
+}
+static inline bool svp_fel_push(struct svp_fel_schedule *s,struct mp_image *img,double source,double target)
+{
+    static atomic_uint_fast64_t ids=1;
+    if(!svp_fel_eligible(img)||s->count||!isfinite(source)||!isfinite(target)||
+        !(source>0&&target>source&&target/source<=SVP_FEL_PHASES))return false;
+    uint64_t id=atomic_fetch_add_explicit(&ids,1,memory_order_relaxed);
+    if(!id)return false;
+    if(!s->previous){
+        s->previous=img;s->previous_id=id;s->origin=img->pts;s->tick=0;return true;
+    }
+    struct mp_image *prev=s->previous;
+    double delta=img->pts-prev->pts;
+    if(prev->w!=img->w||prev->h!=img->h||delta<=0||fabs(delta-1/source)>fmax(.003,.25/source))return false;
+    uint64_t tick=s->tick;
+    unsigned count=0;
+    while(tick<UINT64_C(1000000000)){
+        double pts=s->origin+(double)tick/target;
+        if(pts>=img->pts-1e-8)break;
+        double phase=(pts-prev->pts)/delta;
+        if(count==SVP_FEL_PHASES||phase<-.25||phase>1)goto fail;
+        struct mp_image *out=mp_image_new_ref(prev);
+        if(!out)goto fail;
+        struct svp_fel_pair *p=calloc(1,sizeof(*p));
+        if(!p){mp_image_unrefp(&out);goto fail;}
+        p->source[0]=mp_image_new_ref(prev);p->source[1]=mp_image_new_ref(img);
+        p->ids[0]=s->previous_id;p->ids[1]=id;p->phase=(float)fmax(0,phase);
+        if(!p->source[0]||!p->source[1]){
+            svp_fel_pair_free(NULL,(uint8_t *)p);mp_image_unrefp(&out);goto fail;
+        }
+        out->ambient_svp_pair=av_buffer_create((uint8_t *)p,sizeof(*p),svp_fel_pair_free,NULL,AV_BUFFER_FLAG_READONLY);
+        if(!out->ambient_svp_pair){
+            svp_fel_pair_free(NULL,(uint8_t *)p);mp_image_unrefp(&out);goto fail;
+        }
+        out->pts=pts;out->pkt_duration=1/target;out->nominal_fps=target;
+        s->outputs[count++]=out;tick++;
+    }
+    if(!count)goto fail;
+    mp_image_unrefp(&s->previous);s->previous=img;s->previous_id=id;s->tick=tick;s->count=count;s->next=0;
+    return true;
+fail:
+    for(unsigned i=0;i<count;i++)mp_image_unrefp(&s->outputs[i]);
+    return false;
+}
+#endif
