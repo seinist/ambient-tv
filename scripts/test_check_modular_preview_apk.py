@@ -1,4 +1,5 @@
 import tempfile
+import struct
 import unittest
 from pathlib import Path
 import zipfile
@@ -32,6 +33,27 @@ class ModularPreviewTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             with self.assertRaises(ValueError):
                 preview.verify(self.make_apk(root, omit=["libavcodec.so"]))
+
+    def test_definitions_not_references_control_monogram_exclusion(self):
+        def dex(descriptor, defined):
+            text = descriptor.encode("ascii")
+            data = bytearray(152 + 1 + len(text) + 1)
+            data[:8] = b"dex\n039\0"
+            for offset, value in ((32, len(data)), (36, 112), (40, 0x12345678),
+                                  (56, 1), (60, 112), (64, 1), (68, 116),
+                                  (96, int(defined)), (100, 120 if defined else 0),
+                                  (112, 152), (116, 0), (120, 0)):
+                struct.pack_into("<I", data, offset, value)
+            data[152] = len(text)
+            data[153:153 + len(text)] = text
+            return bytes(data)
+        module = "Lcom/ambient/tv/data/telegram/MonogramNativeBackend;"
+        preview.verify_no_monogram_classes(dex(module, False))
+        preview.verify_no_monogram_classes(dex("Lcom/ambient/tv/data/telegram/MonogramModuleFactory;", True))
+        with self.assertRaisesRegex(ValueError, "bundled Monogram"):
+            preview.verify_no_monogram_classes(dex(module, True))
+        with self.assertRaisesRegex(ValueError, "bundled Monogram"):
+            preview.verify_no_monogram_classes(dex("Lcom/sun/jna/Native;", True))
 
 
 if __name__ == "__main__":
