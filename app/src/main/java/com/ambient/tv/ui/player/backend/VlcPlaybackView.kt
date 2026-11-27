@@ -160,8 +160,12 @@ class VlcPlaybackController(
         toneMappingRequired -> "OpenGL ES / HDR → SDR"
         else -> "Android Surface / OpenGL ES"
     }
+    private var residentRejected = false
+    private fun hdrResidentAvailable(): Boolean = nativeHdrPreferred && svpStaticHdrResident(sourceHdrStandard) &&
+        !residentRejected && !audioOnly && !vulkanOutput && com.ambient.tv.BuildConfig.VLC_SVP &&
+        SvpNative.residentOutputsOrNull() != null && VideoAccelerationRuntime.current(context).let { it.checked && it.device.render }
     private fun effectiveImage(): VlcImageOptions = vlcOptionsForNativeHdr(
-        effectiveVlcImageOptions(imageOptions, reducedVideoEffects(context), vlcSvpAllowed(context)), nativeHdrPreferred, sourceHdrStandard)
+        effectiveVlcImageOptions(imageOptions, reducedVideoEffects(context), vlcSvpAllowed(context)), nativeHdrPreferred, sourceHdrStandard, hdrResidentAvailable())
         .let { if (it.svpMode != "off" && !vlcSvpApplies(measuredSourceFps, svpOutputFps(svpDisplayFps(context), it.svp), it.svp, measuredSourceSize?.first, measuredSourceSize?.second)) it.copy(svpMode = "off") else it }
     /** Source frame rate of the video track once known; SVP is bypassed when it already meets the target. */
     private var measuredSourceFps: Double? = null
@@ -175,9 +179,9 @@ class VlcPlaybackController(
     private fun currentSourceFps(): Double? = runCatching { trackAccess.currentVideoTrack }.getOrNull()
         ?.takeIf { it.frameRateDen > 0 && it.frameRateNum > 0 }?.let { it.frameRateNum.toDouble() / it.frameRateDen }
     private var configuredSvpMode = vlcOptionsForNativeHdr(
-        effectiveVlcImageOptions(initialImageOptions, reducedVideoEffects(context), vlcSvpAllowed(context)), nativeHdrPreferred, sourceHdrStandard).svpMode
+        effectiveVlcImageOptions(initialImageOptions, reducedVideoEffects(context), vlcSvpAllowed(context)), nativeHdrPreferred, sourceHdrStandard, hdrResidentAvailable()).svpMode
     private var configuredSoftwareProcessing = vlcOptionsForNativeHdr(
-        effectiveVlcImageOptions(initialImageOptions, reducedVideoEffects(context), vlcSvpAllowed(context)), nativeHdrPreferred, sourceHdrStandard).softwareProcessing
+        effectiveVlcImageOptions(initialImageOptions, reducedVideoEffects(context), vlcSvpAllowed(context)), nativeHdrPreferred, sourceHdrStandard, hdrResidentAvailable()).softwareProcessing
     private var configuredSvpOptions = initialImageOptions.svp.normalized()
     private var configuredSvpRate = svpOutputFps(svpDisplayFps(context), configuredSvpOptions)
     internal var deinterlaceMode by mutableStateOf(initialDeinterlaceMode)
@@ -186,11 +190,10 @@ class VlcPlaybackController(
         private set
     private var configuredDeinterlaceMode = if (preserveHdrSource) "off" else deinterlaceMode
     private var configuredDeinterlaceFilter = if (preserveHdrSource) "auto" else effectiveDeinterlaceFilter(deinterlaceFilter, reducedVideoEffects(context))
-    private var residentRejected = false
     private var residentLastOutput: Long? = null
     private var residentLastProgressMs = 0L
     private fun wantsResident(options: VlcImageOptions, deint: String): Boolean =
-        !residentRejected && !audioOnly && !vulkanOutput && !preserveHdrSource && deint == "off" &&
+        !residentRejected && !audioOnly && !vulkanOutput && (!preserveHdrSource || hdrResidentAvailable()) && deint == "off" &&
             !options.softwareProcessing && options.svpMode != "off" &&
             svpResidentRequested(options.svp, measuredSourceSize?.first, measuredSourceSize?.second) &&
             com.ambient.tv.BuildConfig.VLC_SVP && SvpNative.residentOutputsOrNull() != null &&
@@ -206,6 +209,7 @@ class VlcPlaybackController(
             timber.log.Timber.w(error, "VLC rejected experimental SVP Surface options; using copy-back")
             residentRejected = true
             configuredResident = false
+            if (preserveHdrSource) configuredSvpMode = "off"
             runCatching { createLibVlc(subtitleLook = true) }.getOrElse { createLibVlc(subtitleLook = false) }
         } else {
             timber.log.Timber.w(error, "VLC rejected the subtitle look options; using its defaults")
@@ -1266,7 +1270,7 @@ class VlcPlaybackController(
         if (!automaticFallback && safe.svp.hardwareResident != imageOptions.svp.hardwareResident) residentRejected = false
         if (released || safe == imageOptions) return
         imageOptions = safe
-        if (preserveHdrSource) return
+        if (preserveHdrSource && !svpStaticHdrResident(sourceHdrStandard)) return
         val resumePosition = vlcRestartPosition(pendingRestorePositionMs, confirmedPlaybackTimeMs(), preservePosition)
         val resumePlaying = wantsToPlay()
         rememberTrackSelection()
@@ -1278,7 +1282,7 @@ class VlcPlaybackController(
 
     /** Re-open media so Sparsam effective overrides (or leaving Low) take effect without changing prefs. */
     fun refreshEffectiveOverrides(preservePosition: Boolean = true) {
-        if (released || preserveHdrSource) return
+        if (released || preserveHdrSource && !svpStaticHdrResident(sourceHdrStandard)) return
         val resumePosition = vlcRestartPosition(pendingRestorePositionMs, confirmedPlaybackTimeMs(), preservePosition)
         val resumePlaying = wantsToPlay()
         rememberTrackSelection()
@@ -1774,7 +1778,7 @@ class VlcPlaybackController(
             !com.ambient.tv.BuildConfig.VLC_SVP -> SvpInactiveReason.ENGINE
             !performanceProfile(context).allowSvpInterpolation -> SvpInactiveReason.PERFORMANCE_MODE
             !SvpNative.isEnabledAndAvailable() -> SvpInactiveReason.LIBRARY
-            nativeHdrPreferred || sourceHdrStandard != null -> SvpInactiveReason.HDR
+            preserveHdrSource && (!hdrResidentAvailable() || !svpResidentRequested(options)) -> SvpInactiveReason.HDR
             effectiveVlcImageOptions(imageOptions, reducedVideoEffects(context), vlcSvpAllowed(context)).svpMode == "off" ->
                 SvpInactiveReason.PERFORMANCE_MODE
             else -> null
