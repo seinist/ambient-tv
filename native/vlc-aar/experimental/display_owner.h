@@ -39,6 +39,8 @@ struct ambient_ahb_input {
     int acquire_fd;
     void (*release_picture)(void *, int);
     AHardwareBuffer *buffer;
+    uint64_t buffer_id;
+    bool buffer_id_valid;
     uint32_t width, height; /* visible output dimensions */
     float crop[4]; /* normalized origin and extent */
     VkSamplerYcbcrModelConversion model;
