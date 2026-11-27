@@ -219,7 +219,7 @@ static void check_native_grid(pl_gpu gpu,pl_dispatch dp,pl_tex actual,bool chrom
         }
     }
     fprintf(stderr,"native420 %s: %u samples, %u exact, max error %u\n",chroma?"UV":"Y",w*h*(chroma?2u:1u),exact,max);
-    assert(max<=1);
+    assert(max==0);
     free(out);pl_tex_destroy(gpu,&rb);
 }
 static void check_reference_filter(pl_gpu gpu,pl_log log,pl_dispatch dp,struct ambient_fel_planes *planes,
