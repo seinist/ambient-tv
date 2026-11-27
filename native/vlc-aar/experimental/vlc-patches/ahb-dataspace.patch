@@ -1,7 +1,16 @@
 diff --git a/modules/video_output/android/utils.h b/modules/video_output/android/utils.h
 --- a/modules/video_output/android/utils.h
 +++ b/modules/video_output/android/utils.h
-@@ -142,6 +142,7 @@
+@@ -39,7 +39,8 @@
+ #include <media/NdkImageReader.h>
+ 
+ #include <vlc_vout_display.h>
+ #include <vlc_common.h>
++#include <vlc_threads.h>
+ 
+ /* AWH using a VideoLAN AWindow helpers */
+ #define AWH_CAPS_SET_VIDEO_LAYOUT 0x1
+@@ -142,6 +143,7 @@
          pfn_AImage_getCropRect getCropRect;
          pfn_AImage_getWidth getWidth;
          pfn_AImage_getHeight getHeight;
@@ -9,7 +18,7 @@ diff --git a/modules/video_output/android/utils.h b/modules/video_output/android
      } AImage;
      pfn_sync_merge sync_merge;
      struct {
-@@ -210,6 +211,8 @@
+@@ -210,6 +212,8 @@
      struct aimage_reader_api *air_api;
      struct asurface_control_api *asc_api;
      AImageReader *air;
@@ -18,7 +27,7 @@ diff --git a/modules/video_output/android/utils.h b/modules/video_output/android
  
      struct vlc_asurfacetexture *texture;
      void *dec_opaque;
-@@ -305,6 +308,10 @@
+@@ -305,6 +309,10 @@
  struct aimage_reader_api *
  AWindowHandler_getAImageReaderApi(AWindowHandler *p_awh);
  
