@@ -77,6 +77,7 @@ private fun ModuleDialog(dismiss: () -> Unit) {
                     SystemModule.PROJECTM -> "ProjectM"
                     SystemModule.MPV -> "MPV"
                     SystemModule.SPOTIFY -> "Spotify (Rusty)"
+                    SystemModule.MONOGRAM -> "Monogram"
                     else -> module.id
                 }
                 TvActionButton(
