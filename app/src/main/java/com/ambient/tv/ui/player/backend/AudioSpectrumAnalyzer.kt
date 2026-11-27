@@ -43,7 +43,12 @@ class AudioSpectrumAnalyzer : TeeAudioProcessor.AudioBufferSink {
     private var sampleRate = 48_000
     private var channelCount = 2
     private var encoding = C.ENCODING_PCM_16BIT
-    private var smoothed = FloatArray(BAND_COUNT)
+    private val smoothed = FloatArray(BAND_COUNT)
+    // Accessed only by the single analysis executor.
+    private val real = DoubleArray(FFT_SIZE)
+    private val imag = DoubleArray(FFT_SIZE)
+    private val magnitudes = DoubleArray(FFT_SIZE / 2)
+    private val window = DoubleArray(FFT_SIZE) { i -> 0.5 - 0.5 * cos(2.0 * PI * i / (FFT_SIZE - 1)) }
     private val pcmSinks = CopyOnWriteArraySet<AudioPcmSink>()
     private val pcmTap = FloatArray(512)
     private var pcmTapSize = 0
@@ -73,19 +78,25 @@ class AudioSpectrumAnalyzer : TeeAudioProcessor.AudioBufferSink {
     }
 
     private fun pushMonoSample(mono: Float) {
-        accumulator[accumulatorSize++] = mono
-        pcmTap[pcmTapSize++] = mono
-        if (pcmTapSize == pcmTap.size) {
-            if (pcmSinks.isNotEmpty()) {
+        if (pcmSinks.isNotEmpty()) {
+            pcmTap[pcmTapSize++] = mono
+            if (pcmTapSize == pcmTap.size) {
                 val frame = pcmTap.copyOf()
                 pcmSinks.forEach { sink -> runCatching { sink.onPcm(frame) } }
+                pcmTapSize = 0
             }
+        } else {
             pcmTapSize = 0
         }
-        if (accumulatorSize == FFT_SIZE) {
-            val frame = accumulator.copyOf()
+        // projectM computes its own FFT; PCM-only sinks must not trigger ours.
+        if (spectrumConsumers.get() > 0) {
+            accumulator[accumulatorSize++] = mono
+            if (accumulatorSize == FFT_SIZE) {
+                accumulatorSize = 0
+                submit(sampleRate)
+            }
+        } else {
             accumulatorSize = 0
-            submit(frame, sampleRate)
         }
     }
 
@@ -95,6 +106,7 @@ class AudioSpectrumAnalyzer : TeeAudioProcessor.AudioBufferSink {
             this.channelCount = channelCount.coerceAtLeast(1)
             this.encoding = encoding
             accumulatorSize = 0
+            pcmTapSize = 0
         }
     }
 
@@ -136,11 +148,12 @@ class AudioSpectrumAnalyzer : TeeAudioProcessor.AudioBufferSink {
         return if (readChannels == channelCount) sum / readChannels else null
     }
 
-    private fun submit(frame: FloatArray, rate: Int) {
+    private fun submit(rate: Int) {
         if (!pending.compareAndSet(false, true)) return
+        val frame = accumulator.copyOf()
         executor.execute {
             try {
-                latest.set(analyse(frame, rate))
+                if (spectrumConsumers.get() > 0) latest.set(analyse(frame, rate))
             } finally {
                 pending.set(false)
             }
@@ -148,15 +161,12 @@ class AudioSpectrumAnalyzer : TeeAudioProcessor.AudioBufferSink {
     }
 
     private fun analyse(samples: FloatArray, rate: Int): FloatArray {
-        val real = DoubleArray(FFT_SIZE)
-        val imag = DoubleArray(FFT_SIZE)
+        imag.fill(0.0)
         for (i in samples.indices) {
-            val window = 0.5 - 0.5 * cos(2.0 * PI * i / (FFT_SIZE - 1))
-            real[i] = samples[i] * window
+            real[i] = samples[i] * window[i]
         }
         fft(real, imag)
 
-        val magnitudes = DoubleArray(FFT_SIZE / 2)
         for (i in 1 until magnitudes.size) {
             magnitudes[i] = hypot(real[i], imag[i]) / FFT_SIZE
         }
