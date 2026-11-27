@@ -479,6 +479,9 @@ static void test_timed_intermediate_lookahead(void)
                 {.i_type=ATOM_trun,.data.p_trun=&tr[1]}};
             MP4_Box_t header[2]={{.i_type=ATOM_tfhd,.data.p_tfhd=&tfhd[0],.p_next=&run[0]},
                 {.i_type=ATOM_tfhd,.data.p_tfhd=&tfhd[1],.p_next=&run[1]}};
+            MP4_Box_data_tfdt_t audio_time={.i_base_media_decode_time=48000};
+            MP4_Box_t audio_clock={.i_type=ATOM_tfdt,.data.p_tfdt=&audio_time,.p_next=&run[0]};
+            header[0].p_next=&audio_clock;
             MP4_Box_t traf[2]={{.i_type=ATOM_traf,.p_first=&header[0]},
                 {.i_type=ATOM_traf,.p_first=&header[1]}};
             MP4_Box_t mfhd[3]={{.i_type=ATOM_mfhd,.data.p_mfhd=&seq[0]},
@@ -516,10 +519,31 @@ static void test_timed_intermediate_lookahead(void)
             assert(MP4_FEL_IndexAdjacent(&d));
             assert(tracks[1].context.runs.i_count==1);
             assert(tracks[1].context.runs.p_array[0].i_offset==212);
-            free(tracks[1].context.runs.p_array);
+            // Finish the BL, then execute the actual replay preparation.
+            sys.context.i_lastseqnumber=7;
+            tracks[0].ambient_fel_clock_valid=true;
+            tracks[0].ambient_fel_sequence_proven=true;
+            tracks[0].ambient_fel_bl_end=tracks[0].ambient_fel_el_end=1;
+            tracks[2].i_time=7;
+            assert(MP4_FEL_AdvanceReplay(&d));
             MP4_FEL_ReleaseCaches(&sys);
+            assert(MP4_FEL_ReplayNext(&d));
+            assert(el_frees==1&&!mid_frees);
+            assert(sys.context.i_lastseqnumber==8&&sys.context.p_fragment_atom==&look_mid);
+            assert(sys.context.i_current_box_type==ATOM_mdat);
+            assert(tracks[0].ambient_fel_clock_valid&&tracks[0].ambient_fel_bl_end==1);
+            assert(!tracks[0].context.runs.i_count&&!tracks[1].context.runs.i_count);
+            assert(tracks[2].context.runs.i_count==1&&tracks[2].i_time==48000);
+            assert(tracks[2].context.i_trun_sample_pos==160);
+            assert(tracks[2].i_next_block_flags&BLOCK_FLAG_DISCONTINUITY);
+            assert(MP4_FEL_ValidatePayloads(&sys));
+            block_t *audio=mode?MP4_FEL_ReadExact(d.s,160,4):MP4_FEL_ReadCached(&sys,false,160,4);
+            assert(audio&&audio->i_buffer==4&&!memcmp(audio->p_buffer,"AUD1",4));
+            block_Release(audio);
+            assert(MP4_FEL_AdvanceReplay(&d));
+            assert(position==216&&sys.context.i_lastseqnumber==9);
+            FragResetContext(&sys);
             MP4_FEL_ClearReplay(&sys);MP4_FEL_ClearReplay(&sys);
-            MP4_BoxFree(sys.context.ambient_fel_el_moof);
             assert(!blocks&&mid_frees==1&&el_frees==1);
             assert(!sys.ambient_fel_replay_count&&!sys.ambient_fel_replay_end);
         }
