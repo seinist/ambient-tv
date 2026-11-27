@@ -121,6 +121,16 @@ jobs:
           ref: v5.264.1
           path: .ci/libplacebo
           persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: videolan/vlc
+          ref: c84ef1eda4f14f8b57a5b266b51c843cf51ed28b
+          path: .ci/vlc-hdr
+          persist-credentials: false
+          sparse-checkout: |
+            include
+            modules/video_output/libplacebo
+            modules/video_output/opengl
       - name: Install host Vulkan and libplacebo build dependencies
         run: |
           sudo apt-get update -o Acquire::Retries=3
@@ -137,6 +147,15 @@ jobs:
             native/vlc-aar/experimental/test_dovi_fel_gpu.c \
             -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-dovi-fel
           VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-dovi-fel
+          git -C .ci/vlc-hdr apply "$GITHUB_WORKSPACE/native/vlc-aar/experimental/vlc-patches/utils-hdr-units.patch"
+          # Link the actual shared adapter, retaining only the functions under test.
+          clang -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -DMODULE_NAME=libplacebo '-DN_(s)=s' \
+            -ffunction-sections -fdata-sections -fsanitize=undefined -fno-sanitize-recover=all \
+            -I .ci/vlc-hdr/include -I .ci/vlc-hdr/modules/video_output/libplacebo \
+            -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
+            .ci/vlc-hdr/modules/video_output/libplacebo/utils.c native/vlc-aar/experimental/test_vlc_hdr_units.c \
+            -Wl,--gc-sections -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-vlc-hdr-units
+          .ci/test-vlc-hdr-units
 
   linked-arm64-aar:
     # Only the repository-owned experiment branch can spend time building the
