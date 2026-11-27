@@ -1,0 +1,71 @@
+name: projectM native checks
+
+on:
+  pull_request:
+    paths:
+      - 'native/ambientprojectm/**'
+      - 'scripts/build_projectm_android.sh'
+      - 'build.sh'
+      - 'gradle/external-versions.properties'
+      - 'app/src/main/java/com/ambient/tv/ui/common/projectm/**'
+      - 'app/src/main/java/com/ambient/tv/ui/player/backend/AudioSpectrumAnalyzer.kt'
+      - '.github/workflows/projectm-native.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'native/ambientprojectm/**'
+      - 'scripts/build_projectm_android.sh'
+      - 'build.sh'
+      - 'gradle/external-versions.properties'
+      - '.github/workflows/projectm-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: projectm-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pcm-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Native PCM ring and tap contracts
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread -fsanitize=address,undefined -fno-omit-frame-pointer -fno-pie -no-pie native/ambientprojectm/tests/pcm_tap_test.cpp -o /tmp/projectm-pcm-test
+          /tmp/projectm-pcm-test
+      - name: Validate script and build fingerprint
+        run: |
+          bash -n scripts/build_projectm_android.sh
+          test "$(bash scripts/build_projectm_android.sh --fingerprint | wc -c)" -eq 41
+
+  android-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PROJECTM_FETCH_ASSETS: '0'
+      NDK_VERSION: '30.0.16248370'
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install pinned NDK
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" "ndk;${NDK_VERSION}"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - name: Compile pinned and patched projectM for every ABI
+        run: bash scripts/build_projectm_android.sh
+      - name: Validate JNI symbol and native artifacts
+        run: |
+          set -euo pipefail
+          nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            dir="app/src/main/jniLibs/$abi"
+            test -s "$dir/libprojectM-4.so"
+            test -s "$dir/libambientprojectm.so"
+            "$nm" -D --defined-only "$dir/libambientprojectm.so" > "/tmp/projectm-symbols-$abi"
+            grep -q 'Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeSetFps' "/tmp/projectm-symbols-$abi"
+            grep -q 'ambient_projectm_pcm_v1' "/tmp/projectm-symbols-$abi"
+          done
