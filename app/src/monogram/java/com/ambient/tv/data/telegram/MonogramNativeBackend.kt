@@ -153,6 +153,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     @Volatile private var chatsLoadedAtMs = 0L
     @Volatile private var chatsExhausted = false
     private val recentFeeds = LinkedHashMap<String, MonogramRecentTimeline>()
+    private val recentFeedRevision = java.util.concurrent.atomic.AtomicLong()
+    private var recentFeedsSeen = -1L // guarded by browseMutex
     private val leftChannels = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
     /** Public channels resolved from t.me/<name> links, so their page has a title before joining. */
     private val resolvedChannels = java.util.concurrent.ConcurrentHashMap<Long, String>()
@@ -359,6 +361,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             if (everything || touched.isNotEmpty()) invalidateHistoryLocked(touched, everything)
         }
         if (everything || changedMessages.isNotEmpty()) {
+            recentFeedRevision.incrementAndGet()
             synchronized(diskChunkLock) {
                 // Existing player buffers and in-flight chunk publications are fenced.
                 invalidateMediaRevisions(changedMessages, everything)
@@ -1008,6 +1011,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
      * is a hit, instead of scanning plain history for the odd video).
      */
     private fun recent(h: Long, token: String?, limit: Int, section: String = "recent"): TelegramMediaPage {
+        val revision = recentFeedRevision.get()
+        if (recentFeedsSeen != revision) {
+            recentFeeds.clear()
+            recentFeedsSeen = revision
+        }
         val filter = categoryFilter(section)
         // Categories: Telegram's own "media of all chats" (one searchGlobal per page) instead
         // of one search per channel; the per-channel timeline stays the fallback.
@@ -1073,6 +1081,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             checkNotNull(recentFeeds[cursorToken]) { "Expired Monogram recent cursor" }
         }
         val page = timeline.nextPage(limit.coerceIn(1, 60))
+        if (recentFeedRevision.get() != revision) {
+            recentFeeds.remove(cursorToken)
+            throw java.io.IOException("Monogram timeline changed during request")
+        }
         if (!page.hasMore) recentFeeds.remove(cursorToken)
         while (recentFeeds.size > 8) recentFeeds.remove(recentFeeds.keys.first())
         return TelegramMediaPage(page.media, if (page.hasMore) "$cursorToken:${pageNumber + 1}" else null)
