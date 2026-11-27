@@ -283,6 +283,8 @@ pub unsafe extern "C" fn ambient_svp_vk_release(pair:*mut VulkanPair)->i32{
     match unsafe{p.core.device.get_fence_status(p.fence)}{
         Ok(true)=>{unsafe{drop(Box::from_raw(pair))};1}
         Ok(false)=>0,
+        // A confirmed lost device no longer executes the submission.
+        Err(vk::Result::ERROR_DEVICE_LOST)=>{unsafe{drop(Box::from_raw(pair))};1}
         Err(_)=>-1,
     }
 }
