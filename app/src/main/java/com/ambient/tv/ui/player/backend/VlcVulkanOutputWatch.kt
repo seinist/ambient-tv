@@ -86,3 +86,32 @@ internal class VlcVulkanOutputWatch(
         return null
     }
 }
+
+
+/** Secondary watchdog for startup/buffering/seek states in which the ordinary
+ * presentation observer is suspended. Network progress extends the deadline;
+ * no progress eventually disables only the experimental decoder route.
+ * All timestamps are monotonic elapsedRealtime values supplied by the owner. */
+internal class VlcAhbOpeningWatch(private val idleLimitMs: Long = 30_000L) {
+    private var since: Long? = null
+    private var marker: Long? = null
+
+    fun reset() {
+        since = null
+        marker = null
+    }
+
+    fun observe(now: Long, progress: Long, active: Boolean): Boolean {
+        if (!active) {
+            reset()
+            return false
+        }
+        val start = since
+        if (start == null || marker != progress || now < start) {
+            since = now
+            marker = progress
+            return false
+        }
+        return now - start >= idleLimitMs
+    }
+}
