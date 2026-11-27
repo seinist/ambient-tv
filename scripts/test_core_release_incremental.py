@@ -165,12 +165,15 @@ class IncrementalCoreReleaseTest(unittest.TestCase):
             workflow = current / ".github/workflows/cores.yml"
             original = workflow.read_text()
             workflow.write_text(original.replace("required: true", "required: false", 1)
-                                .replace("cancel-in-progress:", "cancel-in-progress:"))
+                                .replace("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", "cancel-in-progress: false"))
             caller = current / ".github/workflows/cores-all.yml"
             caller.write_text(caller.read_text() + "\n# temporary validation removed\n")
             policy = current / "scripts/core_build_policy.py"
             previous = policy.read_text()
-            policy.write_text(previous.replace("def plan(", "# scheduling cleanup\n def plan(".lstrip()))
+            policy.write_text(previous.replace('    if event == "pull_request":',
+                                               '    if event == "pull_request" and cores and profile in PUBLIC_EXPERIMENTS:\n'
+                                               '        jobs = [(core, abi, profile) for core in chosen_cores for abi in chosen_abis]\n'
+                                               '    elif event == "pull_request":'))
             for profile in ("baseline", "optimized", "optimized-a57"):
                 assert_current_recipe(source, current, profile, self.ndk)
             # A change in one core recipe invalidates only the profiles affected.
