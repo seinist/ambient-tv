@@ -98,6 +98,8 @@ internal fun initialMpvAccelerationPlan(
         nativeHdrPreferred = nativeHdrPreferred,
         hdrPassthrough = hdrGpuPassthrough, toneMappingRequired = toneMappingRequired,
         zeroCopy = !videoImagePreferences(context).mpvZeroCopyFailed && !mpvStartupRequiresCopyBack(effective))
+        .withSvpResident(effective, MpvNativeFeatures.SVP_RESIDENT in MpvNativeFeatures.current,
+            nativeHdrPreferred || hdrGpuPassthrough || toneMappingRequired)
 }
 
 internal class MpvPlaybackEngine(
@@ -522,6 +524,9 @@ internal class MpvPlaybackEngine(
             setOption("gpu-api", "vulkan")
             setOption("gpu-context", "androidvk")
             setOption("vulkan-device", VideoAccelerationRuntime.capabilities.value.device.device)
+            if (acceleration.svpResident) {
+                setOption("gpu-hwdec-interop", "mediacodec-svp-vulkan")
+            }
             setOption("hwdec", acceleration.hwdec)
             // Passthrough: the swapchain carries the source's PQ/BT.2020 instead of tone-mapping to SDR.
             if (hdrGpuPassthrough) MPV_HDR_PASSTHROUGH_OPTIONS.forEach { (name, value) -> setOption(name, value) }
@@ -1038,12 +1043,13 @@ internal class MpvPlaybackEngine(
             effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context), mpvCheapDefaults(context)),
             sdrImageProcessing,
         )
+        val cpuFramesNeeded = (desiredFilters.keys + activeCpuImageFilters.keys).any { it != "plex-svp" || !acceleration.svpResident }
         val copyBackNeeded = mpvCopyBackNeeded(
             loadedShaderKeys,
-            desiredFilters.isNotEmpty() || activeCpuImageFilters.isNotEmpty(),
+            cpuFramesNeeded,
             enabled,
         )
-        if (!trySetGpuDecoder(copyBackNeeded, cpuFrames = desiredFilters.isNotEmpty() || activeCpuImageFilters.isNotEmpty())) {
+        if (!trySetGpuDecoder(copyBackNeeded, cpuFrames = cpuFramesNeeded)) {
             deinterlaceRequested = previousEnabled
             deinterlaceAutomatic = previousAutomatic
             deinterlaceSingleRate = previousSingleRate
@@ -1654,8 +1660,9 @@ internal class MpvPlaybackEngine(
         // svpCopyBackSession covers the moment before plex-svp is linked into vf.
         // After the filter leaves the chain the latch is cleared, and copy-back
         // stays only for deinterlace, a CPU filter, or a shader that still needs it.
-        val desired = acceleration.hwdecForProcessing(copyBack || svpCopyBackSession, deinterlaceRequested,
-            cpuFrames = cpuFrames || svpCopyBackSession)
+        val svpCpu = svpCopyBackSession && !acceleration.svpResident
+        val desired = acceleration.hwdecForProcessing(copyBack || svpCpu, deinterlaceRequested,
+            cpuFrames = cpuFrames || svpCpu || (acceleration.svpResident && copyBack))
         val current = getPropertyString("hwdec")
         if (current == desired) return true
         // Zero-copy only from the start of a file: copy→opaque MediaCodec on a running vo=gpu
@@ -1665,10 +1672,12 @@ internal class MpvPlaybackEngine(
         return trySetProperty("hwdec", desired)
     }
 
-    private fun updateGpuDecoder(): Boolean = gpuQualityMode && trySetGpuDecoder(
-        mpvCopyBackNeeded(loadedShaderKeys, activeCpuImageFilters.isNotEmpty(), deinterlaceRequested),
-        cpuFrames = activeCpuImageFilters.isNotEmpty(),
-    )
+    private fun updateGpuDecoder(): Boolean {
+        val cpu = activeCpuImageFilters.keys.any { it != "plex-svp" || !acceleration.svpResident }
+        return gpuQualityMode && trySetGpuDecoder(
+            mpvCopyBackNeeded(loadedShaderKeys, cpu, deinterlaceRequested), cpuFrames = cpu,
+        )
+    }
 
     private fun currentMpvLevels(): String? = getPropertyString(MPV_PROP_COLORLEVELS)
         ?.takeIf { it.isNotBlank() } ?: getPropertyString(MPV_PROP_DEC_COLORLEVELS)
@@ -1805,7 +1814,8 @@ internal class MpvPlaybackEngine(
             val mode = mpvSvpAppliedMode(o.svpMode, svpQualityCleared && !svpQualityProbeFailed)
             val tuning = if (o.svpMode == "quality" && mode != "quality") svpProbeOptions(o.svp) else o.svp
             val size = sourceDimensions()
-            mpvSvpFilter(mode, pipelineFps(), displayFps() ?: svpDisplayFps(context), tuning, size?.first, size?.second)?.let {
+            mpvSvpFilter(mode, pipelineFps(), displayFps() ?: svpDisplayFps(context), tuning, size?.first, size?.second,
+                hardwareResident = acceleration.svpResident && !deinterlaceRequested)?.let {
                 put("plex-svp", it)
             }
         }
@@ -2779,6 +2789,7 @@ internal class MpvPlaybackEngine(
         setProperty("vo", "null")
         setProperty("gpu-api", "opengl")
         setProperty("gpu-context", "android")
+        trySetProperty("gpu-hwdec-interop", "auto")
         setProperty("hwdec", acceleration.hwdec)
         setProperty("vo", configuredVo)
         if (deinterlaceRequested) {
