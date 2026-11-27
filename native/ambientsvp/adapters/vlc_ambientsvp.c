@@ -115,18 +115,30 @@ static void Close(filter_t *f) {
     filter_sys_t *s = f->p_sys; DropEngine(f); free(s->buffer);
     if (s->api.lib) dlclose(s->api.lib);
 }
+static void VisitOutput(void *context, const uint8_t *data, size_t len) {
+    SvpFillContext *dst = context;
+    if (len != (size_t)dst->w * dst->h * 3 / 2) return;
+    // Transfer only reads data in the unpack direction.
+    Transfer(dst->picture, (uint8_t *)data, dst->w, dst->h, false);
+}
 static picture_t *Drain(filter_t *f, bool eof) {
     filter_sys_t *s = f->p_sys; picture_t *head = NULL, **tail = &head;
     if (!s->engine || !s->reference) return NULL;
     for (int n = 0; n < 60; n++) {
         int64_t pts;
-        int r = s->api.receive(s->engine, s->buffer, s->bytes, &pts, eof);
-        if (r <= 0) { if (r < 0) s->api.bypass(s->engine, 3); break; }
         picture_t *out = filter_NewPicture(f);
         if (!out) { s->api.bypass(s->engine, 3); break; }
+        SvpFillContext context = {out, s->config.width, s->config.height};
+        int r = s->api.receive_visit
+            ? s->api.receive_visit(s->engine, &context, VisitOutput, &pts, eof)
+            : s->api.receive(s->engine, s->buffer, s->bytes, &pts, eof);
+        if (r <= 0) {
+            picture_Release(out);
+            if (r < 0) s->api.bypass(s->engine, 3);
+            break;
+        }
         picture_CopyProperties(out, s->reference);
-        const int w = s->config.width, h = s->config.height;
-        Transfer(out, s->buffer, w, h, false);
+        if (!s->api.receive_visit) VisitOutput(&context, s->buffer, s->bytes);
         out->date = VLC_TICK_FROM_US(pts);
         *tail = out; tail = &out->p_next;
     }
