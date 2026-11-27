@@ -3,7 +3,7 @@
 # decoded frames or the source. No flag changes and no transcoding.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-[[ $# -ge 1 ]] || { echo "usage: $0 SOURCE [--require-fel] [--require-bl-upscale]" >&2; exit 2; }
+[[ $# -ge 1 ]] || { echo "usage: $0 SOURCE [--require-fel] [--uhd-bluray | --require-bl-upscale]" >&2; exit 2; }
 source="$(realpath "$1")"; shift
 [[ -f "$source" ]] || exit 2
 FFMPEG_SOURCE="${FFMPEG_SOURCE:?pinned patched FFmpeg source with static avformat, avcodec, avutil built}"

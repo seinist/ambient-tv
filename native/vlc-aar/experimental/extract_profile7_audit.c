@@ -80,7 +80,7 @@ static void write_frame(FILE *f,const AVFrame *v)
     }
 }
 static int match(FILE *out,const struct layer *bl,const struct layer *el,
-    const struct snapshot *snap,unsigned count,AVRational tb,bool require_bl,bool require_fel)
+    const struct snapshot *snap,unsigned count,AVRational tb,bool require_bl,bool require_fel,bool uhd_bluray)
 {
     for(unsigned i=0;i<bl->count;i++)for(unsigned j=0;j<el->count;j++){
         const AVFrame *b=bl->frames[i],*e=el->frames[j];if(b->pts!=e->pts)continue;
@@ -90,6 +90,13 @@ static int match(FILE *out,const struct layer *bl,const struct layer *el,
             bool fel=false;
             for(unsigned c=0;c<3;c++)fel|=m->nlq_maximum[c]&&(m->nlq_slope[c]||m->nlq_threshold[c]);
             if((require_bl&&!m->bl_spatial_resampling)||(require_fel&&!fel))continue;
+            // Dolby US10462491B2: BL resampling is forbidden for UHD BD;
+            // the commercial-path audit must not require this flag.
+            if(uhd_bluray){
+                assert(!m->bl_spatial_resampling);
+                assert(b->width==3840&&b->height==2160&&e->width==1920&&e->height==1080);
+                assert(m->el_spatial_resampling);
+            }
             struct ambient_profile7_audit_frame h={.rpu=*m,.bw=b->width,.bh=b->height,.ew=e->width,.eh=e->height,
                 .pts=b->pts,.tb_num=tb.num,.tb_den=tb.den};
             assert(fwrite(&h,sizeof(h),1,out)==1);
@@ -103,13 +110,15 @@ static int match(FILE *out,const struct layer *bl,const struct layer *el,
 }
 int main(int argc,char **argv)
 {
-    assert(argc>=3&&argc<=5);
-    bool require_bl=false,require_fel=false;
+    assert(argc>=3&&argc<=6);
+    bool require_bl=false,require_fel=false,uhd_bluray=false;
     for(int i=3;i<argc;i++){
         if(!strcmp(argv[i],"--require-bl-upscale"))require_bl=true;
         else if(!strcmp(argv[i],"--require-fel"))require_fel=true;
+        else if(!strcmp(argv[i],"--uhd-bluray"))uhd_bluray=true;
         else abort();
     }
+    if(require_bl&&uhd_bluray){fprintf(stderr,"UHD Blu-ray requires BL resampling disabled\n");return 2;}
     AVFormatContext *fmt=NULL;
     // Local file only; no URLs, credentials or decryption.
     assert(avformat_open_input(&fmt,argv[1],NULL,NULL)>=0);
@@ -146,13 +155,13 @@ int main(int argc,char **argv)
             assert(av_ambient_dovi_parse(parser,rbsp,n,&snaps[count].m)==0);count++;
         }
         feed(&bl,pkt);feed(&el,pkt);av_packet_unref(pkt);
-        if(match(out,&bl,&el,snaps,count,st->time_base,require_bl,require_fel)){found=true;break;}
+        if(match(out,&bl,&el,snaps,count,st->time_base,require_bl,require_fel,uhd_bluray)){found=true;break;}
         // This is a bounded first-match audit, not a whole-film decoder.
         if(count>=MAX_PENDING-8||bl.count>=MAX_PENDING-8||el.count>=MAX_PENDING-8)break;
     }
     if(!found){
         feed(&bl,NULL);feed(&el,NULL);
-        found=match(out,&bl,&el,snaps,count,st->time_base,require_bl,require_fel);
+        found=match(out,&bl,&el,snaps,count,st->time_base,require_bl,require_fel,uhd_bluray);
     }
     assert(fclose(out)==0);
     release(&bl);release(&el);av_ambient_dovi_free(parser);free(snaps);av_packet_free(&pkt);avformat_close_input(&fmt);

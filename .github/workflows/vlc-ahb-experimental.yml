@@ -246,9 +246,20 @@ jobs:
           for entry in mkv/dovi-p7-hvce.mkv mov/dovi-p7-hvce.mp4; do
             clip="$(mktemp)"
             curl --fail --location --retry 3 --max-time 120 "https://fate-suite.ffmpeg.org/$entry" -o "$clip"
-            bash scripts/audit_profile7_stream.sh "$clip"
+            case "$entry" in
+              mkv/*) expected=3287bac8deade11e1c57bd65b9c7c8750a1e38e286666cbb4fa39eac264875df ;;
+              mov/*) expected=67baddaf158bc96c0c7955ca8894e92632df5ccca85bc68733f92f5f9fa7caaa ;;
+            esac
+            printf '%s  %s\n' "$expected" "$clip" | sha256sum -c -
+            bash scripts/audit_profile7_stream.sh "$clip" --uhd-bluray --require-fel
             rm -f "$clip"
           done
+          # Real published numerical parameters, independently reported for a
+          # commercial UHD title. No movie frames or original RPU are copied.
+          cc -std=c11 native/vlc-aar/experimental/export_reported_uhd_metadata.c -o .ci/export-reported-uhd
+          .ci/export-reported-uhd .ci/reported-uhd.bin
+          VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-etsi-fel .ci/reported-uhd.bin \
+            .ci/real-fel/real-bl-plane.yuv .ci/real-fel/real-el-plane.yuv
       - name: Compare official AOM HDR10+ conformance picture against independent reference
         if: github.event_name == 'workflow_dispatch' && inputs.aom_reference
         run: |
