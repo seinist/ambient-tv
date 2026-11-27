@@ -112,13 +112,16 @@ internal fun GameMetadataEditor(
             onSave = { value, locked -> model.save(value, locked, done) })
         GameEditPage.Match, is GameEditPage.Artwork -> {
             val imageKind = (current as? GameEditPage.Artwork)?.kind
-            var provider by remember(game.fileId, current) { mutableStateOf(
-                state.metadata.provider.takeIf { it in state.providers }
-                    ?: state.providers.firstOrNull().orEmpty()) }
+            var selectedProvider by remember(game.fileId, current) { mutableStateOf(state.metadata.provider) }
+            val provider = selectedProvider.takeIf { it in state.providers }
+                ?: state.providers.firstOrNull().orEmpty()
             var query by remember(game.fileId, current) { mutableStateOf(
                 gameMetadataSearchTitle(game, state.metadata, provider)) }
             var queryEdited by remember(game.fileId, current) { mutableStateOf(false) }
+            val canSearch = query.isNotBlank() && provider.isNotBlank() && !state.searching && !state.busy
+            val submitSearch = { if (canSearch) model.search(query, provider, imageKind) }
             LaunchedEffect(provider, current) {
+                if (!queryEdited && provider.isNotBlank()) query = gameMetadataSearchTitle(game, state.metadata, provider)
                 if (imageKind != null && state.metadata.providerGameId.isNotBlank() &&
                     provider == state.metadata.provider) model.artworkChoices(imageKind)
                 else if (provider.isNotBlank()) model.search(query, provider, imageKind)
@@ -151,9 +154,17 @@ internal fun GameMetadataEditor(
                     wrapVerticalFocus = false) {
                     item("query") {
                         GameMetadataSearchField(
-                            query, { query = it.take(256); queryEdited = true },
+                            query, { changed ->
+                                val next = changed.take(256)
+                                if (query != next) {
+                                    query = next
+                                    queryEdited = true
+                                    model.clearSearch()
+                                }
+                            },
                             requestInitialFocus = !queryInitiallyFocused,
                             onInitialFocus = { queryInitiallyFocused = true },
+                            onSearch = submitSearch.takeIf { canSearch },
                         )
                     }
                     item("providers") { DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -162,15 +173,16 @@ internal fun GameMetadataEditor(
                                 onClick = {
                                     if (provider != id) {
                                         query = gameMetadataProviderSearchText(game, state.metadata, id, query, queryEdited)
-                                        provider = id
+                                        selectedProvider = id
                                     }
                                 }, enabled = !state.busy)
                         }
                     } }
                     item("actions") { DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TvActionButton(stringResource(R.string.action_search),
-                            onClick = { model.search(query, provider, imageKind) },
-                            enabled = query.isNotBlank() && provider.isNotBlank() && !state.searching && !state.busy,
+                            onClick = submitSearch,
+                            enabled = canSearch,
+                            loading = state.searching,
                             icon = Icons.Filled.Search)
                         if (imageKind != null) TvActionButton(stringResource(R.string.game_edit_local_image),
                             onClick = { picker.launch(arrayOf("image/*")) }, enabled = !state.busy,
@@ -213,14 +225,23 @@ internal fun GameMetadataSearchField(
     modifier: Modifier = Modifier,
     requestInitialFocus: Boolean = true,
     onInitialFocus: () -> Unit = {},
+    onSearch: (() -> Unit)? = null,
 ) {
     val handheld = LocalHandheldUi.current
     val requester = remember { FocusRequester() }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     // A lazy item can be disposed when scrolled off screen. Do not steal focus on return:
     // initial focus belongs to the dialog instance, not to the lazy item.
     TvTextField(query, onQueryChange, stringResource(R.string.action_search),
         modifier.fillMaxWidth().focusRequester(requester),
-        requireExplicitEditing = !handheld)
+        requireExplicitEditing = !handheld,
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+            imeAction = androidx.compose.ui.text.input.ImeAction.Search,
+        ),
+        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = {
+            onSearch?.let { submit -> keyboard?.hide(); submit() }
+        }),
+    )
     if (!handheld && requestInitialFocus) {
         LaunchedEffect(requester) {
             repeat(10) {

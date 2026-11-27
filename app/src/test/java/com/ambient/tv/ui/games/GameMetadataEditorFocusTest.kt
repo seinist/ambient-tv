@@ -23,6 +23,7 @@ import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.performTextReplacement
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.common.TvChip
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.onNodeWithTag
@@ -135,6 +136,7 @@ class GameMetadataEditorFocusTest {
                         inputModeManager = LocalInputModeManager.current
                         TvLazyColumn(Modifier.heightIn(max = 360.dp), wrapVerticalFocus = false) {
                             item("query") { GameMetadataSearchField(query, { query = it }, Modifier.testTag("query")) }
+                            item("provider") { TvChip("Provider", onClick = {}, modifier = Modifier.testTag("provider")) }
                             item("search") { TvActionButton("Search", { submitted = query }, Modifier.testTag("search")) }
                         }
                     }
@@ -152,9 +154,13 @@ class GameMetadataEditorFocusTest {
         rule.runOnIdle { assertEquals("Different game", query) }
         rule.onNode(hasSetTextAction(), useUnmergedTree = true).performKeyInput { pressKey(Key.DirectionDown) }
         settleFocus()
+        rule.onNodeWithTag("provider").assertIsFocused().performKeyInput { pressKey(Key.DirectionDown) }
+        settleFocus()
         rule.onNodeWithTag("search").assertIsFocused().performKeyInput { pressKey(Key.DirectionCenter) }
         rule.runOnIdle { assertEquals("Different game", submitted) }
         rule.onNodeWithTag("search").performKeyInput { pressKey(Key.DirectionUp) }
+        settleFocus()
+        rule.onNodeWithTag("provider").assertIsFocused().performKeyInput { pressKey(Key.DirectionUp) }
         settleFocus()
         field.assertIsFocused()
     }

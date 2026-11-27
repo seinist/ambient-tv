@@ -20,6 +20,9 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performImeAction
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.swipeUp
@@ -81,6 +84,31 @@ class GameMetadataTouchUiTest {
             }
         }
         rule.waitForIdle()
+    }
+
+    @Test fun handheldQueryAcceptsTouchTextAndImeSearch() {
+        var query by mutableStateOf("Original game")
+        var submitted = ""
+        rule.setContent {
+            CompositionLocalProvider(LocalHandheldUi provides true) {
+                AmbientTvTheme {
+                    AppDialog(onDismiss = { dismissals++ }, title = "Identify game",
+                        scrollable = false, captureInitialFocus = false) {
+                        GameMetadataSearchField(query, { query = it },
+                            onSearch = { submitted = query })
+                    }
+                }
+            }
+        }
+        val editor = rule.onNode(hasSetTextAction(), useUnmergedTree = true)
+        editor.performTouchInput { click() }
+        editor.performTextReplacement("New title")
+        editor.performImeAction()
+        rule.runOnIdle {
+            assertEquals("New title", query)
+            assertEquals("New title", submitted)
+            assertEquals(0, dismissals)
+        }
     }
 
     @Test fun tappingAGamesDbMatchSelectsItOnceWithoutDismissingTheDialog() {
