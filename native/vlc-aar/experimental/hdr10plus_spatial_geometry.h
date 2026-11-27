@@ -84,6 +84,40 @@ static inline float ambient_hdrplus_bezier(const struct ambient_hdrplus_window *
     return w->knee_y+(1.f-w->knee_y)*v[0];
 }
 
+/* A monotone Bezier curve need not have sorted control points. Check
+ * the derivative in Bernstein form: nonnegative coefficients prove
+ * nonnegativity over that interval; subdivide ambiguous intervals.
+ * Bound recursion and reject unproven curves rather than assuming monotonicity. */
+static inline bool ambient_hdrplus_nonnegative_bernstein(const double *p,
+    unsigned n,unsigned depth)
+{
+    bool positive=true;
+    for(unsigned i=0;i<=n;i++)if(p[i]<0.0){positive=false;break;}
+    if(positive)return true;
+    if(p[0]<0.0||p[n]<0.0||!depth)return false;
+    double v[16],left[16],right[16];
+    memcpy(v,p,(n+1)*sizeof(*p));
+    left[0]=v[0];right[n]=v[n];
+    for(unsigned k=1;k<=n;k++){
+        for(unsigned j=0;j<=n-k;j++)v[j]=(v[j]+v[j+1])*0.5;
+        left[k]=v[0];right[n-k]=v[n-k];
+    }
+    return ambient_hdrplus_nonnegative_bernstein(left,n,depth-1)&&
+           ambient_hdrplus_nonnegative_bernstein(right,n,depth-1);
+}
+static inline bool ambient_hdrplus_curve_monotone(const struct ambient_hdrplus_window *w)
+{
+    if(!w||w->anchor_count>15)return false;
+    double delta[16],last=0.0;
+    for(unsigned i=0;i<w->anchor_count;i++){
+        double x=w->anchors[i];
+        if(!(x>=0.0&&x<=1.0))return false;
+        delta[i]=x-last;last=x;
+    }
+    delta[w->anchor_count]=1.0-last;
+    return ambient_hdrplus_nonnegative_bernstein(delta,w->anchor_count,10);
+}
+
 /* Section 8.7.4 permits a percentile source normalization when MaxSCL
  * is zero. Reserved v1 distribution markers are never scene statistics. */
 static inline float ambient_hdrplus_source_peak(const struct ambient_hdrplus_window *w,unsigned version)
@@ -123,11 +157,7 @@ static inline bool ambient_hdrplus_spatial_supported(const struct ambient_hdrplu
         if(w->tone_mapping && (m->target_nits<=0.f || w->anchor_count>15 ||
             !(w->knee_x>=0.f && w->knee_x<=1.f) ||
             !(w->knee_y>=0.f && w->knee_y<=1.f))) return false;
-        float last=0.f;
-        for (unsigned j=0;w->tone_mapping && j<w->anchor_count;++j) {
-            if (!(w->anchors[j]>=last && w->anchors[j]<=1.f)) return false;
-            last=w->anchors[j];
-        }
+        if(w->tone_mapping && !ambient_hdrplus_curve_monotone(w))return false;
         if (i && (w->geometry.overlap!=*layering ||
             !ambient_hdrplus_mask_init(&masks[i-1],&w->geometry,width,height))) return false;
     }
