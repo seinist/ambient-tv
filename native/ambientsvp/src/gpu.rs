@@ -102,6 +102,7 @@ impl Gpu {
     }
     pub fn new(width: u32, height: u32) -> Result<Self, String> {
         Self::new_with_compact_fields(width, height, true)
+            .or_else(|_| Self::new_with_compact_fields(width, height, false))
     }
 
     pub(super) fn new_with_compact_fields(width: u32, height: u32, allow_compact: bool) -> Result<Self, String> {
@@ -823,6 +824,26 @@ mod tests {
                 assert!(covered.iter().all(|n| *n == 1), "{base} {w}x{h}");
             }
         }
+    }
+
+    #[test]
+    #[ignore = "requires hardware Vulkan"]
+    fn hd_staged_input_is_bounded_and_rejected_index_can_be_reused() {
+        let (w,h) = (1280u32,720u32);
+        let mut gpu = Gpu::new(w,h).unwrap();
+        let data = vec![40; (w*h*3/2) as usize];
+        for index in 0..8 {
+            gpu.stage_source(index, &data).unwrap();
+        }
+        assert_eq!(gpu.sources.len(), 3);
+        gpu.discard_source(1);
+        assert!(!gpu.sources.contains_key(&1));
+        gpu.stage_source(1, &vec![200; data.len()]).unwrap();
+        assert_eq!(gpu.sources.len(), 3);
+        gpu.clear_sources();
+        assert!(gpu.sources.is_empty());
+        gpu.stage_source(0, &data).unwrap();
+        assert_eq!(gpu.sources.len(), 1);
     }
 
     // Also runnable as an Android test executable via cargo ndk test --lib --no-run.
