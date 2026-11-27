@@ -10,7 +10,9 @@ template<class T> T handle(uintptr_t value) {
     else return static_cast<T>(value);
 }
 int sem_created, sem_destroyed, fence_destroyed, released, fence_resets;
-bool completed, fail_submit;
+bool completed;
+VkResult submit_result = VK_SUCCESS, import_result = VK_SUCCESS;
+int queue_submissions;
 int last_released_fd = -2;
 VKAPI_ATTR VkResult VKAPI_CALL create_sem(VkDevice, const VkSemaphoreCreateInfo *,
     const VkAllocationCallbacks *, VkSemaphore *out) {
@@ -29,8 +31,9 @@ VKAPI_ATTR void VKAPI_CALL destroy_fence(VkDevice, VkFence, const VkAllocationCa
     ++fence_destroyed;
 }
 VKAPI_ATTR VkResult VKAPI_CALL import_fd(VkDevice, const VkImportSemaphoreFdInfoKHR *info) {
-    if (info->fd >= 0) close(info->fd);
-    return VK_SUCCESS;
+    // Vulkan consumes an imported sync fd only on successful import.
+    if (import_result == VK_SUCCESS && info->fd >= 0) close(info->fd);
+    return import_result;
 }
 VKAPI_ATTR VkResult VKAPI_CALL export_fd(VkDevice, const VkSemaphoreGetFdInfoKHR *, int *fd) {
     *fd = -1;
@@ -38,7 +41,8 @@ VKAPI_ATTR VkResult VKAPI_CALL export_fd(VkDevice, const VkSemaphoreGetFdInfoKHR
 }
 VKAPI_ATTR VkResult VKAPI_CALL queue_submit(VkQueue, uint32_t count, const VkSubmitInfo *info, VkFence) {
     assert(count == 1 && info->waitSemaphoreCount == 1 && info->signalSemaphoreCount == 1);
-    return fail_submit ? VK_ERROR_DEVICE_LOST : VK_SUCCESS;
+    ++queue_submissions;
+    return submit_result;
 }
 VKAPI_ATTR VkResult VKAPI_CALL fence_status(VkDevice, VkFence) {
     return completed ? VK_SUCCESS : VK_NOT_READY;
@@ -78,7 +82,7 @@ int main() {
     {
         FrameLease lease(&picture, -1, release, false);
         Submission submit(device, dispatch);
-        fail_submit = true;
+        submit_result = VK_ERROR_DEVICE_LOST;
         assert(submit.submit(queue, cmd, lease) == VK_ERROR_DEVICE_LOST);
         assert(submit.uncertain() && !submit.handoff_ready_semaphore());
         assert(!submit.drain_after_idle(false) && released == 1);
@@ -89,14 +93,14 @@ int main() {
     {
         FrameLease lease(&picture, -1, release, false);
         Submission submit(device, dispatch);
-        fail_submit = false;
+        submit_result = VK_SUCCESS;
         assert(submit.submit(queue, cmd, lease) == VK_SUCCESS);
         assert(submit.handoff_ready_semaphore());
         assert(submit.drain_after_device_lost());
         assert(submit.can_retire() && released == 3 && sem_destroyed == 6 && fence_destroyed == 3);
     }
     {
-        fail_submit = false;
+        submit_result = VK_SUCCESS;
         completed = false;
         const int before = sem_created, destroyed = sem_destroyed, fences = fence_destroyed;
         Submission submit(device, dispatch, true);
@@ -126,8 +130,8 @@ int main() {
         const int before = released;
         FrameLease lease(&picture, fds[0], release, false);
         Submission submit(device, dispatch);
-        fail_submit = true;
-        assert(submit.submit(queue, cmd, lease) == VK_ERROR_DEVICE_LOST);
+        submit_result = VK_ERROR_OUT_OF_HOST_MEMORY;
+        assert(submit.submit(queue, cmd, lease) == VK_ERROR_OUT_OF_HOST_MEMORY);
         assert(submit.uncertain());
         assert(!submit.drain_after_idle(false));
         assert(released == before);
@@ -137,5 +141,25 @@ int main() {
         // unsignaled fence must be returned, never replaced by -1.
         assert(last_released_fd == fds[0]);
         close(fds[1]);
+    }
+    {
+        // Failed import must not submit work or consume the producer fence.
+        int fds[2];
+        assert(pipe(fds) == 0);
+        const int before = released, submits = queue_submissions;
+        const int sems = sem_destroyed, fences = fence_destroyed;
+        submit_result = VK_SUCCESS;
+        import_result = VK_ERROR_DEVICE_LOST;
+        {
+            FrameLease lease(&picture, fds[0], release, false);
+            Submission submit(device, dispatch, true);
+            assert(submit.submit(queue, cmd, lease) == VK_ERROR_DEVICE_LOST);
+            assert(!submit.uncertain() && submit.can_retire());
+            assert(queue_submissions == submits && released == before);
+            assert(sem_destroyed == sems + 2 && fence_destroyed == fences + 1);
+        }
+        assert(released == before + 1 && last_released_fd == fds[0]);
+        close(fds[1]);
+        import_result = VK_SUCCESS;
     }
 }
