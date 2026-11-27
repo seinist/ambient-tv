@@ -60,7 +60,7 @@ jobs:
       - name: Validate integer GPU motion costs using Mesa software Vulkan
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan-dev
           export XDG_RUNTIME_DIR="$RUNNER_TEMP"
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident_vulkan::gpu_tests::native_resident_commands_keep_images_on_shared_device -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib motion::tests::vulkan_candidate_costs_match_cpu -- --ignored --exact
@@ -82,6 +82,19 @@ jobs:
         run: |
           rustup target add --toolchain stable aarch64-linux-android
           RUSTFLAGS="" cargo +stable check --manifest-path native/ambientsvp/Cargo.toml --release --locked --target aarch64-linux-android --lib --tests
+      - name: Cross-check MPV native Vulkan adapter against pinned FFmpeg headers
+        run: |
+          set -euo pipefail
+          pin="$(sed -n 's/^FFMPEG_COMMIT=//p' gradle/external-versions.properties)"
+          [[ "$pin" =~ ^[0-9a-f]{40}$ ]]
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          curl --fail --location --retry 3 "https://github.com/FFmpeg/FFmpeg/archive/$pin.tar.gz" -o "$tmp/ffmpeg.tar.gz"
+          mkdir "$tmp/ffmpeg"
+          tar -xzf "$tmp/ffmpeg.tar.gz" --strip-components=1 -C "$tmp/ffmpeg"
+          (cd "$tmp/ffmpeg" && ./configure --disable-all --disable-autodetect --disable-x86asm --disable-programs --disable-doc > "$tmp/configure.log" 2>&1) || { cat "$tmp/configure.log"; exit 1; }
+          cc -std=c11 -Wall -Wextra -Werror -Wno-unused-function -fsyntax-only -I "$tmp/ffmpeg" \
+            -I native/ambientsvp/include native/ambientsvp/tests/svp_mpv_vulkan_compile_test.c
       - name: Test C adapters' shared helpers
         run: |
           set -euo pipefail
