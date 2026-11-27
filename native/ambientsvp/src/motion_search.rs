@@ -72,8 +72,8 @@ fn clamp_predictor(pred:[i32;2],x:u32,y:u32,w:u32,h:u32,bw:u32,bh:u32,pel:u32)->
      pred[1].clamp(-(y as i32)*p,((h-y-bh) as i32)*p)]
 }
 
-fn candidate_offsets(pred:[i32;2],global:Option<[i32;2]>,radius:i32,pel:u32,finest:bool)->Vec<[i32;2]>{
-    let mut out=Vec::with_capacity(((2*radius+1)*(2*radius+1)+35) as usize);
+fn candidate_offsets(out:&mut Vec<[i32;2]>,pred:[i32;2],global:Option<[i32;2]>,radius:i32,pel:u32,finest:bool){
+    out.clear();
     out.push([0,0]);
     for dy in -radius..=radius{
         for dx in -radius..=radius{
@@ -102,7 +102,6 @@ fn candidate_offsets(pred:[i32;2],global:Option<[i32;2]>,radius:i32,pel:u32,fine
             }
         }
     }
-    out
 }
 
 pub struct MotionSearch{
@@ -192,6 +191,7 @@ impl MotionSearch{
                     .min((device.limits().max_storage_buffer_binding_size/32) as usize);
                 if batch_limit<max_per{return Err("insufficient motion dispatch capacity".into());}
                 let blocks=batch_limit/max_per;
+                let mut offsets=Vec::with_capacity(max_per);
                 for start in (0..grid.count()).step_by(blocks){
                     let end=(start+blocks).min(grid.count());
                     let mut metrics=Vec::with_capacity((end-start)*max_per);
@@ -203,7 +203,8 @@ impl MotionSearch{
                             x,y,a.width,a.height,bw,bh,a.pel);
                         let global=global.map(|v|clamp_predictor(v,x,y,a.width,a.height,bw,bh,a.pel));
                         let from=candidates.len() as u32;
-                        for [dx,dy] in candidate_offsets(pred,global,radius,a.pel,level==0){
+                        candidate_offsets(&mut offsets,pred,global,radius,a.pel,level==0);
+                        for &[dx,dy] in &offsets{
                             let c=Candidate{x,y,dx,dy,width:bw,height:bh,reverse,satd:false};
                             if !c.valid(a.width,a.height,a.pel){continue;}
                             let index=metrics.len() as u32;
@@ -312,7 +313,8 @@ mod tests{
         assert_eq!(f.global(2),Some([12,-8]));
         assert_eq!(clamp_predictor([-16,20],0,48,96,66,16,16,2),[0,4]);
         for pel in [1,2,4]{
-            let offsets=candidate_offsets([0,0],Some([5,1]),2,pel,true);
+            let mut offsets=Vec::new();
+            candidate_offsets(&mut offsets,[0,0],Some([5,1]),2,pel,true);
             assert!(offsets.contains(&[-4*pel as i32,0]));
             assert!(offsets.contains(&[4*pel as i32,0]));
             assert!(offsets.contains(&[5,1]));
