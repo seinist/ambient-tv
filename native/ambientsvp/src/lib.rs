@@ -457,7 +457,7 @@ impl AmbientSvp {
                     {
                         let current=self.pool.install(||self.builder.build(data)).map_err(|_|-1)?;
                         let vectors=if let Some(previous)=self.previous.as_ref(){
-                            match self.gpu.as_mut().unwrap().experimental_motion(&self.builder,previous,&current,&self.analyser.vector_header()){
+                            match self.gpu.as_mut().unwrap().experimental_motion(&self.builder,previous,&current,&self.analyser.vector_header(),Some(self.input-1)){
                                 Ok(vectors)=>{
                                     self.experimental_motion_pairs+=1;
                                     Some(vectors)
@@ -1049,7 +1049,7 @@ mod pipelining_tests {
         // The benchmark itself does not hide initialization cost.
         let a=engine.builder.build(&image(0)).unwrap();
         let b=engine.builder.build(&image(1)).unwrap();
-        engine.gpu.as_mut().unwrap().experimental_motion(&engine.builder,&a,&b,&engine.analyser.vector_header()).unwrap();
+        engine.gpu.as_mut().unwrap().experimental_motion(&engine.builder,&a,&b,&engine.analyser.vector_header(),None).unwrap();
         let mut out=vec![0;engine.frame_len()];
         let mut count=0;
         let mut previous=None;
