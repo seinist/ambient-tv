@@ -12,6 +12,7 @@ typedef struct {
     int (*push)(AmbientSvp *, const uint8_t *, size_t, int64_t);
     int (*push_fill)(AmbientSvp *, int64_t, void *, AmbientSvpFill);
     int (*receive)(AmbientSvp *, uint8_t *, size_t, int64_t *, int);
+    int (*receive_visit)(AmbientSvp *, void *, AmbientSvpVisit, int64_t *, int);
     int (*stats)(const AmbientSvp *, AmbientSvpStats *);
     void (*bypass)(AmbientSvp *, uint32_t);
     int (*enabled)(void);
@@ -28,6 +29,7 @@ static inline int svp_load(SvpApi *api) {
     if (!abi || abi() != AMBIENTSVP_ABI) goto fail;
     /* Optional on older ABI-compatible engines; retain legacy packed path. */
     api->push_fill = dlsym(api->lib, "ambient_svp_push_fill");
+    api->receive_visit = dlsym(api->lib, "ambient_svp_receive_visit");
     return 1;
 fail:
     dlclose(api->lib); memset(api, 0, sizeof(*api)); return 0;
