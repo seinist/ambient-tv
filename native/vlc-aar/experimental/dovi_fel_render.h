@@ -38,8 +38,7 @@ static inline bool ambient_fel_render_picture_ex(pl_gpu gpu,pl_log log,
     unsigned scale=pic->rpu.bl_spatial_resampling?2:1;
     if(bl==s->output||bl->params.w<=0||bl->params.h<=0||
        bl->params.w>8192||bl->params.h>8192||
-       (scale==2&&(bl->params.w>1920||bl->params.h>1088||
-         (bl->params.w&1)||(bl->params.h&1)))||
+       (scale==2&&(bl->params.w>1920||bl->params.h>1088))||
        bl_x>UINT32_MAX/scale||bl_y>UINT32_MAX/scale||
        bl_coded_w>UINT32_MAX/scale||bl_coded_h>UINT32_MAX/scale||
        !ambient_fel_axis_mapping(bl->params.w*scale,w,bl_x*scale,pic->crop_x,bl_coded_w*scale,pic->coded_width,&x)||
@@ -50,7 +49,7 @@ static inline bool ambient_fel_render_picture_ex(pl_gpu gpu,pl_log log,
     const bool zero=ambient_fel_nlq_zero(&nlq);
     if(!zero){
         if(pic->rpu.el_spatial_resampling){
-            if(x.ratio!=.5f||y.ratio!=.5f||(w&1)||(h&1))return false;
+            if(x.ratio!=.5f||y.ratio!=.5f)return false;
         }else if(x.ratio!=1.f||y.ratio!=1.f)return false;
     }
     const size_t expected=(size_t)w*h+2*(size_t)cw*ch;

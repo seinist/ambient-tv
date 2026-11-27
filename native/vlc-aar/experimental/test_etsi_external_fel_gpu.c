@@ -454,6 +454,92 @@ static void check_reference_filter(pl_gpu gpu,pl_log log,pl_dispatch dp,struct a
     ambient_fel_render_destroy(gpu,&render);
     pl_tex_destroy(gpu,&bl);free(pic);
 }
+/* Compare all native 4:2:0 samples on odd visible input, including
+ * independently cropped terminal chroma rows/columns after resampling. */
+static void odd_expand(const uint16_t *src,unsigned w,unsigned h,bool bl,bool luma,uint16_t *dst,unsigned dw,unsigned dh)
+{
+    uint16_t *full=malloc((size_t)w*h*4*sizeof(*full));assert(full);
+    if(bl)reference_expand_bl(src,w,h,full);else reference_expand(src,w,h,luma,full);
+    assert(dw<=w*2&&dh<=h*2);
+    for(unsigned y=0;y<dh;y++)memcpy(dst+y*dw,full+y*2*w,dw*sizeof(*dst));
+    free(full);
+}
+static void check_odd_native(pl_gpu gpu,pl_log log,pl_dispatch dp,const struct ambient_dovi_metadata *m,
+    const uint16_t bl_frame[YUV],const uint16_t el_frame[YUV])
+{
+    const unsigned sizes[][2]={{31,29},{31,30},{32,29},{1,1}};
+    pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,32,32,PL_FMT_CAP_SAMPLEABLE|PL_FMT_CAP_RENDERABLE);
+    assert(fmt);
+    struct ambient_fel_render render={0};
+    for(unsigned i=0;i<sizeof(sizes)/sizeof(sizes[0]);i++){
+        unsigned w=sizes[i][0],h=sizes[i][1],cw=(w+1)/2,ch=(h+1)/2;
+        unsigned l=w*h,c=cw*ch,count=l+2*c,ow=2*w,oh=2*h,ol=ow*oh,oc=w*h;
+        struct spatial_case g={"odd",w,h,2,2,0,0,0,0};
+        uint16_t *raw_b=malloc(count*2),*raw_e=malloc(count*2);
+        // crop_el's destination contract is YUV-sized; use fixed scratch.
+        uint16_t btmp[YUV],etmp[YUV];
+        crop_el(bl_frame,btmp,&g);crop_el(el_frame,etmp,&g);
+        assert(raw_b&&raw_e);memcpy(raw_b,btmp,count*2);memcpy(raw_e,etmp,count*2);
+        float *packed=malloc(l*4*sizeof(*packed));assert(packed);
+        for(unsigned j=0;j<l;j++){
+            unsigned ci=(j/w/2)*cw+(j%w)/2;
+            packed[4*j]=raw_b[l+c+ci]/1023.f;packed[4*j+1]=raw_b[j]/1023.f;
+            packed[4*j+2]=raw_b[l+ci]/1023.f;packed[4*j+3]=1.f;
+        }
+        pl_tex bl=pl_tex_create(gpu,pl_tex_params(.w=w,.h=h,.format=fmt,.sampleable=true,.initial_data=packed));assert(bl);
+        struct ambient_fel_picture *pic=calloc(1,sizeof(*pic)+count*2);assert(pic);
+        pic->rpu=*m;pic->rpu.bl_spatial_resampling=1;pic->rpu.el_spatial_resampling=1;
+        pic->width=w;pic->height=h;pic->pts=1;pic->sample_count=count;
+        memcpy(pic->samples,raw_e,count*2);
+        struct pl_frame frame={.num_planes=1,.crop={0,0,w,h}};
+        frame.planes[0].texture=bl;
+        assert(ambient_fel_render_picture_ex(gpu,log,&render,&frame,pic,1,0,0,0,0));
+        assert(frame.crop.x1==ow&&frame.crop.y1==oh);
+        uint16_t *b=malloc((ol+2*oc)*2),*e=malloc((ol+2*oc)*2);assert(b&&e);
+        for(unsigned k=0;k<3;k++){
+            unsigned off=k?l+(k-1)*c:0,outoff=k?ol+(k-1)*oc:0;
+            unsigned sw=k?cw:w,sh=k?ch:h,dw=k?w:ow,dh=k?h:oh;
+            odd_expand(raw_b+off,sw,sh,true,k==0,b+outoff,dw,dh);
+            odd_expand(raw_e+off,sw,sh,false,k==0,e+outoff,dw,dh);
+            assert(render.native420.bl_expanded[k]->params.w==(int)dw&&render.native420.bl_expanded[k]->params.h==(int)dh);
+            assert(render.planes.expanded[k]->params.w==(int)dw&&render.planes.expanded[k]->params.h==(int)dh);
+            assert_filter_pixels(gpu,dp,render.native420.bl_expanded[k],b+outoff);
+            assert_filter_pixels(gpu,dp,render.planes.expanded[k],e+outoff);
+        }
+        // Native luma is independent of BL chroma for the supported polynomial mapping.
+        uint16_t *want=malloc(ol*2);assert(want);
+        for(unsigned j=0;j<ol;j++){
+            unsigned ci=(j/ow/2)*w+(j%ow)/2;
+            unsigned v[]={b[j],b[ol+ci],b[ol+oc+ci]};
+            want[j]=oracle(m,v,e[j],0);
+        }
+        assert_filter_pixels(gpu,dp,render.native420.y,want);
+        // Extract each native chroma component through a separate readback.
+        pl_fmt rf=pl_find_fmt(gpu,PL_FMT_FLOAT,4,32,32,PL_FMT_CAP_RENDERABLE|PL_FMT_CAP_HOST_READABLE);assert(rf);
+        pl_tex rb=pl_tex_create(gpu,pl_tex_params(.w=w,.h=h,.format=rf,.renderable=true,.host_readable=true));assert(rb);
+        const struct pl_shader_desc d={.desc={.name="odd_uv",.type=PL_DESC_SAMPLED_TEX},.binding={.object=render.native420.uv}};
+        pl_shader sh=pl_dispatch_begin(dp);assert(sh);
+        assert(pl_shader_custom(sh,&(struct pl_custom_shader){.input=PL_SHADER_SIG_NONE,.output=PL_SHADER_SIG_COLOR,
+            .descriptors=&d,.num_descriptors=1,.body="color=texelFetch(odd_uv,ivec2(gl_FragCoord.xy),0);"}));
+        assert(pl_dispatch_finish(dp,pl_dispatch_params(.shader=&sh,.target=rb)));
+        float *pixels=malloc(oc*4*sizeof(*pixels));assert(pixels);
+        assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=rb,.ptr=pixels)));
+        for(unsigned j=0;j<oc;j++){
+            unsigned x=j%w,y=j/w;
+            unsigned row[2];
+            for(unsigned k=0;k<2;k++){
+                int xx=(int)(2*x),yy=(int)(2*y+k);
+                row[k]=(at_plane(b,ow,oh,xx-1,yy)+2*at_plane(b,ow,oh,xx,yy)+at_plane(b,ow,oh,xx+1,yy)+2)/4;
+            }
+            unsigned v[]={(row[0]+row[1]+1)/2,b[ol+j],b[ol+oc+j]};
+            for(unsigned k=0;k<2;k++)assert((unsigned)lroundf(pixels[4*j+k]*65535.f)==oracle(m,v,e[ol+k*oc+j],k+1));
+        }
+        fprintf(stderr,"Odd visible BL/EL %ux%u -> %ux%u: %u exact native codes, phase-preserving chroma crop\n",w,h,ow,oh,ol+2*oc);
+        pl_gpu_finish(gpu);pl_tex_destroy(gpu,&rb);pl_tex_destroy(gpu,&bl);
+        free(pixels);free(want);free(b);free(e);free(pic);free(packed);free(raw_b);free(raw_e);
+    }
+    ambient_fel_render_destroy(gpu,&render);
+}
 static void check_geometry(const struct spatial_case *g,struct ambient_fel_planes *planes)
 {
     // Geometry derived independently: choose coded EL=64x64 and coded
@@ -569,7 +655,10 @@ int main(int argc,char **argv)
     pl_gpu_finish(gpu);
     pl_tex_destroy(gpu,&out);pl_tex_destroy(gpu,&e);pl_tex_destroy(gpu,&b);
     }
-    if(decoded)check_reference_filter(gpu,log,dp,&planes,el_frame,bl_frame,&m,&reshape,&nlq);
+    if(decoded){
+        check_reference_filter(gpu,log,dp,&planes,el_frame,bl_frame,&m,&reshape,&nlq);
+        check_odd_native(gpu,log,dp,&m,bl_frame,el_frame);
+    }
     ambient_fel_planes_destroy(gpu,&planes);pl_dispatch_destroy(&dp);
     pl_vulkan_destroy(&vk);pl_log_destroy(&log);
     // Keep the original one-code threshold separately for every case.

@@ -52,16 +52,19 @@ static inline bool ambient_fel_planes_upload(pl_gpu gpu,struct ambient_fel_plane
  * intermediate rounding and 16-bit clipping. No CPU readback or expansion.
  * The source and destination remain 4:2:0; chroma reconstruction to the
  * packed RGB prepass grid is a distinct, existing approximation. */
-static inline bool ambient_fel_filter_axis_kind(pl_gpu gpu,pl_dispatch dp,
-    pl_tex input,pl_tex *output,bool vertical,int kind)
+static inline bool ambient_fel_filter_axis_extent(pl_gpu gpu,pl_dispatch dp,
+    pl_tex input,pl_tex *output,bool vertical,int kind,int extent)
 {
     if(!gpu||!dp||!input||!output||input==*output)return false;
     int w=input->params.w,h=input->params.h;
     if(w<=0||h<=0||w>1920||h>(vertical?1088:2176))return false;
+    int full=2*(vertical?h:w);
+    if(!extent)extent=full;
+    if(extent!=full&&extent!=full-1)return false;
     pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_UNORM,1,16,16,
         PL_FMT_CAP_SAMPLEABLE|PL_FMT_CAP_RENDERABLE);
     if(!fmt||fmt->component_depth[0]!=16||!pl_tex_recreate(gpu,output,
-        pl_tex_params(.w=vertical?w:w*2,.h=vertical?h*2:h,.format=fmt,
+        pl_tex_params(.w=vertical?w:extent,.h=vertical?extent:h,.format=fmt,
             .sampleable=true,.renderable=true)))return false;
     const struct pl_shader_desc d={.desc={.name="fel_filter_input",.type=PL_DESC_SAMPLED_TEX},
         .binding={.object=input}};
@@ -102,6 +105,11 @@ static inline bool ambient_fel_filter_axis_kind(pl_gpu gpu,pl_dispatch dp,
     return pl_dispatch_finish(dp,pl_dispatch_params(.shader=&sh,.target=*output));
 }
 
+static inline bool ambient_fel_filter_axis_kind(pl_gpu gpu,pl_dispatch dp,
+    pl_tex input,pl_tex *output,bool vertical,int kind)
+{
+    return ambient_fel_filter_axis_extent(gpu,dp,input,output,vertical,kind,0);
+}
 static inline bool ambient_fel_filter_axis(pl_gpu gpu,pl_dispatch dp,
     pl_tex input,pl_tex *output,bool vertical,bool luma)
 {
@@ -110,19 +118,21 @@ static inline bool ambient_fel_filter_axis(pl_gpu gpu,pl_dispatch dp,
 
 /* Produce a borrowed view of the expanded EL planes. Preserve visible
  * crop coordinates after doubling and never overwrite decoder textures.
- * For an odd visible EL extent, the doubled chroma plane can contain one
- * more sample than ceil(doubled luma / 2); reject that case rather than
- * silently changing the filter phase. */
+ * Odd visible extents have ceil(W/2) native chroma samples. After 2x
+ * filtering, discard only the extra right/bottom output sample, never
+ * shift the origin or discard an input tap. */
 static inline bool ambient_fel_reference_el(pl_gpu gpu,pl_dispatch dp,
     struct ambient_fel_planes *src,struct ambient_fel_planes *view)
 {
     if(!gpu||!dp||!src||!view||src==view||!src->mapped||!src->tex[0]||
-       src->x.ratio!=0.5f||src->y.ratio!=0.5f||
-       (src->tex[0]->params.w&1)||(src->tex[0]->params.h&1))return false;
+       src->x.ratio!=0.5f||src->y.ratio!=0.5f)return false;
+    int w=src->tex[0]->params.w,h=src->tex[0]->params.h;
     pl_dispatch_reset_frame(dp);
     for(unsigned c=0;c<3;c++){
-        if(!ambient_fel_filter_axis(gpu,dp,src->tex[c],&src->vertical[c],true,c==0)||
-           !ambient_fel_filter_axis(gpu,dp,src->vertical[c],&src->expanded[c],false,c==0))return false;
+        if(!src->tex[c]||src->tex[c]->params.w!=(c?(w+1)/2:w)||
+           src->tex[c]->params.h!=(c?(h+1)/2:h)||
+           !ambient_fel_filter_axis_extent(gpu,dp,src->tex[c],&src->vertical[c],true,c?1:0,c?h:h*2)||
+           !ambient_fel_filter_axis_extent(gpu,dp,src->vertical[c],&src->expanded[c],false,c?1:0,c?w:w*2))return false;
     }
     *view=(struct ambient_fel_planes){.mapped=true,.reference_codes=true,
         .chroma_x=src->chroma_x,.chroma_y=src->chroma_y,
@@ -514,14 +524,14 @@ static inline bool ambient_fel_reference_bl(pl_gpu gpu,pl_dispatch dp,
 {
     if(!gpu||!dp||!s||!bl||!bl->params.sampleable||bl==s->bl_packed)return false;
     int w=bl->params.w,h=bl->params.h;
-    if(w<=0||h<=0||w>1920||h>1088||(w&1)||(h&1))return false;
+    if(w<=0||h<=0||w>1920||h>1088)return false;
     pl_fmt r16=pl_find_fmt(gpu,PL_FMT_UNORM,1,16,16,
         PL_FMT_CAP_SAMPLEABLE|PL_FMT_CAP_RENDERABLE);
     if(!r16||r16->component_depth[0]!=16)return false;
     const struct pl_shader_desc d={.desc={.name="bl_unpack",.type=PL_DESC_SAMPLED_TEX},.binding={.object=bl}};
     pl_dispatch_reset_frame(dp);
     for(unsigned c=0;c<3;c++){
-        if(!pl_tex_recreate(gpu,&s->bl_raw[c],pl_tex_params(.w=c?w/2:w,.h=c?h/2:h,
+        if(!pl_tex_recreate(gpu,&s->bl_raw[c],pl_tex_params(.w=c?(w+1)/2:w,.h=c?(h+1)/2:h,
             .format=r16,.sampleable=true,.renderable=true)))return false;
         pl_shader sh=pl_dispatch_begin(dp);if(!sh)return false;
         const char *body=c==0?
@@ -534,8 +544,8 @@ static inline bool ambient_fel_reference_bl(pl_gpu gpu,pl_dispatch dp,
             .descriptors=&d,.num_descriptors=1,.body=body,
         })){pl_dispatch_abort(dp,&sh);return false;}
         if(!pl_dispatch_finish(dp,pl_dispatch_params(.shader=&sh,.target=s->bl_raw[c]))||
-           !ambient_fel_filter_axis_kind(gpu,dp,s->bl_raw[c],&s->bl_vertical[c],true,2)||
-           !ambient_fel_filter_axis_kind(gpu,dp,s->bl_vertical[c],&s->bl_expanded[c],false,2))return false;
+           !ambient_fel_filter_axis_extent(gpu,dp,s->bl_raw[c],&s->bl_vertical[c],true,2,c?h:h*2)||
+           !ambient_fel_filter_axis_extent(gpu,dp,s->bl_vertical[c],&s->bl_expanded[c],false,2,c?w:w*2))return false;
     }
     // Preserve the full integer code range, including the filter's positive
     // overshoot, until the per-component pivot clamp in prediction.
