@@ -203,23 +203,29 @@ impl VulkanPair{
             sets:std::mem::take(&mut self.sets),
         });
     }
-    fn image(&self,set:vk::DescriptorSet,binding:u32,view:vk::ImageView,ty:vk::DescriptorType){
-        let info=[vk::DescriptorImageInfo::default().image_view(view).image_layout(vk::ImageLayout::GENERAL)];
-        let write=[vk::WriteDescriptorSet::default().dst_set(set).dst_binding(binding).descriptor_type(ty).image_info(&info)];
-        unsafe{self.core.device.update_descriptor_sets(&write,&[]);}
-    }
-    fn field(&self,set:vk::DescriptorSet,binding:u32){
-        let info=[vk::DescriptorBufferInfo::default().buffer(self.field).offset(0).range(self.core.field_size)];
-        let write=[vk::WriteDescriptorSet::default().dst_set(set).dst_binding(binding)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info)];
-        unsafe{self.core.device.update_descriptor_sets(&write,&[]);}
+    // One driver call per descriptor set, with stack-backed write
+    // storage. No per-binding update or heap allocation on each phase.
+    fn descriptors(&self,set:vk::DescriptorSet,images:&[(u32,vk::ImageView,vk::DescriptorType)],field_binding:u32){
+        assert!(images.len()<=7);
+        let mut info=[vk::DescriptorImageInfo::default();7];
+        for (i,&(_,view,_)) in images.iter().enumerate(){
+            info[i]=vk::DescriptorImageInfo::default().image_view(view).image_layout(vk::ImageLayout::GENERAL);
+        }
+        let field=[vk::DescriptorBufferInfo::default().buffer(self.field).offset(0).range(self.core.field_size)];
+        let mut writes=[vk::WriteDescriptorSet::default();8];
+        for (i,&(binding,_,ty)) in images.iter().enumerate(){
+            writes[i]=vk::WriteDescriptorSet::default().dst_set(set).dst_binding(binding)
+                .descriptor_type(ty).image_info(std::slice::from_ref(&info[i]));
+        }
+        writes[images.len()]=vk::WriteDescriptorSet::default().dst_set(set).dst_binding(field_binding)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&field);
+        unsafe{self.core.device.update_descriptor_sets(&writes[..images.len()+1],&[]);}
     }
     unsafe fn analyse(&self){
         let c=&self.core;
         let set=self.sets[0];
-        self.image(set,0,self.a.y,vk::DescriptorType::SAMPLED_IMAGE);
-        self.image(set,1,self.b.y,vk::DescriptorType::SAMPLED_IMAGE);
-        self.field(set,2);
+        self.descriptors(set,&[(0,self.a.y,vk::DescriptorType::SAMPLED_IMAGE),
+            (1,self.b.y,vk::DescriptorType::SAMPLED_IMAGE)],2);
         unsafe{
             c.motion.dispatch(self.command,set,[c.width,c.height,c.gw,c.gh|if self.a.rgb(){1<<31}else{0}],c.gw,c.gh*2);
             let barrier=[vk::BufferMemoryBarrier::default().src_access_mask(vk::AccessFlags::SHADER_WRITE)
@@ -236,11 +242,11 @@ impl VulkanPair{
             || self.a.views().contains(&output) || self.b.views().contains(&output)
         {return Err("invalid resident output phase/view".into());}
         let set=self.sets[1+self.phases];
-        for (binding,view) in self.a.views().into_iter().chain(self.b.views()).enumerate(){
-            self.image(set,binding as u32,view,vk::DescriptorType::SAMPLED_IMAGE);
-        }
-        self.field(set,6);
-        self.image(set,7,output,vk::DescriptorType::STORAGE_IMAGE);
+        let [ay,au,av]=self.a.views();
+        let [by,bu,bv]=self.b.views();
+        let sampled=vk::DescriptorType::SAMPLED_IMAGE;
+        self.descriptors(set,&[(0,ay,sampled),(1,au,sampled),(2,av,sampled),
+            (3,by,sampled),(4,bu,sampled),(5,bv,sampled),(7,output,vk::DescriptorType::STORAGE_IMAGE)],6);
         let c=&self.core;
         let flags=if self.a.rgb(){64}else{self.a.nv12|(self.b.nv12<<1)|(self.a.chroma_location<<2)|(self.b.chroma_location<<4)};
         unsafe{c.synthesis.dispatch(self.command,set,[phase.to_bits(),flags,matrix,c.width|(c.height<<16)],
