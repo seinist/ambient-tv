@@ -1043,7 +1043,11 @@ internal class MpvPlaybackEngine(
             effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context), mpvCheapDefaults(context)),
             sdrImageProcessing,
         )
-        // A live edit can turn resident transport off; use the actual requested filter,\n        // not merely the startup decoder plan, to decide if readable frames are needed.\n        val cpuFramesNeeded = (activeCpuImageFilters + desiredFilters).any { (label, filter) ->\n            label != "plex-svp" || !filter.endsWith(":hwresident=1")\n        }
+        // A live edit can turn resident transport off; use the actual requested filter,
+        // not merely the startup decoder plan, to decide if readable frames are needed.
+        val cpuFramesNeeded = (activeCpuImageFilters + desiredFilters).any { (label, filter) ->
+            label != "plex-svp" || !filter.endsWith(":hwresident=1")
+        }
         val copyBackNeeded = mpvCopyBackNeeded(
             loadedShaderKeys,
             cpuFramesNeeded,
