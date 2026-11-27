@@ -504,11 +504,20 @@ mod tests {
         }
         let mut encoder=device.create_command_encoder(&Default::default());
         let output=kernel.encode(&device,&mut encoder,&at,&bt,w,h,&candidates).unwrap();
+        let results=read_costs(&device,&queue,encoder,&output);
+        assert!(pollster::block_on(device.pop_error_scope()).is_none());
+        for (c,actual) in candidates.iter().zip(results) {
+            assert_eq!(actual,reference_cost(&a,&b,w,h,*c).unwrap(),"{c:?}");
+        }
+    }
+
+    fn read_costs(device:&wgpu::Device,queue:&wgpu::Queue,mut encoder:wgpu::CommandEncoder,
+                  output:&wgpu::Buffer)->Vec<Cost>{
         let readback=device.create_buffer(&wgpu::BufferDescriptor{
             label:None,size:output.size(),usage:wgpu::BufferUsages::COPY_DST|wgpu::BufferUsages::MAP_READ,
             mapped_at_creation:false,
         });
-        encoder.copy_buffer_to_buffer(&output,0,&readback,0,output.size());
+        encoder.copy_buffer_to_buffer(output,0,&readback,0,output.size());
         queue.submit([encoder.finish()]);
         let (tx,rx)=std::sync::mpsc::sync_channel(1);
         readback.slice(..).map_async(wgpu::MapMode::Read,move |r|{let _=tx.send(r);});
@@ -522,16 +531,108 @@ mod tests {
                 Err(_)=>std::thread::sleep(std::time::Duration::from_millis(1)),
             }
         }
-        assert!(pollster::block_on(device.pop_error_scope()).is_none());
         let bytes=readback.slice(..).get_mapped_range();
-        for (c,raw) in candidates.iter().zip(bytes.chunks_exact(16)) {
+        let results=bytes.chunks_exact(16).map(|raw|{
             let word=|i:usize|u32::from_le_bytes(raw[i*4..i*4+4].try_into().unwrap());
-            let expected=reference_cost(&a,&b,w,h,*c).unwrap();
-            assert_eq!(Cost{y:word(0),u:word(1),v:word(2)},expected,"{c:?}");
-            assert_eq!(word(3),expected.y+expected.u+expected.v);
-        }
+            let cost=Cost{y:word(0),u:word(1),v:word(2)};
+            assert_eq!(word(3),cost.y+cost.u+cost.v);
+            cost
+        }).collect();
         drop(bytes);
         readback.unmap();
+        results
+    }
+
+    #[test]
+    fn exact_super_levels_and_negative_fractional_coordinates(){
+        for pel in [1,2,4] {
+            let builder=svpflow1_vs::SuperBuilder::new(96,66,pel).unwrap();
+            let input:Vec<u8>=(0..builder.source_len()).map(|i|((i*17+i/13)%256) as u8).collect();
+            let frame=builder.build(&input).unwrap();
+            let level=SuperLevel::new(&builder,&frame,0).unwrap();
+            assert_eq!(level.pel,pel as u32);
+            assert_eq!(level.row(0,0,1),&input[96..192]);
+            let c=Candidate{x:16,y:16,dx:-1,dy:3,width:8,height:8,reverse:false,satd:false};
+            let actual=reference_super_cost(&level,&level,c).unwrap();
+            let expected: [u32;3]=std::array::from_fn(|plane|{
+                let shift=usize::from(plane!=0);
+                let pitch=96usize>>shift;
+                let rows=66usize>>shift;
+                let dx=c.dx>>shift;
+                let dy=c.dy>>shift;
+                let phase=(dx.rem_euclid(pel)+dy.rem_euclid(pel)*pel) as usize;
+                let rx=((c.x as i32>>shift)+(dx>>pel.trailing_zeros())) as usize;
+                let ry=((c.y as i32>>shift)+(dy>>pel.trailing_zeros())) as usize;
+                let (sx,sy)=(c.x as usize>>shift,c.y as usize>>shift);
+                let raw=frame.planes()[plane];
+                let mut sum=0;
+                for y in 0..(8>>shift){for x in 0..(8>>shift){
+                    sum+=u32::from(raw[(sy+y)*pitch+sx+x].abs_diff(raw[(phase*rows+ry+y)*pitch+rx+x]));
+                }}
+                sum
+            });
+            assert_eq!(actual,Cost{y:expected[0],u:expected[1],v:expected[2]});
+            assert!(reference_super_cost(&level,&level,Candidate{x:0,dx:-1,..c}).is_none());
+            if builder.levels()>1 {
+                let reduced=SuperLevel::new(&builder,&frame,1).unwrap();
+                assert_eq!((reduced.width,reduced.height,reduced.pel),(48,32,1));
+                let base=pel as usize*pel as usize*96*66;
+                assert_eq!(reduced.row(0,0,0),&frame.planes()[0][base..base+48]);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a Vulkan adapter, including software Vulkan"]
+    fn vulkan_super_phase_and_pyramid_costs_match_cpu(){
+        let instance=wgpu::Instance::new(&wgpu::InstanceDescriptor{
+            backends:wgpu::Backends::VULKAN,..Default::default()
+        });
+        let adapter=pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+            .expect("Vulkan adapter required");
+        let (device,queue)=pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor{
+            label:Some("SVP exact subpixel parity"),required_features:wgpu::Features::empty(),
+            required_limits:wgpu::Limits::default().using_resolution(adapter.limits()),
+            memory_hints:wgpu::MemoryHints::MemoryUsage,
+        },None)).unwrap();
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let kernel=MotionCostKernel::new(&device);
+        let mut tested=0;
+        for pel in [1,2,4]{
+            let builder=svpflow1_vs::SuperBuilder::new(96,66,pel).unwrap();
+            let a:Vec<u8>=(0..builder.source_len()).map(|i|((i*17+i/13)%256) as u8).collect();
+            let b:Vec<u8>=(0..a.len()).map(|i|((i*31+i/7+31)%256) as u8).collect();
+            let a=builder.build(&a).unwrap();
+            let b=builder.build(&b).unwrap();
+            for level in 0..builder.levels() as u32 {
+                let al=SuperLevel::new(&builder,&a,level).unwrap();
+                let bl=SuperLevel::new(&builder,&b,level).unwrap();
+                if al.width<24 || al.height<24 {continue;}
+                let mut candidates=Vec::new();
+                for dx in [-7,-3,-1,0,1,3,7]{
+                    for dy in [-5,-1,0,2,5]{
+                        for reverse in [false,true]{
+                            for satd in [false,true]{
+                                let c=Candidate{x:8,y:8,dx,dy,width:8,height:8,reverse,satd};
+                                if c.valid(al.width,al.height,al.pel){candidates.push(c);}
+                            }
+                        }
+                    }
+                }
+                let mut encoder=device.create_command_encoder(&Default::default());
+                let at=al.upload(&device,&mut encoder).unwrap();
+                let bt=bl.upload(&device,&mut encoder).unwrap();
+                let output=kernel.encode(&device,&mut encoder,&at,&bt,al.width,al.height,&candidates).unwrap();
+                let results=read_costs(&device,&queue,encoder,&output);
+                for (c,actual) in candidates.iter().zip(results){
+                    assert_eq!(actual,reference_super_cost(&al,&bl,*c).unwrap(),"pel={pel} level={level} {c:?}");
+                    tested+=1;
+                }
+            }
+        }
+        assert!(tested>=420);
+        assert!(pollster::block_on(device.pop_error_scope()).is_none());
+
     }
 
 }
