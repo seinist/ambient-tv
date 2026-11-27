@@ -173,3 +173,35 @@ A host Vulkan GPU job builds the pinned libplacebo and exercises the same spatia
 The raw-P010/Dolby route requests API-34 AImageReader_newWithDataSpace with native YCbCr P010, source dimensions, range and transfer, using GPU-only usage. Vendors rejecting the explicit reader may still use PRIVATE, but actual Vulkan P010 format and image-dataspace validation remain mandatory. Native P010 import checks its own physical-device format/import capabilities rather than requiring unrelated external-format sampling capabilities. A requested default dataspace is not proof of actual decoder color behavior; decoded codeword/reference validation remains required.
 
 The local-window prototype is separately available in the isolated app test build with `-PVLC_AHB_EXPERIMENT=1 -PVLC_HDR10PLUS_SPATIAL_EXPERIMENT=1`. The flag is passed only for known HDR10+ sources requiring GPU tone mapping; native HDR and ordinary builds do not enable it. Per-frame unsupported metadata still takes the existing global path. Host Vulkan CI 45949405304 passed with a synthetic 600-nit PQ input (179.50-nit local center versus 84.24-nit global corner), and the native four-ABI/FFmpeg contracts passed on the same revision. This demonstrates local GPU processing, not ST2094-40 conformance or Android hardware compatibility.
+
+
+## Extended HDR10+ and FEL work (2026-11-27)
+
+The opt-in local-window HDR10+ prepass now also accepts one window, uses
+cosine feathering and weighted/layered overlap, evaluates both display
+luminance grids against fraction-bright-pixels and average MaxRGB (not pixel
+coordinates), and applies bounded per-window saturation compensation. Grid
+factors modify scene/display peaks and participate in the LUT cache key.
+The saturation and peak adaptation are experimental Annex-B-inspired
+algorithms, not a normative reference implementation. The metadata parser
+retains legal knee endpoints and records a partial application-version-1
+constraint check without rejecting otherwise parseable legacy payloads.
+Version 1 excludes local windows, grids and saturation mapping; the general
+syntax can nevertheless describe these fields. Unsupported curves still
+fall back to global processing. No certification or complete ST 2094-40
+conformance claim is made. Host native, FFmpeg and HDR10+ GPU tests passed
+at f6b1e678 (run 45952281364).
+
+FEL groundwork: dovi_fel_nlq.h implements integer-code residual inverse
+quantization with the zero case, coefficient scaling, signed residual and
+maximum clamp. dovi_fel_gpu.h composes aligned raw BL and EL textures using
+the pinned libplacebo reshaping shader before adding the bounded residual.
+The output is reconstructed codewords, not display RGB. Dedicated CI
+fixtures compare GPU pixels with the CPU reference and exercise the real
+pinned FFmpeg dovi_split filter, including PTS preservation. These new
+components are not connected to the active VLC decoder or display. Profile
+7 playback still requires EL decoder initialization, synchronized decoded
+picture ownership, chroma/geometry alignment, complete RPU NLQ transport
+and downstream color conversion. Missing EL must not be presented as FEL.
+The original single-layer hardware route and production configuration
+remain unchanged.
