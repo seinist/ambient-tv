@@ -388,6 +388,15 @@ impl Job{
         }
         Ok(())
     }
+    pub(crate) fn ensure_external_handoff(&mut self)->bool{
+        if !self.frame.as_ref().is_some_and(|f|f.external_pending()){return true;}
+        // Rare export failure: wait only for this conversion, not the
+        // whole device. Never return an unsynchronized source to a player.
+        if unsafe{self.core.device.wait_for_fences(&[self.fence],true,250_000_000)}.is_err(){return false;}
+        self.completed=true;
+        if let Some(frame)=self.frame.as_mut(){frame.return_after_gpu(-1);}
+        true
+    }
     fn finish_producer(&mut self){
         // Exporting SYNC_FD transfers the semaphore payload to the FD.
         // If export fails, retain the original AImage until the fence.
