@@ -14,6 +14,8 @@ internal object ProjectMNativeBridge {
     external fun nativeSetSoftCutDuration(handle: Long, seconds: Double)
     external fun nativeSetBeatSensitivity(handle: Long, sensitivity: Float)
     external fun nativeSetLocked(handle: Long, locked: Boolean)
+    /** Developer-only PGO export; returns false in regular builds. */
+    external fun nativeWriteProfile(path: String): Boolean
     external fun nativeVersion(): String
 }
 
