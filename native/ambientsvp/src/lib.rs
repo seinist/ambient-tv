@@ -68,6 +68,7 @@ pub struct AmbientSvp {
     pool: rayon::ThreadPool,
     previous: Option<SuperFrame>,
     frames: BTreeMap<i32, Source>,
+    recycled_frames: Vec<Vec<u8>>,
     input: i32,
     output: i32,
     origin: Option<i64>,
@@ -185,6 +186,7 @@ impl AmbientSvp {
             pool,
             previous: None,
             frames: BTreeMap::new(),
+            recycled_frames: Vec::new(),
             input: 0,
             output: 0,
             origin: None,
@@ -220,7 +222,8 @@ impl AmbientSvp {
             &self.options,
             &self.analyser.vector_header(),
         )?;
-        self.frames.clear();
+        self.recycled_frames.extend(std::mem::take(&mut self.frames).into_values().map(|s| s.data));
+        self.recycled_frames.truncate(MAX_QUEUE);
         self.previous = None;
         self.input = 0;
         self.output = 0;
@@ -257,15 +260,15 @@ impl AmbientSvp {
         }
         let begin = Instant::now();
         if self.stats.bypass_reason == 0 {
-            let current = self
-                .pool
-                .install(|| self.builder.build(data))
-                .map_err(|_| -1)?;
-            if let Some(previous) = &self.previous {
-                let vectors = self
-                    .pool
-                    .install(|| self.analyser.analyse(previous, &current))
-                    .map_err(|_| -1)?;
+            // Enter the session worker pool once for both CPU stages.
+            let (current, vectors) = self.pool.install(|| {
+                let current = self.builder.build(data).map_err(|_| -1)?;
+                let vectors = self.previous.as_ref()
+                    .map(|previous| self.analyser.analyse(previous, &current))
+                    .transpose().map_err(|_| -1)?;
+                Ok::<_, i32>((current, vectors))
+            })?;
+            if let Some(vectors) = vectors {
                 self.smoother.set_vectors(self.input - 1, &vectors);
             }
             if self.smoother.uses_super() {
@@ -277,13 +280,10 @@ impl AmbientSvp {
             }
             self.previous = Some(current);
         }
-        self.frames.insert(
-            self.input,
-            Source {
-                data: data.to_vec(),
-                pts,
-            },
-        );
+        let mut stored = self.recycled_frames.pop().unwrap_or_default();
+        stored.clear();
+        stored.extend_from_slice(data);
+        self.frames.insert(self.input, Source { data: stored, pts });
         self.input += 1;
         self.stats.input_frames += 1;
         let cost = begin.elapsed().as_micros() as u64;
@@ -349,6 +349,7 @@ impl AmbientSvp {
                     continue;
                 }
                 out.copy_from_slice(&source.data);
+                if self.recycled_frames.len() < MAX_QUEUE { self.recycled_frames.push(source.data); }
                 self.last_output = Some(source.pts);
                 self.stats.output_frames += 1;
                 self.stats.queued_frames = self.frames.len() as u32;
@@ -382,12 +383,12 @@ impl AmbientSvp {
         } else {
             let begin = Instant::now();
             #[cfg(feature = "vulkan")]
-            let gpu_done = if let Some(gpu) = self.gpu.as_mut() {
+            let (gpu_done, known_copy) = if let Some(gpu) = self.gpu.as_mut() {
                 use svpflow_core::smooth_engine::Output;
                 match self.smoother.prepare_gpu(self.output) {
                     Output::Copy(k) => {
                         out.copy_from_slice(&self.frames.get(&k).ok_or("missing copy")?.data);
-                        true
+                        (true, true)
                     }
                     Output::Gpu(job) => {
                         let current = &self.frames.get(&job.n).ok_or("missing current")?.data;
@@ -395,22 +396,22 @@ impl AmbientSvp {
                         match gpu.render(&job, current, next, out) {
                             Ok(()) => {
                                 GPU_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                true
+                                (true, false)
                             }
                             Err(_) => {
                                 self.gpu = None;
                                 self.stats.backend = 1;
-                                false
+                                (false, false)
                             }
                         }
                     }
-                    _ => false,
+                    _ => (false, false),
                 }
             } else {
-                false
+                (false, false)
             };
             #[cfg(not(feature = "vulkan"))]
-            let gpu_done = false;
+            let (gpu_done, known_copy) = (false, false);
             if !gpu_done {
                 self.pool
                     .install(|| self.smoother.render_into(self.output, out))?;
@@ -420,7 +421,7 @@ impl AmbientSvp {
             self.window_cost_us += cost;
             // Count novel pictures, not merely fractional output timestamps:
             // scene cuts and unchanged images can legitimately be copies.
-            if self
+            if !known_copy && self
                 .frames
                 .get(&plan[0])
                 .is_some_and(|s| s.data.as_slice() != out)
@@ -442,7 +443,12 @@ impl AmbientSvp {
         self.stats.output_frames += 1;
         self.last_output = Some(pts);
         let keep = self.smoother.plan(self.output)[0].saturating_sub(3);
-        self.frames = self.frames.split_off(&keep);
+        while self.frames.first_key_value().is_some_and(|(key, _)| *key < keep) {
+            let (_, source) = self.frames.pop_first().unwrap();
+            if self.recycled_frames.len() < MAX_QUEUE {
+                self.recycled_frames.push(source.data);
+            }
+        }
         self.smoother.forget_before(keep);
         self.stats.queued_frames = self.frames.len() as u32;
         Ok(Some(pts))
