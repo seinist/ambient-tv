@@ -47,7 +47,7 @@ static inline bool ambient_fel_compose(pl_gpu gpu, pl_dispatch dispatch,
     if (!sh) return false;
     if (!pl_shader_custom(sh,&(struct pl_custom_shader){
         .input=PL_SHADER_SIG_NONE,.output=PL_SHADER_SIG_COLOR,
-        .descriptors=desc,.num_descriptors=2,
+        .descriptors=desc,.num_descriptors=1,
         .body="color=texelFetch(fel_bl,ivec2(gl_FragCoord.xy),0);",
     })) goto fail;
     pl_shader_dovi_reshape(sh,reshape);
