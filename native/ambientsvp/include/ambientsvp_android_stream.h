@@ -12,6 +12,11 @@ typedef void (*AmbientSvpSourceRelease)(void *context,int release_fd);
 /* Owns a compatible Vulkan compute device. Preflights compositor RGBA
  * storage image import. Only explicit SDR8, <=1080p, nonprotected. */
 AmbientSvpAndroidStream *ambient_svp_android_stream_create(uint32_t,uint32_t);
+/* Optional format-specific stream: 4=BT2020 limited P010, 6=full.
+ * Preflight actual RGBA16F compositor AHB before consuming input.
+ * Fixed stream format; output structs and fence/lease ABI unchanged.
+ * Caller sets full-range BT2020 PQ/HLG and static metadata on ASC. */
+AmbientSvpAndroidStream *ambient_svp_android_stream_create_format(uint32_t,uint32_t,uint32_t);
 /* Borrow the existing decoder buffer; acquire_fd remains caller-owned.
  * Transfer an ADDITIONAL source-picture token to the callback, even on
  * ordinary failure. Callback takes ownership of any returned sync_file.
