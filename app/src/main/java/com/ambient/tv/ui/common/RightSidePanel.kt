@@ -616,6 +616,7 @@ private fun RightSidePanelChrome(
     val panelFocus = remember { FocusRequester() }
     val windowInfo = androidx.compose.ui.platform.LocalWindowInfo.current
     val isHandheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    val inputModeManager = androidx.compose.ui.platform.LocalInputModeManager.current
     val rescueScope = androidx.compose.runtime.rememberCoroutineScope()
     val rescue = remember { RescueRun() }
     val footerAllowed = panelFocusFallback(focusRescue?.levelFresh != false) == PanelFocusFallback.FOOTER
@@ -688,6 +689,11 @@ private fun RightSidePanelChrome(
             // Give Compose one layout frame to attach the panel's controls, then claim focus.
             androidx.compose.runtime.withFrameNanos { }
             if (bodyHasFocus || !panelInteractive) return@LaunchedEffect
+            // A TV drawer explicitly requesting initial remote focus must enter keyboard
+            // mode before requesting its children. Individual controls still obey touch mode.
+            if (!isHandheld && inputModeManager.inputMode == androidx.compose.ui.input.InputMode.Touch) {
+                inputModeManager.requestInputMode(androidx.compose.ui.input.InputMode.Keyboard)
+            }
             // Focus held by the footer/parent group does not mean the content row is focused.
             // A fresh level begins at the first available control, not at its footer Back.
             // The footer is only a fallback for an empty level. A returning level keeps
@@ -923,7 +929,6 @@ fun RightPanelChoice(
     val shape = RoundedCornerShape(LocalUiTokens.current.controlRadius)
     Row(
         modifier = modifier
-            .focusProperties { canFocus = enabled }
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) uiSounds?.playFocus() }
             .menuFocusMotion(focused, focusedScale = 1.006f)
             .then(if (LocalPlayerChromeState.current != null) Modifier.appOsdControlSurface(
