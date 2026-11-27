@@ -25,7 +25,7 @@ pub struct Cost {
 }
 
 impl Candidate {
-    fn valid(self, width: u32, height: u32, pel: u32) -> bool {
+    pub(crate) fn valid(self, width: u32, height: u32, pel: u32) -> bool {
         // Candidate displacement is measured in pel units. Chroma shifts
         // motion before subpel indexing, matching the upstream PlaneView.
         if !matches!(pel, 1 | 2 | 4) || !matches!(self.width, 8 | 16 | 32)
@@ -157,6 +157,13 @@ impl<'a> SuperLevel<'a> {
         let width=(self.width as usize)>>shift;
         let start=self.bases[plane]+(phase as usize*height+y)*self.pitches[plane];
         &self.planes[plane][start..start+width]
+    }
+
+    pub(crate) fn block_luma(&self,x:u32,y:u32,w:u32,h:u32)->Option<u8>{
+        if w==0 || h==0 || x.checked_add(w)?>self.width || y.checked_add(h)?>self.height{return None;}
+        let sum:u64=(y..y+h).map(|row|self.row(0,0,row as usize)[x as usize..(x+w) as usize]
+            .iter().map(|&v|u64::from(v)).sum::<u64>()).sum();
+        Some((sum/(u64::from(w)*u64::from(h))) as u8)
     }
 
     /// Compact the original upstream planar/pitched storage directly into
