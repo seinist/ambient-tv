@@ -430,6 +430,7 @@ private fun SelectorListPopup(
     closeOnSelection: Boolean, close: () -> Unit, onSelected: (String) -> Unit,
 ) {
     val density = LocalDensity.current
+    val panelNavigation = LocalPlayerPanelNavigation.current
     val embeddedUi = com.ambient.tv.ui.display.LocalUiRenderEnvironment.current.embedded
     val gap = with(density) { SelectMenuGap.roundToPx() }
     val margin = with(density) { SelectMenuScreenMargin.roundToPx() }
@@ -457,7 +458,7 @@ private fun SelectorListPopup(
         ReportPlayerPanelPopupWindow()
         // The independent UI dialog preserves the theme scale and can recover to native pixels.
         val popupDensity = if (embeddedUi) LocalDensity.current else density
-        CompositionLocalProvider(LocalDensity provides popupDensity) {
+        CompositionLocalProvider(LocalDensity provides popupDensity, LocalPlayerPanelNavigation provides panelNavigation) {
             LaunchedEffect(optionKeys) {
                 scroll.scrollToItem(rowIndices.getOrElse(initialIndex) { 0 }.coerceAtLeast(0))
                 repeat(12) {
@@ -466,7 +467,7 @@ private fun SelectorListPopup(
                 }
             }
             Box(
-                Modifier.playerPanelInput(LocalPlayerPanelNavigation.current).navigationSoundInput()
+                Modifier.playerPanelInput(panelNavigation).navigationSoundInput()
                     .requiredWidth(width)
                     .heightIn(max = maxHeight)
                     .clip(shape)
@@ -592,6 +593,9 @@ private fun PlayerDropUpOptionRow(
                 else toggleableState = ToggleableState(selected)
             }
             .focusRequester(optionFocus[index])
+            // An explicitly opened, focusable selector must accept remote and keyboard focus,
+            // including when the trigger was activated in touch mode.
+            .focusProperties { canFocus = enabled }
             .onFocusChanged { optionFocused = it.isFocused || it.hasFocus; if (it.isFocused) uiSounds?.playFocus() }
             .then(if (inPlayer) Modifier.appOsdControlSurface(
                 focused = optionFocused, selected = selected && matchTrigger,
