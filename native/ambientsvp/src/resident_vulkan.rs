@@ -579,7 +579,9 @@ mod gpu_tests{
                     q.queue_count>0&&q.queue_flags.contains(vk::QueueFlags::COMPUTE)).map(|i|(p,i as u32))).unwrap();
             let priorities=[1.0];
             let queues=[vk::DeviceQueueCreateInfo::default().queue_family_index(family).queue_priorities(&priorities)];
-            let d=instance.create_device(physical,&vk::DeviceCreateInfo::default().queue_create_infos(&queues),None).unwrap();
+            let extended=instance.get_physical_device_features(physical).shader_storage_image_extended_formats!=0;
+            let features=vk::PhysicalDeviceFeatures::default().shader_storage_image_extended_formats(extended);
+            let d=instance.create_device(physical,&vk::DeviceCreateInfo::default().queue_create_infos(&queues).enabled_features(&features),None).unwrap();
             let queue=d.get_device_queue(family,0);
             let props=instance.get_physical_device_memory_properties(physical);
             let (w,h)=(66u32,34u32);
@@ -811,6 +813,93 @@ mod gpu_tests{
                 assert!(observed[1]>observed[0],"10-bit codes collapsed");
                 ambient_svp_vk_destroy(engine);
                 for img in high{d.destroy_image_view(img.view,None);d.destroy_image(img.image,None);d.free_memory(img.memory,None);}
+            }
+            // Raw YUV transport for a downstream Dolby Vision reshaper:
+            // verify exact endpoint packing and a fractional chroma/luma
+            // midpoint without applying any RGB matrix.
+            if extended{
+                for mode in [4,5]{
+                    let engine=ambient_svp_vk_create_format(instance.handle(),physical,d.handle(),
+                        Some(entry.static_fn().get_instance_proc_addr),w,h,mode);
+                    assert!(!engine.is_null(),"raw resident mode {mode}");
+                    let planes=raw_planes(mode);
+                    let mut raw=Vec::new();
+                    for image_index in 0..3{
+                        for plane in 0..planes{
+                            let (pw,ph)=if plane==0{(w,h)}else{(w/2,h/2)};
+                            let format=if mode==4&&plane==1{vk::Format::R16G16_UNORM}else{vk::Format::R16_UNORM};
+                            raw.push(image(&d,&props,pw,ph,format,if image_index==2{out}else{src}));
+                        }
+                    }
+                    let make=|i:usize|VulkanPicture{y:raw[i*planes].view,u:raw[i*planes+1].view,
+                        v:if planes==3{raw[i*planes+2].view}else{vk::ImageView::null()},nv12:if mode==4{1}else{0},chroma_location:1};
+                    let a=make(0);let b=make(1);
+                    let views=raw[2*planes..].iter().map(|img|img.view).collect::<Vec<_>>();
+                    for (i,phase) in [0.0,0.5,1.0].into_iter().enumerate(){
+                        d.reset_fences(&[fence]).unwrap();
+                        d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
+                        d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).unwrap();
+                        if i==0{
+                            for (j,img) in raw[..2*planes].iter().enumerate(){
+                                transition(&d,cmd,img.image,vk::ImageLayout::UNDEFINED,vk::ImageLayout::GENERAL,
+                                    vk::AccessFlags::empty(),vk::AccessFlags::TRANSFER_WRITE,
+                                    vk::PipelineStageFlags::TOP_OF_PIPE,vk::PipelineStageFlags::TRANSFER);
+                                let n=(j/planes) as f32;
+                                let (x,y)=match j%planes{0=>(400.0+4.0*n,0.0),1=>(511.0+2.0*n,514.0+4.0*n),_=>(514.0+4.0*n,0.0)};
+                                let scale=if mode==4{64.0/65535.0}else{1.0/65535.0};
+                                d.cmd_clear_color_image(cmd,img.image,vk::ImageLayout::GENERAL,
+                                    &vk::ClearColorValue{float32:[x*scale,y*scale,0.0,1.0]},&[range()]);
+                                transition(&d,cmd,img.image,vk::ImageLayout::GENERAL,vk::ImageLayout::GENERAL,
+                                    vk::AccessFlags::TRANSFER_WRITE,vk::AccessFlags::SHADER_READ,
+                                    vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::COMPUTE_SHADER);
+                            }
+                        }
+                        for img in &raw[2*planes..]{
+                            transition(&d,cmd,img.image,if i==0{vk::ImageLayout::UNDEFINED}else{vk::ImageLayout::TRANSFER_SRC_OPTIMAL},
+                                vk::ImageLayout::GENERAL,if i==0{vk::AccessFlags::empty()}else{vk::AccessFlags::TRANSFER_READ},
+                                vk::AccessFlags::SHADER_WRITE,if i==0{vk::PipelineStageFlags::TOP_OF_PIPE}else{vk::PipelineStageFlags::TRANSFER},
+                                vk::PipelineStageFlags::COMPUTE_SHADER);
+                        }
+                        let pair=ambient_svp_vk_begin(engine,cmd,&a,&b);
+                        assert!(!pair.is_null());
+                        assert_eq!(ambient_svp_vk_render(pair,phase,0,views[0]),-1);
+                        assert_eq!(ambient_svp_vk_render_raw(pair,phase,views.as_ptr(),1),-1);
+                        assert_eq!(ambient_svp_vk_render_raw(pair,phase,views.as_ptr(),planes as u32),0);
+                        for (p,img) in raw[2*planes..].iter().enumerate(){
+                            transition(&d,cmd,img.image,vk::ImageLayout::GENERAL,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                                vk::AccessFlags::SHADER_WRITE,vk::AccessFlags::TRANSFER_READ,
+                                vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::TRANSFER);
+                            let (pw,ph)=if p==0{(w,h)}else{(w/2,h/2)};
+                            let region=[vk::BufferImageCopy::default().buffer_offset(bytes*p as u64)
+                                .image_subresource(vk::ImageSubresourceLayers::default().aspect_mask(vk::ImageAspectFlags::COLOR).layer_count(1))
+                                .image_extent(vk::Extent3D{width:pw,height:ph,depth:1})];
+                            d.cmd_copy_image_to_buffer(cmd,img.image,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,readback,&region);
+                        }
+                        d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::HOST,
+                            vk::DependencyFlags::empty(),&host,&[],&[]);
+                        d.end_command_buffer(cmd).unwrap();
+                        d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
+                        assert_eq!(ambient_svp_vk_seal(pair,fence),0);
+                        d.wait_for_fences(&[fence],true,20_000_000_000).unwrap();
+                        assert_eq!(ambient_svp_vk_release(pair),1);
+                        let mapped=d.map_memory(readback_memory,0,bytes*3,vk::MemoryMapFlags::empty()).unwrap();
+                        let data=std::slice::from_raw_parts(mapped.cast::<u8>(),(bytes*3) as usize);
+                        let shift=if mode==4{6}else{0};
+                        for p in 0..planes{
+                            let count=if p==0{w*h}else{w*h/4};
+                            let components=if mode==4&&p==1{2}else{1};
+                            let start=bytes as usize*p;
+                            for (j,pixel) in data[start..start+count as usize*components*2].chunks_exact(2).enumerate(){
+                                let code=match p{0=>400+2*i,1 if components==2&&j%2==1=>514+2*i,1=>511+i,_=>514+2*i};
+                                assert_eq!(u16::from_ne_bytes([pixel[0],pixel[1]]),(code as u16)<<shift,
+                                    "raw mode {mode} plane {p} phase {phase}");
+                            }
+                        }
+                        d.unmap_memory(readback_memory);
+                    }
+                    ambient_svp_vk_destroy(engine);
+                    for img in raw{d.destroy_image_view(img.view,None);d.destroy_image(img.image,None);d.free_memory(img.memory,None);}
+                }
             }
             d.destroy_fence(fence,None);d.destroy_command_pool(pool,None);
             d.destroy_buffer(readback,None);d.free_memory(readback_memory,None);
