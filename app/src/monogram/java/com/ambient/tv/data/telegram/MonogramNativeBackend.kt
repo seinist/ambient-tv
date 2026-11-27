@@ -59,6 +59,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     private val chunkIndex = LinkedHashMap<File, Long>(128, 0.75f, true)
     private var chunkIndexGeneration = -1L
     private var chunkIndexBytes = 0L
+    private val chunkTouched = HashMap<File, Long>()
     // Cap memory by heap class and use a stricter ceiling on low-RAM devices.
     private val hotChunkLimit = run {
         val manager = app.getSystemService(android.app.ActivityManager::class.java)
@@ -91,6 +92,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         hotChunks.clear()
         synchronized(mediaDigests) { mediaDigests.clear() }
         chunkIndex.clear()
+        chunkTouched.clear()
         chunkIndexBytes = 0L
         chunkIndexGeneration = -1L
         inlinePreviewIndex.clear()
@@ -259,13 +261,24 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
     private var updatesJob: kotlinx.coroutines.Job? = null
     @Volatile private var updatesStarted = false
+    private val activeUntil = java.util.concurrent.atomic.AtomicLong()
+    private val updateWake = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+
+    private fun noteInteractiveActivity() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val previous = activeUntil.getAndSet(now + 10_000L)
+        if (previous <= now) updateWake.trySend(Unit)
+    }
 
     private fun startUpdatesPump() {
         if (updatesJob?.isActive == true) return
         updatesJob = updatesScope.launch {
             var backoffMs = UPDATES_POLL_MS
             while (true) {
-                kotlinx.coroutines.delay(backoffMs)
+                val active = android.os.SystemClock.elapsedRealtime() < activeUntil.get()
+                kotlinx.coroutines.withTimeoutOrNull(if (active) minOf(backoffMs, 2_000L) else backoffMs) {
+                    updateWake.receive()
+                }
                 backoffMs = try {
                     val generation = cacheGeneration
                     val identity = accountId
@@ -368,6 +381,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     val entry = entries.next()
                     if (affected(entry.key)) {
                         chunkIndexBytes -= entry.value
+                        chunkTouched.remove(entry.key)
                         entries.remove()
                     }
                 }
@@ -1128,8 +1142,9 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     }
 
     // A single channel keeps its history-offset cursor; recent and categories use a global timeline.
-    override suspend fun browse(section: String, cursor: String?, limit: Int): TelegramMediaPage =
-        if (!section.startsWith("channel:")) browseMutex.withLock { nativeCall { h ->
+    override suspend fun browse(section: String, cursor: String?, limit: Int): TelegramMediaPage {
+        noteInteractiveActivity()
+        return if (!section.startsWith("channel:")) browseMutex.withLock { nativeCall { h ->
             requireAuthorized(h)
             recent(h, cursor, limit, section)
         } } else browsePermits.withPermit { nativeCall { h ->
@@ -1165,6 +1180,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 "$epoch:$index:$offset" else null
             TelegramMediaPage(items.distinctBy(TelegramMedia::mediaKey), next)
         } }
+    }
 
     /**
      * messages.searchGlobal has no media filter (search_rpc.rs), so its hits are reduced to
@@ -1486,6 +1502,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
 
     private suspend fun loadMediaWindow(chatId: Long, messageId: Int, offset: Long, lengths: List<Int?>,
         nativeMediaKey: String?, priority: TelegramTransferPriority): List<ByteArray> {
+        noteInteractiveActivity()
         require(offset >= 0L && offset % TELEGRAM_MEDIA_PART_BYTES == 0L)
         require(lengths.size in 1..2 && lengths.all { it == null || it in 1..TELEGRAM_MEDIA_PART_BYTES })
         require(lengths.size == 1 || lengths.first() == TELEGRAM_MEDIA_PART_BYTES && lengths.last() != null)
@@ -1514,6 +1531,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 prepareChunkIndex(dir)
                 hotChunks[cacheFile]?.takeIf { validSize(index, it.size) }?.let {
                     chunkIndex[cacheFile]
+                    touchChunk(cacheFile)
                     return it
                 }
                 // Files are published atomically and never modified in place.
@@ -1525,9 +1543,13 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 verifyGeneration()
                 if (bytes != null && bytes.size.toLong() == candidate && validSize(index, bytes.size)) {
                     rememberHotChunk(cacheFile, bytes)
+                    touchChunk(cacheFile)
                     bytes
                 } else {
-                    if (cacheFile.delete() || !cacheFile.exists()) chunkIndexBytes -= chunkIndex.remove(cacheFile) ?: 0L
+                    if (cacheFile.delete() || !cacheFile.exists()) {
+                        chunkIndexBytes -= chunkIndex.remove(cacheFile) ?: 0L
+                        chunkTouched.remove(cacheFile)
+                    }
                     null
                 }
             }
@@ -1612,6 +1634,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     private fun prepareChunkIndex(dir: File) {
         if (chunkIndexGeneration == cacheGeneration) return
         chunkIndex.clear()
+        chunkTouched.clear()
         chunkIndexBytes = 0L
         dir.listFiles().orEmpty().filter {
             it.isFile && it.name.endsWith(".bin") && !it.name.startsWith("part-")
@@ -1623,6 +1646,14 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     private fun rememberChunk(file: File) {
         val size = file.length()
         chunkIndexBytes += size - (chunkIndex.put(file, size) ?: 0L)
+        chunkTouched[file] = file.lastModified()
+    }
+
+    /** Persist recency at most once per minute per on-disk entry. */
+    private fun touchChunk(file: File) {
+        val touched = chunkTouched[file] ?: return
+        val now = System.currentTimeMillis()
+        if (now - touched >= 60_000L && file.setLastModified(now)) chunkTouched[file] = now
     }
 
     private fun trimChunkCache() {
@@ -1631,6 +1662,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             val entry = iterator.next()
             if (entry.key.delete() || !entry.key.exists()) {
                 chunkIndexBytes -= entry.value
+                chunkTouched.remove(entry.key)
                 iterator.remove()
             }
         }
