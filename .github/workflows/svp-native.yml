@@ -48,6 +48,7 @@ jobs:
           export AMBIENTSVP_TEST_SOFTWARE_VULKAN=1
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::dual_output_matches_single_and_drops_prefetch_on_seek -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::compact_motion_fields_match_float_fields -- --ignored --exact
+          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib pipelining_tests::complete_output_overwrite_matches_clear_on_unaligned_planes -- --ignored --exact
       - name: Cross-check Android JNI and private Vulkan cache
         run: |
           rustup target add --toolchain stable aarch64-linux-android
