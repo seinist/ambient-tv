@@ -39,15 +39,15 @@ static inline bool ambient_hdrplus_curve_key_equal(const struct ambient_hdrplus 
         return false;
     for (unsigned i=0; i<a->window_count; ++i) {
         const struct ambient_hdrplus_window *x=&a->windows[i], *y=&b->windows[i];
-        float xp=fmaxf(x->maxscl[0],fmaxf(x->maxscl[1],x->maxscl[2]));
-        float yp=fmaxf(y->maxscl[0],fmaxf(y->maxscl[1],y->maxscl[2]));
+        float xp=ambient_hdrplus_source_peak(x,a->version);
+        float yp=ambient_hdrplus_source_peak(y,b->version);
         float am,at,bm,bt;
         if (!ambient_hdrplus_grid_factor(&a->mastering_grid,x,&am) ||
             !ambient_hdrplus_grid_factor(&a->targeted_grid,x,&at) ||
             !ambient_hdrplus_grid_factor(&b->mastering_grid,y,&bm) ||
             !ambient_hdrplus_grid_factor(&b->targeted_grid,y,&bt) || am!=bm || at!=bt)
             return false;
-        if (xp!=yp || x->average!=y->average || x->knee_x!=y->knee_x ||
+        if (xp!=yp || x->tone_mapping!=y->tone_mapping || x->average!=y->average || x->knee_x!=y->knee_x ||
             x->knee_y!=y->knee_y || x->anchor_count!=y->anchor_count ||
             x->anchor_count>15)
             return false;
@@ -67,7 +67,7 @@ static inline bool ambient_hdrplus_spatial_curves(pl_gpu gpu, struct ambient_hdr
     s->valid=false;
     for (unsigned i=0;i<3;++i) {
         const struct ambient_hdrplus_window *w=&m->windows[i<m->window_count?i:0];
-        float peak=10000.f*fmaxf(w->maxscl[0],fmaxf(w->maxscl[1],w->maxscl[2]));
+        float peak=10000.f*ambient_hdrplus_source_peak(w,m->version);
         if (!isfinite(peak) || peak<=out_min || peak>10000.f ||
             !isfinite(w->average) || w->average<0.f || w->average>1.f ||
             w->anchor_count>15) return false;
@@ -93,7 +93,19 @@ static inline bool ambient_hdrplus_spatial_curves(pl_gpu gpu, struct ambient_hdr
         p.hdr.ootf.num_anchors=w->anchor_count;
         memcpy(p.hdr.ootf.anchors,w->anchors,w->anchor_count * sizeof(w->anchors[0]));
         s->domains[i]=p.input_max;
-        pl_tone_map_generate(s->curves[i],&p);
+        // For the authored target, evaluate the specified normalized
+        // function directly. Adaptation to a different display peak is
+        // libplacebo policy, except for endpoint knees which its fitting
+        // implementation cannot represent reliably.
+        const bool endpoint=w->knee_x==0.f||w->knee_x==1.f||
+            w->knee_y==0.f||w->knee_y==1.f;
+        if(endpoint || fabsf(out_max-m->target_nits)<=0.01f) {
+            for(unsigned j=0;j<AMBIENT_HDRPLUS_LUT_SIZE;j++){
+                float x=(float)j/(AMBIENT_HDRPLUS_LUT_SIZE-1);
+                float y=ambient_hdrplus_bezier(w,x*x);
+                s->curves[i][j]=p.output_min+(p.output_max-p.output_min)*y;
+            }
+        }else pl_tone_map_generate(s->curves[i],&p);
         float previous=0.f;
         for(unsigned j=0;j<AMBIENT_HDRPLUS_LUT_SIZE;++j) {
             float v=s->curves[i][j];
