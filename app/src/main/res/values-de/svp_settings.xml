@@ -51,5 +51,6 @@
     <string name="svp_reason_passthrough">keine Zwischenbilder</string>
     <string name="svp_reason_starting">startet …</string>
     <string name="svp_reason_overload">zu langsam, für diese Wiedergabe aus</string>
-    <string name="svp_mode_adaptive">Adaptiv (Qualität bei Überlast senken)</string>
+    <string name="svp_mode_adaptive">Adaptiv</string>
+    <string name="svp_adaptive_hint">Beginnt mit leichter Analyse und reduziert bei Überlast die Bewegungsanalysequalität. Bildrate und Zeitstempel bleiben gleich.</string>
 </resources>
