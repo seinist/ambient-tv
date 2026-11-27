@@ -77,6 +77,7 @@ import com.ambient.tv.ui.common.BrowseFocusKey
 import com.ambient.tv.ui.common.BrowseStatusKind
 import com.ambient.tv.ui.common.BrowseStatusPanel
 import com.ambient.tv.ui.common.ContentRow
+import com.ambient.tv.ui.common.ContentRowData
 import com.ambient.tv.ui.common.FilterBar
 import com.ambient.tv.ui.common.FilterBarModel
 import com.ambient.tv.ui.common.LocalFilterBarSetting
@@ -349,8 +350,9 @@ fun TelegramScreen(
     }
     // Observe indices, not pixel offsets: scrolling within the same tile does not restart
     // downloads. A short quiet period avoids competing with D-pad/touch navigation.
+    val rowPrefetchColumns = monogramRowVisibleColumns(gridColumns)
     LaunchedEffect(sectionKey, state.section, state.available, layout, currentRows, flat,
-        rowList, flatList, grid, showViewOptions, gridColumns) {
+        rowList, flatList, grid, showViewOptions, rowPrefetchColumns) {
         if (!state.available || state.section != sectionKey || showViewOptions) return@LaunchedEffect
         snapshotFlow {
             val refs = if (layout == MonogramBrowseLayout.ROWS) {
@@ -360,7 +362,7 @@ fun TelegramScreen(
                         val focusedIndex = row.items.indexOfFirst { it.ratingKey == viewportFocusKey }
                         val first = focusedIndex.coerceAtLeast(0)
                         row.copy(items = monogramViewportItems(row.items, first, first,
-                            ahead = monogramRowVisibleColumns(gridColumns) + 2, behind = 1))
+                            ahead = rowPrefetchColumns + 2, behind = 1))
                     }
                 }
                 monogramPrefetchTargets(windows, limit = 16)
