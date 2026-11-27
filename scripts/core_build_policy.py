@@ -324,7 +324,19 @@ def prepare_cmake(root, core, profile):
     # SwanStation's pin sets IPO unconditionally for Release, overriding cache flags.
     # Preserve the upstream baseline. In explicit candidates disable only the
     # automatic IPO block; the workflow supplies the requested LTO mode itself.
-    if core != "swanstation" or profile not in ({"o3", "thinlto", "o3-thinlto"} | PUBLIC_EXPERIMENTS):
+    if profile not in ({"o3", "thinlto", "o3-thinlto"} | PUBLIC_EXPERIMENTS):
+        return
+    if core == "panda3ds":
+        # ENABLE_USER_BUILD also disables assertions; keep that setting and
+        # disable only its implicit IPO so the explicit ThinLTO policy wins.
+        path = root / "CMakeLists.txt"
+        source = path.read_text()
+        marker = "if(ENABLE_LTO OR ENABLE_USER_BUILD)"
+        if source.count(marker) != 1 or source.count("set_target_properties(panda3ds_libretro PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)") != 1:
+            raise ValueError("Panda3DS IPO recipe changed; inspect the pinned CMakeLists.txt")
+        path.write_text(source.replace(marker, "if(FALSE) # Ambient TV explicit compiler profile"))
+        return
+    if core != "swanstation":
         return
     path = root / "CMakeLists.txt"
     source = path.read_text()

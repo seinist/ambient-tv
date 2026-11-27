@@ -397,6 +397,36 @@ class CoreBuildPolicyTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 prepare_cmake(root, "swanstation", "thinlto")
 
+    def test_panda3ds_ipo_is_not_allowed_to_override_explicit_profile(self):
+        original = ("if(ENABLE_LTO OR ENABLE_USER_BUILD)\n"
+                    "  set_target_properties(panda3ds_libretro PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)\n"
+                    "endif()\n")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "CMakeLists.txt"
+            path.write_text(original)
+            prepare_cmake(root, "panda3ds", "baseline")
+            self.assertEqual(path.read_text(), original)
+            prepare_cmake(root, "panda3ds", "optimized-a57")
+            self.assertIn("if(FALSE)", path.read_text())
+            self.assertIn("INTERPROCEDURAL_OPTIMIZATION TRUE", path.read_text())
+            with self.assertRaises(ValueError):
+                prepare_cmake(root, "panda3ds", "optimized")
+
+    def test_extended_acceleration_contracts_are_architecture_specific(self):
+        self.assertIn("jit_fastmem_build", requirements("melondsds", "arm64-v8a", "optimized"))
+        self.assertNotIn("jit_fastmem_build", requirements("melondsds", "armeabi-v7a", "optimized"))
+        self.assertNotIn("dynarmic", requirements("citra2018", "arm64-v8a", "optimized"))
+        self.assertIn("dynarmic", requirements("citra2018", "x86_64", "optimized"))
+        self.assertIn("vif_neon", requirements("armsx2", "arm64-v8a", "optimized-a57"))
+        self.assertIn("spu2_neon", requirements("armsx2", "arm64-v8a", "optimized-a57"))
+        rules = requirements("vice_x64sc", "arm64-v8a", "optimized")
+        commands = [["-D" + key + "=" + value for key, value in macros] + ["-c", source]
+                    for source, macros in rules.values()]
+        self.assertTrue(all(audit_acceleration(commands, "vice_x64sc", "arm64-v8a", "optimized").values()))
+        with self.assertRaises(ValueError):
+            audit_acceleration(commands, "vice_x64", "arm64-v8a", "optimized")
+
     def test_threaded_snes_candidate(self):
         matrix = plan(self.catalog, "workflow_dispatch", "refs/heads/feature", False,
                       profile="snes9x2010-threaded")["include"]
@@ -440,7 +470,7 @@ class CoreBuildPolicyTest(unittest.TestCase):
         self.assertEqual(AUDITED, {core["core"] for core in self.catalog["cores"]})
         for entry in self.catalog["cores"]:
             core = entry["core"]
-            for abi in self.catalog["abis"]:
+            for abi in entry.get("abis", self.catalog["abis"]):
                 with self.subTest(core=core, abi=abi):
                     rules = requirements(core, abi, "baseline")
                     # These two recipes intentionally have no acceleration
@@ -464,7 +494,8 @@ class CoreBuildPolicyTest(unittest.TestCase):
                       profile="core-hotpaths")["include"]
         self.assertEqual({item["core"] for item in matrix},
                          {core["core"] for core in self.catalog["cores"]} - {"picodrive", "snes9x2010"})
-        self.assertEqual(len(matrix), 24 * len(self.catalog["abis"]))
+        self.assertEqual(len(matrix), sum(len(c.get("abis", self.catalog["abis"])) for c in self.catalog["cores"]
+                                         if c["core"] not in {"picodrive", "snes9x2010"}))
         self.assertTrue(all(item["artifact"].startswith("candidate-core-hotpaths-") for item in matrix))
         with self.assertRaises(ValueError):
             plan(self.catalog, "workflow_dispatch", "refs/heads/main", True, profile="core-hotpaths")
