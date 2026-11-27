@@ -97,6 +97,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         sharpPreviewIndex.clear()
         inlineMemo.clear()
         displayAliases.clear()
+        runCatching { uniffi.monogram_mtproto.ambientClearPreviewIndex() }
     }
     /** Account-generation fences prevent older thumbnail RPCs repopulating a new account's cache. */
     @Volatile private var cacheGeneration = 0L
@@ -461,6 +462,31 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         kotlinx.coroutines.delay(waitMs + 250)
     }
 
+    private var nativePipelineParts = 0
+    private var lastNativeNetworkCheck = -5_000L
+    private val nativeLowRam = app.getSystemService(android.app.ActivityManager::class.java)?.isLowRamDevice == true
+
+    /** Refresh outside hot read loops; keep the demand lane count fixed at four. */
+    private fun refreshNativePipelineLocked(force: Boolean = false) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!force && now - lastNativeNetworkCheck < 5_000L) return
+        lastNativeNetworkCheck = now
+        val parts = runCatching {
+            val cm = app.getSystemService(android.net.ConnectivityManager::class.java)
+            val network = cm?.activeNetwork
+            val caps = network?.let { cm.getNetworkCapabilities(it) }
+            monogramNativePipelineParts(
+                metered = cm?.isActiveNetworkMetered != false,
+                downstreamKbps = caps?.linkDownstreamBandwidthKbps ?: 0,
+                lowRam = nativeLowRam,
+            )
+        }.getOrDefault(2)
+        if (force || parts != nativePipelineParts) {
+            native.setDownloadConcurrency(4, parts)
+            nativePipelineParts = parts
+        }
+    }
+
     /** Serializes native operations and keeps network work off the UI thread. */
     private suspend fun <T> nativeCallOnce(connect: Boolean = true, action: (Long) -> T): T =
         withContext(Dispatchers.IO) {
@@ -496,9 +522,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                         android.util.Log.i("MonogramPerf", "CPU features: ${uniffi.monogram_mtproto.ambientCpuFeatures()}")
                     }
                     uniffi.monogram_mtproto.setAmbientCdnRanges(com.ambient.tv.BuildConfig.MONOGRAM_CDN_RANGES)
-                    native.setDownloadConcurrency(4, 4)
+                    refreshNativePipelineLocked(force = true)
                     connected = false
                 }
+                if (connect) refreshNativePipelineLocked()
                 if (connect && !connected) {
                     native.connect(handle)
                     connected = true

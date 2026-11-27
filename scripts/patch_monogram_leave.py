@@ -47,7 +47,7 @@ MODIFICATIONS = {
     "vendor/mono-rs/crates/mono-proto-client/src/media_lane.rs":
         "avoid duplicate decoding and lane splitting for captured ranges",
     "vendor/mono-rs/crates/mono-proto-runtime/src/rpc/framing.rs":
-        "reuse a bounded receive scratch buffer",
+        "reuse a bounded receive scratch buffer and reserve validated large frame capacity",
     "vendor/mono-rs/crates/mono-proto-crypto/src/symmetric.rs":
         "added safe in-place AES-IGE primitives",
     "native/mtproto/build.gradle.kts":
@@ -945,6 +945,11 @@ fn ambient_preview_index() -> &'static std::sync::Mutex<AmbientPreviewIndex> {
     static INDEX: std::sync::OnceLock<std::sync::Mutex<AmbientPreviewIndex>> = std::sync::OnceLock::new();
     INDEX.get_or_init(Default::default)
 }
+pub fn ambient_clear_preview_index() {
+    if let Ok(mut index) = ambient_preview_index().lock() {
+        *index = AmbientPreviewIndex::default();
+    }
+}
 pub fn ambient_register_preview_sizes<'a>(
     document: bool, id: i64, access_hash: i64, sizes: impl Iterator<Item = &'a PhotoSize>,
 ) {
@@ -1078,6 +1083,10 @@ pub fn ambient_display_identity(handle: u64, chat_id: i64, message_id: i32) -> O
 }
 """, "pub fn ambient_display_identity(")
 add_before(ffi, "#[uniffi::export]\npub fn download_message_thumb(", """#[uniffi::export]
+pub fn ambient_clear_preview_index() {
+    proto_media::thumbs::ambient_clear_preview_index();
+}
+#[uniffi::export]
 pub fn ambient_display_identity(handle: u64, chat_id: i64, message_id: i32, target: u32) -> Option<String> {
     proto_media::thumbs::ambient_with_preview_target(target, ||
         mono_proto_client::media_download::ambient_display_identity(handle, chat_id, message_id))
@@ -1484,6 +1493,35 @@ add_before(framing, "pub fn recv_framed(", """thread_local! {
     static AMBIENT_RECV_SCRATCH: std::cell::RefCell<Option<Vec<u8>>> =
         const { std::cell::RefCell::new(None) };
 }
+// Only reserve after a substantial frame prefix is present and the framing
+// decoder has validated its declared length. Never preallocate arbitrary headers.
+fn ambient_reserve_frame(input: &mut Vec<u8>, needed: usize, available: usize) -> Result<(), MtprotoError> {
+    const MIN_PREFIX: usize = 64 * 1024;
+    const MAX_RESERVE: usize = 2 * 1024 * 1024;
+    if available == input.len() && available >= MIN_PREFIX && needed <= MAX_RESERVE
+        && needed > input.capacity() && needed.saturating_sub(available) >= MIN_PREFIX {
+        input.try_reserve_exact(needed - available)
+            .map_err(|_| MtprotoError::Message("media frame allocation failed".into()))?;
+    }
+    Ok(())
+}
+#[cfg(test)]
+mod ambient_recv_reserve_tests {
+    use super::*;
+    #[test]
+    fn only_validated_substantial_bounded_prefix_reserves() {
+        let mut input = vec![0; 4];
+        ambient_reserve_frame(&mut input, 512 * 1024, 4).unwrap();
+        assert!(input.capacity() < 512 * 1024);
+        input.resize(64 * 1024, 0);
+        let before = input.capacity();
+        ambient_reserve_frame(&mut input, 3 * 1024 * 1024, 64 * 1024).unwrap();
+        assert_eq!(input.capacity(), before);
+        ambient_reserve_frame(&mut input, 512 * 1024, 64 * 1024).unwrap();
+        assert!(input.capacity() >= 512 * 1024);
+        assert_eq!(input.len(), 64 * 1024);
+    }
+}
 struct AmbientRecvScratch(Vec<u8>);
 impl AmbientRecvScratch {
     fn take() -> Self {
@@ -1505,7 +1543,7 @@ impl Drop for AmbientRecvScratch {
 amend(framing, "    let mut buf = vec![0_u8; 64 * 1024];",
       "    let mut scratch = AmbientRecvScratch::take();\n    let buf = &mut scratch.0;")
 amend(framing, "                let n = match conn.receive(&mut buf) {",
-      "                let n = match conn.receive(buf.as_mut_slice()) {")
+      "                ambient_reserve_frame(input, needed, available)?;\n                let n = match conn.receive(buf.as_mut_slice()) {")
 # Safe in-place IGE: retain original APIs, use ownership for the envelope.
 crypto_symmetric = "vendor/mono-rs/crates/mono-proto-crypto/src/symmetric.rs"
 add_before(crypto_symmetric, "/// Apply AES-256-CTR in place", """/// Encrypt validated complete AES-IGE blocks in place.
