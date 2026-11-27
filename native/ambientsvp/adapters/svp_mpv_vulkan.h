@@ -142,6 +142,90 @@ static bool svp_vk_hdrplus_same(const struct mp_image *a,const struct mp_image *
     // sufficient condition. A false mismatch merely repeats source frames.
     return !memcmp(x->data,y->data,x->size);
 }
+/* Temporal estimates for a synthesized image, not measured image statistics.
+ * Interpolate only like-for-like window topology and quantize back to the
+ * ST 2094-40 field units. No invented windows or percentile indices. */
+static bool svp_hdr_lerp_q(AVRational *out,AVRational a,AVRational b,double t,int unit,double limit)
+{
+    if (a.den<=0 || b.den<=0 || a.num<0 || b.num<0) return false;
+    double x=(double)a.num/a.den,y=(double)b.num/b.den;
+    if (x>limit || y>limit) return false;
+    double value=round((x+(y-x)*t)*unit);
+    if (!isfinite(value) || value<0 || value>INT32_MAX) return false;
+    *out=(AVRational){(int)value,unit};return true;
+}
+static bool svp_hdr_window_lerp(AVHDRPlusColorTransformParams *o,
+    const AVHDRPlusColorTransformParams *a,const AVHDRPlusColorTransformParams *b,double t,bool local)
+{
+    if (a->num_distribution_maxrgb_percentiles!=b->num_distribution_maxrgb_percentiles ||
+        a->num_distribution_maxrgb_percentiles>15 || a->tone_mapping_flag!=b->tone_mapping_flag ||
+        a->tone_mapping_flag>1 || a->num_bezier_curve_anchors!=b->num_bezier_curve_anchors ||
+        a->num_bezier_curve_anchors>15 || a->color_saturation_mapping_flag!=b->color_saturation_mapping_flag ||
+        a->color_saturation_mapping_flag>1) return false;
+#define Q(field,unit,limit) if(!svp_hdr_lerp_q(&o->field,a->field,b->field,t,unit,limit))return false
+    if (local) {
+        if (a->overlap_process_option!=b->overlap_process_option || a->overlap_process_option>1 ||
+            a->rotation_angle!=b->rotation_angle || a->rotation_angle>180) return false;
+        Q(window_upper_left_corner_x,65535,1);Q(window_upper_left_corner_y,65535,1);
+        Q(window_lower_right_corner_x,65535,1);Q(window_lower_right_corner_y,65535,1);
+        if (o->window_upper_left_corner_x.num>=o->window_lower_right_corner_x.num ||
+            o->window_upper_left_corner_y.num>=o->window_lower_right_corner_y.num) return false;
+#define U(field) o->field=(uint16_t)round(a->field+(b->field-(double)a->field)*t)
+        U(center_of_ellipse_x);U(center_of_ellipse_y);
+        U(semimajor_axis_internal_ellipse);U(semimajor_axis_external_ellipse);U(semiminor_axis_external_ellipse);
+#undef U
+        if (!o->semimajor_axis_internal_ellipse || !o->semiminor_axis_external_ellipse ||
+            o->semimajor_axis_external_ellipse<o->semimajor_axis_internal_ellipse ||
+            o->semimajor_axis_external_ellipse<o->semiminor_axis_external_ellipse) return false;
+    }
+    for (unsigned i=0;i<3;i++){Q(maxscl[i],100000,1);}
+    Q(average_maxrgb,100000,1);Q(fraction_bright_pixels,1000,1);
+    for (unsigned i=0;i<a->num_distribution_maxrgb_percentiles;i++){
+        if (a->distribution_maxrgb[i].percentage!=b->distribution_maxrgb[i].percentage ||
+            a->distribution_maxrgb[i].percentage>100 ||
+            (i && a->distribution_maxrgb[i].percentage<=a->distribution_maxrgb[i-1].percentage)) return false;
+        Q(distribution_maxrgb[i].percentile,100000,1);
+    }
+    if (a->tone_mapping_flag){
+        Q(knee_point_x,4095,1);Q(knee_point_y,4095,1);
+        if (!o->knee_point_x.num || !o->knee_point_y.num) return false;
+        for(unsigned i=0;i<a->num_bezier_curve_anchors;i++){
+            Q(bezier_curve_anchors[i],1023,1);
+            if(i && o->bezier_curve_anchors[i].num<o->bezier_curve_anchors[i-1].num)return false;
+        }
+    }
+    if(a->color_saturation_mapping_flag){Q(color_saturation_weight,8,7.875);}
+#undef Q
+    return true;
+}
+static bool svp_hdrplus_lerp(AVDynamicHDRPlus *out,const AVBufferRef *x,const AVBufferRef *y,double t)
+{
+    if(!out||!x||!y||!x->data||!y->data||x->size!=sizeof(*out)||y->size!=sizeof(*out)||
+        !isfinite(t)||t<0||t>1)return false;
+    const AVDynamicHDRPlus *a=(const AVDynamicHDRPlus *)x->data,*b=(const AVDynamicHDRPlus *)y->data;
+    if(a->num_windows<1||a->num_windows>3||a->num_windows!=b->num_windows||
+        a->itu_t_t35_country_code!=0xb5||b->itu_t_t35_country_code!=0xb5||
+        a->application_version>1||a->application_version!=b->application_version||
+        a->targeted_system_display_actual_peak_luminance_flag!=b->targeted_system_display_actual_peak_luminance_flag||
+        a->mastering_display_actual_peak_luminance_flag!=b->mastering_display_actual_peak_luminance_flag)return false;
+    *out=*a;
+    if(!svp_hdr_lerp_q(&out->targeted_system_display_maximum_luminance,
+        a->targeted_system_display_maximum_luminance,b->targeted_system_display_maximum_luminance,t,10000,10000))return false;
+    for(unsigned i=0;i<a->num_windows;i++)if(!svp_hdr_window_lerp(&out->params[i],&a->params[i],&b->params[i],t,i!=0))return false;
+#define GRID(prefix) do{ \
+    if(a->prefix##_flag){ \
+        unsigned rows=a->num_rows_##prefix,cols=a->num_cols_##prefix; \
+        if(a->prefix##_flag!=1||rows<2||rows>25||cols<2||cols>25|| \
+            rows!=b->num_rows_##prefix||cols!=b->num_cols_##prefix)return false; \
+        for(unsigned row=0;row<rows;row++)for(unsigned col=0;col<cols;col++) \
+            if(!svp_hdr_lerp_q(&out->prefix[row][col],a->prefix[row][col],b->prefix[row][col],t,15,1))return false; \
+    } \
+}while(0)
+    GRID(targeted_system_display_actual_peak_luminance);
+    GRID(mastering_display_actual_peak_luminance);
+#undef GRID
+    return true;
+}
 static const AVBufferRef *svp_vk_side_data(const struct mp_image *img,int type)
 {
     for (int i=0;i<img->num_ff_side_data;i++)
