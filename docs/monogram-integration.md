@@ -300,17 +300,28 @@ size with `apkanalyzer`; test background playback and session/cache cleanup.
 Ambient TV's versioned source patch adds a bounded 512 KiB in-memory origin
 range sink to mono-rs, preserving existing authentication, file-reference
 refresh, migration, flood handling, cancellation and session-lease publication.
-Inline and CDN responses retain the existing file fallback. The UniFFI
+Inline responses retain the bounded file fallback. Streaming ranges request
+origin data instead of starting the whole-file CDN receiver; ordinary full
+downloads retain upstream CDN behavior. The UniFFI
 byte-array export avoids a native payload write and Kotlin payload re-read;
 the app can persist a single atomic cache copy. A direct JNI buffer is not
 required for correctness and should be considered only after measuring the
 remaining UniFFI marshalling cost. No global CPU-feature assumptions are added.
 
 A sequential read grows a bounded prefetch window from one to three parts;
-a discontinuous seek discards it. Preview and individual streaming ranges
+a discontinuous seek discards it and cancels native request controls when
+the final waiter leaves. Four concurrent part RPCs are allowed across players.
+Identical part requests are coalesced by account generation and offset. Preview and individual streaming ranges
 use single wire requests per lane, while known large complete user downloads
 may pipeline up to four parts. The chunk cache tracks LRU order incrementally.
-The encrypted metadata snapshot retains a bounded in-memory parsed cache.
+The chunk hot cache retains at most eight parts (4 MiB), cleared on account
+generation changes. The encrypted metadata snapshot retains a bounded
+in-memory parsed cache and skips unchanged snapshot writes.
+The pinned aes 0.9.3, sha1 0.11.0 and sha2 0.11.1 depend on cpufeatures
+0.3.1; preserve their safe CPU dispatch rather than forcing AES/SHA/AVX on
+all devices. The patch also removes fixed-size KDF heap allocations and
+reuses authenticated plaintext storage; existing authentication and
+constant-time comparisons are unchanged.
 
 Benchmark on Shield and a phone: first frame, random and forward seek latency,
 sustained 1080p/4K throughput, concurrent thumbnail load, native and Java heap,

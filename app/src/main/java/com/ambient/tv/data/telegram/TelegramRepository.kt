@@ -719,20 +719,49 @@ class TelegramRepository @Inject constructor(
 
     // Bound all players and cancelled seek windows to the native media lane budget.
     private val mediaPartPermits = kotlinx.coroutines.sync.Semaphore(4)
+    private data class PartKey(val epoch: Long, val chatId: Long, val messageId: Int, val offset: Long)
+    private class PartLoad(val deferred: kotlinx.coroutines.Deferred<ByteArray>, var waiters: Int)
+    private val partLoads = HashMap<PartKey, PartLoad>()
 
-    suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray =
-        interactive { mediaPartPermits.withPermit { loadMediaPart(chatId, messageId, offset) } }
-
-    private suspend fun loadMediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray {
+    suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray = interactive {
         val selected = checkNotNull(client) { appContext.getString(R.string.monogram_error_not_authorized) }
         check(chatId !in blockedChannels) { appContext.getString(R.string.monogram_error_channel_left) }
         val generation = streamEpoch.get()
         val identity = selected.cacheIdentity
-        val bytes = selected.mediaPart(chatId, messageId, offset)
-        check(sameAccount(selected, identity, generation) && chatId !in blockedChannels) {
-            appContext.getString(R.string.monogram_error_account_changed)
+        fun verify() {
+            check(sameAccount(selected, identity, generation) && chatId !in blockedChannels) {
+                appContext.getString(R.string.monogram_error_account_changed)
+            }
         }
-        return bytes
+        verify()
+        val key = PartKey(generation, chatId, messageId, offset)
+        val load = synchronized(partLoads) {
+            val existing = partLoads[key]?.takeUnless { it.deferred.isCancelled }
+            if (existing != null) {
+                existing.waiters++
+                existing
+            } else {
+                // A VLC/MPV range reader and a prefetcher can ask for the same part.
+                // Keep one native RPC, but cancel it when its final waiter goes away.
+                val deferred = scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                    mediaPartPermits.withPermit {
+                        verify()
+                        selected.mediaPart(chatId, messageId, offset).also { verify() }
+                    }
+                }
+                PartLoad(deferred, 1).also { partLoads[key] = it }
+            }
+        }
+        try {
+            load.deferred.await().also { verify() }
+        } finally {
+            synchronized(partLoads) {
+                if (--load.waiters == 0) {
+                    if (partLoads[key] === load) partLoads.remove(key)
+                    if (!load.deferred.isCompleted) load.deferred.cancel()
+                }
+            }
+        }
     }
 
     // Last in the class: the IO coroutine may reach disconnect()/installAuthorized() at once,

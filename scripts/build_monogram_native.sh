@@ -26,7 +26,19 @@ export CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
 export CARGO_PROFILE_RELEASE_STRIP=true CARGO_PROFILE_RELEASE_PANIC=abort
 builder_digest="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "${BASH_SOURCE[0]}")"
 # Changing host toolchain, effective flags, or Cargo profile invalidates the AAR.
-build_config="$(printf '%s\n' "$profile" "${RUSTFLAGS:-}" "${CARGO_ENCODED_RUSTFLAGS:-}" "$(rustc -Vv)" "${ANDROID_NDK_HOME:-}" "${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}" | sha256sum | cut -d' ' -f1)"
+# Include ABI-specific flags as well as the actual NDK revision, not just its path.
+sdk_home="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+ndk_home="${ANDROID_NDK_HOME:-}"
+if [[ -z "$ndk_home" && -d "$sdk_home/ndk" ]]; then
+    ndk_home="$(find "$sdk_home/ndk" -mindepth 1 -maxdepth 1 -type d | LC_ALL=C sort | tail -1)"
+fi
+ndk_revision=""
+if [[ -f "$ndk_home/source.properties" ]]; then ndk_revision="$(cat "$ndk_home/source.properties")"; fi
+rust_config="$(env | LC_ALL=C sort | grep -E '^(CARGO_TARGET_(AARCH64|ARMV7|I686|X86_64)_LINUX_ANDROID(EABI)?_(RUSTFLAGS|LINKER)|CARGO_ENCODED_RUSTFLAGS|RUSTFLAGS|RUSTC|RUSTC_WRAPPER|RUSTC_WORKSPACE_WRAPPER)=' || true)"
+if [[ "$rust_config" == *target-cpu=native* ]]; then
+    echo "Host-native CPU flags are incompatible with portable Android ABIs" >&2; exit 1
+fi
+build_config="$(printf '%s\n' "$profile" "$rust_config" "$(rustc -Vv)" "$(cargo -V)" "$ndk_home" "$ndk_revision" "$sdk_home" | sha256sum | cut -d' ' -f1)"
 abis=(${MONOGRAM_ABIS:-arm64-v8a armeabi-v7a x86 x86_64})
 [[ "${#abis[@]}" -gt 0 ]] || exit 1
 for abi in "${abis[@]}"; do

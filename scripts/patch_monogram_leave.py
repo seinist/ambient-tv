@@ -476,6 +476,54 @@ mod ambient_range_tests {
         assert!(!ambient_begin_range(dest));
     }
     #[test]
+    fn real_range_sink_collects_reduced_wire_parts_without_payload_file() {
+        use mono_proto::latest::api::{StorageFileType, StorageFileUnknownConstructor, UploadFileConstructor};
+        let root = std::env::temp_dir().join(format!("ambient-range-{}-{:?}", std::process::id(), std::thread::current().id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let dest = root.join("chunk");
+        let media = MediaRef {
+            file_size: Some(2 * i64::from(FAST_CHUNK)),
+            kind: "video".into(), cache_key: "ambient-range".into(),
+            location: MediaLocation::Document {
+                id: 987654321, access_hash: 4, file_reference: vec![1],
+                thumb_size: String::new(), dc_id: 2, mime_type: "video/mp4".into(),
+            },
+            thumb_cache_key: None, thumb_location: None,
+            display_cache_key: None, display_location: None,
+            sticker_set_id: None, sticker_set_access_hash: None,
+            source_url: None, refresh_source: None, webpage_id: None,
+        };
+        let _window = bind_download_profile(DownloadProfile::Playing);
+        set_forced_chunk(FAST_CHUNK);
+        let mut offsets = Vec::new();
+        let (_, payload) = ambient_capture_range(&dest, || {
+            let staged = StagedDownload::new(&dest)?;
+            download_media_range_batched_streaming_capped(
+                2, &media, staged.path(), &dest, Some(0), 1, None,
+                |_, requests, _| {
+                    assert_eq!(requests.len(), 1);
+                    let request = &requests[0];
+                    assert!(request.cdn_supported.is_none());
+                    if request.limit == FAST_CHUNK {
+                        return Err(MtprotoError::Message("LIMIT_INVALID".into()));
+                    }
+                    assert_eq!(request.limit, DEFAULT_CHUNK);
+                    offsets.push(request.offset);
+                    Ok(vec![Ok(UploadFile::UploadFile(UploadFileConstructor {
+                        type_: Box::new(StorageFileType::StorageFileUnknown(StorageFileUnknownConstructor {})),
+                        mtime: 0, bytes: vec![9; DEFAULT_CHUNK as usize],
+                    }))])
+                },
+            )?;
+            assert_eq!(std::fs::metadata(staged.path()).unwrap().len(), 0);
+            staged.publish(&dest)
+        }).unwrap();
+        assert_eq!(offsets, (0..4).map(|i| i64::from(i * DEFAULT_CHUNK)).collect::<Vec<_>>());
+        assert_eq!(payload.unwrap(), vec![9; FAST_CHUNK as usize]);
+        assert!(!dest.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn captured_output_is_bounded() {
         use std::io::{Seek, SeekFrom, Write};
         let mut out = AmbientRangeOutput::Memory(std::io::Cursor::new(Vec::new()));

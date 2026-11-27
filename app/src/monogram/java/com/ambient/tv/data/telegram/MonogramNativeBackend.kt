@@ -1120,8 +1120,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
                 val request = uniffi.monogram_mtproto.createRequestControl()
                 val worker = launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
-                    try { continuation.resumeWith(Result.success(block(request))) }
-                    catch (failure: Throwable) { continuation.resumeWith(Result.failure(failure)) }
+                    val result = runCatching { block(request) }
+                    continuation.resumeWith(result)
                 }
                 worker.invokeOnCompletion {
                     runCatching { uniffi.monogram_mtproto.releaseRequestControl(request) }
@@ -1149,7 +1149,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     app.getString(R.string.monogram_error_account_changed)
                 }
                 prepareChunkIndex(dir)
-                hotChunks[cacheFile] ?: if (cacheFile.isFile && cacheFile.length() in 1..TELEGRAM_MEDIA_PART_BYTES.toLong()) {
+                hotChunks[cacheFile]?.also { chunkIndex[cacheFile] } ?: if (cacheFile.isFile && cacheFile.length() in 1..TELEGRAM_MEDIA_PART_BYTES.toLong()) {
                     rememberChunk(cacheFile)
                     cacheFile.setLastModified(System.currentTimeMillis())
                     cacheFile.readBytes().also { rememberHotChunk(cacheFile, it) }

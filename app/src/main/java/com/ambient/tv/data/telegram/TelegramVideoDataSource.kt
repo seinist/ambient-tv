@@ -25,6 +25,11 @@ class TelegramVideoDataSource(
         override fun createDataSource(): DataSource = TelegramVideoDataSource(repository, media)
     }
 
+    private val accountRevision = repository.playbackRevision()
+    private fun requireCurrentAccount() {
+        if (repository.playbackRevision() != accountRevision) throw IOException("Monogram account changed")
+    }
+
     private var sourceUri: Uri? = null
     private var position = 0L
     private var remaining = 0L
@@ -37,6 +42,7 @@ class TelegramVideoDataSource(
     private var window = 1
 
     override fun open(dataSpec: DataSpec): Long {
+        requireCurrentAccount()
         if (!media.playableOnTelegram) throw IOException("Protected or externally hosted media")
         if (media.fileSize <= 0) throw IOException("Telegram media size unknown")
         if (dataSpec.position > media.fileSize) throw IOException("Seek beyond Telegram file end")
@@ -55,6 +61,7 @@ class TelegramVideoDataSource(
     }
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        requireCurrentAccount()
         if (length == 0) return 0
         if (remaining == 0L) return C.RESULT_END_OF_INPUT
         if (sourceUri == null) throw IOException("Data source closed")
@@ -71,6 +78,7 @@ class TelegramVideoDataSource(
         val relative = (position - partStart).toInt()
         val count = minOf(length, part.size - relative, remaining.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
         if (count <= 0) throw IOException("Incomplete Telegram media part")
+        requireCurrentAccount()
         part.copyInto(buffer, offset, relative, relative + count)
         position += count
         remaining -= count
@@ -102,6 +110,7 @@ class TelegramVideoDataSource(
             val offset = start + i.toLong() * TELEGRAM_MEDIA_PART_BYTES
             if (offset >= media.fileSize || offset >= position + remaining) break
             if (offset !in prefetch) prefetch[offset] = prefetchScope.async {
+                requireCurrentAccount()
                 repository.mediaPart(media.chatId, media.messageId, offset)
             }
         }
