@@ -1,15 +1,16 @@
 diff --git a/src/libprojectM/MilkdropPreset/BlurTexture.cpp b/src/libprojectM/MilkdropPreset/BlurTexture.cpp
 --- a/src/libprojectM/MilkdropPreset/BlurTexture.cpp
 +++ b/src/libprojectM/MilkdropPreset/BlurTexture.cpp
-@@ -21,6 +21,7 @@
+@@ -20,7 +20,7 @@
+     m_blur2Shader.CompileProgram(staticShaders->GetBlurVertexShader(),
                                   staticShaders->GetBlur2FragmentShader());
  
-     m_blurFramebuffer.CreateColorAttachment(0, 0);
-+    glGenFramebuffers(NumBlurTextures, m_directFbos.data());
+-    m_blurFramebuffer.CreateColorAttachment(0, 0);
++    // The fallback framebuffer and direct targets are allocated only when a preset uses blur.
  
      // Initialize Blur VAO/VBO with a single fullscreen quad.
      static constexpr std::array<float, 16> pointsBlur{
-@@ -61,6 +62,7 @@
+@@ -61,6 +61,7 @@
  
  BlurTexture::~BlurTexture()
  {
@@ -17,7 +18,7 @@ diff --git a/src/libprojectM/MilkdropPreset/BlurTexture.cpp b/src/libprojectM/Mi
      glDeleteBuffers(1, &m_vboBlur);
      glDeleteVertexArrays(1, &m_vaoBlur);
  }
-@@ -106,6 +108,11 @@
+@@ -106,6 +107,11 @@
          return;
      }
  
@@ -29,7 +30,7 @@ diff --git a/src/libprojectM/MilkdropPreset/BlurTexture.cpp b/src/libprojectM/Mi
      AllocateTextures(sourceTexture);
  
      unsigned int const passes = static_cast<int>(m_blurLevel) * 2;
-@@ -133,13 +140,7 @@
+@@ -133,13 +139,7 @@
      scale[2] = 1.0f / (tempMax - tempMin);
      bias[2] = -tempMin * scale[2];
  
@@ -40,11 +41,11 @@ diff --git a/src/libprojectM/MilkdropPreset/BlurTexture.cpp b/src/libprojectM/Mi
 -    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &origDrawFramebuffer);
 -
 -    m_blurFramebuffer.Bind(0);
-+    if (!m_directReady) m_blurFramebuffer.Bind(0);
++    if (!m_directReady) m_blurFramebuffer->Bind(0);
  
      glBlendFunc(GL_ONE, GL_ZERO);
      glBindVertexArray(m_vaoBlur);
-@@ -151,6 +152,8 @@
+@@ -151,6 +151,8 @@
              continue;
          }
  
@@ -53,7 +54,7 @@ diff --git a/src/libprojectM/MilkdropPreset/BlurTexture.cpp b/src/libprojectM/Mi
          // set pixel shader
          Renderer::Shader* blurShader;
          if ((pass % 2) == 0)
-@@ -243,9 +246,13 @@
+@@ -243,9 +245,13 @@
          // Draw fullscreen quad
          glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
  
@@ -70,32 +71,116 @@ diff --git a/src/libprojectM/MilkdropPreset/BlurTexture.cpp b/src/libprojectM/Mi
          m_blurTextures[pass]->Unbind(0);
      }
  
-@@ -359,6 +366,16 @@
+@@ -291,7 +297,7 @@
+     {
+         float avg = (blurMin[0] + blurMax[0]) * 0.5f;
+         blurMin[0] = avg - fMinDist * 0.5f;
+-        blurMax[0] = avg - fMinDist * 0.5f;
++        blurMax[0] = avg + fMinDist * 0.5f;
+     }
+     blurMax[1] = std::min(blurMax[0], blurMax[1]);
+     blurMin[1] = std::max(blurMin[0], blurMin[1]);
+@@ -299,7 +305,7 @@
+     {
+         float avg = (blurMin[1] + blurMax[1]) * 0.5f;
+         blurMin[1] = avg - fMinDist * 0.5f;
+-        blurMax[1] = avg - fMinDist * 0.5f;
++        blurMax[1] = avg + fMinDist * 0.5f;
+     }
+     blurMax[2] = std::min(blurMax[1], blurMax[2]);
+     blurMin[2] = std::max(blurMin[1], blurMin[2]);
+@@ -307,7 +313,7 @@
+     {
+         float avg = (blurMin[2] + blurMax[2]) * 0.5f;
+         blurMin[2] = avg - fMinDist * 0.5f;
+-        blurMax[2] = avg - fMinDist * 0.5f;
++        blurMax[2] = avg + fMinDist * 0.5f;
+     }
+ }
+ 
+@@ -320,13 +326,18 @@
+         width > 0 &&
+         height > 0 &&
+         width == m_sourceTextureWidth &&
+-        height == m_sourceTextureHeight)
++        height == m_sourceTextureHeight &&
++        m_allocatedLevel == m_blurLevel)
+     {
+         // Size unchanged, return.
+         return;
+     }
+ 
+-    for (size_t i = 0; i < m_blurTextures.size(); i++)
++    const auto passes = static_cast<size_t>(m_blurLevel) * 2;
++    // Release the old attachments before replacing textures on resize.
++    glDeleteFramebuffers(NumBlurTextures, m_directFbos.data());
++    m_directFbos.fill(0);
++    for (size_t i = 0; i < passes; i++)
+     {
+         // main VS = 1024
+         // blur0 = 512
+@@ -343,12 +354,6 @@
+         int width2 = ((width + 3) / 16) * 16;
+         int height2 = ((height + 3) / 4) * 4;
+ 
+-        if (i == 0)
+-        {
+-            // Only use as much space as needed to render the blur textures.
+-            m_blurFramebuffer.SetSize(width2, height2);
+-        }
+-
+         std::string textureName;
+         if (i % 2 == 1)
+         {
+@@ -359,6 +364,36 @@
          m_blurTextures[i] = std::make_shared<Renderer::Texture>(textureName, width2, height2, false);
      }
  
 +    // Each pass has a different destination, so no texture is sampled while attached
 +    // to the active draw framebuffer. Validate once per resize, not every frame.
++    m_directReady = false;
++#if !defined(AMBIENT_PROJECTM_FORCE_BLUR_COPY)
 +    m_directReady = true;
-+    for (size_t i = 0; i < m_directFbos.size(); ++i)
++    glGenFramebuffers(static_cast<GLsizei>(passes), m_directFbos.data());
++    for (size_t i = 0; i < passes; ++i)
 +    {
 +        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_directFbos[i]);
 +        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_blurTextures[i]->TextureID(), 0);
 +        if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
 +            m_directReady = false;
 +    }
++#endif
++    if (m_directReady)
++    {
++        m_blurFramebuffer.reset();
++    }
++    else
++    {
++        glDeleteFramebuffers(NumBlurTextures, m_directFbos.data());
++        m_directFbos.fill(0);
++        if (!m_blurFramebuffer)
++        {
++            m_blurFramebuffer = std::make_unique<Renderer::Framebuffer>();
++            m_blurFramebuffer->CreateColorAttachment(0, 0);
++        }
++        m_blurFramebuffer->SetSize(m_blurTextures[0]->Width(), m_blurTextures[0]->Height());
++    }
++    m_allocatedLevel = m_blurLevel;
      m_sourceTextureWidth = sourceTexture.Width();
      m_sourceTextureHeight = sourceTexture.Height();
  }
 diff --git a/src/libprojectM/MilkdropPreset/BlurTexture.hpp b/src/libprojectM/MilkdropPreset/BlurTexture.hpp
 --- a/src/libprojectM/MilkdropPreset/BlurTexture.hpp
 +++ b/src/libprojectM/MilkdropPreset/BlurTexture.hpp
-@@ -107,6 +107,8 @@
+@@ -107,7 +107,10 @@
      int m_sourceTextureWidth{};  //!< Width of the source texture used to create the blur textures.
      int m_sourceTextureHeight{}; //!< Height of the source texture used to create the blur textures.
  
+-    Renderer::Framebuffer m_blurFramebuffer;                                        //!< The framebuffer used to draw the blur textures.
 +    std::array<GLuint, NumBlurTextures> m_directFbos{};
 +    bool m_directReady{false};
-     Renderer::Framebuffer m_blurFramebuffer;                                        //!< The framebuffer used to draw the blur textures.
++    BlurLevel m_allocatedLevel{BlurLevel::None};
++    std::unique_ptr<Renderer::Framebuffer> m_blurFramebuffer;                                        //!< The framebuffer used to draw the blur textures.
      std::shared_ptr<Renderer::Sampler> m_blurSampler;                               //!< The blur sampler.
      std::array<std::shared_ptr<Renderer::Texture>, NumBlurTextures> m_blurTextures; //!< The blur textures for each pass.
+     BlurLevel m_blurLevel{BlurLevel::None};                                         //!< Current blur level.
