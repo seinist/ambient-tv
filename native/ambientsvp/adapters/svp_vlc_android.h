@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <math.h>
+#include <string.h>
 
 #define SVP_ANDROID_PHASES 8
 // The library must outlive the last picture lease, even after filter close.
@@ -39,6 +40,7 @@ typedef struct {
     vlc_tick_t origin;
     uint64_t tick;
     bool bypass;
+    unsigned mode; /* 0 SDR8, 4/6 BT2020 P010 */
 } SvpAndroid;
 static void svp_android_source_release(void *context,int fd)
 {
@@ -115,6 +117,14 @@ static picture_t *svp_android_chain(filter_t *f,picture_t *reference,
         outputs[i]=(AmbientSvpDisplayOutput){NULL,-1};
         out->context=&p->s;vlc_video_context_Hold(p->s.vctx);
         picture_CopyProperties(out,reference);
+        // The compositor receives encoded full-range RGB, with source
+        // transfer/primaries and static metadata retained per picture.
+        out->format.primaries=reference->format.primaries;
+        out->format.transfer=reference->format.transfer;
+        out->format.space=reference->format.space;
+        out->format.color_range=COLOR_RANGE_FULL;
+        out->format.mastering=reference->format.mastering;
+        out->format.lighting=reference->format.lighting;
         out->date=dates[i];out->p_next=NULL;
         *tail=out;tail=&out->p_next;
     }
@@ -171,16 +181,23 @@ static bool svp_android_sdr_color(const video_format_t *v)
         (v->primaries==COLOR_PRIMARIES_BT709 || v->primaries==COLOR_PRIMARIES_BT601_625 ||
          v->primaries==COLOR_PRIMARIES_BT601_525);
 }
+static unsigned svp_android_hdr_mode(const video_format_t *v)
+{
+    if (v->primaries!=COLOR_PRIMARIES_BT2020 || v->space!=COLOR_SPACE_BT2020 ||
+        (v->transfer!=TRANSFER_FUNC_SMPTE_ST2084 && v->transfer!=TRANSFER_FUNC_HLG) ||
+        v->dovi.profile || v->dovi.rpu_present || v->dovi.el_present) return 0;
+    return v->color_range==COLOR_RANGE_FULL?6:v->color_range==COLOR_RANGE_LIMITED?4:0;
+}
 static bool svp_android_input(SvpAndroid *s,picture_t *pic,AHardwareBuffer **buffer,
     struct android_picture_ctx **ctx)
 {
     if (!pic->context || !pic->b_progressive || pic->date==VLC_TICK_INVALID ||
-        !svp_android_sdr_color(&pic->format) || pic->format.orientation!=ORIENT_NORMAL ||
+        (s->mode?svp_android_hdr_mode(&pic->format)!=s->mode:!svp_android_sdr_color(&pic->format)) || pic->format.orientation!=ORIENT_NORMAL ||
         pic->format.projection_mode!=PROJECTION_MODE_RECTANGULAR ||
         vlc_video_context_GetType(pic->context->vctx)!=VLC_VIDEO_CONTEXT_AWINDOW)
         return false;
     android_video_context_t *v=vlc_video_context_GetPrivate(pic->context->vctx,VLC_VIDEO_CONTEXT_AWINDOW);
-    if (!v || !v->svp_surface || !v->air || !v->air_api || pic->format.i_x_offset || pic->format.i_y_offset)
+    if (!v || !v->svp_surface || (s->mode!=0)!=v->svp_hdr10 || !v->air || !v->air_api || pic->format.i_x_offset || pic->format.i_y_offset)
         return false;
     *ctx=container_of(pic->context,struct android_picture_ctx,s);
     if ((*ctx)->svp_buffer || !(*ctx)->image || (*ctx)->read_fence_fd>=0) return false;
@@ -212,7 +229,9 @@ static picture_t *svp_android_filter(filter_t *f,picture_t *pic)
         const video_format_t *current=&pic->format;
         if (previous->transfer!=current->transfer || previous->primaries!=current->primaries ||
             previous->space!=current->space || previous->color_range!=current->color_range ||
-            previous->i_visible_width!=current->i_visible_width || previous->i_visible_height!=current->i_visible_height)
+            previous->i_visible_width!=current->i_visible_width || previous->i_visible_height!=current->i_visible_height ||
+            (s->mode && (memcmp(&previous->mastering,&current->mastering,sizeof(previous->mastering)) ||
+                         memcmp(&previous->lighting,&current->lighting,sizeof(previous->lighting)))))
             return svp_android_passthrough(s,pic,false);
         double expected=1000000.0/s->source;
         double delta=US_FROM_VLC_TICK(pic->date-s->previous->date);
@@ -249,11 +268,12 @@ static int svp_android_open(filter_t *f)
         v->i_visible_width<32 || v->i_visible_height<32 ||
         (v->i_visible_width|v->i_visible_height)&1 ||
         (uint64_t)v->i_visible_width*v->i_visible_height>1920u*1080u ||
-        !svp_android_sdr_color(v) ||
+        (!svp_android_sdr_color(v) && !svp_android_hdr_mode(v)) ||
         !v->i_frame_rate || !v->i_frame_rate_base)
         return VLC_EGENERIC;
     android_video_context_t *ctx=vlc_video_context_GetPrivate(f->vctx_in,VLC_VIDEO_CONTEXT_AWINDOW);
-    if (!ctx || !ctx->svp_surface || !ctx->air || !ctx->asc_api || ctx->texture)
+    unsigned mode=svp_android_hdr_mode(v);
+    if (!ctx || !ctx->svp_surface || (mode!=0)!=ctx->svp_hdr10 || !ctx->air || !ctx->asc_api || ctx->texture)
         return VLC_EGENERIC;
     SvpAndroid *s=vlc_obj_calloc(VLC_OBJECT(f),1,sizeof(*s));
     if (!s) return VLC_ENOMEM;
@@ -264,7 +284,13 @@ static int svp_android_open(filter_t *f)
 #define LOAD(member) s->member=dlsym(s->api.lib,"ambient_svp_android_stream_" #member);if(!s->member) goto fail
     LOAD(create);LOAD(push);LOAD(drain);LOAD(reset);LOAD(destroy);
 #undef LOAD
-    s->stream=s->create(v->i_visible_width,v->i_visible_height);
+    s->mode=mode;
+    if (mode) {
+        AmbientSvpAndroidStream *(*create_format)(uint32_t,uint32_t,uint32_t)=
+            dlsym(s->api.lib,"ambient_svp_android_stream_create_format");
+        if (!create_format) goto fail;
+        s->stream=create_format(v->i_visible_width,v->i_visible_height,mode);
+    } else s->stream=s->create(v->i_visible_width,v->i_visible_height);
     if (!s->stream) goto fail;
     // Optional ABI extension: older engines retain the fresh-buffer path.
     s->lease_output=dlsym(s->api.lib,"ambient_svp_android_stream_lease_output");
