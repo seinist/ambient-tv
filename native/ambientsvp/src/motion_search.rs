@@ -1,7 +1,7 @@
 //! Experimental bounded coarse-to-fine Vulkan motion search.
 //! This is an independently orchestrated search, NOT upstream search parity.
 //! Only the explicit native benchmark/test entry point may enable it.
-use crate::motion::{Candidate,MotionCostKernel,SuperLevel};
+use crate::motion::{Candidate,MotionCostKernel,SuperLevel,reference_super_cost};
 use crate::motion_packet::{FinalVector,PacketLayout};
 use crate::motion_select::{Choice,ScoredCandidate,Search,SelectionKernel};
 use std::{collections::BTreeMap,time::{Duration,Instant}};
@@ -64,6 +64,56 @@ impl LevelField{
         let scale=2*pel as i32;
         Some([dx.saturating_mul(scale),dy.saturating_mul(scale)])
     }
+}
+
+/// Find a strictly majority displacement supported by zero full-block
+/// residuals. Unlike the coarse predictor histogram, this is a strong
+/// final-level consistency check, not a heuristic low-SAD vote.
+fn exact_majority(field:&LevelField)->Option<[i32;2]>{
+    let mut votes=BTreeMap::new();
+    for c in field.choices.iter().filter(|c|c.sad==0){
+        *votes.entry([c.dx,c.dy]).or_insert(0usize)+=1;
+    }
+    votes.into_iter().find(|(_,n)|*n>field.choices.len()/2).map(|(mv,_)|mv)
+}
+
+/// The pinned upstream search includes a centered half-block near image
+/// boundaries. Full-block-only candidate geometry cannot recover a pan
+/// that crosses the outer edge even when every visible central pixel
+/// agrees. Recover only independently corroborated reciprocal motion,
+/// and only after verifying a zero residual against actual source pixels.
+/// Keep luma from the original full block for serialization.
+fn recover_exact_translation(a:&SuperLevel<'_>,b:&SuperLevel<'_>,
+                             fields:&mut [LevelField;2],deadline:Instant)->Result<usize,String>{
+    let Some(f)=exact_majority(&fields[0])else{return Ok(0);};
+    let Some(r)=exact_majority(&fields[1])else{return Ok(0);};
+    if f!=[-r[0],-r[1]] || f==[0,0]{return Ok(0);}
+    let mut recovered=0;
+    for (direction,field) in fields.iter_mut().enumerate(){
+        let mv=[f,r][direction];
+        let grid=field.grid;
+        for (i,c) in field.choices.iter_mut().enumerate(){
+            if c.sad==0{continue;}
+            if Instant::now()>=deadline{return Err("experimental motion deadline".into());}
+            let (x,y)=grid.origin(i);
+            let mut probe=Candidate{x,y,dx:mv[0],dy:mv[1],width:grid.bw,height:grid.bh,
+                reverse:direction==0,satd:false};
+            if !probe.valid(a.width,a.height,a.pel){
+                // Centered half-blocks are supported for 16/32 layouts.
+                // Do not sample beyond any phase or chroma plane.
+                if grid.bw<16 || grid.bh<16{continue;}
+                probe.x+=grid.bw/4;
+                probe.y+=grid.bh/4;
+                probe.width/=2;
+                probe.height/=2;
+            }
+            if reference_super_cost(a,b,probe).is_some_and(|cost|cost.weighted(true)==0){
+                *c=Choice{dx:mv[0],dy:mv[1],sad:0,cost:0,raw_sad:-1,winner:-1};
+                recovered+=1;
+            }
+        }
+    }
+    Ok(recovered)
 }
 
 fn clamp_predictor(pred:[i32;2],x:u32,y:u32,w:u32,h:u32,bw:u32,bh:u32,pel:u32)->[i32;2]{
@@ -259,6 +309,11 @@ impl MotionSearch{
         let [forward,backward]=previous;
         let forward=forward.ok_or("missing previous field")?;
         let backward=backward.ok_or("missing current field")?;
+        let a=SuperLevel::new(builder,current,0).ok_or("invalid current final level")?;
+        let b=SuperLevel::new(builder,next,0).ok_or("invalid next final level")?;
+        let mut fields=[forward,backward];
+        recover_exact_translation(&a,&b,&mut fields,deadline)?;
+        let [forward,backward]=fields;
         let finish=|field:LevelField,frame:&SuperFrame|->Result<Vec<FinalVector>,String>{
             if field.grid.count()!=layout.count(){return Err("incomplete final grid".into());}
             let level=SuperLevel::new(builder,frame,0).ok_or("invalid final level")?;
@@ -339,6 +394,36 @@ mod tests{
             assert_eq!(offsets.len(),offsets.iter().collect::<std::collections::BTreeSet<_>>().len());
             assert!(offsets.len()<=60);
         }
+    }
+
+    #[test]
+    fn exact_reciprocal_translation_recovers_only_verified_edge_blocks(){
+        let builder=SuperBuilder::new(96,66,1).unwrap();
+        let make=|shift:usize|{
+            let mut raw=vec![128;builder.source_len()];
+            for y in 0..66{for x in 0..96{
+                let xx=(x+shift)%96;
+                raw[y*96+x]=((xx*17+y*31+xx*y*3)%256) as u8;
+            }}
+            raw
+        };
+        let a=builder.build(&make(0)).unwrap();
+        let b=builder.build(&make(4)).unwrap();
+        let a=SuperLevel::new(&builder,&a,0).unwrap();
+        let b=SuperLevel::new(&builder,&b,0).unwrap();
+        let grid=Grid::new(96,66,16,16,0,0).unwrap();
+        let choice=|dx|Choice{dx,dy:0,sad:0,cost:0,raw_sad:-1,winner:0};
+        let bad=Choice{sad:500,cost:500,..choice(0)};
+        let mut fields=[LevelField{grid,choices:vec![choice(4);grid.count()]},
+            LevelField{grid,choices:vec![choice(-4);grid.count()]}];
+        fields[1].choices[0]=bad;
+        assert_eq!(recover_exact_translation(&a,&b,&mut fields,Instant::now()+Duration::from_secs(1)).unwrap(),1);
+        assert_eq!((fields[1].choices[0].dx,fields[1].choices[0].sad),(-4,0));
+        // No independently supported reciprocal shift: preserve result.
+        fields[0].choices.fill(choice(3));
+        fields[1].choices[0]=bad;
+        assert_eq!(recover_exact_translation(&a,&b,&mut fields,Instant::now()+Duration::from_secs(1)).unwrap(),0);
+        assert_eq!(fields[1].choices[0],bad);
     }
 
     #[test]
