@@ -161,6 +161,7 @@ pub(crate) const MOTION:&str=r#"
 var<workgroup> scores:array<u32,64>;
 var<workgroup> vectors:array<vec2i,64>;
 var<workgroup> zero_score:u32;
+var<workgroup> source_samples:array<i32,64>;
 fn px(t:texture_2d<f32>,p:vec2i)->i32{
     let value=textureLoad(t,p,0);
     // RGB inputs from an Android external-format sampler use a bounded
@@ -181,8 +182,13 @@ fn cost(origin:vec2i,mv:vec2i,reverse:bool,bound:u32)->u32{
             let q=p+mv;
             if any(q<vec2i(0))||any(q>=size){
                 sad+=255u;
-            }else if reverse{sad+=u32(abs(px(b,p)-px(a,q)));}
-            else{sad+=u32(abs(px(a,p)-px(b,q)));}
+            }else{
+                let sample=source_samples[u32(y/2*8+x/2)];
+                // The original source sample is invariant across all
+                // candidate offsets; only the reference picture moves.
+                if reverse{sad+=u32(abs(sample-px(a,q)));}
+                else{sad+=u32(abs(sample-px(b,q)));}
+            }
             n+=1u;
         }
         // At most 64 samples contribute. The normalized SAD cannot
@@ -214,6 +220,13 @@ fn analyse(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:
     let gy=g.y%gh;
     let origin=vec2i(vec2u(g.x*16u,gy*16u));
     scores[lane]=0xffffffffu;vectors[lane]=vec2i(0);
+    let p=origin+vec2i(i32(lane%8u)*2,i32(lane/8u)*2);
+    source_samples[lane]=0;
+    if all(p<vec2i(geometry.xy)){
+        if reverse{source_samples[lane]=px(b,p);}
+        else{source_samples[lane]=px(a,p);}
+    }
+    workgroupBarrier();
     // Compute zero displacement once. A zero score is the absolute
     // minimum and uniquely selects zero; other blocks can use it as
     // an upper bound. +1 preserves every equal-score tie.
@@ -265,6 +278,9 @@ fn bilinear(t:texture_2d<f32>,p:vec2f,visible:vec2u)->vec4f{
     let i=vec2i(floor(q));
     let j=min(i+vec2i(1),hi);
     let f=fract(q);
+    // Integer sample positions are common at source ticks and in
+    // stationary regions; avoid the three redundant texture fetches.
+    if all(f==vec2f(0)){return textureLoad(t,i,0);}
     let a=mix(textureLoad(t,i,0),textureLoad(t,vec2i(j.x,i.y),0),f.x);
     let b=mix(textureLoad(t,vec2i(i.x,j.y),0),textureLoad(t,j,0),f.x);
     return mix(a,b,f.y);
@@ -311,6 +327,20 @@ fn synthesize(@builtin(global_invocation_id) id:vec3u){
     if f.z>64*48||r.z>64*48||mismatch>6{
         ap=p;bp=p;blend=select(0.0,1.0,phase>=0.5);
     }
+    // At source ticks or on a hard-cut fallback only one source can
+    // contribute. Avoid all texture fetches from the discarded picture.
+    if blend==0.0 || blend==1.0{
+        var pixel:vec3f;
+        if (params.y&64u)!=0u{
+            if blend==0.0{pixel=bilinear(ay,ap,visible).rgb;}
+            else{pixel=bilinear(by,bp,visible).rgb;}
+        }else{
+            if blend==0.0{pixel=rgb(yuv(ay,au,av,ap,(params.y&1u)!=0u,(params.y>>2u)&3u,visible));}
+            else{pixel=rgb(yuv(by,bu,bv,bp,(params.y&2u)!=0u,(params.y>>4u)&3u,visible));}
+        }
+        textureStore(dst,vec2i(id.xy),vec4f(pixel,1.0));
+        return;
+    }
     if (params.y&64u)!=0u{
         // Imported Android hardware pixels are already converted to
         // encoded SDR RGB by the immutable Vulkan YCbCr sampler.
@@ -324,3 +354,131 @@ fn synthesize(@builtin(global_invocation_id) id:vec3u){
     }
 }
 "#;
+
+
+#[cfg(test)]
+mod tests{
+    use super::*;
+    // Independent scalar oracle for the original unpruned integer
+    // search. Model the strict lane-local and tree reduction tie order.
+    fn reference(a:&[u8],b:&[u8],w:u32,h:u32,gx:u32,gy:u32)->[i32;4]{
+        let cost=|dx:i32,dy:i32|{
+            let mut sad=0u32;let mut n=0u32;
+            for y in (0..16).step_by(2){for x in (0..16).step_by(2){
+                let (px,py)=((gx*16+x) as i32,(gy*16+y) as i32);
+                if px>=w as i32||py>=h as i32{continue;}
+                let (qx,qy)=(px+dx,py+dy);
+                sad+=if qx<0||qy<0||qx>=w as i32||qy>=h as i32{255}
+                    else{u32::from(a[(py as u32*w+px as u32) as usize]
+                        .abs_diff(b[(qy as u32*w+qx as u32) as usize]))};
+                n+=1;
+            }}
+            sad*64/n.max(1)*128+dx.unsigned_abs()+dy.unsigned_abs()
+        };
+        let choose=|a:(u32,i32,i32),b:(u32,i32,i32)|if b.0<a.0{b}else{a};
+        let reduce=|mut lanes:[(u32,i32,i32);64]|{
+            for stride in [32,16,8,4,2,1]{for i in 0..stride{
+                lanes[i]=choose(lanes[i],lanes[i+stride]);
+            }}
+            lanes[0]
+        };
+        let mut lanes=[(u32::MAX,0,0);64];
+        for i in 0..81{
+            let dx=(i as i32%9-4)*4;let dy=(i as i32/9-4)*4;
+            lanes[i%64]=choose(lanes[i%64],(cost(dx,dy),dx,dy));
+        }
+        let best=reduce(lanes);
+        lanes.fill((u32::MAX,0,0));lanes[0]=best;
+        for i in 0..25{
+            let dx=best.1+i as i32%5-2;let dy=best.2+i as i32/5-2;
+            lanes[i]=choose(lanes[i],(cost(dx,dy),dx,dy));
+        }
+        let winner=reduce(lanes);
+        [winner.1,winner.2,(winner.0/128) as i32,0]
+    }
+
+    #[test]
+    #[ignore="requires Vulkan, including software Vulkan"]
+    fn resident_motion_matches_unpruned_scalar_search(){
+        let instance=wgpu::Instance::new(&wgpu::InstanceDescriptor{
+            backends:wgpu::Backends::VULKAN,..Default::default()});
+        let adapter=pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+        let (device,queue)=pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor{
+            label:Some("SVP resident exact search regression"),required_features:wgpu::Features::empty(),
+            required_limits:wgpu::Limits::default().using_resolution(adapter.limits()),
+            memory_hints:wgpu::MemoryHints::MemoryUsage,
+        },None)).unwrap();
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let (w,h)=(66u32,34u32);
+        let (gw,gh)=(w.div_ceil(16),h.div_ceil(16));
+        let size=u64::from(gw*gh*32);
+        let output=device.create_buffer(&wgpu::BufferDescriptor{label:None,size,
+            usage:wgpu::BufferUsages::STORAGE|wgpu::BufferUsages::COPY_SRC,mapped_at_creation:false});
+        let staging=device.create_buffer(&wgpu::BufferDescriptor{label:None,size,
+            usage:wgpu::BufferUsages::MAP_READ|wgpu::BufferUsages::COPY_DST,mapped_at_creation:false});
+        let shader=device.create_shader_module(wgpu::ShaderModuleDescriptor{label:None,
+            source:wgpu::ShaderSource::Wgsl(MOTION.into())});
+        let pipeline=device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor{
+            label:None,layout:None,module:&shader,entry_point:Some("analyse"),
+            compilation_options:Default::default(),cache:None});
+        let upload=|data:&[u8]|{
+            let extent=wgpu::Extent3d{width:w,height:h,depth_or_array_layers:1};
+            let t=device.create_texture(&wgpu::TextureDescriptor{label:None,size:extent,
+                mip_level_count:1,sample_count:1,dimension:wgpu::TextureDimension::D2,
+                format:wgpu::TextureFormat::R8Unorm,view_formats:&[],
+                usage:wgpu::TextureUsages::TEXTURE_BINDING|wgpu::TextureUsages::COPY_DST});
+            queue.write_texture(t.as_image_copy(),data,wgpu::TexelCopyBufferLayout{
+                offset:0,bytes_per_row:Some(w),rows_per_image:Some(h)},extent);
+            t
+        };
+        let pattern=|shift:u32|->Vec<u8>{(0..w*h).map(|i|{
+            let x=(i%w+shift)%w;let y=i/w;((x*17+y*31+x*y*3)%256) as u8
+        }).collect()};
+        let base=pattern(0);
+        let shifted=pattern(4);
+        let fractional=pattern(1);
+        let unrelated:Vec<u8>=(0..w*h).map(|i|((i*31+i/7+31)%256) as u8).collect();
+        let flat=vec![80; (w*h) as usize];
+        let flat_other=vec![120; (w*h) as usize];
+        for (case,(a,b)) in [(&base,&base),(&base,&shifted),(&base,&fractional),
+            (&base,&unrelated),(&flat,&flat_other)].into_iter().enumerate(){
+            let at=upload(a);let bt=upload(b);
+            let av=at.create_view(&Default::default());let bv=bt.create_view(&Default::default());
+            let params=uniform(&device,[w,h,gw,gh]);
+            let group=device.create_bind_group(&wgpu::BindGroupDescriptor{label:None,
+                layout:&pipeline.get_bind_group_layout(0),entries:&[
+                    view(0,&av),view(1,&bv),
+                    wgpu::BindGroupEntry{binding:2,resource:output.as_entire_binding()},
+                    wgpu::BindGroupEntry{binding:3,resource:params.as_entire_binding()},
+                ]});
+            let mut encoder=device.create_command_encoder(&Default::default());
+            {let mut pass=encoder.begin_compute_pass(&Default::default());
+                pass.set_pipeline(&pipeline);pass.set_bind_group(0,&group,&[]);
+                pass.dispatch_workgroups(gw,gh*2,1);}
+            encoder.copy_buffer_to_buffer(&output,0,&staging,0,size);
+            queue.submit([encoder.finish()]);
+            let (tx,rx)=std::sync::mpsc::sync_channel(1);
+            staging.slice(..).map_async(wgpu::MapMode::Read,move|r|{let _=tx.send(r);});
+            let deadline=std::time::Instant::now()+std::time::Duration::from_secs(20);
+            loop{
+                device.poll(wgpu::Maintain::Poll);
+                match rx.try_recv(){
+                    Ok(r)=>{r.unwrap();break;}
+                    Err(std::sync::mpsc::TryRecvError::Disconnected)=>panic!("map disconnected"),
+                    Err(_) if std::time::Instant::now()>=deadline=>panic!("resident motion timeout"),
+                    Err(_)=>std::thread::sleep(std::time::Duration::from_millis(1)),
+                }
+            }
+            let bytes=staging.slice(..).get_mapped_range();
+            for (i,raw) in bytes.chunks_exact(16).enumerate(){
+                let actual:[i32;4]=std::array::from_fn(|j|i32::from_le_bytes(raw[j*4..j*4+4].try_into().unwrap()));
+                let i=i as u32;let reverse=i>=gw*gh;
+                let (x,y)=(i%gw,i/gw%gh);
+                let expected=if reverse{reference(b,a,w,h,x,y)}else{reference(a,b,w,h,x,y)};
+                assert_eq!(actual,expected,"case={case}, block={x},{y}, reverse={reverse}");
+            }
+            drop(bytes);staging.unmap();
+        }
+        assert!(pollster::block_on(device.pop_error_scope()).is_none());
+    }
+}
