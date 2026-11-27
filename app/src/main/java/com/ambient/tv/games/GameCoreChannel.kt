@@ -28,6 +28,9 @@ enum class GameCoreSource(val key: String, val experimentalProfile: String? = nu
     AMBIENT("ambient"),
     /** Only the libretro buildbot (nightly). */
     BUILDBOT("buildbot"),
+    OPTIMIZED("experiment-optimized", "optimized"),
+    OPTIMIZED_A57("experiment-optimized-a57", "optimized-a57"),
+    // Legacy values retained for isolated on-disk data and rollback compatibility.
     HOTPATHS("experiment-hotpaths", "core-hotpaths"),
     O3("experiment-o3", "o3"),
     THINLTO("experiment-thinlto", "thinlto"),
@@ -38,7 +41,12 @@ enum class GameCoreSource(val key: String, val experimentalProfile: String? = nu
     ;
 
     companion object {
-        fun fromKey(key: String?) = entries.firstOrNull { it.key == key } ?: AUTO
+        val selectable = listOf(AUTO, AMBIENT, BUILDBOT, OPTIMIZED, OPTIMIZED_A57)
+        fun fromKey(key: String?): GameCoreSource = when (val saved = entries.firstOrNull { it.key == key }) {
+            TUNE_A57 -> OPTIMIZED_A57
+            HOTPATHS, O3, THINLTO, O3_THINLTO, PICODRIVE_SH2, SNES_THREADED -> OPTIMIZED
+            else -> saved ?: AUTO
+        }
     }
 }
 

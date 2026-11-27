@@ -138,7 +138,14 @@ class GameCoreChannelTest {
         org.junit.Assert.assertTrue(GameCoreChannel.matchesManifest(manifest, tag, "core-hotpaths"))
         org.junit.Assert.assertFalse(GameCoreChannel.matchesManifest(manifest, tag, "baseline"))
         org.junit.Assert.assertFalse(GameCoreChannel.matchesManifest(manifest, "other", "core-hotpaths"))
-        assertEquals(GameCoreSource.HOTPATHS, GameSettingsState().withCoreSource(GameCoreSource.HOTPATHS).coreSource)
+        assertEquals(GameCoreSource.OPTIMIZED, GameSettingsState().withCoreSource(GameCoreSource.HOTPATHS).coreSource)
+        assertEquals(GameCoreSource.OPTIMIZED_A57, GameCoreSource.fromKey("experiment-a57"))
+        assertEquals(GameCoreSource.OPTIMIZED, GameCoreSource.fromKey("experiment-o3"))
+        assertEquals(GameCoreSource.OPTIMIZED, GameCoreSource.fromKey("experiment-thinlto"))
+        assertEquals(listOf(GameCoreSource.AUTO, GameCoreSource.AMBIENT, GameCoreSource.BUILDBOT,
+            GameCoreSource.OPTIMIZED, GameCoreSource.OPTIMIZED_A57), GameCoreSource.selectable)
+        org.junit.Assert.assertFalse(GameCoreChannel.matchesChannel(tag, true, "optimized"))
+        org.junit.Assert.assertTrue(GameCoreChannel.matchesChannel("core-experiments-optimized--20261127-1-1", true, "optimized"))
     }
 
     @Test fun signedManifestsVerifyAndTamperedOnesDoNot() {

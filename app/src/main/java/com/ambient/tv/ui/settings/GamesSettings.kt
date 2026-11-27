@@ -65,6 +65,8 @@ private fun GameCoreSource.titleRes(): Int = when (this) {
     GameCoreSource.AUTO -> R.string.games_core_source_auto
     GameCoreSource.AMBIENT -> R.string.games_core_source_ambient
     GameCoreSource.BUILDBOT -> R.string.games_core_source_buildbot
+    GameCoreSource.OPTIMIZED -> R.string.games_core_source_optimized
+    GameCoreSource.OPTIMIZED_A57 -> R.string.games_core_source_optimized_a57
     else -> R.string.games_core_source_experimental
 }
 
@@ -350,9 +352,9 @@ internal fun GamesCores(onlyCoreId: String? = null) {
                 source.experimentalProfile != null -> stringResource(R.string.games_core_experimental_hint)
                 else -> null
             },
-            options = GameCoreSource.entries.map { option ->
+            options = GameCoreSource.selectable.map { option ->
                 SettingsSelectOption(
-                    text = option.experimentalProfile?.let { stringResource(option.titleRes(), it) } ?: stringResource(option.titleRes()),
+                    text = stringResource(option.titleRes()),
                     selected = option == source,
                     onClick = { GameSettings.update { it.withCoreSource(option) } },
                 )
