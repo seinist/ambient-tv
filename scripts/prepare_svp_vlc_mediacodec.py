@@ -78,6 +78,15 @@ insert(decoder,
        "    avctx->air_api->AImage.deleteAsync(image, fence_fd); // SVP preserve producer fence on error",
        "SVP preserve producer fence on error")
 display = "modules/video_output/android/display.c"
+insert(display, "    apctx->sc = sys->asc.sc;",
+       "    // SVP repeated prepares, including failures, conservatively disqualify reuse.\n"
+       "    if (apctx->svp_buffer) {\n"
+       "        unsigned expected = 0;\n"
+       "        if (!atomic_compare_exchange_strong(&apctx->svp_present_count, &expected, 1))\n"
+       "            atomic_store(&apctx->svp_present_count, 2);\n"
+       "    }\n"
+       "    apctx->sc = sys->asc.sc;",
+       "SVP repeated prepares")
 insert(display,
        "    if (release_fd >= 0)\n        android_picture_ctx_set_read_fence(apctx, release_fd);",
        "    if (apctx->svp_buffer) {\n"
@@ -117,11 +126,6 @@ insert(display,
        "    int32_t dataspace = video_format_to_adataspace(&dataspace_fmt);\n"
        "    if (dataspace != ADATASPACE_UNKNOWN)\n"
        "        asc_api->ASurfaceTransaction.setBufferDataSpace(txn, sys->asc.sc, dataspace);\n"
-       "    if (apctx->svp_buffer) {\n"
-       "        // Count actual submissions, not failed prepares; repeated submissions never recycle.\n"
-       "        unsigned count = atomic_load(&apctx->svp_present_count);\n"
-       "        atomic_store(&apctx->svp_present_count, count == 0 ? 1 : 2);\n"
-       "    }\n"
        "    asc_api->ASurfaceTransaction.setBuffer(txn, sys->asc.sc, buffer, fence_fd);",
        "SVP generated RGB is full-range")
 # This path is designed for ASC. Never pass generated RGB to the existing
