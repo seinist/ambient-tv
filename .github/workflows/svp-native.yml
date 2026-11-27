@@ -80,7 +80,7 @@ jobs:
       - name: Cross-check Android JNI and private Vulkan cache
         run: |
           rustup target add --toolchain stable aarch64-linux-android
-          RUSTFLAGS="" cargo +stable check --manifest-path native/ambientsvp/Cargo.toml --release --locked --target aarch64-linux-android --lib
+          RUSTFLAGS="" cargo +stable check --manifest-path native/ambientsvp/Cargo.toml --release --locked --target aarch64-linux-android --lib --tests
       - name: Test C adapters' shared helpers
         run: |
           set -euo pipefail
