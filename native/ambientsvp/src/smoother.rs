@@ -20,7 +20,7 @@ pub(super) struct Smoother {
     width: usize,
     height: usize,
     last: i32,
-    vectors: BTreeMap<i32,Arc<[u8]>>,
+    vectors: BTreeMap<i32,Arc<Vec<u8>>>,
     // CPU-only interleaved pel data. Raw planes are borrowed from the
     // native queue instead of copied to a second source map.
     expanded: BTreeMap<i32,Expanded>,
@@ -47,7 +47,7 @@ impl Smoother {
          if vectors.is_empty(){clamp(vectors.start)}else{clamp(vectors.end-1)+1}]
     }
 
-    pub fn set_vectors(&mut self,k:i32,payload:Arc<[u8]>){
+    pub fn set_vectors(&mut self,k:i32,payload:Arc<Vec<u8>>){
         self.vectors.insert(k,payload);
     }
 
@@ -80,7 +80,7 @@ impl Smoother {
     pub fn prepare_gpu(&mut self,frame:i32)->Output{
         let last=self.last;
         let vectors=&self.vectors;
-        match self.engine.prepare_gpu(frame,|k|vectors.get(&k.clamp(0,last)).map(AsRef::as_ref)){
+        match self.engine.prepare_gpu(frame,|k|vectors.get(&k.clamp(0,last)).map(|data|data.as_slice())){
             Output::Copy(k)=>Output::Copy(k.clamp(0,last)),
             output=>output,
         }
@@ -125,7 +125,7 @@ impl Smoother {
         if !self.engine.cpu_supported(){return Err("overlap must be even with CPU rendering".into());}
         let last=self.last;
         let vectors=&self.vectors;
-        match self.engine.prepare(frame,|k|vectors.get(&k.clamp(0,last)).map(AsRef::as_ref)){
+        match self.engine.prepare(frame,|k|vectors.get(&k.clamp(0,last)).map(|data|data.as_slice())){
             Output::Copy(k)=>{out.copy_from_slice(self.source(frames,k)?);Ok(())}
             Output::Render(job)=>{
                 self.ensure_super(frames,builder,job.n)?;
@@ -219,7 +219,7 @@ mod tests{
                     if let Some(prev)=previous.as_ref(){
                         let payload=analyser.analyse(prev,&sf).unwrap();
                         reference.set_vectors(n-1,&payload);
-                        let payload:Arc<[u8]>=Arc::from(payload);
+                        let payload=Arc::new(payload);
                         lazy.set_vectors(n-1,payload.clone());
                         eager.set_vectors(n-1,payload);
                     }
