@@ -33,7 +33,7 @@ fn synthesis_spirv()->Result<Vec<u32>>{
 // per-frame interpretation of the legacy RGBA8 ABI. R16 UNORM stores
 // P010 in the high ten bits and planar 10-bit in the low ten bits.
 fn high_motion_spirv(mode:u32)->Result<Vec<u32>>{
-    let scale=match mode{1=>"65535.0/64.0",2=>"65535.0",_=>return Err("unknown high-depth mode".into())};
+    let scale=match mode{1=>"65535.0/64.0",2=>"65535.0",3=>"1023.0",_=>return Err("unknown high-depth mode".into())};
     for anchor in ["luminance*255.0","sad+=255u;","i32(scores[0]/128u)"]{
         if MOTION.matches(anchor).count()!=1{return Err("high-depth motion shader contract changed".into());}
     }
@@ -46,6 +46,10 @@ fn high_motion_spirv(mode:u32)->Result<Vec<u32>>{
     spirv(&source,"@group(0) @binding(3) var<uniform> geometry:vec4u;","analyse")
 }
 fn high_synthesis_spirv(mode:u32)->Result<Vec<u32>>{
+    if mode==3{
+        let source=SYNTHESIS.replace("rgba8unorm,write","rgba16float,write");
+        return spirv(&source,"@group(0) @binding(8) var<uniform> params:vec4u;","synthesize");
+    }
     let scale=match mode{1=>"65535.0/64.0",2=>"65535.0",_=>return Err("unknown high-depth mode".into())};
     let old_start=SYNTHESIS.find("fn rgb(yuv:vec3f)").ok_or("missing RGB kernel")?;
     let old_end=old_start+SYNTHESIS[old_start..].find("@compute").ok_or("missing synthesis entry")?;
@@ -189,7 +193,7 @@ impl Drop for VulkanPair{
 impl VulkanPair{
     fn new(core:Arc<Core>,command:vk::CommandBuffer,a:VulkanPicture,b:VulkanPicture)->Result<Self>{
         if core.lost.load(Ordering::Acquire) || command==vk::CommandBuffer::null() || !a.valid() || !b.valid() || a.rgb()!=b.rgb()
-            || (core.mode==1&&(a.nv12!=1||b.nv12!=1)) || (core.mode==2&&(a.nv12!=0||b.nv12!=0))
+            || (core.mode==1&&(a.nv12!=1||b.nv12!=1)) || (core.mode==2&&(a.nv12!=0||b.nv12!=0)) || (core.mode==3&&!a.rgb())
         {return Err("invalid resident pictures".into());}
         core.in_flight.fetch_update(Ordering::AcqRel,Ordering::Acquire,|n|
             (n<MAX_IN_FLIGHT).then_some(n+1)).map_err(|_|"resident in-flight budget")?;
@@ -319,6 +323,7 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
         0=>([vk::Format::R8_UNORM,vk::Format::R8G8_UNORM,vk::Format::R8G8B8A8_UNORM],vk::Format::R8G8B8A8_UNORM),
         1=>([vk::Format::R16_UNORM,vk::Format::R16G16_UNORM,vk::Format::R16G16B16A16_SFLOAT],vk::Format::R16G16B16A16_SFLOAT),
         2=>([vk::Format::R16_UNORM,vk::Format::R16_UNORM,vk::Format::R16G16B16A16_SFLOAT],vk::Format::R16G16B16A16_SFLOAT),
+        3=>([vk::Format::R16G16B16A16_SFLOAT;3],vk::Format::R16G16B16A16_SFLOAT),
         _=>return Err("unknown native resident mode".into())
     };
     for format in formats{
@@ -347,7 +352,7 @@ pub unsafe extern "C" fn ambient_svp_vk_create(instance:vk::Instance,physical:vk
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_create_format(instance:vk::Instance,physical:vk::PhysicalDevice,device:vk::Device,
     get_proc:Option<vk::PFN_vkGetInstanceProcAddr>,width:u32,height:u32,mode:u32)->*mut VulkanResident{
-    if instance==vk::Instance::null() || physical==vk::PhysicalDevice::null() || device==vk::Device::null() || get_proc.is_none() || mode>2{return ptr::null_mut();}
+    if instance==vk::Instance::null() || physical==vk::PhysicalDevice::null() || device==vk::Device::null() || get_proc.is_none() || mode>3{return ptr::null_mut();}
     catch_unwind(AssertUnwindSafe(||{
         let f=ash::StaticFn{get_instance_proc_addr:get_proc.unwrap()};
         let instance=unsafe{ash::Instance::load(&f,instance)};
@@ -383,6 +388,7 @@ pub unsafe extern "C" fn ambient_svp_vk_begin_ahb(s:*const VulkanResident,comman
         let core=unsafe{(*s).0.clone()};
         let convert=|p:*const crate::ahb_vulkan::Job|{
             let (device,q,w,h,view)=unsafe{(&*p).picture()};
+            if unsafe{(&*p).high_depth()}!=(core.mode==3){return None;}
             if device!=core.device.handle() || q!=queue || (w,h)!=(core.width,core.height){return None;}
             Some(VulkanPicture{y:view,u:vk::ImageView::null(),v:vk::ImageView::null(),nv12:2,chroma_location:0})
         };
@@ -438,7 +444,7 @@ mod tests{
         let s=super::synthesis_spirv().unwrap();
         assert_eq!(m[0],0x07230203);assert_eq!(s[0],0x07230203);
         assert!(m.len()>100 && s.len()>100);
-        for mode in [1,2]{
+        for mode in [1,2,3]{
             assert_eq!(super::high_motion_spirv(mode).unwrap()[0],0x07230203);
             assert_eq!(super::high_synthesis_spirv(mode).unwrap()[0],0x07230203);
         }
