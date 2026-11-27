@@ -150,6 +150,228 @@ PATCHES = {
       "   // Integer stick radius (replaces the polar sqrt/atan2 round-trip)\n   radius = analog_isqrt64( (uint64_t)((int64_t)x * x)\n                          + (uint64_t)((int64_t)y * y) );",
       "   // floor(sqrt(r2)) <= deadzone iff r2 < (deadzone+1)^2.\n   const uint64_t r2 = (uint64_t)((int64_t)x * x) + (uint64_t)((int64_t)y * y);\n   if (astick_deadzone >= 0)\n   {\n      const uint64_t limit = (uint64_t)astick_deadzone + 1;\n      if (r2 < limit * limit)\n      {\n         *outX = 0;\n         *outY = 0;\n         return;\n      }\n   }\n   radius = analog_isqrt64(r2);"
     ]
+  ],
+  "armsx2": [
+    [
+      "pcsx2-libretro/Main.cpp",
+      "static retro_input_state_t input_state_cb;",
+      "static retro_input_state_t input_state_cb;\nstatic bool ambient_input_bitmasks;"
+    ],
+    [
+      "pcsx2-libretro/Main.cpp",
+      "RETRO_API void retro_init(void)\n{",
+      "RETRO_API void retro_init(void)\n{\n\tambient_input_bitmasks = environ_cb && environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, nullptr);"
+    ],
+    [
+      "pcsx2-libretro/Main.cpp",
+      "\t\t\tfor (const auto& m : bmap)\n\t\t\t\tpad->Set(m.ds2, input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, m.retro) ? 1.0f : 0.0f);",
+      "\t\t\tconst u16 mask = ambient_input_bitmasks ? static_cast<u16>(input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK)) : 0;\n\t\t\tfor (const auto& m : bmap)\n\t\t\t\tpad->Set(m.ds2, (ambient_input_bitmasks ? ((mask >> m.retro) & 1u) :\n\t\t\t\t\t(input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, m.retro) != 0)) ? 1.0f : 0.0f);"
+    ]
+  ],
+  "cemu": [
+    [
+      "src/libretro/CemuLibretro.cpp",
+      "static retro_input_state_t input_state_cb = nullptr;",
+      "static retro_input_state_t input_state_cb = nullptr;\nstatic bool ambient_input_bitmasks = false;"
+    ],
+    [
+      "src/libretro/CemuLibretro.cpp",
+      "RETRO_API void retro_init()\n{\n\tif (s_initialized)",
+      "RETRO_API void retro_init()\n{\n\tambient_input_bitmasks = environ_cb && environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, nullptr);\n\tif (s_initialized)"
+    ],
+    [
+      "src/libretro/CemuLibretro.cpp",
+      "\t\tfor (uint32_t id = 0; id < 16; ++id)\n\t\t\tpad.buttons[id] = input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, id);",
+      "\t\tif (ambient_input_bitmasks)\n\t\t{\n\t\t\tconst uint16_t mask = static_cast<uint16_t>(input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK));\n\t\t\tfor (uint32_t id = 0; id < 16; ++id)\n\t\t\t\tpad.buttons[id] = (mask >> id) & 1u;\n\t\t}\n\t\telse\n\t\t\tfor (uint32_t id = 0; id < 16; ++id)\n\t\t\t\tpad.buttons[id] = input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, id);"
+    ]
+  ],
+  "noods": [
+    [
+      "src/libretro/libretro.cpp",
+      "static retro_input_state_t inputStateCallback;",
+      "static retro_input_state_t inputStateCallback;\nstatic bool ambientInputBitmasks;\nstatic uint16_t ambientJoypadMask;"
+    ],
+    [
+      "src/libretro/libretro.cpp",
+      "  return inputStateCallback(0, RETRO_DEVICE_JOYPAD, 0, id);",
+      "  return ambientInputBitmasks ? ((ambientJoypadMask >> id) & 1u) != 0 :\n      inputStateCallback(0, RETRO_DEVICE_JOYPAD, 0, id) != 0;"
+    ],
+    [
+      "src/libretro/libretro.cpp",
+      "void retro_init(void)\n{",
+      "void retro_init(void)\n{\n  ambientInputBitmasks = envCallback(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, nullptr);"
+    ],
+    [
+      "src/libretro/libretro.cpp",
+      "  inputPollCallback();",
+      "  inputPollCallback();\n  if (ambientInputBitmasks)\n    ambientJoypadMask = static_cast<uint16_t>(inputStateCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK));"
+    ],
+    [
+      "src/libretro/libretro.cpp",
+      "      for (int x = 0; x < sw; ++x)\n      {\n        for (int cx = 0; cx < scaleX; ++cx)\n          *newRow++ = srcRow[x];\n      }",
+      "      if (scaleX == 1)\n        memcpy(dstRow, srcRow, sw * sizeof(uint32_t));\n      else if (scaleX == 2)\n        for (int x = 0; x < sw; ++x) {\n          const uint32_t pixel = srcRow[x];\n          *newRow++ = pixel;\n          *newRow++ = pixel;\n        }\n      else\n        for (int x = 0; x < sw; ++x) {\n          const uint32_t pixel = srcRow[x];\n          for (int cx = 0; cx < scaleX; ++cx)\n            *newRow++ = pixel;\n        }"
+    ]
+  ],
+  "panda3ds": [
+    [
+      "src/libretro_core.cpp",
+      "static retro_input_state_t inputStateCallback;",
+      "static retro_input_state_t inputStateCallback;\nstatic bool ambientInputBitmasks;\nstatic uint16_t ambientJoypadMask;"
+    ],
+    [
+      "src/libretro_core.cpp",
+      "static bool getButtonState(uint id) { return inputStateCallback(0, RETRO_DEVICE_JOYPAD, 0, id); }",
+      "static bool getButtonState(uint id) {\n\treturn ambientInputBitmasks ? ((ambientJoypadMask >> id) & 1u) != 0 :\n\t\tinputStateCallback(0, RETRO_DEVICE_JOYPAD, 0, id) != 0;\n}"
+    ],
+    [
+      "src/libretro_core.cpp",
+      "void retro_init() {",
+      "void retro_init() {\n\tambientInputBitmasks = envCallback(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, nullptr);"
+    ],
+    [
+      "src/libretro_core.cpp",
+      "\tinputPollCallback();",
+      "\tinputPollCallback();\n\tif (ambientInputBitmasks)\n\t\tambientJoypadMask = static_cast<uint16_t>(inputStateCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK));"
+    ]
+  ],
+  "vice_x128": [
+    [
+      "libretro/libretro-mapper.c",
+      "      /* Key down */\n      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && !kbt[i] && mapper_keys[mk])",
+      "      /* Sample each mapped hotkey once; unmapped keys need no callback. */\n      const int key_down = mapper_keys[mk] && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]);\n      /* Key down */\n      if (key_down && !kbt[i])"
+    ],
+    [
+      "libretro/libretro-mapper.c",
+      "      else if (!input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && kbt[i] && mapper_keys[mk])",
+      "      else if (!key_down && kbt[i] && mapper_keys[mk])"
+    ]
+  ],
+  "vice_x64": [
+    [
+      "libretro/libretro-mapper.c",
+      "      /* Key down */\n      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && !kbt[i] && mapper_keys[mk])",
+      "      /* Sample each mapped hotkey once; unmapped keys need no callback. */\n      const int key_down = mapper_keys[mk] && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]);\n      /* Key down */\n      if (key_down && !kbt[i])"
+    ],
+    [
+      "libretro/libretro-mapper.c",
+      "      else if (!input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && kbt[i] && mapper_keys[mk])",
+      "      else if (!key_down && kbt[i] && mapper_keys[mk])"
+    ]
+  ],
+  "vice_x64sc": [
+    [
+      "libretro/libretro-mapper.c",
+      "      /* Key down */\n      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && !kbt[i] && mapper_keys[mk])",
+      "      /* Sample each mapped hotkey once; unmapped keys need no callback. */\n      const int key_down = mapper_keys[mk] && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]);\n      /* Key down */\n      if (key_down && !kbt[i])"
+    ],
+    [
+      "libretro/libretro-mapper.c",
+      "      else if (!input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && kbt[i] && mapper_keys[mk])",
+      "      else if (!key_down && kbt[i] && mapper_keys[mk])"
+    ]
+  ],
+  "vice_xcbm2": [
+    [
+      "libretro/libretro-mapper.c",
+      "      /* Key down */\n      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && !kbt[i] && mapper_keys[mk])",
+      "      /* Sample each mapped hotkey once; unmapped keys need no callback. */\n      const int key_down = mapper_keys[mk] && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]);\n      /* Key down */\n      if (key_down && !kbt[i])"
+    ],
+    [
+      "libretro/libretro-mapper.c",
+      "      else if (!input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && kbt[i] && mapper_keys[mk])",
+      "      else if (!key_down && kbt[i] && mapper_keys[mk])"
+    ]
+  ],
+  "vice_xcbm5x0": [
+    [
+      "libretro/libretro-mapper.c",
+      "      /* Key down */\n      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && !kbt[i] && mapper_keys[mk])",
+      "      /* Sample each mapped hotkey once; unmapped keys need no callback. */\n      const int key_down = mapper_keys[mk] && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]);\n      /* Key down */\n      if (key_down && !kbt[i])"
+    ],
+    [
+      "libretro/libretro-mapper.c",
+      "      else if (!input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && kbt[i] && mapper_keys[mk])",
+      "      else if (!key_down && kbt[i] && mapper_keys[mk])"
+    ]
+  ],
+  "vice_xpet": [
+    [
+      "libretro/libretro-mapper.c",
+      "      /* Key down */\n      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && !kbt[i] && mapper_keys[mk])",
+      "      /* Sample each mapped hotkey once; unmapped keys need no callback. */\n      const int key_down = mapper_keys[mk] && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]);\n      /* Key down */\n      if (key_down && !kbt[i])"
+    ],
+    [
+      "libretro/libretro-mapper.c",
+      "      else if (!input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && kbt[i] && mapper_keys[mk])",
+      "      else if (!key_down && kbt[i] && mapper_keys[mk])"
+    ]
+  ],
+  "vice_xplus4": [
+    [
+      "libretro/libretro-mapper.c",
+      "      /* Key down */\n      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && !kbt[i] && mapper_keys[mk])",
+      "      /* Sample each mapped hotkey once; unmapped keys need no callback. */\n      const int key_down = mapper_keys[mk] && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]);\n      /* Key down */\n      if (key_down && !kbt[i])"
+    ],
+    [
+      "libretro/libretro-mapper.c",
+      "      else if (!input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && kbt[i] && mapper_keys[mk])",
+      "      else if (!key_down && kbt[i] && mapper_keys[mk])"
+    ]
+  ],
+  "vice_xscpu64": [
+    [
+      "libretro/libretro-mapper.c",
+      "      /* Key down */\n      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && !kbt[i] && mapper_keys[mk])",
+      "      /* Sample each mapped hotkey once; unmapped keys need no callback. */\n      const int key_down = mapper_keys[mk] && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]);\n      /* Key down */\n      if (key_down && !kbt[i])"
+    ],
+    [
+      "libretro/libretro-mapper.c",
+      "      else if (!input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && kbt[i] && mapper_keys[mk])",
+      "      else if (!key_down && kbt[i] && mapper_keys[mk])"
+    ]
+  ],
+  "vice_xvic": [
+    [
+      "libretro/libretro-mapper.c",
+      "      /* Key down */\n      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && !kbt[i] && mapper_keys[mk])",
+      "      /* Sample each mapped hotkey once; unmapped keys need no callback. */\n      const int key_down = mapper_keys[mk] && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]);\n      /* Key down */\n      if (key_down && !kbt[i])"
+    ],
+    [
+      "libretro/libretro-mapper.c",
+      "      else if (!input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && kbt[i] && mapper_keys[mk])",
+      "      else if (!key_down && kbt[i] && mapper_keys[mk])"
+    ]
+  ],
+  "yabasanshiro": [
+    [
+      "yabause/src/libretro/libretro.c",
+      "static int16_t libretro_input_bitmask[12] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};",
+      "static int32_t libretro_input_bitmask[12] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};"
+    ],
+    [
+      "yabause/src/libretro/libretro.c",
+      "libretro_input_bitmask[port] = input_state_cb(port, RETRO_DEVICE_JOYPAD, index, RETRO_DEVICE_ID_JOYPAD_MASK);",
+      "libretro_input_bitmask[port] = (uint16_t)input_state_cb(port, RETRO_DEVICE_JOYPAD, index, RETRO_DEVICE_ID_JOYPAD_MASK);"
+    ]
+  ],
+  "yabause": [
+    [
+      "yabause/src/libretro/libretro.c",
+      "static int16_t libretro_input_bitmask[12] = {-1,};",
+      "static int32_t libretro_input_bitmask[12] = {-1,};"
+    ],
+    [
+      "yabause/src/libretro/libretro.c",
+      "libretro_input_bitmask[port] = input_state_cb(port, RETRO_DEVICE_JOYPAD, index, RETRO_DEVICE_ID_JOYPAD_MASK);",
+      "libretro_input_bitmask[port] = (uint16_t)input_state_cb(port, RETRO_DEVICE_JOYPAD, index, RETRO_DEVICE_ID_JOYPAD_MASK);"
+    ]
+  ],
+  "ymir": [
+    [
+      "apps/ymir-libretro/src/libretro.cpp",
+      "    bool bitmasks = false;\n    if (cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, &bitmasks))\n        core.use_input_bitmasks = bitmasks;",
+      "    // GET_INPUT_BITMASKS returns support in the return value, not through data.\n    core.use_input_bitmasks = cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, nullptr);"
+    ]
   ]
 }
 

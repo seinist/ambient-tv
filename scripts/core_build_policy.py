@@ -137,6 +137,7 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
         jobs += [(core, "arm64-v8a", "baseline")
                  for core in ("parallel_n64", "mednafen_psx_hw", "swanstation")]
         jobs += [(core, "arm64-v8a", variant) for core in sorted(HOTPATH_CORES)
+                 if not next(entry for entry in entries if entry["core"] == core).get("extended")
                  for variant in ("baseline", "core-hotpaths")]
         jobs += [("pcsx_rearmed", "x86_64", "baseline"),
                  ("gpsp", "x86", "baseline"),
