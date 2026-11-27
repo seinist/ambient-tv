@@ -11,6 +11,8 @@
 struct ambient_fel_planes {
     pl_tex tex[3];
     float chroma_x,chroma_y;
+    bool mapped;
+    struct ambient_fel_axis_map x,y;
 };
 static inline void ambient_fel_planes_destroy(pl_gpu gpu,struct ambient_fel_planes *p)
 {
@@ -35,6 +37,7 @@ static inline bool ambient_fel_planes_upload(pl_gpu gpu,struct ambient_fel_plane
             .ptr=(void *)data[i],.row_pitch=pitch[i])))return false;
     }
     p->chroma_x=chroma_x;p->chroma_y=chroma_y;
+    p->mapped=false;
     return true;
 }
 
@@ -85,15 +88,21 @@ static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
         }
     }
     float layer_ratio[2]={1.f,1.f},layer_shift[2]={0.f,0.f},chroma_shift[2]={0.f,0.f};
+    float layer_offset[2]={0.f,0.f};
     int luma_direct=0;
     if(planes){
         if(!planes->tex[0]||!planes->tex[1]||!planes->tex[2]||n->el_bits!=10||
             !isfinite(planes->chroma_x)||!isfinite(planes->chroma_y)||
             fabsf(planes->chroma_x)>0.5f||fabsf(planes->chroma_y)>0.5f)return false;
         const int ew=planes->tex[0]->params.w,eh=planes->tex[0]->params.h;
-        if(ew<=0||eh<=0||
-            !ambient_fel_layer_ratio(bl->params.w,ew)||
-            !ambient_fel_layer_ratio(bl->params.h,eh)) return false;
+        if(ew<=0||eh<=0)return false;
+        struct ambient_fel_axis_map x,y;
+        if(planes->mapped){
+            x=planes->x;y=planes->y;
+            if(!ambient_fel_axis_bounds(bl->params.w,ew,x)||
+               !ambient_fel_axis_bounds(bl->params.h,eh,y))return false;
+        }else if(!ambient_fel_axis_mapping(bl->params.w,ew,0,0,0,0,&x)||
+                 !ambient_fel_axis_mapping(bl->params.h,eh,0,0,0,0,&y))return false;
         for(unsigned i=0;i<3;i++){
             pl_tex t=planes->tex[i];
             if(t==output||!t->params.sampleable||t->params.format->type!=PL_FMT_UNORM||
@@ -102,8 +111,9 @@ static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
         }
         // Layer siting: left horizontally, centered vertically. Chroma
         // siting is separately derived from the software decoder metadata.
-        layer_ratio[0]=(float)ew/bl->params.w;layer_ratio[1]=(float)eh/bl->params.h;
-        luma_direct=bl->params.w==ew&&bl->params.h==eh;
+        layer_ratio[0]=x.ratio;layer_ratio[1]=y.ratio;
+        layer_offset[0]=x.offset;layer_offset[1]=y.offset;
+        luma_direct=x.ratio==1.f&&y.ratio==1.f&&x.offset==0.f&&y.offset==0.f;
         layer_shift[0]=layer_ratio[0]<1.f?-0.5f:0.f;
         chroma_shift[0]=planes->chroma_x;chroma_shift[1]=planes->chroma_y;
     }
@@ -133,6 +143,7 @@ static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
         {.var=pl_var_vec3("fel_maximum"),.data=maximum,.dynamic=true},
         {.var=pl_var_vec2("fel_layer_ratio"),.data=layer_ratio,.dynamic=true},
         {.var=pl_var_vec2("fel_layer_shift"),.data=layer_shift,.dynamic=true},
+        {.var=pl_var_vec2("fel_layer_offset"),.data=layer_offset,.dynamic=true},
         {.var=pl_var_vec2("fel_chroma_shift"),.data=chroma_shift,.dynamic=true},
         {.var=pl_var_int("fel_luma_direct"),.data=&luma_direct,.dynamic=true},
     };
@@ -178,7 +189,7 @@ static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
                     "float c=fel_code(t,clamp(i+ivec2(0,1),ivec2(0),hi));"
                     "float d=fel_code(t,clamp(i+ivec2(1,1),ivec2(0),hi));"
                     "return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}",
-            .body="vec2 ep=(gl_FragCoord.xy-fel_layer_shift)*fel_layer_ratio;"
+            .body="vec2 ep=(gl_FragCoord.xy-fel_layer_shift)*fel_layer_ratio+fel_layer_offset;"
                   "vec2 cp=(ep-fel_chroma_shift)*0.5;"
                   "float ey=fel_luma_direct!=0?fel_code(fel_y,ivec2(gl_FragCoord.xy)):fel_sample(fel_y,ep);"
                   "vec3 ec=vec3(ey,fel_sample(fel_u,cp),fel_sample(fel_v,cp));"

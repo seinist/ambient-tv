@@ -118,7 +118,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          vlc_placebo_ReleaseCurrent(sys->pl);
          return; // Probably benign error, ignore it
      }
-@@ -238,19 +312,45 @@
+@@ -238,19 +312,46 @@
      bool need_vflip = frame.flipped;
  #endif
  
@@ -147,9 +147,10 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +        if (sys->ahb_dovi && ahb_output.raw_yuv) {
 +            if (pic->format.dovi.profile == 7) {
 +                struct vlc_ancillary *el = picture_GetAncillary(pic, AMBIENT_FEL_ID);
-+                if (!el || !ambient_fel_render_picture(gpu, sys->pl->log, &sys->fel,
++                if (!el || !ambient_fel_render_picture_ex(gpu, sys->pl->log, &sys->fel,
 +                    &img, vlc_ancillary_GetData(el), pic->date,
-+                    pic->format.i_x_offset, pic->format.i_y_offset)) {
++                    pic->format.i_x_offset, pic->format.i_y_offset,
++                    pic->format.i_width, pic->format.i_height)) {
 +                    if (!sys->ahb_error_logged)
 +                        msg_Err(vd, "Experimental FEL reconstruction failed");
 +                    sys->ahb_error_logged = true;

@@ -202,6 +202,29 @@ int main(void)
             assert(fabs(big_out[i+2]-(0.73+ambient_fel_residual(&nlq,2,vc/1023.0)))<0.0001);
         }
     }
+    // A smaller BL visible rectangle within a larger EL. The coded
+    // 2:1 relation gives an odd EL-luma origin: a half chroma-sample phase.
+    assert(ambient_fel_planes_upload(gpu,&planes,4,4,direct_planes,direct_pitches,0.f,0.f));
+    planes.mapped=true;
+    assert(ambient_fel_axis_mapping(4,4,2,0,8,4,&planes.x));
+    assert(ambient_fel_axis_mapping(4,4,2,0,8,4,&planes.y));
+    // The matched visible contract would choose 1:1 only at equal origins.
+    assert(planes.x.ratio==0.5f&&planes.x.offset==1.f);
+    assert(ambient_fel_compose_ex(gpu,dp,large_bl,NULL,large_out,&reshape,&nlq,true,false,&planes));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=large_out,.ptr=big_out)));
+    for(unsigned row=0;row<4;row++)for(unsigned col=0;col<4;col++){
+        double ex=(col+1.0)*0.5+1.0,ey=(row+0.5)*0.5+1.0;
+        double lx=fmin(3.0,fmax(0.0,ex-0.5)),ly=fmin(3.0,fmax(0.0,ey-0.5));
+        double cx=fmin(1.0,fmax(0.0,ex*0.5-0.5)),cy=fmin(1.0,fmax(0.0,ey*0.5-0.5));
+        double yc=510+lx+4*ly,uc=508+4*cx+8*cy,vc=520-4*cx-8*cy;
+        unsigned i=4*(row*4+col);
+        assert(fabs(big_out[i]-(center+ambient_fel_residual(&nlq,0,yc/1023.0)))<0.0001);
+        assert(fabs(big_out[i+1]-(0.55+ambient_fel_residual(&nlq,1,uc/1023.0)))<0.0001);
+        assert(fabs(big_out[i+2]-(0.73+ambient_fel_residual(&nlq,2,vc/1023.0)))<0.0001);
+    }
+    planes.x.offset=3.f;
+    assert(!ambient_fel_compose_ex(gpu,dp,large_bl,NULL,large_out,&reshape,&nlq,true,false,&planes));
+    planes.mapped=false;
     // A coefficient above UINT32_MAX is still representable and clamps
     // the reconstructed signal to its legal range.
     assert(ambient_fel_compose(gpu,dp,bl,el,out,&reshape,&wide));

@@ -208,6 +208,17 @@ int main(void) {
     assert(!ambient_fel_crop_axis(2160,1088,0,0));
     assert(ambient_fel_format_geometry(1920,1080,1920,1080,2,4));
     assert(!ambient_fel_format_geometry(1920,1080,1920,1080,1,4));
+    struct ambient_fel_axis_map axis;
+    assert(ambient_fel_axis_mapping(60,64,2,0,64,64,&axis));
+    assert(axis.ratio==1.f&&axis.offset==2.f);
+    assert(ambient_fel_axis_mapping(60,32,2,0,64,32,&axis));
+    assert(axis.ratio==0.5f&&axis.offset==1.f); // half-chroma phase
+    assert(!ambient_fel_axis_mapping(60,32,2,0,0,32,&axis));
+    assert(!ambient_fel_axis_mapping(64,32,2,0,64,32,&axis));
+    assert(!ambient_fel_axis_mapping(60,30,2,2,64,32,&axis));
+    assert(!ambient_fel_axis_mapping(60,32,1,0,64,32,&axis));
+    assert(!ambient_fel_axis_mapping(UINT32_MAX-1,UINT32_MAX,0,0,UINT32_MAX,UINT32_MAX,&axis));
+    assert(!ambient_fel_axis_bounds(4,4,(struct ambient_fel_axis_map){0.5f,3.f}));
     struct ambient_rpu_pts_queue q={0};
     int a=1,b=2,c=3;
     assert(ambient_rpu_pts_insert(&q,30,&a));

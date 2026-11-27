@@ -42,7 +42,7 @@ new file mode 100644
 diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 --- a/libavcodec/dovi_rpudec.c
 +++ b/libavcodec/dovi_rpudec.c
-@@ -747,4 +747,262 @@
+@@ -747,4 +747,264 @@
      }
  
      return 0;
@@ -252,6 +252,7 @@ diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 +    AVFrame *f=ambient_fel_decoder_take(&s->decoder,pts);
 +    if(!f)return NULL;
 +    const unsigned crop_x=(unsigned)f->crop_left,crop_y=(unsigned)f->crop_top;
++    const unsigned coded_width=f->width,coded_height=f->height;
 +    // The following transfer uses only memcpy, so an exact even crop
 +    // is safe even if it is not aligned for FFmpeg SIMD operations.
 +    if(av_frame_apply_cropping(f,AV_FRAME_CROP_UNALIGNED)<0){
@@ -271,7 +272,8 @@ diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 +    struct ambient_fel_picture *out=malloc(sizeof(*out)+count*sizeof(uint16_t));
 +    if(!out){s->decoder.failed=true;goto done;}
 +    *out=(struct ambient_fel_picture){.pts=pts,.width=w,.height=h,
-+        .crop_x=crop_x,.crop_y=crop_y,.sample_count=count};
++        .crop_x=crop_x,.crop_y=crop_y,.coded_width=coded_width,.coded_height=coded_height,
++        .sample_count=count};
 +    if(rpu)out->rpu=*rpu;
 +    // HEVC UHD defaults to top-left here when metadata is missing.
 +    // Other explicitly signaled chroma locations retain their own offsets.
@@ -480,7 +482,7 @@ diff --git a/libavcodec/ambient_fel_api.h b/libavcodec/ambient_fel_api.h
 new file mode 100644
 --- /dev/null
 +++ b/libavcodec/ambient_fel_api.h
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,40 @@
 +#pragma once
 +/* Private static FFmpeg interface. No AVFrame/AVPacket types cross modules.
 + * Data is copied once at picture ownership transfer, allocated with libc
@@ -497,6 +499,7 @@ new file mode 100644
 +    struct ambient_dovi_metadata rpu;
 +    int64_t pts;
 +    unsigned width,height;
++    unsigned coded_width,coded_height; /* before SPS conformance crop */
 +    unsigned crop_x,crop_y; /* origin of the visible EL in its coded picture */
 +    float chroma_x,chroma_y;
 +    size_t sample_count; /* zero only for a proven zero-residual frame */

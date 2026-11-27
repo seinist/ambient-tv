@@ -163,6 +163,7 @@ static void test_crop(const char *file,bool shifted,const struct ambient_fel_pic
     assert(ret==0);
     struct ambient_fel_picture *pic=av_ambient_fel_take(session,100000);
     assert(pic&&pic->width==62&&pic->height==60);
+    assert(pic->coded_width==64&&pic->coded_height==64);
     assert(pic->crop_x==(shifted?2u:0u)&&pic->crop_y==(shifted?4u:0u));
     const uint16_t *src=full->samples,*dst=pic->samples;
     assert(full->width==64&&full->height==64);
@@ -253,6 +254,7 @@ int main(int argc,char **argv)
         assert(!av_ambient_fel_take_rpu(session,key+1,&mel));
         struct ambient_fel_picture *compact=av_ambient_fel_take_rpu(session,key,&mel);
         assert(compact&&compact->pts==key&&compact->width==64&&compact->height==64);
+        assert(compact->coded_width==64&&compact->coded_height==64);
         assert(compact->sample_count==(pass?64*64+2*32*32:0));
         assert(!av_ambient_fel_take(session,key));
         if(pass)assert(!memcmp(compact->samples,picture->samples,

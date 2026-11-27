@@ -20,9 +20,10 @@ static inline void ambient_fel_render_destroy(pl_gpu gpu,struct ambient_fel_rend
     pl_tex_destroy(gpu,&s->output);
     pl_dispatch_destroy(&s->dispatch);
 }
-static inline bool ambient_fel_render_picture(pl_gpu gpu,pl_log log,
+static inline bool ambient_fel_render_picture_ex(pl_gpu gpu,pl_log log,
     struct ambient_fel_render *s,struct pl_frame *img,
-    const struct ambient_fel_picture *pic,int64_t pts,uint32_t bl_x,uint32_t bl_y)
+    const struct ambient_fel_picture *pic,int64_t pts,uint32_t bl_x,uint32_t bl_y,
+    uint32_t bl_coded_w,uint32_t bl_coded_h)
 {
     if(!gpu||!s||!img||!pic||pic->pts!=pts||pts<=0||
         img->num_planes!=1||!img->planes[0].texture||
@@ -31,9 +32,10 @@ static inline bool ambient_fel_render_picture(pl_gpu gpu,pl_log log,
         pic->rpu.source_max_pq>4095)return false;
     pl_tex bl=img->planes[0].texture;
     unsigned w=pic->width,h=pic->height,cw=(w+1)/2,ch=(h+1)/2;
+    struct ambient_fel_axis_map x,y;
     if(bl==s->output||bl->params.w<=0||bl->params.h<=0||
-       !ambient_fel_crop_axis(bl->params.w,w,bl_x,pic->crop_x)||
-       !ambient_fel_crop_axis(bl->params.h,h,bl_y,pic->crop_y))return false;
+       !ambient_fel_axis_mapping(bl->params.w,w,bl_x,pic->crop_x,bl_coded_w,pic->coded_width,&x)||
+       !ambient_fel_axis_mapping(bl->params.h,h,bl_y,pic->crop_y,bl_coded_h,pic->coded_height,&y))return false;
     struct pl_dovi_metadata reshape;
     struct ambient_fel_nlq nlq;
     if(!ambient_fel_metadata(&pic->rpu,&reshape,&nlq))return false;
@@ -48,6 +50,7 @@ static inline bool ambient_fel_render_picture(pl_gpu gpu,pl_log log,
         const size_t pitches[]={w*2u,cw*2u,cw*2u};
         if(!ambient_fel_planes_upload(gpu,&s->planes,w,h,data,pitches,
             pic->chroma_x,pic->chroma_y))return false;
+        s->planes.mapped=true;s->planes.x=x;s->planes.y=y;
     }
     if(!s->dispatch)s->dispatch=pl_dispatch_create(log,gpu);
     pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,16,0,
@@ -66,4 +69,12 @@ static inline bool ambient_fel_render_picture(pl_gpu gpu,pl_log log,
     img->color.hdr.min_luma=pl_hdr_rescale(PL_HDR_PQ,PL_HDR_NITS,pic->rpu.source_min_pq/4095.f);
     img->color.hdr.max_luma=pl_hdr_rescale(PL_HDR_PQ,PL_HDR_NITS,pic->rpu.source_max_pq/4095.f);
     return true;
+}
+
+/* Compatibility entry for a matched visible-rectangle contract only. */
+static inline bool ambient_fel_render_picture(pl_gpu gpu,pl_log log,
+    struct ambient_fel_render *s,struct pl_frame *img,
+    const struct ambient_fel_picture *pic,int64_t pts,uint32_t bl_x,uint32_t bl_y)
+{
+    return ambient_fel_render_picture_ex(gpu,log,s,img,pic,pts,bl_x,bl_y,0,0);
 }

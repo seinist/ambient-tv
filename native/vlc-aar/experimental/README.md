@@ -743,3 +743,19 @@ and final HLG rendering of local neutral pixels against BT.2100 math.
 This is an experimental adaptation, not normative conformance or a
 change to native Android HDR routing.
 Reference: https://pub.smpte.org/pub/st2094-40/st2094-40-2020.pdf
+
+
+### FEL mapped visible rectangles
+
+Keep the original coded EL extent alongside the conformance crop and
+sample count. Where visible rectangles do not match, require exact 1:1
+or 2:1 coded extents and full coverage of the BL rectangle by available
+EL samples. The display bridge additionally checks that the AImage
+confirms the declared coded BL extents and physical origin. The shader
+adds the derived EL-luma offset before chroma subsampling, including odd
+EL offsets (half chroma sample phase). No extrapolation of missing EL
+pixels or arbitrary scale is admitted. Existing matched crops retain
+their prior behavior. The GPU uses the existing experimental bilinear
+filter, not a claim of Dolby proprietary reference filtering. Tests cover
+actual cropped HEVC coded dimensions, invalid geometry and independent
+pixel arithmetic for shifted 2:1 sampling.

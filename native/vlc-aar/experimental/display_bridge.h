@@ -145,11 +145,18 @@ static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
         struct vlc_ancillary *anc=picture_GetAncillary(pic,AMBIENT_FEL_ID);
         const struct ambient_fel_picture *el=anc?vlc_ancillary_GetData(anc):NULL;
         // AImage must confirm the declared BL origin, including zero.
+        // Expanded geometry requires declared coded extents confirmed by
+        // the actual AImage. Allocation padding alone is not proof of scale.
+        const bool coded_confirmed=pic->format.i_width==held.width &&
+            pic->format.i_height==held.height;
+        struct ambient_fel_axis_map x,y;
         fel_crop_ok=el && held.crop.left>=0 && held.crop.top>=0 &&
             pic->format.i_x_offset==(unsigned)held.crop.left &&
             pic->format.i_y_offset==(unsigned)held.crop.top &&
-            ambient_fel_crop_axis(width,el->width,(unsigned)held.crop.left,el->crop_x) &&
-            ambient_fel_crop_axis(height,el->height,(unsigned)held.crop.top,el->crop_y);
+            ambient_fel_axis_mapping(width,el->width,(unsigned)held.crop.left,el->crop_x,
+                coded_confirmed?pic->format.i_width:0,el->coded_width,&x) &&
+            ambient_fel_axis_mapping(height,el->height,(unsigned)held.crop.top,el->crop_y,
+                coded_confirmed?pic->format.i_height:0,el->coded_height,&y);
     }
     if (!fel_crop_ok ||
         width != pic->format.i_visible_width || height != pic->format.i_visible_height ||

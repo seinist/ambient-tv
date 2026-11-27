@@ -14,6 +14,7 @@ struct ambient_fel_picture {
     struct ambient_dovi_metadata rpu;
     int64_t pts;
     unsigned width,height;
+    unsigned coded_width,coded_height; /* before SPS conformance crop */
     unsigned crop_x,crop_y; /* origin of the visible EL in its coded picture */
     float chroma_x,chroma_y;
     size_t sample_count; /* zero only for a proven zero-residual frame */
