@@ -141,7 +141,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     @Volatile private var accountId: Long? = accountIdFile.takeIf { it.isFile }?.let {
         runCatching { it.readText().trim().toLongOrNull() }.getOrNull()
     }
-    private var handle = 0L
+    @Volatile private var handle = 0L
     @Volatile private var connected = false
     private var epoch = System.nanoTime()
     /**
@@ -1542,7 +1542,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 app.getString(R.string.monogram_error_account_changed)
             }
         }
-        val dir = withContext(Dispatchers.IO) { chunkDirectory.canonicalFile }
+        // The parent was canonicalized at initialization; all children are private, fixed names.
+        val dir = chunkDirectory
         val mediaIdentity = nativeMediaKey?.takeIf { it.isNotBlank() }
         val digest = mediaIdentity?.let(::mediaDigest)
         val cacheFiles = lengths.indices.map { index ->
@@ -1579,8 +1580,30 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 }
             }
         }
-        // Cache hits still validate the local authenticated native handle, but do
-        // not wait on reconnect, a network flood deadline or a request control.
+        // Fully hot windows bypass the connection/setup mutex, never authorization.
+        // tryLock avoids parking a read behind logout; the slow path serializes safely.
+        val hot = withContext(Dispatchers.IO) {
+            if (digest == null || handleUse.hasQueuedThreads()) return@withContext null
+            val read = handleUse.readLock()
+            if (!read.tryLock()) return@withContext null
+            try {
+                val current = handle
+                if (current == 0L) return@withContext null
+                val found = synchronized(diskChunkLock) {
+                    verifyGeneration()
+                    cacheFiles.mapIndexed { index, file -> hotChunks[file]?.takeIf { validSize(index, it.size) } }
+                }
+                if (found.any { it == null }) return@withContext null
+                requireAuthorized(current)
+                synchronized(diskChunkLock) {
+                    verifyGeneration()
+                    cacheFiles.forEach { file -> chunkIndex[file]; touchChunk(file) }
+                }
+                found.filterNotNull()
+            } finally { read.unlock() }
+        }
+        if (hot != null) return hot
+        // Cold disk hits retain the regular authenticated handle acquisition path.
         val cached = nativeCallOnce(connect = false) { h ->
             requireAuthorized(h)
             lengths.indices.map(::lookup)
@@ -1608,19 +1631,17 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 }
                 try {
                     val previous = uniffi.monogram_mtproto.bindRequestControl(request)
-                    val payload = try {
+                    val parts = try {
                         mediaClass(if (priority.foreground) DISPATCH_USER else DISPATCH_BACKGROUND) {
-                            AmbientMonogramJni.mediaRange(h, chatId, messageId, temp.absolutePath, offset, mediaIdentity.orEmpty(), lengths.size)
+                            if (lengths.size == 1) listOf(AmbientMonogramJni.mediaRange(
+                                h, chatId, messageId, temp.absolutePath, offset, mediaIdentity.orEmpty(), 1))
+                            else AmbientMonogramJni.mediaParts(h, chatId, messageId, temp.absolutePath,
+                                offset, mediaIdentity.orEmpty(), checkNotNull(lengths[1]))
                         }
                     } finally {
                         uniffi.monogram_mtproto.bindRequestControl(previous)
                     }
-                    val parts = if (lengths.size == 1) listOf(payload) else {
-                        require(payload.size == lengths.sumOf { checkNotNull(it) }) { "Incomplete Monogram window" }
-                        listOf(payload.copyOfRange(0, TELEGRAM_MEDIA_PART_BYTES),
-                            payload.copyOfRange(TELEGRAM_MEDIA_PART_BYTES, payload.size))
-                    }
-                    require(parts.indices.all { validSize(it, parts[it].size) }) { "Invalid or incomplete Monogram chunk" }
+                    require(parts.size == lengths.size && parts.indices.all { validSize(it, parts[it].size) }) { "Invalid or incomplete Monogram chunk" }
                     recordNativeWindow()
                     verifyGeneration()
                     requireAuthorized(h)
@@ -1752,6 +1773,32 @@ internal object AmbientMonogramJni {
             }
         }
         return uniffi.monogram_mtproto.downloadMessagePreviewBytes(handle.toULong(), chatId, messageId, destination, target.toUInt())
+    }
+
+    @Volatile private var partsJniAvailable = true
+    private external fun downloadMediaParts(
+        handle: Long, chatId: Long, messageId: Int, destination: String, offset: Long, expectedKey: String,
+        first: ByteArray, second: ByteArray,
+    ): Int
+
+    fun mediaParts(handle: Long, chatId: Long, messageId: Int, destination: String, offset: Long,
+        expectedKey: String, secondBytes: Int): List<ByteArray> {
+        require(secondBytes in 1..TELEGRAM_MEDIA_PART_BYTES)
+        if (partsJniAvailable) {
+            val first = ByteArray(TELEGRAM_MEDIA_PART_BYTES)
+            val second = ByteArray(secondBytes)
+            try {
+                val count = downloadMediaParts(handle, chatId, messageId, destination, offset, expectedKey, first, second)
+                check(count == first.size + second.size) { "Incomplete Monogram window" }
+                return listOf(first, second)
+            } catch (_: UnsatisfiedLinkError) {
+                partsJniAvailable = false
+            }
+        }
+        val payload = mediaRange(handle, chatId, messageId, destination, offset, expectedKey, 2)
+        require(payload.size == TELEGRAM_MEDIA_PART_BYTES + secondBytes) { "Incomplete Monogram window" }
+        return listOf(payload.copyOfRange(0, TELEGRAM_MEDIA_PART_BYTES),
+            payload.copyOfRange(TELEGRAM_MEDIA_PART_BYTES, payload.size))
     }
 
     private external fun downloadMediaRange(
