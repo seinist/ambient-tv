@@ -110,6 +110,19 @@ internal class SystemModuleStore(
         writeState(directory, State(highWater = state.highWater))
     }
 
+    /** Only call under the exclusive cross-process runtime lease. */
+    fun collectUnused(module: SystemModule) = locked(module) { directory ->
+        val state = readState(directory)
+        val keep = listOfNotNull(state.current?.id, state.previous?.id).toSet()
+        directory.listFiles().orEmpty().filter {
+            idPattern.matches(it.name) && it.name !in keep &&
+                Files.isDirectory(it.toPath(), LinkOption.NOFOLLOW_LINKS)
+        }.forEach { candidate ->
+            if (!candidate.deleteRecursively()) throw IOException("Cannot reclaim old module package")
+        }
+        syncDirectory(directory)
+    }
+
     private fun verify(directory: File, module: SystemModule, pointer: Pointer): Package {
         if (!idPattern.matches(pointer.id)) throw SystemModuleTrustException("Invalid package pointer")
         val dir = File(directory, pointer.id)
