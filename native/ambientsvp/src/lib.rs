@@ -12,6 +12,8 @@ mod gpu;
 const MAX_QUEUE: usize = 10;
 const MAX_FRAMES: i32 = 100_000_000;
 const MAX_RECYCLED_FRAME_BYTES: usize = 32 * 1024 * 1024;
+const ADAPTIVE_PRESET: u32 = 4;
+const MAX_ADAPTIVE_LEVEL: u32 = 2;
 
 // Decoder, audio and render threads must retain CPU time. Small images
 // don't amortize dispatch overhead as well as HD images. Explicit settings
@@ -93,6 +95,8 @@ pub struct AmbientSvp {
     config: Config,
     builder: SuperBuilder,
     analyser: Analyser,
+    analysis_options: String,
+    adaptive_level: u32,
     smoother: Smoother,
     pool: rayon::ThreadPool,
     previous: Option<SuperFrame>,
@@ -134,7 +138,7 @@ impl AmbientSvp {
             || c.source_den == 0
             || c.target_num == 0
             || c.target_den == 0
-            || c.preset > 3
+            || c.preset > ADAPTIVE_PRESET
             || c.backend > 2
             || c.threads > 8 || c.artifacts > 3 || c.scene > 3
             || !matches!(c.algo, 0 | 13 | 21 | 23)
@@ -160,7 +164,7 @@ impl AmbientSvp {
             .build()
             .map_err(|e| e.to_string())?;
         // Start automatic mode conservatively. No architecture-wide AVX/NEON requirement.
-        let preset = if c.preset == 0 { 1 } else { c.preset };
+        let preset = if c.preset == 0 || c.preset == ADAPTIVE_PRESET { 1 } else { c.preset };
         let pel = if c.pel != 0 { c.pel } else if preset == 3 { 2 } else { 1 };
         let builder = SuperBuilder::new(c.width as i32, c.height as i32, pel as i32)?;
         let block = if c.block != 0 { c.block } else if preset == 1 { 32 } else { 16 };
@@ -173,8 +177,10 @@ impl AmbientSvp {
             3 => ",main:{search:{type:4,distance:4,coarse:{distance:4,trymany:true}}}",
             _ => "",
         };
-        let analyser = Analyser::with_options(&builder,
-            &format!("{{block:{{w:{block},h:{block},overlap:{overlap}}},vectors:3{search}}}"))?;
+        // No changes to the old presets or explicit tuning. Only the new
+        // opt-in adaptive preset may switch upstream fast analysis levels.
+        let analysis_options = format!("{{block:{{w:{block},h:{block},overlap:{overlap}}},vectors:3{search}");
+        let analyser = Analyser::with_options(&builder, &format!("{analysis_options},fast:0}}"))?;
         let algo = if c.algo != 0 { c.algo } else if preset == 3 { 23 } else { 13 };
         // Keep zero=0: perfect motion matches must not be mistaken for scene cuts.
         let blocks = match c.scene { 1 => 30, 3 => 70, _ => 50 };
@@ -215,6 +221,8 @@ impl AmbientSvp {
             config: c,
             builder,
             analyser,
+            analysis_options,
+            adaptive_level: 0,
             smoother,
             pool,
             previous: None,
@@ -227,7 +235,7 @@ impl AmbientSvp {
             eof: false,
             stats: Stats {
                 backend,
-                preset,
+                preset: if c.preset == ADAPTIVE_PRESET { ADAPTIVE_PRESET } else { preset },
                 ..Stats::default()
             },
             last_output: None,
@@ -292,6 +300,29 @@ impl AmbientSvp {
             if let Some(gpu) = self.gpu.as_mut() { gpu.clear_sources(); }
         }
         Ok(())
+    }
+
+    /// Changing search effort does not change block layout, pel, cadence or
+    /// timestamps. Future pairs use the cheaper analysis; existing vectors
+    /// remain valid only if the upstream vector contract is identical.
+    fn reduce_analysis_effort(&mut self) -> bool {
+        if self.config.preset != ADAPTIVE_PRESET || self.adaptive_level >= MAX_ADAPTIVE_LEVEL
+            || self.stats.bypass_reason != 0 {
+            return false;
+        }
+        let next = self.adaptive_level + 1;
+        let Ok(analyser) = Analyser::with_options(
+            &self.builder, &format!("{},fast:{next}}}", self.analysis_options)
+        ) else { return false; };
+        if analyser.vector_header() != self.analyser.vector_header() { return false; }
+        self.analyser = analyser;
+        self.adaptive_level = next;
+        self.repeated_vectors = None;
+        self.slow_inputs = 0;
+        self.slow_windows = 0;
+        self.window_cost_us = 0;
+        self.window_inputs = 0;
+        true
     }
 
     pub fn push(&mut self, data: &[u8], pts: i64) -> Result<(), i32> {
@@ -367,7 +398,10 @@ impl AmbientSvp {
         // wait several source-seconds while processing them far below real time.
         if self.input > 1 && cost > (self.source_time(1) as u64 * 2).max(75_000) {
             self.slow_inputs += 1;
-            if self.slow_inputs >= 2 || cost > 500_000 {
+            if cost > 500_000 {
+                // Keep the existing absolute safety ceiling even in adaptive mode.
+                self.bypass(1);
+            } else if self.slow_inputs >= 2 && !self.reduce_analysis_effort() {
                 self.bypass(1);
             }
         } else {
@@ -383,7 +417,7 @@ impl AmbientSvp {
             } else {
                 self.slow_windows = 0;
             }
-            if self.slow_windows >= 2 {
+            if self.slow_windows >= 2 && !self.reduce_analysis_effort() {
                 self.bypass(1);
             }
             self.window_inputs = 0;
@@ -834,4 +868,60 @@ mod pipelining_tests {
         assert_eq!(float.stats.bypass_reason, 0);
     }
 
+}
+
+#[cfg(test)]
+mod adaptive_tests {
+    use super::*;
+    fn config(preset: u32) -> Config {
+        Config {
+            abi: AMBIENTSVP_ABI, width: 96, height: 96,
+            source_num: 24, source_den: 1, target_num: 60, target_den: 1,
+            preset, backend: 1, threads: 2, artifacts: 0, scene: 0,
+            algo: 0, block: 0, overlap: 0, pel: 0, search: 0,
+        }
+    }
+
+    #[test]
+    fn adaptive_levels_preserve_header_and_stop_at_a_bounded_floor() {
+        let mut engine = AmbientSvp::new(config(ADAPTIVE_PRESET)).unwrap();
+        let header = engine.analyser.vector_header();
+        for level in 1..=MAX_ADAPTIVE_LEVEL {
+            assert!(engine.reduce_analysis_effort());
+            assert_eq!(engine.adaptive_level, level);
+            assert_eq!(header, engine.analyser.vector_header());
+        }
+        assert!(!engine.reduce_analysis_effort());
+        engine.reset().unwrap();
+        assert_eq!(engine.adaptive_level, MAX_ADAPTIVE_LEVEL);
+        engine.bypass(1);
+        assert!(!engine.reduce_analysis_effort());
+        let mut fixed = AmbientSvp::new(config(1)).unwrap();
+        assert!(!fixed.reduce_analysis_effort());
+    }
+
+    #[test]
+    fn adaptive_analysis_changes_keep_output_timeline_and_reset() {
+        let mut engine = AmbientSvp::new(config(ADAPTIVE_PRESET)).unwrap();
+        let mut out = vec![0; engine.frame_len()];
+        for origin in [0, 3_000_000] {
+            engine.reset().unwrap();
+            let mut pts = Vec::new();
+            for n in 0..12 {
+                let mut input = vec![128; engine.frame_len()];
+                for y in 0..96 {
+                    for x in 0..96 {
+                        input[y*96+x] = if (x + 96 - n*2 % 96) % 96 < 32 { 180 } else { 40 };
+                    }
+                }
+                if origin == 0 && (n == 4 || n == 8) { assert!(engine.reduce_analysis_effort()); }
+                engine.push(&input, origin + n as i64 * 1_000_000 / 24).unwrap();
+                while let Some(p) = engine.receive(&mut out, false).unwrap() { pts.push(p); }
+            }
+            while let Some(p) = engine.receive(&mut out, true).unwrap() { pts.push(p); }
+            assert_eq!(pts.len(), 30);
+            for (n,p) in pts.iter().enumerate() { assert_eq!(*p, origin + n as i64 * 1_000_000 / 60); }
+            assert_eq!(engine.stats.bypass_reason, 0);
+        }
+    }
 }
