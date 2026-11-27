@@ -164,8 +164,8 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      vlc_mutex_lock(&p_sys->lock);
 +    // A callback can arrive after abort/flush. Never underflow the counter
 +    // or feed a late image back into a retired decoder epoch.
-+    if (p_sys->video.ambient_ahb &&
-+        (!p_sys->video.air_waiting_count || p_sys->b_aborted || p_sys->b_decoder_dead))
++    if (p_sys->b_decoder_dead || (p_sys->video.ambient_ahb &&
++        (!p_sys->video.air_waiting_count || p_sys->b_aborted)))
 +    {
 +        if (p_sys->video.air_waiting_count)
 +            p_sys->video.air_waiting_count--;
@@ -320,7 +320,18 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      p_sys->api.p_obj = p_this;
      p_sys->api.i_codec = p_dec->fmt_in->i_codec;
      p_sys->api.i_cat = p_dec->fmt_in->i_cat;
-@@ -1465,21 +1596,36 @@
+@@ -1314,9 +1445,10 @@
+     vlc_cond_init(&p_sys->cond);
+     vlc_cond_init(&p_sys->dec_cond);
+ 
+     if (p_dec->fmt_in->i_cat == VIDEO_ES)
+     {
++        p_sys->cat = VIDEO_ES; // bailout must clean partial video setup
+         vlc_cond_init(&p_sys->video.air_cond);
+         p_sys->video.use_air = false;
+         p_sys->video.air_waiting_count = 0;
+ 
+@@ -1465,21 +1597,36 @@
      {
          p_sys->b_aborted = true;
          vlc_cond_broadcast(&p_sys->cond);
@@ -359,17 +370,17 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
              if (p_sys->video.surfacetexture)
                  vlc_asurfacetexture_Delete(p_sys->video.surfacetexture);
  
-@@ -1503,6 +1649,9 @@
+@@ -1503,6 +1650,9 @@
  
      vlc_mutex_lock(&p_sys->lock);
      p_sys->b_decoder_dead = true;
 +    // Wake output/flush waits before unregistering the AImage callback.
-+    if (p_sys->cat == VIDEO_ES && p_sys->video.ambient_ahb)
++    if (p_sys->cat == VIDEO_ES && p_sys->video.use_air)
 +        AbortDecoderLocked(p_sys);
      vlc_mutex_unlock(&p_sys->lock);
  
      if (p_sys->cat == VIDEO_ES && p_sys->video.ctx)
-@@ -1519,8 +1668,9 @@
+@@ -1519,8 +1669,9 @@
          }
          android_video_context_t *avctx =
              vlc_video_context_GetPrivate(p_sys->video.ctx, VLC_VIDEO_CONTEXT_AWINDOW);
@@ -381,7 +392,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      }
  
      vlc_mutex_lock(&p_sys->lock);
-@@ -1546,6 +1696,7 @@
+@@ -1546,6 +1697,7 @@
      if (p_out->type == MC_OUT_TYPE_BUF)
      {
          if (!p_sys->b_has_format) {
@@ -389,7 +400,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
              msg_Warn(p_dec, "Buffers returned before output format is set, dropping frame");
              timestamp_FifoGet(p_sys->video.timestamp_fifo); /* Remove timestamp */
              return p_sys->api.release_out(&p_sys->api, p_out->buf.i_index, false);
-@@ -1553,6 +1704,7 @@
+@@ -1553,6 +1705,7 @@
  
          if (p_out->buf.i_ts <= p_sys->i_preroll_end)
          {
@@ -397,7 +408,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
              timestamp_FifoGet(p_sys->video.timestamp_fifo); /* Remove timestamp */
              return p_sys->api.release_out(&p_sys->api, p_out->buf.i_index, false);
          }
-@@ -1571,9 +1723,27 @@
+@@ -1571,9 +1724,27 @@
              {
                  /* We need to wait for AImageReader. Otherwise, we might
                   * overwrite a picture (even when using acquireNextImageAsync) */
@@ -426,7 +437,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
                  if (p_sys->b_flush_out)
                  {
-@@ -1582,10 +1752,54 @@
+@@ -1582,10 +1753,54 @@
                      return 0;
                  }
  
@@ -483,7 +494,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
                  /* picture will be wrapped from AImageReader callback */
                  assert(*pp_out_pic  == NULL);
              }
-@@ -1944,9 +2158,12 @@
+@@ -1944,9 +2159,12 @@
  
          /* Wait for an output buffer. This function returns when a new output
           * is available or if output is flushed. */
@@ -497,7 +508,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
          /* Ignore dequeue_out errors caused by flush, or late picture being
           * dequeued after close. */
-@@ -1973,7 +2190,9 @@
+@@ -1973,7 +2191,9 @@
          if (i_index >= 0 || i_index == MC_API_INFO_OUTPUT_FORMAT_CHANGED
           || i_index == MC_API_INFO_OUTPUT_BUFFERS_CHANGED)
          {
@@ -508,7 +519,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
              int i_ret = p_sys->api.get_out(&p_sys->api, i_index, &out);
  
              if (i_ret == 1)
-@@ -2042,8 +2261,15 @@
+@@ -2042,8 +2262,15 @@
      while (b_drain || (p_block = GetNextBlock(p_sys, p_in_block)))
      {
          vlc_mutex_unlock(&p_sys->lock);
@@ -525,7 +536,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
          if (p_sys->b_aborted)
              return VLC_EGENERIC;
-@@ -2066,6 +2292,41 @@
+@@ -2066,6 +2293,41 @@
                      if (!i_ts && p_block->i_dts)
                          i_ts = p_block->i_dts;
                  }
@@ -567,7 +578,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
                  p_buf = p_block->p_buffer;
                  i_size = p_block->i_buffer;
              }
-@@ -2174,6 +2435,23 @@
+@@ -2174,6 +2436,23 @@
          goto reload;
      }
  
@@ -591,7 +602,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      /* Parse input block */
      if ((i_ret = p_sys->pf_on_new_block(p_dec, &p_in_block)) != 1)
      {
-@@ -2345,6 +2623,10 @@
+@@ -2345,6 +2624,10 @@
  static void Video_OnFlush(decoder_sys_t *p_sys)
  {
      timestamp_FifoEmpty(p_sys->video.timestamp_fifo);
@@ -602,7 +613,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      /* Invalidate all pictures that are currently in flight
       * since flushing make all previous indices returned by
       * MediaCodec invalid. */
-@@ -2352,10 +2634,21 @@
+@@ -2352,10 +2635,21 @@
  
      if (p_sys->video.use_air)
      {
