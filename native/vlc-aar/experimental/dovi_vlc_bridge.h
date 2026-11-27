@@ -23,7 +23,9 @@ static inline bool ambient_dovi_format(const video_format_t *f)
     if (f->dovi.profile == 7)
         return f->dovi.el_present && f->primaries == COLOR_PRIMARIES_BT2020 &&
             f->space == COLOR_SPACE_BT2020 && f->transfer == TRANSFER_FUNC_SMPTE_ST2084 &&
-            f->color_range == COLOR_RANGE_LIMITED && ambient_dovi_visible_origin(f);
+            f->color_range == COLOR_RANGE_LIMITED &&
+            ambient_fel_format_geometry(f->i_width,f->i_height,f->i_visible_width,
+                f->i_visible_height,f->i_x_offset,f->i_y_offset);
     if (f->dovi.el_present) return false;
     if (f->dovi.profile == 8)
         return f->primaries == COLOR_PRIMARIES_BT2020 && f->space == COLOR_SPACE_BT2020 &&
