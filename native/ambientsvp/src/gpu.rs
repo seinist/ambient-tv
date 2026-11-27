@@ -83,6 +83,7 @@ pub struct Gpu {
     #[cfg(test)]
     pub(super) cross_pair_submissions: u64,
     compact_fields: bool,
+    readback_timeout: Duration,
     motion_search: Option<crate::motion_search::MotionSearch>,
     sources: BTreeMap<i32, Source>,
     recycled_sources: Vec<Source>,
@@ -296,6 +297,11 @@ impl Gpu {
             #[cfg(test)]
             cross_pair_submissions: 0,
             compact_fields,
+            // Correctness-only Mesa runs may compile shaders very slowly on
+            // loaded CI hosts. Keep the real device watchdog unchanged.
+            readback_timeout: if software_test && info.device_type == wgpu::DeviceType::Cpu {
+                Duration::from_secs(20)
+            } else { Duration::from_secs(3) },
             motion_search: None,
             sources: BTreeMap::new(),
             recycled_sources: Vec::new(),
@@ -768,7 +774,7 @@ impl Gpu {
         Ok(PendingReadback {
             buffer: readback,
             result: rx,
-            deadline: std::time::Instant::now() + Duration::from_secs(3),
+            deadline: std::time::Instant::now() + self.readback_timeout,
         })
     }
 
