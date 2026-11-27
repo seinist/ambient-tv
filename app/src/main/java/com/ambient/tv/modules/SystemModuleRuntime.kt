@@ -25,9 +25,9 @@ internal class SystemModuleRuntime(
     private val store: SystemModuleStore,
     private val pageSize: Long,
     private val contracts: Map<SystemModule, Contract>,
+    private val root: File = File(context.noBackupFilesDir, "system-module-runtime"),
 ) {
     private val app = context.applicationContext
-    private val root = File(app.noBackupFilesDir, "system-module-runtime")
     private val hostLoader = app.classLoader
 
     data class Contract(
@@ -36,6 +36,10 @@ internal class SystemModuleRuntime(
         // alternative in this process. DEX adapters load their own JNI/JNA.
         val nativeRoots: Set<String> = emptySet(),
         val assetOnly: Boolean = false,
+        // Explicit APK-owned ABI dependencies are never replaced by a module.
+        val hostLibraries: Set<String> = emptySet(),
+        // Only engines whose first load is controlled by this runtime may opt in.
+        val bundledOverrides: Set<String> = emptySet(),
     )
 
     data class Loaded(
@@ -72,7 +76,7 @@ internal class SystemModuleRuntime(
                     }
                     if (id in active) continue
                     val contract = contracts[id] ?: throw SystemModuleTrustException("No host module contract")
-                    val files = SystemModuleMaterializer.prepare(pkg, root, pageSize)
+                    val files = SystemModuleMaterializer.prepare(pkg, root, pageSize, contract.hostLibraries)
                     prepared[id] = files
                     validateContract(contract, files)
                     for (name in files.native.keys) {
@@ -123,8 +127,12 @@ internal class SystemModuleRuntime(
                     throw SystemModuleTrustException("Native-only package does not match host contract")
                 val bundled = hostLoader as? BaseDexClassLoader
                 if (files.native.keys.any { name ->
+                        name !in contract.bundledOverrides &&
                         bundled?.findLibrary(name.removePrefix("lib").removeSuffix(".so")) != null
                     }) throw SystemModuleTrustException("Native-only module conflicts with bundled library")
+                if (contract.hostLibraries.any { name ->
+                        bundled?.findLibrary(name.removePrefix("lib").removeSuffix(".so")) == null
+                    }) throw SystemModuleTrustException("Required host library unavailable")
                 nativeOrder(files.native, contract.nativeRoots)
             }
             else -> if (files.dex.isNotEmpty() || files.native.isNotEmpty())
@@ -155,6 +163,9 @@ internal class SystemModuleRuntime(
             return Loaded(files.build, assets, entry, loader)
         }
         if (contract.nativeRoots.isNotEmpty()) {
+            for (name in contract.hostLibraries.sorted()) {
+                System.loadLibrary(name.removePrefix("lib").removeSuffix(".so"))
+            }
             for (name in nativeOrder(files.native, contract.nativeRoots)) {
                 System.load(files.library(name).absolutePath)
             }
