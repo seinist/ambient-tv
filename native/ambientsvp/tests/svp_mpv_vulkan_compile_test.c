@@ -17,6 +17,8 @@ enum { PL_COLOR_TRC_UNKNOWN=0,PL_COLOR_TRC_PQ,PL_COLOR_TRC_HLG };
 enum { PL_ALPHA_NONE=3 };
 struct pl_bit_encoding { int sample_depth,color_depth,bit_shift; };
 struct mp_ff_side_data { int type; AVBufferRef *buf; };
+struct pl_hdr_metadata { float min_luma,max_luma; };
+bool pl_hdr_metadata_equal(const struct pl_hdr_metadata *,const struct pl_hdr_metadata *);
 struct mp_image {
     int imgfmt,w,h,fields;
     double pts,pkt_duration,nominal_fps;
@@ -27,7 +29,7 @@ struct mp_image {
     struct {
         struct { int x0,y0,x1,y1; } crop;
         struct { int sys,levels,alpha; struct pl_bit_encoding bits; } repr;
-        struct { int transfer,primaries; struct { float min_luma,max_luma; } hdr; } color;
+        struct { int transfer,primaries; struct pl_hdr_metadata hdr; } color;
         int chroma_location;
     } params;
 };
