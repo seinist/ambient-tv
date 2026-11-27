@@ -34,6 +34,7 @@ struct ambient_hdrplus {
     uint8_t version, window_count;
     bool global_projection; /* metadata beyond VLC/libplacebo's global contract */
     bool version1_constraints_ok; /* ST 2094-40:2020 section 9.4 and 8.5.4/8.7.3.2 */
+    bool version1_recommended_distribution; /* Table 1: recommended, not mandatory */
     float target_nits;
     struct ambient_hdrplus_window windows[3];
     struct ambient_hdrplus_grid targeted_grid, mastering_grid;
@@ -152,10 +153,23 @@ static inline bool ambient_hdrplus_parse(const uint8_t *data, size_t size, struc
         m.version1_constraints_ok=m.window_count==1 && !m.targeted_grid.rows &&
             !m.mastering_grid.rows && !p->saturation_mapping &&
             p->histogram_count==9 && p->anchor_count<=9;
-        if (m.version1_constraints_ok && p->histogram[1].percentage==5 &&
-            p->histogram[2].percentage==10 &&
-            (p->histogram[1].percentile!=0.f || p->histogram[2].percentile!=255.f/100000.f))
+        const bool reserved=p->histogram_count==9&&p->histogram[1].percentage==5&&
+            p->histogram[2].percentage==10;
+        if(reserved&&(p->histogram[1].percentile!=0.f||p->histogram[2].percentile!=255.f/100000.f))
             m.version1_constraints_ok=false;
+        // The real CFD percentiles are nondecreasing. Positions V1/V2
+        // are exempt only when both reserved marker percentages match.
+        float previous=0.f;
+        for(unsigned i=0;i<p->histogram_count;i++){
+            if(reserved&&(i==1||i==2))continue;
+            if(p->histogram[i].percentile<previous)m.version1_constraints_ok=false;
+            previous=p->histogram[i].percentile;
+        }
+        static const uint8_t recommended[9]={1,5,10,25,50,75,90,95,99};
+        m.version1_recommended_distribution=p->histogram_count==9;
+        for(unsigned i=0;i<p->histogram_count&&i<9;i++)
+            if(p->histogram[i].percentage!=recommended[i])
+                m.version1_recommended_distribution=false;
     }
     *out = m;
     return true;
