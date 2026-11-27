@@ -28,6 +28,16 @@ class PlayerVideoSettingsTest {
         mpvOutputBuilt = true, mpvDecodeBuilt = true, vlcOutputBuilt = true,
     )
 
+    @Test fun vlcOutputUsesOwnMetadataAndCompatibleBaseLayer() {
+        val hdr10 = setOf(HdrStandard.HDR10)
+        assertFalse(playerVideoOutputNativeHdr("vlc", null, null, HdrStandard.HDR10, hdr10, false))
+        assertTrue(playerVideoOutputNativeHdr("vlc", HdrStandard.DOLBY_VISION, HdrStandard.HDR10,
+            null, hdr10, false))
+        assertTrue(playerVideoOutputNativeHdr("vlc", HdrStandard.HDR10_PLUS, null, null, hdr10, true))
+        assertTrue(playerVideoOutputNativeHdr("mpv", null, null, HdrStandard.HDR10, hdr10, false))
+        assertFalse(playerVideoOutputNativeHdr("mpv", null, null, HdrStandard.HDR10, hdr10, true))
+    }
+
     @Test fun vlcExperimentalHdrTargetUnlocksOnlyAvailableVulkan() {
         assertEquals(emptySet<String>(), disabledPlayerVideoOutputs("vlc", capable,
             nativeHdrPreferred = true, vlcHdrTargetAvailable = true))

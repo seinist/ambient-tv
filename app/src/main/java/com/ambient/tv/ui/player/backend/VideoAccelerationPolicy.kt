@@ -2,6 +2,8 @@ package com.ambient.tv.ui.player.backend
 
 import kotlinx.serialization.Serializable
 import com.ambient.tv.data.local.MpvImageOptions
+import com.ambient.tv.ui.player.HdrStandard
+import com.ambient.tv.ui.player.nativeHdrSurfacePreferred
 
 internal fun mpvNeedsGpuProcessing(o: MpvImageOptions): Boolean =
     o.scaler != "bilinear" || o.chromaScaler != "bilinear" || o.downscaler != "bilinear" ||
@@ -302,6 +304,12 @@ internal fun vlcHdrPlusTargetChanged(expected: VlcHdrPlusTarget?, displayId: Int
     defaultDisplayId: Int, actual: VlcHdrPlusTarget?): Boolean =
     expected != null && displayId != null &&
         (displayId != defaultDisplayId || actual != expected)
+
+/** An explicit HDR10+ target fallback must use the current attached display's
+ * native HDR10+/HDR10 capability. A temporarily missing view preserves the
+ * last known policy rather than making an unsupported capability claim. */
+internal fun vlcHdrPlusFallbackNativeHdr(previous: Boolean, attachedStandards: Set<HdrStandard>?): Boolean =
+    attachedStandards?.let { nativeHdrSurfacePreferred(HdrStandard.HDR10_PLUS, it) } ?: previous
 
 /** Opaque SDR or explicitly supported HDR GPU processing, with no CPU filters. */
 internal fun vlcAhbExperimentEligible(

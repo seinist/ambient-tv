@@ -49,6 +49,13 @@ data class PlayerVideoSettings(
 internal fun sameVideoSettingsPlayback(a: PlaybackMetadata?, b: PlaybackMetadata?): Boolean =
     a != null && b != null && a.route == b.route && a.source == b.source && a.mediaId == b.mediaId
 
+/** MPV runtime detection belongs only to MPV; VLC uses its controller's metadata/base layer policy. */
+internal fun playerVideoOutputNativeHdr(backend: String, metadataSource: HdrStandard?,
+    metadataBaseLayer: HdrStandard?, mpvSource: HdrStandard?, display: Set<HdrStandard>,
+    mpvHdrGpu: Boolean): Boolean = if (backend == "mpv")
+    nativeHdrSurfacePreferred(mpvSource, display) && !mpvHdrGpu
+else nativeHdrSurfacePreferred(metadataSource, display, metadataBaseLayer)
+
 internal fun disabledPlayerVideoOutputs(backend: String, caps: VideoAccelerationCapabilities,
     nativeHdrPreferred: Boolean = false, hdrGpu: Boolean = false,
     vlcHdrTargetAvailable: Boolean = false): Set<String> =

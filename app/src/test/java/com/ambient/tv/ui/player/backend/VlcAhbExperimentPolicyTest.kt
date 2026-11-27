@@ -41,6 +41,15 @@ class VlcAhbExperimentPolicyTest {
         assertTrue(vlcHdrPlusTargetChanged(pq, 0, 0, pq.copy(maxNits = 1000f)))
     }
 
+    @Test fun hdrPlusFallbackUsesCurrentAttachedDisplayPolicy() {
+        assertFalse(vlcHdrPlusFallbackNativeHdr(true, emptySet()))
+        assertFalse(vlcHdrPlusFallbackNativeHdr(true, setOf(com.ambient.tv.ui.player.HdrStandard.HLG)))
+        assertTrue(vlcHdrPlusFallbackNativeHdr(false, setOf(com.ambient.tv.ui.player.HdrStandard.HDR10)))
+        assertTrue(vlcHdrPlusFallbackNativeHdr(false, setOf(com.ambient.tv.ui.player.HdrStandard.HDR10_PLUS)))
+        assertTrue(vlcHdrPlusFallbackNativeHdr(true, null))
+        assertFalse(vlcHdrPlusFallbackNativeHdr(false, null))
+    }
+
     @Test fun onlyExplicitSdrGpuPathIsEligible() {
         assertTrue(vlcAhbExperimentEligible(true, true, false, false, "off", "off", false))
         assertFalse(vlcAhbExperimentEligible(false, true, false, false, "off", "off", false))

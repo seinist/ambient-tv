@@ -26,13 +26,13 @@ internal fun PlayerVideoOutputControls(backend: String) {
     val mpv = backend == "mpv"
     // Same inputs as the player's own decision (MpvPlaybackView): same playback only, title key,
     // configured title/resolution options with global SVP, Dolby Vision from the track list.
-    val activeMpv = (BackgroundPlaybackSession.activeHandle() as? com.ambient.tv.ui.player.backend.MpvPlaybackController)
-        ?.takeIf { sameVideoSettingsPlayback(metadata, BackgroundPlaybackSession.snapshot.value.metadata) }
+    val activeMpv = if (mpv) (BackgroundPlaybackSession.activeHandle() as? com.ambient.tv.ui.player.backend.MpvPlaybackController)
+        ?.takeIf { sameVideoSettingsPlayback(metadata, BackgroundPlaybackSession.snapshot.value.metadata) } else null
     val mediaKey = com.ambient.tv.ui.player.backend.mpvHdrGpuMediaKey(metadata, activeMpv?.url)
     val runtimeHdr = if (activeMpv?.dolbyVisionDetected == true) HdrStandard.DOLBY_VISION else activeMpv?.sourceHdrStandard
-    val source = com.ambient.tv.ui.player.backend.mpvHdrGpuSourceStandard(metadata.handheldHdrStandard,
+    val mpvSource = if (mpv) com.ambient.tv.ui.player.backend.mpvHdrGpuSourceStandard(metadata.handheldHdrStandard,
         com.ambient.tv.ui.player.backend.MpvHdrGpuSession.detectedHdr(mediaKey) ?: runtimeHdr,
-        dolbyVisionRuntime = activeMpv?.dolbyVisionDetected == true)
+        dolbyVisionRuntime = activeMpv?.dolbyVisionDetected == true) else null
     val display = HdrSupport.displayStandards(context)
     val passthroughRunning = activeMpv?.hdrPassthroughRunning == true
     val passthroughConfirmed = activeMpv?.hdrPassthroughConfirmed == true
@@ -47,13 +47,14 @@ internal fun PlayerVideoOutputControls(backend: String) {
         passthroughRunning)
     val tvDevice = remember(context) { com.ambient.tv.ui.player.backend.mpvHdrGpuTvDevice(context) }
     fun hdrGpuFor(output: String, explicit: Boolean) = if (!mpv) com.ambient.tv.ui.player.backend.MpvHdrGpuDecision.NOT_APPLICABLE
-        else com.ambient.tv.ui.player.backend.mpvHdrGpuDecision(preferences.mpvHdrGpuEnabled, output, source, display,
+        else com.ambient.tv.ui.player.backend.mpvHdrGpuDecision(preferences.mpvHdrGpuEnabled, output, mpvSource, display,
             caps, reducedVideoEffects(context), failure, explicitDirect = explicit, effectsActive = effectsActive, tvDevice = tvDevice)
     val hdrGpu = hdrGpuFor(settings.mpvOutput, explicitDirect)
     // With "Direkt" chosen the passthrough must stay selectable again.
     val hdrGpuProbe = hdrGpuFor("vulkan", explicit = false)
     val hdrGpuAvailable = hdrGpuProbe.gpu
-    val nativeHdr = nativeHdrSurfacePreferred(source, display) && !hdrGpu.gpu
+    val nativeHdr = playerVideoOutputNativeHdr(backend, metadata.handheldHdrStandard, metadata.hdrBaseLayer,
+        mpvSource, display, hdrGpu.gpu)
     val output = if (mpv) settings.mpvOutput else settings.vlcOutput
     // Unlike native passthrough, the experimental VLC route renders the
     // dynamic metadata into a characterized PQ or HLG swapchain.

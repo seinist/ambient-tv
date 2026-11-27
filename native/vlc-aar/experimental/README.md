@@ -1019,3 +1019,12 @@ Gradle cache writes are enabled for this restricted linked job, scoped
 by GitHub's PR cache rules, to reduce repeated Maven downloads. The older
 97b2321 build linked both libraries but all four packaging attempts hit
 HTTP 429 from Maven Central (job 140463618096).
+
+Player integration audit: VLC's output selector now uses its own source
+metadata and Dolby Vision base layer exactly as its controller does;
+MPV's cached runtime HDR detection cannot alter VLC choices. On failure
+of the explicit HDR10+ target, re-evaluate native HDR10+/HDR10 support on
+the attached display before rebuilding the Android/GL instance. An HLG-only
+or SDR display needs SDR tone mapping on that fallback, not stale native
+HDR preference. Added JVM policy tests. Latest CI and display transition
+playback remain to be verified.

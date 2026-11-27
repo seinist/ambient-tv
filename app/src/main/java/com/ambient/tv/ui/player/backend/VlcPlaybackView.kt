@@ -131,7 +131,7 @@ class VlcPlaybackController(
     videoOutputMode: String = "auto",
     /** Separate audio stream played alongside [url] (YouTube's video-only + audio-only files). */
     private val audioSlaveUrl: String? = null,
-    private val nativeHdrPreferred: Boolean = false,
+    private var nativeHdrPreferred: Boolean = false,
     private val liveStream: Boolean = false,
     val sourceHdrStandard: HdrStandard? = null,
     val audioOnly: Boolean = false,
@@ -144,7 +144,7 @@ class VlcPlaybackController(
     // HDR on an SDR display still needs the decoder/vout's tone mapping. CPU picture
     // filters must not strip its precision or feed it through SDR-to-HDR a second time.
     private val preserveHdrSource = nativeHdrPreferred || sourceHdrStandard != null
-    private val toneMappingRequired = sourceHdrStandard != null && !nativeHdrPreferred
+    private val toneMappingRequired: Boolean get() = sourceHdrStandard != null && !nativeHdrPreferred
     private val doviRpuDecoderRequired: Boolean get() = vlcDoviRpuDecoderRequired(
         com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT, sourceHdrStandard == HdrStandard.DOLBY_VISION,
         nativeHdrPreferred, audioOnly, hardwareRoute = doviAhbActive,
@@ -1407,6 +1407,13 @@ class VlcPlaybackController(
             Timber.w("VULKAN VLC AHB fallback: %s", accelerationFallback)
         } else {
             if (hdrTargetFailed) {
+                // A display replacement or force-SDR change invalidates the
+                // original native-HDR decision too. Recompute before the
+                // Android/GL instance is constructed, without retrying AHB.
+                val attachedStandards = attachedView?.display?.let { display ->
+                    runCatching { HdrSupport.displayStandards(display) }.getOrNull()
+                }
+                nativeHdrPreferred = vlcHdrPlusFallbackNativeHdr(nativeHdrPreferred, attachedStandards)
                 ahbCopyBackRetried = true
                 ahbFallbackPending = true
             } else {
