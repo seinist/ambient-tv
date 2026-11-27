@@ -4,6 +4,7 @@
 #include <vlc_ancillary.h>
 #include "ambient_dovi_parser.h"
 #include "dovi_fel_api.h"
+#include "dovi_fel_geometry.h"
 #define AMBIENT_FEL_ID VLC_FOURCC('a','F','E','L')
 
 /* AImage import produces the visible rectangle, not the padded coded
@@ -11,9 +12,8 @@
  * aligned; left/top cropping requires separate BL/EL phase information. */
 static inline bool ambient_dovi_visible_origin(const video_format_t *f)
 {
-    return f && !f->i_x_offset && !f->i_y_offset &&
-        f->i_visible_width && f->i_visible_height &&
-        f->i_visible_width<=f->i_width && f->i_visible_height<=f->i_height;
+    return f && ambient_fel_visible_geometry(f->i_width,f->i_height,
+        f->i_visible_width,f->i_visible_height,f->i_x_offset,f->i_y_offset);
 }
 
 static inline bool ambient_dovi_format(const video_format_t *f)
