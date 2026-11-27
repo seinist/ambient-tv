@@ -228,6 +228,9 @@
     <string name="games_core_source_optimized_a57">Cortex-A57 (experimental)</string>
     <string name="games_core_source_buildbot">Libretro build server</string>
     <string name="games_core_source_unavailable">The signed Ambient TV channel is unavailable in this app build.</string>
+    <string name="games_core_source_optimized_hint">Prefers optimized cores, then signed standard cores. The libretro build server requires confirmation.</string>
+    <string name="games_core_source_a57_hint">Prefers Cortex-A57, then optimized and signed standard cores. The libretro build server requires confirmation.</string>
+    <string name="games_core_source_fallback">Installed fallback variant: %1$s</string>
     <string name="games_core_source_auto_hint">Uses an installed core or looks for a signed Ambient TV build. Downloads from the libretro build server require confirmation.</string>
     <string name="games_core_source_ambient_hint">Uses signed Ambient TV builds with pinned versions and 16 KB page support.</string>
     <string name="games_core_source_mismatch">Select Load to download this core from %1$s.</string>

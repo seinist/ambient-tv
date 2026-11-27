@@ -128,6 +128,38 @@ class GameExtrasTest {
 }
 
 class GameCoreChannelTest {
+    @Test fun optimizedPreferencesRespectAbiAndStaySigned() {
+        val core = GameCore("fixture", "Fixture", "MIT")
+        assertEquals(listOf(GameCoreSource.OPTIMIZED_A57, GameCoreSource.OPTIMIZED, GameCoreSource.AMBIENT),
+            GameCoreSource.OPTIMIZED_A57.preferredSources(core, "arm64-v8a"))
+        assertEquals(listOf(GameCoreSource.OPTIMIZED, GameCoreSource.AMBIENT),
+            GameCoreSource.OPTIMIZED_A57.preferredSources(core, "armeabi-v7a"))
+        assertEquals(listOf(GameCoreSource.OPTIMIZED, GameCoreSource.AMBIENT),
+            GameCoreSource.OPTIMIZED.preferredSources(core, "x86_64"))
+        assertEquals(listOf(GameCoreSource.AMBIENT), GameCoreSource.AMBIENT.preferredSources(core, "arm64-v8a"))
+    }
+
+    @Test fun preferenceResolutionFallsBackOnlyOnAbsence() = kotlinx.coroutines.runBlocking {
+        val candidates = listOf(GameCoreSource.OPTIMIZED_A57, GameCoreSource.OPTIMIZED, GameCoreSource.AMBIENT)
+        val seen = mutableListOf<GameCoreSource>()
+        assertEquals(GameCoreSource.OPTIMIZED, firstAvailableCoreSource(candidates) {
+            seen += it
+            it == GameCoreSource.OPTIMIZED
+        })
+        assertEquals(candidates.take(2), seen)
+        assertEquals(GameCoreSource.AMBIENT, firstAvailableCoreSource(candidates) { it == GameCoreSource.AMBIENT })
+        assertEquals(null, firstAvailableCoreSource(candidates) { false })
+        seen.clear()
+        val failure = runCatching {
+            firstAvailableCoreSource(candidates) {
+                seen += it
+                throw GameCoreSignatureException("invalid signature")
+            }
+        }.exceptionOrNull()
+        org.junit.Assert.assertTrue(failure is GameCoreSignatureException)
+        assertEquals(candidates.take(1), seen)
+    }
+
     @Test fun experimentalReleaseCannotEnterStableChannel() {
         val tag = "core-experiments-core-hotpaths--20261126-1-1"
         org.junit.Assert.assertTrue(GameCoreChannel.matchesChannel(tag, true, "core-hotpaths"))
