@@ -1166,3 +1166,53 @@ The previous de4b909e CI passed source patch, CPU and portable
 Vulkan checks before supersession. Exact-head full player builds,
 device HDR playback, real compositor metadata/fence validation and
 app HDR selection remain pending; no claim of hardware validation.
+
+
+App opt-in and metadata-aware HDR resident transport
+---------------------------------------------------
+The existing hardware-resident SVP preference (default off) now allows
+HDR10/HLG when MPV has an actual Vulkan output plan, or VLC has a
+native HDR SurfaceControl plan with a verified compute device. The
+existing native HDR presentation route is not overridden merely to
+enable SVP. Incompatible dimensions, CPU filters, old libraries and
+rejected hardware fall back; HDR never requests the SDR CPU filter.
+The MPV filter-chain planner no longer mistakes a resident SVP filter
+for a CPU filter requiring decoder copy-back. Dynamic HDR is selected
+only with MPV's native Vulkan decoder, not opaque MediaCodec.
+
+HDR10+: retain the original FFmpeg side data and libplacebo mapping
+for compatible identical single-window metadata, excluding peak
+luminance grids. A change/missing or unsupported payload (including
+spatial windows) repeats the previous unmodified source at output
+ticks rather than blending across incompatible metadata. This is
+conservative scene-metadata reuse, not new normative ST 2094-40
+metadata generation or spatial HDR10+ interpolation.
+
+Dolby Vision: modes 4/5 synthesize raw P010/I420 10-bit YUV on the
+existing Vulkan device, quantizing back to the original bit packing
+without RGB conversion, then retain MPV's mapped Dolby representation
+and RPU side data for libplacebo's normal reshaping. Require enabled
+shaderStorageImageExtendedFormats, actual separate storage planes,
+matching chroma siting, bounded valid FFmpeg metadata offsets and
+no required residual/EL reconstruction. Exact identical metadata and
+mapping are required; on changed metadata repeat original frames.
+This is compatible single-layer processing, not Profile 7 FEL
+composition or native Dolby Vision passthrough. Unsupported inputs
+retain the original renderer and metadata.
+
+VLC's static HDR SurfaceControl output cannot carry per-frame HDR10+
+or Dolby RPU metadata. Known dynamic formats are kept out of this
+route. The HEVC access-unit parser also latches in-band HDR10+ SEI,
+RPU/EL or malformed NAL/SEI framing; the filter rejects ancillary
+HDR10+/Dolby metadata and stops interpolation, allowing the app's
+resident-output watchdog to restore the normal playback path. The
+separate experimental metadata renderer and FEL composition in
+PR #510 are not yet integrated with this SVP output path.
+
+Added actual raw Vulkan endpoint/midpoint plane-code tests, FFmpeg
+HDR10+/Dolby metadata contract fixtures, HEVC dynamic guards and
+Android routing tests. Earlier 8b9a953e native CI passed source pin,
+patch application and CPU checks before supersession. Exact-head
+CI, full player builds, real HDR rendering and device performance
+remain unverified. No full HDR10+/Dolby Vision standard-conformance
+or hardware validation claim.
