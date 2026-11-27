@@ -155,7 +155,7 @@ static bool svp_hdr_lerp_q(AVRational *out,AVRational a,AVRational b,double t,in
     *out=(AVRational){(int)value,unit};return true;
 }
 static bool svp_hdr_window_lerp(AVHDRPlusColorTransformParams *o,
-    const AVHDRPlusColorTransformParams *a,const AVHDRPlusColorTransformParams *b,double t,bool local)
+    const AVHDRPlusColorTransformParams *a,const AVHDRPlusColorTransformParams *b,double t,bool local,int width,int height)
 {
     if (a->num_distribution_maxrgb_percentiles!=b->num_distribution_maxrgb_percentiles ||
         a->num_distribution_maxrgb_percentiles>15 || a->tone_mapping_flag!=b->tone_mapping_flag ||
@@ -166,15 +166,17 @@ static bool svp_hdr_window_lerp(AVHDRPlusColorTransformParams *o,
     if (local) {
         if (a->overlap_process_option!=b->overlap_process_option || a->overlap_process_option>1 ||
             a->rotation_angle!=b->rotation_angle || a->rotation_angle>180) return false;
-        Q(window_upper_left_corner_x,65535,1);Q(window_upper_left_corner_y,65535,1);
-        Q(window_lower_right_corner_x,65535,1);Q(window_lower_right_corner_y,65535,1);
+        if(width<2||height<2)return false;
+        Q(window_upper_left_corner_x,width-1,1);Q(window_upper_left_corner_y,height-1,1);
+        Q(window_lower_right_corner_x,width-1,1);Q(window_lower_right_corner_y,height-1,1);
         if (o->window_upper_left_corner_x.num>=o->window_lower_right_corner_x.num ||
             o->window_upper_left_corner_y.num>=o->window_lower_right_corner_y.num) return false;
 #define U(field) o->field=(uint16_t)round(a->field+(b->field-(double)a->field)*t)
         U(center_of_ellipse_x);U(center_of_ellipse_y);
         U(semimajor_axis_internal_ellipse);U(semimajor_axis_external_ellipse);U(semiminor_axis_external_ellipse);
 #undef U
-        if (!o->semimajor_axis_internal_ellipse || !o->semiminor_axis_external_ellipse ||
+        if (o->center_of_ellipse_x>=width || o->center_of_ellipse_y>=height ||
+            !o->semimajor_axis_internal_ellipse || !o->semiminor_axis_external_ellipse ||
             o->semimajor_axis_external_ellipse<o->semimajor_axis_internal_ellipse ||
             o->semimajor_axis_external_ellipse<o->semiminor_axis_external_ellipse) return false;
     }
@@ -198,7 +200,7 @@ static bool svp_hdr_window_lerp(AVHDRPlusColorTransformParams *o,
 #undef Q
     return true;
 }
-static bool svp_hdrplus_lerp(AVDynamicHDRPlus *out,const AVBufferRef *x,const AVBufferRef *y,double t)
+static bool svp_hdrplus_lerp(AVDynamicHDRPlus *out,const AVBufferRef *x,const AVBufferRef *y,double t,int width,int height)
 {
     if(!out||!x||!y||!x->data||!y->data||x->size!=sizeof(*out)||y->size!=sizeof(*out)||
         !isfinite(t)||t<0||t>1)return false;
@@ -211,7 +213,7 @@ static bool svp_hdrplus_lerp(AVDynamicHDRPlus *out,const AVBufferRef *x,const AV
     *out=*a;
     if(!svp_hdr_lerp_q(&out->targeted_system_display_maximum_luminance,
         a->targeted_system_display_maximum_luminance,b->targeted_system_display_maximum_luminance,t,10000,10000))return false;
-    for(unsigned i=0;i<a->num_windows;i++)if(!svp_hdr_window_lerp(&out->params[i],&a->params[i],&b->params[i],t,i!=0))return false;
+    for(unsigned i=0;i<a->num_windows;i++)if(!svp_hdr_window_lerp(&out->params[i],&a->params[i],&b->params[i],t,i!=0,width,height))return false;
 #define GRID(prefix) do{ \
     if(a->prefix##_flag){ \
         unsigned rows=a->num_rows_##prefix,cols=a->num_cols_##prefix; \
@@ -283,6 +285,40 @@ static bool svp_vk_hdr_metadata_same(const struct mp_image *a,const struct mp_im
         svp_vk_hdrplus_same(a,b) && svp_vk_buffer_equal(a->dovi,b->dovi) &&
         svp_vk_buffer_equal(svp_vk_side_data(a,AV_FRAME_DATA_DOVI_METADATA),svp_vk_side_data(b,AV_FRAME_DATA_DOVI_METADATA)) &&
         svp_vk_buffer_equal(svp_vk_side_data(a,AV_FRAME_DATA_DOVI_RPU_BUFFER),svp_vk_side_data(b,AV_FRAME_DATA_DOVI_RPU_BUFFER));
+}
+/* The static display contract must remain constant even when dynamic
+ * tone curves change. Full metadata is retained on every output; the
+ * pinned MPV libplacebo API additionally maps window zero for rendering. */
+static bool svp_vk_hdrplus_pair(const struct mp_image *a,const struct mp_image *b)
+{
+    if(a->params.color.transfer!=PL_COLOR_TRC_PQ || b->params.color.transfer!=PL_COLOR_TRC_PQ ||
+       a->dovi||b->dovi)return false;
+    struct pl_hdr_metadata x=a->params.color.hdr,y=b->params.color.hdr;
+    memset(x.scene_max,0,sizeof(x.scene_max));memset(y.scene_max,0,sizeof(y.scene_max));
+    x.scene_avg=y.scene_avg=x.max_pq_y=y.max_pq_y=x.avg_pq_y=y.avg_pq_y=0;
+    memset(&x.ootf,0,sizeof(x.ootf));memset(&y.ootf,0,sizeof(y.ootf));
+    AVDynamicHDRPlus scratch;
+    return pl_hdr_metadata_equal(&x,&y) &&
+        svp_hdrplus_lerp(&scratch,svp_vk_hdr10plus(a),svp_vk_hdr10plus(b),0.5,a->w,a->h);
+}
+static bool svp_vk_hdrplus_apply(struct mp_image *out,const struct mp_image *a,const struct mp_image *b,float phase)
+{
+    AVDynamicHDRPlus metadata;
+    if(!svp_hdrplus_lerp(&metadata,svp_vk_hdr10plus(a),svp_vk_hdr10plus(b),phase,a->w,a->h))return false;
+    for(int i=0;i<out->num_ff_side_data;i++){
+        if(out->ff_side_data[i].type!=AV_FRAME_DATA_DYNAMIC_HDR_PLUS)continue;
+        AVBufferRef *ref=av_buffer_alloc(sizeof(metadata));
+        if(!ref)return false;
+        memcpy(ref->data,&metadata,sizeof(metadata));
+        av_buffer_unref(&out->ff_side_data[i].buf);
+        out->ff_side_data[i].buf=ref;
+        struct pl_hdr_metadata *hdr=&out->params.color.hdr;
+        memset(hdr->scene_max,0,sizeof(hdr->scene_max));hdr->scene_avg=hdr->max_pq_y=hdr->avg_pq_y=0;
+        memset(&hdr->ootf,0,sizeof(hdr->ootf));
+        pl_map_hdr_metadata(hdr,&(struct pl_av_hdr_metadata){.dhp=&metadata});
+        return true;
+    }
+    return false;
 }
 static bool svp_vk_eligible(struct mp_image *img)
 {
@@ -531,8 +567,9 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
         || svp_vk_matrix(a)!=svp_vk_matrix(b) || a->params.color.transfer!=b->params.color.transfer
         || a->params.color.primaries!=b->params.color.primaries) return false;
     if (s->mode>=4 && a->params.chroma_location!=b->params.chroma_location) return false;
+    bool dynamic=s->mode>0 && s->mode<4 && svp_vk_hdrplus_pair(a,b);
     if (s->mode && (s->mode>=4 || a->params.color.transfer==PL_COLOR_TRC_PQ || a->params.color.transfer==PL_COLOR_TRC_HLG) &&
-        !svp_vk_hdr_metadata_same(a,b)) return false;
+        !dynamic && !svp_vk_hdr_metadata_same(a,b)) return false;
     svp_vk_reap(s,false);
     unsigned slot=0;while(slot<SVP_VK_JOBS && s->jobs[slot]) slot++;
     if (slot==SVP_VK_JOBS) return false;
@@ -586,6 +623,7 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
             outputs[i]->params.repr.alpha=PL_ALPHA_NONE;
             outputs[i]->params.chroma_location=PL_CHROMA_UNKNOWN;
         }
+        if(dynamic && phases[i]>0.0f && !svp_vk_hdrplus_apply(outputs[i],a,b,phases[i]))goto fail;
         outputs[i]->pts=times[i];outputs[i]->pkt_duration=1.0/s->target_rate;
         outputs[i]->nominal_fps=s->target_rate;
     }
@@ -720,7 +758,8 @@ static bool svp_vk_pair_frames(struct svp_vk_mpv *s,struct mp_image *next,double
     bool compatible=a->params.color.transfer==next->params.color.transfer &&
         a->params.color.primaries==next->params.color.primaries &&
         svp_vk_matrix(s->previous)==svp_vk_matrix(next);
-    if (s->mode && hdr && compatible && (!svp_vk_hdr_metadata_same(a,next) ||
+    if (s->mode && hdr && compatible && ((!svp_vk_hdr_metadata_same(a,next) &&
+        !(s->mode<4 && svp_vk_hdrplus_pair(a,next))) ||
         (s->mode>=4 && a->params.chroma_location!=next->params.chroma_location))) {
         // Do not interpolate across dynamic/static HDR metadata changes.
         // Repeat the exact preceding source until the next source tick;
