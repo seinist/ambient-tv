@@ -10,6 +10,9 @@ const MAX_PIXELS:u64=1920*1080;
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub enum ColorMatrix { Bt601Limited, Bt709Limited, Bt601Full, Bt709Full }
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+#[repr(u32)]
+pub enum ChromaLocation { TopLeft=0, Left=1, Center=2 }
 
 /// The caller owns the renderer/decoder device and its submission order.
 /// Y and UV are views of actual R8Unorm/Rg8Unorm planes (including
@@ -20,7 +23,7 @@ pub enum Chroma<'a>{
     Nv12(&'a wgpu::TextureView),
     I420{u:&'a wgpu::TextureView,v:&'a wgpu::TextureView},
 }
-pub struct Picture<'a>{pub y:&'a wgpu::TextureView,pub chroma:Chroma<'a>}
+pub struct Picture<'a>{pub y:&'a wgpu::TextureView,pub chroma:Chroma<'a>,pub chroma_location:ChromaLocation}
 
 pub struct Resident {
     device:wgpu::Device,
@@ -43,7 +46,7 @@ impl Resident{
     pub fn new(device:&wgpu::Device,width:u32,height:u32)->Result<Self,String>{
         let limits=device.limits();
         if width<32 || height<32 || (width|height)&1!=0
-            || u64::from(width)*u64::from(height)>MAX_PIXELS
+            || width>3840 || height>2160 || u64::from(width)*u64::from(height)>MAX_PIXELS
             || width>limits.max_texture_dimension_2d || height>limits.max_texture_dimension_2d
             || limits.max_sampled_textures_per_shader_stage<6
             || limits.max_storage_buffers_per_shader_stage<1
@@ -126,10 +129,10 @@ impl Pair<'_,'_>{
         {return Err("invalid resident output texture or phase".into());}
         let (au,av,af)=chroma(&self.a.chroma);
         let (bu,bv,bf)=chroma(&self.b.chroma);
-        let flags=af|bf<<1;
+        let flags=af|bf<<1|(self.a.chroma_location as u32)<<2|(self.b.chroma_location as u32)<<4;
         let matrix=match matrix{ColorMatrix::Bt601Limited=>0,ColorMatrix::Bt709Limited=>1,
             ColorMatrix::Bt601Full=>2,ColorMatrix::Bt709Full=>3};
-        let params=uniform(&e.device,[phase.to_bits(),flags,matrix,e.grid_w]);
+        let params=uniform(&e.device,[phase.to_bits(),flags,matrix,e.width|(e.height<<16)]);
         let dst=output.create_view(&Default::default());
         let group=e.device.create_bind_group(&wgpu::BindGroupDescriptor{
             label:None,layout:&e.synthesis.get_bind_group_layout(0),entries:&[
@@ -236,8 +239,8 @@ pub(crate) const SYNTHESIS:&str=r#"
 @group(0) @binding(6) var<storage,read> fields:array<vec4i>;
 @group(0) @binding(7) var dst:texture_storage_2d<rgba8unorm,write>;
 @group(0) @binding(8) var<uniform> params:vec4u;
-fn bilinear(t:texture_2d<f32>,p:vec2f)->vec4f{
-    let hi=vec2i(textureDimensions(t))-vec2i(1);
+fn bilinear(t:texture_2d<f32>,p:vec2f,visible:vec2u)->vec4f{
+    let hi=vec2i(min(textureDimensions(t),visible))-vec2i(1);
     let q=clamp(p,vec2f(0),vec2f(hi));
     let i=vec2i(floor(q));
     let j=min(i+vec2i(1),hi);
@@ -246,11 +249,12 @@ fn bilinear(t:texture_2d<f32>,p:vec2f)->vec4f{
     let b=mix(textureLoad(t,vec2i(i.x,j.y),0),textureLoad(t,j,0),f.x);
     return mix(a,b,f.y);
 }
-fn yuv(y:texture_2d<f32>,u:texture_2d<f32>,v:texture_2d<f32>,p:vec2f,nv:bool)->vec3f{
-    let chroma=p*0.5;
-    let uv=bilinear(u,chroma);
-    let vv=select(bilinear(v,chroma).x,uv.y,nv);
-    return vec3f(bilinear(y,p).x,uv.x,vv);
+fn yuv(y:texture_2d<f32>,u:texture_2d<f32>,v:texture_2d<f32>,p:vec2f,nv:bool,location:u32,visible:vec2u)->vec3f{
+    let offset=vec2f(select(0.0,0.5,location==2u),select(0.0,0.5,location!=0u));
+    let chroma=(p-offset)*0.5;
+    let uv=bilinear(u,chroma,visible/2u);
+    let vv=select(bilinear(v,chroma,visible/2u).x,uv.y,nv);
+    return vec3f(bilinear(y,p,visible).x,uv.x,vv);
 }
 fn rgb(yuv:vec3f)->vec3f{
     let full=params.z>=2u;
@@ -266,12 +270,12 @@ fn rgb(yuv:vec3f)->vec3f{
 }
 @compute @workgroup_size(8,8)
 fn synthesize(@builtin(global_invocation_id) id:vec3u){
-    let size=textureDimensions(dst);
-    if any(id.xy>=size){return;}
-    let gy=(size.y+15u)/16u;
-    let index=id.x/16u+id.y/16u*params.w;
+    let visible=vec2u(params.w&65535u,params.w>>16u);
+    if any(id.xy>=visible)||any(id.xy>=textureDimensions(dst)){return;}
+    let grid=(visible+vec2u(15))/16u;
+    let index=id.x/16u+id.y/16u*grid.x;
     let f=fields[index];
-    let r=fields[index+params.w*gy];
+    let r=fields[index+grid.x*grid.y];
     let phase=bitcast<f32>(params.x);
     let p=vec2f(id.xy);
     // Opposite motion estimates, warped toward the same output position.
@@ -284,8 +288,8 @@ fn synthesize(@builtin(global_invocation_id) id:vec3u){
     if f.z>64*48||r.z>64*48||mismatch>6{
         ap=p;bp=p;blend=select(0.0,1.0,phase>=0.5);
     }
-    let a=yuv(ay,au,av,ap,(params.y&1u)!=0u);
-    let b=yuv(by,bu,bv,bp,(params.y&2u)!=0u);
+    let a=yuv(ay,au,av,ap,(params.y&1u)!=0u,(params.y>>2u)&3u,visible);
+    let b=yuv(by,bu,bv,bp,(params.y&2u)!=0u,(params.y>>4u)&3u,visible);
     textureStore(dst,vec2i(id.xy),vec4f(rgb(mix(a,b,blend)),1.0));
 }
 "#;
