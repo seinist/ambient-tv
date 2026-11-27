@@ -34,16 +34,22 @@ A persistent high-water version prevents unsolicited downgrade; rollback require
 explicit user selection of a previously verified compatible version.
 
 SystemModuleChannel implements the signed catalog and selection contract;
-the trust key is passed by the caller, which must pin it. It does not yet
-perform networking, persistent version floors, installation or activation.
+the trust key is passed by the caller, which must pin it. SystemModuleTransport fetches a named release from fixed GitHub HTTPS origins;
+SystemModuleStore stages the verified ZIP and its signed catalog, checks bounded
+archive entries, persists a monotonic version floor and atomically replaces the
+selection pointer. Rollback re-authenticates the previous archive. Removal clears
+the selection but preserves the version floor. No executable files are extracted
+or loaded yet. The caller must supply the pinned key and private storage root;
+release discovery, runtime integration and safe garbage collection remain open.
 
 ## Next implementation stages
 
-1. Shared bounded HTTPS release transport and ZIP staging, with signature/hash,
-   entry allowlists, no traversal/symlinks, per-file hashes, ELF ABI and 16 KiB
-   checks, fsync/atomic activation metadata, private versioned directories and
-   crash-safe rollback. Reject unknown dependencies, duplicate archive entries
-   and dependency cycles. Never load a partially installed package.
+1. Extend the implemented bounded HTTPS transport and private ZIP store with
+   release discovery, cancellable streaming/progress, a pinned-key host factory,
+   safe materialization (regular files only, no symlinks), per-file hashes, ELF
+   ABI and 16 KiB checks, directory durability and safe garbage collection.
+   Reject unknown dependencies and dependency cycles. Never load a partially
+   installed package.
 2. Versioned module host API and process-start loader with isolated classloader,
    read-only executable DEX files and native dependency resolution. No mixing
    incompatible JNI/UniFFI/JNA bindings. Keep non-optional UI in the APK; replace
