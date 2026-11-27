@@ -132,7 +132,7 @@ jobs:
           bash -n scripts/prepare_svp_sources.sh
           bash -n scripts/build_svp_android.sh
           bash -n scripts/profile_svp_android.sh
-          for test in svp_retry_test svp_planes_test; do
+          for test in svp_retry_test svp_planes_test svp_sdr_profile_test; do
             cc -std=c11 -O2 -Wall -Wextra -Werror -I native/ambientsvp/include "native/ambientsvp/tests/$test.c" -o "/tmp/$test"
             "/tmp/$test"
           done
