@@ -870,3 +870,17 @@ both buffers at fragment end/reset. Partial reads and budget violations
 are terminal for forward-only input; no unbounded buffering or guessing.
 Fixed a missing addition marker and recomputed unified diff offsets;
 actual container playback and final linked build remain to be verified.
+
+
+### Multiple dependent tracks in the adjacent fragment
+
+The adjacent EL moof may carry multiple hidden dependent tracks, each
+paired with its own BL in the first moof. Per-track membership controls
+payload selection; the shared box is read once even on forward-only
+input. Validate all trafs (no unrelated or duplicate tracks), index
+explicit/default/implicit base data offsets in the adjacent moof's own
+coordinate system, share the 65,536 run and 1,048,576 sample limits,
+and sort run byte ranges to reject overlap before demux. Preserve the
+combined 64 MiB payload cap. Tests cover disjoint, touching, overlapping,
+duplicate and empty byte intervals. Actual multi-track playback and
+linked build remain unverified. Non-adjacent fragments remain excluded.

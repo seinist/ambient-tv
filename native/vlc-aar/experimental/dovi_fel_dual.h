@@ -1,5 +1,6 @@
 #pragma once
 #include "dovi_fel_hvce.h"
+#include <stdlib.h>
 
 #define AMBIENT_FEL_MAX_AU (32u*1024u*1024u)
 
@@ -141,6 +142,23 @@ static inline bool ambient_fel_trun_offset(uint64_t base,int32_t delta,uint64_t 
         if((uint64_t)delta>UINT64_MAX-base)return false;
         *out=base+(uint64_t)delta;
     }
+    return true;
+}
+
+/* All runs of a separate EL fragment must occupy disjoint byte ranges.
+ * Sorting once avoids quadratic pairwise comparisons on fragmented files. */
+struct ambient_fel_byte_range { uint64_t start,end; };
+static inline int ambient_fel_range_compare(const void *a,const void *b)
+{
+    const struct ambient_fel_byte_range *x=a,*y=b;
+    return (x->start>y->start)-(x->start<y->start);
+}
+static inline bool ambient_fel_ranges_disjoint(struct ambient_fel_byte_range *r,size_t n)
+{
+    if(!r||!n||n>65536)return false;
+    qsort(r,n,sizeof(*r),ambient_fel_range_compare);
+    for(size_t i=0;i<n;i++)
+        if(r[i].start>=r[i].end||(i&&r[i].start<r[i-1].end))return false;
     return true;
 }
 

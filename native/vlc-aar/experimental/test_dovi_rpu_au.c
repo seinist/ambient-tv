@@ -131,6 +131,16 @@ int main(void) {
     assert(!ambient_fel_fragment_start(false,0,false,0,true,true,18000,9601,90000,48000,&bs,&es));
     assert(!ambient_fel_fragment_start(true,UINT64_MAX,true,0,true,true,0,0,90000,48000,&bs,&es));
     uint64_t payload,box_end,run_offset;
+    struct ambient_fel_byte_range disjoint[]={{200,300},{100,150},{150,200}};
+    assert(ambient_fel_ranges_disjoint(disjoint,3));
+    assert(disjoint[0].start==100&&disjoint[2].start==200);
+    struct ambient_fel_byte_range overlapping[]={{100,200},{199,250}};
+    assert(!ambient_fel_ranges_disjoint(overlapping,2));
+    struct ambient_fel_byte_range empty[]={{200,200}};
+    assert(!ambient_fel_ranges_disjoint(empty,1));
+    struct ambient_fel_byte_range duplicate[]={{100,200},{100,200}};
+    assert(!ambient_fel_ranges_disjoint(duplicate,2));
+    assert(!ambient_fel_ranges_disjoint(disjoint,0));
     assert(ambient_fel_mdat_pair_budget(1,AMBIENT_FEL_MAX_MDAT-1));
     assert(!ambient_fel_mdat_pair_budget(0,1));
     assert(!ambient_fel_mdat_pair_budget(1,0));
