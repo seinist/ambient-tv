@@ -342,7 +342,7 @@ internal class CarAudioCatalog @Inject constructor(
         }
     }
 
-    private fun spotifyEnabled() = preferences.spotifyEnabled && spotify.webAuthorized
+    private fun spotifyEnabled() = preferences.spotifyEnabled && spotify.nativeAvailable && spotify.webAuthorized
 
     /** A selection is resolved through the authenticated repository, never a URI provided by a car client. */
     suspend fun resolve(id: String): CarAudioSelection? {
