@@ -6,6 +6,32 @@ name: Cores
 # public half is in cores/signing-public.pem (secret CORES_SIGNING_KEY, PEM, EC P-256).
 
 on:
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        default: false
+      publish_experimental:
+        type: boolean
+        default: false
+      force_rebuild:
+        type: boolean
+        default: false
+      cores:
+        type: string
+        default: ""
+      abis:
+        type: string
+        default: ""
+      profile:
+        type: string
+        required: true
+      comparison:
+        type: string
+        default: none
+    secrets:
+      CORES_SIGNING_KEY:
+        required: true
   workflow_dispatch:
     inputs:
       publish:
@@ -40,6 +66,8 @@ on:
     paths:
       - cores/cores.json
       - .github/workflows/cores.yml
+      - .github/workflows/cores-experimental.yml
+      - cores/signing-public.pem
       - scripts/core_build_policy.py
       - scripts/core_release_incremental.py
       - scripts/test_core_release_incremental.py
@@ -56,6 +84,8 @@ on:
     paths:
       - cores/cores.json
       - .github/workflows/cores.yml
+      - .github/workflows/cores-experimental.yml
+      - cores/signing-public.pem
       - scripts/check_elf_pages.py
       - scripts/core_build_policy.py
       - scripts/core_release_incremental.py
@@ -69,7 +99,7 @@ on:
       - scripts/test_core_build_policy.py
 
 concurrency:
-  group: cores-${{ github.ref }}-${{ (github.event_name == 'push' || inputs.publish) && 'release' || (inputs.publish_experimental && format('release-experimental-{0}', inputs.profile) || (github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || 'pr')) }}
+  group: cores-${{ github.ref }}-${{ inputs.publish_experimental && format('release-experimental-{0}', inputs.profile) || ((github.event_name == 'push' || inputs.publish) && 'release' || (github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || 'pr')) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -81,7 +111,7 @@ env:
 jobs:
   rename-releases:
     # Normalize existing display titles on main only, without modifying signed assets or tags.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !inputs.publish_experimental
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -121,9 +151,13 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$PUBLISH_EXPERIMENTAL" = true ]; then
-            [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" == refs/heads/main &&
+            [[ ( "$GITHUB_EVENT_NAME" == workflow_dispatch || "$GITHUB_EVENT_NAME" == push ) && "$GITHUB_REF" == refs/heads/main &&
                "$PUBLISH" != true && ( "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ) && "$COMPARISON" == none ]] ||
               { echo "::error::Experimental publishing requires main, optimized or optimized-a57, and no production publish/comparison"; exit 1; }
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == push && "$PROFILE" != baseline && "$PUBLISH_EXPERIMENTAL" != true ]]; then
+            echo "::error::Automatic non-baseline builds require explicit experimental channel"
+            exit 1
           fi
           matrix=$(python3 scripts/core_build_policy.py plan --catalog cores/cores.json \
             --event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF" --publish "$PUBLISH" \
@@ -334,8 +368,8 @@ jobs:
       (needs.build.result == 'success' || (needs.build.result == 'skipped' && needs.plan.outputs.count == '0')) &&
       github.ref == 'refs/heads/main' &&
       ((github.event_name == 'workflow_dispatch' && inputs.publish && inputs.profile == 'baseline') ||
-       (github.event_name == 'workflow_dispatch' && inputs.publish_experimental && !inputs.publish && (inputs.profile == 'optimized' || inputs.profile == 'optimized-a57') && inputs.comparison == 'none') ||
-       (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+       ((github.event_name == 'workflow_dispatch' || github.event_name == 'push') && inputs.publish_experimental && !inputs.publish && (inputs.profile == 'optimized' || inputs.profile == 'optimized-a57') && inputs.comparison == 'none') ||
+       (github.event_name == 'push' && !inputs.publish_experimental && (inputs.profile || 'baseline') == 'baseline'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -364,7 +398,7 @@ jobs:
           assert_current_recipe() {
             git fetch --no-tags --depth=1 origin refs/heads/main
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- cores/cores.json cores/signing-public.pem \
-                .github/workflows/cores.yml scripts/core_build_policy.py scripts/core_acceleration_audit.py \
+                .github/workflows/cores.yml .github/workflows/cores-experimental.yml scripts/core_build_policy.py scripts/core_acceleration_audit.py \
                 scripts/core_link_evidence.py scripts/check_elf_pages.py scripts/core_release_incremental.py \
                 scripts/core_hotpath_patches.py scripts/core_hotpath_remaining.py; then
               echo "::error::Core release inputs changed on main; dispatch a fresh release"
@@ -374,9 +408,9 @@ jobs:
           assert_current_recipe
           # Require every planned artifact, and ensure the profile cannot cross channels.
           if [ "$EXPERIMENT" = true ]; then
-            [[ ( "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ) && "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || exit 1
+            [[ ( "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ) && ( "$GITHUB_EVENT_NAME" == workflow_dispatch || "$GITHUB_EVENT_NAME" == push ) ]] || exit 1
             prefix="candidate-$PROFILE-"
-            tag="core-experiments-$PROFILE--$(date -u +%Y%m%d)-$GITHUB_RUN_NUMBER-$GITHUB_RUN_ATTEMPT"
+            tag="core-experiments-$PROFILE--$(date -u +%Y%m%d)-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           else
             [ "$PROFILE" = baseline ] || exit 1
             prefix="core-"

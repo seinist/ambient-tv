@@ -389,3 +389,9 @@ New signed releases use only `optimized` (O3 + ThinLTO + reviewed per-core hotpa
     ./build.sh cores-rename-releases --apply
 
 Release display names are Ambient TV cores and Ambient TV Experimental cores. The profile, date and run remain in the release tag and notes. A main-only workflow job normalizes the existing release names; it does not change tags or assets.
+
+### Automatic releases and x86 assembly audit
+
+The main-only Experimental Cores workflow calls the existing Cores pipeline independently for optimized and optimized-a57 on the same core-recipe paths as baseline. Every profile uses its own signed history and concurrency group. No new release is emitted when its fingerprints are unchanged. Manual dispatch remains available. The reusable workflow passes only the existing signing secret and cannot publish on PRs. Experimental tag run IDs avoid collisions between automatic and manual workflows.
+
+Mupen64Plus Next x86/x86_64 linked successfully in run 45955530667 but Yasm-produced linkage objects were rejected by the link evidence parser. The parser now recognizes actual Yasm/Nasm invocations, resolves their explicit ELF object output through the final link graph, and requires the architecture-specific assembly source together with the existing dynarec macro evidence. Assembly does not count towards C/C++ optimization flag checks. Both baseline x86 ABIs are now part of PR CI. No bypass of ELF/dependency/manifest checks or dynarec disablement.
