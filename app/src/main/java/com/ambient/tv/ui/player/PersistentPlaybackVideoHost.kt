@@ -41,12 +41,8 @@ fun PersistentPlaybackVideoHost(modifier: Modifier = Modifier, systemPip: Boolea
     // The handle is Compose state and changes synchronously during acquisition. The snapshot
     // flow reaches this composition separately: keying by its generation can attach the NEW
     // handle under the OLD generation, then destroy its Surface again one frame later.
-    // Keep the output keyed to its actual owner; collect only the optional geometry hint.
-    val sourceAspectRatioHint by remember {
-        BackgroundPlaybackSession.snapshot
-            .map { it.metadata?.sourceAspectRatioHint }
-            .distinctUntilChanged()
-    }.collectAsState(initial = remember { BackgroundPlaybackSession.snapshot.value.metadata?.sourceAspectRatioHint })
+    // Keep the output keyed to its actual owner. The geometry collector below shares that key
+    // so the first composition of a new engine reads the new snapshot, not the previous DAR.
     val handle = BackgroundPlaybackSession.activeHandle()
     // Ambient letterbox on a phone with a real picture. In landscape only portrait/square videos
     // (side bars) get it; widescreen keeps black bars ([AmbientVideoBackdrop.active]).
@@ -65,6 +61,11 @@ fun PersistentPlaybackVideoHost(modifier: Modifier = Modifier, systemPip: Boolea
     }
     if (ambient) AmbientVideoBackdropLayer(modifier)
     key(handle) {
+        val sourceAspectRatioHint by remember {
+            BackgroundPlaybackSession.snapshot
+                .map { it.metadata?.sourceAspectRatioHint }
+                .distinctUntilChanged()
+        }.collectAsState(initial = remember { BackgroundPlaybackSession.snapshot.value.metadata?.sourceAspectRatioHint })
         when (handle) {
             is Media3PlaybackHandle -> PersistentMedia3Video(handle, sourceAspectRatioHint, modifier)
             is VlcPlaybackController -> if (!handle.audioSession.audioOnly || handle.audioVisualizationEnabled) VlcVideoSurface(handle, modifier, sourceAspectRatioHint)
