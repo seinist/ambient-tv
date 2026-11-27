@@ -44,6 +44,16 @@ int ambient_svp_receive_visit(AmbientSvp *s,void *context,AmbientSvpVisit visit,
     if (r==1) visit(context,data,sizeof(data));
     return r;
 }
+int ambient_svp_push_ahardwarebuffer(AmbientSvp *s,struct AHardwareBuffer *b,
+    uint32_t x,uint32_t y,int fence,int64_t pts) {
+    (void)s;(void)b;(void)x;(void)y;(void)fence;(void)pts;return -4;
+}
+int ambient_svp_receive_ahardwarebuffer(AmbientSvp *s,struct AHardwareBuffer *b,
+    uint32_t x,uint32_t y,int fence,int *release,int64_t *pts,int eof) {
+    (void)s;(void)b;(void)x;(void)y;(void)fence;(void)pts;(void)eof;
+    if (release) *release=-1;
+    return -4;
+}
 #endif
 #else
 #include "ambientsvp_loader.h"
@@ -71,11 +81,16 @@ int main(int argc,char **argv) {
     int64_t pts=0;
     if (!strcmp(argv[1],"direct")) {
         assert(api.push_fill && api.ready && api.receive_visit);
+        assert(api.push_ahardwarebuffer && api.receive_ahardwarebuffer);
+        int release=99;
+        assert(api.push_ahardwarebuffer(s,NULL,0,0,-1,0)==-4);
+        assert(api.receive_ahardwarebuffer(s,NULL,0,0,-1,&release,&pts,0)==-4 && release==-1);
         assert(api.push_fill(s,0,&value,fill)==0);
         assert(api.ready(s,0)==1);
         assert(api.receive_visit(s,data,visit,&pts,0)==1);
     } else {
         assert(!api.push_fill && !api.ready && !api.receive_visit);
+        assert(!api.push_ahardwarebuffer && !api.receive_ahardwarebuffer);
         assert(api.push(s,&value,1,0)==0);
         assert(api.receive(s,data,sizeof(data),&pts,0)==1);
     }
