@@ -7,6 +7,9 @@ static stream_t fixture_stream;
 static uint8_t bytes[256];
 static size_t position, visible, blocks, peek_at_end, short_read_at;
 static bool seekable, misdirect_seek, misdirect_read;
+static uint64_t wrong_seek_at=UINT64_MAX;
+static MP4_Box_t look_root,look_el;
+static unsigned root_frees,el_frees,chunk_reads;
 
 uint64_t vlc_stream_Tell(const stream_t *stream)
 {
@@ -32,7 +35,7 @@ int vlc_stream_Seek(stream_t *stream,uint64_t offset)
     assert(stream==&fixture_stream);
     if(!seekable||offset>visible)return VLC_EGENERIC;
     position=(size_t)offset;
-    if(misdirect_seek&&position>0)--position;
+    if((misdirect_seek||offset==wrong_seek_at)&&position>0)--position;
     return VLC_SUCCESS;
 }
 int vlc_stream_vaControl(stream_t *stream,int query,va_list args)
@@ -54,6 +57,40 @@ MP4_Box_t *MP4_BoxGet(const MP4_Box_t *box,const char *path)
     for(MP4_Box_t *child=box->p_first;child;child=child->p_next)
         if(child->i_type==type)return child;
     return NULL;
+}
+/* The box parser is the boundary here: construct the exact parsed tree
+ * while exercising VLC's real patched lookahead and dependent indexer. */
+unsigned MP4_BoxCount(const MP4_Box_t *parent,const char *path)
+{
+    assert(strlen(path)==4);
+    uint32_t type=VLC_FOURCC(path[0],path[1],path[2],path[3]);
+    unsigned count=0;
+    for(const MP4_Box_t *box=parent->p_first;box;box=box->p_next)
+        count+=box->i_type==type;
+    return count;
+}
+MP4_Box_t *MP4_BoxGetNextChunk(stream_t *stream)
+{
+    assert(stream==&fixture_stream&&position==look_el.i_pos);
+    ++chunk_reads;
+    if(vlc_stream_Read(stream,NULL,look_el.i_size)!=(ssize_t)look_el.i_size)return NULL;
+    look_root.p_first=&look_el;
+    return &look_root;
+}
+MP4_Box_t *MP4_BoxExtract(MP4_Box_t **chain,uint32_t type)
+{
+    for(;*chain;chain=&(*chain)->p_next){
+        if((*chain)->i_type!=type)continue;
+        MP4_Box_t *box=*chain;
+        *chain=box->p_next;box->p_next=NULL;
+        return box;
+    }
+    return NULL;
+}
+void MP4_BoxFree(MP4_Box_t *box)
+{
+    if(box==&look_root){assert(!box->p_first);++root_frees;}
+    else{assert(box==&look_el);++el_frees;}
 }
 vlc_frame_t *vlc_frame_Alloc(size_t size)
 {
@@ -93,6 +130,7 @@ static void reset_stream(bool can_seek)
     box(120,12,"mdat");memcpy(bytes+128,"WXYZ",4);
     position=100;visible=132;seekable=can_seek;
     short_read_at=SIZE_MAX;peek_at_end=0;misdirect_seek=misdirect_read=false;
+    wrong_seek_at=UINT64_MAX;root_frees=el_frees=chunk_reads=0;
 }
 
 static void test_segment_header(demux_t *d,demux_sys_t *sys)
@@ -216,6 +254,72 @@ static void test_exact_sample_read(demux_t *d)
     assert(MP4_FEL_SeekExact(d->s,128));
     assert(!MP4_FEL_ReadExact(d->s,128,5)&&position==132&&!blocks);
 }
+static void test_adjacent_lookahead(void)
+{
+    for(unsigned mode=0;mode<2;mode++){
+        for(unsigned failure=0;failure<4;failure++){
+            if(failure==3&&!mode)continue;
+            reset_stream(mode!=0);
+            mp4_track_t tracks[2]={{.i_track_ID=1,.b_ok=true,.i_timescale=1000,
+                .ambient_fel_el_id=2},{.i_track_ID=2,.b_ok=true,.i_timescale=1000,
+                .ambient_fel_hidden=true,.ambient_fel_separate=true}};
+            demux_sys_t sys={.i_tracks=2,.track=tracks,.b_seekable=mode!=0};
+            demux_t d={.s=&fixture_stream,.p_sys=&sys};
+            MP4_Box_data_mfhd_t bm={.i_sequence_number=7},
+                em={.i_sequence_number=failure==1?9:8};
+            MP4_Box_data_tfhd_t tfhd={.i_track_ID=2,
+                .i_flags=MP4_TFHD_DEFAULT_BASE_IS_MOOF|MP4_TFHD_DFLT_SAMPLE_SIZE|
+                    MP4_TFHD_DFLT_SAMPLE_DURATION,
+                .i_default_sample_size=4,.i_default_sample_duration=1};
+            MP4_Box_data_trun_t tr={.i_flags=MP4_TRUN_DATA_OFFSET,
+                .i_sample_count=1,.i_data_offset=56};
+            MP4_Box_t bl_header={.i_type=ATOM_mfhd,.data.p_mfhd=&bm};
+            MP4_Box_t bl={.i_type=ATOM_moof,.i_pos=0,.i_size=100,.p_first=&bl_header};
+            MP4_Box_t run={.i_type=ATOM_trun,.data.p_trun=&tr};
+            MP4_Box_t header={.i_type=ATOM_tfhd,.data.p_tfhd=&tfhd,.p_next=&run};
+            MP4_Box_t traf={.i_type=ATOM_traf,.p_first=&header};
+            MP4_Box_t el_header={.i_type=ATOM_mfhd,.data.p_mfhd=&em,.p_next=&traf};
+            look_el=(MP4_Box_t){.i_type=ATOM_moof,.i_pos=136,.i_size=40,.p_first=&el_header};
+            look_root=(MP4_Box_t){0};
+            box(112,8,failure==2?"emsg":"free");
+            box(120,16,"styp");memcpy(bytes+128,"msdh",4);SetDWBE(bytes+132,0);
+            box(136,40,"moof");box(176,8,"mdat");
+            box(184,12,"mdat");memcpy(bytes+192,"EL12",4);visible=196;
+            sys.context.ambient_fel_required_end=112;
+            if(failure==3)wrong_seek_at=100;
+            const bool ok=MP4_FEL_Lookahead(&d,&bl);
+            assert(ok==(failure==0));
+            if(failure){
+                assert(!sys.context.ambient_fel_el_moof&&!blocks);
+                assert(!sys.context.ambient_fel_bl_extent_count&&!sys.context.ambient_fel_el_extent_count);
+                assert(root_frees==(failure==2?0:1)&&el_frees==root_frees);
+                assert(sys.b_error==(!mode||failure==3));
+                if(mode)assert(position==(failure==3?99:100));
+                continue;
+            }
+            assert(chunk_reads==1&&root_frees==1&&!el_frees);
+            assert(sys.context.ambient_fel_el_moof==&look_el);
+            assert(sys.context.ambient_fel_bl_extent_count==1&&sys.context.ambient_fel_el_extent_count==1);
+            assert(sys.context.ambient_fel_bl_extents[0].start==108);
+            assert(sys.context.ambient_fel_el_start==192&&sys.context.ambient_fel_el_end==196);
+            assert(position==(mode?100:196));
+            assert(blocks==(mode?0:2));
+            assert(MP4_FEL_IndexAdjacent(&d));
+            assert(tracks[1].context.runs.i_count==1);
+            assert(tracks[1].context.runs.p_array[0].i_offset==192);
+            assert(tracks[1].context.i_default_sample_size==4);
+            if(!mode){
+                block_t *sample=MP4_FEL_ReadCached(&sys,true,192,4);
+                assert(sample&&!memcmp(sample->p_buffer,"EL12",4));
+                block_Release(sample);
+            }
+            free(tracks[1].context.runs.p_array);
+            MP4_FEL_ReleaseCaches(&sys);
+            MP4_BoxFree(sys.context.ambient_fel_el_moof);
+            assert(!blocks&&el_frees==1);
+        }
+    }
+}
 int main(void)
 {
     mp4_track_t track={.i_track_ID=1,.b_ok=true,.i_timescale=1000};
@@ -225,6 +329,7 @@ int main(void)
     test_empty_mdat_gaps(&demux,&sys);
     test_leading_empty_mdats(&demux,&sys);
     test_exact_sample_read(&demux);
+    test_adjacent_lookahead();
     MP4_Box_data_tfhd_t tfhd={.i_track_ID=1,
         .i_flags=MP4_TFHD_DEFAULT_BASE_IS_MOOF|MP4_TFHD_DFLT_SAMPLE_SIZE|
             MP4_TFHD_DFLT_SAMPLE_DURATION,
