@@ -11,12 +11,14 @@
  * object or private decoder state is referenced from the display module. */
 struct ambient_fel_render {
     struct ambient_fel_planes planes;
+    struct ambient_fel_native420 native420;
     pl_dispatch dispatch;
     pl_tex output;
 };
 static inline void ambient_fel_render_destroy(pl_gpu gpu,struct ambient_fel_render *s)
 {
     ambient_fel_planes_destroy(gpu,&s->planes);
+    ambient_fel_native420_destroy(gpu,&s->native420);
     pl_tex_destroy(gpu,&s->output);
     pl_dispatch_destroy(&s->dispatch);
 }
@@ -72,8 +74,8 @@ static inline bool ambient_fel_render_picture_ex(pl_gpu gpu,pl_log log,
     if(!s->dispatch||!fmt||!pl_tex_recreate(gpu,&s->output,pl_tex_params(
         .w=bl->params.w,.h=bl->params.h,.format=fmt,.sampleable=true,.renderable=true)))
         return false;
-    if(!ambient_fel_compose_domain(gpu,s->dispatch,bl,NULL,s->output,&reshape,&nlq,
-        true,true,active,true))return false;
+    if(!ambient_fel_native420_compose(gpu,s->dispatch,&s->native420,
+        bl,s->output,&reshape,&nlq,active))return false;
     // The prepass has produced nonlinear BT.2020 PQ RGB. Ordinary rendering
     // now handles target gamut, tone mapping, scaling, overlays and dither.
     img->planes[0]=(struct pl_plane){.texture=s->output,.components=3,

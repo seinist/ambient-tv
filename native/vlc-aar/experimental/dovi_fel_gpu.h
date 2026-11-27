@@ -120,6 +120,38 @@ static inline bool ambient_fel_reference_el(pl_gpu gpu,pl_dispatch dp,
     return true;
 }
 
+/* Input is reconstructed RPU-domain Y/Cb/Cr, with no second reshape. */
+static inline bool ambient_fel_rgb_shader(pl_shader sh,const struct pl_dovi_metadata *reshape)
+{
+    float nonlinear[3][3],linear[3][3];
+    for(unsigned i=0;i<3;i++)for(unsigned j=0;j<3;j++){
+        nonlinear[j][i]=reshape->nonlinear.m[i][j];
+        linear[j][i]=reshape->linear.m[i][j];
+    }
+    const struct pl_shader_var color_vars[]={
+        {.var=pl_var_mat3("fel_nonlinear"),.data=nonlinear,.dynamic=true},
+        {.var=pl_var_mat3("fel_linear"),.data=linear,.dynamic=true},
+        {.var=pl_var_vec3("fel_color_offset"),.data=reshape->nonlinear_offset,.dynamic=true},
+    };
+    if(!pl_shader_custom(sh,&(struct pl_custom_shader){
+        .input=PL_SHADER_SIG_COLOR,.output=PL_SHADER_SIG_COLOR,
+        .variables=color_vars,.num_variables=sizeof(color_vars)/sizeof(color_vars[0]),
+        .body="vec3 code=fel_nonlinear*(color.rgb-fel_color_offset);"
+              "vec3 t=log(max(code,vec3(1e-20)))*(32.0/2523.0);"
+              "vec3 u=-t*(1.0+t*(0.5+t*(1.0/6.0+t*(1.0/24.0+t*(1.0/120.0+t/720.0)))));"
+              "u=mix(1.0-exp(t),u,lessThanEqual(abs(t),vec3(0.125)));"
+              "vec3 light=pow(max(vec3(1.0-3424.0/4096.0)-u,0.0)/"
+              "max(vec3(21.0/128.0)+(2392.0/128.0)*u,vec3(1e-8)),vec3(16384.0/2610.0));"
+              "vec3 lms=fel_linear*light;"
+              "const mat3 hpe=mat3(3.06441879,-0.65612108,0.01736321,"
+              "-2.16597676,1.78554118,-0.04725154,0.10155818,-0.12943749,1.03004253);"
+              "vec3 p=pow(max(hpe*lms,0.0),vec3(2610.0/16384.0));"
+              "color.rgb=pow((vec3(3424.0/4096.0)+(2413.0/128.0)*p)/"
+              "(vec3(1.0)+(2392.0/128.0)*p),vec3(2523.0/32.0));",
+    }))return false;
+    return true;
+}
+
 /* GPU composition of aligned packed Y/Cb/Cr BL and EL textures.
  * Input must already be chroma-aligned, normalized raw codewords. Output is
  * reconstructed codewords, NOT RGB; a downstream DV matrix stage is required.
@@ -330,32 +362,7 @@ static inline bool ambient_fel_compose_domain(pl_gpu gpu, pl_dispatch dispatch,
         // significant FP32 precision. Compute u = 1 - exp(log(PQ)/m2)
         // directly, using a short expm1 series around zero. Algebraically,
         // (x-c1)/(c2-c3*x) == ((1-c1)-u)/((c2-c3)+c3*u).
-        float nonlinear[3][3],linear[3][3];
-        for(unsigned i=0;i<3;i++)for(unsigned j=0;j<3;j++){
-            nonlinear[j][i]=reshape->nonlinear.m[i][j];
-            linear[j][i]=reshape->linear.m[i][j];
-        }
-        const struct pl_shader_var color_vars[]={
-            {.var=pl_var_mat3("fel_nonlinear"),.data=nonlinear,.dynamic=true},
-            {.var=pl_var_mat3("fel_linear"),.data=linear,.dynamic=true},
-            {.var=pl_var_vec3("fel_color_offset"),.data=reshape->nonlinear_offset,.dynamic=true},
-        };
-        if(!pl_shader_custom(sh,&(struct pl_custom_shader){
-            .input=PL_SHADER_SIG_COLOR,.output=PL_SHADER_SIG_COLOR,
-            .variables=color_vars,.num_variables=sizeof(color_vars)/sizeof(color_vars[0]),
-            .body="vec3 code=fel_nonlinear*(color.rgb-fel_color_offset);"
-                  "vec3 t=log(max(code,vec3(1e-20)))*(32.0/2523.0);"
-                  "vec3 u=-t*(1.0+t*(0.5+t*(1.0/6.0+t*(1.0/24.0+t*(1.0/120.0+t/720.0)))));"
-                  "u=mix(1.0-exp(t),u,lessThanEqual(abs(t),vec3(0.125)));"
-                  "vec3 light=pow(max(vec3(1.0-3424.0/4096.0)-u,0.0)/"
-                  "max(vec3(21.0/128.0)+(2392.0/128.0)*u,vec3(1e-8)),vec3(16384.0/2610.0));"
-                  "vec3 lms=fel_linear*light;"
-                  "const mat3 hpe=mat3(3.06441879,-0.65612108,0.01736321,"
-                  "-2.16597676,1.78554118,-0.04725154,0.10155818,-0.12943749,1.03004253);"
-                  "vec3 p=pow(max(hpe*lms,0.0),vec3(2610.0/16384.0));"
-                  "color.rgb=pow((vec3(3424.0/4096.0)+(2413.0/128.0)*p)/"
-                  "(vec3(1.0)+(2392.0/128.0)*p),vec3(2523.0/32.0));",
-        }))goto fail;
+        if(!ambient_fel_rgb_shader(sh,reshape))goto fail;
         return pl_dispatch_finish(dispatch,pl_dispatch_params(.shader=&sh,.target=output));
     }
     if (decode_rgb) {
@@ -379,6 +386,167 @@ static inline bool ambient_fel_compose_domain(pl_gpu gpu, pl_dispatch dispatch,
 fail:
     pl_dispatch_abort(dispatch,&sh);
     return false;
+}
+
+/* Native 4:2:0 reconstruction: separate Y and Cb/Cr images in 12-bit
+ * codeword units stored exactly in UNORM16, followed by display conversion.
+ * The imported P010 sampler is RGB_IDENTITY + NEAREST, order Cr/Y/Cb.
+ * Read chroma at the even native-grid position, never interpolate BL chroma
+ * before MMR. ETSI 5.4.2.3.3 uses two individually rounded horizontal
+ * [1,2,1] sums and a rounded vertical mean for the chroma predictor. */
+struct ambient_fel_native420 {
+    pl_tex y,uv;
+};
+static inline void ambient_fel_native420_destroy(pl_gpu gpu,struct ambient_fel_native420 *s)
+{
+    pl_tex_destroy(gpu,&s->y);pl_tex_destroy(gpu,&s->uv);
+}
+static inline bool ambient_fel_native_grid(pl_gpu gpu,pl_dispatch dp,
+    pl_tex bl,pl_tex *out,const struct pl_dovi_metadata *reshape,
+    const struct ambient_fel_nlq *n,const struct ambient_fel_planes *el,bool chroma)
+{
+    if(!gpu||!dp||!bl||!out||!reshape||!ambient_fel_nlq_valid(n)||bl==*out||
+       !bl->params.sampleable||bl->params.w<=0||bl->params.h<=0)return false;
+    bool zero=ambient_fel_nlq_zero(n);
+    if(!zero&&(!el||!el->tex[0]||!el->tex[1]||!el->tex[2]||!el->mapped||
+       el->x.ratio!=1.f||el->y.ratio!=1.f||
+       !ambient_fel_axis_bounds(bl->params.w,el->tex[0]->params.w,el->x)||
+       !ambient_fel_axis_bounds(bl->params.h,el->tex[0]->params.h,el->y)||
+       ((unsigned)el->x.offset&1u)||((unsigned)el->y.offset&1u)))return false;
+    // Luma MMR is outside the ETSI 4:2:0 mapping contract.
+    for(unsigned i=0;i+1<reshape->comp[0].num_pivots;i++)
+        if(reshape->comp[0].method[i]!=0)return false;
+    unsigned w=bl->params.w,h=bl->params.h;
+    if(chroma){w=(w+1)/2;h=(h+1)/2;}
+    unsigned components=chroma?2:1;
+    pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_UNORM,components,16,16,
+        PL_FMT_CAP_SAMPLEABLE|PL_FMT_CAP_RENDERABLE);
+    if(!fmt)fmt=pl_find_fmt(gpu,PL_FMT_UNORM,4,16,16,
+        PL_FMT_CAP_SAMPLEABLE|PL_FMT_CAP_RENDERABLE);
+    if(!fmt||fmt->component_depth[0]!=16||
+       (chroma&&fmt->component_depth[1]!=16)||
+       !pl_tex_recreate(gpu,out,pl_tex_params(.w=w,.h=h,.format=fmt,
+           .sampleable=true,.renderable=true)))return false;
+    const struct pl_shader_desc b={.desc={.name="native_bl",.type=PL_DESC_SAMPLED_TEX},
+        .binding={.object=bl}};
+    pl_shader sh=pl_dispatch_begin(dp);if(!sh)return false;
+    if(!pl_shader_custom(sh,&(struct pl_custom_shader){
+        .input=PL_SHADER_SIG_NONE,.output=PL_SHADER_SIG_COLOR,
+        .descriptors=&b,.num_descriptors=1,
+        .header="vec3 native_code(ivec2 p){"
+            "return floor(texelFetch(native_bl,clamp(p,ivec2(0),textureSize(native_bl,0)-ivec2(1)),0).gbr*1023.0+0.5);}",
+        .body=chroma?
+            "ivec2 p=ivec2(gl_FragCoord.xy)*2;"
+            "int a=(int(native_code(p-ivec2(1,0)).x)+2*int(native_code(p).x)+int(native_code(p+ivec2(1,0)).x)+2)>>2;"
+            "p.y+=1;"
+            "int b=(int(native_code(p-ivec2(1,0)).x)+2*int(native_code(p).x)+int(native_code(p+ivec2(1,0)).x)+2)>>2;"
+            "vec3 v=native_code(p-ivec2(0,1));"
+            "color=vec4(float((a+b+1)>>1),v.yz,1024.0)/1024.0;":
+            "vec3 v=native_code(ivec2(gl_FragCoord.xy));color=vec4(v/1024.0,1.0);",
+    }))goto fail;
+    float lo[3]={0},hi[3]={1,1,1};
+    struct pl_dovi_metadata prediction=*reshape;
+    for(unsigned c=0;c<3;c++){
+        unsigned k=prediction.comp[c].num_pivots;
+        if(k){
+            if(k<2||k>9)goto fail;
+            lo[c]=prediction.comp[c].pivots[0];hi[c]=prediction.comp[c].pivots[k-1];
+            prediction.comp[c].pivots[0]=0.f;prediction.comp[c].pivots[k-1]=1.f;
+        }
+    }
+    const struct pl_shader_var bounds[]={
+        {.var=pl_var_vec3("native_lo"),.data=lo,.dynamic=true},
+        {.var=pl_var_vec3("native_hi"),.data=hi,.dynamic=true},
+    };
+    if(!pl_shader_custom(sh,&(struct pl_custom_shader){
+        .input=PL_SHADER_SIG_COLOR,.output=PL_SHADER_SIG_COLOR,
+        .variables=bounds,.num_variables=2,
+        .body="color.rgb=clamp(color.rgb,native_lo,native_hi);",
+    }))goto fail;
+    // Skip unused curves without changing the three-input pivot clamp.
+    if(chroma)prediction.comp[0].num_pivots=0;
+    else prediction.comp[1].num_pivots=prediction.comp[2].num_pivots=0;
+    pl_shader_dovi_reshape(sh,&prediction);
+    if(!zero){
+        const struct pl_shader_desc ed[]={
+            {.desc={.name="native_ey",.type=PL_DESC_SAMPLED_TEX},.binding={.object=el->tex[0]}},
+            {.desc={.name="native_eu",.type=PL_DESC_SAMPLED_TEX},.binding={.object=el->tex[1]}},
+            {.desc={.name="native_ev",.type=PL_DESC_SAMPLED_TEX},.binding={.object=el->tex[2]}},
+        };
+        float off[3],slope[3],threshold[3],cap[3],origin[2]={el->x.offset,el->y.offset};
+        float code_max=el->reference_codes?65535.f:1023.f;
+        for(unsigned c=0;c<3;c++){
+            off[c]=n->offset[c];slope[c]=(float)ldexp((double)n->slope[c],-(int)n->coef_log2_denom);
+            threshold[c]=(float)ldexp((double)n->threshold[c],-(int)n->coef_log2_denom);
+            cap[c]=(float)ldexp((double)n->maximum[c],-(int)n->coef_log2_denom);
+        }
+        const struct pl_shader_var vars[]={
+            {.var=pl_var_vec3("native_off"),.data=off,.dynamic=true},
+            {.var=pl_var_vec3("native_slope"),.data=slope,.dynamic=true},
+            {.var=pl_var_vec3("native_threshold"),.data=threshold,.dynamic=true},
+            {.var=pl_var_vec3("native_cap"),.data=cap,.dynamic=true},
+            {.var=pl_var_vec2("native_origin"),.data=origin,.dynamic=true},
+            {.var=pl_var_float("native_max"),.data=&code_max,.dynamic=true},
+        };
+        if(!pl_shader_custom(sh,&(struct pl_custom_shader){
+            .input=PL_SHADER_SIG_COLOR,.output=PL_SHADER_SIG_COLOR,
+            .descriptors=ed,.num_descriptors=3,.variables=vars,.num_variables=6,
+            .header="float native_el_code(sampler2D t,ivec2 p){"
+                "return clamp(floor(texelFetch(t,clamp(p,ivec2(0),textureSize(t,0)-ivec2(1)),0).r*65535.0+0.5),0.0,native_max);}"
+                "vec3 native_residual(vec3 v){vec3 d=v-native_off;"
+                "return clamp(sign(d)*((abs(d)-0.5)*native_slope+native_threshold),-native_cap,native_cap);}",
+            .body=chroma?
+                "ivec2 p=ivec2(gl_FragCoord.xy)+ivec2(native_origin)/2;"
+                "color.gb+=native_residual(vec3(native_off.x,native_el_code(native_eu,p),native_el_code(native_ev,p))).yz;":
+                "ivec2 p=ivec2(gl_FragCoord.xy)+ivec2(native_origin);"
+                "color.r+=native_residual(vec3(native_el_code(native_ey,p),native_off.yz)).x;",
+        }))goto fail;
+    }
+    // ETSI 5.4.3.3: round to the 12-bit reconstructed signal before
+    // resampling chroma for RGB. Keep 12-bit integers in R16/RG16.
+    if(!pl_shader_custom(sh,&(struct pl_custom_shader){
+        .input=PL_SHADER_SIG_COLOR,.output=PL_SHADER_SIG_COLOR,
+        .body=chroma?
+            "vec2 q=clamp(floor(color.gb*4096.0+0.5),0.0,4095.0);color=vec4(q/65535.0,0.0,1.0);":
+            "float q=clamp(floor(color.r*4096.0+0.5),0.0,4095.0);color=vec4(q/65535.0,0.0,0.0,1.0);",
+    }))goto fail;
+    return pl_dispatch_finish(dp,pl_dispatch_params(.shader=&sh,.target=*out));
+fail:
+    pl_dispatch_abort(dp,&sh);return false;
+}
+
+static inline bool ambient_fel_native420_compose(pl_gpu gpu,pl_dispatch dp,
+    struct ambient_fel_native420 *s,pl_tex bl,pl_tex output,
+    const struct pl_dovi_metadata *reshape,const struct ambient_fel_nlq *n,
+    const struct ambient_fel_planes *el)
+{
+    if(!gpu||!dp||!s||!bl||!output||!reshape||output==bl||
+       output->params.w!=bl->params.w||output->params.h!=bl->params.h)return false;
+    pl_dispatch_reset_frame(dp);
+    if(!ambient_fel_native_grid(gpu,dp,bl,&s->y,reshape,n,el,false)||
+       !ambient_fel_native_grid(gpu,dp,bl,&s->uv,reshape,n,el,true))return false;
+    const struct pl_shader_desc d[]={
+        {.desc={.name="native_y",.type=PL_DESC_SAMPLED_TEX},.binding={.object=s->y}},
+        {.desc={.name="native_uv",.type=PL_DESC_SAMPLED_TEX},.binding={.object=s->uv}},
+    };
+    pl_shader sh=pl_dispatch_begin(dp);if(!sh)return false;
+    // Chroma expansion here is display-side, AFTER reconstruction; the
+    // CCM output itself remains native 4:2:0. Left/center siting follows
+    // the MMR predictor grid. Explicit bilinear display policy.
+    if(!pl_shader_custom(sh,&(struct pl_custom_shader){
+        .input=PL_SHADER_SIG_NONE,.output=PL_SHADER_SIG_COLOR,
+        .descriptors=d,.num_descriptors=2,
+        .header="vec2 native_uv_at(ivec2 p){return floor(texelFetch(native_uv,clamp(p,ivec2(0),textureSize(native_uv,0)-ivec2(1)),0).rg*65535.0+0.5);}",
+        .body="vec2 p=(gl_FragCoord.xy-vec2(0.5,1.0))*0.5;"
+            "ivec2 i=ivec2(floor(p));vec2 f=fract(p);"
+            "vec2 uv=mix(mix(native_uv_at(i),native_uv_at(i+ivec2(1,0)),f.x),"
+            "mix(native_uv_at(i+ivec2(0,1)),native_uv_at(i+ivec2(1,1)),f.x),f.y);"
+            "float y=floor(texelFetch(native_y,ivec2(gl_FragCoord.xy),0).r*65535.0+0.5);"
+            "color=vec4(vec3(y,uv)/4096.0,1.0);",
+    })||!ambient_fel_rgb_shader(sh,reshape)){
+        pl_dispatch_abort(dp,&sh);return false;
+    }
+    return pl_dispatch_finish(dp,pl_dispatch_params(.shader=&sh,.target=output));
 }
 
 /* Low-level fixtures with already prediction-normalized BL input. Live

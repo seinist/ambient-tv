@@ -175,6 +175,53 @@ static void assert_filter_pixels(pl_gpu gpu,pl_dispatch dp,pl_tex actual,const u
     }
     free(out);pl_tex_destroy(gpu,&readback);
 }
+static unsigned native420_ref_luma(const uint16_t *y,unsigned x,unsigned row)
+{
+    unsigned h[2];
+    for(unsigned j=0;j<2;j++){
+        unsigned a=at_plane(y,W,H,(int)(2*x)-1,(int)(2*row+j));
+        unsigned b=at_plane(y,W,H,(int)(2*x),(int)(2*row+j));
+        unsigned c=at_plane(y,W,H,(int)(2*x)+1,(int)(2*row+j));
+        h[j]=(a+2*b+c+2)/4;
+    }
+    return (h[0]+h[1]+1)/2;
+}
+static void check_native_grid(pl_gpu gpu,pl_dispatch dp,pl_tex actual,bool chroma,
+    const uint16_t bl[YUV],const uint16_t el[YUV],const struct ambient_dovi_metadata *m)
+{
+    unsigned w=chroma?W/2:W,h=chroma?H/2:H;
+    assert(actual&&actual->params.w==(int)w&&actual->params.h==(int)h);
+    pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,32,32,PL_FMT_CAP_RENDERABLE|PL_FMT_CAP_HOST_READABLE);
+    assert(fmt);
+    pl_tex rb=pl_tex_create(gpu,pl_tex_params(.w=w,.h=h,.format=fmt,.renderable=true,.host_readable=true));
+    assert(rb);
+    const struct pl_shader_desc d={.desc={.name="grid_check",.type=PL_DESC_SAMPLED_TEX},.binding={.object=actual}};
+    pl_shader sh=pl_dispatch_begin(dp);assert(sh);
+    assert(pl_shader_custom(sh,&(struct pl_custom_shader){
+        .input=PL_SHADER_SIG_NONE,.output=PL_SHADER_SIG_COLOR,
+        .descriptors=&d,.num_descriptors=1,.body="color=texelFetch(grid_check,ivec2(gl_FragCoord.xy),0);",
+    }));
+    assert(pl_dispatch_finish(dp,pl_dispatch_params(.shader=&sh,.target=rb)));
+    float *out=malloc((size_t)w*h*4*sizeof(*out));assert(out);
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=rb,.ptr=out)));
+    unsigned max=0,exact=0;
+    for(unsigned i=0;i<w*h;i++){
+        unsigned x=i%w,y=i/w,ci=chroma?i:(y/2)*(W/2)+x/2;
+        unsigned b[3]={chroma?native420_ref_luma(bl,x,y):bl[i],bl[N+ci],bl[N+C+ci]};
+        for(unsigned k=0;k<(chroma?2u:1u);k++){
+            unsigned c=chroma?k+1:0;
+            unsigned want=oracle(m,b,el[chroma?N+k*C+i:i],c);
+            unsigned got=(unsigned)lroundf(out[4*i+k]*65535.f);
+            unsigned err=(unsigned)abs((int)got-(int)want);
+            if(err>max)max=err;
+            exact+=err==0;
+            if(err>1)fprintf(stderr,"native420 %s pixel %u component %u got %u expected %u\n",chroma?"UV":"Y",i,c,got,want);
+        }
+    }
+    fprintf(stderr,"native420 %s: %u samples, %u exact, max error %u\n",chroma?"UV":"Y",w*h*(chroma?2u:1u),exact,max);
+    assert(max<=1);
+    free(out);pl_tex_destroy(gpu,&rb);
+}
 static void check_reference_filter(pl_gpu gpu,pl_log log,pl_dispatch dp,struct ambient_fel_planes *planes,
     const uint16_t source[YUV],const uint16_t bl_frame[YUV],const struct ambient_dovi_metadata *m,
     const struct pl_dovi_metadata *reshape,const struct ambient_fel_nlq *nlq)
@@ -262,6 +309,21 @@ static void check_reference_filter(pl_gpu gpu,pl_log log,pl_dispatch dp,struct a
     assert(ambient_fel_render_picture_ex(gpu,log,&render,&frame,pic,1,0,0,64,64));
     assert(render.planes.expanded[0]&&render.planes.expanded[0]->params.w==64);
     assert(frame.planes[0].texture==render.output);
+    check_native_grid(gpu,dp,render.native420.y,false,bl_frame,expanded,m);
+    check_native_grid(gpu,dp,render.native420.uv,true,bl_frame,expanded,m);
+    // Force luma-dependent MMR even when the external RPU uses only
+    // polynomial chroma curves. A strong cross-component term catches a
+    // regression to point-sampled luma, including both image edges.
+    for(unsigned c=1;c<3;c++){
+        struct ambient_dovi_curve *q=&pic->rpu.curves[c];
+        memset(q,0,sizeof(*q));q->num_pivots=2;q->pivots[1]=1023;
+        q->mapping[0]=1;q->mmr_order[0]=1;
+        q->mmr_coef[0][0][0]=(INT64_C(1)<<m->coef_log2_denom)/2;
+        q->mmr_coef[0][0][c]=(INT64_C(1)<<m->coef_log2_denom)/4;
+    }
+    frame.planes[0].texture=bl;
+    assert(ambient_fel_render_picture_ex(gpu,log,&render,&frame,pic,1,0,0,64,64));
+    check_native_grid(gpu,dp,render.native420.uv,true,bl_frame,expanded,&pic->rpu);
     pl_gpu_finish(gpu);ambient_fel_render_destroy(gpu,&render);
     pl_tex_destroy(gpu,&bl);free(pic);
 }
