@@ -13,6 +13,8 @@ mod pipeline_cache;
 // Experimental reusable exact metric; not a replacement for the upstream analyser.
 #[cfg(feature = "vulkan")]
 pub mod motion;
+#[cfg(feature = "vulkan")]
+pub mod motion_select;
 
 const MAX_QUEUE: usize = 10;
 const MAX_FRAMES: i32 = 100_000_000;
