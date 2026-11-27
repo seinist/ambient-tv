@@ -166,6 +166,16 @@ int main(void) {
     assert(ambient_fel_trun_offset(UINT64_C(2147483648),INT32_MIN,&run_offset)&&run_offset==0);
     assert(!ambient_fel_trun_offset(0,-1,&run_offset));
     assert(!ambient_fel_trun_offset(UINT64_MAX,1,&run_offset));
+    assert(ambient_fel_run_offset(1000,2000,300,true,40,&run_offset)&&run_offset==1040);
+    assert(ambient_fel_run_offset(1000,2000,300,true,-40,&run_offset)&&run_offset==960);
+    assert(ambient_fel_run_offset(1000,2000,300,false,40,&run_offset)&&run_offset==2300);
+    assert(!ambient_fel_run_offset(1000,UINT64_MAX-4,5,false,0,&run_offset));
+    assert(!ambient_fel_run_offset(1,1000,0,true,-2,&run_offset));
+    assert(!ambient_fel_run_offset(1,1000,0,false,0,NULL));
+    assert(ambient_fel_pts_valid(0,-1));
+    assert(ambient_fel_pts_valid(INT64_MAX,0));
+    assert(!ambient_fel_pts_valid(INT64_MAX,1));
+    assert(!ambient_fel_pts_valid(-1,0));
     assert(ambient_fel_fragment_timing(9000,-3000,3000,9000,6000,3000));
     assert(ambient_fel_fragment_timing(9000,0,3000,9000,9000,3000));
     assert(!ambient_fel_fragment_timing(9001,-3001,3000,9000,6000,3000));

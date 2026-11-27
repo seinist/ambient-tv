@@ -161,6 +161,22 @@ static inline bool ambient_fel_trun_offset(uint64_t base,int32_t delta,uint64_t 
     return true;
 }
 
+/* ISO-BMFF data_offset is relative to the traf base, not the previous
+ * run. Absent data_offset instead inherits the previous run's end. */
+static inline bool ambient_fel_run_offset(uint64_t base,uint64_t previous,
+    uint32_t previous_size,bool explicit_offset,int32_t delta,uint64_t *out)
+{
+    if(!out)return false;
+    if(explicit_offset)return ambient_fel_trun_offset(base,delta,out);
+    if(previous_size>UINT64_MAX-previous)return false;
+    *out=previous+previous_size;return true;
+}
+static inline bool ambient_fel_pts_valid(int64_t dts,int64_t cts)
+{
+    return dts>=0 && !(cts>0 && dts>INT64_MAX-cts) &&
+        !(cts<0 && dts<INT64_MIN-cts);
+}
+
 /* All runs of a separate EL fragment must occupy disjoint byte ranges.
  * Sorting once avoids quadratic pairwise comparisons on fragmented files. */
 struct ambient_fel_byte_range { uint64_t start,end; };

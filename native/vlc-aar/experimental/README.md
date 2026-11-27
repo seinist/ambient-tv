@@ -928,3 +928,11 @@ spatial pass rather than applying a second unverified color transform.
 The ordinary libplacebo renderer remains the fallback. An asymmetric GPU
 fixture verifies flipped source rows and the authored local window while
 preserving the final crop/rotation. No claim of device-level certification.
+
+Paired fragment indexing now bypasses VLC's legacy Smooth offset heuristic:
+explicit trun offsets resolve relative to the traf base, implicit offsets
+advance from the previous run, and all additions are checked for overflow.
+Unknown tracks and allocation failure fail closed in paired fragments,
+not ordinary MP4. Validate signed composition offset arithmetic before
+sample delivery. New host boundary tests cover positive/negative explicit
+offsets, implicit continuation, unsigned offset wrap and signed PTS wrap.
