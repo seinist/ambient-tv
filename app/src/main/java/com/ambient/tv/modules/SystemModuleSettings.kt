@@ -76,6 +76,7 @@ private fun ModuleDialog(dismiss: () -> Unit) {
                     SystemModule.SHADERS -> stringResource(R.string.module_settings_shaders)
                     SystemModule.PROJECTM -> "ProjectM"
                     SystemModule.MPV -> "MPV"
+                    SystemModule.SPOTIFY -> "Spotify (Rusty)"
                     else -> module.id
                 }
                 TvActionButton(
@@ -97,6 +98,7 @@ private fun ModuleDialog(dismiss: () -> Unit) {
         }
         Text(stringResource(stateLabel), style = MaterialTheme.typography.bodyMedium)
         if (status.restartRequired) Text(stringResource(R.string.module_settings_restart))
+        if (selected == SystemModule.SPOTIFY) Text(stringResource(R.string.module_settings_spotify_experimental), style = MaterialTheme.typography.bodySmall)
         if (!SystemModuleHost.downloadsEnabled) Text(stringResource(R.string.module_settings_no_key))
         notice?.let { Text(stringResource(it), style = MaterialTheme.typography.bodySmall) }
         TvActionButton(text = stringResource(R.string.module_settings_install),
