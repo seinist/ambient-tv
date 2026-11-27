@@ -146,6 +146,7 @@ class TelegramViewModel @Inject constructor(
     val state: StateFlow<TelegramBrowseState> = mutableState.asStateFlow()
     val pendingPlaybackReturn: StateFlow<TelegramPlaybackContext.ReturnSnapshot?> = playbackContext.pendingReturn
     private var loadJob: Job? = null
+    private var thumbnailPrefetchJob: Job? = null
     private var playbackSessionToken: Long? = null
 
     private var pageGeneration = 0
@@ -164,6 +165,7 @@ class TelegramViewModel @Inject constructor(
                 if (signedIn) open(mutableState.value.section, refresh = true)
                 else {
                     loadJob?.cancel()
+                    thumbnailPrefetchJob?.cancel()
                     pageGeneration++
                     mutableState.value = TelegramBrowseState(section = mutableState.value.section)
                 }
@@ -190,6 +192,7 @@ class TelegramViewModel @Inject constructor(
             val prepared = checkNotNull(prepareTelegramBrowseReturn(section, snapshot.sourceRevision,
                 snapshot, smartTubeUsable))
             loadJob?.cancel()
+            thumbnailPrefetchJob?.cancel()
             pageGeneration++
             lastFreshLoadMs = android.os.SystemClock.elapsedRealtime()
             mutableState.value = prepared
@@ -208,6 +211,7 @@ class TelegramViewModel @Inject constructor(
             now - lastFreshLoadMs < SECTION_STALE_MS) return
         lastFreshLoadMs = now
         loadJob?.cancel()
+        thumbnailPrefetchJob?.cancel()
         pageGeneration++
         mutableState.value = current.copy(
             section = key, loading = repository.available,
@@ -327,7 +331,6 @@ class TelegramViewModel @Inject constructor(
                 items = (old.items + row.items).distinctBy(MediaItem::ratingKey),
             )
         }
-        repository.prefetchThumbnails(pageMedia)
         val earlier = if (append) mutableState.value.media else emptyMap()
         val previousState = mutableState.value
         mutableState.value = TelegramBrowseState(
@@ -337,6 +340,16 @@ class TelegramViewModel @Inject constructor(
             playbackReturnRevision = previousState.playbackReturnRevision.takeIf { previousState.section == section } ?: 0L,
             playbackReturnKey = previousState.playbackReturnKey.takeIf { previousState.section == section },
         )
+        // Only prefetch cards actually published after section filtering/deduplication,
+        // including channel avatars. The latest page supersedes queued speculative work.
+        thumbnailPrefetchJob?.cancel()
+        val previews = pageRows.asSequence().flatMap { it.items.asSequence() }
+            .mapNotNull { item ->
+                item.artUrl?.let { com.ambient.tv.data.telegram.parseMonogramThumbModel(it) }
+            }.distinctBy { it.chatId to it.messageId }.take(24).toList()
+        if (previews.isNotEmpty()) thumbnailPrefetchJob = viewModelScope.launch {
+            repository.prefetchThumbnails(previews)
+        }
     }
 
     private fun playbackScope(section: String) = "telegram:$section"

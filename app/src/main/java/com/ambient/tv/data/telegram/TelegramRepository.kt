@@ -97,6 +97,8 @@ interface TelegramClientPort {
     fun setSessionLostListener(listener: ((String) -> Unit)?) = Unit
     /** Revision of the media at this post, changed by native edit/delete updates. */
     fun mediaRevision(chatId: Long, messageId: Int): Long = 0L
+    /** Local authenticated sharp thumbnail, without native RPC or download admission. */
+    suspend fun cachedThumbnail(chatId: Long, messageId: Int): String? = null
     /** Telegram's real (non-inline) thumbnail of a post as a local file URI, or null. */
     suspend fun thumbnail(chatId: Long, messageId: Int): String? = null
     suspend fun thumbnail(chatId: Long, messageId: Int, priority: TelegramTransferPriority): String? =
@@ -618,9 +620,9 @@ class TelegramRepository @Inject constructor(
     }
 
     /** Waits (bounded) until no interactive request runs. */
-    private suspend fun awaitInteractiveIdle() {
+    private suspend fun awaitInteractiveIdle(shouldWait: () -> Boolean = { true }) {
         var waitedMs = 0L
-        while (interactiveRequests.get() > 0 && waitedMs < BACKGROUND_MAX_WAIT_MS) {
+        while (shouldWait() && interactiveRequests.get() > 0 && waitedMs < BACKGROUND_MAX_WAIT_MS) {
             kotlinx.coroutines.delay(BACKGROUND_POLL_MS)
             waitedMs += BACKGROUND_POLL_MS
         }
@@ -778,19 +780,23 @@ class TelegramRepository @Inject constructor(
         val selected = client ?: return null
         val identity = selected.cacheIdentity
         val generation = streamEpoch.get()
-        val key = "$generation:$chatId:$messageId"
+        val revision = selected.mediaRevision(chatId, messageId)
+        val key = "$generation:$chatId:$messageId:$revision"
         val load = synchronized(thumbnailLoads) {
             thumbnailLoads[key]?.takeUnless { it.deferred.isCancelled }?.also { it.waiters++ }
                 ?: run {
                     val priority = TelegramTransferPriority(!speculative)
                     ThumbnailLoad(scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
-                        loadThumbnailFile(selected, identity, generation, chatId, messageId, priority)
+                        loadThumbnailFile(selected, identity, generation, chatId, messageId, revision, priority)
                     }, 1, priority).also { thumbnailLoads[key] = it }
                 }
         }
         if (!speculative) load.priority.promote()
         try {
-            return load.deferred.await().takeIf { sameAccount(selected, identity, generation) && chatId !in blockedChannels }
+            return load.deferred.await().takeIf {
+                sameAccount(selected, identity, generation) && chatId !in blockedChannels &&
+                    selected.mediaRevision(chatId, messageId) == revision
+            }
         } finally {
             val cancel = synchronized(thumbnailLoads) {
                 if (--load.waiters == 0) {
@@ -806,39 +812,51 @@ class TelegramRepository @Inject constructor(
      * Loads the card images of a freshly shown page in the background, newest first, so they
      * are on disk by the time the cards are drawn (the inline preview showed for long).
      */
-    fun prefetchThumbnails(media: List<TelegramMedia>, limit: Int = 24) {
+    suspend fun prefetchThumbnails(refs: List<MonogramThumbRef>, limit: Int = 24) {
         val selected = client ?: return
         val identity = selected.cacheIdentity
         val generation = streamEpoch.get()
-        media.asSequence()
-            .filter { it.cardImageUrl?.startsWith(MONOGRAM_THUMB_SCHEME) == true }
-            .take(limit)
-            .forEach { item ->
-                scope.launch {
-                    // A card already loading this image shares its download without the permit.
-                    if (synchronized(thumbnailLoads) { thumbnailLoads.containsKey("$generation:${item.chatId}:${item.messageId}") }) return@launch
-                    prefetchPermits.withPermit {
-                        if (sameAccount(selected, identity, generation)) thumbnailFile(item.chatId, item.messageId, speculative = true)
+        val targets = refs.asSequence().distinctBy { it.chatId to it.messageId }
+            .take(limit.coerceAtLeast(0)).toList()
+        // Two structured workers rather than one repository-lifetime coroutine per card.
+        // Cancelling the owning page releases speculative waiters; visible cards retain theirs.
+        kotlinx.coroutines.coroutineScope {
+            repeat(minOf(2, targets.size)) { lane ->
+                launch {
+                    for (index in lane until targets.size step 2) {
+                        val item = targets[index]
+                        prefetchPermits.withPermit {
+                            if (!sameAccount(selected, identity, generation)) return@launch
+                            val revision = selected.mediaRevision(item.chatId, item.messageId)
+                            val key = "$generation:${item.chatId}:${item.messageId}:$revision"
+                            if (!synchronized(thumbnailLoads) { thumbnailLoads.containsKey(key) }) {
+                                thumbnailFile(item.chatId, item.messageId, speculative = true)
+                            }
+                        }
                     }
                 }
             }
+        }
     }
 
     private suspend fun loadThumbnailFile(
         selected: TelegramClientPort, identity: String?, generation: Long, chatId: Long, messageId: Int,
-        priority: TelegramTransferPriority,
+        revision: Long, priority: TelegramTransferPriority,
     ): String? {
-        if (!sameAccount(selected, identity, generation) || chatId in blockedChannels) return null
+        fun valid() = sameAccount(selected, identity, generation) && chatId !in blockedChannels &&
+            selected.mediaRevision(chatId, messageId) == revision
+        if (!valid()) return null
         val file = try {
-            if (!priority.foreground) awaitInteractiveIdle()
+            // Disk hits do not consume network permits or wait for interactive catalog RPCs.
+            selected.cachedThumbnail(chatId, messageId)?.let { return it.takeIf { valid() } }
+            if (!priority.foreground) awaitInteractiveIdle { !priority.foreground }
             thumbnailPermits.withPermit {
-                if (!sameAccount(selected, identity, generation) || chatId in blockedChannels) null
-                else selected.thumbnail(chatId, messageId, priority)
+                if (!valid()) null else selected.thumbnail(chatId, messageId, priority)
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (_: Exception) { null }
-        return file.takeIf { sameAccount(selected, identity, generation) && chatId !in blockedChannels }
+        return file.takeIf { valid() }
     }
 
     // Bound all players and cancelled seek windows to the native media lane budget.

@@ -1187,18 +1187,22 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     override suspend fun thumbnail(chatId: Long, messageId: Int): String? =
         thumbnail(chatId, messageId, TelegramTransferPriority(true))
 
-    override suspend fun thumbnail(chatId: Long, messageId: Int, priority: TelegramTransferPriority): String? {
-        // A preview on disk needs no MTProto at all: never queue it behind connecting, a
-        // FLOOD_WAIT or other RPCs (cards stayed on the inline preview meanwhile).
-        if (accountId != null && chatId !in leftChannels) {
-            val cached = File(File(cache, "previews"), "$chatId-$messageId.img")
-            if (cached.isFile && cached.length() > 0L) {
-                cached.setLastModified(System.currentTimeMillis())
-                return cached.toURI().toString()
-            }
+    override suspend fun cachedThumbnail(chatId: Long, messageId: Int): String? {
+        val identity = accountId ?: return null
+        val generation = cacheGeneration
+        val revision = mediaRevision(chatId, messageId)
+        if (chatId in leftChannels) return null
+        val cached = File(File(cache, "previews"), "$chatId-$messageId.img")
+        if (!cached.isFile || cached.length() <= 0L) return null
+        cached.setLastModified(System.currentTimeMillis())
+        return cached.toURI().toString().takeIf {
+            identity == accountId && generation == cacheGeneration && chatId !in leftChannels &&
+                revision == mediaRevision(chatId, messageId)
         }
-        return downloadThumbnail(chatId, messageId, priority)
     }
+
+    override suspend fun thumbnail(chatId: Long, messageId: Int, priority: TelegramTransferPriority): String? =
+        cachedThumbnail(chatId, messageId) ?: downloadThumbnail(chatId, messageId, priority)
 
     private suspend fun downloadThumbnail(chatId: Long, messageId: Int, priority: TelegramTransferPriority): String? =
         cancellableMediaRequest(priority) { request ->

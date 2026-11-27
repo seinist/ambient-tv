@@ -513,14 +513,16 @@ fun ArtworkImage(
     cacheOnly: Boolean = false,
     /** A caller can defer offscreen requests; memory hits and already-admitted work remain usable. */
     loadUncached: Boolean = true,
+    /** Local low-resolution preview while the primary image loads/fades; removed on success. */
+    progressivePreview: String? = null,
 ) {
     val context = LocalContext.current
-    val candidates = remember(model, fallbackModels) {
+    val candidates = remember(model, fallbackModels, progressivePreview) {
         // An HD Telegram thumbnail that downloads but cannot be decoded must still fall back
         // to the post's inline preview instead of the title card.
         val monogramFallback = (model as? String)
             ?.let { com.ambient.tv.data.telegram.parseMonogramThumbModel(it) }?.fallback
-        (listOf(model, monogramFallback) + fallbackModels)
+        (listOf(model, monogramFallback.takeIf { progressivePreview == null }) + fallbackModels)
             .filter { it != null && (it !is String || it.isNotBlank()) }
             .distinct()
     }
@@ -655,7 +657,10 @@ fun ArtworkImage(
     val hdrFilter = com.ambient.tv.ui.display.rememberUiHdrBitmapColorFilter()
     Box(modifier = if (focusCrop) modifier.onSizeChanged { containerSize = it } else modifier) {
         if (hasModel) {
-            if (loadAdmitted && placeholder && (loading || fadeBackground)) PulsingArtworkPlaceholder()
+            if (progressivePreview != null && (!loadAdmitted || loading || fadeBackground || failed)) {
+                ArtworkImage(progressivePreview, title, Modifier.matchParentSize(), contentScale,
+                    alignment = alignment, crossfadeOnLoad = false)
+            } else if (loadAdmitted && placeholder && (loading || fadeBackground)) PulsingArtworkPlaceholder()
             if (loadAdmitted) AsyncImage(
                 model = request,
                 contentDescription = title,
@@ -667,7 +672,7 @@ fun ArtworkImage(
                 onLoading = { loading = !shownFromMemory; fadeBackground = false; failed = false },
                 onSuccess = {
                     val source = it.result.dataSource
-                    fadeBackground = placeholder && fadeMillis > 0 &&
+                    fadeBackground = (placeholder || progressivePreview != null) && fadeMillis > 0 &&
                         source != coil3.decode.DataSource.MEMORY_CACHE && source != coil3.decode.DataSource.MEMORY
                     loading = false
                     failed = false
@@ -716,7 +721,7 @@ fun ArtworkImage(
                 },
             )
         }
-        if (placeholder && (!hasModel || failed)) {
+        if (placeholder && (!hasModel || failed) && (progressivePreview == null || !hasModel)) {
             when {
                 fallbackContent != null -> fallbackContent()
                 fallbackIcon == null -> ArtworkFallback(fallbackText)

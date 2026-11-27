@@ -109,17 +109,13 @@ internal fun MonogramArtwork(
             imageUrl, item.title, modifier, ContentScale.Crop,
             staggerUncached = staggerUncached,
             prioritizeUncached = prioritizeUncached,
-        ) else Box(modifier) {
-            // Inline preview is already local: never defer it. Only the sharper remote/native
-            // thumbnail is admitted through the browse limiter.
-            ArtworkImage(inline, item.title, Modifier.matchParentSize(), ContentScale.Crop)
-            ArtworkImage(
-                imageUrl, item.title, Modifier.matchParentSize(), ContentScale.Crop,
-                placeholder = false,
-                staggerUncached = staggerUncached,
-                prioritizeUncached = prioritizeUncached,
-            )
-        }
+        ) else ArtworkImage(
+            imageUrl, item.title, modifier, ContentScale.Crop,
+            placeholder = false,
+            staggerUncached = staggerUncached,
+            prioritizeUncached = prioritizeUncached,
+            progressivePreview = inline,
+        )
     }
 }
 
