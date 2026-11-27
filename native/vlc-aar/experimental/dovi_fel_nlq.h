@@ -21,6 +21,16 @@ static inline bool ambient_fel_nlq_valid(const struct ambient_fel_nlq *n)
             return false;
     return true;
 }
+/* A zero maximum or zero slope AND threshold proves an identically
+ * zero residual, independent of EL codewords. This includes canonical
+ * Profile 7 MEL NLQ parameters, but is not a profile classifier. */
+static inline bool ambient_fel_nlq_zero(const struct ambient_fel_nlq *n)
+{
+    if(!ambient_fel_nlq_valid(n))return false;
+    for(unsigned i=0;i<3;i++)
+        if(n->maximum[i]&&(n->slope[i]||n->threshold[i]))return false;
+    return true;
+}
 static inline double ambient_fel_residual(const struct ambient_fel_nlq *n,
     unsigned component, double sample)
 {
