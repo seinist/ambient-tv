@@ -29,4 +29,12 @@ class SettingsVideoAccelerationTest {
         assertEquals("1080", merged.gpuRenderResolutionKey)
         assertEquals("bt1886", merged.mpvSdrCurveKey)
     }
+    @org.junit.Test fun experimentalVlcSwitchIsOffByDefaultAndSurvivesSettingsMerge() {
+        val baseline = SettingsUiState()
+        val draft = baseline.copy(uiDisplay = baseline.uiDisplay.copy(vlcExperimentalFeaturesEnabled = true))
+        org.junit.Assert.assertFalse(baseline.vlcExperimentalFeaturesEnabled)
+        org.junit.Assert.assertTrue(mergeStoredSettings(draft, baseline, baseline).vlcExperimentalFeaturesEnabled)
+        org.junit.Assert.assertNotEquals(baseline.editableValues(), draft.editableValues())
+        org.junit.Assert.assertFalse(mergeStoredSettings(baseline, draft, draft).vlcExperimentalFeaturesEnabled)
+    }
 }

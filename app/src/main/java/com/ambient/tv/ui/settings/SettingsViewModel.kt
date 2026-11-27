@@ -511,7 +511,7 @@ class SettingsViewModel @Inject constructor(
             scale = appPreferences.uiScale,
             renderResolutionKey = appPreferences.uiRenderResolutionKey,
             mousePointerHideSeconds = appPreferences.mousePointerHideSeconds,
-            vlcExperimentFlags = appPreferences.vlcExperimentFlags,
+            vlcExperimentalFeaturesEnabled = appPreferences.vlcExperimentalFeaturesEnabled,
         ),
         accentColorKey = appPreferences.accentColorKey,
         customAccentHex = appPreferences.customAccentHex,
@@ -2622,9 +2622,8 @@ class SettingsViewModel @Inject constructor(
         _uiState.update { it.copy(mpvHdrGpuEnabled = value) }
     }
 
-    fun onVlcExperimentChanged(flag: Int, enabled: Boolean) = _uiState.update {
-        it.copy(uiDisplay = it.uiDisplay.copy(vlcExperimentFlags =
-            com.ambient.tv.data.local.VlcExperimentFlags.toggle(it.vlcExperimentFlags, flag, enabled)))
+    fun onVlcExperimentChanged(enabled: Boolean) = _uiState.update {
+        it.copy(uiDisplay = it.uiDisplay.copy(vlcExperimentalFeaturesEnabled = enabled))
     }
 
     fun onVlcVideoOutputModeChanged(value: String) = _uiState.update {
@@ -3124,7 +3123,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.mpvVideoDecoderKey = state.mpvVideoDecoderKey
         appPreferences.mpvHdrGpuEnabled = state.mpvHdrGpuEnabled
         appPreferences.vlcVideoOutputModeKey = state.vlcVideoOutputModeKey
-        appPreferences.vlcExperimentFlags = state.vlcExperimentFlags
+        appPreferences.vlcExperimentalFeaturesEnabled = state.vlcExperimentalFeaturesEnabled
         appPreferences.autoPictureInPicture = state.autoPictureInPicture
         appPreferences.visibleBackgroundVideoPlayback = state.visibleBackgroundVideoPlayback
         appPreferences.backgroundVideoDimPercent = state.backgroundVideoDimPercent

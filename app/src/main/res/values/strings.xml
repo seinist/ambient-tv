@@ -2493,15 +2493,6 @@
     <string name="game_library_scanning">Scanning games…</string>
     <string name="game_library_scan_progress">Checked %1$d of %2$d discovered files</string>
     <string name="game_library_scan_cancel">Cancel scan</string>
-    <string name="vlc_experiment_title">Experimental VLC features</string>
-    <string name="vlc_experiment_hint">Use Vulkan video output. Changes take effect with the next playback. Unsupported formats or devices fall back to the existing renderer.</string>
-    <string name="vlc_experiment_legacy">Experimental HDR decoding requires Android 14 or newer. SDR availability depends on the Vulkan driver.</string>
-    <string name="vlc_experiment_ahb">MediaCodec Vulkan zero-copy</string>
-    <string name="vlc_experiment_ahb_hint">Import decoder buffers directly into Vulkan. Requires compatible hardware and disabled CPU filters, SVP and deinterlacing.</string>
-    <string name="vlc_experiment_dovi">Dolby Vision GPU processing</string>
-    <string name="vlc_experiment_dovi_hint">Enable the experimental Dolby Vision GPU path when native HDR playback is not preferred. Enables zero-copy.</string>
-    <string name="vlc_experiment_fel">Dolby Vision Profile 7 FEL</string>
-    <string name="vlc_experiment_fel_hint">Reconstruct the enhancement layer with integer filters and prediction. Enables Dolby Vision GPU processing.</string>
-    <string name="vlc_experiment_hdrplus">HDR10+ spatial tone mapping</string>
-    <string name="vlc_experiment_hdrplus_hint">Enable experimental HDR10+ dynamic and spatial GPU processing. Enables zero-copy.</string>
+    <string name="vlc_experiment_title">Enable experimental VLC features</string>
+    <string name="vlc_experiment_hint">Uses new Vulkan video processing for smoother playback and improved HDR10+ and Dolby Vision images on supported devices. May be unstable. Changes apply with the next playback.</string>
 </resources>

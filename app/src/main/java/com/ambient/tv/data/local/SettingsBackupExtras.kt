@@ -61,7 +61,7 @@ data class DeviceSettingsExtras(
     val imageCacheMb: Int? = null,
     val cardImages1080: Boolean? = null,
     /** Explicit device tuning; old/partial backups preserve the receiving device. */
-    val vlcExperimentFlags: Int? = null,
+    val vlcExperimentalFeaturesEnabled: Boolean? = null,
 )
 
 @Serializable

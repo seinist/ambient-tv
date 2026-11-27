@@ -1339,9 +1339,9 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean("mpv_hdr_gpu", false)
         set(value) = prefs.edit { putBoolean("mpv_hdr_gpu", value) }
 
-    var vlcExperimentFlags: Int
-        get() = VlcExperimentFlags.normalize(prefs.getInt("vlc_experiment_flags", 0))
-        set(value) = prefs.edit { putInt("vlc_experiment_flags", VlcExperimentFlags.normalize(value)) }
+    var vlcExperimentalFeaturesEnabled: Boolean
+        get() = prefs.getBoolean("vlc_experimental_features_enabled", false)
+        set(value) = prefs.edit { putBoolean("vlc_experimental_features_enabled", value) }
 
     var vlcVideoOutputModeKey: String
         get() = prefs.getString("vlc_video_output_mode", "auto").takeIf { it in VLC_VIDEO_OUTPUT_MODES } ?: "auto"

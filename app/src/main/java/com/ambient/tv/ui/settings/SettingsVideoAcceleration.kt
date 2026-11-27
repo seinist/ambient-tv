@@ -42,7 +42,7 @@ internal fun SettingsVideoAcceleration(state: SettingsUiState, model: SettingsVi
             checkAgain = { scope.launch { VideoAccelerationRuntime.refresh(context, force = true) } },
         )
         if (backend == "vlc" && com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT) {
-            VlcExperimentSettings(state.vlcExperimentFlags, model::onVlcExperimentChanged)
+            VlcExperimentSettings(state.vlcExperimentalFeaturesEnabled, model::onVlcExperimentChanged)
         }
         if (backend in setOf("mpv", "vlc", "media3")) GpuOutputPreferenceSettings(mpv = backend == "mpv", state, model)
         if (com.ambient.tv.ui.player.sparsamGpuOutputHeadsUp(backend == "mpv", state.mpvVideoOutputModeKey,
@@ -58,25 +58,13 @@ internal fun SettingsVideoAcceleration(state: SettingsUiState, model: SettingsVi
 
 /** Device-local controls; actual playback remains subject to native capability and format checks. */
 @Composable
-internal fun VlcExperimentSettings(flags: Int, change: (Int, Boolean) -> Unit) {
-    val policy = com.ambient.tv.data.local.VlcExperimentFlags
-    SettingsGroup(title = stringResource(R.string.vlc_experiment_title)) {
-        ImageHint(stringResource(R.string.vlc_experiment_hint))
-        if (android.os.Build.VERSION.SDK_INT < 34) ImageHint(stringResource(R.string.vlc_experiment_legacy))
-        val choices = listOf(
-            Triple(policy.AHB, R.string.vlc_experiment_ahb, R.string.vlc_experiment_ahb_hint),
-            Triple(policy.DOVI, R.string.vlc_experiment_dovi, R.string.vlc_experiment_dovi_hint),
-            Triple(policy.FEL, R.string.vlc_experiment_fel, R.string.vlc_experiment_fel_hint),
-            Triple(policy.HDR10PLUS, R.string.vlc_experiment_hdrplus, R.string.vlc_experiment_hdrplus_hint),
-        )
-        choices.forEach { (flag, title, hint) ->
-            com.ambient.tv.ui.common.TvSettingRow(
-                title = stringResource(title), body = stringResource(hint),
-                checked = policy.enabled(flags, flag),
-                onCheckedChange = { change(flag, it) },
-            )
-        }
-    }
+internal fun VlcExperimentSettings(enabled: Boolean, change: (Boolean) -> Unit) {
+    com.ambient.tv.ui.common.TvSettingRow(
+        title = stringResource(R.string.vlc_experiment_title),
+        body = stringResource(R.string.vlc_experiment_hint),
+        checked = enabled,
+        onCheckedChange = change,
+    )
 }
 
 /** Production content also used by the account-free debug UI test. */
