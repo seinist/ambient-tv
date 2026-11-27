@@ -510,6 +510,33 @@ mod tests{
     }
     #[test]
     #[ignore="requires a physical Android Vulkan device with compositor AHB extensions"]
+    fn compositor_allocation_can_be_reimported_after_successful_gpu_sync(){
+        let owner=DeviceOwner::new().unwrap();
+        let image=DisplayImage::new(owner.clone(),64,64,None).unwrap();
+        let buffer=image.buffer;
+        // Submit a real GPU clear-independent handoff semaphore and
+        // export its sync_file; no compositor transaction is simulated.
+        let commands=BatchCommands::new(owner.clone()).unwrap();
+        let d=owner.d();
+        unsafe{
+            d.begin_command_buffer(commands.command,&vk::CommandBufferBeginInfo::default()).unwrap();
+            d.end_command_buffer(commands.command).unwrap();
+            d.queue_submit(owner.queue,&[vk::SubmitInfo::default().command_buffers(&[commands.command])
+                .signal_semaphores(&[image.signal])],commands.fence).unwrap();
+        }
+        let fd=unsafe{ash::khr::external_semaphore_fd::Device::new(&owner.instance,d)
+            .get_semaphore_fd(&vk::SemaphoreGetFdInfoKHR::default().semaphore(image.signal).handle_type(HANDLE))}.unwrap();
+        unsafe{d.wait_for_fences(&[commands.fence],true,20_000_000_000).unwrap();}
+        assert!(fence_ready(fd));
+        if fd>=0{unsafe{libc::close(fd);}}
+        unsafe{AHardwareBuffer_acquire(buffer);}
+        drop(image);
+        let new=DisplayImage::new(owner.clone(),64,64,Some(RecycledBuffer{
+            buffer:buffer as usize,producer:-1,consumer:-1})).unwrap();
+        assert_eq!(new.buffer,buffer);
+    }
+    #[test]
+    #[ignore="requires a physical Android Vulkan device with compositor AHB extensions"]
     fn compositor_command_bundle_reuses_only_signaled_fences(){
         let owner=DeviceOwner::new().unwrap();
         let commands=BatchCommands::new(owner.clone()).unwrap();
