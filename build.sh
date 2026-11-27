@@ -1314,7 +1314,7 @@ run_cores_command() {
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --profile)
-                        [[ $# -ge 2 ]] || fail "--profile requires baseline, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2, snes9x2010-threaded or core-hotpaths"
+                        [[ $# -ge 2 ]] || fail "--profile requires baseline, optimized, optimized-a57 or an internal diagnostic profile"
                         profile="$2"; shift 2 ;;
                     --abis)
                         [[ $# -ge 2 ]] || fail "--abis requires a comma-separated ABI list"
@@ -1336,7 +1336,7 @@ run_cores_command() {
                         selected="$1"; shift ;;
                 esac
             done
-            case "$profile" in baseline|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths) ;; *) fail "Unknown core profile: $profile" ;; esac
+            case "$profile" in baseline|optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths) ;; *) fail "Unknown core profile: $profile" ;; esac
             if [[ -n "$selected" ]]; then inputs+=(-f "cores=$selected"); fi
             if [[ -n "$abis" ]]; then inputs+=(-f "abis=$abis"); fi
             if [[ "$profile" != baseline ]]; then inputs+=(-f "profile=$profile"); fi
@@ -1346,7 +1346,7 @@ run_cores_command() {
                 inputs+=(-f "comparison=$comparison")
             fi
             if [[ "$publish_experimental" == true ]]; then
-                [[ "$core_ref" == main && "$profile" != baseline && "$comparison" == none ]] || fail "Experimental release requires main, an explicit non-baseline profile and no comparison"
+                [[ "$core_ref" == main && ( "$profile" == optimized || "$profile" == optimized-a57 ) && "$comparison" == none ]] || fail "Experimental release requires main, optimized or optimized-a57, and no comparison"
                 inputs+=(-f publish_experimental=true)
                 if [[ "$force_rebuild" == true ]]; then inputs+=(-f force_rebuild=true); fi
             elif [[ "$force_rebuild" == true ]]; then
@@ -1381,11 +1381,11 @@ run_cores_command() {
             while IFS=$'\t' read -r tag old; do
                 if [[ "$tag" =~ ^cores-([0-9]{4})([0-9]{2})([0-9]{2})-([0-9]+)(-[0-9]+)?$ ]]; then
                     date="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}"
-                    title="Ambient TV – Libretro Cores (Stable) – $date"
-                elif [[ "$tag" =~ ^core-experiments-(o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths)--([0-9]{4})([0-9]{2})([0-9]{2})-[0-9]+-[0-9]+$ ]]; then
+                    title="Ambient TV cores"
+                elif [[ "$tag" =~ ^core-experiments-(optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths)--([0-9]{4})([0-9]{2})([0-9]{2})-[0-9]+-[0-9]+$ ]]; then
                     profile="${BASH_REMATCH[1]}"
                     date="${BASH_REMATCH[2]}-${BASH_REMATCH[3]}-${BASH_REMATCH[4]}"
-                    title="Ambient TV – Libretro Cores (Experimental: $profile) – $date"
+                    title="Ambient TV Experimental cores"
                 else
                     continue
                 fi
@@ -1421,9 +1421,9 @@ Libraries: libs-check [svp|monogram|libretro], libs-update [svp|monogram|libretr
            monogram-check, monogram-update, monogram-size [abi|all]
 
 Libretro cores on GitHub Actions (main):
-  cores [id[,id...]] [--profile baseline|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths] [--abis ABI[,ABI...]]
+  cores [id[,id...]] [--profile baseline|optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths] [--abis ABI[,ABI...]]
         [--comparison baseline-thinlto|o3-o3-thinlto] [--ref branch] [--publish-experimental [--force]]
-                      Build artifacts by default. Explicit --publish-experimental signs a separate prerelease on main.
+                      Build artifacts by default. --publish-experimental signs optimized or optimized-a57 on main; other profiles are diagnostic only.
   cores-key [--manual] Generate signing keys. Upload the secret in the browser if gh is unavailable.
                        Commit and push cores/signing-public.pem and rebuild the app to embed it.
   cores-release [--force]  Build changed cores and publish a complete signed catalog; --force rebuilds all.

@@ -24,6 +24,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 internal val GameCoreSource.experimentTitle: Int get() = when (this) {
+    GameCoreSource.OPTIMIZED -> R.string.games_core_source_optimized
+    GameCoreSource.OPTIMIZED_A57 -> R.string.games_core_source_optimized_a57
     GameCoreSource.HOTPATHS -> R.string.games_core_test_hotpaths
     GameCoreSource.O3 -> R.string.games_core_test_o3
     GameCoreSource.THINLTO -> R.string.games_core_test_thinlto
@@ -45,7 +47,7 @@ internal fun GameCoreExperimentOptions(game: LibraryGame, onPlay: (LibraryGame, 
     val entry = gamesEntryPoint()
     val manager = entry.cores()
     val abi = manager.abi ?: return
-    val eligible = GameCoreSource.entries.filter { it.supportsExperiment(core, abi) }
+    val eligible = GameCoreSource.publicExperiments.filter { it.supportsExperiment(core, abi) }
     if (eligible.isEmpty()) return
 
     key(core.id, abi) {
@@ -86,7 +88,7 @@ private fun GameCoreExperimentList(
         result.sources.forEach { source ->
             SettingsNavigationRow(
                 title = stringResource(R.string.games_core_test_option, core.name, stringResource(source.experimentTitle)),
-                summary = stringResource(if (source == GameCoreSource.SNES_THREADED)
+                summary = stringResource(if (core.id == "snes9x2010" && source in GameCoreSource.publicExperiments)
                     R.string.games_core_test_threaded_hint else R.string.games_core_test_play),
                 onClick = { onPlay(game, GameCoreExperiment(core.id, source)) },
             )

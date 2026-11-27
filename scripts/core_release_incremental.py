@@ -28,7 +28,7 @@ def fingerprint(job, ndk, root=ROOT):
     start = workflow.index("      - name: Install NDK")
     end = workflow.index("      - uses: actions/upload-artifact", start)
     files = list(SHARED)
-    if job["profile"] == "core-hotpaths":
+    if job["profile"] in {"core-hotpaths", "optimized", "optimized-a57"}:
         files += ["core_hotpath_patches.py", "core_hotpath_remaining.py"]
     payload = {"schema": 1, "ndk": ndk, "job": job,
                "build": digest(workflow[start:end].encode()),

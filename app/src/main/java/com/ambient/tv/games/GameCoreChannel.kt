@@ -28,6 +28,9 @@ enum class GameCoreSource(val key: String, val experimentalProfile: String? = nu
     AMBIENT("ambient"),
     /** Only the libretro buildbot (nightly). */
     BUILDBOT("buildbot"),
+    OPTIMIZED("experiment-optimized", "optimized"),
+    OPTIMIZED_A57("experiment-optimized-a57", "optimized-a57"),
+    // Legacy profiles remain addressable for old isolated data and saved routes.
     HOTPATHS("experiment-hotpaths", "core-hotpaths"),
     O3("experiment-o3", "o3"),
     THINLTO("experiment-thinlto", "thinlto"),
@@ -39,6 +42,7 @@ enum class GameCoreSource(val key: String, val experimentalProfile: String? = nu
 
     companion object {
         val regular = listOf(AUTO, AMBIENT, BUILDBOT)
+        val publicExperiments = listOf(OPTIMIZED, OPTIMIZED_A57)
 
         fun fromKey(key: String?) = entries.firstOrNull { it.key == key } ?: AUTO
     }
@@ -47,7 +51,8 @@ enum class GameCoreSource(val key: String, val experimentalProfile: String? = nu
         (core.supportedAbis.isEmpty() || abi in core.supportedAbis) && when (this) {
             PICODRIVE_SH2 -> core.id == "picodrive" && abi == "arm64-v8a"
             SNES_THREADED -> core.id == "snes9x2010"
-            TUNE_A57 -> abi == "arm64-v8a"
+            TUNE_A57, OPTIMIZED_A57 -> abi == "arm64-v8a"
+            OPTIMIZED -> true
             HOTPATHS, O3, THINLTO, O3_THINLTO -> true
             AUTO, AMBIENT, BUILDBOT -> false
         }

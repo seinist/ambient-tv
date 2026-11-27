@@ -6,6 +6,32 @@ name: Cores
 # public half is in cores/signing-public.pem (secret CORES_SIGNING_KEY, PEM, EC P-256).
 
 on:
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        default: false
+      publish_experimental:
+        type: boolean
+        default: false
+      force_rebuild:
+        type: boolean
+        default: false
+      cores:
+        type: string
+        default: ""
+      abis:
+        type: string
+        default: ""
+      profile:
+        type: string
+        required: true
+      comparison:
+        type: string
+        default: none
+    secrets:
+      CORES_SIGNING_KEY:
+        required: true
   workflow_dispatch:
     inputs:
       publish:
@@ -27,9 +53,9 @@ on:
         description: Android ABIs, comma separated (empty = all)
         default: ""
       profile:
-        description: Compiler profile (non-baseline requires explicit experimental publication)
+        description: Compiler profile (optimized and optimized-a57 are public; other candidates are diagnostic)
         type: choice
-        options: [baseline, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2, snes9x2010-threaded, core-hotpaths]
+        options: [baseline, optimized, optimized-a57, o3, thinlto, o3-thinlto, tune-a57, picodrive-sh2, snes9x2010-threaded, core-hotpaths]
         default: baseline
       comparison:
         description: Paired full-catalog builds (artifact-only; baseline profile required)
@@ -40,6 +66,8 @@ on:
     paths:
       - cores/cores.json
       - .github/workflows/cores.yml
+      - .github/workflows/cores-experimental.yml
+      - cores/signing-public.pem
       - scripts/core_build_policy.py
       - scripts/core_release_incremental.py
       - scripts/test_core_release_incremental.py
@@ -56,6 +84,8 @@ on:
     paths:
       - cores/cores.json
       - .github/workflows/cores.yml
+      - .github/workflows/cores-experimental.yml
+      - cores/signing-public.pem
       - scripts/check_elf_pages.py
       - scripts/core_build_policy.py
       - scripts/core_release_incremental.py
@@ -69,7 +99,7 @@ on:
       - scripts/test_core_build_policy.py
 
 concurrency:
-  group: cores-${{ github.ref }}-${{ (github.event_name == 'push' || inputs.publish) && 'release' || (inputs.publish_experimental && format('release-experimental-{0}', inputs.profile) || (github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || 'pr')) }}
+  group: cores-${{ github.ref }}-${{ inputs.publish_experimental && format('release-experimental-{0}', inputs.profile) || ((github.event_name == 'push' || inputs.publish) && 'release' || (github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || 'pr')) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -79,6 +109,19 @@ env:
   NDK_VERSION: "30.0.16248370"
 
 jobs:
+  rename-releases:
+    # Normalize existing display titles on main only, without modifying signed assets or tags.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !inputs.publish_experimental
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Normalize existing core release titles
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash build.sh cores-rename-releases --apply
+
   plan:
     runs-on: ubuntu-latest
     outputs:
@@ -108,9 +151,13 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$PUBLISH_EXPERIMENTAL" = true ]; then
-            [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" == refs/heads/main &&
-               "$PUBLISH" != true && "$PROFILE" != baseline && "$COMPARISON" == none ]] ||
-              { echo "::error::Experimental publishing requires main, a non-baseline profile, and no production publish/comparison"; exit 1; }
+            [[ ( "$GITHUB_EVENT_NAME" == workflow_dispatch || "$GITHUB_EVENT_NAME" == push ) && "$GITHUB_REF" == refs/heads/main &&
+               "$PUBLISH" != true && ( "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ) && "$COMPARISON" == none ]] ||
+              { echo "::error::Experimental publishing requires main, optimized or optimized-a57, and no production publish/comparison"; exit 1; }
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == push && "$PROFILE" != baseline && "$PUBLISH_EXPERIMENTAL" != true ]]; then
+            echo "::error::Automatic non-baseline builds require explicit experimental channel"
+            exit 1
           fi
           matrix=$(python3 scripts/core_build_policy.py plan --catalog cores/cores.json \
             --event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF" --publish "$PUBLISH" \
@@ -200,7 +247,7 @@ jobs:
             echo "::warning::Compiler cache unavailable; compiling without it"
             echo "CORE_CCACHE=" >> "$GITHUB_ENV"
           fi
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         if: env.CORE_CCACHE != ''
         with:
           path: ~/.cache/ccache
@@ -249,8 +296,8 @@ jobs:
           read -r -a args <<< "$ARGS"
           read -r -a extra_env <<< "$EXTRA_ENV"
           read -r -a makevars <<< "$MAKEVARS"
-          if [ "$PROFILE" = "core-hotpaths" ]; then
-            python3 scripts/core_build_policy.py prepare-hotpaths --root src --core "$CORE"
+          if [[ "$PROFILE" == core-hotpaths || "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ]]; then
+            python3 scripts/core_build_policy.py prepare-hotpaths --root src --core "$CORE" --profile "$PROFILE"
           fi
           if [ "$BUILD_KIND" = "cmake" ]; then
             python3 scripts/core_build_policy.py prepare-cmake --root src --core "$CORE" --profile "$PROFILE"
@@ -261,7 +308,7 @@ jobs:
             if [ -n "$CFLAGS_EXTRA" ]; then
               flags+=("-DCMAKE_C_FLAGS=$CFLAGS_EXTRA" "-DCMAKE_CXX_FLAGS=$CFLAGS_EXTRA")
             fi
-            if [[ "$PROFILE" = o3* ]]; then
+            if [[ "$PROFILE" = o3* || "$PROFILE" = optimized* ]]; then
               flags+=("-DCMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG" "-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG")
             fi
             cmake -G "Unix Makefiles" -S src -B build \
@@ -296,14 +343,14 @@ jobs:
           cat reports/build.json
           if [ -n "${CORE_CCACHE:-}" ]; then ccache --show-stats || true; fi
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: out/*.so
           if-no-files-found: error
           retention-days: 14
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: report-${{ matrix.artifact }}
@@ -321,13 +368,13 @@ jobs:
       (needs.build.result == 'success' || (needs.build.result == 'skipped' && needs.plan.outputs.count == '0')) &&
       github.ref == 'refs/heads/main' &&
       ((github.event_name == 'workflow_dispatch' && inputs.publish && inputs.profile == 'baseline') ||
-       (github.event_name == 'workflow_dispatch' && inputs.publish_experimental && !inputs.publish && inputs.profile != 'baseline' && inputs.comparison == 'none') ||
-       (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+       ((github.event_name == 'workflow_dispatch' || github.event_name == 'push') && inputs.publish_experimental && !inputs.publish && (inputs.profile == 'optimized' || inputs.profile == 'optimized-a57') && inputs.comparison == 'none') ||
+       (github.event_name == 'push' && !inputs.publish_experimental && (inputs.profile || 'baseline') == 'baseline'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v7
         if: needs.plan.outputs.count != '0'
         with:
           pattern: ${{ inputs.publish_experimental && format('candidate-{0}-*', inputs.profile) || 'core-*' }}
@@ -351,7 +398,7 @@ jobs:
           assert_current_recipe() {
             git fetch --no-tags --depth=1 origin refs/heads/main
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- cores/cores.json cores/signing-public.pem \
-                .github/workflows/cores.yml scripts/core_build_policy.py scripts/core_acceleration_audit.py \
+                .github/workflows/cores.yml .github/workflows/cores-experimental.yml scripts/core_build_policy.py scripts/core_acceleration_audit.py \
                 scripts/core_link_evidence.py scripts/check_elf_pages.py scripts/core_release_incremental.py \
                 scripts/core_hotpath_patches.py scripts/core_hotpath_remaining.py; then
               echo "::error::Core release inputs changed on main; dispatch a fresh release"
@@ -361,9 +408,9 @@ jobs:
           assert_current_recipe
           # Require every planned artifact, and ensure the profile cannot cross channels.
           if [ "$EXPERIMENT" = true ]; then
-            [[ "$PROFILE" != baseline && "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || exit 1
+            [[ ( "$PROFILE" == optimized || "$PROFILE" == optimized-a57 ) && ( "$GITHUB_EVENT_NAME" == workflow_dispatch || "$GITHUB_EVENT_NAME" == push ) ]] || exit 1
             prefix="candidate-$PROFILE-"
-            tag="core-experiments-$PROFILE--$(date -u +%Y%m%d)-$GITHUB_RUN_NUMBER-$GITHUB_RUN_ATTEMPT"
+            tag="core-experiments-$PROFILE--$(date -u +%Y%m%d)-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           else
             [ "$PROFILE" = baseline ] || exit 1
             prefix="core-"
@@ -412,9 +459,9 @@ jobs:
           release_args=(--latest=false)
           if [ "$EXPERIMENT" = true ]; then
             release_args+=(--prerelease)
-            title="Ambient TV – Libretro Cores (Experimental: $PROFILE) – $(date -u +%Y-%m-%d)"
+            title="Ambient TV Experimental cores"
           else
-            title="Ambient TV – Libretro Cores (Stable) – $(date -u +%Y-%m-%d)"
+            title="Ambient TV cores"
           fi
           # Publish only after every asset has been uploaded to an invisible draft.
           gh release create "$tag" release/* --draft --title "$title" "${release_args[@]}" --target "$GITHUB_SHA" \

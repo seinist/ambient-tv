@@ -139,6 +139,9 @@ class GameCoreChannelTest {
         org.junit.Assert.assertFalse(GameCoreChannel.matchesManifest(manifest, tag, "baseline"))
         org.junit.Assert.assertFalse(GameCoreChannel.matchesManifest(manifest, "other", "core-hotpaths"))
         assertEquals(GameCoreSource.AUTO, GameSettingsState().withCoreSource(GameCoreSource.HOTPATHS).coreSource)
+        assertEquals(listOf(GameCoreSource.OPTIMIZED, GameCoreSource.OPTIMIZED_A57), GameCoreSource.publicExperiments)
+        org.junit.Assert.assertFalse(GameCoreChannel.matchesChannel(tag, true, "optimized"))
+        org.junit.Assert.assertTrue(GameCoreChannel.matchesChannel("core-experiments-optimized--20261127-1-1", true, "optimized"))
     }
 
     @Test fun aLegacyGlobalTestProfileMigratesToAutomaticAndKeepsTestAccess() {
@@ -163,7 +166,10 @@ class GameCoreChannelTest {
         org.junit.Assert.assertFalse(GameCoreSource.PICODRIVE_SH2.supportsExperiment(snes.core, "arm64-v8a"))
         org.junit.Assert.assertTrue(GameCoreSource.SNES_THREADED.supportsExperiment(threaded, "arm64-v8a"))
         org.junit.Assert.assertFalse(GameCoreSource.SNES_THREADED.supportsExperiment(snes.core, "arm64-v8a"))
-        val experiment = GameCoreExperiment(threaded.id, GameCoreSource.SNES_THREADED)
+        org.junit.Assert.assertTrue(GameCoreSource.OPTIMIZED.supportsExperiment(threaded, "arm64-v8a"))
+        org.junit.Assert.assertTrue(GameCoreSource.OPTIMIZED_A57.supportsExperiment(threaded, "arm64-v8a"))
+        org.junit.Assert.assertFalse(GameCoreSource.OPTIMIZED_A57.supportsExperiment(threaded, "x86"))
+        val experiment = GameCoreExperiment(threaded.id, GameCoreSource.OPTIMIZED)
         assertEquals(experiment, GameCoreExperiment.fromKey(experiment.key))
         assertNull(GameCoreExperiment.fromKey("snes9x2010:ambient"))
     }

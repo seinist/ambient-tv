@@ -1,6 +1,6 @@
 """Trace the selected ELF back to the compiler invocations that contributed to it."""
 from pathlib import Path
-from core_acceleration_audit import DRIVER, build_commands, compile_source
+from core_acceleration_audit import DRIVER, ASSEMBLER, assembler_source, build_commands, compile_source
 
 
 def output_file(args, cwd):
@@ -39,6 +39,11 @@ def target_commands(log, cwd, root, library):
                 objects[output] = args
             elif "-shared" in args:
                 links[output] = (args, directory)
+        elif ASSEMBLER.fullmatch(driver):
+            output = output_file(args, directory)
+            source = assembler_source(args)
+            if output is not None and source is not None:
+                objects[output] = ["-c", source, *args]
         else:
             # GNU/LLVM ar accepts flags as the first argument, followed by the
             # output archive and objects. Include multiple incremental adds.

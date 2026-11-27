@@ -223,7 +223,9 @@
     <string name="games_ra_hardcore_hint">Double points; the game starts fresh instead of continuing, and loading states, rewind and cheats are off.</string>
     <string name="games_core_source">Core source</string>
     <string name="games_core_source_auto">Automatic</string>
-    <string name="games_core_source_ambient">Ambient TV</string>
+    <string name="games_core_source_ambient">Ambient TV – Standard</string>
+    <string name="games_core_source_optimized">Optimized (experimental)</string>
+    <string name="games_core_source_optimized_a57">Cortex-A57 (experimental)</string>
     <string name="games_core_source_buildbot">Libretro build server</string>
     <string name="games_core_source_unavailable">The signed Ambient TV channel is unavailable in this app build.</string>
     <string name="games_core_source_auto_hint">Uses an installed core or looks for a signed Ambient TV build. Downloads from the libretro build server require confirmation.</string>

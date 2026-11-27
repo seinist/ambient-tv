@@ -1,0 +1,42 @@
+name: Experimental Cores
+
+# Each signed channel uses the same incremental build, verification and signing
+# pipeline as the manual workflow. Per-profile concurrency is owned by cores.yml.
+on:
+  push:
+    branches: [main]
+    paths:
+      - cores/cores.json
+      - .github/workflows/cores.yml
+      - .github/workflows/cores-experimental.yml
+      - cores/signing-public.pem
+      - scripts/check_elf_pages.py
+      - scripts/core_build_policy.py
+      - scripts/core_release_incremental.py
+      - scripts/test_core_release_incremental.py
+      - scripts/core_acceleration_audit.py
+      - scripts/core_link_evidence.py
+      - scripts/core_hotpath_patches.py
+      - scripts/core_hotpath_remaining.py
+      - scripts/test_core_hotpath_remaining.py
+      - scripts/test_core_hotpath_patches.py
+      - scripts/test_core_build_policy.py
+
+permissions:
+  contents: read
+
+jobs:
+  experimental:
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [optimized, optimized-a57]
+    name: ${{ matrix.profile }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/cores.yml
+    with:
+      profile: ${{ matrix.profile }}
+      publish_experimental: true
+    secrets:
+      CORES_SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}
