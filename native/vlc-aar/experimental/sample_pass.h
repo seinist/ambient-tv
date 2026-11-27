@@ -60,7 +60,8 @@ public:
     // descriptor consumption for this conversion (not guessed from plane count).
     VkResult create(VkSampler immutable_sampler, VkImageView input, VkImageView output,
                     VkFormat output_format, uint32_t width, uint32_t height,
-                    uint32_t combined_count, ShaderCode vert, ShaderCode frag) {
+                    uint32_t combined_count, ShaderCode vert, ShaderCode frag,
+                    VkPipelineCache pipeline_cache = VK_NULL_HANDLE) {
         if (!device_ || !d_.valid() || layout_ || !immutable_sampler || !input || !output ||
             input == output || !width || !height || !combined_count || !vert.valid() || !frag.valid())
             return VK_ERROR_INITIALIZATION_FAILED;
@@ -208,7 +209,7 @@ public:
         gp.pDynamicState = &dyn;
         gp.layout = pipeline_layout_;
         gp.renderPass = render_pass_;
-        result = d_.create_pipeline(device_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeline_);
+        result = d_.create_pipeline(device_, pipeline_cache, 1, &gp, nullptr, &pipeline_);
         for (auto module : modules) d_.destroy_shader(device_, module, nullptr);
         if (result != VK_SUCCESS) return fail(result);
         extent_ = {width, height};
