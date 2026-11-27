@@ -140,7 +140,8 @@ static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
     }
     uint32_t width = held.crop.right - held.crop.left;
     uint32_t height = held.crop.bottom - held.crop.top;
-    if (width != pic->format.i_visible_width || height != pic->format.i_visible_height ||
+    if ((dovi && pic->format.dovi.profile == 7 && (held.crop.left || held.crop.top)) ||
+        width != pic->format.i_visible_width || height != pic->format.i_visible_height ||
         (pic->format.i_x_offset && pic->format.i_x_offset != (unsigned)held.crop.left) ||
         (pic->format.i_y_offset && pic->format.i_y_offset != (unsigned)held.crop.top)) {
         ambient_vlc_release_picture(held.held, held.acquire_fd);
