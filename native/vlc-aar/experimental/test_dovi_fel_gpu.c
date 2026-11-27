@@ -79,6 +79,58 @@ int main(void)
             fprintf(stderr,"FEL pixel %u: actual %f expected %f\n",k,pixels[k],expected);
         assert(isfinite(pixels[k])&&fabs(pixels[k]-expected)<0.0001);
     }
+    // Half-resolution EL: 2x2 luma, 1x1 chroma; 4x4 BL is
+    // packed exactly like the native P010 identity sampler (Cr,Y,Cb).
+    const uint16_t y[]={512,516,520,524},u[]={514},v[]={510};
+    const uint16_t *planes_data[]={y,u,v};
+    const size_t pitches[]={4,2,2};
+    struct ambient_fel_planes planes={0};
+    assert(ambient_fel_planes_upload(gpu,&planes,2,2,planes_data,pitches,-0.5f,-0.5f));
+    float big[64],big_out[64];
+    for(unsigned i=0;i<16;i++){
+        big[i*4]=0.7f;big[i*4+1]=0.3f;big[i*4+2]=0.5f;big[i*4+3]=1.f;
+    }
+    pl_tex large_bl=pl_tex_create(gpu,pl_tex_params(.w=4,.h=4,.format=fmt,
+        .sampleable=true,.initial_data=big));
+    pl_tex large_out=pl_tex_create(gpu,pl_tex_params(.w=4,.h=4,.format=fmt,
+        .renderable=true,.host_readable=true));
+    assert(large_bl&&large_out);
+    assert(ambient_fel_compose_ex(gpu,dp,large_bl,NULL,large_out,&reshape,&nlq,true,false,&planes));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=large_out,.ptr=big_out)));
+    for(unsigned row=0;row<4;row++)for(unsigned col=0;col<4;col++){
+        // Layer siting: left horizontally, centered vertically.
+        double x=fmin(1.0,0.5*col), yy=fmin(1.0,fmax(0.0,0.5*row-0.25));
+        double code=512+4*x+8*yy;
+        unsigned i=4*(row*4+col);
+        double a=0.1+0.9*0.3+ambient_fel_residual(&nlq,0,code/1023.0);
+        double b=0.1+0.9*0.5+ambient_fel_residual(&nlq,1,514.0/1023);
+        double c=0.1+0.9*0.7+ambient_fel_residual(&nlq,2,510.0/1023);
+        assert(fabs(big_out[i]-a)<0.0001);
+        assert(fabs(big_out[i+1]-b)<0.0001);
+        assert(fabs(big_out[i+2]-c)<0.0001);
+    }
+    // A neutral signal with identity matrix and no residual remains neutral.
+    // The pinned Dolby Vision LMS-to-RGB matrix preserves its neutral axis.
+    struct pl_dovi_metadata identity={0};
+    for(unsigned i=0;i<3;i++){
+        identity.linear.m[i][i]=1.f;identity.nonlinear.m[i][i]=1.f;
+    }
+    float neutral[16],zero[16];
+    for(unsigned i=0;i<16;i++){
+        neutral[i]=i%4==3?1.f:0.5f;zero[i]=i%4==3?1.f:512.f/1023;
+    }
+    pl_tex neutral_bl=pl_tex_create(gpu,pl_tex_params(.w=2,.h=2,.format=fmt,
+        .sampleable=true,.initial_data=neutral));
+    pl_tex zero_el=pl_tex_create(gpu,pl_tex_params(.w=2,.h=2,.format=fmt,
+        .sampleable=true,.initial_data=zero));
+    assert(neutral_bl&&zero_el);
+    assert(ambient_fel_compose_ex(gpu,dp,neutral_bl,zero_el,out,&identity,&nlq,false,true,NULL));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=out,.ptr=pixels)));
+    for(unsigned i=0;i<16;i++)if(i%4!=3)assert(fabsf(pixels[i]-0.5f)<0.0002f);
+    pl_gpu_finish(gpu);
+    pl_tex_destroy(gpu,&neutral_bl);pl_tex_destroy(gpu,&zero_el);
+    pl_tex_destroy(gpu,&large_bl);pl_tex_destroy(gpu,&large_out);
+    ambient_fel_planes_destroy(gpu,&planes);
     nlq.el_bits=17;
     assert(!ambient_fel_compose(gpu,dp,bl,el,out,&reshape,&nlq));
     pl_gpu_finish(gpu);
