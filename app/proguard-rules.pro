@@ -107,3 +107,6 @@
 # name, never by a direct static reference. Keep the constructor for release R8.
 # The upstream AAR supplies additional UniFFI/JNA consumer rules.
 -keep class com.ambient.tv.data.telegram.MonogramNativeBackend { *; }
+
+# Downloaded adapters link this host API by its original binary name.
+-keep interface com.ambient.tv.modules.SystemModuleEntrypoint { *; }
