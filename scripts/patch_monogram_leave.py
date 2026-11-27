@@ -20,6 +20,14 @@ MODIFICATION_DATE = "2026-11-27"
 NOTICE_MARKER = "Modified by Ambient TV, "
 COMMENT_PREFIX = {".rs": "//", ".kt": "//", ".kts": "//", ".toml": "#"}
 MODIFICATIONS = {
+    "vendor/mono-rs/crates/mono-proto-engine/src/rpc.rs":
+        "accept owned inbound packets and move raw RPC responses",
+    "vendor/mono-rs/crates/mono-proto-runtime/src/rpc/invoke.rs":
+        "move authenticated packet buffers through the RPC path",
+    "vendor/mono-rs/crates/mono-proto-runtime/src/rpc/inbound.rs":
+        "reuse owned non-container result bodies and avoid redundant snapshot clones",
+    "vendor/mono-rs/crates/mono-proto-runtime/src/connection/tcp.rs":
+        "avoid redundant successful socket timeout configuration",
     "vendor/mono-rs/crates/mono-proto-client/src/lanes.rs":
         "prefer warm same-DC media lanes and promote queued foreground requests",
     "vendor/mono-rs/crates/mono-proto-runtime/src/transfer_policy.rs":
@@ -83,6 +91,18 @@ def amend(relative: str, before: str, after: str) -> None:
         raise SystemExit(f"Unexpected pinned Monogram API in {relative}: expected unique anchor")
     changes[path] = original.replace(before, after, 1)
 
+def amend_count(relative: str, before: str, after: str, count: int) -> None:
+    path = root / relative
+    original = changes.get(path)
+    if original is None:
+        original = path.read_text(encoding="utf-8")
+    if original.count(after) == count:
+        changes[path] = original
+        return
+    if original.count(before) != count:
+        raise SystemExit(f"Unexpected pinned Monogram API in {relative}: expected {count} anchors")
+    changes[path] = original.replace(before, after)
+    
 def add_before(relative: str, anchor: str, addition: str, marker: str) -> None:
     path = root / relative
     original = changes.get(path)
@@ -796,21 +816,50 @@ amend(crypto_message,
     b_input[..36].copy_from_slice(&auth_key[40 + x..76 + x]);
     b_input[36..].copy_from_slice(msg_key);""")
 amend(crypto_message,
+      """    if auth_key.len() != 256 {
+        return Err(Error::InvalidLength {
+            kind: "auth key",
+            actual: auth_key.len(),
+            expected: 256,
+        });
+    }
+    if packet.len() < 24 + 48""",
+      """    decrypt_message_owned(auth_key, packet.to_vec(), direction, expected_session_id, max_body_length)
+}
+
+/// Decrypt an owned transport packet without allocating a second ciphertext-sized buffer.
+pub fn decrypt_message_owned(
+    auth_key: &[u8],
+    mut packet: Vec<u8>,
+    direction: Direction,
+    expected_session_id: i64,
+    max_body_length: usize,
+) -> Result<DecryptedMessage, Error> {
+    if auth_key.len() != 256 {
+        return Err(Error::InvalidLength {
+            kind: "auth key",
+            actual: auth_key.len(),
+            expected: 256,
+        });
+    }
+    if packet.len() < 24 + 48""")
+amend(crypto_message,
       "    let plaintext = aes_ige_decrypt(&packet[24..], &aes_key, &aes_iv)?;",
-      "    let mut plaintext = aes_ige_decrypt(&packet[24..], &aes_key, &aes_iv)?;")
+      """    crate::aes_ige_decrypt_in_place(&mut packet[24..], &aes_key, &aes_iv)?;
+    let plaintext = &packet[24..];""")
 amend(crypto_message,
       """    Ok(DecryptedMessage {
         server_salt,""",
       """    // Authentication and all envelope checks precede reuse of the allocation.
     let padding = plaintext[body_end..].to_vec();
-    plaintext.copy_within(32..body_end, 0);
-    plaintext.truncate(body_length);
+    packet.copy_within(24 + 32..24 + body_end, 0);
+    packet.truncate(body_length);
     Ok(DecryptedMessage {
         server_salt,""")
 amend(crypto_message,
       """        body: plaintext[32..body_end].to_vec(),
         padding: plaintext[body_end..].to_vec(),""",
-      """        body: plaintext,
+      """        body: packet,
         padding,""")
 
 # An optional CPU-specific Android build must not pass ARM flags to the
@@ -1086,6 +1135,156 @@ amend(transfer_policy,
             }
             let limits = *self.queue_limits.lock();
             let limit = if large { limits.1.min(2) } else { limits.0 };""")
+
+
+engine_rpc = "vendor/mono-rs/crates/mono-proto-engine/src/rpc.rs"
+amend(engine_rpc,
+      """        let message = mono_proto_crypto::decrypt_message(
+            auth_key,
+            packet,""",
+      """        let message = mono_proto_crypto::decrypt_message_owned(
+            auth_key,
+            packet,""")
+amend(engine_rpc,
+      """    ) -> Result<InboundMessage, Error> {
+        let auth_key = self""",
+      """    ) -> Result<InboundMessage, Error> {
+        self.open_inbound_owned(packet.to_vec(), clock, check_time, max_body_length)
+    }
+
+    pub fn open_inbound_owned(
+        &mut self,
+        packet: Vec<u8>,
+        clock: &impl Clock,
+        check_time: bool,
+        max_body_length: usize,
+    ) -> Result<InboundMessage, Error> {
+        let auth_key = self""")
+add_before(engine_rpc,
+      "    /// Decode and consume a typed response.",
+      """    /// The raw RPC adapter needs the original byte vector, not a decoded copy.
+    pub fn take_raw_response(&mut self, handle: &RequestHandle<Vec<u8>>) -> Option<Vec<u8>> {
+        self.responses.remove(&handle.message_id)
+    }
+""", "pub fn take_raw_response(")
+inbound = "vendor/mono-rs/crates/mono-proto-runtime/src/rpc/inbound.rs"
+amend(inbound,
+      "    let mut validated = snapshot.clone();",
+      """    // Ordinary results never mutate child replay state. Only wrappers need
+    // transactional validation of all children before committing the snapshot.
+    if let Some(ctor) = peek_u32(body, 0)
+        && ctor != MSG_CONTAINER && ctor != MSG_COPY && ctor != GZIP_PACKED {
+        return parse_service_at_depth(body, 0);
+    }
+    let mut validated = snapshot.clone();""")
+add_before(inbound, "pub fn parse_authenticated_inner(", """pub fn parse_authenticated_owned(
+    mut body: Vec<u8>,
+    outer_id: i64,
+    snapshot: &mut Snapshot,
+    clock: &impl Clock,
+) -> Result<Vec<InboundEvent>, MtprotoError> {
+    if peek_u32(&body, 0) != Some(RPC_RESULT) {
+        return parse_authenticated(&body, outer_id, snapshot, clock);
+    }
+    let mut decoder = Decoder::new(&body, Limits::default())
+        .map_err(|e| MtprotoError::Message(e.to_string()))?;
+    decoder.read_u32().map_err(|e| MtprotoError::Message(e.to_string()))?;
+    let req_msg_id = <i64 as TlDecode>::decode(&mut decoder)
+        .map_err(|e| MtprotoError::Message(e.to_string()))?;
+    let offset = decoder.offset();
+    let result = if peek_u32(&body, offset) == Some(GZIP_PACKED) {
+        ungzip_if_needed(&body[offset..])?
+    } else {
+        let len = body.len() - offset;
+        body.copy_within(offset.., 0);
+        body.truncate(len);
+        body
+    };
+    Ok(vec![InboundEvent::RpcResult { req_msg_id, body: result }])
+}
+""", "pub fn parse_authenticated_owned(")
+rpc_invoke = "vendor/mono-rs/crates/mono-proto-runtime/src/rpc/invoke.rs"
+amend(rpc_invoke, "    parse_authenticated, should_process_inbound,",
+      "    parse_authenticated_owned, should_process_inbound,")
+amend(rpc_invoke,
+      """                if let Some(response) = engine
+                    .take_response::<RawMethod>(handle)
+                    .map_err(|e| MtprotoError::Message(e.to_string()))?
+                {""",
+      """                if let Some(response) = engine.take_raw_response(handle) {""")
+amend(rpc_invoke,
+      """            if let Some(response) = engine
+                .take_response::<RawMethod>(&handle)
+                .map_err(|e| MtprotoError::Message(e.to_string()))?
+            {""",
+      """            if let Some(response) = engine.take_raw_response(&handle) {""")
+amend_count(rpc_invoke,
+      """        let packet = trim_padded_mtproto_packet(&packet);
+        let inbound = engine
+            .open_inbound(packet, clock, true, 1024 * 1024)""",
+      """        let mut packet = packet;
+        let length = trim_padded_mtproto_packet(&packet).len();
+        packet.truncate(length);
+        let inbound = engine
+            .open_inbound_owned(packet, clock, true, 1024 * 1024)""", 2)
+amend_count(rpc_invoke,
+      """        for event in parse_authenticated(
+            &body,""",
+      """        for event in parse_authenticated_owned(
+            body,""", 2)
+amend(rpc_invoke,
+      """    let inbound = engine
+        .open_inbound(
+            trim_padded_mtproto_packet(&packet),""",
+      """    let mut packet = packet;
+    let length = trim_padded_mtproto_packet(&packet).len();
+    packet.truncate(length);
+    let inbound = engine
+        .open_inbound_owned(
+            packet,""")
+amend(rpc_invoke,
+      """    for event in parse_authenticated(
+        &inbound.message.body,""",
+      """    for event in parse_authenticated_owned(
+        inbound.message.body,""")
+# Avoid redundant timeout configuration only after a successful socket update.
+# Track the actual configured timeout independently of the logical read deadline.
+tcp = "vendor/mono-rs/crates/mono-proto-runtime/src/connection/tcp.rs"
+amend(tcp,
+      """pub struct ObfuscatedTcp {
+    inner: NativeTransportConnection,
+    stream: Arc<TcpStream>,
+    read_timeout: Duration,
+}""",
+      """pub struct ObfuscatedTcp {
+    inner: NativeTransportConnection,
+    stream: Arc<TcpStream>,
+    read_timeout: Duration,
+    configured_timeout_ms: Option<u64>,
+}""")
+amend(tcp,
+      """        self.read_timeout = Duration::from_millis(ms.max(50));
+        let read = self.read_timeout;""",
+      """        self.read_timeout = Duration::from_millis(ms.max(50));
+        if self.configured_timeout_ms == Some(ms) { return; }
+        let read = self.read_timeout;""")
+amend(tcp,
+      """        let _ = self.stream.set_read_timeout(Some(read));
+    }
+}""",
+      """        if self.stream.set_read_timeout(Some(read)).is_ok() {
+            self.configured_timeout_ms = Some(ms);
+        } else {
+            self.configured_timeout_ms = None;
+        }
+    }
+}""")
+amend(tcp,
+      """        read_timeout: Duration::from_secs(connect_secs.max(1)),
+    };""",
+      """        read_timeout: Duration::from_secs(connect_secs.max(1)),
+        configured_timeout_ms: None,
+    };""")
 
 # Commit files only after every source contract has been checked.
 for path, result in changes.items():
