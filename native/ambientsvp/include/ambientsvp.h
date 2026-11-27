@@ -33,7 +33,12 @@ void ambient_svp_destroy(AmbientSvp *svp);
 /* 0 success, -1 invalid/error, -2 full (receive before pushing more input).
  * Discontinuous timestamps return -3; reset/recreate then resubmit the frame. */
 int ambient_svp_push(AmbientSvp *svp, const uint8_t *i420, size_t len, int64_t pts_us);
-/* 1 output, 0 needs input/end of drain, -1 failure. Always drain before push.
+/* Optional direct-fill entry point. The writer is called synchronously only
+ * after input timing/capacity checks. It must fill exactly len bytes of I420,
+ * return 0 on success, not retain dst and never re-enter this engine. */
+typedef int (*AmbientSvpFill)(void *context, uint8_t *dst, size_t len);
+int ambient_svp_push_fill(AmbientSvp *, int64_t pts_us, void *context, AmbientSvpFill);
+ /* 1 output, 0 needs input/end of drain, -1 failure. Always drain before push.
  * eof=1 closes the input and drains the finite tail without extrapolation. */
 int ambient_svp_receive(AmbientSvp *svp, uint8_t *i420, size_t len, int64_t *pts_us, int eof);
 int ambient_svp_stats(const AmbientSvp *svp, AmbientSvpStats *stats);
