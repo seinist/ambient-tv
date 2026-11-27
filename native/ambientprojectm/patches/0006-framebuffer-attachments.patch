@@ -1,0 +1,99 @@
+diff --git a/src/libprojectM/Renderer/Framebuffer.cpp b/src/libprojectM/Renderer/Framebuffer.cpp
+--- a/src/libprojectM/Renderer/Framebuffer.cpp
++++ b/src/libprojectM/Renderer/Framebuffer.cpp
+@@ -1,5 +1,8 @@
+ #include "Framebuffer.hpp"
+ 
++#include <array>
++#include <algorithm>
++
+ namespace libprojectM {
+ namespace Renderer {
+ 
+@@ -175,7 +178,8 @@
+             textureType = GL_DEPTH_STENCIL_ATTACHMENT;
+             break;
+     }
+-    m_attachments.at(framebufferIndex).insert({textureType, attachment});
++    auto& attachments = m_attachments.at(framebufferIndex);
++    attachments.insert_or_assign(textureType, attachment);
+ 
+     glBindFramebuffer(GL_FRAMEBUFFER, m_framebufferIds.at(framebufferIndex));
+ 
+@@ -331,53 +335,23 @@
+ 
+     const auto& attachments = m_attachments.at(framebufferIndex);
+ 
+-    std::vector<GLenum> buffers;
+-
+-    bool hasDepthAttachment = false;
+-    bool hasStencilAttachment = false;
+-    bool hasDepthStencilAttachment = false;
+-
++    // GLES requires color attachment i in draw-buffer slot i. Depth/stencil
++    // are not legal glDrawBuffers entries. Preserve holes and avoid heap work
++    // on every warp/attachment switch.
++    std::array<GLenum, 32> buffers{};
++    buffers.fill(GL_NONE);
++    size_t count = 1;
+     for (const auto& attachment : attachments)
+     {
+-        if (attachment.first != GL_DEPTH_ATTACHMENT &&
+-            attachment.first != GL_STENCIL_ATTACHMENT &&
+-            attachment.first != GL_DEPTH_STENCIL_ATTACHMENT)
+-        {
+-            buffers.push_back(attachment.first);
+-        }
+-        else
++        if (attachment.first >= GL_COLOR_ATTACHMENT0 &&
++            attachment.first < GL_COLOR_ATTACHMENT0 + buffers.size())
+         {
+-            switch (attachment.first)
+-            {
+-                case GL_DEPTH_ATTACHMENT:
+-                    hasDepthAttachment = true;
+-                    break;
+-                case GL_STENCIL_ATTACHMENT:
+-                    hasStencilAttachment = true;
+-                    break;
+-                case GL_DEPTH_STENCIL_ATTACHMENT:
+-                    hasDepthStencilAttachment = true;
+-                    break;
+-                default:
+-                    break;
+-            }
++            const size_t slot = attachment.first - GL_COLOR_ATTACHMENT0;
++            buffers[slot] = attachment.first;
++            count = std::max(count, slot + 1);
+         }
+     }
+-
+-    if (hasDepthAttachment)
+-    {
+-        buffers.push_back(GL_DEPTH_ATTACHMENT);
+-    }
+-    if (hasStencilAttachment)
+-    {
+-        buffers.push_back(GL_STENCIL_ATTACHMENT);
+-    }
+-    if (hasDepthStencilAttachment)
+-    {
+-        buffers.push_back(GL_DEPTH_STENCIL_ATTACHMENT);
+-    }
+-
+-    glDrawBuffers(static_cast<GLsizei>(buffers.size()), buffers.data());
++    glDrawBuffers(static_cast<GLsizei>(count), buffers.data());
+ }
+ 
+ void Framebuffer::RemoveAttachment(int framebufferIndex, GLenum attachmentType)
+@@ -390,9 +364,8 @@
+     glBindFramebuffer(GL_FRAMEBUFFER, m_framebufferIds.at(framebufferIndex));
+ 
+     glFramebufferTexture2D(GL_FRAMEBUFFER, attachmentType, GL_TEXTURE_2D, 0, 0);
+-    UpdateDrawBuffers(framebufferIndex);
+-
+     m_attachments.at(framebufferIndex).erase(attachmentType);
++    UpdateDrawBuffers(framebufferIndex);
+ 
+     // Reset to previous read/draw buffers
+     glBindFramebuffer(GL_READ_FRAMEBUFFER, m_framebufferIds.at(m_readFramebuffer));
