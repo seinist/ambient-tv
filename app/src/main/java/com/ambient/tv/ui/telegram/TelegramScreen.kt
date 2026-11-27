@@ -351,8 +351,12 @@ fun TelegramScreen(
     // Observe indices, not pixel offsets: scrolling within the same tile does not restart
     // downloads. A short quiet period avoids competing with D-pad/touch navigation.
     val rowPrefetchColumns = monogramRowVisibleColumns(gridColumns)
+    val decodeContext = androidx.compose.ui.platform.LocalContext.current
+    val decodeHint = remember(sectionKey, layout, gridColumns, listRows, decodeContext) {
+        com.ambient.tv.ui.common.MonogramDecodeHint(decodeContext)
+    }
     LaunchedEffect(sectionKey, state.section, state.available, layout, currentRows, flat,
-        rowList, flatList, grid, showViewOptions, rowPrefetchColumns) {
+        rowList, flatList, grid, showViewOptions, rowPrefetchColumns, decodeHint) {
         if (!state.available || state.section != sectionKey || showViewOptions) return@LaunchedEffect
         coroutineScope {
         val active = LinkedHashMap<Pair<Long, Int>, kotlinx.coroutines.Job>()
@@ -395,6 +399,10 @@ fun TelegramScreen(
             desired.forEach { (key, ref) ->
                 if (key !in active) active[key] = launch {
                     viewModel.prefetchViewport(sectionKey, listOf(ref))
+                    // Warm only a few nearby non-avatar images, using the last measured card.
+                    // The single decode slot is non-queuing and cache-only.
+                    if (ref.messageId != 0 && key in desired.keys.toList().takeLast(4))
+                        decodeHint.warm(ref)
                 }
             }
         }
@@ -430,6 +438,7 @@ fun TelegramScreen(
         restorePanelFocus = true
     }
 
+    CompositionLocalProvider(com.ambient.tv.ui.common.LocalMonogramDecodeHint provides decodeHint) {
     Box(Modifier.fillMaxSize().claimBrowseStartupFocusOnInput(startupFocus)) {
         Column(
             Modifier.fillMaxSize().handheldSwipeTabs(
@@ -772,6 +781,7 @@ fun TelegramScreen(
                 }
             }
         }
+    }
     }
 }
 

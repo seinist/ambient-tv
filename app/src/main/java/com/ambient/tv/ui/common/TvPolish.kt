@@ -449,6 +449,11 @@ private class ArtworkRequestContinuity {
 /** Recent memory-cache keys per artwork model, one index per loader; see [ArtworkMemoryKeyIndex]. */
 private val CardArtworkKeys = ArtworkMemoryKeyIndex()
 
+/** Called on the composition dispatcher by the bounded Monogram ahead decoder. */
+internal fun rememberPrefetchedMonogramArtwork(model: String, key: coil3.memory.MemoryCache.Key) {
+    CardArtworkKeys.remember(model, key)
+}
+
 /** An OSD card is small enough to reuse the guide's already-decoded TMDb landscape. */
 internal fun preferCachedTmdbCardVariant(context: android.content.Context, url: String?): String? {
     val prefix = "https://image.tmdb.org/t/p/w780/"
@@ -619,6 +624,9 @@ fun ArtworkImage(
     val cap1080 = !backdrop && density > CARD_IMAGE_1080_DENSITY &&
         remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context).cardImages1080 }
     val cardSize = remember(cap1080, density) { if (cap1080) CardImage1080SizeResolver(density) else null }
+    val monogramDecodeHint = LocalMonogramDecodeHint.current.takeIf {
+        sharpModel != null && !backdrop && !cap1080 && contentScale == ContentScale.Crop && headers.isEmpty()
+    }
     // A successful painter keeps its request during an outage/recovery. Only failed/in-flight
     // images retry; otherwise every visible poster would briefly re-enter its loading state.
     var successfulNetwork by remember(currentModel, sharpKey, refreshRevision, address?.imageKey, headerKey) {
@@ -702,7 +710,10 @@ fun ArtworkImage(
                 contentScale = contentScale,
                 alignment = focus?.alignment ?: alignment,
                 colorFilter = hdrFilter,
-                modifier = Modifier.fillMaxSize().then(cardSize?.modifier() ?: Modifier),
+                modifier = Modifier.fillMaxSize().then(cardSize?.modifier() ?: Modifier)
+                    .then(if (monogramDecodeHint != null) Modifier.onSizeChanged {
+                        monogramDecodeHint.record(it, constrainDecode)
+                    } else Modifier),
                 onLoading = { loading = !shownFromMemory; fadeBackground = false; failed = false },
                 onSuccess = {
                     val source = it.result.dataSource

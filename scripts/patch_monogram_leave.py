@@ -928,7 +928,7 @@ pub fn download_message_media_window_bytes(
 }
 """, "pub fn download_message_media_chunk_bytes(")
 # Complete previews reuse the bounded range sink only with an exact native file size.
-add_before(ffi, "#[uniffi::export]\\npub fn download_message_thumb(", """#[uniffi::export]
+add_before(ffi, "#[uniffi::export]\npub fn download_message_thumb(", """#[uniffi::export]
 pub fn download_message_preview_bytes(
     handle: u64, chat_id: i64, message_id: i32, dest_path: String,
 ) -> Result<Vec<u8>, MtprotoError> {
