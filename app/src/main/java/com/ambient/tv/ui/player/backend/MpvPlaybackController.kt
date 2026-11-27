@@ -75,7 +75,7 @@ class MpvPlaybackController(
     private val expectedGpuFilters = runCatching {
         initialMpvAccelerationPlan(context, videoOutputMode, decoderMode, initialImageOptions, nativeHdrPreferred,
             hdrGpuPassthrough, declaredHdr != null &&
-                !nativeHdrSurfacePreferred(declaredHdr, HdrSupport.displayStandards(context))).gpu
+                !nativeHdrSurfacePreferred(declaredHdr, HdrSupport.displayStandards(context)), declaredHdr).gpu
     }.getOrDefault(false)
     private var state by mutableStateOf(MpvEngineState(imageOptions = initialImageOptions.normalized(),
         status = PlaybackStatus(positionMs = initialStartPositionMs), supportsGpuFilters = expectedGpuFilters))
