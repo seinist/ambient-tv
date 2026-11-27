@@ -349,7 +349,7 @@ class HomeViewModel @Inject constructor(
     private val _uiState = MutableStateFlow<HomeUiState>(
         if (appPreferences.isConfigured || appPreferences.isJellyfinConfigured || appPreferences.isEmbyConfigured ||
             appPreferences.isTvheadendConfigured || appPreferences.radioEnabled ||
-            (appPreferences.telegramEnabled && appPreferences.homeRows.any { it.enabled && it.system == HomeRowDefinition.SYSTEM_TELEGRAM }) ||
+            (com.ambient.tv.modules.SystemModuleAvailability.monogramOffered && appPreferences.telegramEnabled && appPreferences.homeRows.any { it.enabled && it.system == HomeRowDefinition.SYSTEM_TELEGRAM }) ||
             (appPreferences.youtubeEnabled && appPreferences.homeRows.any { it.enabled && it.system == HomeRowDefinition.SYSTEM_YOUTUBE }))
             HomeUiState.LoadingLibrary else HomeUiState.NotConfigured,
     )
@@ -1959,7 +1959,7 @@ class HomeViewModel @Inject constructor(
         val generation = ++telegramRowsGeneration
         telegramJob?.cancel()
         telegramRowsPending = false
-        if (plexOnly || jellyfinOnly || embyOnly || !appPreferences.telegramEnabled ||
+        if (plexOnly || jellyfinOnly || embyOnly || !com.ambient.tv.modules.SystemModuleAvailability.monogramOffered || !appPreferences.telegramEnabled ||
             !telegramRepository.available) {
             telegramRows = emptyList()
             return
