@@ -7,6 +7,8 @@ internal enum class VlcVulkanOutputVerdict { CONFIRMED, STALLED }
 internal class VlcVulkanOutputWatch(
     private val intervalMs: Long = 1_000L,
     private val stallMs: Long = 8_000L,
+    private val starvationMs: Long = 15_000L,
+    private val missingCountersMs: Long = 20_000L,
 ) {
     private var finished = false
     private var confirmed = false
@@ -14,6 +16,7 @@ internal class VlcVulkanOutputWatch(
     private var baselineAt: Long? = null
     private var baselineDecoded: Int? = null
     private var baselineDisplayed: Int? = null
+    private var missingSince: Long? = null
 
     fun reset() {
         finished = false
@@ -27,6 +30,7 @@ internal class VlcVulkanOutputWatch(
         baselineAt = null
         baselineDecoded = null
         baselineDisplayed = null
+        missingSince = null
     }
 
     fun shouldSample(now: Long): Boolean =
@@ -39,8 +43,19 @@ internal class VlcVulkanOutputWatch(
             baselineAt = null
             baselineDecoded = null
             baselineDisplayed = null
+            // No presentation statistics means this experimental path
+            // cannot be verified. Fall back once after a longer interval,
+            // but only during eligible, active video playback.
+            if (continuous) {
+                val since = missingSince ?: now.also { missingSince = it }
+                if (now - since >= missingCountersMs) {
+                    finished = true
+                    return VlcVulkanOutputVerdict.STALLED
+                }
+            }
             return null
         }
+        missingSince = null
         val firstDecoded = baselineDecoded
         val firstDisplayed = baselineDisplayed
         val firstAt = baselineAt
@@ -62,7 +77,9 @@ internal class VlcVulkanOutputWatch(
             confirmed = true
             return VlcVulkanOutputVerdict.CONFIRMED
         }
-        if (now - firstAt >= stallMs && decoded > firstDecoded) {
+        val stalled = now - firstAt >= stallMs && decoded > firstDecoded
+        val starved = continuous && now - firstAt >= starvationMs
+        if (stalled || starved) {
             finished = true
             return VlcVulkanOutputVerdict.STALLED
         }
