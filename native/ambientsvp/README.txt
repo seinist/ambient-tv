@@ -693,3 +693,50 @@ upstream first-pair packet to localize remaining quality differences.
 Actual hardware performance, broader video quality and full upstream
 search parity still need validation; regular player presets remain
 unchanged.
+
+
+Android hardware-buffer integration (API 29+)
+---------------------------------------------
+Two optional ABI-2 symbols, ambient_svp_push_ahardwarebuffer and
+ambient_svp_receive_ahardwarebuffer, accept actual CPU-mappable
+AHardwareBuffer references (Y8Cb8Cr8_420, one layer). Input is mapped
+only inside the validated direct-fill callback, copied into the existing
+engine I420 allocation, and unlocked before motion analysis. Output
+preflights readiness and maps a caller-owned buffer before consuming
+a tick. Planar and interleaved chroma, padded rows and even crop offsets
+are checked. Protected, opaque, unsupported, or unready buffers return
+-4 without consuming a frame. A borrowed acquire fence is checked
+without consuming or closing its FD; -1 requires caller synchronization.
+A returned release fence belongs to the caller, including on failure.
+A NULL release-fence pointer requests synchronous unlock. The driver
+can still block inside a CPU lock/unlock; this is not a real-time
+external-memory import. See include/ambientsvp.h for the API contract.
+
+MPV now accepts transferable Vulkan AVHWFramesContext decoder images
+when MPV's pinned transfer helper reports I420/NV12. The adapter reuses a
+software image pool and does not release the original reference until
+a successful download. Unsupported/opaque hardware frames pass through.
+This is a hardware-to-host transfer, not zero-copy. The VLC filter
+continues to accept its existing CPU-accessible I420/NV12 pictures.
+Neither player supplies a native AHardwareBuffer to the filter yet:
+MediaCodec surface handles are not AHardwareBuffer pointers. MPV's
+AImageReader obtains its buffer later, in the hardware renderer.
+Do not cast opaque MediaCodec handles, release a buffer to two consumers,
+or enable the hardware-buffer API for unsupported formats.
+
+Host layout roundtrip and dynamic-loader optional symbol tests run in
+native CI. The Android-only ignored test
+hardware_buffer::android::device_tests::hardware_buffer_roundtrip_matches_native_i420_stream
+allocates real hardware buffers and compares crop, fences, timestamps
+and output against the native I420 stream. Cross-check compilation is
+part of native CI; run the test executable on an API29+ physical device
+that supports CPU-mappable YUV420 (isolated exact ignored test).
+Actual device execution and full player build validation are pending.
+
+A full zero-copy decoder-to-synthesis-to-renderer path still requires
+a producer that exposes owned YUV hardware buffers, imported Vulkan
+external memory on a compatible shared device, explicit acquire/release
+synchronization and compatible output presentation. The upstream CPU
+motion analyser needs host I420 data, so a GPU-only path also needs a
+validated hardware motion-analysis implementation. No such path is
+silently enabled by these optional APIs.
