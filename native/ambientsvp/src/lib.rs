@@ -590,15 +590,15 @@ impl AmbientSvp {
                     false
                 }
             } else if self.gpu.is_some() {
-                // Only prefetch a ready consecutive output from the same
-                // source pair, never across a seek, EOF tail or lookahead gap.
-                // Bound extra readback + CPU storage to <= 1080p.
+                // Prefetch a ready consecutive output from the same or
+                // adjacent source pair, never across a seek, EOF tail or
+                // lookahead gap. Bound extra GPU readback storage to <=1080p.
                 let next_index = self.output + 1;
                 let next_plan = self.smoother.plan(next_index);
                 let next_offset = (next_index as i128 * 1_000_000 * self.config.target_den as i128
                     / self.config.target_num as i128) as i64;
                 let can_prefetch = self.frame_len() <= 1920 * 1080 * 3 / 2
-                    && next_plan[0] == plan[0]
+                    && next_plan[0] >= plan[0] && next_plan[0] <= plan[0] + 1
                     && self.required_input(next_plan) < self.input
                     && (!self.eof || next_offset < self.source_time(self.input));
                 #[cfg(test)]
@@ -614,13 +614,16 @@ impl AmbientSvp {
                         let next = &self.frames.get(&(job.n + 1)).ok_or("missing next")?.data;
                         let next_job = if can_prefetch {
                             match self.smoother.prepare_gpu(next_index) {
-                                Output::Gpu(next_job) if next_job.n == job.n => Some(next_job),
+                                Output::Gpu(next_job) if next_job.n >= job.n && next_job.n <= job.n + 1
+                                    && self.frames.contains_key(&next_job.n)
+                                    && self.frames.contains_key(&(next_job.n + 1)) => Some(next_job),
                                 _ => None,
                             }
                         } else { None };
                         let gpu = self.gpu.as_mut().unwrap();
                         let result = if let Some(next_job) = next_job {
-                            let result = gpu.render_pair(&job, &next_job, current, next, &mut emit);
+                            let following = [&self.frames[&next_job.n].data[..], &self.frames[&(next_job.n + 1)].data[..]];
+                            let result = gpu.render_pair(&job, &next_job, [current, next], following, &mut emit);
                             if result.is_ok() { self.prefetched = Some(next_index); }
                             result
                         } else {
@@ -1002,6 +1005,49 @@ mod pipelining_tests {
             assert_eq!(pipelined.stats.bypass_reason, 0);
         }
         assert!(saw_prefetch, "test must exercise two in-flight jobs");
+    }
+
+    #[test]
+    #[ignore = "requires Vulkan"]
+    fn adjacent_ready_source_pairs_match_serial_output() {
+        let c = Config { target_num: 36, ..config() };
+        let mut fast = AmbientSvp::new(c).unwrap();
+        let mut serial = AmbientSvp::new(c).unwrap();
+        serial.disable_prefetch = true;
+        let mut a=vec![0;fast.frame_len()];
+        let mut b=a.clone();
+        let mut observed=false;
+        for origin in [0,9_000_000] {
+            fast.reset().unwrap();
+            serial.reset().unwrap();
+            for batch in 0..3 {
+                // Both adjacent pairs must have arrived before scheduling.
+                for n in batch*4..(batch+1)*4 {
+                    let input=image(n);
+                    let pts=origin+n as i64*1_000_000/24;
+                    fast.push(&input,pts).unwrap();
+                    serial.push(&input,pts).unwrap();
+                }
+                loop {
+                    let ap=fast.receive_visit(|data|a.copy_from_slice(data),false).unwrap();
+                    let bp=serial.receive(&mut b,false).unwrap();
+                    assert_eq!(ap,bp);
+                    if ap.is_none(){break;}
+                    assert_eq!(a,b,"cross-pair {ap:?}");
+                }
+                observed|=fast.gpu.as_ref().unwrap().cross_pair_submissions>0;
+            }
+            loop {
+                let ap=fast.receive(&mut a,true).unwrap();
+                let bp=serial.receive(&mut b,true).unwrap();
+                assert_eq!(ap,bp);
+                if ap.is_none(){break;}
+                assert_eq!(a,b);
+            }
+            assert_eq!(fast.stats.backend,2);
+            assert_eq!(fast.stats.bypass_reason,0);
+        }
+        assert!(observed,"test must exercise adjacent source pairs");
     }
 
     #[test]
