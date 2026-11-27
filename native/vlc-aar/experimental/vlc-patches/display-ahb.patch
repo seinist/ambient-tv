@@ -1,7 +1,7 @@
 diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/libplacebo/display.c
 --- a/modules/video_output/libplacebo/display.c
 +++ b/modules/video_output/libplacebo/display.c
-@@ -40,6 +40,11 @@
+@@ -40,6 +40,12 @@
  #include <libplacebo/utils/upload.h>
  #include <libplacebo/swapchain.h>
  #include <libplacebo/shaders/lut.h>
@@ -9,11 +9,12 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +# include "display_bridge.h"
 +# include "hdr10plus_vlc_bridge.h"
 +# include "hdr10plus_spatial.h"
++# include "dovi_fel_render.h"
 +#endif
  
  typedef struct vout_display_sys_t
  {
-@@ -47,6 +52,15 @@
+@@ -47,6 +53,16 @@
      pl_renderer renderer;
      pl_tex plane_tex[4];
      pl_tex fbo;
@@ -25,17 +26,19 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +    bool ahb_dovi;
 +    bool ahb_hdrplus_spatial;
 +    struct ambient_hdrplus_spatial spatial;
++    struct ambient_fel_render fel;
 +#endif
  
      // Pool of textures for the subpictures
      struct pl_overlay *overlays;
-@@ -129,9 +143,30 @@
+@@ -129,9 +145,31 @@
      if (!sys->renderer)
          goto error;
  
 +#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
 +    if (var_InheritBool(vd, "vk-ambient-ahb") && vd->source->i_chroma == VLC_CODEC_ANDROID_OPAQUE) {
-+        sys->ahb_dovi = var_InheritBool(vd, "vk-ambient-dovi-ahb") && ambient_dovi_format(vd->source);
++        sys->ahb_dovi = var_InheritBool(vd, "vk-ambient-dovi-ahb") && ambient_dovi_format(vd->source) &&
++            (vd->source->dovi.profile != 7 || var_InheritBool(vd, "vk-ambient-dovi-fel"));
 +        if (var_Create(vd, "ambient-ahb-dropped", VLC_VAR_BOOL) == VLC_SUCCESS)
 +            sys->ahb = ambient_display_open(gpu, vd->source, context, sys->ahb_dovi);
 +        if (!sys->ahb) {
@@ -60,13 +63,14 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
      if (vlc_placebo_FormatSupported(gpu, vd->source->i_chroma)) {
          fmt->i_chroma = vd->source->i_chroma;
      } else {
-@@ -195,6 +230,15 @@
+@@ -195,6 +233,16 @@
          for (int i = 0; i < sys->num_overlays; i++)
              pl_tex_destroy(gpu, &sys->overlay_tex[i]);
          pl_renderer_destroy(&sys->renderer);
 +#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
 +        if (sys->ahb) {
 +            ambient_hdrplus_spatial_destroy(gpu, &sys->spatial);
++            ambient_fel_render_destroy(gpu, &sys->fel);
 +            pl_gpu_finish(gpu);
 +            if (!ambient_ahb_close(sys->ahb))
 +                msg_Err(vd, "Experimental AHB owner quarantined: GPU retirement unproven");
@@ -76,7 +80,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          vlc_placebo_ReleaseCurrent(sys->pl);
      }
  
-@@ -222,11 +266,37 @@
+@@ -222,11 +270,37 @@
      pl_gpu gpu = sys->pl->gpu;
      bool failed = false;
  
@@ -114,7 +118,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          vlc_placebo_ReleaseCurrent(sys->pl);
          return; // Probably benign error, ignore it
      }
-@@ -238,19 +308,40 @@
+@@ -238,19 +312,51 @@
      bool need_vflip = frame.flipped;
  #endif
  
@@ -147,8 +151,19 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +        img = ahb_output.raw_yuv ? ambient_pl_raw_p010_frame((pl_tex)ahb_output.texture, color,
 +                pic->format.color_range == COLOR_RANGE_FULL ? PL_COLOR_LEVELS_FULL : PL_COLOR_LEVELS_LIMITED) :
 +            ambient_pl_rgb_frame((pl_tex)ahb_output.texture, color);
-+        if (sys->ahb_dovi && ahb_output.raw_yuv)
-+            vlc_placebo_frame_DoviMetadata(&img, pic, &sys->dovi_metadata);
++        if (sys->ahb_dovi && ahb_output.raw_yuv) {
++            if (pic->format.dovi.profile == 7) {
++                struct vlc_ancillary *el = picture_GetAncillary(pic, AMBIENT_FEL_ID);
++                if (!el || !ambient_fel_render_picture(gpu, sys->pl->log, &sys->fel,
++                    &img, vlc_ancillary_GetData(el), pic->date)) {
++                    if (!sys->ahb_error_logged)
++                        msg_Err(vd, "Experimental FEL reconstruction failed");
++                    sys->ahb_error_logged = true;
++                    failed = true; goto done;
++                }
++            } else
++                vlc_placebo_frame_DoviMetadata(&img, pic, &sys->dovi_metadata);
++        }
 +    } else
 +#endif
 +    {
@@ -168,7 +183,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
  
      struct vlc_ancillary *iccp = picture_GetAncillary(pic, VLC_ANCILLARY_ID_ICC);
      if (iccp) {
-@@ -264,9 +355,19 @@
+@@ -264,9 +370,19 @@
      if (hdrplus) {
          vlc_video_hdr_dynamic_metadata_t *hdm = vlc_ancillary_GetData(hdrplus);
          vlc_placebo_HdrMetadata(hdm, &img.color.hdr);
@@ -189,7 +204,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
      struct pl_plane_data data[4];
      if (!vlc_placebo_PlaneData(pic, data)) {
          // This should never happen, in theory
-@@ -287,6 +388,9 @@
+@@ -287,6 +403,9 @@
                                        &plane->shift_y);
      }
  
@@ -199,7 +214,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
      struct pl_frame target;
      pl_frame_from_swapchain(&target, &frame);
      if (vd->cfg->icc_profile) {
-@@ -438,7 +542,32 @@
+@@ -438,7 +557,32 @@
      }
  
      // Dispatch the actual image rendering with the pre-configured parameters
@@ -233,7 +248,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          msg_Err(vd, "Failed rendering frame!");
          failed = true;
          goto done;
-@@ -445,6 +574,17 @@
+@@ -445,6 +589,17 @@
      }
  
  done:
@@ -251,7 +266,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
  
      if (failed)
          pl_tex_clear(gpu, frame.fbo, (float[4]){ 1.0, 0.0, 0.0, 1.0 });
-@@ -463,8 +603,13 @@
+@@ -463,8 +618,13 @@
  
      sys->fbo = NULL;
      if (vlc_placebo_MakeCurrent(sys->pl) == VLC_SUCCESS) {
