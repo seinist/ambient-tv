@@ -83,6 +83,17 @@ if [[ -n "${LIBPLACEBO_SOURCE:-}" ]]; then
                     -I "$VLC_SOURCE/modules/codec/omxil" \
                     -fsyntax-only "$VLC_SOURCE/modules/codec/omxil/$module.c"
             done
+            # The actual MP4 demux integration is compiled as well as the
+            # host NAL merger; a passing isolated test cannot validate the
+            # VLC track, edit-list and block APIs on its own.
+            for module in mp4 libmp4; do
+                "$NDK/toolchains/llvm/prebuilt/$host/bin/${triple}29-clang" \
+                    -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 \
+                    -DMODULE_NAME=mp4 '-DN_(s)=s' \
+                    -Werror=implicit-function-declaration -Werror=incompatible-pointer-types -Werror=int-conversion \
+                    -I "$VLC_SOURCE/include" \
+                    -fsyntax-only "$VLC_SOURCE/modules/demux/mp4/$module.c"
+            done
             for module in utils display; do
                 "$NDK/toolchains/llvm/prebuilt/$host/bin/${triple}29-clang" \
                     -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 \
