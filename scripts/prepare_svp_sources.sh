@@ -6,7 +6,7 @@ SVP="$ROOT/native/ambientsvp"
 if [[ "${1:-}" == --hash ]]; then
     case "${2:-}" in mpv) adapter=vf_ambientsvp.c;; vlc) adapter=vlc_ambientsvp.c;; *) exit 2;; esac
     extra=()
-    if [[ "${2:-}" == mpv ]]; then extra+=("$SVP/adapters/svp_mpv_vulkan.h" "$SVP/adapters/svp_mpv_mediacodec.h" "$SVP/include/ambientsvp_vulkan.h" "$SVP/include/ambientsvp_android_vulkan.h" "$ROOT/scripts/prepare_svp_mpv_mediacodec.py"); else extra+=("$SVP/adapters/svp_vlc_android.h" "$SVP/include/ambientsvp_android_stream.h" "$SVP/include/svp_sdr_profile.h" "$SVP/include/svp_av1_config.h" "$SVP/include/svp_hevc_hdr_guard.h" "$ROOT/scripts/prepare_svp_vlc_mediacodec.py"); fi
+    if [[ "${2:-}" == mpv ]]; then extra+=("$SVP/adapters/svp_mpv_vulkan.h" "$SVP/adapters/svp_mpv_mediacodec.h" "$SVP/include/ambientsvp_vulkan.h" "$SVP/include/ambientsvp_android_vulkan.h" "$ROOT/scripts/prepare_svp_mpv_mediacodec.py"); else extra+=("$SVP/adapters/svp_vlc_android.h" "$SVP/include/ambientsvp_android_stream.h" "$SVP/include/svp_sdr_profile.h" "$SVP/include/svp_av1_config.h" "$SVP/include/svp_hevc_hdr_guard.h" "$ROOT/scripts/prepare_svp_vlc_mediacodec.py" "$ROOT/scripts/prepare_svp_vlc_hdr_bridge.py" "$SVP/adapters/svp_vlc_hdr_pair.h" "$SVP/adapters/svp_vlc_hdr_schedule.h" "$SVP/adapters/svp_vlc_hdr_display.h"); fi
     sha256sum "${extra[@]}" "$SVP/adapters/$adapter" "$SVP/include/ambientsvp.h" "$SVP/include/ambientsvp_loader.h" "$SVP/include/svp_retry.h" "$SVP/include/svp_planes.h" "$0" \
         | cut -d ' ' -f1 | sha256sum | cut -d ' ' -f1
     exit 0
@@ -45,7 +45,14 @@ vlc)
         sed -i '/        "amf_frc",/i\        "ambientsvp",' "$SOURCE/src/video_output/video_output.c"
     fi
     grep -q '"ambientsvp",' "$SOURCE/src/video_output/video_output.c"
-    python3 "$ROOT/scripts/prepare_svp_vlc_mediacodec.py" "$SOURCE"
+    if [[ -f "$SOURCE/.ambient-ahb-experimental" ]]; then
+        # PR510 owns the decoder and AHB lifetime in this isolated build.
+        # Do not apply the competing SurfaceControl decoder patches.
+        cp "$SVP/adapters/svp_vlc_hdr_schedule.h" "$SOURCE/modules/video_filter/svp_vlc_android.h"
+        cp "$SVP/adapters/svp_vlc_hdr_pair.h" "$SOURCE/modules/video_filter/"
+    else
+        python3 "$ROOT/scripts/prepare_svp_vlc_mediacodec.py" "$SOURCE"
+    fi
     ;;
 *) exit 2 ;;
 esac
