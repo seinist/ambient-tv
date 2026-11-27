@@ -15,6 +15,8 @@ on:
       - 'scripts/test_vlc_ahb_import.sh'
       - 'scripts/prepare_vlc_ahb_experimental.sh'
       - 'scripts/build_vlc_vulkan.sh'
+      - 'scripts/run_vlc_seek_e2e.sh'
+      - 'native/vlc-aar/seek-audit/**'
       - '.github/workflows/vlc-ahb-experimental.yml'
   workflow_dispatch:
 permissions:
@@ -235,6 +237,17 @@ jobs:
           unzip -tq "$aar"
           unzip -Z1 "$aar" | grep -Fx jni/arm64-v8a/libvlc.so
           unzip -Z1 "$aar" | grep -Fx jni/arm64-v8a/libvlcjni.so
+      - name: Build seek audit APK against the newly linked AAR
+        run: |
+          bash scripts/run_vlc_seek_e2e.sh --prepare-only
+      - uses: actions/upload-artifact@v5
+        with:
+          name: vlc-seek-audit-arm64
+          path: |
+            native/vlc-aar/seek-audit/build/outputs/apk/debug/seek-audit-debug.apk
+            native/vlc-aar/seek-audit/build/seek-fixture.mp4
+          if-no-files-found: error
+          retention-days: 7
       - uses: actions/upload-artifact@v5
         with:
           name: vlc-ahb-experimental-arm64
