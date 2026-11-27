@@ -326,3 +326,38 @@ preset remains saved; a seek preserves the session's reduced effort.
 Analysis quality can decrease in this opt-in mode. Fixed presets never
 participate. MPV retains its dropped-frame and native bypass watchdogs
 but does not issue a separate cost-only verdict for the adaptive preset.
+
+
+Direct transfers and overlapping source upload (PR #528)
+-------------------------------------------------------
+The optional ABI-2 push_fill entry point validates capacity and timestamps
+before calling a synchronous adapter writer. MPV and VLC pack decoded
+I420/NV12 directly into an owned/recycled SVP source buffer, eliminating the
+adapter scratch-to-engine copy. Old libraries use the original push API.
+The writer must not retain the pointer or re-enter the engine. A rejected
+writer does not advance the timeline. No decoder hardware buffer is imported.
+
+For 720p through 1080p (by pixel count), Vulkan can stage a new packed
+source before CPU superframe construction and motion analysis. The source
+cache is bounded to three speculative entries; queue ordering guarantees
+later synthesis sees the upload. A rejected input discards its staged
+index, and validation failure falls back to CPU. The additional submission
+may not benefit every driver: benchmark on actual devices.
+
+MPV reuses up to six output images with a 32 MiB retained backing budget,
+using the pinned MPV image-pool ownership API. A direct output slice is
+used only with tight I420 strides and proven bounds inside a single
+writable AVBufferRef; padded layouts still use the existing transfer.
+A normal seek preserves the warm engine and discards temporal history;
+a bypassed engine keeps the previous explicit-seek retry behavior.
+VLC continues to use its normal picture allocator and output conversion.
+None of these changes constitute decoder-to-renderer GPU zero-copy.
+
+Optional profile-guided Android build:
+  SVP_ABIS=arm64-v8a SVP_PGO_PROFILE_DIR=/absolute/profiles ./scripts/build_svp_android.sh
+The directory must contain arm64-v8a.profdata (and one matching .profdata
+for every requested ABI). Use LLVM profiles collected from representative
+device playback with the same source revision, Rust/LLVM and target;
+profile generation and measurement are separate from release packaging.
+The profile digest and flags are included in the per-ABI build key.
+No profile is generated or applied by default; no PGO gain is asserted.
