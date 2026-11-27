@@ -67,4 +67,21 @@ jobs:
             cc -std=c11 -O2 -Wall -Wextra -Werror -I native/ambientsvp/include "native/ambientsvp/tests/$test.c" -o "/tmp/$test"
             "/tmp/$test"
           done
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          src=native/ambientsvp/tests/svp_loader_test.c
+          cc -std=c11 -O2 -Wall -Wextra -Werror -I native/ambientsvp/include "$src" -ldl -o "$tmp/loader"
+          for variant in legacy direct mismatch incomplete; do
+            mkdir "$tmp/$variant"
+            flags=(-DMOCK_RUNTIME)
+            expected=reject
+            case "$variant" in
+              legacy) expected=legacy;;
+              direct) flags+=(-DDIRECT_APIS); expected=direct;;
+              mismatch) flags+=(-DWRONG_ABI);;
+              incomplete) flags+=(-DMISSING_REQUIRED);;
+            esac
+            cc -std=c11 -O2 -Wall -Wextra -Werror -fPIC -shared -I native/ambientsvp/include "${flags[@]}" "$src" -o "$tmp/$variant/libambientsvp.so"
+            LD_LIBRARY_PATH="$tmp/$variant" "$tmp/loader" "$expected"
+          done
       # Full synthesis/hardware throughput tests still require a physical GPU.
