@@ -122,7 +122,7 @@ internal object SystemModuleHost {
     @Synchronized
     fun install(module: SystemModule, tag: String): SystemModuleBuild? {
         require(module in supported && downloadsEnabled)
-        val old = selected(module)
+        val old = session.store.selectedMetadata(module)
         val result = SystemModuleTransport().install(session.store, module, tag)?.build
         if (result != null && result != old) markChanged(module, old, result)
         return result
@@ -131,7 +131,7 @@ internal object SystemModuleHost {
     @Synchronized
     fun remove(module: SystemModule) {
         require(module in supported && downloadsEnabled)
-        val old = selected(module)
+        val old = session.store.selectedMetadata(module)
         session.store.remove(module)
         if (old != null) markChanged(module, old, null)
     }
@@ -139,7 +139,7 @@ internal object SystemModuleHost {
     @Synchronized
     fun rollback(module: SystemModule): SystemModuleBuild? {
         require(module in supported && downloadsEnabled)
-        val old = selected(module)
+        val old = session.store.selectedMetadata(module)
         val result = session.store.rollback(module)?.build
         if (result != null && result != old) markChanged(module, old, result)
         return result
