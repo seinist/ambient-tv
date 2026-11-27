@@ -71,6 +71,17 @@ void ambient_svp_ahb_importer_destroy(AmbientSvpAhbImporter *);
  */
 int ambient_svp_ahb_submit(const AmbientSvpAhbImporter *,AmbientSvpMediaFrame **frame,
     uint32_t sdr8,AmbientSvpAhbJob **job);
+typedef struct {
+    VkImage image; VkImageView view; VkSemaphore semaphore;
+    uint64_t value; VkImageLayout layout; uint32_t family,width,height;
+} AmbientSvpAhbDestination;
+/* Write straight into a caller-owned RGBA8 storage image, exact visible
+ * extent. Requires enabled timeline semaphores. Caller holds frame and
+ * queue locks; on successful submit publish GENERAL, shader-write access,
+ * semaphore value+1. Retain the supplied image/view until job release.
+ * This avoids even a GPU copy into the player's output frame. */
+int ambient_svp_ahb_submit_into(const AmbientSvpAhbImporter *,AmbientSvpMediaFrame **frame,
+    uint32_t sdr8,const AmbientSvpAhbDestination *,AmbientSvpAhbJob **job);
 /* Borrow a GENERAL-layout GPU image/view. Use ONLY on the same queue
  * after the conversion submission (ordered GPU barrier); no ownership
  * transfer to a different queue is implied. Preserve the job until all
