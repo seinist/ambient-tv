@@ -1,0 +1,101 @@
+diff --git a/src/libprojectM/MilkdropPreset/BlurTexture.cpp b/src/libprojectM/MilkdropPreset/BlurTexture.cpp
+--- a/src/libprojectM/MilkdropPreset/BlurTexture.cpp
++++ b/src/libprojectM/MilkdropPreset/BlurTexture.cpp
+@@ -21,6 +21,7 @@
+                                  staticShaders->GetBlur2FragmentShader());
+ 
+     m_blurFramebuffer.CreateColorAttachment(0, 0);
++    glGenFramebuffers(NumBlurTextures, m_directFbos.data());
+ 
+     // Initialize Blur VAO/VBO with a single fullscreen quad.
+     static constexpr std::array<float, 16> pointsBlur{
+@@ -61,6 +62,7 @@
+ 
+ BlurTexture::~BlurTexture()
+ {
++    glDeleteFramebuffers(NumBlurTextures, m_directFbos.data());
+     glDeleteBuffers(1, &m_vboBlur);
+     glDeleteVertexArrays(1, &m_vaoBlur);
+ }
+@@ -106,6 +108,11 @@
+         return;
+     }
+ 
++    // Save before allocation as allocation can change framebuffer bindings.
++    GLint origReadFramebuffer;
++    GLint origDrawFramebuffer;
++    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &origReadFramebuffer);
++    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &origDrawFramebuffer);
+     AllocateTextures(sourceTexture);
+ 
+     unsigned int const passes = static_cast<int>(m_blurLevel) * 2;
+@@ -133,13 +140,7 @@
+     scale[2] = 1.0f / (tempMax - tempMin);
+     bias[2] = -tempMin * scale[2];
+ 
+-    // Remember previously bound framebuffer
+-    GLint origReadFramebuffer;
+-    GLint origDrawFramebuffer;
+-    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &origReadFramebuffer);
+-    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &origDrawFramebuffer);
+-
+-    m_blurFramebuffer.Bind(0);
++    if (!m_directReady) m_blurFramebuffer.Bind(0);
+ 
+     glBlendFunc(GL_ONE, GL_ZERO);
+     glBindVertexArray(m_vaoBlur);
+@@ -151,6 +152,8 @@
+             continue;
+         }
+ 
++        if (m_directReady) glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_directFbos[pass]);
++
+         // set pixel shader
+         Renderer::Shader* blurShader;
+         if ((pass % 2) == 0)
+@@ -243,9 +246,13 @@
+         // Draw fullscreen quad
+         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+ 
+-        // Save to blur texture
+-        m_blurTextures[pass]->Bind(0);
+-        glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, m_blurTextures[pass]->Width(), m_blurTextures[pass]->Height());
++        // Render directly into the destination texture when RGB framebuffer attachments
++        // are supported; retain the old RGBA scratch/copy path on incompatible drivers.
++        if (!m_directReady)
++        {
++            m_blurTextures[pass]->Bind(0);
++            glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, m_blurTextures[pass]->Width(), m_blurTextures[pass]->Height());
++        }
+         m_blurTextures[pass]->Unbind(0);
+     }
+ 
+@@ -359,6 +366,16 @@
+         m_blurTextures[i] = std::make_shared<Renderer::Texture>(textureName, width2, height2, false);
+     }
+ 
++    // Each pass has a different destination, so no texture is sampled while attached
++    // to the active draw framebuffer. Validate once per resize, not every frame.
++    m_directReady = true;
++    for (size_t i = 0; i < m_directFbos.size(); ++i)
++    {
++        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_directFbos[i]);
++        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_blurTextures[i]->TextureID(), 0);
++        if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
++            m_directReady = false;
++    }
+     m_sourceTextureWidth = sourceTexture.Width();
+     m_sourceTextureHeight = sourceTexture.Height();
+ }
+diff --git a/src/libprojectM/MilkdropPreset/BlurTexture.hpp b/src/libprojectM/MilkdropPreset/BlurTexture.hpp
+--- a/src/libprojectM/MilkdropPreset/BlurTexture.hpp
++++ b/src/libprojectM/MilkdropPreset/BlurTexture.hpp
+@@ -107,6 +107,8 @@
+     int m_sourceTextureWidth{};  //!< Width of the source texture used to create the blur textures.
+     int m_sourceTextureHeight{}; //!< Height of the source texture used to create the blur textures.
+ 
++    std::array<GLuint, NumBlurTextures> m_directFbos{};
++    bool m_directReady{false};
+     Renderer::Framebuffer m_blurFramebuffer;                                        //!< The framebuffer used to draw the blur textures.
+     std::shared_ptr<Renderer::Sampler> m_blurSampler;                               //!< The blur sampler.
+     std::array<std::shared_ptr<Renderer::Texture>, NumBlurTextures> m_blurTextures; //!< The blur textures for each pass.
