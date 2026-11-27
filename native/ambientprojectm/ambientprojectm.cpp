@@ -14,6 +14,7 @@
 struct AmbientProjectM {
     projectm_handle instance = nullptr;
     int audioSource = 0;
+    uint64_t nativeCursor = 0;
     std::mutex mutex;
     PcmRing pcm;
     std::string pendingPreset;
@@ -59,7 +60,9 @@ Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeSetAudioSource
     if (source) {
         auto& tap = nativeAudio[source];
         std::lock_guard<std::mutex> lock(tap.mutex);
-        tap.pcm.clear();
+        if (tap.consumers.load(std::memory_order_relaxed) == 0) tap.pcm.clear();
+        tap.maxFrames = std::min<size_t>(PcmRing::capacity, projectm_pcm_get_max_samples());
+        state->nativeCursor = tap.pcm.sequence;
         tap.consumers.fetch_add(1);
     }
 }
@@ -171,7 +174,7 @@ Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeRender(JNIEnv*
     if (state->audioSource) {
         auto& tap = nativeAudio[state->audioSource];
         std::unique_lock<std::mutex> lock(tap.mutex, std::try_to_lock);
-        if (lock.owns_lock()) pcmCount = tap.pcm.drainLatest(pcm.data(), maxSamples);
+        if (lock.owns_lock()) pcmCount = tap.pcm.readLatestSince(pcm.data(), maxSamples, state->nativeCursor);
     }
     if (!texturePath.empty()) {
         const char* paths[] = { texturePath.c_str() };
