@@ -105,6 +105,7 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
     }
 
     internal fun check(automatic: Boolean = false) {
+        if (BuildConfig.MODULE_PACKAGING != "full") return
         if (work?.isActive == true || mutable.value.preparingInstall) return
         val now = System.currentTimeMillis()
         if (automatic && !updateCheckDue(now, prefs.getLong("last_attempt", 0))) return
@@ -139,6 +140,7 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
     }
 
     private fun parseOffer(release: String, text: String): UpdateOffer? {
+        if (BuildConfig.MODULE_PACKAGING != "full") return null
         val json = JSONObject(release)
         require(!json.getBoolean("draft") && !json.getBoolean("prerelease"))
         val manifest = UpdateManifest.parse(text)
