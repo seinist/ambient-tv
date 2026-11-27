@@ -26,6 +26,7 @@ internal fun SystemModuleSettingsCard() {
 @Composable
 private fun ModuleDialog(dismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
+    val states by SystemModuleAvailability.states.collectAsState()
     val modules = remember { SystemModuleHost.supported.sortedBy { it.id } }
     var selected by remember { mutableStateOf(modules.first()) }
     var installed by remember { mutableStateOf<SystemModuleBuild?>(null) }
@@ -47,7 +48,7 @@ private fun ModuleDialog(dismiss: () -> Unit) {
         }
     }
 
-    fun action(block: (SystemModule) -> SystemModuleBuild?) {
+    fun action(block: (SystemModule) -> Boolean) {
         if (busy) return
         val module = selected
         busy = true
@@ -56,7 +57,7 @@ private fun ModuleDialog(dismiss: () -> Unit) {
             try {
                 val result = withContext(Dispatchers.IO) { block(module) }
                 installed = withContext(Dispatchers.IO) { SystemModuleHost.selected(module) }
-                notice = if (result == null) R.string.module_settings_no_candidate else R.string.module_settings_restart
+                notice = if (!result) R.string.module_settings_no_candidate else R.string.module_settings_restart
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -85,19 +86,29 @@ private fun ModuleDialog(dismiss: () -> Unit) {
         }
         Text(installed?.let { stringResource(R.string.module_settings_installed, it.version) }
             ?: stringResource(R.string.module_settings_no_override))
+        val status = states.getValue(selected)
+        val stateLabel = when (status.runtime) {
+            ModuleRuntimeState.MISSING -> R.string.module_state_missing
+            ModuleRuntimeState.BUNDLED_UNVERIFIED -> R.string.module_state_bundled
+            ModuleRuntimeState.EXTERNAL_UNVERIFIED -> R.string.module_state_external
+            ModuleRuntimeState.ACTIVE_BUNDLED -> R.string.module_state_active_bundled
+            ModuleRuntimeState.ACTIVE_EXTERNAL -> R.string.module_state_active_external
+            ModuleRuntimeState.FAILED -> R.string.module_state_failed
+        }
+        Text(stringResource(stateLabel), style = MaterialTheme.typography.bodyMedium)
+        if (status.restartRequired) Text(stringResource(R.string.module_settings_restart))
         if (!SystemModuleHost.downloadsEnabled) Text(stringResource(R.string.module_settings_no_key))
         notice?.let { Text(stringResource(it), style = MaterialTheme.typography.bodySmall) }
         TvActionButton(text = stringResource(R.string.module_settings_install),
             enabled = !busy && SystemModuleHost.downloadsEnabled, loading = busy,
-            onClick = { action(SystemModuleHost::installLatest) })
-        TvActionButton(text = stringResource(R.string.module_settings_rollback), enabled = !busy,
-            onClick = { action(SystemModuleHost::rollback) })
-        TvActionButton(text = stringResource(R.string.module_settings_remove), enabled = !busy && installed != null,
+            onClick = { action { SystemModuleHost.installLatest(it) != null } })
+        TvActionButton(text = stringResource(R.string.module_settings_rollback), enabled = !busy && SystemModuleHost.downloadsEnabled,
+            onClick = { action { SystemModuleHost.rollback(it) != null } })
+        TvActionButton(text = stringResource(R.string.module_settings_remove), enabled = !busy && SystemModuleHost.downloadsEnabled && (installed != null || status.runtime == ModuleRuntimeState.FAILED),
             onClick = {
                 action { module ->
-                    val old = installed
                     SystemModuleHost.remove(module)
-                    old
+                    true
                 }
             })
     })
