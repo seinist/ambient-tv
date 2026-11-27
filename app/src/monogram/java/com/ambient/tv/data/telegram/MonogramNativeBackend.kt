@@ -174,7 +174,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
      * (account change, logout, manual refresh, leaving a channel).
      */
     private val historyPages = LinkedHashMap<Pair<Long, Int>, HistoryPage>(64, 0.75f, true)
-    private val historyLocks = Array(32) { Any() }
+    private class HistoryFlight { var users = 0 }
+    private val historyFlights = HashMap<Pair<Long, Int>, HistoryFlight>()
     // Guarded by historyPages; never publish an RPC begun before an invalidation.
     private var historyRevision = 0L
     private var historyFloor = 0L
@@ -210,23 +211,37 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
 
     private fun historyPage(h: Long, chatId: Long, size: Int, offset: Int): List<MessageDto> {
         val key = chatId to offset
-        return synchronized(historyLocks[(key.hashCode() and Int.MAX_VALUE) % historyLocks.size]) {
-            val now = android.os.SystemClock.elapsedRealtime()
-            val revision = synchronized(historyPages) {
-                historyPages[key]?.takeIf { now - it.atMs < HISTORY_PAGE_TTL_MS &&
-                    (it.requested >= size || it.messages.size < it.requested) }
-                    ?.let { return it.messages.take(size) }
-                historyRevisionFor(chatId)
-            }
-            val requested = maxOf(size, HISTORY_SHARED_PAGE).coerceAtMost(100)
-            val fetched = native.getHistoryPage(h, chatId, requested, offset, 0, 0)
-            synchronized(historyPages) {
-                if (revision == historyRevisionFor(chatId) && chatId !in leftChannels) {
-                    historyPages[key] = HistoryPage(requested, fetched, android.os.SystemClock.elapsedRealtime())
-                    while (historyPages.size > HISTORY_PAGE_LIMIT) historyPages.remove(historyPages.keys.first())
+        val flight = synchronized(historyFlights) {
+            historyFlights.getOrPut(key) { HistoryFlight() }.also { it.users++ }
+        }
+        try {
+            synchronized(flight) {
+                repeat(2) {
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    val revision = synchronized(historyPages) {
+                        if (chatId in leftChannels) return emptyList()
+                        historyPages[key]?.takeIf { now - it.atMs < HISTORY_PAGE_TTL_MS &&
+                            (it.requested >= size || it.messages.size < it.requested) }
+                            ?.let { return it.messages.take(size) }
+                        historyRevisionFor(chatId)
+                    }
+                    val requested = maxOf(size, HISTORY_SHARED_PAGE).coerceAtMost(100)
+                    val fetched = native.getHistoryPage(h, chatId, requested, offset, 0, 0)
+                    synchronized(historyPages) {
+                        if (chatId in leftChannels) return emptyList()
+                        if (revision == historyRevisionFor(chatId)) {
+                            historyPages[key] = HistoryPage(requested, fetched, android.os.SystemClock.elapsedRealtime())
+                            while (historyPages.size > HISTORY_PAGE_LIMIT) historyPages.remove(historyPages.keys.first())
+                            return fetched.take(size)
+                        }
+                    }
                 }
+                throw java.io.IOException("Monogram history changed during request")
             }
-            fetched.take(size)
+        } finally {
+            synchronized(historyFlights) {
+                if (--flight.users == 0) historyFlights.remove(key)
+            }
         }
     }
 
@@ -298,7 +313,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         return batches.flatMap { it.events } + drained.liveEvents
     }
 
-    private fun applyUpdates(events: List<UpdateEventDto>) {
+    private suspend fun applyUpdates(events: List<UpdateEventDto>) {
         if (events.isEmpty()) return
         val touched = HashSet<Long>()
         var everything = false
@@ -361,7 +376,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 }
             }
         }
-        if (everything || changedMessages.isNotEmpty()) artworkChangedListener?.invoke()
+        if (everything || changedMessages.isNotEmpty()) {
+            contentChangedListener?.invoke(changedMessages, everything)
+            artworkChangedListener?.invoke()
+        }
         // Newer last-message dates for loaded dialogs. The catalog's last entry is the paging
         // offset for loadMoreChats and stays untouched.
         val lastIndex = chats.size - 1
@@ -375,6 +393,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         }
     }
 
+    @Volatile private var contentChangedListener: (suspend (Set<Pair<Long, Int>>, Boolean) -> Unit)? = null
+    override fun setContentChangedListener(listener: (suspend (Set<Pair<Long, Int>>, Boolean) -> Unit)?) {
+        contentChangedListener = listener
+    }
     @Volatile private var artworkChangedListener: (() -> Unit)? = null
     override fun setArtworkChangedListener(listener: (() -> Unit)?) { artworkChangedListener = listener }
 
