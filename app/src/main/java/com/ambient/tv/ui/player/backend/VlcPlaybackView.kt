@@ -700,8 +700,9 @@ class VlcPlaybackController(
                             pendingRestorePositionMs != null || lastPlaybackSeekable,
                         )
                         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                            if (released || player !== eventPlayer) return@postDelayed
-                            restartAfterStop(resumePosition, desiredPlayWhenReady)
+                            if (released || player !== eventPlayer || restartStopFailed || vulkanFallbackPosted ||
+                                restartStop != null || dvRetirementPending) return@postDelayed
+                            restartAfterStop(pendingRestorePositionMs ?: resumePosition, desiredPlayWhenReady)
                         }, 350L)
                     } else errorMessage = context.getString(com.ambient.tv.R.string.vlc_playback_error)
                 }
@@ -893,7 +894,7 @@ class VlcPlaybackController(
 
     fun attach(view: SurfaceView) {
         if (audioOnly && !audioVisualizationEnabled) return
-        if (released) return
+        if (released || restartStopFailed) return
         if (attachedView === view || pendingAttachView === view) return
         pendingAttachView = view
         if (restartStop != null) return
@@ -1075,7 +1076,9 @@ class VlcPlaybackController(
         pendingAttachView = null
         if (released) return
         val view = attachedView
-        if (view != null) detach(view) else player.setVideoTrackEnabled(false)
+        if (view != null) detach(view)
+        else if (!restartStopFailed && !vulkanFallbackPosted && restartStop == null && !dvRetirementPending)
+            player.setVideoTrackEnabled(false)
     }
 
     /** Coalesce reopens while a native stop is outstanding; never stop twice concurrently. */
@@ -1664,7 +1667,8 @@ class VlcPlaybackController(
     override fun requestedPlayIntent(): Boolean = !released && desiredPlayWhenReady && !ended
 
     /** Native playing flag for UI snapshots; false once released (the native player may be gone). */
-    fun isPlayingNow(): Boolean = !released && !restartStopFailed && restartStop == null && !dvRetirementPending && runCatching { player.isPlaying }.getOrDefault(false)
+    fun isPlayingNow(): Boolean = !released && !restartStopFailed && !vulkanFallbackPosted &&
+        restartStop == null && !dvRetirementPending && runCatching { player.isPlaying }.getOrDefault(false)
 
     /** A transcoded HTTP response may have no VLC seek index despite having a server start offset. */
     override fun canSeekNow(): Boolean = !released && prepared && !openingOrRestarting && player.isSeekable
@@ -1710,7 +1714,9 @@ class VlcPlaybackController(
                 refreshEffectiveOverrides(player.isSeekable)
         }
         checkVulkanOutput()
-        if (vulkanFallbackPosted)
+        // Effective-option refresh can itself initiate native stop before the
+        // watchdog runs. Never read the old player after either transition.
+        if (restartStopFailed || vulkanFallbackPosted || restartStop != null || dvRetirementPending)
             return PlaybackStatus(pendingRestorePositionMs ?: lastPlaybackTimeMs, restartDurationMs, false, false, errorMessage)
         return PlaybackStatus(confirmedPlaybackTimeMs().coerceAtLeast(0), player.length.coerceAtLeast(0), player.isPlaying && (!dvPrimeActive || desiredPlayWhenReady), ended, errorMessage)
     }
@@ -1718,7 +1724,7 @@ class VlcPlaybackController(
     fun seekBy(deltaMs: Long) {
         // Key handlers can still fire between Stop and the next recomposition; a released
         // libVLC MediaPlayer throws IllegalStateException on every native call.
-        if (released) return
+        if (released || restartStopFailed) return
         val restarting = vulkanFallbackPosted || restartStop != null || dvRetirementPending
         val length = (if (restarting) restartDurationMs else player.length).takeIf { it > 0L } ?: Long.MAX_VALUE
         val position = if (restarting) pendingRestorePositionMs ?: lastPlaybackTimeMs else confirmedPlaybackTimeMs()
@@ -1816,7 +1822,7 @@ class VlcPlaybackController(
             override fun run() {
                 pendingSeekTask = null
                 if (released || !prepared || restartStopFailed || vulkanFallbackPosted ||
-                    restartStop != null || errorMessage != null || pendingRestorePositionMs == null) return
+                    restartStop != null || dvRetirementPending || errorMessage != null || pendingRestorePositionMs == null) return
                 observePendingSeek()
                 if (pendingRestorePositionMs == null) return
                 if (seekState.expired(android.os.SystemClock.elapsedRealtime())) {
