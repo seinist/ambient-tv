@@ -63,7 +63,7 @@ static bool SvpAv1ConfigSDR8(const es_format_t *fmt, SvpAv1Config *config)
 static int SvpAv1_OnNewBlock(decoder_t *p_dec, block_t **pp_block)
 {
     SvpAv1Config config;
-    if (!SvpAv1ConfigSDR8(p_dec->fmt_in, &config) ||
+    if (!svp_av1_config(p_dec->fmt_in->p_extra, p_dec->fmt_in->i_extra, &config) ||
         !svp_av1_same_sequence(&config, (*pp_block)->p_buffer, (*pp_block)->i_buffer))
         return VLC_EGENERIC; /* changed sequence: normal decoder fallback */
     return Video_OnNewBlock(p_dec, pp_block);
