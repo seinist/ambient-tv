@@ -631,6 +631,13 @@ static void test_multiple_timed_intermediates(void)
                     assert(r->ambient_fel_discontinuity==(i==0));
                     assert(MP4_FEL_RunContains(&sys,r,offset,4));
                     assert(!MP4_FEL_RunContains(&sys,r,108,4));
+                    // Legacy nonseekable OverflowCheck uses the BL end.
+                    // Independent runs must use their own extent instead.
+                    sys.b_fragmented=true;
+                    sys.context.i_post_mdat_offset=112;
+                    assert(MP4_FEL_CheckedRunSize(&d,&tracks[2],r,offset,4)==4);
+                    assert(MP4_FEL_CheckedRunSize(&d,&tracks[2],r,offset,5)==0);
+                    assert(MP4_FEL_CheckedRunSize(&d,&tracks[2],r,108,4)==0);
                     if(mode)assert(MP4_FEL_SeekExact(d.s,offset));
                     block_t *audio=MP4_FEL_ReadRun(&d,r,offset,4);
                     assert(audio&&audio->i_buffer==4&&audio->p_buffer[0]==i+1);
@@ -745,6 +752,10 @@ static void test_mixed_terminal(void)
                 mp4_run_t *r=&track[2].context.runs.p_array[0];
                 assert(r->ambient_fel_source==1&&r->ambient_fel_duration==1024);
                 assert(r->i_offset==164&&r->i_first_dts==48000);
+                sys.b_fragmented=true;
+                sys.context.i_post_mdat_offset=112;
+                assert(MP4_FEL_CheckedRunSize(&d,&track[2],r,164,4)==4);
+                assert(MP4_FEL_CheckedRunSize(&d,&track[2],r,168,4)==0);
                 if(mode)assert(MP4_FEL_SeekExact(d.s,164));
                 block_t *audio=MP4_FEL_ReadRun(&d,r,164,4);
                 assert(audio&&!memcmp(audio->p_buffer,"AUD1",4));
