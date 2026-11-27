@@ -2,13 +2,23 @@
 //! wgpu owns feature negotiation and Vulkan synchronization (no render surface).
 use std::{borrow::Cow, collections::BTreeMap, sync::mpsc, time::Duration};
 use svpflow_core::smooth_engine::{GpuJob, GpuParams};
-use wgpu::util::DeviceExt;
 
 struct Source {
     packed: wgpu::Texture,
     linear: Option<wgpu::Texture>,
     linear_valid: bool,
 }
+struct FieldCache {
+    texture: wgpu::Texture,
+    grid: (u32, u32),
+    values: Vec<u16>,
+}
+struct MaskCache {
+    texture: wgpu::Texture,
+    grid: (u32, u32),
+    values: Option<Vec<u8>>,
+}
+
 pub struct Gpu {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -21,6 +31,10 @@ pub struct Gpu {
     sources: BTreeMap<i32, Source>,
     recycled_sources: Vec<Source>,
     empty_prepass: wgpu::BindGroup,
+    base_field: Option<FieldCache>,
+    ext_field: Option<FieldCache>,
+    mask: Option<MaskCache>,
+    uniforms: [wgpu::Buffer; 3],
     output: wgpu::Buffer,
     readback: wgpu::Buffer,
     width: u32,
@@ -148,6 +162,12 @@ impl Gpu {
         if let Some(e) = pollster::block_on(device.pop_error_scope()) {
             return Err(e.to_string());
         }
+        let uniforms = std::array::from_fn(|_| device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("SVP plane parameters"),
+            size: 96,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
         Ok(Self {
             device,
             queue,
@@ -160,6 +180,10 @@ impl Gpu {
             sources: BTreeMap::new(),
             recycled_sources: Vec::new(),
             empty_prepass,
+            base_field: None,
+            ext_field: None,
+            mask: None,
+            uniforms,
             output,
             readback,
             width,
@@ -287,16 +311,26 @@ impl Gpu {
         source.linear_valid = true;
     }
 
-    fn field(&self, encoder: &mut wgpu::CommandEncoder, data: &[u16], w: u32, h: u32) -> wgpu::Texture {
-        let texture = self.texture(w, h, wgpu::TextureFormat::Rgba32Float, false);
+    fn field(&self, encoder: &mut wgpu::CommandEncoder, cache: &mut Option<FieldCache>,
+             data: &[u16], w: u32, h: u32) {
+        if cache.as_ref().is_some_and(|c| c.grid == (w, h) && c.values.as_slice() == data) {
+            return;
+        }
+        let mut field = cache.take().filter(|c| c.grid == (w, h)).unwrap_or_else(|| FieldCache {
+            texture: self.texture(w, h, wgpu::TextureFormat::Rgba32Float, false),
+            grid: (w, h),
+            values: Vec::new(),
+        });
         let row_values = w as usize * 4;
-        self.upload_rows(encoder, &texture, w, h, w * 16, |row, dst| {
+        self.upload_rows(encoder, &field.texture, w, h, w * 16, |row, dst| {
             for (out, value) in dst.chunks_exact_mut(4)
                 .zip(&data[row * row_values..(row + 1) * row_values]) {
                 out.copy_from_slice(&(*value as f32).to_le_bytes());
             }
         });
-        texture
+        field.values.clear();
+        field.values.extend_from_slice(data);
+        *cache = Some(field);
     }
 
     pub fn render(
@@ -316,23 +350,50 @@ impl Gpu {
         self.source(job.n, current, job.linear, &mut encoder);
         self.source(job.n + 1, next, job.linear, &mut encoder);
         let (w, h) = (job.grid.0 as u32, job.grid.1 as u32);
-        let base = self.field(&mut encoder, &job.base, w, h);
-        let ext = job.ext.as_ref().map(|data| self.field(&mut encoder, data, w, h));
-        let mask = self.texture(w, h, wgpu::TextureFormat::Rgba8Unorm, false);
-        let stride = w as usize * 4;
-        self.upload_rows(&mut encoder, &mask, w, h, w * 4, |row, dst| {
-            if let Some(data) = job.mask.as_deref() {
-                dst.copy_from_slice(&data[row * stride..(row + 1) * stride]);
-            } else {
-                dst.fill(0);
+        // Cache by the actual contents, not merely the frame pair: SAD masks
+        // and coverage fields can change with fractional phase.
+        let mut base = self.base_field.take();
+        self.field(&mut encoder, &mut base, &job.base, w, h);
+        self.base_field = base;
+        if let Some(data) = job.ext.as_deref() {
+            let mut ext = self.ext_field.take();
+            self.field(&mut encoder, &mut ext, data, w, h);
+            self.ext_field = ext;
+        }
+        let mask_data = job.mask.as_deref();
+        if !self.mask.as_ref().is_some_and(|m| m.grid == (w, h) && m.values.as_deref() == mask_data) {
+            let mut mask = self.mask.take().filter(|m| m.grid == (w, h)).unwrap_or_else(|| MaskCache {
+                texture: self.texture(w, h, wgpu::TextureFormat::Rgba8Unorm, false),
+                grid: (w, h),
+                values: None,
+            });
+            let stride = w as usize * 4;
+            self.upload_rows(&mut encoder, &mask.texture, w, h, w * 4, |row, dst| {
+                if let Some(data) = mask_data {
+                    dst.copy_from_slice(&data[row * stride..(row + 1) * stride]);
+                } else {
+                    dst.fill(0);
+                }
+            });
+            match mask_data {
+                Some(data) => {
+                    let values = mask.values.get_or_insert_with(Vec::new);
+                    values.clear();
+                    values.extend_from_slice(data);
+                }
+                None => mask.values = None,
             }
-        });
+            self.mask = Some(mask);
+        }
+        let base = &self.base_field.as_ref().unwrap().texture;
+        let ext = if job.ext.is_some() {
+            &self.ext_field.as_ref().unwrap().texture
+        } else {
+            base
+        };
         let base_view = base.create_view(&Default::default());
-        let ext_view = ext
-            .as_ref()
-            .unwrap_or(&base)
-            .create_view(&Default::default());
-        let mask_view = mask.create_view(&Default::default());
+        let ext_view = ext.create_view(&Default::default());
+        let mask_view = self.mask.as_ref().unwrap().texture.create_view(&Default::default());
         encoder.clear_buffer(&self.output, 0, None);
         for (plane, p) in job.params.iter().enumerate() {
             let key = [
@@ -374,13 +435,8 @@ impl Gpu {
             let luma = self.width * self.height;
             let start = [0, luma, luma * 5 / 4][plane];
             let (stride_words, groups_x, groups_y) = dispatch_geometry(start, p.width as u32, p.height as u32);
-            let params = self
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: None,
-                    contents: &params_bytes(p, start, stride_words),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
+            let params = &self.uniforms[plane];
+            self.queue.write_buffer(params, 0, &params_bytes(p, start, stride_words));
             let view = |n| {
                 let source = &self.sources[&n];
                 if plane == 0 && job.linear {
@@ -489,34 +545,20 @@ fn texture_binding(binding: u32, view: &wgpu::TextureView) -> wgpu::BindGroupEnt
         resource: wgpu::BindingResource::TextureView(view),
     }
 }
-fn params_bytes(p: &GpuParams, base: u32, stride: u32) -> Vec<u8> {
-    let mut data: Vec<u8> = [
-        p.algorithm,
-        p.width,
-        p.height,
-        p.x_ratio,
-        p.y_ratio,
-        p.pel,
-        p.block_w,
-        p.block_h,
-        p.origin_x,
-        p.origin_y,
-        p.phase,
-        p.has_sad,
-        p.linear_luma,
-        p.cubic,
-        p.cubic_ref,
-        p.offset_x,
-        p.offset_y,
-    ]
-    .iter()
-    .flat_map(|v| v.to_le_bytes())
-    .collect();
-    data.extend(p.sad_blend.to_le_bytes());
-    data.extend(p.dither.to_le_bytes());
-    data.extend(base.to_le_bytes());
-    data.extend(stride.to_le_bytes());
-    data.resize(96, 0);
+fn params_bytes(p: &GpuParams, base: u32, stride: u32) -> [u8; 96] {
+    let mut data = [0u8; 96];
+    let ints = [
+        p.algorithm, p.width, p.height, p.x_ratio, p.y_ratio, p.pel,
+        p.block_w, p.block_h, p.origin_x, p.origin_y, p.phase, p.has_sad,
+        p.linear_luma, p.cubic, p.cubic_ref, p.offset_x, p.offset_y,
+    ];
+    for (dst, v) in data.chunks_exact_mut(4).zip(ints) {
+        dst.copy_from_slice(&v.to_le_bytes());
+    }
+    data[68..72].copy_from_slice(&p.sad_blend.to_le_bytes());
+    data[72..76].copy_from_slice(&p.dither.to_le_bytes());
+    data[76..80].copy_from_slice(&base.to_le_bytes());
+    data[80..84].copy_from_slice(&stride.to_le_bytes());
     data
 }
 
