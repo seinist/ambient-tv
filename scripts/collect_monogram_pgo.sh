@@ -15,7 +15,7 @@ adb exec-out run-as "$app" cat files/monogram-pgo.stamp > "$scratch/device.stamp
 cmp -s "$stamp" "$scratch/device.stamp" ||
     { echo "Installed training APK does not match the local native AAR stamp" >&2; exit 1; }
 adb exec-out run-as "$app" cat files/monogram-pgo.profraw > "$scratch/device.profraw"
-[[ -s "$scratch/device.profraw" ]] || { echo "No profile; exercise at least 16 native media windows first" >&2; exit 1; }
+[[ -s "$scratch/device.profraw" ]] || { echo "No profile; exercise at least 16 native media transfers (playback windows or image downloads) first" >&2; exit 1; }
 rustup component add llvm-tools-preview
 sysroot="$(rustc --print sysroot)"
 host="$(rustc -vV | sed -n 's/^host: //p')"

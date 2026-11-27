@@ -95,6 +95,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         chunkIndexGeneration = -1L
         inlinePreviewIndex.clear()
         sharpPreviewIndex.clear()
+        photoIndex.clear()
         inlineMemo.clear()
         displayAliases.clear()
         runCatching { uniffi.monogram_mtproto.ambientClearPreviewIndex() }
@@ -107,6 +108,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     }
     private val sharpPreviewIndex = PreviewFileIndex(File(cache, "previews"), 500, 64L * 1024 * 1024) {
         it.name.endsWith(".img") && !it.name.startsWith("pending-")
+    }
+    // Full photographs are much larger than thumbnails; independent storage budget.
+    private val photoIndex = PreviewFileIndex(File(cache, "photos"), 24, 128L * 1024 * 1024) {
+        it.name.endsWith(".media") && !it.name.startsWith("pending-")
     }
     private data class InlineMemo(val revision: Long, val atMs: Long, val file: File)
     private val inlineMemo = LinkedHashMap<Pair<Long, Int>, InlineMemo>(128, .75f, true)
@@ -341,6 +346,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 inlineMemo.entries.removeAll { everything || it.key in changedMessages }
                 inlinePreviewIndex.removeMatching(::affected)
                 sharpPreviewIndex.removeMatching(::affected)
+                photoIndex.removeMatching(::affected)
                 displayAliases.entries.removeAll { affected(it.value) }
                 val entries = chunkIndex.entries.iterator()
                 while (entries.hasNext()) {
@@ -1195,28 +1201,46 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     }
 
     // The full photo for the viewer: the adapter's downloadMessageDisplay is the full download.
-    override suspend fun photoFile(chatId: Long, messageId: Int): String? = nativeCall { h ->
-        requireAuthorized(h)
-        check(chatId !in leftChannels) { app.getString(R.string.monogram_error_channel_left) }
-        val dir = File(cache, "photos").apply { mkdirs() }.canonicalFile
-        val output = File(dir, "$chatId-$messageId.media")
-        if (output.isFile && output.length() > 0L) return@nativeCall output.toURI().toString()
-        val generation = cacheGeneration
-        val identity = accountId
-        val revision = mediaRevision(chatId, messageId)
-        val stage = File(dir, "pending-${java.util.UUID.randomUUID()}.media")
-        try {
-            val actual = File(mediaClass(DISPATCH_USER) { native.downloadMessageDisplay(h, chatId, messageId, stage.path) })
-                .canonicalFile
-            require(actual == stage.canonicalFile && actual.length() > 0L) { "Monogram full-resolution photo unavailable" }
-            synchronized(diskChunkLock) {
-                check(generation == cacheGeneration && identity != null && identity == accountId && chatId !in leftChannels &&
-                    revision == mediaRevision(chatId, messageId))
-                check(actual.renameTo(output)) { "Monogram photo publication failed" }
+    override suspend fun photoFile(chatId: Long, messageId: Int): String? =
+        cachedPhotoFile(chatId, messageId) ?: cancellableMediaRequest(TelegramTransferPriority(true)) { request ->
+            nativeCall { h ->
+                requireAuthorized(h)
+                check(chatId !in leftChannels) { app.getString(R.string.monogram_error_channel_left) }
+                val dir = File(cache, "photos").apply { mkdirs() }.canonicalFile
+                val output = File(dir, "$chatId-$messageId.media")
+                val generation = cacheGeneration
+                val identity = accountId
+                val revision = mediaRevision(chatId, messageId)
+                fun valid() = generation == cacheGeneration && identity != null && identity == accountId &&
+                    chatId !in leftChannels && revision == mediaRevision(chatId, messageId)
+                synchronized(diskChunkLock) {
+                    if (!valid()) return@nativeCall null
+                    if (photoIndex.hit(output)) return@nativeCall output.toURI().toString()
+                }
+                val stage = File(dir, "pending-${java.util.UUID.randomUUID()}.media")
+                val previous = uniffi.monogram_mtproto.bindRequestControl(request)
+                try {
+                    val actual = File(mediaClass(DISPATCH_USER) { native.downloadMessageDisplay(h, chatId, messageId, stage.path) })
+                        .canonicalFile
+                    require(actual == stage.canonicalFile && actual.length() in 1L..128L * 1024 * 1024) {
+                        "Monogram full-resolution photo unavailable or exceeds cache budget"
+                    }
+                    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    android.graphics.BitmapFactory.decodeFile(actual.path, bounds)
+                    require(bounds.outWidth > 0 && bounds.outHeight > 0) { "Monogram photo is not a valid image" }
+                    synchronized(diskChunkLock) {
+                        check(valid())
+                        check(actual.renameTo(output)) { "Monogram photo publication failed" }
+                        photoIndex.publish(output)
+                    }
+                    recordNativeWindow()
+                    output.toURI().toString()
+                } finally {
+                    uniffi.monogram_mtproto.bindRequestControl(previous)
+                    stage.delete()
+                }
             }
-            output.toURI().toString()
-        } finally { stage.delete() }
-    }
+        }
 
     override suspend fun cachedPhotoFile(chatId: Long, messageId: Int): String? {
         val generation = cacheGeneration
@@ -1225,7 +1249,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         val file = File(File(cache, "photos"), "$chatId-$messageId.media")
         return synchronized(diskChunkLock) {
             if (generation == cacheGeneration && identity == accountId && chatId !in leftChannels &&
-                revision == mediaRevision(chatId, messageId) && file.isFile && file.length() > 0L)
+                revision == mediaRevision(chatId, messageId) && photoIndex.hit(file))
                 file.toURI().toString() else null
         }
     }
@@ -1372,6 +1396,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 while (displayAliases.size > 256) displayAliases.remove(displayAliases.keys.first())
             }
         }
+        recordNativeWindow()
         output.toURI().toString()
         } finally {
             uniffi.monogram_mtproto.bindRequestControl(previous)

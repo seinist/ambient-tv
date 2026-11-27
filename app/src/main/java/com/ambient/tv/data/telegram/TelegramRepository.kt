@@ -744,15 +744,41 @@ class TelegramRepository @Inject constructor(
         flood?.let { throw it }
         return null
     }
+    private val photoPermits = kotlinx.coroutines.sync.Semaphore(2)
+
     suspend fun photoFile(chatId: Long, messageId: Int): String? {
         val selected = client ?: return null
         check(chatId !in blockedChannels) { appContext.getString(R.string.monogram_error_channel_left) }
         val generation = streamEpoch.get()
         val identity = selected.cacheIdentity
         val revision = selected.mediaRevision(chatId, messageId)
-        val result = selected.photoFile(chatId, messageId)
-        return result.takeIf { sameAccount(selected, identity, generation) &&
-            chatId !in blockedChannels && selected.mediaRevision(chatId, messageId) == revision }
+        fun valid() = sameAccount(selected, identity, generation) && chatId !in blockedChannels &&
+            selected.mediaRevision(chatId, messageId) == revision
+        if (!valid()) return null
+        val key = "$generation:photo:$chatId:$messageId:$revision"
+        // The same lifetime/refcount machinery as sharp cards; independent photo admission.
+        val load = synchronized(thumbnailLoads) {
+            thumbnailLoads[key]?.takeUnless { it.deferred.isCancelled }?.also { it.waiters++ }
+                ?: ThumbnailLoad(scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                    if (!valid()) null else {
+                        selected.cachedPhotoFile(chatId, messageId)?.takeIf { valid() }
+                            ?: photoPermits.withPermit {
+                                if (!valid()) null else selected.photoFile(chatId, messageId).takeIf { valid() }
+                            }
+                    }
+                }, 1, TelegramTransferPriority(true)).also { thumbnailLoads[key] = it }
+        }
+        try {
+            return load.deferred.await().takeIf { valid() }
+        } finally {
+            val cancel = synchronized(thumbnailLoads) {
+                if (--load.waiters == 0) {
+                    if (thumbnailLoads[key] === load) thumbnailLoads.remove(key)
+                    !load.deferred.isCompleted
+                } else false
+            }
+            if (cancel) load.deferred.cancel()
+        }
     }
     /** Monotonic end of a FLOOD_WAIT: until then, search answers without contacting Telegram. */
     @Volatile private var searchBlockedUntilMs = 0L

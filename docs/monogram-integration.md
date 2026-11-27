@@ -354,3 +354,5 @@ Full-file media batches retain at most one initial window plus four bounded refi
 - Speculative thumbnail transfers are constrained on metered/slow links. Native full-file pipeline width is reevaluated at most every five seconds from Android's bandwidth hint, metered and low-RAM flags (1/2/4 parts); the four demand lanes and existing FLOOD_WAIT backoff remain independent. Hints are not measured throughput. Single-block playback and preview ranges remain single-part.
 - A validated, substantial incoming frame may reserve capacity once, up to 2 MiB, avoiding repeated vector growth while retaining the existing decoder and framing limits.
 - These are bounded optimizations, not measured speedup claims. PGO profile-use and architecture-specific changes still require representative device traces and release size checks.
+
+- Full-photo requests share one account/revision-scoped transfer with reference-counted cancellation, independent two-request admission and a separate 24-file / 128 MiB cache. Photo and sharp-preview transfers also contribute to opt-in PGO flush cadence, so an artwork-only training session can produce profiles.
