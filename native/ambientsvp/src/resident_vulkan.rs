@@ -178,37 +178,106 @@ fn quality_spirv(mode:u32,t:ResidentTuning,entry:&str)->Result<Vec<u32>>{
     spirv(&source,"@group(0) @binding(7) var<uniform> geometry:vec4u;",entry)
 }
 fn tuned_synthesis(source:&str,t:ResidentTuning)->Result<String>{
-    let old="let grid=(visible+vec2u(15))/16u;\n    let index=id.x/16u+id.y/16u*grid.x;\n    let f=fields[index];\n    let r=fields[index+grid.x*grid.y];";
-    if source.matches(old).count()!=1{return Err("tuned synthesis geometry anchor".into());}
-    let mut s=source.replace(old,&format!("let grid=(visible+vec2u({}u))/{}u;\n    let f=motion_at(id.xy,grid,false);\n    let r=motion_at(id.xy,grid,true);",t.step()-1,t.step()));
+    let entry=source.find("@compute @workgroup_size(8,8)").ok_or("tuned synthesis entry")?;
+    let threshold=match t.artifacts{1=>64,2=>48,3=>32,_=>48};
+    let mismatch=match t.artifacts{1=>8,2=>6,3=>4,_=>6};
     let helper=format!(r#"
+struct BlendGrid {{ indices:vec4u, weights:vec4f }}
+struct Warp {{ ap:vec2f, bp:vec2f, blend:f32 }}
 fn decode_mv(v:vec4i)->vec4f{{
     return vec4f(vec2f(v.xy)/f32(max(v.w,1)),f32(v.z),1.0);
 }}
-fn motion_at(p:vec2u,grid:vec2u,reverse:bool)->vec4f{{
+fn overlap_grid(p:vec2u,grid:vec2u)->BlendGrid{{
     let cell=min(p/{step}u,grid-vec2u(1));
-    let base=select(0u,grid.x*grid.y,reverse);
-    let at=cell.x+cell.y*grid.x+base;
-    let current=decode_mv(fields[at]);
-    if {overlap}u==0u{{return current;}}
     let prev=cell-min(cell,vec2u(1));
     let frac=clamp((vec2f(p-cell*{step}u)+vec2f(0.5))/f32(max({overlap}u,1u)),vec2f(0),vec2f(1));
-    let w=select(frac,vec2f(1),cell==vec2u(0));
-    let top=decode_mv(fields[cell.x+prev.y*grid.x+base]);
-    let left=decode_mv(fields[prev.x+cell.y*grid.x+base]);
-    let diag=decode_mv(fields[prev.x+prev.y*grid.x+base]);
-    return mix(mix(diag,top,w.x),mix(left,current,w.x),w.y);
+    let rise=0.5-0.5*cos(3.141592653589793*frac);
+    let w=select(rise,vec2f(1),cell==vec2u(0));
+    let x=select(w.x,1.0,{overlap}u==0u);
+    let y=select(w.y,1.0,{overlap}u==0u);
+    return BlendGrid(vec4u(prev.x+prev.y*grid.x,cell.x+prev.y*grid.x,
+        prev.x+cell.y*grid.x,cell.x+cell.y*grid.x),
+        vec4f((1.0-x)*(1.0-y),x*(1.0-y),(1.0-x)*y,x*y));
 }}
-"#,step=t.step(),overlap=t.overlap);
-    s=s.replacen("@compute",&format!("{helper}\n@compute"),1);
-    // Explicit global cut gate and artifact policy. Per-block confidence
-    // remains continuous through overlap regions.
-    let threshold=match t.artifacts{1=>64,2=>48,3=>32,_=>48};
-    let mismatch=match t.artifacts{1=>8,2=>6,3=>4,_=>6};
-    s=s.replace("f.z>64*48||r.z>64*48",&format!("fields[2u*grid.x*grid.y].x!=0||f.z>64*{threshold}||r.z>64*{threshold}"))
-        .replace("mismatch>6", &format!("mismatch>{mismatch}"))
-        .replace("abs(f.x+r.x)+abs(f.y+r.y)>6",&format!("abs(f.x+r.x)+abs(f.y+r.y)>{mismatch}"));
-    Ok(s)
+fn warp_block(p:vec2f,grid:vec2u,index:u32,phase:f32)->Warp{{
+    let n=grid.x*grid.y;
+    let f=decode_mv(fields[index]);let r=decode_mv(fields[index+n]);
+    if phase==0.0||phase==1.0{{return Warp(p,p,phase);}}
+    if fields[2u*n].x!=0||f.z>64*{threshold}||r.z>64*{threshold}||
+        abs(f.x+r.x)+abs(f.y+r.y)>{mismatch}{{
+        return Warp(p,p,select(0.0,1.0,phase>=0.5));
+    }}
+    return Warp(p-f.xy*phase,p-r.xy*(1.0-phase),phase);
+}}
+"#,step=t.step(),overlap=t.overlap,threshold=threshold,mismatch=mismatch);
+    let mut result=source[..entry].to_owned();
+    result.push_str(&helper);
+    if source.contains("var dy:texture_storage"){
+        result.push_str(r#"
+@compute @workgroup_size(8,8)
+fn synthesize(@builtin(global_invocation_id) id:vec3u){
+    let visible=vec2u(params.w&65535u,params.w>>16u);
+    if any(id.xy>=visible)||any(id.xy>=textureDimensions(dy)){return;}
+    let grid=(visible+vec2u(SVP_STEP-1u))/SVP_STEP;
+    let phase=bitcast<f32>(params.x);
+    let blocks=overlap_grid(id.xy,grid);
+    let p=vec2f(id.xy);
+    var y=vec4f(0);var u=vec4f(0);var v=vec4f(0);
+    let chroma=all((id.xy&vec2u(1))==vec2u(0));
+    for(var i=0u;i<4u;i++){
+        let weight=blocks.weights[i];
+        if weight<=0.0{continue;}
+        let m=warp_block(p,grid,blocks.indices[i],phase);
+        y+=weight*sample_pair(ay,by,m.ap,m.bp,m.blend,visible);
+        if chroma{
+            u+=weight*sample_pair(au,bu,m.ap*0.5,m.bp*0.5,m.blend,visible/2u);
+            SVP_V
+        }
+    }
+    textureStore(dy,vec2i(id.xy),pack10(y));
+    if chroma{
+        let cp=vec2i(id.xy/2u);
+        textureStore(du,cp,pack10(u));
+        SVP_STORE_V
+    }
+}
+"#);
+        result=result.replace("SVP_STORE_V",if source.contains("var dv:texture_storage"){"textureStore(dv,cp,pack10(v));"}else{""})
+            .replace("SVP_V",if source.contains("var dv:texture_storage"){"v+=weight*sample_pair(av,bv,m.ap*0.5,m.bp*0.5,m.blend,visible/2u);"}else{""});
+    }else{
+        result.push_str(r#"
+fn sample_warp(m:Warp,visible:vec2u)->vec3f{
+    if (params.y&64u)!=0u{
+        if m.blend==0.0{return bilinear(ay,m.ap,visible).rgb;}
+        if m.blend==1.0{return bilinear(by,m.bp,visible).rgb;}
+        return mix(bilinear(ay,m.ap,visible).rgb,bilinear(by,m.bp,visible).rgb,m.blend);
+    }
+    if m.blend==0.0{return yuv(ay,au,av,m.ap,(params.y&1u)!=0u,(params.y>>2u)&3u,visible);}
+    if m.blend==1.0{return yuv(by,bu,bv,m.bp,(params.y&2u)!=0u,(params.y>>4u)&3u,visible);}
+    return mix(yuv(ay,au,av,m.ap,(params.y&1u)!=0u,(params.y>>2u)&3u,visible),
+        yuv(by,bu,bv,m.bp,(params.y&2u)!=0u,(params.y>>4u)&3u,visible),m.blend);
+}
+@compute @workgroup_size(8,8)
+fn synthesize(@builtin(global_invocation_id) id:vec3u){
+    let visible=vec2u(params.w&65535u,params.w>>16u);
+    if any(id.xy>=visible)||any(id.xy>=textureDimensions(dst)){return;}
+    let grid=(visible+vec2u(SVP_STEP-1u))/SVP_STEP;
+    let phase=bitcast<f32>(params.x);
+    let blocks=overlap_grid(id.xy,grid);
+    var pixel=vec3f(0);
+    for(var i=0u;i<4u;i++){
+        let weight=blocks.weights[i];
+        if weight<=0.0{continue;}
+        pixel+=weight*sample_warp(warp_block(vec2f(id.xy),grid,blocks.indices[i],phase),visible);
+    }
+    // Sum overlapped warped YUV blocks before the one RGB conversion.
+    // Imported RGB inputs never repeat the matrix conversion.
+    if (params.y&64u)==0u{pixel=rgb(pixel);}
+    textureStore(dst,vec2i(id.xy),vec4f(pixel,1.0));
+}
+"#);
+    }
+    Ok(result.replace("SVP_STEP",&format!("{}u",t.step())))
 }
 fn raw_planes(mode:u32)->usize{match mode{4=>2,5=>3,_=>1}}
 struct Pipeline{
