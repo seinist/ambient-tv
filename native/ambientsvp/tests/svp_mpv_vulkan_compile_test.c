@@ -34,6 +34,7 @@ struct mp_image {
     } params;
 };
 void mp_image_unrefp(struct mp_image **);
+struct mp_image *mp_image_new_ref(struct mp_image *);
 AVFrame *mp_image_to_av_frame(struct mp_image *);
 struct mp_image *mp_image_from_av_frame(AVFrame *);
 void mp_image_set_size(struct mp_image *,int,int);
