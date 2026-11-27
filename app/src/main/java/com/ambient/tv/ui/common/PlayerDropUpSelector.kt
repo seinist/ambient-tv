@@ -492,7 +492,10 @@ private fun SelectorListPopup(
                             PlayerDropUpOptionRow(index, key, text, selectedKeys, disabledKeys,
                                 optionKeys, optionFocus, true, sections.isNotEmpty(),
                                 optionSwatches[key].orEmpty(), closeOnSelection, close, onSelected,
-                                moveFocus = { target ->
+                                moveFocus = move@{ target ->
+                                    // Already composed options can receive focus immediately.
+                                    // Only offscreen targets need a layout/scroll coroutine.
+                                    if (runCatching { optionFocus[target].requestFocus() }.getOrDefault(false)) return@move
                                     scope.launch {
                                         val targetRow = rowIndices[target]
                                         val info = scroll.layoutInfo
