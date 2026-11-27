@@ -379,3 +379,13 @@ Stable main pushes and explicit release dispatches compare each recipe/ABI finge
 Release jobs for a given profile are serialized; a stale queued or retried workflow checks the current main recipe before packaging and again before making its draft visible. A new attempt gets a unique tag. All asset names must match the staged files before publication. Both planner and app now use signed manifests (not an unsigned asset listing) to establish whether a core was omitted from a partial experimental release; a missing latest asset schedules a rebuild or fails the download rather than silently selecting an older binary. App archive size is enforced against the signed manifest as well as SHA-256. Pagination uses smaller metadata pages and explicitly fails on the bounded history limit rather than silently downgrading. Regression fixtures cover missing latest assets and unchanged release metadata. Final CI and real signed release execution remain gates.
 
 Full previous core matrix 45889998163: 66 of 67 builds passed, Snes9x2010 threaded failed at recipe validation before compilation. The pinned Android.mk uses four spaces in LOCAL_CFLAGS, not three. Match the complete assignment with whitespace-tolerant anchoring and require exactly one occurrence; update the regression fixture to the actual pin. New build validation remains required.
+
+## Consolidated public experimental channels
+
+New signed releases use only `optimized` (O3 + ThinLTO + reviewed per-core hotpaths, ARM64 PicoDrive SH2 and optional Snes9x2010 threaded renderer) and `optimized-a57` (same plus ARM64 Cortex-A57 scheduling). Single experiments remain artifact-only diagnostics. Existing stable tags, signatures and assets are unchanged; legacy experimental selections map to the corresponding new channel, whose saves and binaries stay isolated. No legacy states are copied automatically. The complete combined matrix is a PR build gate; physical runtime acceptance remains required.
+
+    ./build.sh cores --profile optimized --publish-experimental
+    ./build.sh cores --profile optimized-a57 --publish-experimental
+    ./build.sh cores-rename-releases --apply
+
+Release display names are Ambient TV cores and Ambient TV Experimental cores. The profile, date and run remain in the release tag and notes. A main-only workflow job normalizes the existing release names; it does not change tags or assets.

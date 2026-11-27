@@ -223,7 +223,7 @@
     <string name="games_ra_hardcore_hint">Double points; the game starts fresh instead of continuing, and loading states, rewind and cheats are off.</string>
     <string name="games_core_source">Core source</string>
     <string name="games_core_source_auto">Own signed build, otherwise the libretro build server</string>
-    <string name="games_core_source_ambient">Own signed build only (pinned versions, 16 KB checked)</string>
+    <string name="games_core_source_ambient">Ambient TV – Standard (signed, 16 KB verified)</string>
     <string name="games_core_source_buildbot">libretro build server only (current nightly)</string>
     <string name="games_core_source_unavailable">not set up in this build</string>
     <string name="games_core_from_ambient">Own build %1$s · %2$s</string>

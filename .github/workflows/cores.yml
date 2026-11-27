@@ -79,6 +79,19 @@ env:
   NDK_VERSION: "30.0.16248370"
 
 jobs:
+  rename-releases:
+    # Normalize existing display titles on main only, without modifying signed assets or tags.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Normalize existing core release titles
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash build.sh cores-rename-releases --apply
+
   plan:
     runs-on: ubuntu-latest
     outputs:

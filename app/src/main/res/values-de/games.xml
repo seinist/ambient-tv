@@ -223,7 +223,7 @@
     <string name="games_ra_hardcore_hint">Doppelte Punkte; das Spiel startet neu statt fortzusetzen, Laden von Spielständen, Zurückspulen und Cheats sind aus.</string>
     <string name="games_core_source">Quelle für Cores</string>
     <string name="games_core_source_auto">Eigener signierter Build, sonst libretro-Buildserver</string>
-    <string name="games_core_source_ambient">Nur eigener signierter Build (feste Versionen, 16-KB-geprüft)</string>
+    <string name="games_core_source_ambient">Ambient TV – Standard (signiert, 16-KB-geprüft)</string>
     <string name="games_core_source_buildbot">Nur libretro-Buildserver (aktuelle Nightly)</string>
     <string name="games_core_source_unavailable">in diesem Build nicht eingerichtet</string>
     <string name="games_core_from_ambient">Eigener Build %1$s · %2$s</string>
