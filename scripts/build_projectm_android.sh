@@ -27,10 +27,16 @@ PROJECTM_PRESET_PACK="${PROJECTM_PRESET_PACK:-cream}"
 PROJECTM_FETCH_ASSETS="${PROJECTM_FETCH_ASSETS:-1}"
 ANDROID_API="${ANDROID_API:-29}"
 CLEAN=0
+PROJECTM_PATCH_DIR="$ROOT_DIR/native/ambientprojectm/patches"
+
+projectm_fingerprint() {
+  { grep '^PROJECTM_' "$EXTERNAL_VERSIONS"; printf '%s\n' "$PROJECTM_REF" "$PROJECTM_PRESET_PACK" "$ANDROID_API"; git hash-object "$ROOT_DIR/scripts/build_projectm_android.sh" "$ROOT_DIR/native/ambientprojectm/ambientprojectm.cpp" "$ROOT_DIR/native/ambientprojectm/native_audio_tap.h" "$PROJECTM_PATCH_DIR"/*.patch; } | git hash-object --stdin
+}
 
 for arg in "$@"; do
   case "$arg" in
     --clean) CLEAN=1 ;;
+    --fingerprint) projectm_fingerprint; exit 0 ;;
     -h|--help) sed -n '1,30p' "$0"; exit 0 ;;
     *) echo "Unknown argument: $arg" >&2; exit 2 ;;
   esac
@@ -61,7 +67,7 @@ TOOLCHAIN="$NDK_DIR/toolchains/llvm/prebuilt/$HOST_TAG"
 mkdir -p "$PROJECTM_BUILD_ROOT"
 if [[ ! -d "$PROJECTM_SRC/.git" ]]; then git clone --filter=blob:none "$PROJECTM_REPO" "$PROJECTM_SRC"; fi
 git -C "$PROJECTM_SRC" fetch --tags --prune origin
-git -C "$PROJECTM_SRC" checkout "$PROJECTM_REF"
+git -C "$PROJECTM_SRC" checkout --force "$PROJECTM_REF"
 # The pinned tag must still point at the pinned commit (overrides of PROJECTM_REF skip this).
 PROJECTM_COMMIT="$(external_version PROJECTM_COMMIT)"
 if [[ "$PROJECTM_REF" == "$(external_version PROJECTM_REF)" && -n "$PROJECTM_COMMIT" ]]; then
@@ -73,6 +79,11 @@ if [[ "$PROJECTM_REF" == "$(external_version PROJECTM_REF)" && -n "$PROJECTM_COM
 fi
 git -C "$PROJECTM_SRC" submodule sync --recursive
 git -C "$PROJECTM_SRC" submodule update --init --recursive
+# This is a dedicated managed source checkout. Always start from the pinned revision.
+for patch in "$PROJECTM_PATCH_DIR"/*.patch; do
+  git -C "$PROJECTM_SRC" apply --check "$patch"
+  git -C "$PROJECTM_SRC" apply "$patch"
+done
 
 if [[ "$CLEAN" == "1" ]]; then rm -rf "$PROJECTM_BUILD_ROOT/build" "$PROJECTM_BUILD_ROOT/install"; fi
 
@@ -91,6 +102,7 @@ build_abi() {
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$prefix" \
     -DBUILD_TESTING=OFF \
+    -DENABLE_PLAYLIST=OFF \
     -DENABLE_SDL_UI=OFF \
     -DENABLE_GLES=ON
   cmake --build "$build" --parallel
@@ -169,6 +181,6 @@ fetch_assets() {
 }
 
 fetch_assets
-printf 'projectm_ref=%s\npreset_pack=%s\npcm_tap_api=1\n' "$PROJECTM_REF" "$PROJECTM_PRESET_PACK" > "$ROOT_DIR/app/src/main/jniLibs/.projectm-version"
+printf 'projectm_ref=%s\npreset_pack=%s\npcm_tap_api=1\nfingerprint=%s\n' "$PROJECTM_REF" "$PROJECTM_PRESET_PACK" "$(projectm_fingerprint)" > "$ROOT_DIR/app/src/main/jniLibs/.projectm-version"
 
 echo "projectM native runtime and presets are ready."
