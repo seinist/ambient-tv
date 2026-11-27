@@ -188,6 +188,27 @@ int main(void)
         assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
         assert(img.planes[0].texture==state.output);
     }
+    // Independent analytical pixel fixture, authored display matches actual
+    // target. No reference to the generated LUT in the expected value.
+    m=(struct ambient_hdrplus){.window_count=1,.version=1,.target_nits=state.output_max};
+    m.windows[0]=(struct ambient_hdrplus_window){.tone_mapping=true,.knee_x=1.f,
+        .knee_y=0.5f,.maxscl={0.1f,0.1f,0.1f}};
+    img.planes[0].texture=input;img.color=pl_color_space_hdr10;
+    assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
+    sh=pl_dispatch_begin(state.dispatch);
+    pl_shader_sample_direct(sh,pl_sample_src(.tex=state.output));
+    assert(pl_dispatch_finish(state.dispatch,pl_dispatch_params(.shader=&sh,.target=readback)));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=readback,.ptr=pixels)));
+    float expected=state.output_min+(state.output_max-state.output_min)*0.3f;
+    assert(fabsf(pl_hdr_rescale(PL_HDR_PQ,PL_HDR_NITS,pixels[0])-expected)<0.6f);
+    // Legal no-OOTF input uses scene statistics, not an uninitialized curve.
+    m.windows[0].tone_mapping=false;m.target_nits=0.f;
+    m.windows[0].maxscl[0]=m.windows[0].maxscl[1]=m.windows[0].maxscl[2]=0.f;
+    m.windows[0].histogram_count=1;m.windows[0].histogram[0].percentage=99;
+    m.windows[0].histogram[0].percentile=0.1f;m.windows[0].average=0.025f;
+    img.planes[0].texture=input;img.color=pl_color_space_hdr10;
+    assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
+    assert(img.planes[0].texture==state.output);
     // A crop changes local coordinates; preserve the ordinary renderer path.
     img.planes[0].texture=input;img.color=pl_color_space_hdr10;
     img.crop.x0=1.f;
