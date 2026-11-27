@@ -98,9 +98,17 @@ internal object SystemModuleHost {
     }
 
     /** These functions are blocking; callers must dispatch to a worker. */
-    fun selected(module: SystemModule): SystemModuleBuild? =
-        if (app == null || BuildConfig.CORES_PUBLIC_KEY.isBlank()) null
-        else session.store.current(module)?.build
+    fun selected(module: SystemModule): SystemModuleBuild? {
+        return try {
+            val build = if (app == null || BuildConfig.CORES_PUBLIC_KEY.isBlank()) null
+                else session.store.current(module)?.build
+            SystemModuleAvailability.observeSelection(module, build?.version)
+            build
+        } catch (e: Exception) {
+            SystemModuleAvailability.reportFailure(module)
+            throw e
+        }
+    }
 
     val downloadsEnabled: Boolean get() = BuildConfig.CORES_PUBLIC_KEY.isNotBlank()
 
@@ -108,18 +116,43 @@ internal object SystemModuleHost {
         require(module in supported && downloadsEnabled)
         val transport = SystemModuleTransport()
         val tag = transport.latestTag(module) ?: return null
-        return transport.install(session.store, module, tag)?.build
+        return install(module, tag)
     }
 
+    @Synchronized
     fun install(module: SystemModule, tag: String): SystemModuleBuild? {
-        require(module in supported && BuildConfig.CORES_PUBLIC_KEY.isNotBlank())
-        return SystemModuleTransport().install(session.store, module, tag)?.build
+        require(module in supported && downloadsEnabled)
+        val old = selected(module)
+        val result = SystemModuleTransport().install(session.store, module, tag)?.build
+        if (result != null && result != old) markChanged(module, old, result)
+        return result
     }
 
-    fun remove(module: SystemModule) { require(module in supported); session.store.remove(module) }
+    @Synchronized
+    fun remove(module: SystemModule) {
+        require(module in supported && downloadsEnabled)
+        val old = selected(module)
+        session.store.remove(module)
+        if (old != null) markChanged(module, old, null)
+    }
+
+    @Synchronized
     fun rollback(module: SystemModule): SystemModuleBuild? {
-        require(module in supported)
-        return session.store.rollback(module)?.build
+        require(module in supported && downloadsEnabled)
+        val old = selected(module)
+        val result = session.store.rollback(module)?.build
+        if (result != null && result != old) markChanged(module, old, result)
+        return result
+    }
+
+    private fun markChanged(module: SystemModule, old: SystemModuleBuild?, new: SystemModuleBuild?) {
+        // If the previous selection has not been loaded, never activate the
+        // new version mid-process. Bundled/no-payload selection remains safe.
+        if (module !in processSelections) {
+            processSelections[module] = if (old == null) Result.success(null)
+                else Result.failure(SystemModuleTrustException("Module selection changed; restart required"))
+        }
+        SystemModuleAvailability.selectionChanged(module, new?.version)
     }
 
     // Only absent packages fall back. Do not mix bundled and downloaded JNI
@@ -131,6 +164,6 @@ internal object SystemModuleHost {
             runCatching {
                 if (selected(module) == null) null else session.runtime.load(module)
             }
-        }.getOrThrow()
+        }.onFailure { SystemModuleAvailability.reportFailure(module) }.getOrThrow()
     }
 }
