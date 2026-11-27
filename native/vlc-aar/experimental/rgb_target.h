@@ -64,7 +64,8 @@ public:
             return VK_ERROR_FORMAT_NOT_SUPPORTED;
 
         reset();
-        VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        VkImageCreateInfo ci{};
+        ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         ci.imageType = VK_IMAGE_TYPE_2D;
         ci.format = format;
         ci.extent = {width, height, 1};
@@ -91,9 +92,11 @@ public:
         }
         if (index >= memory.memoryTypeCount || index >= VK_MAX_MEMORY_TYPES)
             return fail(VK_ERROR_FEATURE_NOT_PRESENT);
-        VkMemoryDedicatedAllocateInfo dedicated{VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO};
+        VkMemoryDedicatedAllocateInfo dedicated{};
+        dedicated.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
         dedicated.image = image_;
-        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        VkMemoryAllocateInfo ai{};
+        ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         ai.pNext = &dedicated;
         ai.allocationSize = req.size;
         ai.memoryTypeIndex = index;
@@ -101,7 +104,8 @@ public:
         if (result != VK_SUCCESS) return fail(result);
         result = d_.bind_image(device_, image_, memory_, 0);
         if (result != VK_SUCCESS) return fail(result);
-        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        VkImageViewCreateInfo vi{};
+        vi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         vi.image = image_;
         vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
         vi.format = format;
