@@ -403,6 +403,14 @@ std::thread_local! {
     static AMBIENT_RANGE: std::cell::RefCell<Option<AmbientRangeCapture>> =
         const { std::cell::RefCell::new(None) };
 }
+/// Validate both final JVM part lengths before either array can be published.
+pub fn ambient_validate_part_lengths(total: usize, first: usize, second: usize) -> Result<(), MtprotoError> {
+    let part = AMBIENT_RANGE_LIMIT as usize;
+    if first != part || !(1..=part).contains(&second) || total != first + second {
+        return Err(MtprotoError::Message("incomplete or invalid media window".into()));
+    }
+    Ok(())
+}
 pub fn ambient_capture_range<T>(
     destination: &std::path::Path,
     work: impl FnOnce() -> Result<T, MtprotoError>,
@@ -638,6 +646,16 @@ mod ambient_range_tests {
         assert!(bytes[..AMBIENT_RANGE_LIMIT as usize].iter().all(|b| *b == 1));
         assert!(bytes[AMBIENT_RANGE_LIMIT as usize..].iter().all(|b| *b == 2));
         assert_eq!(ambient_range_capacity(dest), AMBIENT_RANGE_LIMIT);
+    }
+    #[test]
+    fn jni_two_array_window_requires_exact_lengths_including_short_tail() {
+        let part = AMBIENT_RANGE_LIMIT as usize;
+        assert!(ambient_validate_part_lengths(2 * part, part, part).is_ok());
+        assert!(ambient_validate_part_lengths(part + 17, part, 17).is_ok());
+        assert!(ambient_validate_part_lengths(part + 16, part, 17).is_err());
+        assert!(ambient_validate_part_lengths(part + 18, part, 17).is_err());
+        assert!(ambient_validate_part_lengths(part, part, 0).is_err());
+        assert!(ambient_validate_part_lengths(2 * part, part - 1, part + 1).is_err());
     }
     #[test]
     fn only_published_exact_destination_and_stage_are_returned() {
@@ -1318,8 +1336,8 @@ pub extern "system" fn downloadMediaParts<'caller>(
         } else {
             download_message_media_window_bytes(handle as u64, chat_id, message_id, path, offset, expected, 2)
                 .and_then(|bytes| {
-                    if bytes.len() == first_len + second_len { Ok(bytes) }
-                    else { Err(MtprotoError::Message("incomplete media window".into())) }
+                    proto_media::download::ambient_validate_part_lengths(bytes.len(), first_len, second_len)?;
+                    Ok(bytes)
                 })
         };
         match result {
