@@ -442,7 +442,7 @@ android {
             // Preview only: omit the two projectM libraries that the module host can load.
             if (modularPreview) excludes += setOf("**/libprojectM-4.so", "**/libambientprojectm.so")
             // An earlier build may have left the Spotify core in jniLibs: never ship it when disabled.
-            if (!spotifyEnabled) excludes += "**/libspotify_receiver_core.so"
+            if (!spotifyEnabled || modularPreview) excludes += "**/libspotify_receiver_core.so"
             // An earlier full Vulkan build may leave a 6+ MB native library in
             // jniLibs. A later GLES-only build must never accidentally ship it.
             val includeNativeSlang = providers.gradleProperty("LIBRASHADER_NATIVE")
