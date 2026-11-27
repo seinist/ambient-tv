@@ -62,8 +62,8 @@ class SettingsNavigationTest {
             listOf(MediaSystem.PLEX, MediaSystem.JELLYFIN, MediaSystem.EMBY, MediaSystem.DLNA, MediaSystem.ROMM, MediaSystem.TVHEADEND, MediaSystem.IPTV, MediaSystem.YOUTUBE, MediaSystem.TELEGRAM, MediaSystem.SPOTIFY, MediaSystem.RADIO, MediaSystem.TRAILERS, MediaSystem.FILES)
                 // Monogram is only offered by builds that contain its native core.
                 .filter { it != MediaSystem.TELEGRAM || com.ambient.tv.BuildConfig.MONOGRAM_NATIVE }
-                // Spotify only in builds with SPOTIFY_NATIVE.
-                .filter { it != MediaSystem.SPOTIFY || com.ambient.tv.BuildConfig.SPOTIFY_ENABLED },
+                // Native Spotify must have passed its actual runtime probe.
+                .filter { it != MediaSystem.SPOTIFY || com.ambient.tv.modules.SystemModuleAvailability.spotifyOffered },
             MediaSystem.addOrder,
         )
     }
