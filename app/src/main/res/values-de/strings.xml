@@ -2495,5 +2495,5 @@
     <string name="svp_transport">Bildtransport</string>
     <string name="svp_transport_standard">Standard (Copy-back)</string>
     <string name="svp_transport_resident">Hardware-resident (experimentell)</string>
-    <string name="svp_transport_hint">SDR mit 8 Bit bis 1080p. Benötigt kompatible native Bibliotheken und Vulkan; bei nicht unterstützter Verarbeitung wird zurückgefallen. MPV übernimmt den Decoderwechsel beim erneuten Öffnen.</string>
+    <string name="svp_transport_hint">Bis 1080p mit kompatibler Vulkan-Hardware. Unterstützt SDR sowie kompatibles 10-Bit-HDR10/HLG. MPV kann bei nativer Vulkan-Decodierung auch kompatibles HDR10+ und Dolby Vision verarbeiten; bei wechselnden oder ungeeigneten Metadaten bleiben die Originalbilder erhalten. Nicht unterstützte Pfade nutzen den Fallback. MPV übernimmt Decoderwechsel beim erneuten Öffnen.</string>
 </resources>
