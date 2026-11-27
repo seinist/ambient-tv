@@ -15,6 +15,7 @@ set -euo pipefail
 #   PROJECTM_ARM64_TUNE=generic|cortex-a57 (default: generic, ISA unchanged)
 #   PROJECTM_SHADER_CACHE=ON|OFF (default: ON, bounded driver-keyed cache)
 #   PROJECTM_DIRECT_CLASSIC_COMPOSITE=ON|OFF (default: OFF pending visual equivalence tests)
+#   PROJECTM_PGO_GENERATE=ON|OFF (default: OFF; instrumented audit build only)
 #   PROJECTM_PGO_DIR=<directory with <abi>.profdata for libprojectM> (optional)
 #   PROJECTM_ABIS=<comma-separated ABIs> (default: all four; partial builds do not publish marker)
 #
@@ -39,6 +40,9 @@ PROJECTM_ARM64_TUNE="${PROJECTM_ARM64_TUNE:-generic}"
 PROJECTM_SHADER_CACHE="${PROJECTM_SHADER_CACHE:-ON}"
 PROJECTM_DIRECT_CLASSIC_COMPOSITE="${PROJECTM_DIRECT_CLASSIC_COMPOSITE:-OFF}"
 PROJECTM_PGO_DIR="${PROJECTM_PGO_DIR:-}"
+PROJECTM_PGO_GENERATE="${PROJECTM_PGO_GENERATE:-OFF}"
+[[ "$PROJECTM_PGO_GENERATE" == ON || "$PROJECTM_PGO_GENERATE" == OFF ]] || { echo "Invalid PROJECTM_PGO_GENERATE" >&2; exit 2; }
+[[ "$PROJECTM_PGO_GENERATE" == OFF || -z "$PROJECTM_PGO_DIR" ]] || { echo "PGO generation and use are mutually exclusive" >&2; exit 2; }
 PROJECTM_ABIS="${PROJECTM_ABIS:-arm64-v8a,armeabi-v7a,x86,x86_64}"
 IFS=, read -r -a selected_abis <<< "$PROJECTM_ABIS"
 [[ -n "$PROJECTM_ABIS" && "${#selected_abis[@]}" -ge 1 ]] || { echo "No projectM ABIs selected" >&2; exit 2; }
@@ -60,7 +64,7 @@ CLEAN=0
 PROJECTM_PATCH_DIR="$ROOT_DIR/native/ambientprojectm/patches"
 
 projectm_fingerprint() {
-  { grep '^PROJECTM_' "$EXTERNAL_VERSIONS"; printf '%s\n' "$PROJECTM_REF" "$PROJECTM_PRESET_PACK" "$PROJECTM_FETCH_ASSETS" "$ANDROID_API" "$PROJECTM_OPT_LEVEL" "$PROJECTM_LTO" "$PROJECTM_ARM64_TUNE" "$PROJECTM_SHADER_CACHE" "$PROJECTM_DIRECT_CLASSIC_COMPOSITE" "$PROJECTM_ABIS"; if [[ -n "$PROJECTM_PGO_DIR" ]]; then for abi in "${selected_abis[@]}"; do git hash-object "$PROJECTM_PGO_DIR/$abi.profdata"; done; fi; git hash-object "$ROOT_DIR/scripts/build_projectm_android.sh" "$ROOT_DIR/native/ambientprojectm/ambientprojectm.cpp" "$ROOT_DIR/native/ambientprojectm/native_audio_tap.h" "$PROJECTM_PATCH_DIR"/*.patch; } | git hash-object --stdin
+  { grep '^PROJECTM_' "$EXTERNAL_VERSIONS"; printf '%s\n' "$PROJECTM_REF" "$PROJECTM_PRESET_PACK" "$PROJECTM_FETCH_ASSETS" "$ANDROID_API" "$PROJECTM_OPT_LEVEL" "$PROJECTM_LTO" "$PROJECTM_ARM64_TUNE" "$PROJECTM_SHADER_CACHE" "$PROJECTM_DIRECT_CLASSIC_COMPOSITE" "$PROJECTM_PGO_GENERATE" "$PROJECTM_ABIS"; if [[ -n "$PROJECTM_PGO_DIR" ]]; then for abi in "${selected_abis[@]}"; do git hash-object "$PROJECTM_PGO_DIR/$abi.profdata"; done; fi; git hash-object "$ROOT_DIR/scripts/build_projectm_android.sh" "$ROOT_DIR/native/ambientprojectm/ambientprojectm.cpp" "$ROOT_DIR/native/ambientprojectm/native_audio_tap.h" "$PROJECTM_PATCH_DIR"/*.patch; } | git hash-object --stdin
 }
 
 for arg in "$@"; do
@@ -130,8 +134,13 @@ build_abi() {
   local shader_cache_flag=""
   if [[ "$PROJECTM_SHADER_CACHE" == ON ]]; then shader_cache_flag="-DAMBIENT_PROJECTM_PROGRAM_CACHE=1"; fi
   if [[ "$PROJECTM_DIRECT_CLASSIC_COMPOSITE" == ON ]]; then shader_cache_flag+=" -DAMBIENT_PROJECTM_DIRECT_CLASSIC_COMPOSITE=1"; fi
-  local profile_flag=""
-  if [[ -n "$PROJECTM_PGO_DIR" ]]; then
+  local profile_flag="" profile_link=""
+  local -a bridge_profile=()
+  if [[ "$PROJECTM_PGO_GENERATE" == ON ]]; then
+    profile_flag="-fprofile-instr-generate -fprofile-update=atomic -DAMBIENT_PROJECTM_PGO_GENERATE=1"
+    profile_link="-fprofile-instr-generate"
+    bridge_profile=(-DAMBIENT_PROJECTM_PGO_GENERATE=1)
+  elif [[ -n "$PROJECTM_PGO_DIR" ]]; then
     # CMake flags are shell-tokenized. Escape a profile path containing spaces.
     profile_flag="-fprofile-instr-use=\"$PROJECTM_PGO_DIR/$abi.profdata\" -Werror=profile-instr-out-of-date -Werror=profile-instr-unprofiled"
   fi
@@ -144,6 +153,7 @@ build_abi() {
     -DCMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE="$PROJECTM_LTO" \
     -DCMAKE_C_FLAGS_RELEASE="${optimize[*]} -DNDEBUG $profile_flag" \
     -DCMAKE_CXX_FLAGS_RELEASE="${optimize[*]} -DNDEBUG $shader_cache_flag $profile_flag" \
+    -DCMAKE_SHARED_LINKER_FLAGS_RELEASE="$profile_link" \
     -DCMAKE_INSTALL_PREFIX="$prefix" \
     -DBUILD_TESTING=OFF \
     -DENABLE_PLAYLIST=OFF \
@@ -161,7 +171,7 @@ build_abi() {
   if [[ "$(basename "$projectm_so")" != "libprojectM-4.so" ]]; then cp "$projectm_so" "$dest/libprojectM-4.so"; fi
 
   [[ -x "$cxx" ]] || { echo "NDK C++ compiler missing: $cxx" >&2; exit 1; }
-  "$cxx" -shared -fPIC "${optimize[@]}" "${bridge_lto[@]}" -std=c++17 -static-libstdc++ \
+  "$cxx" -shared -fPIC "${optimize[@]}" "${bridge_lto[@]}" "${bridge_profile[@]}" -std=c++17 -static-libstdc++ \
     -I"$prefix/include" \
     "$ROOT_DIR/native/ambientprojectm/ambientprojectm.cpp" \
     -L"$dest" -lprojectM-4 -llog -landroid -lGLESv3 -lEGL \
@@ -232,7 +242,7 @@ fetch_assets() {
 }
 
 fetch_assets
-if [[ "$PROJECTM_ABIS" == "arm64-v8a,armeabi-v7a,x86,x86_64" ]]; then
+if [[ "$PROJECTM_ABIS" == "arm64-v8a,armeabi-v7a,x86,x86_64" && "$PROJECTM_PGO_GENERATE" == OFF ]]; then
   printf 'projectm_ref=%s\npreset_pack=%s\npcm_tap_api=1\nfingerprint=%s\n' "$PROJECTM_REF" "$PROJECTM_PRESET_PACK" "$(projectm_fingerprint)" > "$ROOT_DIR/app/src/main/jniLibs/.projectm-version"
 fi
 
