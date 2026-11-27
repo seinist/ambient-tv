@@ -204,7 +204,7 @@ jobs:
             native/vlc-aar/experimental/test_hdr_reference_gpu.c \
             -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-hdr-reference
           VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-hdr-reference
-          cc -std=gnu11 -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
+          cc -std=gnu11 -Wall -Wextra -fsanitize=undefined -fno-sanitize-recover=all -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
             native/vlc-aar/experimental/test_etsi_external_fel_gpu.c \
             -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-etsi-fel
           VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-etsi-fel .ci/real-fel/real-fel-snapshot.bin

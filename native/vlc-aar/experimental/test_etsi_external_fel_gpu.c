@@ -1,8 +1,9 @@
 /* Independent fixed-point reference for ETSI GS CCM 001 V1.1.1,
  * 5.4.2 and 5.4.3. We compare the actual GPU composition BEFORE color
  * conversion, using authentic external RPU coefficients. BL/EL input
- * samples are deterministic, already spatially aligned; resampling and
- * the Dolby display-management stage are deliberately not asserted. */
+ * samples include deterministic aligned vectors and decoded 4:2:0 planes.
+ * Spatial cases validate the experimental bilinear approximation; normative
+ * Dolby resampling and display management are not asserted. */
 #include "dovi_fel_gpu.h"
 #include "dovi_fel_metadata.h"
 #include <libplacebo/vulkan.h>
@@ -72,27 +73,73 @@ static unsigned oracle(const struct ambient_dovi_metadata *m,const unsigned bl[3
     return clip(floor_shift((wide)fixed_prediction(m,bl,c)+residual+8,4),4095);
 }
 enum { W=64,H=64,N=W*H,C=N/4,YUV=N+2*C };
-/* Independent integer bilinear oracle for the implementation's centered
- * equal-resolution EL sampler, NOT the normative Dolby resampling filter.
- * Fractions at luma pixel centers are quarters, so the weights sum to 16. */
-static unsigned at_chroma(const uint16_t *p,int x,int y)
+/* Independent rational-coordinate oracle for the implementation's bilinear
+ * EL sampler, not the normative Dolby resampling filter. Positions use
+ * sixteenth-texel units; products and signed rounding remain integers. */
+struct spatial_case {
+    const char *name;
+    unsigned ew,eh,sx,sy,ox,oy; /* integer BL:EL ratio; local EL offset */
+    int cx,cy; /* chroma offsets in half-luma-pixel units */
+};
+static int floor16(int q)
 {
-    x=x<0?0:x>=W/2?W/2-1:x;
-    y=y<0?0:y>=H/2?H/2-1:y;
-    return p[y*(W/2)+x];
+    return q>=0?q/16:-((-q+15)/16);
 }
-static unsigned aligned_el(const uint16_t *el,unsigned x,unsigned y,unsigned c,unsigned offset)
+static unsigned at_plane(const uint16_t *p,unsigned w,unsigned h,int x,int y)
 {
-    if(!c)return el[y*W+x];
-    const uint16_t *p=el+N+(c-1)*C;
-    int ix=(int)x/2-(x%2==0),iy=(int)y/2-(y%2==0);
-    unsigned fx=x%2?1:3,fy=y%2?1:3;
-    int weighted=(int)((4-fx)*(4-fy)*at_chroma(p,ix,iy)+
-        fx*(4-fy)*at_chroma(p,ix+1,iy)+(4-fx)*fy*at_chroma(p,ix,iy+1)+
-        fx*fy*at_chroma(p,ix+1,iy+1));
-    int delta=weighted-(int)(16*offset);
-    int rounded=delta<0?-((-delta+8)/16):(delta+8)/16;
+    x=x<0?0:x>=(int)w?(int)w-1:x;
+    y=y<0?0:y>=(int)h?(int)h-1:y;
+    return p[(unsigned)y*w+(unsigned)x];
+}
+static unsigned aligned_el(const uint16_t *el,const struct spatial_case *g,
+    unsigned x,unsigned y,unsigned c,unsigned offset)
+{
+    unsigned w=g->ew,h=g->eh;
+    const uint16_t *p=el;
+    // The local BL pixel center maps to the EL. Horizontally the
+    // factor-two layer is left-sited; vertically it is centered.
+    int px=(int)((16*x+8+(g->sx==2?8:0))/g->sx+16*g->ox);
+    int py=(int)((16*y+8)/g->sy+16*g->oy);
+    if(c){
+        unsigned luma=w*h;
+        w=(w+1)/2;h=(h+1)/2;
+        p+=luma+(c-1)*w*h;
+        px=(px-8*g->cx)/2;
+        py=(py-8*g->cy)/2;
+    }
+    px-=8;py-=8;
+    int ix=floor16(px),iy=floor16(py);
+    unsigned fx=(unsigned)(px-16*ix),fy=(unsigned)(py-16*iy);
+    assert(fx<16&&fy<16);
+    unsigned weighted=(16-fx)*(16-fy)*at_plane(p,w,h,ix,iy)+
+        fx*(16-fy)*at_plane(p,w,h,ix+1,iy)+(16-fx)*fy*at_plane(p,w,h,ix,iy+1)+
+        fx*fy*at_plane(p,w,h,ix+1,iy+1);
+    // NLQ rounds the signed distance from the offset, not the raw sample.
+    int delta=(int)weighted-(int)(256*offset);
+    int rounded=delta<0?-((-delta+128)/256):(delta+128)/256;
     return clip((int)offset+rounded,1023);
+}
+static void crop_el(const uint16_t source[YUV],uint16_t dest[YUV],
+    const struct spatial_case *g)
+{
+    unsigned cw=(g->ew+1)/2,ch=(g->eh+1)/2;
+    for(unsigned y=0;y<g->eh;y++)
+        memcpy(dest+y*g->ew,source+y*W,g->ew*sizeof(uint16_t));
+    for(unsigned c=0;c<2;c++)for(unsigned y=0;y<ch;y++)
+        memcpy(dest+g->ew*g->eh+c*cw*ch+y*cw,
+            source+N+c*C+y*(W/2),cw*sizeof(uint16_t));
+}
+static void check_geometry(const struct spatial_case *g,struct ambient_fel_planes *planes)
+{
+    // Geometry derived independently: choose coded EL=64x64 and coded
+    // BL=64 or 128 per axis. The EL has zero visible origin; BL starts
+    // at its matched coded offset. The visible bounds are checked in
+    // the same production routine used by ambient_fel_render_picture_ex.
+    assert(ambient_fel_axis_mapping(W,g->ew,g->ox*g->sx,0,64*g->sx,64,&planes->x));
+    assert(ambient_fel_axis_mapping(H,g->eh,g->oy*g->sy,0,64*g->sy,64,&planes->y));
+    assert(planes->x.ratio==1.f/g->sx&&planes->x.offset==g->ox);
+    assert(planes->y.ratio==1.f/g->sy&&planes->y.offset==g->oy);
+    planes->mapped=true;
 }
 static void read_frame(const char *path,uint16_t p[YUV])
 {
@@ -120,6 +167,28 @@ int main(int argc,char **argv)
     assert(vk);pl_gpu gpu=vk->gpu;
     pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,32,32,PL_FMT_CAP_SAMPLEABLE|PL_FMT_CAP_RENDERABLE|PL_FMT_CAP_HOST_READABLE);
     assert(fmt);
+    const struct spatial_case cases[]={
+        {"identity centered",64,64,1,1,0,0,0,0},
+        {"identity left/top",64,64,1,1,0,0,-1,-1},
+        {"identity right/bottom",64,64,1,1,0,0,1,1},
+        {"half XY centered",32,32,2,2,0,0,0,0},
+        {"half XY asymmetric siting",32,32,2,2,0,0,-1,1},
+        {"half X only",32,64,2,1,0,0,1,-1},
+        {"half Y only",64,32,1,2,0,0,-1,1},
+        {"half XY odd extents, crop phase",35,33,2,2,2,1,0,0},
+        {"half XY odd extents, shifted chroma",35,33,2,2,2,1,1,-1},
+    };
+    struct ambient_fel_axis_map invalid;
+    assert(!ambient_fel_axis_mapping(64,32,2,0,128,64,&invalid));
+    assert(!ambient_fel_axis_mapping(64,32,1,0,128,64,&invalid));
+    assert(!ambient_fel_axis_mapping(64,32,0,2,128,64,&invalid));
+    bool passed=true;
+    pl_dispatch dp=pl_dispatch_create(log,gpu);assert(dp);
+    struct ambient_fel_planes planes={0};
+    for(unsigned ci=0;ci<(decoded?sizeof(cases)/sizeof(cases[0]):1);ci++){
+    const struct spatial_case *g=&cases[ci];
+    uint16_t spatial_el[YUV];
+    if(decoded)crop_el(el_frame,spatial_el,g);
     float bl[N*4],el[N*4],pixels[N*4];
     unsigned expected[N][3],bl_code[N][3],el_code[N][3];
     for(unsigned i=0;i<N;i++){
@@ -140,7 +209,7 @@ int main(int argc,char **argv)
             if(i%8==0)e=0;
             if(i%8==1)e=1023;
             if(i%8==2)e=m.nlq_offset[k];
-            unsigned ec=decoded?aligned_el(el_frame,i%W,i/W,k,m.nlq_offset[k]):clip(e,1023);
+            unsigned ec=decoded?aligned_el(spatial_el,g,i%W,i/W,k,m.nlq_offset[k]):clip(e,1023);
             bl_code[i][k]=b[k];el_code[i][k]=ec;
             bl[4*i+k]=b[k]/1023.f;el[4*i+k]=ec/1023.f;
             expected[i][k]=oracle(&m,b,ec,k);
@@ -148,15 +217,16 @@ int main(int argc,char **argv)
         bl[4*i+3]=el[4*i+3]=1;
     }
     pl_tex b=pl_tex_create(gpu,pl_tex_params(.w=W,.h=H,.format=fmt,.sampleable=true,.initial_data=bl));
-    struct ambient_fel_planes planes={0};
     pl_tex e=NULL;
     if(decoded){
-        const uint16_t *data[3]={el_frame,el_frame+N,el_frame+N+C};
-        const size_t pitch[3]={W*2,W,W};
-        assert(ambient_fel_planes_upload(gpu,&planes,W,H,data,pitch,0,0));
+        unsigned luma=g->ew*g->eh,cw=(g->ew+1)/2,ch=(g->eh+1)/2;
+        const uint16_t *data[3]={spatial_el,spatial_el+luma,spatial_el+luma+cw*ch};
+        const size_t pitch[3]={2*g->ew,2*cw,2*cw};
+        assert(ambient_fel_planes_upload(gpu,&planes,g->ew,g->eh,data,pitch,g->cx*.5f,g->cy*.5f));
+        check_geometry(g,&planes);
     }else e=pl_tex_create(gpu,pl_tex_params(.w=W,.h=H,.format=fmt,.sampleable=true,.initial_data=el));
     pl_tex out=pl_tex_create(gpu,pl_tex_params(.w=W,.h=H,.format=fmt,.renderable=true,.host_readable=true));
-    pl_dispatch dp=pl_dispatch_create(log,gpu);assert(b&&(e||decoded)&&out&&dp);
+    assert(b&&(e||decoded)&&out);
     assert(ambient_fel_compose_domain(gpu,dp,b,e,out,&reshape,&nlq,false,false,decoded?&planes:NULL,true));
     assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=out,.ptr=pixels)));
     unsigned max=0,exact=0,within=0,wi=0,wc=0,actual=0;
@@ -169,11 +239,13 @@ int main(int argc,char **argv)
         if(err>max){max=err;wi=i;wc=c;actual=got;}
     }
     fprintf(stderr,"ETSI fixed-point / real RPU (%s): %u samples, exact %u, within one %u, max %u, RMS %.6f; worst pixel %u component %u BL %u EL %u actual %u expected %u\n",
-        decoded?"decoded 4:2:0 planes":"aligned stress vectors",3u*N,exact,within,max,sqrt(sum/(3*N)),wi,wc,bl_code[wi][wc],el_code[wi][wc],actual,expected[wi][wc]);
-    pl_gpu_finish(gpu);pl_dispatch_destroy(&dp);ambient_fel_planes_destroy(gpu,&planes);
+        decoded?g->name:"aligned stress vectors",3u*N,exact,within,max,sqrt(sum/(3*N)),wi,wc,bl_code[wi][wc],el_code[wi][wc],actual,expected[wi][wc]);
+    passed &= max<=1;
+    pl_gpu_finish(gpu);
     pl_tex_destroy(gpu,&out);pl_tex_destroy(gpu,&e);pl_tex_destroy(gpu,&b);
+    }
+    ambient_fel_planes_destroy(gpu,&planes);pl_dispatch_destroy(&dp);
     pl_vulkan_destroy(&vk);pl_log_destroy(&log);
-    // Allow at most one 12-bit code for the float approximation, never
-    // silently broaden the threshold to accommodate a failed comparison.
-    return max<=1?0:1;
+    // Keep the original one-code threshold separately for every case.
+    return passed?0:1;
 }
