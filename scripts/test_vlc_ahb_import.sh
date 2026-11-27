@@ -104,6 +104,17 @@ if [[ -n "${LIBPLACEBO_SOURCE:-}" ]]; then
             done
         fi
     done
+    if [[ -n "${VLC_SOURCE:-}" && "$(uname -s)" == Linux ]]; then
+        # Run the real patched MP4 fragment scanner with deterministic
+        # stream/allocator shims. Unrelated VLC entry points are discarded.
+        "${CC:-clang}" -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 \
+            -DMODULE_NAME=mp4 -DHAVE_ATTRIBUTE_PACKED=1 '-DN_(s)=s' '-D_(s)=s' \
+            -ffunction-sections -fdata-sections -fsanitize=address,undefined \
+            -fno-sanitize-recover=all -Wl,--gc-sections \
+            -I "$VLC_SOURCE/include" -I "$VLC_SOURCE/modules/demux/mp4" \
+            "$SRC/test_vlc_fel_fragment.c" -lm -o "$TMP/test_vlc_fel_fragment"
+        "$TMP/test_vlc_fel_fragment"
+    fi
     echo "Pinned libplacebo, MediaCodec and Android window C API checks passed for four Android ABIs"
 fi
 echo "AHB lifetime tests, shaders and four Android ABI syntax checks passed (no GPU execution)"

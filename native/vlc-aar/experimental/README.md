@@ -992,3 +992,11 @@ bounded budgets. Any timed or unknown box before required bytes, backward
 payload reference, overflow or invalid header fails closed. Extra unused
 mdats between a separate BL and EL are not admitted. Host tests cover
 required-end arithmetic. Real container integration remains to be verified.
+
+The Linux native contract now also compiles and executes the actual staged
+MP4 demux translation unit with deterministic stream/allocator shims and
+linker section garbage collection. The fixture checks exact preflight,
+seekable and forward-only scans with inter-mdat padding, zero trailing
+header reads, cache bytes, overlap rejection and partial read cleanup.
+This exercises real demux functions, not a full VLC player or encoded
+Dolby Vision media; CI results remain pending.
