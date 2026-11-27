@@ -5,6 +5,7 @@ import shlex
 
 DRIVER = re.compile(r"(?:[\w.-]+-)?clang(?:\+\+)?(?:-\d+)?")
 COMPILER_COMMAND = re.compile(r"^\s*(?:\d{4}-\d{2}-\d{2}T[^ ]+Z\s+)?(?:\S*/)?(?:[\w.-]+-)?clang(?:\+\+)?(?:-\d+)?(?:\s|$)")
+ASSEMBLER = re.compile(r"(?:yasm|nasm)(?:-\d+)?")
 SOURCE = re.compile(r"\.(?:c|cc|cpp|cxx|C|s|S|asm)$")
 AUDITED = {"gpsp", "pcsx_rearmed", "mupen64plus_next_gles3", "picodrive", "parallel_n64", "mednafen_psx_hw", "swanstation", "gambatte", "genesis_plus_gx",
            "mednafen_pce_fast", "mednafen_ngp", "mednafen_wswan", "mednafen_supergrafx", "snes9x2010",
@@ -58,7 +59,8 @@ def build_commands(log, cwd=None, root=None, strict=False):
         wrapped = line.startswith(("cd ", ": && ")) or re.match(r"^(?:\S*/)?ccache\s+", line)
         archive_start = re.match(r"^(?:\S*/)?(?:[\w.-]+-)?llvm-ar(?:-\d+)?(?:\s|$)", line)
         quoted_driver = re.match(r'^"[^"]*/(?:[\w.-]+-)?(?:clang(?:\+\+)?|llvm-ar)(?:-\d+)?"(?:\s|$)', line)
-        if not COMPILER_COMMAND.match(line) and not wrapped and not archive_start and not quoted_driver:
+        assembler_start = re.match(r'^(?:"[^"]*/|(?:\S*/)?)' + ASSEMBLER.pattern + r'"?(?:\s|$)', line)
+        if not COMPILER_COMMAND.match(line) and not wrapped and not archive_start and not quoted_driver and not assembler_start:
             continue
         try:
             tokens = shlex.split(line)
@@ -86,7 +88,7 @@ def build_commands(log, cwd=None, root=None, strict=False):
         if not tokens:
             continue
         driver = Path(tokens[0]).name
-        if not DRIVER.fullmatch(driver) and not re.fullmatch(r"(?:[\w.-]+-)?llvm-ar(?:-\d+)?", driver):
+        if not DRIVER.fullmatch(driver) and not ASSEMBLER.fullmatch(driver) and not re.fullmatch(r"(?:[\w.-]+-)?llvm-ar(?:-\d+)?", driver):
             continue
         end = next((i for i, token in enumerate(tokens) if token in {"&&", ";", "||"}), len(tokens))
         try:
@@ -99,10 +101,26 @@ def build_commands(log, cwd=None, root=None, strict=False):
 
 
 
+def assembler_source(args):
+    # Yasm/Nasm assemble by default, with no clang-style -c. Only accept
+    # a single explicit .asm input, ELF output format and .o output.
+    if "-o" not in args or "-f" not in args:
+        return None
+    oi, fi = args.index("-o"), args.index("-f")
+    if oi + 1 >= len(args) or fi + 1 >= len(args):
+        return None
+    if Path(args[oi + 1]).suffix != ".o" or args[fi + 1] not in {"elf", "elf32", "elf64"}:
+        return None
+    sources = [arg for arg in args if not arg.startswith("-") and arg.endswith(".asm")]
+    return sources[0] if len(sources) == 1 else None
+
+
 def compiler_commands(log, cwd=None, root=None, strict=False):
     for driver, args, _ in build_commands(log, cwd, root, strict):
         if DRIVER.fullmatch(driver):
             yield args
+        elif ASSEMBLER.fullmatch(driver) and (source := assembler_source(args)):
+            yield ["-c", source, *args]
 
 
 def compile_source(args):
@@ -248,6 +266,9 @@ def requirements(core, abi, profile):
         if arm:
             result["parallel_rsp"] = ("parallel.cpp", (("HAVE_PARALLEL_RSP", "1"),))
             result["parallel_rdp"] = ("new_dynarec/new_dynarec.c", (("HAVE_PARALLEL_RDP", "1"),))
+        else:
+            stub = "x86/linkage_x86.asm" if abi == "x86" else "x64/linkage_x64.asm"
+            result["native_stub"] = ("new_dynarec/" + stub, ())
         return result
     if core == "parallel_n64":
         result = {"parallel_rsp": ("mupen64plus-rsp-paraLLEl/parallel.cpp", (("HAVE_PARALLEL_RSP", "1"),)),

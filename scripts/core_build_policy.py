@@ -103,9 +103,12 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
         raise ValueError("Threaded renderer candidate requires Snes9x2010")
     if profile in {"tune-a57", "optimized-a57"} and chosen_abis != ["arm64-v8a"]:
         raise ValueError("Cortex-A57 tuning is initially restricted to arm64-v8a")
-    if event == "push" or publish:
-        if ref != "refs/heads/main" or profile != "baseline" or set(chosen_cores) != set(ids) or set(chosen_abis) != set(declared_abis):
-            raise ValueError("Release requires the full baseline catalog on main; use publish=false for experiments.")
+    if publish or event == "push":
+        public_push = event == "push" and not publish and profile in PUBLIC_EXPERIMENTS
+        expected_abis = {"arm64-v8a"} if public_push and profile == "optimized-a57" else set(declared_abis)
+        if (ref != "refs/heads/main" or (profile != "baseline" and not public_push)
+                or set(chosen_cores) != set(ids) or set(chosen_abis) != expected_abis):
+            raise ValueError("Automatic releases require the full public profile catalog on main; stable publish requires baseline.")
     if event == "pull_request":
         if publish:
             raise ValueError("PRs may never publish cores")
@@ -117,6 +120,7 @@ def plan(catalog, event, ref, publish, cores="", abis="", profile="baseline", co
         jobs += [(core, abi, "baseline")
                  for core in ("gpsp", "pcsx_rearmed")
                  for abi in ("arm64-v8a", "armeabi-v7a")]
+        jobs += [("mupen64plus_next_gles3", abi, "baseline") for abi in ("x86", "x86_64")]
         jobs += [("mupen64plus_next_gles3", "arm64-v8a", "baseline"),
                  ("picodrive", "arm64-v8a", "baseline"),
                  ("picodrive", "arm64-v8a", "picodrive-sh2"),

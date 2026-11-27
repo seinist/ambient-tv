@@ -5,6 +5,7 @@ import struct
 import unittest
 from core_acceleration_audit import AUDITED, audit_acceleration, compiler_commands, defines, requirements
 from unittest.mock import patch
+from core_link_evidence import target_commands
 
 from core_build_policy import (REQUIRED_EXPORTS, audit_commands, ndk_flags, plan,
                                select_library, verify_elf_abi, dynamic_dependencies, prepare_cmake, prepare_ndk)
@@ -30,7 +31,7 @@ class CoreBuildPolicyTest(unittest.TestCase):
 
     def test_pr_comparison(self):
         matrix = plan(self.catalog, "pull_request", "refs/pull/1/merge", False)["include"]
-        self.assertEqual(len(matrix), 67 + len(self.catalog["cores"]) * (len(self.catalog["abis"]) + 1))
+        self.assertEqual(len(matrix), 69 + len(self.catalog["cores"]) * (len(self.catalog["abis"]) + 1))
         self.assertEqual({item["core"] for item in matrix if item["profile"] == "core-hotpaths"},
                          {core["core"] for core in self.catalog["cores"]} - {"picodrive", "snes9x2010"})
         self.assertEqual({item["profile"] for item in matrix},
@@ -54,6 +55,43 @@ class CoreBuildPolicyTest(unittest.TestCase):
         for flag in ("-O3", "-flto=thin", "-mtune=cortex-a57"):
             with self.assertRaises(ValueError):
                 audit_commands(log.replace(flag, ""), "optimized-a57")
+
+    def test_auto_experimental_full_catalogs(self):
+        for profile in ("optimized", "optimized-a57"):
+            automatic = plan(self.catalog, "push", "refs/heads/main", False, profile=profile)
+            manual = plan(self.catalog, "workflow_dispatch", "refs/heads/main", False, profile=profile)
+            self.assertEqual(automatic, manual)
+            for ref, cores in (("refs/heads/feature", ""), ("refs/heads/main", "mgba")):
+                with self.assertRaises(ValueError):
+                    plan(self.catalog, "push", ref, False, cores=cores, profile=profile)
+        with self.assertRaises(ValueError):
+            plan(self.catalog, "push", "refs/heads/main", False, profile="o3")
+
+    def test_mupen_yasm_linked_objects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for abi, variant, stub, fmt in (("x86", "1", "x86/linkage_x86", "elf32"),
+                                             ("x86_64", "2", "x64/linkage_x64", "elf64")):
+                with self.subTest(abi=abi):
+                    source = "new_dynarec/" + stub + ".asm"
+                    asm = f"/usr/bin/ccache /ndk/bin/yasm -I/root/include -f {fmt} {source} -o stub.o\n"
+                    compile = f"clang -O3 -flto=thin -DNEW_DYNAREC={variant} -DDYNAREC -c new_dynarec/new_dynarec.c -o dyn.o\n"
+                    (root / "linker.list").write_text("dyn.o stub.o")
+                    link = "clang++ -flto=thin -shared @linker.list -o libretro.so\n"
+                    log = asm + compile + link
+                    commands, graph = target_commands(log, root, root, root / "libretro.so")
+                    self.assertEqual(graph["unresolved_local_inputs"], [])
+                    self.assertEqual(graph["linked_compile_commands"], 2)
+                    result = audit_commands(log, "optimized", core="mupen64plus_next_gles3", abi=abi, scoped_commands=commands)
+                    self.assertEqual(result["compile_commands"], 1)
+                    self.assertTrue(result["acceleration"]["native_stub"])
+                    for bad in (compile + link, "warning: " + asm + compile + link, log.replace(fmt, "bin")):
+                        _, missing = target_commands(bad, root, root, root / "libretro.so")
+                        self.assertEqual(missing["unresolved_local_inputs"], ["stub.o"])
+                    (root / "linker.list").write_text("dyn.o")
+                    commands, _ = target_commands(log, root, root, root / "libretro.so")
+                    with self.assertRaises(ValueError):
+                        audit_commands(log, "optimized", core="mupen64plus_next_gles3", abi=abi, scoped_commands=commands)
 
     def test_full_paired_comparisons(self):
         for comparison, profiles in (("baseline-thinlto", ("baseline", "thinlto")),
