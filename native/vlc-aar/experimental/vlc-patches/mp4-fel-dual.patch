@@ -20,7 +20,7 @@ diff --git a/modules/demux/mp4/mp4.h b/modules/demux/mp4/mp4.h
 diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 --- a/modules/demux/mp4/mp4.c
 +++ b/modules/demux/mp4/mp4.c
-@@ -133,7 +133,11 @@
+@@ -133,7 +133,12 @@
      {
          uint32_t        i_current_box_type;
          MP4_Box_t      *p_fragment_atom;
@@ -29,6 +29,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +        uint64_t        ambient_fel_mdat_start;
 +        block_t        *ambient_fel_mdat; /* forward-only, owned until fragment end */
 +        MP4_Box_t      *ambient_fel_el_moof; /* adjacent, seekable EL-only fragment */
++        unsigned        ambient_fel_el_track_id;
 +        uint64_t        ambient_fel_el_start, ambient_fel_el_end;
          uint32_t        i_lastseqnumber;
      } context;
@@ -339,7 +340,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
      int i_status;
      /* demux up to increment amount of data on every track, or just set pcr if empty data */
      for( ;; )
-@@ -1947,7 +2192,174 @@
+@@ -1947,8 +2192,177 @@
      return VLC_SUCCESS;
  }
  
@@ -422,7 +423,8 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +    if(MP4_Seek(d->s,resume)!=VLC_SUCCESS){s->b_error=true;ok=false;}
 +    if(!ok){if(el)MP4_BoxFree(el);return false;}
 +    s->context.ambient_fel_el_moof=el;
-+    s->context.ambient_fel_el_start=ep;s->context.ambient_fel_el_end=ee;
++    s->context.ambient_fel_el_track_id=id;
+    s->context.ambient_fel_el_start=ep;s->context.ambient_fel_el_end=ee;
 +    return true;
 +}
 +
@@ -456,7 +458,9 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +                          MP4_TRUN_SAMPLE_TIME_OFFSET))&&!tr->p_samples))goto fail;
 +        if(tr->i_flags&MP4_TRUN_DATA_OFFSET){
 +            if(!ambient_fel_trun_offset(base,tr->i_data_offset,&offset))goto fail;
-+        }else if(!j)goto fail; /* require a proven initial payload offset */
++        }else if(!j && !(header->i_flags&MP4_TFHD_BASE_DATA_OFFSET))goto fail;
++        /* An explicit base-data-offset alone also proves the first run;
++         * all samples must still fit inside this exact EL mdat. */
 +        if(j&&offset<previous_end)goto fail;
 +        runs[j++]=(mp4_run_t){.i_offset=offset,.i_first_dts=time,.p_trun=box};
 +        for(unsigned i=0;i<tr->i_sample_count;i++){
@@ -515,7 +519,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
                               MP4_Box_t *p_sidx, stime_t i_moof_time, bool b_discontinuity )
  {
      demux_sys_t *p_sys = p_demux->p_sys;
-@@ -1958,7 +2257,70 @@
+@@ -1958,7 +2257,71 @@
              p_sys->track[i].context.b_resync_time_offset = true;
      }
  
@@ -568,6 +572,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +            mp4_track_t *el=MP4_GetTrackByTrackID(p_demux,bl->ambient_fel_el_id);
 +            uint64_t bn,en;stime_t be,ee;int64_t mapped;
 +            if (el && bl->ambient_fel_fragment_present && !el->context.runs.i_count &&
++                p_sys->context.ambient_fel_el_track_id==el->i_track_ID &&
 +                p_sys->context.ambient_fel_el_moof && !MP4_FEL_IndexSeparate(p_demux,el))
 +                return VLC_EGENERIC;
 +            if (!el || !MP4_FEL_ValidateRuns(bl,&bn,&be) ||
@@ -621,7 +626,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
          p_sys->context.i_lastseqnumber = FragGetMoofSequenceNumber( p_moox );
  
          p_sys->i_nztime = FragGetDemuxTimeFromTracksTime( p_sys );
-@@ -4987,9 +5328,15 @@
+@@ -4987,9 +5328,16 @@
              MP4_BoxFree( p_sys->context.p_fragment_atom );
          p_sys->context.p_fragment_atom = NULL;
      }
@@ -634,13 +639,14 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +    p_sys->context.ambient_fel_mdat = NULL;
 +    if (p_sys->context.ambient_fel_el_moof) MP4_BoxFree(p_sys->context.ambient_fel_el_moof);
 +    p_sys->context.ambient_fel_el_moof=NULL;
++    p_sys->context.ambient_fel_el_track_id=0;
 +    p_sys->context.ambient_fel_el_start=p_sys->context.ambient_fel_el_end=0;
 +
 +    for ( uint32_t i=0; i<p_sys->i_tracks; i++ )
      {
          mp4_track_t *p_track = &p_sys->track[i];
          p_track->context.i_default_sample_size = 0;
-@@ -4997,7 +5341,114 @@
+@@ -4997,7 +5341,115 @@
      }
  }
  
@@ -727,7 +733,8 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +            offset+=size;time+=dur;
 +        }
 +    }
-+    const bool separate=s->context.ambient_fel_el_moof!=NULL;
++    const bool separate=s->context.ambient_fel_el_moof!=NULL &&
++        s->context.ambient_fel_el_track_id==el->i_track_ID;
 +    if (!matched || !ambient_fel_fragment_range(
 +        separate?s->context.ambient_fel_el_start:s->context.ambient_fel_mdat_start,
 +        separate?s->context.ambient_fel_el_end:s->context.i_post_mdat_offset,offset,size)) return NULL;
