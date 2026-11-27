@@ -330,3 +330,5 @@ GC, disk writes, and release APK delta per ABI. Compare the three compiler
 profiles before raising the portable default; keep the existing APK size gate.
 
 For compiler profile size comparisons, run `MONOGRAM_ABIS=arm64-v8a bash scripts/measure_monogram_native_profiles.sh`. This reports actual AAR and raw ELF bytes, not APK overhead or device throughput.
+
+An opt-in Shield-oriented build is available with `MONOGRAM_CPU_TUNE=cortex-a57 MONOGRAM_ABIS=arm64-v8a bash scripts/build_monogram_native.sh`. Use the same `MONOGRAM_CPU_TUNE=cortex-a57` when assembling the ARM64 APK. Multi-ABI and ordinary release builds use the generic default; the AAR stamp prevents accidentally packaging the tuned binary as a generic one. Android-only compiler flags do not affect host bindgen. Optional AES/SHA/CRC features are not globally enabled. CI builds the additional tuned ARM64 variant and verifies the JNI symbol in each ELF.

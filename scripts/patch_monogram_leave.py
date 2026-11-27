@@ -18,8 +18,10 @@ changes = {}
 # The date is fixed (not the build date) so repeated builds stay reproducible.
 MODIFICATION_DATE = "2026-11-27"
 NOTICE_MARKER = "Modified by Ambient TV, "
-COMMENT_PREFIX = {".rs": "//", ".kt": "//", ".toml": "#"}
+COMMENT_PREFIX = {".rs": "//", ".kt": "//", ".kts": "//", ".toml": "#"}
 MODIFICATIONS = {
+    "native/mtproto/build.gradle.kts":
+        "isolated opt-in ARM64 CPU flags to Android cargo-ndk tasks",
     "vendor/mono-rs/crates/mono-proto-messages/src/membership.rs":
         "added leave_chat (Telegram channels.leaveChannel)",
     "vendor/mono-rs/crates/mono-proto-client/src/membership.rs":
@@ -747,6 +749,23 @@ amend(crypto_message,
         padding: plaintext[body_end..].to_vec(),""",
       """        body: plaintext,
         padding,""")
+
+# An optional CPU-specific Android build must not pass ARM flags to the
+# host Rust compiler used to generate UniFFI Kotlin bindings.
+upstream_build = "native/mtproto/build.gradle.kts"
+amend(upstream_build,
+      '        inputs.property("abis", abis)',
+      '''        inputs.property("abis", abis)
+        val androidRustFlags = providers.environmentVariable("MONOGRAM_ANDROID_RUSTFLAGS").orElse("").get()
+        inputs.property("ambientAndroidRustFlags", androidRustFlags)''')
+amend(upstream_build,
+      '                        pb.environment()["CARGO_BUILD_JOBS"] = jobs.toString()',
+      '''                        pb.environment()["CARGO_BUILD_JOBS"] = jobs.toString()
+                        if (androidRustFlags.isNotBlank()) {
+                            check(abi == "arm64-v8a") { "Ambient CPU tuning requires ARM64" }
+                            pb.environment()["RUSTFLAGS"] = androidRustFlags
+                            pb.environment().remove("CARGO_ENCODED_RUSTFLAGS")
+                        }''')
 
 # Commit files only after every source contract has been checked.
 for path, result in changes.items():

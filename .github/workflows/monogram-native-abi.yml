@@ -36,15 +36,23 @@ jobs:
         include:
           - abi: arm64-v8a
             app_abi: arm64
+            cpu: generic
           - abi: armeabi-v7a
             app_abi: arm
+            cpu: generic
           - abi: x86
             app_abi: x86
+            cpu: generic
           - abi: x86_64
             app_abi: x86_64
+            cpu: generic
+          - abi: arm64-v8a
+            app_abi: arm64
+            cpu: cortex-a57
     env:
       NDK_VERSION: '30.0.16248370'
       MONOGRAM_OPT_LEVEL: '2'
+      MONOGRAM_CPU_TUNE: ${{ matrix.cpu }}
       CARGO_BUILD_JOBS: '2'
       SKIP_MPV_NATIVE: '1'
     steps:
@@ -75,7 +83,7 @@ jobs:
           MONOGRAM_ABIS: ${{ matrix.abi }}
         run: bash scripts/build_monogram_native.sh
       - name: Check exact patched Rust contracts on host
-        if: matrix.abi == 'arm64-v8a'
+        if: matrix.abi == 'arm64-v8a' && matrix.cpu == 'generic'
         run: |
           python3 scripts/patch_monogram_leave.py third_party/monogram
           cargo test --manifest-path third_party/monogram/vendor/mono-rs/Cargo.toml -p mono-proto-media --lib ambient_range_tests
@@ -90,12 +98,15 @@ jobs:
           test -s monogram-report/libmonogram_mtproto.so
           readelf="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
           "$readelf" -h monogram-report/libmonogram_mtproto.so
+          "$readelf" --dyn-syms --wide monogram-report/libmonogram_mtproto.so > monogram-report/symbols.txt
+          grep -Eq 'GLOBAL.*Java_com_ambient_tv_data_telegram_AmbientMonogramJni_downloadMediaRange$' monogram-report/symbols.txt
+          grep -Fx "cpu_tune=$MONOGRAM_CPU_TUNE" app/libs/.monogram-native-version
           python3 scripts/check_elf_page_alignment.py "$readelf" monogram-report/libmonogram_mtproto.so
           cp app/libs/.monogram-native-version monogram-report/stamp.txt
           printf 'ABI: %s\nRaw ELF bytes: %s\nAAR bytes: %s\n' "$ABI" "$(stat -c%s monogram-report/libmonogram_mtproto.so)" "$(stat -c%s app/libs/monogram-mtproto.aar)" | tee monogram-report/sizes.txt >> "$GITHUB_STEP_SUMMARY"
           rm monogram-report/libmonogram_mtproto.so
       - name: Compile opt-in Android adapter and test streaming
-        if: matrix.abi == 'arm64-v8a'
+        if: matrix.abi == 'arm64-v8a' && matrix.cpu == 'generic'
         env:
           MONOGRAM_NATIVE: '1'
         run: |
@@ -104,6 +115,6 @@ jobs:
       - uses: actions/upload-artifact@v5
         if: always()
         with:
-          name: monogram-native-report-${{ matrix.abi }}
+          name: monogram-native-report-${{ matrix.abi }}-${{ matrix.cpu }}
           path: monogram-report/
           if-no-files-found: ignore

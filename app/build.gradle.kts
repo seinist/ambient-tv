@@ -200,9 +200,12 @@ if (monogramEnabled) {
         .joinToString("") { "%02x".format(it) }
     require(stampLines.contains("builder=$builderHash") &&
         stampLines.any { it.startsWith("build_config=") } &&
-        stampLines.contains("opt_level=" + (providers.environmentVariable("MONOGRAM_OPT_LEVEL").orNull ?: "2"))) {
+        stampLines.contains("opt_level=" + (providers.environmentVariable("MONOGRAM_OPT_LEVEL").orNull ?: "2")) &&
+        stampLines.contains("cpu_tune=" + (providers.environmentVariable("MONOGRAM_CPU_TUNE").orNull ?: "generic"))) {
         "Monogram native compiler configuration changed; rebuild with ./build.sh monogram"
     }
+    require((providers.environmentVariable("MONOGRAM_CPU_TUNE").orNull ?: "generic") != "cortex-a57" ||
+        selectedAbis == listOf("arm64-v8a")) { "Cortex-A57 Monogram is ARM64-only" }
     ZipFile(monogramAar).use { aar ->
         val missing = selectedAbis.filter { aar.getEntry("jni/$it/libmonogram_mtproto.so") == null }
         require(missing.isEmpty()) {

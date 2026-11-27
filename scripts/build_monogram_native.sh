@@ -21,6 +21,16 @@ patch_digest="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.ar
 # at runtime. Never pass -C target-cpu=native from the build host.
 profile="${MONOGRAM_OPT_LEVEL:-2}"
 case "$profile" in 2|3|z) ;; *) echo "MONOGRAM_OPT_LEVEL must be 2, 3 or z" >&2; exit 1;; esac
+cpu_tune="${MONOGRAM_CPU_TUNE:-generic}"
+case "$cpu_tune" in generic|cortex-a57) ;; *) echo "MONOGRAM_CPU_TUNE must be generic or cortex-a57" >&2; exit 1;; esac
+# Only this script sets the child Android compilation flags.
+unset MONOGRAM_ANDROID_RUSTFLAGS
+if [[ "$cpu_tune" == cortex-a57 ]]; then
+    [[ -z "${CARGO_ENCODED_RUSTFLAGS:-}" ]] || { echo "Encoded Rust flags conflict with explicit CPU tuning" >&2; exit 1; }
+    # The A57 is ARMv8-A; do not assume optional cryptographic/CRC instructions
+    # are present. RustCrypto can still detect them at runtime.
+    export MONOGRAM_ANDROID_RUSTFLAGS="${RUSTFLAGS:-} --cap-lints allow -C target-cpu=cortex-a57 -C target-feature=-aes,-sha2,-crc"
+fi
 export CARGO_PROFILE_RELEASE_OPT_LEVEL="$profile"
 export CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
 export CARGO_PROFILE_RELEASE_STRIP=true CARGO_PROFILE_RELEASE_PANIC=abort
@@ -38,13 +48,17 @@ rust_config="$(env | LC_ALL=C sort | grep -E '^(CARGO_TARGET_(AARCH64|ARMV7|I686
 if [[ "$rust_config" == *target-cpu=native* ]]; then
     echo "Host-native CPU flags are incompatible with portable Android ABIs" >&2; exit 1
 fi
-build_config="$(printf '%s\n' "$profile" "$rust_config" "$(rustc -Vv)" "$(cargo -V)" "$ndk_home" "$ndk_revision" "$sdk_home" | sha256sum | cut -d' ' -f1)"
+build_config="$(printf '%s\n' "$profile" "$cpu_tune" "${MONOGRAM_ANDROID_RUSTFLAGS:-}" "$rust_config" "$(rustc -Vv)" "$(cargo -V)" "$ndk_home" "$ndk_revision" "$sdk_home" | sha256sum | cut -d' ' -f1)"
 abis=(${MONOGRAM_ABIS:-arm64-v8a armeabi-v7a x86 x86_64})
 [[ "${#abis[@]}" -gt 0 ]] || exit 1
 for abi in "${abis[@]}"; do
     case "$abi" in arm64-v8a|armeabi-v7a|x86|x86_64) ;; *) echo "Unsupported ABI $abi" >&2; exit 1;; esac
 done
 requested="$(printf '%s\n' "${abis[@]}" | sort -u | tr '\n' ',')"
+if [[ "$cpu_tune" == cortex-a57 && "$requested" != "arm64-v8a," ]]; then
+    echo "Cortex-A57 tuning is opt-in and requires MONOGRAM_ABIS=arm64-v8a" >&2
+    exit 1
+fi
 if [[ "${REBUILD_MONOGRAM:-0}" != "1" && -s "$output" && -f "$stamp" ]] &&
     grep -Fx "version=$version" "$stamp" >/dev/null &&
     grep -Fx "ref=$ref" "$stamp" >/dev/null &&
@@ -111,5 +125,5 @@ done
 args=()
 for abi in "${abis[@]}"; do args+=("$abi=$scratch/$abi.aar"); done
 python3 "$root/scripts/merge_monogram_aars.py" "$output" "${args[@]}"
-printf 'version=%s\nref=%s\nabis=%s\npatch=%s\nbuilder=%s\nbuild_config=%s\nopt_level=%s\n' "$version" "$ref" "$requested" "$patch_digest" "$builder_digest" "$build_config" "$profile" > "$stamp"
+printf 'version=%s\nref=%s\nabis=%s\npatch=%s\nbuilder=%s\nbuild_config=%s\nopt_level=%s\ncpu_tune=%s\n' "$version" "$ref" "$requested" "$patch_digest" "$builder_digest" "$build_config" "$profile" "$cpu_tune" > "$stamp"
 echo "Only the upstream Monogram MTProto native module was compiled; GPL terms apply to the opt-in build."
