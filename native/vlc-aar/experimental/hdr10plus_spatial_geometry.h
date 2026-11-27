@@ -196,8 +196,30 @@ static inline bool ambient_hdrplus_spatial_supported(const struct ambient_hdrplu
             !(w->knee_x>=0.f && w->knee_x<=1.f) ||
             !(w->knee_y>=0.f && w->knee_y<=1.f))) return false;
         if(w->tone_mapping && !ambient_hdrplus_curve_monotone(w))return false;
-        if (i && (w->geometry.overlap!=*layering ||
-            !ambient_hdrplus_mask_init(&masks[i-1],&w->geometry,width,height))) return false;
+        if (i && !ambient_hdrplus_mask_init(&masks[i-1],&w->geometry,width,height))
+            return false;
+    }
+    // Section 6.7 requires equal options only for overlapping selectors.
+    // Prove disjointness conservatively using each rotated ellipse's
+    // bounding box intersected with its processing rectangle. In that case
+    // both methods produce identical pixels, so either shader mode works.
+    if(m->window_count==3 && m->windows[1].geometry.overlap!=m->windows[2].geometry.overlap){
+        float bounds[2][4];
+        for(unsigned i=0;i<2;i++){
+            const struct ambient_hdrplus_mask *mask=&masks[i];
+            float a=1.f/mask->ellipse[2],b=1.f/mask->ellipse[3];
+            float c=mask->rotation[0],s=mask->rotation[1];
+            float dx=hypotf(a*c,b*s),dy=hypotf(a*s,b*c);
+            bounds[i][0]=fmaxf(mask->rect[0],mask->ellipse[0]-dx);
+            bounds[i][1]=fmaxf(mask->rect[1],mask->ellipse[1]-dy);
+            bounds[i][2]=fminf(mask->rect[2],mask->ellipse[0]+dx);
+            bounds[i][3]=fminf(mask->rect[3],mask->ellipse[1]+dy);
+        }
+        bool disjoint=bounds[0][0]>bounds[0][2]||bounds[0][1]>bounds[0][3]||
+            bounds[1][0]>bounds[1][2]||bounds[1][1]>bounds[1][3]||
+            bounds[0][2]<bounds[1][0]||bounds[1][2]<bounds[0][0]||
+            bounds[0][3]<bounds[1][1]||bounds[1][3]<bounds[0][1];
+        if(!disjoint)return false;
     }
     return true;
 }
