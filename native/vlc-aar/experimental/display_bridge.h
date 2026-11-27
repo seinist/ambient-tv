@@ -47,7 +47,7 @@ static inline void ambient_display_destroy_texture(void *opaque, void *texture)
 }
 
 /* Admit only explicit BT.709 SDR and BT.2020 PQ/HLG. PQ/HLG is routed
- * through a 16-bit UNORM target with the original nonlinear color transfer.
+ * through a 16-bit floating-point target with the original nonlinear color transfer.
  * Do not infer the driver matrix, range or unknown transfer. */
 static inline bool ambient_display_sdr(const video_format_t *fmt)
 {
@@ -72,6 +72,7 @@ ambient_display_open(pl_gpu gpu, const video_format_t *fmt, vlc_video_context *c
     android_video_context_t *avctx =
         vlc_video_context_GetPrivate(context, VLC_VIDEO_CONTEXT_AWINDOW);
     if (!avctx || !avctx->air || !avctx->air_api) return NULL;
+    if (ambient_display_hdr(fmt) && !avctx->air_api->AImage.getDataSpace) return NULL;
     pl_vulkan vk = pl_vulkan_get(gpu);
     if (!ambient_pl_ahb_device_enabled(vk)) return NULL;
     // A conservative descriptor-pool budget, not an asserted per-format
@@ -101,6 +102,22 @@ static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
         return VK_ERROR_FORMAT_NOT_SUPPORTED;
     struct ambient_vlc_picture held;
     if (!ambient_vlc_hold_picture(pic, &held)) return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    const bool hdr = ambient_display_hdr(&pic->format);
+    const int32_t standard = hdr ? ADATASPACE_STANDARD_BT2020 : ADATASPACE_STANDARD_BT709;
+    const int32_t transfer = pic->format.transfer == TRANSFER_FUNC_SMPTE_ST2084 ?
+        ADATASPACE_TRANSFER_ST2084 : pic->format.transfer == TRANSFER_FUNC_HLG ?
+        ADATASPACE_TRANSFER_HLG : ADATASPACE_TRANSFER_SMPTE_170M;
+    const int32_t range = pic->format.color_range == COLOR_RANGE_FULL ?
+        ADATASPACE_RANGE_FULL : ADATASPACE_RANGE_LIMITED;
+    // The compressed stream's metadata alone cannot establish that the
+    // decoder did not tone-map or change range before producing this image.
+    if ((hdr && !held.data_space_valid) ||
+        (held.data_space_valid && ((held.data_space & ADATASPACE_STANDARD_MASK) != standard ||
+          (held.data_space & ADATASPACE_TRANSFER_MASK) != transfer ||
+          (held.data_space & ADATASPACE_RANGE_MASK) != range))) {
+        ambient_vlc_release_picture(held.held, held.acquire_fd);
+        return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    }
     uint32_t width = held.crop.right - held.crop.left;
     uint32_t height = held.crop.bottom - held.crop.top;
     if (width != pic->format.i_visible_width || height != pic->format.i_visible_height ||
@@ -116,9 +133,9 @@ static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
         .width = width, .height = height,
         .crop = { (float)held.crop.left / held.width, (float)held.crop.top / held.height,
                   (float)width / held.width, (float)height / held.height },
-        .model = ambient_display_hdr(&pic->format) ? VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_2020 :
+        .model = hdr ? VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_2020 :
             VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_709,
-        .high_precision = ambient_display_hdr(&pic->format),
+        .high_precision = hdr,
         .range = pic->format.color_range == COLOR_RANGE_FULL ?
             VK_SAMPLER_YCBCR_RANGE_ITU_FULL : VK_SAMPLER_YCBCR_RANGE_ITU_NARROW,
     };
