@@ -91,16 +91,20 @@ pub struct VulkanResident(Arc<Core>);
 #[derive(Clone,Copy)]
 pub struct VulkanPicture{
     y:vk::ImageView,u:vk::ImageView,v:vk::ImageView,
-    // 0: separate R8 U/V; 1: RG8 interleaved UV (v ignored).
+    // 0: separate R8 U/V; 1: RG8 interleaved UV; 2: SDR RGB in y.
     nv12:u32,
     chroma_location:u32,
 }
 impl VulkanPicture{
     fn valid(self)->bool{
-        self.nv12<=1 && self.chroma_location<=2 && self.y!=vk::ImageView::null() && self.u!=vk::ImageView::null()
-            && (self.nv12==1 || self.v!=vk::ImageView::null())
+        self.nv12<=2 && self.chroma_location<=2 && self.y!=vk::ImageView::null()
+            && (self.nv12==2 || self.u!=vk::ImageView::null()
+            && (self.nv12==1 || self.v!=vk::ImageView::null()))
     }
-    fn views(self)->[vk::ImageView;3]{[self.y,self.u,if self.nv12==1{self.u}else{self.v}]}
+    fn views(self)->[vk::ImageView;3]{
+        if self.nv12==2{[self.y;3]}else{[self.y,self.u,if self.nv12==1{self.u}else{self.v}]}
+    }
+    fn rgb(self)->bool{self.nv12==2}
 }
 
 pub struct VulkanPair{
@@ -125,7 +129,7 @@ impl Drop for VulkanPair{
 }
 impl VulkanPair{
     fn new(core:Arc<Core>,command:vk::CommandBuffer,a:VulkanPicture,b:VulkanPicture)->Result<Self>{
-        if command==vk::CommandBuffer::null() || !a.valid() || !b.valid(){return Err("invalid resident pictures".into());}
+        if command==vk::CommandBuffer::null() || !a.valid() || !b.valid() || a.rgb()!=b.rgb(){return Err("invalid resident pictures".into());}
         core.in_flight.fetch_update(Ordering::AcqRel,Ordering::Acquire,|n|
             (n<MAX_IN_FLIGHT).then_some(n+1)).map_err(|_|"resident in-flight budget")?;
         let mut p=Self{core,pool:vk::DescriptorPool::null(),field:vk::Buffer::null(),
@@ -174,7 +178,7 @@ impl VulkanPair{
         self.image(set,1,self.b.y,vk::DescriptorType::SAMPLED_IMAGE);
         self.field(set,2);
         unsafe{
-            c.motion.dispatch(self.command,set,[c.width,c.height,c.gw,c.gh],c.gw,c.gh*2);
+            c.motion.dispatch(self.command,set,[c.width,c.height,c.gw,c.gh|if self.a.rgb(){1<<31}else{0}],c.gw,c.gh*2);
             let barrier=[vk::BufferMemoryBarrier::default().src_access_mask(vk::AccessFlags::SHADER_WRITE)
                 .dst_access_mask(vk::AccessFlags::SHADER_READ)
                 .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -195,7 +199,8 @@ impl VulkanPair{
         self.field(set,6);
         self.image(set,7,output,vk::DescriptorType::STORAGE_IMAGE);
         let c=&self.core;
-        unsafe{c.synthesis.dispatch(self.command,set,[phase.to_bits(),self.a.nv12|(self.b.nv12<<1)|(self.a.chroma_location<<2)|(self.b.chroma_location<<4),matrix,c.width|(c.height<<16)],
+        let flags=if self.a.rgb(){64}else{self.a.nv12|(self.b.nv12<<1)|(self.a.chroma_location<<2)|(self.b.chroma_location<<4)};
+        unsafe{c.synthesis.dispatch(self.command,set,[phase.to_bits(),flags,matrix,c.width|(c.height<<16)],
             c.width.div_ceil(8),c.height.div_ceil(8));}
         self.phases+=1;
         Ok(())
