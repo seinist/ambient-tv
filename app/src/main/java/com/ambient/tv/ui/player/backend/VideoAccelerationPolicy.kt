@@ -266,3 +266,15 @@ internal class MpvZeroCopyFailureCache(
 }
 
 internal val mpvZeroCopyFailures = MpvZeroCopyFailureCache()
+
+/** The native experiment only negotiates opaque SDR when no CPU filter requires readable frames. */
+internal fun vlcAhbExperimentEligible(
+    experiment: Boolean,
+    vulkan: Boolean,
+    preserveHdr: Boolean,
+    softwareProcessing: Boolean,
+    svpMode: String,
+    deinterlaceMode: String,
+    copyBackRetried: Boolean,
+): Boolean = experiment && vulkan && !preserveHdr && !softwareProcessing &&
+    svpMode == "off" && deinterlaceMode == "off" && !copyBackRetried
