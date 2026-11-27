@@ -210,7 +210,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +#if defined(__ANDROID__) && defined(AMBIENT_VLC_AHB_EXPERIMENT)
 +    struct pl_render_params spatial_params;
 +    struct pl_color_map_params spatial_color;
-+    if (ahb_output.texture && !ahb_output.raw_yuv && sys->ahb_hdrplus_spatial &&
++    if (ahb_output.texture && sys->ahb_hdrplus_spatial &&
 +        !sys->ahb_dovi && !img.lut && !target.lut && !sys->params.lut &&
 +        ahb_output.metadata_origin_aligned &&
 +        img.planes[0].texture->params.w == (int)pic->format.i_visible_width &&

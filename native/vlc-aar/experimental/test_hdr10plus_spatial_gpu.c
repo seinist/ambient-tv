@@ -343,6 +343,66 @@ int main(void)
     img.planes[0].texture=input;img.color=pl_color_space_hdr10;
     assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
     assert(img.planes[0].texture==state.output);
+    // Native P010 is packed Cr/Y/Cb. Compare the spatial result against
+    // independent CPU BT.2020 NCL decoding of the same quantized codewords,
+    // with both full and limited ranges and nonneutral channels.
+    m=(struct ambient_hdrplus){.window_count=1,.version=1,.target_nits=state.output_max};
+    m.windows[0]=(struct ambient_hdrplus_window){.tone_mapping=true,.knee_x=1.f,
+        .knee_y=0.5f,.maxscl={0.1f,0.1f,0.1f}};
+    const float yuv[4][3]={{0.45f,0.04f,0.08f},{0.40f,-0.08f,0.04f},
+        {0.32f,0.06f,-0.04f},{0.20f,0.f,0.f}};
+    float rgb_reference[16];
+    for(unsigned range=0;range<2;range++){
+        bool limited=range==0;
+        float yo=limited?64.f:0.f,ys=limited?876.f:1023.f;
+        float cs=limited?896.f:1023.f;
+        for(int i=0;i<width*height;i++){
+            const float *v=yuv[i%4];
+            float yc=roundf(yo+ys*v[0]),uc=roundf(512.f+cs*v[1]),vc=roundf(512.f+cs*v[2]);
+            pixels[4*i]=vc/1023.f;pixels[4*i+1]=yc/1023.f;
+            pixels[4*i+2]=uc/1023.f;pixels[4*i+3]=1.f;
+        }
+        pl_tex packed=pl_tex_create(gpu,pl_tex_params(.w=width,.h=height,.format=fmt,
+            .sampleable=true,.initial_data=pixels));
+        assert(packed);
+        for(int i=0;i<width*height;i++){
+            float yy=(pixels[4*i+1]*1023.f-yo)/ys;
+            float cb=(pixels[4*i+2]*1023.f-512.f)/cs,cr=(pixels[4*i]*1023.f-512.f)/cs;
+            float red=yy+1.4746f*cr,blue=yy+1.8814f*cb;
+            pixels[4*i]=red;pixels[4*i+1]=(yy-0.2627f*red-0.0593f*blue)/0.6780f;
+            pixels[4*i+2]=blue;
+        }
+        pl_tex rgb=pl_tex_create(gpu,pl_tex_params(.w=width,.h=height,.format=fmt,
+            .sampleable=true,.initial_data=pixels));
+        assert(rgb);
+        img.planes[0].texture=rgb;img.color=pl_color_space_hdr10;img.repr=pl_color_repr_rgb;
+        assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
+        sh=pl_dispatch_begin(state.dispatch);
+        pl_shader_sample_direct(sh,pl_sample_src(.tex=state.output));
+        assert(pl_dispatch_finish(state.dispatch,pl_dispatch_params(.shader=&sh,.target=readback)));
+        assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=readback,.ptr=pixels)));
+        memcpy(rgb_reference,pixels,sizeof(rgb_reference));
+        img.planes[0]=(struct pl_plane){.texture=packed,.components=3,.component_mapping={2,0,1,-1}};
+        img.color=pl_color_space_hdr10;
+        img.repr=(struct pl_color_repr){.sys=PL_COLOR_SYSTEM_BT_2020_NC,
+            .levels=limited?PL_COLOR_LEVELS_LIMITED:PL_COLOR_LEVELS_FULL,
+            .bits={.sample_depth=10,.color_depth=10}};
+        img.repr.bits.color_depth=8;
+        assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
+        assert(img.planes[0].texture==packed && img.repr.bits.color_depth==8);
+        img.repr.bits.color_depth=10;
+        assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&target,&m));
+        assert(img.repr.sys==PL_COLOR_SYSTEM_RGB && img.planes[0].component_mapping[0]==0 &&
+            img.planes[0].component_mapping[1]==1 && img.planes[0].component_mapping[2]==2);
+        sh=pl_dispatch_begin(state.dispatch);
+        pl_shader_sample_direct(sh,pl_sample_src(.tex=state.output));
+        assert(pl_dispatch_finish(state.dispatch,pl_dispatch_params(.shader=&sh,.target=readback)));
+        assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=readback,.ptr=pixels)));
+        for(unsigned j=0;j<16;j++)if(j%4!=3){
+            assert(isfinite(pixels[j]) && fabsf(pixels[j]-rgb_reference[j])<0.003f);
+        }
+        pl_gpu_finish(gpu);pl_tex_destroy(gpu,&packed);pl_tex_destroy(gpu,&rgb);
+    }
     // A crop changes local coordinates; preserve the ordinary renderer path.
     img.planes[0].texture=input;img.color=pl_color_space_hdr10;
     img.crop.x0=1.f;

@@ -3,7 +3,7 @@
  * LUT generator and GPU-side elliptical weighting. No claim of conformance
  * for complete ST2094-40 conformance. Scene LUTs and saturation use an
  * adapted display peak with the existing libplacebo curve generator.
- * Only RGB PQ AHB frames -> SDR, no raw P010 or Dolby Vision. */
+ * RGB PQ or native packed P010 AHB frames -> SDR, no Dolby Vision. */
 #include <libplacebo/dispatch.h>
 #include <libplacebo/shaders/custom.h>
 #include <libplacebo/shaders/colorspace.h>
@@ -215,10 +215,22 @@ static inline bool ambient_hdrplus_spatial_render(pl_gpu gpu, pl_log log,
     const struct pl_frame *target, const struct ambient_hdrplus *m)
 {
     if (!gpu || !s || !img || !target || !m || img->num_planes!=1 ||
-        img->repr.sys!=PL_COLOR_SYSTEM_RGB || img->color.transfer!=PL_COLOR_TRC_PQ ||
+        img->color.transfer!=PL_COLOR_TRC_PQ ||
         img->color.primaries!=PL_COLOR_PRIM_BT_2020 || !img->planes[0].texture)
         return false;
-    pl_tex input=img->planes[0].texture;
+    const struct pl_plane *plane=&img->planes[0];
+    const bool raw=img->repr.sys==PL_COLOR_SYSTEM_BT_2020_NC;
+    // Only the exact native AHB identity layout, not arbitrary YUV planes.
+    // Reject Dolby metadata and unproven range/bit depth before decoding.
+    if(img->repr.dovi || plane->components!=3 || plane->component_mapping[3]!=-1 ||
+        (raw ? (plane->component_mapping[0]!=2 || plane->component_mapping[1]!=0 ||
+            plane->component_mapping[2]!=1 || img->repr.bits.sample_depth!=10 ||
+            img->repr.bits.color_depth!=10 || img->repr.bits.bit_shift!=0 ||
+            (img->repr.levels!=PL_COLOR_LEVELS_FULL && img->repr.levels!=PL_COLOR_LEVELS_LIMITED)) :
+            (img->repr.sys!=PL_COLOR_SYSTEM_RGB || plane->component_mapping[0]!=0 ||
+             plane->component_mapping[1]!=1 || plane->component_mapping[2]!=2)))
+        return false;
+    pl_tex input=plane->texture;
     int w=input->params.w,h=input->params.h;
     // The prepass reads the whole source and must never sample its own target.
     if (w<=0 || h<=0 || input==s->output || !input->params.sampleable ||
@@ -294,10 +306,18 @@ static inline bool ambient_hdrplus_spatial_render(pl_gpu gpu, pl_log log,
     if (!pl_shader_custom(sh,&(struct pl_custom_shader){
         .description="Ambient HDR10+ spatial source",.input=PL_SHADER_SIG_NONE,
         .output=PL_SHADER_SIG_COLOR,
-        .body="color=texelFetch(ahp_input,clamp(ivec2(ahp_uv*ahp_size),ivec2(0),ivec2(ahp_size)-1),0);",
+        .body=raw ?
+            "color=texelFetch(ahp_input,clamp(ivec2(ahp_uv*ahp_size),ivec2(0),ivec2(ahp_size)-1),0).gbra;" :
+            "color=texelFetch(ahp_input,clamp(ivec2(ahp_uv*ahp_size),ivec2(0),ivec2(ahp_size)-1),0);",
         .descriptors=desc,.num_descriptors=2,.variables=vars,.num_variables=sizeof(vars)/sizeof(vars[0]),
         .vertex_attribs=&va,.num_vertex_attribs=1,.output_w=w,.output_h=h,
     })) goto fail;
+    if(raw){
+        // Native sampler delivered Cr/Y/Cb; swizzle and apply the existing
+        // BT.2020 NCL range/matrix conversion exactly once, in this prepass.
+        struct pl_color_repr repr=img->repr;
+        pl_shader_decode_color(sh,&repr,NULL);
+    }
     pl_shader_linearize(sh,&src);
     if (!pl_shader_custom(sh,&(struct pl_custom_shader){
         .description="Ambient HDR10+ local-window blend",.input=PL_SHADER_SIG_COLOR,
@@ -311,7 +331,9 @@ static inline bool ambient_hdrplus_spatial_render(pl_gpu gpu, pl_log log,
     pl_shader_delinearize(sh,&mapped);
     if (!pl_dispatch_finish(s->dispatch,pl_dispatch_params(.shader=&sh,.target=s->output)))
         return false;
-    img->planes[0].texture=s->output;
+    img->planes[0]=(struct pl_plane){.texture=s->output,.components=3,
+        .component_mapping={0,1,2,-1}};
+    img->repr=pl_color_repr_rgb;
     img->color=mapped;
     return true;
 fail:
