@@ -40,7 +40,10 @@ static inline bool ambient_fel_render_picture(pl_gpu gpu,pl_log log,
     const uint16_t *data[]={pic->samples,pic->samples+(size_t)w*h,
         pic->samples+(size_t)w*h+(size_t)cw*ch};
     const size_t pitches[]={w*2u,cw*2u,cw*2u};
-    if(!ambient_fel_planes_upload(gpu,&s->planes,w,h,data,pitches,
+    const bool zero=ambient_fel_nlq_zero(&nlq);
+    // Keep decoding EL frames to preserve reference pictures across a
+    // possible later nonzero-residual RPU, but avoid useless GPU uploads.
+    if(!zero&&!ambient_fel_planes_upload(gpu,&s->planes,w,h,data,pitches,
         pic->chroma_x,pic->chroma_y))return false;
     if(!s->dispatch)s->dispatch=pl_dispatch_create(log,gpu);
     pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,16,0,
@@ -49,7 +52,7 @@ static inline bool ambient_fel_render_picture(pl_gpu gpu,pl_log log,
         .w=bl->params.w,.h=bl->params.h,.format=fmt,.sampleable=true,.renderable=true)))
         return false;
     if(!ambient_fel_compose_ex(gpu,s->dispatch,bl,NULL,s->output,&reshape,&nlq,
-        true,true,&s->planes))return false;
+        true,true,zero?NULL:&s->planes))return false;
     // The prepass has produced nonlinear BT.2020 PQ RGB. Ordinary rendering
     // now handles target gamut, tone mapping, scaling, overlays and dither.
     img->planes[0]=(struct pl_plane){.texture=s->output,.components=3,
