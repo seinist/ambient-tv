@@ -20,6 +20,10 @@ MODIFICATION_DATE = "2026-11-27"
 NOTICE_MARKER = "Modified by Ambient TV, "
 COMMENT_PREFIX = {".rs": "//", ".kt": "//", ".kts": "//", ".toml": "#"}
 MODIFICATIONS = {
+    "vendor/mono-rs/crates/mono-proto-client/src/lanes.rs":
+        "prefer warm same-DC media lanes and promote queued foreground requests",
+    "vendor/mono-rs/crates/mono-proto-runtime/src/transfer_policy.rs":
+        "honor live promotion during download admission",
     "vendor/mono-rs/crates/mono-proto-runtime/src/api_invoke.rs":
         "decode non-refilling media batches only once",
     "vendor/mono-rs/crates/mono-proto-client/src/media_lane.rs":
@@ -1029,6 +1033,59 @@ amend(crypto_message,
     plaintext[..8].copy_from_slice(&auth_key_id(auth_key).to_le_bytes());
     plaintext[8..24].copy_from_slice(&msg_key);
     Ok(plaintext)""")
+
+
+# Warm same-DC media lanes first, with existing gate fairness and lease checks.
+lanes = "vendor/mono-rs/crates/mono-proto-client/src/lanes.rs"
+amend(lanes,
+      """pub fn lock_media_lane(client: &Client) -> Result<LaneLease<'_>, MtprotoError> {
+    let class = scheduler::current_class();""",
+      """pub fn lock_media_lane(client: &Client) -> Result<LaneLease<'_>, MtprotoError> {
+    lock_media_lane_for_dc(client, None)
+}
+
+pub fn lock_media_lane_for_dc(client: &Client, dc: Option<i32>) -> Result<LaneLease<'_>, MtprotoError> {
+    let class = scheduler::current_class();""")
+amend(lanes,
+      """                if !waiter.is_next() {
+                    waiter.wait();
+                    continue;
+                }
+                let open = client.media_open.load(Ordering::Acquire).min(cap);
+                for lane in client.media.iter().take(open) {
+                    if let Some(lease) = lane.try_lease(class) {""",
+      """                let promoted = mono_proto_runtime::request_control::promoted_class()
+                    .filter(|p| p.priority() < class.priority() && scheduler::family(*p) == scheduler::LaneFamily::Media)
+                    .unwrap_or(class);
+                if promoted != class { waiter.promote(promoted); }
+                if !waiter.is_next() {
+                    waiter.wait();
+                    continue;
+                }
+                let open = client.media_open.load(Ordering::Acquire).min(cap);
+                // Probe without holding the lane lock across acquisition.
+                if let Some(dc) = dc {
+                    for lane in client.media.iter().take(open) {
+                        let warm = lane.io.try_lock().is_some_and(|io| io.snapshot.dc_id == dc && io.transport.is_some());
+                        if warm && let Some(lease) = lane.try_lease(promoted) {
+                            return Ok(lease);
+                        }
+                    }
+                }
+                for lane in client.media.iter().take(open) {
+                    if let Some(lease) = lane.try_lease(promoted) {""")
+amend(media_lane, "    let mut io = lock_media_lane(client)?;",
+      "    let mut io = crate::lanes::lock_media_lane_for_dc(client, Some(target_dc))?;")
+transfer_policy = "vendor/mono-rs/crates/mono-proto-runtime/src/transfer_policy.rs"
+amend(transfer_policy,
+      """            let limits = *self.queue_limits.lock();
+            let limit = if large { limits.1.min(2) } else { limits.0 };""",
+      """            if let Some(promoted) = crate::request_control::promoted_class()
+                && let Some(waiter) = active.waiters.iter_mut().find(|waiter| waiter.ticket == ticket) {
+                waiter.priority = waiter.priority.min(promoted.priority());
+            }
+            let limits = *self.queue_limits.lock();
+            let limit = if large { limits.1.min(2) } else { limits.0 };""")
 
 # Commit files only after every source contract has been checked.
 for path, result in changes.items():

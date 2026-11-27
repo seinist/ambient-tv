@@ -1131,7 +1131,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
      * do), so it returned the same ~40 px image again; Display is the getFile size Monogram
      * itself uses to sharpen a cell. Thumb stays the fallback, but never the inline bytes.
      */
-    override suspend fun thumbnail(chatId: Long, messageId: Int): String? {
+    override suspend fun thumbnail(chatId: Long, messageId: Int): String? =
+        thumbnail(chatId, messageId, TelegramTransferPriority(true))
+
+    override suspend fun thumbnail(chatId: Long, messageId: Int, priority: TelegramTransferPriority): String? {
         // A preview on disk needs no MTProto at all: never queue it behind connecting, a
         // FLOOD_WAIT or other RPCs (cards stayed on the inline preview meanwhile).
         if (accountId != null && chatId !in leftChannels) {
@@ -1141,10 +1144,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 return cached.toURI().toString()
             }
         }
-        return downloadThumbnail(chatId, messageId)
+        return downloadThumbnail(chatId, messageId, priority)
     }
 
-    private suspend fun downloadThumbnail(chatId: Long, messageId: Int): String? = cancellableMediaRequest { request ->
+    private suspend fun downloadThumbnail(chatId: Long, messageId: Int, priority: TelegramTransferPriority): String? =
+        cancellableMediaRequest(priority) { request ->
         nativeCall { h ->
         requireAuthorized(h)
         if (chatId in leftChannels) return@nativeCall null
@@ -1164,7 +1168,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         try {
         // Upstream's MtprotoNativeUniFfi.downloadMessageDisplay calls the FULL media download
         // (a whole video for one card); the UniFFI export itself fetches the display size.
-        fun display() = File(mediaClass(DISPATCH_ORDINARY) {
+        fun display() = File(mediaClass(if (priority.foreground) DISPATCH_ORDINARY else DISPATCH_BACKGROUND) {
             uniffi.monogram_mtproto.downloadMessageDisplay(h.toULong(), chatId, messageId, stage.path)
         }).canonicalFile
         val returned = runCatching {
@@ -1179,7 +1183,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             if (failure.message?.contains("cancel", ignoreCase = true) == true ||
                 classifyTelegramFailure(failure.message) != TelegramFailureKind.OTHER) throw failure
             val inline = native.peekMessageInlineThumb(h, chatId, messageId)
-            val thumb = File(mediaClass(DISPATCH_VISIBLE) { native.downloadMessageThumb(h, chatId, messageId, stage.path) }).canonicalFile
+            val thumb = File(mediaClass(if (priority.foreground) DISPATCH_VISIBLE else DISPATCH_BACKGROUND) { native.downloadMessageThumb(h, chatId, messageId, stage.path) }).canonicalFile
             if (inline != null && thumb.isFile && thumb.length() == inline.size.toLong()) {
                 thumb.delete()
                 return@nativeCall null
@@ -1236,15 +1240,17 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     // A started video waits out a FLOOD_WAIT caused by browsing or card images instead of
     // failing at once (the player then stood at 0:00).
     // Cancellation must reach a synchronous UniFFI call, not merely cancel the Kotlin waiter.
-    private suspend fun <T> cancellableMediaRequest(block: suspend (ULong) -> T): T =
+    private suspend fun <T> cancellableMediaRequest(priority: TelegramTransferPriority, block: suspend (ULong) -> T): T =
         kotlinx.coroutines.coroutineScope {
             kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
                 val request = uniffi.monogram_mtproto.createRequestControl()
+                priority.bind { uniffi.monogram_mtproto.promoteRequestControl(request, DISPATCH_USER) }
                 val worker = launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
                     val result = runCatching { block(request) }
                     continuation.resumeWith(result)
                 }
                 worker.invokeOnCompletion {
+                    priority.unbind()
                     runCatching { uniffi.monogram_mtproto.releaseRequestControl(request) }
                 }
                 continuation.invokeOnCancellation {
@@ -1256,15 +1262,20 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         }
 
     override suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray =
-        loadMediaPart(chatId, messageId, offset, null, null)
+        loadMediaPart(chatId, messageId, offset, null, null, TelegramTransferPriority(true))
 
     override suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int): ByteArray =
-        loadMediaPart(chatId, messageId, offset, expectedBytes, null)
+        loadMediaPart(chatId, messageId, offset, expectedBytes, null, TelegramTransferPriority(true))
 
     override suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int, nativeMediaKey: String?): ByteArray =
-        loadMediaPart(chatId, messageId, offset, expectedBytes, nativeMediaKey)
+        loadMediaPart(chatId, messageId, offset, expectedBytes, nativeMediaKey, TelegramTransferPriority(true))
 
-    private suspend fun loadMediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int?, nativeMediaKey: String?): ByteArray {
+    override suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int, nativeMediaKey: String?,
+        priority: TelegramTransferPriority): ByteArray =
+        loadMediaPart(chatId, messageId, offset, expectedBytes, nativeMediaKey, priority)
+
+    private suspend fun loadMediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int?,
+        nativeMediaKey: String?, priority: TelegramTransferPriority): ByteArray {
         require(offset >= 0L && offset % TELEGRAM_MEDIA_PART_BYTES == 0L)
         require(expectedBytes == null || expectedBytes in 1..TELEGRAM_MEDIA_PART_BYTES)
         fun validSize(size: Int) = size in 1..TELEGRAM_MEDIA_PART_BYTES &&
@@ -1314,7 +1325,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             lookup()
         }?.let { return it }
 
-        return cancellableMediaRequest { request ->
+        return cancellableMediaRequest(priority) { request ->
             nativeCall(maxFloodWaitSeconds = PLAYBACK_FLOOD_WAIT_SECONDS) { h ->
                 requireAuthorized(h)
                 verifyGeneration()
@@ -1328,7 +1339,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 try {
                     val previous = uniffi.monogram_mtproto.bindRequestControl(request)
                     val payload = try {
-                        mediaClass(DISPATCH_USER) {
+                        mediaClass(if (priority.foreground) DISPATCH_USER else DISPATCH_BACKGROUND) {
                             AmbientMonogramJni.mediaRange(h, chatId, messageId, temp.absolutePath, offset, mediaIdentity.orEmpty())
                         }
                     } finally {
@@ -1400,6 +1411,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         const val GLOBAL_CATEGORY_ROUNDS = 3
         /** Native dispatch classes (ffi.rs set_dispatch_class). */
         const val DISPATCH_READ = 0
+        const val DISPATCH_BACKGROUND = 3
         const val DISPATCH_VISIBLE = 6
         /** 128 KiB parts, 4 in flight (Visible: 512 KiB x 8, which stalls on a 15 KiB preview). */
         const val DISPATCH_ORDINARY = 5
