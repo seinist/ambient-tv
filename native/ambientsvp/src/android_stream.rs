@@ -517,6 +517,23 @@ mod tests{
         }
     }
     #[test]
+    #[ignore="requires a physical Android Vulkan device with FP16 compositor AHB storage support"]
+    fn hdr_compositor_preflight_uses_explicit_fp16_allocations(){
+        let owner=DeviceOwner::new().unwrap();
+        let image=DisplayImage::new(owner.clone(),64,64,None,true).unwrap();
+        let mut desc=Desc::default();
+        unsafe{crate::mediacodec_reader::AHardwareBuffer_describe(image.buffer,&mut desc);}
+        assert_eq!((desc.width,desc.height,desc.layers,desc.format),(64,64,1,0x16));
+        assert_eq!(desc.usage&((1<<8)|(1<<9)|(1<<11)),(1<<8)|(1<<9)|(1<<11));
+        let stream=unsafe{ambient_svp_android_stream_create_format(64,64,4)};
+        assert!(!stream.is_null());
+        let s=unsafe{&*stream};
+        assert_eq!(s.mode,4);
+        assert!(s.preflight.is_some());
+        assert_eq!(unsafe{ambient_svp_android_stream_destroy(stream)},1);
+        assert!(unsafe{ambient_svp_android_stream_create_format(64,64,99)}.is_null());
+    }
+    #[test]
     #[ignore="requires a physical Android Vulkan device with compositor AHB extensions"]
     fn compositor_allocation_can_be_reimported_after_successful_gpu_sync(){
         let owner=DeviceOwner::new().unwrap();
