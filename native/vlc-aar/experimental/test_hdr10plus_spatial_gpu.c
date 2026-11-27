@@ -525,6 +525,55 @@ int main(void)
     pq_target.color.hdr.min_luma=0.f;
     assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&pq_target,&m));
     assert(img.planes[0].texture==input && img.color.transfer==PL_COLOR_TRC_PQ);
+    // Full reversed crop and rotation belong to final presentation, not
+    // the local-window coordinate system. Normalize a physically flipped
+    // texture in the prepass, keeping authored masks on logical rows.
+    m=(struct ambient_hdrplus){.window_count=2,.version=0,.target_nits=600.f};
+    m.windows[0]=(struct ambient_hdrplus_window){.tone_mapping=true,.knee_x=1.f,
+        .knee_y=0.5f,.maxscl={0.1f,0.1f,0.1f}};
+    m.windows[1]=m.windows[0];m.windows[1].knee_y=0.8f;
+    m.windows[1].geometry=(struct ambient_hdrplus_geometry){
+        .left=0,.top=0,.right=63,.bottom=63,.center_x=32,.center_y=8,
+        .semimajor_inner=4,.semimajor_outer=8,.semiminor_outer=8};
+    for(int y=0;y<height;y++)for(int x=0;x<width;x++){
+        float p=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_PQ,y<height/2?200.f:600.f);
+        unsigned i=4*(y*width+x);
+        pixels[i]=pixels[i+1]=pixels[i+2]=p;pixels[i+3]=1.f;
+    }
+    pl_tex inverted=pl_tex_create(gpu,pl_tex_params(.w=width,.h=height,.format=fmt,
+        .sampleable=true,.initial_data=pixels));
+    assert(inverted);
+    pq_target.color=pl_color_space_hdr10;
+    pq_target.color.hdr.min_luma=0.005f;pq_target.color.hdr.max_luma=600.f;
+    img.planes[0]=(struct pl_plane){.texture=inverted,.flipped=true,.components=3,
+        .component_mapping={0,1,2,-1}};
+    img.color=pl_color_space_hdr10;img.repr=pl_color_repr_rgb;
+    img.crop=(struct pl_rect2df){width,height,0,0};
+    img.rotation=PL_ROTATION_90;
+    assert(ambient_hdrplus_spatial_render(gpu,log,&state,&img,&pq_target,&m));
+    assert(!img.planes[0].flipped && img.crop.x0==width && img.crop.y0==height &&
+        img.crop.x1==0 && img.crop.y1==0 && img.rotation==PL_ROTATION_90);
+    sh=pl_dispatch_begin(state.dispatch);
+    pl_shader_sample_direct(sh,pl_sample_src(.tex=state.output));
+    assert(pl_dispatch_finish(state.dispatch,pl_dispatch_params(.shader=&sh,.target=readback)));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=readback,.ptr=pixels)));
+    assert(fabsf(pl_hdr_rescale(PL_HDR_PQ,PL_HDR_NITS,pixels[4*(8*width+32)])-288.f)<2.f);
+    assert(fabsf(pl_hdr_rescale(PL_HDR_PQ,PL_HDR_NITS,pixels[4*(56*width+32)])-60.f)<1.f);
+    img.planes[0].texture=inverted;img.color=pl_color_space_hdr10;
+    img.planes[0].shift_y=0.5f;
+    assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&pq_target,&m));
+    img.planes[0].shift_y=0.f;
+    img.profile.len=1;
+    assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&pq_target,&m));
+    img.profile.len=0;pq_target.profile.len=1;
+    assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&pq_target,&m));
+    pq_target.profile.len=0;
+    img.repr.levels=PL_COLOR_LEVELS_LIMITED;
+    assert(!ambient_hdrplus_spatial_render(gpu,log,&state,&img,&pq_target,&m));
+    img.repr=pl_color_repr_rgb;img.rotation=PL_ROTATION_0;
+    img.crop=(struct pl_rect2df){0,0,width,height};
+    img.planes[0].texture=input;
+    pl_gpu_finish(gpu);pl_tex_destroy(gpu,&inverted);
     // A crop changes local coordinates; preserve the ordinary renderer path.
     img.planes[0].texture=input;img.color=pl_color_space_hdr10;
     img.crop.x0=1.f;

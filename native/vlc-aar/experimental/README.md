@@ -918,3 +918,13 @@ HLG-only HDR displays remain eligible for explicitly requested conversion;
 the current nativeHdrPreferred value describes source/display compatibility,
 not a user-forced SDR preference. Corrected the missing unified-diff prefix
 in the previous MP4 change and validated every hunk's line syntax/counts.
+
+
+HDR10+ spatial coordinates: full mirrored crops and rotation are retained
+for final presentation; physically flipped planes are fetched in logical
+source orientation before local masks. Nonzero plane shifts, unknown RGB
+range transforms, ICC profiles and custom frame LUTs are excluded from the
+spatial pass rather than applying a second unverified color transform.
+The ordinary libplacebo renderer remains the fallback. An asymmetric GPU
+fixture verifies flipped source rows and the authored local window while
+preserving the final crop/rotation. No claim of device-level certification.

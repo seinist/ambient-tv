@@ -1,7 +1,7 @@
 #pragma once
 /* Default-off local-window HDR10+ prototype. Uses libplacebo's own ST2094-40
- * LUT generator and GPU-side elliptical weighting. No claim of conformance
- * for complete ST2094-40 conformance. Scene LUTs and saturation use an
+ * LUT generator and GPU-side elliptical weighting. No claim of complete
+ * ST2094-40 conformance. Scene LUTs and saturation use an
  * adapted display peak with the existing libplacebo curve generator.
  * RGB PQ or native packed P010 AHB frames -> SDR or explicit PQ/HLG
  * targets, no Dolby Vision. Keep display-linear light until PQ re-encoding. */
@@ -248,20 +248,30 @@ static inline bool ambient_hdrplus_spatial_render(pl_gpu gpu, pl_log log,
     const bool raw=img->repr.sys==PL_COLOR_SYSTEM_BT_2020_NC;
     // Only the exact native AHB identity layout, not arbitrary YUV planes.
     // Reject Dolby metadata and unproven range/bit depth before decoding.
-    if(img->repr.dovi || plane->components!=3 || plane->component_mapping[3]!=-1 ||
+    if(img->repr.dovi || img->profile.len || target->profile.len ||
+        img->lut || target->lut || plane->shift_x!=0.f || plane->shift_y!=0.f ||
+        plane->components!=3 || plane->component_mapping[3]!=-1 ||
         (raw ? (plane->component_mapping[0]!=2 || plane->component_mapping[1]!=0 ||
             plane->component_mapping[2]!=1 || img->repr.bits.sample_depth!=10 ||
             img->repr.bits.color_depth!=10 || img->repr.bits.bit_shift!=0 ||
             (img->repr.levels!=PL_COLOR_LEVELS_FULL && img->repr.levels!=PL_COLOR_LEVELS_LIMITED)) :
             (img->repr.sys!=PL_COLOR_SYSTEM_RGB || plane->component_mapping[0]!=0 ||
-             plane->component_mapping[1]!=1 || plane->component_mapping[2]!=2)))
+             plane->component_mapping[1]!=1 || plane->component_mapping[2]!=2 ||
+             (img->repr.levels!=PL_COLOR_LEVELS_FULL && img->repr.levels!=PL_COLOR_LEVELS_UNKNOWN) ||
+             img->repr.bits.bit_shift!=0)))
         return false;
     pl_tex input=plane->texture;
     int w=input->params.w,h=input->params.h;
-    // The prepass reads the whole source and must never sample its own target.
+    // The prepass reads the whole source in unrotated logical coordinates.
+    // A full reversed crop is VLC's orientation transform, not a subcrop.
+    // Leave crop direction and rotation for the main renderer. A physically
+    // flipped plane is normalized in the fetch below before mask evaluation.
+    bool full_x=(img->crop.x0==0.f && img->crop.x1==(float)w) ||
+                (img->crop.x1==0.f && img->crop.x0==(float)w);
+    bool full_y=(img->crop.y0==0.f && img->crop.y1==(float)h) ||
+                (img->crop.y1==0.f && img->crop.y0==(float)h);
     if (w<=0 || h<=0 || input==s->output || !input->params.sampleable ||
-        img->crop.x0!=0.f || img->crop.y0!=0.f ||
-        img->crop.x1!=(float)w || img->crop.y1!=(float)h) return false;
+        !full_x || !full_y) return false;
     struct ambient_hdrplus_mask masks[2];
     bool layering;
     if (!ambient_hdrplus_spatial_supported(m,w,h,masks,&layering)) return false;
@@ -293,7 +303,7 @@ static inline bool ambient_hdrplus_spatial_render(pl_gpu gpu, pl_log log,
         {.desc={.name="ahp_lut",.type=PL_DESC_SAMPLED_TEX},.binding={.object=s->lut}},
     };
     float rect[2][4],ellipse[2][4],rotation[2][4],size[2]={(float)w,(float)h};
-    int layer=layering?1:0;
+    int layer=layering?1:0, flipped=plane->flipped?1:0;
     float sat[3]={0},sat_peak[3]={0},sat_source_scale[3]={0},sat_target_scale[3]={0};
     for(unsigned i=0;i<3;++i) {
         const struct ambient_hdrplus_window *window=&m->windows[i<m->window_count?i:0];
@@ -324,6 +334,7 @@ static inline bool ambient_hdrplus_spatial_render(pl_gpu gpu, pl_log log,
         {.var=pl_var_vec3("ahp_domains"),.data=s->domains,.dynamic=true},
         {.var=pl_var_vec2("ahp_size"),.data=size,.dynamic=true},
         {.var=pl_var_int("ahp_layering"),.data=&layer,.dynamic=true},
+        {.var=pl_var_int("ahp_flipped"),.data=&flipped,.dynamic=true},
         {.var=pl_var_vec3("ahp_sat"),.data=sat,.dynamic=true},
         {.var=pl_var_vec3("ahp_sat_peak"),.data=sat_peak,.dynamic=true},
         {.var=pl_var_vec3("ahp_sat_source_scale"),.data=sat_source_scale,.dynamic=true},
@@ -338,8 +349,12 @@ static inline bool ambient_hdrplus_spatial_render(pl_gpu gpu, pl_log log,
         .description="Ambient HDR10+ spatial source",.input=PL_SHADER_SIG_NONE,
         .output=PL_SHADER_SIG_COLOR,
         .body=raw ?
-            "color=texelFetch(ahp_input,clamp(ivec2(ahp_uv*ahp_size),ivec2(0),ivec2(ahp_size)-1),0).gbra;" :
-            "color=texelFetch(ahp_input,clamp(ivec2(ahp_uv*ahp_size),ivec2(0),ivec2(ahp_size)-1),0);",
+            "ivec2 pos=clamp(ivec2(ahp_uv*ahp_size),ivec2(0),ivec2(ahp_size)-1);"
+            "if(ahp_flipped!=0) pos.y=int(ahp_size.y)-1-pos.y;"
+            "color=texelFetch(ahp_input,pos,0).gbra;" :
+            "ivec2 pos=clamp(ivec2(ahp_uv*ahp_size),ivec2(0),ivec2(ahp_size)-1);"
+            "if(ahp_flipped!=0) pos.y=int(ahp_size.y)-1-pos.y;"
+            "color=texelFetch(ahp_input,pos,0);",
         .descriptors=desc,.num_descriptors=2,.variables=vars,.num_variables=sizeof(vars)/sizeof(vars[0]),
         .vertex_attribs=&va,.num_vertex_attribs=1,.output_w=w,.output_h=h,
     })) goto fail;
