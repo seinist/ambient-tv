@@ -165,10 +165,18 @@ static picture_t *svp_android_passthrough(SvpAndroid *s,picture_t *pic,bool drop
     if (old) {old->p_next=pic;return old;}
     return pic;
 }
+static bool svp_android_sdr_color(const video_format_t *v)
+{
+    return (v->transfer==TRANSFER_FUNC_BT709 || v->transfer==TRANSFER_FUNC_SRGB) &&
+        (v->primaries==COLOR_PRIMARIES_BT709 || v->primaries==COLOR_PRIMARIES_BT601_625 ||
+         v->primaries==COLOR_PRIMARIES_BT601_525);
+}
 static bool svp_android_input(SvpAndroid *s,picture_t *pic,AHardwareBuffer **buffer,
     struct android_picture_ctx **ctx)
 {
     if (!pic->context || !pic->b_progressive || pic->date==VLC_TICK_INVALID ||
+        !svp_android_sdr_color(&pic->format) || pic->format.orientation!=ORIENT_NORMAL ||
+        pic->format.projection_mode!=PROJECTION_MODE_RECTANGULAR ||
         vlc_video_context_GetType(pic->context->vctx)!=VLC_VIDEO_CONTEXT_AWINDOW)
         return false;
     android_video_context_t *v=vlc_video_context_GetPrivate(pic->context->vctx,VLC_VIDEO_CONTEXT_AWINDOW);
@@ -200,6 +208,12 @@ static picture_t *svp_android_filter(filter_t *f,picture_t *pic)
     if (!svp_android_input(s,pic,&buffer,&ctx))
         return svp_android_passthrough(s,pic,false);
     if (s->previous) {
+        const video_format_t *previous=&s->previous->format;
+        const video_format_t *current=&pic->format;
+        if (previous->transfer!=current->transfer || previous->primaries!=current->primaries ||
+            previous->space!=current->space || previous->color_range!=current->color_range ||
+            previous->i_visible_width!=current->i_visible_width || previous->i_visible_height!=current->i_visible_height)
+            return svp_android_passthrough(s,pic,false);
         double expected=1000000.0/s->source;
         double delta=US_FROM_VLC_TICK(pic->date-s->previous->date);
         if (fabs(delta-expected)>fmax(3000.0,expected*0.25))
@@ -235,9 +249,7 @@ static int svp_android_open(filter_t *f)
         v->i_visible_width<32 || v->i_visible_height<32 ||
         (v->i_visible_width|v->i_visible_height)&1 ||
         (uint64_t)v->i_visible_width*v->i_visible_height>1920u*1080u ||
-        (v->transfer!=TRANSFER_FUNC_BT709 && v->transfer!=TRANSFER_FUNC_SRGB) ||
-        (v->primaries!=COLOR_PRIMARIES_BT709 && v->primaries!=COLOR_PRIMARIES_BT601_625 &&
-         v->primaries!=COLOR_PRIMARIES_BT601_525) ||
+        !svp_android_sdr_color(v) ||
         !v->i_frame_rate || !v->i_frame_rate_base)
         return VLC_EGENERIC;
     android_video_context_t *ctx=vlc_video_context_GetPrivate(f->vctx_in,VLC_VIDEO_CONTEXT_AWINDOW);
