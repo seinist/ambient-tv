@@ -78,6 +78,7 @@ static int svp_vk_matrix(struct mp_image *img)
     switch (img->params.repr.sys) {
     case PL_COLOR_SYSTEM_BT_601: matrix=0; break;
     case PL_COLOR_SYSTEM_BT_709: matrix=1; break;
+    case PL_COLOR_SYSTEM_RGB: return img->params.repr.levels==PL_COLOR_LEVELS_FULL?3:-1;
     default: return -1;
     }
     switch (img->params.repr.levels) {
@@ -88,6 +89,7 @@ static int svp_vk_matrix(struct mp_image *img)
 }
 static int svp_vk_chroma(struct mp_image *img)
 {
+    if (img->params.repr.sys==PL_COLOR_SYSTEM_RGB) return 0;
     switch (img->params.chroma_location) {
     case PL_CHROMA_TOP_LEFT: return 0;
     case PL_CHROMA_LEFT: return 1;
@@ -114,9 +116,10 @@ static bool svp_vk_eligible(struct mp_image *img)
     if (!fc || !fc->device_ctx || !fc->device_ref || !fc->hwctx
         || fc->device_ctx->type!=AV_HWDEVICE_TYPE_VULKAN
         || fc->format!=AV_PIX_FMT_VULKAN
-        || (fc->sw_format!=AV_PIX_FMT_NV12 && fc->sw_format!=AV_PIX_FMT_YUV420P)
+        || (fc->sw_format!=AV_PIX_FMT_NV12 && fc->sw_format!=AV_PIX_FMT_YUV420P && fc->sw_format!=AV_PIX_FMT_RGBA)
         || fc->width<img->w || fc->height<img->h)
         return false;
+    if ((fc->sw_format==AV_PIX_FMT_RGBA)!=(img->params.repr.sys==PL_COLOR_SYSTEM_RGB)) return false;
     AVVulkanFramesContext *vfc=fc->hwctx;
     return vfc->nb_layers==1 && vfc->tiling==VK_IMAGE_TILING_OPTIMAL
         && (vfc->usage&VK_IMAGE_USAGE_SAMPLED_BIT)
@@ -271,7 +274,7 @@ static bool svp_vk_ref(AVFrame *frame,bool write,struct svp_vk_ref *out)
     AVVkFrame *vkf=(AVVkFrame *)frame->data[0];
     unsigned count=0;
     while(count<AV_NUM_DATA_POINTERS && vkf->img[count]) count++;
-    unsigned expected=write?1:fc->sw_format==AV_PIX_FMT_NV12?2:3;
+    unsigned expected=(write||fc->sw_format==AV_PIX_FMT_RGBA)?1:fc->sw_format==AV_PIX_FMT_NV12?2:3;
     if (!count || (count!=1 && count!=expected) || !vfc->lock_frame || !vfc->unlock_frame)
         return false;
     *out=(struct svp_vk_ref){fc,vfc,vkf,write,count};
@@ -290,6 +293,13 @@ static VkImageView svp_vk_view(struct svp_vk_mpv *s,struct svp_vk_job *j,VkImage
 static bool svp_vk_picture(struct svp_vk_mpv *s,struct svp_vk_job *j,
     struct svp_vk_ref *r,int chroma,AmbientSvpVkPicture *p)
 {
+    if (r->fc->sw_format==AV_PIX_FMT_RGBA) {
+        if (r->count!=1 || r->vfc->format[0]!=VK_FORMAT_R8G8B8A8_UNORM) return false;
+        VkImageView view=svp_vk_view(s,j,r->frame->img[0],VK_FORMAT_R8G8B8A8_UNORM,VK_IMAGE_ASPECT_COLOR_BIT);
+        if (!view) return false;
+        *p=(AmbientSvpVkPicture){view,VK_NULL_HANDLE,VK_NULL_HANDLE,2,0};
+        return true;
+    }
     unsigned planes=r->fc->sw_format==AV_PIX_FMT_NV12?2:3;
     VkFormat expected_multi=planes==2?VK_FORMAT_G8_B8R8_2PLANE_420_UNORM:VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM;
     if (r->count==1 && r->vfc->format[0]!=expected_multi) return false;
@@ -313,6 +323,7 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
     const double *times,const float *phases,unsigned count,struct mp_image **outputs)
 {
     if (!count || count>SVP_VK_PHASES || !svp_vk_matches(s,a) || !svp_vk_matches(s,b)
+        || (a->params.repr.sys==PL_COLOR_SYSTEM_RGB)!=(b->params.repr.sys==PL_COLOR_SYSTEM_RGB)
         || svp_vk_matrix(a)!=svp_vk_matrix(b) || a->params.color.transfer!=b->params.color.transfer
         || a->params.color.primaries!=b->params.color.primaries) return false;
     svp_vk_reap(s,false);
