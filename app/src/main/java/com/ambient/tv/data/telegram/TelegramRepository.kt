@@ -141,7 +141,7 @@ interface TelegramClientPort {
     /** Called once when Telegram reports the session as revoked or unknown ([TelegramSessionLostException]). */
     fun setSessionLostListener(listener: ((String) -> Unit)?) = Unit
     fun setArtworkChangedListener(listener: (() -> Unit)?) = Unit
-    fun setContentChangedListener(listener: (suspend (Set<Pair<Long, Int>>, Boolean) -> Unit)?) = Unit
+    fun setContentChangedListener(listener: (suspend (String, Set<Pair<Long, Int>>, Boolean) -> Unit)?) = Unit
     /** Revision of the media at this post, changed by native edit/delete updates. */
     fun mediaRevision(chatId: Long, messageId: Int): Long = 0L
     /** Local authenticated sharp thumbnail, without native RPC or download admission. */
@@ -463,9 +463,8 @@ class TelegramRepository @Inject constructor(
     fun installAuthorized(port: TelegramClientPort) {
         port.setSessionLostListener { type -> scope.launch { sessionLost(port, type) } }
         port.setArtworkChangedListener { if (client === port) notifyArtworkChanged() }
-        port.setContentChangedListener { messages, all ->
-            val identity = port.cacheIdentity
-            if (client === port && identity != null) {
+        port.setContentChangedListener { identity, messages, all ->
+            if (client === port && port.cacheIdentity == identity) {
                 contentInvalidations.incrementAndGet()
                 contentRevision.incrementAndGet()
                 try {
