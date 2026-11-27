@@ -62,7 +62,7 @@ static inline bool ambient_hdrplus_spatial_curves(pl_gpu gpu, struct ambient_hdr
             previous=v;
         }
     }
-    pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,1,32,32,PL_FMT_CAP_SAMPLEABLE | PL_FMT_CAP_HOST_WRITABLE);
+    pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,1,32,32,PL_FMT_CAP_SAMPLEABLE);
     if (!fmt || !pl_tex_recreate(gpu,&s->lut,pl_tex_params(
         .w=AMBIENT_HDRPLUS_LUT_SIZE,.h=3,.format=fmt,.sampleable=true,.host_writable=true)))
         return false;
@@ -114,7 +114,7 @@ static inline bool ambient_hdrplus_spatial_render(pl_gpu gpu, pl_log log,
         .out_min=&out_min,.out_max=&out_max));
     if (!(out_min>=0.f && out_max>out_min && out_max<=1000.f)) return false;
     if (!ambient_hdrplus_spatial_curves(gpu,s,m,out_min,out_max)) return false;
-    pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,16,0,PL_FMT_CAP_SAMPLEABLE | PL_FMT_CAP_RENDERABLE);
+    pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,16,0,PL_FMT_CAP_SAMPLEABLE | PL_FMT_CAP_RENDERABLE | PL_FMT_CAP_LINEAR);
     if (!fmt || !pl_tex_recreate(gpu,&s->output,pl_tex_params(
         .w=w,.h=h,.format=fmt,.sampleable=true,.renderable=true))) return false;
     if (!s->dispatch) s->dispatch=pl_dispatch_create(log,gpu);

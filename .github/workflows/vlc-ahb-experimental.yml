@@ -91,11 +91,35 @@ jobs:
           cc -I . -I libavcodec -I "$GITHUB_WORKSPACE/native/vlc-aar/experimental" "$GITHUB_WORKSPACE/native/vlc-aar/experimental/test_ambient_dovi_parser.c" libavcodec/libavcodec.a libavutil/libavutil.a -lm -pthread -o test-ambient-dovi
           ./test-ambient-dovi
 
+  hdrplus-spatial-gpu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: haasn/libplacebo
+          ref: v5.264.1
+          path: .ci/libplacebo
+          persist-credentials: false
+      - name: Install host Vulkan and libplacebo build dependencies
+        run: |
+          sudo apt-get update -o Acquire::Retries=3
+          sudo apt-get install -y meson ninja-build python3-jinja2 libvulkan-dev vulkan-validationlayers mesa-vulkan-drivers libshaderc-dev
+      - name: Build pinned libplacebo and render local-window reference fixture
+        run: |
+          meson setup .ci/pl-build .ci/libplacebo -Dvulkan=enabled -Dshaderc=enabled -Dglslang=disabled -Dopengl=disabled -Ddemos=false -Dtests=false -Dlcms=disabled -Dlibdovi=disabled -Dunwind=disabled
+          meson compile -C .ci/pl-build -j2
+          cc -std=c11 -I .ci/libplacebo/src/include -I .ci/pl-build/src/include \
+            native/vlc-aar/experimental/test_hdr10plus_spatial_gpu.c \
+            -L .ci/pl-build/src -Wl,-rpath,"$PWD/.ci/pl-build/src" -lplacebo -lm -o .ci/test-hdrplus-spatial
+          VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation .ci/test-hdrplus-spatial
+
   linked-arm64-aar:
     # Only the repository-owned experiment branch can spend time building the
     # whole native stack. No release credentials or publishing step.
     if: github.event_name == 'workflow_dispatch' || (github.head_ref == 'experiment/vlc-vulkan-ahb-import' && github.event.pull_request.head.repo.full_name == github.repository)
-    needs: [ndk-contract, ffmpeg-rpu-contract]
+    needs: [ndk-contract, ffmpeg-rpu-contract, hdrplus-spatial-gpu]
     # Let an expensive linked build finish even while a newer commit is
     # audited. GitHub keeps only the newest queued build in this group.
     concurrency:
