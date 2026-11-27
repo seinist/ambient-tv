@@ -326,7 +326,18 @@ impl AmbientSvp {
     }
 
     pub fn push(&mut self, data: &[u8], pts: i64) -> Result<(), i32> {
-        if self.eof || data.len() != self.frame_len() || self.input >= MAX_FRAMES - 16 {
+        if data.len() != self.frame_len() { return Err(-1); }
+        self.push_filled(pts, |dst| {
+            dst.copy_from_slice(data);
+            Ok(())
+        })
+    }
+
+    // The adapter can write directly into the engine-owned I420 allocation.
+    // Validate capacity/timing before invoking the writer; no source pointer
+    // survives the call. A failed writer must not advance the timeline.
+    fn push_filled(&mut self, pts: i64, fill: impl FnOnce(&mut [u8]) -> Result<(), i32>) -> Result<(), i32> {
+        if self.eof || self.input >= MAX_FRAMES - 16 {
             return Err(-1);
         }
         if self.frames.len() >= MAX_QUEUE {
@@ -339,10 +350,16 @@ impl AmbientSvp {
             {
                 return Err(-3);
             }
-        } else if self.origin.is_none() {
-            self.origin = Some(pts);
         }
         let begin = Instant::now();
+        let mut stored = self.recycled_frames.pop().unwrap_or_default();
+        stored.resize(self.frame_len(), 0);
+        if let Err(e) = fill(&mut stored) {
+            self.recycle_frame(stored);
+            return Err(e);
+        }
+        if self.origin.is_none() { self.origin = Some(pts); }
+        let data = stored.as_slice();
         if self.stats.bypass_reason == 0 {
             // Exact repeated source pictures can share the previous super
             // frame and the analysis of an identical pair. No sampled hashes,
@@ -383,9 +400,6 @@ impl AmbientSvp {
                 self.previous = Some(current);
             }
         }
-        let mut stored = self.recycled_frames.pop().unwrap_or_default();
-        stored.clear();
-        stored.extend_from_slice(data);
         self.frames.insert(self.input, Source { data: stored, pts });
         self.input += 1;
         self.stats.input_frames += 1;
@@ -714,6 +728,27 @@ pub unsafe extern "C" fn ambient_svp_push(
     }))
     .unwrap_or(-1)
 }
+/// Optional adapter fast path. The synchronous C writer may fill exactly
+/// len bytes and must not retain the pointer, re-enter the engine or unwind.
+/// The caller owns context for the duration of this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_push_fill(
+    s: *mut AmbientSvp,
+    pts: i64,
+    context: *mut std::ffi::c_void,
+    fill: Option<unsafe extern "C" fn(*mut std::ffi::c_void, *mut u8, usize) -> i32>,
+) -> i32 {
+    if s.is_null() || fill.is_none() { return -1; }
+    catch_unwind(AssertUnwindSafe(|| {
+        let s = unsafe { &mut *s };
+        if ambient_svp_enabled() == 0 { s.bypass(2); }
+        s.push_filled(pts, |dst| {
+            let code = unsafe { fill.unwrap()(context, dst.as_mut_ptr(), dst.len()) };
+            if code == 0 { Ok(()) } else { Err(-1) }
+        }).map_or_else(|e| e, |_| 0)
+    })).unwrap_or(-1)
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_receive(
     s: *mut AmbientSvp,
@@ -888,6 +923,39 @@ mod adaptive_tests {
             preset, backend: 1, threads: 2, artifacts: 0, scene: 0,
             algo: 0, block: 0, overlap: 0, pel: 0, search: 0,
         }
+    }
+
+    #[test]
+    fn direct_fill_validates_before_callback_and_matches_normal_push() {
+        let mut direct = AmbientSvp::new(config(1)).unwrap();
+        let mut normal = AmbientSvp::new(config(1)).unwrap();
+        let mut out_a = vec![0; direct.frame_len()];
+        let mut out_b = out_a.clone();
+        let len = out_a.len();
+        assert_eq!(direct.push_filled(100, |_| Err(-1)), Err(-1));
+        assert!(direct.origin.is_none());
+        for n in 0..12 {
+            let pts = n * 1_000_000 / 24;
+            let data = vec![80 + n as u8; len];
+            direct.push_filled(pts, |out| { out.copy_from_slice(&data); Ok(()) }).unwrap();
+            normal.push(&data, pts).unwrap();
+            assert_eq!(direct.push_filled(pts + 9_000_000, |_| panic!("invalid timing called writer")), Err(-3));
+            loop {
+                let a = direct.receive(&mut out_a, false).unwrap();
+                let b = normal.receive(&mut out_b, false).unwrap();
+                assert_eq!(a,b);
+                if a.is_none() { break; }
+                assert_eq!(out_a,out_b);
+            }
+        }
+        loop {
+            let a = direct.receive(&mut out_a, true).unwrap();
+            let b = normal.receive(&mut out_b, true).unwrap();
+            assert_eq!(a,b);
+            if a.is_none() { break; }
+            assert_eq!(out_a,out_b);
+        }
+        assert_eq!(direct.push_filled(0, |_| panic!("EOF called writer")), Err(-1));
     }
 
     #[test]
