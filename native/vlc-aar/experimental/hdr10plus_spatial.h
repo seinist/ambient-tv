@@ -87,19 +87,22 @@ static inline bool ambient_hdrplus_spatial_curves(pl_gpu gpu, struct ambient_hdr
             .output_min=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_NORM,out_min),
             .output_max=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_NORM,dst),
         };
-        p.hdr.ootf.target_luma=m->target_nits*target_factor;
-        p.hdr.ootf.knee_x=w->knee_x;
-        p.hdr.ootf.knee_y=w->knee_y;
-        p.hdr.ootf.num_anchors=w->anchor_count;
-        memcpy(p.hdr.ootf.anchors,w->anchors,w->anchor_count * sizeof(w->anchors[0]));
+        if(w->tone_mapping){
+            p.hdr.ootf.target_luma=m->target_nits*target_factor;
+            p.hdr.ootf.knee_x=w->knee_x;
+            p.hdr.ootf.knee_y=w->knee_y;
+            p.hdr.ootf.num_anchors=w->anchor_count;
+            memcpy(p.hdr.ootf.anchors,w->anchors,w->anchor_count * sizeof(w->anchors[0]));
+        }
         s->domains[i]=p.input_max;
         // For the authored target, evaluate the specified normalized
         // function directly. Adaptation to a different display peak is
         // libplacebo policy, except for endpoint knees which its fitting
         // implementation cannot represent reliably.
-        const bool endpoint=w->knee_x==0.f||w->knee_x==1.f||
-            w->knee_y==0.f||w->knee_y==1.f;
-        if(endpoint || fabsf(out_max-m->target_nits)<=0.01f) {
+        const bool direct=w->tone_mapping && (!w->anchor_count ||
+            w->knee_x==0.f||w->knee_x==1.f||w->knee_y==0.f||w->knee_y==1.f ||
+            fabsf(out_max-m->target_nits)<=0.01f);
+        if(direct) {
             for(unsigned j=0;j<AMBIENT_HDRPLUS_LUT_SIZE;j++){
                 float x=(float)j/(AMBIENT_HDRPLUS_LUT_SIZE-1);
                 float y=ambient_hdrplus_bezier(w,x*x);
