@@ -175,8 +175,11 @@ struct ambient_ahb_owner {
                 VkResult status = s.submission->poll();
                 if (status == VK_NOT_READY) continue;
                 if (status != VK_SUCCESS || !pool.converted(s.ticket)) {
+                    // The owner is now terminally failed. Retain every
+                    // other outstanding lease for drain instead of making
+                    // further driver calls on a possibly lost device.
                     quarantine(s);
-                    continue;
+                    return;
                 }
                 s.converted = true;
                 s.lease.reset();
@@ -187,7 +190,7 @@ struct ambient_ahb_owner {
             if (status != VK_SUCCESS || !s.converted ||
                 !s.submission->retire_after_consumer(true) || !pool.reclaimed(s.ticket)) {
                 quarantine(s);
-                continue;
+                return;
             }
             // Keep both pairs of semaphores/fences for the next frame.
             // Reclaim's wait is proven complete by its fence.
