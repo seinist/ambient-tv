@@ -128,31 +128,67 @@ impl DisplayImage{
 #[derive(Clone,Copy)]
 pub struct DisplayOutput{pub buffer:*mut c_void,pub fence_fd:i32}
 impl Default for DisplayOutput{fn default()->Self{Self{buffer:ptr::null_mut(),fence_fd:-1}}}
-struct Batch{
-    owner:Arc<DeviceOwner>,pool:vk::CommandPool,fence:vk::Fence,
-    pair:*mut VulkanPair,images:Vec<DisplayImage>,submitted:bool,
+// These objects are never exposed to SurfaceControl. Only the exact
+// GPU fence is needed to recycle them, unlike compositor-owned images.
+struct BatchCommands{
+    owner:Arc<DeviceOwner>,pool:vk::CommandPool,command:vk::CommandBuffer,fence:vk::Fence,
 }
-impl Drop for Batch{
+impl Drop for BatchCommands{
     fn drop(&mut self){unsafe{
-        let d=self.owner.d();
-        d.destroy_command_pool(self.pool,None);
-        if !self.pair.is_null()&&!self.submitted{ambient_svp_vk_cancel(self.pair);}
-        d.destroy_fence(self.fence,None);
+        self.owner.d().destroy_command_pool(self.pool,None);
+        self.owner.d().destroy_fence(self.fence,None);
     }}
 }
-impl Batch{
-    fn record(owner:Arc<DeviceOwner>,resident:*mut VulkanResident,a:*mut Job,b:*mut Job,
-        width:u32,height:u32,phases:&[f32])->Result<Self>{
-        let mut s=Self{owner,pool:vk::CommandPool::null(),fence:vk::Fence::null(),
-            pair:ptr::null_mut(),images:Vec::new(),submitted:false};
-        for _ in phases{s.images.push(DisplayImage::new(s.owner.clone(),width,height)?);}
+impl BatchCommands{
+    fn new(owner:Arc<DeviceOwner>)->Result<Self>{
+        let mut s=Self{owner,pool:vk::CommandPool::null(),command:vk::CommandBuffer::null(),fence:vk::Fence::null()};
         let d=s.owner.d();
         unsafe{
             s.pool=d.create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(s.owner.family)
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT),None).map_err(err)?;
-            let cmd=d.allocate_command_buffers(&vk::CommandBufferAllocateInfo::default().command_pool(s.pool)
+            s.command=d.allocate_command_buffers(&vk::CommandBufferAllocateInfo::default().command_pool(s.pool)
                 .level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(1)).map_err(err)?[0];
             s.fence=d.create_fence(&Default::default(),None).map_err(err)?;
+        }
+        Ok(s)
+    }
+    fn reset(&self)->Result<()>{
+        let d=self.owner.d();
+        unsafe{
+            if !d.get_fence_status(self.fence).map_err(err)?{return Err("compositor command bundle still active".into());}
+            d.reset_command_pool(self.pool,vk::CommandPoolResetFlags::empty()).map_err(err)?;
+            d.reset_fences(&[self.fence]).map_err(err)?;
+        }
+        Ok(())
+    }
+}
+struct Batch{
+    owner:Arc<DeviceOwner>,commands:Option<BatchCommands>,
+    pair:*mut VulkanPair,images:Vec<DisplayImage>,submitted:bool,
+}
+impl Drop for Batch{
+    fn drop(&mut self){unsafe{
+        // Discard the unsubmitted command buffer before canceling its
+        // pair. Submitted batches only reach Drop after retirement.
+        drop(self.commands.take());
+        if !self.pair.is_null()&&!self.submitted{ambient_svp_vk_cancel(self.pair);}
+    }}
+}
+impl Batch{
+    fn record(owner:Arc<DeviceOwner>,resident:*mut VulkanResident,a:*mut Job,b:*mut Job,
+        width:u32,height:u32,phases:&[f32],cached:Option<BatchCommands>,
+        preflight:Option<DisplayImage>)->Result<Self>{
+        let commands=if let Some(cached)=cached{cached.reset()?;cached}
+            else{BatchCommands::new(owner.clone())?};
+        let cmd=commands.command;let fence=commands.fence;
+        let mut s=Self{owner,commands:Some(commands),
+            pair:ptr::null_mut(),images:Vec::with_capacity(phases.len()),submitted:false};
+        // The preflight image has never been submitted or exposed to
+        // any consumer. Subsequent output images remain fresh.
+        if let Some(img)=preflight{s.images.push(img);}
+        while s.images.len()<phases.len(){s.images.push(DisplayImage::new(s.owner.clone(),width,height)?);}
+        let d=s.owner.d();
+        unsafe{
             d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).map_err(err)?;
             let barriers=s.images.iter().map(|img|vk::ImageMemoryBarrier::default().image(img.image)
                 .subresource_range(range()).old_layout(vk::ImageLayout::UNDEFINED).new_layout(vk::ImageLayout::GENERAL)
@@ -173,11 +209,11 @@ impl Batch{
                 vk::DependencyFlags::empty(),&[],&[],&barriers);
             d.end_command_buffer(cmd).map_err(err)?;
             let signals=s.images.iter().map(|i|i.signal).collect::<Vec<_>>();
-            d.queue_submit(s.owner.queue,&[vk::SubmitInfo::default().command_buffers(&[cmd]).signal_semaphores(&signals)],s.fence).map_err(err)?;
+            d.queue_submit(s.owner.queue,&[vk::SubmitInfo::default().command_buffers(&[cmd]).signal_semaphores(&signals)],fence).map_err(err)?;
             s.submitted=true;
             // A non-null pair with at least one render and a valid fence
             // necessarily seals. Keep the batch in flight even on error.
-            let _=ambient_svp_vk_seal(s.pair,s.fence);
+            let _=ambient_svp_vk_seal(s.pair,fence);
         }
         Ok(s)
     }
@@ -204,6 +240,14 @@ impl Batch{
         if self.pair.is_null(){return true;}
         if unsafe{ambient_svp_vk_release(self.pair)}==1{self.pair=ptr::null_mut();true}else{false}
     }
+    fn take_retired_commands(&mut self)->Option<BatchCommands>{
+        if !self.submitted || !self.pair.is_null(){return None;}
+        let commands=self.commands.as_ref()?;
+        // Release also accepts confirmed device loss. Only a genuinely
+        // signaled fence may enter the cache; never recycle on errors.
+        if !matches!(unsafe{self.owner.d().get_fence_status(commands.fence)},Ok(true)){return None;}
+        self.commands.take()
+    }
 }
 fn discard_output(out:&mut DisplayOutput){
     unsafe{
@@ -215,6 +259,7 @@ fn discard_output(out:&mut DisplayOutput){
 pub struct Stream{
     owner:Arc<DeviceOwner>,importer:*mut Importer,resident:*mut VulkanResident,
     width:u32,height:u32,previous:*mut Job,retired:Vec<*mut Job>,batches:Vec<Batch>,
+    idle_commands:Vec<BatchCommands>,preflight:Option<DisplayImage>,
 }
 impl Stream{
     fn new(width:u32,height:u32)->Result<Self>{
@@ -228,12 +273,23 @@ impl Stream{
         let resident=unsafe{ambient_svp_vk_create(owner.instance.handle(),owner.physical,owner.d().handle(),get,width,height)};
         if resident.is_null(){unsafe{ambient_svp_ahb_importer_destroy(importer)};return Err("resident device rejected geometry".into());}
         // Preflight real compositor-format output before consuming frames.
-        let mut s=Self{owner,importer,resident,width,height,previous:ptr::null_mut(),retired:Vec::new(),batches:Vec::new()};
-        if let Err(e)=DisplayImage::new(s.owner.clone(),width,height){s.dispose();return Err(e);}
+        let mut s=Self{owner,importer,resident,width,height,previous:ptr::null_mut(),retired:Vec::new(),
+            batches:Vec::with_capacity(MAX_BATCHES),idle_commands:Vec::with_capacity(MAX_BATCHES),preflight:None};
+        match DisplayImage::new(s.owner.clone(),width,height){
+            Ok(img)=>s.preflight=Some(img),
+            Err(e)=>{s.dispose();return Err(e);}
+        }
         Ok(s)
     }
     fn reap(&mut self){
-        self.batches.retain_mut(|b|!b.reap());
+        let mut i=0;
+        while i<self.batches.len(){
+            if !self.batches[i].reap(){i+=1;continue;}
+            let mut batch=self.batches.swap_remove(i);
+            if self.idle_commands.len()<MAX_BATCHES{
+                if let Some(commands)=batch.take_retired_commands(){self.idle_commands.push(commands);}
+            }
+        }
         self.retired.retain(|&p|unsafe{ambient_svp_ahb_release(p,vk::Fence::null())}!=1);
     }
     fn reset(&mut self){
@@ -249,7 +305,8 @@ impl Stream{
             return Err("invalid compositor phases".into());
         }
         if self.batches.len()>=MAX_BATCHES{return Err("compositor GPU backpressure".into());}
-        let batch=Batch::record(self.owner.clone(),self.resident,a,b,self.width,self.height,phases)?;
+        let batch=Batch::record(self.owner.clone(),self.resident,a,b,self.width,self.height,phases,
+            self.idle_commands.pop(),self.preflight.take())?;
         let result=batch.outputs(out);
         self.batches.push(batch);
         if result.is_ok(){
