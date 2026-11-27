@@ -276,3 +276,34 @@ available only out-of-band, cropping and unsupported geometry remain
 outside the route. Physical Android playback, reference image comparison,
 seek/reorder stress and performance validation remain necessary. HDR10+
 full ST 2094-40 conformance is still not established.
+
+
+### ST 2094-40:2020 curve and distribution follow-up
+
+Reference: https://pub.smpte.org/pub/st2094-40/st2094-40-2020.pdf
+(section 8.5, 8.7.4 and 9.4; Annex B.4).
+
+The normalized authored Bezier curve now uses de Casteljau evaluation
+for degree 1 through 16, including the zero and unit knee cases and
+zero intermediate anchors. The authored target uses this curve directly;
+other targets retain libplacebo adaptation, except for the explicitly
+handled degenerate/zero-anchor curve cases. Curves are normalized to the
+actual target peak, not limited by the source peak when an authored curve
+intentionally expands brightness. The derivative is checked in Bernstein
+form, using bounded interval subdivision when control points are not
+sorted; unresolved cases fail closed. Metadata without an authored OOTF
+uses scene-statistics-based mapping. Zero MaxSCL falls back to actual
+distribution percentiles, excluding the version-1 reserved markers.
+
+Version-1 diagnostics now distinguish mandatory restrictions and CFD
+ordering from the recommended nine-position distribution vector. Tests
+cover analytical curve cases, reserved markers, invalid derivatives, and
+GPU readback independent of the LUT used in rendering.
+
+At a6c7820 all three native contract jobs passed (45955660024), including
+the integrated four-ABI MediaCodec/display syntax checks, actual pinned
+FFmpeg tests, and host GPU fixtures. This is not a full linked AAR or
+device playback result. The subsequent HDR10+ changes need their own CI.
+The renderer still has display-adaptation policy, LUT approximation and
+experimental legacy grid/saturation handling; neither complete reference
+equivalence nor HDR10+ certification has been established.
