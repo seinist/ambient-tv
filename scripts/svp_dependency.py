@@ -69,6 +69,7 @@ def fingerprint(root: Path) -> str:
     revision = pinned_revision(root)
     verify(crate, revision)
     paths = [crate / name for name in UPDATE_FILES]
+    paths += [crate / "build.rs", crate / "shaders/ahb_convert.comp"]
     paths += sorted((crate / "src").rglob("*.rs"))
     paths += sorted((crate / "include").glob("*.h"))
     paths += [root / "scripts" / name for name in (
