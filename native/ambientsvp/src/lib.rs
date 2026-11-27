@@ -72,6 +72,8 @@ mod worker_tests {
 static ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static INTERPOLATED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static GPU_FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(all(target_os="android",feature="vulkan"))]
+static ANDROID_RESIDENT_OUTPUTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Must equal AMBIENTSVP_ABI in include/ambientsvp.h and SVP_NATIVE_ABI in SvpNative.kt.
 /// The engine, both player adapters and the JNI check are rebuilt together when it changes.
@@ -858,6 +860,14 @@ pub extern "system" fn Java_com_ambient_tv_ui_player_backend_SvpNative_gpuFrames
     _class: *mut std::ffi::c_void,
 ) -> i64 {
     GPU_FRAMES.load(std::sync::atomic::Ordering::Relaxed) as i64
+}
+// A separate transport counter: generated GPU ticks do not prove pixel novelty.
+#[cfg(all(target_os="android",feature="vulkan"))]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_ambient_tv_ui_player_backend_SvpNative_residentOutputs(
+    _env:*mut std::ffi::c_void,_class:*mut std::ffi::c_void,
+)->i64 {
+    ANDROID_RESIDENT_OUTPUTS.load(std::sync::atomic::Ordering::Relaxed) as i64
 }
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_ambient_tv_ui_player_backend_SvpNative_enabled(
