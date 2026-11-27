@@ -44,7 +44,7 @@ unsafe extern "C"{
     pub(crate) fn AHardwareBuffer_release(buffer:*mut c_void);
 }
 
-struct ReaderInner{reader:*mut c_void,window:*mut c_void}
+struct ReaderInner{reader:*mut c_void,window:*mut c_void,allow_p010:bool}
 impl Drop for ReaderInner{
     fn drop(&mut self){unsafe{AImageReader_delete(self.reader)}}
 }
@@ -117,13 +117,17 @@ impl Drop for Frame{
 }
 
 fn checked_info(crop:Crop,d:Desc,image_format:i32,timestamp_ns:i64)->Option<FrameInfo>{
+    checked_info_format(crop,d,image_format,timestamp_ns,false)
+}
+fn checked_info_format(crop:Crop,d:Desc,image_format:i32,timestamp_ns:i64,allow_p010:bool)->Option<FrameInfo>{
+    let explicit_p010=allow_p010 && d.format==0x36 && matches!(image_format,PRIVATE|0x36);
     if crop.left<0 || crop.top<0 || crop.right<=crop.left || crop.bottom<=crop.top
         || crop.right as u32>d.width || crop.bottom as u32>d.height
         || d.layers!=1 || d.usage&GPU_SAMPLED_IMAGE==0 || d.usage&(1<<14)!=0
         // PRIVATE AImages may expose an implementation-defined gralloc
         // format. Vulkan queries the true format; never infer its layout.
-        || !matches!(image_format,PRIVATE|0x23)
-        || !(matches!(d.format,0x22|0x23) || image_format==PRIVATE && d.format>=0x100)
+        || (!explicit_p010 && (!matches!(image_format,PRIVATE|0x23)
+        || !(matches!(d.format,0x22|0x23) || image_format==PRIVATE && d.format>=0x100)))
     {return None;}
     let (width,height)=((crop.right-crop.left) as u32,(crop.bottom-crop.top) as u32);
     if width<32 || height<32 || width>3840 || height>2160
@@ -136,6 +140,13 @@ fn checked_info(crop:Crop,d:Desc,image_format:i32,timestamp_ns:i64)->Option<Fram
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_mediacodec_reader_create(width:u32,height:u32)->*mut Reader{
+    unsafe{ambient_svp_mediacodec_reader_create_format(width,height,0)}
+}
+// Mode 1 keeps the PRIVATE Surface but accepts explicitly identified P010
+// leases. Vendor-private formats still need importer-side proof of depth.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_mediacodec_reader_create_format(width:u32,height:u32,mode:u32)->*mut Reader{
+    if mode>1{return ptr::null_mut();}
     if width<32 || height<32 || width>3840 || height>2160 || (width|height)&1!=0
         || u64::from(width)*u64::from(height)>1920*1080{return ptr::null_mut();}
     catch_unwind(AssertUnwindSafe(||{
@@ -146,7 +157,7 @@ pub unsafe extern "C" fn ambient_svp_mediacodec_reader_create(width:u32,height:u
         if unsafe{AImageReader_getWindow(reader,&mut window)}!=0 || window.is_null(){
             unsafe{AImageReader_delete(reader)};return ptr::null_mut();
         }
-        Box::into_raw(Box::new(Reader(Arc::new(ReaderInner{reader,window}))))
+        Box::into_raw(Box::new(Reader(Arc::new(ReaderInner{reader,window,allow_p010:mode==1}))))
     })).unwrap_or(ptr::null_mut())
 }
 #[unsafe(no_mangle)]
@@ -181,6 +192,7 @@ pub unsafe extern "C" fn ambient_svp_mediacodec_acquire(reader:*const Reader,out
             return match status{-30001=>0,-30002=>-2,_=>-1};
         }
         if image.is_null(){if fence>=0{unsafe{libc::close(fence)};}return -1;}
+        let allow_p010=r.allow_p010;
         let mut frame=Frame{_reader:Some(r),external:None,image,buffer:ptr::null_mut(),acquire_fd:fence,info:FrameInfo::default()};
         let mut crop=Crop::default();
         let mut timestamp=0;
@@ -191,7 +203,7 @@ pub unsafe extern "C" fn ambient_svp_mediacodec_acquire(reader:*const Reader,out
             || unsafe{AImage_getFormat(image,&mut format)}!=0{return -1;}
         let mut desc=Desc::default();
         unsafe{AHardwareBuffer_describe(frame.buffer,&mut desc)};
-        let Some(info)=checked_info(crop,desc,format,timestamp)else{return -1;};
+        let Some(info)=checked_info_format(crop,desc,format,timestamp,allow_p010)else{return -1;};
         frame.info=info;
         unsafe{*out=Box::into_raw(Box::new(frame));}
         1
@@ -222,6 +234,9 @@ mod tests{
         assert!(checked_info(Crop{left:1,..c},d,PRIVATE,10).is_none());
         assert!(checked_info(Crop{right:130,..c},d,PRIVATE,10).is_none());
         assert!(checked_info(c,Desc{format:0x36,..d},PRIVATE,10).is_none());
+        assert!(checked_info_format(c,Desc{format:0x36,..d},PRIVATE,10,true).is_some());
+        assert!(checked_info_format(c,Desc{format:0x36,..d},0x36,10,true).is_some());
+        assert!(checked_info_format(c,d,0x36,10,true).is_none());
         assert!(checked_info(c,Desc{format:0x7fa30c04,..d},PRIVATE,10).is_some());
         assert!(checked_info(c,d,0x24,10).is_none());
     }
