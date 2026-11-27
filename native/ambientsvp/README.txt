@@ -1132,3 +1132,37 @@ high-depth compositor output yet. Actual ten-bit PRIVATE decoder
 buffers, driver conversion fidelity and end-to-end HDR playback
 require physical tests. Prior c28f022d CI was superseded; fresh CI
 must complete. No measured performance or full HDR claim.
+
+
+VLC high-depth SurfaceControl and MPV import completion
+--------------------------------------------------------
+The optional Android stream format 4/6 selects fixed BT.2020
+limited/full P010 input and RGBA16F compositor output. It imports the
+retained decoder AHB into a GPU-local FP16 image and uses resident
+mode 3 to synthesize directly into compositor AHBs with format
+R16G16B16A16_FLOAT. Allocation, storage image features and external
+memory importability are preflighted before accepting source frames.
+The existing bounded pool remains per stream, so eight-bit and FP16
+allocations cannot mix. Existing producer and consumer sync_file
+retirement and source ownership rules are unchanged.
+
+The VLC decoder enables the experimental high-depth PRIVATE reader
+for explicit HEVC Main10 BT.2020 PQ/HLG and known range (no declared
+Dolby Vision). The pre-clock filter validates matching color
+metadata per picture and resets history at format/metadata changes.
+SurfaceControl receives full-range RGB BT.2020 PQ/HLG for synthesized
+pictures; original source pictures retain their range. SMPTE ST 2086
+and CTA-861.3 static metadata are set or cleared per transaction.
+HDR10+ dynamic metadata is not implemented or independently detected
+in the VLC opaque path; do not treat this as full HDR10+ support.
+
+MPV's optional P010 reader/importer symbols are negotiated together;
+failure retains the old SDR reader. Explicit standard-format P010
+import is also supported when the driver supplies no external token.
+Unknown/private layouts without affirmative P010 proof still fall
+back rather than risk truncation or incorrect color conversion.
+Android FP16 compositor allocation/preflight device fixture added.
+The previous de4b909e CI passed source patch, CPU and portable
+Vulkan checks before supersession. Exact-head full player builds,
+device HDR playback, real compositor metadata/fence validation and
+app HDR selection remain pending; no claim of hardware validation.
