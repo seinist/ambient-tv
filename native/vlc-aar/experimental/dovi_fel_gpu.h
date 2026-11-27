@@ -48,7 +48,8 @@ static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
     const struct ambient_fel_nlq *n, bool packed_cr_y_cb, bool decode_rgb,
     const struct ambient_fel_planes *planes)
 {
-    if (!gpu || !dispatch || !bl || (!el && !planes) || (el && planes) || !output || !reshape ||
+    const bool zero=ambient_fel_nlq_zero(n);
+    if (!gpu || !dispatch || !bl || (!el && !planes && !zero) || (el && planes) || !output || !reshape ||
         !ambient_fel_nlq_valid(n) || output==bl || output==el ||
         !bl->params.sampleable || !output->params.renderable ||
         bl->params.w<=0 || bl->params.h<=0 ||
@@ -59,8 +60,19 @@ static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
     for (unsigned i=0;i<3;i++) {
         unsigned count=reshape->comp[i].num_pivots;
         if (count && (count<2 || count>9)) return false;
-        for (unsigned j=1;j<count;j++)
-            if (!(reshape->comp[i].pivots[j]>reshape->comp[i].pivots[j-1])) return false;
+        const struct pl_reshape_data *c=&reshape->comp[i];
+        for (unsigned j=0;j<count;j++) {
+            if (!(c->pivots[j]>=0.f && c->pivots[j]<=1.f) ||
+                (j && !(c->pivots[j]>c->pivots[j-1]))) return false;
+            if (j+1==count) continue;
+            if(c->method[j]==0){
+                for(unsigned k=0;k<3;k++)if(!isfinite(c->poly_coeffs[j][k]))return false;
+            }else if(c->method[j]==1){
+                if(c->mmr_order[j]<1||c->mmr_order[j]>3||!isfinite(c->mmr_constant[j]))return false;
+                for(unsigned k=0;k<c->mmr_order[j];k++)for(unsigned l=0;l<7;l++)
+                    if(!isfinite(c->mmr_coeffs[j][k][l]))return false;
+            }else return false;
+        }
     }
     float layer_ratio[2]={1.f,1.f},layer_shift[2]={0.f,0.f},chroma_shift[2]={0.f,0.f};
     int luma_direct=0;
@@ -126,7 +138,10 @@ static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
             "color=texelFetch(fel_bl,ivec2(gl_FragCoord.xy),0);",
     })) goto fail;
     pl_shader_dovi_reshape(sh,reshape);
-    if(planes){
+    // Canonical MEL and any provably zero residual need no EL sampling.
+    if(zero) {
+        // Reshaping already clamps each component to its RPU pivot bounds.
+    }else if(planes){
         const struct pl_shader_desc pd[]={
             {.desc={.name="fel_y",.type=PL_DESC_SAMPLED_TEX},.binding={.object=planes->tex[0]}},
             {.desc={.name="fel_u",.type=PL_DESC_SAMPLED_TEX},.binding={.object=planes->tex[1]}},
