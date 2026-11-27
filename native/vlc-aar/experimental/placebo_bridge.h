@@ -102,8 +102,8 @@ static inline pl_tex ambient_pl_wrap_completed_rgb(pl_gpu gpu, VkDevice device,
 }
 
 // Driver YCbCr conversion has already produced RGB. Never run YCbCr matrix or
-// limited-range expansion twice. The caller supplies verified SDR primaries
-// and transfer, and applies the existing VLC orientation and destination crop.
+// limited-range expansion twice. The caller supplies verified source primaries
+// and transfer (including PQ/HLG), and applies the existing VLC orientation and destination crop.
 // The input crop was already applied in the conversion pass.
 static inline struct pl_frame ambient_pl_rgb_frame(pl_tex texture, struct pl_color_space color)
 {
