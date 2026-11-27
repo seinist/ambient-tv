@@ -111,6 +111,11 @@ interface TelegramClientPort {
         mediaPart(chatId, messageId, offset, expectedBytes)
     suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int, nativeMediaKey: String?,
         priority: TelegramTransferPriority): ByteArray = mediaPart(chatId, messageId, offset, expectedBytes, nativeMediaKey)
+    suspend fun mediaWindow(chatId: Long, messageId: Int, offset: Long, lengths: List<Int>,
+        nativeMediaKey: String?, priority: TelegramTransferPriority): List<ByteArray> =
+        lengths.mapIndexed { index, count ->
+            mediaPart(chatId, messageId, offset + index.toLong() * TELEGRAM_MEDIA_PART_BYTES, count, nativeMediaKey, priority)
+        }
     /**
      * Playable video/audio posts from subscribed channels matching [query]. One request per
      * submitted search; throws [TelegramFloodWaitException] when Telegram asks to wait.
@@ -470,6 +475,9 @@ class TelegramRepository @Inject constructor(
             prefetchLoader = { offset -> kotlinx.coroutines.runBlocking {
                 mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset), generation, speculative = true, nativeMediaKey = media.nativeMediaKey, expectedMediaRevision = mediaRevision)
             } },
+            prefetchWindow = { offset -> kotlinx.coroutines.runBlocking {
+                prefetchAdjacent(media, offset, generation, mediaRevision)
+            } },
             authorized = { client === authenticated && isPlaybackMediaCurrent(media, generation, mediaRevision) },
         ) }
         // An account may be logged out while the URL is being registered on a worker.
@@ -812,8 +820,9 @@ class TelegramRepository @Inject constructor(
     // At most two speculative RPCs globally; two lanes remain for actual reads.
     private val speculativePartPermits = kotlinx.coroutines.sync.Semaphore(2)
     private data class PartKey(val epoch: Long, val chatId: Long, val messageId: Int, val offset: Long, val expectedBytes: Int?, val nativeMediaKey: String?, val mediaRevision: Long)
+    private class PartGroup(val job: kotlinx.coroutines.Job, var activeKeys: Int)
     private class PartLoad(val deferred: kotlinx.coroutines.Deferred<ByteArray>, var waiters: Int,
-        val priority: TelegramTransferPriority)
+        val priority: TelegramTransferPriority, val group: PartGroup? = null)
     private val partLoads = HashMap<PartKey, PartLoad>()
 
     private fun cancelObsoleteTransfers() {
@@ -821,9 +830,9 @@ class TelegramRepository @Inject constructor(
         val obsoleteParts = synchronized(partLoads) {
             val old = partLoads.filterKeys { it.epoch != epoch }
             old.keys.forEach { partLoads.remove(it) }
-            old.values.map { it.deferred }
+            old.values.toList()
         }
-        obsoleteParts.forEach { it.cancel() }
+        obsoleteParts.forEach { load -> load.group?.job?.cancel() ?: load.deferred.cancel() }
         val obsoleteThumbnails = synchronized(thumbnailLoads) {
             val old = thumbnailLoads.filterKeys { !it.startsWith("$epoch:") }
             old.keys.forEach { thumbnailLoads.remove(it) }
@@ -883,14 +892,74 @@ class TelegramRepository @Inject constructor(
         if (!speculative) load.priority.promote()
         try {
             return load.deferred.await().also { verify() }
-        } finally {
-            val cancel = synchronized(partLoads) {
-                if (--load.waiters == 0) {
-                    if (partLoads[key] === load) partLoads.remove(key)
-                    !load.deferred.isCompleted
-                } else false
+        } finally { releasePart(key, load) }
+    }
+
+    private fun releasePart(key: PartKey, load: PartLoad) {
+        val cancel = synchronized(partLoads) {
+            if (--load.waiters != 0) null
+            else {
+                if (partLoads[key] === load) partLoads.remove(key)
+                val group = load.group
+                if (group == null) load.deferred.takeUnless { it.isCompleted }
+                else if (--group.activeKeys == 0) group.job.takeUnless { it.isCompleted }
+                else null
             }
-            if (cancel) load.deferred.cancel()
+        }
+        cancel?.cancel()
+    }
+
+    /** Reserve both adjacent keys before starting one bounded native window.
+     * A foreground read joins either key and promotes the shared transfer. */
+    internal suspend fun prefetchAdjacent(media: TelegramMedia, offset: Long,
+        accountRevision: Long, mediaRevision: Long): List<ByteArray> {
+        val offsets = listOf(offset, offset + TELEGRAM_MEDIA_PART_BYTES)
+        val lengths = offsets.map { telegramExpectedPartSize(media.fileSize, it) }
+        require(lengths[0] == TELEGRAM_MEDIA_PART_BYTES && lengths[1] > 0)
+        val batched = speculativePartPermits.withPermit {
+            val selected = checkNotNull(client)
+            val identity = selected.cacheIdentity
+            fun verify() {
+                check(sameAccount(selected, identity, accountRevision) &&
+                    isPlaybackMediaCurrent(media, accountRevision, mediaRevision))
+            }
+            verify()
+            val keys = offsets.mapIndexed { index, at ->
+                PartKey(accountRevision, media.chatId, media.messageId, at, lengths[index], media.nativeMediaKey, mediaRevision)
+            }
+            val loads = synchronized(partLoads) {
+                if (keys.any { partLoads.containsKey(it) }) null
+                else {
+                    val priority = TelegramTransferPriority(false)
+                    val results = keys.map { kotlinx.coroutines.CompletableDeferred<ByteArray>() }
+                    val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                        mediaPartPermits.withPermit {
+                            verify()
+                            val data = selected.mediaWindow(media.chatId, media.messageId, offset,
+                                lengths, media.nativeMediaKey, priority)
+                            verify()
+                            check(data.size == 2 && data.indices.all { data[it].size == lengths[it] })
+                            results.indices.forEach { results[it].complete(data[it]) }
+                        }
+                    }
+                    job.invokeOnCompletion { failure ->
+                        if (failure != null) results.forEach { it.completeExceptionally(failure) }
+                    }
+                    val group = PartGroup(job, 2)
+                    keys.mapIndexed { index, key ->
+                        PartLoad(results[index], 1, priority, group).also { partLoads[key] = it }
+                    }
+                }
+            } ?: return@withPermit null
+            try {
+                loads.first().group!!.job.start()
+                loads.map { it.deferred.await() }.also { verify() }
+            } finally { keys.indices.forEach { releasePart(keys[it], loads[it]) } }
+        }
+        // Never hold the speculative gate while falling back to individual keys.
+        return batched ?: offsets.mapIndexed { index, at ->
+            mediaPart(media.chatId, media.messageId, at, lengths[index], accountRevision,
+                speculative = true, nativeMediaKey = media.nativeMediaKey, expectedMediaRevision = mediaRevision)
         }
     }
 

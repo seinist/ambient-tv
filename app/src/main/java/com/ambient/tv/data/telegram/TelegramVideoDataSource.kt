@@ -43,6 +43,7 @@ class TelegramVideoDataSource(
     /** Bounded sequential read-ahead; random seeks discard the previous window. */
     private val prefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val prefetch = LinkedHashMap<Long, Deferred<ByteArray>>()
+    private val prefetchGroups = ArrayList<Deferred<List<ByteArray>>>()
     private var previousPart = -1L
     private val readAhead = TelegramReadAhead(media)
     private var window = 1
@@ -127,9 +128,20 @@ class TelegramVideoDataSource(
     }
 
     private fun schedulePrefetch(start: Long) {
-        for (i in 1..window) {
-            val offset = start + i.toLong() * TELEGRAM_MEDIA_PART_BYTES
-            if (offset >= media.fileSize || offset >= position + remaining) break
+        prefetchGroups.removeAll { it.isCompleted }
+        val offsets = (1..window).map { start + it.toLong() * TELEGRAM_MEDIA_PART_BYTES }
+            .takeWhile { it < media.fileSize && it < position + remaining }
+            .filterNot { it in prefetch }
+        val pair = offsets.take(2).takeIf { it.size == 2 && it[1] - it[0] == TELEGRAM_MEDIA_PART_BYTES.toLong() }
+        if (pair != null) {
+            val group = prefetchScope.async {
+                requireCurrentAccount()
+                repository.prefetchAdjacent(media, pair[0], accountRevision, mediaRevision)
+            }
+            prefetchGroups.add(group)
+            pair.forEachIndexed { index, at -> prefetch[at] = prefetchScope.async { group.await()[index] } }
+        }
+        for (offset in offsets) {
             if (offset !in prefetch) prefetch[offset] = prefetchScope.async {
                 requireCurrentAccount()
                 repository.mediaPart(media.chatId, media.messageId, offset, telegramExpectedPartSize(media.fileSize, offset), accountRevision, speculative = true, nativeMediaKey = media.nativeMediaKey, expectedMediaRevision = mediaRevision)
@@ -140,6 +152,8 @@ class TelegramVideoDataSource(
     private fun cancelPrefetch() {
         prefetch.values.forEach { it.cancel() }
         prefetch.clear()
+        prefetchGroups.forEach { it.cancel() }
+        prefetchGroups.clear()
     }
 
     override fun getUri(): Uri? = sourceUri

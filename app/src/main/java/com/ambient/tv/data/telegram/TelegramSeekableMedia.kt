@@ -13,6 +13,7 @@ internal class TelegramSeekableMedia(
     private val partLoader: (Long) -> ByteArray,
     private val authorized: () -> Boolean,
     private val prefetchLoader: (Long) -> ByteArray = partLoader,
+    private val prefetchWindow: ((Long) -> List<ByteArray>)? = null,
 ) : SeekableMedia {
     override val size: Long = media.fileSize
     private var partStart = -1L
@@ -26,6 +27,7 @@ internal class TelegramSeekableMedia(
         Thread(work, "monogram-media-prefetch").apply { isDaemon = true }
     }
     private val prefetch = java.util.concurrent.ConcurrentHashMap<Long, java.util.concurrent.Future<ByteArray>>()
+    private val prefetchGroups = ArrayList<java.util.concurrent.Future<List<ByteArray>>>()
     private val lifecycle = Any()
     @Volatile private var closed = false
     private var readingThread: Thread? = null
@@ -122,9 +124,17 @@ internal class TelegramSeekableMedia(
     private fun schedulePrefetch(start: Long) {
         synchronized(lifecycle) {
         if (closed || prefetcher.isShutdown) return
-        for (i in 1..window) {
-            val offset = start + i.toLong() * TELEGRAM_MEDIA_PART_BYTES
-            if (offset >= size) break
+        prefetchGroups.removeAll { it.isDone }
+        val offsets = (1..window).map { start + it.toLong() * TELEGRAM_MEDIA_PART_BYTES }
+            .takeWhile { it < size }.filterNot { prefetch.containsKey(it) }
+        val loader = prefetchWindow
+        val pair = offsets.take(2).takeIf { it.size == 2 && it[1] - it[0] == TELEGRAM_MEDIA_PART_BYTES.toLong() }
+        if (loader != null && pair != null) {
+            val group = prefetcher.submit(java.util.concurrent.Callable { checkOpen(); loader(pair[0]) })
+            prefetchGroups.add(group)
+            pair.forEachIndexed { index, at -> prefetch[at] = WindowPartFuture(group, index) }
+        }
+        for (offset in offsets) {
             if (!prefetch.containsKey(offset)) prefetch[offset] = prefetcher.submit(java.util.concurrent.Callable {
                 checkOpen()
                 prefetchLoader(offset)
@@ -136,7 +146,26 @@ internal class TelegramSeekableMedia(
     private fun cancelPrefetch() {
         prefetch.values.forEach { it.cancel(true) }
         prefetch.clear()
+        prefetchGroups.forEach { it.cancel(true) }
+        prefetchGroups.clear()
         (prefetcher as? java.util.concurrent.ThreadPoolExecutor)?.purge()
+    }
+
+    private class WindowPartFuture(
+        private val group: java.util.concurrent.Future<List<ByteArray>>, private val index: Int,
+    ) : java.util.concurrent.Future<ByteArray> {
+        private val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
+        override fun isDone() = cancelled.get() || group.isDone
+        override fun isCancelled() = cancelled.get() || group.isCancelled
+        override fun cancel(mayInterruptIfRunning: Boolean) = cancelled.compareAndSet(false, true)
+        override fun get(): ByteArray {
+            if (isCancelled) throw java.util.concurrent.CancellationException()
+            return group.get()[index]
+        }
+        override fun get(timeout: Long, unit: java.util.concurrent.TimeUnit): ByteArray {
+            if (isCancelled) throw java.util.concurrent.CancellationException()
+            return group.get(timeout, unit)[index]
+        }
     }
 
     override fun close() {

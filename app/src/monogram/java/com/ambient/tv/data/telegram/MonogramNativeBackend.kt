@@ -1306,11 +1306,20 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         loadMediaPart(chatId, messageId, offset, expectedBytes, nativeMediaKey, priority)
 
     private suspend fun loadMediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int?,
-        nativeMediaKey: String?, priority: TelegramTransferPriority): ByteArray {
+        nativeMediaKey: String?, priority: TelegramTransferPriority): ByteArray =
+        loadMediaWindow(chatId, messageId, offset, listOf(expectedBytes), nativeMediaKey, priority).single()
+
+    override suspend fun mediaWindow(chatId: Long, messageId: Int, offset: Long, lengths: List<Int>,
+        nativeMediaKey: String?, priority: TelegramTransferPriority): List<ByteArray> =
+        loadMediaWindow(chatId, messageId, offset, lengths, nativeMediaKey, priority)
+
+    private suspend fun loadMediaWindow(chatId: Long, messageId: Int, offset: Long, lengths: List<Int?>,
+        nativeMediaKey: String?, priority: TelegramTransferPriority): List<ByteArray> {
         require(offset >= 0L && offset % TELEGRAM_MEDIA_PART_BYTES == 0L)
-        require(expectedBytes == null || expectedBytes in 1..TELEGRAM_MEDIA_PART_BYTES)
-        fun validSize(size: Int) = size in 1..TELEGRAM_MEDIA_PART_BYTES &&
-            (expectedBytes == null || size == expectedBytes)
+        require(lengths.size in 1..2 && lengths.all { it == null || it in 1..TELEGRAM_MEDIA_PART_BYTES })
+        require(lengths.size == 1 || lengths.first() == TELEGRAM_MEDIA_PART_BYTES && lengths.last() != null)
+        fun validSize(index: Int, size: Int) = size in 1..TELEGRAM_MEDIA_PART_BYTES &&
+            (lengths[index] == null || size == lengths[index])
         val generation = cacheGeneration
         val currentIdentity = accountId
         val revision = mediaRevision(chatId, messageId)
@@ -1323,24 +1332,27 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         val dir = withContext(Dispatchers.IO) { chunkDirectory.canonicalFile }
         val mediaIdentity = nativeMediaKey?.takeIf { it.isNotBlank() }
         val digest = mediaIdentity?.let(::mediaDigest)
-        val cacheFile = File(dir, "$chatId-$messageId-$digest-$offset.bin")
-        fun lookup(): ByteArray? {
+        val cacheFiles = lengths.indices.map { index ->
+            File(dir, "$chatId-$messageId-$digest-${offset + index.toLong() * TELEGRAM_MEDIA_PART_BYTES}.bin")
+        }
+        fun lookup(index: Int): ByteArray? {
             if (digest == null) return null
+            val cacheFile = cacheFiles[index]
             val candidate = synchronized(diskChunkLock) {
                 verifyGeneration()
                 prepareChunkIndex(dir)
-                hotChunks[cacheFile]?.takeIf { validSize(it.size) }?.let {
+                hotChunks[cacheFile]?.takeIf { validSize(index, it.size) }?.let {
                     chunkIndex[cacheFile]
                     return it
                 }
                 // Files are published atomically and never modified in place.
-                chunkIndex[cacheFile]?.takeIf { it <= TELEGRAM_MEDIA_PART_BYTES && validSize(it.toInt()) }
+                chunkIndex[cacheFile]?.takeIf { it <= TELEGRAM_MEDIA_PART_BYTES && validSize(index, it.toInt()) }
             } ?: return null
             // Do not block unrelated hot-cache lookups or update publication on disk IO.
             val bytes = runCatching { cacheFile.readBytes() }.getOrNull()
             return synchronized(diskChunkLock) {
                 verifyGeneration()
-                if (bytes != null && bytes.size.toLong() == candidate && validSize(bytes.size)) {
+                if (bytes != null && bytes.size.toLong() == candidate && validSize(index, bytes.size)) {
                     rememberHotChunk(cacheFile, bytes)
                     bytes
                 } else {
@@ -1351,17 +1363,26 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         }
         // Cache hits still validate the local authenticated native handle, but do
         // not wait on reconnect, a network flood deadline or a request control.
-        nativeCallOnce(connect = false) { h ->
+        val cached = nativeCallOnce(connect = false) { h ->
             requireAuthorized(h)
-            lookup()
-        }?.let { return it }
+            lengths.indices.map(::lookup)
+        }
+        if (cached.all { it != null }) return cached.filterNotNull()
+        if (lengths.size == 2 && cached.any { it != null }) {
+            // A partial hit must not redownload a cached neighbor.
+            return lengths.indices.map { index ->
+                cached[index] ?: loadMediaPart(chatId, messageId, offset + index.toLong() * TELEGRAM_MEDIA_PART_BYTES,
+                    lengths[index], nativeMediaKey, priority)
+            }
+        }
 
         return cancellableMediaRequest(priority) { request ->
             nativeCall(maxFloodWaitSeconds = PLAYBACK_FLOOD_WAIT_SECONDS) { h ->
                 requireAuthorized(h)
                 verifyGeneration()
                 // Another reader may have filled the cache while we waited to connect.
-                lookup()?.let { return@nativeCall it }
+                val ready = lengths.indices.map(::lookup)
+                if (ready.all { it != null }) return@nativeCall ready.filterNotNull()
                 val temp = synchronized(diskChunkLock) {
                     verifyGeneration()
                     // A unique destination name does not create an empty file.
@@ -1371,29 +1392,38 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     val previous = uniffi.monogram_mtproto.bindRequestControl(request)
                     val payload = try {
                         mediaClass(if (priority.foreground) DISPATCH_USER else DISPATCH_BACKGROUND) {
-                            AmbientMonogramJni.mediaRange(h, chatId, messageId, temp.absolutePath, offset, mediaIdentity.orEmpty())
+                            AmbientMonogramJni.mediaRange(h, chatId, messageId, temp.absolutePath, offset, mediaIdentity.orEmpty(), lengths.size)
                         }
                     } finally {
                         uniffi.monogram_mtproto.bindRequestControl(previous)
                     }
-                    require(validSize(payload.size)) { "Invalid or incomplete Monogram chunk" }
+                    val parts = if (lengths.size == 1) listOf(payload) else {
+                        require(payload.size == lengths.sumOf { checkNotNull(it) }) { "Incomplete Monogram window" }
+                        listOf(payload.copyOfRange(0, TELEGRAM_MEDIA_PART_BYTES),
+                            payload.copyOfRange(TELEGRAM_MEDIA_PART_BYTES, payload.size))
+                    }
+                    require(parts.indices.all { validSize(it, parts[it].size) }) { "Invalid or incomplete Monogram chunk" }
                     verifyGeneration()
                     requireAuthorized(h)
-                    // The single optional disk copy happens outside the shared index lock.
-                    val staged = digest != null && runCatching {
-                        dir.mkdirs()
-                        if (temp.length() != payload.size.toLong()) temp.writeBytes(payload)
-                    }.isSuccess
-                    synchronized(diskChunkLock) {
-                        verifyGeneration()
-                        if (digest != null) {
-                            prepareChunkIndex(dir)
-                            rememberHotChunk(cacheFile, payload)
-                            if (staged && !cacheFile.isFile && temp.renameTo(cacheFile)) rememberChunk(cacheFile)
-                            trimChunkCache()
+                    val stages = parts.indices.map { index -> File(dir, "${temp.name}-$index.bin") }
+                    try {
+                        val staged = parts.indices.map { index ->
+                            digest != null && runCatching { dir.mkdirs(); stages[index].writeBytes(parts[index]) }.isSuccess
                         }
-                    }
-                    payload
+                        synchronized(diskChunkLock) {
+                            verifyGeneration()
+                            if (digest != null) {
+                                prepareChunkIndex(dir)
+                                parts.indices.forEach { index ->
+                                    val cacheFile = cacheFiles[index]
+                                    rememberHotChunk(cacheFile, parts[index])
+                                    if (staged[index] && !cacheFile.isFile && stages[index].renameTo(cacheFile)) rememberChunk(cacheFile)
+                                }
+                                trimChunkCache()
+                            }
+                        }
+                        parts
+                    } finally { stages.forEach { it.delete() } }
                 } finally {
                     temp.delete()
                 }
@@ -1471,21 +1501,21 @@ internal object AmbientMonogramJni {
     @Volatile private var jniAvailable = true
 
     private external fun downloadMediaRange(
-        handle: Long, chatId: Long, messageId: Int, destination: String, offset: Long, expectedKey: String,
+        handle: Long, chatId: Long, messageId: Int, destination: String, offset: Long, expectedKey: String, parts: Int,
     ): ByteArray
 
-    fun mediaRange(handle: Long, chatId: Long, messageId: Int, destination: String, offset: Long, expectedKey: String): ByteArray {
+    fun mediaRange(handle: Long, chatId: Long, messageId: Int, destination: String, offset: Long, expectedKey: String, parts: Int): ByteArray {
         if (jniAvailable) {
             try {
-                return downloadMediaRange(handle, chatId, messageId, destination, offset, expectedKey)
+                return downloadMediaRange(handle, chatId, messageId, destination, offset, expectedKey, parts)
             } catch (_: UnsatisfiedLinkError) {
                 // A missing symbol is the only safe reason to retry through UniFFI.
                 // Network, authentication and RPC errors must not issue a second request.
                 jniAvailable = false
             }
         }
-        return uniffi.monogram_mtproto.downloadMessageMediaChunkBytes(
-            handle.toULong(), chatId, messageId, destination, offset, expectedKey)
+        return uniffi.monogram_mtproto.downloadMessageMediaWindowBytes(
+            handle.toULong(), chatId, messageId, destination, offset, expectedKey, parts.toUInt())
     }
 }
 
