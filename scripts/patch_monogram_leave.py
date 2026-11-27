@@ -413,6 +413,14 @@ pub fn ambient_capture_range<T>(
     });
     Ok((result, payload))
 }
+static AMBIENT_CDN_RANGES: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+pub fn set_ambient_cdn_ranges(enabled: bool) {
+    AMBIENT_CDN_RANGES.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+fn ambient_cdn_ranges() -> bool {
+    AMBIENT_CDN_RANGES.load(std::sync::atomic::Ordering::Relaxed)
+}
 pub fn ambient_capture_active(destination: &std::path::Path) -> bool {
     AMBIENT_RANGE.with(|slot| slot.borrow().as_ref().is_some_and(|capture| capture.destination.as_path() == destination))
 }
@@ -433,7 +441,7 @@ fn ambient_begin_range(destination: &std::path::Path) -> bool {
         } else { false }
     })
 }
-fn ambient_stage_range(destination: &std::path::Path, stage: &std::path::Path, bytes: Vec<u8>) {
+pub fn ambient_stage_range(destination: &std::path::Path, stage: &std::path::Path, bytes: Vec<u8>) {
     AMBIENT_RANGE.with(|slot| {
         if let Some(capture) = slot.borrow_mut().as_mut().filter(|c| c.destination.as_path() == destination) {
             capture.staged = Some((stage.to_owned(), bytes));
@@ -452,7 +460,7 @@ fn ambient_publish_range(destination: &std::path::Path, stage: &std::path::Path)
         false
     })
 }
-const AMBIENT_RANGE_LIMIT: u64 = 512 * 1024;
+pub const AMBIENT_RANGE_LIMIT: u64 = 512 * 1024;
 enum AmbientRangeOutput {
     File(std::fs::File),
     Memory(std::io::Cursor<Vec<u8>>),
@@ -698,7 +706,7 @@ amend(range_output,
       "                let (flags, cdn_supported) = cdn_fields_for_seek(origin);",
       """                // CDN's whole-file receiver is inappropriate for a bounded range.
                 let (flags, cdn_supported) = if ambient_range {
-                    (0, None)
+                    if ambient_cdn_ranges() { crate::media_cdn::getfile_cdn_fields() } else { (0, None) }
                 } else { cdn_fields_for_seek(origin) };""")
 # Keep small and unknown-size transfers at one wire request (old latency fix).
 profile_source = "vendor/mono-rs/crates/mono-proto-media/src/profile.rs"
@@ -732,13 +740,25 @@ amend(client_download,
       """                drop(admission);
                 cdn_or_origin(""",
       """                drop(admission);
-                if offset.is_some() && mono_proto_media::profile::ambient_media_mode() {
-                    return media::with_cdn_supported(false, || {
-                        let _admission = client.policy.admit_download(target_dc, large)?;
-                        download_media_range_on_lane_dc(
-                            handle, client, home, api_id, media, dest, offset, target_dc,
-                        )
-                    });
+                if let Some(start) = offset
+                    && mono_proto_media::download::ambient_capture_active(dest) {
+                    // A reduced wire retry may redirect after the requested start.
+                    // Never publish that suffix as if it were the complete range.
+                    return cdn_or_origin(
+                        || {
+                            if job.offset != start {
+                                return Err(MtprotoError::Message("CDN range start changed".into()));
+                            }
+                            let _cdn_admission = client.policy.admit_download(job.dc_id, large)?;
+                            follow_cdn_redirect_bounded(handle, api_id, dest, &job, true)
+                        },
+                        || {
+                            let _admission = client.policy.admit_download(target_dc, large)?;
+                            download_media_range_on_lane_dc(
+                                handle, client, home, api_id, media, dest, offset, target_dc,
+                            )
+                        },
+                    );
                 }
                 cdn_or_origin(""")
 add_before(ffi, "#[uniffi::export]\npub fn set_download_concurrency(", """#[uniffi::export]
@@ -1339,6 +1359,110 @@ upstream_settings = "settings.gradle.kts"
 amend(upstream_settings,
       '    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"',
       '    // Ambient TV provisions the required JDK before invoking Gradle.')
+
+
+# Opt-in bounded CDN receiver. No whole-file fallback for a range. Every byte
+# is decrypted at its absolute offset and covered by the server's SHA-256 hashes.
+amend(media_lane,
+      """    if job.offset != 0 {
+        return Err(MtprotoError::Message("CDN resume requires origin download".into()));
+    }
+    let client = get_client(handle)?;""",
+      """    follow_cdn_redirect_bounded(handle, api_id, dest, job, false)
+}
+
+fn follow_cdn_redirect_bounded(
+    handle: u64, api_id: i32, dest: &Path, job: &media::CdnRedirect, range: bool,
+) -> Result<String, MtprotoError> {
+    if (!range && job.offset != 0) || job.offset < 0 ||
+        (range && job.offset % mono_proto_media::download::AMBIENT_RANGE_LIMIT as i64 != 0) {
+        return Err(MtprotoError::Message("CDN resume requires origin download".into()));
+    }
+    let client = get_client(handle)?;""")
+amend(media_lane,
+      """            receive_cdn_parts(job, dest, &staged, |offset| {""",
+      """            receive_cdn_parts_dispatch(job, dest, &staged, range, |offset| {""")
+add_before(media_lane, "fn receive_cdn_parts(", """fn receive_cdn_parts_dispatch(
+    job: &media::CdnRedirect,
+    dest: &Path,
+    staged: &media::StagedDownload,
+    range: bool,
+    fetch: impl FnMut(i64) -> Result<Result<Vec<u8>, Vec<u8>>, MtprotoError>,
+    reupload: impl FnMut(Vec<u8>) -> Result<(), MtprotoError>,
+) -> Result<(), MtprotoError> {
+    if range { receive_cdn_parts_bounded(job, dest, staged, true, fetch, reupload) }
+    else { receive_cdn_parts(job, dest, staged, fetch, reupload) }
+}
+fn receive_cdn_parts_bounded(
+    job: &media::CdnRedirect,
+    dest: &Path,
+    staged: &media::StagedDownload,
+    range: bool,
+    mut fetch: impl FnMut(i64) -> Result<Result<Vec<u8>, Vec<u8>>, MtprotoError>,
+    mut reupload: impl FnMut(Vec<u8>) -> Result<(), MtprotoError>,
+) -> Result<(), MtprotoError> {
+    use std::io::{Seek, SeekFrom, Write};
+    let mut memory = Vec::new();
+    let mut out = if range { None } else { Some(std::fs::File::create(staged.path())
+        .map_err(|e| MtprotoError::Message(e.to_string()))?) };
+    let limit = mono_proto_media::download::AMBIENT_RANGE_LIMIT as usize;
+    let mut offset = job.offset;
+    loop {
+        if range && memory.len() == limit { break; }
+        if media::download_cancelled(dest) || mono_proto_runtime::request_control::check().is_err() {
+            return Err(MtprotoError::Message("cancelled".into()));
+        }
+        let mut reuploads = 0;
+        let mut part = loop {
+            if mono_proto_runtime::request_control::check().is_err() {
+                return Err(MtprotoError::Message("cancelled".into()));
+            }
+            match fetch(offset)? {
+                Ok(bytes) => break bytes,
+                Err(token) => {
+                    if reuploads >= 3 {
+                        return Err(MtprotoError::Message("CDN reupload limit exceeded".into()));
+                    }
+                    reuploads += 1;
+                    reupload(token)?;
+                }
+            }
+        };
+        if mono_proto_runtime::request_control::check().is_err() {
+            return Err(MtprotoError::Message("cancelled".into()));
+        }
+        media::decrypt_cdn_part(&job.encryption_key, &job.encryption_iv, offset, &mut part)?;
+        if part.len() > media::CHUNK as usize || !media::verify_cdn_part(&job.file_hashes, offset, &part) {
+            return Err(MtprotoError::Message("CDN hash verification failed".into()));
+        }
+        if let Some(out) = out.as_mut() {
+            out.seek(SeekFrom::Start(offset as u64)).map_err(|e| MtprotoError::Message(e.to_string()))?;
+            out.write_all(&part).map_err(|e| MtprotoError::Message(e.to_string()))?;
+        } else {
+            if memory.len().saturating_add(part.len()) > limit {
+                return Err(MtprotoError::Message("CDN range exceeds limit".into()));
+            }
+            memory.extend_from_slice(&part);
+        }
+        if part.len() < media::CHUNK as usize { break; }
+        offset = offset.checked_add(part.len() as i64)
+            .ok_or_else(|| MtprotoError::Message("CDN offset overflow".into()))?;
+        media::notify_progress(&dest.display().to_string(), offset, 0);
+    }
+    if let Some(mut out) = out {
+        out.flush().map_err(|e| MtprotoError::Message(e.to_string()))
+    } else {
+        mono_proto_media::download::ambient_stage_range(dest, staged.path(), memory);
+        Ok(())
+    }
+}
+
+""", "fn receive_cdn_parts_dispatch(")
+add_before(ffi, "#[uniffi::export]\npub fn set_download_concurrency(", """#[uniffi::export]
+pub fn set_ambient_cdn_ranges(enabled: bool) {
+    proto_media::download::set_ambient_cdn_ranges(enabled);
+}
+""", "pub fn set_ambient_cdn_ranges(")
 
 # Commit files only after every source contract has been checked.
 for path, result in changes.items():

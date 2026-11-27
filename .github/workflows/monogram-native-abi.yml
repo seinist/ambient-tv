@@ -121,6 +121,8 @@ jobs:
           MONOGRAM_ABIS: ${{ matrix.abi }}
         run: |
           ./scripts/fetch_libretrodroid.sh
+          bash scripts/build_projectm_android.sh
+          SVP_ABIS="${{ matrix.abi }}" bash scripts/build_svp_android.sh
           bash scripts/measure_monogram_apk.sh "${{ matrix.abi }}"
           cp dist/monogram-size-* monogram-report/
       - uses: actions/upload-artifact@v5
