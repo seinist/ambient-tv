@@ -117,6 +117,21 @@ internal class SystemModuleRuntime(
         }
     }
 
+    /** Validate without initializing classes or invoking the linker. */
+    fun validateCandidate(module: SystemModule, pkg: SystemModuleStore.Package) {
+        val contract = contracts[module] ?: throw SystemModuleTrustException("No host module contract")
+        if (pkg.build.module != module.id ||
+            !contract.hostLibraries.containsAll(pkg.build.hostNativeSha256.keys))
+            throw SystemModuleTrustException("Unapproved module or host native dependency")
+        val prepared = SystemModuleMaterializer.prepare(pkg, root, pageSize, pkg.build.hostNativeSha256.keys)
+        try {
+            validateContract(contract, prepared)
+            SystemModuleMaterializer.verifyFiles(prepared)
+        } finally {
+            prepared.directory.deleteRecursively()
+        }
+    }
+
     private fun validateContract(contract: Contract, files: SystemModuleMaterializer.Materialized) {
         val modes = listOf(contract.entryClass != null, contract.nativeRoots.isNotEmpty(), contract.assetOnly).count { it }
         if (modes != 1) throw SystemModuleTrustException("Invalid host module contract")
