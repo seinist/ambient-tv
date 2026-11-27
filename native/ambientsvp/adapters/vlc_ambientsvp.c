@@ -10,6 +10,7 @@
 #include <math.h>
 #include "ambientsvp_loader.h"
 #include "svp_retry.h"
+#include "svp_planes.h"
 
 static int Open(filter_t *filter);
 vlc_module_begin()
@@ -48,16 +49,21 @@ static void Transfer(picture_t *pic, uint8_t *data, int w, int h, bool pack) {
     const bool nv12 = pic->format.i_chroma == VLC_CODEC_NV12;
     for (int plane = 0, offset = 0; plane < 3; plane++) {
         int shift = plane != 0, pw = w >> shift, ph = h >> shift;
-        int idx = nv12 && plane ? 1 : plane;
-        int step = nv12 && plane ? 2 : 1;
-        int ox = (pic->format.i_x_offset >> shift) * step + (nv12 && plane ? plane-1 : 0);
+        int ox = pic->format.i_x_offset >> shift;
         int oy = pic->format.i_y_offset >> shift;
-        for (int y = 0; y < ph; y++) {
-            uint8_t *pixels = pic->p[idx].p_pixels + (y+oy)*pic->p[idx].i_pitch + ox;
-            uint8_t *row = data + offset + y*pw;
-            if (step == 1) { if (pack) memcpy(row,pixels,pw); else memcpy(pixels,row,pw); }
-            else for (int x = 0; x < pw; x++) { if (pack) row[x]=pixels[x*2]; else pixels[x*2]=row[x]; }
+        ptrdiff_t pitch = pic->p[plane].i_pitch;
+        if (nv12 && plane == 1) {
+            uint8_t *u = data + offset, *v = u + pw*ph;
+            for (int y = 0; y < ph; y++) {
+                uint8_t *uv = pic->p[1].p_pixels + (ptrdiff_t)(y+oy)*pitch + 2*ox;
+                if (pack) svp_split_uv(u + y*pw, v + y*pw, uv, pw);
+                else svp_join_uv(uv, u + y*pw, v + y*pw, pw);
+            }
+            break;
         }
+        uint8_t *pixels = pic->p[plane].p_pixels + (ptrdiff_t)oy*pitch + ox;
+        if (pack) svp_copy_plane(data + offset, pw, pixels, pitch, pw, ph);
+        else svp_copy_plane(pixels, pitch, data + offset, pw, pw, ph);
         offset += pw*ph;
     }
 }
