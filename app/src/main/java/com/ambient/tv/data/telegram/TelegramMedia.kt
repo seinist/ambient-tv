@@ -155,6 +155,12 @@ fun TelegramMedia.playerMetadata(): PlaybackMetadata = PlaybackMetadata(
     hasVideo = kind == TelegramMediaKind.VIDEO,
     artworkUrl = cardImageUrl ?: thumbnailUrl,
     durationMs = durationMs,
+    // Use the original video geometry before any decoded frame is visible, not the
+    // independently sized preview artwork. The renderer remains authoritative for DAR.
+    sourceAspectRatioHint = if (kind == TelegramMediaKind.VIDEO)
+        com.ambient.tv.ui.player.sourceAspectRatioHint(width, height) else null,
+    sourceWidth = width.takeIf { kind == TelegramMediaKind.VIDEO && it > 0 && height > 0 },
+    sourceHeight = height.takeIf { kind == TelegramMediaKind.VIDEO && it > 0 && width > 0 },
 )
 
 /** Parse only actual youtube.com / youtu.be hosts. Do not mistake lookalike domains for YouTube. */
