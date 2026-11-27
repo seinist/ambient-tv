@@ -58,7 +58,7 @@ pub(super) struct StatsJob{
     device:ash::Device,pool:vk::DescriptorPool,
     hist:Buffer,summary:Buffer,windows:Vec<HdrWindow>,
     pipelines:Arc<StatsPipelines>,set:vk::DescriptorSet,
-    tracking:bool,width:u32,height:u32,
+    tracking:bool,width:u32,height:u32,step:u32,
 }
 impl Drop for StatsJob{
     fn drop(&mut self){unsafe{self.device.destroy_descriptor_pool(self.pool,None);}}
@@ -90,7 +90,7 @@ impl StatsJob{
         let summary=Buffer::new(core,(STRIDE*4*windows.len()) as u64,vk::BufferUsageFlags::STORAGE_BUFFER,
             vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)?;
         let mut s=Self{device:core.device.clone(),pool:vk::DescriptorPool::null(),hist,summary,windows:windows.to_vec(),
-            pipelines,set:vk::DescriptorSet::null(),tracking:tracking.is_some(),width:core.width,height:core.height};
+            pipelines,set:vk::DescriptorSet::null(),tracking:tracking.is_some(),width:core.width,height:core.height,step:core.tuning.map_or(16,super::ResidentTuning::step)};
         let mut config=vec![0u32;STRIDE*windows.len()];
         for (i,w) in windows.iter().enumerate(){
             let row=&mut config[i*STRIDE..(i+1)*STRIDE];
@@ -125,7 +125,7 @@ impl StatsJob{
     }
     pub(super) unsafe fn record(&self,cmd:vk::CommandBuffer,w:u32,h:u32){
         let d=&self.device;
-        let params=[w,h,self.windows.len() as u32,0];
+        let params=[w,h,self.windows.len() as u32,self.step];
         unsafe{
             d.cmd_fill_buffer(cmd,self.hist.buffer,0,self.hist.size,0);
             let read=vk::AccessFlags::SHADER_READ|vk::AccessFlags::SHADER_WRITE;
