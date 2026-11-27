@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <libavutil/rational.h>
+#include <libavutil/buffer.h>
 #include "common/common.h"
 #include "common/msg.h"
 #include "common/tags.h"
@@ -10,6 +11,7 @@
 #include "filters/filter_internal.h"
 #include "filters/user_filters.h"
 #include "video/mp_image.h"
+#include "video/mp_image_pool.h"
 #include "video/img_format.h"
 #include "ambientsvp_loader.h"
 #include "svp_retry.h"
@@ -19,6 +21,8 @@ struct opts { double fps, source; int preset, backend, threads, artifacts, scene
 struct priv {
     struct opts *opts; SvpApi api; AmbientSvp *engine;
     struct mp_image *reference; uint8_t *buffer; size_t bytes;
+    struct mp_image_pool *output_pool;
+    unsigned output_pool_count;
     bool eof, bypass; int width, height;
     /* Why frames pass through unchanged (metadata "passthrough"); 0 while the engine runs.
      * Kept separate from the engine's bypass_reason so only a real overload reads as one. */
@@ -36,12 +40,24 @@ static void reset(struct mp_filter *f) {
     if (p->engine) p->api.destroy(p->engine);
     p->engine = NULL; mp_image_unrefp(&p->reference);
     free(p->buffer); p->buffer = NULL; p->bytes = 0;
+    if (p->output_pool) mp_image_pool_clear(p->output_pool);
+    p->output_pool_count = 0;
     p->eof = p->bypass = false;
     p->passthrough = PASS_NONE;
 }
-/* mpv's reset (seek, track switch): a fresh timeline forgets earlier timing gaps. */
+/* A normal seek discards temporal state without rebuilding warm GPU
+ * resources. A bypassed engine keeps the old explicit-seek retry behavior. */
 static void seek_reset(struct mp_filter *f) {
-    struct priv *p = f->priv; reset(f); svp_retry_clear(&p->retry);
+    struct priv *p = f->priv;
+    AmbientSvpStats stats = {0};
+    if (p->engine && !p->bypass && p->api.enabled()
+        && !p->api.stats(p->engine, &stats) && !stats.bypass_reason
+        && !p->api.reset(p->engine)) {
+        mp_image_unrefp(&p->reference);
+        p->eof = false;
+        p->passthrough = PASS_NONE;
+    } else reset(f);
+    svp_retry_clear(&p->retry);
 }
 static void destroy(struct mp_filter *f) {
     struct priv *p = f->priv; reset(f); if (p->api.lib) dlclose(p->api.lib);
@@ -71,17 +87,51 @@ static int fill_input(void *context, uint8_t *dst, size_t len) {
     pack(img, dst);
     return 0;
 }
+/* MPV's pinned image pool retains backing allocations until the last
+ * renderer reference is released. Cap retained images by both count and
+ * byte budget; when all are busy, allocate a normal unpooled image. */
+static struct mp_image *output_image(struct priv *p) {
+    struct mp_image *out = mp_image_pool_get_no_alloc(p->output_pool, IMGFMT_420P, p->width, p->height);
+    if (out) return out;
+    out = mp_image_alloc(IMGFMT_420P, p->width, p->height);
+    if (!out) return NULL;
+    const size_t budget = 32u * 1024u * 1024u;
+    if (p->output_pool_count < 6 && out->bufs[0] && out->bufs[0]->size > 0
+        && out->bufs[0]->size <= budget / (p->output_pool_count + 1)) {
+        mp_image_pool_add(p->output_pool, out);
+        p->output_pool_count++;
+        return mp_image_pool_get_no_alloc(p->output_pool, IMGFMT_420P, p->width, p->height);
+    }
+    return out;
+}
+/* Only write the Rust contiguous slice into a proven single AVBufferRef.
+ * Never infer contiguity from adjacent plane addresses alone. */
+static bool packed_output(struct mp_image *out, int w, int h, size_t bytes) {
+    if (!out->bufs[0] || !mp_image_is_writeable(out)
+        || out->stride[0] != w || out->stride[1] != w/2 || out->stride[2] != w/2)
+        return false;
+    uintptr_t base = (uintptr_t)out->bufs[0]->data, y = (uintptr_t)out->planes[0];
+    size_t luma = (size_t)w*h;
+    if (y < base || y-base > out->bufs[0]->size || bytes > out->bufs[0]->size-(y-base))
+        return false;
+    return (uintptr_t)out->planes[1] == y+luma
+        && (uintptr_t)out->planes[2] == y+luma+luma/4;
+}
 static bool receive(struct mp_filter *f) {
     struct priv *p = f->priv;
-    if (!p->engine) return false;
-    int64_t pts;
-    int r = p->api.receive(p->engine, p->buffer, p->bytes, &pts, p->eof);
-    if (r < 0) { p->api.bypass(p->engine, 3); return false; }
-    if (r == 0) return false;
-    struct mp_image *out = mp_image_alloc(IMGFMT_420P, p->width, p->height);
+    if (!p->engine || !p->reference) return false;
+    struct mp_image *out = output_image(p);
     if (!out) { p->api.bypass(p->engine, 3); return false; }
+    bool direct = packed_output(out, p->width, p->height, p->bytes);
+    int64_t pts;
+    int r = p->api.receive(p->engine, direct ? out->planes[0] : p->buffer, p->bytes, &pts, p->eof);
+    if (r <= 0) {
+        talloc_free(out);
+        if (r < 0) p->api.bypass(p->engine, 3);
+        return false;
+    }
     mp_image_copy_attributes(out, p->reference);
-    for (int plane = 0, offset = 0; plane < 3; plane++) {
+    if (!direct) for (int plane = 0, offset = 0; plane < 3; plane++) {
         int w = p->width >> (plane != 0), h = p->height >> (plane != 0);
         svp_copy_plane(out->planes[plane], out->stride[plane], p->buffer + offset, w, w, h);
         offset += w*h;
@@ -172,6 +222,7 @@ static struct mp_filter *create(struct mp_filter *parent, void *options) {
     struct mp_filter *f = mp_filter_create(parent, &info);
     if (!f) { talloc_free(options); return NULL; }
     struct priv *p = f->priv; p->opts = talloc_steal(p, options); svp_load(&p->api);
+    p->output_pool = mp_image_pool_new(p);
     mp_filter_add_pin(f, MP_PIN_IN, "in"); mp_filter_add_pin(f, MP_PIN_OUT, "out"); return f;
 }
 #define OPT_BASE_STRUCT struct opts
