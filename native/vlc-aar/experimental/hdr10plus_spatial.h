@@ -18,6 +18,8 @@ struct ambient_hdrplus_spatial {
     bool valid;
     float curves[3][AMBIENT_HDRPLUS_LUT_SIZE];
     float domains[3];
+    // x/y knee, normalized output peak and direct-authored mode flag.
+    float authored[3][4];
     struct ambient_hdrplus previous;
     float output_min, output_max;
 };
@@ -101,14 +103,21 @@ static inline bool ambient_hdrplus_spatial_curves(pl_gpu gpu, struct ambient_hdr
         const bool direct=w->tone_mapping && (!w->anchor_count ||
             w->knee_x==0.f||w->knee_x==1.f||w->knee_y==0.f||w->knee_y==1.f ||
             fabsf(out_max-m->target_nits)<=0.01f);
+        memset(s->authored[i],0,sizeof(s->authored[i]));
         if(direct) {
-            // Authored output is normalized to the targeted display, not
-            // to MaxSCL. A valid curve can explicitly expand a dark scene.
+            // Exact linear segment and a LUT parameterized only over the
+            // curved segment. Never interpolate across the knee. The
+            // specified normalized curve is scaled by target peak, without
+            // adding a display-black pedestal (the main renderer handles it).
             p.output_max=pl_hdr_rescale(PL_HDR_NITS,PL_HDR_NORM,target_peak);
+            s->authored[i][0]=w->knee_x;s->authored[i][1]=w->knee_y;
+            s->authored[i][2]=p.output_max;s->authored[i][3]=1.f;
+            struct ambient_hdrplus_window segment=*w;
+            segment.knee_x=0.f;
             for(unsigned j=0;j<AMBIENT_HDRPLUS_LUT_SIZE;j++){
-                float x=(float)j/(AMBIENT_HDRPLUS_LUT_SIZE-1);
-                float y=ambient_hdrplus_bezier(w,x*x);
-                s->curves[i][j]=p.output_min+(p.output_max-p.output_min)*y;
+                float t=(float)j/(AMBIENT_HDRPLUS_LUT_SIZE-1);
+                float y=w->knee_x==1.f?w->knee_y:ambient_hdrplus_bezier(&segment,t);
+                s->curves[i][j]=p.output_max*y;
             }
         }else pl_tone_map_generate(s->curves[i],&p);
         float previous=0.f;
@@ -137,12 +146,19 @@ static const char ambient_hdrplus_mask_glsl[] =
     "  return 0.5+0.5*cos(3.141592653589793*u);\n"
     "}\n"
     "float ahp_curve(int i,float root) {\n"
-    "  float x=clamp(root/ahp_domains[i],0.0,1.0)*255.0;\n"
+    "  float u=clamp(root/ahp_domains[i],0.0,1.0);\n"
+    "  vec4 k=ahp_authored[i];\n"
+    "  if(k.w>0.0) {\n"
+    "    float s=u*u;\n"
+    "    if(k.x==1.0 || s<k.x) return k.z*k.y*s/k.x;\n"
+    "    u=(s-k.x)/(1.0-k.x);\n"
+    "  }\n"
+    "  float x=clamp(u,0.0,1.0)*255.0;\n"
     "  int n=int(floor(x));\n"
     "  return mix(texelFetch(ahp_lut,ivec2(n,i),0).r,texelFetch(ahp_lut,ivec2(min(n+1,255),i),0).r,fract(x));\n"
     "}\n"
     "vec3 ahp_map_rgb(int i,vec3 rgb,float v,float root) {\n"
-    "  if(v<=1e-7) return vec3(0.0);\n"
+    "  if(v<=0.0) return vec3(0.0);\n"
     "  float domain=ahp_domains[i]*ahp_domains[i];\n"
     "  vec3 normalized=clamp(rgb/domain,0.0,1.0);\n"
     "  float s=min(v/domain,1.0);\n"
@@ -256,8 +272,10 @@ static inline bool ambient_hdrplus_spatial_render(pl_gpu gpu, pl_log log,
         {.var=pl_var_vec3("ahp_sat_peak"),.data=sat_peak,.dynamic=true},
         {.var=pl_var_vec3("ahp_sat_source_scale"),.data=sat_source_scale,.dynamic=true},
         {.var=pl_var_vec3("ahp_sat_target_scale"),.data=sat_target_scale,.dynamic=true},
+        {.var=pl_var_vec4("ahp_authored"),.data=s->authored,.dynamic=true},
     };
     for(unsigned i=0;i<3;++i) vars[i].var.dim_a=2;
+    vars[sizeof(vars)/sizeof(vars[0])-1].var.dim_a=3;
     pl_dispatch_reset_frame(s->dispatch);
     pl_shader sh=pl_dispatch_begin(s->dispatch);
     if (!pl_shader_custom(sh,&(struct pl_custom_shader){
