@@ -150,9 +150,13 @@ internal fun svpNativeOptions(options: SvpOptions, separator: String): String {
         "pel=${o.pel}", "search=${o.search}").joinToString(separator)
 }
 
-/** The independent resident algorithm is currently SDR8/1080p only.
+/** The independent resident algorithm supports SDR8 and verified high-depth/1080p.
+ * Dynamic HDR and Dolby Vision require a compatible metadata-aware renderer.
  * An explicit CPU backend must never be overridden by the transport choice.
  * Unknown sizes are checked again by the native decoder before importing. */
+internal fun svpStaticHdrResident(source: com.ambient.tv.ui.player.HdrStandard?): Boolean =
+    source == com.ambient.tv.ui.player.HdrStandard.HDR10 || source == com.ambient.tv.ui.player.HdrStandard.HLG
+
 internal fun svpResidentRequested(options: SvpOptions, width: Int? = null, height: Int? = null): Boolean =
     options.hardwareResident && options.normalized().backend != 1 &&
         (width == null || width in 32..1920) && (height == null || height in 32..1080)
