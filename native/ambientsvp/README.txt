@@ -1055,3 +1055,24 @@ converting to RGBA8. MPV's decoder selection remains codec-agnostic.
 The previous CI head 8c4a7c25 passed source patch application and
 CPU fallback before cancellation by newer commits. Fresh native
 and full player validation are required. No 10-bit/HDR claim.
+
+
+Opt-in AV1 Main8 VLC MediaCodec transport
+----------------------------------------
+The pinned VLC MediaCodec module now also recognizes video/av01,
+only when explicit experimental SVP Surface and direct rendering
+are requested. Require an av1C version 1 record with Main profile,
+8-bit non-monochrome 4:2:0, one bounded sequence OBU, and known
+SDR container metadata. VLC's existing AV1 syntax parser is linked
+into the module and independently confirms profile, I420 chroma
+and compatible sequence color metadata. Feed the configuration
+OBUs, not the four-byte MP4 record header, as MediaCodec CSD.
+In-band sequence headers must match the validated configuration;
+malformed framing or a changed header triggers existing decoder
+fallback. Raw/missing configuration, Main10, HDR and other profiles
+remain excluded. The earlier statement that the MIME switch lacks
+AV1 applies only to the prior revision. Host C tests exercise CSD
+framing, truncation, invalid profile flags and sequence changes.
+A full VLC Android build, actual AV1 MediaCodec/SurfaceControl
+playback and exact-head CI remain unverified. No HDR/10-bit path or
+measured hardware throughput is claimed.
