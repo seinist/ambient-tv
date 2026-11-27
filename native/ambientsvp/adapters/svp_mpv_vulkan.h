@@ -172,7 +172,11 @@ static bool svp_vk_dovi_valid(const struct mp_image *img)
         sizeof(AVDOVIColorMetadata)>buf->size-m->color_offset ||
         m->header_offset%_Alignof(AVDOVIRpuDataHeader) ||
         m->mapping_offset%_Alignof(AVDOVIDataMapping) ||
-        m->color_offset%_Alignof(AVDOVIColorMetadata)) return false;
+        m->color_offset%_Alignof(AVDOVIColorMetadata) ||
+        m->num_ext_blocks<0 || m->num_ext_blocks>AV_DOVI_MAX_EXT_BLOCKS) return false;
+    if (m->num_ext_blocks && (m->ext_block_offset<sizeof(*m) || m->ext_block_offset>buf->size ||
+        m->ext_block_size<sizeof(AVDOVIDmData) ||
+        (size_t)m->num_ext_blocks>(buf->size-m->ext_block_offset)/m->ext_block_size)) return false;
     const AVDOVIRpuDataHeader *h=av_dovi_get_header(m);
     const AVDOVIDataMapping *map=av_dovi_get_mapping(m);
     return h->bl_bit_depth==10 && h->disable_residual_flag==1 &&
@@ -192,7 +196,7 @@ static int svp_vk_image_mode(const struct mp_image *img,enum AVPixelFormat forma
 static bool svp_vk_hdr_metadata_same(const struct mp_image *a,const struct mp_image *b)
 {
     return pl_hdr_metadata_equal(&a->params.color.hdr,&b->params.color.hdr) &&
-        svp_vk_hdrplus_same(a,b) &&
+        svp_vk_hdrplus_same(a,b) && svp_vk_buffer_equal(a->dovi,b->dovi) &&
         svp_vk_buffer_equal(svp_vk_side_data(a,AV_FRAME_DATA_DOVI_METADATA),svp_vk_side_data(b,AV_FRAME_DATA_DOVI_METADATA)) &&
         svp_vk_buffer_equal(svp_vk_side_data(a,AV_FRAME_DATA_DOVI_RPU_BUFFER),svp_vk_side_data(b,AV_FRAME_DATA_DOVI_RPU_BUFFER));
 }
