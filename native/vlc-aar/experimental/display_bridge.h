@@ -75,8 +75,9 @@ ambient_display_open(pl_gpu gpu, const video_format_t *fmt, vlc_video_context *c
     if (ambient_display_hdr(fmt) && !avctx->air_api->AImage.getDataSpace) return NULL;
     pl_vulkan vk = pl_vulkan_get(gpu);
     if (!ambient_pl_ahb_device_enabled(vk)) return NULL;
-    // A conservative descriptor-pool budget, not an asserted per-format
-    // descriptor count. Allocation failure rejects this experimental path.
+    // Use the physical device's maintenance6 limit when available;
+    // otherwise allocate a conservative bounded pool. Allocation failure
+    // rejects this experimental path.
     struct ambient_ahb_config config = {
         .instance = vk->instance, .physical = vk->phys_device, .device = vk->device,
         .family = vk->queue_graphics.index, .get_proc = vk->get_proc_addr,
@@ -86,7 +87,7 @@ ambient_display_open(pl_gpu gpu, const video_format_t *fmt, vlc_video_context *c
         .destroy_texture = ambient_display_destroy_texture,
         .vert_words = ambient_sample_vert, .vert_bytes = sizeof(ambient_sample_vert),
         .frag_words = ambient_sample_frag, .frag_bytes = sizeof(ambient_sample_frag),
-        .descriptor_count = 16,
+        .descriptor_count = ambient_pl_descriptor_budget(vk),
     };
     return ambient_ahb_open(&config);
 }

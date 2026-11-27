@@ -40,6 +40,58 @@ static inline bool ambient_pl_ycbcr_enabled(pl_vulkan vk)
     return false;
 }
 
+// The actual physical device must support the sync-fd import operation, not
+// merely advertise the logical-device extension. The display never exports
+// ready semaphores (same-device handoff), so exportability is not required.
+static inline bool ambient_pl_sync_fd_importable(pl_vulkan vk)
+{
+    if (!vk || !vk->get_proc_addr || !vk->phys_device) return false;
+    PFN_vkGetPhysicalDeviceExternalSemaphoreProperties get =
+        (PFN_vkGetPhysicalDeviceExternalSemaphoreProperties)
+        vk->get_proc_addr(vk->instance, "vkGetPhysicalDeviceExternalSemaphoreProperties");
+    if (!get) return false;
+    VkPhysicalDeviceExternalSemaphoreInfo info = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO,
+        .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
+    };
+    VkExternalSemaphoreProperties props = {
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES,
+    };
+    get(vk->phys_device, &info, &props);
+    return (props.externalSemaphoreFeatures & VK_EXTERNAL_SEMAPHORE_FEATURE_IMPORTABLE_BIT) &&
+        (props.compatibleHandleTypes & VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT);
+}
+
+static inline uint32_t ambient_pl_descriptor_budget(pl_vulkan vk)
+{
+    if (!vk || !vk->get_proc_addr || !vk->phys_device) return 16;
+    PFN_vkGetPhysicalDeviceProperties2 get =
+        (PFN_vkGetPhysicalDeviceProperties2)
+        vk->get_proc_addr(vk->instance, "vkGetPhysicalDeviceProperties2");
+    if (!get) return 16;
+    VkPhysicalDeviceProperties2 props = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+    get(vk->phys_device, &props);
+#if defined(VK_KHR_maintenance6)
+    if (props.properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 4, 0) ||
+        ambient_pl_extension_enabled(vk, VK_KHR_MAINTENANCE_6_EXTENSION_NAME)) {
+        VkPhysicalDeviceMaintenance6PropertiesKHR maintenance = {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_6_PROPERTIES_KHR,
+        };
+        props.pNext = &maintenance;
+        get(vk->phys_device, &props);
+        if (maintenance.maxCombinedImageSamplerDescriptorCount)
+            return maintenance.maxCombinedImageSamplerDescriptorCount;
+    }
+#endif
+    // Older drivers cannot directly query the external-format descriptor count.
+    // Allocate a conservative pool bounded by the device's actual sampler limit.
+    // Pool allocation does not increase the descriptor count of the layout.
+    uint32_t budget = props.properties.limits.maxPerStageDescriptorSamplers;
+    if (budget < 16) budget = 16;
+    if (budget > 256) budget = 256;
+    return budget;
+}
+
 static inline bool ambient_pl_ahb_device_enabled(pl_vulkan vk)
 {
     return vk && vk->api_version >= VK_API_VERSION_1_1 &&
@@ -47,7 +99,7 @@ static inline bool ambient_pl_ahb_device_enabled(pl_vulkan vk)
         ambient_pl_extension_enabled(vk, VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME) &&
         ambient_pl_extension_enabled(vk, VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME) &&
         ambient_pl_extension_enabled(vk, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME) &&
-        ambient_pl_ycbcr_enabled(vk);
+        ambient_pl_ycbcr_enabled(vk) && ambient_pl_sync_fd_importable(vk);
 }
 
 // Wrap exactly once while held by the external owner. No cross-device

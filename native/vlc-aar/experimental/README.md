@@ -40,6 +40,9 @@ distribute the experiment as a validated production build.
   output geometry reuse the actual sampler and pipeline, replacing only the
   imported image/view and descriptor binding. Other formats rebuild the pass.
   A shared VkPipelineCache also permits driver compilation reuse across slots.
+  The actual physical device is checked for sync-fd import support. Descriptor
+  pool capacity uses maintenance6's maximum when available, otherwise a
+  bounded conservative device-limit-based budget.
 - GPU-only conversion and asynchronous libplacebo semaphore handoff. Decoder
   picture completion and consumer hold/reclaim completion are distinct;
   no per-frame CPU fence wait or device-wide idle. Per-slot binary semaphores

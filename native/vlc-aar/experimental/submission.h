@@ -18,7 +18,7 @@ struct QueueDispatch {
 
     bool valid() const {
         return create_semaphore && destroy_semaphore && create_fence && destroy_fence &&
-            import_fd && export_fd && submit && fence_status;
+            import_fd && submit && fence_status;
     }
 };
 
@@ -37,7 +37,7 @@ public:
     // sampling, and be executable. No caller-owned semaphores are consumed.
     VkResult submit(VkQueue queue, VkCommandBuffer cmd, FrameLease &lease) {
         if (!device_ || !queue || !cmd || !d_.valid() || submitted_ ||
-            (reuse_after_handoff_ && !d_.reset_fences)) return VK_ERROR_INITIALIZATION_FAILED;
+            (reuse_after_handoff_ ? !d_.reset_fences : !d_.export_fd)) return VK_ERROR_INITIALIZATION_FAILED;
         if ((acquire_ || release_ || done_) && !(acquire_ && release_ && done_ && reusable_))
             return VK_ERROR_INITIALIZATION_FAILED;
         UniqueFd producer;

@@ -94,7 +94,9 @@ struct ambient_ahb_owner {
         D(samples, set_scissor, CmdSetScissor); D(samples, draw, CmdDraw);
         D(sync, create_semaphore, CreateSemaphore); D(sync, destroy_semaphore, DestroySemaphore);
         D(sync, create_fence, CreateFence); D(sync, destroy_fence, DestroyFence);
-        D(sync, import_fd, ImportSemaphoreFdKHR); D(sync, export_fd, GetSemaphoreFdKHR);
+        D(sync, import_fd, ImportSemaphoreFdKHR);
+        // Export is not needed for this conservative same-device path.
+        sync.export_fd = reinterpret_cast<PFN_vkGetSemaphoreFdKHR>(get(c.device, "vkGetSemaphoreFdKHR"));
         D(sync, submit, QueueSubmit); D(sync, fence_status, GetFenceStatus);
         D(sync, reset_fences, ResetFences);
         D(commands, get_queue, GetDeviceQueue);
