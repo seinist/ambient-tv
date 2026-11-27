@@ -118,7 +118,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          vlc_placebo_ReleaseCurrent(sys->pl);
          return; // Probably benign error, ignore it
      }
-@@ -238,19 +312,44 @@
+@@ -238,19 +312,45 @@
      bool need_vflip = frame.flipped;
  #endif
  
@@ -148,7 +148,8 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +            if (pic->format.dovi.profile == 7) {
 +                struct vlc_ancillary *el = picture_GetAncillary(pic, AMBIENT_FEL_ID);
 +                if (!el || !ambient_fel_render_picture(gpu, sys->pl->log, &sys->fel,
-+                    &img, vlc_ancillary_GetData(el), pic->date)) {
++                    &img, vlc_ancillary_GetData(el), pic->date,
++                    pic->format.i_x_offset, pic->format.i_y_offset)) {
 +                    if (!sys->ahb_error_logged)
 +                        msg_Err(vd, "Experimental FEL reconstruction failed");
 +                    sys->ahb_error_logged = true;
@@ -176,7 +177,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
  
      struct vlc_ancillary *iccp = picture_GetAncillary(pic, VLC_ANCILLARY_ID_ICC);
      if (iccp) {
-@@ -264,9 +363,12 @@
+@@ -264,9 +364,12 @@
      if (hdrplus) {
          vlc_video_hdr_dynamic_metadata_t *hdm = vlc_ancillary_GetData(hdrplus);
          vlc_placebo_HdrMetadata(hdm, &img.color.hdr);
@@ -190,7 +191,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
      struct pl_plane_data data[4];
      if (!vlc_placebo_PlaneData(pic, data)) {
          // This should never happen, in theory
-@@ -287,6 +389,9 @@
+@@ -287,6 +390,9 @@
                                        &plane->shift_y);
      }
  
@@ -200,7 +201,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
      struct pl_frame target;
      pl_frame_from_swapchain(&target, &frame);
      if (vd->cfg->icc_profile) {
-@@ -438,7 +543,32 @@
+@@ -438,7 +544,32 @@
      }
  
      // Dispatch the actual image rendering with the pre-configured parameters
@@ -234,7 +235,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
          msg_Err(vd, "Failed rendering frame!");
          failed = true;
          goto done;
-@@ -445,6 +575,17 @@
+@@ -445,6 +576,17 @@
      }
  
  done:
@@ -252,7 +253,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
  
      if (failed)
          pl_tex_clear(gpu, frame.fbo, (float[4]){ 1.0, 0.0, 0.0, 1.0 });
-@@ -463,8 +604,13 @@
+@@ -463,8 +605,13 @@
  
      sys->fbo = NULL;
      if (vlc_placebo_MakeCurrent(sys->pl) == VLC_SUCCESS) {
