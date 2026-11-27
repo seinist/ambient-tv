@@ -126,9 +126,9 @@ class VlcPlaybackController(
     // filters must not strip its precision or feed it through SDR-to-HDR a second time.
     private val preserveHdrSource = nativeHdrPreferred || sourceHdrStandard != null
     private val toneMappingRequired = sourceHdrStandard != null && !nativeHdrPreferred
-    private val doviRpuDecoderRequired = vlcDoviRpuDecoderRequired(
+    private val doviRpuDecoderRequired: Boolean get() = vlcDoviRpuDecoderRequired(
         com.ambient.tv.BuildConfig.VLC_AHB_EXPERIMENT, sourceHdrStandard == HdrStandard.DOLBY_VISION,
-        nativeHdrPreferred, audioOnly,
+        nativeHdrPreferred, audioOnly, hardwareRoute = doviAhbActive,
     )
     override val usesRendererScaling: Boolean get() = true
     val audioSession = com.ambient.tv.ui.player.AudioSession(videoImagePreferences(context), "vlc", initialAudioPassthrough, audioOnly = audioOnly)
@@ -175,6 +175,7 @@ class VlcPlaybackController(
     var renderSurfaceSize by mutableStateOf<Pair<Int, Int>?>(null)
         private set
     val videoOutputDescription: String get() = when {
+        doviAhbActive -> "libplacebo / Vulkan · Dolby Vision AHB (experimental)"
         doviRpuDecoderRequired && vulkanOutput -> "libplacebo / Vulkan · Dolby Vision RPU (SW)"
         doviRpuDecoderRequired -> "OpenGL ES · Dolby Vision RPU (SW)"
         vulkanOutput -> "libplacebo / Vulkan"
@@ -215,8 +216,11 @@ class VlcPlaybackController(
         configuredSoftwareProcessing, configuredSvpMode, configuredDeinterlaceMode, ahbCopyBackRetried,
         supportedHdrGpu = android.os.Build.VERSION.SDK_INT >= 34 && !nativeHdrPreferred &&
             (sourceHdrStandard == HdrStandard.HDR10 || sourceHdrStandard == HdrStandard.HLG ||
-             sourceHdrStandard == HdrStandard.HDR10_PLUS),
+             sourceHdrStandard == HdrStandard.HDR10_PLUS ||
+             (sourceHdrStandard == HdrStandard.DOLBY_VISION && com.ambient.tv.BuildConfig.VLC_DOVI_AHB_EXPERIMENT)),
     )
+    private val doviAhbActive: Boolean get() = ahbExperimentActive &&
+        com.ambient.tv.BuildConfig.VLC_DOVI_AHB_EXPERIMENT && sourceHdrStandard == HdrStandard.DOLBY_VISION
     override val usesFrameInterpolation: Boolean
         get() = effectiveImage().svpMode != "off"
     /** An option this LibVLC build does not know fails the whole instance: retry without the subtitle look. */
@@ -254,6 +258,7 @@ class VlcPlaybackController(
             ))
             if (ahbExperimentActive && sourceHdrStandard == HdrStandard.HDR10_PLUS)
                 add("--vk-ambient-hdr10plus")
+            if (doviAhbActive) add("--vk-ambient-dovi-ahb")
             // MediaCodec copy-back lacks VLC's DOVI picture ancillary. Use
             // avcodec's RPU-aware software decoder, but keep the GPU renderer.
             if (doviRpuDecoderRequired) add("--no-mediacodec")
@@ -1258,7 +1263,13 @@ class VlcPlaybackController(
         // clipped timeline, which otherwise shifts both duration and later seeks.
         // Respect VLC/device codec blacklists and retain software fallback.
         // Sparsam forces hardware/direct (no hqdn3d/gradfun software path) without mutating prefs.
-        media.setHWDecoderEnabled(!effectiveImage.softwareProcessing, false)
+        media.setHWDecoderEnabled(!effectiveImage.softwareProcessing && !doviRpuDecoderRequired, false)
+        if (doviRpuDecoderRequired) {
+            // Media-level decoder options must not undo the instance-level
+            // RPU-preserving software decoder fallback on an AHB retry.
+            media.addOption(":no-mediacodec")
+            media.addOption(":avcodec-hw=none")
+        }
         if ((vulkanOutput || toneMappingRequired) && !ahbExperimentActive) {
             // Normal Vulkan and HDR processing keep CPU-accessible MediaCodec output.
             // The isolated experiment may negotiate opaque AImage input for eligible SDR/PQ/HLG.
@@ -1323,11 +1334,13 @@ class VlcPlaybackController(
         if (!vulkanOutput || released) return false
         if (ahbFallbackPending) return true // Coalesce duplicate error events before the posted reopen.
         val retryCopyBack = ahbExperimentActive
+        val retryDoviRpu = doviAhbActive
         if (retryCopyBack) {
             ahbCopyBackRetried = true
             ahbFallbackPending = true
-            accelerationFallback = "Vulkan AHB → Vulkan Copy-back: $reason"
-            Timber.w("VULKAN VLC AHB fallback to copy-back: %s", reason)
+            accelerationFallback = if (retryDoviRpu) "Dolby Vision AHB → FFmpeg RPU (SW): $reason"
+                else "Vulkan AHB → Vulkan Copy-back: $reason"
+            Timber.w("VULKAN VLC AHB fallback: %s", accelerationFallback)
         } else {
             VideoAccelerationRuntime.reportFallback("vlc", reason)
             if (vulkanRequested) VideoAccelerationRuntime.notifyUnavailable()

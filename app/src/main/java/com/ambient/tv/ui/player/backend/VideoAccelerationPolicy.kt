@@ -276,7 +276,8 @@ internal fun vlcDoviRpuDecoderRequired(
     dolbyVision: Boolean,
     nativeHdrPreferred: Boolean,
     audioOnly: Boolean,
-): Boolean = experiment && dolbyVision && !nativeHdrPreferred && !audioOnly
+    hardwareRoute: Boolean = false,
+): Boolean = experiment && dolbyVision && !nativeHdrPreferred && !audioOnly && !hardwareRoute
 
 /** Opaque SDR or explicitly supported HDR GPU processing, with no CPU filters. */
 internal fun vlcAhbExperimentEligible(

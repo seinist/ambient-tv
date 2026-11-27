@@ -7,6 +7,9 @@ import org.junit.Test
 class VlcAhbExperimentPolicyTest {
     @Test fun dolbyVisionRpuFallbackNeverOverridesNativeHdrOrProduction() {
         assertTrue(vlcDoviRpuDecoderRequired(true, true, false, false))
+        assertFalse(vlcDoviRpuDecoderRequired(true, true, false, false, hardwareRoute = true))
+        // Retry disables the hardware route; the RPU-aware SW path is selected again.
+        assertTrue(vlcDoviRpuDecoderRequired(true, true, false, false, hardwareRoute = false))
         assertFalse(vlcDoviRpuDecoderRequired(false, true, false, false))
         assertFalse(vlcDoviRpuDecoderRequired(true, true, true, false))
         assertFalse(vlcDoviRpuDecoderRequired(true, false, false, false))
