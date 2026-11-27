@@ -76,6 +76,7 @@ int main(void)
         metadata.curves[i].poly_coef[0][1]=58982;
     }
     assert(ambient_fel_metadata(&metadata,&reshape,&nlq));
+    assert(reshape.comp[0].pivots[1]==1023.f/1024.f);
     metadata.residual_present=0;
     assert(!ambient_fel_metadata(&metadata,&reshape,&nlq));
     assert(!ambient_fel_compose(gpu,dp,bl,el,bl,&reshape,&nlq));
@@ -118,6 +119,32 @@ int main(void)
         }
         double expected=fmin(1.0,fmax(0.0,mapped+ambient_fel_residual(&nlq,0,residual[4*i])));
         assert(isfinite(pixels[4*i])&&fabs(pixels[4*i]-expected)<0.0001);
+    }
+    // Real RPU prediction domain: use different pivot limits on every
+    // component and cross-terms which detect unclamped MMR inputs.
+    struct pl_dovi_metadata exact=reshape;
+    const unsigned lows[3]={64,256,384},highs[3]={960,768,896};
+    for(unsigned j=0;j<3;j++){
+        exact.comp[j].pivots[0]=lows[j]/1024.f;
+        exact.comp[j].pivots[1]=highs[j]/1024.f;
+    }
+    struct pl_reshape_data *xc=&exact.comp[1];
+    xc->method[0]=1;xc->mmr_order[0]=2;xc->mmr_constant[0]=0.05f;
+    xc->mmr_coeffs[0][0][0]=0.3f;
+    xc->mmr_coeffs[0][0][6]=0.4f;
+    xc->mmr_coeffs[0][1][5]=0.2f;
+    assert(ambient_fel_compose_domain(gpu,dp,bl,el,out,&exact,&nlq,false,false,NULL,true));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=out,.ptr=pixels)));
+    for(unsigned i=0;i<4;i++){
+        double x[3];
+        for(unsigned j=0;j<3;j++)
+            x[j]=fmin(highs[j]/1024.0,fmax(lows[j]/1024.0,base[4*i+j]*1023.0/1024.0));
+        for(unsigned j=0;j<3;j++){
+            double pred=j==1?0.05+0.3*x[0]+0.4*x[0]*x[1]*x[2]+0.2*pow(x[1]*x[2],2):
+                6554.0/65536.0+58982.0/65536.0*x[j];
+            double exp=fmin(1.0,fmax(0.0,pred+ambient_fel_residual(&nlq,j,residual[4*i+j])));
+            assert(isfinite(pixels[4*i+j])&&fabs(pixels[4*i+j]-exp)<0.0001);
+        }
     }
     // A canonical MEL-like RPU can prove the residual is zero without
     // sampling any EL texture. Also cover zero-maximum components.
@@ -245,6 +272,15 @@ int main(void)
     pl_tex zero_el=pl_tex_create(gpu,pl_tex_params(.w=2,.h=2,.format=fmt,
         .sampleable=true,.initial_data=zero));
     assert(neutral_bl&&zero_el);
+    // Independent neutral-axis result including a nonzero RPU matrix
+    // offset. All three channels are equal and both matrices identity.
+    struct pl_dovi_metadata exact_matrix=identity;
+    for(unsigned j=0;j<3;j++)exact_matrix.nonlinear_offset[j]=0.125f;
+    assert(ambient_fel_compose_domain(gpu,dp,neutral_bl,zero_el,out,
+        &exact_matrix,&nlq,false,true,NULL,true));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=out,.ptr=pixels)));
+    for(unsigned j=0;j<16;j++)if(j%4!=3)
+        assert(fabsf(pixels[j]-(0.5f*1023.f/1024.f-0.125f))<0.0002f);
     assert(ambient_fel_compose_ex(gpu,dp,neutral_bl,zero_el,out,&identity,&nlq,false,true,NULL));
     assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=out,.ptr=pixels)));
     for(unsigned i=0;i<16;i++)if(i%4!=3)assert(fabsf(pixels[i]-0.5f)<0.0002f);

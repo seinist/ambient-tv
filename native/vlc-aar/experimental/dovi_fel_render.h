@@ -58,8 +58,8 @@ static inline bool ambient_fel_render_picture_ex(pl_gpu gpu,pl_log log,
     if(!s->dispatch||!fmt||!pl_tex_recreate(gpu,&s->output,pl_tex_params(
         .w=bl->params.w,.h=bl->params.h,.format=fmt,.sampleable=true,.renderable=true)))
         return false;
-    if(!ambient_fel_compose_ex(gpu,s->dispatch,bl,NULL,s->output,&reshape,&nlq,
-        true,true,zero?NULL:&s->planes))return false;
+    if(!ambient_fel_compose_domain(gpu,s->dispatch,bl,NULL,s->output,&reshape,&nlq,
+        true,true,zero?NULL:&s->planes,true))return false;
     // The prepass has produced nonlinear BT.2020 PQ RGB. Ordinary rendering
     // now handles target gamut, tone mapping, scaling, overlays and dither.
     img->planes[0]=(struct pl_plane){.texture=s->output,.components=3,

@@ -46,10 +46,10 @@ static inline bool ambient_fel_planes_upload(pl_gpu gpu,struct ambient_fel_plane
  * reconstructed codewords, NOT RGB; a downstream DV matrix stage is required.
  * decode_rgb optionally applies the Dolby matrix and returns nonlinear PQ RGB.
  * No claim of bit-exact reference-decoder equivalence. */
-static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
+static inline bool ambient_fel_compose_domain(pl_gpu gpu, pl_dispatch dispatch,
     pl_tex bl, pl_tex el, pl_tex output, const struct pl_dovi_metadata *reshape,
     const struct ambient_fel_nlq *n, bool packed_cr_y_cb, bool decode_rgb,
-    const struct ambient_fel_planes *planes)
+    const struct ambient_fel_planes *planes, bool rpu_domain)
 {
     const bool zero=ambient_fel_nlq_zero(n);
     if (!gpu || !dispatch || !bl || (!el && !planes && !zero) || (el && planes) || !output || !reshape ||
@@ -158,6 +158,27 @@ static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
         .body=packed_cr_y_cb ? "color=texelFetch(fel_bl,ivec2(gl_FragCoord.xy),0).gbra;" :
             "color=texelFetch(fel_bl,ivec2(gl_FragCoord.xy),0);",
     })) goto fail;
+    if(rpu_domain){
+        // The native P010 sample is code/1023; RPU polynomial and MMR
+        // coefficients use code/1024. Clamp every input component to its
+        // own pivot interval BEFORE the cross-component MMR prediction.
+        // Match the newer libplacebo 7.387.0 prediction domain without
+        // altering the pinned library or unrelated single-layer paths.
+        float lo[3]={0.f,0.f,0.f},hi[3]={1.f,1.f,1.f};
+        for(unsigned i=0;i<3;i++)if(reshape->comp[i].num_pivots){
+            lo[i]=reshape->comp[i].pivots[0];
+            hi[i]=reshape->comp[i].pivots[reshape->comp[i].num_pivots-1];
+        }
+        const struct pl_shader_var bounds[]={
+            {.var=pl_var_vec3("fel_pivot_lo"),.data=lo,.dynamic=true},
+            {.var=pl_var_vec3("fel_pivot_hi"),.data=hi,.dynamic=true},
+        };
+        if(!pl_shader_custom(sh,&(struct pl_custom_shader){
+            .input=PL_SHADER_SIG_COLOR,.output=PL_SHADER_SIG_COLOR,
+            .variables=bounds,.num_variables=2,
+            .body="color.rgb=clamp(color.rgb*(1023.0/1024.0),fel_pivot_lo,fel_pivot_hi);",
+        }))goto fail;
+    }
     pl_shader_dovi_reshape(sh,reshape);
     // Canonical MEL and any provably zero residual need no EL sampling.
     if(zero) {
@@ -212,7 +233,13 @@ static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
         // Reuse the pinned Dolby matrix/PQ conversion with the curves cleared,
         // rather than applying the reshape twice or treating EL as RGB.
         struct pl_dovi_metadata matrix=*reshape;
-        for(unsigned i=0;i<3;i++) matrix.comp[i].num_pivots=0;
+        for(unsigned i=0;i<3;i++){
+            matrix.comp[i].num_pivots=0;
+            // Pinned v5 matrix decoding scales the RPU offset by
+            // 1024/1023. Our composed values are already in the RPU
+            // domain; undo that legacy offset adjustment here only.
+            if(rpu_domain)matrix.nonlinear_offset[i]*=1023.f/1024.f;
+        }
         struct pl_color_repr repr={
             .sys=PL_COLOR_SYSTEM_DOLBYVISION,.levels=PL_COLOR_LEVELS_LIMITED,
             .bits={.sample_depth=10,.color_depth=10},.dovi=&matrix,
@@ -225,6 +252,17 @@ static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
 fail:
     pl_dispatch_abort(dispatch,&sh);
     return false;
+}
+
+/* Low-level fixtures with already prediction-normalized BL input. Live
+ * P010 callers must use ambient_fel_compose_domain(...,true). */
+static inline bool ambient_fel_compose_ex(pl_gpu gpu, pl_dispatch dispatch,
+    pl_tex bl, pl_tex el, pl_tex output, const struct pl_dovi_metadata *reshape,
+    const struct ambient_fel_nlq *n, bool packed_cr_y_cb, bool decode_rgb,
+    const struct ambient_fel_planes *planes)
+{
+    return ambient_fel_compose_domain(gpu,dispatch,bl,el,output,reshape,n,
+        packed_cr_y_cb,decode_rgb,planes,false);
 }
 
 static inline bool ambient_fel_compose(pl_gpu gpu, pl_dispatch dispatch,

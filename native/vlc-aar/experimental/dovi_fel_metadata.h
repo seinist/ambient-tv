@@ -36,7 +36,8 @@ static inline bool ambient_fel_metadata(const struct ambient_dovi_metadata *m,
         t->num_pivots=s->num_pivots;
         for(unsigned j=0;j<s->num_pivots;j++){
             if(s->pivots[j]>1023||(j&&s->pivots[j]<=s->pivots[j-1]))return false;
-            t->pivots[j]=s->pivots[j]/1023.f;
+            // RPU prediction uses code / 2^BL_bit_depth, not UNORM.
+            t->pivots[j]=s->pivots[j]/1024.f;
         }
         for(unsigned j=0;j+1<s->num_pivots;j++){
             t->method[j]=s->mapping[j];

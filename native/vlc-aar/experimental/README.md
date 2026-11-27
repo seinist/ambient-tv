@@ -801,3 +801,20 @@ copy-back path. Detect default-display/capability changes during playback.
 A spatial SDR request explicitly selects SDR. Native and app regression
 fixtures cover invalid capabilities, source vs target luminance and
 actual output format checks. Physical display behavior is unverified.
+
+
+### FEL prediction-domain correction against newer libplacebo
+
+libplacebo v7.387.0 now includes FEL composition. Its code distinguishes
+EL integer code scaling from BL prediction scaling (2^bit_depth), clamps
+all predictor channels to their respective pivot intervals before MMR,
+and uses the RPU nonlinear offsets directly in the composed domain.
+The pinned v5.264.1 implementation instead uses UNORM pivots and scales
+nonlinear offsets. The live FEL prepass explicitly corrects these three
+aspects without changing other VLC rendering paths or the pinned ABI.
+EL sampling and residual calculation retain their own integer domain.
+Synthetic GPU regressions exercise cross-component MMR with unequal
+pivot limits and a nonzero matrix offset. This is a source comparison
+against newer open-source libplacebo, not Dolby reference certification.
+See https://github.com/haasn/libplacebo/blob/v7.387.0/src/shaders/colorspace.c
+and https://github.com/haasn/libplacebo/blob/v7.387.0/src/include/libplacebo/utils/libav_internal.h .
