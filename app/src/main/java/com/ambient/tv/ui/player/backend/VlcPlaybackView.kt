@@ -436,7 +436,7 @@ class VlcPlaybackController(
         val deadline = android.os.SystemClock.elapsedRealtime() + 8_000L
         val task = object : Runnable {
             override fun run() {
-                if (released || !dvPrimeWaiting) return
+                if (nativeCommandsBlocked() || !dvPrimeWaiting) return
                 // VLC counts submitted pictures, not Android's first presented frame.
                 // Let the NVIDIA DV presentation pipeline settle before flushing it
                 // for the resume seek (P8.1 can otherwise keep a black surface).
@@ -473,6 +473,9 @@ class VlcPlaybackController(
     private var restartStopFailed = false
     private var headerRelayFailed = false
     private var dvRetirementPending = false
+    // All main-thread callbacks must recheck after a call that can initiate a reopen.
+    private fun nativeCommandsBlocked(): Boolean = released || restartStopFailed ||
+        vulkanFallbackPosted || restartStop != null || dvRetirementPending
     private val previousAudioRelease = nativeAudioReleases.snapshot()
     private val createdAt = android.os.SystemClock.elapsedRealtime()
     private var awaitingAudioRelease = false
@@ -670,8 +673,7 @@ class VlcPlaybackController(
         player.vlcVout.addCallback(surfaceCallback)
         val eventPlayer = player
         player.setEventListener { event ->
-            if (released || player !== eventPlayer || restartStopFailed || vulkanFallbackPosted ||
-                restartStop != null) return@setEventListener
+            if (nativeCommandsBlocked() || player !== eventPlayer) return@setEventListener
             frameDropSamples.onEvent(event.type,
                 if (event.type == MediaPlayer.Event.Buffering) event.buffering else 100f)
             when (event.type) {
@@ -752,6 +754,10 @@ class VlcPlaybackController(
                     }
                     resumeVideoSeekMs = null
                     refreshSelectedAudioCodec()
+                    // Codec discovery can start an asynchronous native stop for a
+                    // changed passthrough plan. Do not consume the saved selection
+                    // or send any more commands to that player in this event.
+                    if (nativeCommandsBlocked() || player !== eventPlayer) return@setEventListener
                     applyAudioLiveOptions()
                     logHdrDiagnostics("playing")
                     pendingImageTrackSelection?.let { (audio, subtitle, rate) ->
@@ -810,9 +816,10 @@ class VlcPlaybackController(
         }
     }
 
-    private fun refreshSelectedAudioCodec(trackId: Int = currentAudioTrackId()) {
-        if (released) return
-        trackAccess.mediaTracks(0).firstOrNull { it.id == trackId }?.let { updateSourceCodec(it.codec, it.channels) }
+    private fun refreshSelectedAudioCodec(trackId: Int? = null) {
+        if (nativeCommandsBlocked()) return
+        val selected = trackId ?: currentAudioTrackId()
+        trackAccess.mediaTracks(0).firstOrNull { it.id == selected }?.let { updateSourceCodec(it.codec, it.channels) }
     }
 
     fun refreshAudioCodec() = refreshSelectedAudioCodec()
@@ -832,9 +839,9 @@ class VlcPlaybackController(
         val position = vlcRestartPosition(
             pendingRestorePositionMs,
             confirmedPlaybackTimeMs(),
-            pendingRestorePositionMs != null || player.isSeekable || lastPlaybackTimeMs > 0L,
+            pendingRestorePositionMs != null || (if (nativeCommandsBlocked()) lastPlaybackSeekable else player.isSeekable) || lastPlaybackTimeMs > 0L,
         )
-        val playing = wantsToPlay()
+        val playing = desiredPlayWhenReady && !ended
         rememberTrackSelection()
         nightProcessing.release()
         if (audioSession.outputPlan().encoded) audioVisualizationEnabled = false
@@ -1008,7 +1015,7 @@ class VlcPlaybackController(
                         reportWindowSize(frame.width(), frame.height())
                     }
                     if (!prepared) prepare()
-                    if (restartStopFailed || headerRelayFailed || restartStop != null || dvRetirementPending ||
+                    if (nativeCommandsBlocked() || headerRelayFailed ||
                         previousReleaseOutcome == PreviousReleaseOutcome.BLOCKED ||
                         previousReleaseOutcome == PreviousReleaseOutcome.TIMED_OUT) return
                     if (!prepared) {
@@ -1962,6 +1969,7 @@ class VlcPlaybackController(
         return externalSubtitleSources[id]
     }
     private fun collectExternalSubtitle() {
+        if (nativeCommandsBlocked()) return
         val pending = pendingExternalSubtitle ?: return
         val added = subtitleTracks().firstOrNull { it.first >= 0 && it.first !in subtitleIdsBeforeAdd }
         if (added != null) {
@@ -1979,7 +1987,7 @@ class VlcPlaybackController(
     fun ensureExternalSubtitle(track: com.ambient.tv.domain.model.MediaTrack) {
         collectExternalSubtitle()
         val url = track.externalUrl ?: return
-        if (released || player.length <= 0 || pendingExternalSubtitle != null || !externalSubtitleRequests.add(url)) return
+        if (nativeCommandsBlocked() || player.length <= 0 || pendingExternalSubtitle != null || !externalSubtitleRequests.add(url)) return
         subtitleIdsBeforeAdd = subtitleTracks().map { it.first }.toSet()
         subtitleAddStarted = android.os.SystemClock.elapsedRealtime()
         pendingExternalSubtitle = track
@@ -1996,7 +2004,7 @@ class VlcPlaybackController(
         val url = track.externalUrl ?: return
         collectExternalSubtitle()
         externalSubtitleSources.entries.firstOrNull { it.value.externalUrl == url }?.let { selectSubtitleTrack(it.key); return }
-        require(!released && player.length > 0) { "Subtitle renderer is not ready" }
+        require(!nativeCommandsBlocked() && player.length > 0) { "Subtitle renderer is not ready" }
         require(pendingExternalSubtitle == null || pendingExternalSubtitle?.externalUrl == url) { "A subtitle load is pending" }
         if (pendingExternalSubtitle == null) externalSubtitleRequests.remove(url) // An explicit retry, not an automatic fetch loop.
         manualExternalSubtitleUrl = url
@@ -2008,9 +2016,10 @@ class VlcPlaybackController(
         }
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
         val requestedAt = subtitleAddStarted
+        val selectedPlayer = player
         val poll = object : Runnable {
             override fun run() {
-                if (released || manualExternalSubtitleUrl != url || requestedAt != subtitleAddStarted) return
+                if (nativeCommandsBlocked() || player !== selectedPlayer || manualExternalSubtitleUrl != url || requestedAt != subtitleAddStarted) return
                 collectExternalSubtitle()
                 if (pendingExternalSubtitle != null && manualExternalSubtitleUrl == url) handler.postDelayed(this, 100)
                 else manualExternalSubtitleUrl = null
@@ -2054,9 +2063,12 @@ class VlcPlaybackController(
     }
     fun selectAudioTrack(id: Int) {
         if (released) return
+        if (nativeCommandsBlocked()) return
+        val selectedPlayer = player
         trackAccess.setAudioTrack(id)
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            if (!released) refreshSelectedAudioCodec(id)
+            if (!nativeCommandsBlocked() && player === selectedPlayer && currentAudioTrackId() == id)
+                refreshSelectedAudioCodec(id)
         }, 100L)
     }
     fun selectSubtitleTrack(id: Int?) {
