@@ -468,8 +468,9 @@ mod tests{
             assert_eq!(field.predict(0,0,1),[0,0]);
             assert_eq!(field.predict(g.sx*3,g.sy*3,1),[48,-48]);
             let p=field.predict(g.sx,g.sy,1);
-            assert!(p[0]>0 && p[0]<48 && p[1]<=-p[0]);
-            if overlap==0{assert_eq!(p,[12,-12]);}
+            // At half-block overlap the odd-cell weight is exactly 100%.
+            let expected=match overlap{0=>12,4=>8,8=>0,_=>unreachable!()};
+            assert_eq!(p,[expected,-expected]);
         }
     }
 
