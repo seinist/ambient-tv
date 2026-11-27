@@ -35,6 +35,7 @@ struct ambient_hdrplus {
     bool global_projection; /* metadata beyond VLC/libplacebo's global contract */
     bool metadata_constraints_ok; /* checkable ST2094-40 constraints, both versions */
     bool version0_recommended_features; /* section 9.3 recommendations */
+    bool version0_recommended_fraction; /* section 10.3: zero for new metadata */
     bool version1_constraints_ok; /* ST 2094-40:2020 section 9.4 and 8.5.4/8.7.3.2 */
     bool version1_recommended_distribution; /* Table 1: recommended, not mandatory */
     float target_nits;
@@ -207,9 +208,13 @@ static inline bool ambient_hdrplus_parse(const uint8_t *data, size_t size, struc
     // Syntax compatibility is independent of checkable metadata validity.
     // Statistics derived from the source pixels cannot be verified here.
     m.metadata_constraints_ok=true;
+    m.version0_recommended_fraction=m.version==0;
     for(unsigned i=0;i<m.window_count;i++){
         const struct ambient_hdrplus_window *w=&m.windows[i];
-        if(!ambient_hdrplus_distribution_ordered(w,m.version) ||
+        // Legacy v0/2016 values are allowed but separately identified.
+        if(w->fraction!=0.f)m.version0_recommended_fraction=false;
+        if((m.version==1&&i>0&&w->fraction!=0.f) ||
+            !ambient_hdrplus_distribution_ordered(w,m.version) ||
             (w->tone_mapping&&!ambient_hdrplus_curve_monotone(w)))
             m.metadata_constraints_ok=false;
     }
