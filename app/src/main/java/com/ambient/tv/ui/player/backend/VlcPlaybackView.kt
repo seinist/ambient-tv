@@ -68,11 +68,14 @@ internal class VlcFrameDropSampleState {
         private set
     var buffering: Boolean = false
         private set
+    var bufferProgress: Int = 0
+        private set
 
     fun discontinuity() { generation++ }
 
     fun prepare() {
         buffering = false
+        bufferProgress = 0
         discontinuity()
     }
 
@@ -80,6 +83,7 @@ internal class VlcFrameDropSampleState {
         when (type) {
             MediaPlayer.Event.Buffering -> {
                 if (!bufferPercent.isFinite() || bufferPercent !in 0f..100f) return
+                bufferProgress = (bufferPercent / 5f).toInt().coerceIn(0, 20)
                 val active = bufferPercent < 100f
                 if (active != buffering) {
                     buffering = active
@@ -141,8 +145,10 @@ class VlcPlaybackController(
         vulkanProbePending = false
         vulkanProbeGeneration++
         vulkanOutputWatch.reset()
+        ahbOpeningWatch.reset()
     }
     private val vulkanOutputWatch = VlcVulkanOutputWatch()
+    private val ahbOpeningWatch = VlcAhbOpeningWatch()
     var accelerationFallback: String? = if (!audioOnly && videoOutputMode == "vulkan" && !vulkanOutput)
         if (nativeHdrPreferred) "Vulkan → Android: native HDR surface" else "Vulkan → Android: unavailable" else null
         private set
@@ -1277,6 +1283,7 @@ class VlcPlaybackController(
         }
         renderSurfaceSize?.let { (width, height) -> reportWindowSize(width, height) }
         vulkanOutputWatch.reset()
+        ahbOpeningWatch.reset()
         nativeMediaOpened = true
         player.play()
         // Pause on the Playing event, after demux and the pending seek are ready.
@@ -1317,13 +1324,24 @@ class VlcPlaybackController(
 
     fun checkVulkanOutput() {
         if (!vulkanOutput || released) return
-        if (ahbFallbackPending || !prepared || !vulkanSurfaceChecked || restartStop != null ||
-            restartStopFailed || dvRetirementPending || userVideoDisabled || audioOnly ||
-            attachedView?.holder?.surface?.isValid != true || !frameDropSampleReady()) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val eligible = !ahbFallbackPending && prepared && vulkanSurfaceChecked && restartStop == null &&
+            !restartStopFailed && !dvRetirementPending && !userVideoDisabled && !audioOnly &&
+            attachedView?.holder?.surface?.isValid == true && !ended && errorMessage == null
+        val ready = eligible && frameDropSampleReady()
+        // The ordinary observer deliberately ignores buffering, opening and pending
+        // seeks. Bound these states separately if the user still requests playback.
+        val openingActive = ahbExperimentActive && eligible && nativeMediaOpened &&
+            desiredPlayWhenReady && !ready
+        val progress = frameDropSamples.generation.toLong() * 21L + frameDropSamples.bufferProgress
+        if (ahbOpeningWatch.observe(now, progress, openingActive)) {
+            fallbackVulkan("ahb_opening_stalled")
+            return
+        }
+        if (!ready) {
             vulkanOutputWatch.suspendObservation()
             return
         }
-        val now = android.os.SystemClock.elapsedRealtime()
         if (!vulkanOutputWatch.shouldSample(now)) return
         val stats = runtimeStats()
         when (vulkanOutputWatch.observe(now, stats?.decodedVideo, stats?.displayedPictures, continuous = ahbExperimentActive)) {
