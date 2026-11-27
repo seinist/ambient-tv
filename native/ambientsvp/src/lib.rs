@@ -1083,6 +1083,12 @@ mod pipelining_tests {
         assert_eq!(experimental.experimental_motion_stats(),(u64::from(count-1),0));
         assert_eq!(cpu.pixels,gpu.pixels);
         assert_eq!(cpu.nearest_squared,gpu.nearest_squared);
+        // Protect the measured previous experimental baseline (33.357 dB,
+        // MAE 1.846 on this exact fixture), not a claim of general parity.
+        // Leave a small margin for floating-point synthesis differences.
+        assert!(gpu.psnr(gpu.squared)>=33.0,"experimental translation PSNR regressed: {}",gpu.psnr(gpu.squared));
+        assert!(gpu.absolute as f64/gpu.pixels as f64<=2.0,"experimental translation MAE regressed");
+        assert!(gpu.squared<gpu.nearest_squared,"interpolation is worse than source-frame repetition");
         // Report objective quality relative to a known in-between image.
         // No assertion of upstream equivalence or superiority from one
         // synthetic clip; the production selection remains unchanged.
