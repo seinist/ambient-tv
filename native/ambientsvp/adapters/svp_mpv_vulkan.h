@@ -844,8 +844,10 @@ static bool svp_vk_pair_frames(struct svp_vk_mpv *s,struct mp_image *next,double
     bool compatible=a->params.color.transfer==next->params.color.transfer &&
         a->params.color.primaries==next->params.color.primaries &&
         svp_vk_matrix(s->previous)==svp_vk_matrix(next);
-    if (s->mode && hdr && compatible && ((!svp_vk_hdr_metadata_same(a,next) &&
-        !(s->mode<4 && svp_vk_hdrplus_pair(a,next))) ||
+    bool has_hdrplus=svp_vk_hdr10plus(a)||svp_vk_hdr10plus(next);
+    bool measured_hdrplus=s->mode>0 && s->mode<4 && s->hdr_stats && s->hdr_read && svp_vk_hdrplus_pair(a,next);
+    if (s->mode && hdr && compatible && ((has_hdrplus && !measured_hdrplus) ||
+        (!svp_vk_hdr_metadata_same(a,next) && !measured_hdrplus) ||
         (s->mode>=4 && a->params.chroma_location!=next->params.chroma_location))) {
         // Do not interpolate across dynamic/static HDR metadata changes.
         // Repeat the exact preceding source until the next source tick;
