@@ -970,3 +970,35 @@ decoder formats, compositor-consumer release synchronization for
 output-buffer pooling, full player builds and physical-device
 validation are still outstanding. Do not infer a measured speedup
 from reduced work or from Mesa software Vulkan correctness checks.
+
+
+Shared source samples and Android command reuse
+----------------------------------------------
+The resident motion workgroup now loads the invariant 2x2-spaced
+source block samples into 64 shared integers once per direction,
+instead of sampling the source again for every candidate. Candidate
+order, displacement penalty, SAD normalization, and clipped border
+handling are unchanged. Integer-coordinate synthesis bypasses
+bilinear reads; exact source phases and hard-cut fallback sample
+only the contributing picture. An independent scalar oracle
+recreates the original unpruned candidate search including its
+lane/tree tie order. Mesa CI compares every field entry on stationary,
+four-pixel and one-pixel translations, unrelated patterns, flat
+pictures and partial edge blocks.
+
+The VLC Android compositor stream now keeps up to three retired
+command-pool/command-buffer/fence bundles, reset only after the
+actual GPU fence is signaled and the resident pair has retired.
+Device-loss/error retirement cannot return a bundle to the cache.
+The first output can use the unused preflight allocation. Previously
+presented AHardwareBuffers are never reused: the compositor may still
+read them after the producer fence signals. A separate consumer
+release protocol is needed before recycling those images. An ignored
+Android regression exercises two real submissions using the same
+command bundle and rejects unsignaled-fence reset. It is compiled by
+the Android CI cross-check but requires physical device execution.
+
+Prior head 390ad9cd6683c28cd332aac1592371318f06aefd passed the complete
+SVP native workflow 46064619928; the general and SmartTube checks
+were canceled by later commits. Fresh exact-head CI is required.
+No hardware speed, upstream GPU parity, or HDR support claim.
