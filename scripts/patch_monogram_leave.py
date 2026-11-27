@@ -66,6 +66,10 @@ MODIFICATIONS = {
         "bounded preview and playing request windows independently of full file downloads",
     "vendor/mono-rs/crates/mono-proto-media/src/thumbs.rs":
         "select smallest adequate network preview from indexed Telegram sizes for Ambient cards",
+    "vendor/mono-rs/crates/mono-proto-media/src/index.rs":
+        "retain bounded network preview dimensions during Telegram media indexing",
+    "vendor/mono-rs/crates/mono-proto-media/src/location.rs":
+        "resolve scoped card size without changing full photo or video downloads",
     "vendor/mono-rs/crates/mono-proto-client/src/media_download.rs":
         "kept unknown-size and small full downloads on a single request window",
     "vendor/mono-rs/crates/mono-proto-crypto/src/message.rs":
@@ -929,6 +933,132 @@ amend(thumb_source,
         return ambient_pick_preview(sizes, Some(full_ty));
     }
     let usable: Vec<&(String, i32, Option<Vec<u8>>)> = sizes""")
+# Metadata only: bounded shared dimensions, no file references or image payloads.
+add_before(thumb_source, "pub fn pick_getfile_preview(", """type AmbientPreviewId = (bool, i64, i64);
+type AmbientPreviewSizes = Vec<(String, i32)>;
+#[derive(Default)]
+struct AmbientPreviewIndex {
+    items: std::collections::HashMap<AmbientPreviewId, AmbientPreviewSizes>,
+    order: std::collections::VecDeque<AmbientPreviewId>,
+}
+fn ambient_preview_index() -> &'static std::sync::Mutex<AmbientPreviewIndex> {
+    static INDEX: std::sync::OnceLock<std::sync::Mutex<AmbientPreviewIndex>> = std::sync::OnceLock::new();
+    INDEX.get_or_init(Default::default)
+}
+pub fn ambient_register_preview_sizes<'a>(
+    document: bool, id: i64, access_hash: i64, sizes: impl Iterator<Item = &'a PhotoSize>,
+) {
+    if !crate::profile::ambient_media_mode() { return; }
+    let key = (document, id, access_hash);
+    if ambient_preview_index().lock().ok().is_some_and(|index| index.items.contains_key(&key)) { return; }
+    let candidates: AmbientPreviewSizes = sizes.filter_map(|size| {
+        let (ty, w, h) = match size {
+            PhotoSize::PhotoSize(s) => (&s.type_, s.w, s.h),
+            PhotoSize::PhotoSizeProgressive(s) => (&s.type_, s.w, s.h),
+            _ => return None,
+        };
+        (is_getfile_thumb_size(ty) && w > 0 && h > 0).then(|| (ty.clone(), w.saturating_mul(h)))
+    }).take(16).collect();
+    if candidates.is_empty() { return; }
+    if let Ok(mut index) = ambient_preview_index().lock() {
+        if index.items.contains_key(&key) { return; }
+        while index.items.len() >= 2048 {
+            if let Some(old) = index.order.pop_front() { index.items.remove(&old); } else { break; }
+        }
+        index.order.push_back(key);
+        index.items.insert(key, candidates);
+    }
+}
+std::thread_local! {
+    static AMBIENT_PREVIEW_TARGET: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+pub fn ambient_with_preview_target<T>(target: u32, work: impl FnOnce() -> T) -> T {
+    let target = match target { 160 | 320 | 640 => target, _ => 320 };
+    struct Reset(u32);
+    impl Drop for Reset { fn drop(&mut self) { AMBIENT_PREVIEW_TARGET.with(|slot| slot.set(self.0)); } }
+    let _reset = Reset(AMBIENT_PREVIEW_TARGET.with(|slot| slot.replace(target)));
+    work()
+}
+fn ambient_pick_indexed_size(sizes: &[(String, i32)], target: u32, exclude: Option<&str>) -> Option<String> {
+    let area = (target * target * 9 / 16) as i32;
+    let candidates = || sizes.iter().filter(|(ty, _)| Some(ty.as_str()) != exclude);
+    candidates().filter(|(_, size)| *size >= area).min_by_key(|(_, size)| *size)
+        .or_else(|| candidates().max_by_key(|(_, size)| *size)).map(|(ty, _)| ty.clone())
+}
+pub fn ambient_indexed_display(media: &crate::media_types::MediaRef) -> Option<crate::media_types::MediaLocation> {
+    use crate::media_types::MediaLocation;
+    let target = AMBIENT_PREVIEW_TARGET.with(|slot| slot.get());
+    if target == 0 { return None; }
+    let base = [&media.location, media.display_location.as_ref().unwrap_or(&media.location),
+        media.thumb_location.as_ref().unwrap_or(&media.location)].into_iter().find(|loc|
+        matches!(loc, MediaLocation::Photo { .. } | MediaLocation::Document { .. }))?;
+    let key = match base {
+        MediaLocation::Photo { id, access_hash, .. } => (false, *id, *access_hash),
+        MediaLocation::Document { id, access_hash, .. } => (true, *id, *access_hash),
+        _ => return None,
+    };
+    let exclude = match &media.location {
+        MediaLocation::Photo { thumb_size, .. } => Some(thumb_size.as_str()),
+        _ => None,
+    };
+    let index = ambient_preview_index().lock().ok()?;
+    let letter = ambient_pick_indexed_size(index.items.get(&key)?, target, exclude)?;
+    crate::location::with_thumb_size(base, &letter)
+}
+#[cfg(test)]
+mod ambient_dynamic_preview_tests {
+    use super::*;
+    #[test]
+    fn measured_size_classes_select_only_known_candidates() {
+        let sizes = vec![("s".into(), 160 * 90), ("m".into(), 320 * 180), ("x".into(), 640 * 360)];
+        assert_eq!(ambient_pick_indexed_size(&sizes, 160, None).as_deref(), Some("s"));
+        assert_eq!(ambient_pick_indexed_size(&sizes, 320, None).as_deref(), Some("m"));
+        assert_eq!(ambient_pick_indexed_size(&sizes, 640, None).as_deref(), Some("x"));
+        assert_eq!(ambient_pick_indexed_size(&sizes, 640, Some("x")).as_deref(), Some("m"));
+    }
+}
+""", "struct AmbientPreviewIndex")
+index_source = "vendor/mono-rs/crates/mono-proto-media/src/index.rs"
+amend(index_source,
+      """    photo: &mono_proto::latest::api::PhotoConstructor,
+    thumb_size: String,
+    inline: Option<Vec<u8>>,
+) -> MediaLocation {
+    if let Some(bytes) = inline {""",
+      """    photo: &mono_proto::latest::api::PhotoConstructor,
+    thumb_size: String,
+    inline: Option<Vec<u8>>,
+) -> MediaLocation {
+    crate::thumbs::ambient_register_preview_sizes(false, photo.id, photo.access_hash,
+        vector_boxed_items(&photo.sizes));
+    if let Some(bytes) = inline {""")
+amend(index_source,
+      """    doc: &mono_proto::latest::api::DocumentConstructor,
+    thumb_size: String,
+    inline: Option<Vec<u8>>,
+) -> MediaLocation {
+    if let Some(bytes) = inline {""",
+      """    doc: &mono_proto::latest::api::DocumentConstructor,
+    thumb_size: String,
+    inline: Option<Vec<u8>>,
+) -> MediaLocation {
+    if let Some(sizes) = doc.thumbs.as_ref() {
+        crate::thumbs::ambient_register_preview_sizes(true, doc.id, doc.access_hash, vector_boxed_items(sizes));
+    }
+    if let Some(bytes) = inline {""")
+location_source = "vendor/mono-rs/crates/mono-proto-media/src/location.rs"
+amend(location_source,
+      """        MediaDownloadKind::Display => {
+            if let Some(loc) = &media.display_location""",
+      """        MediaDownloadKind::Display => {
+            if let Some(loc) = crate::thumbs::ambient_indexed_display(media) {
+                let mut copy = media.clone();
+                copy.cache_key = format!("{}:display:{}", media.cache_key, location_thumb_size(&loc).unwrap_or(""));
+                copy.location = loc;
+                copy.file_size = None;
+                return Ok(copy);
+            }
+            if let Some(loc) = &media.display_location""")
 client_download = "vendor/mono-rs/crates/mono-proto-client/src/media_download.rs"
 add_before(client_download, "pub fn indexed_media_for_download(", """/// Immutable network artwork identity; never reuse an inline or peer-avatar alias.
 pub fn ambient_display_identity(handle: u64, chat_id: i64, message_id: i32) -> Option<String> {
@@ -948,8 +1078,9 @@ pub fn ambient_display_identity(handle: u64, chat_id: i64, message_id: i32) -> O
 }
 """, "pub fn ambient_display_identity(")
 add_before(ffi, "#[uniffi::export]\npub fn download_message_thumb(", """#[uniffi::export]
-pub fn ambient_display_identity(handle: u64, chat_id: i64, message_id: i32) -> Option<String> {
-    mono_proto_client::media_download::ambient_display_identity(handle, chat_id, message_id)
+pub fn ambient_display_identity(handle: u64, chat_id: i64, message_id: i32, target: u32) -> Option<String> {
+    proto_media::thumbs::ambient_with_preview_target(target, ||
+        mono_proto_client::media_download::ambient_display_identity(handle, chat_id, message_id))
 }
 """, "pub fn ambient_display_identity(")
 amend(client_download,
@@ -1052,13 +1183,26 @@ pub fn download_message_media_window_bytes(
 # Complete previews reuse the bounded range sink only with an exact native file size.
 add_before(ffi, "#[uniffi::export]\npub fn download_message_thumb(", """#[uniffi::export]
 pub fn download_message_preview_bytes(
-    handle: u64, chat_id: i64, message_id: i32, dest_path: String,
+    handle: u64, chat_id: i64, message_id: i32, dest_path: String, target: u32,
 ) -> Result<Vec<u8>, MtprotoError> {
     let destination = std::path::Path::new(&dest_path);
-    proto_media::download::ambient_capture_complete_preview(destination, || {
+    proto_media::thumbs::ambient_with_preview_target(target, || {
+        proto_media::download::ambient_capture_complete_preview(destination, || {
+            mono_proto_client::media_download::download_message_media_range_checked(
+                handle, chat_id, message_id, dest_path.clone(),
+                proto_media::location::MediaDownloadKind::Display, Some(0), None,
+            )
+        })
+    })
+}
+#[uniffi::export]
+pub fn download_message_preview_file(
+    handle: u64, chat_id: i64, message_id: i32, dest_path: String, target: u32,
+) -> Result<String, MtprotoError> {
+    proto_media::thumbs::ambient_with_preview_target(target, || {
         mono_proto_client::media_download::download_message_media_range_checked(
-            handle, chat_id, message_id, dest_path.clone(),
-            proto_media::location::MediaDownloadKind::Display, Some(0), None,
+            handle, chat_id, message_id, dest_path,
+            proto_media::location::MediaDownloadKind::Display, None, None,
         )
     })
 }
@@ -1073,10 +1217,11 @@ pub extern "system" fn downloadPreview<'caller>(
     chat_id: jni::sys::jlong,
     message_id: jni::sys::jint,
     destination: jni::objects::JString<'caller>,
+    target: jni::sys::jint,
 ) -> jni::objects::JByteArray<'caller> {
     unowned_env.with_env(|env| -> jni::errors::Result<_> {
         let path = destination.try_to_string(env)?;
-        match download_message_preview_bytes(handle as u64, chat_id, message_id, path) {
+        match download_message_preview_bytes(handle as u64, chat_id, message_id, path, target as u32) {
             Ok(bytes) => env.byte_array_from_slice(&bytes),
             Err(error) => {
                 let code = match &error {

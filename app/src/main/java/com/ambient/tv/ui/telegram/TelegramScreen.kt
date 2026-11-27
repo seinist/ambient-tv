@@ -359,7 +359,7 @@ fun TelegramScreen(
         rowList, flatList, grid, showViewOptions, rowPrefetchColumns, decodeHint) {
         if (!state.available || state.section != sectionKey || showViewOptions) return@LaunchedEffect
         coroutineScope {
-        val active = LinkedHashMap<Pair<Long, Int>, kotlinx.coroutines.Job>()
+        val active = LinkedHashMap<Triple<Long, Int, Int>, kotlinx.coroutines.Job>()
         @OptIn(kotlinx.coroutines.FlowPreview::class)
         val windows = snapshotFlow {
             val refs = if (layout == MonogramBrowseLayout.ROWS) {
@@ -388,10 +388,10 @@ fun TelegramScreen(
                     id = "monogram.viewport", title = "", style = com.ambient.tv.ui.common.MediaTileStyle.LANDSCAPE,
                     items = window)), limit = 24)
             }
-            refs
+            refs to decodeHint.target
         }.distinctUntilChanged().debounce(100)
-        windows.collect { refs ->
-            val desired = refs.associateBy { it.chatId to it.messageId }
+        windows.collect { (refs, target) ->
+            val desired = refs.associateBy { Triple(it.chatId, it.messageId, if (it.messageId == 0) 320 else target) }
             val obsolete = active.keys.filter { it !in desired }
             obsolete.forEach { active.remove(it)?.cancel() }
             // Retain overlapping in-flight work and completed entries until they leave
@@ -399,7 +399,7 @@ fun TelegramScreen(
             val decodeCandidates = desired.keys.toList().takeLast(4).toSet()
             desired.forEach { (key, ref) ->
                 if (key !in active) active[key] = launch {
-                    viewModel.prefetchViewport(sectionKey, listOf(ref))
+                    viewModel.prefetchViewport(sectionKey, listOf(ref), key.third)
                     // Warm only a few nearby non-avatar images, using the last measured card.
                     // The single decode slot is non-queuing and cache-only.
                     if (ref.messageId != 0 && key in decodeCandidates)

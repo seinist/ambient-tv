@@ -348,9 +348,9 @@ class TelegramViewModel @Inject constructor(
     }
 
     /** The screen owns cancellation: leaving, filtering or scrolling drops the old window. */
-    internal suspend fun prefetchViewport(section: String, refs: List<com.ambient.tv.data.telegram.MonogramThumbRef>) {
+    internal suspend fun prefetchViewport(section: String, refs: List<com.ambient.tv.data.telegram.MonogramThumbRef>, target: Int = 320) {
         if (refs.isNotEmpty() && mutableState.value.section == section && repository.available)
-            repository.prefetchThumbnails(refs)
+            repository.prefetchThumbnails(refs, target = target)
     }
 
     private fun playbackScope(section: String) = "telegram:$section"

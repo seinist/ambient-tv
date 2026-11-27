@@ -3,6 +3,8 @@ package com.ambient.tv.ui.common
 import android.app.ActivityManager
 import android.content.Context
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.IntSize
 import coil3.SingletonImageLoader
 import coil3.request.CachePolicy
@@ -23,17 +25,18 @@ internal class MonogramDecodeHint(context: Context) {
     private val app = context.applicationContext as? AmbientTvApplication
     private val enabled = context.getSystemService(ActivityManager::class.java)?.isLowRamDevice != true
     private data class Hint(val size: IntSize, val rgb565: Boolean)
-    private var hint: Hint? = null
+    private var hint by androidx.compose.runtime.mutableStateOf<Hint?>(null)
+    val target: Int get() = hint?.let { com.ambient.tv.data.telegram.monogramPreviewTarget(it.size.width, it.size.height) } ?: 320
     private val slot = Semaphore(1)
 
     fun record(size: IntSize, rgb565: Boolean) {
-        if (enabled && size.width in 1..1024 && size.height in 1..1024) hint = Hint(size, rgb565)
+        if (size.width in 1..4096 && size.height in 1..4096) hint = Hint(size, rgb565)
     }
 
     suspend fun warm(ref: MonogramThumbRef) {
         val application = app ?: return
         val current = hint ?: return
-        if (!enabled || !slot.tryAcquire()) return
+        if (!enabled || current.size.width > 1024 || current.size.height > 1024 || !slot.tryAcquire()) return
         try {
             val model = monogramThumbModel(ref.chatId, ref.messageId, ref.fallback)
             val repository = application.telegramRepository.get()

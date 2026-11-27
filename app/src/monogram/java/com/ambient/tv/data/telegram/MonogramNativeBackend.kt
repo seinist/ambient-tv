@@ -1212,12 +1212,15 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     override suspend fun thumbnail(chatId: Long, messageId: Int): String? =
         thumbnail(chatId, messageId, TelegramTransferPriority(true))
 
-    override suspend fun cachedThumbnail(chatId: Long, messageId: Int): String? {
+    override suspend fun cachedThumbnail(chatId: Long, messageId: Int): String? =
+        cachedThumbnail(chatId, messageId, 320)
+
+    override suspend fun cachedThumbnail(chatId: Long, messageId: Int, target: Int): String? {
         val identity = accountId ?: return null
         val generation = cacheGeneration
         val revision = mediaRevision(chatId, messageId)
         if (chatId in leftChannels) return null
-        val cached = File(File(cache, "previews"), "$chatId-$messageId.img")
+        val cached = File(File(cache, "previews"), "$chatId-$messageId-$target.img")
         return synchronized(diskChunkLock) {
             if (identity != accountId || generation != cacheGeneration || chatId in leftChannels ||
                 revision != mediaRevision(chatId, messageId) || !sharpPreviewIndex.hit(cached)) null
@@ -1226,9 +1229,12 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     }
 
     override suspend fun thumbnail(chatId: Long, messageId: Int, priority: TelegramTransferPriority): String? =
-        cachedThumbnail(chatId, messageId) ?: downloadThumbnail(chatId, messageId, priority)
+        thumbnail(chatId, messageId, priority, 320)
 
-    private suspend fun downloadThumbnail(chatId: Long, messageId: Int, priority: TelegramTransferPriority): String? =
+    override suspend fun thumbnail(chatId: Long, messageId: Int, priority: TelegramTransferPriority, target: Int): String? =
+        cachedThumbnail(chatId, messageId, target) ?: downloadThumbnail(chatId, messageId, priority, target)
+
+    private suspend fun downloadThumbnail(chatId: Long, messageId: Int, priority: TelegramTransferPriority, target: Int): String? =
         cancellableMediaRequest(priority) { request ->
         nativeCall { h ->
         requireAuthorized(h)
@@ -1239,10 +1245,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         // "thumbs-hd" held the inline previews the old Thumb download returned: never reuse it.
         File(cache, "thumbs-hd").takeIf { it.isDirectory }?.deleteRecursively()
         val dir = File(cache, "previews").apply { mkdirs() }.canonicalFile
-        val output = File(dir, "$chatId-$messageId.img")
+        val output = File(dir, "$chatId-$messageId-$target.img")
         // Only identities in the authenticated shared index qualify. Reference refreshes
         // may change tokens, but the file id, access hash and size letter must match.
-        val displayIdentity = uniffi.monogram_mtproto.ambientDisplayIdentity(h.toULong(), chatId, messageId)
+        val displayIdentity = uniffi.monogram_mtproto.ambientDisplayIdentity(h.toULong(), chatId, messageId, target.toUInt())
         synchronized(diskChunkLock) {
             if (expectedAccount == null || accountId != expectedAccount || cacheGeneration != expectedGeneration ||
                 revision != mediaRevision(chatId, messageId) || chatId in leftChannels) return@nativeCall null
@@ -1270,7 +1276,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         fun display(): File {
             val dispatch = if (priority.foreground) DISPATCH_ORDINARY else DISPATCH_BACKGROUND
             try {
-                val bytes = mediaClass(dispatch) { AmbientMonogramJni.preview(h, chatId, messageId, stage.path) }
+                val bytes = mediaClass(dispatch) { AmbientMonogramJni.preview(h, chatId, messageId, stage.path, target) }
                 if (bytes.size !in 1..(1024 * 1024)) throw IllegalStateException("incomplete captured preview")
                 // The native sink has already validated exact size and session ownership.
                 // Write only once to the Kotlin-controlled atomic publication stage.
@@ -1283,7 +1289,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     !reason.contains("oversized captured media range")) throw failure
             }
             return File(mediaClass(dispatch) {
-                uniffi.monogram_mtproto.downloadMessageDisplay(h.toULong(), chatId, messageId, stage.path)
+                uniffi.monogram_mtproto.downloadMessagePreviewFile(h.toULong(), chatId, messageId, stage.path, target.toUInt())
             }).canonicalFile
         }
         var displayResult = true
@@ -1323,7 +1329,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             return@nativeCall null
         }
         val verifiedDisplay = displayIdentity.takeIf { displayResult && it != null &&
-            it == uniffi.monogram_mtproto.ambientDisplayIdentity(h.toULong(), chatId, messageId) }
+            it == uniffi.monogram_mtproto.ambientDisplayIdentity(h.toULong(), chatId, messageId, target.toUInt()) }
         synchronized(diskChunkLock) {
             // A logout or account switch meanwhile: never keep the old account's image.
             if (expectedAccount == null || accountId != expectedAccount || cacheGeneration != expectedGeneration ||
@@ -1604,17 +1610,17 @@ internal object AmbientMonogramJni {
     external fun flushPgoProfile(destination: String): Int
 
     @Volatile private var previewJniAvailable = true
-    private external fun downloadPreview(handle: Long, chatId: Long, messageId: Int, destination: String): ByteArray
+    private external fun downloadPreview(handle: Long, chatId: Long, messageId: Int, destination: String, target: Int): ByteArray
 
-    fun preview(handle: Long, chatId: Long, messageId: Int, destination: String): ByteArray {
+    fun preview(handle: Long, chatId: Long, messageId: Int, destination: String, target: Int): ByteArray {
         if (previewJniAvailable) {
             try {
-                return downloadPreview(handle, chatId, messageId, destination)
+                return downloadPreview(handle, chatId, messageId, destination, target)
             } catch (_: UnsatisfiedLinkError) {
                 previewJniAvailable = false
             }
         }
-        return uniffi.monogram_mtproto.downloadMessagePreviewBytes(handle.toULong(), chatId, messageId, destination)
+        return uniffi.monogram_mtproto.downloadMessagePreviewBytes(handle.toULong(), chatId, messageId, destination, target.toUInt())
     }
 
     private external fun downloadMediaRange(

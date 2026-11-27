@@ -23,6 +23,7 @@ class MonogramThumbFetcher(
     private val repository: () -> TelegramRepository,
 ) : Fetcher {
     override suspend fun fetch(): FetchResult? {
+        val target = monogramPreviewTarget(options.size, ref.messageId)
         // A card thumbnail that is unavailable right now (FLOOD_WAIT, offline) must fail: the
         // card composable draws the inline preview itself and ArtworkImage retries the inline
         // model as its next candidate. Returning the preview here would cache the pixelated
@@ -30,8 +31,8 @@ class MonogramThumbFetcher(
         val uri = (if (fullPhoto && !options.networkCachePolicy.readEnabled) repository().cachedPhotoArtworkFile(ref.chatId, ref.messageId)
             else if (fullPhoto) runCatching { repository().photoFile(ref.chatId, ref.messageId) }
                 .getOrElse { if (it is kotlinx.coroutines.CancellationException) throw it; null }
-            else if (!options.networkCachePolicy.readEnabled) repository().cachedArtworkFile(ref.chatId, ref.messageId)
-            else repository().thumbnailFile(ref.chatId, ref.messageId)) ?: return null
+            else if (!options.networkCachePolicy.readEnabled) repository().cachedArtworkFile(ref.chatId, ref.messageId, target)
+            else repository().thumbnailFile(ref.chatId, ref.messageId, target = target)) ?: return null
         val file = runCatching { java.io.File(java.net.URI(uri)) }.getOrNull()?.takeIf { it.isFile } ?: return null
         return SourceFetchResult(
             source = ImageSource(file.toOkioPath(), options.fileSystem),
@@ -72,6 +73,10 @@ internal class MonogramSharpCacheInterceptor(
             throw kotlinx.coroutines.CancellationException("Monogram artwork request became obsolete")
         val result = chain.withRequest(request.newBuilder().apply {
             memoryCacheKeyExtra(MONOGRAM_RETRY_EXTRA, null)
+            if (model.startsWith("$MONOGRAM_THUMB_SCHEME://")) {
+                val ref = parseMonogramThumbModel(model)
+                if (ref != null) memoryCacheKeyExtra(MONOGRAM_PREVIEW_SIZE_EXTRA, monogramPreviewTarget(chain.size, ref.messageId).toString())
+            }
             if (key == null) {
                 memoryCachePolicy(coil3.request.CachePolicy.DISABLED)
                 placeholderMemoryCacheKey(null as coil3.memory.MemoryCache.Key?)

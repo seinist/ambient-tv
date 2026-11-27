@@ -101,10 +101,13 @@ interface TelegramClientPort {
     fun mediaRevision(chatId: Long, messageId: Int): Long = 0L
     /** Local authenticated sharp thumbnail, without native RPC or download admission. */
     suspend fun cachedThumbnail(chatId: Long, messageId: Int): String? = null
+    suspend fun cachedThumbnail(chatId: Long, messageId: Int, target: Int): String? = cachedThumbnail(chatId, messageId)
     /** Telegram's real (non-inline) thumbnail of a post as a local file URI, or null. */
     suspend fun thumbnail(chatId: Long, messageId: Int): String? = null
     suspend fun thumbnail(chatId: Long, messageId: Int, priority: TelegramTransferPriority): String? =
         thumbnail(chatId, messageId)
+    suspend fun thumbnail(chatId: Long, messageId: Int, priority: TelegramTransferPriority, target: Int): String? =
+        thumbnail(chatId, messageId, priority)
     /** A byte range from a Telegram file; Monogram downloadMessageMediaChunk does the MTProto I/O. */
     suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray
     suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long, expectedBytes: Int): ByteArray =
@@ -838,13 +841,13 @@ class TelegramRepository @Inject constructor(
     }
 
     /** Cache-only requests must not start native media RPCs. */
-    internal suspend fun cachedArtworkFile(chatId: Long, messageId: Int): String? = withContext(Dispatchers.IO) {
+    internal suspend fun cachedArtworkFile(chatId: Long, messageId: Int, target: Int = 320): String? = withContext(Dispatchers.IO) {
         val selected = client ?: return@withContext null
         val generation = streamEpoch.get()
         val identity = selected.cacheIdentity
         val revision = selected.mediaRevision(chatId, messageId)
         if (chatId in blockedChannels) return@withContext null
-        selected.cachedThumbnail(chatId, messageId).takeIf {
+        selected.cachedThumbnail(chatId, messageId, target).takeIf {
             sameAccount(selected, identity, generation) && chatId !in blockedChannels &&
                 selected.mediaRevision(chatId, messageId) == revision
         }
@@ -852,20 +855,20 @@ class TelegramRepository @Inject constructor(
 
     /** Real thumbnail for a visible card (see [TelegramMedia.cardImageUrl]); null when unavailable. */
     suspend fun thumbnailFile(chatId: Long, messageId: Int, speculative: Boolean = false,
-        expectedGeneration: Long? = null): String? {
+        expectedGeneration: Long? = null, target: Int = 320): String? {
         val selected = client ?: return null
         val identity = selected.cacheIdentity
         val generation = streamEpoch.get()
         if (expectedGeneration != null && generation != expectedGeneration) return null
         if (!sameAccount(selected, identity, generation)) return null
         val revision = selected.mediaRevision(chatId, messageId)
-        val key = "$generation:$chatId:$messageId:$revision"
+        val key = "$generation:$chatId:$messageId:$revision:$target"
         val load = synchronized(thumbnailLoads) {
             thumbnailLoads[key]?.takeUnless { it.deferred.isCancelled }?.also { it.waiters++ }
                 ?: run {
                     val priority = TelegramTransferPriority(!speculative)
                     ThumbnailLoad(scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
-                        loadThumbnailFile(selected, identity, generation, chatId, messageId, revision, priority)
+                        loadThumbnailFile(selected, identity, generation, chatId, messageId, revision, priority, target)
                     }, 1, priority).also { thumbnailLoads[key] = it }
                 }
         }
@@ -890,7 +893,7 @@ class TelegramRepository @Inject constructor(
      * Loads the card images of a freshly shown page in the background, newest first, so they
      * are on disk by the time the cards are drawn (the inline preview showed for long).
      */
-    suspend fun prefetchThumbnails(refs: List<MonogramThumbRef>, limit: Int = 24) {
+    suspend fun prefetchThumbnails(refs: List<MonogramThumbRef>, limit: Int = 24, target: Int = 320) {
         val selected = client ?: return
         val identity = selected.cacheIdentity
         val generation = streamEpoch.get()
@@ -909,7 +912,8 @@ class TelegramRepository @Inject constructor(
                             if (!sameAccount(selected, identity, generation)) return@launch
                             // Join an existing visible request too: if the visible card is
                             // disposed before the download finishes, the viewport still owns it.
-                            thumbnailFile(item.chatId, item.messageId, speculative = true, expectedGeneration = generation)
+                            thumbnailFile(item.chatId, item.messageId, speculative = true, expectedGeneration = generation,
+                                target = if (item.messageId == 0) 320 else target)
                         }
                     }
                 }
@@ -920,20 +924,20 @@ class TelegramRepository @Inject constructor(
 
     private suspend fun loadThumbnailFile(
         selected: TelegramClientPort, identity: String?, generation: Long, chatId: Long, messageId: Int,
-        revision: Long, priority: TelegramTransferPriority,
+        revision: Long, priority: TelegramTransferPriority, target: Int,
     ): String? {
         fun valid() = sameAccount(selected, identity, generation) && chatId !in blockedChannels &&
             selected.mediaRevision(chatId, messageId) == revision
         if (!valid()) return null
         val file = try {
             // Disk hits do not consume network permits or wait for interactive catalog RPCs.
-            selected.cachedThumbnail(chatId, messageId)?.let { return it.takeIf { valid() } }
-            val key = "$generation:$chatId:$messageId:$revision"
+            selected.cachedThumbnail(chatId, messageId, target)?.let { return it.takeIf { valid() } }
+            val key = "$generation:$chatId:$messageId:$revision:$target"
             if (thumbnailMisses.isRecent(key)) return null
             if (!priority.foreground) awaitInteractiveIdle { !priority.foreground }
             thumbnailPermits.withPermit {
                 if (!valid() || thumbnailMisses.isRecent(key)) null else {
-                    val result = selected.thumbnail(chatId, messageId, priority)
+                    val result = selected.thumbnail(chatId, messageId, priority, target)
                     // Only an ordinary null result, never a cancelled request or thrown
                     // network/FLOOD_WAIT error. Retry shortly, and always prefer a disk hit.
                     if (result == null && valid()) thumbnailMisses.record(key)
