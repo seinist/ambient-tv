@@ -590,3 +590,46 @@ The general CI failed early in the updater tests due to the relocated
 test-only dependency; fixed in this revision, awaiting CI confirmation.
 Full GPU predictor-dependent orchestration, hardware-buffer zero-copy,
 actual renderer builds and device performance validation remain open.
+
+
+Executable experimental hierarchical Vulkan motion search
+---------------------------------------------------------
+The explicit Rust-only benchmark flag --experimental-motion now
+selects a real bidirectional coarse-to-fine search, rather than only
+testing individual cost and selection kernels. Example (on a device
+with a supported Vulkan GPU; built with the default Vulkan feature):
+
+  benchmark 320 180 48 2 24 1 --experimental-motion --no-checksum --verify
+
+Use the same arguments without --experimental-motion for the pinned
+CPU analyser plus Vulkan synthesis comparison. Experimental mode is
+not exposed by the Android C ABI or enabled in any player preset. It
+rejects adaptive mode, unsupported layouts and GPU-unavailable
+sessions. The initial limits are 720p, four pyramid levels, 16384 blocks
+per field, one million candidate metrics per pair, bounded batches
+and a 250ms deadline. The original source frames are reused as
+SuperBuilder inputs; each level's phase textures are uploaded once for
+both directions. The coarse winner is propagated to the next grid,
+where a bounded local window and zero-vector window are evaluated.
+The cost and selection stages are chained on GPU, only winning
+vectors are read back; valid final fields are packed and fed into
+the normal smoother. Failure retires the experimental path and
+falls back to the pinned CPU analyser and CPU synthesis; the benchmark
+asserts no failures, full changing-pair coverage, correct cadence,
+actual Vulkan synthesis and novel images, and reports experimental
+pair counts separately.
+
+This is a distinct, experimental search policy, not a port of the
+upstream predictor-dependent search. It does NOT implement identical
+neighbor processing, adaptive radii, search ranking, refinement or
+quality equivalence. Do not select it automatically or claim speed or
+quality gains before physical-device comparisons. The tests exercise
+multi-level search, pel=1/2/4, two directions, deterministic complete
+packets, bounded timeouts and actual streaming output.
+
+Exact preceding head 3cdf5799df1f4132236f07ae9d3d4dddbe463ef8 passed all
+native checks (46039008235), including updater verification, the
+prepared-field serialization and upstream smoother tests, Android JNI
+and C loader checks. SmartTube integration also passed. Current-head
+experimental search and streaming tests still need CI confirmation.
+Hardware-buffer zero-copy and full upstream search parity remain open.
