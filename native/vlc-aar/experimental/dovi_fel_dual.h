@@ -190,6 +190,20 @@ static inline bool ambient_fel_pts_valid(int64_t dts,int64_t cts)
 /* All runs of a separate EL fragment must occupy disjoint byte ranges.
  * Sorting once avoids quadratic pairwise comparisons on fragmented files. */
 struct ambient_fel_byte_range { uint64_t start,end; };
+#define AMBIENT_FEL_MAX_MDAT_BOXES 64u
+/* A contiguous sample/run must be wholly contained in ONE physical
+ * payload. The sorted extents exclude box headers and intervening bytes. */
+static inline bool ambient_fel_payload_contains(const struct ambient_fel_byte_range *r,
+    size_t n,uint64_t pos,uint64_t bytes)
+{
+    if(!r||!n||n>AMBIENT_FEL_MAX_MDAT_BOXES||!bytes)return false;
+    size_t lo=0,hi=n;
+    while(lo<hi){
+        size_t mid=lo+(hi-lo)/2;
+        if(r[mid].start<=pos)lo=mid+1;else hi=mid;
+    }
+    return lo && pos<r[lo-1].end && bytes<=r[lo-1].end-pos;
+}
 static inline int ambient_fel_range_compare(const void *a,const void *b)
 {
     const struct ambient_fel_byte_range *x=a,*y=b;

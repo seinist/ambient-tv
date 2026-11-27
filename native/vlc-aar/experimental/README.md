@@ -962,3 +962,12 @@ never used as presentation seek destinations. A loaded EL-only moof is
 rejected before the existing context is retired, permitting the existing
 caller to restore its previous position. Ordinary unpaired seek policy
 is retained. Actual seek behavior requires container/device validation.
+
+Seekable paired fragments now support up to 64 consecutive physical mdat
+boxes per BL or separate EL moof. Scan header extents without downloading
+payloads; each indexed run and delivered sample must fit a single physical
+payload, never a header or gap. Binary-search range checks and host tests
+cover boundaries and overflow. Ordinary MP4 is unchanged. Forward-only
+multi-mdat input, interleaved timed moofs and padding between successive
+mdats remain outside this extension; the existing 64 MiB buffered route
+is unchanged. Latest linked build and real media fixtures remain pending.

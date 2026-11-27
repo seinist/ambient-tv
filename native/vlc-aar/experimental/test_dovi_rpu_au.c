@@ -151,6 +151,16 @@ int main(void) {
     struct ambient_fel_byte_range duplicate_ranges[]={{100,200},{100,200}};
     assert(!ambient_fel_ranges_disjoint(duplicate_ranges,2));
     assert(!ambient_fel_ranges_disjoint(disjoint,0));
+    const struct ambient_fel_byte_range payloads[]={{108,200},{208,300},{316,400}};
+    assert(ambient_fel_payload_contains(payloads,3,108,92));
+    assert(ambient_fel_payload_contains(payloads,3,208,92));
+    assert(ambient_fel_payload_contains(payloads,3,399,1));
+    assert(!ambient_fel_payload_contains(payloads,3,199,2));
+    assert(!ambient_fel_payload_contains(payloads,3,200,8));
+    assert(!ambient_fel_payload_contains(payloads,3,300,16));
+    assert(!ambient_fel_payload_contains(payloads,3,316,UINT64_MAX));
+    assert(!ambient_fel_payload_contains(payloads,3,400,1));
+    assert(!ambient_fel_payload_contains(payloads,0,108,1));
     uint64_t padding_bytes=0;
     unsigned padding_boxes=0;
     assert(ambient_fel_padding_budget(&padding_bytes,&padding_boxes,8));
