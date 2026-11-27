@@ -519,3 +519,39 @@ native ARM64 build succeeded at the library-link stage, but the
 AAR packaging failed on Maven Central HTTP 429; a bounded retry
 has since been added. Full HDR10+ reference equivalence and exact
 Dolby proprietary reconstruction remain unproven. Default-off unchanged.
+
+
+### Additional indexed MP4 and HDR10+ conformance follow-up
+
+The exact rational clock conversion is now also used for indexed
+nonfragmented dual-track MP4: the original sample DTS, composition
+delta and duration must match after conversion, and the mapped VLC
+timestamps must still agree. Equivalent edit-list media times may
+use different track clocks; empty edits retain the -1 sentinel and
+the edit durations and rates must remain equal. Seekable hybrid
+moov+moof files with matching initial sample counts, no edit lists
+and stable sample descriptions are admitted to both existing
+indexed and fragmented paths. Forward-only hybrid files and
+incompatible edits remain excluded.
+
+ST 2094-40 sections 6.1 and 6.7 use pixel-center membership.
+When two local selectors specify different overlap modes, the
+renderer now intersects their clipped elliptical row intervals at
+integer pixel centers, rather than rejecting every overlapping
+axis-aligned bounding box. The bounded scan uses a conservative
+floating-point margin near tangencies. A regression independently
+checks every pixel of a rotated, disjoint pair, and tests a truly
+overlapping pair. Annex B.12 saturation gain is no longer subject
+to an arbitrary 4x cap: it is bounded by the RGB gamut, with
+existing log singularity guards. A new GPU test independently
+calculates a valid gain greater than 4. Section 10.3's zero
+FractionBrightPixels recommendation for new version-0 metadata is
+reported separately from compatible legacy data; version-1 local
+nonzero values violate the section 10.4.1 check.
+
+Both MP4 patches match the pinned source contexts. At 8595108 the
+FFmpeg and GPU contracts passed (45966188095); the ABI job and app
+unit tests were canceled by subsequent pushes. The new head needs
+its own complete CI and real indexed/hybrid/forward-only playback
+validation. Full HDR10+ certification and bit-exact proprietary
+Dolby FEL resampling are still unproven. Default-off unchanged.
