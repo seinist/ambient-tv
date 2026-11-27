@@ -12,6 +12,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -74,6 +75,9 @@ fun ProjectMVisualizer(
     var glView by remember { mutableStateOf<GLSurfaceView?>(null) }
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
     val resolutionKey = browser.resolutionKey
+    var adaptiveLevel by remember { mutableIntStateOf(0) }
+    val adaptive = remember { ProjectMAdaptiveQuality() }
+    val adaptiveEnabled = rememberUpdatedState(resumed && !throttleProjectM && resolutionKey == ProjectMRenderResolution.AUTO)
     com.ambient.tv.ui.display.RegisterAmbientHdr(windowOutput = false, priority = 1, eligible = !throttleProjectM) { request ->
         (glView as? ProjectMHdrView)?.updateHdr(request, !throttleProjectM && nativeHandle.get() != 0L)
             ?: if (request == null) com.ambient.tv.ui.display.SdrToHdrStatus.OFF
@@ -192,13 +196,14 @@ fun ProjectMVisualizer(
         }
     }
 
-    LaunchedEffect(glView, viewSize, resolutionKey, throttleProjectM) {
+    LaunchedEffect(glView, viewSize, resolutionKey, throttleProjectM, adaptiveLevel) {
         val view = glView ?: return@LaunchedEffect
         val metrics = view.resources.displayMetrics
         val displayLines = view.display?.mode?.let { minOf(it.physicalWidth, it.physicalHeight) } ?: 0
         val size = ProjectMRenderResolution.bufferSize(
             resolutionKey, viewSize.width, viewSize.height,
             metrics.widthPixels, metrics.heightPixels, displayLines, throttleProjectM,
+            adaptiveCap = ProjectMAdaptiveQuality.capLines(adaptiveLevel),
         )
         if (size == null) view.holder.setSizeFromLayout() else view.holder.setFixedSize(size.first, size.second)
     }
@@ -309,6 +314,7 @@ fun ProjectMVisualizer(
                         }
 
                         override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
+                            adaptive.resetTiming()
                             surfaceWidth.set(width)
                             surfaceHeight.set(height)
                             val handle = nativeHandle.get()
@@ -319,7 +325,12 @@ fun ProjectMVisualizer(
 
                         override fun onDrawFrame(gl: GL10?) {
                             val handle = nativeHandle.get()
-                            if (handle != 0L) ProjectMNativeBridge.nativeRender(handle)
+                            if (handle != 0L) {
+                                ProjectMNativeBridge.nativeRender(handle)
+                                adaptive.observe(System.nanoTime(), currentFps.value, adaptiveEnabled.value)?.let { level ->
+                                    post { if (!nativeReleased.get()) adaptiveLevel = level }
+                                }
+                            }
                         }
                     })
                     renderMode = if (pacedRendering) {
