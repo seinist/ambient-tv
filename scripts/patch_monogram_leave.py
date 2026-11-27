@@ -991,7 +991,8 @@ amend(upstream_build,
                                 listOf(encoded, "-C", "link-arg=-Wl,-z,max-page-size=16384")
                                     .filter { it.isNotEmpty() }.joinToString(31.toChar().toString())
                         } else {
-                            if (androidRustFlags.isNotBlank()) check(abi == "arm64-v8a")
+                            // CPU-specific ABI validation is performed by the builder.
+                            // PGO flags may target any explicitly selected single ABI.
                             pb.environment()["RUSTFLAGS"] =
                                 listOf(androidRustFlags.ifBlank { pb.environment()["RUSTFLAGS"].orEmpty() }, alignment)
                                     .filter { it.isNotBlank() }.joinToString(" ")
@@ -1818,6 +1819,37 @@ amend(media_lane,
 amend(client_download,
       "        let downloaded = media::download_media_range_batched_streaming_capped(",
       "        let downloaded = mono_proto_media::download::download_media_range_batched_streaming_borrowed(")
+
+
+add_before(ffi, "#[uniffi::export]\npub fn download_message_thumb(", """// Present only in instrumented Android builds. Keep the profile inside
+// the application-private files directory; the app supplies a stable path.
+#[cfg(all(target_os = "android", ambient_pgo_generate))]
+#[allow(unsafe_code)]
+#[jni::jni_mangle("com.ambient.tv.data.telegram.AmbientMonogramJni")]
+pub extern "system" fn flushPgoProfile<'caller>(
+    mut unowned_env: jni::EnvUnowned<'caller>,
+    _this: jni::objects::JObject<'caller>,
+    destination: jni::objects::JString<'caller>,
+) -> jni::sys::jint {
+    unsafe extern "C" {
+        fn __llvm_profile_set_filename(name: *const std::ffi::c_char);
+        fn __llvm_profile_write_file() -> std::ffi::c_int;
+    }
+    static PATH: std::sync::OnceLock<std::ffi::CString> = std::sync::OnceLock::new();
+    static WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    unowned_env.with_env(|env| -> jni::errors::Result<_> {
+        let path = destination.try_to_string(env)?;
+        let Ok(path) = std::ffi::CString::new(path) else { return Ok(-1); };
+        let Ok(_lock) = WRITE.lock() else { return Ok(-1); };
+        let path = PATH.get_or_init(|| path);
+        // PATH owns the filename for the lifetime of the LLVM runtime.
+        unsafe {
+            __llvm_profile_set_filename(path.as_ptr());
+            Ok(__llvm_profile_write_file())
+        }
+    }).resolve::<jni::errors::ThrowRuntimeExAndDefault>()
+}
+""", "pub extern \"system\" fn flushPgoProfile")
 
 # Commit files only after every source contract has been checked.
 for path, result in changes.items():

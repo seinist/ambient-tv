@@ -97,6 +97,20 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     /** Account-generation fences prevent older thumbnail RPCs repopulating a new account's cache. */
     @Volatile private var cacheGeneration = 0L
     private var previewWrites = 0
+    private val measuredWindows = java.util.concurrent.atomic.AtomicInteger()
+    private fun recordNativeWindow() {
+        if (!com.ambient.tv.BuildConfig.MONOGRAM_PGO_GENERATE && !com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS) return
+        if (measuredWindows.incrementAndGet() % 16 != 0) return
+        if (com.ambient.tv.BuildConfig.MONOGRAM_PGO_GENERATE) {
+            val result = runCatching { AmbientMonogramJni.flushPgoProfile(File(app.filesDir, "monogram-pgo.profraw").absolutePath) }
+            android.util.Log.i("MonogramPerf", "PGO profile flush: ${result.getOrNull() ?: "unavailable"}")
+        }
+        if (com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS) {
+            runCatching { uniffi.monogram_mtproto.perfSnapshot(true) }.getOrNull()?.let {
+                android.util.Log.d("MonogramPerf", it)
+            }
+        }
+    }
     private val accountIdFile = File(session.parentFile, "account.id")
     @Volatile private var accountId: Long? = accountIdFile.takeIf { it.isFile }?.let {
         runCatching { it.readText().trim().toLongOrNull() }.getOrNull()
@@ -451,6 +465,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     // Patched profiles keep thumbnails and individual ranges at one part.
                     // Only known large full-file downloads may use a wider native pipeline.
                     uniffi.monogram_mtproto.setAmbientMediaMode(true)
+                    if (com.ambient.tv.BuildConfig.MONOGRAM_PERF_COUNTERS)
+                        uniffi.monogram_mtproto.perfSetEnabled(true)
                     uniffi.monogram_mtproto.setAmbientCdnRanges(com.ambient.tv.BuildConfig.MONOGRAM_CDN_RANGES)
                     native.setDownloadConcurrency(4, 4)
                     connected = false
@@ -1403,6 +1419,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                             payload.copyOfRange(TELEGRAM_MEDIA_PART_BYTES, payload.size))
                     }
                     require(parts.indices.all { validSize(it, parts[it].size) }) { "Invalid or incomplete Monogram chunk" }
+                    recordNativeWindow()
                     verifyGeneration()
                     requireAuthorized(h)
                     val stages = parts.indices.map { index ->
@@ -1504,6 +1521,7 @@ private const val TELEGRAM_CHANNEL_ID_MAX = -1_000_000_000_000L
 @androidx.annotation.Keep
 internal object AmbientMonogramJni {
     @Volatile private var jniAvailable = true
+    external fun flushPgoProfile(destination: String): Int
 
     private external fun downloadMediaRange(
         handle: Long, chatId: Long, messageId: Int, destination: String, offset: Long, expectedKey: String, parts: Int,

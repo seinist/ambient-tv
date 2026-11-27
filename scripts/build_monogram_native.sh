@@ -31,6 +31,27 @@ if [[ "$cpu_tune" == cortex-a57 ]]; then
     # are present. RustCrypto can still detect them at runtime.
     export MONOGRAM_ANDROID_RUSTFLAGS="${RUSTFLAGS:-} --cap-lints allow -C target-cpu=cortex-a57 -C target-feature=-aes,-sha2,-crc"
 fi
+# PGO is deliberately opt-in and target-specific. The training binary dumps
+# LLVM counters on-device; the resulting merged profile is an explicit input.
+pgo_mode="${MONOGRAM_PGO_MODE:-off}"
+pgo_digest=none
+case "$pgo_mode" in
+    off) ;;
+    generate|use)
+        [[ -z "${CARGO_ENCODED_RUSTFLAGS:-}" ]] || { echo "Encoded Rust flags conflict with PGO" >&2; exit 1; }
+        export MONOGRAM_ANDROID_RUSTFLAGS="${MONOGRAM_ANDROID_RUSTFLAGS:-${RUSTFLAGS:-} --cap-lints allow}"
+        if [[ "$pgo_mode" == generate ]]; then
+            export MONOGRAM_ANDROID_RUSTFLAGS="$MONOGRAM_ANDROID_RUSTFLAGS -C profile-generate --cfg ambient_pgo_generate"
+        else
+            pgo_profile="$(realpath -e "${MONOGRAM_PGO_PROFILE:?Set MONOGRAM_PGO_PROFILE to merged profdata}")"
+            [[ -f "$pgo_profile" && -s "$pgo_profile" && "$pgo_profile" != *[[:space:]]* ]] ||
+                { echo "PGO requires a nonempty profile at a whitespace-free path" >&2; exit 1; }
+            pgo_digest="$(sha256sum "$pgo_profile" | cut -d' ' -f1)"
+            export MONOGRAM_ANDROID_RUSTFLAGS="$MONOGRAM_ANDROID_RUSTFLAGS -C profile-use=$pgo_profile -C llvm-args=-pgo-warn-missing-function"
+        fi
+        ;;
+    *) echo "MONOGRAM_PGO_MODE must be off, generate or use" >&2; exit 1 ;;
+esac
 export CARGO_PROFILE_RELEASE_OPT_LEVEL="$profile"
 export CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
 export CARGO_PROFILE_RELEASE_STRIP=true CARGO_PROFILE_RELEASE_PANIC=abort
@@ -48,13 +69,17 @@ rust_config="$(env | LC_ALL=C sort | grep -E '^(CARGO_TARGET_(AARCH64|ARMV7|I686
 if [[ "$rust_config" == *target-cpu=native* ]]; then
     echo "Host-native CPU flags are incompatible with portable Android ABIs" >&2; exit 1
 fi
-build_config="$(printf '%s\n' "$profile" "$cpu_tune" "${MONOGRAM_ANDROID_RUSTFLAGS:-}" "$rust_config" "$(rustc -Vv)" "$(cargo -V)" "$ndk_home" "$ndk_revision" "$sdk_home" | sha256sum | cut -d' ' -f1)"
+build_config="$(printf '%s\n' "$profile" "$cpu_tune" "$pgo_mode" "$pgo_digest" "${MONOGRAM_ANDROID_RUSTFLAGS:-}" "$rust_config" "$(rustc -Vv)" "$(cargo -V)" "$ndk_home" "$ndk_revision" "$sdk_home" | sha256sum | cut -d' ' -f1)"
 abis=(${MONOGRAM_ABIS:-arm64-v8a armeabi-v7a x86 x86_64})
 [[ "${#abis[@]}" -gt 0 ]] || exit 1
 for abi in "${abis[@]}"; do
     case "$abi" in arm64-v8a|armeabi-v7a|x86|x86_64) ;; *) echo "Unsupported ABI $abi" >&2; exit 1;; esac
 done
 requested="$(printf '%s\n' "${abis[@]}" | sort -u | tr '\n' ',')"
+if [[ "$pgo_mode" != off && "${#abis[@]}" != 1 ]]; then
+    echo "PGO profiles must be built and trained for exactly one Android ABI" >&2
+    exit 1
+fi
 if [[ "$cpu_tune" == cortex-a57 && "$requested" != "arm64-v8a," ]]; then
     echo "Cortex-A57 tuning is opt-in and requires MONOGRAM_ABIS=arm64-v8a" >&2
     exit 1
@@ -125,5 +150,5 @@ done
 args=()
 for abi in "${abis[@]}"; do args+=("$abi=$scratch/$abi.aar"); done
 python3 "$root/scripts/merge_monogram_aars.py" "$output" "${args[@]}"
-printf 'version=%s\nref=%s\nabis=%s\npatch=%s\nbuilder=%s\nbuild_config=%s\nopt_level=%s\ncpu_tune=%s\n' "$version" "$ref" "$requested" "$patch_digest" "$builder_digest" "$build_config" "$profile" "$cpu_tune" > "$stamp"
+printf 'version=%s\nref=%s\nabis=%s\npatch=%s\nbuilder=%s\nbuild_config=%s\nopt_level=%s\ncpu_tune=%s\npgo_mode=%s\npgo_profile=%s\n' "$version" "$ref" "$requested" "$patch_digest" "$builder_digest" "$build_config" "$profile" "$cpu_tune" "$pgo_mode" "$pgo_digest" > "$stamp"
 echo "Only the upstream Monogram MTProto native module was compiled; GPL terms apply to the opt-in build."
