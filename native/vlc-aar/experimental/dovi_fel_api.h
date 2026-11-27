@@ -23,6 +23,8 @@ void av_ambient_fel_close(struct ambient_fel_session *);
 void av_ambient_fel_flush(struct ambient_fel_session *);
 int av_ambient_fel_submit(struct ambient_fel_session *,const uint8_t *,size_t,int64_t,int64_t);
 int av_ambient_fel_drain(struct ambient_fel_session *);
+/* After take() returns NULL: can another submit still produce this picture? */
+bool av_ambient_fel_may_receive(const struct ambient_fel_session *);
 /* Return owned EL frame for exactly pts, never nearest. */
 struct ambient_fel_picture *av_ambient_fel_take(struct ambient_fel_session *,int64_t);
 void av_ambient_fel_discard(struct ambient_fel_session *,int64_t);
