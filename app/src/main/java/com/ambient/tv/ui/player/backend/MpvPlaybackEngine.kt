@@ -1673,7 +1673,9 @@ internal class MpvPlaybackEngine(
     }
 
     private fun updateGpuDecoder(): Boolean {
-        val cpu = activeCpuImageFilters.any { (label, filter) ->\n            label != "plex-svp" || !filter.endsWith(":hwresident=1")\n        }
+        val cpu = activeCpuImageFilters.any { (label, filter) ->
+            label != "plex-svp" || !filter.endsWith(":hwresident=1")
+        }
         return gpuQualityMode && trySetGpuDecoder(
             mpvCopyBackNeeded(loadedShaderKeys, cpu, deinterlaceRequested), cpuFrames = cpu,
         )
