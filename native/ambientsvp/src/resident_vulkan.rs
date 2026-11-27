@@ -535,7 +535,7 @@ mod gpu_tests{
             let a=rgb(images[5].view);let b=rgb(images[7].view);
             let pair=ambient_svp_vk_begin(engine,cmd,&a,&b);
             assert!(!pair.is_null());
-            let handles=((*pair).field,(*pair).pool,(*pair).sets.clone());
+            let handles=((&*pair).field,(&*pair).pool,(&*pair).sets.clone());
             // Matrix=limited BT601 intentionally: RGB must not be converted again.
             assert_eq!(ambient_svp_vk_render(pair,0.5,0,images[6].view),0);
             transition(&d,cmd,images[6].image,vk::ImageLayout::GENERAL,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
@@ -558,7 +558,7 @@ mod gpu_tests{
             d.unmap_memory(readback_memory);
             // The completed pair's entire bundle is reusable, but no
             // in-flight bundle can be borrowed by another pair.
-            assert_eq!((*engine).0.idle.lock().unwrap().len(),1);
+            assert_eq!((&*engine).0.idle.lock().unwrap().len(),1);
             d.reset_fences(&[fence]).unwrap();
             d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
             d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)).unwrap();
@@ -567,8 +567,8 @@ mod gpu_tests{
                 vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::COMPUTE_SHADER);
             let stationary=ambient_svp_vk_begin(engine,cmd,&a,&a);
             assert!(!stationary.is_null());
-            assert_eq!(((*stationary).field,(*stationary).pool,&(*stationary).sets),(handles.0,handles.1,&handles.2));
-            assert_eq!((*engine).0.idle.lock().unwrap().len(),0);
+            assert_eq!(((&*stationary).field,(&*stationary).pool,&(&*stationary).sets),(handles.0,handles.1,&handles.2));
+            assert_eq!((&*engine).0.idle.lock().unwrap().len(),0);
             assert_eq!(ambient_svp_vk_render(stationary,0.5,0,images[6].view),0);
             transition(&d,cmd,images[6].image,vk::ImageLayout::GENERAL,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                 vk::AccessFlags::SHADER_WRITE,vk::AccessFlags::TRANSFER_READ,
