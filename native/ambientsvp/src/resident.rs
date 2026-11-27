@@ -161,6 +161,7 @@ pub(crate) const MOTION:&str=r#"
 var<workgroup> scores:array<u32,64>;
 var<workgroup> vectors:array<vec2i,64>;
 var<workgroup> zero_score:u32;
+var<workgroup> predictor_score:u32;
 var<workgroup> source_samples:array<i32,64>;
 fn px(t:texture_2d<f32>,p:vec2i)->i32{
     let value=textureLoad(t,p,0);
@@ -257,7 +258,9 @@ fn analyse(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) lane:
         if all(cell>=vec2i(0)) && all(cell<vec2i(i32(geometry.z),i32(gh))){
             neighbor=fields[base+u32(cell.x)+u32(cell.y)*geometry.z].xy;
         }
-        let current_cost=cost(origin,current,reverse,0xffffffffu);
+        if lane==0u{predictor_score=cost(origin,current,reverse,0xffffffffu);}
+        workgroupBarrier();
+        let current_cost=predictor_score;
         if lane==0u{choose(lane,current,current_cost);}
         if lane==1u{choose(lane,vec2i(0),zero);}
         // Exact matches need no broader search. Large residuals test
