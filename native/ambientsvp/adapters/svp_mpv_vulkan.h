@@ -10,6 +10,7 @@
 #include <libavutil/hwcontext.h>
 #include <libavutil/hwcontext_vulkan.h>
 #include <libavutil/frame.h>
+#include <libavutil/hdr_dynamic_metadata.h>
 #include <libavutil/version.h>
 #include "ambientsvp_vulkan.h"
 #include <stdbool.h>
@@ -110,6 +111,38 @@ static int svp_vk_mode(enum AVPixelFormat format)
     default: return -1;
     }
 }
+/* Only a single validated ST 2094-40 window can be passed through
+ * MPV's current global libplacebo mapping. Compare the complete decoded
+ * payload, not just MaxSCL or the projected OOTF. An unsupported window
+ * or metadata transition keeps the original source images unchanged. */
+static const AVBufferRef *svp_vk_hdr10plus(const struct mp_image *img)
+{
+    for (int i=0;i<img->num_ff_side_data;i++)
+        if (img->ff_side_data[i].type==AV_FRAME_DATA_DYNAMIC_HDR_PLUS)
+            return img->ff_side_data[i].buf;
+    return NULL;
+}
+static bool svp_vk_hdrplus_same(const struct mp_image *a,const struct mp_image *b)
+{
+    const AVBufferRef *x=svp_vk_hdr10plus(a),*y=svp_vk_hdr10plus(b);
+    if (!x || !y) return !x && !y;
+    if (x->size!=y->size || x->size<sizeof(AVDynamicHDRPlus)) return false;
+    const AVDynamicHDRPlus *p=(const AVDynamicHDRPlus *)x->data;
+    const AVDynamicHDRPlus *q=(const AVDynamicHDRPlus *)y->data;
+    if (!p || !q || p->num_windows!=1 || q->num_windows!=1 ||
+        p->targeted_system_display_actual_peak_luminance_flag ||
+        q->targeted_system_display_actual_peak_luminance_flag ||
+        p->mastering_display_actual_peak_luminance_flag ||
+        q->mastering_display_actual_peak_luminance_flag) return false;
+    // Decoded structs may contain padding: byte equality is a conservative
+    // sufficient condition. A false mismatch merely repeats source frames.
+    return !memcmp(x->data,y->data,x->size);
+}
+static bool svp_vk_hdr_metadata_same(const struct mp_image *a,const struct mp_image *b)
+{
+    return pl_hdr_metadata_equal(&a->params.color.hdr,&b->params.color.hdr) &&
+        svp_vk_hdrplus_same(a,b);
+}
 static bool svp_vk_eligible(struct mp_image *img)
 {
     if (!img || img->imgfmt!=IMGFMT_VULKAN || !img->hwctx
@@ -135,8 +168,7 @@ static bool svp_vk_eligible(struct mp_image *img)
     bool hdr=img->params.color.transfer==PL_COLOR_TRC_PQ || img->params.color.transfer==PL_COLOR_TRC_HLG;
     if ((!mode && (hdr || svp_vk_matrix(img)>3)) || (hdr && img->params.repr.sys!=PL_COLOR_SYSTEM_BT_2020_NC && !(mode==3 && img->params.repr.sys==PL_COLOR_SYSTEM_RGB))) return false;
     for (int i=0;i<img->num_ff_side_data;i++)
-        if (img->ff_side_data[i].type==AV_FRAME_DATA_DYNAMIC_HDR_PLUS ||
-            img->ff_side_data[i].type==AV_FRAME_DATA_DOVI_METADATA ||
+        if (img->ff_side_data[i].type==AV_FRAME_DATA_DOVI_METADATA ||
             img->ff_side_data[i].type==AV_FRAME_DATA_DOVI_RPU_BUFFER) return false;
     AVVulkanFramesContext *vfc=fc->hwctx;
     return vfc->nb_layers==1 && vfc->tiling==VK_IMAGE_TILING_OPTIMAL
@@ -355,7 +387,7 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
         || svp_vk_matrix(a)!=svp_vk_matrix(b) || a->params.color.transfer!=b->params.color.transfer
         || a->params.color.primaries!=b->params.color.primaries) return false;
     if (s->mode && (a->params.color.transfer==PL_COLOR_TRC_PQ || a->params.color.transfer==PL_COLOR_TRC_HLG) &&
-        !pl_hdr_metadata_equal(&a->params.color.hdr,&b->params.color.hdr)) return false;
+        !svp_vk_hdr_metadata_same(a,b)) return false;
     svp_vk_reap(s,false);
     unsigned slot=0;while(slot<SVP_VK_JOBS && s->jobs[slot]) slot++;
     if (slot==SVP_VK_JOBS) return false;
@@ -520,9 +552,32 @@ static bool svp_vk_pair_frames(struct svp_vk_mpv *s,struct mp_image *next,double
         if (phase< -0.25 || phase>1.0) return false;
         times[count]=time;phases[count++]=(float)fmax(0.0,phase);
     }
-    if (!count || !svp_vk_interpolate(s,s->previous,next,times,phases,count,s->outputs)) return false;
+    if (!count) return false;
+    const struct mp_image *a=s->previous;
+    bool hdr=a->params.color.transfer==PL_COLOR_TRC_PQ || a->params.color.transfer==PL_COLOR_TRC_HLG;
+    bool compatible=a->params.color.transfer==next->params.color.transfer &&
+        a->params.color.primaries==next->params.color.primaries &&
+        svp_vk_matrix(s->previous)==svp_vk_matrix(next);
+    if (s->mode && hdr && compatible && !svp_vk_hdr_metadata_same(a,next)) {
+        // Do not interpolate across dynamic/static HDR metadata changes.
+        // Repeat the exact preceding source until the next source tick;
+        // retain all its original pixels, representation and side data.
+        for (unsigned i=0;i<count;i++) {
+            struct mp_image *out=mp_image_new_ref(s->previous);
+            if (!out) {
+                for (unsigned k=0;k<i;k++) mp_image_unrefp(&s->outputs[k]);
+                return false;
+            }
+            out->pts=times[i];out->pkt_duration=1.0/s->target_rate;
+            out->nominal_fps=s->target_rate;
+            s->outputs[i]=out;
+        }
+    } else {
+        if (!svp_vk_interpolate(s,s->previous,next,times,phases,count,s->outputs)) return false;
+        s->generated_frames+=count;
+    }
     s->tick=tick;s->output_count=count;s->next_output=0;
-    s->generated_frames+=count;return true;
+    return true;
 }
 // On success consumes img; on rejection caller still owns it.
 static bool svp_vk_feed(struct svp_vk_mpv *s,struct mp_image *img)
