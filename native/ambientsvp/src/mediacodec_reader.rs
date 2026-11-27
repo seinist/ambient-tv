@@ -33,6 +33,7 @@ unsafe extern "C"{
     fn AImage_getHardwareBuffer(image:*const c_void,out:*mut *mut c_void)->i32;
     fn AImage_getCropRect(image:*const c_void,crop:*mut Crop)->i32;
     fn AImage_getTimestamp(image:*const c_void,timestamp:*mut i64)->i32;
+    fn AImage_getFormat(image:*const c_void,format:*mut i32)->i32;
     fn AImage_deleteAsync(image:*mut c_void,release_fence:i32);
 }
 #[link(name="android")]
@@ -73,17 +74,20 @@ impl Drop for Frame{
         if !self.image.is_null(){
             // No GPU use committed. Return the original producer fence,
             // not -1, so a dropped image cannot be reused prematurely.
-            unsafe{AImage_deleteAsync(self.image,self.acquire_fd)};
+            unsafe{AImage_deleteAsync(self.image,self.acquire_fd.max(-1))};
             self.image=ptr::null_mut();self.acquire_fd=-1;
         }
     }
 }
 
-fn checked_info(crop:Crop,d:Desc,timestamp_ns:i64)->Option<FrameInfo>{
+fn checked_info(crop:Crop,d:Desc,image_format:i32,timestamp_ns:i64)->Option<FrameInfo>{
     if crop.left<0 || crop.top<0 || crop.right<=crop.left || crop.bottom<=crop.top
         || crop.right as u32>d.width || crop.bottom as u32>d.height
         || d.layers!=1 || d.usage&GPU_SAMPLED_IMAGE==0 || d.usage&(1<<14)!=0
-        || !matches!(d.format,0x22|0x23)
+        // PRIVATE AImages may expose an implementation-defined gralloc
+        // format. Vulkan queries the true format; never infer its layout.
+        || !matches!(image_format,PRIVATE|0x23)
+        || !(matches!(d.format,0x22|0x23) || image_format==PRIVATE && d.format>=0x100)
     {return None;}
     let (width,height)=((crop.right-crop.left) as u32,(crop.bottom-crop.top) as u32);
     if width<32 || height<32 || width>3840 || height>2160
@@ -144,12 +148,14 @@ pub unsafe extern "C" fn ambient_svp_mediacodec_acquire(reader:*const Reader,out
         let mut frame=Frame{_reader:r,image,buffer:ptr::null_mut(),acquire_fd:fence,info:FrameInfo::default()};
         let mut crop=Crop::default();
         let mut timestamp=0;
+        let mut format=0;
         if fence< -1 || unsafe{AImage_getHardwareBuffer(image,&mut frame.buffer)}!=0
             || frame.buffer.is_null() || unsafe{AImage_getCropRect(image,&mut crop)}!=0
-            || unsafe{AImage_getTimestamp(image,&mut timestamp)}!=0{return -1;}
+            || unsafe{AImage_getTimestamp(image,&mut timestamp)}!=0
+            || unsafe{AImage_getFormat(image,&mut format)}!=0{return -1;}
         let mut desc=Desc::default();
         unsafe{AHardwareBuffer_describe(frame.buffer,&mut desc)};
-        let Some(info)=checked_info(crop,desc,timestamp)else{return -1;};
+        let Some(info)=checked_info(crop,desc,format,timestamp)else{return -1;};
         frame.info=info;
         unsafe{*out=Box::into_raw(Box::new(frame));}
         1
@@ -174,11 +180,13 @@ mod tests{
     fn rejects_protected_and_invalid_crop_without_misreading_padding(){
         let d=Desc{width:128,height:80,layers:1,format:PRIVATE,usage:GPU_SAMPLED_IMAGE,..Default::default()};
         let c=Crop{left:2,top:4,right:98,bottom:70};
-        let f=checked_info(c,d,10).unwrap();
+        let f=checked_info(c,d,PRIVATE,10).unwrap();
         assert_eq!((f.width,f.height,f.buffer_width,f.buffer_height),(96,66,128,80));
-        assert!(checked_info(c,Desc{usage:d.usage|(1<<14),..d},10).is_none());
-        assert!(checked_info(Crop{left:1,..c},d,10).is_none());
-        assert!(checked_info(Crop{right:130,..c},d,10).is_none());
-        assert!(checked_info(c,Desc{format:0x36,..d},10).is_none());
+        assert!(checked_info(c,Desc{usage:d.usage|(1<<14),..d},PRIVATE,10).is_none());
+        assert!(checked_info(Crop{left:1,..c},d,PRIVATE,10).is_none());
+        assert!(checked_info(Crop{right:130,..c},d,PRIVATE,10).is_none());
+        assert!(checked_info(c,Desc{format:0x36,..d},PRIVATE,10).is_none());
+        assert!(checked_info(c,Desc{format:0x7fa30c04,..d},PRIVATE,10).is_some());
+        assert!(checked_info(c,d,0x24,10).is_none());
     }
 }
