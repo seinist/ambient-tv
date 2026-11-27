@@ -26,8 +26,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Install shader validation tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq glslang-tools
       - name: Validate bundled shader sources
         run: python3 scripts/check_game_slang.py
+      - name: Package format tests
+        run: python3 -m unittest discover -s scripts -p test_package_system_modules.py
       - name: Build reproducible module package
         run: |
           set -euo pipefail
