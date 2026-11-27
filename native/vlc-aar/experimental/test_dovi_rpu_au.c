@@ -151,6 +151,18 @@ int main(void) {
     struct ambient_fel_byte_range duplicate_ranges[]={{100,200},{100,200}};
     assert(!ambient_fel_ranges_disjoint(duplicate_ranges,2));
     assert(!ambient_fel_ranges_disjoint(disjoint,0));
+    uint64_t padding_bytes=0;
+    unsigned padding_boxes=0;
+    assert(ambient_fel_padding_budget(&padding_bytes,&padding_boxes,8));
+    assert(ambient_fel_padding_budget(&padding_bytes,&padding_boxes,AMBIENT_FEL_MAX_PADDING-8));
+    assert(padding_boxes==2&&padding_bytes==AMBIENT_FEL_MAX_PADDING);
+    assert(!ambient_fel_padding_budget(&padding_bytes,&padding_boxes,8));
+    assert(!ambient_fel_padding_budget(&padding_bytes,&padding_boxes,UINT64_MAX));
+    padding_bytes=0;padding_boxes=AMBIENT_FEL_MAX_PADDING_BOXES-1;
+    assert(ambient_fel_padding_budget(&padding_bytes,&padding_boxes,8));
+    assert(!ambient_fel_padding_budget(&padding_bytes,&padding_boxes,8));
+    padding_boxes=0;
+    assert(!ambient_fel_padding_budget(&padding_bytes,&padding_boxes,7));
     assert(ambient_fel_mdat_pair_budget(1,AMBIENT_FEL_MAX_MDAT-1));
     assert(!ambient_fel_mdat_pair_budget(0,1));
     assert(!ambient_fel_mdat_pair_budget(1,0));

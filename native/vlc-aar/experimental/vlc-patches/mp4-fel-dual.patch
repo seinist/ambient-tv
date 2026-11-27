@@ -343,7 +343,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
      int i_status;
      /* demux up to increment amount of data on every track, or just set pcr if empty data */
      for( ;; )
-@@ -1947,7 +2196,353 @@
+@@ -1947,7 +2196,384 @@
      return VLC_SUCCESS;
  }
  
@@ -393,43 +393,74 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +    return vlc_stream_GetSize(stream,&total)!=VLC_SUCCESS || *end<=total;
 +}
 +
-+/* Dolby dual-track fragmented carriage: BL moof/mdat immediately followed
-+ * by an EL-only moof/mdat. Retain the second box tree while its trun
-+ * pointers are live. Seekable inputs restore the BL position; forward-only
-+ * inputs consume both payloads within one combined memory budget. */
++/* Walk only explicitly inert top-level padding; never skip a timed
++ * fragment, event message, index, or unknown box. Account for all gaps
++ * using one combined bound, including on forward-only streams. */
++static bool MP4_FEL_SkipPadding(demux_t *d,uint64_t *bytes,unsigned *count)
++{
++    demux_sys_t *s=d->p_sys;
++    for(;;){
++        const uint8_t *b;
++        if(vlc_stream_Peek(d->s,&b,8)!=8)return false;
++        uint32_t type=VLC_FOURCC(b[4],b[5],b[6],b[7]);
++        if(type!=VLC_FOURCC('f','r','e','e') && type!=VLC_FOURCC('s','k','i','p'))
++            return true;
++        uint64_t pos=vlc_stream_Tell(d->s),payload,end;
++        if(!MP4_FEL_PeekBox(d->s,type,&payload,&end)||
++            !ambient_fel_padding_budget(bytes,count,end-pos))return false;
++        if(s->b_seekable){
++            if(MP4_Seek(d->s,end)!=VLC_SUCCESS)return false;
++        }else if(vlc_stream_Read(d->s,NULL,(size_t)(end-pos))!=(ssize_t)(end-pos))
++            return false;
++        if(vlc_stream_Tell(d->s)!=end)return false;
++    }
++}
++
++/* Dolby dual-track fragmented carriage: BL moof/mdat followed by an
++ * EL-only moof/mdat, optionally separated by inert padding. Retain the
++ * second tree while its trun pointers are live. Seekable inputs restore
++ * BL position; forward-only inputs use one combined memory budget. */
 +static bool MP4_FEL_Lookahead(demux_t *d,const MP4_Box_t *bl)
 +{
 +    demux_sys_t *s=d->p_sys;
 +    if(s->context.ambient_fel_el_moof||s->context.ambient_fel_mdat||
 +       s->context.ambient_fel_el_mdat)return false;
 +    uint64_t resume=vlc_stream_Tell(d->s),bp,be,mp,me,ep,ee;
-+    if(bl->i_size>UINT64_MAX-bl->i_pos||bl->i_pos+bl->i_size!=resume||
-+       !MP4_FEL_PeekBox(d->s,ATOM_mdat,&bp,&be)||bp==be)return false;
++    if(bl->i_size>UINT64_MAX-bl->i_pos||bl->i_pos+bl->i_size!=resume)return false;
 +    MP4_Box_t *root=NULL,*el=NULL;
 +    block_t *base_cache=NULL,*el_cache=NULL;
++    uint64_t padding=0;
++    unsigned boxes=0;
 +    bool ok=false;
++    if(!MP4_FEL_SkipPadding(d,&padding,&boxes)||
++       !MP4_FEL_PeekBox(d->s,ATOM_mdat,&bp,&be)||bp==be)goto done;
++    const uint64_t bl_mdat=vlc_stream_Tell(d->s);
 +    if(s->b_seekable){
 +        if(MP4_Seek(d->s,be)!=VLC_SUCCESS)goto done;
 +    }else{
 +        if(!ambient_fel_mdat_pair_budget(be-bp,1)||
-+           vlc_stream_Read(d->s,NULL,bp-resume)!=(ssize_t)(bp-resume))goto done;
++           vlc_stream_Read(d->s,NULL,bp-bl_mdat)!=(ssize_t)(bp-bl_mdat))goto done;
 +        base_cache=vlc_stream_Block(d->s,(size_t)(be-bp));
 +        if(!base_cache||base_cache->i_buffer!=be-bp||vlc_stream_Tell(d->s)!=be)goto done;
 +    }
-+    if(!MP4_FEL_PeekBox(d->s,ATOM_moof,&mp,&me)||me-be>16u*1024u*1024u)
++    if(!MP4_FEL_SkipPadding(d,&padding,&boxes))goto done;
++    const uint64_t el_moof=vlc_stream_Tell(d->s);
++    if(!MP4_FEL_PeekBox(d->s,ATOM_moof,&mp,&me)||me-el_moof>16u*1024u*1024u)
 +        goto done;
 +    root=MP4_BoxGetNextChunk(d->s);
 +    if(!root)goto done;
 +    el=MP4_BoxExtract(&root->p_first,ATOM_moof);
 +    const MP4_Box_t *bm=MP4_BoxGet(bl,"mfhd"),*em=el?MP4_BoxGet(el,"mfhd"):NULL;
-+    if(!el||el->i_pos!=be||el->i_size!=me-be||vlc_stream_Tell(d->s)!=me||
++    if(!el||el->i_pos!=el_moof||el->i_size!=me-el_moof||vlc_stream_Tell(d->s)!=me||
 +       !bm||!em||!bm->data.p_mfhd||!em->data.p_mfhd||
 +       em->data.p_mfhd->i_sequence_number!=bm->data.p_mfhd->i_sequence_number+1u||
 +       !MP4_BoxCount(el,"traf")||MP4_BoxCount(el,"traf")>256||
++       !MP4_FEL_SkipPadding(d,&padding,&boxes)||
 +       !MP4_FEL_PeekBox(d->s,ATOM_mdat,&ep,&ee)||ep==ee)goto done;
++    const uint64_t el_mdat=vlc_stream_Tell(d->s);
 +    if(!s->b_seekable){
 +        if(!ambient_fel_mdat_pair_budget(be-bp,ee-ep)||
-+           vlc_stream_Read(d->s,NULL,ep-me)!=(ssize_t)(ep-me))goto done;
++           vlc_stream_Read(d->s,NULL,ep-el_mdat)!=(ssize_t)(ep-el_mdat))goto done;
 +        el_cache=vlc_stream_Block(d->s,(size_t)(ee-ep));
 +        if(!el_cache||el_cache->i_buffer!=ee-ep||vlc_stream_Tell(d->s)!=ee)goto done;
 +    }
@@ -698,7 +729,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
                               MP4_Box_t *p_sidx, stime_t i_moof_time, bool b_discontinuity )
  {
      demux_sys_t *p_sys = p_demux->p_sys;
-@@ -1958,7 +2553,87 @@
+@@ -1958,7 +2584,87 @@
              p_sys->track[i].context.b_resync_time_offset = true;
      }
  
@@ -787,7 +818,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +        }
          for( unsigned i=0; i<p_sys->i_tracks; i++ )
          {
-@@ -2027,8 +2702,14 @@
+@@ -2027,8 +2733,14 @@
              return VLC_EGENERIC;
      }
  
@@ -802,7 +833,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
      /* map context */
      p_sys->context.p_fragment_atom = p_moox;
      p_sys->context.i_current_box_type = i_moox;
-@@ -2042,8 +2723,9 @@
+@@ -2042,8 +2754,9 @@
      unsigned cand = 0;
      for( unsigned i=0; i<p_sys->i_tracks; i++ )
      {
@@ -814,7 +845,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
          {
              if( cand != i && !p_sys->track[cand].b_selected )
                  cand = i;
-@@ -2188,7 +2870,13 @@
+@@ -2188,7 +2901,13 @@
      if( i_segment_type == ATOM_moof )
      {
          MP4_Box_t *p_moox = p_sys->context.p_fragment_atom;
@@ -829,7 +860,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
          p_sys->context.i_lastseqnumber = FragGetMoofSequenceNumber( p_moox );
  
          p_sys->i_nztime = FragGetDemuxTimeFromTracksTime( p_sys );
-@@ -4987,9 +5675,22 @@
+@@ -4987,9 +5706,22 @@
              MP4_BoxFree( p_sys->context.p_fragment_atom );
          p_sys->context.p_fragment_atom = NULL;
      }
@@ -855,7 +886,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +        p_track->context.runs.i_count=p_track->context.runs.i_current=0;
 +        p_track->ambient_fel_separate=false;
          p_track->context.i_default_sample_size = 0;
-@@ -4997,7 +5698,107 @@
+@@ -4997,7 +5729,107 @@
      }
  }
  
@@ -964,7 +995,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
                             vlc_tick_t i_max_preload )
  {
      if( !p_track->b_ok ||
-@@ -5010,8 +5811,10 @@
+@@ -5010,8 +5842,10 @@
      uint32_t dur = p_track->context.i_default_sample_duration,
               len = p_track->context.i_default_sample_size;
  
@@ -977,7 +1008,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
          return VLC_DEMUXER_EOF;
  
      const stime_t i_demux_max_dts = (i_max_preload < INVALID_PRELOAD) ?
-@@ -5026,10 +5829,17 @@
+@@ -5026,10 +5860,17 @@
          if( p_trun->i_flags & MP4_TRUN_SAMPLE_DURATION )
              dur = p_trun->p_samples[i].i_duration;
  
@@ -999,7 +1030,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
          p_track->context.i_trun_sample = i + 1;
  
          if( p_trun->i_flags & MP4_TRUN_SAMPLE_TIME_OFFSET )
-@@ -5051,7 +5861,13 @@
+@@ -5051,7 +5892,13 @@
          if( !len )
              msg_Warn(p_demux, "Zero length sample in trun.");
  
@@ -1015,7 +1046,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +        block_t *p_block = sys->context.ambient_fel_mdat ?
 +            MP4_FEL_ReadCached(sys,false,readpos,len) : vlc_stream_Block( p_demux->s, len );
          uint32_t i_read = ( p_block ) ? p_block->i_buffer : 0;
-@@ -5076,8 +5892,22 @@
+@@ -5076,8 +5923,22 @@
                  p_block->i_pts = VLC_TICK_INVALID;
              else
                  p_block->i_pts = VLC_TICK_0 + MP4_rescale_mtime( i_pts, p_track->i_timescale );
@@ -1040,7 +1071,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
          }
          else block_Release( p_block );
      }
-@@ -5100,7 +5930,7 @@
+@@ -5100,7 +5961,7 @@
      demux_sys_t *p_sys = p_demux->p_sys;
      int i_status;
  
@@ -1049,7 +1080,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
  
      const vlc_tick_t i_nztime = MP4_GetMoviePTS( p_sys );
  
-@@ -5222,7 +6052,10 @@
+@@ -5222,7 +6083,10 @@
  {
      demux_sys_t *p_sys = p_demux->p_sys;
  
@@ -1060,7 +1091,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
      uint32_t i_traf = 0;
      uint64_t i_prev_traf_end = 0;
  
-@@ -5245,14 +6078,19 @@
+@@ -5245,14 +6109,19 @@
          const MP4_Box_t *p_tfhd = MP4_BoxGet( p_traf, "tfhd" );
          uint32_t i_trun_count = MP4_BoxCount( p_traf, "trun" );
          if ( !p_tfhd || !i_trun_count )
@@ -1080,7 +1111,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +        }
              continue;
          memset(&p_track->context.runs.p_array[p_track->context.runs.i_count], 0, i_trun_count * sizeof(mp4_run_t));
-@@ -5375,7 +6213,12 @@
+@@ -5375,7 +6244,12 @@
              const MP4_Box_data_trun_t *p_trundata = p_trun->data.p_trun;
  
              /* Get data offset */
@@ -1094,7 +1125,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
              {
                  /* Fix for broken Trun data offset relative to tfhd instead of moof, as seen in smooth */
                  if( (BOXDATA(p_tfhd)->i_flags & MP4_TFHD_BASE_DATA_OFFSET) == 0 &&
-@@ -5444,9 +6287,11 @@
+@@ -5444,9 +6318,11 @@
                  i_trun_size += p_trundata->i_sample_count *
                          i_track_defaultsamplesize;
              }
@@ -1106,7 +1137,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
  
          i_traf++;
      }
-@@ -5612,8 +6457,9 @@
+@@ -5612,8 +6488,9 @@
              p_sys->context.i_current_box_type != ATOM_moov )
          {
              uint64_t i_pos = vlc_stream_Tell( p_demux->s );
@@ -1118,7 +1149,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
              {
                  if( vlc_stream_Peek( p_demux->s, &p_peek, 16 ) != 16 )
                  {
-@@ -5633,7 +6479,29 @@
+@@ -5633,7 +6510,29 @@
              {
                  /* We'll now read mdat using context atom,
                   * but we'll need post mdat offset, as we'll never seek backward */
@@ -1149,7 +1180,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
              }
              else if( MP4_Seek( p_demux->s, i_pos + i_size ) != VLC_SUCCESS ) /* skip other atoms */
              {
-@@ -5683,7 +6551,10 @@
+@@ -5683,7 +6582,10 @@
                                            MP4_BoxGet( p_vroot, "sidx"), INVALID_SEGMENT_TIME,
                                            b_discontinuity ) != VLC_SUCCESS )
                      {
@@ -1160,7 +1191,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
                          i_status = VLC_DEMUXER_EOF;
                          goto end;
                      }
-@@ -5696,7 +6567,9 @@
+@@ -5696,7 +6598,9 @@
                      /* !Prepare chunk */
                  }
  
@@ -1171,7 +1202,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
              }
  
              MP4_BoxFree( p_vroot );
-@@ -5712,7 +6585,23 @@
+@@ -5712,7 +6616,23 @@
      if ( p_sys->context.i_current_box_type == ATOM_mdat )
      {
          assert(p_sys->context.p_fragment_atom);
@@ -1195,7 +1226,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
          if ( p_sys->context.p_fragment_atom )
          switch( p_sys->context.p_fragment_atom->i_type )
          {
-@@ -5732,7 +6621,9 @@
+@@ -5732,7 +6652,9 @@
              i_status = VLC_DEMUXER_SUCCESS;
              /* Skip if we didn't reach the end of mdat box */
              uint64_t i_pos = vlc_stream_Tell( p_demux->s );
@@ -1206,7 +1237,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
              {
                  if( i_pos > p_sys->context.i_post_mdat_offset )
                      msg_Err( p_demux, " Overread mdat by %" PRIu64, i_pos - p_sys->context.i_post_mdat_offset );
-@@ -5742,9 +6633,26 @@
+@@ -5742,9 +6664,26 @@
                  if( MP4_Seek( p_demux->s, p_sys->context.i_post_mdat_offset ) != VLC_SUCCESS )
                      i_status = VLC_DEMUXER_EGENERIC;
              }

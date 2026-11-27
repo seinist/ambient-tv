@@ -945,3 +945,13 @@ auxiliary runs do not claim bytes. The one-time check is reset with the
 fragment context and shared by seekable and buffered paths. This strict
 admission deliberately rejects aliased runs and layouts with multiple
 physical mdats for a single moof, rather than silently truncating them.
+
+Adjacent BL/EL carriage now admits inert top-level free/skip boxes in
+all three gaps (BL moof to mdat, BL mdat to EL moof, EL moof to mdat).
+Each pair shares a 16 MiB / 64 padding-box scan budget in addition to the
+64 MiB combined forward-only payload cap. No timed or unknown box is
+skipped; the EL moof must still be the next media fragment, sequence and
+track checks remain exact. Seekable lookahead restores the original
+position; forward-only reads use the actual mdat header positions.
+Host tests cover exact padding budgets and malformed lengths. Arbitrary
+intervening media fragments and multi-mdat layouts remain unsupported.

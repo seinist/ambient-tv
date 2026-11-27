@@ -8,6 +8,16 @@
  * The entire payload is owned by the demuxer until that fragment ends;
  * callers receive a view only while the owner is alive. */
 #define AMBIENT_FEL_MAX_MDAT (64u*1024u*1024u)
+/* Only inert ISO-BMFF padding boxes may intervene in a matched pair.
+ * Both size and box-count budgets apply across all gaps in that pair. */
+#define AMBIENT_FEL_MAX_PADDING (16u*1024u*1024u)
+#define AMBIENT_FEL_MAX_PADDING_BOXES 64u
+static inline bool ambient_fel_padding_budget(uint64_t *bytes,unsigned *count,uint64_t size)
+{
+    if(!bytes||!count||size<8||*count>=AMBIENT_FEL_MAX_PADDING_BOXES||
+        *bytes>AMBIENT_FEL_MAX_PADDING||size>AMBIENT_FEL_MAX_PADDING-*bytes)return false;
+    *bytes+=size;++*count;return true;
+}
 /* Both adjacent payloads share the existing cap. */
 static inline bool ambient_fel_mdat_pair_budget(uint64_t bl,uint64_t el)
 {
