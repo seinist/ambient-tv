@@ -16,6 +16,7 @@ struct ambient_fel_picture {
     unsigned width,height;
     unsigned crop_x,crop_y; /* origin of the visible EL in its coded picture */
     float chroma_x,chroma_y;
+    size_t sample_count; /* zero only for a proven zero-residual frame */
     // Tightly packed 16-bit Y, Cb, Cr codewords, ceil chroma dimensions.
     uint16_t samples[];
 };
@@ -28,6 +29,10 @@ int av_ambient_fel_drain(struct ambient_fel_session *);
 bool av_ambient_fel_may_receive(const struct ambient_fel_session *);
 /* Return owned EL frame for exactly pts, never nearest. */
 struct ambient_fel_picture *av_ambient_fel_take(struct ambient_fel_session *,int64_t);
+/* Match the decoded EL as usual, but omit its pixel copy only when the
+ * exact matching RPU proves all residual components are zero. */
+struct ambient_fel_picture *av_ambient_fel_take_rpu(struct ambient_fel_session *,int64_t,
+    const struct ambient_dovi_metadata *);
 void av_ambient_fel_discard(struct ambient_fel_session *,int64_t);
 #ifdef __cplusplus
 }

@@ -42,7 +42,7 @@ new file mode 100644
 diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 --- a/libavcodec/dovi_rpudec.c
 +++ b/libavcodec/dovi_rpudec.c
-@@ -747,4 +747,246 @@
+@@ -747,4 +747,262 @@
      }
  
      return 0;
@@ -245,7 +245,8 @@ diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 +    if(s->discarded>=64){s->decoder.failed=true;return;}
 +    s->discard[s->discarded++]=pts;
 +}
-+struct ambient_fel_picture *av_ambient_fel_take(struct ambient_fel_session *s,int64_t pts)
++struct ambient_fel_picture *av_ambient_fel_take_rpu(struct ambient_fel_session *s,int64_t pts,
++    const struct ambient_dovi_metadata *rpu)
 +{
 +    if(!s)return NULL;
 +    AVFrame *f=ambient_fel_decoder_take(&s->decoder,pts);
@@ -257,11 +258,21 @@ diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 +        s->decoder.failed=true;av_frame_free(&f);return NULL;
 +    }
 +    unsigned w=f->width,h=f->height,cw=(w+1)/2,ch=(h+1)/2;
-+    size_t count=(size_t)w*h+2*(size_t)cw*ch;
++    // Keep decoding and consuming the exact EL even when its contribution
++    // is zero. Only omit the copy when valid profile-7 NLQ proves it.
++    bool zero=rpu && rpu->residual_present && !rpu->full_range &&
++        rpu->bl_bit_depth==10 && rpu->el_bit_depth==10 && rpu->vdr_bit_depth==12 &&
++        rpu->coef_log2_denom>=13 && rpu->coef_log2_denom<=32 &&
++        rpu->nlq_pivots[0]<=rpu->nlq_pivots[1] && rpu->nlq_pivots[1]<=1023;
++    for(unsigned i=0;zero&&i<3;i++)
++        if(rpu->nlq_offset[i]>1023 || (rpu->nlq_maximum[i] &&
++            (rpu->nlq_slope[i] || rpu->nlq_threshold[i])))zero=false;
++    size_t count=zero?0:(size_t)w*h+2*(size_t)cw*ch;
 +    struct ambient_fel_picture *out=malloc(sizeof(*out)+count*sizeof(uint16_t));
 +    if(!out){s->decoder.failed=true;goto done;}
 +    *out=(struct ambient_fel_picture){.pts=pts,.width=w,.height=h,
-+        .crop_x=crop_x,.crop_y=crop_y};
++        .crop_x=crop_x,.crop_y=crop_y,.sample_count=count};
++    if(rpu)out->rpu=*rpu;
 +    // HEVC UHD defaults to top-left here when metadata is missing.
 +    // Other explicitly signaled chroma locations retain their own offsets.
 +    switch(f->chroma_location){
@@ -274,6 +285,7 @@ diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 +        case AVCHROMA_LOC_BOTTOM:out->chroma_y=0.5f;break;
 +        default:free(out);out=NULL;s->decoder.failed=true;goto done;
 +    }
++    if(zero)goto done;
 +    uint16_t *dst=out->samples;
 +    for(unsigned i=0;i<3;i++){
 +        unsigned pw=i?cw:w,ph=i?ch:h;
@@ -288,6 +300,10 @@ diff --git a/libavcodec/dovi_rpudec.c b/libavcodec/dovi_rpudec.c
 +done:
 +    av_frame_free(&f);
 +    return out;
++}
++struct ambient_fel_picture *av_ambient_fel_take(struct ambient_fel_session *s,int64_t pts)
++{
++    return av_ambient_fel_take_rpu(s,pts,NULL);
 +}
 diff --git a/libavcodec/ambient_fel_decoder.h b/libavcodec/ambient_fel_decoder.h
 new file mode 100644
@@ -464,7 +480,7 @@ diff --git a/libavcodec/ambient_fel_api.h b/libavcodec/ambient_fel_api.h
 new file mode 100644
 --- /dev/null
 +++ b/libavcodec/ambient_fel_api.h
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,39 @@
 +#pragma once
 +/* Private static FFmpeg interface. No AVFrame/AVPacket types cross modules.
 + * Data is copied once at picture ownership transfer, allocated with libc
@@ -483,6 +499,7 @@ new file mode 100644
 +    unsigned width,height;
 +    unsigned crop_x,crop_y; /* origin of the visible EL in its coded picture */
 +    float chroma_x,chroma_y;
++    size_t sample_count; /* zero only for a proven zero-residual frame */
 +    // Tightly packed 16-bit Y, Cb, Cr codewords, ceil chroma dimensions.
 +    uint16_t samples[];
 +};
@@ -495,6 +512,10 @@ new file mode 100644
 +bool av_ambient_fel_may_receive(const struct ambient_fel_session *);
 +/* Return owned EL frame for exactly pts, never nearest. */
 +struct ambient_fel_picture *av_ambient_fel_take(struct ambient_fel_session *,int64_t);
++/* Match the decoded EL as usual, but omit its pixel copy only when the
++ * exact matching RPU proves all residual components are zero. */
++struct ambient_fel_picture *av_ambient_fel_take_rpu(struct ambient_fel_session *,int64_t,
++    const struct ambient_dovi_metadata *);
 +void av_ambient_fel_discard(struct ambient_fel_session *,int64_t);
 +#ifdef __cplusplus
 +}

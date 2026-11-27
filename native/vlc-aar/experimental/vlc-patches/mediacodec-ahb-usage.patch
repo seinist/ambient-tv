@@ -528,7 +528,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
 +                        struct ambient_fel_picture *el = NULL;
 +                        const vlc_tick_t el_deadline = vlc_tick_now() + VLC_TICK_FROM_SEC(3);
 +                        while (!p_sys->b_aborted && !p_sys->b_flush_out && !p_sys->b_decoder_dead &&
-+                               !(el = av_ambient_fel_take(p_sys->video.fel, p_out->buf.i_ts))) {
++                               !(el = av_ambient_fel_take_rpu(p_sys->video.fel, p_out->buf.i_ts, m))) {
 +                            if (!av_ambient_fel_may_receive(p_sys->video.fel) ||
 +                                vlc_cond_timedwait(&p_sys->video.air_cond, &p_sys->lock, el_deadline))
 +                                break;

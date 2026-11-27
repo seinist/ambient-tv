@@ -226,6 +226,7 @@ int main(int argc,char **argv)
     assert(!av_ambient_fel_may_receive(session));
     struct ambient_fel_picture *picture=av_ambient_fel_take(session,90000);
     assert(picture&&picture->pts==90000&&picture->width==64&&picture->height==64);
+    assert(picture->sample_count==64*64+2*32*32);
     assert(!av_ambient_fel_take(session,90000));
     for(unsigned i=0;i<64*64+2*32*32;i++) assert(picture->samples[i]<=1023);
     av_ambient_fel_flush(session);
@@ -240,6 +241,25 @@ int main(int argc,char **argv)
     free(dual_picture);av_packet_free(&paired);
     av_ambient_fel_flush(session);
     assert(av_ambient_fel_may_receive(session));
+    // The compact path still decodes, matches and consumes the exact PTS.
+    struct ambient_dovi_metadata mel={.residual_present=1,.bl_bit_depth=10,
+        .el_bit_depth=10,.vdr_bit_depth=12,.coef_log2_denom=16,.nlq_pivots={0,1023}};
+    for(unsigned i=0;i<3;i++)mel.nlq_maximum[i]=65536;
+    for(unsigned pass=0;pass<2;pass++){
+        int64_t key=290000+pass*100000;
+        AVPacket *mp=wrap(input,(size_t)n,key);
+        assert(av_ambient_fel_submit(session,mp->data,mp->size,key,key)==0);
+        assert(av_ambient_fel_drain(session)==0);
+        assert(!av_ambient_fel_take_rpu(session,key+1,&mel));
+        struct ambient_fel_picture *compact=av_ambient_fel_take_rpu(session,key,&mel);
+        assert(compact&&compact->pts==key&&compact->width==64&&compact->height==64);
+        assert(compact->sample_count==(pass?64*64+2*32*32:0));
+        assert(!av_ambient_fel_take(session,key));
+        if(pass)assert(!memcmp(compact->samples,picture->samples,
+            compact->sample_count*sizeof(uint16_t)));
+        free(compact);av_packet_free(&mp);av_ambient_fel_flush(session);
+        mel.nlq_slope[0]=1; // next frame requires its actual samples
+    }
     // Overflow of early discard markers is a terminal error, never a wait.
     for(int64_t i=1;i<=65;i++)av_ambient_fel_discard(session,i);
     assert(!av_ambient_fel_may_receive(session));

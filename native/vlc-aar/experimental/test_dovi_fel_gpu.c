@@ -287,7 +287,7 @@ int main(void)
     struct ambient_fel_picture *pic=calloc(1,sizeof(*pic)+6*sizeof(uint16_t));
     assert(pic);
     pic->rpu=metadata;pic->rpu.residual_present=1;pic->rpu.source_max_pq=3072;
-    pic->width=2;pic->height=2;pic->pts=1234;
+    pic->width=2;pic->height=2;pic->pts=1234;pic->sample_count=6;
     for(unsigned i=0;i<3;i++){
         pic->rpu.nonlinear_matrix[3*i+i]=1.f;
         pic->rpu.linear_matrix[3*i+i]=1.f;
@@ -303,6 +303,12 @@ int main(void)
     assert(ambient_fel_render_picture(gpu,log,&render,&frame,pic,1234,0,0));
     assert(frame.planes[0].texture==render.output && frame.repr.sys==PL_COLOR_SYSTEM_RGB);
     assert(frame.color.transfer==PL_COLOR_TRC_PQ);
+    assert(!ambient_fel_render_picture(gpu,log,&render,&frame,pic,1234,0,0));
+    assert(frame.planes[0].texture==render.output);
+    frame.planes[0].texture=neutral_bl;
+    pic->sample_count=5;
+    assert(!ambient_fel_render_picture(gpu,log,&render,&frame,pic,1234,0,0));
+    pic->sample_count=6;
     // Cropped visible textures are in local coordinates; admit only
     // matched even origins, never silently accept a different EL phase.
     pic->crop_x=2;pic->crop_y=4;
@@ -319,7 +325,14 @@ int main(void)
         pic->rpu.nlq_slope[i]=0;pic->rpu.nlq_threshold[i]=0;
     }
     frame.planes[0].texture=neutral_bl;
-    assert(ambient_fel_render_picture(gpu,log,&mel_render,&frame,pic,1234,0,0));
+    struct ambient_fel_picture *compact=malloc(sizeof(*compact));
+    assert(compact);
+    *compact=*pic;compact->sample_count=0;
+    assert(ambient_fel_render_picture(gpu,log,&mel_render,&frame,compact,1234,0,0));
+    frame.planes[0].texture=neutral_bl;
+    compact->rpu=original_rpu;
+    assert(!ambient_fel_render_picture(gpu,log,&mel_render,&frame,compact,1234,0,0));
+    free(compact);
     assert(!mel_render.planes.tex[0]&&!mel_render.planes.tex[1]&&!mel_render.planes.tex[2]);
     pic->rpu=original_rpu;
     frame.planes[0].texture=neutral_bl;

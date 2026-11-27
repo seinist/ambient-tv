@@ -31,20 +31,24 @@ static inline bool ambient_fel_render_picture(pl_gpu gpu,pl_log log,
         pic->rpu.source_max_pq>4095)return false;
     pl_tex bl=img->planes[0].texture;
     unsigned w=pic->width,h=pic->height,cw=(w+1)/2,ch=(h+1)/2;
-    if(bl->params.w<=0||bl->params.h<=0||
+    if(bl==s->output||bl->params.w<=0||bl->params.h<=0||
        !ambient_fel_crop_axis(bl->params.w,w,bl_x,pic->crop_x)||
        !ambient_fel_crop_axis(bl->params.h,h,bl_y,pic->crop_y))return false;
     struct pl_dovi_metadata reshape;
     struct ambient_fel_nlq nlq;
     if(!ambient_fel_metadata(&pic->rpu,&reshape,&nlq))return false;
-    const uint16_t *data[]={pic->samples,pic->samples+(size_t)w*h,
-        pic->samples+(size_t)w*h+(size_t)cw*ch};
-    const size_t pitches[]={w*2u,cw*2u,cw*2u};
     const bool zero=ambient_fel_nlq_zero(&nlq);
-    // Keep decoding EL frames to preserve reference pictures across a
-    // possible later nonzero-residual RPU, but avoid useless GPU uploads.
-    if(!zero&&!ambient_fel_planes_upload(gpu,&s->planes,w,h,data,pitches,
-        pic->chroma_x,pic->chroma_y))return false;
+    const size_t expected=(size_t)w*h+2*(size_t)cw*ch;
+    // A compact snapshot may only be used with a matching zero-residual
+    // RPU. Validate its length before forming any flexible-array pointers.
+    if(pic->sample_count!=expected && !(zero&&pic->sample_count==0))return false;
+    if(!zero){
+        const uint16_t *data[]={pic->samples,pic->samples+(size_t)w*h,
+            pic->samples+(size_t)w*h+(size_t)cw*ch};
+        const size_t pitches[]={w*2u,cw*2u,cw*2u};
+        if(!ambient_fel_planes_upload(gpu,&s->planes,w,h,data,pitches,
+            pic->chroma_x,pic->chroma_y))return false;
+    }
     if(!s->dispatch)s->dispatch=pl_dispatch_create(log,gpu);
     pl_fmt fmt=pl_find_fmt(gpu,PL_FMT_FLOAT,4,16,0,
         PL_FMT_CAP_SAMPLEABLE|PL_FMT_CAP_RENDERABLE|PL_FMT_CAP_LINEAR);
