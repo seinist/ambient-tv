@@ -225,9 +225,9 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +    struct pl_color_map_params spatial_color;
 +    if (ahb_output.texture && !ahb_output.raw_yuv && sys->ahb_hdrplus_spatial &&
 +        !sys->ahb_dovi && !img.lut && !target.lut && !sys->params.lut &&
-+        pic->format.i_x_offset == 0 && pic->format.i_y_offset == 0 &&
-+        pic->format.i_visible_width == pic->format.i_width &&
-+        pic->format.i_visible_height == pic->format.i_height) {
++        ambient_dovi_visible_origin(&pic->format) &&
++        img.planes[0].texture->params.w == (int)pic->format.i_visible_width &&
++        img.planes[0].texture->params.h == (int)pic->format.i_visible_height) {
 +        struct vlc_ancillary *full = picture_GetAncillary(pic, AMBIENT_HDRPLUS_FULL_ID);
 +        if (full && ambient_hdrplus_spatial_render(gpu, sys->pl->log, &sys->spatial,
 +            &img, &target, vlc_ancillary_GetData(full))) {
