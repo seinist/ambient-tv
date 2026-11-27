@@ -89,6 +89,29 @@ int main(void)
             fprintf(stderr,"FEL pixel %u: actual %f expected %f\n",k,pixels[k],expected);
         assert(isfinite(pixels[k])&&fabs(pixels[k]-expected)<0.0001);
     }
+    // A canonical MEL-like RPU can prove the residual is zero without
+    // sampling any EL texture. Also cover zero-maximum components.
+    struct ambient_fel_nlq mel=nlq;
+    for(unsigned i=0;i<3;i++){mel.offset[i]=0;mel.slope[i]=0;mel.threshold[i]=0;mel.maximum[i]=65536;}
+    assert(ambient_fel_nlq_zero(&mel)&&!ambient_fel_nlq_zero(&nlq));
+    mel.maximum[0]=0;mel.slope[0]=65536;
+    assert(ambient_fel_nlq_zero(&mel));
+    mel.threshold[1]=1;
+    assert(!ambient_fel_nlq_zero(&mel));
+    assert(!ambient_fel_compose(gpu,dp,bl,NULL,out,&reshape,&mel));
+    mel.threshold[1]=0;
+    assert(ambient_fel_compose(gpu,dp,bl,NULL,out,&reshape,&mel));
+    assert(pl_tex_download(gpu,pl_tex_transfer_params(.tex=out,.ptr=pixels)));
+    for(unsigned i=0;i<16;i++)if(i%4!=3)
+        assert(fabsf(pixels[i]-(0.1f+0.9f*base[i]))<0.0001f);
+    struct pl_dovi_metadata invalid=reshape;
+    invalid.comp[0].method[0]=2;
+    assert(!ambient_fel_compose(gpu,dp,bl,NULL,out,&invalid,&mel));
+    invalid=reshape;invalid.comp[0].method[0]=1;invalid.comp[0].mmr_order[0]=4;
+    assert(!ambient_fel_compose(gpu,dp,bl,NULL,out,&invalid,&mel));
+    invalid=reshape;invalid.comp[0].poly_coeffs[0][1]=NAN;
+    assert(!ambient_fel_compose(gpu,dp,bl,NULL,out,&invalid,&mel));
+
     // Half-resolution EL: 2x2 luma, 1x1 chroma; 4x4 BL is
     // packed exactly like the native P010 identity sampler (Cr,Y,Cb).
     const uint16_t y[]={512,516,520,524},u[]={514},v[]={510};
@@ -192,6 +215,21 @@ int main(void)
     assert(ambient_fel_render_picture(gpu,log,&render,&frame,pic,1234));
     assert(frame.planes[0].texture==render.output && frame.repr.sys==PL_COLOR_SYSTEM_RGB);
     assert(frame.color.transfer==PL_COLOR_TRC_PQ);
+    // Exercise transition from nonzero -> zero -> nonzero metadata.
+    // The first MEL frame must not allocate any EL GPU planes.
+    struct ambient_fel_render mel_render={0};
+    struct ambient_dovi_metadata original_rpu=pic->rpu;
+    for(unsigned i=0;i<3;i++){
+        pic->rpu.nlq_slope[i]=0;pic->rpu.nlq_threshold[i]=0;
+    }
+    frame.planes[0].texture=neutral_bl;
+    assert(ambient_fel_render_picture(gpu,log,&mel_render,&frame,pic,1234));
+    assert(!mel_render.planes.tex[0]&&!mel_render.planes.tex[1]&&!mel_render.planes.tex[2]);
+    pic->rpu=original_rpu;
+    frame.planes[0].texture=neutral_bl;
+    assert(ambient_fel_render_picture(gpu,log,&mel_render,&frame,pic,1234));
+    assert(mel_render.planes.tex[0]&&mel_render.planes.tex[1]&&mel_render.planes.tex[2]);
+    pl_gpu_finish(gpu);ambient_fel_render_destroy(gpu,&mel_render);
     free(pic);
     pl_gpu_finish(gpu);
     ambient_fel_render_destroy(gpu,&render);
