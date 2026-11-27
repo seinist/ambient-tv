@@ -2496,5 +2496,5 @@
     <string name="svp_transport">Frame transport</string>
     <string name="svp_transport_standard">Standard (copy-back)</string>
     <string name="svp_transport_resident">Hardware-resident (experimental)</string>
-    <string name="svp_transport_hint">SDR 8-bit, up to 1080p. Requires compatible native libraries and Vulkan; unsupported processing falls back. MPV applies the decoder change when reopening playback.</string>
+    <string name="svp_transport_hint">Up to 1080p with compatible Vulkan hardware. Supports SDR and compatible 10-bit HDR10/HLG. MPV can also use native Vulkan decoding for compatible HDR10+ and Dolby Vision; changing or unsupported metadata keeps the original frames. Unsupported paths fall back. MPV applies decoder changes when reopening playback.</string>
 </resources>
