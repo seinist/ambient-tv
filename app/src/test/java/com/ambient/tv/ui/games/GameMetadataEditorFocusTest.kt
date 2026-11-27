@@ -20,6 +20,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.performTextReplacement
+import com.ambient.tv.ui.common.TvActionButton
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.onNodeWithTag
@@ -119,6 +122,41 @@ class GameMetadataEditorFocusTest {
         val actual = edgeColor(index)
         val difference = distance(actual, expected)
         assertTrue("$message: actual=$actual, expected=$expected, RGB difference=$difference", difference < .04f)
+    }
+
+    @Test fun queryCanBeFocusedAndEditedWithRemote() {
+        var query by mutableStateOf("Original game")
+        var submitted = ""
+        rule.setContent {
+            CompositionLocalProvider(LocalHandheldUi provides false) {
+                AmbientTvTheme(accentMotionKey = "off") {
+                    AppDialog(onDismiss = {}, title = "Identify game", scrollable = false,
+                        captureInitialFocus = false) {
+                        inputModeManager = LocalInputModeManager.current
+                        TvLazyColumn(Modifier.heightIn(max = 360.dp), wrapVerticalFocus = false) {
+                            item("query") { GameMetadataSearchField(query, { query = it }, Modifier.testTag("query")) }
+                            item("search") { TvActionButton("Search", { submitted = query }, Modifier.testTag("search")) }
+                        }
+                    }
+                }
+            }
+        }
+        rule.runOnIdle { assertTrue(inputModeManager.requestInputMode(InputMode.Keyboard)) }
+        val field = rule.onNodeWithTag("query")
+        field.performSemanticsAction(SemanticsActions.RequestFocus) { assertTrue(it()) }
+        settleFocus()
+        field.assertIsFocused()
+        field.performKeyInput { pressKey(Key.DirectionCenter) }
+        settleFocus()
+        rule.onNode(hasSetTextAction(), useUnmergedTree = true).performTextReplacement("Different game")
+        rule.runOnIdle { assertEquals("Different game", query) }
+        rule.onNode(hasSetTextAction(), useUnmergedTree = true).performKeyInput { pressKey(Key.DirectionDown) }
+        settleFocus()
+        rule.onNodeWithTag("search").assertIsFocused().performKeyInput { pressKey(Key.DirectionCenter) }
+        rule.runOnIdle { assertEquals("Different game", submitted) }
+        rule.onNodeWithTag("search").performKeyInput { pressKey(Key.DirectionUp) }
+        settleFocus()
+        field.assertIsFocused()
     }
 
     @Test fun visibleFocusFollowsDpadBetweenMatchesWithEveryAccentStyle() {

@@ -28,6 +28,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -130,10 +132,14 @@ internal fun GameMetadataEditor(
                 }),
                 hint = stringResource(if (imageKind == null) R.string.game_edit_search_hint else R.string.game_edit_artwork_hint),
                 scrollable = false,
+                // The search field owns initial focus; do not let the dialog's generic
+                // endpoint traversal land on a provider, result or footer instead.
+                captureInitialFocus = false,
                 widthFraction = if (LocalHandheldUi.current) null else .65f,
                 maxWidth = 880.dp,
                 maxHeightFraction = .92f,
             ) {
+                var queryInitiallyFocused by remember(game.fileId, current) { mutableStateOf(false) }
                 val choices = remember(state.matches, imageKind) {
                     (if (imageKind == null) state.matches else state.matches.filter { it.metadata.artwork(imageKind) != null })
                         .distinctBy { gameMetadataChoiceKey(it, imageKind) }
@@ -141,7 +147,15 @@ internal fun GameMetadataEditor(
                 // Keep the controls in the same scrollable viewport as the results. Fixed
                 // controls can otherwise consume the whole dialog in landscape or above the IME.
                 TvLazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    wrapVerticalFocus = false) {
+                    item("query") {
+                        GameMetadataSearchField(
+                            query, { query = it.take(256); queryEdited = true },
+                            requestInitialFocus = !queryInitiallyFocused,
+                            onInitialFocus = { queryInitiallyFocused = true },
+                        )
+                    }
                     item("providers") { DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         state.providers.forEach { id ->
                             TvChip(gameMetadataProviderName(id), selected = provider == id,
@@ -153,8 +167,6 @@ internal fun GameMetadataEditor(
                                 }, enabled = !state.busy)
                         }
                     } }
-                    item("query") { TvTextField(query, { query = it.take(256); queryEdited = true }, stringResource(R.string.action_search),
-                        Modifier.fillMaxWidth()) }
                     item("actions") { DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TvActionButton(stringResource(R.string.action_search),
                             onClick = { model.search(query, provider, imageKind) },
@@ -187,6 +199,35 @@ internal fun GameMetadataEditor(
                                 else model.setArtwork(imageKind, match, done)
                             })
                     }
+                }
+            }
+        }
+    }
+}
+
+/** The query is the first focus target on TV, without automatically opening the IME. */
+@Composable
+internal fun GameMetadataSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    requestInitialFocus: Boolean = true,
+    onInitialFocus: () -> Unit = {},
+) {
+    val handheld = LocalHandheldUi.current
+    val requester = remember { FocusRequester() }
+    // A lazy item can be disposed when scrolled off screen. Do not steal focus on return:
+    // initial focus belongs to the dialog instance, not to the lazy item.
+    TvTextField(query, onQueryChange, stringResource(R.string.action_search),
+        modifier.fillMaxWidth().focusRequester(requester),
+        requireExplicitEditing = !handheld)
+    if (!handheld && requestInitialFocus) {
+        LaunchedEffect(requester) {
+            repeat(10) {
+                androidx.compose.runtime.withFrameNanos { }
+                if (runCatching { requester.requestFocus() }.getOrDefault(false)) {
+                    onInitialFocus()
+                    return@LaunchedEffect
                 }
             }
         }
