@@ -7,10 +7,15 @@ import java.io.File
 internal class ModuleDexOwnership(
     private val prefixes: Set<String>,
     private val classes: Set<String>,
+    private val required: Set<String> = emptySet(),
+    private val requiredPrefixes: Set<String> = emptySet(),
 ) {
     fun owns(name: String): Boolean =
         prefixes.any { name.startsWith(it) } ||
             classes.any { name == it || name.startsWith(it + "$") }
+
+    fun accepts(definitions: Set<String>): Boolean = definitions.containsAll(required) &&
+        definitions.all(::owns) && requiredPrefixes.all { prefix -> definitions.any { it.startsWith(prefix) } }
 
     companion object {
         val MONOGRAM = ModuleDexOwnership(
@@ -22,6 +27,14 @@ internal class ModuleDexOwnership(
                 "com.ambient.tv.data.telegram.AmbientMonogramJni",
                 "com.ambient.tv.data.telegram.AmbientMonogramJniFailure",
             ),
+            required = setOf(
+                "com.ambient.tv.data.telegram.MonogramModuleAdapter",
+                "com.ambient.tv.data.telegram.MonogramNativeBackend",
+                "com.ambient.tv.data.telegram.AmbientMonogramJni",
+                "org.monogram.mtproto.MtprotoNativeLoader",
+                "com.sun.jna.Native",
+            ),
+            requiredPrefixes = setOf("uniffi.monogram_mtproto.", "org.rustls."),
         )
     }
 }
