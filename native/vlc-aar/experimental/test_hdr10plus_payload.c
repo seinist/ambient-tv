@@ -49,6 +49,7 @@ int main(void) {
                 const struct ambient_hdrplus_window *global = &m.windows[0];
                 assert(m.version == 1 && m.target_nits == 1000 && global->anchor_count == 2);
                 assert(m.window_count == windows);
+                assert(!m.version1_constraints_ok);
                 assert(m.global_projection == (windows>1 || grids || saturation));
                 assert(fabsf(global->maxscl[0] - 0.1f) < 0.00001f);
                 assert(global->histogram_count == 2 && global->histogram[1].percentage == 99);
@@ -82,6 +83,24 @@ int main(void) {
             }
         }
     }
+    // Single-window v1 metadata with nine distribution entries and no
+    // optional grids/saturation; zero knee endpoints are legal syntax.
+    struct writer conforming = {{0xb5,0,0x3c,0,1,4},48};
+    put(&conforming,8,1); put(&conforming,2,1);
+    put(&conforming,27,1000); put(&conforming,1,0);
+    for(unsigned i=0;i<3;i++) put(&conforming,17,10000);
+    put(&conforming,17,2500); put(&conforming,4,9);
+    const unsigned percentages[]={1,5,10,25,50,75,90,95,99};
+    const unsigned distribution[]={0,0,255,1000,2000,3000,4000,5000,9000};
+    for(unsigned i=0;i<9;i++){
+        put(&conforming,7,percentages[i]); put(&conforming,17,distribution[i]);
+    }
+    put(&conforming,10,100); put(&conforming,1,0);
+    put(&conforming,1,1); put(&conforming,12,0); put(&conforming,12,0);
+    put(&conforming,4,0); put(&conforming,1,0);
+    assert(ambient_hdrplus_parse(conforming.data,(conforming.pos+7)/8,&m));
+    assert(m.version1_constraints_ok && m.windows[0].knee_x==0.f &&
+           m.windows[0].knee_y==0.f);
     struct writer w = fixture(1,1,0);
     assert(!ambient_hdrplus_parse(w.data,(w.pos+7)/8,&m)); // invalid grid dimensions
     w = fixture(0,0,0);
