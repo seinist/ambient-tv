@@ -209,6 +209,11 @@ static void process(struct mp_filter *f) {
 #if SVP_MPV_RESIDENT
     if (p->vk) {
         svp_vk_reap(p->vk, false);
+        if (!p->api.enabled()) {
+            struct mp_image *previous = svp_vk_take_previous(p->vk);
+            svp_vk_reset_history(p->vk);
+            if (previous) { mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, previous)); return; }
+        }
         struct mp_image *out = svp_vk_take_output(p->vk);
         if (out) { mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, out)); return; }
     }
@@ -331,6 +336,15 @@ static bool command(struct mp_filter *f, struct mp_filter_command *cmd) {
 #endif
     mp_tags_set_str(tags, "backend", resident || s.backend == 2 ? "vulkan" : s.backend == 1 ? "cpu" : "off");
     mp_tags_set_str(tags, "transport", resident ? "hardware-resident" : "host-i420");
+#if SVP_MPV_RESIDENT
+    if (resident) {
+        s.output_frames = p->vk->output_frames;
+        // No GPU readback to count genuinely novel images. Generated
+        // output ticks are exposed separately from novelty statistics.
+        mp_tags_set_str(tags, "gpu-generated-frames", talloc_asprintf(tags, "%llu",
+            (unsigned long long)p->vk->generated_frames));
+    }
+#endif
     /* bypass: engine reason only (1 overload, 2 gate, 3 engine error); passthrough: adapter reason. */
     mp_tags_set_str(tags, "bypass", talloc_asprintf(tags, "%u", p->engine ? s.bypass_reason : 0u));
     mp_tags_set_str(tags, "passthrough", talloc_asprintf(tags, "%d", p->passthrough));
