@@ -78,6 +78,24 @@ int main(void) {
     assert(ambient_hdrplus_spatial_supported(&m,200,200,masks,&layering)&&layering);
     assert(ambient_hdrplus_weight(&masks[0],40,100)==1.f);
     assert(ambient_hdrplus_weight(&masks[1],40,100)==0.f);
+    // Parallel narrow 45-degree ellipses whose AABBs overlap but
+    // whose actual selected pixels are disjoint.
+    struct ambient_hdrplus_geometry save1=m.windows[1].geometry,save2=m.windows[2].geometry;
+    m.windows[1].geometry=(struct ambient_hdrplus_geometry){
+        .left=0,.top=0,.right=199,.bottom=199,.center_x=80,.center_y=80,
+        .semimajor_inner=20,.semimajor_outer=60,.semiminor_outer=5,.angle=45,.overlap=1};
+    m.windows[2].geometry=m.windows[1].geometry;
+    m.windows[2].geometry.center_x=100;m.windows[2].geometry.center_y=60;
+    m.windows[2].geometry.overlap=0;
+    assert(ambient_hdrplus_spatial_supported(&m,200,200,masks,&layering));
+    assert(ambient_hdrplus_masks_disjoint(masks));
+    // Independent brute-force pixel check for the accepted pair.
+    for(unsigned y=0;y<200;y++)for(unsigned x=0;x<200;x++)
+        assert(!(ambient_hdrplus_weight(&masks[0],x,y)>0.f&&
+                 ambient_hdrplus_weight(&masks[1],x,y)>0.f));
+    m.windows[2].geometry.center_x=85;m.windows[2].geometry.center_y=78;
+    assert(!ambient_hdrplus_spatial_supported(&m,200,200,masks,&layering));
+    m.windows[1].geometry=save1;m.windows[2].geometry=save2;
     m.windows[1].geometry.center_x=m.windows[2].geometry.center_x=100;
     m.windows[2].geometry.overlap=1;
     assert(ambient_hdrplus_spatial_supported(&m,200,200,masks,&layering)&&layering);
