@@ -56,6 +56,22 @@ static bool SvpAv1ConfigSDR8(const es_format_t *fmt, SvpAv1Config *config)
     int profile, level, tier;
     AV1_get_profile_level(seq, &profile, &level, &tier);
     bool ok = profile == 0 && AV1_get_chroma(seq) == VLC_CODEC_I420;
+    video_color_primaries_t prim;
+    video_transfer_func_t transfer;
+    video_color_space_t space;
+    video_color_range_t range;
+    if (ok && AV1_get_colorimetry(seq, &prim, &transfer, &space, &range)) {
+        if (transfer != TRANSFER_FUNC_UNDEF &&
+            transfer != TRANSFER_FUNC_BT709 && transfer != TRANSFER_FUNC_SRGB)
+            ok = false;
+        if (prim != COLOR_PRIMARIES_UNDEF && prim != COLOR_PRIMARIES_BT709 &&
+            prim != COLOR_PRIMARIES_BT601_625 && prim != COLOR_PRIMARIES_BT601_525)
+            ok = false;
+    }
+    const video_format_t *v = &fmt->video;
+    ok = ok && (v->transfer == TRANSFER_FUNC_BT709 || v->transfer == TRANSFER_FUNC_SRGB) &&
+        (v->primaries == COLOR_PRIMARIES_BT709 || v->primaries == COLOR_PRIMARIES_BT601_625 ||
+         v->primaries == COLOR_PRIMARIES_BT601_525);
     AV1_release_sequence_header(seq);
     return ok;
 }
