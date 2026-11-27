@@ -27,7 +27,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
  }
  
  static MP4_Box_t * MP4_GetTrexByTrackID( MP4_Box_t *p_moov, const uint32_t i_id )
-@@ -465,7 +465,114 @@
+@@ -465,7 +465,127 @@
      return p_sampleentry;
  }
  
@@ -74,7 +74,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +static bool MP4_FEL_PairTracks(demux_t *d)
 +{
 +    demux_sys_t *s=d->p_sys;
-+    if (s->b_fragmented || !s->b_seekable ||
++    if (!s->b_seekable ||
 +        !var_InheritBool(d,"vk-ambient-ahb") ||
 +        !var_InheritBool(d,"vk-ambient-dovi-ahb") ||
 +        !var_InheritBool(d,"vk-ambient-dovi-fel")) return true;
@@ -104,10 +104,23 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +        }
 +        if (base_ids!=1 || matches!=1 || !el || el->i_use_flags ||
 +            !el->i_track_ID || el->ambient_fel_hidden ||
-+            bl->i_timescale!=el->i_timescale || !bl->i_sample_count ||
++            bl->i_timescale!=el->i_timescale ||
 +            bl->i_sample_count!=el->i_sample_count ||
-+            !MP4_FEL_SingleDescription(bl) || !MP4_FEL_SingleDescription(el) ||
 +            !MP4_FEL_SameEdits(bl,el)) continue;
++        if (s->b_fragmented) {
++            // Pure fragmented tracks only; explicit tfdt and one stable
++            // sample description will also be checked per fragment.
++            if (bl->i_sample_count || el->i_sample_count || bl->p_elst || el->p_elst ||
++                !bl->p_stsd || !el->p_stsd || bl->p_stsd->p_first!=bl->p_sample ||
++                el->p_stsd->p_first!=el->p_sample || bl->p_sample->p_next ||
++                el->p_sample->p_next) continue;
++            const MP4_Box_t *bt=MP4_GetTrexByTrackID(s->p_moov,bl->i_track_ID);
++            const MP4_Box_t *et=MP4_GetTrexByTrackID(s->p_moov,el->i_track_ID);
++            if (!bt || !et || !bt->data.p_trex || !et->data.p_trex ||
++                bt->data.p_trex->i_default_sample_description_index!=1 ||
++                et->data.p_trex->i_default_sample_description_index!=1) continue;
++        } else if (!bl->i_sample_count || !MP4_FEL_SingleDescription(bl) ||
++                   !MP4_FEL_SingleDescription(el)) continue;
 +        unsigned el_ids=0;
 +        for (unsigned j=0;j<s->i_tracks;j++)
 +            if (s->track[j].i_track_ID==el->i_track_ID) el_ids++;
@@ -143,7 +156,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
                                     bool b_forced_spu )
  {
      es_out_id_t *p_es = es_out_Add( out, p_fmt );
-@@ -1426,7 +1533,9 @@
+@@ -1426,7 +1546,9 @@
          goto error;
      }
  
@@ -154,7 +167,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
      {
          vlc_tick_t i_max_continuity;
          bool b_flat;
-@@ -1626,7 +1735,78 @@
+@@ -1626,7 +1748,85 @@
   *****************************************************************************
   * TODO check for newly selected track (ie audio upt to now )
   *****************************************************************************/
@@ -162,6 +175,36 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +/* Read a dependent sample by index without changing its demux state.
 + * Both DTS and PTS must match the BL after edit-list mapping. The
 + * dependent stream never enters the normal ES scheduling loop. */
++static block_t *MP4_FEL_MergeBlocks(mp4_track_t *bl,mp4_track_t *el,
++                                   block_t *base,block_t *enh)
++{
++    block_t *merged=NULL;
++    const MP4_Box_t *bc=MP4_BoxGet(bl->p_sample,"hvcC");
++    const MP4_Box_t *ec=MP4_BoxGet(el->p_sample,"hvcC");
++    if (bc && ec && bc->data.p_binary && ec->data.p_binary) {
++        unsigned bw=ambient_fel_hvcc_length(bc->data.p_binary->p_blob,bc->data.p_binary->i_blob);
++        const uint8_t *config=ec->data.p_binary->p_blob;
++        size_t cn=ec->data.p_binary->i_blob;
++        unsigned ew=ambient_fel_hvcc_length(config,cn);
++        bool has_el,irap;size_t first_el;
++        if (ambient_fel_mp4_sample(base->p_buffer,base->i_buffer,bw,&has_el,&irap,&first_el) &&
++            !has_el) {
++            bool inject=irap || ((base->i_flags|bl->i_next_block_flags)&BLOCK_FLAG_DISCONTINUITY);
++            size_t n;
++            if (ambient_fel_dual_sample(base->p_buffer,base->i_buffer,bw,enh->p_buffer,
++                                        enh->i_buffer,ew,config,cn,inject,NULL,0,&n)) {
++                merged=block_Alloc(n);
++                if (merged && !ambient_fel_dual_sample(base->p_buffer,base->i_buffer,bw,
++                    enh->p_buffer,enh->i_buffer,ew,config,cn,inject,merged->p_buffer,n,&n)) {
++                    block_Release(merged);merged=NULL;
++                }
++                if (merged) block_CopyProperties(merged,base);
++            }
++        }
++    }
++    return merged;
++}
++
 +static block_t *MP4_FEL_ReadPaired(demux_t *d,mp4_track_t *bl,block_t *base)
 +{
 +    mp4_track_t *el=MP4_GetTrackByTrackID(d,bl->ambient_fel_el_id);
@@ -202,30 +245,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
 +    el->ambient_fel_cursor_offset=cursor.offset;
 +    block_t *enh=vlc_stream_Block(d->s,size);
 +    if (!enh) return NULL;
-+    block_t *merged=NULL;
-+    const MP4_Box_t *bc=MP4_BoxGet(bl->p_sample,"hvcC");
-+    const MP4_Box_t *ec=MP4_BoxGet(el->p_sample,"hvcC");
-+    if (enh->i_buffer==size && bc && ec && bc->data.p_binary && ec->data.p_binary) {
-+        unsigned bw=ambient_fel_hvcc_length(bc->data.p_binary->p_blob,bc->data.p_binary->i_blob);
-+        const uint8_t *config=ec->data.p_binary->p_blob;
-+        size_t cn=ec->data.p_binary->i_blob;
-+        unsigned ew=ambient_fel_hvcc_length(config,cn);
-+        bool has_el,irap;size_t first_el;
-+        if (ambient_fel_mp4_sample(base->p_buffer,base->i_buffer,bw,&has_el,&irap,&first_el) &&
-+            !has_el) {
-+            bool inject=irap || ((base->i_flags|bl->i_next_block_flags)&BLOCK_FLAG_DISCONTINUITY);
-+            size_t n;
-+            if (ambient_fel_dual_sample(base->p_buffer,base->i_buffer,bw,enh->p_buffer,
-+                                        enh->i_buffer,ew,config,cn,inject,NULL,0,&n)) {
-+                merged=block_Alloc(n);
-+                if (merged && !ambient_fel_dual_sample(base->p_buffer,base->i_buffer,bw,
-+                    enh->p_buffer,enh->i_buffer,ew,config,cn,inject,merged->p_buffer,n,&n)) {
-+                    block_Release(merged);merged=NULL;
-+                }
-+                if (merged) block_CopyProperties(merged,base);
-+            }
-+        }
-+    }
++    block_t *merged=enh->i_buffer==size ? MP4_FEL_MergeBlocks(bl,el,base,enh) : NULL;
 +    block_Release(enh);
 +    return merged;
 +}
@@ -234,7 +254,7 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
                         vlc_tick_t i_max_preload )
  {
      demux_sys_t *p_sys = p_demux->p_sys;
-@@ -1710,7 +1890,20 @@
+@@ -1710,7 +1910,20 @@
                  p_block->i_buffer -= 4;
              }
  
@@ -256,3 +276,180 @@ diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
          }
  
          /* Next sample */
+@@ -1947,7 +2160,28 @@
+     return VLC_SUCCESS;
+ }
+ 
+-static int FragPrepareChunk( demux_t *p_demux, MP4_Box_t *p_moof,
++/* A dependent fragment must be in the same moof and contain a single
++ * traf with explicit tfdt and the initial sample description. */
++static const MP4_Box_data_tfdt_t *MP4_FEL_FragmentTime(const MP4_Box_t *moof,unsigned id)
++{
++    const MP4_Box_data_tfdt_t *time=NULL;
++    unsigned matches=0;
++    for (const MP4_Box_t *t=moof->p_first;t;t=t->p_next) {
++        if (t->i_type!=ATOM_traf) continue;
++        const MP4_Box_t *h=MP4_BoxGet(t,"tfhd");
++        if (!h || !h->data.p_tfhd || h->data.p_tfhd->i_track_ID!=id) continue;
++        const MP4_Box_data_tfhd_t *header=h->data.p_tfhd;
++        if (++matches!=1 || header->b_empty ||
++            ((header->i_flags&MP4_TFHD_SAMPLE_DESC_INDEX) &&
++             header->i_sample_description_index!=1)) return NULL;
++        const MP4_Box_t *dt=MP4_BoxGet(t,"tfdt");
++        if (!dt || !dt->data.p_tfdt) return NULL;
++        time=dt->data.p_tfdt;
++    }
++    return time;
++}
++
++static int FragPrepareChunk( demux_t *p_demux, MP4_Box_t *p_moof,
+                              MP4_Box_t *p_sidx, stime_t i_moof_time, bool b_discontinuity )
+ {
+     demux_sys_t *p_sys = p_demux->p_sys;
+@@ -1958,7 +2192,23 @@
+             p_sys->track[i].context.b_resync_time_offset = true;
+     }
+ 
+-    if( FragCreateTrunIndex( p_demux, p_moof, p_sidx, i_moof_time ) == VLC_SUCCESS )
++    for (unsigned i=0;i<p_sys->i_tracks;i++) {
++        mp4_track_t *bl=&p_sys->track[i];
++        if (!bl->b_ok || !bl->ambient_fel_el_id) continue;
++        mp4_track_t *el=MP4_GetTrackByTrackID(p_demux,bl->ambient_fel_el_id);
++        const MP4_Box_data_tfdt_t *bt=MP4_FEL_FragmentTime(p_moof,bl->i_track_ID);
++        const MP4_Box_data_tfdt_t *et=MP4_FEL_FragmentTime(p_moof,bl->ambient_fel_el_id);
++        if (!el || !el->ambient_fel_hidden || !bt || !et ||
++            bt->i_base_media_decode_time!=et->i_base_media_decode_time ||
++            bt->i_base_media_decode_time>INT64_MAX) {
++            msg_Err(p_demux,"FEL fragment has no matching explicit decode time");
++            return VLC_EGENERIC;
++        }
++        // Do not infer the hidden EL clock from the previous fragment.
++        bl->context.b_resync_time_offset=el->context.b_resync_time_offset=true;
++    }
++
++    if( FragCreateTrunIndex( p_demux, p_moof, p_sidx, i_moof_time ) == VLC_SUCCESS )
+     {
+         for( unsigned i=0; i<p_sys->i_tracks; i++ )
+         {
+@@ -2042,8 +2292,9 @@
+     unsigned cand = 0;
+     for( unsigned i=0; i<p_sys->i_tracks; i++ )
+     {
+-        if( p_sys->track[i].fmt.i_cat == VIDEO_ES ||
+-            p_sys->track[i].fmt.i_cat == AUDIO_ES )
++        if( !p_sys->track[i].ambient_fel_hidden &&
++            (p_sys->track[i].fmt.i_cat == VIDEO_ES ||
++             p_sys->track[i].fmt.i_cat == AUDIO_ES) )
+         {
+             if( cand != i && !p_sys->track[cand].b_selected )
+                 cand = i;
+@@ -4997,7 +5248,83 @@
+     }
+ }
+ 
+-static int FragDemuxTrack( demux_t *p_demux, mp4_track_t *p_track,
++static int64_t MP4_FEL_CompositionOffset(const MP4_Box_data_trun_t *trun,unsigned sample)
++{
++    if (!(trun->i_flags&MP4_TRUN_SAMPLE_TIME_OFFSET)) return 0;
++    const MP4_descriptor_trun_sample_t *s=&trun->p_samples[sample];
++    return trun->i_version==1 || s->i_composition_time_offset.v0>=0xff000000u ?
++        (int64_t)s->i_composition_time_offset.v1 : s->i_composition_time_offset.v0;
++}
++
++/* Index the same run/sample in the dependent traf. Verify raw DTS, PTS and
++ * duration before any read. The hidden-track cursor is refreshed on seeks
++ * and fragment preparation, and never shared across decoder threads. */
++static block_t *MP4_FEL_ReadFragment(demux_t *d,mp4_track_t *bl,
++    block_t *base,unsigned sample,stime_t dts,stime_t pts,uint32_t duration)
++{
++    demux_sys_t *s=d->p_sys;
++    mp4_track_t *el=MP4_GetTrackByTrackID(d,bl->ambient_fel_el_id);
++    unsigned run=bl->context.runs.i_current;
++    if (!el || !el->ambient_fel_hidden || !s->context.p_fragment_atom ||
++        el->context.runs.i_count!=bl->context.runs.i_count ||
++        run>=el->context.runs.i_count || !el->context.runs.p_array) return NULL;
++    const mp4_run_t *er=&el->context.runs.p_array[run];
++    const mp4_run_t *br=&bl->context.runs.p_array[run];
++    const MP4_Box_data_trun_t *et=er->p_trun->data.p_trun;
++    const MP4_Box_data_trun_t *bt=br->p_trun->data.p_trun;
++    if (!et || !bt || et->i_sample_count!=bt->i_sample_count ||
++        sample>=et->i_sample_count || er->i_first_dts!=br->i_first_dts ||
++        er->i_first_dts<0 || (et->i_flags&(MP4_TRUN_SAMPLE_DURATION|
++        MP4_TRUN_SAMPLE_SIZE|MP4_TRUN_SAMPLE_TIME_OFFSET)) && !et->p_samples)
++        return NULL;
++    uint64_t offset=er->i_offset;
++    stime_t time=er->i_first_dts;
++    unsigned start=0;
++    if (el->context.runs.i_current==run && el->context.i_trun_sample<=sample &&
++        el->context.i_trun_sample_pos>=offset && el->i_time>=time) {
++        start=el->context.i_trun_sample;
++        offset=el->context.i_trun_sample_pos;
++        time=el->i_time;
++    }
++    uint32_t size=0;
++    for (unsigned i=start;i<=sample;i++) {
++        size=et->i_flags&MP4_TRUN_SAMPLE_SIZE ? et->p_samples[i].i_size :
++            el->context.i_default_sample_size;
++        uint32_t dur=et->i_flags&MP4_TRUN_SAMPLE_DURATION ? et->p_samples[i].i_duration :
++            el->context.i_default_sample_duration;
++        if (!size || !dur || size>AMBIENT_FEL_MAX_AU || size>UINT64_MAX-offset ||
++            time>INT64_MAX-dur) return NULL;
++        if (i==sample) {
++            int64_t cts=MP4_FEL_CompositionOffset(et,i);
++            if ((cts>0 && time>INT64_MAX-cts) || (cts<0 && time<INT64_MIN-cts) ||
++                time!=dts || time+cts!=pts || dur!=duration) return NULL;
++            el->context.runs.i_current=run;
++            el->context.i_trun_sample=i+1;
++            el->context.i_trun_sample_pos=offset+size;
++            el->i_time=time+dur;
++            break;
++        }
++        offset+=size;time+=dur;
++    }
++    uint64_t moof_end=s->context.p_fragment_atom->i_pos;
++    if (s->context.p_fragment_atom->i_size>UINT64_MAX-moof_end) return NULL;
++    moof_end+=s->context.p_fragment_atom->i_size;
++    if (offset<moof_end || offset>s->context.i_post_mdat_offset ||
++        size>s->context.i_post_mdat_offset-offset) return NULL;
++    // Restore the BL stream position before the normal trun loop continues.
++    uint64_t resume=vlc_stream_Tell(d->s);
++    block_t *enh=NULL,*merged=NULL;
++    if (MP4_Seek(d->s,offset)==VLC_SUCCESS) enh=vlc_stream_Block(d->s,size);
++    if (enh && enh->i_buffer==size) merged=MP4_FEL_MergeBlocks(bl,el,base,enh);
++    if (enh) block_Release(enh);
++    if (MP4_Seek(d->s,resume)!=VLC_SUCCESS) {
++        if (merged) block_Release(merged);
++        return NULL;
++    }
++    return merged;
++}
++
++static int FragDemuxTrack( demux_t *p_demux, mp4_track_t *p_track,
+                            vlc_tick_t i_max_preload )
+ {
+     if( !p_track->b_ok ||
+@@ -5076,8 +5403,22 @@
+                 p_block->i_pts = VLC_TICK_INVALID;
+             else
+                 p_block->i_pts = VLC_TICK_0 + MP4_rescale_mtime( i_pts, p_track->i_timescale );
+-            p_block->i_length = MP4_rescale_mtime( dur, p_track->i_timescale );
+-            MP4_Block_Send( p_demux, p_track, p_block );
++            p_block->i_length = MP4_rescale_mtime( dur, p_track->i_timescale );
++            if (p_track->ambient_fel_el_id) {
++                // In a trun without CTS offsets, presentation equals decode
++                // time by definition; both raw times are checked below.
++                p_block->i_pts=VLC_TICK_0+MP4_rescale_mtime(i_pts,p_track->i_timescale);
++                block_t *paired=MP4_FEL_ReadFragment(p_demux,p_track,p_block,i,i_dts,i_pts,dur);
++                block_Release(p_block);
++                if (!paired) {
++                    msg_Err(p_demux,"FEL fragment sample pairing failed");
++                    MP4_TrackSelect(p_demux,p_track,false);
++                    p_track->b_ok=false;
++                    return VLC_DEMUXER_FATAL;
++                }
++                p_block=paired;
++            }
++            MP4_Block_Send( p_demux, p_track, p_block );
+         }
+         else block_Release( p_block );
+     }
