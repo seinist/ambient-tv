@@ -160,6 +160,11 @@ pub struct MotionSearch{
     cached_index:Option<i32>,
     cached_next:BTreeMap<u32,wgpu::Texture>,
     readback:Option<wgpu::Buffer>,
+    // Bounded by MAX_BATCH; reuse host-side descriptors between pairs.
+    metrics:Vec<Candidate>,
+    candidates:Vec<ScoredCandidate>,
+    searches:Vec<Search>,
+    offsets:Vec<[i32;2]>,
     #[cfg(test)]
     separate_directions:bool,
     #[cfg(test)]
@@ -171,6 +176,7 @@ impl MotionSearch{
     pub fn new(device:&wgpu::Device)->Self{
         Self{metric:MotionCostKernel::new(device),selection:SelectionKernel::new(device),
             cached_index:None,cached_next:BTreeMap::new(),readback:None,
+            metrics:Vec::new(),candidates:Vec::new(),searches:Vec::new(),offsets:Vec::new(),
             #[cfg(test)] separate_directions:false,#[cfg(test)] submissions:0,#[cfg(test)] cache_hits:0}
     }
 
@@ -234,7 +240,9 @@ impl MotionSearch{
                 _=>a.upload(device,&mut encoder)?,
             };
             let bt=b.upload(device,&mut encoder)?;
-            queue.submit([encoder.finish()]);
+            // Record the uploads in the first metric batch's encoder, so
+            // upload and compute execute in order in one queue submission.
+            let mut first_encoder=Some(encoder);
             // The two directions have no same-level dependencies. Flatten
             // the two raster grids into one bounded stream of independent
             // jobs, preserving each block's exact candidate order.
@@ -246,16 +254,22 @@ impl MotionSearch{
                 .min((device.limits().max_storage_buffer_binding_size/32) as usize);
             if batch_limit<max_per{return Err("insufficient motion dispatch capacity".into());}
             let blocks=batch_limit/max_per;
-            let mut offsets=Vec::with_capacity(max_per);
+            let offsets=&mut self.offsets;
+            let metrics=&mut self.metrics;
+            let candidates=&mut self.candidates;
+            let searches=&mut self.searches;
             let mut choices:[Vec<Choice>;2]=std::array::from_fn(|_|Vec::with_capacity(count));
             let mut start=0;
             while start<2*count{
                 let end=(start+blocks).min(2*count);
                 #[cfg(test)]
                 let end=if self.separate_directions && start<count{end.min(count)}else{end};
-                let mut metrics=Vec::with_capacity((end-start)*max_per);
-                let mut candidates=Vec::with_capacity(metrics.capacity());
-                let mut searches=Vec::with_capacity(end-start);
+                metrics.clear();
+                candidates.clear();
+                searches.clear();
+                metrics.reserve((end-start)*max_per);
+                candidates.reserve((end-start)*max_per);
+                searches.reserve(end-start);
                 for i in start..end{
                     let direction=i/count;
                     let field=&previous[direction];
@@ -264,8 +278,8 @@ impl MotionSearch{
                         x,y,a.width,a.height,bw,bh,a.pel);
                     let global=global[direction].map(|v|clamp_predictor(v,x,y,a.width,a.height,bw,bh,a.pel));
                     let from=candidates.len() as u32;
-                    candidate_offsets(&mut offsets,pred,global,radius,a.pel,level==0);
-                    for &[dx,dy] in &offsets{
+                    candidate_offsets(offsets,pred,global,radius,a.pel,level==0);
+                    for &[dx,dy] in offsets.iter(){
                         let c=Candidate{x,y,dx,dy,width:bw,height:bh,reverse:direction==0,satd:false};
                         if !c.valid(a.width,a.height,a.pel){continue;}
                         let index=metrics.len() as u32;
@@ -279,12 +293,12 @@ impl MotionSearch{
                 }
                 total=total.checked_add(metrics.len()).filter(|&n|n<=MAX_TOTAL_CANDIDATES)
                     .ok_or("experimental motion candidate budget")?;
-                let mut encoder=device.create_command_encoder(&Default::default());
-                let costs=self.metric.encode(device,&mut encoder,&at,&bt,a.width,a.height,&metrics)?;
-                let selected=self.selection.encode(device,&mut encoder,&costs,&searches,&candidates)?;
+                let mut encoder=first_encoder.take().unwrap_or_else(||device.create_command_encoder(&Default::default()));
+                let costs=self.metric.encode(device,&mut encoder,&at,&bt,a.width,a.height,metrics)?;
+                let selected=self.selection.encode(device,&mut encoder,&costs,searches,candidates)?;
                 let batch=read_choices(device,queue,encoder,&selected,deadline,&mut self.readback)?;
                 #[cfg(test)] {self.submissions+=1;}
-                if batch.len()!=end-start || batch.iter().zip(&searches).any(|(c,s)|{
+                if batch.len()!=end-start || batch.iter().zip(searches.iter()).any(|(c,s)|{
                     if c.winner<s.start as i32 || c.winner>=(s.start+s.count) as i32
                         || c.sad<0 || c.sad>3*(bw*bh*255) as i32{return true;}
                     let selected=candidates[c.winner as usize];
