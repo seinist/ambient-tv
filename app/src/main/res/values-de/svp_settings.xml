@@ -51,4 +51,5 @@
     <string name="svp_reason_passthrough">keine Zwischenbilder</string>
     <string name="svp_reason_starting">startet …</string>
     <string name="svp_reason_overload">zu langsam, für diese Wiedergabe aus</string>
+    <string name="svp_mode_adaptive">Adaptiv (Qualität bei Überlast senken)</string>
 </resources>
