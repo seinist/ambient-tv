@@ -360,6 +360,14 @@ impl AmbientSvp {
         }
         if self.origin.is_none() { self.origin = Some(pts); }
         let data = stored.as_slice();
+        #[cfg(feature = "vulkan")]
+        if self.stats.bypass_reason == 0 && self.gpu.as_mut().is_some_and(|gpu| gpu.stage_source(self.input, data).is_err()) {
+            self.gpu = None;
+            self.stats.backend = 1;
+            self.prefetched = None;
+            self.prefetch_buffer = Vec::new();
+        }
+        let analysis = (|| -> Result<(), i32> {
         if self.stats.bypass_reason == 0 {
             // Exact repeated source pictures can share the previous super
             // frame and the analysis of an identical pair. No sampled hashes,
@@ -400,6 +408,15 @@ impl AmbientSvp {
                 self.previous = Some(current);
             }
         }
+        Ok(())
+        })();
+        if let Err(error) = analysis {
+            #[cfg(feature = "vulkan")]
+            if let Some(gpu) = self.gpu.as_mut() { gpu.discard_source(self.input); }
+            self.recycle_frame(stored);
+            if self.input == 0 { self.origin = None; }
+            return Err(error);
+        }
         self.frames.insert(self.input, Source { data: stored, pts });
         self.input += 1;
         self.stats.input_frames += 1;
@@ -417,7 +434,7 @@ impl AmbientSvp {
         } else {
             (self.source_time(1) as u64 * 2).max(75_000)
         };
-        if self.input > 1 && cost > analysis_limit {
+        if self.stats.bypass_reason == 0 && self.input > 1 && cost > analysis_limit {
             self.slow_inputs += 1;
             if cost > 500_000 {
                 // Keep the existing absolute safety ceiling even in adaptive mode.
@@ -430,7 +447,7 @@ impl AmbientSvp {
         }
         // A full source-second window amortizes multi-output synthesis and analysis.
         // Two slow windows are required; initial shader setup is excluded.
-        if self.window_inputs as i64 * self.source_time(1) >= 1_000_000 {
+        if self.stats.bypass_reason == 0 && self.window_inputs as i64 * self.source_time(1) >= 1_000_000 {
             if self.stats.input_frames > (self.window_inputs * 2) as u64
                 && self.window_cost_us > 850_000
             {
