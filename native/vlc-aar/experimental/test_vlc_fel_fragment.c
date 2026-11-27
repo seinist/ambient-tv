@@ -6,7 +6,7 @@
 static stream_t fixture_stream;
 static uint8_t bytes[256];
 static size_t position, visible, blocks, peek_at_end, short_read_at;
-static bool seekable;
+static bool seekable, misdirect_seek;
 
 uint64_t vlc_stream_Tell(const stream_t *stream)
 {
@@ -31,7 +31,9 @@ int vlc_stream_Seek(stream_t *stream,uint64_t offset)
 {
     assert(stream==&fixture_stream);
     if(!seekable||offset>visible)return VLC_EGENERIC;
-    position=(size_t)offset;return VLC_SUCCESS;
+    position=(size_t)offset;
+    if(misdirect_seek&&position>0)--position;
+    return VLC_SUCCESS;
 }
 int vlc_stream_vaControl(stream_t *stream,int query,va_list args)
 {
@@ -89,7 +91,7 @@ static void reset_stream(bool can_seek)
     box(112,8,"free");
     box(120,12,"mdat");memcpy(bytes+128,"WXYZ",4);
     position=100;visible=132;seekable=can_seek;
-    short_read_at=SIZE_MAX;peek_at_end=0;
+    short_read_at=SIZE_MAX;peek_at_end=0;misdirect_seek=false;
 }
 
 static void test_segment_header(demux_t *d,demux_sys_t *sys)
@@ -158,6 +160,44 @@ static void test_empty_mdat_gaps(demux_t *d,demux_sys_t *sys)
         assert(!MP4_FEL_SkipGap(d,&padding,&boxes,true)&&position==112);
     }
 }
+static void test_leading_empty_mdats(demux_t *d,demux_sys_t *sys)
+{
+    for(unsigned mode=0;mode<2;mode++){
+        reset_stream(mode!=0);sys->b_seekable=mode!=0;
+        box(100,8,"mdat");box(108,1,"mdat");SetQWBE(bytes+116,16);
+        box(124,8,"free");box(132,12,"mdat");
+        memcpy(bytes+140,"DATA",4);visible=144;
+        uint64_t end=0,padding=0,total=0;unsigned count=0,boxes=0;
+        struct ambient_fel_byte_range ranges[AMBIENT_FEL_MAX_MDAT_BOXES];
+        if(mode)
+            assert(MP4_FEL_ScanMdats(d,ranges,&count,&end,144,&padding,&boxes));
+        else
+            assert(MP4_FEL_BufferMdats(d,ranges,sys->context.ambient_fel_bl_cache,
+                &count,&end,&total,144,&padding,&boxes));
+        assert(count==1&&end==144&&position==144&&padding==32&&boxes==3);
+        assert(ranges[0].start==140&&ranges[0].end==144);
+        assert(!ambient_fel_payload_contains(ranges,count,116,8));
+        if(!mode){
+            assert(total==4&&blocks==1);
+            MP4_FEL_ReleaseCaches(sys);
+        }
+        assert(!blocks);
+        position=100;count=boxes=0;padding=AMBIENT_FEL_MAX_PADDING-7;
+        assert(!MP4_FEL_SkipGap(d,&padding,&boxes,true)&&position==100);
+        position=100;box(100,0,"mdat");padding=boxes=0;
+        assert(!MP4_FEL_SkipGap(d,&padding,&boxes,true));
+    }
+    reset_stream(true);sys->b_seekable=true;
+    misdirect_seek=true;
+    assert(!MP4_FEL_SeekExact(d->s,120)&&position==119);
+    position=100;
+    uint64_t end=0,padding=0;unsigned count=0,boxes=0;
+    struct ambient_fel_byte_range ranges[AMBIENT_FEL_MAX_MDAT_BOXES];
+    assert(!MP4_FEL_ScanMdats(d,ranges,&count,&end,132,&padding,&boxes));
+    assert(!count&&position==111);
+    misdirect_seek=false;
+    assert(MP4_FEL_SeekExact(d->s,100));
+}
 int main(void)
 {
     mp4_track_t track={.i_track_ID=1,.b_ok=true,.i_timescale=1000};
@@ -165,6 +205,7 @@ int main(void)
     demux_t demux={.s=&fixture_stream,.p_sys=&sys};
     test_segment_header(&demux,&sys);
     test_empty_mdat_gaps(&demux,&sys);
+    test_leading_empty_mdats(&demux,&sys);
     MP4_Box_data_tfhd_t tfhd={.i_track_ID=1,
         .i_flags=MP4_TFHD_DEFAULT_BASE_IS_MOOF|MP4_TFHD_DFLT_SAMPLE_SIZE|
             MP4_TFHD_DFLT_SAMPLE_DURATION,
