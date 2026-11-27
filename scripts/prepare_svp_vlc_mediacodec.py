@@ -22,11 +22,14 @@ shutil.copyfile(svp / "adapters/svp_vlc_android.h", source / "modules/video_filt
 shutil.copyfile(svp / "include/ambientsvp_android_stream.h", source / "modules/video_filter/ambientsvp_android_stream.h")
 
 utils = "modules/video_output/android/utils.h"
+insert(utils, "#include <assert.h>", "#include <assert.h>\n#include <stdatomic.h> // SVP consumer fence state",
+       "stdatomic.h> // SVP")
 insert(utils, "    AImageReader *air;",
        "    AImageReader *air;\n    bool svp_surface; // SVP selected GPU-readable PRIVATE producer",
        "bool svp_surface; // SVP")
 insert(utils, "    AImage *image;\n    int fence_fd;",
-       "    AImage *image;\n    AHardwareBuffer *svp_buffer; // SVP compositor-owned RGB output\n    int fence_fd;",
+       "    AImage *image;\n    AHardwareBuffer *svp_buffer; // SVP compositor-owned RGB output\n"
+       "    void *svp_lease;\n    void *svp_recycle;\n    atomic_uint svp_present_count;\n    atomic_int svp_consumer_fd;\n    int fence_fd;",
        "AHardwareBuffer *svp_buffer; // SVP")
 
 decoder = "modules/codec/omxil/mediacodec.c"
@@ -75,6 +78,17 @@ insert(decoder,
        "    avctx->air_api->AImage.deleteAsync(image, fence_fd); // SVP preserve producer fence on error",
        "SVP preserve producer fence on error")
 display = "modules/video_output/android/display.c"
+insert(display,
+       "    if (release_fd >= 0)\n        android_picture_ctx_set_read_fence(apctx, release_fd);",
+       "    if (apctx->svp_buffer) {\n"
+       "        // SVP only recycles after one presentation with an explicit positive release fd.\n"
+       "        int expected = -1;\n"
+       "        if (release_fd >= 0 && (atomic_load(&apctx->svp_present_count) != 1 ||\n"
+       "            !atomic_compare_exchange_strong(&apctx->svp_consumer_fd, &expected, release_fd)))\n"
+       "            close(release_fd);\n"
+       "    } else if (release_fd >= 0)\n"
+       "        android_picture_ctx_set_read_fence(apctx, release_fd);",
+       "SVP only recycles after")
 insert(display, "    int32_t status = air_api->AImage.getHardwareBuffer(apctx->image, &buffer);",
        "    // SVP output already is a compositor-compatible RGB AHB.\n"
        "    int32_t status = 0;\n"
@@ -103,6 +117,11 @@ insert(display,
        "    int32_t dataspace = video_format_to_adataspace(&dataspace_fmt);\n"
        "    if (dataspace != ADATASPACE_UNKNOWN)\n"
        "        asc_api->ASurfaceTransaction.setBufferDataSpace(txn, sys->asc.sc, dataspace);\n"
+       "    if (apctx->svp_buffer) {\n"
+       "        // Count actual submissions, not failed prepares; repeated submissions never recycle.\n"
+       "        unsigned count = atomic_load(&apctx->svp_present_count);\n"
+       "        atomic_store(&apctx->svp_present_count, count == 0 ? 1 : 2);\n"
+       "    }\n"
        "    asc_api->ASurfaceTransaction.setBuffer(txn, sys->asc.sc, buffer, fence_fd);",
        "SVP generated RGB is full-range")
 # This path is designed for ASC. Never pass generated RGB to the existing
