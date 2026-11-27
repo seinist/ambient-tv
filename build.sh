@@ -1544,6 +1544,7 @@ case "$MODE" in
         ;;
     release-modular-preview)
         export MODULE_PACKAGING=modular-preview
+        export MONOGRAM_NATIVE=0
         DIST_DIR="$ROOT_DIR/dist/modular-preview"
         build_release
         ;;
