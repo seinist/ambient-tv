@@ -241,10 +241,17 @@ int mp_svp_mediacodec_convert(AVBufferRef *device,AVCodecContext *avctx,AVFrame 
     struct svp_mc_state *s=mc->user_opaque;
     // Only explicit 8-bit SDR stream metadata. No HDR reinterpretation.
     const AVPixFmtDescriptor *desc=av_pix_fmt_desc_get(avctx->sw_pix_fmt);
-    if (!desc || desc->nb_components<3 || desc->comp[0].depth!=8 ||
+    if (!desc || desc->nb_components!=3 || (desc->flags&AV_PIX_FMT_FLAG_RGB) ||
+        desc->comp[0].depth!=8 || desc->comp[1].depth!=8 || desc->comp[2].depth!=8 ||
         desc->log2_chroma_w!=1 || desc->log2_chroma_h!=1 ||
-        src->color_trc==AVCOL_TRC_UNSPECIFIED || src->color_trc==AVCOL_TRC_SMPTE2084 ||
-        src->color_trc==AVCOL_TRC_ARIB_STD_B67 || src->pts==AV_NOPTS_VALUE ||
+        (src->color_trc!=AVCOL_TRC_BT709 && src->color_trc!=AVCOL_TRC_SMPTE170M &&
+         src->color_trc!=AVCOL_TRC_IEC61966_2_1) ||
+        (src->color_primaries!=AVCOL_PRI_BT709 && src->color_primaries!=AVCOL_PRI_BT470BG &&
+         src->color_primaries!=AVCOL_PRI_SMPTE170M) ||
+        (src->colorspace!=AVCOL_SPC_BT709 && src->colorspace!=AVCOL_SPC_BT470BG &&
+         src->colorspace!=AVCOL_SPC_SMPTE170M) ||
+        (src->color_range!=AVCOL_RANGE_MPEG && src->color_range!=AVCOL_RANGE_JPEG) ||
+        src->pts==AV_NOPTS_VALUE ||
         src->pts<0 || !src->data[3] || src->width<32 || src->height<32 ||
         (src->width|src->height)&1 || (uint64_t)src->width*src->height>1920u*1080u ||
         (src->flags&AV_FRAME_FLAG_INTERLACED) ||
