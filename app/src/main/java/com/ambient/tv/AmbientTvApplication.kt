@@ -235,11 +235,13 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
             com.ambient.tv.ui.player.backend.VideoAccelerationRuntime.refresh(this@AmbientTvApplication)
         }
         // Monogram's repository probes its selected backend on IO before exposing account UI.
-        if (BuildConfig.MONOGRAM_NATIVE) {
-            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                runCatching { telegramRepository.get() }
-                    .onFailure { Timber.w("Monogram startup failed: %s", it.javaClass.simpleName) }
-            }
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            runCatching {
+                val module = com.ambient.tv.modules.SystemModule.MONOGRAM
+                if (com.ambient.tv.modules.SystemModuleAvailability.bundled(module) ||
+                    com.ambient.tv.modules.SystemModuleHost.selected(module) != null)
+                    telegramRepository.get()
+            }.onFailure { Timber.w("Monogram startup failed: %s", it.javaClass.simpleName) }
         }
         // A downloaded Spotify receiver must be probed before its UI becomes available.
         // Merely probing the native library does not log in or start the receiver.
