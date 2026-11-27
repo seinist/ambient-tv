@@ -383,6 +383,7 @@ struct AmbientRangeCapture {
     destination: std::path::PathBuf,
     staged: Option<(std::path::PathBuf, Vec<u8>)>,
     published: bool,
+    limit: u64,
 }
 std::thread_local! {
     static AMBIENT_RANGE: std::cell::RefCell<Option<AmbientRangeCapture>> =
@@ -392,13 +393,23 @@ pub fn ambient_capture_range<T>(
     destination: &std::path::Path,
     work: impl FnOnce() -> Result<T, MtprotoError>,
 ) -> Result<(T, Option<Vec<u8>>), MtprotoError> {
+    ambient_capture_range_bounded(destination, AMBIENT_RANGE_LIMIT, work)
+}
+pub fn ambient_capture_range_bounded<T>(
+    destination: &std::path::Path,
+    limit: u64,
+    work: impl FnOnce() -> Result<T, MtprotoError>,
+) -> Result<(T, Option<Vec<u8>>), MtprotoError> {
+    if limit != AMBIENT_RANGE_LIMIT && limit != 2 * AMBIENT_RANGE_LIMIT {
+        return Err(MtprotoError::Message("invalid media range capacity".into()));
+    }
     AMBIENT_RANGE.with(|slot| {
         let mut slot = slot.borrow_mut();
         if slot.is_some() {
             return Err(MtprotoError::Message("nested media range capture".into()));
         }
         *slot = Some(AmbientRangeCapture {
-            destination: destination.to_owned(), staged: None, published: false,
+            destination: destination.to_owned(), staged: None, published: false, limit,
         });
         Ok(())
     })?;
@@ -422,6 +433,11 @@ pub fn set_ambient_cdn_ranges(enabled: bool) {
 }
 fn ambient_cdn_ranges() -> bool {
     AMBIENT_CDN_RANGES.load(std::sync::atomic::Ordering::Relaxed)
+}
+pub fn ambient_range_capacity(destination: &std::path::Path) -> u64 {
+    AMBIENT_RANGE.with(|slot| slot.borrow().as_ref()
+        .filter(|capture| capture.destination.as_path() == destination)
+        .map_or(AMBIENT_RANGE_LIMIT, |capture| capture.limit))
 }
 pub fn ambient_capture_active(destination: &std::path::Path) -> bool {
     AMBIENT_RANGE.with(|slot| slot.borrow().as_ref().is_some_and(|capture| capture.destination.as_path() == destination))
@@ -465,15 +481,15 @@ fn ambient_publish_range(destination: &std::path::Path, stage: &std::path::Path)
 pub const AMBIENT_RANGE_LIMIT: u64 = 512 * 1024;
 enum AmbientRangeOutput {
     File(std::fs::File),
-    Memory(std::io::Cursor<Vec<u8>>),
+    Memory(std::io::Cursor<Vec<u8>>, u64),
 }
 impl AmbientRangeOutput {
     // The usual single-wire 512 KiB response can be moved into the memory
     // sink, rather than allocated and copied. Reduced parts append normally.
     fn write_owned(&mut self, bytes: Vec<u8>) -> std::io::Result<()> {
-        if let Self::Memory(cursor) = self
+        if let Self::Memory(cursor, limit) = self
             && cursor.position() == 0 && cursor.get_ref().is_empty()
-            && bytes.len() as u64 <= AMBIENT_RANGE_LIMIT {
+            && bytes.len() as u64 <= *limit {
             let len = bytes.len() as u64;
             *cursor = std::io::Cursor::new(bytes);
             cursor.set_position(len);
@@ -484,11 +500,11 @@ impl AmbientRangeOutput {
     fn set_len(&mut self, len: u64) -> std::io::Result<()> {
         match self {
             Self::File(file) => file.set_len(len),
-            Self::Memory(cursor) if len <= AMBIENT_RANGE_LIMIT => {
+            Self::Memory(cursor, limit) if len <= *limit => {
                 cursor.get_mut().resize(len as usize, 0);
                 Ok(())
             }
-            Self::Memory(_) => Err(std::io::Error::other("oversized captured media range")),
+            Self::Memory(..) => Err(std::io::Error::other("oversized captured media range")),
         }
     }
 }
@@ -496,7 +512,7 @@ impl std::io::Seek for AmbientRangeOutput {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
         match self {
             Self::File(file) => std::io::Seek::seek(file, pos),
-            Self::Memory(cursor) => std::io::Seek::seek(cursor, pos),
+            Self::Memory(cursor, _) => std::io::Seek::seek(cursor, pos),
         }
     }
 }
@@ -504,9 +520,9 @@ impl std::io::Write for AmbientRangeOutput {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         match self {
             Self::File(file) => std::io::Write::write(file, bytes),
-            Self::Memory(cursor) => {
+            Self::Memory(cursor, limit) => {
                 if cursor.position().checked_add(bytes.len() as u64)
-                    .is_none_or(|end| end > AMBIENT_RANGE_LIMIT) {
+                    .is_none_or(|end| end > *limit) {
                     return Err(std::io::Error::other("oversized captured media range"));
                 }
                 std::io::Write::write(cursor, bytes)
@@ -516,7 +532,7 @@ impl std::io::Write for AmbientRangeOutput {
     fn flush(&mut self) -> std::io::Result<()> {
         match self {
             Self::File(file) => std::io::Write::flush(file),
-            Self::Memory(_) => Ok(()),
+            Self::Memory(..) => Ok(()),
         }
     }
 }
@@ -527,11 +543,33 @@ mod ambient_range_tests {
     fn single_wire_response_reuses_owned_payload() {
         let bytes = vec![3; AMBIENT_RANGE_LIMIT as usize];
         let ptr = bytes.as_ptr();
-        let mut out = AmbientRangeOutput::Memory(std::io::Cursor::new(Vec::new()));
+        let mut out = AmbientRangeOutput::Memory(std::io::Cursor::new(Vec::new()), AMBIENT_RANGE_LIMIT);
         out.write_owned(bytes).unwrap();
-        let AmbientRangeOutput::Memory(cursor) = out else { panic!("memory sink"); };
+        let AmbientRangeOutput::Memory(cursor, _) = out else { panic!("memory sink"); };
         assert_eq!(cursor.get_ref().as_ptr(), ptr);
         assert_eq!(cursor.position(), AMBIENT_RANGE_LIMIT);
+    }
+    #[test]
+    fn two_part_capture_keeps_single_part_default_and_enforces_bound() {
+        let dest = std::path::Path::new("ambient-window");
+        assert_eq!(ambient_range_capacity(dest), AMBIENT_RANGE_LIMIT);
+        let (_, payload) = ambient_capture_range_bounded(dest, 2 * AMBIENT_RANGE_LIMIT, || {
+            assert_eq!(ambient_range_capacity(dest), 2 * AMBIENT_RANGE_LIMIT);
+            assert!(ambient_begin_range(dest));
+            let mut out = AmbientRangeOutput::Memory(std::io::Cursor::new(Vec::new()), ambient_range_capacity(dest));
+            out.write_owned(vec![1; AMBIENT_RANGE_LIMIT as usize]).unwrap();
+            out.write_owned(vec![2; AMBIENT_RANGE_LIMIT as usize]).unwrap();
+            assert!(out.write_owned(vec![3]).is_err());
+            let AmbientRangeOutput::Memory(cursor, _) = out else { panic!("memory sink"); };
+            ambient_stage_range(dest, dest, cursor.into_inner());
+            assert!(ambient_publish_range(dest, dest));
+            Ok(())
+        }).unwrap();
+        let bytes = payload.unwrap();
+        assert_eq!(bytes.len(), 2 * AMBIENT_RANGE_LIMIT as usize);
+        assert!(bytes[..AMBIENT_RANGE_LIMIT as usize].iter().all(|b| *b == 1));
+        assert!(bytes[AMBIENT_RANGE_LIMIT as usize..].iter().all(|b| *b == 2));
+        assert_eq!(ambient_range_capacity(dest), AMBIENT_RANGE_LIMIT);
     }
     #[test]
     fn only_published_exact_destination_and_stage_are_returned() {
@@ -605,7 +643,7 @@ mod ambient_range_tests {
     #[test]
     fn captured_output_is_bounded() {
         use std::io::{Seek, SeekFrom, Write};
-        let mut out = AmbientRangeOutput::Memory(std::io::Cursor::new(Vec::new()));
+        let mut out = AmbientRangeOutput::Memory(std::io::Cursor::new(Vec::new()), AMBIENT_RANGE_LIMIT);
         out.seek(SeekFrom::Start(AMBIENT_RANGE_LIMIT - 1)).unwrap();
         assert!(out.write_all(&[1, 2]).is_err());
         assert!(out.set_len(AMBIENT_RANGE_LIMIT + 1).is_err());
@@ -653,8 +691,9 @@ amend(range_output,
 amend(range_output,
       "        let mut out = if !stream && file_len > 0 {",
       """        let ambient_range = stream && ambient_begin_range(cancellation_path);
+        let capture_limit = ambient_range_capacity(cancellation_path);
         let mut out = if ambient_range {
-            AmbientRangeOutput::Memory(std::io::Cursor::new(Vec::new()))
+            AmbientRangeOutput::Memory(std::io::Cursor::new(Vec::new()), capture_limit)
         } else if !stream && file_len > 0 {""")
 amend(range_output,
       """            file
@@ -674,7 +713,7 @@ amend(range_output,
     })();""",
       """        out.flush()
             .map_err(|e| MtprotoError::Message(e.to_string()))?;
-        if let AmbientRangeOutput::Memory(cursor) = out {
+        if let AmbientRangeOutput::Memory(cursor, _) = out {
             ambient_stage_range(cancellation_path, dest_path, cursor.into_inner());
         }
         Ok(())
@@ -683,7 +722,7 @@ amend(range_output,
 # to 128 KiB. Keep collecting until the requested range is full or EOF is proven.
 amend(range_output,
       """                    .min((FAST_CHUNK / chunk).max(1) as usize)""",
-      """                    .min(((origin.saturating_add(i64::from(FAST_CHUNK)) - next)
+      """                    .min(((origin.saturating_add(if ambient_range { capture_limit as i64 } else { i64::from(FAST_CHUNK) }) - next)
                         .max(1) / i64::from(chunk)).max(1) as usize)""")
 amend(range_output,
       """                if stream {
@@ -691,7 +730,8 @@ amend(range_output,
                 }
                 if last_part {""",
       """                if stream {
-                    if !ambient_range || last_part || written_end >= origin.saturating_add(i64::from(FAST_CHUNK)) {
+                    if !ambient_range || last_part || written_end >= origin.saturating_add(capture_limit as i64)
+                        || media.file_size.is_some_and(|size| size > 0 && written_end >= size) {
                         break 'download;
                     }
                     if written_end <= next {
@@ -777,13 +817,25 @@ pub fn download_message_media_chunk_bytes(
     handle: u64, chat_id: i64, message_id: i32, dest_path: String, offset: i64,
     expected_key: String,
 ) -> Result<Vec<u8>, MtprotoError> {
+    download_message_media_window_bytes(handle, chat_id, message_id, dest_path, offset, expected_key, 1)
+}
+
+#[uniffi::export]
+pub fn download_message_media_window_bytes(
+    handle: u64, chat_id: i64, message_id: i32, dest_path: String, offset: i64,
+    expected_key: String, parts: u32,
+) -> Result<Vec<u8>, MtprotoError> {
     use std::io::Read;
-    const LIMIT: usize = 512 * 1024;
-    if offset < 0 || offset % LIMIT as i64 != 0 {
+    const PART: usize = 512 * 1024;
+    if !(1..=2).contains(&parts) {
+        return Err(MtprotoError::Message("invalid media window width".into()));
+    }
+    let limit = PART * parts as usize;
+    if offset < 0 || offset % PART as i64 != 0 {
         return Err(MtprotoError::Message("invalid media range offset".into()));
     }
     let destination = std::path::Path::new(&dest_path);
-    let (path, captured) = proto_media::download::ambient_capture_range(destination, || {
+    let (path, captured) = proto_media::download::ambient_capture_range_bounded(destination, limit as u64, || {
         mono_proto_client::media_download::download_message_media_range_checked(
             handle, chat_id, message_id, dest_path.clone(),
             proto_media::location::MediaDownloadKind::Full, Some(offset),
@@ -794,15 +846,15 @@ pub fn download_message_media_chunk_bytes(
         if std::path::Path::new(&path) != destination {
             return Err(MtprotoError::Message("unexpected range destination".into()));
         }
-        let mut bytes = Vec::with_capacity(LIMIT);
+        let mut bytes = Vec::with_capacity(limit);
         std::fs::File::open(destination)
             .map_err(|e| MtprotoError::Message(e.to_string()))?
-            .take((LIMIT + 1) as u64)
+            .take((limit + 1) as u64)
             .read_to_end(&mut bytes)
             .map_err(|e| MtprotoError::Message(e.to_string()))?;
         bytes
     };
-    if bytes.is_empty() || bytes.len() > LIMIT {
+    if bytes.is_empty() || bytes.len() > limit {
         return Err(MtprotoError::Message("invalid captured media range size".into()));
     }
     Ok(bytes)
@@ -824,11 +876,12 @@ pub extern "system" fn downloadMediaRange<'caller>(
     destination: jni::objects::JString<'caller>,
     offset: jni::sys::jlong,
     expected_key: jni::objects::JString<'caller>,
+    parts: jni::sys::jint,
 ) -> jni::objects::JByteArray<'caller> {
     unowned_env.with_env(|env| -> jni::errors::Result<_> {
         let path = destination.try_to_string(env)?;
         let expected = expected_key.try_to_string(env)?;
-        match download_message_media_chunk_bytes(handle as u64, chat_id, message_id, path, offset, expected) {
+        match download_message_media_window_bytes(handle as u64, chat_id, message_id, path, offset, expected, parts as u32) {
             Ok(bytes) => env.byte_array_from_slice(&bytes),
             Err(error) => {
                 let code = match &error {
@@ -1409,7 +1462,7 @@ fn receive_cdn_parts_bounded(
     let mut memory = Vec::new();
     let mut out = if range { None } else { Some(std::fs::File::create(staged.path())
         .map_err(|e| MtprotoError::Message(e.to_string()))?) };
-    let limit = mono_proto_media::download::AMBIENT_RANGE_LIMIT as usize;
+    let limit = mono_proto_media::download::ambient_range_capacity(dest) as usize;
     let mut offset = job.offset;
     loop {
         if range && memory.len() == limit { break; }
