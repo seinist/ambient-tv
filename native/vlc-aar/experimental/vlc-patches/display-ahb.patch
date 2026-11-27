@@ -212,7 +212,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +    struct pl_color_map_params spatial_color;
 +    if (ahb_output.texture && !ahb_output.raw_yuv && sys->ahb_hdrplus_spatial &&
 +        !sys->ahb_dovi && !img.lut && !target.lut && !sys->params.lut &&
-+        ambient_dovi_visible_origin(&pic->format) &&
++        ahb_output.metadata_origin_aligned &&
 +        img.planes[0].texture->params.w == (int)pic->format.i_visible_width &&
 +        img.planes[0].texture->params.h == (int)pic->format.i_visible_height) {
 +        struct vlc_ancillary *full = picture_GetAncillary(pic, AMBIENT_HDRPLUS_FULL_ID);

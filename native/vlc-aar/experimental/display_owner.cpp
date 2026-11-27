@@ -282,7 +282,7 @@ struct ambient_ahb_owner {
         VkSemaphore ready = s.submission->handoff_ready_semaphore();
         if (!ready) { quarantine(s); return VK_ERROR_INITIALIZATION_FAILED; }
         c.release(c.opaque, s.texture, ready);
-        out = {s.texture, ticket.index, ticket.generation, in.raw_yuv};
+        out = {s.texture, ticket.index, ticket.generation, in.raw_yuv, false};
         return VK_SUCCESS;
     }
 

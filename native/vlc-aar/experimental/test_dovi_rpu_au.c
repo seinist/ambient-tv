@@ -184,6 +184,11 @@ int main(void) {
     const uint8_t embedded_start[]={5,0x26,1,0,0,1};
     assert(!ambient_fel_to_annexb(embedded_start,sizeof(embedded_start),1,NULL,0,&converted_dummy));
     // Decoder allocation padding is not a change of picture origin.
+    assert(ambient_hdrplus_origin_aligned(3840,2176,3840,2160,0,0,0,0));
+    assert(!ambient_hdrplus_origin_aligned(3840,2176,3840,2160,0,0,0,8));
+    assert(!ambient_hdrplus_origin_aligned(3840,2176,3840,2160,0,8,0,8));
+    assert(!ambient_hdrplus_origin_aligned(3840,2176,3840,2160,0,0,-1,0));
+    assert(!ambient_hdrplus_origin_aligned(3840,2176,3842,2160,0,0,0,0));
     assert(ambient_fel_visible_geometry(3840,2176,3840,2160,0,0));
     assert(ambient_fel_visible_geometry(1920,1088,1920,1080,0,0));
     assert(!ambient_fel_visible_geometry(3840,2176,3840,2160,0,8));

@@ -172,5 +172,11 @@ static inline VkResult ambient_display_prepare(struct ambient_ahb_owner *owner,
         .range = pic->format.color_range == COLOR_RANGE_FULL ?
             VK_SAMPLER_YCBCR_RANGE_ITU_FULL : VK_SAMPLER_YCBCR_RANGE_ITU_NARROW,
     };
-    return ambient_ahb_prepare(owner, &input, out);
+    const bool metadata_origin_aligned=ambient_hdrplus_origin_aligned(
+        pic->format.i_width,pic->format.i_height,width,height,
+        pic->format.i_x_offset,pic->format.i_y_offset,held.crop.left,held.crop.top);
+    VkResult result=ambient_ahb_prepare(owner, &input, out);
+    if(result==VK_SUCCESS)
+        out->metadata_origin_aligned=metadata_origin_aligned;
+    return result;
 }

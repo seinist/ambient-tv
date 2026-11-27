@@ -10,6 +10,17 @@ static inline bool ambient_fel_visible_geometry(uint32_t coded_w,uint32_t coded_
     return !x&&!y&&visible_w&&visible_h&&visible_w<=coded_w&&visible_h<=coded_h;
 }
 
+/* Spatial HDR metadata is only admitted for an origin-aligned visible
+ * picture. A decoder may report a zero format offset even though the
+ * physical AImage crop is shifted; do not treat that as confirmed geometry. */
+static inline bool ambient_hdrplus_origin_aligned(uint32_t coded_w,uint32_t coded_h,
+    uint32_t visible_w,uint32_t visible_h,uint32_t declared_x,uint32_t declared_y,
+    int32_t actual_x,int32_t actual_y)
+{
+    return actual_x==0&&actual_y==0&&ambient_fel_visible_geometry(coded_w,coded_h,
+        visible_w,visible_h,declared_x,declared_y);
+}
+
 /* Reconstruction is defined in visible coordinates. Support identity and
  * exact factor-two layers per axis without integer overflow. */
 static inline bool ambient_fel_layer_ratio(uint32_t bl,uint32_t el)
