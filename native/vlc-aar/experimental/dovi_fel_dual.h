@@ -3,6 +3,45 @@
 
 #define AMBIENT_FEL_MAX_AU (32u*1024u*1024u)
 
+/* A cursor caches the next byte offset in the current chunk. Sequential
+ * playback becomes O(1) even for a chunk containing many variable-sized
+ * samples; a backward seek safely restarts from the chunk's first byte.
+ * No table allocation and no unchecked addition of file offsets. */
+struct ambient_fel_offset_cursor {
+    uint32_t chunk, sample;
+    uint64_t offset;
+    bool valid;
+};
+static inline bool ambient_fel_sample_offset(struct ambient_fel_offset_cursor *cursor,
+    uint32_t chunk,uint32_t first,uint32_t count,uint64_t start,uint32_t sample,
+    uint32_t total,uint32_t fixed,const uint32_t *sizes,uint64_t *offset,uint32_t *size)
+{
+    if(!cursor||!offset||!size||first>total||count>total-first||
+        sample<first||sample-first>=count||(!fixed&&!sizes))return false;
+    uint64_t pos=start;
+    uint32_t n=first;
+    if(fixed){
+        uint64_t add=(uint64_t)(sample-first)*fixed;
+        if(add>UINT64_MAX-pos)return false;
+        pos+=add;
+    }else{
+        if(cursor->valid&&cursor->chunk==chunk&&cursor->sample>=first&&
+            cursor->sample<=sample&&cursor->offset>=start){
+            n=cursor->sample;pos=cursor->offset;
+        }
+        for(;n<sample;n++){
+            if(sizes[n]>UINT64_MAX-pos)return false;
+            pos+=sizes[n];
+        }
+    }
+    uint32_t bytes=fixed?fixed:sizes[sample];
+    if(!bytes||bytes>AMBIENT_FEL_MAX_AU||bytes>UINT64_MAX-pos)return false;
+    *offset=pos;*size=bytes;
+    *cursor=(struct ambient_fel_offset_cursor){.chunk=chunk,.sample=sample+1,
+        .offset=pos+bytes,.valid=true};
+    return true;
+}
+
 /* Legacy dual-track carriage: BL sample followed by EL NALs wrapped in
  * type 63, with the original type-62 RPU outside the wrapper. No attempt
  * to infer PTS, track identity, or a missing RPU from NAL contents. */
@@ -12,7 +51,8 @@ static inline bool ambient_fel_dual_sample(const uint8_t *bl,size_t bn,unsigned 
 {
     if(!bl||!el||!written||!bn||!en||bn>AMBIENT_FEL_MAX_AU||en>AMBIENT_FEL_MAX_AU||
         (bw!=1&&bw!=2&&bw!=4)||(ew!=1&&ew!=2&&ew!=4))return false;
-    bool bv=false,ev=false,rpu=false;
+    bool bv=false,ev=false,rpu=false,br=false,er=false;
+    unsigned bfirst=0,efirst=0;
     size_t total=bn;
     for(size_t p=0;p<bn;){
         if(bn-p<bw)return false;
@@ -21,10 +61,15 @@ static inline bool ambient_fel_dual_sample(const uint8_t *bl,size_t bn,unsigned 
         if(len<2||len>bn-p||(bl[p]&0x81)||!(bl[p+1]&7)||(bl[p+1]>>3))return false;
         unsigned type=(bl[p]>>1)&63;
         if(type>=62)return false;
-        if(type<=31)bv=true;
+        if(type<=31){
+            if(len<3)return false;
+            if(bl[p+2]&0x80)bfirst++;
+            if(!bv && !(bl[p+2]&0x80))return false;
+            bv=true;br|=type>=16&&type<=23;
+        }
         p+=len;
     }
-    if(!bv)return false;
+    if(!bv||bfirst!=1)return false;
     size_t prefix=0;
     if(inject){
         if(!ambient_fel_hvce_prefix(config,cn,bw,NULL,0,&prefix)||
@@ -39,14 +84,18 @@ static inline bool ambient_fel_dual_sample(const uint8_t *bl,size_t bn,unsigned 
         unsigned type=(el[p]>>1)&63;
         if(type==63)return false;
         if(type==62){if(rpu)return false;rpu=true;}
-        if(type<=31)ev=true;
+        if(type<=31){
+            if(el[p+2]&0x80)efirst++;
+            if(!ev && !(el[p+2]&0x80))return false;
+            ev=true;er|=type>=16&&type<=23;
+        }
         uint64_t wrapped=(uint64_t)len+(type==62?0:2);
         if((bw==1&&wrapped>255)||(bw==2&&wrapped>65535)||
             wrapped+bw>AMBIENT_FEL_MAX_AU-total)return false;
         total+=(size_t)wrapped+bw;
         p+=len;
     }
-    if(!ev||!rpu)return false;
+    if(!ev||efirst!=1||!rpu||(br&&!er))return false;
     if(!out){*written=total;return true;}
     if(cap<total)return false;
     memcpy(out,bl,bn);
