@@ -41,7 +41,16 @@ jobs:
           for patch in "$GITHUB_WORKSPACE"/native/vlc-aar/patches/*.patch; do
             git -C .ci/vlc apply "$patch"
           done
-          git -C .ci/vlc apply --check "$GITHUB_WORKSPACE"/native/vlc-aar/experimental/vlc-patches/*.patch
+          # Check sequential applicability, as actual staging does. A single
+          # git apply --check with many patches can miss conflicting hunks
+          # against the same original file.
+          for patch in "$GITHUB_WORKSPACE"/native/vlc-aar/experimental/vlc-patches/*.patch; do
+            echo "Checking experimental patch: $(basename "$patch")"
+            git -C .ci/vlc apply --check "$patch"
+            git -C .ci/vlc apply "$patch"
+          done
+          # Staging below must recognize the already applied series. It also
+          # generates shaders, copies headers and applies the contrib changes.
       - name: Install pinned Android NDK and shader compiler
         run: |
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
