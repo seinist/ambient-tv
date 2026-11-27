@@ -41,6 +41,12 @@ int ambient_svp_push_fill(AmbientSvp *, int64_t pts_us, void *context, AmbientSv
  /* 1 output, 0 needs input/end of drain, -1 failure. Always drain before push.
  * eof=1 closes the input and drains the finite tail without extrapolation. */
 int ambient_svp_receive(AmbientSvp *svp, uint8_t *i420, size_t len, int64_t *pts_us, int eof);
+/* Optional direct output visitor. Called synchronously exactly once for
+ * each output, never for a need-input result. The borrowed packed I420
+ * pointer is read-only and valid only during the callback; do not retain
+ * it, re-enter SVP, or unwind. The destination must be ready beforehand. */
+typedef void (*AmbientSvpVisit)(void *context, const uint8_t *src, size_t len);
+int ambient_svp_receive_visit(AmbientSvp *, void *, AmbientSvpVisit, int64_t *, int);
 int ambient_svp_stats(const AmbientSvp *svp, AmbientSvpStats *stats);
 /* Explicit runtime protection (thermal pressure / player dropped frames). */
 void ambient_svp_bypass(AmbientSvp *svp, uint32_t reason);
