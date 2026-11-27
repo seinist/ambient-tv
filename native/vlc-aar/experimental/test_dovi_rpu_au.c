@@ -1,3 +1,4 @@
+#include "dovi_fel_geometry.h"
 #include "dovi_rpu_au.h"
 #include "dovi_fel_dual.h"
 #include <assert.h>
@@ -182,6 +183,18 @@ int main(void) {
     size_t converted_dummy;
     const uint8_t embedded_start[]={5,0x26,1,0,0,1};
     assert(!ambient_fel_to_annexb(embedded_start,sizeof(embedded_start),1,NULL,0,&converted_dummy));
+    // Decoder allocation padding is not a change of picture origin.
+    assert(ambient_fel_visible_geometry(3840,2176,3840,2160,0,0));
+    assert(ambient_fel_visible_geometry(1920,1088,1920,1080,0,0));
+    assert(!ambient_fel_visible_geometry(3840,2176,3840,2160,0,8));
+    assert(!ambient_fel_visible_geometry(1920,1088,1922,1080,0,0));
+    assert(!ambient_fel_visible_geometry(1920,1088,1920,0,0,0));
+    assert(ambient_fel_layer_ratio(2160,1080));
+    assert(ambient_fel_layer_ratio(1080,1080));
+    assert(!ambient_fel_layer_ratio(2176,1080));
+    assert(!ambient_fel_layer_ratio(2161,1080));
+    assert(!ambient_fel_layer_ratio(0,0));
+    assert(!ambient_fel_layer_ratio(UINT32_MAX-1,UINT32_MAX));
     struct ambient_rpu_pts_queue q={0};
     int a=1,b=2,c=3;
     assert(ambient_rpu_pts_insert(&q,30,&a));
