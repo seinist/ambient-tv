@@ -23,8 +23,11 @@ object MpvBackendAvailability {
             runCatching {
                 // Android resolves libmpv.so/libambientmpv.so from the matching ABI directory
                 // (arm64-v8a, armeabi-v7a, x86 or x86_64). No manual library path is needed.
-                System.loadLibrary("mpv")
-                System.loadLibrary("ambientmpv")
+                val external = com.ambient.tv.modules.SystemModuleHost.loadSelected(com.ambient.tv.modules.SystemModule.MPV)
+                if (external == null) {
+                    System.loadLibrary("mpv")
+                    System.loadLibrary("ambientmpv")
+                }
                 MpvNativeBridge.nativeVersion().isNotBlank()
             }.onFailure { timber.log.Timber.e(it, "MPV native runtime could not be loaded") }.getOrDefault(false)
         }
