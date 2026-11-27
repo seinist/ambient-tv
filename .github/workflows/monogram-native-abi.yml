@@ -32,6 +32,8 @@ jobs:
     timeout-minutes: 90
     strategy:
       fail-fast: false
+      # Avoid six concurrent cold dependency resolutions against Maven Central.
+      max-parallel: 3
       matrix:
         include:
           - abi: arm64-v8a

@@ -138,6 +138,17 @@ git -C "$source_dir" submodule update --init --force --recursive vendor/mono-rs
 [[ "$(git -C "$source_dir/vendor/mono-rs" rev-parse HEAD)" == "$mono_rs_ref" ]] ||
     { echo "mono-rs checkout is not at the pinned commit" >&2; exit 1; }
 python3 "$patch_script" "$source_dir"
+# Gradle can negatively cache a missing artifact after a rate limit or short
+# repository outage. Only classify dependency resolution failures, never source,
+# native compiler, test, or packaging failures as retryable.
+monogram_gradle_retryable() {
+    local log="$1"
+    if grep -Eq '^e: |^error(\[|:)|^> Task .* (FAILED|failure)' "$log"; then
+        return 1
+    fi
+    grep -Eiq 'could not resolve plugin artifact|could not resolve all (artifacts|files|dependencies) for configuration' "$log" &&
+        grep -Eiq 'could not resolve plugin artifact|could not (resolve|find|get resource)|received status code (429|5[0-9][0-9])|timed out|connection reset' "$log"
+}
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 for abi in "${abis[@]}"; do
@@ -152,17 +163,25 @@ for abi in "${abis[@]}"; do
     ( cd "$source_dir"
       # Upstream's native task does not fingerprint Cargo profile environment.
       gradle_args=(--no-daemon --no-configuration-cache --rerun-tasks :native:mtproto:assembleRelease "-PtargetAbi=$abi")
-      # CI runners sometimes fail to resolve an otherwise identical pinned plugin.
-      # Retry once only for a plugin repository resolution failure, not compile errors.
+      # Rate limits and transient missing artifacts must not force another Rust
+      # build or a dependency downgrade. Preserve the normal positive cache;
+      # refresh only the final attempt to invalidate negative resolution entries.
       log="$scratch/gradle-$abi.log"
-      if ! ./gradlew "${gradle_args[@]}" 2>&1 | tee "$log"; then
-          if [[ "${CI:-}" != true && "${CI:-}" != 1 ]] || ! grep -Fq 'could not resolve plugin artifact' "$log"; then
+      for attempt in 1 2 3; do
+          extra=()
+          if (( attempt == 3 )); then extra+=(--refresh-dependencies); fi
+          if ./gradlew "${gradle_args[@]}" "${extra[@]}" 2>&1 | tee "$log"; then
+              break
+          fi
+          if [[ "${CI:-}" != true && "${CI:-}" != 1 ]] ||
+              (( attempt == 3 )) || ! monogram_gradle_retryable "$log"; then
               exit 1
           fi
-          echo "Retrying pinned Gradle plugin resolution for $abi" >&2
-          sleep 5
-          ./gradlew "${gradle_args[@]}" --refresh-dependencies
-      fi
+          # Spread concurrent runners and respect a repository's recovery time.
+          delay=$((20 * attempt + RANDOM % 15))
+          echo "Retrying pinned Gradle dependency resolution for $abi in ${delay}s (attempt $((attempt + 1))/3)" >&2
+          sleep "$delay"
+      done
     )
     aar="$source_dir/native/mtproto/build/outputs/aar/mtproto-release.aar"
     [[ -s "$aar" ]] || { echo "Missing $aar" >&2; exit 1; }

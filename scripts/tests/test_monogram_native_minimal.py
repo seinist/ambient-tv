@@ -92,6 +92,28 @@ class MinimalMonogramTests(unittest.TestCase):
         self.assertIn("apiCredentialsReady", settings)
         self.assertIn("resetForCredentials()", backend)
 
+    def test_gradle_retry_classifies_dependency_outages_not_compile_failures(self):
+        import subprocess
+        shell = (ROOT / "scripts" / "build_monogram_native.sh").read_text()
+        classifier = shell.split("monogram_gradle_retryable() {", 1)[1].split("\n}", 1)[0]
+        function = "monogram_gradle_retryable() {" + classifier + "\n}"
+        cases = [
+            ("Could not resolve all artifacts for configuration 'classpath'.\nReceived status code 429 from server", True),
+            ("Could not resolve all artifacts for configuration 'classpath'.\nCould not find org.jetbrains.kotlin:kotlin-reflect:2.4.21.", True),
+            ("Plugin Repositories (could not resolve plugin artifact 'p:v')", True),
+            ("e: file:///app.kt:1 Unresolved reference", False),
+            ("> Task :app:compileDebugKotlin FAILED\nCould not resolve all artifacts for configuration 'classpath'.", False),
+            ("error[E0308]: mismatched types", False),
+            ("APK size delta exceeds limit", False),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "build.log"
+            for message, retry in cases:
+                with self.subTest(message=message):
+                    log.write_text(message)
+                    result = subprocess.run(["bash", "-c", function + '\nmonogram_gradle_retryable "$1"', "bash", str(log)], check=False)
+                    self.assertEqual(result.returncode == 0, retry)
+
     def test_leave_channel_patch_is_pinned_and_native_only(self):
         shell = (ROOT / "scripts" / "build_monogram_native.sh").read_text()
         gradle = (ROOT / "app" / "build.gradle.kts").read_text()
