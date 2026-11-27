@@ -62,6 +62,8 @@ class ProjectMBrowser(
     var currentPath by mutableStateOf<String?>(null)
     var locked by mutableStateOf(false)
     var pendingPath by mutableStateOf<String?>(null)
+    var pendingRevision by mutableIntStateOf(0)
+        private set
     var pendingSmooth by mutableStateOf(true)
     private val revision = mutableIntStateOf(0)
 
@@ -115,6 +117,7 @@ class ProjectMBrowser(
         currentPath = preset.assetPath
         pendingPath = preset.assetPath
         pendingSmooth = smooth
+        pendingRevision++
         locked = true
     }
 
