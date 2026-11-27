@@ -6,7 +6,7 @@
 static stream_t fixture_stream;
 static uint8_t bytes[256];
 static size_t position, visible, blocks, peek_at_end, short_read_at;
-static bool seekable, misdirect_seek;
+static bool seekable, misdirect_seek, misdirect_read;
 
 uint64_t vlc_stream_Tell(const stream_t *stream)
 {
@@ -76,6 +76,7 @@ block_t *vlc_stream_Block(stream_t *stream,size_t len)
     if(len>visible-position)len=visible-position;
     block_t *b=block_Alloc(len);
     if(b)assert(vlc_stream_Read(stream,b->p_buffer,len)==(ssize_t)len);
+    if(misdirect_read&&position>0)--position;
     return b;
 }
 
@@ -91,7 +92,7 @@ static void reset_stream(bool can_seek)
     box(112,8,"free");
     box(120,12,"mdat");memcpy(bytes+128,"WXYZ",4);
     position=100;visible=132;seekable=can_seek;
-    short_read_at=SIZE_MAX;peek_at_end=0;misdirect_seek=false;
+    short_read_at=SIZE_MAX;peek_at_end=0;misdirect_seek=misdirect_read=false;
 }
 
 static void test_segment_header(demux_t *d,demux_sys_t *sys)
@@ -198,6 +199,23 @@ static void test_leading_empty_mdats(demux_t *d,demux_sys_t *sys)
     misdirect_seek=false;
     assert(MP4_FEL_SeekExact(d->s,100));
 }
+static void test_exact_sample_read(demux_t *d)
+{
+    reset_stream(true);
+    assert(MP4_FEL_SeekExact(d->s,108));
+    assert(!MP4_FEL_ReadExact(d->s,109,3)&&position==108&&!blocks);
+    assert(!MP4_FEL_ReadExact(d->s,108,0)&&position==108&&!blocks);
+    block_t *sample=MP4_FEL_ReadExact(d->s,108,4);
+    assert(sample&&sample->i_buffer==4&&!memcmp(sample->p_buffer,"ABCD",4));
+    assert(position==112&&blocks==1);block_Release(sample);
+    assert(MP4_FEL_SeekExact(d->s,128));short_read_at=128;
+    assert(!MP4_FEL_ReadExact(d->s,128,4)&&position==131&&!blocks);
+    assert(MP4_FEL_SeekExact(d->s,128));short_read_at=SIZE_MAX;misdirect_read=true;
+    assert(!MP4_FEL_ReadExact(d->s,128,4)&&position==131&&!blocks);
+    misdirect_read=false;
+    assert(MP4_FEL_SeekExact(d->s,128));
+    assert(!MP4_FEL_ReadExact(d->s,128,5)&&position==132&&!blocks);
+}
 int main(void)
 {
     mp4_track_t track={.i_track_ID=1,.b_ok=true,.i_timescale=1000};
@@ -206,6 +224,7 @@ int main(void)
     test_segment_header(&demux,&sys);
     test_empty_mdat_gaps(&demux,&sys);
     test_leading_empty_mdats(&demux,&sys);
+    test_exact_sample_read(&demux);
     MP4_Box_data_tfhd_t tfhd={.i_track_ID=1,
         .i_flags=MP4_TFHD_DEFAULT_BASE_IS_MOOF|MP4_TFHD_DFLT_SAMPLE_SIZE|
             MP4_TFHD_DFLT_SAMPLE_DURATION,
