@@ -168,7 +168,7 @@ static const char ambient_hdrplus_mask_glsl[] =
     "  float source_nits=s*ahp_sat_source_scale[i];\n"
     "  float target_nits=clamp(mapped/ahp_sat_peak[i],0.0,1.0)*ahp_sat_target_scale[i];\n"
     "  if(target_nits<=1.0001 || source_nits<=target_nits) return out_rgb;\n"
-    "  float gain=1.0+ahp_sat[i]*max(0.0,log(source_nits)/log(target_nits)-1.0);\n"
+    "  float gain=min(4.0,1.0+ahp_sat[i]*max(0.0,log(source_nits)/log(target_nits)-1.0));\n"
     "  vec3 enc=pow(clamp(out_rgb/ahp_sat_peak[i],0.0,1.0),vec3(1.0/2.4));\n"
     "  float y=dot(enc,vec3(0.2627,0.6780,0.0593)); vec3 d=enc-vec3(y);\n"
     "  for(int k=0;k<3;++k) {\n"
@@ -179,7 +179,8 @@ static const char ambient_hdrplus_mask_glsl[] =
     "}\n";
 /* Annex B.5 inspired saturation compensation in BT.2020 non-linear RGB.
  * The adapted curve supplies the actual mapped light, not raw PQ code values.
- * Use BT.1886's ideal-black 2.4 power and cap chroma gain at the RGB gamut.
+ * Use BT.1886's ideal-black 2.4 power and cap gain at 4 and the RGB gamut
+ * as specified by Annex B.12.
  * Guard logarithm singularities and leave blacks/neutral colors unchanged. */
 static const char ambient_hdrplus_map_glsl[] =
     "vec2 p=floor(ahp_uv*ahp_size);\n"
