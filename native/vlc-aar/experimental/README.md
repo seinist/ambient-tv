@@ -236,3 +236,43 @@ of hardware BL and software EL across output reordering and drops,
 chroma/layer alignment and matrix/color conversion before the feature
 can be enabled. No actual FEL title playback or production activation
 is claimed.
+
+
+### Experimental live Profile 7 FEL route
+
+The AHB decoder/display integration now accepts explicitly flagged single-track
+profile-7 streams with combined Annex B BL/EL/RPU, explicit BT.2020 PQ limited
+range and uncropped dimensions. The isolated test build requires all of:
+
+```sh
+VLC_EXPERIMENTAL_AHB=1 bash scripts/build_vlc_vulkan.sh
+# App Gradle properties:
+# -PVLC_AHB_EXPERIMENT=1 -PVLC_DOVI_AHB_EXPERIMENT=1 -PVLC_DOVI_FEL_EXPERIMENT=1
+```
+
+The last flag passes the separate default-off `--vk-ambient-dovi-fel` option.
+The base layer is decoded by MediaCodec into actual native P010. The software
+FFmpeg EL decoder receives the original combined access unit before wrapped
+EL NALs and RPU are removed from the BL input. Its output thread pairing uses
+a bounded condition wait on exact PTS, with explicit flush/drain/drop and
+ownership handling. The AImage timestamp is checked again. An owned picture
+ancillary transfers the raw EL planes and RPU to the display without sharing
+FFmpeg state across modules.
+
+The Vulkan prepass uploads three reusable R16 UNORM EL planes, samples with
+separate chroma and layer alignment (1:1 or 2:1, left/center layer siting),
+performs NLQ and BL reshape in the correct order, and uses the existing
+libplacebo Dolby Vision matrix/PQ conversion without a second reshape.
+The resulting PQ RGB frame goes through the ordinary display pipeline.
+Unknown chroma siting uses a documented top-left assumption. The host
+reference test for planar alignment and matrix conversion passed at
+6f1dae5 (run 45955201352); the real FFmpeg decoder/RPU contract also passed
+at that revision. The newer opaque API and active VLC handoff tests,
+four-ABI contract, fully linked AAR and app validation remain unconfirmed.
+
+This is a restricted experimental route, not a fully validated or
+bit-exact Dolby Vision implementation. Separate EL tracks, EL configuration
+available only out-of-band, cropping and unsupported geometry remain
+outside the route. Physical Android playback, reference image comparison,
+seek/reorder stress and performance validation remain necessary. HDR10+
+full ST 2094-40 conformance is still not established.
