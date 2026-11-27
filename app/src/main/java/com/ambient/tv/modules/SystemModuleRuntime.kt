@@ -2,7 +2,6 @@ package com.ambient.tv.modules
 
 import android.content.Context
 import dalvik.system.BaseDexClassLoader
-import dalvik.system.DexClassLoader
 import java.io.File
 
 /**
@@ -41,6 +40,9 @@ internal class SystemModuleRuntime(
         // Only engines whose first load is controlled by this runtime may opt in.
         val bundledOverrides: Set<String> = emptySet(),
         val hostBindingSha256: String? = null,
+        val dexOwnership: ModuleDexOwnership? = null,
+        val dexNativeRoots: Set<String> = emptySet(),
+        val dexAlternative: Contract? = null,
     )
 
     data class Loaded(
@@ -77,7 +79,7 @@ internal class SystemModuleRuntime(
                         if (it.build != pkg.build) throw SystemModuleTrustException("Loaded module differs from selected package; restart required")
                     }
                     if (id in active) continue
-                    val contract = contracts[id] ?: throw SystemModuleTrustException("No host module contract")
+                    val contract = contractFor(id, pkg.build)
                     if (!contract.hostLibraries.containsAll(pkg.build.hostNativeSha256.keys))
                         throw SystemModuleTrustException("Unapproved host native dependency")
                     val files = SystemModuleMaterializer.prepare(pkg, root, pageSize, pkg.build.hostNativeSha256.keys)
@@ -100,7 +102,7 @@ internal class SystemModuleRuntime(
                     files.native.keys.forEach { nativeOwners[it] = id }
                     try {
                         SystemModuleMaterializer.verifyFiles(files)
-                        active[id] = activate(files, contracts.getValue(id))
+                        active[id] = activate(files, contractFor(id, files.build))
                     } catch (e: Exception) {
                         failed += id
                         throw e
@@ -121,7 +123,7 @@ internal class SystemModuleRuntime(
 
     /** Validate without initializing classes or invoking the linker. */
     fun validateCandidate(module: SystemModule, pkg: SystemModuleStore.Package) {
-        val contract = contracts[module] ?: throw SystemModuleTrustException("No host module contract")
+        val contract = contractFor(module, pkg.build)
         if (pkg.build.module != module.id ||
             !contract.hostLibraries.containsAll(pkg.build.hostNativeSha256.keys))
             throw SystemModuleTrustException("Unapproved module or host native dependency")
@@ -134,6 +136,11 @@ internal class SystemModuleRuntime(
         }
     }
 
+    private fun contractFor(module: SystemModule, build: SystemModuleBuild): Contract {
+        val primary = contracts[module] ?: throw SystemModuleTrustException("No host module contract")
+        return primary.dexAlternative?.takeIf { it.hostBindingSha256 == build.hostBindingSha256 } ?: primary
+    }
+
     private fun validateContract(contract: Contract, files: SystemModuleMaterializer.Materialized) {
         if (files.build.hostBindingSha256 != contract.hostBindingSha256)
             throw SystemModuleTrustException("Host language binding fingerprint mismatch")
@@ -141,7 +148,11 @@ internal class SystemModuleRuntime(
         if (modes != 1) throw SystemModuleTrustException("Invalid host module contract")
         when {
             contract.entryClass != null -> {
-                if (files.dex.isEmpty()) throw SystemModuleTrustException("Missing module adapter DEX")
+                if (files.dex.isEmpty() || files.native.keys != contract.dexNativeRoots ||
+                    files.build.hostNativeSha256.isNotEmpty())
+                    throw SystemModuleTrustException("Module adapter DEX or native payload mismatch")
+                if (contract.dexOwnership == null)
+                    throw SystemModuleTrustException("Module adapter ownership missing")
             }
             contract.nativeRoots.isNotEmpty() -> {
                 if (files.dex.isNotEmpty() || !files.native.keys.containsAll(contract.nativeRoots))
@@ -199,11 +210,9 @@ internal class SystemModuleRuntime(
             dependency.entrypoint?.let { entry -> it.module to entry }
         }.toMap()
         if (contract.entryClass != null) {
-            val loader = DexClassLoader(
-                files.dex.joinToString(File.pathSeparator) { it.absolutePath },
-                null,
-                File(files.directory, "lib").absolutePath,
-                hostLoader,
+            val loader = OwnedModuleDexClassLoader(
+                files.dex, File(files.directory, "lib"), hostLoader,
+                checkNotNull(contract.dexOwnership),
             )
             val type = Class.forName(contract.entryClass, false, loader)
             if (type.classLoader !== loader || !SystemModuleEntrypoint::class.java.isAssignableFrom(type))
