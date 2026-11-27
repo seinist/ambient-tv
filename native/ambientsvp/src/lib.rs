@@ -122,8 +122,6 @@ pub struct AmbientSvp {
     gpu: Option<gpu::Gpu>,
     #[cfg(feature = "vulkan")]
     prefetched: Option<i32>,
-    #[cfg(feature = "vulkan")]
-    prefetch_buffer: Vec<u8>,
     #[cfg(all(test, feature = "vulkan"))]
     disable_prefetch: bool,
 }
@@ -252,8 +250,6 @@ impl AmbientSvp {
             gpu,
             #[cfg(feature = "vulkan")]
             prefetched: None,
-            #[cfg(feature = "vulkan")]
-            prefetch_buffer: Vec::new(),
             #[cfg(all(test, feature = "vulkan"))]
             disable_prefetch: false,
         })
@@ -368,7 +364,6 @@ impl AmbientSvp {
             self.gpu = None;
             self.stats.backend = 1;
             self.prefetched = None;
-            self.prefetch_buffer = Vec::new();
         }
         let analysis = (|| -> Result<(), i32> {
         if self.stats.bypass_reason == 0 {
@@ -482,7 +477,6 @@ impl AmbientSvp {
         {
             self.gpu = None;
             self.prefetched = None;
-            self.prefetch_buffer = Vec::new();
         }
     }
 
@@ -536,9 +530,14 @@ impl AmbientSvp {
             let begin = Instant::now();
             #[cfg(feature = "vulkan")]
             let (gpu_done, known_copy) = if self.prefetched.take() == Some(self.output) {
-                out.copy_from_slice(&self.prefetch_buffer);
-                GPU_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                (true, false)
+                if self.gpu.as_mut().is_some_and(|gpu| gpu.finish_prefetched(out).is_ok()) {
+                    GPU_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    (true, false)
+                } else {
+                    self.gpu = None;
+                    self.stats.backend = 1;
+                    (false, false)
+                }
             } else if self.gpu.is_some() {
                 // Only prefetch a ready consecutive output from the same
                 // source pair, never across a seek, EOF tail or lookahead gap.
@@ -570,8 +569,7 @@ impl AmbientSvp {
                         } else { None };
                         let gpu = self.gpu.as_mut().unwrap();
                         let result = if let Some(next_job) = next_job {
-                            self.prefetch_buffer.resize(out.len(), 0);
-                            let result = gpu.render_pair(&job, &next_job, current, next, out, &mut self.prefetch_buffer);
+                            let result = gpu.render_pair(&job, &next_job, current, next, out);
                             if result.is_ok() { self.prefetched = Some(next_index); }
                             result
                         } else {
@@ -585,8 +583,7 @@ impl AmbientSvp {
                             Err(_) => {
                                 self.gpu = None;
                                 self.prefetched = None;
-                                self.prefetch_buffer = Vec::new();
-                                self.stats.backend = 1;
+                                                    self.stats.backend = 1;
                                 (false, false)
                             }
                         }
