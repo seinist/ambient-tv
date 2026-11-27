@@ -33,12 +33,71 @@ struct ambient_hdrplus_window {
 struct ambient_hdrplus {
     uint8_t version, window_count;
     bool global_projection; /* metadata beyond VLC/libplacebo's global contract */
+    bool metadata_constraints_ok; /* checkable ST2094-40 constraints, both versions */
+    bool version0_recommended_features; /* section 9.3 recommendations */
     bool version1_constraints_ok; /* ST 2094-40:2020 section 9.4 and 8.5.4/8.7.3.2 */
     bool version1_recommended_distribution; /* Table 1: recommended, not mandatory */
     float target_nits;
     struct ambient_hdrplus_window windows[3];
     struct ambient_hdrplus_grid targeted_grid, mastering_grid;
 };
+/* A monotone Bezier curve need not have sorted control points. Check
+ * the derivative in Bernstein form: nonnegative coefficients prove
+ * nonnegativity over that interval; subdivide ambiguous intervals.
+ * Bound recursion and reject unproven curves rather than assuming monotonicity. */
+static inline bool ambient_hdrplus_nonnegative_bernstein(const double *p,
+    unsigned n,unsigned depth)
+{
+    bool positive=true;
+    for(unsigned i=0;i<=n;i++)if(p[i]<0.0){positive=false;break;}
+    if(positive)return true;
+    if(p[0]<0.0||p[n]<0.0||!depth)return false;
+    double v[16],left[16],right[16];
+    memcpy(v,p,(n+1)*sizeof(*p));
+    left[0]=v[0];right[n]=v[n];
+    for(unsigned k=1;k<=n;k++){
+        for(unsigned j=0;j<=n-k;j++)v[j]=(v[j]+v[j+1])*0.5;
+        left[k]=v[0];right[n-k]=v[n-k];
+    }
+    return ambient_hdrplus_nonnegative_bernstein(left,n,depth-1)&&
+           ambient_hdrplus_nonnegative_bernstein(right,n,depth-1);
+}
+static inline bool ambient_hdrplus_curve_monotone(const struct ambient_hdrplus_window *w)
+{
+    if(!w||w->anchor_count>15)return false;
+    double delta[16],last=0.0;
+    for(unsigned i=0;i<w->anchor_count;i++){
+        double x=w->anchors[i];
+        if(!(x>=0.0&&x<=1.0))return false;
+        delta[i]=x-last;last=x;
+    }
+    delta[w->anchor_count]=1.0-last;
+    return ambient_hdrplus_nonnegative_bernstein(delta,w->anchor_count,10);
+}
+
+/* Validate actual distribution values, not the v1 reserved markers. */
+static inline bool ambient_hdrplus_reserved_markers(const struct ambient_hdrplus_window *w,unsigned version)
+{
+    return version==1 && w->histogram_count==9 &&
+        w->histogram[1].percentage==5 && w->histogram[2].percentage==10;
+}
+static inline bool ambient_hdrplus_distribution_ordered(const struct ambient_hdrplus_window *w,unsigned version)
+{
+    if(!w||w->histogram_count>15)return false;
+    bool reserved=ambient_hdrplus_reserved_markers(w,version);
+    if(reserved&&(w->histogram[1].percentile!=0.f||w->histogram[2].percentile!=255.f/100000.f))
+        return false;
+    float last=0.f;
+    for(unsigned i=0;i<w->histogram_count;i++){
+        if(w->histogram[i].percentage>100 || (i&&w->histogram[i].percentage<=w->histogram[i-1].percentage))
+            return false;
+        if(reserved&&(i==1||i==2))continue;
+        float v=w->histogram[i].percentile;
+        if(!(v>=last&&v<=1.f))return false;
+        last=v;
+    }
+    return true;
+}
 struct ambient_hdrplus_bits { const uint8_t *data; size_t bits, pos; };
 static inline bool ambient_hdrplus_read(struct ambient_hdrplus_bits *r, unsigned n, uint32_t *value)
 {
@@ -78,7 +137,7 @@ static inline bool ambient_hdrplus_geometry(struct ambient_hdrplus_bits *r,
         !ambient_hdrplus_read(r, 16, &inner) ||
         !ambient_hdrplus_read(r, 16, &outer) ||
         !ambient_hdrplus_read(r, 16, &minor) ||
-        !inner || !outer || !minor || inner > outer ||
+        !inner || !outer || !minor || inner > outer || minor > outer ||
         !ambient_hdrplus_read(r, 1, &overlap)) return false;
     *g = (struct ambient_hdrplus_geometry){left, top, right, bottom, cx, cy,
         inner, outer, minor, angle, overlap};
@@ -145,26 +204,23 @@ static inline bool ambient_hdrplus_parse(const uint8_t *data, size_t size, struc
     if (r.bits - r.pos > 7) return false;
     while (r.pos < r.bits) { READ(1); if (v) return false; }
 #undef READ
-    // Version 1 has a narrower metadata contract than the general syntax.
-    // Preserve parseable legacy/nonconforming payloads for compatibility but
-    // do not describe them as compliant. Version 0 does not use this flag.
-    if (m.version==1) {
-        const struct ambient_hdrplus_window *p=&m.windows[0];
-        m.version1_constraints_ok=m.window_count==1 && !m.targeted_grid.rows &&
-            !m.mastering_grid.rows && !p->saturation_mapping &&
-            p->histogram_count==9 && p->anchor_count<=9;
-        const bool reserved=p->histogram_count==9&&p->histogram[1].percentage==5&&
-            p->histogram[2].percentage==10;
-        if(reserved&&(p->histogram[1].percentile!=0.f||p->histogram[2].percentile!=255.f/100000.f))
-            m.version1_constraints_ok=false;
-        // The real CFD percentiles are nondecreasing. Positions V1/V2
-        // are exempt only when both reserved marker percentages match.
-        float previous=0.f;
-        for(unsigned i=0;i<p->histogram_count;i++){
-            if(reserved&&(i==1||i==2))continue;
-            if(p->histogram[i].percentile<previous)m.version1_constraints_ok=false;
-            previous=p->histogram[i].percentile;
-        }
+    // Syntax compatibility is independent of checkable metadata validity.
+    // Statistics derived from the source pixels cannot be verified here.
+    m.metadata_constraints_ok=true;
+    for(unsigned i=0;i<m.window_count;i++){
+        const struct ambient_hdrplus_window *w=&m.windows[i];
+        if(!ambient_hdrplus_distribution_ordered(w,m.version) ||
+            (w->tone_mapping&&!ambient_hdrplus_curve_monotone(w)))
+            m.metadata_constraints_ok=false;
+    }
+    const struct ambient_hdrplus_window *p=&m.windows[0];
+    bool no_optional=m.window_count==1&&!m.targeted_grid.rows&&
+        !m.mastering_grid.rows&&!p->saturation_mapping;
+    if(m.version==0)m.version0_recommended_features=no_optional;
+    if(m.version==1){
+        m.version1_constraints_ok=m.metadata_constraints_ok&&no_optional&&
+            p->histogram_count==9&&p->anchor_count<=9;
+        m.metadata_constraints_ok=m.version1_constraints_ok;
         static const uint8_t recommended[9]={1,5,10,25,50,75,90,95,99};
         m.version1_recommended_distribution=p->histogram_count==9;
         for(unsigned i=0;i<p->histogram_count&&i<9;i++)
