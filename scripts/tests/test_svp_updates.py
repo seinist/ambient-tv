@@ -27,6 +27,8 @@ class SvpUpdateTest(unittest.TestCase):
             dest = self.crate / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(svp.ROOT / "native/ambientsvp" / name, dest)
+        for name in ("build.rs", "shaders/ahb_convert.comp"):
+            shutil.copyfile(svp.ROOT / "native/ambientsvp" / name, self.crate / name)
         (self.root / "gradle").mkdir()
         self.props = self.root / "gradle/external-versions.properties"
         shutil.copyfile(updater.PROPS, self.props)
@@ -219,10 +221,14 @@ class SvpUpdateTest(unittest.TestCase):
         source.write_text("// changed\n")
         second = svp.fingerprint(self.root)
         self.assertNotEqual(first, second)
+        shader = self.crate / "shaders/ahb_convert.comp"
+        shader.write_bytes(shader.read_bytes() + b"\n// fingerprint regression\n")
+        third = svp.fingerprint(self.root)
+        self.assertNotEqual(second, third)
         with tempfile.TemporaryDirectory() as other:
             clone = Path(other) / "copy"
             shutil.copytree(self.root, clone)
-            self.assertEqual(second, svp.fingerprint(clone))
+            self.assertEqual(third, svp.fingerprint(clone))
 
     @unittest.skipUnless(os.environ.get("SVP_UPDATE_NETWORK_TEST") == "1", "explicit network/Cargo resolution test")
     def test_real_upstream_update_resolves_in_isolation(self):
