@@ -429,7 +429,7 @@ jobs:
                       repo: ($matrix.include[] | select(.core == $core and .abi == $abi) | .repo),
                       fingerprint: ($matrix.include[] | select(.core == $core and .abi == $abi) | .fingerprint) }]' <<< "$entries")
           done
-          if [ "$EXPERIMENT" = true ]; then count="${#expected[@]}"; else count="$TOTAL"; fi
+          count="$TOTAL"
           jq -e --argjson count "$count" 'length == $count and ([.[] | [.core,.abi]] | unique | length) == $count and all(.[]; .fingerprint | test("^[0-9a-f]{64}$"))' <<< "$entries" >/dev/null
           jq -n --arg tag "$tag" --arg profile "$PROFILE" --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson cores "$entries" \
             '{ version: 1, tag: $tag, profile: $profile, created: $created, cores: $cores }' > release/manifest.json
@@ -444,7 +444,7 @@ jobs:
           release_args=(--latest=false)
           if [ "$EXPERIMENT" = true ]; then
             release_args+=(--prerelease)
-            title="Ambient TV Experimental cores"
+            title="Ambient TV cores – $PROFILE"
           else
             title="Ambient TV cores"
           fi
@@ -456,3 +456,14 @@ jobs:
           cmp "$RUNNER_TEMP/uploaded-assets" "$RUNNER_TEMP/expected-assets"
           assert_current_recipe
           gh release edit "$tag" --draft=false --latest=false
+          # A successful CLI mutation alone is not proof that the published channel exists.
+          for attempt in 1 2 3 4 5; do
+            if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" > "$RUNNER_TEMP/published-core-release.json" &&
+               jq -e --arg tag "$tag" --argjson pre "$EXPERIMENT" '.tag_name == $tag and .draft == false and .prerelease == $pre' "$RUNNER_TEMP/published-core-release.json" >/dev/null &&
+               jq -r '.assets[].name' "$RUNNER_TEMP/published-core-release.json" | LC_ALL=C sort | cmp - "$RUNNER_TEMP/expected-assets"; then
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::Published core release $tag is missing or incomplete"
+          exit 1

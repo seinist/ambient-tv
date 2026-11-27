@@ -1385,7 +1385,7 @@ run_cores_command() {
                 elif [[ "$tag" =~ ^core-experiments-(optimized|optimized-a57|o3|thinlto|o3-thinlto|tune-a57|picodrive-sh2|snes9x2010-threaded|core-hotpaths)--([0-9]{4})([0-9]{2})([0-9]{2})-[0-9]+-[0-9]+$ ]]; then
                     profile="${BASH_REMATCH[1]}"
                     date="${BASH_REMATCH[2]}-${BASH_REMATCH[3]}-${BASH_REMATCH[4]}"
-                    title="Ambient TV Experimental cores"
+                    title="Ambient TV cores – $profile"
                 else
                     continue
                 fi

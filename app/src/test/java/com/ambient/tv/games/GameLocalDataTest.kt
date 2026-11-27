@@ -45,6 +45,20 @@ class GameLocalDataTest {
         }
     }
 
+    @Test fun incompatibleAutomaticCheckpointIsPreservedBeforeReplacement() {
+        try {
+            states.save(game, GameStateKind.AUTO, byteArrayOf(1), null, "stable", now = 1)
+            states.save(game.copy(experimentalProfile = "optimized"), GameStateKind.AUTO,
+                byteArrayOf(2), null, "optimized", now = 2)
+            val archived = states.list(game).single { it.kind == GameStateKind.MANUAL }
+            assertEquals("stable", archived.coreStamp)
+            assertEquals(1, states.read(game, archived)!!.single().toInt())
+            assertEquals("optimized", states.entry(game, GameStateKind.AUTO)!!.coreStamp)
+        } finally {
+            storage.statesDirectory(game).deleteRecursively()
+        }
+    }
+
     @Test fun biosFilesAreKnownByNameAndNotOfferedAsGames() {
         assertTrue(GameSystems.isBios("SCPH5501.BIN"))
         assertEquals("psx", GameSystems.bios("scph5501.bin").single().first.id)

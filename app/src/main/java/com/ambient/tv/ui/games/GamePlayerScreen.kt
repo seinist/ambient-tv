@@ -1239,7 +1239,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 .filter { it.visible }
                     }
                 }.onSuccess { (declared, parsed) ->
-                    if (session.coreSource.experimentalProfile == null) model.saveDeclaredOptions(core, declared)
+                    if (!model.testingCore) model.saveDeclaredOptions(core, declared)
                     coreOptionsSnapshot = parsed
                 }
                 (0 until RetroPorts.COUNT).forEach { port ->
@@ -1934,7 +1934,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             if (availability.discs) GameDiscSelector(discCount, currentDisc, ::changeDisc)
                             GamePanelChoice(stringResource(R.string.game_panel_info), selected = false,
                                 icon = Icons.Filled.Info, onClick = { openSettingsPanel(GamePanel.INFO) })
-                            if (session.coreSource.experimentalProfile != null) GamePanelChoice(
+                            if (model.testingCore) GamePanelChoice(
                                 stringResource(R.string.games_core_test_play_regular), selected = false,
                                 enabled = !exiting && !stateBusy && !netplay.busy,
                                 onClick = {
@@ -2174,7 +2174,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             }
                         }
                         open == GamePanel.CORE -> {
-                            if (category == null && session.coreSource.experimentalProfile == null && system.alternatives.isNotEmpty()) {
+                            if (category == null && !model.testingCore && system.alternatives.isNotEmpty()) {
                                 // Which core plays this game; switching saves and starts it again.
                                 GamePanelHeading(stringResource(R.string.game_info_core_choice))
                                 val own = settings.ownGameCore(system, game.saveKey)
