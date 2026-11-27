@@ -157,6 +157,13 @@ internal fun svpNativeOptions(options: SvpOptions, separator: String): String {
 internal fun svpStaticHdrResident(source: com.ambient.tv.ui.player.HdrStandard?): Boolean =
     source == com.ambient.tv.ui.player.HdrStandard.HDR10 || source == com.ambient.tv.ui.player.HdrStandard.HLG
 
+/** Dynamic metadata must reach the renderer in the original decoded
+ * Vulkan frames; the opaque MediaCodec RGB route cannot guarantee it. */
+internal fun svpMpvHdrResident(source: com.ambient.tv.ui.player.HdrStandard?, decoder: String): Boolean =
+    svpStaticHdrResident(source) || decoder == "vulkan" &&
+        (source == com.ambient.tv.ui.player.HdrStandard.HDR10_PLUS ||
+            source == com.ambient.tv.ui.player.HdrStandard.DOLBY_VISION)
+
 internal fun svpResidentRequested(options: SvpOptions, width: Int? = null, height: Int? = null): Boolean =
     options.hardwareResident && options.normalized().backend != 1 &&
         (width == null || width in 32..1920) && (height == null || height in 32..1080)
