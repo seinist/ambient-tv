@@ -108,7 +108,9 @@ jobs:
           ffprobe -v error -select_streams v:0 -show_entries packet=pts,dts -of csv=p=0 test-el-reorder.mp4 > test-el-reorder.csv
           ffmpeg -hide_banner -loglevel error -i test-el-reorder.mp4 -map 0:v:0 -c copy -bsf:v hevc_mp4toannexb -f hevc -y test-el-reorder.hevc
           ffmpeg -hide_banner -loglevel error -i test-el-reorder.mp4 -map 0:v:0 -pix_fmt yuv420p10le -f rawvideo -y test-el-reorder.yuv
-          ./test-fel-decoder test-el.hevc test-el-reorder.hevc test-el-reorder.csv test-el-reorder.yuv
+          ffmpeg -hide_banner -loglevel error -i test-el.hevc -c copy -bsf:v hevc_metadata=crop_right=2:crop_bottom=4 -f hevc -y test-el-pad.hevc
+          ffmpeg -hide_banner -loglevel error -i test-el.hevc -c copy -bsf:v hevc_metadata=crop_left=2:crop_top=4 -f hevc -y test-el-shift.hevc
+          ./test-fel-decoder test-el.hevc test-el-reorder.hevc test-el-reorder.csv test-el-reorder.yuv test-el-pad.hevc test-el-shift.hevc
 
   hdrplus-spatial-gpu:
     runs-on: ubuntu-24.04
