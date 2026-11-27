@@ -19,6 +19,14 @@ int main(void) {
     curve.anchor_count=15;
     for(unsigned i=0;i<15;i++)curve.anchors[i]=(i+1)/16.f;
     assert(fabsf(ambient_hdrplus_bezier(&curve,0.625f)-0.625f)<1e-6f);
+    // B3 with control points [0,1,0,1] has nonnegative derivative
+    // 3*(1-2t)^2, despite descending intermediate control points.
+    curve.anchor_count=2;curve.anchors[0]=1.f;curve.anchors[1]=0.f;
+    assert(ambient_hdrplus_curve_monotone(&curve));
+    curve.anchor_count=4;
+    curve.anchors[0]=0.99f;curve.anchors[1]=0.99f;
+    curve.anchors[2]=0.01f;curve.anchors[3]=0.01f;
+    assert(!ambient_hdrplus_curve_monotone(&curve));
     curve.histogram_count=9;
     curve.histogram[1].percentage=5;curve.histogram[2].percentage=10;
     curve.histogram[2].percentile=0.00255f;
