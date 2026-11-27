@@ -128,8 +128,11 @@ internal object SystemModuleHost {
     fun install(module: SystemModule, tag: String): SystemModuleBuild? {
         require(module in supported && downloadsEnabled)
         val old = session.store.selectedMetadata(module)
-        val result = SystemModuleTransport().install(session.store, module, tag)?.build
-        if (result != null && result != old) markChanged(module, old, result)
+        val result = SystemModuleTransport().install(session.store, module, tag, validateCandidate = {
+            session.runtime.validateCandidate(module, it)
+        })?.build
+        if (result != null && (result != old || SystemModuleAvailability.state(module).runtime == ModuleRuntimeState.FAILED))
+            markChanged(module, old, result)
         return result
     }
 
