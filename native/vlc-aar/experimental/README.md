@@ -336,3 +336,39 @@ unsupported configurations are not injected. The host fixtures exercise
 prefix widths, truncation and the insertion location. Separate BL and EL
 tracks with vdep references are still not merged by this patch. The
 final native/app build and real MP4 seek/playback tests remain pending.
+
+
+### Legacy dual-track MP4 profile 7
+
+The experimental MP4 demuxer now recognizes the Annex C legacy carriage
+with a DV-specific dvhe/dvh1 enhancement track, profile 7, EL/RPU flags
+and an explicit, unique vdep reference to a conventional HEVC base track.
+It only pairs seekable, non-fragmented tracks with matching sample counts,
+timescales and edit lists, one sample description per track, unique
+track IDs, and BL color/geometry compatible with the experimental P010
+path. The BL ES is recreated with the combined Dolby Vision configuration,
+while preserving the BL codec, extradata and priority. The EL track is
+removed from normal ES scheduling, but its sample index remains owned
+by the MP4 demuxer.
+
+For each BL access unit the EL sample is read directly from its indexed
+chunk, without modifying EL playback state. Both PTS and DTS must match
+after edit-list mapping. The merger validates both NAL-length widths,
+wraps ordinary EL NALs as type 63, preserves the single type-62 RPU, and
+injects EL hvcC parameter sets on random access/discontinuity. Invalid,
+missing or mismatched samples fail the paired track rather than using
+nearest timestamps or stale residuals. The merged stream goes through
+the existing HEVC packetizer and experimental VLC FEL decoder.
+
+Host tests cover mixed prefix widths, truncation, missing RPU, config
+injection and the new path's actual independently encoded Main10 EL
+decode versus the original single-track wrapper (synthetic BL/RPU
+markers, not a certified Dolby Vision stream). The native CI now also
+compiles the patched MP4 demuxer and box parser for all four Android
+ABIs. Both MP4 patch contexts were checked against the exact pinned
+VLC source. Native contracts passed at 9f7f663 (45956782241), before
+the separate-track changes. The new CI and linked ARM64 AAR are not
+yet confirmed. Actual dual-track MP4 playback, seek/reorder tests,
+fragmented MP4 and streams with different edit/timing tables remain
+unvalidated or outside this restricted implementation. HDR10+
+full reference equivalence remains unproven; production is unchanged.
