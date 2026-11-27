@@ -104,7 +104,7 @@ fun ProjectMVisualizer(
     // The MilkDrop texture pack can contain many files. Extract it off the GL thread so the
     // first visualizer frame is not blocked by APK I/O. Once ready, queue the path onto the
     // active GL context; the JNI bridge applies it safely on the next render frame.
-    LaunchedEffect(browser) {
+    LaunchedEffect(Unit) {
         val path = withContext(Dispatchers.IO) { browser.textureDirectory()?.absolutePath }
         texturePath.set(path)
         if (path != null) {
@@ -136,20 +136,15 @@ fun ProjectMVisualizer(
         }
     }
 
-    LaunchedEffect(browser, browser.pendingRevision) {
-        val pending = browser.consumePending() ?: return@LaunchedEffect
-        load(pending.first, pending.second)
-    }
-
-    LaunchedEffect(browser, browser.filter, browser.shuffle, availablePresets.isEmpty()) {
-        // A non-null fallback to entry zero hid the uninitialized state and made shuffle's
-        // startup branch unreachable. Publish the actual choice even before GL is ready;
-        // onSurfaceCreated then loads that same preset rather than choosing a second one.
-        // A retained browser can already have an active path when a new GL view is mounted.
-        // Restore its decoded data here on IO, not in onSurfaceCreated.
-        if (browser.pendingPath == null &&
-            preparedPreset.get()?.let { it.browser === browser && it.path == browser.currentPath } != true
-        ) browser.initialPreset()?.let { load(it, false) }
+    LaunchedEffect(browser, browser.pendingRevision, availablePresets.isEmpty()) {
+        val pending = browser.consumePending()
+        if (pending != null) {
+            load(pending.first, pending.second)
+        } else if (preparedPreset.get()?.let { it.browser === browser && it.path == browser.currentPath } != true) {
+            // A retained browser may already have a selected path. Prepare it on IO,
+            // never read the asset synchronously from onSurfaceCreated.
+            browser.initialPreset()?.let { load(it, false) }
+        }
     }
 
     LaunchedEffect(browser.locked) {
