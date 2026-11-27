@@ -288,7 +288,7 @@ android {
         // Pin the exact UniFFI/Kotlin bridge artifact, independent of CPU tuning.
         val monogramBindingSha = if (monogramEnabled) ZipFile(monogramAar).use { aar ->
             val entry = requireNotNull(aar.getEntry("classes.jar")) { "Monogram bindings missing" }
-            val hash = java.security.MessageDigest.getInstance("SHA-256")
+            val hash = MessageDigest.getInstance("SHA-256")
             aar.getInputStream(entry).use { input ->
                 val buffer = ByteArray(64 * 1024)
                 while (true) {
