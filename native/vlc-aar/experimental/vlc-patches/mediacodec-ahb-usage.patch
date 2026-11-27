@@ -592,7 +592,24 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
                  /* picture will be wrapped from AImageReader callback */
                  assert(*pp_out_pic  == NULL);
              }
-@@ -1944,9 +2239,12 @@
+@@ -1682,8 +1977,16 @@
+             p_dec->fmt_out.video.i_width = i_width;
+             p_dec->fmt_out.video.i_visible_height =
+             p_dec->fmt_out.video.i_height = i_height;
+             p_dec->fmt_out.video.i_x_offset = valid_crop ? p_out->conf.video.crop_left : 0;
+             p_dec->fmt_out.video.i_y_offset = valid_crop ? p_out->conf.video.crop_top : 0;
++            // The upstream opaque path collapses coded size to visible size.
++            // Retain the coded geometry for a validated nonzero FEL crop;
++            // otherwise the declared rectangle extends beyond its frame.
++            if (p_sys->video.ambient_dovi && p_sys->video.ambient_dovi_profile==7 &&
++                valid_crop) {
++                p_dec->fmt_out.video.i_width=p_out->conf.video.width;
++                p_dec->fmt_out.video.i_height=p_out->conf.video.height;
++            }
+         }
+         else
+         {
+@@ -1944,9 +2247,12 @@
  
          /* Wait for an output buffer. This function returns when a new output
           * is available or if output is flushed. */
@@ -606,7 +623,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
          /* Ignore dequeue_out errors caused by flush, or late picture being
           * dequeued after close. */
-@@ -1973,7 +2271,9 @@
+@@ -1973,7 +2279,9 @@
          if (i_index >= 0 || i_index == MC_API_INFO_OUTPUT_FORMAT_CHANGED
           || i_index == MC_API_INFO_OUTPUT_BUFFERS_CHANGED)
          {
@@ -617,7 +634,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
              int i_ret = p_sys->api.get_out(&p_sys->api, i_index, &out);
  
              if (i_ret == 1)
-@@ -2008,6 +2308,13 @@
+@@ -2008,6 +2316,13 @@
      decoder_sys_t *p_sys = p_dec->p_sys;
      block_t *p_block = NULL;
 +    if (b_drain && p_sys->cat == VIDEO_ES && p_sys->video.fel) {
@@ -631,7 +648,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      assert(p_sys->api.b_started);
  
      if ((p_sys->api.i_quirks & MC_API_QUIRKS_NEED_CSD) && !p_sys->i_csd_count
-@@ -2042,8 +2349,84 @@
+@@ -2042,8 +2357,84 @@
      while (b_drain || (p_block = GetNextBlock(p_sys, p_in_block)))
      {
 +        // Feed the independent EL decoder before waiting for a hardware
@@ -717,7 +734,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
  
          if (p_sys->b_aborted)
              return VLC_EGENERIC;
-@@ -2174,6 +2557,23 @@
+@@ -2174,6 +2565,23 @@
          goto reload;
      }
  
@@ -741,7 +758,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      /* Parse input block */
      if ((i_ret = p_sys->pf_on_new_block(p_dec, &p_in_block)) != 1)
      {
-@@ -2345,6 +2745,14 @@
+@@ -2345,6 +2753,14 @@
  static void Video_OnFlush(decoder_sys_t *p_sys)
  {
      timestamp_FifoEmpty(p_sys->video.timestamp_fifo);
@@ -756,7 +773,7 @@ diff --git a/modules/codec/omxil/mediacodec.c b/modules/codec/omxil/mediacodec.c
      /* Invalidate all pictures that are currently in flight
       * since flushing make all previous indices returned by
       * MediaCodec invalid. */
-@@ -2352,10 +2760,21 @@
+@@ -2352,10 +2768,21 @@
  
      if (p_sys->video.use_air)
      {
