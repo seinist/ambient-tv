@@ -241,6 +241,18 @@ mod tests{
                 let (mut a,mut b,mut c)=(vec![0;builder.source_len()],vec![0;builder.source_len()],vec![0;builder.source_len()]);
                 for n in 0..reference.output_frames(){
                     assert_eq!(lazy.plan(n),reference.plan(n));
+                    // Simulate switching from GPU planning to CPU rendering
+                    // with already queued pictures, as on a driver failure.
+                    #[cfg(feature="vulkan")]
+                    if n<4 {
+                        let upstream=reference.prepare_gpu(n);
+                        let borrowed=lazy.prepare_gpu(n);
+                        let prepared=eager.prepare_gpu(n);
+                        assert_eq!(std::mem::discriminant(&upstream),std::mem::discriminant(&borrowed));
+                        assert_eq!(std::mem::discriminant(&upstream),std::mem::discriminant(&prepared));
+                        assert!(lazy.expanded.is_empty());
+                        continue;
+                    }
                     reference.render_into(n,&mut a).unwrap();
                     lazy.render_into(n,&mut b,&frames,&builder).unwrap();
                     eager.render_into(n,&mut c,&frames,&builder).unwrap();
