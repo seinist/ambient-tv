@@ -33,8 +33,16 @@ fn synthesis_spirv()->Result<Vec<u32>>{
 // per-frame interpretation of the legacy RGBA8 ABI. R16 UNORM stores
 // P010 in the high ten bits and planar 10-bit in the low ten bits.
 fn high_motion_spirv(mode:u32)->Result<Vec<u32>>{
-    let scale=match mode{1=>"65535.0/65472.0",2=>"65535.0/1023.0",_=>return Err("unknown high-depth mode".into())};
-    let source=MOTION.replace("luminance*255.0",&format!("clamp(luminance*({scale}),0.0,1.0)*255.0"));
+    let scale=match mode{1=>"65535.0/64.0",2=>"65535.0",_=>return Err("unknown high-depth mode".into())};
+    for anchor in ["luminance*255.0","sad+=255u;","i32(scores[0]/128u)"]{
+        if MOTION.matches(anchor).count()!=1{return Err("high-depth motion shader contract changed".into());}
+    }
+    // Search on all 1024 luma levels. Keep the existing synthesis cut
+    // threshold in approximately eight-bit SAD units; selection itself
+    // uses the complete ten-bit SAD, including clipped block penalties.
+    let source=MOTION.replace("luminance*255.0",&format!("clamp(luminance*({scale}),0.0,1023.0)"))
+        .replace("sad+=255u;","sad+=1023u;")
+        .replace("i32(scores[0]/128u)","i32(scores[0]/512u)");
     spirv(&source,"@group(0) @binding(3) var<uniform> geometry:vec4u;","analyse")
 }
 fn high_synthesis_spirv(mode:u32)->Result<Vec<u32>>{
