@@ -42,7 +42,9 @@ profdata="$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-profdata"
 # Separate build directory and flags: instrumented binaries cannot end up
 # in regular Android build cache or jniLibs.
 export CARGO_TARGET_DIR="$tmp/target"
-export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-z,max-page-size=16384 -C profile-generate"
+source "$ROOT/scripts/svp_pgo_metadata.sh"
+base_flags="${RUSTFLAGS:-} -C link-arg=-Wl,-z,max-page-size=16384"
+export RUSTFLAGS="$base_flags -C profile-generate"
 (
     cd "$ROOT/native/ambientsvp"
     cargo ndk -t "$abi" -P 29 build --release --locked --bin benchmark
@@ -70,8 +72,8 @@ mapfile -d '' profiles < <(find "$tmp/profiles" -name '*.profraw' -size +0c -pri
 (( ${#profiles[@]} >= run )) || { echo "Missing profile output(s)" >&2; exit 1; }
 "$profdata" merge -o "$tmp/$abi.profdata" "${profiles[@]}"
 [[ -s "$tmp/$abi.profdata" ]]
-profile_hash="$(sha256sum "$tmp/$abi.profdata" | cut -d ' ' -f1)"
-printf '%s\n' "source=$source_hash" "rustc=$(rustc --version)" "abi=$abi" "sha256=$profile_hash" > "$tmp/$abi.meta"
+[[ "$(python3 "$ROOT/scripts/svp_dependency.py" --fingerprint)" == "$source_hash" ]] || { echo "SVP sources changed during training; discarding profile" >&2; exit 1; }
+svp_pgo_metadata "$source_hash" "$abi" "$tmp/$abi.profdata" "$base_flags" > "$tmp/$abi.meta"
 mv "$tmp/$abi.profdata" "$dest/$abi.profdata"
 mv "$tmp/$abi.meta" "$dest/$abi.meta"
 printf '%s\n' "Synthetic device-training profile: $dest/$abi.profdata" "Build the non-instrumented runtime with SVP_PGO_PROFILE_DIR=$dest and measure it separately."
