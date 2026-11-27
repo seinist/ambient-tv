@@ -166,7 +166,7 @@ static struct mp_filter *create(struct mp_filter *parent, void *options) {
 #define OPT_BASE_STRUCT struct opts
 static const m_option_t options[] = {
     {"fps", OPT_DOUBLE(fps), M_RANGE(5, 120)}, {"source", OPT_DOUBLE(source), M_RANGE(5, 120)},
-    {"preset", OPT_INT(preset), M_RANGE(0, 3)}, {"backend", OPT_INT(backend), M_RANGE(0, 2)},
+    {"preset", OPT_INT(preset), M_RANGE(0, 4)}, {"backend", OPT_INT(backend), M_RANGE(0, 2)},
     {"threads", OPT_INT(threads), M_RANGE(0, 8)},
     {"artifacts", OPT_INT(artifacts), M_RANGE(0, 3)},
     {"scene", OPT_INT(scene), M_RANGE(0, 3)},
