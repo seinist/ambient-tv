@@ -50,3 +50,57 @@ void svp_mpv_compile_entrypoints(void *lib,struct mp_image *img)
     mp_image_unrefp(&out);
     svp_vk_destroy_state(s);
 }
+
+#ifdef SVP_METADATA_TEST
+#include <assert.h>
+bool pl_hdr_metadata_equal(const struct pl_hdr_metadata *a,const struct pl_hdr_metadata *b)
+{
+    return a->min_luma==b->min_luma && a->max_luma==b->max_luma;
+}
+struct dovi_fixture {
+    AVDOVIMetadata metadata;
+    AVDOVIRpuDataHeader header;
+    AVDOVIDataMapping mapping;
+    AVDOVIColorMetadata color;
+};
+static struct dovi_fixture make_dovi(void)
+{
+    struct dovi_fixture f={0};
+    f.metadata.header_offset=offsetof(struct dovi_fixture,header);
+    f.metadata.mapping_offset=offsetof(struct dovi_fixture,mapping);
+    f.metadata.color_offset=offsetof(struct dovi_fixture,color);
+    f.header.bl_bit_depth=10;f.header.disable_residual_flag=1;
+    f.mapping.nlq_method_idc=AV_DOVI_NLQ_NONE;
+    return f;
+}
+int main(void)
+{
+    AVDynamicHDRPlus h={.num_windows=1},h2=h;
+    AVBufferRef x={.data=(uint8_t *)&h,.size=sizeof(h)},y={.data=(uint8_t *)&h2,.size=sizeof(h2)};
+    struct mp_ff_side_data ax={AV_FRAME_DATA_DYNAMIC_HDR_PLUS,&x},ay={AV_FRAME_DATA_DYNAMIC_HDR_PLUS,&y};
+    struct mp_image a={.ff_side_data=&ax,.num_ff_side_data=1},b={.ff_side_data=&ay,.num_ff_side_data=1};
+    assert(svp_vk_hdr_metadata_same(&a,&b));
+    h2.num_windows=2;assert(!svp_vk_hdr_metadata_same(&a,&b));
+    h2=h;h2.targeted_system_display_actual_peak_luminance_flag=1;
+    assert(!svp_vk_hdr_metadata_same(&a,&b));
+    h2=h;y.size--;assert(!svp_vk_hdr_metadata_same(&a,&b));y.size++;
+    b.num_ff_side_data=0;assert(!svp_vk_hdr_metadata_same(&a,&b));b.num_ff_side_data=1;
+    struct dovi_fixture d=make_dovi(),d2=d;
+    x.data=(uint8_t *)&d;x.size=sizeof(d);y.data=(uint8_t *)&d2;y.size=sizeof(d2);
+    ax.type=ay.type=AV_FRAME_DATA_DOVI_METADATA;
+    a.dovi=&x;b.dovi=&y;
+    a.params.repr.sys=b.params.repr.sys=PL_COLOR_SYSTEM_DOLBYVISION;
+    assert(svp_vk_dovi_valid(&a));
+    assert(svp_vk_image_mode(&a,AV_PIX_FMT_P010)==4);
+    assert(svp_vk_image_mode(&a,AV_PIX_FMT_YUV420P10)==5);
+    assert(svp_vk_image_mode(&a,AV_PIX_FMT_RGBAF16)==-1);
+    assert(svp_vk_hdr_metadata_same(&a,&b));
+    d2.header.disable_residual_flag=0;
+    assert(!svp_vk_dovi_valid(&b));assert(!svp_vk_hdr_metadata_same(&a,&b));
+    d2=d;d2.metadata.header_offset=SIZE_MAX;assert(!svp_vk_dovi_valid(&b));
+    d2=d;d2.mapping.nlq_method_idc=AV_DOVI_NLQ_LINEAR_DZ;assert(!svp_vk_dovi_valid(&b));
+    d2=d;b.enhancement_layer=&a;assert(!svp_vk_dovi_valid(&b));
+    b.enhancement_layer=NULL;b.dovi=NULL;assert(!svp_vk_dovi_valid(&b));
+    return 0;
+}
+#endif
