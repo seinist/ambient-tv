@@ -268,8 +268,9 @@ capacity for playback; explicitly chosen thread counts remain authoritative.
 
 Driver pipeline caches are reused across engine instances in the same process
 when the adapter supports PIPELINE_CACHE. The bounded cache is keyed by the
-wgpu adapter cache key and driver identity. No arbitrary disk blob is passed
-to the unsafe pipeline-cache API; cross-process persistence is not implemented.
+wgpu adapter cache key and driver identity. On Android it can also persist
+in the app's private cache directory, with owner/mode, format, driver key
+and corruption checks. Arbitrary imported cache blobs are not accepted.
 
 Use the native benchmark with its existing positional arguments plus:
   benchmark 1280 720 240 2 24 1 --threads=3 --preset=1 --no-checksum
@@ -356,10 +357,13 @@ None of these changes constitute decoder-to-renderer GPU zero-copy.
 
 Optional profile-guided Android build:
   SVP_ABIS=arm64-v8a SVP_PGO_PROFILE_DIR=/absolute/profiles ./scripts/build_svp_android.sh
-The directory must contain arm64-v8a.profdata (and one matching .profdata
-for every requested ABI). Use LLVM profiles collected from representative
-device playback with the same source revision, Rust/LLVM and target;
-profile generation and measurement are separate from release packaging.
+The directory must contain arm64-v8a.profdata and arm64-v8a.meta (and one
+matching pair for every requested ABI). To collect a synthetic training
+profile on an attached device without replacing the app runtime:
+  bash scripts/profile_svp_android.sh arm64-v8a /absolute/profiles DEVICE_SERIAL
+The metadata must match source fingerprint, Rust toolchain, ABI and profile
+digest. Profile generation and performance measurement are separate from
+release packaging. Synthetic training is not a real playback benchmark.
 The profile digest and flags are included in the per-ABI build key.
 No profile is generated or applied by default; no PGO gain is asserted.
 
@@ -386,3 +390,36 @@ Predictor-dependent search ordering, pyramids, border extension, subpixel
 sampling, SATD gating, penalty/recalculation stages and vector serialization
 still need integration and parity tests. Do not select this module as a
 production motion-analysis backend until those stages are complete.
+
+
+Final optimization and validation scope
+---------------------------------------
+A private Android pipeline cache is configured only when SVP is enabled.
+It retains one driver-qualified entry, at most 8 MiB of payload, and one
+bounded temporary file. The native implementation checks UID, private
+permissions, regular-file type, link count, size, driver key and envelope
+checksum. A cross-process lock and atomic rename prevent concurrent partial
+writes. The checksum is for corruption detection, not authentication:
+trust is the app UID sandbox; never use external/imported cache files.
+Missing JNI support, unsupported driver, or failed I/O simply leave the
+in-memory cache/normal pipeline compilation in use. Unit tests cover
+envelope corruption and private-file permissions/symlink rejection.
+Android-only JNI compilation is included in CI.
+
+The synthesis dispatch now overwrites every output word without a separate
+full-buffer clear. A/B tests retain the previous clear path and compare
+unaligned Y/U/V boundaries and output reuse across seeks under Vulkan.
+
+The benchmark reports p50/p95/p99 push+drain latency, output cadence and
+throughput, and verifies monotonic timestamps, the exact output count,
+no bypass, actual requested backend and a minimum novel-frame ratio
+when --require-realtime is supplied. --algo=13/21/23 fixes the algorithm
+across repeated cycles; --min-novel-percent= sets the threshold (50 default).
+
+The native SVP CI at fbb38f12 passed CPU, Vulkan and C tests, including
+the software Vulkan motion and synthesis tests. The full Android suite
+reported 11 focus/navigation failures; attribution has not been verified.
+New cache, PGO, and clear-elision changes require current-head CI and
+physical device validation. The experimental candidate metric is not a
+complete GPU motion analyser. Decoder-to-renderer hardware zero-copy
+and full cross-source compute overlap remain separate architectural work.
