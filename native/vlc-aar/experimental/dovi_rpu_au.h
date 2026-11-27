@@ -139,35 +139,92 @@ static inline void ambient_rpu_pts_clear(struct ambient_rpu_pts_queue *q, void (
 }
 
 
-/* Remove wrapped EL NALs from combined Annex B access units before passing
- * them to the vendor BL decoder. Validate first; never partially mutate
- * malformed input. Type-63 payload contains another HEVC NAL header. */
-static inline bool ambient_fel_strip_el(uint8_t *p,size_t *size)
+/* Validate explicit framing and both outer/inner HEVC headers. Never
+ * scan an hvcC sample for Annex B start codes. */
+#define AMBIENT_FEL_AU_LIMIT (32u*1024u*1024u)
+static inline bool ambient_fel_nal_bounds(const uint8_t *p,size_t n,size_t cursor,
+    unsigned length_size,size_t *data,size_t *end)
 {
-    if(!p||!size||!*size)return false;
+    if(cursor>=n)return false;
+    if(length_size){
+        if((length_size!=1&&length_size!=2&&length_size!=4)||n-cursor<length_size)
+            return false;
+        uint32_t len=0;
+        for(unsigned j=0;j<length_size;j++)len=(len<<8)|p[cursor+j];
+        *data=cursor+length_size;
+        if(len<2||len>n-*data)return false;
+        *end=*data+len;
+    }else{
+        size_t prefix,next;
+        size_t start=ambient_rpu_start_code(p,n,cursor,&prefix);
+        if(!prefix)return false;
+        for(size_t j=cursor;j<start;j++)if(p[j])return false;
+        *data=start+prefix;
+        *end=ambient_rpu_start_code(p,n,*data,&next);
+    }
+    if(*end-*data<2||(p[*data]&0x81)||!(p[*data+1]&7)||(p[*data+1]>>3))
+        return false;
+    if(((p[*data]>>1)&63)==63 &&
+        (*end-*data<5||(p[*data+2]&0x81)||!(p[*data+3]&7)||
+         (p[*data+3]>>3)||((p[*data+2]>>1)&63)>=62))
+        return false;
+    return true;
+}
+
+/* Convert explicitly length-prefixed combined input to Annex B for the
+ * pinned FFmpeg dovi_split BSF. Two-pass sizing validates the whole
+ * access unit before writing. Original BL framing is kept separately. */
+static inline bool ambient_fel_to_annexb(const uint8_t *p,size_t n,unsigned length_size,
+    uint8_t *dst,size_t cap,size_t *written)
+{
+    if(!p||!n||n>AMBIENT_FEL_AU_LIMIT||!written||
+        (length_size!=1&&length_size!=2&&length_size!=4))return false;
+    size_t total=0;
+    for(size_t cur=0;cur<n;){
+        size_t data,end;
+        if(!ambient_fel_nal_bounds(p,n,cur,length_size,&data,&end)||
+            end-data>AMBIENT_FEL_AU_LIMIT-4||
+            end-data+4>AMBIENT_FEL_AU_LIMIT-total)return false;
+        total+=end-data+4;cur=end;
+    }
+    if(dst){
+        if(cap<total)return false;
+        size_t out=0;
+        for(size_t cur=0;cur<n;){
+            size_t data,end;
+            if(!ambient_fel_nal_bounds(p,n,cur,length_size,&data,&end))return false;
+            dst[out]=dst[out+1]=dst[out+2]=0;dst[out+3]=1;
+            memcpy(dst+out+4,p+data,end-data);
+            out+=end-data+4;cur=end;
+        }
+    }
+    *written=total;return true;
+}
+
+/* Remove wrapped EL NALs before handing the BL to the vendor decoder.
+ * Validate the entire input first; never partially mutate malformed data.
+ * Both Annex B and explicit 1/2/4-byte length framing are supported. */
+static inline bool ambient_fel_strip_el_framed(uint8_t *p,size_t *size,unsigned length_size)
+{
+    if(!p||!size||!*size||*size>AMBIENT_FEL_AU_LIMIT)return false;
     size_t n=*size;
     for(unsigned pass=0;pass<2;pass++){
         size_t cursor=0,out=0;
         while(cursor<n){
-            size_t prefix,next;
-            size_t start=ambient_rpu_start_code(p,n,cursor,&prefix);
-            if(!prefix)return false;
-            for(size_t i=cursor;i<start;i++)if(p[i])return false;
-            size_t data=start+prefix,end=ambient_rpu_start_code(p,n,data,&next);
-            if(end-data<2||(p[data]&0x80)||!(p[data+1]&7)||
-                (p[data]&1)||(p[data+1]>>3))return false;
-            unsigned type=(p[data]>>1)&63;
-            if(type==63){
-                if(end-data<5||(p[data+2]&0x81)||!(p[data+3]&7)||
-                    (p[data+3]>>3)||((p[data+2]>>1)&63)>=62)return false;
-            }else{
+            size_t data,end;
+            if(!ambient_fel_nal_bounds(p,n,cursor,length_size,&data,&end))return false;
+            if(((p[data]>>1)&63)!=63){
                 if(pass)memmove(p+out,p+cursor,end-cursor);
                 out+=end-cursor;
             }
             cursor=end;
         }
-        if(!out)return false; // no BL data for the already-dequeued input slot
+        if(!out)return false;
         if(pass)*size=out;
     }
     return true;
+}
+static inline bool ambient_fel_strip_el(uint8_t *p,size_t *size)
+{
+    return ambient_fel_strip_el_framed(p,size,0);
 }
