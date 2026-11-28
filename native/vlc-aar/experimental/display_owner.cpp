@@ -151,9 +151,10 @@ struct ambient_ahb_owner {
         s.reclaim_fence = VK_NULL_HANDLE;
         s.reclaimed = VK_NULL_HANDLE;
     }
-    void clear_texture(Slot &s) {
-        if (s.texture) c.destroy_texture(c.opaque, s.texture);
+    bool clear_texture(Slot &s) {
+        if (s.texture && !c.destroy_texture(c.opaque, s.texture)) return false;
         s.texture = nullptr;
+        return true;
     }
     void quarantine(Slot &s) {
         pool.quarantine(s.ticket);
@@ -270,7 +271,10 @@ struct ambient_ahb_owner {
                     return VK_NOT_READY;
                 }
             }
-            clear_texture(s);
+            if (!clear_texture(s)) {
+                cancel(s);
+                return VK_NOT_READY;
+            }
         }
         VkResult result = s.cache->prepare_retired(in.buffer, in.width, in.height, format, c.descriptor_count,
                                                     in.buffer_id, in.buffer_id_valid, in.raw_yuv);
@@ -388,7 +392,7 @@ struct ambient_ahb_owner {
         for (auto &s : slots) {
             // Destroy the wrapper and its deferred dependencies before the
             // conversion semaphore it may still reference on a failed hold.
-            clear_texture(s);
+            if (!clear_texture(s)) return false;
             if (s.submission && !(device_lost ? s.submission->drain_after_device_lost() :
                                                 s.submission->drain_after_idle(true))) return false;
             clear_reclaim(s);

@@ -988,10 +988,12 @@ class VlcPlaybackController(
             dvRetirementPending = true
             val retirement = nativeAudioReleases.beginRelease()
             kotlin.concurrent.thread(name = "vlc-dv-surface-stop", isDaemon = true) {
-                runCatching { retiring.stop() }
+                val closed = runCatching {
+                    VlcNativeRetirement.stop(retiring, retiringLibVlc)
+                    VlcNativeRetirement.release(retiring, retiringLibVlc)
+                    libVlcRelease.retired(retiringLibVlc)
+                }
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    val closed = runCatching { retiring.release() }
-                    if (closed.isSuccess) libVlcRelease.retired(retiringLibVlc)
                     dvRetirementPending = false
                     closed.onSuccess { retirement.complete(Unit) }
                         .onFailure { retirement.completeExceptionally(NativeOutputReleaseUncertain(it)) }
@@ -1169,6 +1171,7 @@ class VlcPlaybackController(
         restartDurationMs = runCatching { player.length }.getOrDefault(0L).coerceAtLeast(0L)
         prepared = false
         val stopping = player
+        val stoppingLibrary = libVlc
         val stop = java.util.concurrent.CompletableFuture<Unit>()
         restartStop = stop
         // A driver may never return from stop(). Do not leave the UI in an
@@ -1184,7 +1187,7 @@ class VlcPlaybackController(
             }
         }, 12_000L)
         kotlin.concurrent.thread(name = "vlc-reopen-stop", isDaemon = true) {
-            val result = runCatching { stopping.stop() }
+            val result = runCatching { VlcNativeRetirement.stop(stopping, stoppingLibrary) }
             result.onSuccess { stop.complete(Unit) }.onFailure { stop.completeExceptionally(it) }
             pendingSeekHandler.post {
                 if (released || restartStop !== stop || player !== stopping) return@post
@@ -1346,26 +1349,50 @@ class VlcPlaybackController(
             restartAfterStop(resumePositionMs, resumePlaying)
             return
         }
-        val surfaceWasValidated = vulkanSurfaceChecked
-        val reattach = if (rebuild) {
+        if (rebuild) {
             forceOutputRebuild = false
             val view = attachedView
             view?.let(::detach)
             player.setEventListener(null)
             player.vlcVout.removeCallback(surfaceCallback)
-            // A previously opened player has completed restartAfterStop before we get here.
-            player.release(); libVlcRelease.releaseWhenIdle(libVlc)
+            // A previously opened player has completed restartAfterStop. Finish
+            // native destruction off-main before creating its replacement.
+            val retiringPlayer = player
+            val retiringLib = libVlc
+            val retirement = java.util.concurrent.CompletableFuture<Unit>()
+            restartStop = retirement
+            prepared = false
+            if (pendingAttachView == null) pendingAttachView = view
             configuredSoftwareProcessing = effectiveImage.softwareProcessing
             configuredSvpOptions = effectiveImage.svp
             configuredSvpMode = effectiveImage.svpMode
             configuredSvpRate = targetRate
             configuredDeinterlaceMode = effectiveDeinterlaceMode
             configuredDeinterlaceFilter = effectiveDeinterlace
-            libVlc = createLibVlc(); player = MediaPlayer(libVlc)
-            trackAccess.rebind(player); configurePlayer()
-            ahbFallbackPending = false
-            view
-        } else null
+            kotlin.concurrent.thread(name = "vlc-rebuild-release", isDaemon = true) {
+                val closed = runCatching {
+                    VlcNativeRetirement.release(retiringPlayer, retiringLib)
+                    libVlcRelease.releaseWhenIdle(retiringLib)
+                }
+                closed.onSuccess { retirement.complete(Unit) }
+                    .onFailure { retirement.completeExceptionally(it) }
+                pendingSeekHandler.post {
+                    if (released || restartStop !== retirement) return@post
+                    restartStop = null
+                    if (closed.isFailure) {
+                        restartStopFailed = true
+                        errorMessage = context.getString(R.string.audio_output_release_failed)
+                        return@post
+                    }
+                    libVlc = createLibVlc(); player = MediaPlayer(libVlc)
+                    trackAccess.rebind(player); configurePlayer()
+                    ahbFallbackPending = false
+                    consumePendingAttachView()
+                    if (!prepared) prepare(pendingRestorePositionMs ?: resumePositionMs, desiredPlayWhenReady)
+                }
+            }
+            return
+        }
         // A new Media drops added slaves and renumbers tracks: forget old subtitle ids and requests.
         externalSubtitleRequests.clear()
         externalSubtitleSources.clear()
@@ -1381,7 +1408,6 @@ class VlcPlaybackController(
             headerRelayFailed = true
             errorMessage = context.getString(R.string.vlc_playback_error)
             prepared = false
-            reattach?.let(::attach)
             return
         }
         val media = Media(libVlc, Uri.parse(if (playbackUrl == url) authProxy?.url ?: url else playbackUrl))
@@ -1457,13 +1483,6 @@ class VlcPlaybackController(
         prepared = true
         if (dvResumeWorkaround && (pendingRestorePositionMs ?: 0) > 0) beginDvPrime()
         applyAudioLiveOptions()
-        // Recreated vout must own the real surface before opening its media.
-        reattach?.let { view ->
-            attach(view)
-            // This is the same still-valid SurfaceHolder, not a new native window.
-            if (attachedView === view && view.holder.surface.isValid && surfaceWasValidated)
-                vulkanSurfaceChecked = true
-        }
         renderSurfaceSize?.let { (width, height) -> reportWindowSize(width, height) }
         vulkanOutputWatch.reset()
         ahbOpeningWatch.reset()
@@ -1551,9 +1570,14 @@ class VlcPlaybackController(
         val ready = eligible && frameDropSampleReady()
         // The ordinary observer deliberately ignores buffering, opening and pending
         // seeks. Bound these states separately if the user still requests playback.
-        val openingActive = ahbExperimentActive && eligible && nativeMediaOpened &&
-            desiredPlayWhenReady && !ready
-        val progress = frameDropSamples.generation.toLong() * 21L + frameDropSamples.bufferProgress
+        val surfaceReady = attachedView?.holder?.surface?.isValid == true
+        val openingActive = ahbExperimentActive && !ahbFallbackPending && !audioOnly &&
+            !userVideoDisabled && surfaceReady && desiredPlayWhenReady && !ended &&
+            errorMessage == null && !ready
+        // Include probe and media-opening transitions, not only prepared playback.
+        val stage = (if (vulkanSurfaceChecked) 2L else if (vulkanProbePending) 1L else 0L) +
+            (if (nativeMediaOpened) 4L else 0L) + (if (prepared) 8L else 0L)
+        val progress = (frameDropSamples.generation.toLong() * 21L + frameDropSamples.bufferProgress) * 16L + stage
         if (ahbOpeningWatch.observe(now, progress, openingActive)) {
             fallbackVulkan("ahb_opening_stalled")
             return
@@ -2363,17 +2387,16 @@ class VlcPlaybackController(
             val started = android.os.SystemClock.elapsedRealtime()
             // A Back/renderer switch can arrive while a same-player reopen is stopping.
             // Never call stop/release on the same MediaPlayer concurrently.
-            val alreadyStopped = inFlightStop?.let { runCatching { it.join() }.isSuccess } == true
-            if (!alreadyStopped) runCatching { retiringPlayer.stop() }
-                .onFailure { Timber.w(it, "VLC native stop failed") }
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                val closed = runCatching { retiringPlayer.release() }
-                if (closed.isSuccess) libVlcRelease.releaseWhenIdle(retiringLibVlc)
-                closed.onSuccess { audioRelease.complete(Unit) }
-                    .onFailure { audioRelease.completeExceptionally(NativeOutputReleaseUncertain(it)) }
-                com.ambient.tv.diagnostics.CrashBreadcrumbs.add("vlc", "native release done")
-                Timber.i("VLC native release completed in %d ms", android.os.SystemClock.elapsedRealtime() - started)
+            val closed = runCatching {
+                if (inFlightStop != null) inFlightStop.join()
+                else if (!retiringPlayer.isReleased) VlcNativeRetirement.stop(retiringPlayer, retiringLibVlc)
+                if (!retiringPlayer.isReleased) VlcNativeRetirement.release(retiringPlayer, retiringLibVlc)
+                libVlcRelease.releaseWhenIdle(retiringLibVlc)
             }
+            closed.onSuccess { audioRelease.complete(Unit) }
+                .onFailure { audioRelease.completeExceptionally(NativeOutputReleaseUncertain(it)) }
+            com.ambient.tv.diagnostics.CrashBreadcrumbs.add("vlc", "native release settled")
+            Timber.i("VLC native release settled in %d ms", android.os.SystemClock.elapsedRealtime() - started)
         }
     }
 }

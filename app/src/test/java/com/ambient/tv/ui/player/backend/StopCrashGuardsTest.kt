@@ -90,6 +90,9 @@ class StopCrashGuardsTest {
         val vlc = source("ui/player/backend/VlcPlaybackView.kt")
         assertFalse(Regex("""libVlc\.release\(\)|retiringLibVlc\.release\(\)""").containsMatchIn(vlc))
         assertEquals(2, Regex("""libVlcRelease\.releaseWhenIdle\(""").findAll(vlc).count())
+        assertFalse(vlc.contains("player.release(); libVlcRelease"))
+        assertTrue(vlc.contains("VlcNativeRetirement.release(retiringPlayer, retiringLibVlc)"))
+        assertTrue(vlc.contains("vlc-rebuild-release"))
         assertTrue(vlc.contains("libVlcRelease.retiring(retiringLibVlc)"))
         assertTrue(vlc.contains("libVlcRelease.retired(retiringLibVlc)"))
     }

@@ -12,7 +12,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +# include "hdr10plus_spatial.h"
 +# include "dovi_fel_render.h"
 +/* A device whose retirement could not be established is never reused. */
-+static atomic_bool ambient_ahb_quarantined = false;
++/* Process-wide state lives in libvlccore, also visible to JNI. */
 +#endif
  
  typedef struct vout_display_sys_t
@@ -54,7 +54,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +        goto error;
 +    }
 +    if (var_InheritBool(vd, "vk-ambient-ahb") && vd->source->i_chroma == VLC_CODEC_ANDROID_OPAQUE) {
-+        if (atomic_load(&ambient_ahb_quarantined)) {
++        if (vlc_ambient_output_quarantined()) {
 +            msg_Err(vd, "Experimental AHB disabled after uncertain GPU retirement");
 +            vlc_placebo_ReleaseCurrent(sys->pl);
 +            goto error;
@@ -102,7 +102,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +        if (!current || !ambient_ahb_retire(sys->ahb)) {
 +            if (current)
 +                vlc_placebo_ReleaseCurrent(sys->pl);
-+            atomic_store(&ambient_ahb_quarantined, true);
++            vlc_ambient_output_quarantine();
 +            msg_Err(vd, "Experimental AHB renderer/device quarantined: GPU retirement unproven");
 +            /* Disable logging through the retiring VLC object's logger.
 +             * Retain the entire context, swapchain, renderer and owner. No
@@ -124,7 +124,7 @@ diff --git a/modules/video_output/libplacebo/display.c b/modules/video_output/li
 +            ambient_fel_render_destroy(gpu, &sys->fel);
 +            if (!ambient_ahb_close(sys->ahb)) {
 +                vlc_placebo_ReleaseCurrent(sys->pl);
-+                atomic_store(&ambient_ahb_quarantined, true);
++                vlc_ambient_output_quarantine();
 +                msg_Err(vd, "Experimental AHB device quarantined after cleanup failure");
 +                pl_log_update(sys->pl->log, &(struct pl_log_params){0});
 +                return;

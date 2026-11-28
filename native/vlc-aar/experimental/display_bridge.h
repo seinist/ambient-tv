@@ -37,14 +37,17 @@ static inline bool ambient_display_hold(void *opaque, void *texture, VkSemaphore
     pl_gpu_flush(vk->gpu);
     return true;
 }
-static inline void ambient_display_destroy_texture(void *opaque, void *texture)
+static inline bool ambient_display_destroy_texture(void *opaque, void *texture)
 {
     pl_vulkan vk = opaque;
     pl_tex tex = texture;
+    // The pinned Vulkan backend polls command callbacks and reports busy
+    // until the wrapper has only its owning reference left. Never destroy
+    // the external VkImage while deferred libplacebo image views exist.
+    if (pl_tex_poll(vk->gpu, tex, 0))
+        return false;
     pl_tex_destroy(vk->gpu, &tex);
-    // Rare resize/teardown only: retire libplacebo's deferred view destruction
-    // before the external owner destroys or reallocates the raw VkImage.
-    pl_gpu_finish(vk->gpu);
+    return true;
 }
 
 /* Admit only explicit BT.709 SDR and BT.2020 PQ/HLG. PQ/HLG is routed

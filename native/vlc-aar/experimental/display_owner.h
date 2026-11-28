@@ -25,7 +25,8 @@ struct ambient_ahb_config {
     void *(*wrap)(void *, VkImage, VkFormat, uint32_t, uint32_t, VkImageUsageFlags);
     void (*release)(void *, void *, VkSemaphore);
     bool (*hold_and_flush)(void *, void *, VkSemaphore);
-    void (*destroy_texture)(void *, void *);
+    /* False leaves the texture and all external dependencies owned. */
+    bool (*destroy_texture)(void *, void *);
     /* The caller must flush libplacebo before close. */
     const uint32_t *vert_words;
     size_t vert_bytes;

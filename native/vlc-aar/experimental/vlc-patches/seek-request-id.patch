@@ -232,11 +232,18 @@ diff --git a/include/vlc_player.h b/include/vlc_player.h
 diff --git a/lib/media_player.c b/lib/media_player.c
 --- a/lib/media_player.c
 +++ b/lib/media_player.c
-@@ -1462,7 +1462,19 @@
+@@ -1462,7 +1462,26 @@
      return set_time( p_mi, i_time, b_fast, VLC_PLAYER_WHENCE_ABSOLUTE );
  }
  
 -int libvlc_media_player_jump_time( libvlc_media_player_t *p_mi,
++/* Implemented in libvlccore; keep the exported query independent of a player. */
++extern bool vlc_ambient_output_quarantined(void);
++bool libvlc_ambient_output_quarantined(void)
++{
++    return vlc_ambient_output_quarantined();
++}
++
 +int libvlc_media_player_ambient_set_time_with_id(libvlc_media_player_t *p_mi,
 +                                                 libvlc_time_t time, uint64_t request_id)
 +{
@@ -256,11 +263,13 @@ diff --git a/lib/media_player.c b/lib/media_player.c
 diff --git a/include/vlc/libvlc_media_player.h b/include/vlc/libvlc_media_player.h
 --- a/include/vlc/libvlc_media_player.h
 +++ b/include/vlc/libvlc_media_player.h
-@@ -1325,7 +1325,10 @@
+@@ -1325,7 +1325,12 @@
   * \param b_fast prefer fast seeking or precise seeking
   * \return 0 on success, -1 on error
   */
 -LIBVLC_API int libvlc_media_player_set_time( libvlc_media_player_t *p_mi,
++LIBVLC_API bool libvlc_ambient_output_quarantined(void);
++
 +LIBVLC_API int libvlc_media_player_ambient_set_time_with_id(libvlc_media_player_t *p_mi,
 +    libvlc_time_t time, uint64_t request_id);
 +
@@ -271,13 +280,14 @@ diff --git a/include/vlc/libvlc_media_player.h b/include/vlc/libvlc_media_player
 diff --git a/lib/libvlc.sym b/lib/libvlc.sym
 --- a/lib/libvlc.sym
 +++ b/lib/libvlc.sym
-@@ -173,7 +173,8 @@
+@@ -173,7 +173,9 @@
  libvlc_media_player_set_rate
  libvlc_media_player_set_renderer
  libvlc_media_player_set_role
 -libvlc_media_player_set_time
 +libvlc_media_player_set_time
 +libvlc_media_player_ambient_set_time_with_id
++libvlc_ambient_output_quarantined
  libvlc_media_player_jump_time
  libvlc_media_player_set_title
  libvlc_media_player_set_xwindow

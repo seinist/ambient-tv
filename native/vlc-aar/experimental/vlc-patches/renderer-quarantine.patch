@@ -1,0 +1,93 @@
+diff --git a/src/video_output/display.c b/src/video_output/display.c
+--- a/src/video_output/display.c
++++ b/src/video_output/display.c
+@@ -44,3 +44,15 @@
+-#include "vout_internal.h"
+-
+-static int UpdateSourceSAR(vout_display_t *, const video_format_t *);
++#include "vout_internal.h"
++
++/* Process-lifetime poison bit: do not hand a potentially still-owned
++ * Android GPU output to another decoder/renderer after uncertain teardown. */
++static atomic_bool ambient_output_quarantined = false;
++void vlc_ambient_output_quarantine(void)
++{
++    atomic_store(&ambient_output_quarantined, true);
++}
++bool vlc_ambient_output_quarantined(void)
++{
++    return atomic_load(&ambient_output_quarantined);
++}
++
++static int UpdateSourceSAR(vout_display_t *, const video_format_t *);
+diff --git a/include/vlc_vout_display.h b/include/vlc_vout_display.h
+--- a/include/vlc_vout_display.h
++++ b/include/vlc_vout_display.h
+@@ -453,1 +453,3 @@
+-VLC_API void vout_display_Delete(vout_display_t *);
++VLC_API void vout_display_Delete(vout_display_t *);
++VLC_API void vlc_ambient_output_quarantine(void);
++VLC_API bool vlc_ambient_output_quarantined(void);
+diff --git a/src/libvlccore.sym b/src/libvlccore.sym
+--- a/src/libvlccore.sym
++++ b/src/libvlccore.sym
+@@ -797,2 +797,4 @@
+-vout_display_Delete
+-vout_display_Prepare
++vout_display_Delete
++vlc_ambient_output_quarantine
++vlc_ambient_output_quarantined
++vout_display_Prepare
+diff --git a/modules/video_output/vulkan/platform_android.c b/modules/video_output/vulkan/platform_android.c
+--- a/modules/video_output/vulkan/platform_android.c
++++ b/modules/video_output/vulkan/platform_android.c
+@@ -46,18 +46,31 @@
+-    vk->platform_ext = VK_KHR_ANDROID_SURFACE_EXTENSION_NAME;
+-    vk->ops = &platform_ops;
+-    return VLC_SUCCESS;
+-}
+-
+-static void ClosePlatform(vlc_vk_platform_t *vk)
+-{
+-    AWindowHandler_releaseANativeWindow(vk->window->display.anativewindow,
+-                                        vk->window->handle.android_id);
+-}
+-
+-static int CreateSurface(vlc_vk_platform_t *vk, const vlc_vk_instance_t *inst,
+-                         VkSurfaceKHR *surface_out)
+-{
+-    ANativeWindow *anw =
+-        AWindowHandler_getANativeWindow(vk->window->display.anativewindow,
+-                                        vk->window->handle.android_id);
+-    PFN_vkCreateAndroidSurfaceKHR CreateAndroidSurfaceKHR = (PFN_vkCreateAndroidSurfaceKHR)
++    vk->platform_ext = VK_KHR_ANDROID_SURFACE_EXTENSION_NAME;
++    vk->platform_sys = NULL;
++    vk->ops = &platform_ops;
++    return VLC_SUCCESS;
++}
++
++static void ClosePlatform(vlc_vk_platform_t *vk)
++{
++    if (vk->platform_sys)
++        ANativeWindow_release(vk->platform_sys);
++    vk->platform_sys = NULL;
++    AWindowHandler_releaseANativeWindow(vk->window->display.anativewindow,
++                                        vk->window->handle.android_id);
++}
++
++static int CreateSurface(vlc_vk_platform_t *vk, const vlc_vk_instance_t *inst,
++                         VkSurfaceKHR *surface_out)
++{
++    ANativeWindow *anw =
++        AWindowHandler_getANativeWindow(vk->window->display.anativewindow,
++                                        vk->window->handle.android_id);
++    if (!anw)
++        return VLC_EGENERIC;
++    /* Independent reference survives AWindowHandler/Java detachment.
++     * A quarantined platform is deliberately retained with its VkSurface. */
++    if (!vk->platform_sys) {
++        ANativeWindow_acquire(anw);
++        vk->platform_sys = anw;
++    } else if (vk->platform_sys != anw)
++        return VLC_EGENERIC;
++    PFN_vkCreateAndroidSurfaceKHR CreateAndroidSurfaceKHR = (PFN_vkCreateAndroidSurfaceKHR)
