@@ -183,6 +183,26 @@ PATCHES = {
       "src/libretro/CemuLibretro.cpp",
       "\t\tfor (uint32_t id = 0; id < 16; ++id)\n\t\t\tpad.buttons[id] = input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, id);",
       "\t\tif (ambient_input_bitmasks)\n\t\t{\n\t\t\tconst uint16_t mask = static_cast<uint16_t>(input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK));\n\t\t\tfor (uint32_t id = 0; id < 16; ++id)\n\t\t\t\tpad.buttons[id] = (mask >> id) & 1u;\n\t\t}\n\t\telse\n\t\t\tfor (uint32_t id = 0; id < 16; ++id)\n\t\t\t\tpad.buttons[id] = input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, id);"
+    ],
+    [
+      "src/Cafe/HW/Latte/Renderer/Vulkan/VulkanPipelineStableCache.cpp",
+      "#include <openssl/sha.h>",
+      "#include <openssl/sha.h>\n#ifdef __ANDROID__\n#include <sched.h>\n#endif"
+    ],
+    [
+      "src/Cafe/HW/Latte/Renderer/Vulkan/VulkanPipelineStableCache.cpp",
+      "\tuint32 cpuCoreCount = GetPhysicalCoreCount();\n\tm_numCompilationThreads = std::clamp(cpuCoreCount, 1u, 8u);",
+      "\tuint32 cpuCoreCount = std::max(1u, GetPhysicalCoreCount());\n#ifdef __ANDROID__\n\tcpu_set_t available;\n\tCPU_ZERO(&available);\n\tif (sched_getaffinity(0, sizeof(available), &available) == 0) {\n\t\tint count = CPU_COUNT(&available);\n\t\tif (count > 0) cpuCoreCount = std::min(cpuCoreCount, static_cast<uint32>(count));\n\t}\n\t// Preserve emulation and presentation headroom on Android TV.\n\tcpuCoreCount = cpuCoreCount > 2 ? cpuCoreCount - 2 : 1;\n#endif\n\tm_numCompilationThreads = std::clamp(cpuCoreCount, 1u, 8u);"
+    ],
+    [
+      "src/Cafe/HW/Latte/Renderer/Vulkan/VulkanPipelineStableCache.cpp",
+      "\twhile (g_vkCacheState.pipelineLoadIndex <= g_vkCacheState.pipelineMaxFileIndex)\n\t{",
+      "\t// Refill a bounded batch instead of scheduling only one pipeline per UI tick.\n\tconst uint32 batch = std::clamp(m_numCompilationThreads.load() * 2u, 2u, 16u);\n\tuint32 queued = 0, scanned = 0;\n\twhile (g_vkCacheState.pipelineLoadIndex <= g_vkCacheState.pipelineMaxFileIndex)\n\t{\n\t\tif (queued >= batch || scanned++ >= 64) return true;"
+    ],
+    [
+      "src/Cafe/HW/Latte/Renderer/Vulkan/VulkanPipelineStableCache.cpp",
+      "\t\t\tg_vkCacheState.pipelineLoadIndex++;\n\t\t\treturn true;\n\t\t}\n\t\tg_vkCacheState.pipelineLoadIndex++;",
+      "\t\t\t++queued;\n\t\t}\n\t\tg_vkCacheState.pipelineLoadIndex++;"
     ]
   ],
   "noods": [
@@ -1042,6 +1062,11 @@ PATCHES = {
       "Source/Core/VideoCommon/VideoConfig.cpp",
       "std::max(cpu_info.num_cores - 2, 1)",
       "std::max(AmbientEffectiveShaderCores() - 2, 1)"
+    ],
+    [
+      "Source/Core/VideoCommon/AsyncShaderCompiler.cpp",
+      "    m_worker_thread_wake.wait(pending_lock);",
+      "    // Work may have been queued before a newly started worker reached wait.\n    m_worker_thread_wake.wait(pending_lock, [this] {\n      return m_exit_flag.IsSet() || !m_pending_work.empty();\n    });"
     ]
   ],
   "flycast": [
