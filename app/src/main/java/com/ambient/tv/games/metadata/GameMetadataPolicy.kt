@@ -63,7 +63,7 @@ internal fun matchingGameCatalogTitles(hint: String, candidates: List<String>): 
 /** Includes file version and locale so a previous miss cannot suppress a new ROM/region. */
 internal fun gameMetadataFingerprint(game: LibraryGame, query: GameMetadataQuery): String =
     gameMetadataDigest(listOf(game.fileId, game.modified.toString(), query.systemId,
-        game.datVersion.toString(), game.verifiedTitle.orEmpty(),
+        game.datVersion.toString(), game.verifiedTitle.orEmpty(), game.internalTitle.orEmpty(),
         query.size.toString(), query.title, query.filename, query.crc32.orEmpty(), query.serial.orEmpty(),
         query.language, query.region, query.canonicalTitle.orEmpty(), query.providerGameId.orEmpty()).joinToString("\u0000"))
 
