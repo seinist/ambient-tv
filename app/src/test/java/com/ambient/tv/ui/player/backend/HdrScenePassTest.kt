@@ -51,6 +51,27 @@ class HdrScenePassTest {
         assertNull(HdrScenePlanner.plan(input,24.0,24.0,false))
     }
 
+    @Test fun detectsHardCutsWithIdenticalMetadataAndIgnoresSingleFrameFlash() {
+        fun f(pts:Long,luma:Int) = HdrContentSceneDetector.Signature(pts,ByteArray(HdrContentSceneDetector.CELLS){luma.toByte()})
+        assertEquals(setOf(2L),HdrContentSceneDetector.cuts(listOf(f(0,20),f(1,21),f(2,220),f(3,221))))
+        assertEquals(emptySet<Long>(),HdrContentSceneDetector.cuts(listOf(f(0,20),f(1,220),f(2,20),f(3,21))))
+        assertNull(HdrContentSceneDetector.cuts(listOf(f(0,20),f(0,21))))
+        val same = samples().map { it.copy(metadata="unchanged") }
+        val p = HdrScenePlanner.plan(same,24.0,60.0,false,setOf(same[4].ptsUs))
+        assertEquals(listOf(10L,20L),p!!.ends)
+        val varying = same.mapIndexed { i,s -> s.copy(metadata=i.toString()) }
+        assertEquals(listOf(10L,20L),HdrScenePlanner.plan(varying,24.0,60.0,true,setOf(same[4].ptsUs))!!.ends)
+        assertNull(HdrScenePlanner.plan(same,24.0,60.0,true,setOf(-1L)))
+    }
+
+    @Test fun uhdSceneModeRemainsExplicitAndBounded() {
+        val standard = SvpOptions(hardwareResident=true,maxHeight=2160)
+        assertFalse(svpResidentRequested(standard,3840,2160))
+        assertTrue(svpResidentRequested(standard.copy(hdrTwoPass=true),3840,2160))
+        assertFalse(svpResidentRequested(standard.copy(hdrTwoPass=true),4096,2160))
+        assertFalse(svpResidentRequested(standard.copy(hdrTwoPass=true,maxHeight=1080),3840,2160))
+    }
+
     @Test fun onlyMatchingCompleteCacheCanRequestSingleReplay() {
         val dir = folder.newFolder()
         val file = folder.newFile()
