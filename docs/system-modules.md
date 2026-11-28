@@ -718,6 +718,14 @@ members, declared root inventory, notice counts and bounded expansion must
 agree. This validates package integrity and declared coverage, not legal
 completeness or reproducibility of every third-party build.
 
+SmartTube native candidates export source JARs for the actual Gradle-resolved
+private Java dependencies (json-path, json-smart and resolved net.minidev
+components, nanojson, regex, DiskLruCache). Source files and embedded binary
+license notices are collected with exact Maven coordinates and SHA-256
+fingerprints for both artifacts. Missing source artifacts block candidate
+generation. This does not yet establish native J2V8/V8 source correspondence
+or complete licensing of host-owned Java dependencies.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

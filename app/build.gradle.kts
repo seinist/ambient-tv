@@ -722,6 +722,50 @@ if (monogramEnabled) {
 }
 
 if (smartTubeBundled) {
+    // Capture sources of the actual resolved private Java libraries, not the
+    // requested version-catalog pins (Gradle conflict resolution can differ).
+    // Only the release candidate workflow invokes this network-enabled task.
+    tasks.register("exportSmartTubeMavenSources") {
+        notCompatibleWithConfigurationCache("Resolves reviewed Maven source artifacts at execution time")
+        val destination = layout.buildDirectory.dir("outputs/system-modules/smarttube-maven-inputs")
+        outputs.dir(destination)
+        outputs.upToDateWhen { false }
+        doLast {
+            val runtime = configurations.getByName("releaseRuntimeClasspath")
+            val required = setOf("com.jayway.jsonpath:json-path", "net.minidev:json-smart",
+                "com.grack:nanojson", "com.github.florianingerl.util:regex", "com.jakewharton:disklrucache")
+            val components = runtime.incoming.resolutionResult.allComponents.mapNotNull {
+                it.id as? org.gradle.api.artifacts.component.ModuleComponentIdentifier
+            }.filter { "${it.group}:${it.module}" in required || it.group == "net.minidev" }
+            check(components.map { "${it.group}:${it.module}" }.containsAll(required)) {
+                "Missing resolved SmartTube private Maven dependency"
+            }
+            val sources = dependencies.createArtifactResolutionQuery()
+                .forComponents(components)
+                .withArtifacts(org.gradle.jvm.JvmLibrary::class.java, org.gradle.language.base.artifact.SourcesArtifact::class.java)
+                .execute()
+            val binaries = runtime.incoming.artifacts.artifacts.groupBy { it.id.componentIdentifier }
+            val output = destination.get().asFile
+            check(!output.exists() || output.deleteRecursively())
+            check(output.mkdirs())
+            for (component in components.sortedBy { it.displayName }) {
+                val coordinate = "${component.group}:${component.module}:${component.version}"
+                check(coordinate.matches(Regex("[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.+-]+")))
+                val source = sources.resolvedComponents.singleOrNull { it.id == component }
+                    ?.getArtifacts(org.gradle.language.base.artifact.SourcesArtifact::class.java)
+                    ?.filterIsInstance<org.gradle.api.artifacts.result.ResolvedArtifactResult>()
+                    ?.singleOrNull()?.file ?: error("Missing exact Maven sources: $coordinate")
+                val binary = binaries[component]?.singleOrNull()?.file
+                    ?: error("Missing exact Maven binary: $coordinate")
+                check(source.isFile && binary.isFile && source.extension == "jar" && binary.extension == "jar")
+                val directory = File(output, coordinate.replace(':', '/'))
+                check(directory.mkdirs())
+                source.copyTo(File(directory, "sources.jar"))
+                binary.copyTo(File(directory, "binary.jar"))
+            }
+        }
+    }
+
     androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
         val task = tasks.register<ExportMonogramDex>("exportSmartTubeAdapterDex") {
             exporter.set(rootProject.layout.projectDirectory.file("scripts/export_monogram_adapter.py"))

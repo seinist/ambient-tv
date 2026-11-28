@@ -205,6 +205,73 @@ def vendor_cargo(module, destination):
     return destination
 
 
+SMARTTUBE_MAVEN_REQUIRED = {
+    "com.jayway.jsonpath:json-path", "net.minidev:json-smart", "com.grack:nanojson",
+    "com.github.florianingerl.util:regex", "com.jakewharton:disklrucache",
+}
+
+
+def collect_smarttube_maven_sources(inputs, destination):
+    """Expand exact resolved source jars and copy embedded binary notices.
+
+    Keep only source/notice material plus binary and source digests, not the
+    binary JAR itself. Missing source artifacts must stop candidate generation.
+    """
+    import zipfile
+    if not inputs.is_dir() or inputs.is_symlink():
+        raise ValueError("Missing resolved SmartTube Maven sources")
+    destination.mkdir(parents=True, exist_ok=False)
+    inventory = []
+    seen = set()
+    budget = 128 * 1024**2
+    for source in sorted(inputs.glob("*/*/*/sources.jar")):
+        group, artifact, version = source.relative_to(inputs).parts[:3]
+        identity = f"{group}:{artifact}"
+        if identity not in SMARTTUBE_MAVEN_REQUIRED and group != "net.minidev":
+            raise ValueError("Unexpected private Maven dependency")
+        if identity in seen or not re.fullmatch(r"[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.+-]+", f"{identity}:{version}"):
+            raise ValueError("Invalid or duplicate resolved Maven coordinate")
+        seen.add(identity)
+        binary = source.with_name("binary.jar")
+        if any(not item.is_file() or item.is_symlink() or not 0 < item.stat().st_size <= 64 * 1024**2 for item in (source, binary)):
+            raise ValueError("Invalid resolved Maven artifact")
+        target = destination / group / artifact / version
+        target.mkdir(parents=True)
+        counts = {"sources": 0, "binaryNotices": 0}
+        for jar, folder, notices_only in ((source, "sources", False), (binary, "binary-notices", True)):
+            with zipfile.ZipFile(jar) as archive:
+                names = set()
+                for member in archive.infolist():
+                    name = member.filename
+                    if member.is_dir():
+                        continue
+                    if not safe_archive_name(name) or name in names or (member.external_attr >> 16) & 0xf000 not in (0, 0x8000):
+                        raise ValueError("Unsafe Maven JAR entry")
+                    names.add(name)
+                    if len(names) > 32768:
+                        raise ValueError("Maven JAR entry count exceeds bounds")
+                    if notices_only and not NOTICE.match(name.rsplit("/", 1)[-1]):
+                        continue
+                    if not notices_only and (not safe_path(Path(name)) or name.endswith((".jar", ".zip"))):
+                        continue
+                    if member.file_size > budget or member.file_size > 16 * 1024**2:
+                        raise ValueError("Maven sources exceed expansion bounds")
+                    budget -= member.file_size
+                    data = archive.read(member)
+                    dest = target / folder / name
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(data)
+                    counts["binaryNotices" if notices_only else "sources"] += 1
+        if not counts["sources"]:
+            raise ValueError("Empty Maven source artifact")
+        inventory.append({"coordinate": f"{identity}:{version}", "binarySha256": digest(binary),
+                          "sourceSha256": digest(source), **counts})
+    if not SMARTTUBE_MAVEN_REQUIRED <= seen:
+        raise ValueError("Incomplete SmartTube Maven source inventory")
+    (destination / "maven-inventory.json").write_text(json.dumps(inventory, sort_keys=True) + "\n")
+    return destination
+
+
 def fetch_moonlight_source_dependencies(destination):
     notice = ROOT / "third_party/moonlight-android/app/protocol-only-assets/moonlight-licenses/SOURCE-NOTICE.txt"
     content = notice.read_text()
@@ -319,6 +386,10 @@ def main():
     cargo = vendor_cargo(args.module, args.output.parent / "resolved-cargo-source")
     if cargo:
         extra_roots.append(cargo)
+    if args.module == "smarttube":
+        extra_roots.append(collect_smarttube_maven_sources(
+            ROOT / "app/build/outputs/system-modules/smarttube-maven-inputs",
+            args.output.parent / "resolved-smarttube-maven-source"))
     if args.module == "moonlight":
         extra_roots.append(fetch_moonlight_source_dependencies(args.output.parent / "pinned-moonlight-dependencies"))
     collect(args.module, args.sha, args.output, args.notices, extra_roots)

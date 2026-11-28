@@ -5,6 +5,7 @@ from unittest import mock
 import json
 import io
 import tarfile
+import zipfile
 import module_corresponding_source as sources
 
 
@@ -78,6 +79,37 @@ class CorrespondingSourceTest(unittest.TestCase):
                 path, descriptor = self.source_fixture(Path(temp), names)
                 with self.assertRaises(ValueError):
                     sources.validate_source_archive(path, descriptor)
+
+    def maven_fixture(self, directory, identities):
+        for identity in identities:
+            group, artifact = identity.split(":")
+            target = directory / group / artifact / "1.2.3"
+            target.mkdir(parents=True)
+            with zipfile.ZipFile(target / "sources.jar", "w") as archive:
+                archive.writestr("org/example/Example.java", "class Example {}")
+            with zipfile.ZipFile(target / "binary.jar", "w") as archive:
+                archive.writestr("org/example/Example.class", b"binary")
+                archive.writestr("META-INF/LICENSE", b"license")
+
+    def test_collect_exact_smarttube_maven_sources_and_binary_notices(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            identities = sources.SMARTTUBE_MAVEN_REQUIRED | {"net.minidev:accessors-smart"}
+            self.maven_fixture(root / "inputs", identities)
+            output = sources.collect_smarttube_maven_sources(root / "inputs", root / "sources")
+            rows = json.loads((output / "maven-inventory.json").read_text())
+            self.assertEqual({row["coordinate"] for row in rows}, {name + ":1.2.3" for name in identities})
+            self.assertTrue(all(row["sources"] == 1 and row["binaryNotices"] == 1 for row in rows))
+            self.assertEqual(len(list(output.rglob("LICENSE"))), len(identities))
+            self.assertFalse(list(output.rglob("*.class")))
+            self.assertFalse(list(output.rglob("*.jar")))
+
+    def test_missing_smarttube_maven_sources_stop_collection(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.maven_fixture(root / "inputs", {"net.minidev:json-smart"})
+            with self.assertRaisesRegex(ValueError, "Incomplete"):
+                sources.collect_smarttube_maven_sources(root / "inputs", root / "sources")
 
     def test_all_modules_have_explicit_roots(self):
         self.assertEqual(10, len(sources.ROOTS))

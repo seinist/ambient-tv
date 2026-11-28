@@ -482,7 +482,7 @@ jobs:
           set -euo pipefail
           case "$MODULE" in
             monogram) ./gradlew :app:exportMonogramAdapterDex -PAPK_ABI=arm64 ;;
-            smarttube) ./gradlew :app:exportSmartTubeAdapterDex -PAPK_ABI=arm64 ;;
+            smarttube) ./gradlew :app:exportSmartTubeAdapterDex :app:exportSmartTubeMavenSources -PAPK_ABI=arm64 ;;
             vlc) if [[ "${VLC_DEX_MODULE:-0}" == 1 ]]; then ./gradlew :app:exportVlcAdapterDex -PAPK_ABI=arm64; fi ;;
             libretrodroid) if [[ "${LIBRETRO_DEX_MODULE:-0}" == 1 ]]; then ./gradlew :app:exportLibretroAdapterDex -PAPK_ABI=arm64; fi ;;
           esac
