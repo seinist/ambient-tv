@@ -8,7 +8,7 @@ use std::{sync::{Arc,Mutex,atomic::{AtomicBool,AtomicU32,Ordering}},panic::{catc
 use crate::resident::{MOTION,SYNTHESIS};
 #[path="resident_hdr_stats.rs"]
 mod hdr_stats;
-use hdr_stats::{HdrWindow,HdrResult,HdrTrack,StatsJob,StatsPipelines,HdrScene,SceneResult};
+use hdr_stats::{HdrWindow,HdrResult,HdrTrack,StatsJob,StatsPipelines,HdrScene,SceneResult,TwoPass};
 
 const MAX_PHASES:usize=8;
 const MAX_IN_FLIGHT:u32=4;
@@ -1288,6 +1288,47 @@ pub unsafe extern "C" fn ambient_svp_hdr_scene_validate(first:u64,end:u64,measur
             std::slice::from_raw_parts(measured,count as usize),
             std::slice::from_raw_parts(authored,count as usize)))
     })).unwrap_or(-1)
+}
+// The per-playback session is serialized, including all accesses from
+// scheduler/display threads. The caller retains the handle until retirement.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_hdr_pass_open(mode:u32,plan:*const std::ffi::c_char,
+    cache:*const std::ffi::c_char,key:*const std::ffi::c_char,profile:*const std::ffi::c_char,w:u32,h:u32)->*mut TwoPass{
+    if [plan,cache,key,profile].iter().any(|p|p.is_null()){return ptr::null_mut();}
+    catch_unwind(AssertUnwindSafe(||unsafe{
+        let (Ok(plan),Ok(cache),Ok(key),Ok(profile))=(std::ffi::CStr::from_ptr(plan).to_str(),
+            std::ffi::CStr::from_ptr(cache).to_str(),std::ffi::CStr::from_ptr(key).to_str(),std::ffi::CStr::from_ptr(profile).to_str())else{return ptr::null_mut();};
+        TwoPass::open(mode,std::path::Path::new(plan),std::path::Path::new(cache),key,profile,w,h)
+            .map_or(ptr::null_mut(),|s|Box::into_raw(Box::new(s)))
+    })).unwrap_or(ptr::null_mut())
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_hdr_pass_capture(pass:*mut TwoPass,pair:*const VulkanPair,phase:u32,index:u64)->i32{
+    if pass.is_null()||pair.is_null(){return -1;}
+    catch_unwind(AssertUnwindSafe(||unsafe{
+        let p=&*pair;let i=phase as usize;
+        if p.fence==vk::Fence::null()||i>=p.phases{return -1;}
+        match p.core.device.get_fence_status(p.fence){Ok(true)=>{},Ok(false)=>return 0,Err(_)=>return -1}
+        let Some(job)=p.hdr_jobs[i].as_ref()else{return -1;};
+        let Ok(frame)=job.scene_frame()else{return -1;};
+        (&mut *pass).capture(index,frame).map_or(-1,|_|1)
+    })).unwrap_or(-1)
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_hdr_pass_lookup(pass:*mut TwoPass,index:u64,out:*mut SceneResult)->i32{
+    if pass.is_null()||out.is_null(){return -1;}
+    catch_unwind(AssertUnwindSafe(||unsafe{
+        let Ok(result)=(&mut *pass).lookup(index)else{return -1;};*out=result;1
+    })).unwrap_or(-1)
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_hdr_pass_finish(pass:*mut TwoPass)->i32{
+    if pass.is_null(){return -1;}
+    catch_unwind(AssertUnwindSafe(||unsafe{(&mut *pass).finish().map_or(-1,|_|1)})).unwrap_or(-1)
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_hdr_pass_destroy(pass:*mut TwoPass){
+    if !pass.is_null(){let _=catch_unwind(AssertUnwindSafe(||unsafe{drop(Box::from_raw(pass))}));}
 }
 // The caller must pass the fence of the successful submission containing
 // this exact command buffer. The fence is borrowed and must not be reset
