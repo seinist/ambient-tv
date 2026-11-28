@@ -10,6 +10,7 @@ from export_monogram_adapter import owns, owns_smarttube
 ABIS = {"arm64-v8a", "armeabi-v7a", "x86", "x86_64"}
 EXTERNAL = {"libprojectM-4.so", "libambientprojectm.so",
             "libmpv.so", "libambientmpv.so", "libspotify_receiver_core.so", "libmonogram_mtproto.so", "libjnidispatch.so", "libj2v8.so"}
+VLC_EXTERNAL = {"libvlc.so", "libvlcjni.so"}
 SHARED = {"libc++_shared.so", "libavcodec.so", "libavutil.so", "libswresample.so"}
 
 
@@ -60,7 +61,8 @@ def verify_no_optional_classes(data):
                 raise ValueError(f"bundled SmartTube adapter class: {descriptor}")
 
 
-def verify(apk):
+def verify(apk, expect_vlc_external=False):
+    external = EXTERNAL | (VLC_EXTERNAL if expect_vlc_external else set())
     with zipfile.ZipFile(apk) as archive:
         names = archive.namelist()
         for name in names:
@@ -75,7 +77,7 @@ def verify(apk):
             raise ValueError(f"{apk}: bundled shader preset: {name}")
         if len(parts) == 3 and parts[0] == "lib" and parts[2].endswith(".so"):
             abi, library = parts[1:]
-            if abi not in ABIS or library in EXTERNAL:
+            if abi not in ABIS or library in external:
                 raise ValueError(f"{apk}: unexpected native payload: {name}")
             libraries.setdefault(abi, set()).add(library)
     if not libraries:
@@ -89,11 +91,12 @@ def verify(apk):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--expect-vlc-external", action="store_true")
     parser.add_argument("apks", nargs="+", type=Path)
     args = parser.parse_args()
     seen = set()
     for apk in args.apks:
-        abis = verify(apk)
+        abis = verify(apk, args.expect_vlc_external)
         if seen & abis:
             raise ValueError("duplicate ABI across preview APKs")
         seen.update(abis)
