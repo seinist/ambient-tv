@@ -1561,9 +1561,9 @@ class VlcPlaybackController(
             if (configuredResident && outputReady && player.isPlaying && !openingOrRestarting &&
                 !com.ambient.tv.ui.player.PlaybackOutputTransition.active()) {
                 val now = android.os.SystemClock.elapsedRealtime()
-                // HDR libplacebo uses a different output path from SurfaceControl.
-                // Its visible playback clock is a liveness fallback, not a frame counter.
-                val frames = if (hdrSceneSession != null) confirmedPlaybackTimeMs() else SvpNative.residentOutputsOrNull()
+                // Count actual renderer output on the HDR display route.
+                // Old native libraries retain the playback-clock fallback.
+                val frames = if (hdrSceneSession != null) SvpNative.hdrResidentOutputsOrNull() ?: confirmedPlaybackTimeMs() else SvpNative.residentOutputsOrNull()
                 if (residentLastProgressMs == 0L || frames != residentLastOutput) {
                     residentLastOutput = frames
                     residentLastProgressMs = now

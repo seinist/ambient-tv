@@ -86,7 +86,7 @@ replace('        enum ambient_hdrplus_spatial_result spatial_result=ambient_hdrp
 replace('            full?vlc_ancillary_GetData(full):NULL,eligible,sys->hdr_target_mode!=0);',
         '            metadata,eligible,sys->hdr_target_mode!=0);')
 replace('    if (ahb_output.texture)\n        sys->ahb_frame_rendered = !failed;',
-        '    if (ahb_output.texture || svp_pair)\n        sys->ahb_frame_rendered = !failed;')
+        '    if (ahb_output.texture || svp_pair)\n        sys->ahb_frame_rendered = !failed;\n    if (svp_pair && !failed) ambient_svp_hdr_mark_output(&sys->svp_hdr);')
 backup.write_text(original)
 staged.write_text(s)
 display.write_text(s)

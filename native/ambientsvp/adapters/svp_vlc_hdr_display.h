@@ -46,6 +46,8 @@ struct ambient_svp_hdr_display {
     int (*scene_finish)(AmbientSvpHdrPass *);
     void (*scene_destroy)(AmbientSvpHdrPass *);
     bool scene_finished;
+    void *progress_lib;
+    void (*mark_output)(void);
     unsigned scene_version;
     struct ambient_svp_hdr_phase phases[SVP_PLACEBO_PENDING];
     uint64_t phase_ids[4],phase_group;
@@ -121,6 +123,14 @@ static inline bool ambient_svp_hdr_scene_end(pl_gpu gpu,struct ambient_svp_hdr_d
     if(!atomic_load(&s->scene->ended)||atomic_load(&s->scene->aborted)||s->scene_finish(s->scene_pass)!=1)return false;
     s->scene_finished=true;return true;
 }
+static inline void ambient_svp_hdr_mark_output(struct ambient_svp_hdr_display *s)
+{
+    if(!s->progress_lib){
+        s->progress_lib=dlopen("libambientsvp.so",RTLD_NOW|RTLD_LOCAL);
+        if(s->progress_lib)s->mark_output=dlsym(s->progress_lib,"ambient_svp_mark_hdr_output");
+    }
+    if(s->mark_output)s->mark_output();
+}
 static inline void ambient_svp_hdr_display_destroy(pl_gpu gpu,struct ambient_svp_hdr_display *s)
 {
     ambient_svp_hdr_scene_close(gpu,s,true);
@@ -131,6 +141,7 @@ static inline void ambient_svp_hdr_display_destroy(pl_gpu gpu,struct ambient_svp
     }
     for(unsigned i=0;i<SVP_PLACEBO_PENDING;i++)pl_tex_destroy(gpu,&s->phases[i].texture);
     pl_tex_destroy(gpu,&s->output);svp_placebo_quality_destroy(gpu,&s->quality);pl_dispatch_destroy(&s->dp);
+    if(s->progress_lib)dlclose(s->progress_lib);
     *s=(struct ambient_svp_hdr_display){0};
 }
 static inline bool ambient_svp_hdr_target(pl_gpu gpu,struct svp_placebo_quality *s,pl_tex *tex,int w,int h)
