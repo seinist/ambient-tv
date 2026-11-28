@@ -1537,11 +1537,18 @@ private fun AmbientTvApp(
     }
     val spotifyTakeover by spotifyRepository.playbackTakeover.collectAsState()
     val mediaSelectionScope = rememberCoroutineScope()
+    var scheduledGame by remember { mutableStateOf<com.ambient.tv.livetv.LiveTvReminder?>(null) }
     val launchGameOnTarget = rememberUpdatedState<(
         com.ambient.tv.games.library.LibraryGame, Boolean, (() -> Unit) -> Unit,
     ) -> Unit> { game, fresh, complete ->
         playOnSelectedTarget(Destinations.gamePlayer(game.fileId, game.systemId, fresh), title = game.title,
-            navigate = { route -> complete { navController.navigate(route) { launchSingleTop = true } } })
+            navigate = { route -> complete {
+                val scheduled = scheduledGame?.takeIf { it.plan?.targetId == game.fileId && it.plan?.restart == fresh }
+                scheduledGame = null
+                if (scheduled != null && com.ambient.tv.livetv.scheduledPlaybackIdentity(context, "games", game.fileId) != scheduled.plan?.sourceIdentity) return@complete
+                navController.navigate(route) { launchSingleTop = true }
+                scheduled?.let { com.ambient.tv.livetv.LiveTvReminderStore(context.applicationContext).completePlan(it) }
+            } })
     }
     val gameSelections = remember(mediaSelectionScope, navController, gameLibraryRepository, appPreferences, tokenStore, browseSelectionIntents) {
         GameSelectionCoordinator(
@@ -2319,6 +2326,32 @@ private fun AmbientTvApp(
             }
         }
         com.ambient.tv.launcher.LauncherIntents.consumed(route)
+    }
+    val scheduledLaunch by com.ambient.tv.livetv.LiveTvReminderPrompt.plannedLaunch.collectAsState()
+    LaunchedEffect(scheduledLaunch) {
+        val reminder = scheduledLaunch ?: return@LaunchedEffect
+        val plan = reminder.plan ?: return@LaunchedEffect
+        val store = com.ambient.tv.livetv.LiveTvReminderStore(context.applicationContext)
+        try {
+            val current = store.find(reminder.id)
+            if (current?.plan != plan || current.startEpochSeconds != reminder.startEpochSeconds ||
+                com.ambient.tv.livetv.scheduledPlaybackIdentity(context, plan.provider, plan.targetId) != plan.sourceIdentity) return@LaunchedEffect
+            if (plan.provider == "games") {
+                scheduledGame = reminder
+                if (plan.restart) gameSelections.playFresh(plan.targetId) else gameSelections.play(plan.targetId)
+            } else {
+                requestLocalPlayback(plan.route(), reminder.title) { route ->
+                    if (store.find(reminder.id)?.plan == plan &&
+                        com.ambient.tv.livetv.scheduledPlaybackIdentity(context, plan.provider, plan.targetId) == plan.sourceIdentity) {
+                        navController.navigate(route) { launchSingleTop = true }
+                        store.completePlan(reminder)
+                    }
+                }
+            }
+        } finally {
+            if (com.ambient.tv.livetv.LiveTvReminderPrompt.plannedLaunch.value == reminder)
+                com.ambient.tv.livetv.LiveTvReminderPrompt.plannedLaunch.value = null
+        }
     }
     // System/voice search: open the search page; it runs and consumes the query.
     val externalSearch by com.ambient.tv.search.ExternalSearch.requests.collectAsState()
