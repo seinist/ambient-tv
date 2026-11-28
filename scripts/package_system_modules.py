@@ -6,6 +6,7 @@ must be the matching, verified Full APKs, not arbitrary binaries.
 """
 import argparse
 import hashlib
+import io
 import json
 from pathlib import Path
 import re
@@ -19,10 +20,12 @@ NATIVE_ROOTS = {
     "projectm": ("libprojectM-4.so", "libambientprojectm.so"),
     "mpv": ("libmpv.so", "libambientmpv.so"),
     "spotify": ("libspotify_receiver_core.so",),
+    "vlc": ("libvlc.so", "libvlcjni.so"),
 }
 HOST_LIBRARIES = {
     "projectm": {"libc++_shared.so"},
     "spotify": {"libc++_shared.so"},
+    "vlc": {"libc++_shared.so"},
     "mpv": {"libc++_shared.so", "libavcodec.so", "libavdevice.so", "libavfilter.so",
             "libavformat.so", "libavutil.so", "libswresample.so", "libswscale.so",
             "libpostproc.so", "libass.so", "libplacebo.so", "libfreetype.so",
@@ -94,7 +97,9 @@ def native_dependencies(data, name):
     return needed
 
 
-def native_module(out, module, version, apks, licenses):
+def native_module(out, module, version, apks, licenses, binding=None):
+    if module == "vlc" and not re.fullmatch(r"[0-9a-f]{64}", binding or ""):
+        raise ValueError("VLC requires exact patched Java binding fingerprint")
     entries = []
     seen = set()
     roots = NATIVE_ROOTS[module]
@@ -136,10 +141,23 @@ def native_module(out, module, version, apks, licenses):
                     if path in files:
                         raise ValueError("duplicate license filename")
                     files[path] = license.read_bytes()
-                entries.append(write_package(out, module, abi, version, files, shared))
+                entries.append(write_package(out, module, abi, version, files, shared, binding))
     if seen != set(ABIS):
         raise ValueError(f"{module} publication requires matching Full APKs for all four ABIs")
     return entries
+
+
+def vlc_binding(aar):
+    with zipfile.ZipFile(aar) as archive:
+        classes = archive.read("classes.jar")
+        with zipfile.ZipFile(io.BytesIO(classes)) as jar:
+            if "org/videolan/libvlc/AmbientNativeLibraryLoader.class" not in jar.namelist():
+                raise ValueError("VLC AAR lacks the verified module loader")
+        for abi in ABIS:
+            for name in NATIVE_ROOTS["vlc"]:
+                if f"jni/{abi}/{name}" not in archive.namelist():
+                    raise ValueError(f"VLC AAR lacks {abi}/{name}")
+    return digest(classes)
 
 
 def monogram(out, version, aar, licenses):
@@ -219,13 +237,14 @@ def monogram_dex(out, version, dex_dir, apks, licenses):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--module", choices=("shaders", "projectm", "mpv", "spotify", "monogram", "smarttube"), required=True)
+    parser.add_argument("--module", choices=("shaders", "projectm", "mpv", "spotify", "monogram", "smarttube", "vlc"), required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--version", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--apk", type=Path, action="append", default=[])
     parser.add_argument("--license", type=Path, action="append", default=[])
     parser.add_argument("--monogram-aar", type=Path)
+    parser.add_argument("--vlc-aar", type=Path)
     parser.add_argument("--monogram-dex-dir", type=Path)
     parser.add_argument("--smarttube-dex-dir", type=Path)
     args = parser.parse_args()
@@ -250,7 +269,10 @@ def main():
     else:
         if not args.apk or not args.license:
             parser.error("Native modules require verified Full APKs and corresponding license notices")
-        entries = native_module(args.output, args.module, args.version, args.apk, args.license)
+        if args.module == "vlc" and not args.vlc_aar:
+            parser.error("VLC requires the matching patched AAR")
+        binding = vlc_binding(args.vlc_aar) if args.module == "vlc" else None
+        entries = native_module(args.output, args.module, args.version, args.apk, args.license, binding)
     manifest = dict(schema=1, tag=args.tag, modules=entries)
     (args.output / "manifest.json").write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
 
