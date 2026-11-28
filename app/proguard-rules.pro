@@ -139,3 +139,17 @@
 -keep class androidx.webkit.** { *; }
 -keep class androidx.preference.** { *; }
 -keep class androidx.appcompat.** { *; }
+
+# SmartTube resource-only host: code in a downloaded DEX is not visible to R8.
+# Preserve the pinned transitive dependency entry points, not just the app's own callers.
+-keep class androidx.core.** { *; }
+-keep class androidx.collection.** { *; }
+-keep class com.grack.nanojson.** { *; }
+-keep class com.florianingerl.util.regex.** { *; }
+-keep class com.localebro.** { *; }
+-keep class com.jakewharton.disklrucache.** { *; }
+-keep class info.guardianproject.netcipher.** { *; }
+-keep class org.chromium.net.** { *; }
+-keep class com.google.android.gms.net.** { *; }
+-keep class org.brotli.** { *; }
+-keep class org.objectweb.asm.** { *; }
