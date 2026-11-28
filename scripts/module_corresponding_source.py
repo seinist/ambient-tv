@@ -310,137 +310,7 @@ def collect_j2v8_provenance(shared, dist, destination):
     commit = subprocess.check_output(["git", "-C", str(shared), "rev-parse", "HEAD"], text=True).strip()
     if not re.fullmatch(r"[a-f0-9]{40}", commit):
         raise ValueError("Invalid SharedModules commit")
-    versions = re.findall(r'(?m)^\s*versionName\s+"([0-9.]+)"\s*
-    notice = ROOT / "third_party/moonlight-android/app/protocol-only-assets/moonlight-licenses/SOURCE-NOTICE.txt"
-    content = notice.read_text()
-    repositories = {"openssl/openssl": "openssl", "cgutman/moonlight-mobile-deps": "mobile-deps"}
-    destination.mkdir(parents=True, exist_ok=False)
-    for repo, name in repositories.items():
-        pins = set(re.findall(r"https://github\.com/" + re.escape(repo) + r"/tree/([a-f0-9]{40})(?![a-f0-9])", content))
-        if len(pins) != 1:
-            raise ValueError(f"Missing exact Moonlight corresponding-source pin: {repo}")
-        pin = pins.pop()
-        checkout = destination / name
-        checkout.mkdir()
-        subprocess.run(["git", "init", "-q", str(checkout)], check=True)
-        subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", f"https://github.com/{repo}.git"], check=True)
-        subprocess.run(["git", "-C", str(checkout), "fetch", "--depth", "1", "origin", pin], check=True)
-        subprocess.run(["git", "-C", str(checkout), "checkout", "--detach", "FETCH_HEAD"], check=True)
-        actual = subprocess.check_output(["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True).strip()
-        if actual != pin:
-            raise ValueError(f"Moonlight dependency checkout does not match pin: {repo}")
-        (destination / (name + "-commit.txt")).write_text(pin + "\n")
-    return destination
-
-
-def collect(module, commit, output, notices, extra_roots=()):
-    if module not in ROOTS or not re.fullmatch(r"[a-f0-9]{40}", commit):
-        raise ValueError("Invalid source candidate identity")
-    actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    if actual != commit:
-        raise ValueError("Source checkout differs from candidate commit")
-    if output.exists() or notices.exists():
-        raise ValueError("Source and notices outputs must be fresh")
-    roots = [(p, ROOT / p) for p in ROOTS[module]]
-    for extra in extra_roots:
-        resolved = extra.resolve()
-        if not resolved.is_relative_to(ROOT.resolve()):
-            raise ValueError("Additional source root must be within the build workspace")
-        roots.append((resolved.relative_to(ROOT).as_posix(), resolved))
-    if len({name for name, _ in roots}) != len(roots):
-        raise ValueError("Duplicate corresponding-source root")
-    for name, path in roots:
-        if not path.is_dir() or path.is_symlink():
-            raise ValueError(f"Missing build source root: {name}")
-    notices.mkdir(parents=True)
-    (notices / "Ambient-TV-LICENSE").write_bytes((ROOT / "LICENSE").read_bytes())
-    # Reviewed supplemental notices may include Maven, prebuilt archive and
-    # transitive dependency license texts not supplied by an upstream checkout.
-    reviewed = ROOT / "third_party_licenses/system_modules" / module
-    supplemental = [reviewed]
-    if module == "svp":
-        supplemental.append(ROOT / "app/src/main/assets/licenses/open-svpflow")
-    if module == "moonlight":
-        supplemental.append(ROOT / "third_party/moonlight-android/app/protocol-only-assets/moonlight-licenses")
-    inventory = []
-    budget = [MAX_SOURCE_BYTES]
-    output.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with output.open("xb") as raw, gzip.GzipFile(filename="", fileobj=raw, mode="wb", mtime=0) as compressed, \
-                tarfile.open(fileobj=compressed, mode="w|") as archive:
-            # Include exact tracked Ambient TV source, patches, build recipes and pins.
-            # git archive does not include credentials or untracked build secrets.
-            with tempfile.TemporaryDirectory() as temp:
-                host = Path(temp) / "host-source.tar"
-                with host.open("wb") as stream:
-                    subprocess.run(["git", "archive", "--format=tar", commit], cwd=ROOT, stdout=stream, check=True)
-                add_file(archive, host, "ambient-tv-source.tar", budget)
-            for index, (name, root) in enumerate(roots):
-                count = 0
-                found = 0
-                for path, relative in source_files(root):
-                    add_file(archive, path, f"upstream/{name}/{relative.as_posix()}", budget)
-                    count += 1
-                    if NOTICE.match(path.name) and 0 < path.stat().st_size <= 4 * 1024 * 1024:
-                        dest = notices / f"source-{index}" / relative
-                        dest.parent.mkdir(parents=True, exist_ok=True)
-                        dest.write_bytes(path.read_bytes())
-                        found += 1
-                if count == 0:
-                    raise ValueError(f"Empty source root: {name}")
-                inventory.append({"root": name, "files": count, "notices": found})
-            for index, root in enumerate(supplemental):
-                if not root.is_dir():
-                    continue
-                for path, relative in source_files(root):
-                    dest = notices / f"reviewed-{index}" / relative
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    dest.write_bytes(path.read_bytes())
-            if not any(row["notices"] for row in inventory) and not any(p.is_dir() for p in notices.iterdir()):
-                raise ValueError("No upstream license notices collected")
-            info = {"schema": 1, "module": module, "commit": commit, "roots": inventory,
-                    "reviewRequired": True}
-            add_bytes(archive, "source-inventory.json", (json.dumps(info, sort_keys=True) + "\n").encode())
-        if output.stat().st_size > MAX_SOURCE_BYTES:
-            raise ValueError("Compressed corresponding-source archive exceeds release bounds")
-        descriptor = {"asset": output.name, "size": output.stat().st_size, "sha256": digest(output), **info}
-        validate_source_archive(output, descriptor)
-        (notices / "corresponding-source.json").write_text(json.dumps(descriptor, sort_keys=True) + "\n")
-        return descriptor
-    except BaseException:
-        output.unlink(missing_ok=True)
-        raise
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--module", choices=ROOTS, required=True)
-    parser.add_argument("--sha", required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--notices", type=Path, required=True)
-    parser.add_argument("--extra-root", type=Path, action="append", default=[])
-    parser.add_argument("--dist", type=Path, help="Signed Full APK directory for native binary provenance")
-    args = parser.parse_args()
-    extra_roots = list(args.extra_root)
-    cargo = vendor_cargo(args.module, args.output.parent / "resolved-cargo-source")
-    if cargo:
-        extra_roots.append(cargo)
-    if args.module == "smarttube":
-        if args.dist is None:
-            parser.error("SmartTube requires Full APKs for J2V8 provenance")
-        extra_roots.append(collect_j2v8_provenance(ROOT / "third_party/smarttube/SharedModules",
-            args.dist, args.output.parent / "resolved-j2v8-provenance"))
-        extra_roots.append(collect_smarttube_maven_sources(
-            ROOT / "app/build/outputs/system-modules/smarttube-maven-inputs",
-            args.output.parent / "resolved-smarttube-maven-source"))
-    if args.module == "moonlight":
-        extra_roots.append(fetch_moonlight_source_dependencies(args.output.parent / "pinned-moonlight-dependencies"))
-    collect(args.module, args.sha, args.output, args.notices, extra_roots)
-
-
-if __name__ == "__main__":
-    main()
-, (shared / "j2v8/build.gradle").read_text())
+    versions = re.findall(r'(?m)^\s*versionName\s+"([0-9.]+)"\s*$', (shared / "j2v8/build.gradle").read_text())
     if len(versions) != 1:
         raise ValueError("Cannot determine vendored J2V8 version")
     inputs = {}
@@ -592,12 +462,17 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--notices", type=Path, required=True)
     parser.add_argument("--extra-root", type=Path, action="append", default=[])
+    parser.add_argument("--dist", type=Path, help="Signed Full APK directory for native binary provenance")
     args = parser.parse_args()
     extra_roots = list(args.extra_root)
     cargo = vendor_cargo(args.module, args.output.parent / "resolved-cargo-source")
     if cargo:
         extra_roots.append(cargo)
     if args.module == "smarttube":
+        if args.dist is None:
+            parser.error("SmartTube requires Full APKs for J2V8 provenance")
+        extra_roots.append(collect_j2v8_provenance(ROOT / "third_party/smarttube/SharedModules",
+            args.dist, args.output.parent / "resolved-j2v8-provenance"))
         extra_roots.append(collect_smarttube_maven_sources(
             ROOT / "app/build/outputs/system-modules/smarttube-maven-inputs",
             args.output.parent / "resolved-smarttube-maven-source"))

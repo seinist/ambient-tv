@@ -122,6 +122,37 @@ class CorrespondingSourceTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 sources.elf_text_digest(b"xxcodeyy")
 
+    def test_j2v8_provenance_matches_full_apk_and_git_blob(self):
+        import hashlib
+        from package_system_modules import ABIS
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            shared, dist = root / "shared", root / "dist"
+            (shared / "j2v8").mkdir(parents=True)
+            (shared / "j2v8/build.gradle").write_text('versionName "6.2.1"\n')
+            dist.mkdir()
+            for abi in ABIS:
+                source = shared / f"j2v8/src/main/jniLibs/{abi}/libj2v8.so"
+                source.parent.mkdir(parents=True)
+                source.write_bytes(abi.encode())
+                with zipfile.ZipFile(dist / f"{abi}.apk", "w") as archive:
+                    archive.writestr(f"lib/{abi}/libj2v8.so", abi.encode())
+            def git(command, text):
+                if command[-1] == "HEAD":
+                    return "a" * 40
+                data = (shared / command[-1].split(":", 1)[1]).read_bytes()
+                return hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()
+            with mock.patch.object(sources.subprocess, "check_output", side_effect=git), mock.patch.object(
+                    sources, "elf_text_digest", side_effect=lambda data: hashlib.sha256(data).hexdigest()):
+                output = sources.collect_j2v8_provenance(shared, dist, root / "evidence")
+                evidence = json.loads((output / "j2v8-provenance.json").read_text())
+                self.assertEqual(evidence["nativeSourceCorrespondence"], "unverified")
+                self.assertEqual({row["abi"] for row in evidence["libraries"]}, set(ABIS))
+                with zipfile.ZipFile(dist / "x86.apk", "w") as archive:
+                    archive.writestr("lib/x86/libj2v8.so", b"changed")
+                with self.assertRaisesRegex(ValueError, "executable text differs"):
+                    sources.collect_j2v8_provenance(shared, dist, root / "bad")
+
     def test_all_modules_have_explicit_roots(self):
         self.assertEqual(10, len(sources.ROOTS))
         self.assertTrue(all(paths for paths in sources.ROOTS.values()))
