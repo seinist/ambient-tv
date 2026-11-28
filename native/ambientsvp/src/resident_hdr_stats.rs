@@ -21,7 +21,7 @@ pub struct HdrResult{
 #[repr(C)]
 #[derive(Clone,Copy,Debug,Default)]
 pub struct HdrTrack{pub a:[u32;4],pub b:[u32;4],pub ellipse:[u32;2]}
-pub(super) struct StatsPipelines{collect:Pipeline,reduce:Pipeline,track:Pipeline,proxy:Pipeline,bright:Pipeline}
+pub(super) struct StatsPipelines{collect:Pipeline,reduce:Pipeline,track:Pipeline,proxy:Pipeline,bright:Pipeline,linear:Pipeline}
 impl StatsPipelines{
     pub(super) fn new(core:&Core)->Result<Self>{
         let types=[vk::DescriptorType::SAMPLED_IMAGE,vk::DescriptorType::STORAGE_BUFFER,vk::DescriptorType::STORAGE_BUFFER,vk::DescriptorType::STORAGE_BUFFER];
@@ -29,7 +29,8 @@ impl StatsPipelines{
             reduce:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"summarize")?,c"summarize")?,
             track:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"track")?,c"track")?,
             proxy:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"bright_proxy")?,c"bright_proxy")?,
-            bright:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"bright_reduce")?,c"bright_reduce")?})
+            bright:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"bright_reduce")?,c"bright_reduce")?,
+            linear:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"scene_linear_sum")?,c"scene_linear_sum")?})
     }
 }
 struct Buffer{device:ash::Device,buffer:vk::Buffer,memory:vk::DeviceMemory,size:u64}
@@ -159,6 +160,7 @@ impl StatsJob{
                 vk::DependencyFlags::empty(),&between,&[],&[]);
             self.pipelines.reduce.dispatch(cmd,self.set,params,self.windows.len() as u32,1);
             if let Some(hist)=&self.scene_hist{
+                self.pipelines.linear.dispatch(cmd,self.set,params,w.div_ceil(8),h.div_ceil(8));
                 self.pipelines.proxy.dispatch(cmd,self.set,params,w.div_ceil(5).div_ceil(8),h.div_ceil(5).div_ceil(8));
                 d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::COMPUTE_SHADER,
                     vk::DependencyFlags::empty(),&between,&[],&[]);
@@ -190,14 +192,15 @@ impl StatsJob{
             self.device.unmap_memory(hist.memory);
         }
         let average=f32::from_bits(row[61]);let fraction=f32::from_bits(row[62]);
+        let linear_sum=u64::from(row[56])|(u64::from(row[57])<<32);
         if row[63]!=self.width.div_ceil(5)*self.height.div_ceil(5)||
             !average.is_finite()||!(0.0..=1.0).contains(&average)||
             !fraction.is_finite()||!(0.0..=1.0).contains(&fraction)||
             row[39]!=self.width*self.height||bins.iter().map(|&v|u64::from(v)).sum::<u64>()!=u64::from(row[39])||
-            row[20..23].iter().any(|&v|v>100000){
+            row[20..23].iter().any(|&v|v>100000)||linear_sum>u64::from(row[39])*1_000_000_000{
             return Err("invalid scene frame statistics".into());
         }
-        Ok(SceneFrame{width:self.width,height:self.height,maxscl:[row[20],row[21],row[22]],bins,average,fraction})
+        Ok(SceneFrame{width:self.width,height:self.height,maxscl:[row[20],row[21],row[22]],bins,average,fraction,linear_sum})
     }
     pub(super) fn ellipses(&self,out:&mut[[u32;3]])->Result<()>{
         if !self.affine||out.len()!=self.windows.len(){return Err("HDR ellipse read contract".into());}
@@ -287,7 +290,7 @@ impl StatsJob{
 #[cfg(test)]
 #[test]
 fn hdr_statistics_shaders_compile(){
-    for entry in ["collect","summarize","track","bright_proxy","bright_reduce"]{assert_eq!(spirv(SHADER,UNIFORM,entry).unwrap()[0],0x07230203);}
+    for entry in ["collect","summarize","track","bright_proxy","bright_reduce","scene_linear_sum"]{assert_eq!(spirv(SHADER,UNIFORM,entry).unwrap()[0],0x07230203);}
 }
 
 // ST 2094-40:2020 section 10.4. Scene-level reducer. A caller must
@@ -335,7 +338,7 @@ fn bright_scene_selects_latest_highest_average_and_weighted_band(){
 
 pub(super) struct SceneFrame{
     pub width:u32,pub height:u32,pub maxscl:[u32;3],
-    pub bins:Vec<u32>,pub average:f32,pub fraction:f32,
+    pub bins:Vec<u32>,pub average:f32,pub fraction:f32,pub linear_sum:u64,
 }
 
 // Explicit complete-scene contract. The caller supplies authoritative
@@ -349,7 +352,7 @@ pub struct SceneResult{
 }
 pub struct HdrScene{
     first:u64,end:u64,next:u64,width:u32,height:u32,
-    percentages:[u32;9],bins:Vec<u64>,maxscl:[u32;3],best:Option<(f32,u64,f32)>,
+    percentages:[u32;9],bins:Vec<u64>,maxscl:[u32;3],linear_sum:u128,best:Option<(f32,u64,f32)>,
 }
 impl HdrScene{
     pub(super) fn new(first:u64,end:u64,width:u32,height:u32,percentages:[u32;9])->Result<Self>{
@@ -358,17 +361,18 @@ impl HdrScene{
             percentages.iter().any(|&v|v>100)||percentages.windows(2).any(|p|p[0]>=p[1]){
             return Err("invalid scene interval or distribution".into());
         }
-        Ok(Self{first,end,next:first,width,height,percentages,bins:vec![0;BINS as usize],maxscl:[0;3],best:None})
+        Ok(Self{first,end,next:first,width,height,percentages,bins:vec![0;BINS as usize],maxscl:[0;3],linear_sum:0,best:None})
     }
     pub(super) fn push(&mut self,index:u64,frame:SceneFrame)->Result<()>{
         if index!=self.next||index>=self.end||frame.width!=self.width||frame.height!=self.height||
             frame.bins.len()!=self.bins.len()||frame.bins.iter().map(|&v|u64::from(v)).sum::<u64>()!=u64::from(self.width)*u64::from(self.height)||
             !frame.average.is_finite()||!(0.0..=1.0).contains(&frame.average)||
             !frame.fraction.is_finite()||!(0.0..=1.0).contains(&frame.fraction)||
-            frame.maxscl.iter().any(|&v|v>100000){
+            frame.maxscl.iter().any(|&v|v>100000)||frame.linear_sum>u64::from(self.width)*u64::from(self.height)*1_000_000_000{
             return Err("incompatible or out-of-order scene frame".into());
         }
         for (sum,&v) in self.bins.iter_mut().zip(&frame.bins){*sum+=u64::from(v);}
+        self.linear_sum+=u128::from(frame.linear_sum);
         for (peak,v) in self.maxscl.iter_mut().zip(frame.maxscl){*peak=(*peak).max(v);}
         if self.best.is_none_or(|(a,_,_)|frame.average>=a){self.best=Some((frame.average,index,frame.fraction));}
         self.next+=1;
@@ -378,9 +382,9 @@ impl HdrScene{
         if self.next!=self.end{return Err("incomplete scene".into());}
         let (_,brightest_frame,fraction)=self.best.ok_or("empty scene")?;
         let n=self.bins.iter().sum::<u64>();
-        let sum=self.bins.iter().enumerate().map(|(i,&v)|i as u128*u128::from(v)).sum::<u128>();
+        let denominator=u128::from(n)*10_000;
         let mut result=SceneResult{first:self.first,end:self.end,brightest_frame,maxscl:self.maxscl,
-            average:((sum+u128::from(n)/2)/u128::from(n)) as u32,
+            average:((self.linear_sum+denominator/2)/denominator) as u32,
             fraction:(f64::from(fraction)*1000.0).round().clamp(1.0,1000.0) as u32,
             ..Default::default()};
         let reserved=self.percentages[1]==5&&self.percentages[2]==10;
@@ -402,7 +406,7 @@ mod scene_tests{
     const P:[u32;9]=[1,5,10,25,50,75,90,95,99];
     fn frame(a:u32,b:u32,avg:f32,fraction:f32)->SceneFrame{
         let mut bins=vec![0;BINS as usize];bins[a as usize]+=1;bins[b as usize]+=1;
-        SceneFrame{width:2,height:1,maxscl:[a.max(b);3],bins,average:avg,fraction}
+        SceneFrame{width:2,height:1,maxscl:[a.max(b);3],bins,average:avg,fraction,linear_sum:(u64::from(a)+u64::from(b))*10_000}
     }
     #[test]
     fn complete_scene_histogram_and_latest_tie(){
@@ -614,7 +618,7 @@ fn two_pass_cache_identity_completeness_and_replay(){
     assert!(p.finish().is_err());assert!(!cache.exists());
     for i in 0..2{
         let mut bins=vec![0;BINS as usize];bins[100+i as usize]=2;
-        p.capture(i,SceneFrame{width:2,height:1,maxscl:[100+i as u32;3],bins,average:0.1,fraction:1.0}).unwrap();
+        p.capture(i,SceneFrame{width:2,height:1,maxscl:[100+i as u32;3],bins,average:0.1,fraction:1.0,linear_sum:(100+i)*20_000}).unwrap();
     }
     p.finish().unwrap();
     assert!(TwoPass::open(2,&plan,&cache,&key,"vlc:fixture",2,1).is_err());
