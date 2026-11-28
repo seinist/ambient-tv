@@ -115,6 +115,7 @@ class VlcPlaybackController(
     private val preferOriginalAudio: Boolean = false,
     private val reopeningTimeshift: Boolean = false,
 ) : PlaybackHandle, VideoPresentationTarget, com.ambient.tv.ui.player.SubtitleDelayTarget {
+    init { VlcBackendAvailability.requireReady(context) }
     private val startupConstructionAt = System.nanoTime()
     private var initialOpenReported = false
     private val frameDropSamples = VlcFrameDropSampleState()
