@@ -460,9 +460,10 @@ static bool svp_vk_scene_metadata(struct mp_image *img,const AmbientSvpHdrSceneR
         p->average_maxrgb=(AVRational){r->average,100000};
         p->fraction_bright_pixels=(AVRational){r->fraction,1000};
         for(unsigned j=0;j<9;j++)p->distribution_maxrgb[j].percentile=(AVRational){r->percentiles[j],100000};
-        SvpHdrCurve curve;
+        SvpHdrCurve curve={0};
         AVRational target=m->targeted_system_display_maximum_luminance;
-        if(target.den<=0||!svp_hdr_curve(peak,r->average,r->percentiles[8],(double)target.num/target.den,&curve))return false;
+        if(target.den<=0||target.num<0||(!target.num&&p->tone_mapping_flag)||
+            (target.num&&!svp_hdr_curve(peak,r->average,r->percentiles[8],(double)target.num/target.den,&curve)))return false;
         p->tone_mapping_flag=curve.count!=0;p->num_bezier_curve_anchors=curve.count;
         p->knee_point_x=(AVRational){curve.knee_x,4095};p->knee_point_y=(AVRational){curve.knee_y,4095};
         memset(p->bezier_curve_anchors,0,sizeof(p->bezier_curve_anchors));
@@ -479,9 +480,12 @@ static bool svp_vk_scene_compatible(const struct mp_image *img)
 {
     static const unsigned percentages[9]={1,5,10,25,50,75,90,95,99};
     const AVBufferRef *ref=svp_vk_hdr10plus(img);
-    if(!ref||ref->size!=sizeof(AVDynamicHDRPlus))return false;
+    if(!ref||!ref->data||ref->size!=sizeof(AVDynamicHDRPlus)||img->dovi||
+        img->params.color.transfer!=PL_COLOR_TRC_PQ||img->params.color.primaries!=PL_COLOR_PRIM_BT_2020)return false;
     const AVDynamicHDRPlus *m=(const AVDynamicHDRPlus *)ref->data;
     if(m->application_version!=1||m->num_windows!=1||m->params[0].num_distribution_maxrgb_percentiles!=9)return false;
+    AVDynamicHDRPlus checked;
+    if(!svp_hdrplus_lerp(&checked,ref,ref,0,img->w,img->h))return false;
     for(unsigned j=0;j<9;j++)if(m->params[0].distribution_maxrgb[j].percentage!=percentages[j])return false;
     return true;
 }
