@@ -727,7 +727,7 @@ fn valid_v1_values(r:&SceneResult,p:&[u32;9])->bool{
 const MAX_SCENES:usize=100_000;
 pub(super) struct TwoPass{
     mode:u32,version:u32,key:String,profile:String,width:u32,height:u32,ends:Vec<u64>,
-    path:std::path::PathBuf,next:u64,results:Vec<SceneResult>,current:Option<HdrScene>,legacy_results:Vec<LegacySceneResult>,legacy_current:Option<LegacyScene>,geometry:Vec<u64>,schemas:Vec<[u32;9]>,current_schema:Option<[u32;9]>,failed:bool,
+    path:std::path::PathBuf,next:u64,results:Vec<SceneResult>,current:Option<HdrScene>,legacy_results:Vec<LegacySceneResult>,legacy_current:Option<LegacyScene>,geometry:Vec<u64>,geometry_verified:Option<u64>,schemas:Vec<[u32;9]>,current_schema:Option<[u32;9]>,failed:bool,
 }
 fn read_bounded(path:&std::path::Path,max:u64)->Result<String>{
     use std::io::Read;
@@ -766,7 +766,7 @@ impl TwoPass{
         if ends.is_empty(){return Err("empty scene plan".into());}
         if version==0&&*ends.last().unwrap()>1_000_000{return Err("legacy geometry cache frame limit".into());}
         let mut s=Self{mode,version,key:key.into(),profile:profile.into(),width:w,height:h,ends,path:cache.into(),
-            next:0,results:Vec::new(),current:None,legacy_results:Vec::new(),legacy_current:None,geometry:Vec::new(),schemas:Vec::new(),current_schema:None,failed:false};
+            next:0,results:Vec::new(),current:None,legacy_results:Vec::new(),legacy_current:None,geometry:Vec::new(),geometry_verified:None,schemas:Vec::new(),current_schema:None,failed:false};
         if mode==2{s.read_cache()?;}
         else if cache.exists(){return Err("scene cache already exists".into());}
         Ok(s)
@@ -866,14 +866,16 @@ impl TwoPass{
             self.geometry.get(index as usize)!=Some(&signature){
             self.abort();return Err("legacy replay geometry mismatch".into());
         }
+        self.geometry_verified=Some(index);
         Ok(())
     }
     pub(super) fn lookup_legacy(&mut self,index:u64)->Result<LegacySceneResult>{
-        if self.version!=0||self.mode!=2||self.failed||index!=self.next||index>=*self.ends.last().unwrap(){
+        if self.version!=0||self.mode!=2||self.failed||index!=self.next||self.geometry_verified!=Some(index)||index>=*self.ends.last().unwrap(){
             self.abort();return Err("legacy replay order".into());
         }
         let i=self.ends.partition_point(|&v|v<=index);
         let result=*self.legacy_results.get(i).ok_or("missing legacy result")?;
+        self.geometry_verified=None;
         self.next+=1;Ok(result)
     }
     pub(super) fn capture(&mut self,index:u64,frame:SceneFrame)->Result<()>{
@@ -1037,7 +1039,10 @@ mod legacy_scene_cache_tests{
         let r=p.lookup_legacy(0).unwrap();
         assert_eq!(r.windows[1].average,300);
         assert_eq!(r.windows[0].percentiles[1],100);
+        assert!(p.verify_geometry(1,0).is_ok());
         assert_eq!(p.lookup_legacy(1).unwrap(),r);p.finish().unwrap();
+        let mut bad=TwoPass::open_version(2,0,&plan,&cache,&key,"fixture",4,1).unwrap();
+        assert!(bad.verify_geometry(0,1).is_err());assert!(bad.lookup_legacy(0).is_err());
         std::fs::remove_file(&cache).unwrap();
         let schema=[0,4,11,26,51,76,91,99,100];
         let mut p=TwoPass::open_version(1,1,&plan,&cache,&key,"fixture",4,1).unwrap();
