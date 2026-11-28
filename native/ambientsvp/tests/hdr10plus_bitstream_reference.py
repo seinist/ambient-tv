@@ -78,21 +78,92 @@ def check_fate(result):
                              75,1600,90,1850,95,1950,99,2940), window
     assert window[24:] == (1,0,0,9,102,205,307,410,512,614,717,819,922), window
 
+def synthetic_payload(version, windows, *, bad_average=False, bad_marker=False):
+    """Independent bit writer for generated registered data (not player serialization)."""
+    fields=[]
+    def put(value,width):
+        if not 0<=value<1<<width:
+            raise ValueError("fixture field overflow")
+        fields.append(f"{value:0{width}b}")
+    put(version,8);put(windows,2)
+    for i in range(1,windows):
+        for v in (10*i,20*i,100*i,110*i,50*i,60*i):
+            put(v,16)
+        put(45*i,8)
+        for v in (5*i,30*i,15*i):
+            put(v,16)
+        put(i-1,1)
+    put(400,27)
+    # Legacy optional 2x2 target and mastering grids.
+    def grid():
+        put(2,5);put(2,5)
+        for v in (0,5,10,15):put(v,4)
+    put(int(version==0),1)
+    if version==0:grid()
+    expected=[]
+    for i in range(windows):
+        peak=1000+100*i
+        maxima=[peak,peak-100,peak-200]
+        average=peak+1 if bad_average and i==0 else peak//2
+        for v in maxima:put(v,17)
+        put(average,17)
+        if version==0:
+            pairs=[(5,100+i),(10,200+i),(99,peak)] if i!=2 else [(50,300),(100,peak)]
+            fraction=0
+        else:
+            pairs=list(zip((1,5,10,25,50,75,90,95,99),(10,0 if not bad_marker else 1,255,100,200,300,400,500,peak)))
+            fraction=500
+        put(len(pairs),4)
+        for p,v in pairs:put(p,7);put(v,17)
+        put(fraction,10)
+        expected.append(tuple(maxima+[average,fraction,len(pairs)]+[v for pair in pairs for v in pair]))
+    put(int(version==0),1)
+    if version==0:grid()
+    for i in range(windows):
+        put(1,1);put(0,12);put(0,12);put(2,4);put(600,10);put(400,10)
+        put(int(version==0 and i>0),1)
+        if version==0 and i>0:put(8,6)
+        expected[i]+=(1,0,0,2,600,400)
+    bits="".join(fields)
+    bits+="0"*((-len(bits))%8)
+    return REGISTERED+int(bits,2).to_bytes(len(bits)//8,"big"),expected
+
+def self_test(exe):
+    for version,windows in [(0,1),(0,2),(0,3),(1,1)]:
+        payload,expected=synthetic_payload(version,windows)
+        assert probe(exe,payload)==[(version,windows,400,1)]+expected
+        for end in range(1,len(payload)):
+            assert probe(exe,payload[:end]) is None, (version,windows,end)
+        assert probe(exe,payload+b"\x00") is None
+        payload,expected=synthetic_payload(version,windows,bad_average=True)
+        assert probe(exe,payload)==[(version,windows,400,0)]+expected
+    payload,expected=synthetic_payload(1,1,bad_marker=True)
+    assert probe(exe,payload)==[(1,1,400,0)]+expected
+    # Syntactically decodable but forbidden v1 local windows.
+    payload,expected=synthetic_payload(1,2)
+    assert probe(exe,payload)==[(1,2,400,0)]+expected
+    print("Synthetic versioned parser fixtures and exhaustive byte truncation passed")
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stream",type=Path)
+    parser.add_argument("stream",type=Path,nargs="?")
+    parser.add_argument("--self-test",action="store_true")
     parser.add_argument("--fate",action="store_true",help="require known FATE metadata vector")
     args=parser.parse_args()
-    size=args.stream.stat().st_size
-    if not 0<size<=MAX_FILE:
-        raise ValueError("file outside bounded corpus size")
-    stream=args.stream.read_bytes()
-    print("SHA256:",hashlib.sha256(stream).hexdigest())
+    if args.stream is None and not args.self_test:
+        parser.error("provide a stream or --self-test")
     with tempfile.TemporaryDirectory() as tmp:
         exe=Path(tmp)/"probe"
         subprocess.run(["cc","-std=c11","-O2","-Wall","-Wextra","-Werror",
                         str(Path(__file__).with_name("hdr10plus_payload_probe.c")),
                         "-lm","-o",str(exe)],check=True)
+        if args.self_test:self_test(exe)
+        if args.stream is None:return
+        size=args.stream.stat().st_size
+        if not 0<size<=MAX_FILE:
+            raise ValueError("file outside bounded corpus size")
+        stream=args.stream.read_bytes()
+        print("SHA256:",hashlib.sha256(stream).hexdigest())
         seen=set();count=0;valid=0;strict=0;versions=set();fate_match=False
         for payload in registered_payloads(stream):
             count+=1
