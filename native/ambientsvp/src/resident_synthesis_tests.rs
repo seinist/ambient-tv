@@ -137,7 +137,7 @@ fn probe(@builtin(global_invocation_id) id:vec3u){
     let algo=algorithms[id.x];
     let time=f32(id.y)/256.0;
     let mask=vec4f(0.13,0.77,0.21,0.44);
-    let m=FamilyMotion(vec2f(0),vec2f(0),vec2f(0),vec2f(0),mask,time,false);
+    let m=FamilyMotion(vec2f(0),vec2f(0),vec2f(0),vec2f(0),mask,time,false,true);
     results[id.y*7u+id.x]=family_blend(vec4f(0.15),vec4f(0.83),vec4f(0.62),vec4f(0.29),
         vec4f(0.49),vec4f(0.35),m,algo);
 }
