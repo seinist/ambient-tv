@@ -9,9 +9,15 @@ on:
   pull_request:
     paths:
       - cores/cores.json
+      - app/src/main/java/com/ambient/tv/games/GameSystems.kt
       - scripts/core_*.py
       - scripts/test_core_*.py
       - scripts/native_core_candidates/**
+      - scripts/check_core_policy.sh
+      - scripts/check_elf_pages.py
+      - scripts/test_game_rewind.py
+      - scripts/native_rewind/**
+      - .github/workflows/core-policy-validation.yml
       - .github/workflows/cores.yml
   workflow_call:
     inputs:
@@ -36,6 +42,10 @@ on:
       comparison:
         type: string
         default: none
+      shared_policy_validated:
+        description: Caller has a successful same-run core-policy gate; artifact-only builds may reuse it
+        type: boolean
+        default: false
     secrets:
       CORES_SIGNING_KEY:
         required: true
@@ -77,7 +87,7 @@ on:
         default: none
 
 concurrency:
-  group: cores-${{ github.ref }}-${{ inputs.publish_experimental && format('release-experimental-{0}', inputs.profile) || ((github.event_name == 'push' || inputs.publish) && 'release' || (github.event_name == 'workflow_dispatch' && format('manual-{0}-{1}-{2}', github.run_id, inputs.profile || 'baseline', inputs.abis || 'all') || format('pr-{0}-{1}', inputs.profile || 'baseline', inputs.abis || 'smoke'))) }}
+  group: cores-${{ github.ref }}-${{ inputs.publish_experimental && format('release-experimental-{0}', inputs.profile) || ((github.event_name == 'push' || inputs.publish) && 'release' || (github.event_name == 'workflow_dispatch' && format('manual-{0}-{1}-{2}', github.run_id, inputs.profile || 'baseline', inputs.abis || 'all') || format('pr-{0}-{1}-{2}', github.workflow, inputs.profile || 'baseline', inputs.abis || 'smoke'))) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -112,16 +122,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Test core build policy
-        run: |
-          python3 -m unittest discover -s scripts -p test_core_build_policy.py
-          python3 -m unittest discover -s scripts -p test_core_release_incremental.py
-          python3 -m unittest discover -s scripts -p test_core_hotpath_patches.py
-          python3 -m unittest discover -s scripts -p test_core_hotpath_remaining.py
-          python3 -m unittest discover -s scripts -p test_core_pgo.py
-          python3 -m unittest discover -s scripts -p test_core_candidates.py
-          python3 -m unittest discover -s scripts -p test_core_benchmark.py
-          python3 -m unittest discover -s scripts -p test_core_device_validation.py
-          python3 scripts/test_game_rewind.py
+        # Publication and standalone builds always run their own gate.
+        if: ${{ !inputs.shared_policy_validated || inputs.publish || inputs.publish_experimental || github.event_name == 'push' }}
+        run: bash scripts/check_core_policy.sh
       - id: plan
         env:
           ONLY: ${{ inputs.cores }}
@@ -436,6 +439,19 @@ jobs:
           path: |
             out/*.so
             out/build.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Validate Citra native test executable
+        if: matrix.profile == 'citra-arm64-jit'
+        run: |
+          test -s build/bin/tests
+          python3 scripts/check_elf_pages.py build/bin/tests
+      - uses: actions/upload-artifact@v7
+        if: matrix.profile == 'citra-arm64-jit'
+        with:
+          name: citra-arm64-jit-native-tests
+          path: build/bin/tests
           if-no-files-found: error
           retention-days: 14
 

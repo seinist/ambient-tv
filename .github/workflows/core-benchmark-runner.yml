@@ -7,6 +7,10 @@ on:
       - scripts/native_core_candidates/core_benchmark_input_test.cpp
       - scripts/native_core_candidates/core_benchmark_mock.cpp
       - scripts/test_ppsspp_thread_budget.py
+      - scripts/test_core_benchmark.py
+      - scripts/test_core_device_validation.py
+      - scripts/validate_core_device_matrix.py
+      - scripts/check_elf_pages.py
       - scripts/core_hotpath_remaining.py
       - scripts/native_rewind/**
       - scripts/native_core_candidates/core_benchmark_vulkan.h
@@ -64,6 +68,10 @@ jobs:
           assert len(frames) == 64 and {float(row["fps"]) for row in frames} == {50, 60}
           assert {float(row["sample_rate"]) for row in frames} == {44100, 48000}
           PY
+      - name: Test benchmark and device validation tooling
+        run: |
+          python3 -m unittest discover -s scripts -p test_core_benchmark.py
+          python3 -m unittest discover -s scripts -p test_core_device_validation.py
       - name: Stress patched PPSSPP worker pool on host
         run: python3 scripts/test_ppsspp_thread_budget.py
   runner:

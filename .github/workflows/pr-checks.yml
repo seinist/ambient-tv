@@ -66,15 +66,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
-      - name: Compile core policy scripts
-        run: |
-          python3 -m py_compile scripts/core_build_policy.py scripts/core_release_incremental.py scripts/test_core_release_incremental.py scripts/core_acceleration_audit.py scripts/core_link_evidence.py scripts/core_hotpath_patches.py scripts/core_hotpath_remaining.py
-      - name: Test core build and release policy
-        run: |
-          python3 -m unittest discover -s scripts -p 'test_core_build_policy.py'
-          python3 -m unittest discover -s scripts -p 'test_core_release_incremental.py'
-          python3 -m unittest discover -s scripts -p 'test_core_hotpath_patches.py'
-          python3 -m unittest discover -s scripts -p 'test_core_hotpath_remaining.py'
+      - name: Compile and test all core policy scripts
+        run: bash scripts/check_core_policy.sh
 
   updater-policy:
     runs-on: ubuntu-latest
@@ -87,8 +80,8 @@ jobs:
           python3 -m py_compile scripts/update_cores.py scripts/update_external_libraries.py scripts/update_maven_dependencies.py
           python3 -m unittest discover -s scripts/tests -p 'test_*updates.py'
 
+  # Run independently: a policy failure must not hide JVM failures.
   unit-tests:
-    needs: [core-policy, updater-policy]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:

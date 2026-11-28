@@ -74,6 +74,35 @@ jobs:
             gh run download "$run" -n "$artifact" -D "$work/builds/$artifact"
           done < "$work/artifacts.txt"
           gh run download "$RUNNER_RUN" -n "core-benchmark-runner-$ABI" -D "$work/runner"
+      - name: Execute Citra native unit tests on trusted ARM64 Android
+        if: inputs.jit_run_id != ''
+        timeout-minutes: 15
+        env:
+          CORES: ${{ inputs.cores }}
+          JIT_RUN: ${{ inputs.jit_run_id }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$CORES" && ",$CORES," != *,citra2018,* ]]; then
+            exit 0
+          fi
+          # The preceding step already verifies the manual main-branch JIT run
+          # and exact source SHA. Never execute arbitrary PR artifacts here.
+          gh run download "$JIT_RUN" -n citra-arm64-jit-native-tests -D "$CORE_DEVICE_WORK/citra-tests"
+          binary="$CORE_DEVICE_WORK/citra-tests/tests"
+          test -s "$binary"
+          python3 scripts/check_elf_pages.py "$binary"
+          serial=$(adb get-serialno)
+          [[ -n "$serial" && "$serial" != unknown ]]
+          device_abis=$(adb -s "$serial" shell getprop ro.product.cpu.abilist | tr -d '\r')
+          [[ ",$device_abis," == *,arm64-v8a,* ]]
+          remote="/data/local/tmp/ambient-citra-tests-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          adb -s "$serial" shell mkdir "$remote"
+          trap 'adb -s "$serial" shell rm -rf "$remote"' EXIT
+          adb -s "$serial" push "$binary" "$remote/tests"
+          expected=$(sha256sum "$binary" | cut -d ' ' -f1)
+          actual=$(adb -s "$serial" shell sha256sum "$remote/tests" | cut -d ' ' -f1)
+          [[ "$actual" == "$expected" ]]
+          adb -s "$serial" shell "cd '$remote' && chmod 700 tests && ./tests --reporter compact"
       - name: Execute paired performance and functional validation
         env:
           ABI: ${{ inputs.abi }}

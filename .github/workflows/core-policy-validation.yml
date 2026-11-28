@@ -1,0 +1,13 @@
+name: Shared core policy validation
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate every core policy and native rewind contract
+        run: bash scripts/check_core_policy.sh
