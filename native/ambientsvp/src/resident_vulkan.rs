@@ -8,7 +8,7 @@ use std::{sync::{Arc,Mutex,atomic::{AtomicBool,AtomicU32,Ordering}},panic::{catc
 use crate::resident::{MOTION,SYNTHESIS};
 #[path="resident_hdr_stats.rs"]
 mod hdr_stats;
-use hdr_stats::{HdrWindow,HdrResult,HdrTrack,StatsJob,StatsPipelines};
+use hdr_stats::{HdrWindow,HdrResult,HdrTrack,StatsJob,StatsPipelines,HdrScene,SceneResult};
 
 const MAX_PHASES:usize=8;
 const MAX_IN_FLIGHT:u32=4;
@@ -1245,6 +1245,39 @@ pub unsafe extern "C" fn ambient_svp_vk_hdr_read_ellipses(pair:*const VulkanPair
         let Some(job)=p.hdr_jobs[i].as_ref()else{return -1;};
         job.ellipses(unsafe{std::slice::from_raw_parts_mut(ellipses,count as usize)}).map_or(-1,|_|1)
     })).unwrap_or(-1)
+}
+// Offline/two-pass scene capture. The caller supplies authoritative
+// boundaries and indices of ALL output frames, including originals.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_hdr_scene_create(first:u64,end:u64,width:u32,height:u32,
+    percentages:*const [u32;9])->*mut HdrScene{
+    if percentages.is_null(){return ptr::null_mut();}
+    catch_unwind(AssertUnwindSafe(||HdrScene::new(first,end,width,height,unsafe{*percentages})
+        .map_or(ptr::null_mut(),|s|Box::into_raw(Box::new(s))))).unwrap_or(ptr::null_mut())
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_hdr_scene_push(scene:*mut HdrScene,pair:*const VulkanPair,phase:u32,index:u64)->i32{
+    if scene.is_null()||pair.is_null(){return -1;}
+    catch_unwind(AssertUnwindSafe(||unsafe{
+        let p=&*pair;let i=phase as usize;
+        if p.fence==vk::Fence::null()||i>=p.phases{return -1;}
+        match p.core.device.get_fence_status(p.fence){Ok(true)=>{},Ok(false)=>return 0,Err(_)=>return -1}
+        let Some(job)=p.hdr_jobs[i].as_ref()else{return -1;};
+        let Ok(frame)=job.scene_frame()else{return -1;};
+        (&mut *scene).push(index,frame).map_or(-1,|_|1)
+    })).unwrap_or(-1)
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_hdr_scene_finish(scene:*const HdrScene,out:*mut SceneResult)->i32{
+    if scene.is_null()||out.is_null(){return -1;}
+    catch_unwind(AssertUnwindSafe(||unsafe{
+        let Ok(r)=(&*scene).finish()else{return -1;};
+        *out=r;1
+    })).unwrap_or(-1)
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ambient_svp_hdr_scene_destroy(scene:*mut HdrScene){
+    if !scene.is_null(){let _=catch_unwind(AssertUnwindSafe(||unsafe{drop(Box::from_raw(scene))}));}
 }
 // The caller must pass the fence of the successful submission containing
 // this exact command buffer. The fence is borrowed and must not be reset
