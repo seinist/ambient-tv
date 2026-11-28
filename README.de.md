@@ -211,12 +211,14 @@ PRIVATE_KEYS=1 ./build.sh release
 ./build.sh x86_64
 
 # Gradle-Maven-Abhängigkeiten prüfen / aktualisieren (stabile Releases)
-./build.sh check-deps
-./build.sh update-deps
-./build.sh update-deps media3  # optional nur Media3
+./build.sh deps-check
+./build.sh deps-update
+./build.sh deps-update media3  # optional nur Media3
 # Externe Engines prüfen / Pins aktualisieren
 ./build.sh libs-check
 ./build.sh libs-update
+./build.sh cores-check
+./build.sh cores-update
 ```
 
 Artefakte landen unter `dist/` (z. B. `ambient-tv-arm64-<version>.apk`, `ambient-tv-x86_64-<version>.apk`). Vorab-Suffixe wie `beta`, `alpha` oder `rc` bleiben am Ende, die Build-Nummer steht davor (`ambient-tv-arm64-1.0.270-beta.apk`).

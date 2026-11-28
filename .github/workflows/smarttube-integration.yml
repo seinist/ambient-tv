@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/smarttube-integration.yml'
       - 'scripts/**'
+      - 'build.sh'
       - 'smarttube_wrappers/**'
       - 'gradle/**'
       - '**/*.gradle.kts'
@@ -26,7 +27,7 @@ concurrency:
 jobs:
   smarttube:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       SKIP_MPV_NATIVE: '1'
       ROBOLECTRIC_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2/
@@ -59,12 +60,32 @@ jobs:
             -o "$RUNNER_TEMP/j2v8-official.aar"
           python3 scripts/j2v8_source_audit.py --shared third_party/smarttube/SharedModules \
             --official-aar "$RUNNER_TEMP/j2v8-official.aar" --output j2v8-native-source-audit.json
+      - name: Resolve actual AARs and reject duplicate classes before unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts/tests -p 'test_maven_updates.py'
+          ./gradlew :app:checkDebugDuplicateClasses :app:checkReleaseDuplicateClasses \
+            -PAPK_ABI=arm64 --no-configuration-cache --stacktrace --continue
+      - name: Verify release R8 with actual dependency classes
+        run: |
+          ./gradlew :app:minifyReleaseWithR8 -PAPK_ABI=arm64 -PADB_DEPLOY=false \
+            --no-configuration-cache --stacktrace
+      - name: Test DNS provider compatibility
+        run: |
+          ./gradlew :sharedutils:testDebugUnitTest -PAPK_ABI=arm64 --stacktrace
       - name: Test the patched SmartTube account and format paths
         run: |
-          ./gradlew :youtubeapi:testDebugUnitTest --tests '*AuthHeaderSnapshotTest' --tests '*SmartTubeFormatBridgeTest' -PAPK_ABI=arm64
+          ./gradlew :youtubeapi:testDebugUnitTest --tests '*AuthHeaderSnapshotTest' --tests '*SmartTubeFormatBridgeTest' --tests '*SmartTubeJsonPathCompatibilityTest' -PAPK_ABI=arm64
       - name: Verify the application runtime dependency graph
         run: |
-          ./gradlew :app:dependencies --configuration debugRuntimeClasspath -PAPK_ABI=arm64
+          set -euo pipefail
+          for variant in debug release; do
+            ./gradlew :app:dependencies --configuration "${variant}RuntimeClasspath" -PAPK_ABI=arm64 | tee "cronet-${variant}-graph.log"
+            if grep -Eq ' FAILED([[:space:]]|$)' "cronet-${variant}-graph.log"; then
+              echo "::error::Unresolved runtime dependency"
+              exit 1
+            fi
+          done
       - name: Test SmartTube playback, relay and reflection
         run: |
           ./gradlew :app:testDebugUnitTest -PAPK_ABI=arm64 \
@@ -83,6 +104,8 @@ jobs:
           name: smarttube-test-reports
           path: |
             smarttube_wrappers/youtubeapi/build/test-results/
+            smarttube_wrappers/sharedutils/build/test-results/
+            app/build/outputs/mapping/release/
             app/build/test-results/
             app/build/outputs/system-modules/smarttube-dex/
             j2v8-native-source-audit.json

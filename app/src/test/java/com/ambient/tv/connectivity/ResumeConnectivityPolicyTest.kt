@@ -27,6 +27,13 @@ class ResumeConnectivityPolicyTest {
         assertTrue(ResumeConnectivityPolicy.shouldRecheckOnStart(false, 0L, 30_000L))
     }
 
+    @Test fun configuredNasIsCheckedOnColdStartEvenWithFreshHealth() {
+        assertTrue(ResumeConnectivityPolicy.shouldRecheckOnStart(false, 0L, 0L, hasStartupNas = true))
+        assertTrue(ResumeConnectivityPolicy.shouldRecheckOnStart(false, 0L, 0L, handheld = true, hasStartupNas = true))
+        assertFalse(ResumeConnectivityPolicy.shouldRecheckOnStart(false, 0L, 0L))
+        assertFalse(ResumeConnectivityPolicy.shouldRecheckOnStart(true, 1_000L, 1_000L, handheld = true, hasStartupNas = true))
+    }
+
     @Test
     fun `negative ages force recheck`() {
         assertTrue(ResumeConnectivityPolicy.shouldRecheck(backgroundedForMs = -1L, lastHealthAgeMs = 0L))

@@ -10,7 +10,10 @@
 # device-code response empty ("User code result is empty") in release builds.
 -keep class com.liskovsoft.googlecommon.** { *; }
 -keep class com.liskovsoft.googleapi.** { *; }
--keep class com.jayway.jsonpath.** { *; }
+# SmartTube constructs GsonJsonProvider/GsonMappingProvider directly. Keep the
+# used JsonPath API and names, but do not root optional Jakarta/Jackson/etc.
+# providers that are not on the Android classpath.
+-keep,allowshrinking class com.jayway.jsonpath.** { *; }
 # UrlEncodedQueryString.Separator overrides toString() per enum constant ("&", ";"). R8 folded
 # those calls to the constant names, so stream URLs were joined with "AMPERSAND" and split on
 # its letters: every googlevideo request failed with HTTP 403.
@@ -24,10 +27,32 @@
 -keep class org.videolan.libvlc.** { *; }
 -keep interface org.videolan.libvlc.** { *; }
 
-# dnsjava 2.1.9 contains a legacy JVM-only NameService SPI implementation.
-# Android does not provide sun.net.spi.nameservice; SmartTube does not use that SPI.
--dontwarn sun.net.spi.nameservice.NameService
--dontwarn sun.net.spi.nameservice.NameServiceDescriptor
+# dnsjava 3.x: WindowsResolverConfigProvider only creates its JNA-backed
+# implementation when os.name contains Windows. JndiContextResolverConfigProvider
+# skips its JNDI-backed implementation when java.vendor contains Android.
+# Neither optional desktop implementation is used by SmartTube's Android DNS.
+# Keep these exceptions narrow; do not suppress dnsjava or all JNA warnings.
+-dontwarn com.sun.jna.platform.win32.Guid$GUID
+-dontwarn com.sun.jna.platform.win32.Win32Exception
+-dontwarn javax.naming.NamingException
+-dontwarn javax.naming.directory.DirContext
+-dontwarn javax.naming.directory.InitialDirContext
+# JNA itself is also optional when the Monogram native AAR is disabled.
+-dontwarn com.sun.jna.Library
+-dontwarn com.sun.jna.Memory
+-dontwarn com.sun.jna.Native
+-dontwarn com.sun.jna.Pointer
+-dontwarn com.sun.jna.Structure
+-dontwarn com.sun.jna.Structure$*
+-dontwarn com.sun.jna.WString
+-dontwarn com.sun.jna.ptr.IntByReference
+-dontwarn com.sun.jna.win32.W32APIOptions
+# Lombok's generated-code marker is build-time metadata, not a runtime API.
+-dontwarn lombok.Generated
+# The Java 18+ InetAddressResolver SPI is not an Android API. Its multi-release
+# service descriptor is excluded by Android packaging (see app/build.gradle.kts).
+-dontwarn java.net.spi.InetAddressResolverProvider
+-dontwarn org.xbill.DNS.spi.DnsjavaInetAddressResolverProvider
 
 # GameArchives rejects Zstandard ZIP methods before Commons Compress can call its optional decoder.
 -dontwarn com.github.luben.zstd.ZstdInputStream
