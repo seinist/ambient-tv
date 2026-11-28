@@ -15,6 +15,11 @@ internal object VlcNativeEngine : VlcEnginePort {
     override fun createLibrary(context: Context, options: ArrayList<String>): VlcLibraryPort =
         NativeLibrary(LibVLC(context, options))
     override fun createTracks(player: VlcPlayerPort): VlcTracksPort = VlcTrackAccess(player)
+    override fun bindSharedNative(svp: Long, pcm: Long): Int {
+        val helper = Class.forName("org.videolan.libvlc.AmbientNativeLibraryLoader", true, javaClass.classLoader)
+        return helper.getMethod("bindSharedNative", Long::class.javaPrimitiveType, Long::class.javaPrimitiveType)
+            .invoke(null, svp, pcm) as Int
+    }
     override fun vulkanModules(): Boolean {
         // Preserve the established probe for host-owned VLC. The isolated
         // engine must not load a second copy from the host linker namespace.

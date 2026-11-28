@@ -19,6 +19,7 @@ internal object VulkanNativeProbe {
     val available by lazy { runCatching { System.loadLibrary("ambientvulkan"); true }.getOrDefault(false) }
     external fun probe(surface: Surface?): String
     external fun vlcModules(): Boolean
+    external fun sharedVlcFunctions(svpPath: String?, pcmPath: String?): LongArray
     /** Read-only producer dataspace, not a Vulkan capability query. Unknown returns zero. */
     external fun dataSpace(surface: Surface): Int
     external fun restoreDataSpace(surface: Surface, dataSpace: Int): Boolean

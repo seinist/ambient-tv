@@ -770,6 +770,8 @@ val buildVulkanProbe = tasks.register<Exec>("buildVulkanProbe") {
         ?: error("Android SDK not configured")
     val ndk = File(sdk).resolve("ndk/30.0.16248370")
     inputs.file(rootProject.file("native/vulkan/probe.cpp"))
+    inputs.file(rootProject.file("native/ambientsvp/include/ambientsvp.h"))
+    inputs.file(rootProject.file("native/ambientsvp/include/ambientsvp_shared.h"))
     inputs.file(rootProject.file("scripts/build_vulkan_probe.sh"))
     inputs.property("abis", selectedAbis)
     outputs.dir(layout.buildDirectory.dir("generated/vulkan/jniLibs"))

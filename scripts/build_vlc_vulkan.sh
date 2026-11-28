@@ -130,4 +130,9 @@ done
 env -u ANDROID_SDK_ROOT ANDROID_HOME="${ANDROID_NDK%/ndk/*}" "$ROOT/gradlew" -p "$ROOT/native/vlc-aar" assembleRelease -PVLC_SOURCE="$JNI" --console=plain
 mkdir -p "$ROOT/app/libs"
 cp "$ROOT/native/vlc-aar/build/outputs/aar/libvlc-vulkan-release.aar" "$ROOT/app/libs/libvlc-vulkan.aar"
+# Validate the actual dynamic symbol table before enabling the isolated adapter.
+if [[ "${VLC_DEX_MODULE:-0}" == 1 ]]; then
+    python3 "$ROOT/scripts/check_vlc_shared_native.py" "$ROOT/app/libs/libvlc-vulkan.aar" \
+        --abis "${VLC_VULKAN_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}"
+fi
 echo "Installed Vulkan-enabled LibVLC AAR (Java + JNI from $JNI_REF, VLC $VLC_REF)"

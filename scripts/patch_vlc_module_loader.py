@@ -28,9 +28,13 @@ public final class AmbientNativeLibraryLoader {
 }
 """
 
-HELPER = LEGACY_HELPER.replace("    private AmbientNativeLibraryLoader() {}",
+PROBE_HELPER = LEGACY_HELPER.replace("    private AmbientNativeLibraryLoader() {}",
     "    private AmbientNativeLibraryLoader() {}\n"
     "    public static native boolean vulkanModules();")
+
+HELPER = PROBE_HELPER.replace("public static native boolean vulkanModules();",
+    "public static native boolean vulkanModules();\n"
+    "    public static native int bindSharedNative(long svp, long pcm);")
 
 PROBE_MARKER = "Java_org_videolan_libvlc_AmbientNativeLibraryLoader_vulkanModules"
 PROBE = r"""
@@ -67,22 +71,49 @@ Java_org_videolan_libvlc_AmbientNativeLibraryLoader_vulkanModules(JNIEnv *env, j
 """
 
 
+SHARED_PROBE = r"""
+/* The host owns both providers. This code only installs borrowed addresses. */
+#include <stdint.h>
+JNIEXPORT jint JNICALL
+Java_org_videolan_libvlc_AmbientNativeLibraryLoader_bindSharedNative(
+    JNIEnv *env, jclass type, jlong svp, jlong pcm)
+{
+    (void)env; (void)type;
+    void *lib = dlopen("libvlc.so", RTLD_NOW | RTLD_NOLOAD | RTLD_LOCAL);
+    if (!lib) return -1;
+    typedef int (*bind_svp)(const void *);
+    typedef void (*pcm_fn)(int, const void *, size_t, int, int);
+    typedef int (*bind_pcm)(pcm_fn);
+    bind_svp install_svp = (bind_svp)dlsym(lib, "ambient_vlc_bind_svp_v1");
+    bind_pcm install_pcm = (bind_pcm)dlsym(lib, "ambient_vlc_bind_pcm_v1");
+    if (!install_svp || !install_pcm) { dlclose(lib); return -1; }
+    int result = install_svp((const void *)(uintptr_t)svp) ? 1 : 0;
+    if (install_pcm((pcm_fn)(uintptr_t)pcm)) result |= 2;
+    dlclose(lib);
+    return result;
+}
+"""
+
+
 def patch_probe(jni):
     path = Path(jni) / "libvlcjni-mediaplayer.c"
     source = path.read_text()
     if "Java_org_videolan_libvlc_MediaPlayer_nativeSetTime" not in source:
         raise ValueError("pinned VLC JNI source not found")
-    if PROBE_MARKER in source:
-        if not source.endswith(PROBE):
-            raise ValueError("unexpected VLC namespace probe")
+    if source.endswith(PROBE + SHARED_PROBE):
         return
-    path.write_text(source + PROBE)
+    if source.endswith(PROBE):
+        path.write_text(source + SHARED_PROBE)
+        return
+    if PROBE_MARKER in source or "AmbientNativeLibraryLoader_bindSharedNative" in source:
+        raise ValueError("unexpected VLC namespace probe")
+    path.write_text(source + PROBE + SHARED_PROBE)
 
 
 def patch(root):
     root = Path(root)
     marker = root / MARKER
-    if marker.exists() and marker.read_text() not in (HELPER, LEGACY_HELPER):
+    if marker.exists() and marker.read_text() not in (HELPER, PROBE_HELPER, LEGACY_HELPER):
         raise ValueError("unexpected VLC loader helper")
     changes = {}
     seen = set()

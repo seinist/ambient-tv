@@ -10,6 +10,7 @@ internal interface VlcEnginePort {
     fun createLibrary(context: Context, options: ArrayList<String>): VlcLibraryPort
     fun createTracks(player: VlcPlayerPort): VlcTracksPort
     fun vulkanModules(): Boolean
+    fun bindSharedNative(svp: Long, pcm: Long): Int
 }
 
 internal interface VlcLibraryPort {
@@ -115,6 +116,10 @@ internal object VlcEngineRuntime {
     @Volatile private var selected: VlcEnginePort? = null
     @Volatile var isolated: Boolean = false
         private set
+    @Volatile var sharedSvp = false
+        private set
+    @Volatile var sharedPcm = false
+        private set
     val engine: VlcEnginePort get() = checkNotNull(selected) { "VLC engine not initialized" }
 
     fun bind(module: com.ambient.tv.modules.SystemModuleRuntime.Loaded?) {
@@ -129,6 +134,19 @@ internal object VlcEngineRuntime {
             type.getField("INSTANCE").get(null) as VlcEnginePort
         }
         isolated = external != null
+        if (isolated) {
+            // No recursive module load inside adapter.initialize. All providers
+            // have their own process lease and native ABI availability checks.
+            val pointers = if (VulkanNativeProbe.available) VulkanNativeProbe.sharedVlcFunctions(
+                SvpNative.sharedNativePath(),
+                com.ambient.tv.ui.common.projectm.ProjectMAvailability.sharedNativePath(),
+            ) else longArrayOf(0, 0)
+            check(pointers.size == 2)
+            val bound = candidate.bindSharedNative(pointers[0], pointers[1])
+            check(bound in 0..3) { "VLC shared native registration unavailable" }
+            sharedSvp = bound and 1 != 0
+            sharedPcm = bound and 2 != 0
+        }
         selected = candidate
     }
 }

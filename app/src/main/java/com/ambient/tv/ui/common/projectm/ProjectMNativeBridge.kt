@@ -53,6 +53,8 @@ internal fun probeProjectMRuntime(
 }
 
 object ProjectMAvailability {
+    @Volatile private var selectedPath: String? = null
+    internal fun sharedNativePath(): String? = if (isAvailable) selectedPath else null
     /** Only expose ProjectM-specific controls after the actual runtime probe. */
     val canConfigure: Boolean
         get() = isAvailable
@@ -62,6 +64,7 @@ object ProjectMAvailability {
         val result = runCatching {
             val loaded = com.ambient.tv.modules.SystemModuleHost.loadSelected(com.ambient.tv.modules.SystemModule.PROJECTM)
             external = loaded != null
+            selectedPath = loaded?.nativeDirectory?.resolve("libambientprojectm.so")?.absolutePath ?: "libambientprojectm.so"
             if (loaded == null) probeProjectMRuntime(
                 abiSupported = com.ambient.tv.ui.player.backend.NativeArmRuntime.isSupportedDevice,
                 loadLibrary = System::loadLibrary,

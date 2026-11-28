@@ -619,8 +619,13 @@ probe runs inside VLC JNI, not the host linker namespace.
 The Build release workflow accepts vlc_dex_candidate with module_candidate=vlc.
 This is opt-in; the stable Modular release deliberately rejects the flag
 until native cross-namespace SVP and ProjectM PCM integration is validated.
-The isolated adapter disables SVP rather than accidentally starting a second
-unshared native runtime. ProjectM PCM routing still needs integration testing.
+The isolated adapter now registers a versioned borrowed SVP function table
+and ProjectM PCM callback from the already loaded host providers. The
+host retains their linker handles for process lifetime. The VLC filter
+never creates a separate SVP engine, and the audio callback uses the
+same host PCM ring. The experimental AAR build checks core and JNI dynamic
+exports; a missing registration fails the isolated engine closed. Actual
+Android linker/renderer validation is still required before stable promotion.
 The default native-only VLC path stays unchanged. Device validation must
 cover JNI load, seek, audio, subtitles, Vulkan and release before promotion.
 

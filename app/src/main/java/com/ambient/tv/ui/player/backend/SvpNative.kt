@@ -14,6 +14,10 @@ internal const val SVP_NATIVE_ABI = 2
 internal object SvpNative {
     private var loaded = false
     private var attempted = false
+    private var selectedPath: String? = null
+
+    @Synchronized
+    fun sharedNativePath(): String? = if (probe()) selectedPath else null
 
     /** Probe the selected engine without enabling frame interpolation. */
     @Synchronized
@@ -29,6 +33,7 @@ internal object SvpNative {
                         return@runCatching false
                     System.loadLibrary("ambientsvp")
                 }
+                selectedPath = selected?.nativeDirectory?.resolve("libambientsvp.so")?.absolutePath ?: "libambientsvp.so"
                 val native = abi()
                 if (native != SVP_NATIVE_ABI) {
                     timber.log.Timber.w("SVP disabled: libambientsvp ABI %d, app expects %d (rebuild native libs together)", native, SVP_NATIVE_ABI)

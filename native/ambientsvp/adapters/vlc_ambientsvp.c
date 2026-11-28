@@ -9,6 +9,27 @@
 #include <vlc_picture.h>
 #include <math.h>
 #include "ambientsvp_loader.h"
+#include "ambientsvp_shared.h"
+#include <stdatomic.h>
+
+/* A DEX-owned renderer must never open a second SVP engine. */
+static _Atomic(const AmbientSharedSvp *) ambient_shared_svp;
+static atomic_bool ambient_isolated;
+__attribute__((visibility("default"))) int ambient_vlc_bind_svp_v1(const AmbientSharedSvp *api) {
+    if (api && !ambient_shared_svp_valid(api)) return 0;
+    atomic_store_explicit(&ambient_shared_svp, api, memory_order_release);
+    atomic_store_explicit(&ambient_isolated, true, memory_order_release);
+    return api != NULL;
+}
+static int ambient_vlc_svp_load(SvpApi *api) {
+    if (!atomic_load_explicit(&ambient_isolated, memory_order_acquire)) return svp_load(api);
+    const AmbientSharedSvp *shared = atomic_load_explicit(&ambient_shared_svp, memory_order_acquire);
+    if (!ambient_shared_svp_valid(shared)) return 0;
+    *api = (SvpApi){.create=shared->create, .destroy=shared->destroy, .reset=shared->reset,
+        .push=shared->push, .receive=shared->receive, .stats=shared->stats,
+        .bypass=shared->bypass, .enabled=shared->enabled};
+    return 1;
+}
 #include "svp_retry.h"
 
 static int Open(filter_t *filter);
@@ -188,10 +209,10 @@ static int Open(filter_t *f) {
         llround(var_InheritFloat(f, "ambientsvp-fps")*1000.), 1000, var_InheritInteger(f, "ambientsvp-preset"),
         var_InheritInteger(f, "ambientsvp-backend"), var_InheritInteger(f, "ambientsvp-threads"), var_InheritInteger(f, "ambientsvp-artifacts"), var_InheritInteger(f, "ambientsvp-scene"), var_InheritInteger(f, "ambientsvp-algo"), var_InheritInteger(f, "ambientsvp-block"), var_InheritInteger(f, "ambientsvp-overlap"), var_InheritInteger(f, "ambientsvp-pel"), var_InheritInteger(f, "ambientsvp-search")};
     if ((!s->measure_rate && (uint64_t)s->config.source_num * s->config.target_den >= (uint64_t)s->config.target_num * s->config.source_den)
-        || !svp_load(&s->api)) { msg_Dbg(f,"SVP source >= target or library unavailable"); return VLC_EGENERIC; }
+        || !ambient_vlc_svp_load(&s->api)) { msg_Dbg(f,"SVP source >= target or library unavailable"); return VLC_EGENERIC; }
     s->bytes = (size_t)s->config.width * s->config.height * 3 / 2;
     s->buffer = malloc(s->bytes);
-    if (!s->buffer) { dlclose(s->api.lib); return VLC_ENOMEM; }
+    if (!s->buffer) { if (s->api.lib) dlclose(s->api.lib); return VLC_ENOMEM; }
     f->fmt_out.video.i_frame_rate = s->config.target_num;
     f->fmt_out.video.i_frame_rate_base = s->config.target_den;
     f->ops = &ops; return VLC_SUCCESS;
