@@ -189,6 +189,9 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
     override fun onCreate() {
         super.onCreate()
         com.ambient.tv.modules.SystemModuleHost.initialize(this)
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            com.ambient.tv.youtube.SmartTubeModuleRuntime.probe()
+        }
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
         }
