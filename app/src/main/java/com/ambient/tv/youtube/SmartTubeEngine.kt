@@ -165,13 +165,8 @@ class SmartTubeEngine @Inject constructor(
         }
     }
 
-    // Probe the packaged class without running static initializers or restoring an account.
-    // UI state constructors query this on the main thread; services are initialized by io().
-    val available: Boolean by lazy {
-        runCatching {
-            Class.forName("com.liskovsoft.youtubeapi.service.YouTubeServiceManager", false, javaClass.classLoader)
-        }.isSuccess
-    }
+    // The application probes the selected engine on IO before exposing its UI.
+    val available: Boolean get() = SmartTubeModuleRuntime.available
 
     /** Keep YouTube/SmartTube metadata language independent from the app UI language. */
     fun applyMetadataLanguage() {
@@ -181,12 +176,12 @@ class SmartTubeEngine @Inject constructor(
             ?: return
         globalPreferences()?.call("setPreferredLanguage", language)
         runCatching {
-            Class.forName("com.liskovsoft.sharedutils.locale.LocaleUpdater")
+            SmartTubeModuleRuntime.type("com.liskovsoft.sharedutils.locale.LocaleUpdater")
                 .getMethod("clearCache")
                 .invoke(null)
         }.onFailure { Timber.d(it, "SmartTube LocaleUpdater reset") }
         runCatching {
-            Class.forName("com.liskovsoft.googlecommon.common.locale.LocaleManager")
+            SmartTubeModuleRuntime.type("com.liskovsoft.googlecommon.common.locale.LocaleManager")
                 .getMethod("unhold")
                 .invoke(null)
         }.onFailure { Timber.d(it, "SmartTube LocaleManager reset") }
@@ -285,10 +280,10 @@ class SmartTubeEngine @Inject constructor(
     }
 
     private fun parseAccount(spec: String): Any? = runCatching {
-        Class.forName("com.liskovsoft.googlecommon.service.oauth.YouTubeAccount").getMethod("from", String::class.java).invoke(null, spec)
+        SmartTubeModuleRuntime.type("com.liskovsoft.googlecommon.service.oauth.YouTubeAccount").getMethod("from", String::class.java).invoke(null, spec)
     }.getOrNull()
 
-    private fun helpers() = Class.forName("com.liskovsoft.sharedutils.helpers.Helpers")
+    private fun helpers() = SmartTubeModuleRuntime.type("com.liskovsoft.sharedutils.helpers.Helpers")
 
     suspend fun home(onRows: suspend (List<YouTubeRow>) -> Unit = {}): List<YouTubeRow> {
         val home = contentRows("getHomeObserve", "getHomeRowObserve", "getHome", onRows = onRows)
@@ -372,7 +367,7 @@ class SmartTubeEngine @Inject constructor(
     }
 
     private fun videoIdMediaItem(videoId: String): Any {
-        val iface = Class.forName("com.liskovsoft.mediaserviceinterfaces.data.MediaItem")
+        val iface = SmartTubeModuleRuntime.type("com.liskovsoft.mediaserviceinterfaces.data.MediaItem")
         return Proxy.newProxyInstance(iface.classLoader, arrayOf(iface)) { proxy, method, args ->
             when (method.name) {
                 "getVideoId" -> videoId
@@ -881,7 +876,7 @@ class SmartTubeEngine @Inject constructor(
 
     private fun innertubeFormatInfo(videoId: String): Any? {
         val clazz = runCatching {
-            Class.forName("com.liskovsoft.youtubeapi.innertube.InnertubeService")
+            SmartTubeModuleRuntime.type("com.liskovsoft.youtubeapi.innertube.InnertubeService")
         }.getOrNull() ?: return null
         val method = clazz.declaredMethods.firstOrNull {
             it.name.startsWith("createFormatInfo") && it.parameterTypes.size == 1 && it.parameterTypes[0] == String::class.java
@@ -955,10 +950,10 @@ class SmartTubeEngine @Inject constructor(
         val signIn = service("getSignInService")
         if (signIn.callBool("isSigned") != true) return true
         return try {
-            val formatInfoClass = Class.forName("com.liskovsoft.mediaserviceinterfaces.data.MediaItemFormatInfo")
-            Class.forName("com.liskovsoft.youtubeapi.service.internal.FormatInfoWrapper")
+            val formatInfoClass = SmartTubeModuleRuntime.type("com.liskovsoft.mediaserviceinterfaces.data.MediaItemFormatInfo")
+            SmartTubeModuleRuntime.type("com.liskovsoft.youtubeapi.service.internal.FormatInfoWrapper")
                 .getMethod("syncWithAuthInfoIfNeeded", formatInfoClass).invoke(null, info)
-            val tracking = Class.forName("com.liskovsoft.youtubeapi.track.TrackingService")
+            val tracking = SmartTubeModuleRuntime.type("com.liskovsoft.youtubeapi.track.TrackingService")
                 .getMethod("instance").invoke(null) ?: return false
             val invocation = tracking.invokeDetailed("updateWatchTime",
                 info.callString("getVideoId") ?: videoId, positionSec,
@@ -1482,13 +1477,13 @@ class SmartTubeEngine @Inject constructor(
         // MediaServiceCore deliberately doesn't own an Android Application. Its account/session
         // storage is backed by SharedModules GlobalPreferences and must be initialized by the host.
         globalPreferences()
-        val clazz = Class.forName("com.liskovsoft.youtubeapi.service.YouTubeServiceManager")
+        val clazz = SmartTubeModuleRuntime.type("com.liskovsoft.youtubeapi.service.YouTubeServiceManager")
         return clazz.getMethod("instance").invoke(null)
             ?: throw IllegalStateException("SmartTube YouTubeServiceManager unavailable")
     }
 
     private fun globalPreferences(): Any? = runCatching {
-        val prefs = Class.forName("com.liskovsoft.sharedutils.prefs.GlobalPreferences")
+        val prefs = SmartTubeModuleRuntime.type("com.liskovsoft.sharedutils.prefs.GlobalPreferences")
             .getMethod("instance", Context::class.java)
             .invoke(null, context.applicationContext)
         val language = LanguagePreferences.baseLanguage(LanguagePreferences.resolve(appPreferences.metadataLanguageKey))
@@ -1514,7 +1509,7 @@ class SmartTubeEngine @Inject constructor(
         ?: throw IllegalStateException("SmartTube engine service $method unavailable")
 
     private fun rxProxy(interfaceName: String, callback: (Array<out Any?>?) -> Unit): Any {
-        val iface = Class.forName(interfaceName)
+        val iface = SmartTubeModuleRuntime.type(interfaceName)
         return Proxy.newProxyInstance(iface.classLoader, arrayOf(iface)) { proxy, method, args ->
             when (method.name) {
                 "accept", "run" -> { callback(args); null }
@@ -1586,6 +1581,7 @@ class SmartTubeEngine @Inject constructor(
     private fun blockingObservable(value: Any?): Any? = unwrapReactive(value)
 
     private suspend fun <T> io(block: suspend () -> T): T = withContext(Dispatchers.IO) {
+        check(SmartTubeModuleRuntime.probe()) { "SmartTube engine unavailable" }
         YouTubeLocalProgress.awaitReady()
         block()
     }
