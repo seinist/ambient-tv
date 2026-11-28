@@ -53,6 +53,7 @@ import com.ambient.tv.games.library.coverAspectRatio
 import com.ambient.tv.games.library.GameLibraryFolder
 import com.ambient.tv.ui.common.AlphabetBar
 import com.ambient.tv.ui.common.alphabetTrackedLetter
+import com.ambient.tv.games.library.gameIndexLetter
 import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.LocalBrowseRightIndexFocus
 import com.ambient.tv.ui.common.TvActionButton
@@ -419,9 +420,7 @@ internal fun GameLibraryGames(
     val gameIds = remember(games) { games.map { it.fileId } }
     val alphabet = remember(games, section, view, sortKey) {
         if (section == "recent" || view == "rows" || sortKey != "name") emptyList()
-        else games.mapNotNull { game ->
-            game.title.firstOrNull()?.uppercaseChar()?.takeIf { it in 'A'..'Z' }
-        }.distinct()
+        else games.map { gameIndexLetter(it.title) }.distinct()
     }
         val firstFocus = remember(section, view) { FocusRequester() }
         // Keep geometry fixed for this result set while background artwork finishes.
@@ -435,10 +434,10 @@ internal fun GameLibraryGames(
         GameLibraryAlphabetLayout(
             letters = alphabet,
             selectedLetter = games.firstOrNull { it.fileId == focusedId }
-                ?.title?.firstOrNull()?.uppercaseChar(),
+                ?.let { gameIndexLetter(it.title) },
             visibleLetter = {
                 val index = if (view == "list") listState.firstVisibleItemIndex else gridState.firstVisibleItemIndex
-                games.getOrNull(index)?.title?.firstOrNull()?.uppercaseChar()
+                games.getOrNull(index)?.let { gameIndexLetter(it.title) }
             },
             firstContentFocus = firstFocus,
             onReturnToContent = {
@@ -446,7 +445,7 @@ internal fun GameLibraryGames(
                     ?: runCatching { firstFocus.requestFocus() }
             },
             onSelect = { letter ->
-                val index = games.indexOfFirst { it.title.firstOrNull()?.uppercaseChar() == letter }
+                val index = games.indexOfFirst { gameIndexLetter(it.title) == letter }
                 if (index >= 0) {
                     alphabetJumpJob?.cancel()
                     alphabetJumpJob = scope.launch {
