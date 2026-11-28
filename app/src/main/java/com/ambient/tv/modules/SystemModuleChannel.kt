@@ -105,12 +105,16 @@ object SystemModuleChannel {
 
     private fun validate(manifest: SystemModuleManifest, expectedTag: String) {
         if (manifest.schema != SCHEMA || manifest.tag != expectedTag ||
-            manifest.modules.size > SystemModule.entries.size * abis.size * profiles.size) {
+            manifest.modules.size !in 1..(SystemModule.entries.size * abis.size * profiles.size)) {
             throw SystemModuleTrustException("System module schema, tag or entry count mismatch")
         }
         val identities = mutableSetOf<Triple<String, String, String>>()
         val assets = mutableSetOf<String>()
+        val moduleVersions = mutableMapOf<String, Long>()
         for (build in manifest.modules) {
+            val previousVersion = moduleVersions.putIfAbsent(build.module, build.version)
+            if (previousVersion != null && previousVersion != build.version)
+                throw SystemModuleTrustException("Mixed versions in a signed module catalog")
             val expectedAsset = "${build.module}--${build.abi}--${build.profile}.zip"
             if (SystemModule.fromId(build.module) == null || build.abi !in abis ||
                 build.profile !in profiles ||

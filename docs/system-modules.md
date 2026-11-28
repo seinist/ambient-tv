@@ -749,6 +749,12 @@ check-only mode, not merely a matching feature flag. The reviewed source
 anchors are compatible with PR #494 head d1e345c3423c8086adb967b868c01208b3888d51;
 the upstream branch is not merged or modified by this preparation.
 
+Signed catalog validation now requires a nonempty catalog and one version
+per module across ABI/profile alternatives. The incremental publisher checks
+the same bounds, fields, fingerprints and dependency identities before
+comparing historical releases. Explicit schema defaults and omitted optional
+fields are treated identically; duplicate catalog assets are rejected.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

@@ -97,6 +97,14 @@ class SystemModuleChannelTest {
         rejected { authenticate(manifest(build(abi = "any", profile = "optimized"))) }
     }
 
+    @Test fun aCatalogMustUseOneVersionPerModuleAcrossAbisAndProfiles() {
+        rejected { authenticate(manifest(build(), build(profile = "optimized", version = 2))) }
+        rejected { authenticate(manifest(build(), build(abi = "x86", version = 2))) }
+        rejected { authenticate(manifest()) }
+        val other = build(version = 3).copy(module = "mpv", asset = "mpv--arm64-v8a--baseline.zip")
+        assertEquals(2, authenticate(manifest(build(), other)).modules.size)
+    }
+
     @Test fun hostBindingFingerprintIsCoveredBySignature() {
         val pinned = build().copy(hostBindingSha256 = "b".repeat(64))
         assertEquals(pinned, authenticate(manifest(pinned)).modules.single())

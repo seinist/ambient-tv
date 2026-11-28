@@ -40,6 +40,28 @@ class IncrementalSystemModulesTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             incremental.should_publish(self.parse(new), old)
 
+    def test_invalid_signed_fields_cannot_suppress_publication(self):
+        for field, value in (("size", 0), ("size", 256 * 1024**2 + 1), ("hostApi", True),
+                             ("minSdk", 28), ("version", 2**63), ("hostBindingSha256", "bad"),
+                             ("hostNativeSha256", {"libbad.so": "bad"}),
+                             ("dependencies", [{"module": "mpv", "version": 1}]),
+                             ("unknown", "value")):
+            new = self.manifest(2)
+            new["modules"][0][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                self.parse(new)
+        mixed = self.manifest(2)
+        mixed["modules"][0]["version"] = 1
+        with self.assertRaisesRegex(ValueError, "Mixed"):
+            self.parse(mixed)
+
+    def test_optional_defaults_do_not_trigger_unnecessary_publication(self):
+        old = self.parse(self.manifest())
+        new = self.manifest(2)
+        for row in new["modules"]:
+            row.update(dependencies=[], hostBindingSha256=None)
+        self.assertFalse(incremental.should_publish(self.parse(new), old))
+
     def test_incomplete_catalog_cannot_suppress_build(self):
         new = self.manifest()
         new["modules"].pop()
