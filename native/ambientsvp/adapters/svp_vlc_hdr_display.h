@@ -21,7 +21,7 @@ struct ambient_svp_hdr_source {
     struct ambient_hdrplus hdrplus;
 };
 struct ambient_svp_hdr_display {
-    struct ambient_svp_hdr_source sources[2];
+    struct ambient_svp_hdr_source sources[4];
     struct ambient_fel_render fel;
     pl_dispatch dp;
     pl_tex output;
@@ -32,7 +32,7 @@ struct ambient_svp_hdr_display {
 static inline void ambient_svp_hdr_display_destroy(pl_gpu gpu,struct ambient_svp_hdr_display *s)
 {
     ambient_fel_render_destroy(gpu,&s->fel);
-    for(unsigned i=0;i<2;i++){
+    for(unsigned i=0;i<4;i++){
         pl_tex_destroy(gpu,&s->sources[i].texture);
     }
     pl_tex_destroy(gpu,&s->output);svp_placebo_quality_destroy(gpu,&s->quality);pl_dispatch_destroy(&s->dp);
@@ -184,10 +184,15 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
     if(!s->dp)s->dp=pl_dispatch_create(log,gpu);
     if(!s->dp)return false;
     pl_dispatch_reset_frame(s->dp);
-    // Reuse the adjacent picture by its monotonic source ID. No cached
-    // decoder lease or equality based on recycled picture addresses.
-    if(s->sources[1].id==pair->a_id&&s->sources[0].id!=pair->a_id){
-        struct ambient_svp_hdr_source tmp=s->sources[0];s->sources[0]=s->sources[1];s->sources[1]=tmp;
+    // Reorder the cached reconstructed textures using immutable source
+    // IDs, including the two adjacent pictures for algorithm 23.
+    bool extended=ambient_svp_quality_extended(&pair->quality)&&pair->past&&pair->future;
+    uint64_t ids[4]={pair->a_id,pair->b_id,pair->past_id,pair->future_id};
+    for(unsigned i=0;i<(extended?4u:2u);i++){
+        for(unsigned j=i+1;j<4&&s->sources[i].id!=ids[i];j++){
+            if(s->sources[j].id!=ids[i])continue;
+            struct ambient_svp_hdr_source tmp=s->sources[i];s->sources[i]=s->sources[j];s->sources[j]=tmp;break;
+        }
     }
     struct ambient_svp_hdr_source *a=&s->sources[0],*b=&s->sources[1];
     if(!ambient_svp_hdr_source_load(gpu,log,s,owner,a,pair->a,pair->a_id,raw,dovi))return false;
@@ -207,8 +212,15 @@ static inline bool ambient_svp_hdr_render_pair(pl_gpu gpu,pl_log log,
         if(a->has_hdrplus)s->metadata=a->hdrplus;
         *img=ambient_pl_rgb_frame(a->texture,a->color);return true;
     }
+    if(extended){
+        extended=ambient_svp_hdr_source_load(gpu,log,s,owner,&s->sources[2],pair->past,pair->past_id,raw,dovi)&&
+            ambient_svp_hdr_source_load(gpu,log,s,owner,&s->sources[3],pair->future,pair->future_id,raw,dovi);
+        for(unsigned i=2;extended&&i<4;i++)
+            extended=s->sources[i].color.transfer==a->color.transfer&&s->sources[i].color.primaries==a->color.primaries;
+    }
     if(!svp_placebo_quality_render(gpu,&s->quality,a->texture,b->texture,
-        NULL,NULL,&s->output,pair->phase,&pair->quality)){
+        extended?s->sources[2].texture:NULL,extended?s->sources[3].texture:NULL,
+        &s->output,pair->phase,&pair->quality)){
         // Preserve the exact reconstructed picture and its metadata
         // if the renderer cannot share the native Vulkan queue.
         if(a->has_hdrplus)s->metadata=a->hdrplus;
