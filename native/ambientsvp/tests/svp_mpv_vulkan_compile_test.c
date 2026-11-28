@@ -149,6 +149,33 @@ int main(void)
     h2.params[1].overlap_process_option=h.params[1].overlap_process_option;
     h2.num_cols_targeted_system_display_actual_peak_luminance=3;
     assert(!svp_hdrplus_lerp(&mid,&x,&y,.5,128,64));
+    // Version-zero two-pass replay preserves all selected geometries and
+    // old optional display descriptors, while measuring every window.
+    a.w=128;a.h=64;a.params.color.transfer=PL_COLOR_TRC_PQ;a.params.color.primaries=PL_COLOR_PRIM_BT_2020;
+    assert(svp_vk_scene_compatible(&a));
+    AmbientSvpHdrLegacyScene legacy={.first=0,.end=2,.count=3};
+    for(unsigned w=0;w<3;w++){
+        legacy.windows[w].count=1;legacy.windows[w].percentages[0]=99;
+        legacy.windows[w].maxscl[0]=legacy.windows[w].maxscl[1]=legacy.windows[w].maxscl[2]=1000+100*w;
+        legacy.windows[w].average=500+100*w;legacy.windows[w].percentiles[0]=900+100*w;
+    }
+    const unsigned center=h.params[1].center_of_ellipse_x;
+    assert(svp_vk_scene_legacy_metadata(&a,&legacy));
+    assert(h.num_windows==3&&h.application_version==0&&h.targeted_system_display_actual_peak_luminance_flag);
+    assert(h.params[1].center_of_ellipse_x==center&&h.params[2].average_maxrgb.num==700);
+    assert(h.params[0].fraction_bright_pixels.num==0&&h.params[1].fraction_bright_pixels.num==0);
+    legacy.windows[1].fraction=1;
+    assert(!svp_vk_scene_legacy_metadata(&a,&legacy));
+    const uint16_t nonascending[]={600,400};
+    const uint16_t invalid[]={1023,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+    assert(svp_hdr_anchors_monotone(nonascending,2));
+    assert(!svp_hdr_anchors_monotone(invalid,15));
+    h.params[0].tone_mapping_flag=1;h.params[0].num_bezier_curve_anchors=2;
+    h.params[0].bezier_curve_anchors[0]=(AVRational){600,1023};
+    h.params[0].bezier_curve_anchors[1]=(AVRational){400,1023};
+    h.params[0].knee_point_x=(AVRational){0,4095};
+    h.params[0].knee_point_y=(AVRational){0,4095};
+    assert(svp_vk_scene_compatible(&a));
     // Actual second-pass metadata mapping, including reserved values
     // and a Profile-A-style absent tone mapping target.
     memset(&h,0,sizeof(h));h.itu_t_t35_country_code=0xb5;
