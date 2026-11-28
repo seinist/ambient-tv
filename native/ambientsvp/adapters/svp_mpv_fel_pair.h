@@ -12,8 +12,8 @@
 #include "ambientsvp_quality.h"
 #define SVP_FEL_PHASES 8
 struct svp_fel_pair {
-    struct mp_image *source[2];
-    uint64_t ids[2];
+    struct mp_image *source[4]; // center A/B, optional past/future
+    uint64_t ids[4];
     float phase;
     AmbientSvpQuality quality;
 };
@@ -26,7 +26,7 @@ static inline void svp_fel_pair_free(void *opaque,uint8_t *data)
 {
     (void)opaque;
     struct svp_fel_pair *p=(struct svp_fel_pair *)data;
-    mp_image_unrefp(&p->source[0]);mp_image_unrefp(&p->source[1]);free(p);
+    for(unsigned i=0;i<4;i++)mp_image_unrefp(&p->source[i]);free(p);
 }
 static inline bool svp_fel_eligible(const struct mp_image *a)
 {
@@ -50,16 +50,16 @@ static inline bool svp_fel_eligible(const struct mp_image *a)
 #endif
 }
 struct svp_fel_schedule {
-    struct mp_image *previous,*outputs[SVP_FEL_PHASES];
-    uint64_t previous_id,tick,output_ticks;
+    struct mp_image *previous,*older,*lookahead,*outputs[SVP_FEL_PHASES];
+    uint64_t previous_id,older_id,lookahead_id,tick,output_ticks;
     double origin;
     unsigned next,count;
 };
 static inline void svp_fel_reset(struct svp_fel_schedule *s)
 {
-    mp_image_unrefp(&s->previous);
+    mp_image_unrefp(&s->previous);mp_image_unrefp(&s->older);mp_image_unrefp(&s->lookahead);
     for(unsigned i=0;i<SVP_FEL_PHASES;i++)mp_image_unrefp(&s->outputs[i]);
-    s->previous_id=s->tick=0;s->next=s->count=0;
+    s->previous_id=s->older_id=s->lookahead_id=s->tick=0;s->next=s->count=0;
 }
 static inline struct mp_image *svp_fel_take(struct svp_fel_schedule *s)
 {
@@ -71,7 +71,9 @@ static inline struct mp_image *svp_fel_take(struct svp_fel_schedule *s)
 }
 static inline struct mp_image *svp_fel_previous(struct svp_fel_schedule *s)
 {
-    struct mp_image *out=s->previous;s->previous=NULL;s->previous_id=s->tick=0;
+    struct mp_image *out=s->previous;s->previous=s->lookahead;s->previous_id=s->lookahead_id;
+    s->lookahead=NULL;s->lookahead_id=0;mp_image_unrefp(&s->older);s->older_id=0;
+    if(!s->previous)s->tick=0;
     return out;
 }
 static inline bool svp_fel_push(struct svp_fel_schedule *s,struct mp_image *img,double source,double target,const AmbientSvpQuality *quality)
@@ -84,22 +86,35 @@ static inline bool svp_fel_push(struct svp_fel_schedule *s,struct mp_image *img,
     if(!s->previous){
         s->previous=img;s->previous_id=id;s->origin=img->pts;s->tick=0;return true;
     }
-    struct mp_image *prev=s->previous;
-    double delta=img->pts-prev->pts;
-    if(prev->w!=img->w||prev->h!=img->h||delta<=0||fabs(delta-1/source)>fmax(.003,.25/source))return false;
+    struct mp_image *last=s->lookahead?s->lookahead:s->previous;
+    double delta=img->pts-last->pts;
+    if(last->w!=img->w||last->h!=img->h||delta<=0||fabs(delta-1/source)>fmax(.003,.25/source))return false;
+    bool extended=ambient_svp_quality_extended(quality);
+    if(extended&&!s->lookahead){s->lookahead=img;s->lookahead_id=id;return true;}
+    if(!extended&&s->lookahead)return false;
+    struct mp_image *prev=s->previous,*next=extended?s->lookahead:img;
+    uint64_t next_id=extended?s->lookahead_id:id;
+    delta=next->pts-prev->pts;
     uint64_t tick=s->tick;
     unsigned count=0;
     while(tick<UINT64_C(1000000000)){
         double pts=s->origin+(double)tick/target;
-        if(pts>=img->pts-1e-8)break;
+        if(pts>=next->pts-1e-8)break;
         double phase=(pts-prev->pts)/delta;
         if(count==SVP_FEL_PHASES||phase<-.25||phase>1)goto fail;
         struct mp_image *out=mp_image_new_ref(prev);
         if(!out)goto fail;
         struct svp_fel_pair *p=calloc(1,sizeof(*p));
         if(!p){mp_image_unrefp(&out);goto fail;}
-        p->source[0]=mp_image_new_ref(prev);p->source[1]=mp_image_new_ref(img);
-        p->ids[0]=s->previous_id;p->ids[1]=id;p->phase=(float)fmax(0,phase);p->quality=*quality;
+        p->source[0]=mp_image_new_ref(prev);p->source[1]=mp_image_new_ref(next);
+        p->ids[0]=s->previous_id;p->ids[1]=next_id;p->phase=(float)fmax(0,phase);p->quality=*quality;
+        if(extended&&s->older){
+            p->source[2]=mp_image_new_ref(s->older);p->source[3]=mp_image_new_ref(img);
+            p->ids[2]=s->older_id;p->ids[3]=id;
+            if(!p->source[2]||!p->source[3]){
+                svp_fel_pair_free(NULL,(uint8_t *)p);mp_image_unrefp(&out);goto fail;
+            }
+        }
         if(!p->source[0]||!p->source[1]){
             svp_fel_pair_free(NULL,(uint8_t *)p);mp_image_unrefp(&out);goto fail;
         }
@@ -111,7 +126,11 @@ static inline bool svp_fel_push(struct svp_fel_schedule *s,struct mp_image *img,
         s->outputs[count++]=out;tick++;
     }
     if(!count)goto fail;
-    mp_image_unrefp(&s->previous);s->previous=img;s->previous_id=id;s->tick=tick;s->count=count;s->next=0;
+    if(extended){
+        mp_image_unrefp(&s->older);s->older=prev;s->older_id=s->previous_id;
+        s->previous=next;s->previous_id=next_id;s->lookahead=img;s->lookahead_id=id;
+    }else{mp_image_unrefp(&s->previous);s->previous=img;s->previous_id=id;}
+    s->tick=tick;s->count=count;s->next=0;
     return true;
 fail:
     for(unsigned i=0;i<count;i++)mp_image_unrefp(&s->outputs[i]);
