@@ -17,9 +17,8 @@ static bool map_frame(pl_gpu gpu,pl_tex *tex,const struct pl_source_frame *src,s
 static void unmap_frame(pl_gpu gpu,struct pl_frame *frame,const struct pl_source_frame *src);
 struct svp_fel_vo_cache {
     pl_renderer reconstruct;
-    pl_dispatch dp;
-    pl_tex sources[2];
-    uint64_t ids[2];
+    pl_tex sources[4];
+    uint64_t ids[4];
 #if defined(PL_HAVE_VULKAN)
     struct svp_placebo_quality quality;
 #endif
@@ -28,13 +27,12 @@ static inline void svp_fel_vo_destroy(struct priv *p)
 {
     struct svp_fel_vo_cache *s=p->svp_fel;
     if(!s)return;
-    for(unsigned i=0;i<2;i++){
+    for(unsigned i=0;i<4;i++){
         pl_tex_destroy(p->gpu,&s->sources[i]);
     }
 #if defined(PL_HAVE_VULKAN)
     svp_placebo_quality_destroy(p->gpu,&s->quality);
 #endif
-    pl_dispatch_destroy(&s->dp);
     pl_renderer_destroy(&s->reconstruct);
     free(s);p->svp_fel=NULL;
 }
@@ -113,23 +111,33 @@ static inline bool svp_fel_vo_map(struct priv *p,struct vo *vo,struct mp_image *
     if(!p->svp_fel)p->svp_fel=calloc(1,sizeof(*p->svp_fel));
     struct svp_fel_vo_cache *s=p->svp_fel;
     if(!s)return false;
-    if(!s->dp)s->dp=pl_dispatch_create(p->pllog,p->gpu);
     if(!s->reconstruct)s->reconstruct=pl_renderer_create(p->pllog,p->gpu);
-    if(!s->dp||!s->reconstruct)return false;
-    if(s->ids[1]==pair->ids[0]&&s->ids[0]!=pair->ids[0]){
-        pl_tex t=s->sources[0];s->sources[0]=s->sources[1];s->sources[1]=t;
-        uint64_t id=s->ids[0];s->ids[0]=s->ids[1];s->ids[1]=id;
+    if(!s->reconstruct)return false;
+    bool extended=ambient_svp_quality_extended(&pair->quality)&&pair->source[2]&&pair->source[3]&&
+        pair->source[2]->w==mpi->w&&pair->source[2]->h==mpi->h&&
+        pair->source[3]->w==mpi->w&&pair->source[3]->h==mpi->h;
+    unsigned count=extended?4:2;
+    // Rotate cached reconstruction textures to match the four immutable
+    // source IDs before loading missing frames.
+    for(unsigned i=0;i<count;i++){
+        for(unsigned j=i+1;j<4&&s->ids[i]!=pair->ids[i];j++){
+            if(s->ids[j]!=pair->ids[i])continue;
+            pl_tex t=s->sources[i];s->sources[i]=s->sources[j];s->sources[j]=t;
+            uint64_t id=s->ids[i];s->ids[i]=s->ids[j];s->ids[j]=id;break;
+        }
     }
-    if(!svp_fel_vo_source(p,vo,s,pair->source[0],pair->ids[0],0)||
-        !svp_fel_vo_source(p,vo,s,pair->source[1],pair->ids[1],1))return false;
-    pl_dispatch_reset_frame(s->dp);
+    for(unsigned i=0;i<count;i++){
+        if(svp_fel_vo_source(p,vo,s,pair->source[i],pair->ids[i],i))continue;
+        if(i<2)return false;
+        extended=false;break;
+    }
     struct frame_priv *fp=mpi->priv;
     // The full BL/EL reconstruction is complete. Interpolate only
     // canonical RGB; source endpoints or bridge failure keep exact
     // reconstructed originals, never the base layer alone.
     pl_tex output=pair->phase>=1.0f?s->sources[1]:s->sources[0];
     if(pair->phase>0&&pair->phase<1&&svp_placebo_quality_render(p->gpu,&s->quality,
-        s->sources[0],s->sources[1],NULL,NULL,&fp->svp_fel_output,pair->phase,&pair->quality))
+        s->sources[0],s->sources[1],extended?s->sources[2]:NULL,extended?s->sources[3]:NULL,&fp->svp_fel_output,pair->phase,&pair->quality))
         output=fp->svp_fel_output;
     // Each queue frame must own its output. For source/failure frames
     // use normal MPV mapping instead of exposing a mutable cache slot.
