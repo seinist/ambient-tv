@@ -1870,13 +1870,15 @@ internal class MpvPlaybackEngine(
         val source = pipelineFps() ?: return
         val target = svpOutputFps(displayFps() ?: svpDisplayFps(context), imageOptions.svp) ?: return
         hdrSceneAttempted = true
+        // Do not restart a film after the viewer has already started watching.
+        if (positionMs() > 250L) return
         hdrSceneJob = imageScope.launch {
             val result = try {
                 HdrScenePlanner.scan(context, url, headers, source, target, false, File(context.noBackupFilesDir, "hdr-scene"))
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (e: Exception) { Timber.w(e, "HDR scene plan unavailable"); null }
             if (result == null) { Timber.i("HDR10+ automatic scene plan not supported for this file"); return@launch }
-            if (released || !attached || !fileReady || !imageOptions.svp.hdrTwoPass ||
+            if (released || !attached || !fileReady || positionMs() > 250L || !imageOptions.svp.hdrTwoPass ||
                 activeCpuImageFilters["plex-svp"] != base || kotlin.math.abs(result.plan.source-source) > 0.0001 ||
                 kotlin.math.abs(result.plan.target-target) > 0.0001) {
                 result.cleanup(); return@launch
@@ -1898,7 +1900,7 @@ internal class MpvPlaybackEngine(
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                 catch (e: Exception) { Timber.w(e,"MPV offscreen HDR capture unavailable"); false }
                 coroutineContext.ensureActive()
-                if (!analyzed) result.discardIncompleteCapture()
+                if (!analyzed) { result.discardIncompleteCapture(); return@launch }
                 if (released || ended || !attached || !fileReady || !result.valid() || !imageOptions.svp.hdrTwoPass ||
                     activeCpuImageFilters["plex-svp"] != base) return@launch
                 // Offscreen renderer has retired. Restart uses the latest user play intent.

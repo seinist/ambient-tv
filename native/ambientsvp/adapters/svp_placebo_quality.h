@@ -52,7 +52,7 @@ struct svp_placebo_quality {
         const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,
         const uint32_t (*)[3],uint32_t,AmbientSvpHdrPass *,uint64_t,AmbientSvpVkHeld **,uint64_t);
     int (*retire_capture)(AmbientSvpVkHeld *,uint32_t,AmbientSvpHdrPass *,uint64_t);
-    bool capture_failed;
+    bool capture_failed,device_lost;
     int (*submit_stats)(const AmbientSvpVk *,VkQueue,uint32_t,const VkImage *,uint32_t,
         const VkSemaphore *,VkSemaphore,uint64_t,float,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,
         const uint32_t (*)[3],uint32_t,AmbientSvpHdrPass *,uint64_t,AmbientSvpVkHeld **,uint64_t);
@@ -71,8 +71,9 @@ static inline bool svp_placebo_retire_one(pl_gpu gpu,struct svp_placebo_quality 
 {
     struct svp_placebo_pending *p=&s->pending[i];
     int rc=p->capture&&!s->capture_failed?s->retire_capture(p->job,wait?1:0,p->capture,p->index):s->retire(p->job,wait?1:0);
-    if(rc!=1&&rc!=2)return false;
-    if(rc==2)s->capture_failed=true;
+    if(rc!=1&&rc!=2&&rc!=3)return false;
+    if(rc==3)s->device_lost=true;
+    if(rc!=1)s->capture_failed=true;
     for(unsigned j=0;j<p->count;j++)pl_vulkan_sem_destroy(gpu,&p->holds[j]);
     --s->pending_count;
     memmove(p,p+1,(s->pending_count-i)*sizeof(*p));
@@ -114,7 +115,7 @@ static inline bool svp_placebo_quality_target(pl_gpu gpu,pl_tex *tex,int w,int h
 static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo_quality *s,
     pl_tex a,pl_tex b,pl_tex previous,pl_tex next,pl_tex *out,float phase,const AmbientSvpQuality *options,struct svp_placebo_hdr *hdr,AmbientSvpHdrPass *pass,uint64_t index,bool capture)
 {
-    if(!a||!b||!options||!out||(!pass&&a==b)||!isfinite(phase)||phase<0||phase>=1||(!pass&&phase==0)|| (a==b&&phase!=0)||
+    if(s->device_lost||!a||!b||!options||!out||(!pass&&a==b)||!isfinite(phase)||phase<0||phase>=1||(!pass&&phase==0)|| (a==b&&phase!=0)||
         a->params.w!=b->params.w||a->params.h!=b->params.h)return false;
     pl_vulkan vk=pl_vulkan_get(gpu);
     // hold_ex submits on GRAPHICS. Restrict to a common compute-capable
@@ -155,9 +156,9 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
     // Poll all existing jobs, then apply bounded backpressure outside
     // the queue lock. The legacy and metadata paths also share the budget.
     while(s->pending_count&&svp_placebo_retire_one(gpu,s,0,false)){}
-    if(capture&&s->capture_failed)return false;
+    if(s->device_lost||(capture&&s->capture_failed))return false;
     if(s->pending_count==SVP_PLACEBO_PENDING&&!svp_placebo_retire_one(gpu,s,0,true))return false;
-    if(capture&&s->capture_failed)return false;
+    if(s->device_lost||(capture&&s->capture_failed))return false;
     if(*out&&((*out)->params.w!=w||(*out)->params.h!=h))
         svp_placebo_quality_retire_texture(gpu,s,*out);
     if(!s->done)s->done=pl_vulkan_sem_create(gpu,pl_vulkan_sem_params(.type=VK_SEMAPHORE_TYPE_TIMELINE));
@@ -217,8 +218,9 @@ static inline bool svp_placebo_quality_render_pass(pl_gpu gpu,struct svp_placebo
     // holds the external Vulkan queue lock while waiting for the fence.
     if(split_stats&&job){
         int result=s->collect_stats(job,1,hdr->results,hdr->rects,hdr->ellipses,hdr->shifts,hdr->count,pass,index);
-        if(result==1||result==2)job=NULL;
-        else if(s->retire(job,1)==1)job=NULL;
+        if(result==1||result==2||result==3)job=NULL;
+        else {int rc=s->retire(job,1);if(rc==1||rc==2||rc==3)job=NULL;if(rc==3)s->device_lost=true;}
+        if(result==3)s->device_lost=true;
         ok=ok&&result==1;
     }
 cleanup:

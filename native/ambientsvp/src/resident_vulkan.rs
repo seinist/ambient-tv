@@ -979,7 +979,7 @@ pub struct HeldSubmission {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_retire_held(job:*mut HeldSubmission,wait:u32)->i32{
     let rc=unsafe{retire_held_impl(job,wait,ptr::null_mut(),0)};
-    if rc==2{1}else{rc}
+    rc
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_retire_held_capture(job:*mut HeldSubmission,wait:u32,pass:*mut TwoPass,index:u64)->i32{
@@ -1012,7 +1012,7 @@ unsafe fn retire_held_with(job:*mut HeldSubmission,wait:u32,consume:impl FnOnce(
         for view in j.views{j.core.device.destroy_image_view(view,None);}
         if let Some(commands)=j.commands{commands.recycle(&j.core);}
     }
-    if captured{1}else{2}
+    if lost{3}else if captured{1}else{2}
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ambient_svp_vk_submit_held(s:*const VulkanResident,queue:vk::Queue,family:u32,
@@ -1135,7 +1135,7 @@ unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
         let mut key=HeldKey{generation,images:[vk::Image::null();4],count,algorithm:core.algorithm.load(Ordering::Acquire)};
         key.images[..count as usize-1].copy_from_slice(&images[..count as usize-1]);
         let mut publish_cache=false;
-        let result=(||->Result<()>{
+        let result=catch_unwind(AssertUnwindSafe(||->Result<()>{
             for &image in images{
                 views.push(d.create_image_view(&vk::ImageViewCreateInfo::default().image(image)
                     .view_type(vk::ImageViewType::TYPE_2D).format(vk::Format::R16G16B16A16_SFLOAT)
@@ -1220,7 +1220,7 @@ unsafe fn render_held_impl(s:*const VulkanResident,queue:vk::Queue,family:u32,
             if !pass.is_null()&&(&*pass).mode()==2&&(&*pass).version()==0&&
                 ambient_svp_hdr_pass_verify_geometry(pass,pair,0,index)!=1{return Err("scene replay geometry mismatch".into());}
             Ok(())
-        })();
+        })).unwrap_or_else(|_|Err("held submission panic".into()));
         if deferred{return 0;}
         if submitted{
             // A failed wait may only release resources after confirmed

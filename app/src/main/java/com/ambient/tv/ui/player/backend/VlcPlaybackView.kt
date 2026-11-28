@@ -218,13 +218,14 @@ class VlcPlaybackController(
         val target = svpOutputFps(svpDisplayFps(context), imageOptions.svp) ?: return
         val settings = imageOptions
         hdrSceneAttempted = true
+        if (confirmedPlaybackTimeMs() > 250L) return
         hdrSceneJob = hdrSceneScope.launch {
             val result = try {
                 HdrScenePlanner.scan(context, url, headers, source, target, true, File(context.noBackupFilesDir, "hdr-scene"))
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (e: Exception) { Timber.w(e, "VLC HDR scene plan unavailable"); null }
             if (result == null) { Timber.i("VLC automatic HDR10+ scene plan not supported for this file"); return@launch }
-            if (released || !prepared || openingOrRestarting || imageOptions != settings ||
+            if (released || !prepared || openingOrRestarting || confirmedPlaybackTimeMs() > 250L || imageOptions != settings ||
                 attachedView?.holder?.surface?.isValid != true || kotlin.math.abs(result.plan.source-source) > 0.0001 ||
                 svpOutputFps(svpDisplayFps(context), imageOptions.svp) != target) {
                 result.cleanup(); return@launch
@@ -249,7 +250,7 @@ class VlcPlaybackController(
                     catch (e: kotlinx.coroutines.CancellationException) { throw e }
                     catch (e: Exception) { Timber.w(e,"VLC offscreen HDR capture unavailable"); false }
                 coroutineContext.ensureActive()
-                if (!analyzed) result.discardIncompleteCapture()
+                if (!analyzed) { result.discardIncompleteCapture(); return@launch }
                 if (released || ended || player !== visiblePlayer || !prepared || openingOrRestarting || imageOptions != settings ||
                     attachedView?.holder?.surface?.isValid != true || !result.valid()) return@launch
                 hdrSceneHold.release()
@@ -1553,8 +1554,10 @@ class VlcPlaybackController(
             if (configuredResident && outputReady && player.isPlaying && !openingOrRestarting &&
                 !com.ambient.tv.ui.player.PlaybackOutputTransition.active()) {
                 val now = android.os.SystemClock.elapsedRealtime()
-                val frames = SvpNative.residentOutputsOrNull()
-                if (hdrSceneSession != null || residentLastProgressMs == 0L || frames != residentLastOutput) {
+                // HDR libplacebo uses a different output path from SurfaceControl.
+                // Its visible playback clock is a liveness fallback, not a frame counter.
+                val frames = if (hdrSceneSession != null) confirmedPlaybackTimeMs() else SvpNative.residentOutputsOrNull()
+                if (residentLastProgressMs == 0L || frames != residentLastOutput) {
                     residentLastOutput = frames
                     residentLastProgressMs = now
                 } else if (now - residentLastProgressMs > VLC_SVP_STALL_MS) {
@@ -1562,6 +1565,7 @@ class VlcPlaybackController(
                     // Retry the existing copy-back filter, not the experimental Surface again.
                     Timber.w("VLC resident SVP produced no output; reopening on standard transport")
                     residentRejected = true
+                    if (hdrSceneSession != null) cancelHdrScenePass()
                 }
             } else residentLastProgressMs = 0L
             val wanted = wantsResident(effective, if (preserveHdrSource) "off" else deinterlaceMode)

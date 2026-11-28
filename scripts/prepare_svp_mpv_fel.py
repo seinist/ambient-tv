@@ -16,8 +16,11 @@ def patch(path, edits, marker):
     p = source / path
     s = p.read_text()
     if marker in s:
+        # HDR spatial staging legitimately inserts a cleanup call inside
+        # the FEL cleanup sequence. Validate the composed patch as well.
+        composed = s.replace('    svp_hdr_spatial_destroy(gpu, &fp->svp_hdr);\n', '') if path == 'video/out/vo_gpu_next.c' else s
         for _, new in edits:
-            if new not in s:
+            if new not in composed:
                 raise SystemExit("Incomplete SVP FEL staging: " + path)
         return
     for old, new in edits:
