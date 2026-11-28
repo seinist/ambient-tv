@@ -59,6 +59,31 @@ class GameArchivesTest {
         assert(GameSystems.isGame("Zelda.7z") && GameSystems.isGame("Pack.rar") && GameSystems.isGame("Sonic.md.gz"))
     }
 
+    @Test fun rar4StoredEntryAndOutputLimitRemainCompatible() {
+        // Minimal RAR4 fixture: stored game.sfc, valid file/header CRCs.
+        val fixture = "526172211a0700cf907300000d000000000000003bec74008028000600000006000000032477f6810000215814300800a481000067616d652e73666301020304050604b07b00000700"
+        val rar = folder.newFile("game.rar").apply {
+            writeBytes(fixture.chunked(2).map { it.toInt(16).toByte() }.toByteArray())
+        }
+        val files = GameArchives.extract(rar, File(folder.root, "rar-output"))
+        assertEquals(listOf("game.sfc"), files.map { it.name })
+        org.junit.Assert.assertArrayEquals(byteArrayOf(1, 2, 3, 4, 5, 6), files.single().readBytes())
+        assertTrue(runCatching {
+            GameArchives.extract(rar, File(folder.root, "rar-limited"), maxOutputBytes = 5)
+        }.exceptionOrNull() is GameArchiveException)
+    }
+
+    @Test fun rar5StillReportsUnsupportedWithoutWritingFiles() {
+        val rar = folder.newFile("rar5.rar").apply {
+            writeBytes(byteArrayOf(0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x01, 0x00))
+        }
+        val out = File(folder.root, "rar5-output")
+        val error = runCatching { GameArchives.extract(rar, out) }.exceptionOrNull()
+        assertTrue(error is GameArchiveException)
+        assertTrue(error!!.message!!.contains("RAR5 is not supported"))
+        assertTrue(out.listFiles().orEmpty().isEmpty())
+    }
+
     @Test fun coresAreChosenPerGameOverSystemOverDefault() {
         val snes = GameSystems.byId("snes")!!
         var state = GameSettingsState()

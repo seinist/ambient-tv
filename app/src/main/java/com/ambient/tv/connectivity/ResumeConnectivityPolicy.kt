@@ -17,7 +17,9 @@ object ResumeConnectivityPolicy {
         lastHealthAgeMs: Long,
         /** Phones switch apps all the time: only a longer absence re-checks every system. */
         handheld: Boolean = false,
+        hasStartupNas: Boolean = false,
     ): Boolean = when {
+        !wasBackgrounded && hasStartupNas -> true
         !wasBackgrounded -> shouldRecheck(backgroundedForMs, lastHealthAgeMs)
         handheld -> backgroundedForMs >= HANDHELD_BACKGROUND_THRESHOLD_MS
         else -> true

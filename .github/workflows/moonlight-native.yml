@@ -2,10 +2,7 @@ name: Moonlight native verification
 
 # Audit the native protocol and application integration, including shared input and build changes.
 on:
-  # The integration branch also needs native validation while merge conflicts
-  # prevent pull_request workflows from creating a synthetic merge commit.
-  push:
-    branches: ['feature/moonlight-native-integration']
+  # One automatic run per PR update; manual dispatch remains available for conflicts.
   pull_request:
     paths:
       - 'moonlight_wrapper/**'
