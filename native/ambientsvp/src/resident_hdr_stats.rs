@@ -460,3 +460,157 @@ fn validate_scene_sequence_rejects_gaps_and_metadata_changes(){
     assert!(!validate_scene_sequence(0,4,&[a,b],&[a,SceneResult{fraction:501,..b}]));
     assert!(!validate_scene_sequence(0,4,&[a,b],&[a,SceneResult{percentiles:[1;9],..b}]));
 }
+
+// Two-pass cache: explicitly supplied authoritative scene boundaries and
+// content fingerprint, renderer/configuration fingerprint, fixed geometry.
+// All frames must be captured in presentation order. The cache is create-only
+// and is published atomically only on successful explicit completion.
+const PASS_P:[u32;9]=[1,5,10,25,50,75,90,95,99];
+const MAX_SCENES:usize=100_000;
+pub(super) struct TwoPass{
+    mode:u32,key:String,profile:String,width:u32,height:u32,ends:Vec<u64>,
+    path:std::path::PathBuf,next:u64,results:Vec<SceneResult>,current:Option<HdrScene>,failed:bool,
+}
+fn read_bounded(path:&std::path::Path,max:u64)->Result<String>{
+    use std::io::Read;
+    let f=std::fs::File::open(path).map_err(|e|e.to_string())?;
+    if !f.metadata().map_err(|e|e.to_string())?.is_file(){return Err("not a regular scene file".into());}
+    let mut s=String::new();
+    f.take(max+1).read_to_string(&mut s).map_err(|e|e.to_string())?;
+    if s.len() as u64>max{return Err("scene file too large".into());}
+    Ok(s)
+}
+fn parse_num<T:std::str::FromStr>(s:Option<&str>)->Result<T>{
+    s.ok_or("missing scene field")?.parse().map_err(|_|"invalid scene field".into())
+}
+impl TwoPass{
+    pub(super) fn open(mode:u32,plan:&std::path::Path,cache:&std::path::Path,key:&str,profile:&str,w:u32,h:u32)->Result<Self>{
+        if !matches!(mode,1|2)||key.len()!=64||!key.bytes().all(|v|v.is_ascii_hexdigit())||
+            profile.is_empty()||profile.len()>1024||profile.bytes().any(|v|!v.is_ascii_graphic())||
+            w==0||h==0||u64::from(w)*u64::from(h)>1920*1080||plan==cache{
+            return Err("invalid two-pass identity or geometry".into());
+        }
+        let manifest=read_bounded(plan,2_000_000)?;
+        let mut lines=manifest.lines();
+        if lines.next()!=Some("AMBIENTSVP_SCENE_PLAN_1")||lines.next()!=Some(key){
+            return Err("scene plan identity mismatch".into());
+        }
+        let mut ends=Vec::new();let mut first=0;
+        for l in lines{
+            let end:u64=parse_num(Some(l))?;
+            if ends.len()>=MAX_SCENES||end<=first||end>1_000_000_000{return Err("invalid scene interval".into());}
+            ends.push(end);first=end;
+        }
+        if ends.is_empty(){return Err("empty scene plan".into());}
+        let mut s=Self{mode,key:key.into(),profile:profile.into(),width:w,height:h,ends,path:cache.into(),
+            next:0,results:Vec::new(),current:None,failed:false};
+        if mode==2{s.read_cache()?;}
+        else if cache.exists(){return Err("scene cache already exists".into());}
+        Ok(s)
+    }
+    fn header(&self)->String{
+        format!("AMBIENTSVP_SCENE_CACHE_1\n{}\n{}\n{} {}\n",self.key,self.profile,self.width,self.height)
+    }
+    fn read_cache(&mut self)->Result<()>{
+        let contents=read_bounded(&self.path,32_000_000)?;
+        let header=self.header();
+        let body=contents.strip_prefix(&header).ok_or("scene cache identity mismatch")?;
+        for l in body.lines(){
+            if self.results.len()>=self.ends.len(){return Err("extra scene result".into());}
+            let mut fields=l.split_ascii_whitespace();
+            let first=parse_num(fields.next())?;let end=parse_num(fields.next())?;
+            let brightest_frame=parse_num(fields.next())?;
+            let mut maxscl=[0;3];for v in &mut maxscl{*v=parse_num(fields.next())?;}
+            let average=parse_num(fields.next())?;
+            let mut percentiles=[0;9];for v in &mut percentiles{*v=parse_num(fields.next())?;}
+            let fraction=parse_num(fields.next())?;
+            if fields.next().is_some()||end!=self.ends[self.results.len()]{return Err("scene cache plan mismatch".into());}
+            self.results.push(SceneResult{first,end,brightest_frame,maxscl,average,percentiles,fraction});
+        }
+        if self.results.len()!=self.ends.len()||!validate_scene_sequence(0,*self.ends.last().unwrap(),&self.results,&self.results){
+            return Err("incomplete or invalid scene cache".into());
+        }
+        Ok(())
+    }
+    pub(super) fn mode(&self)->u32{if self.failed{0}else{self.mode}}
+    pub(super) fn abort(&mut self){self.failed=true;}
+    pub(super) fn capture(&mut self,index:u64,frame:SceneFrame)->Result<()>{
+        if self.mode!=1||self.failed||index!=self.next||self.results.len()>=self.ends.len(){
+            self.abort();return Err("out of order scene capture".into());
+        }
+        let end=self.ends[self.results.len()];
+        if self.current.is_none(){self.current=Some(HdrScene::new(index,end,self.width,self.height,PASS_P)?);}
+        if let Err(e)=self.current.as_mut().unwrap().push(index,frame){self.abort();return Err(e);}
+        self.next+=1;
+        if self.next==end{
+            self.results.push(self.current.take().unwrap().finish()?);
+        }
+        Ok(())
+    }
+    pub(super) fn lookup(&mut self,index:u64)->Result<SceneResult>{
+        if self.mode!=2||self.failed||index!=self.next||index>=*self.ends.last().unwrap(){
+            self.abort();return Err("out of order second pass".into());
+        }
+        let i=self.ends.partition_point(|&v|v<=index);
+        let result=*self.results.get(i).ok_or("missing scene result")?;
+        self.next+=1;
+        Ok(result)
+    }
+    pub(super) fn finish(&mut self)->Result<()>{
+        use std::io::Write;
+        if self.failed||self.next!=*self.ends.last().unwrap()||self.results.len()!=self.ends.len()||self.current.is_some(){
+            return Err("incomplete two-pass run".into());
+        }
+        if self.mode==2{return Ok(());}
+        if self.mode!=1{return Err("already finalized".into());}
+        let mut data=self.header();
+        for r in &self.results{
+            use std::fmt::Write as _;
+            write!(&mut data,"{} {} {}",r.first,r.end,r.brightest_frame).map_err(|_|"cache formatting")?;
+            for v in r.maxscl{write!(&mut data," {}",v).map_err(|_|"cache formatting")?;}
+            write!(&mut data," {}",r.average).map_err(|_|"cache formatting")?;
+            for v in r.percentiles{write!(&mut data," {}",v).map_err(|_|"cache formatting")?;}
+            writeln!(&mut data," {}",r.fraction).map_err(|_|"cache formatting")?;
+        }
+        // Unique create-new sibling; hard-link publication never overwrites
+        // an existing cache and never exposes a partially written file.
+        static SERIAL:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+        let mut tmp=self.path.as_os_str().to_os_string();
+        tmp.push(format!(".tmp-{}-{}",std::process::id(),SERIAL.fetch_add(1,std::sync::atomic::Ordering::Relaxed)));
+        let tmp=std::path::PathBuf::from(tmp);
+        let mut f=std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp).map_err(|e|e.to_string())?;
+        let result=(||->Result<()>{
+            f.write_all(data.as_bytes()).map_err(|e|e.to_string())?;
+            f.sync_all().map_err(|e|e.to_string())?;
+            std::fs::hard_link(&tmp,&self.path).map_err(|e|e.to_string())?;
+            Ok(())
+        })();
+        drop(f);let _=std::fs::remove_file(tmp);
+        result?;self.mode=0;Ok(())
+    }
+}
+#[cfg(test)]
+#[test]
+fn two_pass_cache_identity_completeness_and_replay(){
+    let root=std::env::temp_dir().join(format!("ambient-svp-two-pass-{}",std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let plan=root.join("plan");let cache=root.join("cache");
+    let _=std::fs::remove_file(&cache);
+    let key="a".repeat(64);
+    std::fs::write(&plan,format!("AMBIENTSVP_SCENE_PLAN_1\n{key}\n1\n2\n")).unwrap();
+    let mut p=TwoPass::open(1,&plan,&cache,&key,"mpv:fixture",2,1).unwrap();
+    assert!(p.finish().is_err());assert!(!cache.exists());
+    for i in 0..2{
+        let mut bins=vec![0;BINS as usize];bins[100+i as usize]=2;
+        p.capture(i,SceneFrame{width:2,height:1,maxscl:[100+i as u32;3],bins,average:0.1,fraction:1.0}).unwrap();
+    }
+    p.finish().unwrap();
+    assert!(TwoPass::open(2,&plan,&cache,&key,"vlc:fixture",2,1).is_err());
+    let mut q=TwoPass::open(2,&plan,&cache,&key,"mpv:fixture",2,1).unwrap();
+    assert_eq!(q.lookup(0).unwrap().average,100);
+    assert_eq!(q.lookup(1).unwrap().average,101);
+    q.finish().unwrap();
+    let mut q=TwoPass::open(2,&plan,&cache,&key,"mpv:fixture",2,1).unwrap();
+    assert!(q.lookup(1).is_err());assert!(q.lookup(0).is_err());
+    let _=std::fs::remove_dir_all(root);
+}
