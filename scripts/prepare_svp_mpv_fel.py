@@ -52,7 +52,7 @@ patch("video/out/vo_gpu_next.c", [
     ("    fp->hwdec = ra_hwdec_get(&p->hwdec_ctx, mpi->imgfmt);",
      "    if (mpi->ambient_svp_pair && svp_fel_vo_map(p, vo, mpi, frame))\n        return true;\n\n    fp->hwdec = ra_hwdec_get(&p->hwdec_ctx, mpi->imgfmt);"),
     ("    slot_release_owner(p, &p->hwdec, mpi);",
-     "    svp_fel_vo_retire_output(p, fp->svp_fel_output);\n    pl_tex_destroy(gpu, &fp->svp_fel_output);\n    slot_release_owner(p, &p->hwdec, mpi);"),
+     "    svp_fel_vo_retire_output(p, &fp->svp_fel_output);\n    pl_tex_destroy(gpu, &fp->svp_fel_output);\n    slot_release_owner(p, &p->hwdec, mpi);"),
     ("    // Drain any in-flight uploads.",
      "    svp_fel_vo_preflight_retirement(p); // SVP ownership before GPU teardown\n    // Drain any in-flight uploads."),
     ("    pl_queue_destroy(&p->queue); // destroy this first",

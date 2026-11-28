@@ -108,8 +108,8 @@ internal object HdrOffscreenAnalysis {
                 withContext(NonCancellable) {
                     try {
                         boundedNativeOperation(PREVIOUS_RELEASE_LIMIT_MS) { api.nativeDestroy(handle) }
-                        sink.close()
                         retirement.complete(Unit)
+                        runCatching { sink.close() }.onFailure { timber.log.Timber.w(it, "MPV analysis sink cleanup failed") }
                     } catch (failure: Throwable) {
                         session.quarantine()
                         MpvRetainedOwners.retain(sink)

@@ -62,6 +62,7 @@ internal class AudioOutputReleaseGate {
     }
 
     @Synchronized internal fun pendingCount(): Int = pending.size
+    @Synchronized fun hasUncertainOwnership(): Boolean = pending.any { it.uncertain() }
 }
 
 /** The previous owners' teardown as seen by one starting owner. */

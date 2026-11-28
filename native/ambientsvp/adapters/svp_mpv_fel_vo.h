@@ -22,6 +22,7 @@ struct svp_fel_vo_cache {
     uint64_t ids[4];
 #if defined(PL_HAVE_VULKAN)
     struct svp_placebo_quality quality;
+    pl_tex deferred[SVP_PLACEBO_PENDING];
 #endif
 };
 // A failed GPU ownership proof must never return into upstream VO teardown.
@@ -36,11 +37,24 @@ static inline void svp_fel_vo_quarantine(void)
     for(;;)pthread_cond_wait(&cv,&lock);
 }
 #endif
+#if defined(PL_HAVE_VULKAN)
+static inline void svp_fel_vo_reap_outputs(struct priv *p)
+{
+    struct svp_fel_vo_cache *s=p->svp_fel;
+    if(!s)return;
+    for(unsigned i=0;i<SVP_PLACEBO_PENDING;i++)
+        if(s->deferred[i]&&svp_placebo_quality_poll_texture(p->gpu,&s->quality,s->deferred[i]))
+            pl_tex_destroy(p->gpu,&s->deferred[i]);
+}
+#endif
 static inline void svp_fel_vo_preflight_retirement(struct priv *p)
 {
 #if defined(PL_HAVE_VULKAN)
-    if(p->svp_fel&&!svp_placebo_quality_try_retire_texture(p->gpu,&p->svp_fel->quality,NULL))
-        svp_fel_vo_quarantine();
+    if(p->svp_fel){
+        if(!svp_placebo_quality_try_retire_texture(p->gpu,&p->svp_fel->quality,NULL))
+            svp_fel_vo_quarantine();
+        svp_fel_vo_reap_outputs(p);
+    }
 #else
     (void)p;
 #endif
@@ -61,10 +75,23 @@ static inline void svp_fel_vo_destroy(struct priv *p)
     pl_renderer_destroy(&s->reconstruct);
     free(s);p->svp_fel=NULL;
 }
-static inline void svp_fel_vo_retire_output(struct priv *p,pl_tex output)
+static inline void svp_fel_vo_retire_output(struct priv *p,pl_tex *output)
 {
 #if defined(PL_HAVE_VULKAN)
-    if(p->svp_fel&&output&&!svp_placebo_quality_try_retire_texture(p->gpu,&p->svp_fel->quality,output))
+    struct svp_fel_vo_cache *s=p->svp_fel;
+    if(!s||!output||!*output)return;
+    if(svp_placebo_quality_poll_texture(p->gpu,&s->quality,*output))return;
+    if(s->quality.terminal_uncertain)svp_fel_vo_quarantine();
+    svp_fel_vo_reap_outputs(p);
+    // Keep evicted textures alive without delaying a live queue unmap.
+    for(unsigned i=0;i<SVP_PLACEBO_PENDING;i++){
+        if(s->deferred[i])continue;
+        s->deferred[i]=*output;*output=NULL;
+        return;
+    }
+    // A full bounded deferred set is backpressure, not permission to
+    // destroy an in-flight image. Try the bounded fence path once.
+    if(!svp_placebo_quality_try_retire_texture(p->gpu,&s->quality,*output))
         svp_fel_vo_quarantine();
 #else
     (void)p;(void)output;
@@ -144,6 +171,7 @@ static inline bool svp_fel_vo_map(struct priv *p,struct vo *vo,struct mp_image *
     if(!p->svp_fel)p->svp_fel=calloc(1,sizeof(*p->svp_fel));
     struct svp_fel_vo_cache *s=p->svp_fel;
     if(!s)return false;
+    svp_fel_vo_reap_outputs(p);
     if(!s->reconstruct)s->reconstruct=pl_renderer_create(p->pllog,p->gpu);
     if(!s->reconstruct)return false;
     bool extended=ambient_svp_quality_extended(&pair->quality)&&pair->source[2]&&pair->source[3]&&

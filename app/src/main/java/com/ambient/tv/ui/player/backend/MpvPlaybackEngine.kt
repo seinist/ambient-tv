@@ -1951,7 +1951,8 @@ internal class MpvPlaybackEngine(
                 if (!adopted) owned?.cleanup()
                 if (held) {
                     hdrSceneHold.release()
-                    if (!released && !ended) setProperty("pause", if (nativePlayWanted) "no" else "yes")
+                    if (!released && !ended && !nativeAudioReleases.hasUncertainOwnership())
+                        setProperty("pause", if (nativePlayWanted) "no" else "yes")
                 }
             }
         }

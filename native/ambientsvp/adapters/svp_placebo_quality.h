@@ -142,6 +142,20 @@ static inline bool svp_placebo_quality_try_retire_texture(pl_gpu gpu,struct svp_
     }
     return true;
 }
+// Nonblocking retirement for queue frame eviction. An unrelated older
+// ticket must also retire before reaching a later referencing ticket.
+static inline bool svp_placebo_quality_poll_texture(pl_gpu gpu,struct svp_placebo_quality *s,pl_tex texture)
+{
+    if(s->terminal_uncertain)return false;
+    while(s->pending_count){
+        bool needed=texture==NULL;
+        for(unsigned i=0;i<s->pending_count;i++)
+            for(unsigned j=0;j<s->pending[i].count;j++)needed|=s->pending[i].textures[j]==texture;
+        if(!needed)return true;
+        if(!svp_placebo_retire_one(gpu,s,0,0))return false;
+    }
+    return true;
+}
 static inline void svp_placebo_quality_source_changed(pl_gpu gpu,struct svp_placebo_quality *s,pl_tex texture)
 {
     (void)gpu;(void)texture;
