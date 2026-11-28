@@ -12,7 +12,8 @@ use hdr_stats::{HdrWindow,HdrResult,HdrTrack,StatsJob,StatsPipelines,HdrScene,Sc
 
 const MAX_PHASES:usize=8;
 const MAX_IN_FLIGHT:u32=4;
-const MAX_PIXELS:u64=1920*1080;
+const MAX_PIXELS:u64=3840*2160;
+const HD_PIXELS:u64=1920*1080;
 type Result<T>=std::result::Result<T,String>;
 fn err(e:vk::Result)->String{format!("Vulkan result {}",e.as_raw())}
 fn spirv(source:&str,uniform:&str,entry:&str)->Result<Vec<u32>>{
@@ -714,6 +715,8 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
     let limits=properties.limits;
     let step=tuning.map_or(16,ResidentTuning::step);
     let (gw,gh)=(width.div_ceil(step),height.div_ceil(step));
+    // UHD is opt-in via the high-depth path; preserve the bounded motion-grid budget.
+    if u64::from(width)*u64::from(height)>HD_PIXELS && !matches!(mode,1..=3){return Err("UHD resident HDR formats only".into());}
     if tuning.is_some() && u64::from(gw)*u64::from(gh)>32768{return Err("resident quality block budget".into());}
     // Keep the first two directional fields and scene word ABI stable;
     // append immutable coarse snapshots and two global predictors.
@@ -770,7 +773,8 @@ fn new_core(instance:&ash::Instance,physical:vk::PhysicalDevice,device:ash::Devi
     }else{None};
     Ok(VulkanResident(Arc::new(Core{device,memory,motion,synthesis,quality,tuning,masks,algorithm:AtomicU32::new(0),width,height,gw,gh,field_size,mode,in_flight:AtomicU32::new(0),aux_in_flight:AtomicU32::new(0),idle:Mutex::new(Vec::new()),lost:AtomicBool::new(false),
         stats_supported:matches!(mode,1..=3)&&limits.max_per_stage_descriptor_storage_buffers>=3&&
-            limits.max_storage_buffer_range>=100001*4*3,
+            limits.max_storage_buffer_range>=100001*4*3&&
+            u64::from(limits.max_storage_buffer_range)>=4*(100001+u64::from(width.div_ceil(5))*u64::from(height.div_ceil(5))),
         stats:Mutex::new(None)})))
 }
 
