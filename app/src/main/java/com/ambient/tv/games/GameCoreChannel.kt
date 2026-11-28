@@ -47,6 +47,17 @@ enum class GameCoreSource(val key: String, val experimentalProfile: String? = nu
         fun fromKey(key: String?) = entries.firstOrNull { it.key == key } ?: AUTO
     }
 
+    /** Ordered signed preferences; optionally consider an already installed buildbot as the last resort. */
+    fun preferredSources(core: GameCore, abi: String, includeInstalledBuildbot: Boolean = false): List<GameCoreSource> {
+        val candidates = when (this) {
+            OPTIMIZED_A57 -> listOf(OPTIMIZED_A57, OPTIMIZED, AMBIENT)
+            OPTIMIZED -> listOf(OPTIMIZED, AMBIENT)
+            else -> listOf(this)
+        }
+        val signed = candidates.filter { it.experimentalProfile == null || it.supportsExperiment(core, abi) }
+        return if (includeInstalledBuildbot && this in publicExperiments) signed + BUILDBOT else signed
+    }
+
     fun supportsExperiment(core: GameCore, abi: String): Boolean =
         (core.supportedAbis.isEmpty() || abi in core.supportedAbis) && when (this) {
             PICODRIVE_SH2 -> core.id == "picodrive" && abi == "arm64-v8a"
@@ -56,6 +67,17 @@ enum class GameCoreSource(val key: String, val experimentalProfile: String? = nu
             HOTPATHS, O3, THINLTO, O3_THINLTO -> true
             AUTO, AMBIENT, BUILDBOT -> false
         }
+}
+
+/** Only a negative availability result permits moving to the next preference. Errors propagate. */
+internal suspend fun firstAvailableCoreSource(
+    candidates: List<GameCoreSource>,
+    available: suspend (GameCoreSource) -> Boolean,
+): GameCoreSource? {
+    for (candidate in candidates) {
+        if (available(candidate)) return candidate
+    }
+    return null
 }
 
 /** A test signed for one core, selected explicitly for this player route. */

@@ -178,26 +178,39 @@ class GamePlayerViewModel @Inject constructor(
             }
             val source = if (testingCore) {
                 val experiment = GameCoreExperiment.fromKey(savedArguments.get<String>("experiment").orEmpty())
-                if (!settings.coreExperimentsEnabled || experiment == null || experiment.coreId != chosen.id ||
+                if (experiment == null ||
+                    (experiment.source !in GameCoreSource.publicExperiments && !settings.coreExperimentsEnabled) ||
+                    experiment.coreId != chosen.id ||
                     !experiment.source.supportsExperiment(chosen, abi)) {
                     mutable.value = GameUiState.Failed(GameFailure.CORE_INCOMPATIBLE)
                     return@launch
                 }
                 experiment.source
-            } else settings.coreSource
-            if (source.experimentalProfile != null && !source.supportsExperiment(chosen, abi)) {
-                mutable.value = GameUiState.Failed(GameFailure.CORE_INCOMPATIBLE)
-                return@launch
-            }
+            } else settings.gameCoreSource(game.system, game.saveKey)
             // A RomM game's firmware is its server's: matched to it before the check.
             if (game.remote != null) remoteData.syncFirmware(game)
             bios.missingRequired(game.system, GameSystems.extension(game.file.name), chosen,
                 storage.systemDirectory(game))?.let { missing ->
                 mutable.value = GameUiState.Failed(GameFailure.BIOS_MISSING, missing.file); return@launch
             }
-            val core = cores.installed(chosen, source)
-            if (core == null) mutable.value = GameUiState.NeedsCore(game, chosen, cores.sourceUrl(chosen), source)
-            else start(game, chosen, core, source)
+            // Explicit experiments remain strict; normal optimized preferences may fall back.
+            val resolvedSource = try {
+                if (testingCore) source else cores.resolvePreferredSource(chosen, source)
+            } catch (error: GameCoreBuildbotConsentRequired) {
+                mutable.value = GameUiState.ConfirmBuildbot(game, chosen, error.message.orEmpty())
+                return@launch
+            } catch (error: GameCoreIncompatibleException) {
+                mutable.value = GameUiState.Failed(GameFailure.CORE_INCOMPATIBLE, error.message)
+                return@launch
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                mutable.value = GameUiState.Failed(GameFailure.CORE_DOWNLOAD, error.message)
+                return@launch
+            }
+            val core = cores.installed(chosen, resolvedSource)
+            if (core == null) mutable.value = GameUiState.NeedsCore(game, chosen, cores.sourceUrl(chosen), resolvedSource)
+            else start(game, chosen, core, resolvedSource)
         }
     }
 

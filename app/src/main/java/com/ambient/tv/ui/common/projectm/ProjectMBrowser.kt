@@ -3,6 +3,7 @@ package com.ambient.tv.ui.common.projectm
 import android.content.Context
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,6 +62,8 @@ class ProjectMBrowser(
     var currentPath by mutableStateOf<String?>(null)
     var locked by mutableStateOf(false)
     var pendingPath by mutableStateOf<String?>(null)
+    var pendingRevision by mutableIntStateOf(0)
+        private set
     var pendingSmooth by mutableStateOf(true)
     private val revision = mutableIntStateOf(0)
 
@@ -89,13 +92,16 @@ class ProjectMBrowser(
         preferences.projectmResolutionKey = resolutionKey
     }
 
-    fun presets(): List<ProjectMPreset> {
+    private val filteredPresets = derivedStateOf {
         revision.intValue
-        return if (filter == "favorites") {
+        if (filter == "favorites") {
             val fav = favoritesStore.all()
             repository.presets.filter { it.assetPath in fav }
         } else repository.presets
     }
+    private val byPath by lazy { repository.presets.associateBy { it.assetPath } }
+
+    fun presets(): List<ProjectMPreset> = filteredPresets.value
 
     fun isFavorite(path: String): Boolean {
         revision.intValue
@@ -111,12 +117,13 @@ class ProjectMBrowser(
         currentPath = preset.assetPath
         pendingPath = preset.assetPath
         pendingSmooth = smooth
+        pendingRevision++
         locked = true
     }
 
     fun consumePending(): Pair<ProjectMPreset, Boolean>? {
         val path = pendingPath ?: return null
-        val preset = repository.presets.firstOrNull { it.assetPath == path } ?: return null
+        val preset = byPath[path] ?: return null
         pendingPath = null
         return preset to pendingSmooth
     }

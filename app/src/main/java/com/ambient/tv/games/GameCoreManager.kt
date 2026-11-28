@@ -57,6 +57,34 @@ class GameCoreManager @Inject constructor(
     fun installed(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO): File? =
         file(core, source).takeIf { it.isFile && it.length() > 0 && sourceMatches(source, infoFile(core, source)) }
 
+    /** For presentation and management of an already installed preferred variant. */
+    fun installedPreferredSource(core: GameCore, source: GameCoreSource): GameCoreSource? =
+        abi?.let { currentAbi -> source.preferredSources(core, currentAbi, includeInstalledBuildbot = true).firstOrNull { installed(core, it) != null } }
+
+    /**
+     * Resolve normal optimized playback or a management download to the actual signed channel.
+     * Check higher-priority releases before using a lower installed variant. Do not mask an
+     * invalid signature, malformed metadata, download error or other integrity failure.
+     */
+    suspend fun resolvePreferredSource(
+        core: GameCore,
+        source: GameCoreSource,
+        preferInstalled: Boolean = true,
+    ): GameCoreSource {
+        if (source !in GameCoreSource.publicExperiments) return source
+        val currentAbi = abi ?: throw GameCoreIncompatibleException("No core build for this ABI")
+        if (core.supportedAbis.isNotEmpty() && currentAbi !in core.supportedAbis)
+            throw GameCoreIncompatibleException("${core.name} is not available for $currentAbi")
+        return firstAvailableCoreSource(source.preferredSources(core, currentAbi, includeInstalledBuildbot = preferInstalled)) { candidate ->
+            // Reuse a previously accepted local buildbot binary, never automatically download one.
+            if (candidate == GameCoreSource.BUILDBOT) installed(core, candidate) != null
+            else (preferInstalled && installed(core, candidate) != null) ||
+                (channel.available && channel.build(core, currentAbi, candidate) != null)
+        } ?: throw GameCoreBuildbotConsentRequired(
+            "No signed ${core.id} build for $currentAbi. Confirm the unsigned buildbot source explicitly."
+        )
+    }
+
     private fun sourceMatches(source: GameCoreSource, metadata: File): Boolean =
         source == GameCoreSource.AUTO || source.acceptsOrigin(readInfo(metadata)?.origin)
 

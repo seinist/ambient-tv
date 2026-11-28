@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="game_launch_loading_title">Loading game</string>
     <string name="game_preparing">Preparing game …</string>
     <string name="game_progress">%1$d %%</string>
     <string name="game_core_needed">%1$s is needed</string>
@@ -224,10 +225,15 @@
     <string name="games_core_source">Core source</string>
     <string name="games_core_source_auto">Automatic</string>
     <string name="games_core_source_ambient">Ambient TV – Standard</string>
-    <string name="games_core_source_optimized">Optimized (experimental)</string>
-    <string name="games_core_source_optimized_a57">Cortex-A57 (experimental)</string>
+    <string name="games_core_source_optimized">Optimized</string>
+    <string name="games_core_source_optimized_a57">Cortex-A57</string>
     <string name="games_core_source_buildbot">Libretro build server</string>
     <string name="games_core_source_unavailable">The signed Ambient TV channel is unavailable in this app build.</string>
+    <string name="games_core_source_optimized_hint">Prefers optimized cores, then signed standard cores. The libretro build server requires confirmation.</string>
+    <string name="games_core_source_a57_hint">Prefers Cortex-A57, then optimized and signed standard cores. The libretro build server requires confirmation.</string>
+    <string name="games_core_source_fallback">Installed fallback variant: %1$s</string>
+    <string name="games_core_source_default">Preferred core variant</string>
+    <string name="games_core_source_inherit">Inherit default (%1$s)</string>
     <string name="games_core_source_auto_hint">Uses an installed core or looks for a signed Ambient TV build. Downloads from the libretro build server require confirmation.</string>
     <string name="games_core_source_ambient_hint">Uses signed Ambient TV builds with pinned versions and 16 KB page support.</string>
     <string name="games_core_source_mismatch">Select Load to download this core from %1$s.</string>
@@ -377,7 +383,7 @@
     <string name="game_performance_rewind_suspended">Suspended by the Low overhead profile. Your saved rewind setting is preserved.</string>
     <string name="games_core_tests_enable">Allow core test builds</string>
     <string name="games_core_tests_enable_hint">Show compatible test builds under Advanced in game details.</string>
-    <string name="games_core_tests_advanced">Advanced · Core test builds</string>
+    <string name="games_core_tests_advanced">Launch core variant directly</string>
     <string name="games_core_tests_empty">No matching test builds for this core and device.</string>
     <string name="games_core_tests_load_failed">Could not check for more signed test builds.</string>
     <string name="games_core_test_option">%1$s · %2$s</string>

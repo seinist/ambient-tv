@@ -1,23 +1,32 @@
 --- a/audio/out/ao_audiotrack.c
 +++ b/audio/out/ao_audiotrack.c
-@@ -34,6 +34,24 @@
+@@ -34,6 +34,33 @@
  
  static mp_static_mutex jni_static_lock = MP_STATIC_MUTEX_INITIALIZER;
  static int jni_static_use_count = 0;
 +
 +#include <dlfcn.h>
++#include <stdatomic.h>
 +/* Optional in-process PCM tap; no microphone or system-wide audio capture. */
 +static void ambient_pcm_tap(int source, const void *data, size_t frames, int channels, int encoding)
 +{
 +    typedef void (*tap_fn)(int, const void *, size_t, int, int);
-+    static tap_fn tap;
-+    static unsigned retry;
-+    if (!tap && (++retry % 64 == 1)) {
++    static _Atomic(tap_fn) cached;
++    static atomic_uint retry;
++    tap_fn tap = atomic_load_explicit(&cached, memory_order_acquire);
++    if (!tap && (atomic_fetch_add_explicit(&retry, 1, memory_order_relaxed) % 64 == 0)) {
 +        void *lib = dlopen("libambientprojectm.so", RTLD_NOW | RTLD_NOLOAD);
 +        if (lib) {
-+            tap = (tap_fn)dlsym(lib, "ambient_projectm_pcm_v1");
-+            /* Retain the handle for the lifetime of the cached function pointer. */
-+            if (!tap) dlclose(lib);
++            tap_fn found = (tap_fn)dlsym(lib, "ambient_projectm_pcm_v1");
++            tap_fn expected = NULL;
++            if (found && atomic_compare_exchange_strong_explicit(&cached, &expected, found,
++                    memory_order_acq_rel, memory_order_acquire)) {
++                /* Retain the winning handle for the lifetime of the published pointer. */
++                tap = found;
++            } else {
++                dlclose(lib);
++                tap = expected;
++            }
 +        }
 +    }
 +    if (tap) tap(source, data, frames, channels, encoding);
@@ -25,11 +34,13 @@
  
  struct priv {
      jobject audiotrack;
-@@ -591,6 +609,10 @@
+@@ -591,6 +618,12 @@
              ts += MP_TIME_S_TO_NS(read_samples / (double)(ao->samplerate));
              ts += MP_TIME_S_TO_NS(AudioTrack_getLatency(ao));
              int samples = ao_read_data(ao, &p->chunk, read_samples, ts, NULL, false, false);
-+            if (p->format != AudioFormat.ENCODING_IEC61937)
++            if (samples > 0 && (p->format == AudioFormat.ENCODING_PCM_FLOAT ||
++                    p->format == AudioFormat.ENCODING_PCM_16BIT ||
++                    p->format == AudioFormat.ENCODING_PCM_8BIT))
 +                ambient_pcm_tap(2, p->chunk, samples, ao->channels.num,
 +                    p->format == AudioFormat.ENCODING_PCM_FLOAT ? 4 :
 +                    p->format == AudioFormat.ENCODING_PCM_16BIT ? 2 : 1);

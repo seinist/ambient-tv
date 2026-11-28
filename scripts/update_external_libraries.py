@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import concurrent.futures
 import os
 import json
 import re
@@ -249,33 +248,6 @@ def git_tag_for(repo: str, sha: str) -> str:
     return ""
 
 
-def cores_path() -> Path:
-    return ROOT / "cores" / "cores.json"
-
-
-def remote_head(repo: str) -> str:
-    # git ls-remote instead of the GitHub API: one call per core would exhaust the 60/h limit.
-    out = subprocess.run(["git", "ls-remote", repo, "HEAD"], capture_output=True, text=True, timeout=120,
-                         env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
-    sha = out.stdout.split()[0] if out.returncode == 0 and out.stdout.strip() else ""
-    if not re.fullmatch(r"[0-9a-f]{40}", sha):
-        raise RuntimeError(f"Could not resolve HEAD of {repo}: {out.stderr.strip() or 'no output'}")
-    return sha
-
-
-def cores_latest(cores: list[dict]) -> dict[str, str]:
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-        heads = pool.map(lambda c: remote_head(c["repo"]), cores)
-        return {c["core"]: sha for c, sha in zip(cores, heads)}
-
-
-def render_cores(data: dict, commits: dict[str, str]) -> bytes:
-    data = json.loads(json.dumps(data))
-    for core in data["cores"]:
-        core["commit"] = commits.get(core["core"], core["commit"])
-    return (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode()
-
-
 def prepare_libretrodroid() -> bool:
     """Fetch the pinned module and apply our patches; False when a patch no longer applies."""
     return subprocess.run([str(ROOT / "scripts" / "fetch_libretrodroid.sh")]).returncode == 0
@@ -296,15 +268,13 @@ def main() -> int:
     group.add_argument("--check", action="store_true")
     group.add_argument("--apply", action="store_true")
     parser.add_argument("--only", choices=("svp", "monogram", "libretro"),
-                        help="Check/update only Open-SVPFlow, Monogram or LibretroDroid and the libretro cores")
+                        help="Check/update only Open-SVPFlow, Monogram or LibretroDroid (cores have a separate updater)")
     args = parser.parse_args()
     include_rest = args.only is None
     include_svp = args.only in (None, "svp")
     include_monogram = args.only in (None, "monogram")
     include_libretro = args.only in (None, "libretro")
-
     current = load_props()
-    cores_data = json.loads(cores_path().read_text(encoding="utf-8")) if include_libretro else None
     if include_svp:
         svp.verify(ROOT / "native/ambientsvp", svp.pinned_revision(ROOT))
     managed = [PROPS]
@@ -312,8 +282,6 @@ def main() -> int:
         managed.extend(ROOT / "native/ambientsvp" / name for name in svp.UPDATE_FILES)
     if include_rest:
         managed.append(CATALOG)
-    if include_libretro:
-        managed.append(cores_path())
     originals = {path: path.read_bytes() for path in managed}
     latest: dict[str, str] = {}
     current_libvlc = latest_libvlc = None
@@ -329,10 +297,8 @@ def main() -> int:
         latest.update(svp_latest())
     if include_monogram:
         latest.update(monogram_latest())
-    latest_cores: dict[str, str] = {}
     if include_libretro:
         latest.update(libretrodroid_latest(current))
-        latest_cores = cores_latest(cores_data["cores"])
 
     labels = [
         ("SmartTube", "SMARTTUBE_VERSION"),
@@ -382,13 +348,6 @@ def main() -> int:
         marker = "UPDATE" if current_libvlc != latest_libvlc else "ok"
         changed |= current_libvlc != latest_libvlc
         print(f"  {'libVLC':22} {current_libvlc:44} -> {latest_libvlc:44} [{marker}]")
-    cores_changed = []
-    for core in (cores_data or {}).get("cores", []):
-        old, new = core["commit"], latest_cores[core["core"]]
-        if old != new:
-            cores_changed.append(core["core"])
-        print(f"  {'core ' + core['core']:22} {old:44} -> {new:44} [{'ok' if old == new else 'UPDATE'}]")
-    changed |= bool(cores_changed)
     libretrodroid_changed = ("LIBRETRODROID_COMMIT" in latest
                              and current.get("LIBRETRODROID_COMMIT") != latest["LIBRETRODROID_COMMIT"])
 
@@ -406,8 +365,6 @@ def main() -> int:
         old_libretrodroid = current.get("LIBRETRODROID_COMMIT", "")
         old_libretrodroid_pins = {key: current.get(key, "") for key in LIBRETRODROID_KEYS}
         updates = {}
-        if cores_changed:
-            updates[cores_path()] = render_cores(cores_data, latest_cores)
         if "SVPFLOW_REF" in latest and current["SVPFLOW_REF"] != latest["SVPFLOW_REF"]:
             print("Preparing matching SVP Rust pins, Cargo.lock, Vulkan shader and notices...")
             updates.update(svp.stage_update(ROOT, latest["SVPFLOW_REF"], get_bytes))
@@ -415,7 +372,8 @@ def main() -> int:
         updates[PROPS] = render_props(current).encode()
         if latest_libvlc is not None:
             updates[CATALOG] = render_catalog_version("libvlc", latest_libvlc).encode()
-        svp.apply_files(updates, {path: originals[path] for path in updates})
+        if updates:
+            svp.apply_files(updates, {path: originals[path] for path in updates})
         if libretrodroid_changed:
             # Our patches target exact upstream lines: prove they still apply before keeping
             # the new pin, otherwise the next build would stop at a patch error.
@@ -427,9 +385,6 @@ def main() -> int:
                 print(f"WARNING: LibretroDroid kept at {old_libretrodroid}: a patch does not apply to "
                       f"{latest['LIBRETRODROID_COMMIT']}. Rebase scripts/patches/libretrodroid, then set "
                       "LIBRETRODROID_COMMIT by hand.")
-        if cores_changed:
-            print(f"Libretro cores updated ({', '.join(cores_changed)}). Pushing cores/cores.json to main "
-                  "builds and publishes them; or run ./build.sh cores " + ",".join(cores_changed) + ".")
         if include_svp:
             print("\nUpdated managed pins and matching SVP source assets (no native build).")
             print("The next normal build detects changed native inputs and rebuilds affected runtimes automatically.")

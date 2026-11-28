@@ -399,8 +399,12 @@ class GamesTest {
         val snes = GameSystems.byId("snes")!!
         val ds = GameSystems.byId("nds")!!
         val defaults = GameSettingsState()
-        assertTrue(defaults.touchControls(snes))
-        assertFalse(defaults.touchControls(ds))
+        GameSystems.all.forEach { system ->
+            assertTrue(system.id, defaults.touchControls(system))
+            val disabled = defaults.withTouchControls(system, false)
+            assertFalse(system.id, GameSettingsState(disabled.values).touchControls(system))
+            assertTrue(system.id, disabled.withTouchControls(system, true).touchControls(system))
+        }
         assertEquals(GameTouchMode.DPAD, defaults.touchMode(snes))
         val edited = defaults.withTouchControls(snes, false)
             .withTouchControls(ds, true)
@@ -410,7 +414,9 @@ class GamesTest {
         assertEquals(GameTouchMode.DUAL, edited.touchMode(snes))
         assertEquals(GameTouchMode.HYBRID, edited.withTouchMode(snes, GameTouchMode.HYBRID).touchMode(snes))
         assertEquals("0", edited.values["touch.snes"])
-        assertEquals("1", edited.values["touch.nds"])
+        assertNull(edited.values["touch.nds"])
+        // Existing explicitly enabled pointer-system settings remain valid after the default change.
+        assertTrue(GameSettingsState(mapOf("touch.nds" to "1")).touchControls(ds))
         assertEquals(GameTouchMode.DPAD, edited.withTouchMode(snes, GameTouchMode.DPAD).touchMode(snes))
     }
 

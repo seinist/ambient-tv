@@ -195,6 +195,27 @@ if (monogramEnabled) {
     require(stamp.readLines().contains("patch=$patchHash")) {
         "Monogram Native patch changed; rebuild the MTProto AAR"
     }
+    val builderHash = MessageDigest.getInstance("SHA-256")
+        .digest(file("../scripts/build_monogram_native.sh").readBytes())
+        .joinToString("") { "%02x".format(it) }
+    require(stampLines.contains("builder=$builderHash") &&
+        stampLines.any { it.startsWith("build_config=") } &&
+        stampLines.contains("opt_level=" + (providers.environmentVariable("MONOGRAM_OPT_LEVEL").orNull ?: "2")) &&
+        stampLines.contains("cpu_tune=" + (providers.environmentVariable("MONOGRAM_CPU_TUNE").orNull ?: "generic")) &&
+        stampLines.contains("pgo_mode=" + (providers.environmentVariable("MONOGRAM_PGO_MODE").orNull ?: "off"))) {
+        "Monogram native compiler configuration changed; rebuild with ./build.sh monogram"
+    }
+    require((providers.environmentVariable("MONOGRAM_CPU_TUNE").orNull ?: "generic") != "cortex-a57" ||
+        selectedAbis == listOf("arm64-v8a")) { "Cortex-A57 Monogram is ARM64-only" }
+    val pgoMode = providers.environmentVariable("MONOGRAM_PGO_MODE").orNull ?: "off"
+    require(pgoMode in listOf("off", "generate", "use") && (pgoMode == "off" || selectedAbis.size == 1)) {
+        "Monogram PGO requires an explicit single ABI"
+    }
+    if (pgoMode == "use") {
+        val profile = file(requireNotNull(providers.environmentVariable("MONOGRAM_PGO_PROFILE").orNull))
+        val digest = MessageDigest.getInstance("SHA-256").digest(profile.readBytes()).joinToString("") { "%02x".format(it) }
+        require(stampLines.contains("pgo_profile=$digest")) { "Monogram PGO profile changed; rebuild the native AAR" }
+    }
     ZipFile(monogramAar).use { aar ->
         val missing = selectedAbis.filter { aar.getEntry("jni/$it/libmonogram_mtproto.so") == null }
         require(missing.isEmpty()) {
@@ -259,6 +280,12 @@ android {
 
         buildConfigField("String", "APP_DISPLAY_NAME", quotedBuildConfigString(appDisplayName))
         buildConfigField("boolean", "MONOGRAM_NATIVE", monogramEnabled.toString())
+        buildConfigField("boolean", "MONOGRAM_CDN_RANGES", (providers.environmentVariable("MONOGRAM_CDN_RANGES").orNull == "1").toString())
+        val monogramPgoGenerate = monogramEnabled && providers.environmentVariable("MONOGRAM_PGO_MODE").orNull == "generate"
+        buildConfigField("boolean", "MONOGRAM_PGO_GENERATE", monogramPgoGenerate.toString())
+        buildConfigField("String", "MONOGRAM_PGO_STAMP", quotedBuildConfigString(
+            if (monogramPgoGenerate) file("libs/.monogram-native-version").readText() else ""))
+        buildConfigField("boolean", "MONOGRAM_PERF_COUNTERS", (providers.environmentVariable("MONOGRAM_PERF_COUNTERS").orNull == "1").toString())
         buildConfigField("boolean", "SPOTIFY_ENABLED", spotifyEnabled.toString())
         buildConfigField("boolean", "LIBRASHADER_NATIVE", (
             providers.gradleProperty("LIBRASHADER_NATIVE")
@@ -397,6 +424,9 @@ android {
         resources {
             // Signed JVM crypto jars contain metadata that Android does not load as code.
             excludes += setOf("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "META-INF/versions/**")
+            // dnsjava's multi-release desktop JDK resolver provider is absent on Android.
+            // Do not exclude other service descriptors: SLF4J and other providers need them.
+            excludes += "META-INF/services/java.net.spi.InetAddressResolverProvider"
             merges += setOf("META-INF/LICENSE", "META-INF/LICENSE.txt", "META-INF/LICENSE.md", "META-INF/NOTICE", "META-INF/NOTICE.txt", "META-INF/NOTICE.md")
         }
         jniLibs {
@@ -563,9 +593,10 @@ dependencies {
     implementation(libs.zxing.core)
     // WireGuard X25519 (the platform JCA has it only from API 33); also required by smbj/jcifs-ng.
     implementation(libs.bouncycastle.prov)
-    // SFTP file sources. bcpkix uses the published 1.85 release; bcprov retains its 1.85.2 patch.
+    // SFTP file sources. Bouncy Castle provider, PKIX and utility modules share one release.
     implementation(libs.sshj)
     implementation(libs.bouncycastle.pkix)
+    implementation(libs.bouncycastle.util)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
@@ -596,6 +627,8 @@ dependencies {
     // SmartTube network engine "Cronet": the Play Services provider, no bundled native library.
     implementation(libs.androidx.media3.datasource.cronet)
     implementation(libs.play.services.cronet)
+    // Use the canonical API AAR explicitly; retain the Play Services provider.
+    implementation(libs.chromium.cronet)
     implementation(libs.androidx.media3.session)
 
     implementation(libs.retrofit.core)
@@ -934,7 +967,8 @@ configurations.configureEach {
         incoming.afterResolve {
             val forbidden = resolutionResult.allComponents.mapNotNull { it.moduleVersion }
                 .filter {
-                    (it.group == "org.chromium.net" && it.name in setOf("cronet-embedded", "cronet-common")) ||
+                    (it.group == "org.chromium.net" && it.name in setOf("cronet-embedded", "cronet-bundled", "cronet-common", "cronet-shared",
+                        "cronet-api", "cronet-fallback", "httpengine-native-provider")) ||
                         (it.group == "com.google.net.cronet" && it.name == "cronet-okhttp")
                 }
             check(forbidden.isEmpty()) {

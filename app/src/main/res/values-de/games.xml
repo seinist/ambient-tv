@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="game_launch_loading_title">Spiel wird geladen</string>
     <string name="game_preparing">Spiel wird vorbereitet …</string>
     <string name="game_progress">%1$d %%</string>
     <string name="game_core_needed">%1$s wird benötigt</string>
@@ -224,10 +225,15 @@
     <string name="games_core_source">Quelle für Cores</string>
     <string name="games_core_source_auto">Automatisch</string>
     <string name="games_core_source_ambient">Ambient TV – Standard</string>
-    <string name="games_core_source_optimized">Optimiert (experimentell)</string>
-    <string name="games_core_source_optimized_a57">Cortex-A57 (experimentell)</string>
+    <string name="games_core_source_optimized">Optimiert</string>
+    <string name="games_core_source_optimized_a57">Cortex-A57</string>
     <string name="games_core_source_buildbot">Libretro-Buildserver</string>
     <string name="games_core_source_unavailable">Der signierte Ambient-TV-Kanal ist in diesem App-Build nicht verfügbar.</string>
+    <string name="games_core_source_optimized_hint">Bevorzugt optimierte Cores, danach signierte Standard-Cores. Der Libretro-Buildserver erfordert eine Bestätigung.</string>
+    <string name="games_core_source_a57_hint">Bevorzugt Cortex-A57, danach optimierte und signierte Standard-Cores. Der Libretro-Buildserver erfordert eine Bestätigung.</string>
+    <string name="games_core_source_fallback">Installierte Ausweichvariante: %1$s</string>
+    <string name="games_core_source_default">Bevorzugte Core-Variante</string>
+    <string name="games_core_source_inherit">Übergeordnete Vorgabe (%1$s)</string>
     <string name="games_core_source_auto_hint">Verwendet einen installierten Core oder sucht einen signierten Ambient-TV-Build. Downloads vom Libretro-Buildserver erfordern eine Bestätigung.</string>
     <string name="games_core_source_ambient_hint">Verwendet signierte Ambient-TV-Builds mit festen Versionen und Unterstützung für 16-KB-Speicherseiten.</string>
     <string name="games_core_source_mismatch">Wähle Laden, um diesen Core von %1$s herunterzuladen.</string>
@@ -377,7 +383,7 @@
     <string name="game_performance_rewind_suspended">Durch das Profil Geringer Zusatzaufwand deaktiviert. Deine gespeicherte Rückspuleinstellung bleibt erhalten.</string>
     <string name="games_core_tests_enable">Core-Testbuilds erlauben</string>
     <string name="games_core_tests_enable_hint">Zeigt passende Testbuilds in den Spieldetails unter Erweitert.</string>
-    <string name="games_core_tests_advanced">Erweitert · Core-Testbuilds</string>
+    <string name="games_core_tests_advanced">Core-Variante direkt starten</string>
     <string name="games_core_tests_empty">Für diesen Core und dieses Gerät gibt es keine passenden Testbuilds.</string>
     <string name="games_core_tests_load_failed">Weitere signierte Testbuilds konnten nicht geprüft werden.</string>
     <string name="games_core_test_option">%1$s · %2$s</string>

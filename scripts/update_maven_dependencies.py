@@ -6,6 +6,7 @@ import argparse
 import os
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 import urllib.request
 
@@ -41,8 +42,11 @@ def main() -> int:
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--check", action="store_true")
     action.add_argument("--apply", action="store_true")
+    parser.add_argument("--validate", action="store_true", help="Compile and test candidate pins; restore catalog on failure")
     parser.add_argument("key", nargs="?", help="Optional version key or inline library alias (libraries.<alias>)")
     args = parser.parse_args()
+    if args.validate and not args.apply:
+        parser.error('--validate requires --apply')
     original = CATALOG.read_bytes()
     text = original.decode("utf-8")
     channel = os.environ.get("MAVEN_CHANNEL", "stable")
@@ -61,9 +65,21 @@ def main() -> int:
     if args.apply and updates:
         updated = maven.render_catalog(text, findings).encode("utf-8")
         apply_catalog(CATALOG, original, updated)
-        print(f"\nUpdated {len(updates)} catalog pin(s). Review the diff and rebuild/test before committing.")
+        if args.validate:
+            root = CATALOG.parents[1]
+            try:
+                subprocess.run(["bash", str(root / "scripts/validate_maven_dependencies.sh")],
+                               cwd=root, check=True)
+            except BaseException:
+                # Do not silently overwrite an unrelated concurrent edit.
+                apply_catalog(CATALOG, updated, original)
+                print("Validation failed; restored previous Maven catalog.", file=sys.stderr)
+                raise
+            print(f"\nUpdated and validated {len(updates)} catalog pin(s).")
+        else:
+            print(f"\nUpdated {len(updates)} catalog pin(s). Review the diff and rebuild/test before committing.")
     elif updates:
-        print("\nApply with ./build.sh update-deps" + (f" {args.key}" if args.key else ""))
+        print("\nApply with ./build.sh deps-update" + (f" {args.key}" if args.key else ""))
     else:
         print("\nNo automatically applicable updates.")
     if any(f.status in ("MANUAL", "UNAVAILABLE") for f in findings):

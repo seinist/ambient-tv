@@ -234,6 +234,7 @@ fun PlayerPanelVisibility(
                     .fillMaxSize()
                     .zIndex(PLAYER_SETTINGS_PANEL_Z_INDEX)
                     .then(input)
+                    .focusGroup()
                     .onGloballyPositioned { entranceGate.markPlaced() },
             ) {
                 content(visualPanel)

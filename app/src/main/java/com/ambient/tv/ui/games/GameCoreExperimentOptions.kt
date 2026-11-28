@@ -18,6 +18,7 @@ import com.ambient.tv.games.library.LibraryGame
 import com.ambient.tv.ui.common.SettingsHint
 import com.ambient.tv.ui.common.SettingsNavigationRow
 import com.ambient.tv.ui.settings.SettingsGroup
+import com.ambient.tv.ui.settings.GameCoreSourceOverrideSelect
 import com.ambient.tv.ui.settings.gamesEntryPoint
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -41,9 +42,15 @@ private data class ExperimentOptions(val sources: List<GameCoreSource>, val chec
 /** Both library details open the same locally scoped test launch. No catalog request until expanded. */
 @Composable
 internal fun GameCoreExperimentOptions(game: LibraryGame, onPlay: (LibraryGame, GameCoreExperiment) -> Unit) {
-    if (!GameSettings.state.coreExperimentsEnabled) return
     val system = GameSystems.byId(game.systemId) ?: return
-    val core = GameSettings.state.gameCore(system, GameRomPreparer.sha1(game.fileId))
+    val gameKey = GameRomPreparer.sha1(game.fileId)
+    val settings = GameSettings.state
+    val core = settings.gameCore(system, gameKey)
+    GameCoreSourceOverrideSelect(
+        own = settings.ownGameCoreSource(gameKey),
+        inherited = settings.systemCoreSource(system),
+        onSelect = { source -> GameSettings.update { it.withGameCoreSource(gameKey, source) } },
+    )
     val entry = gamesEntryPoint()
     val manager = entry.cores()
     val abi = manager.abi ?: return

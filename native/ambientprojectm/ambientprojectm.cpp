@@ -14,8 +14,9 @@
 struct AmbientProjectM {
     projectm_handle instance = nullptr;
     int audioSource = 0;
+    uint64_t nativeCursor = 0;
     std::mutex mutex;
-    std::vector<float> pcm;
+    PcmRing pcm;
     std::string pendingPreset;
     bool pendingSmooth = false;
     std::string pendingTexturePath;
@@ -53,13 +54,21 @@ Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeDestroy(JNIEnv
 extern "C" JNIEXPORT void JNICALL
 Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeSetAudioSource(JNIEnv*, jobject, jlong handle, jint source) {
     auto* state = ptr(handle);
-    if (!state || source < 0 || source > 2 || state->audioSource == source) return;
-    if (state->audioSource) nativeAudio[state->audioSource].consumers.fetch_sub(1);
-    state->audioSource = source;
+    if (!state || source < 0 || source > 2) return;
+    {
+        std::lock_guard<std::mutex> guard(state->mutex);
+        if (state->audioSource == source) return;
+        if (state->audioSource) nativeAudio[state->audioSource].consumers.fetch_sub(1);
+        state->audioSource = source;
+        // Never replay PCM from the old player after switching back to the JNI feed.
+        state->pcm.clear();
+    }
     if (source) {
         auto& tap = nativeAudio[source];
         std::lock_guard<std::mutex> lock(tap.mutex);
-        tap.count = 0;
+        if (tap.consumers.load(std::memory_order_relaxed) == 0) tap.pcm.clear();
+        tap.maxFrames = std::min<size_t>(PcmRing::capacity, projectm_pcm_get_max_samples());
+        state->nativeCursor = tap.pcm.sequence;
         tap.consumers.fetch_add(1);
     }
 }
@@ -78,12 +87,12 @@ Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeFeedPcm(JNIEnv
     if (!state || !state->instance || !samples) return;
     const jsize count = env->GetArrayLength(samples);
     if (count <= 0) return;
-    std::vector<float> incoming(static_cast<size_t>(count));
-    env->GetFloatArrayRegion(samples, 0, count, incoming.data());
-    std::lock_guard<std::mutex> guard(state->mutex);
-    const unsigned maxSamples = projectm_pcm_get_max_samples();
-    if (incoming.size() > maxSamples) incoming.erase(incoming.begin(), incoming.end() - maxSamples);
-    state->pcm = std::move(incoming);
+    std::array<float, PcmRing::capacity> incoming;
+    const jsize size = std::min(count, static_cast<jsize>(incoming.size()));
+    env->GetFloatArrayRegion(samples, count - size, size, incoming.data());
+    if (env->ExceptionCheck()) return;
+    std::unique_lock<std::mutex> guard(state->mutex, std::try_to_lock);
+    if (guard.owns_lock() && state->audioSource == 0) state->pcm.append(incoming.data(), size);
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -111,6 +120,12 @@ Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeSetTexturePath
         state->pendingTexturePath = raw;
     }
     env->ReleaseStringUTFChars(path, raw);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeSetFps(JNIEnv*, jobject, jlong handle, jint fps) {
+    auto* state = ptr(handle);
+    if (state && state->instance) projectm_set_fps(state->instance, std::clamp(fps, 1, 120));
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -144,7 +159,9 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeRender(JNIEnv*, jobject, jlong handle) {
     auto* state = ptr(handle);
     if (!state || !state->instance) return;
-    std::vector<float> pcm;
+    std::array<float, PcmRing::capacity> pcm;
+    size_t pcmCount = 0;
+    const size_t maxSamples = std::min<size_t>(pcm.size(), projectm_pcm_get_max_samples());
     std::string preset;
     std::string texturePath;
     bool smooth = false;
@@ -152,7 +169,7 @@ Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeRender(JNIEnv*
     bool lockedDirty = false;
     {
         std::lock_guard<std::mutex> guard(state->mutex);
-        pcm.swap(state->pcm);
+        if (state->audioSource == 0) pcmCount = state->pcm.drainLatest(pcm.data(), maxSamples);
         preset.swap(state->pendingPreset);
         texturePath.swap(state->pendingTexturePath);
         smooth = state->pendingSmooth;
@@ -162,9 +179,8 @@ Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeRender(JNIEnv*
     }
     if (state->audioSource) {
         auto& tap = nativeAudio[state->audioSource];
-        std::lock_guard<std::mutex> lock(tap.mutex);
-        pcm.assign(tap.samples.begin(), tap.samples.begin() + tap.count);
-        tap.count = 0;
+        std::unique_lock<std::mutex> lock(tap.mutex, std::try_to_lock);
+        if (lock.owns_lock()) pcmCount = tap.pcm.readLatestSince(pcm.data(), maxSamples, state->nativeCursor);
     }
     if (!texturePath.empty()) {
         const char* paths[] = { texturePath.c_str() };
@@ -172,8 +188,28 @@ Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeRender(JNIEnv*
     }
     if (!preset.empty()) projectm_load_preset_data(state->instance, preset.c_str(), smooth);
     if (lockedDirty) projectm_set_preset_locked(state->instance, locked);
-    if (!pcm.empty()) projectm_pcm_add_float(state->instance, pcm.data(), static_cast<unsigned>(pcm.size()), PROJECTM_MONO);
+    if (pcmCount) projectm_pcm_add_float(state->instance, pcm.data(), static_cast<unsigned>(pcmCount), PROJECTM_MONO);
     projectm_opengl_render_frame(state->instance);
+}
+
+#if defined(AMBIENT_PROJECTM_PGO_GENERATE)
+extern "C" int ambient_projectm_write_profile(const char* path);
+#endif
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_ambient_tv_ui_common_projectm_ProjectMNativeBridge_nativeWriteProfile(JNIEnv* env, jobject, jstring path) {
+#if defined(AMBIENT_PROJECTM_PGO_GENERATE)
+    if (!path) return JNI_FALSE;
+    const char* raw = env->GetStringUTFChars(path, nullptr);
+    if (!raw) return JNI_FALSE;
+    const int result = ambient_projectm_write_profile(raw);
+    env->ReleaseStringUTFChars(path, raw);
+    return result == 0 ? JNI_TRUE : JNI_FALSE;
+#else
+    (void)env;
+    (void)path;
+    return JNI_FALSE;
+#endif
 }
 
 extern "C" JNIEXPORT jstring JNICALL

@@ -279,12 +279,12 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
         "effect.game.$gameKey",
     )
 
-    /** DS/3DS pointer games default to an unobstructed screen; others show buttons on phones. */
+    /** Every system offers phone buttons by default, independently of native pointer input. */
     fun touchControls(system: GameSystem): Boolean =
-        values["touch.${system.id}"]?.let { it == "1" } ?: !system.pointerInput
+        values["touch.${system.id}"]?.let { it == "1" } ?: true
 
     fun withTouchControls(system: GameSystem, on: Boolean): GameSettingsState =
-        set("touch.${system.id}", (if (on) "1" else "0").takeIf { on != !system.pointerInput })
+        set("touch.${system.id}", "0".takeIf { !on })
 
     fun touchMode(system: GameSystem): GameTouchMode = GameTouchMode.fromKey(values["touchmode.${system.id}"])
 
@@ -373,6 +373,20 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
 
     fun withCoreSource(source: GameCoreSource): GameSettingsState =
         set("core_source", source.key.takeIf { source != GameCoreSource.AUTO && source in GameCoreSource.regular })
+
+    private fun ownCoreSource(key: String): GameCoreSource? =
+        values[key]?.let(GameCoreSource::fromKey)?.takeIf { it in GameCoreSource.regular }
+
+    fun ownSystemCoreSource(system: GameSystem): GameCoreSource? = ownCoreSource("syscoresource.${system.id}")
+    fun systemCoreSource(system: GameSystem): GameCoreSource = ownSystemCoreSource(system) ?: coreSource
+    fun withSystemCoreSource(system: GameSystem, source: GameCoreSource?): GameSettingsState =
+        set("syscoresource.${system.id}", source?.takeIf { it in GameCoreSource.regular }?.key)
+
+    fun ownGameCoreSource(gameKey: String): GameCoreSource? = ownCoreSource("gamecoresource.$gameKey")
+    fun gameCoreSource(system: GameSystem, gameKey: String): GameCoreSource =
+        ownGameCoreSource(gameKey) ?: systemCoreSource(system)
+    fun withGameCoreSource(gameKey: String, source: GameCoreSource?): GameSettingsState =
+        set("gamecoresource.$gameKey", source?.takeIf { it in GameCoreSource.regular }?.key)
 
     internal fun migrateCoreSource(): GameSettingsState =
         if (GameCoreSource.fromKey(values["core_source"]) !in GameCoreSource.regular) {
