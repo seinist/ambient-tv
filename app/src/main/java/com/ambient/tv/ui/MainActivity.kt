@@ -1579,6 +1579,9 @@ private fun AmbientTvApp(
         )
     }
     val gameSelectionState by gameSelections.state.collectAsState()
+    LaunchedEffect(gameSelectionState, scheduledGame) {
+        if (gameSelectionState == null) scheduledGame = null
+    }
     /** A RomM game opens the shared game player; its data are mirrored with the server there. */
     fun playRomm(fileId: String, systemId: String, title: String, fresh: Boolean) {
         browseSelectionIntents.begin()
