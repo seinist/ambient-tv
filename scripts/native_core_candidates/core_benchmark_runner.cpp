@@ -14,6 +14,7 @@
 #include <sys/mman.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdarg>
 #include <cstdio>
@@ -28,8 +29,8 @@
 static std::string system_dir, save_dir, content_dir;
 static std::map<std::string,std::string> options, defaults;
 static std::map<std::string,std::string> overrides;
-static bool unsupported = false, quit = false;
-static uint16_t buttons = 0;
+static std::atomic<bool> unsupported{false}, quit{false};
+static std::atomic<uint16_t> buttons{0};
 static retro_hw_render_callback hw{};
 static EGLDisplay display = EGL_NO_DISPLAY;
 static EGLContext context = EGL_NO_CONTEXT;
@@ -38,7 +39,8 @@ static bool hardware = false, reset_done = false, vulkan = false;
 static BenchmarkVulkan vk;
 static unsigned preferred_renderer=RETRO_HW_CONTEXT_OPENGLES3;
 static bool require_vulkan=false, require_gles=false;
-static uint64_t video_frames = 0, audio_frames = 0;
+static uint64_t video_frames = 0, fresh_frames = 0, duplicate_frames = 0;
+static std::atomic<uint64_t> audio_frames{0};
 static unsigned width = 0, height = 0;
 static void die(const char* message) {
     std::fprintf(stderr, "%s\n", message);
@@ -187,15 +189,20 @@ static bool env(unsigned cmd, void* data) {
 }
 static void video(const void* data,unsigned w,unsigned h,size_t) {
     if(vulkan && !vk.frame(data==RETRO_HW_FRAME_BUFFER_VALID))die("Vulkan frame submission failed");
-    if(data || video_frames) {++video_frames;width=w;height=h;}
+    if(data || video_frames) {
+        ++video_frames;
+        if(data)++fresh_frames;else ++duplicate_frames;
+        width=w;height=h;
+    }
 }
-static void audio(int16_t,int16_t) {++audio_frames;}
-static size_t audio_batch(const int16_t*,size_t count) {audio_frames+=count;return count;}
+static void audio(int16_t,int16_t) {audio_frames.fetch_add(1,std::memory_order_relaxed);}
+static size_t audio_batch(const int16_t*,size_t count) {audio_frames.fetch_add(count,std::memory_order_relaxed);return count;}
 static void poll() {}
 static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id) {
     if(port || index || device!=RETRO_DEVICE_JOYPAD)return 0;
-    if(id==RETRO_DEVICE_ID_JOYPAD_MASK)return static_cast<int16_t>(buttons);
-    return id<16 ? ((buttons>>id)&1u) : 0;
+    const uint16_t state=buttons.load(std::memory_order_relaxed);
+    if(id==RETRO_DEVICE_ID_JOYPAD_MASK)return static_cast<int16_t>(state);
+    return id<16 ? ((state>>id)&1u) : 0;
 }
 template<class T> static T symbol(void* lib,const char* name) {
     void* p=dlsym(lib,name);
@@ -302,6 +309,11 @@ int main(int argc,char** argv) {
     }
     if(vulkan)vk.idle();
     else if(hardware)glFinish();
+    // Snapshot workload before serialization or shutdown can emit callbacks.
+    const uint64_t captured_video=video_frames, captured_fresh=fresh_frames,
+                   captured_duplicate=duplicate_frames,
+                   captured_audio=audio_frames.load(std::memory_order_relaxed);
+    const unsigned captured_width=width,captured_height=height;
     uint64_t state_hash=14695981039346656037ull;
     const size_t size=serialize_size();
     bool state_ok=false;
@@ -322,10 +334,11 @@ int main(int argc,char** argv) {
     }
     FILE* summary=std::fopen((prefix+"-summary.json").c_str(),"w");
     if(!summary)die("Cannot write benchmark summary");
-    std::fprintf(summary,"{\"frames\":%u,\"fps\":%.9g,\"video_frames\":%llu,\"audio_frames\":%llu,"
+    std::fprintf(summary,"{\"frames\":%u,\"fps\":%.9g,\"video_frames\":%llu,\"fresh_frames\":%llu,\"duplicate_frames\":%llu,\"audio_frames\":%llu,"
                          "\"width\":%u,\"height\":%u,\"hardware\":%s,\"renderer\":\"%s\",\"state_hash\":\"%016llx\",\"state_valid\":%s}\n",
-                 frames,av.timing.fps,(unsigned long long)video_frames,(unsigned long long)audio_frames,
-                 width,height,hardware?"true":"false",vulkan?"vulkan-sync-headless":hardware?"gles-sync-pbuffer":"software",(unsigned long long)state_hash,state_ok?"true":"false");
+                 frames,av.timing.fps,(unsigned long long)captured_video,(unsigned long long)captured_fresh,
+                 (unsigned long long)captured_duplicate,(unsigned long long)captured_audio,
+                 captured_width,captured_height,hardware?"true":"false",vulkan?"vulkan-sync-headless":hardware?"gles-sync-pbuffer":"software",(unsigned long long)state_hash,state_ok?"true":"false");
     if(std::fclose(summary))die("Summary output failed");
     // Deliberately keep the DSO loaded until normal process exit so the
     // compiler instrumentation runtime can emit LLVM_PROFILE_FILE.

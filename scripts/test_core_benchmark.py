@@ -7,6 +7,21 @@ from run_core_benchmark import fixture_identity
 from compare_core_profiles import compare
 
 class BenchmarkTests(unittest.TestCase):
+    def test_workload_rejects_missing_output(self):
+        from benchmark_core_matrix import validate_workload
+        base = dict(round=1, profile="baseline", video_frames=1000, fresh_frames=900,
+                    duplicate_frames=100, audio_frames=441000, width=1280, height=720, hardware=True)
+        other = dict(base, profile="optimized")
+        validate_workload([base, other])
+        validate_workload([base, dict(other, fresh_frames=895, duplicate_frames=105)])
+        for changed in (dict(fresh_frames=450, duplicate_frames=550),
+                        dict(audio_frames=0), dict(width=640),
+                        dict(video_frames=1000, fresh_frames=0, duplicate_frames=1000),
+                        dict(video_frames=999)):
+            with self.assertRaises(ValueError):
+                validate_workload([base, dict(other, **changed)])
+
+
     def test_fixture_identity_tracks_runtime_and_all_content(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp)

@@ -8,6 +8,35 @@ from types import SimpleNamespace
 from run_core_benchmark import run
 from compare_core_profiles import compare, PUBLIC
 
+def validate_workload(results):
+    """Reject apparent speedups caused by less rendering or missing audio."""
+    def counts(row):
+        values = [row[k] for k in ("video_frames", "fresh_frames", "duplicate_frames", "audio_frames")]
+        if any(type(n) is not int or n < 0 for n in values):
+            raise ValueError("Invalid workload counters")
+        video, fresh, duplicate, audio = values
+        if not fresh or fresh + duplicate != video or not row["width"] or not row["height"]:
+            raise ValueError("Incomplete rendered workload")
+        return video, fresh, audio
+
+    baselines = {r["round"]: r for r in results if r["profile"] == "baseline"}
+    for row in results:
+        baseline = baselines.get(row["round"])
+        if baseline is None:
+            raise ValueError("Missing paired workload baseline")
+        if (row["width"], row["height"], row["hardware"]) != (
+                baseline["width"], baseline["height"], baseline["hardware"]):
+            raise ValueError("Incomparable render geometry or hardware mode")
+        for actual, expected, tolerance in zip(counts(row), counts(baseline), (0.01, 0.01, 0.02)):
+            # Allow modest asynchronous boot/scheduling variation, not
+            # skipped frames, half-rate rendering or silent audio.
+            if expected == 0:
+                if actual != 0:
+                    raise ValueError("Incomparable workload: unexpected output")
+            elif actual == 0 or abs(actual - expected) > max(1, expected * tolerance):
+                raise ValueError("Incomparable workload: output count differs")
+
+
 def matrix(args):
     config=json.loads(args.fixture.read_text())
     root=args.fixture.resolve().parent
@@ -75,6 +104,7 @@ def matrix(args):
             (out/"workload-results.json").write_text(json.dumps(results,indent=2)+"\n")
             if args.cooldown:
                 time.sleep(args.cooldown)
+    validate_workload(results)
     result=compare(manifest,out)
     result["runner_mode"]=True
     result["fixture"]=initial_fixture

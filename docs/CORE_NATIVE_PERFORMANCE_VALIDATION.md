@@ -225,3 +225,11 @@ Shared variants on the same pin update atomically; different pins remain
 separate. Citra and Yabause JIT reference pins require a coordinated manual
 rebase of recipes and differential tests. A failed preflight keeps the old
 pin and reports the reason, while independent compatible cores can update.
+
+Paired diagnostic runs now also validate output workload: real (non-null)
+video frames, duplicated frames, audio sample counts and output geometry.
+Video and fresh-frame counts may vary by at most 1%, audio by at most 2%
+(with a one-count rounding allowance); zero/nonzero audio must match.
+Counters are captured before save-state serialization and teardown. This
+rejects comparisons that render materially less work rather than running
+it faster. It does not replace visual or audio quality verification.
