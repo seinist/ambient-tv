@@ -27,7 +27,7 @@
 #define SVP_MPV_RESIDENT 0
 #endif
 
-struct opts { double fps, source; int preset, backend, threads, artifacts, scene, algo, block, overlap, pel, search, hwresident; };
+struct opts { double fps, source; int preset, backend, threads, artifacts, scene, algo, block, overlap, pel, search, hwresident; int hdr_pass; char *hdr_plan,*hdr_cache,*hdr_key; };
 struct priv {
     struct opts *opts; SvpApi api; AmbientSvp *engine;
     struct mp_image *reference; uint8_t *buffer; size_t bytes;
@@ -222,6 +222,7 @@ static void process(struct mp_filter *f) {
     if (p->vk) {
         svp_vk_reap(p->vk, false);
         if (!p->api.enabled()) {
+            svp_vk_scene_abort(p->vk);
             struct mp_image *previous = svp_vk_take_previous(p->vk);
             if (previous) { mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, previous)); return; }
             svp_vk_reset_history(p->vk);
@@ -229,6 +230,10 @@ static void process(struct mp_filter *f) {
         struct mp_image *out = svp_vk_take_output(p->vk);
         if (out) { mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, out)); return; }
         if(p->eof&&p->vk->previous){svp_vk_eof(p->vk);mp_filter_internal_mark_progress(f);return;}
+        if(p->eof&&p->vk->scene_pass){
+            if(svp_vk_scene_complete(p->vk))MP_INFO(f,"HDR scene pass complete\n");
+            else MP_WARN(f,"HDR scene pass incomplete; no cache published\n");
+        }
     }
 #endif
     if (receive(f)) return;
@@ -287,6 +292,11 @@ static void process(struct mp_filter *f) {
                 .pel=p->opts->pel,.search=p->opts->search,.artifacts=p->opts->artifacts,.scene=p->opts->scene,
                 .algorithm=p->opts->algo};
             p->vk=svp_vk_new(p->api.lib,img,p->opts->source,p->opts->fps,&quality);
+            if(p->vk&&p->opts->hdr_pass&&!svp_vk_scene_open(p->vk,p->api.lib,img,&quality,p->opts->hdr_pass,
+                p->opts->hdr_plan,p->opts->hdr_cache,p->opts->hdr_key)){
+                MP_WARN(f,"HDR scene pass unavailable; no scene cache used\n");
+                svp_vk_destroy_state(p->vk);p->vk=NULL;
+            }
             if (p->vk) MP_INFO(f, "SVP native Vulkan resident path %dx%d %.6f -> %.6f\n",
                                img->w, img->h, p->opts->source, p->opts->fps);
         }
@@ -294,12 +304,14 @@ static void process(struct mp_filter *f) {
             p->passthrough = PASS_NONE;
             mp_filter_internal_mark_progress(f); return;
         }
+        svp_vk_scene_abort(p->vk);
         p->vk_disabled = true;
         MP_WARN(f, "SVP native Vulkan path unavailable; using existing transfer/passthrough\n");
     }
     if (p->vk && p->vk->previous) {
         // Preserve the last source frame at a transition/failure. Put the
         // new frame back so the existing path can handle it next time.
+        svp_vk_scene_abort(p->vk);
         struct mp_image *previous = svp_vk_take_previous(p->vk);
         p->vk_disabled = true;
         mp_pin_out_unread(f->ppins[0], frame);
@@ -421,6 +433,8 @@ static const m_option_t options[] = {
     {"pel", OPT_INT(pel), M_RANGE(0, 4)},
     {"search", OPT_INT(search), M_RANGE(0, 3)},
     {"hwresident", OPT_INT(hwresident), M_RANGE(0, 1)},
+    {"hdr-pass", OPT_INT(hdr_pass), M_RANGE(0, 2)},
+    {"hdr-plan", OPT_STRING(hdr_plan)}, {"hdr-cache", OPT_STRING(hdr_cache)}, {"hdr-key", OPT_STRING(hdr_key)},
     {0}
 };
 const struct mp_user_filter_entry vf_ambientsvp = {
