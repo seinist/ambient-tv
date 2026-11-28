@@ -25,6 +25,7 @@ internal data class ModuleAvailability(
  */
 internal object SystemModuleAvailability {
     fun bundled(module: SystemModule): Boolean = when (module) {
+        SystemModule.LIBRETRODROID -> BuildConfig.LIBRETRODROID_BUNDLED
         SystemModule.VLC -> BuildConfig.VLC_BUNDLED
         SystemModule.SMARTTUBE -> BuildConfig.SMARTTUBE_BUNDLED
         SystemModule.MONOGRAM -> BuildConfig.MONOGRAM_NATIVE && BuildConfig.MODULE_PACKAGING == "full"
@@ -43,13 +44,13 @@ internal object SystemModuleAvailability {
     fun reportProbe(module: SystemModule, external: Boolean, success: Boolean) {
         val offered = state(module).usable
         registry.reportProbe(module, external, success)
-        if (module in setOf(SystemModule.SPOTIFY, SystemModule.MONOGRAM, SystemModule.SMARTTUBE) && offered != state(module).usable)
+        if (module in setOf(SystemModule.SPOTIFY, SystemModule.MONOGRAM, SystemModule.SMARTTUBE, SystemModule.LIBRETRODROID) && offered != state(module).usable)
             com.ambient.tv.data.local.LoginStateSignal.changed()
     }
     fun reportFailure(module: SystemModule) {
         val offered = state(module).usable
         registry.reportFailure(module)
-        if (module in setOf(SystemModule.SPOTIFY, SystemModule.MONOGRAM, SystemModule.SMARTTUBE) && offered != state(module).usable)
+        if (module in setOf(SystemModule.SPOTIFY, SystemModule.MONOGRAM, SystemModule.SMARTTUBE, SystemModule.LIBRETRODROID) && offered != state(module).usable)
             com.ambient.tv.data.local.LoginStateSignal.changed()
     }
 
