@@ -289,10 +289,10 @@ impl StatsJob{
         if self.windows.len()!=1{return Err("expected one global scene window".into());}
         Ok(self.scene_frames()?.remove(0).frame)
     }
-    // Fingerprint exact quantized selector inputs and measured pixel count.
-    // This is a replay consistency check, not an authentication primitive.
+    // Fingerprint selector inputs, actual scanline spans and compact measured
+    // statistics. This is a replay consistency check, not authentication.
     pub(super) fn geometry_signature(&self)->Result<u64>{
-        let mut rows=vec![0u32;STRIDE*self.windows.len()];
+        let mut rows=vec![0u32;(self.summary.size/4) as usize];
         unsafe{
             let mapped=self.summary.map()?;
             std::ptr::copy_nonoverlapping(mapped,rows.as_mut_ptr(),rows.len());
@@ -302,6 +302,7 @@ impl StatsJob{
         let mut add=|value:u32|{
             for b in value.to_le_bytes(){hash^=u64::from(b);hash=hash.wrapping_mul(0x100000001b3);}
         };
+        add(2); // signature format revision
         add(self.width);add(self.height);add(self.windows.len() as u32);
         for (i,w) in self.windows.iter().enumerate(){
             let row=&rows[i*STRIDE..(i+1)*STRIDE];
@@ -310,6 +311,11 @@ impl StatsJob{
             for &v in &row[..4]{add(v);}
             add(row[39]);add(w.count);
             for &p in &w.percentages[..w.count as usize]{add(p);}
+            // Capture and replay must agree on quantized peak, distribution,
+            // brightest population and the unrounded fixed-point sum.
+            for &v in &row[20..23]{add(v);}
+            for &v in &row[24..24+w.count as usize]{add(v);}
+            add(row[40]);add(row[72]);add(row[73]);
             if i>0{
                 let x=i64::from(row[52])+i64::from(row[41] as i32);
                 let y=i64::from(row[53])+i64::from(row[42] as i32);
@@ -319,6 +325,22 @@ impl StatsJob{
                 }
                 add(x as u32);add(y as u32);
                 for &v in &row[68..71]{add(v);}
+                let offset=row[71] as usize;
+                let len=2*self.height as usize;
+                if offset<STRIDE*self.windows.len()||offset.checked_add(len).is_none_or(|end|end>rows.len()){
+                    return Err("invalid replay scanline offset".into());
+                }
+                let mut selected=0u64;
+                for (y,span) in rows[offset..offset+len].chunks_exact(2).enumerate(){
+                    if span[0]>span[1]||span[1]>self.width||
+                        span[0]!=span[1]&&(y<(row[1] as usize)||y>=row[3] as usize||
+                            span[0]<row[0]||span[1]>row[2]){
+                        return Err("invalid replay scanline".into());
+                    }
+                    selected+=u64::from(span[1]-span[0]);
+                    add(span[0]);add(span[1]);
+                }
+                if selected!=u64::from(row[39]){return Err("replay scanline population mismatch".into());}
             }
         }
         Ok(hash)
@@ -512,6 +534,29 @@ pub struct SceneResult{
     pub first:u64,pub end:u64,pub brightest_frame:u64,
     pub maxscl:[u32;3],pub average:u32,pub percentiles:[u32;9],pub fraction:u32,
 }
+// Each histogram bin represents a rounded 1e-5 MaxRGB value. The
+// independently accumulated 1e-9 sum must be consistent with those
+// bin intervals, including saturation endpoints. Allow one fixed-point
+// unit at each half-bin boundary for independent LUT rounding.
+fn validate_frame_population(frame:&SceneFrame,n:u64)->Result<()>{
+    let peak=*frame.maxscl.iter().max().ok_or("missing frame maximum")? as usize;
+    if frame.bins.len()!=BINS as usize||peak>=frame.bins.len()||
+        frame.bins.iter().rposition(|&v|v!=0)!=Some(peak){
+        return Err("histogram peak disagrees with MaxSCL".into());
+    }
+    let(mut count,mut lower,mut upper)=(0u64,0u128,0u128);
+    for (i,&v) in frame.bins.iter().enumerate(){
+        if v==0{continue;}
+        count+=u64::from(v);
+        let q=i as u128*10_000;
+        lower+=q.saturating_sub(5_001)*u128::from(v);
+        upper+=(q+5_001).min(1_000_000_000)*u128::from(v);
+    }
+    if count!=n||u128::from(frame.linear_sum)<lower||u128::from(frame.linear_sum)>upper{
+        return Err("histogram disagrees with selected population or linear sum".into());
+    }
+    Ok(())
+}
 pub struct HdrScene{
     first:u64,end:u64,next:u64,width:u32,height:u32,
     percentages:[u32;9],bins:Vec<u64>,maxscl:[u32;3],linear_sum:u128,best:Option<(f64,u64,f64)>,
@@ -533,6 +578,7 @@ impl HdrScene{
             frame.maxscl.iter().any(|&v|v>100000)||frame.linear_sum>u64::from(self.width)*u64::from(self.height)*1_000_000_000{
             return Err("incompatible or out-of-order scene frame".into());
         }
+        validate_frame_population(&frame,u64::from(self.width)*u64::from(self.height))?;
         for (sum,&v) in self.bins.iter_mut().zip(&frame.bins){*sum+=u64::from(v);}
         self.linear_sum+=u128::from(frame.linear_sum);
         for (peak,v) in self.maxscl.iter_mut().zip(frame.maxscl){*peak=(*peak).max(v);}
@@ -569,6 +615,17 @@ mod scene_tests{
     fn frame(a:u32,b:u32,avg:f64,fraction:f64)->SceneFrame{
         let mut bins=vec![0;BINS as usize];bins[a as usize]+=1;bins[b as usize]+=1;
         SceneFrame{width:2,height:1,maxscl:[a.max(b);3],bins,average:avg,fraction,linear_sum:(u64::from(a)+u64::from(b))*10_000}
+    }
+    #[test]
+    fn rejects_inconsistent_measured_histogram_before_accumulation(){
+        let mut s=HdrScene::new(0,1,2,1,P).unwrap();
+        let mut f=frame(100,300,0.2,0.5);f.maxscl=[301;3];
+        assert!(s.push(0,f).is_err());
+        let mut f=frame(100,300,0.2,0.5);f.linear_sum=100;
+        assert!(s.push(0,f).is_err());
+        let mut f=frame(100,300,0.2,0.5);f.linear_sum=4_010_000;
+        assert!(s.push(0,f).is_ok());
+        assert_eq!(s.finish().unwrap().average,201);
     }
     #[test]
     fn complete_scene_histogram_and_latest_tie(){
@@ -689,6 +746,7 @@ impl LegacyWindow{
             f.frame.maxscl.iter().any(|&v|v>100000){
             return Err("invalid legacy selected pixel population".into());
         }
+        validate_frame_population(&f.frame,n)?;
         for (sum,v) in self.bins.iter_mut().zip(f.frame.bins){*sum=sum.checked_add(u64::from(v)).ok_or("legacy histogram overflow")?;}
         for (peak,v) in self.maxscl.iter_mut().zip(f.frame.maxscl){*peak=(*peak).max(v);}
         self.linear_sum+=u128::from(f.frame.linear_sum);
