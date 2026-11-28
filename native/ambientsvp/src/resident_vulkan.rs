@@ -1935,6 +1935,130 @@ mod gpu_tests{
             .subresource_range(range())];
         unsafe{d.cmd_pipeline_barrier(cmd,stage_src,stage_dst,vk::DependencyFlags::empty(),&[],&[],&barriers)}
     }
+    // Same device, inputs, quality and phases for all modes. The
+    // renderer-independent workload measures submit and complete time
+    // separately; it is not a full player throughput benchmark.
+    #[test]
+    #[ignore="requires a real Vulkan device or Mesa"]
+    fn held_cache_and_submission_benchmark(){
+        unsafe{
+            let dim=|name:&str,default:u32|std::env::var(name).ok().and_then(|v|v.parse::<u32>().ok()).unwrap_or(default);
+            let (w,h,runs)=(dim("AMBIENT_SVP_BENCH_WIDTH",66),dim("AMBIENT_SVP_BENCH_HEIGHT",34),dim("AMBIENT_SVP_BENCH_RUNS",4));
+            assert!(w>=32&&h>=32&&w<=1920&&h<=1080&&(w|h)&1==0&&(2..=64).contains(&runs));
+            let entry=ash::Entry::load().unwrap();
+            let app=vk::ApplicationInfo::default().api_version(vk::API_VERSION_1_2);
+            let instance=entry.create_instance(&vk::InstanceCreateInfo::default().application_info(&app),None).unwrap();
+            let require_hw=std::env::var("AMBIENT_SVP_REQUIRE_HARDWARE").as_deref()==Ok("1");
+            let (physical,family)=instance.enumerate_physical_devices().unwrap().into_iter()
+                .filter(|&p|{let v=instance.get_physical_device_properties(p);
+                    v.api_version>=vk::API_VERSION_1_2&&(!require_hw||v.device_type!=vk::PhysicalDeviceType::CPU)})
+                .find_map(|p|instance.get_physical_device_queue_family_properties(p).iter().position(|q|
+                    q.queue_count>0&&q.queue_flags.contains(vk::QueueFlags::COMPUTE)).map(|i|(p,i as u32))).expect("no qualified Vulkan device");
+            let properties=instance.get_physical_device_properties(physical);
+            let name=std::ffi::CStr::from_ptr(properties.device_name.as_ptr()).to_string_lossy();
+            println!("SVP_DEVICE name={name} vendor={} device={} driver={} width={w} height={h} runs={runs}",
+                properties.vendor_id,properties.device_id,properties.driver_version);
+            let priorities=[1.0];
+            let queues=[vk::DeviceQueueCreateInfo::default().queue_family_index(family).queue_priorities(&priorities)];
+            let mut timeline_feature=vk::PhysicalDeviceTimelineSemaphoreFeatures::default().timeline_semaphore(true);
+            let d=instance.create_device(physical,&vk::DeviceCreateInfo::default().queue_create_infos(&queues).push_next(&mut timeline_feature),None).unwrap();
+            let queue=d.get_device_queue(family,0);
+            let props=instance.get_physical_device_memory_properties(physical);
+            let quality=ResidentOptions{preset:2,algorithm:11,..Default::default()};
+            let engine=ambient_svp_vk_create_quality(instance.handle(),physical,d.handle(),
+                Some(entry.static_fn().get_instance_proc_addr),w,h,3,&quality);
+            assert!(!engine.is_null());
+            let src=vk::ImageUsageFlags::SAMPLED|vk::ImageUsageFlags::TRANSFER_DST;
+            let out=vk::ImageUsageFlags::STORAGE|vk::ImageUsageFlags::TRANSFER_SRC;
+            let images=std::array::from_fn::<_,5,_>(|i|image(&d,&props,w,h,vk::Format::R16G16B16A16_SFLOAT,if i<2{src}else{out}));
+            let pool=d.create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(family)
+                .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER),None).unwrap();
+            let cmd=d.allocate_command_buffers(&vk::CommandBufferAllocateInfo::default().command_pool(pool)
+                .level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(1)).unwrap()[0];
+            let fence=d.create_fence(&Default::default(),None).unwrap();
+            let hold=std::array::from_fn::<_,3,_>(|_|d.create_semaphore(&vk::SemaphoreCreateInfo::default(),None).unwrap());
+            let mut ty=vk::SemaphoreTypeCreateInfo::default().semaphore_type(vk::SemaphoreType::TIMELINE);
+            let done=d.create_semaphore(&vk::SemaphoreCreateInfo::default().push_next(&mut ty),None).unwrap();
+            d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default()).unwrap();
+            for(i,img)in images.iter().enumerate(){
+                transition(&d,cmd,img.image,vk::ImageLayout::UNDEFINED,vk::ImageLayout::GENERAL,
+                    vk::AccessFlags::empty(),if i<2{vk::AccessFlags::TRANSFER_WRITE}else{vk::AccessFlags::SHADER_WRITE},
+                    vk::PipelineStageFlags::TOP_OF_PIPE,if i<2{vk::PipelineStageFlags::TRANSFER}else{vk::PipelineStageFlags::COMPUTE_SHADER});
+                if i<2{d.cmd_clear_color_image(cmd,img.image,vk::ImageLayout::GENERAL,
+                    &vk::ClearColorValue{float32:[0.25+i as f32*0.25,0.5,0.75,1.0]},&[range()]);}
+            }
+            d.end_command_buffer(cmd).unwrap();
+            d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
+            d.wait_for_fences(&[fence],true,u64::MAX).unwrap();
+            let mut value=0u64;
+            let mut previous_pool=vk::CommandPool::null();
+            for mode in 0..3{
+                let mut host_us=0u128;let mut total_us=0u128;
+                for i in 0..runs+2{
+                    d.queue_submit(queue,&[vk::SubmitInfo::default().signal_semaphores(&hold)],vk::Fence::null()).unwrap();
+                    let handles=[images[0].image,images[1].image,images[mode+2].image];
+                    value+=1;
+                    let phase=if i+1==runs+2{0.5}else{0.25+(i%3) as f32*0.125};
+                    let start=std::time::Instant::now();
+                    let mut job=ptr::null_mut();
+                    let rc=match mode{
+                        0=>ambient_svp_vk_render_held(engine,queue,family,handles.as_ptr(),3,hold.as_ptr(),done,value,phase),
+                        1=>ambient_svp_vk_submit_held(engine,queue,family,handles.as_ptr(),3,hold.as_ptr(),done,value,phase,&mut job),
+                        _=>ambient_svp_vk_submit_held_cached(engine,queue,family,handles.as_ptr(),3,hold.as_ptr(),done,value,phase,&mut job,1),
+                    };
+                    assert_eq!(rc,0);
+                    let host=start.elapsed().as_micros();
+                    if mode!=0{
+                        assert!(!job.is_null());
+                        let p=(*job).commands.as_ref().unwrap().pool;
+                        if previous_pool!=vk::CommandPool::null(){assert_eq!(p,previous_pool,"command bundle was not reused");}
+                        previous_pool=p;
+                        if mode==2{
+                            let snapshot=(*engine).0.held_field.lock().unwrap();
+                            assert!(snapshot.as_ref().unwrap().key.is_some());
+                        }
+                        assert_eq!(ambient_svp_vk_retire_held(job,1),1);
+                    }
+                    assert_eq!(d.get_semaphore_counter_value(done).unwrap(),value);
+                    if i>=2{host_us+=host;total_us+=start.elapsed().as_micros();}
+                }
+                println!("SVP_BENCH mode={} host_submit_mean_us={} complete_mean_us={}",
+                    ["sync_uncached","async_uncached","async_cached"][mode],host_us/runs as u128,total_us/runs as u128);
+            }
+            // Independently read each final output and compare all FP16 bytes.
+            let bytes=u64::from(w)*u64::from(h)*8;
+            let buf=d.create_buffer(&vk::BufferCreateInfo::default().size(bytes*3).usage(vk::BufferUsageFlags::TRANSFER_DST),None).unwrap();
+            let req=d.get_buffer_memory_requirements(buf);
+            let memory=d.allocate_memory(&vk::MemoryAllocateInfo::default().allocation_size(req.size).memory_type_index(
+                memory_index(&props,req.memory_type_bits,vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)),None).unwrap();
+            d.bind_buffer_memory(buf,memory,0).unwrap();
+            d.reset_fences(&[fence]).unwrap();d.reset_command_buffer(cmd,vk::CommandBufferResetFlags::empty()).unwrap();
+            d.begin_command_buffer(cmd,&vk::CommandBufferBeginInfo::default()).unwrap();
+            for i in 0..3{
+                transition(&d,cmd,images[2+i].image,vk::ImageLayout::GENERAL,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                    vk::AccessFlags::SHADER_WRITE,vk::AccessFlags::TRANSFER_READ,vk::PipelineStageFlags::COMPUTE_SHADER,vk::PipelineStageFlags::TRANSFER);
+                let region=[vk::BufferImageCopy::default().buffer_offset(bytes*i as u64)
+                    .image_subresource(vk::ImageSubresourceLayers::default().aspect_mask(vk::ImageAspectFlags::COLOR).layer_count(1))
+                    .image_extent(vk::Extent3D{width:w,height:h,depth:1})];
+                d.cmd_copy_image_to_buffer(cmd,images[2+i].image,vk::ImageLayout::TRANSFER_SRC_OPTIMAL,buf,&region);
+            }
+            let host=[vk::MemoryBarrier::default().src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::HOST_READ)];
+            d.cmd_pipeline_barrier(cmd,vk::PipelineStageFlags::TRANSFER,vk::PipelineStageFlags::HOST,vk::DependencyFlags::empty(),&host,&[],&[]);
+            d.end_command_buffer(cmd).unwrap();
+            d.queue_submit(queue,&[vk::SubmitInfo::default().command_buffers(&[cmd])],fence).unwrap();
+            d.wait_for_fences(&[fence],true,u64::MAX).unwrap();
+            let mapped=d.map_memory(memory,0,bytes*3,vk::MemoryMapFlags::empty()).unwrap();
+            let data=std::slice::from_raw_parts(mapped.cast::<u8>(),(bytes*3) as usize);
+            let b=bytes as usize;
+            assert_eq!(&data[..b],&data[b..2*b]);assert_eq!(&data[..b],&data[2*b..]);
+            d.unmap_memory(memory);d.destroy_buffer(buf,None);d.free_memory(memory,None);
+            println!("SVP_PARITY exact");
+            ambient_svp_vk_destroy(engine);
+            for s in hold{d.destroy_semaphore(s,None);}d.destroy_semaphore(done,None);
+            for img in images{d.destroy_image_view(img.view,None);d.destroy_image(img.image,None);d.free_memory(img.memory,None);}
+            d.destroy_fence(fence,None);d.destroy_command_pool(pool,None);d.destroy_device(None);instance.destroy_instance(None);
+        }
+    }
     #[test]
     #[ignore="requires Vulkan, including Mesa software Vulkan"]
     fn native_resident_commands_keep_images_on_shared_device(){

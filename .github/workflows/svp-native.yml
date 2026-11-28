@@ -98,6 +98,7 @@ jobs:
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident_vulkan::tests::resident_upstream_subpixel_filters_match_phase_planes -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident_vulkan::synthesis_tests::coverage_and_sad_masks_match_upstream -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident_vulkan::synthesis_tests::all_synthesis_equations_match_reference -- --ignored --exact
+          cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident_vulkan::gpu_tests::held_cache_and_submission_benchmark -- --ignored --exact --nocapture
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident_vulkan::gpu_tests::native_resident_commands_keep_images_on_shared_device -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib resident::tests::resident_motion_matches_unpruned_scalar_search -- --ignored --exact
           cargo +stable test --manifest-path native/ambientsvp/Cargo.toml --release --locked --lib motion::tests::vulkan_candidate_costs_match_cpu -- --ignored --exact
@@ -165,6 +166,7 @@ jobs:
           bash -n scripts/prepare_svp_sources.sh
           bash -n scripts/build_svp_android.sh
           bash -n scripts/profile_svp_android.sh
+          bash -n scripts/benchmark_svp_resident_android.sh
           for test in svp_retry_test svp_planes_test svp_sdr_profile_test svp_av1_config_test svp_hevc_hdr_guard_test; do
             cc -std=c11 -O2 -Wall -Wextra -Werror -I native/ambientsvp/include "native/ambientsvp/tests/$test.c" -o "/tmp/$test"
             "/tmp/$test"

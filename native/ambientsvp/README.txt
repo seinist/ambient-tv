@@ -1780,3 +1780,30 @@ generates valid and invalid v0/v1 data, including all three legacy
 window counts, optional grids, valid nonascending Bezier anchors,
 reserved markers and every byte truncation. These tests run against
 the real C parser before any network-dependent FATE download.
+
+Asynchronous capture and resident resource reuse
+-----------------------------------------------
+The shared bridge now queues up to four metadata capture jobs and
+consumes them in scene tick order after fence retirement, including
+legacy HDR10+ capture. Direct MPV uses its existing fence-owned
+jobs to collect scene statistics in tick order; version-1 replay
+attaches the existing scene statistics without a GPU readback.
+Legacy replay and live per-frame HDR metadata still require the
+measured results before presenting their matching output.
+
+Fence-retired held command pools, command buffers and fences are
+recycled per queue family. A single device-local snapshot caches
+motion analysis before phase-specific masks, keyed by immutable
+source generation, ordered images, algorithm and queue. A new
+source invalidates reuse. The GPU copies the snapshot into private
+phase fields, with barriers, without waiting for its predecessor
+on the CPU.
+
+Run scripts/benchmark_svp_resident_android.sh arm64-v8a results
+SERIAL on a physical Android device with Vulkan 1.2. It builds a
+standalone release test, runs identical synchronous, asynchronous
+and cached synthesis workloads, reports device identity and
+host-submit and complete means, and asserts exact FP16 parity.
+This synthetic test does not measure MediaCodec, display latency,
+thermal steady state or real-video performance. No Android hardware
+measurements have been recorded yet.
