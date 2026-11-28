@@ -21,11 +21,33 @@ pub struct HdrResult{
 #[repr(C)]
 #[derive(Clone,Copy,Debug,Default)]
 pub struct HdrTrack{pub a:[u32;4],pub b:[u32;4],pub ellipse:[u32;2]}
-pub(super) struct StatsPipelines{collect:Pipeline,reduce:Pipeline,track:Pipeline,proxy:Pipeline,bright:Pipeline,linear:Pipeline}
+// Every positive finite binary16 PQ code through 1.0, evaluated in f64
+// once per process. Quantization is performed from the high precision
+// linear value rather than from device-specific shader pow() results.
+const PQ_CODES:usize=0x3c01;
+fn pq_table()->&'static Vec<u32>{
+    static TABLE:std::sync::OnceLock<Vec<u32>>=std::sync::OnceLock::new();
+    TABLE.get_or_init(||{
+        let mut table=Vec::with_capacity(PQ_CODES*4);
+        for bits in 0..PQ_CODES{
+            let exp=(bits>>10)&31;let mant=(bits&1023) as f64;
+            let x=if exp==0{mant*2f64.powi(-24)}else{(1.0+mant/1024.0)*2f64.powi(exp as i32-15)};
+            let p=x.powf(32.0/2523.0);
+            let linear=((p-3424.0/4096.0).max(0.0)/(2413.0/128.0-2392.0/128.0*p)).powf(16384.0/2610.0).clamp(0.0,1.0);
+            table.extend_from_slice(&[(linear*100_000.0).round() as u32,(linear*1_000_000_000.0).round() as u32,(linear as f32).to_bits(),0]);
+        }
+        table
+    })
+}
+pub(super) struct StatsPipelines{collect:Pipeline,reduce:Pipeline,track:Pipeline,proxy:Pipeline,bright:Pipeline,linear:Pipeline,pq:Buffer}
 impl StatsPipelines{
     pub(super) fn new(core:&Core)->Result<Self>{
-        let types=[vk::DescriptorType::SAMPLED_IMAGE,vk::DescriptorType::STORAGE_BUFFER,vk::DescriptorType::STORAGE_BUFFER,vk::DescriptorType::STORAGE_BUFFER];
-        Ok(Self{collect:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"collect")?,c"collect")?,
+        let types=[vk::DescriptorType::SAMPLED_IMAGE,vk::DescriptorType::STORAGE_BUFFER,vk::DescriptorType::STORAGE_BUFFER,vk::DescriptorType::STORAGE_BUFFER,vk::DescriptorType::STORAGE_BUFFER];
+        let table=pq_table();
+        let pq=Buffer::new(core,(table.len()*4) as u64,vk::BufferUsageFlags::STORAGE_BUFFER,
+            vk::MemoryPropertyFlags::HOST_VISIBLE|vk::MemoryPropertyFlags::HOST_COHERENT)?;
+        unsafe{let mapped=pq.map()?;std::ptr::copy_nonoverlapping(table.as_ptr(),mapped,table.len());pq.device.unmap_memory(pq.memory);}
+        Ok(Self{pq,collect:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"collect")?,c"collect")?,
             reduce:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"summarize")?,c"summarize")?,
             track:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"track")?,c"track")?,
             proxy:Pipeline::new(&core.device,&types,&spirv(SHADER,UNIFORM,"bright_proxy")?,c"bright_proxy")?,
@@ -172,7 +194,7 @@ impl StatsJob{
             s.device.unmap_memory(s.summary.memory);
             let sizes=[
                 vk::DescriptorPoolSize::default().ty(vk::DescriptorType::SAMPLED_IMAGE).descriptor_count(1),
-                vk::DescriptorPoolSize::default().ty(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(3)];
+                vk::DescriptorPoolSize::default().ty(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(4)];
             s.pool=s.device.create_descriptor_pool(&vk::DescriptorPoolCreateInfo::default().max_sets(1).pool_sizes(&sizes),None).map_err(err)?;
             s.set=s.device.allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo::default().descriptor_pool(s.pool)
                 .set_layouts(&[s.pipelines.collect.set])).map_err(err)?[0];
@@ -180,11 +202,13 @@ impl StatsJob{
             let h=[vk::DescriptorBufferInfo::default().buffer(s.hist.buffer).range(s.hist.size)];
             let o=[vk::DescriptorBufferInfo::default().buffer(s.summary.buffer).range(s.summary.size)];
             let motion=[vk::DescriptorBufferInfo::default().buffer(field).range(core.field_size)];
+            let lut=[vk::DescriptorBufferInfo::default().buffer(s.pipelines.pq.buffer).range(s.pipelines.pq.size)];
             s.device.update_descriptor_sets(&[
                 vk::WriteDescriptorSet::default().dst_set(s.set).dst_binding(0).descriptor_type(vk::DescriptorType::SAMPLED_IMAGE).image_info(&image),
                 vk::WriteDescriptorSet::default().dst_set(s.set).dst_binding(1).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&h),
                 vk::WriteDescriptorSet::default().dst_set(s.set).dst_binding(2).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&o),
                 vk::WriteDescriptorSet::default().dst_set(s.set).dst_binding(3).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&motion),
+                vk::WriteDescriptorSet::default().dst_set(s.set).dst_binding(4).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&lut),
             ],&[]);
         }
         Ok(s)
@@ -975,4 +999,13 @@ fn legacy_ellipse_span_reference_counts(){
             assert_eq!(x as u32>=spans[y*2]&&(x as u32)<spans[y*2+1],expected);
         }
     }
+}
+
+#[cfg(test)]
+#[test]
+fn pq_table_matches_independent_decimal_vectors(){
+    let t=pq_table();
+    assert_eq!(t[0],0);assert_eq!(t[(PQ_CODES-1)*4],100000);
+    assert_eq!((0x37ff..=0x3803).map(|i|t[i*4]).collect::<Vec<_>>(),[920,922,927,932,936]);
+    assert!(t.chunks_exact(4).map(|v|v[0]).collect::<Vec<_>>().windows(2).all(|p|p[0]<=p[1]));
 }
