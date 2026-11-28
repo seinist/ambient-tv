@@ -24,6 +24,24 @@ class HdrScenePassTest {
         assertFalse(hold.active)
     }
 
+    @Test fun analysisReuseIsBoundedAndDoesNotOverwriteActiveRuns() {
+        val reuse = folder.newFolder("reuse")
+        val run = folder.newFolder("run")
+        val source = java.io.File(run,"source").apply { writeText("completed statistics") }
+        val destination = java.io.File(run,"destination")
+        val key = HdrSceneReuse.key("source|profile")
+        assertNotEquals(key,HdrSceneReuse.key("source|different-profile"))
+        HdrSceneReuse.store(reuse,"$key.stats",source,1024L)
+        assertFalse(HdrSceneReuse.copyIn(reuse,"$key.stats",destination,2L))
+        assertTrue(HdrSceneReuse.copyIn(reuse,"$key.stats",destination,1024L))
+        assertEquals(source.readText(),destination.readText())
+        destination.writeText("active")
+        assertFalse(HdrSceneReuse.copyIn(reuse,"$key.stats",destination,1024L))
+        assertEquals("active",destination.readText())
+        HdrSceneReuse.invalidate(reuse,"$key.stats")
+        assertFalse(HdrSceneReuse.copyIn(reuse,"$key.stats",java.io.File(run,"missing"),1024L))
+    }
+
     private fun sei(version: Int = 1, value: Int = 19): ByteArray =
         byteArrayOf(0x4e, 1, 4, 8, 0xb5.toByte(), 0, 0x3c, 0, 1, 4, version.toByte(), value.toByte(), 0x80.toByte())
 

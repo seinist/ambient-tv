@@ -1874,26 +1874,26 @@ internal class MpvPlaybackEngine(
         // Do not restart a film after the viewer has already started watching.
         if (positionMs() > 250L) return
         hdrSceneJob = imageScope.launch {
-            val result = try {
-                HdrScenePlanner.scan(context, url, headers, source, target, false, File(context.noBackupFilesDir, "hdr-scene"))
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (e: Exception) { Timber.w(e, "HDR scene plan unavailable"); null }
-            if (result == null) { Timber.i("HDR10+ automatic scene plan not supported for this file"); return@launch }
-            if (released || !attached || !fileReady || positionMs() > 250L || !imageOptions.svp.hdrTwoPass ||
-                activeCpuImageFilters["plex-svp"] != base || kotlin.math.abs(result.plan.source-source) > 0.0001 ||
-                kotlin.math.abs(result.plan.target-target) > 0.0001) {
-                result.cleanup(); return@launch
-            }
-            // A second native instance renders into a drained private
-            // ImageReader, not the visible TV surface. Its cache must be
-            // complete before the current controller adopts it.
+            var owned: HdrSceneSession? = null
             var adopted = false
             var held = false
             try {
                 coroutineContext.ensureActive()
                 hdrSceneHold.acquire()
                 held = true
-                if (!trySetProperty("pause", "yes")) return@launch
+                if (!trySetProperty("pause", "yes") || positionMs() > 250L) return@launch
+                val result = try {
+                HdrScenePlanner.scan(context, url, headers, source, target, false, File(context.noBackupFilesDir, "hdr-scene"))
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { Timber.w(e, "HDR scene plan unavailable"); null }
+                if (result == null) { Timber.i("HDR10+ automatic scene plan not supported for this file"); return@launch }
+                owned = result
+                if (released || !attached || !fileReady || positionMs() > 250L || !imageOptions.svp.hdrTwoPass ||
+                    activeCpuImageFilters["plex-svp"] != base || kotlin.math.abs(result.plan.source-source) > 0.0001 ||
+                    kotlin.math.abs(result.plan.target-target) > 0.0001) return@launch
+                // Hold applies to the complete planning/capture lifecycle, not
+                // just the second native instance. Never rewind active playback.
+                coroutineContext.ensureActive()
                 val capture = base.removeSuffix(":hwresident=1") + result.mpvOptions() + ":hwresident=1"
                 val device = VideoAccelerationRuntime.capabilities.value.device.device
                 val profile = "mpv|$base|${acceleration.hwdec}|$device"
@@ -1913,7 +1913,7 @@ internal class MpvPlaybackEngine(
                 adopted = true
                 if (!restartHdrScenePass()) cancelHdrScenePass()
             } finally {
-                if (!adopted) result.cleanup()
+                if (!adopted) owned?.cleanup()
                 if (held) {
                     hdrSceneHold.release()
                     if (!released && !ended) setProperty("pause", if (nativePlayWanted) "no" else "yes")

@@ -25,7 +25,7 @@ internal object HdrSceneReuse {
     fun copyIn(directory: File, name: String, destination: File, limit: Long): Boolean = synchronized(lock) {
         val file = File(directory,name)
         runCatching {
-            if (!file.isFile || file.length() !in 1..limit || destination.exists()) return@synchronized false
+            if (!file.isFile || file.length() !in 1L..limit || destination.exists()) return@synchronized false
             file.copyTo(destination,overwrite=false)
             file.setLastModified(System.currentTimeMillis())
             true
@@ -34,7 +34,7 @@ internal object HdrSceneReuse {
 
     fun store(directory: File, name: String, source: File, limit: Long) = synchronized(lock) {
         runCatching {
-            if (!source.isFile || source.length() !in 1..limit || !directory.exists()&&!directory.mkdirs()) return@synchronized
+            if (!source.isFile || source.length() !in 1L..limit || !directory.exists()&&!directory.mkdirs()) return@synchronized
             val tmp = File.createTempFile("analysis-", ".tmp", directory)
             try {
                 source.copyTo(tmp,overwrite=true)

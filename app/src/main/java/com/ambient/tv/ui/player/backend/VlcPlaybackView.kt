@@ -221,20 +221,25 @@ class VlcPlaybackController(
         hdrSceneAttempted = true
         if (confirmedPlaybackTimeMs() > 250L) return
         hdrSceneJob = hdrSceneScope.launch {
-            val result = try {
-                HdrScenePlanner.scan(context, url, headers, source, target, true, File(context.noBackupFilesDir, "hdr-scene"))
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (e: Exception) { Timber.w(e, "VLC HDR scene plan unavailable"); null }
-            if (result == null) { Timber.i("VLC automatic HDR10+ scene plan not supported for this file"); return@launch }
-            if (released || !prepared || openingOrRestarting || confirmedPlaybackTimeMs() > 250L || imageOptions != settings ||
-                attachedView?.holder?.surface?.isValid != true || kotlin.math.abs(result.plan.source-source) > 0.0001 ||
-                svpOutputFps(svpDisplayFps(context), imageOptions.svp) != target) {
-                result.cleanup(); return@launch
-            }
+            var owned: HdrSceneSession? = null
             var adopted = false
             var held = false
             val visiblePlayer = player
             try {
+                coroutineContext.ensureActive()
+                hdrSceneHold.acquire()
+                held = true
+                visiblePlayer.pause()
+                if (confirmedPlaybackTimeMs() > 250L) return@launch
+                val result = try {
+                HdrScenePlanner.scan(context, url, headers, source, target, true, File(context.noBackupFilesDir, "hdr-scene"))
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { Timber.w(e, "VLC HDR scene plan unavailable"); null }
+                if (result == null) { Timber.i("VLC automatic HDR10+ scene plan not supported for this file"); return@launch }
+                owned = result
+                if (released || player !== visiblePlayer || !prepared || openingOrRestarting || confirmedPlaybackTimeMs() > 250L || imageOptions != settings ||
+                    attachedView?.holder?.surface?.isValid != true || kotlin.math.abs(result.plan.source-source) > 0.0001 ||
+                    svpOutputFps(svpDisplayFps(context), imageOptions.svp) != target) return@launch
                 val route = hdrSceneOutputOptions() ?: return@launch
                 val effective = vlcOptionsForNativeHdr(
                     effectiveVlcImageOptions(settings,reducedVideoEffects(context),vlcSvpAllowed(context)),
@@ -244,9 +249,6 @@ class VlcPlaybackController(
                     .filter { it.startsWith(":video-filter=") || it in setOf(":mediacodec-dr",":no-mediacodec-dr") }
                     .map { "--"+it.removePrefix(":") } + route
                 coroutineContext.ensureActive()
-                hdrSceneHold.acquire()
-                held = true
-                visiblePlayer.pause()
                 val profile = "vlc|$effective|$target|${route.joinToString("|")}"
                 val analyzed = try { result.restoreCapture(profile) || HdrOffscreenAnalysis.vlc(context,result,options) }
                     catch (e: kotlinx.coroutines.CancellationException) { throw e }
@@ -261,7 +263,7 @@ class VlcPlaybackController(
                 adopted = true
                 restartHdrScenePass()
             } finally {
-                if (!adopted) result.cleanup()
+                if (!adopted) owned?.cleanup()
                 if (held) {
                     val restoreVisiblePlayer = hdrSceneHold.active
                     hdrSceneHold.release()
