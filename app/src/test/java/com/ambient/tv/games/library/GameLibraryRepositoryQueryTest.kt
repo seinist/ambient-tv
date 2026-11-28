@@ -433,6 +433,25 @@ class GameLibraryRepositoryQueryTest {
         } finally { metadata.closeForTests() }
     }
 
+    @Test fun automaticMissingCoverDoesNotRepeatNetworkProbesOnEveryScan() = runBlocking {
+        seed("one", filename = "[Release] Super Mario World (Europe).sfc", title = "INTERNAL NAME")
+        val library = repository()
+        library.importDat("snes", """<datafile><game name="Super Mario World (Europe)"><rom crc="AABBCCDD"/></game></datafile>""".byteInputStream())
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        val metadata = metadataRepository(library, okhttp3.Interceptor { chain ->
+            okhttp3.Response.Builder().request(chain.request().also { requests.incrementAndGet() }).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(404).message("Not Found").body(byteArrayOf().toResponseBody()).build()
+        })
+        try {
+            withTimeout(15_000) { metadata.refresh(library.game("one")!!) }
+            val first = requests.get()
+            assertTrue(first > 0)
+            withTimeout(15_000) { metadata.refresh(library.game("one")!!) }
+            assertEquals(first, requests.get())
+            assertEquals("Super Mario World", library.game("one")!!.title)
+        } finally { metadata.closeForTests() }
+    }
+
     @Test fun manuallySelectingACatalogNamePersistsItWhenAllArtworkReturnsNotFound() = runBlocking {
         seed("one", title = "INTERNAL NAME")
         val library = repository()

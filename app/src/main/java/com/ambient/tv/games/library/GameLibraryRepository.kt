@@ -112,6 +112,11 @@ internal fun needsArchiveDatChecksum(filename: String, previous: LibraryGame?, c
     GameSystems.extension(filename) == "7z" && previous != null && previous.archiveCrc == null &&
         catalogVersion > 0L && previous.datVersion != catalogVersion
 
+/** A null result is also a completed attempt for an unchanged ROM and catalog revision. */
+internal fun reuseScanChecksums(previous: LibraryGame?, catalogVersion: Long): Boolean =
+    previous != null && (previous.archiveCrc != null || catalogVersion == 0L ||
+        previous.datVersion == catalogVersion)
+
 /** Also filter old cache rows immediately, without opening a ROM or waking its source. */
 internal fun cachedGameMatchesFolder(
     folder: GameLibraryFolder,
@@ -485,10 +490,11 @@ class GameLibraryRepository @Inject constructor(
             arrayOf(systemId, crc32),
         ).use { rows -> if (rows.moveToFirst()) rows.getString(0) else null }
 
-    private fun datChecksums(session: GameScanFileSession, entry: FileEntry, systemId: String): GameRomChecksums.Result {
-        // Never hash a huge NAS ISO or an archive merely to populate library artwork.
-        if (!GameRomChecksums.canHash(entry.name, entry.size)) return GameRomChecksums.Result(null)
-        return session.open(entry.path).use { media ->
+    private fun datChecksums(session: () -> GameScanFileSession, entry: FileEntry, systemId: String,
+                             remote: Boolean): GameRomChecksums.Result {
+        // Never read a large remote ROM end-to-end merely to populate library artwork.
+        if (!GameRomChecksums.canHashDuringScan(entry.name, entry.size, remote)) return GameRomChecksums.Result(null)
+        return session().open(entry.path).use { media ->
             GameRomChecksums.read(systemId, entry.size, media::read)
         }
     }
@@ -1304,6 +1310,11 @@ class GameLibraryRepository @Inject constructor(
             // Only explicit scans wake a NAS. All workers reuse its prepared VPN/WOL route.
             access.prepare(source)
             val datVersions = catalogVersions()
+            val remote = source.kind != "local"
+            // Archive header CRCs remain usable; do not inflate an entire remote 7z
+            // just to synthesize a missing CRC. Local scans retain checksum verification.
+            val archiveChecksumSystems = if (remote) emptySet()
+                else datVersions.keys.filter(GameNameDatabases::usesChecksums).toSet()
             val discovered = java.util.concurrent.atomic.AtomicInteger()
             val processed = java.util.concurrent.atomic.AtomicInteger()
 
@@ -1380,7 +1391,7 @@ class GameLibraryRepository @Inject constructor(
                                     val last = previous[entry.id]
                                     val unchanged = last != null && last.size == entry.size &&
                                         last.modified == entry.modified && entry.modified != 0L
-                                    val needsArchiveChecksum = needsArchiveDatChecksum(entry.name, last,
+                                    val needsArchiveChecksum = !remote && needsArchiveDatChecksum(entry.name, last,
                                         last?.let { datVersions[it.systemId] } ?: 0L)
                                     val cachedProbe = unchanged && last.probeVersion == probeVersion(last.systemId) &&
                                         (folder.systemId == "auto" || folder.systemId == last.systemId) && !needsArchiveChecksum
@@ -1393,7 +1404,7 @@ class GameLibraryRepository @Inject constructor(
                                         } else {
                                             val probed = runCatching {
                                                 reader().open(entry.path).use {
-                                                    GameArchives.probe(entry.name, it, assigned?.id, checksumSystems = datVersions.keys.filter(GameNameDatabases::usesChecksums).toSet())
+                                                    GameArchives.probe(entry.name, it, assigned?.id, checksumSystems = archiveChecksumSystems)
                                                 }
                                             }
                                             // Network/decoder errors must NOT silently delete a
@@ -1414,18 +1425,18 @@ class GameLibraryRepository @Inject constructor(
                                             GameSystems.forAssignedFile(inner, folder.systemId, detected,
                                                 archive.systemFromHeader)
                                         }
-                                        else -> classify(entry, reader(), folder.systemId)
+                                        else -> classify(entry, ::reader, folder.systemId)
                                     }
                                     if (system != null && (systemId == null || system.id == systemId)) {
                                         val internal = if (cachedProbe) last.internalTitle
                                             else archive?.internalTitle ?: if (ext in GameSystems.archiveExtensions)
-                                                null else extractTitle(entry, reader(), system.id)
+                                                null else extractTitle(entry, ::reader, system.id)
                                         val version = datVersions[system.id] ?: 0L
                                         val checksums = when {
-                                            cachedProbe && (last.archiveCrc != null || version == 0L) ->
+                                            cachedProbe && reuseScanChecksums(last, version) ->
                                                 GameRomChecksums.Result(last.archiveCrc, last.datCrc)
                                             archive != null -> GameRomChecksums.Result(archive.crc32, archive.datCrc32)
-                                            version > 0L && GameNameDatabases.usesChecksums(system.id) -> datChecksums(reader(), entry, system.id)
+                                            version > 0L && GameNameDatabases.usesChecksums(system.id) -> datChecksums(::reader, entry, system.id, remote)
                                             else -> GameRomChecksums.Result(null)
                                         }
                                         val verified = when {
@@ -1552,9 +1563,9 @@ class GameLibraryRepository @Inject constructor(
         }
     }
 
-    private fun classify(entry: FileEntry, session: GameScanFileSession, systemId: String): com.ambient.tv.games.GameSystem? {
+    private fun classify(entry: FileEntry, session: () -> GameScanFileSession, systemId: String): com.ambient.tv.games.GameSystem? {
         val head = if (GameSystems.extension(entry.name) == "iso") {
-            runCatching { session.open(entry.path).use { media ->
+            runCatching { session().open(entry.path).use { media ->
                 ByteArray(0x20).also { if (media.read(0, it, it.size) != it.size) return@use null }
             } }.getOrElse { error ->
                 if (error is InterruptedException || error is kotlinx.coroutines.CancellationException) throw error
@@ -1573,14 +1584,14 @@ class GameLibraryRepository @Inject constructor(
     // Invalidate only DS, 3DS and PSP probes so existing libraries recover new titles and alternate CRCs.
     private fun probeVersion(systemId: String): Int = if (systemId in setOf("nds", "n3ds", "psp")) PROBE_VERSION + 1 else PROBE_VERSION
 
-    private fun extractTitle(entry: FileEntry, session: GameScanFileSession, system: String): String? {
+    private fun extractTitle(entry: FileEntry, session: () -> GameScanFileSession, system: String): String? {
         if (entry.size <= 0 || system !in setOf("gb", "gba", "nds", "snes", "megadrive",
                 "n64", "gamecube", "wii", "psp")) return null
         val ext = GameSystems.extension(entry.name)
         if (ext in GameSystems.archiveExtensions || ext in setOf("cue", "m3u", "gdi", "chd",
                 "wbfs", "rvz", "ciso") || (ext in setOf("cso", "zso") && system != "psp")) return null
         return runCatching {
-            session.open(entry.path).use { media ->
+            session().open(entry.path).use { media ->
                 GameRomTitles.extract(system, entry.name) { offset, count ->
                     if (offset < 0L || count <= 0 || count > 64 * 1024 ||
                         offset + count > media.size) null

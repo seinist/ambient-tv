@@ -283,6 +283,23 @@ class GameMetadataRepository @Inject constructor(
         if (!options.enabled) return@withGame false
         val ticket = library.metadataTicket(current.fileId) ?: return@withGame false
         var old = library.metadata(current.fileId)
+        // Avoid repeating local catalog searches for a completed automatic lookup.
+        // Manual matches still get their dedicated recovery path.
+        val initialProvider = old?.takeIf { it.matchLocked }?.provider ?: GameMetadataPlatforms.automaticProvider(
+            GameMetadataQuery(current.systemId, current.title, current.filename), options.provider, providers.availableProviders())
+        val initialQuery = gameMetadataQuery(current, old?.takeIf { it.provider == initialProvider },
+            settings.language(), options.region, ticket.crc32, provider = initialProvider)
+        val initialFingerprint = gameMetadataLookupFingerprint(initialProvider, gameMetadataFingerprint(current, initialQuery))
+        if (!force && old?.matchLocked != true) {
+            when (library.lookupStatus(current.fileId, initialProvider, initialFingerprint)) {
+                "not_found", "ambiguous" -> return@withGame false
+                "found" -> if (old != null && old.provider == initialProvider &&
+                    gameMetadataMatchesQueryIdentity(old, initialQuery)) {
+                    ensureStoredArtwork(current, old, GameArtworkKind.COVER, force = false)
+                    return@withGame true
+                }
+            }
+        }
         // DAT names are useful even when there is no cover, the provider has no artwork
         // namespace for this platform, or its server fails. Publish the local title first.
         val catalog = localCatalogMatches(current, old)
@@ -306,6 +323,10 @@ class GameMetadataRepository @Inject constructor(
         val unresolvedLibretro = known?.provider == GameMetadataProviderIds.LIBRETRO &&
             (known.providerGameId.isBlank() || "cover" !in known.lockedFields &&
                 current.coverPath?.let { File(it).isFile } != true)
+        // Automatic title-only matches must respect cached missing images.
+        if (!force && known?.matchLocked != true &&
+            library.lookupStatus(current.fileId, provider, fingerprint) in setOf("not_found", "ambiguous"))
+            return@withGame false
         if (!force && !unresolvedLibretro) {
             when (library.lookupStatus(current.fileId, provider, fingerprint)) {
                 "found" -> {
@@ -468,6 +489,14 @@ class GameMetadataRepository @Inject constructor(
                         find = { id, after -> library.folderGame(folderId, id, after, systemId) },
                     )
                     var lastPulse = System.nanoTime()
+                    // Publish committed covers even while the next network request stalls.
+                    val publisher = launch {
+                        while (true) {
+                            kotlinx.coroutines.delay(750)
+                            library.flushMetadataBatch()
+                        }
+                    }
+                    try {
                     onProgress(0, total)
                     while (true) {
                         currentCoroutineContext().ensureActive()
@@ -495,6 +524,7 @@ class GameMetadataRepository @Inject constructor(
                     }
                     onProgress(completed, total)
                     firstFailure?.let { throw GameMetadataBatchException(failed, completed, it) }
+                    } finally { publisher.cancel() }
                 } finally { library.endMetadataBatch(); unregister(folderId, job) }
             }
         }

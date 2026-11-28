@@ -22,6 +22,11 @@ internal object GameRomChecksums {
         return extension !in EXCLUDED && size in 1..limit * 1024 * 1024
     }
 
+    /** Small cartridge ROMs are still verified over NAS. Large raw dumps are matched by
+     * filename/DAT and bounded header reads instead; local scans retain full verification. */
+    fun canHashDuringScan(filename: String, size: Long, remote: Boolean): Boolean =
+        canHash(filename, size) && (!remote || size <= 16L * 1024 * 1024)
+
     /** One bounded streaming pass over a raw ROM, never an in-memory ROM or cache copy. */
     fun read(systemId: String, size: Long, readAt: (Long, ByteArray, Int) -> Int): Result {
         require(size > 0)

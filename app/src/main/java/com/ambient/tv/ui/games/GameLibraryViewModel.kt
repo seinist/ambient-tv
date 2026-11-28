@@ -30,7 +30,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.onStart
@@ -124,7 +125,7 @@ class GameLibraryViewModel @Inject constructor(
                         it.copy(sort = library.sortKey(), descending = library.sortDescending()), library.titleStyle(), refresh),
                     library.viewStyle(), library.gridColumns(), library.listRows(),
                 ) }
-            }.filterNotNull().distinctUntilChanged().collectLatest { request ->
+            }.filterNotNull().distinctUntilChanged().conflate().collect { request ->
                 try { reload(request) }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (error: Exception) {
@@ -148,6 +149,10 @@ class GameLibraryViewModel @Inject constructor(
         val systemsRevision = request.read.revision.copy(overrides = "")
         val systems = loadedSystems?.takeIf { it.first == systemsRevision }?.second
             ?: kotlinx.coroutines.runInterruptible(Dispatchers.IO) { library.systemIds() }
+        // Complete one query and conflate pending artwork revisions rather than cancelling
+        // every read. Never publish data for a category/search/sort that is no longer selected.
+        val current = selection.value?.copy(sort = library.sortKey(), descending = library.sortDescending())
+        if (current != request.read.query || library.titleStyle() != request.read.titleStyle) return
         loadedGames = request.read to games
         loadedSystems = systemsRevision to systems
         val previousReadError = libraryReadError
