@@ -339,6 +339,46 @@ PATCHES = {
       "libretro/libretro-mapper.c",
       "      else if (!input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && kbt[i] && mapper_keys[mk])",
       "      else if (!key_down && kbt[i] && mapper_keys[mk])"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "static void ensure_output_audio_buffer_capacity(int32_t capacity)\r\n{\r\n   if (capacity <= output_audio_buffer.capacity) {\r\n      return;\r\n   }\r\n\r\n   output_audio_buffer.data = realloc(output_audio_buffer.data, capacity * sizeof(*output_audio_buffer.data));\r\n   output_audio_buffer.capacity = capacity;\r\n   log_cb(RETRO_LOG_DEBUG, \"Output audio buffer capacity set to %d\\n\", capacity);\r\n}",
+      "static bool ensure_output_audio_buffer_capacity(int32_t additional)\r\n{\r\n   if (additional < 0 || output_audio_buffer.size > INT32_MAX - additional)\r\n      return false;\r\n   int32_t required = output_audio_buffer.size + additional;\r\n   if (required <= output_audio_buffer.capacity)\r\n      return true;\r\n   int32_t growth = output_audio_buffer.capacity / 2;\r\n   int32_t capacity = required;\r\n   if (output_audio_buffer.capacity <= INT32_MAX - growth &&\r\n       output_audio_buffer.capacity + growth > capacity)\r\n      capacity = output_audio_buffer.capacity + growth;\r\n   if ((size_t)capacity > SIZE_MAX / sizeof(*output_audio_buffer.data))\r\n      return false;\r\n   int16_t *data = realloc(output_audio_buffer.data, (size_t)capacity * sizeof(*data));\r\n   if (!data)\r\n      return false;\r\n   output_audio_buffer.data = data;\r\n   output_audio_buffer.capacity = capacity;\r\n   return true;\r\n}"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "   audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);\r\n   output_audio_buffer.size = 0;",
+      "   if (output_audio_buffer.size > 0)\r\n      audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);\r\n   output_audio_buffer.size = 0;"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "   if (output_audio_buffer.capacity - output_audio_buffer.size < samples)\r\n      ensure_output_audio_buffer_capacity((output_audio_buffer.capacity + samples) * 1.5);\r\n   memcpy(output_audio_buffer.data + output_audio_buffer.size, data, samples * sizeof(*output_audio_buffer.data));",
+      "   if (!data || !ensure_output_audio_buffer_capacity(samples))\r\n      return;\r\n   memcpy(output_audio_buffer.data + output_audio_buffer.size, data, (size_t)samples * sizeof(*output_audio_buffer.data));"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "#elif ARCHDEP_SOUND_OUTPUT_MODE == SOUND_OUTPUT_MONO\r\n   for (int x = 0; x < samples; x++) audio_cb(data[x], data[x]);\r\n#endif",
+      "#elif ARCHDEP_SOUND_OUTPUT_MODE == SOUND_OUTPUT_MONO\r\n#ifdef RETRO_AUDIO_BATCH\r\n   if (!data || samples > INT32_MAX / 2 || !ensure_output_audio_buffer_capacity(samples * 2))\r\n      return;\r\n   int16_t *dest = output_audio_buffer.data + output_audio_buffer.size;\r\n   for (int32_t x = 0; x < samples; ++x) {\r\n      dest[2 * x] = data[x];\r\n      dest[2 * x + 1] = data[x];\r\n   }\r\n   output_audio_buffer.size += samples * 2;\r\n#else\r\n   for (int x = 0; x < samples; x++) audio_cb(data[x], data[x]);\r\n#endif\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_write_word_array(snapshot_stream_t *f, const uint16_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_write_word_array(snapshot_stream_t *f, const uint16_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    /* Android's little-endian arrays already match the snapshot wire format.\r\n       One stream operation also makes size-only snapshots O(1) per array. */\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*data) ||\r\n            snapshot_write(f, data, (size_t)num * sizeof(*data)) != 1) {\r\n            snapshot_error = SNAPSHOT_WRITE_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_read_word_array(snapshot_stream_t *f, uint16_t *w_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_read_word_array(snapshot_stream_t *f, uint16_t *w_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*w_return) ||\r\n            snapshot_read(f, w_return, (size_t)num * sizeof(*w_return)) != 1) {\r\n            snapshot_error = SNAPSHOT_READ_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_write_dword_array(snapshot_stream_t *f, const uint32_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_write_dword_array(snapshot_stream_t *f, const uint32_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    /* Android's little-endian arrays already match the snapshot wire format.\r\n       One stream operation also makes size-only snapshots O(1) per array. */\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*data) ||\r\n            snapshot_write(f, data, (size_t)num * sizeof(*data)) != 1) {\r\n            snapshot_error = SNAPSHOT_WRITE_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_read_dword_array(snapshot_stream_t *f, uint32_t *dw_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_read_dword_array(snapshot_stream_t *f, uint32_t *dw_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*dw_return) ||\r\n            snapshot_read(f, dw_return, (size_t)num * sizeof(*dw_return)) != 1) {\r\n            snapshot_error = SNAPSHOT_READ_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
     ]
   ],
   "vice_x64": [
@@ -351,6 +391,46 @@ PATCHES = {
       "libretro/libretro-mapper.c",
       "      else if (!input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && kbt[i] && mapper_keys[mk])",
       "      else if (!key_down && kbt[i] && mapper_keys[mk])"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "static void ensure_output_audio_buffer_capacity(int32_t capacity)\r\n{\r\n   if (capacity <= output_audio_buffer.capacity) {\r\n      return;\r\n   }\r\n\r\n   output_audio_buffer.data = realloc(output_audio_buffer.data, capacity * sizeof(*output_audio_buffer.data));\r\n   output_audio_buffer.capacity = capacity;\r\n   log_cb(RETRO_LOG_DEBUG, \"Output audio buffer capacity set to %d\\n\", capacity);\r\n}",
+      "static bool ensure_output_audio_buffer_capacity(int32_t additional)\r\n{\r\n   if (additional < 0 || output_audio_buffer.size > INT32_MAX - additional)\r\n      return false;\r\n   int32_t required = output_audio_buffer.size + additional;\r\n   if (required <= output_audio_buffer.capacity)\r\n      return true;\r\n   int32_t growth = output_audio_buffer.capacity / 2;\r\n   int32_t capacity = required;\r\n   if (output_audio_buffer.capacity <= INT32_MAX - growth &&\r\n       output_audio_buffer.capacity + growth > capacity)\r\n      capacity = output_audio_buffer.capacity + growth;\r\n   if ((size_t)capacity > SIZE_MAX / sizeof(*output_audio_buffer.data))\r\n      return false;\r\n   int16_t *data = realloc(output_audio_buffer.data, (size_t)capacity * sizeof(*data));\r\n   if (!data)\r\n      return false;\r\n   output_audio_buffer.data = data;\r\n   output_audio_buffer.capacity = capacity;\r\n   return true;\r\n}"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "   audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);\r\n   output_audio_buffer.size = 0;",
+      "   if (output_audio_buffer.size > 0)\r\n      audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);\r\n   output_audio_buffer.size = 0;"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "   if (output_audio_buffer.capacity - output_audio_buffer.size < samples)\r\n      ensure_output_audio_buffer_capacity((output_audio_buffer.capacity + samples) * 1.5);\r\n   memcpy(output_audio_buffer.data + output_audio_buffer.size, data, samples * sizeof(*output_audio_buffer.data));",
+      "   if (!data || !ensure_output_audio_buffer_capacity(samples))\r\n      return;\r\n   memcpy(output_audio_buffer.data + output_audio_buffer.size, data, (size_t)samples * sizeof(*output_audio_buffer.data));"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "#elif ARCHDEP_SOUND_OUTPUT_MODE == SOUND_OUTPUT_MONO\r\n   for (int x = 0; x < samples; x++) audio_cb(data[x], data[x]);\r\n#endif",
+      "#elif ARCHDEP_SOUND_OUTPUT_MODE == SOUND_OUTPUT_MONO\r\n#ifdef RETRO_AUDIO_BATCH\r\n   if (!data || samples > INT32_MAX / 2 || !ensure_output_audio_buffer_capacity(samples * 2))\r\n      return;\r\n   int16_t *dest = output_audio_buffer.data + output_audio_buffer.size;\r\n   for (int32_t x = 0; x < samples; ++x) {\r\n      dest[2 * x] = data[x];\r\n      dest[2 * x + 1] = data[x];\r\n   }\r\n   output_audio_buffer.size += samples * 2;\r\n#else\r\n   for (int x = 0; x < samples; x++) audio_cb(data[x], data[x]);\r\n#endif\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_write_word_array(snapshot_stream_t *f, const uint16_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_write_word_array(snapshot_stream_t *f, const uint16_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    /* Android's little-endian arrays already match the snapshot wire format.\r\n       One stream operation also makes size-only snapshots O(1) per array. */\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*data) ||\r\n            snapshot_write(f, data, (size_t)num * sizeof(*data)) != 1) {\r\n            snapshot_error = SNAPSHOT_WRITE_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_read_word_array(snapshot_stream_t *f, uint16_t *w_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_read_word_array(snapshot_stream_t *f, uint16_t *w_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*w_return) ||\r\n            snapshot_read(f, w_return, (size_t)num * sizeof(*w_return)) != 1) {\r\n            snapshot_error = SNAPSHOT_READ_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_write_dword_array(snapshot_stream_t *f, const uint32_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_write_dword_array(snapshot_stream_t *f, const uint32_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    /* Android's little-endian arrays already match the snapshot wire format.\r\n       One stream operation also makes size-only snapshots O(1) per array. */\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*data) ||\r\n            snapshot_write(f, data, (size_t)num * sizeof(*data)) != 1) {\r\n            snapshot_error = SNAPSHOT_WRITE_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_read_dword_array(snapshot_stream_t *f, uint32_t *dw_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_read_dword_array(snapshot_stream_t *f, uint32_t *dw_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*dw_return) ||\r\n            snapshot_read(f, dw_return, (size_t)num * sizeof(*dw_return)) != 1) {\r\n            snapshot_error = SNAPSHOT_READ_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
     ]
   ],
   "vice_x64sc": [
@@ -363,6 +443,46 @@ PATCHES = {
       "libretro/libretro-mapper.c",
       "      else if (!input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && kbt[i] && mapper_keys[mk])",
       "      else if (!key_down && kbt[i] && mapper_keys[mk])"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "static void ensure_output_audio_buffer_capacity(int32_t capacity)\r\n{\r\n   if (capacity <= output_audio_buffer.capacity) {\r\n      return;\r\n   }\r\n\r\n   output_audio_buffer.data = realloc(output_audio_buffer.data, capacity * sizeof(*output_audio_buffer.data));\r\n   output_audio_buffer.capacity = capacity;\r\n   log_cb(RETRO_LOG_DEBUG, \"Output audio buffer capacity set to %d\\n\", capacity);\r\n}",
+      "static bool ensure_output_audio_buffer_capacity(int32_t additional)\r\n{\r\n   if (additional < 0 || output_audio_buffer.size > INT32_MAX - additional)\r\n      return false;\r\n   int32_t required = output_audio_buffer.size + additional;\r\n   if (required <= output_audio_buffer.capacity)\r\n      return true;\r\n   int32_t growth = output_audio_buffer.capacity / 2;\r\n   int32_t capacity = required;\r\n   if (output_audio_buffer.capacity <= INT32_MAX - growth &&\r\n       output_audio_buffer.capacity + growth > capacity)\r\n      capacity = output_audio_buffer.capacity + growth;\r\n   if ((size_t)capacity > SIZE_MAX / sizeof(*output_audio_buffer.data))\r\n      return false;\r\n   int16_t *data = realloc(output_audio_buffer.data, (size_t)capacity * sizeof(*data));\r\n   if (!data)\r\n      return false;\r\n   output_audio_buffer.data = data;\r\n   output_audio_buffer.capacity = capacity;\r\n   return true;\r\n}"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "   audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);\r\n   output_audio_buffer.size = 0;",
+      "   if (output_audio_buffer.size > 0)\r\n      audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);\r\n   output_audio_buffer.size = 0;"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "   if (output_audio_buffer.capacity - output_audio_buffer.size < samples)\r\n      ensure_output_audio_buffer_capacity((output_audio_buffer.capacity + samples) * 1.5);\r\n   memcpy(output_audio_buffer.data + output_audio_buffer.size, data, samples * sizeof(*output_audio_buffer.data));",
+      "   if (!data || !ensure_output_audio_buffer_capacity(samples))\r\n      return;\r\n   memcpy(output_audio_buffer.data + output_audio_buffer.size, data, (size_t)samples * sizeof(*output_audio_buffer.data));"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "#elif ARCHDEP_SOUND_OUTPUT_MODE == SOUND_OUTPUT_MONO\r\n   for (int x = 0; x < samples; x++) audio_cb(data[x], data[x]);\r\n#endif",
+      "#elif ARCHDEP_SOUND_OUTPUT_MODE == SOUND_OUTPUT_MONO\r\n#ifdef RETRO_AUDIO_BATCH\r\n   if (!data || samples > INT32_MAX / 2 || !ensure_output_audio_buffer_capacity(samples * 2))\r\n      return;\r\n   int16_t *dest = output_audio_buffer.data + output_audio_buffer.size;\r\n   for (int32_t x = 0; x < samples; ++x) {\r\n      dest[2 * x] = data[x];\r\n      dest[2 * x + 1] = data[x];\r\n   }\r\n   output_audio_buffer.size += samples * 2;\r\n#else\r\n   for (int x = 0; x < samples; x++) audio_cb(data[x], data[x]);\r\n#endif\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_write_word_array(snapshot_stream_t *f, const uint16_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_write_word_array(snapshot_stream_t *f, const uint16_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    /* Android's little-endian arrays already match the snapshot wire format.\r\n       One stream operation also makes size-only snapshots O(1) per array. */\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*data) ||\r\n            snapshot_write(f, data, (size_t)num * sizeof(*data)) != 1) {\r\n            snapshot_error = SNAPSHOT_WRITE_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_read_word_array(snapshot_stream_t *f, uint16_t *w_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_read_word_array(snapshot_stream_t *f, uint16_t *w_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*w_return) ||\r\n            snapshot_read(f, w_return, (size_t)num * sizeof(*w_return)) != 1) {\r\n            snapshot_error = SNAPSHOT_READ_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_write_dword_array(snapshot_stream_t *f, const uint32_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_write_dword_array(snapshot_stream_t *f, const uint32_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    /* Android's little-endian arrays already match the snapshot wire format.\r\n       One stream operation also makes size-only snapshots O(1) per array. */\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*data) ||\r\n            snapshot_write(f, data, (size_t)num * sizeof(*data)) != 1) {\r\n            snapshot_error = SNAPSHOT_WRITE_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_read_dword_array(snapshot_stream_t *f, uint32_t *dw_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_read_dword_array(snapshot_stream_t *f, uint32_t *dw_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*dw_return) ||\r\n            snapshot_read(f, dw_return, (size_t)num * sizeof(*dw_return)) != 1) {\r\n            snapshot_error = SNAPSHOT_READ_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
     ]
   ],
   "vice_xcbm2": [
@@ -375,6 +495,46 @@ PATCHES = {
       "libretro/libretro-mapper.c",
       "      else if (!input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && kbt[i] && mapper_keys[mk])",
       "      else if (!key_down && kbt[i] && mapper_keys[mk])"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "static void ensure_output_audio_buffer_capacity(int32_t capacity)\r\n{\r\n   if (capacity <= output_audio_buffer.capacity) {\r\n      return;\r\n   }\r\n\r\n   output_audio_buffer.data = realloc(output_audio_buffer.data, capacity * sizeof(*output_audio_buffer.data));\r\n   output_audio_buffer.capacity = capacity;\r\n   log_cb(RETRO_LOG_DEBUG, \"Output audio buffer capacity set to %d\\n\", capacity);\r\n}",
+      "static bool ensure_output_audio_buffer_capacity(int32_t additional)\r\n{\r\n   if (additional < 0 || output_audio_buffer.size > INT32_MAX - additional)\r\n      return false;\r\n   int32_t required = output_audio_buffer.size + additional;\r\n   if (required <= output_audio_buffer.capacity)\r\n      return true;\r\n   int32_t growth = output_audio_buffer.capacity / 2;\r\n   int32_t capacity = required;\r\n   if (output_audio_buffer.capacity <= INT32_MAX - growth &&\r\n       output_audio_buffer.capacity + growth > capacity)\r\n      capacity = output_audio_buffer.capacity + growth;\r\n   if ((size_t)capacity > SIZE_MAX / sizeof(*output_audio_buffer.data))\r\n      return false;\r\n   int16_t *data = realloc(output_audio_buffer.data, (size_t)capacity * sizeof(*data));\r\n   if (!data)\r\n      return false;\r\n   output_audio_buffer.data = data;\r\n   output_audio_buffer.capacity = capacity;\r\n   return true;\r\n}"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "   audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);\r\n   output_audio_buffer.size = 0;",
+      "   if (output_audio_buffer.size > 0)\r\n      audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);\r\n   output_audio_buffer.size = 0;"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "   if (output_audio_buffer.capacity - output_audio_buffer.size < samples)\r\n      ensure_output_audio_buffer_capacity((output_audio_buffer.capacity + samples) * 1.5);\r\n   memcpy(output_audio_buffer.data + output_audio_buffer.size, data, samples * sizeof(*output_audio_buffer.data));",
+      "   if (!data || !ensure_output_audio_buffer_capacity(samples))\r\n      return;\r\n   memcpy(output_audio_buffer.data + output_audio_buffer.size, data, (size_t)samples * sizeof(*output_audio_buffer.data));"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "#elif ARCHDEP_SOUND_OUTPUT_MODE == SOUND_OUTPUT_MONO\r\n   for (int x = 0; x < samples; x++) audio_cb(data[x], data[x]);\r\n#endif",
+      "#elif ARCHDEP_SOUND_OUTPUT_MODE == SOUND_OUTPUT_MONO\r\n#ifdef RETRO_AUDIO_BATCH\r\n   if (!data || samples > INT32_MAX / 2 || !ensure_output_audio_buffer_capacity(samples * 2))\r\n      return;\r\n   int16_t *dest = output_audio_buffer.data + output_audio_buffer.size;\r\n   for (int32_t x = 0; x < samples; ++x) {\r\n      dest[2 * x] = data[x];\r\n      dest[2 * x + 1] = data[x];\r\n   }\r\n   output_audio_buffer.size += samples * 2;\r\n#else\r\n   for (int x = 0; x < samples; x++) audio_cb(data[x], data[x]);\r\n#endif\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_write_word_array(snapshot_stream_t *f, const uint16_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_write_word_array(snapshot_stream_t *f, const uint16_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    /* Android's little-endian arrays already match the snapshot wire format.\r\n       One stream operation also makes size-only snapshots O(1) per array. */\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*data) ||\r\n            snapshot_write(f, data, (size_t)num * sizeof(*data)) != 1) {\r\n            snapshot_error = SNAPSHOT_WRITE_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_read_word_array(snapshot_stream_t *f, uint16_t *w_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_read_word_array(snapshot_stream_t *f, uint16_t *w_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*w_return) ||\r\n            snapshot_read(f, w_return, (size_t)num * sizeof(*w_return)) != 1) {\r\n            snapshot_error = SNAPSHOT_READ_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_write_dword_array(snapshot_stream_t *f, const uint32_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_write_dword_array(snapshot_stream_t *f, const uint32_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    /* Android's little-endian arrays already match the snapshot wire format.\r\n       One stream operation also makes size-only snapshots O(1) per array. */\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*data) ||\r\n            snapshot_write(f, data, (size_t)num * sizeof(*data)) != 1) {\r\n            snapshot_error = SNAPSHOT_WRITE_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_read_dword_array(snapshot_stream_t *f, uint32_t *dw_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_read_dword_array(snapshot_stream_t *f, uint32_t *dw_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*dw_return) ||\r\n            snapshot_read(f, dw_return, (size_t)num * sizeof(*dw_return)) != 1) {\r\n            snapshot_error = SNAPSHOT_READ_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
     ]
   ],
   "vice_xcbm5x0": [
@@ -387,6 +547,46 @@ PATCHES = {
       "libretro/libretro-mapper.c",
       "      else if (!input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && kbt[i] && mapper_keys[mk])",
       "      else if (!key_down && kbt[i] && mapper_keys[mk])"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "static void ensure_output_audio_buffer_capacity(int32_t capacity)\r\n{\r\n   if (capacity <= output_audio_buffer.capacity) {\r\n      return;\r\n   }\r\n\r\n   output_audio_buffer.data = realloc(output_audio_buffer.data, capacity * sizeof(*output_audio_buffer.data));\r\n   output_audio_buffer.capacity = capacity;\r\n   log_cb(RETRO_LOG_DEBUG, \"Output audio buffer capacity set to %d\\n\", capacity);\r\n}",
+      "static bool ensure_output_audio_buffer_capacity(int32_t additional)\r\n{\r\n   if (additional < 0 || output_audio_buffer.size > INT32_MAX - additional)\r\n      return false;\r\n   int32_t required = output_audio_buffer.size + additional;\r\n   if (required <= output_audio_buffer.capacity)\r\n      return true;\r\n   int32_t growth = output_audio_buffer.capacity / 2;\r\n   int32_t capacity = required;\r\n   if (output_audio_buffer.capacity <= INT32_MAX - growth &&\r\n       output_audio_buffer.capacity + growth > capacity)\r\n      capacity = output_audio_buffer.capacity + growth;\r\n   if ((size_t)capacity > SIZE_MAX / sizeof(*output_audio_buffer.data))\r\n      return false;\r\n   int16_t *data = realloc(output_audio_buffer.data, (size_t)capacity * sizeof(*data));\r\n   if (!data)\r\n      return false;\r\n   output_audio_buffer.data = data;\r\n   output_audio_buffer.capacity = capacity;\r\n   return true;\r\n}"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "   audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);\r\n   output_audio_buffer.size = 0;",
+      "   if (output_audio_buffer.size > 0)\r\n      audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);\r\n   output_audio_buffer.size = 0;"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "   if (output_audio_buffer.capacity - output_audio_buffer.size < samples)\r\n      ensure_output_audio_buffer_capacity((output_audio_buffer.capacity + samples) * 1.5);\r\n   memcpy(output_audio_buffer.data + output_audio_buffer.size, data, samples * sizeof(*output_audio_buffer.data));",
+      "   if (!data || !ensure_output_audio_buffer_capacity(samples))\r\n      return;\r\n   memcpy(output_audio_buffer.data + output_audio_buffer.size, data, (size_t)samples * sizeof(*output_audio_buffer.data));"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "#elif ARCHDEP_SOUND_OUTPUT_MODE == SOUND_OUTPUT_MONO\r\n   for (int x = 0; x < samples; x++) audio_cb(data[x], data[x]);\r\n#endif",
+      "#elif ARCHDEP_SOUND_OUTPUT_MODE == SOUND_OUTPUT_MONO\r\n#ifdef RETRO_AUDIO_BATCH\r\n   if (!data || samples > INT32_MAX / 2 || !ensure_output_audio_buffer_capacity(samples * 2))\r\n      return;\r\n   int16_t *dest = output_audio_buffer.data + output_audio_buffer.size;\r\n   for (int32_t x = 0; x < samples; ++x) {\r\n      dest[2 * x] = data[x];\r\n      dest[2 * x + 1] = data[x];\r\n   }\r\n   output_audio_buffer.size += samples * 2;\r\n#else\r\n   for (int x = 0; x < samples; x++) audio_cb(data[x], data[x]);\r\n#endif\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_write_word_array(snapshot_stream_t *f, const uint16_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_write_word_array(snapshot_stream_t *f, const uint16_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    /* Android's little-endian arrays already match the snapshot wire format.\r\n       One stream operation also makes size-only snapshots O(1) per array. */\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*data) ||\r\n            snapshot_write(f, data, (size_t)num * sizeof(*data)) != 1) {\r\n            snapshot_error = SNAPSHOT_WRITE_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_read_word_array(snapshot_stream_t *f, uint16_t *w_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_read_word_array(snapshot_stream_t *f, uint16_t *w_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*w_return) ||\r\n            snapshot_read(f, w_return, (size_t)num * sizeof(*w_return)) != 1) {\r\n            snapshot_error = SNAPSHOT_READ_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_write_dword_array(snapshot_stream_t *f, const uint32_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_write_dword_array(snapshot_stream_t *f, const uint32_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    /* Android's little-endian arrays already match the snapshot wire format.\r\n       One stream operation also makes size-only snapshots O(1) per array. */\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*data) ||\r\n            snapshot_write(f, data, (size_t)num * sizeof(*data)) != 1) {\r\n            snapshot_error = SNAPSHOT_WRITE_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_read_dword_array(snapshot_stream_t *f, uint32_t *dw_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_read_dword_array(snapshot_stream_t *f, uint32_t *dw_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*dw_return) ||\r\n            snapshot_read(f, dw_return, (size_t)num * sizeof(*dw_return)) != 1) {\r\n            snapshot_error = SNAPSHOT_READ_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
     ]
   ],
   "vice_xpet": [
@@ -399,6 +599,46 @@ PATCHES = {
       "libretro/libretro-mapper.c",
       "      else if (!input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && kbt[i] && mapper_keys[mk])",
       "      else if (!key_down && kbt[i] && mapper_keys[mk])"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "static void ensure_output_audio_buffer_capacity(int32_t capacity)\r\n{\r\n   if (capacity <= output_audio_buffer.capacity) {\r\n      return;\r\n   }\r\n\r\n   output_audio_buffer.data = realloc(output_audio_buffer.data, capacity * sizeof(*output_audio_buffer.data));\r\n   output_audio_buffer.capacity = capacity;\r\n   log_cb(RETRO_LOG_DEBUG, \"Output audio buffer capacity set to %d\\n\", capacity);\r\n}",
+      "static bool ensure_output_audio_buffer_capacity(int32_t additional)\r\n{\r\n   if (additional < 0 || output_audio_buffer.size > INT32_MAX - additional)\r\n      return false;\r\n   int32_t required = output_audio_buffer.size + additional;\r\n   if (required <= output_audio_buffer.capacity)\r\n      return true;\r\n   int32_t growth = output_audio_buffer.capacity / 2;\r\n   int32_t capacity = required;\r\n   if (output_audio_buffer.capacity <= INT32_MAX - growth &&\r\n       output_audio_buffer.capacity + growth > capacity)\r\n      capacity = output_audio_buffer.capacity + growth;\r\n   if ((size_t)capacity > SIZE_MAX / sizeof(*output_audio_buffer.data))\r\n      return false;\r\n   int16_t *data = realloc(output_audio_buffer.data, (size_t)capacity * sizeof(*data));\r\n   if (!data)\r\n      return false;\r\n   output_audio_buffer.data = data;\r\n   output_audio_buffer.capacity = capacity;\r\n   return true;\r\n}"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "   audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);\r\n   output_audio_buffer.size = 0;",
+      "   if (output_audio_buffer.size > 0)\r\n      audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);\r\n   output_audio_buffer.size = 0;"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "   if (output_audio_buffer.capacity - output_audio_buffer.size < samples)\r\n      ensure_output_audio_buffer_capacity((output_audio_buffer.capacity + samples) * 1.5);\r\n   memcpy(output_audio_buffer.data + output_audio_buffer.size, data, samples * sizeof(*output_audio_buffer.data));",
+      "   if (!data || !ensure_output_audio_buffer_capacity(samples))\r\n      return;\r\n   memcpy(output_audio_buffer.data + output_audio_buffer.size, data, (size_t)samples * sizeof(*output_audio_buffer.data));"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "#elif ARCHDEP_SOUND_OUTPUT_MODE == SOUND_OUTPUT_MONO\r\n   for (int x = 0; x < samples; x++) audio_cb(data[x], data[x]);\r\n#endif",
+      "#elif ARCHDEP_SOUND_OUTPUT_MODE == SOUND_OUTPUT_MONO\r\n#ifdef RETRO_AUDIO_BATCH\r\n   if (!data || samples > INT32_MAX / 2 || !ensure_output_audio_buffer_capacity(samples * 2))\r\n      return;\r\n   int16_t *dest = output_audio_buffer.data + output_audio_buffer.size;\r\n   for (int32_t x = 0; x < samples; ++x) {\r\n      dest[2 * x] = data[x];\r\n      dest[2 * x + 1] = data[x];\r\n   }\r\n   output_audio_buffer.size += samples * 2;\r\n#else\r\n   for (int x = 0; x < samples; x++) audio_cb(data[x], data[x]);\r\n#endif\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_write_word_array(snapshot_stream_t *f, const uint16_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_write_word_array(snapshot_stream_t *f, const uint16_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    /* Android's little-endian arrays already match the snapshot wire format.\r\n       One stream operation also makes size-only snapshots O(1) per array. */\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*data) ||\r\n            snapshot_write(f, data, (size_t)num * sizeof(*data)) != 1) {\r\n            snapshot_error = SNAPSHOT_WRITE_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_read_word_array(snapshot_stream_t *f, uint16_t *w_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_read_word_array(snapshot_stream_t *f, uint16_t *w_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*w_return) ||\r\n            snapshot_read(f, w_return, (size_t)num * sizeof(*w_return)) != 1) {\r\n            snapshot_error = SNAPSHOT_READ_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_write_dword_array(snapshot_stream_t *f, const uint32_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_write_dword_array(snapshot_stream_t *f, const uint32_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    /* Android's little-endian arrays already match the snapshot wire format.\r\n       One stream operation also makes size-only snapshots O(1) per array. */\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*data) ||\r\n            snapshot_write(f, data, (size_t)num * sizeof(*data)) != 1) {\r\n            snapshot_error = SNAPSHOT_WRITE_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_read_dword_array(snapshot_stream_t *f, uint32_t *dw_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_read_dword_array(snapshot_stream_t *f, uint32_t *dw_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*dw_return) ||\r\n            snapshot_read(f, dw_return, (size_t)num * sizeof(*dw_return)) != 1) {\r\n            snapshot_error = SNAPSHOT_READ_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
     ]
   ],
   "vice_xplus4": [
@@ -411,6 +651,46 @@ PATCHES = {
       "libretro/libretro-mapper.c",
       "      else if (!input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && kbt[i] && mapper_keys[mk])",
       "      else if (!key_down && kbt[i] && mapper_keys[mk])"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "static void ensure_output_audio_buffer_capacity(int32_t capacity)\r\n{\r\n   if (capacity <= output_audio_buffer.capacity) {\r\n      return;\r\n   }\r\n\r\n   output_audio_buffer.data = realloc(output_audio_buffer.data, capacity * sizeof(*output_audio_buffer.data));\r\n   output_audio_buffer.capacity = capacity;\r\n   log_cb(RETRO_LOG_DEBUG, \"Output audio buffer capacity set to %d\\n\", capacity);\r\n}",
+      "static bool ensure_output_audio_buffer_capacity(int32_t additional)\r\n{\r\n   if (additional < 0 || output_audio_buffer.size > INT32_MAX - additional)\r\n      return false;\r\n   int32_t required = output_audio_buffer.size + additional;\r\n   if (required <= output_audio_buffer.capacity)\r\n      return true;\r\n   int32_t growth = output_audio_buffer.capacity / 2;\r\n   int32_t capacity = required;\r\n   if (output_audio_buffer.capacity <= INT32_MAX - growth &&\r\n       output_audio_buffer.capacity + growth > capacity)\r\n      capacity = output_audio_buffer.capacity + growth;\r\n   if ((size_t)capacity > SIZE_MAX / sizeof(*output_audio_buffer.data))\r\n      return false;\r\n   int16_t *data = realloc(output_audio_buffer.data, (size_t)capacity * sizeof(*data));\r\n   if (!data)\r\n      return false;\r\n   output_audio_buffer.data = data;\r\n   output_audio_buffer.capacity = capacity;\r\n   return true;\r\n}"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "   audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);\r\n   output_audio_buffer.size = 0;",
+      "   if (output_audio_buffer.size > 0)\r\n      audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);\r\n   output_audio_buffer.size = 0;"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "   if (output_audio_buffer.capacity - output_audio_buffer.size < samples)\r\n      ensure_output_audio_buffer_capacity((output_audio_buffer.capacity + samples) * 1.5);\r\n   memcpy(output_audio_buffer.data + output_audio_buffer.size, data, samples * sizeof(*output_audio_buffer.data));",
+      "   if (!data || !ensure_output_audio_buffer_capacity(samples))\r\n      return;\r\n   memcpy(output_audio_buffer.data + output_audio_buffer.size, data, (size_t)samples * sizeof(*output_audio_buffer.data));"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "#elif ARCHDEP_SOUND_OUTPUT_MODE == SOUND_OUTPUT_MONO\r\n   for (int x = 0; x < samples; x++) audio_cb(data[x], data[x]);\r\n#endif",
+      "#elif ARCHDEP_SOUND_OUTPUT_MODE == SOUND_OUTPUT_MONO\r\n#ifdef RETRO_AUDIO_BATCH\r\n   if (!data || samples > INT32_MAX / 2 || !ensure_output_audio_buffer_capacity(samples * 2))\r\n      return;\r\n   int16_t *dest = output_audio_buffer.data + output_audio_buffer.size;\r\n   for (int32_t x = 0; x < samples; ++x) {\r\n      dest[2 * x] = data[x];\r\n      dest[2 * x + 1] = data[x];\r\n   }\r\n   output_audio_buffer.size += samples * 2;\r\n#else\r\n   for (int x = 0; x < samples; x++) audio_cb(data[x], data[x]);\r\n#endif\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_write_word_array(snapshot_stream_t *f, const uint16_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_write_word_array(snapshot_stream_t *f, const uint16_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    /* Android's little-endian arrays already match the snapshot wire format.\r\n       One stream operation also makes size-only snapshots O(1) per array. */\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*data) ||\r\n            snapshot_write(f, data, (size_t)num * sizeof(*data)) != 1) {\r\n            snapshot_error = SNAPSHOT_WRITE_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_read_word_array(snapshot_stream_t *f, uint16_t *w_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_read_word_array(snapshot_stream_t *f, uint16_t *w_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*w_return) ||\r\n            snapshot_read(f, w_return, (size_t)num * sizeof(*w_return)) != 1) {\r\n            snapshot_error = SNAPSHOT_READ_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_write_dword_array(snapshot_stream_t *f, const uint32_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_write_dword_array(snapshot_stream_t *f, const uint32_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    /* Android's little-endian arrays already match the snapshot wire format.\r\n       One stream operation also makes size-only snapshots O(1) per array. */\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*data) ||\r\n            snapshot_write(f, data, (size_t)num * sizeof(*data)) != 1) {\r\n            snapshot_error = SNAPSHOT_WRITE_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_read_dword_array(snapshot_stream_t *f, uint32_t *dw_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_read_dword_array(snapshot_stream_t *f, uint32_t *dw_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*dw_return) ||\r\n            snapshot_read(f, dw_return, (size_t)num * sizeof(*dw_return)) != 1) {\r\n            snapshot_error = SNAPSHOT_READ_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
     ]
   ],
   "vice_xscpu64": [
@@ -423,6 +703,46 @@ PATCHES = {
       "libretro/libretro-mapper.c",
       "      else if (!input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && kbt[i] && mapper_keys[mk])",
       "      else if (!key_down && kbt[i] && mapper_keys[mk])"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "static void ensure_output_audio_buffer_capacity(int32_t capacity)\r\n{\r\n   if (capacity <= output_audio_buffer.capacity) {\r\n      return;\r\n   }\r\n\r\n   output_audio_buffer.data = realloc(output_audio_buffer.data, capacity * sizeof(*output_audio_buffer.data));\r\n   output_audio_buffer.capacity = capacity;\r\n   log_cb(RETRO_LOG_DEBUG, \"Output audio buffer capacity set to %d\\n\", capacity);\r\n}",
+      "static bool ensure_output_audio_buffer_capacity(int32_t additional)\r\n{\r\n   if (additional < 0 || output_audio_buffer.size > INT32_MAX - additional)\r\n      return false;\r\n   int32_t required = output_audio_buffer.size + additional;\r\n   if (required <= output_audio_buffer.capacity)\r\n      return true;\r\n   int32_t growth = output_audio_buffer.capacity / 2;\r\n   int32_t capacity = required;\r\n   if (output_audio_buffer.capacity <= INT32_MAX - growth &&\r\n       output_audio_buffer.capacity + growth > capacity)\r\n      capacity = output_audio_buffer.capacity + growth;\r\n   if ((size_t)capacity > SIZE_MAX / sizeof(*output_audio_buffer.data))\r\n      return false;\r\n   int16_t *data = realloc(output_audio_buffer.data, (size_t)capacity * sizeof(*data));\r\n   if (!data)\r\n      return false;\r\n   output_audio_buffer.data = data;\r\n   output_audio_buffer.capacity = capacity;\r\n   return true;\r\n}"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "   audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);\r\n   output_audio_buffer.size = 0;",
+      "   if (output_audio_buffer.size > 0)\r\n      audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);\r\n   output_audio_buffer.size = 0;"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "   if (output_audio_buffer.capacity - output_audio_buffer.size < samples)\r\n      ensure_output_audio_buffer_capacity((output_audio_buffer.capacity + samples) * 1.5);\r\n   memcpy(output_audio_buffer.data + output_audio_buffer.size, data, samples * sizeof(*output_audio_buffer.data));",
+      "   if (!data || !ensure_output_audio_buffer_capacity(samples))\r\n      return;\r\n   memcpy(output_audio_buffer.data + output_audio_buffer.size, data, (size_t)samples * sizeof(*output_audio_buffer.data));"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "#elif ARCHDEP_SOUND_OUTPUT_MODE == SOUND_OUTPUT_MONO\r\n   for (int x = 0; x < samples; x++) audio_cb(data[x], data[x]);\r\n#endif",
+      "#elif ARCHDEP_SOUND_OUTPUT_MODE == SOUND_OUTPUT_MONO\r\n#ifdef RETRO_AUDIO_BATCH\r\n   if (!data || samples > INT32_MAX / 2 || !ensure_output_audio_buffer_capacity(samples * 2))\r\n      return;\r\n   int16_t *dest = output_audio_buffer.data + output_audio_buffer.size;\r\n   for (int32_t x = 0; x < samples; ++x) {\r\n      dest[2 * x] = data[x];\r\n      dest[2 * x + 1] = data[x];\r\n   }\r\n   output_audio_buffer.size += samples * 2;\r\n#else\r\n   for (int x = 0; x < samples; x++) audio_cb(data[x], data[x]);\r\n#endif\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_write_word_array(snapshot_stream_t *f, const uint16_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_write_word_array(snapshot_stream_t *f, const uint16_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    /* Android's little-endian arrays already match the snapshot wire format.\r\n       One stream operation also makes size-only snapshots O(1) per array. */\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*data) ||\r\n            snapshot_write(f, data, (size_t)num * sizeof(*data)) != 1) {\r\n            snapshot_error = SNAPSHOT_WRITE_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_read_word_array(snapshot_stream_t *f, uint16_t *w_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_read_word_array(snapshot_stream_t *f, uint16_t *w_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*w_return) ||\r\n            snapshot_read(f, w_return, (size_t)num * sizeof(*w_return)) != 1) {\r\n            snapshot_error = SNAPSHOT_READ_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_write_dword_array(snapshot_stream_t *f, const uint32_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_write_dword_array(snapshot_stream_t *f, const uint32_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    /* Android's little-endian arrays already match the snapshot wire format.\r\n       One stream operation also makes size-only snapshots O(1) per array. */\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*data) ||\r\n            snapshot_write(f, data, (size_t)num * sizeof(*data)) != 1) {\r\n            snapshot_error = SNAPSHOT_WRITE_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_read_dword_array(snapshot_stream_t *f, uint32_t *dw_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_read_dword_array(snapshot_stream_t *f, uint32_t *dw_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*dw_return) ||\r\n            snapshot_read(f, dw_return, (size_t)num * sizeof(*dw_return)) != 1) {\r\n            snapshot_error = SNAPSHOT_READ_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
     ]
   ],
   "vice_xvic": [
@@ -435,6 +755,46 @@ PATCHES = {
       "libretro/libretro-mapper.c",
       "      else if (!input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, mapper_keys[mk]) && kbt[i] && mapper_keys[mk])",
       "      else if (!key_down && kbt[i] && mapper_keys[mk])"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "static void ensure_output_audio_buffer_capacity(int32_t capacity)\r\n{\r\n   if (capacity <= output_audio_buffer.capacity) {\r\n      return;\r\n   }\r\n\r\n   output_audio_buffer.data = realloc(output_audio_buffer.data, capacity * sizeof(*output_audio_buffer.data));\r\n   output_audio_buffer.capacity = capacity;\r\n   log_cb(RETRO_LOG_DEBUG, \"Output audio buffer capacity set to %d\\n\", capacity);\r\n}",
+      "static bool ensure_output_audio_buffer_capacity(int32_t additional)\r\n{\r\n   if (additional < 0 || output_audio_buffer.size > INT32_MAX - additional)\r\n      return false;\r\n   int32_t required = output_audio_buffer.size + additional;\r\n   if (required <= output_audio_buffer.capacity)\r\n      return true;\r\n   int32_t growth = output_audio_buffer.capacity / 2;\r\n   int32_t capacity = required;\r\n   if (output_audio_buffer.capacity <= INT32_MAX - growth &&\r\n       output_audio_buffer.capacity + growth > capacity)\r\n      capacity = output_audio_buffer.capacity + growth;\r\n   if ((size_t)capacity > SIZE_MAX / sizeof(*output_audio_buffer.data))\r\n      return false;\r\n   int16_t *data = realloc(output_audio_buffer.data, (size_t)capacity * sizeof(*data));\r\n   if (!data)\r\n      return false;\r\n   output_audio_buffer.data = data;\r\n   output_audio_buffer.capacity = capacity;\r\n   return true;\r\n}"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "   audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);\r\n   output_audio_buffer.size = 0;",
+      "   if (output_audio_buffer.size > 0)\r\n      audio_batch_cb(output_audio_buffer.data, output_audio_buffer.size / 2);\r\n   output_audio_buffer.size = 0;"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "   if (output_audio_buffer.capacity - output_audio_buffer.size < samples)\r\n      ensure_output_audio_buffer_capacity((output_audio_buffer.capacity + samples) * 1.5);\r\n   memcpy(output_audio_buffer.data + output_audio_buffer.size, data, samples * sizeof(*output_audio_buffer.data));",
+      "   if (!data || !ensure_output_audio_buffer_capacity(samples))\r\n      return;\r\n   memcpy(output_audio_buffer.data + output_audio_buffer.size, data, (size_t)samples * sizeof(*output_audio_buffer.data));"
+    ],
+    [
+      "libretro/libretro-core.c",
+      "#elif ARCHDEP_SOUND_OUTPUT_MODE == SOUND_OUTPUT_MONO\r\n   for (int x = 0; x < samples; x++) audio_cb(data[x], data[x]);\r\n#endif",
+      "#elif ARCHDEP_SOUND_OUTPUT_MODE == SOUND_OUTPUT_MONO\r\n#ifdef RETRO_AUDIO_BATCH\r\n   if (!data || samples > INT32_MAX / 2 || !ensure_output_audio_buffer_capacity(samples * 2))\r\n      return;\r\n   int16_t *dest = output_audio_buffer.data + output_audio_buffer.size;\r\n   for (int32_t x = 0; x < samples; ++x) {\r\n      dest[2 * x] = data[x];\r\n      dest[2 * x + 1] = data[x];\r\n   }\r\n   output_audio_buffer.size += samples * 2;\r\n#else\r\n   for (int x = 0; x < samples; x++) audio_cb(data[x], data[x]);\r\n#endif\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_write_word_array(snapshot_stream_t *f, const uint16_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_write_word_array(snapshot_stream_t *f, const uint16_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    /* Android's little-endian arrays already match the snapshot wire format.\r\n       One stream operation also makes size-only snapshots O(1) per array. */\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*data) ||\r\n            snapshot_write(f, data, (size_t)num * sizeof(*data)) != 1) {\r\n            snapshot_error = SNAPSHOT_WRITE_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_read_word_array(snapshot_stream_t *f, uint16_t *w_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_read_word_array(snapshot_stream_t *f, uint16_t *w_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*w_return) ||\r\n            snapshot_read(f, w_return, (size_t)num * sizeof(*w_return)) != 1) {\r\n            snapshot_error = SNAPSHOT_READ_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_write_dword_array(snapshot_stream_t *f, const uint32_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_write_dword_array(snapshot_stream_t *f, const uint32_t *data, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    /* Android's little-endian arrays already match the snapshot wire format.\r\n       One stream operation also makes size-only snapshots O(1) per array. */\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*data) ||\r\n            snapshot_write(f, data, (size_t)num * sizeof(*data)) != 1) {\r\n            snapshot_error = SNAPSHOT_WRITE_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
+    ],
+    [
+      "retrodep/snapshot_stream.c",
+      "static int snapshot_read_dword_array(snapshot_stream_t *f, uint32_t *dw_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);",
+      "static int snapshot_read_dword_array(snapshot_stream_t *f, uint32_t *dw_return, unsigned int num)\r\n{\r\n    unsigned int i;\r\n\r\n    current_fpos = snapshot_ftell(f);\r\n#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\r\n    if (f->ops == &snapshot_memory_ops) {\r\n        if (num == 0)\r\n            return 0;\r\n        if ((size_t)num > SIZE_MAX / sizeof(*dw_return) ||\r\n            snapshot_read(f, dw_return, (size_t)num * sizeof(*dw_return)) != 1) {\r\n            snapshot_error = SNAPSHOT_READ_EOF_ERROR;\r\n            return -1;\r\n        }\r\n        return 0;\r\n    }\r\n#endif"
     ]
   ],
   "yabasanshiro": [
