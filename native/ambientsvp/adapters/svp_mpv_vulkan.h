@@ -939,7 +939,7 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
             outputs[i]->params.repr.alpha=PL_ALPHA_NONE;
             outputs[i]->params.chroma_location=PL_CHROMA_UNKNOWN;
         }
-        if(dynamic && phases[i]>0.0f && !svp_vk_hdrplus_apply(outputs[i],a,b,phases[i]))goto fail;
+        if(dynamic && (phases[i]>0.0f||s->scene_pass) && !svp_vk_hdrplus_apply(outputs[i],a,b,phases[i]))goto fail;
         outputs[i]->pts=times[i];outputs[i]->pkt_duration=1.0/s->target_rate;
         outputs[i]->nominal_fps=s->target_rate;
     }
