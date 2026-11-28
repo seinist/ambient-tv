@@ -210,7 +210,7 @@ class VlcPlaybackController(
             sourceHdrStandard != HdrStandard.HDR10_PLUS || !imageOptions.svp.hdrTwoPass ||
             !imageOptions.svp.hardwareResident || imageOptions.svpMode == "off" || !vlcSvpAllowed(context) ||
             residentRejected || vulkanOutput || hdrSceneOutputOptions() == null || !player.isSeekable || attachedView?.holder?.surface?.isValid != true ||
-            HdrScenePlanner.localFile(url) == null ||
+            !HdrScenePlanner.supportedSource(url) ||
             SvpNative.residentOutputsOrNull() == null || !VideoAccelerationRuntime.current(context).let { it.checked && it.device.render }) return
         val source = measuredSourceFps ?: return
         val target = svpOutputFps(svpDisplayFps(context), imageOptions.svp) ?: return
@@ -218,7 +218,7 @@ class VlcPlaybackController(
         hdrSceneAttempted = true
         hdrSceneJob = hdrSceneScope.launch {
             val result = try {
-                HdrScenePlanner.scan(url, source, target, true, File(context.noBackupFilesDir, "hdr-scene"))
+                HdrScenePlanner.scan(context, url, headers, source, target, true, File(context.noBackupFilesDir, "hdr-scene"))
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (e: Exception) { Timber.w(e, "VLC HDR scene plan unavailable"); null }
             if (result == null) { Timber.i("VLC automatic HDR10+ scene plan not supported for this file"); return@launch }
@@ -258,7 +258,8 @@ class VlcPlaybackController(
     private fun hdrResidentAvailable(): Boolean = nativeHdrPreferred && (svpStaticHdrResident(sourceHdrStandard) ||
             sourceHdrStandard == HdrStandard.HDR10_PLUS && hdrSceneSession?.valid() == true && hdrSceneOutputOptions() != null) &&
         !residentRejected && !audioOnly && !vulkanOutput &&
-        svpResidentRequested(com.ambient.tv.data.local.SvpOptions(hardwareResident = true), measuredSourceSize?.first, measuredSourceSize?.second) &&
+        svpResidentRequested(com.ambient.tv.data.local.SvpOptions(hardwareResident = true,
+            hdrTwoPass = hdrSceneSession != null, maxHeight = if (hdrSceneSession != null) 2160 else 1080), measuredSourceSize?.first, measuredSourceSize?.second) &&
         com.ambient.tv.BuildConfig.VLC_SVP &&
         SvpNative.residentOutputsOrNull() != null && VideoAccelerationRuntime.current(context).let { it.checked && it.device.render }
     private fun effectiveImage(): VlcImageOptions = vlcOptionsForNativeHdr(
@@ -1157,7 +1158,8 @@ class VlcPlaybackController(
         val keepTimeshiftMs = pendingTimeshiftKeepMs.also { pendingTimeshiftKeepMs = null }
         val playbackUrl = keepTimeshiftMs?.let { com.ambient.tv.livetv.LiveTimeshift.playbackUrlKeepingPosition(url, it, "vlc-audio")?.first }
             ?: com.ambient.tv.livetv.LiveTimeshift.playbackUrl(url, reopening || reopeningTimeshift)
-        val media = Media(libVlc, Uri.parse(if (playbackUrl == url) authProxy?.url ?: url else playbackUrl))
+        val snapshot = hdrSceneSession?.playbackPath()
+        val media = Media(libVlc, if (snapshot != null) Uri.fromFile(File(snapshot)) else Uri.parse(if (playbackUrl == url) authProxy?.url ?: url else playbackUrl))
         if (!preferOriginalAudio) media.addOption(":audio-language=" + com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(
             videoImagePreferences(context).playbackAudioLanguage).joinToString(","))
         media.addOption(":sub-language=" + com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(
