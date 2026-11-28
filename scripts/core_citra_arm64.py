@@ -36,7 +36,10 @@ def prepare_fastmem(root, dependency):
             "struct PageTable {\n    AmbientFastmem::Arena fastmem;")
     replace(root, "src/core/memory.cpp", "        if (memory != nullptr)\n            memory += PAGE_SIZE;\n    }",
             "        if (memory != nullptr)\n            memory += PAGE_SIZE;\n    }\n"
-            "    page_table.fastmem.sync(page_table.pointers, end - size, size);")
+            "    page_table.fastmem.sync(page_table.pointers, end - size, size);\n"
+            "    page_table.fastmem.mapping_changed();\n"
+            "    if (size && &page_table == current_page_table && Core::System::GetInstance().IsPoweredOn())\n"
+            "        Core::CPU().InvalidateCacheRange((end - size) << PAGE_BITS, static_cast<size_t>(size) * PAGE_SIZE);")
     replace(root, "src/core/memory.cpp",
             "            default:\n                UNREACHABLE();\n            }\n        }\n    }\n}\n\nvoid RasterizerFlushRegion",
             "            default:\n                UNREACHABLE();\n            }\n        }\n"
@@ -65,6 +68,11 @@ def prepare_fastmem(root, dependency):
         first_include = updated.index("#include ")
         updated = updated[:first_include] + '#include "core/ambient_fastmem.h"\n' + updated[first_include:]
         file.write_text(updated)
+    # VMManager::Reset directly clears the page arrays, independently of
+    # MapPages and of the size of its managed virtual address region.
+    replace(root, "src/core/hle/kernel/vm_manager.cpp",
+            "    page_table.pointers.fill(nullptr);",
+            "    page_table.fastmem.reset_mappings();\n    page_table.pointers.fill(nullptr);")
     # A guest-page crossing access must not partially commit to a writable
     # mapped host page before faulting on the following page.
     file = dependency / "src/dynarmic/backend/arm64/emit_arm64_memory.cpp"
@@ -198,17 +206,59 @@ elseif (ARCHITECTURE_x86_64)""")
     path = folder + "arm_dynarmic.cpp"
     replace(root, path, "#include <dynarmic/interface/A32/context.h>",
             '#include <array>\n#include <mutex>\n#include "core/hle/lock.h"')
+    replace(root, folder + "arm_dynarmic.h", "#include <map>", "#include <map>\n#include <vector>")
     replace(root, folder + "arm_dynarmic.h", "    Memory::PageTable* current_page_table = nullptr;",
-            "    Memory::PageTable* current_page_table = nullptr;\n    std::map<Memory::PageTable*, uint64_t> jit_generations;")
+            """    Memory::PageTable* current_page_table = nullptr;
+    std::map<Memory::PageTable*, uint64_t> jit_generations, jit_mapping_generations;
+    std::vector<std::unique_ptr<Dynarmic::A32::Jit>> retired_jits;
+    void PruneJits();""")
     replace(root, path, "    if (iter != jits.end()) {\n        jit = iter->second.get();",
             """    const uint64_t generation = current_page_table ? current_page_table->fastmem.id() : 0;
+    const uint64_t mapping = current_page_table ? current_page_table->fastmem.mapping_id() : 0;
     if (iter != jits.end() && jit_generations[current_page_table] != generation) {
+        // A guest syscall may change page tables while the old JIT's Run
+        // is on the stack. Keep that object alive until it has unwound.
+        if (iter->second->IsExecuting())
+            retired_jits.emplace_back(std::move(iter->second));
         jits.erase(iter);
         iter = jits.end();
     }
     jit_generations[current_page_table] = generation;
+    const bool changed_mapping = jit_mapping_generations[current_page_table] != mapping;
+    jit_mapping_generations[current_page_table] = mapping;
     if (iter != jits.end()) {
-        jit = iter->second.get();""")
+        jit = iter->second.get();
+        if (changed_mapping) jit->ClearCache();
+        PruneJits();""")
+    replace(root, path, "    jits.emplace(current_page_table, std::move(new_jit));\n}",
+            """    jits.emplace(current_page_table, std::move(new_jit));
+    PruneJits();
+}
+
+void ARM_Dynarmic::PruneJits() {
+    for (auto iter = jit_generations.begin(); iter != jit_generations.end();) {
+        auto compiled = jits.find(iter->first);
+        if (AmbientFastmem::Arena::is_live(iter->second) ||
+            (compiled != jits.end() && compiled->second.get() == jit)) {
+            ++iter;
+            continue;
+        }
+        if (compiled != jits.end()) {
+            if (compiled->second->IsExecuting())
+                retired_jits.emplace_back(std::move(compiled->second));
+            jits.erase(compiled);
+        }
+        jit_mapping_generations.erase(iter->first);
+        iter = jit_generations.erase(iter);
+    }
+    retired_jits.erase(std::remove_if(retired_jits.begin(), retired_jits.end(),
+        [](const auto& retired) { return !retired->IsExecuting(); }), retired_jits.end());
+}""")
+    replace(root, path, "    jit->Run();\n}", "    jit->Run();\n    PruneJits();\n}")
+    replace(root, path, "    current_page_table = Memory::GetCurrentPageTable();",
+            """    if (jit && jit->IsExecuting() && current_page_table != Memory::GetCurrentPageTable())
+        jit->HaltExecution();
+    current_page_table = Memory::GetCurrentPageTable();""")
     # The current API exposes registers directly instead of A32::Context.
     # Keep FPEXC in Citra's existing interpreter-owned context.
     file = root / path

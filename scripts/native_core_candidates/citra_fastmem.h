@@ -9,6 +9,7 @@
 #include <mutex>
 #include <new>
 #include <optional>
+#include <set>
 #include <vector>
 #include <sys/mman.h>
 #include <sys/syscall.h>
@@ -28,6 +29,7 @@ struct Registry {
     std::mutex mutex;
     std::map<uintptr_t, Allocation> allocations;
     std::vector<Arena*> arenas;
+    std::set<uint64_t> live_generations;
 };
 inline Registry& registry() {
     // Core globals may release backing allocations during library teardown.
@@ -47,13 +49,39 @@ inline int backing_fd() {
 }
 class Arena {
 public:
-    Arena() : generation(next_generation.fetch_add(1, std::memory_order_relaxed)) {}
+    Arena() : generation(next_generation.fetch_add(1, std::memory_order_relaxed)) {
+        auto& r=registry();
+        std::lock_guard<std::mutex> lock(r.mutex);
+        r.live_generations.insert(generation);
+    }
     uint64_t id() const noexcept { return generation; }
+    uint64_t mapping_id() const noexcept { return mapping_generation.load(std::memory_order_relaxed); }
+    void mapping_changed() noexcept { mapping_generation.fetch_add(1,std::memory_order_relaxed); }
+    static bool is_live(uint64_t id) {
+        if(!id)return true; // the null page-table JIT
+        auto& r=registry();
+        std::lock_guard<std::mutex> lock(r.mutex);
+        return r.live_generations.count(id)!=0;
+    }
+    void reset_mappings() {
+        auto& r=registry();
+        std::lock_guard<std::mutex> lock(r.mutex);
+        if(base) {
+            // Replace the entire reservation; this drops aliases even for
+            // guest addresses outside the managed VM region.
+            if(mmap(base,AddressSpace+page,PROT_NONE,MAP_FIXED|MAP_PRIVATE|MAP_ANONYMOUS,-1,0)==MAP_FAILED) {
+                for(const auto& item:mapped)revoke(item.first);
+            }
+            mapped.clear();
+        }
+        mapping_changed();
+    }
     Arena(const Arena&) = delete;
     Arena& operator=(const Arena&) = delete;
     ~Arena() {
         auto& r = registry();
         std::lock_guard<std::mutex> lock(r.mutex);
+        r.live_generations.erase(generation);
         if (!base) return;
         r.arenas.erase(std::remove(r.arenas.begin(), r.arenas.end(), this), r.arenas.end());
         munmap(base, AddressSpace + page);
@@ -169,6 +197,7 @@ private:
 
     inline static std::atomic<uint64_t> next_generation{1};
     const uint64_t generation;
+    std::atomic<uint64_t> mapping_generation{1};
     unsigned char* base = nullptr;
     size_t page = 0;
     bool attempted = false;

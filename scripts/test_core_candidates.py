@@ -73,6 +73,13 @@ int main() {
     assert(!split_ram_access(false,true,0xfff,4));
     assert(!split_ram_access(true,true,0xffffffffu,4));
     std::vector<uint8_t*> pointers(AddressSpace / GuestPage, nullptr);
+    uint64_t dead;
+    {
+        Arena temporary;
+        dead=temporary.id();
+        assert(Arena::is_live(dead));
+    }
+    assert(!Arena::is_live(dead));
     Arena arena;
     auto first = arena.ensure(pointers);
     assert(first);
@@ -103,6 +110,13 @@ int main() {
         pointers[0] = memory.data();
         arena.sync(pointers, 0, 1);
         assert(guest[17] == 77);
+        const auto mapping=arena.mapping_id();
+        arena.reset_mappings();
+        assert(arena.mapping_id()!=mapping && Arena::is_live(arena.id()));
+        inaccessible(guest+17);
+        inaccessible(guest+page+17);
+        arena.sync(pointers,0,4*page/GuestPage);
+        assert(guest[17]==77 && guest[page+17]==77);
     }
     // Backing destruction revokes both aliases, even before a page table refresh.
     inaccessible(guest+17);

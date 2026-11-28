@@ -252,6 +252,28 @@ static void test_direct_native_pair(void) {
     ambient_sh2_clear();
     puts("SH2 direct ARM64 tail-linked block pair: target state, budget and stale-successor guards passed");
 }
+static void test_shared_code_pages(void) {
+    ambient_sh2_clear();
+    /* Exercise multiple immutable slots on a simulated 16 KiB slab, even
+       when the ARM64 Linux CI host actually uses 4 KiB pages. */
+    ambient_sh2_code_page_size=16384;
+    ambient_sh2_code_per_page=16384/AMBIENT_SH2_CODE_STRIDE;
+    if(ambient_sh2_code_per_page<2)abort();
+    AmbientSh2Block* a=&ambient_sh2_cache[0][0];
+    AmbientSh2Block* b=&ambient_sh2_cache[0][1];
+    uint32_t first[]={0xd503245f,0x52800020,0xd65f03c0};
+    uint32_t second[]={0xd503245f,0x52800040,0xd65f03c0};
+    a->code=ambient_sh2_install_code(0,a,first,3);
+    b->code=ambient_sh2_install_code(0,b,second,3);
+    if(!a->code||!b->code||
+       (char*)b->code-(char*)a->code!=AMBIENT_SH2_CODE_STRIDE ||
+       ((u32(*)(void))a->code)()!=1||((u32(*)(void))b->code)()!=2)abort();
+    first[1]=0x52800060;
+    a->code=ambient_sh2_install_code(0,a,first,3);
+    if(!a->code||((u32(*)(void))a->code)()!=3||((u32(*)(void))b->code)()!=2)abort();
+    ambient_sh2_clear();
+    puts("SH2 shared 16 KiB W^X slots: replacement and neighbor preservation passed");
+}
 static void test_persistent_execution_scope(void) {
     u16 program[32];
     for(unsigned i=0;i<30;++i)program[i]=0x7101;
@@ -419,6 +441,7 @@ int main(void) {
     test_scoped_page_invalidation();
     test_resident_cache_traces();
     test_direct_native_pair();
+    test_shared_code_pages();
     test_persistent_execution_scope();
     test_dynamic_native_prediction();
     test_conditional_native_loops();
