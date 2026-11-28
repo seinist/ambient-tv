@@ -402,7 +402,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     // Extract and verify only the selected, eligible built-in preset off the UI thread.
     // Key the result to the request so a previous shader can never be presented as the new one.
     val nativeSlangRequest = shader.takeIf {
-        BuildConfig.LIBRASHADER_NATIVE && session.vulkan && effect == null &&
+        session.vulkan && effect == null &&
             nativeTransfer == GameVulkanTransferMode.SDR &&
             (!GameRetroShaders.isCustom(shader) || kotlin.math.abs(shaderIntensity - 1f) < 0.0001f) &&
             GameVulkanSlangPresets.supports(shader, selectedPack)
