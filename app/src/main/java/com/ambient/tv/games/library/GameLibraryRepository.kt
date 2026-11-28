@@ -288,6 +288,29 @@ class GameLibraryRepository @Inject constructor(
         return folder
     }
 
+    /** Preserve assignment ID and portable user choices; invalidate the previous system identity. */
+    fun changeFolderSystem(id: String, systemId: String): GameLibraryFolder = synchronized(queryLock) {
+        require(systemId == "auto" || GameSystems.byId(systemId) != null) { "Unknown game system" }
+        val present = folders()
+        val before = present.firstOrNull { it.id == id } ?: throw IOException("Folder was removed")
+        if (before.systemId == systemId) return@synchronized before
+        require(present.none { it.id != id && it.sourceId == before.sourceId &&
+            it.path == before.path && it.systemId == systemId }) { "This folder is already assigned" }
+        ensureQueryIndex()
+        folderEpochs[id] = (folderEpochs[id] ?: 0L) + 1L
+        val updated = before.copy(systemId = systemId)
+        val others = present.filterNot { it.id == id }
+        preferences.gameLibraryOverrides = preferences.gameLibraryOverrides.map { choice ->
+            if (folderContains(before, choice.sourceId, choice.path) &&
+                others.none { folderContains(it, choice.sourceId, choice.path) }) choice.copy(metadata = null)
+            else choice
+        }
+        preferences.gameLibraryFolders = present.map { if (it.id == id) updated else it }
+        ensureQueryIndex()
+        changed()
+        updated
+    }
+
     fun setAlsoShowInFiles(id: String, visible: Boolean) {
         val existing = folders()
         if (existing.none { it.id == id }) return
@@ -1148,6 +1171,7 @@ class GameLibraryRepository @Inject constructor(
         where: String? = null,
         args: Array<String>? = null,
         deduplicate: Boolean = true,
+        includeIncompatible: Boolean = false,
         consume: (LibraryGame) -> Unit,
     ) {
         val clause = where?.let { " WHERE " + it.replace(Regex("\\b(file_id|folder_id)\\b"), "g.$1") }.orEmpty()
@@ -1165,7 +1189,7 @@ class GameLibraryRepository @Inject constructor(
                 if (Thread.currentThread().isInterrupted) throw InterruptedException()
                 val folder = configuration.folders[cursor.getString(0)] ?: continue
                 val filename = cursor.getString(4)
-                if (!cachedGameMatchesFolder(folder, cursor.getString(2), filename, cursor.getString(5))) continue
+                if (!includeIncompatible && !cachedGameMatchesFolder(folder, cursor.getString(2), filename, cursor.getString(5))) continue
                 val portable = configuration.overrides[cursor.getString(2) to cursor.getString(3)]
                 val custom = portable?.title?.takeIf(String::isNotBlank)
                     ?: cursor.getString(11)?.takeIf(String::isNotBlank)
@@ -1279,7 +1303,7 @@ class GameLibraryRepository @Inject constructor(
 
     /**
      * User-triggered scan, never a cold-start/background network poll. Builds a complete
-     * snapshot before DB writes. Failed or truncated scans never delete cached games.
+     * snapshot before deletions. New entries are published in bounded batches; failed or truncated scans never delete cached games.
      * No ROM is copied to cache, and metadata reads are fixed-size seek requests.
      */
     suspend fun scan(
@@ -1317,6 +1341,56 @@ class GameLibraryRepository @Inject constructor(
                 else datVersions.keys.filter(GameNameDatabases::usesChecksums).toSet()
             val discovered = java.util.concurrent.atomic.AtomicInteger()
             val processed = java.util.concurrent.atomic.AtomicInteger()
+            val scanContext = kotlinx.coroutines.currentCoroutineContext()
+            val previewGeneration = System.nanoTime()
+            val published = hashSetOf<String>()
+            // New files may be published before the complete snapshot. Existing files are
+            // never removed or overwritten until successful validation of the whole scan.
+            fun publishAdditions(batch: List<IndexedGame>) = synchronized(queryLock) {
+                scanContext.ensureActive()
+                val configuration = ensureQueryIndex()
+                if (configuration.folders[folder.id] != folder || folderFingerprint(folder) != folderRevision ||
+                    files.sources().none { it.sameLocation(source) && it.id == source.id })
+                    throw kotlinx.coroutines.CancellationException("Game folder changed")
+                val writable = db.writableDatabase
+                val ids = ArrayList<String>(batch.size)
+                writable.beginTransaction()
+                try {
+                    for (game in batch) {
+                        scanContext.ensureActive()
+                        val e = game.entry
+                        if (e.id in previous) continue
+                        if (published.add(e.id)) {
+                            if (writable.insertWithOnConflict("game_entries", null,
+                                    indexedValues(folder.id, game, previewGeneration),
+                                    SQLiteDatabase.CONFLICT_IGNORE) != -1L) ids += e.id
+                        } else if (game.probeVersion > 0) {
+                            val values = indexedValues(folder.id, game, previewGeneration).apply {
+                                remove("favorite"); remove("last_played"); remove("manual_title")
+                            }
+                            if (writable.update("game_entries", values,
+                                    "folder_id=? AND file_id=? AND seen=? AND probe_version=0",
+                                    arrayOf(folder.id, e.id, previewGeneration.toString())) > 0) ids += e.id
+                        }
+                    }
+                    if (ids.isNotEmpty()) refreshQueryFiles(ids, configuration)
+                    writable.setTransactionSuccessful()
+                } finally { writable.endTransaction() }
+                if (ids.isNotEmpty()) changed()
+            }
+            // Disc grouping and ISO signatures need the complete verified snapshot.
+            // Cartridge files with a compatible extension are safe to publish from listings.
+            fun earlySystem(entry: FileEntry): com.ambient.tv.games.GameSystem? {
+                val ext = GameSystems.extension(entry.name)
+                val target = assigned ?: return null
+                if (GameSystems.acceptsFile(target, "playlist.m3u") || ext == "iso") return null
+                if (ext in GameSystems.archiveExtensions) {
+                    val inner = entry.name.substringBeforeLast('.')
+                    return target.takeIf { GameSystems.acceptsFile(it, inner) }
+                }
+                return GameSystems.forAssignedFile(entry.name, target.id,
+                    GameSystems.forSourceFile(entry.name, entry.path))
+            }
 
             // Bounded channel avoids 200k open file handles, 200k suspended coroutines, and
             // keeping a second copy of the entire directory catalog in device RAM.
@@ -1328,6 +1402,8 @@ class GameLibraryRepository @Inject constructor(
                             val pending = ArrayDeque<Pair<String, Int>>()
                             val visited = hashSetOf<String>()
                             pending.add(folder.path to 0)
+                            val entries = ArrayList<FileEntry>()
+                            val previews = ArrayList<IndexedGame>(128)
                             while (pending.isNotEmpty()) {
                                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
                                 val (path, depth) = pending.removeFirst()
@@ -1353,9 +1429,25 @@ class GameLibraryRepository @Inject constructor(
                                     if (!candidate(entry)) continue
                                     val known = discovered.incrementAndGet()
                                     require(known <= 200000) { "Game library item limit reached" }
-                                    queue.send(entry)
+                                    entries += entry
+                                    if (entry.id !in previous) earlySystem(entry)?.let { target ->
+                                        previews += IndexedGame(entry, target.id, null, false, 0L,
+                                            null, null, 0, -1L, null, null)
+                                    }
+                                    if (previews.size >= 128) {
+                                        publishAdditions(previews)
+                                        previews.clear()
+                                    }
                                 }
+                                if (previews.isNotEmpty()) {
+                                    publishAdditions(previews)
+                                    previews.clear()
+                                }
+                                onProgress(0, discovered.get())
                             }
+                            // The existing 200k bound also bounds the listing snapshot.
+                            // Header workers must not delay discovering the remaining files.
+                            for (entry in entries) queue.send(entry)
                         }
                     } finally {
                         queue.close()
@@ -1365,6 +1457,7 @@ class GameLibraryRepository @Inject constructor(
                 val workers = (0 until workerCount).map {
                     async(Dispatchers.IO) {
                         val indexed = ArrayList<IndexedGame>()
+                        val ready = ArrayList<IndexedGame>(64)
                         val descriptors = mutableMapOf<String, Set<String>>()
                         var lease: GameScanFileSession? = null
                         fun reader(): GameScanFileSession =
@@ -1447,16 +1540,20 @@ class GameLibraryRepository @Inject constructor(
                                             else -> checksums.crc32?.let { datNameFromCrc(system.id, it) }
                                                 ?: checksums.datCrc32?.let { datNameFromCrc(system.id, it) }
                                         }
-                                        indexed += IndexedGame(entry, system.id, internal,
+                                        val resolved = IndexedGame(entry, system.id, internal,
                                             last?.favorite ?: false, last?.lastPlayed ?: 0L,
                                             last?.customTitle, verified, probeVersion(system.id), version,
                                             checksums.crc32, checksums.datCrc32)
+                                        indexed += resolved
+                                        if (entry.id !in previous && !GameSystems.acceptsFile(system, "playlist.m3u")) ready += resolved
                                     }
                                 }
+                                if (ready.size >= 64) { publishAdditions(ready); ready.clear() }
                                 val count = processed.incrementAndGet()
                                 if (count % 16 == 0 || count == discovered.get())
                                     onProgress(count, discovered.get())
                             }
+                            if (ready.isNotEmpty()) publishAdditions(ready)
                         } finally {
                             lease?.close()
                         }
@@ -1474,7 +1571,6 @@ class GameLibraryRepository @Inject constructor(
                 selected.mapTo(hashSetOf()) { it.entry.path }, references)
             selected.removeAll { it.entry.path !in visible }
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
-            val scanContext = kotlinx.coroutines.currentCoroutineContext()
             val discardedPaths = mutableListOf<String>()
             var abandoned = emptySet<String>()
             var removedChoices = emptySet<Pair<String, String>>()
@@ -1506,20 +1602,14 @@ class GameLibraryRepository @Inject constructor(
                             writable.delete("game_metadata_checks", "file_id=?", arrayOf(e.id))
                             writable.delete("game_metadata_guards", "file_id=?", arrayOf(e.id))
                         }
-                        val values = android.content.ContentValues().apply {
-                            put("folder_id", folder.id); put("file_id", e.id); put("source_id", e.sourceId)
-                            put("path", e.path); put("filename", e.name); put("system_id", game.systemId)
-                            put("internal_title", game.internalTitle); put("file_size", e.size)
-                            put("modified", e.modified); put("favorite", if (game.favorite) 1 else 0)
-                            put("last_played", game.lastPlayed); put("seen", generation)
-                            put("manual_title", game.customTitle); put("verified_title", game.verifiedTitle)
-                            put("probe_version", game.probeVersion); put("dat_version", game.datVersion)
-                            put("archive_crc", game.archiveCrc)
-                            put("dat_crc", game.datCrc)
-                            put("dat_checked", if (game.datVersion > 0L) 1 else 0)
+                        val values = indexedValues(folder.id, game, generation)
+                        // A user may rename or favourite an already visible tile mid-scan.
+                        val update = android.content.ContentValues(values).apply {
+                            remove("favorite"); remove("last_played"); remove("manual_title")
                         }
-                        writable.insertWithOnConflict("game_entries", null, values,
-                            SQLiteDatabase.CONFLICT_REPLACE)
+                        if (writable.update("game_entries", update, "folder_id=? AND file_id=?",
+                                arrayOf(folder.id, e.id)) == 0)
+                            writable.insertOrThrow("game_entries", null, values)
                         configuration.overrides[e.sourceId to e.path]?.metadata?.let { portable ->
                             if (GameMetadataStorage.read(writable, e.id) == null) GameMetadataStorage.write(writable, e.id, portable)
                         }
@@ -1549,6 +1639,22 @@ class GameLibraryRepository @Inject constructor(
         }
     }
 
+    private fun indexedValues(folderId: String, game: IndexedGame, generation: Long): android.content.ContentValues {
+        val e = game.entry
+        return android.content.ContentValues().apply {
+                            put("folder_id", folderId); put("file_id", e.id); put("source_id", e.sourceId)
+                            put("path", e.path); put("filename", e.name); put("system_id", game.systemId)
+                            put("internal_title", game.internalTitle); put("file_size", e.size)
+                            put("modified", e.modified); put("favorite", if (game.favorite) 1 else 0)
+                            put("last_played", game.lastPlayed); put("seen", generation)
+                            put("manual_title", game.customTitle); put("verified_title", game.verifiedTitle)
+                            put("probe_version", game.probeVersion); put("dat_version", game.datVersion)
+                            put("archive_crc", game.archiveCrc)
+                            put("dat_crc", game.datCrc)
+                            put("dat_checked", if (game.datVersion > 0L) 1 else 0)
+                        }
+    }
+
     private data class IndexedGame(val entry: FileEntry, val systemId: String,
         val internalTitle: String?, val favorite: Boolean, val lastPlayed: Long,
         val customTitle: String?, val verifiedTitle: String?,
@@ -1557,7 +1663,7 @@ class GameLibraryRepository @Inject constructor(
     private fun existing(folderId: String): Map<String, LibraryGame> = synchronized(queryLock) {
         val configuration = currentQueryConfiguration()
         buildMap {
-            forEachIndexedGame(configuration, "folder_id=?", arrayOf(folderId), deduplicate = false) {
+            forEachIndexedGame(configuration, "folder_id=?", arrayOf(folderId), deduplicate = false, includeIncompatible = true) {
                 put(it.fileId, it)
             }
         }
