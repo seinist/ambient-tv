@@ -63,7 +63,7 @@ static inline AmbientComplexMem ambient_complex_decode(uint16_t op) {
     } else if ((op&0xf00f)==0x400f) a.mode=AC_MACW;
     else if ((op&0xf00f)==0x000f) a.mode=AC_MACL;
     else if ((op&0xff00)==0xc300) a.mode=AC_TRAP;
-    else if (op==0x002b) a.mode=AC_RTE;
+    else if ((op&0xf0ff)==0x002b) a.mode=AC_RTE; // upstream ignores the unused B nibble
     return a;
 }
 #if defined(AMBIENT_SH2_ARM64_JIT)

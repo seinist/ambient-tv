@@ -95,7 +95,7 @@ int main(void) {
     }
     printf("SH2 memory: %u encodings, %u differential executions against pinned upstream handlers passed\n",supported,supported*32);
     printf("SH2 control: %u encodings, %u differential executions against pinned upstream handlers passed\n",controls,controls*32);
-    return supported==25553 && controls==9568?0:1;
+    return supported==25568 && controls==9568?0:1;
 }
 """
 def run(upstream: Path):

@@ -200,7 +200,9 @@ int main(void) {
         }
         if(a.mode!=AC_TRAP&&a.mode!=AC_RTE)assert(s.regs.PC==0x1004);
     }
-    assert(complex==2001);
+    assert(complex==2016);
+    for (unsigned alias=0;alias<16;++alias)
+        assert(ambient_complex_decode(0x002b|(alias<<8)).mode==AC_RTE);
     // Signed overflow, negative products and same-register memory aliases.
     s.regs.R[1]=0x2000;s.regs.MACL=INT32_MAX;s.regs.SR.all=2;s.value=0x7fff;
     ambient_complex_execute(&s,ambient_complex_decode(0x411f));
