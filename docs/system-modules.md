@@ -391,3 +391,43 @@ before attempting to omit its runtime. New native candidates are not
 published or validated on Android by these source changes. The shared
 release pipeline, full CI, device linkage and actual APK size measurements
 remain outstanding.
+
+### Moonlight migration staged independently of PR #494
+
+Moonlight's ongoing native performance work stays in
+feature/moonlight-native-integration (PR #494); this PR does not merge,
+rebase, or modify that branch. The verified pinned upstream entrypoint is
+MoonBridge.java, with a single System.loadLibrary("moonlight-core") call.
+The standalone patch_moonlight_module_loader.py script changes only that
+call in the staged protocol Java sources and preserves the subsequent
+JNI initialization. It is idempotent and rejects unexpected upstream drift.
+
+Once the final Moonlight implementation is integrated into the module
+branch, run the patch after its normal source staging, before compilation:
+
+    python3 scripts/patch_moonlight_module_loader.py third_party/moonlight-android
+    python3 scripts/patch_moonlight_module_loader.py third_party/moonlight-android --fingerprint
+
+Use the identical fingerprint in the host's native-only Moonlight contract
+and signed module manifest. It includes the source/patch provenance marker
+and every staged Java source, so ongoing native optimization revisions
+cannot accidentally be mixed with a previous host build. This conservative
+policy requires regenerating the matching module when those inputs change.
+The native package command supports --module moonlight with the four
+matching Full ABI APKs and required license notices; libmoonlight-core.so
+is the only root, with platform dependencies only until additional native
+dependencies have been explicitly reviewed.
+
+Final wiring must set ambient.moonlight.native.directory before any
+MoonBridge class initialization, preserve host-side Java/JNI bindings,
+probe on IO, gate MoonlightFeature and direct playback routes, and only then
+exclude the native root from Modular APKs. Full must preserve its normal
+opt-in behavior and native fallback when no selected package exists.
+No packet, decoder, audio, input, network or optimization source is copied
+from PR #494 here. Tests cover patch drift, idempotency, provenance changes
+and the native package layout. This is preparation, not activated Moonlight
+modularization, and it must be validated against the final Moonlight branch.
+
+Merge order: PR #532 is intentionally the final integration PR, after the
+other engine and optimization work has landed and its combined CI and
+runtime compatibility have been checked. Do not merge it early.
