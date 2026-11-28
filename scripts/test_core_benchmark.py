@@ -7,6 +7,18 @@ from run_core_benchmark import fixture_identity
 from compare_core_profiles import compare
 
 class BenchmarkTests(unittest.TestCase):
+    def test_strict_correctness_proofs(self):
+        from benchmark_core_matrix import validate_output_proofs
+        base=dict(audio_hash="a"*16,video_hash="b"*16,state_loaded=False)
+        validate_output_proofs({"baseline":base,"optimized":dict(base)},require_video=True)
+        for changed in (dict(audio_hash="c"*16),dict(video_hash=None),dict(state_loaded=True)):
+            with self.assertRaises(ValueError):
+                validate_output_proofs({"baseline":base,"optimized":dict(base,**changed)},require_video=True)
+        hw=dict(base,video_hash=None,state_loaded=True)
+        validate_output_proofs({"baseline":hw,"optimized":dict(hw)},state_loaded=True)
+        with self.assertRaises(ValueError):
+            validate_output_proofs({"baseline":hw},require_video=True,state_loaded=True)
+
     def test_workload_rejects_missing_output(self):
         from benchmark_core_matrix import validate_workload
         base = dict(round=1, profile="baseline", video_frames=1000, fresh_frames=900,

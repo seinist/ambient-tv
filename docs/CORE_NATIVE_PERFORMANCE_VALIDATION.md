@@ -281,3 +281,20 @@ still retain all frames for consistent warm-up exclusion. PGO artifact builds
 can be dispatched with `./build.sh cores mgba --abis arm64-v8a --profile pgo-generate`
 and `./build.sh cores mgba --abis arm64-v8a --profile pgo-use --pgo-run-id ID --pgo-sha256 HASH`.
 The latter requires the validated training artifact; both remain artifact-only.
+
+## Optional deterministic correctness and state interchange replay
+
+For deterministic fixtures, set `"verify_output": true` in the matrix fixture.
+After timing, each profile runs a separate fresh replay and compares visible
+software pixels (excluding padding and unused color bits) and audio samples.
+Hardware video hashes are explicitly unavailable; `"require_video_hash": true`
+rejects such a run rather than mistaking frame counts for identical GPU output.
+The diagnostic FNV-1a fingerprints are not cryptographic or a universal
+visual-quality metric. Asynchronous or nondeterministic fixtures may fail strict
+comparison. Do not mix these correctness runs with performance samples.
+
+Set `"verify_states": true` to additionally export the baseline state, load it
+into fresh instances of all selected profiles (including baseline), and compare
+replayed output. Unsupported serialization or rejected state loads fail the
+requested validation. This is a baseline-to-candidate state interchange check,
+not proof of the app's complete rewind lifecycle or hardware video parity.

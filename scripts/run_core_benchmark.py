@@ -31,6 +31,14 @@ def run(args):
         raise ValueError("Core binary does not match verified build report")
     if args.training and build["profile"] != "pgo-generate":
         raise ValueError("Training requires pgo-generate")
+    verify_output = getattr(args, "verify_output", False)
+    export_state = getattr(args, "export_state", False)
+    state_input = getattr(args, "state_input", None)
+    if (export_state or state_input) and not verify_output:
+        raise ValueError("State interchange requires correctness mode")
+    if verify_output and args.training:
+        raise ValueError("Correctness mode must not be used for PGO training")
+    state_digest = sha(state_input) if state_input else None
     warmup = getattr(args, "warmup_frames", 0)
     if args.frames < 60 or args.frames > 1000000 or not 0 <= warmup <= args.frames - 60:
         raise ValueError("Invalid frame count or measurement window")
@@ -90,11 +98,28 @@ def run(args):
                 if shell("sha256sum", remote+"/"+folder+"/"+name, capture=True).split()[0] != digest:
                     raise ValueError("Transferred content/BIOS digest mismatch: "+name)
         prefix=remote+"/capture"
-        shell("env","AMBIENT_BENCHMARK_RENDERER="+getattr(args,"renderer","auto"),"LD_LIBRARY_PATH="+remote,"LLVM_PROFILE_FILE="+remote+"/training-%p-%m.profraw",
+        extra=[]
+        if verify_output:
+            extra.append("AMBIENT_BENCHMARK_VERIFY_OUTPUT=1")
+        if export_state:
+            extra.append("AMBIENT_BENCHMARK_EXPORT_STATE=1")
+        if state_input:
+            cmd("push",state_input,remote+"/state.bin")
+            if shell("sha256sum",remote+"/state.bin",capture=True).split()[0]!=state_digest:
+                raise ValueError("Transferred state digest mismatch")
+            extra.append("AMBIENT_BENCHMARK_STATE_INPUT="+remote+"/state.bin")
+        shell("env",*extra,"AMBIENT_BENCHMARK_RENDERER="+getattr(args,"renderer","auto"),"LD_LIBRARY_PATH="+remote,"LLVM_PROFILE_FILE="+remote+"/training-%p-%m.profraw",
               remote+"/runner",remote+"/core.so",remote+"/content/"+str(rom.relative_to(content)),
               remote+"/system",remote+"/save",remote+"/input.txt",remote+"/options.txt",args.frames,prefix,warmup)
-        for suffix in (".csv","-thermal.csv","-summary.json"):
+        suffixes=[".csv","-thermal.csv","-summary.json"]
+        if verify_output:
+            suffixes.append("-output.json")
+        if export_state:
+            suffixes.append("-state.bin")
+        for suffix in suffixes:
             cmd("pull",prefix+suffix,out/("capture"+suffix))
+        if state_input and sha(state_input)!=state_digest:
+            raise ValueError("Local interchange state changed during capture")
         if args.training:
             profiles=shell("sh","-c","find "+shlex.quote(remote)+" -maxdepth 1 -name 'training-*.profraw' -type f",capture=True)
             names=profiles.splitlines()
@@ -111,7 +136,8 @@ def run(args):
                 sha(args.binary) != build["binary_sha256"] or args.report.read_text() != report_text):
             raise ValueError("Local fixture or build changed during capture")
         metadata={"build":build,"device_fingerprint":fingerprint,"device_serial":serial,
-                  "frames":args.frames,"warmup_frames":warmup,"measured_frames":args.frames-warmup,**identity}
+                  "frames":args.frames,"warmup_frames":warmup,"measured_frames":args.frames-warmup,
+                  "verify_output":verify_output,"state_input_sha256":state_digest,**identity}
         (out/"metadata.json").write_text(json.dumps(metadata,indent=2)+"\n")
         (out/"build.json").write_text(report_text)
     finally:
@@ -128,4 +154,7 @@ if __name__=="__main__":
     p.add_argument("--warmup-frames",type=int,default=0,help="Exclude initial frames from workload counters")
     p.add_argument("--renderer",choices=("auto","gles","vulkan"),default="auto")
     p.add_argument("--training",action="store_true")
+    p.add_argument("--verify-output",action="store_true")
+    p.add_argument("--export-state",action="store_true")
+    p.add_argument("--state-input",type=Path)
     run(p.parse_args())

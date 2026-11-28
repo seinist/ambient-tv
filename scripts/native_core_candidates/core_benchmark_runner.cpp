@@ -49,6 +49,17 @@ static bool require_vulkan=false, require_gles=false;
 static uint64_t video_frames = 0, fresh_frames = 0, duplicate_frames = 0;
 static std::atomic<uint64_t> audio_frames{0};
 static unsigned width = 0, height = 0;
+static retro_pixel_format pixel_format=RETRO_PIXEL_FORMAT_0RGB1555;
+static bool verify_output=false;
+static constexpr uint64_t hash_offset=14695981039346656037ull;
+static uint64_t video_hash=hash_offset, audio_hash=hash_offset;
+static std::mutex audio_hash_mutex;
+static void hash_value(uint64_t& hash,uint32_t value,unsigned bytes) {
+    for(unsigned i=0;i<bytes;++i) {
+        hash^=static_cast<uint8_t>(value>>(i*8));
+        hash*=1099511628211ull;
+    }
+}
 static void die(const char* message) {
     std::fprintf(stderr, "%s\n", message);
     std::exit(2);
@@ -157,8 +168,10 @@ static bool env(unsigned cmd, void* data) {
     case RETRO_ENVIRONMENT_GET_LOG_INTERFACE: static_cast<retro_log_callback*>(data)->log=log_message; return true;
     case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT: {
         auto format=*static_cast<retro_pixel_format*>(data);
-        return format==RETRO_PIXEL_FORMAT_0RGB1555 || format==RETRO_PIXEL_FORMAT_XRGB8888 ||
-               format==RETRO_PIXEL_FORMAT_RGB565;
+        if(format!=RETRO_PIXEL_FORMAT_0RGB1555 && format!=RETRO_PIXEL_FORMAT_XRGB8888 &&
+           format!=RETRO_PIXEL_FORMAT_RGB565)return false;
+        pixel_format=format;
+        return true;
     }
     case RETRO_ENVIRONMENT_SET_VARIABLES: {
         auto* v=static_cast<const retro_variable*>(data);
@@ -222,16 +235,55 @@ static bool env(unsigned cmd, void* data) {
     default: return false;
     }
 }
-static void video(const void* data,unsigned w,unsigned h,size_t) {
+static void video(const void* data,unsigned w,unsigned h,size_t pitch) {
     if(vulkan && !vk.frame(data==RETRO_HW_FRAME_BUFFER_VALID))die("Vulkan frame submission failed");
+    if(verify_output && !hardware) {
+        // Hash visible pixels only, excluding row padding and unused bits.
+        if(data==RETRO_HW_FRAME_BUFFER_VALID)die("Unexpected hardware frame");
+        hash_value(video_hash,w,4);hash_value(video_hash,h,4);
+        hash_value(video_hash,static_cast<uint32_t>(pixel_format),4);
+        hash_value(video_hash,data?1u:0u,1);
+        if(data) {
+            const unsigned bytes=pixel_format==RETRO_PIXEL_FORMAT_XRGB8888?4:2;
+            if(!w || !h || w>16384 || h>16384 || pitch<size_t(w)*bytes ||
+               (h>1 && pitch>(std::numeric_limits<size_t>::max()-size_t(w)*bytes)/(h-1)))
+                die("Invalid software frame geometry");
+            const auto* row=static_cast<const uint8_t*>(data);
+            for(unsigned y=0;y<h;++y) {
+                for(unsigned x=0;x<w;++x) {
+                    uint32_t value=0;
+                    std::memcpy(&value,row+size_t(x)*bytes,bytes);
+                    if(bytes==4)value&=0xffffffu;
+                    else if(pixel_format==RETRO_PIXEL_FORMAT_0RGB1555)value&=0x7fffu;
+                    hash_value(video_hash,value,bytes);
+                }
+                if(y+1<h)row+=pitch;
+            }
+        }
+    }
     if(data || video_frames) {
         ++video_frames;
         if(data)++fresh_frames;else ++duplicate_frames;
         width=w;height=h;
     }
 }
-static void audio(int16_t,int16_t) {audio_frames.fetch_add(1,std::memory_order_relaxed);}
-static size_t audio_batch(const int16_t*,size_t count) {audio_frames.fetch_add(count,std::memory_order_relaxed);return count;}
+static void audio(int16_t left,int16_t right) {
+    if(verify_output) {
+        std::lock_guard<std::mutex> lock(audio_hash_mutex);
+        hash_value(audio_hash,static_cast<uint16_t>(left),2);
+        hash_value(audio_hash,static_cast<uint16_t>(right),2);
+    }
+    audio_frames.fetch_add(1,std::memory_order_relaxed);
+}
+static size_t audio_batch(const int16_t* samples,size_t count) {
+    if(verify_output) {
+        if(count>std::numeric_limits<size_t>::max()/2 || (count && !samples))
+            die("Invalid audio batch");
+        std::lock_guard<std::mutex> lock(audio_hash_mutex);
+        for(size_t i=0;i<count*2;++i)hash_value(audio_hash,static_cast<uint16_t>(samples[i]),2);
+    }
+    audio_frames.fetch_add(count,std::memory_order_relaxed);return count;
+}
 static void poll() {}
 static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id) {
     if(port)return 0;
@@ -299,6 +351,10 @@ int main(int argc,char** argv) {
         if(p==std::string::npos || !p || !overrides.emplace(line.substr(0,p),line.substr(p+1)).second)
             die("Invalid/duplicate option");
     }
+    verify_output=std::getenv("AMBIENT_BENCHMARK_VERIFY_OUTPUT")!=nullptr;
+    const char* state_input=std::getenv("AMBIENT_BENCHMARK_STATE_INPUT");
+    const bool export_state=std::getenv("AMBIENT_BENCHMARK_EXPORT_STATE")!=nullptr;
+    if((state_input || export_state) && !verify_output)die("State interchange requires correctness mode");
     if(const char* renderer=std::getenv("AMBIENT_BENCHMARK_RENDERER")) {
         if(std::strcmp(renderer,"vulkan")==0){preferred_renderer=RETRO_HW_CONTEXT_VULKAN;require_vulkan=true;}
         else if(std::strcmp(renderer,"gles")==0)require_gles=true;
@@ -312,7 +368,7 @@ int main(int argc,char** argv) {
     LOAD(set_audio_sample_batch);LOAD(set_input_poll);LOAD(set_input_state);
     LOAD(init);LOAD(deinit);LOAD(get_system_info);LOAD(get_system_av_info);
     LOAD(set_controller_port_device);LOAD(load_game);LOAD(unload_game);LOAD(run);
-    LOAD(serialize_size);LOAD(serialize);
+    LOAD(serialize_size);LOAD(serialize);LOAD(unserialize);
 #undef LOAD
     if(api_version()!=RETRO_API_VERSION)die("Unsupported libretro ABI");
     set_environment(env);set_video_refresh(video);set_audio_sample(audio);
@@ -336,6 +392,15 @@ int main(int argc,char** argv) {
     if(vulkan && !vk.init())die("Vulkan context negotiation failed");
     if(hardware && hw.context_reset){hw.context_reset();reset_done=true;}
     set_controller_port_device(0,RETRO_DEVICE_JOYPAD);
+    if(state_input) {
+        std::ifstream saved(state_input,std::ios::binary|std::ios::ate);
+        const auto size=saved.tellg();
+        if(size<=0 || size>std::streamoff(256u*1024*1024))die("Invalid interchange state size");
+        std::vector<uint8_t> data(static_cast<size_t>(size));
+        saved.seekg(0);
+        if(!saved.read(reinterpret_cast<char*>(data.data()),size) || !unserialize(data.data(),data.size()))
+            die("Core rejected interchange save state");
+    }
     retro_system_av_info av{};get_system_av_info(&av);
     if(!(av.timing.fps>=1 && av.timing.fps<=240))die("Invalid core FPS");
     std::string prefix=argv[8];
@@ -387,13 +452,32 @@ int main(int argc,char** argv) {
                    captured_duplicate=duplicate_frames-initial_duplicate,
                    captured_audio=audio_frames.load(std::memory_order_relaxed)-initial_audio;
     const unsigned captured_width=width,captured_height=height;
-    uint64_t state_hash=14695981039346656037ull;
+    uint64_t captured_audio_hash=0;
+    {std::lock_guard<std::mutex> lock(audio_hash_mutex);captured_audio_hash=audio_hash;}
+    const uint64_t captured_video_hash=video_hash;
+    uint64_t state_hash=hash_offset;
     const size_t size=serialize_size();
     bool state_ok=false;
     if(size && size<=256u*1024*1024) {
         std::vector<uint8_t> state(size);
         state_ok=serialize(state.data(),size);
         if(state_ok)for(auto byte:state){state_hash^=byte;state_hash*=1099511628211ull;}
+        if(export_state && state_ok) {
+            std::ofstream saved(prefix+"-state.bin",std::ios::binary);
+            if(!saved.write(reinterpret_cast<const char*>(state.data()),state.size()) || !saved.flush())
+                die("Cannot export interchange save state");
+        }
+    }
+    if(export_state && !state_ok)die("Core does not support requested state interchange");
+    if(verify_output) {
+        FILE* proof=std::fopen((prefix+"-output.json").c_str(),"w");
+        if(!proof)die("Cannot write correctness proof");
+        std::fprintf(proof,"{\"audio_hash\":\"%016llx\",\"video_hash\":",
+                     static_cast<unsigned long long>(captured_audio_hash));
+        if(hardware)std::fputs("null",proof);
+        else std::fprintf(proof,"\"%016llx\"",static_cast<unsigned long long>(captured_video_hash));
+        std::fprintf(proof,",\"state_loaded\":%s}\n",state_input?"true":"false");
+        if(std::fclose(proof))die("Cannot write correctness proof");
     }
     if(std::fclose(csv) || std::fclose(thermal))die("Benchmark output failed");
     if(manager)release(manager);

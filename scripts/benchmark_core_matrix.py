@@ -39,6 +39,23 @@ def validate_workload(results, warmup=None, measured=None):
                 raise ValueError("Incomparable workload: output count differs")
 
 
+def validate_output_proofs(proofs, require_video=False, state_loaded=False):
+    if not proofs or "baseline" not in proofs:
+        raise ValueError("Missing correctness baseline")
+    baseline=proofs["baseline"]
+    for proof in proofs.values():
+        for key in ("audio_hash","video_hash"):
+            value=proof.get(key)
+            if value is None and key=="video_hash" and not require_video:
+                continue
+            if not isinstance(value,str) or not re.fullmatch(r"[0-9a-f]{16}",value):
+                raise ValueError("Missing or invalid output hash: "+key)
+        if proof.get("state_loaded") is not state_loaded:
+            raise ValueError("Incorrect state interchange execution")
+        if (proof["audio_hash"],proof.get("video_hash"))!=(baseline["audio_hash"],baseline.get("video_hash")):
+            raise ValueError("Core output differs from baseline")
+
+
 def matrix(args):
     config=json.loads(args.fixture.read_text())
     root=args.fixture.resolve().parent
@@ -118,6 +135,40 @@ def matrix(args):
     hashes={x["state_hash"] for x in results if x["state_valid"]}
     result["state_hash_diagnostic"]={"valid_runs":sum(x["state_valid"] for x in results),
                                      "distinct_hashes":len(hashes)}
+    # Optional strict deterministic correctness replay, outside the timed rounds.
+    if config.get("verify_output") or config.get("verify_states"):
+        def correctness(profile, target, state_input=None, export_state=False):
+            record=profiles[profile]
+            run(SimpleNamespace(
+                runner=resolve(config["runner"]),binary=resolve(record["binary"]),
+                report=resolve(record["report"]),content=resolve(config["content"]),
+                system=resolve(config["system"]),input=resolve(config["input"]),
+                options=resolve(config["options"]),output=target,
+                runtime=resolve(config["runtime"]) if config.get("runtime") else None,
+                rom=config["rom"],serial=initial_fixture["device_serial"],
+                frames=warmup+measured,warmup_frames=warmup,training=False,
+                renderer=config.get("renderer","auto"),verify_output=True,
+                export_state=export_state,state_input=state_input))
+            meta=json.loads((target/"metadata.json").read_text())
+            summary=json.loads((target/"capture-summary.json").read_text())
+            if (meta["build"]["binary_sha256"]!=result["profiles"][profile]["binary_sha256"] or
+                meta["device_fingerprint"]!=identity["device_fingerprint"] or
+                meta["fixture_files"]!=initial_fixture["files"] or meta["bios_files"]!=initial_fixture["bios"] or
+                meta["runner_sha256"]!=initial_fixture["runner"] or meta["runtime_sha256"]!=initial_fixture["runtime"] or
+                meta["input_sha256"]!=identity["input_sha256"] or meta["settings_sha256"]!=identity["settings_sha256"] or
+                summary["renderer"]!=identity["renderer"]):
+                raise ValueError("Correctness replay identity mismatch")
+            return json.loads((target/"capture-output.json").read_text())
+        require_video=bool(config.get("require_video_hash",False))
+        interchange=bool(config.get("verify_states"))
+        proofs={p:correctness(p,out/("verify-"+p),export_state=interchange and p=="baseline") for p in ordered}
+        validate_output_proofs(proofs,require_video)
+        result["output_correctness"]=proofs
+        if interchange:
+            baseline_state=out/"verify-baseline"/"capture-state.bin"
+            restored={p:correctness(p,out/("restore-"+p),state_input=baseline_state) for p in ordered}
+            validate_output_proofs(restored,require_video,state_loaded=True)
+            result["state_interchange"]=restored
     (out/"comparison.json").write_text(json.dumps(result,indent=2)+"\n")
 
 if __name__=="__main__":
