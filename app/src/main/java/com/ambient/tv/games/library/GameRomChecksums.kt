@@ -14,7 +14,11 @@ internal object GameRomChecksums {
 
     fun canHash(filename: String, size: Long): Boolean {
         val extension = filename.substringAfterLast('.', "").lowercase(Locale.ROOT)
-        val limit = if (extension in setOf("nds", "dsi", "ids")) 512L else 128L
+        val limit = when (extension) {
+            "nds", "dsi", "ids" -> 512L
+            "3ds", "cci", "cxi" -> 4096L
+            else -> 128L
+        }
         return extension !in EXCLUDED && size in 1..limit * 1024 * 1024
     }
 
