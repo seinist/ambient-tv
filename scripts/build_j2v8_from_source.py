@@ -38,7 +38,12 @@ if (is_android && current_toolchain == default_toolchain) {
     configs += [ ":external_config", "//build/config/android:hide_all_but_jni" ]
     deps = [ ":v8_monolith" ]
     cflags_cc = [ "-Wno-error", "-Wno-unknown-pragmas" ]
-    ldflags = [ "-Wl,-z,max-page-size=16384", "-Wl,-z,common-page-size=16384" ]
+    ldflags = [
+      "-static-libstdc++",
+      "-Wl,--exclude-libs,libc++_static.a:libc++abi.a",
+      "-Wl,-z,max-page-size=16384",
+      "-Wl,-z,common-page-size=16384",
+    ]
     libs = [ "log", "android", "dl" ]
   }
 }
@@ -99,6 +104,17 @@ def patch_android_page_alignment(source):
     if source.count(old) != 1:
         raise ValueError("Unexpected pinned arm64 linker page-size config")
     return source.replace(old, new)
+
+
+def patch_android_cxx_runtime(source):
+    """Select the pinned NDK's static C++ runtime, not a second shared STL.
+
+    Android GN versions may explicitly add c++_shared in addition to
+    Clang's default. Only rewrite the exact library token; the linker
+    driver also gets -static-libstdc++ for implicit runtime selection.
+    The final ELF dependency check remains authoritative.
+    """
+    return re.sub(r'(["\'])c\+\+_shared\1', lambda match: match[1] + "c++_static" + match[1], source)
 
 
 def jni_exports(path, readelf="readelf"):
@@ -173,6 +189,8 @@ def build(work, output, shared, abi, jobs):
     build_file.write_text(build_file.read_text() + BRIDGE)
     compiler_config = v8 / "build/config/compiler/BUILD.gn"
     compiler_config.write_text(patch_android_page_alignment(compiler_config.read_text()))
+    android_config = v8 / "build/config/android/BUILD.gn"
+    android_config.write_text(patch_android_cxx_runtime(android_config.read_text()))
     out = v8 / "out" / abi
     out.mkdir(parents=True)
     args = (j2v8 / "v8" / ABI_CONFIGS[abi] / "args.gn").read_text()
@@ -187,6 +205,7 @@ def build(work, output, shared, abi, jobs):
     (output / "args.gn").write_text(args)
     (output / "bridge.gn").write_text(BRIDGE)
     shutil.copyfile(compiler_config, output / "compiler-config.gn")
+    shutil.copyfile(android_config, output / "android-config.gn")
     shutil.copyfile(bridge / cpp, output / cpp)
     shutil.copyfile(bridge / "com_eclipsesource_v8_V8Impl.h", output / "com_eclipsesource_v8_V8Impl.h")
     (output / "v8-deps.txt").write_text(actual_deps)
@@ -201,6 +220,7 @@ def build(work, output, shared, abi, jobs):
         "jniHeaderSha256": sha(output / "com_eclipsesource_v8_V8Impl.h"),
         "jniCompatibilityPatch": "v8-handle-to-local-122-windows-pragmas-5",
         "compilerConfigSha256": sha(output / "compiler-config.gn"),
+        "androidConfigSha256": sha(output / "android-config.gn"),
         "native": row, "deviceValidated": False, "publicationApproved": False,
     }, indent=2, sort_keys=True) + "\n")
 
@@ -231,7 +251,8 @@ def stage_candidates(inputs, output, shared):
                             ("args.gn", "argsSha256"), ("bridge.gn", "bridgeSha256"),
                             ("com_eclipsesource_v8_V8Impl.cpp", "jniSourceSha256"),
                             ("com_eclipsesource_v8_V8Impl.h", "jniHeaderSha256"),
-                            ("compiler-config.gn", "compilerConfigSha256")):
+                            ("compiler-config.gn", "compilerConfigSha256"),
+                            ("android-config.gn", "androidConfigSha256")):
             path = root / name
             if (not path.is_file() or path.is_symlink() or not 0 < path.stat().st_size <= 16 * 1024**2
                     or sha(path) != evidence.get(field)):

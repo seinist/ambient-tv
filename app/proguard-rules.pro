@@ -157,7 +157,8 @@
 -keep class io.reactivex.** { *; }
 -keep class org.reactivestreams.** { *; }
 -keep class org.apache.commons.io.** { *; }
--keep class com.jayway.jsonpath.** { *; }
+# JsonPath is module-owned, not a shared host ABI. The allowshrinking rule
+# above keeps names without rooting optional unsupported provider classes.
 -keep class net.minidev.** { *; }
 -keep class org.xbill.DNS.** { *; }
 -keep class org.slf4j.** { *; }

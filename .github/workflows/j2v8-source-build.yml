@@ -4,7 +4,9 @@ on:
   pull_request:
     paths:
       - 'scripts/build_j2v8_from_source.py'
+      - 'scripts/test_build_j2v8_from_source.py'
       - 'scripts/j2v8_source_audit.py'
+      - 'scripts/test_j2v8_source_audit.py'
       - 'smarttube_wrappers/j2v8/**'
       - '.github/workflows/j2v8-source-build.yml'
   workflow_dispatch:
@@ -35,6 +37,10 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends libatomic1 libatomic1:i386 libstdc++6:i386
           df -h
+      - name: Run source-build validation tests before expensive compilation
+        run: |
+          python3 -m unittest discover -s scripts -p test_build_j2v8_from_source.py
+          python3 -m unittest discover -s scripts -p test_j2v8_source_audit.py
       - name: Fetch pinned SmartTube Java and legacy JNI inputs
         run: bash scripts/fetch_smarttube_engine.sh
       - uses: actions/setup-python@v5

@@ -890,6 +890,16 @@ VLC instrumentation uses read-only native diagnostics, renderer and
 Spotify tests explicitly model module probe success, and Monogram
 Central HTTP 429 retries can use the HTTPS Central mirror.
 
+All four J2V8 source builds compiled and linked on the merged-main
+candidate; the final ELF dependency check correctly rejected an unexpected
+libc++_shared.so. The JNI link now requests the pinned static C++ runtime,
+with private archive symbols and explicit Android GN library selection.
+The shared-runtime rejection stays active. The exact modified Android
+configuration is included in source evidence. Fast source-build tests run
+before the expensive native matrix. Core update preflight now covers
+build-only Snes9x2010; its tests use real reviewed core fixtures, and the
+conflicting redundant JsonPath keep rule was removed.
+
 Merge order: PR #532 is intentionally the final integration PR, after the
 other engine and optimization work has landed and its combined CI and
 runtime compatibility have been checked. Do not merge it early.

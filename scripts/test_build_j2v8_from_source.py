@@ -35,6 +35,22 @@ class SourceBuildTest(unittest.TestCase):
             build.patch_android_page_alignment("changed")
         self.assertIn("hide_all_but_jni", build.BRIDGE)
 
+    def test_static_runtime_does_not_allow_shared_stl(self):
+        self.assertIn("-static-libstdc++", build.BRIDGE)
+        self.assertEqual('libs += [ "c++_static" ]',
+                         build.patch_android_cxx_runtime('libs += [ "c++_shared" ]'))
+        self.assertEqual('libs += [ "log" ]',
+                         build.patch_android_cxx_runtime('libs += [ "log" ]'))
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp)
+            candidate, legacy = path / "new.so", path / "old.so"
+            candidate.write_bytes(b"candidate")
+            legacy.write_bytes(b"legacy")
+            with mock.patch.object(build, "validate_elf"), mock.patch.object(
+                    build, "native_dependencies", return_value={"libc++_shared.so"}):
+                with self.assertRaisesRegex(ValueError, "non-platform"):
+                    build.verify_candidate(candidate, legacy, "arm64-v8a")
+
     def test_missing_jni_and_private_dependencies_fail(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp)
