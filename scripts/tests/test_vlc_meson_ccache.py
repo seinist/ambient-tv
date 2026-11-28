@@ -33,6 +33,7 @@ class VlcMesonCacheEnvironmentTest(unittest.TestCase):
 test "$CCACHE_DIR" = "$AMBIENT_VLC_CCACHE_ROOT/contrib"
 test "$CCACHE_COMPILERCHECK" = content
 test "$CCACHE_MAXSIZE" = 123M
+printf 'cached invocation\\n'
 exec "$@"
 """)
             for path in (compiler, Path(str(compiler) + "++")):
@@ -47,6 +48,10 @@ if [ -n "${AMBIENT_VLC_REAL_CLANG:-}" ]; then
     test -n "$HOME"
     clang --version
     clang++ --version
+    clang -Werror -c probe.c
+    test ! -d "$AMBIENT_VLC_CCACHE_ROOT"
+    clang -c normal.c
+    clang++ -c normal.cpp
 else
     test -z "${AMBIENT_VLC_CCACHE_ROOT+x}"
     printf 'uncached\\n'
@@ -65,6 +70,10 @@ fi
                                     env=env, text=True, capture_output=True, check=True)
             self.assertIn(f"compiler={compiler} args=--version", result.stdout)
             self.assertIn(f"compiler={compiler}++ args=--version", result.stdout)
+            self.assertIn(f"compiler={compiler} args=-Werror -c probe.c", result.stdout)
+            self.assertIn(f"compiler={compiler} args=-c normal.c", result.stdout)
+            self.assertIn(f"compiler={compiler}++ args=-c normal.cpp", result.stdout)
+            self.assertEqual(2, result.stdout.count("cached invocation"))
             self.assertTrue((cache / "contrib").is_dir())
             for key in ("AMBIENT_VLC_REAL_CLANG", "AMBIENT_VLC_CCACHE_ROOT", "AMBIENT_VLC_CCACHE_MAXSIZE"):
                 env.pop(key)
