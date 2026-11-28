@@ -11,7 +11,7 @@ internal object GameNameDatabases {
     // Lynx and 7800 dumps usually keep their header; No-Intro lists them without it.
     private const val HEADERED = "metadat/headered/"
     private const val REDUMP = "metadat/redump/"
-    private val titleOnly = setOf("psx", "ps2", "psp", "saturn", "dreamcast", "gamecube", "wii", "n3ds")
+    private val titleOnly = setOf("psx", "ps2", "psp", "saturn", "dreamcast", "gamecube", "wii")
     fun usesChecksums(systemId: String): Boolean = systemId !in titleOnly
 
     private val files: Map<String, List<String>> = mapOf(
