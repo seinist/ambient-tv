@@ -39,8 +39,9 @@ never modifies Ambient TV's installed cores or saves. The runner supports
 software, GLES2/3 pbuffer and synchronous headless Vulkan (v1/v2 negotiation).
 Select renderer `vulkan` in the fixture or `--renderer vulkan` for a single run.
 Vulkan uses one sync slot and a fence per submitted frame, including core
-command buffers and semaphores. Cross-queue-family image handoffs and unsupported
-interfaces fail explicitly. This measures completed GPU work in a serialized
+command buffers and semaphores. Cross-queue-family image handoffs use semaphore-ordered acquire/release
+barriers on the frontend queue. Missing synchronization and unsupported
+interfaces fail explicitly. Real multi-family GPU validation remains required. This measures completed GPU work in a serialized
 frontend, not real presentation or pipelined input latency.
 
 Create a local fixture JSON with paths relative to that JSON:

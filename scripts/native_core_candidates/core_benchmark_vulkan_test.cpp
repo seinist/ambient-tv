@@ -39,6 +39,17 @@ int main() {
     frame.create_info.format=imageinfo.format;
     frame.create_info.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
     assert(vkCreateImageView(dev,&frame.create_info,nullptr,&frame.image_view)==VK_SUCCESS);
+    // Verify inverse ownership barriers even on single-family software GPUs.
+    const auto acquire=benchmark_ownership_barrier(image,frame.image_layout,frame.create_info.subresourceRange,3,7,true);
+    const auto release=benchmark_ownership_barrier(image,frame.image_layout,frame.create_info.subresourceRange,7,3,false);
+    assert(acquire.srcQueueFamilyIndex==release.dstQueueFamilyIndex &&
+           acquire.dstQueueFamilyIndex==release.srcQueueFamilyIndex);
+    assert(acquire.oldLayout==acquire.newLayout && acquire.newLayout==release.oldLayout &&
+           release.oldLayout==release.newLayout);
+    assert(acquire.srcAccessMask==0 && release.dstAccessMask==0 &&
+           acquire.dstAccessMask==release.srcAccessMask);
+    assert(acquire.image==image && release.image==image &&
+           acquire.subresourceRange.levelCount==1 && release.subresourceRange.layerCount==1);
     VkCommandBufferBeginInfo begin{};begin.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     assert(vkBeginCommandBuffer(cmd,&begin)==VK_SUCCESS);
     VkImageMemoryBarrier barrier{};barrier.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
