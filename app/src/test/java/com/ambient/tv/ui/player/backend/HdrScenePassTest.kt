@@ -107,7 +107,10 @@ class HdrScenePassTest {
         val key="b".repeat(64)
         val session=HdrSceneSession(media,media.length(),media.lastModified(),key,
             HdrScenePlanner.Plan(listOf(20),24.0,60.0),manifest,cache,version=0)
-        val header="AMBIENTSVP_SCENE_CACHE_0\n$key\nmpv:fixture\n128 64\n"
+        val oldHeader="AMBIENTSVP_SCENE_CACHE_0\n$key\nmpv:fixture\n128 64\n"
+        cache.writeText(oldHeader+"0 20 2 1 400 400 400 200 0 99 400 2 300 300 300 100 0 50 100 99 300\n")
+        assertFalse(session.advance())
+        val header=oldHeader+"G 0000000000000000\n".repeat(20)
         cache.writeText(header+"0 20 2 1 400 400 400 200 0 99 400 2 300 300 300 100 1 50 100 99 300\n")
         assertFalse(session.advance())
         cache.writeText(header+"0 20 2 1 400 400 400 200 0 99 400 2 300 300 300 100 0 50 100 99 300\n")
