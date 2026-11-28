@@ -99,7 +99,9 @@ static picture_t *svp_hdr_filter(filter_t *f,picture_t *pic)
     unsigned count=0;
     while(next<UINT64_C(1000000000)){
         vlc_tick_t time=s->origin+VLC_TICK_FROM_US(llround((double)next*1000000.0/s->target));
-        if(time>=end)break;
+        // Match the Android scene planner and MPV's microsecond boundary
+        // tolerance. Leave ordinary single-pass scheduling unchanged.
+        if(time>=end-(s->scene?VLC_TICK_FROM_US(1):0))break;
         double phase=(double)(time-s->previous->date)/(double)(end-s->previous->date);
         if(count==8||phase<-.25||phase>1.)goto fail;
         picture_t *out=picture_Clone(s->previous);

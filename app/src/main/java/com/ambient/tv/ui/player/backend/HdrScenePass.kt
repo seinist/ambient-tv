@@ -204,7 +204,11 @@ internal object HdrScenePlanner {
             previous = current
             val end = if (i+1 < sorted.size) sorted[i+1].ptsUs-origin else current+expected.roundToLong()
             val first = tick
-            while (if (vlc) (tick*1_000_000.0/target).roundToLong() < end else tick*1_000_000.0/target < end-1.0) {
+            // The native scene schedulers reserve a 1 us boundary tolerance.
+            // In particular, rounding the final source duration and then
+            // adding it to a rounded PTS can move the endpoint by one tick.
+            while (if (vlc) (tick*1_000_000.0/target).roundToLong() < end-1L
+                else tick*1_000_000.0/target < end-1.0) {
                 if (++tick-first > 8 || tick >= 1_000_000_000L) return null
             }
             if (tick == first) return null

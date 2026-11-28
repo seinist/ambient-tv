@@ -57,6 +57,26 @@ class HdrScenePassTest {
         }
     }
 
+    @Test fun sceneEofDoesNotAddAnOutputTickFromMicrosecondRounding() {
+        // At 24 fps the last PTS + rounded duration is 333334 us,
+        // although output tick 20 is already the exclusive EOF boundary.
+        for ((source,target) in listOf(
+            24.0 to 60.0, 24000.0/1001 to 60000.0/1001,
+            25.0 to 100.0, 30.0 to 60.0, 50.0 to 100.0,
+            30000.0/1001 to 60000.0/1001,
+        )) {
+            for (vlc in listOf(false,true)) {
+                val input = (0 until 8).map { i ->
+                    HdrScenePlanner.Sample(kotlin.math.round(i*1_000_000.0/source).toLong()+37_123,
+                        if (i<4) "a" else "b")
+                }
+                val ratio = target/source
+                assertEquals(listOf(kotlin.math.round(4*ratio).toLong(),kotlin.math.round(8*ratio).toLong()),
+                    HdrScenePlanner.plan(input,source,target,vlc)?.ends)
+            }
+        }
+    }
+
     @Test fun rejectsAmbiguousOrDiscontinuousInputs() {
         val input = samples()
         assertNull(HdrScenePlanner.plan(input.mapIndexed { i,s -> s.copy(metadata=i.toString()) },24.0,60.0,false))
