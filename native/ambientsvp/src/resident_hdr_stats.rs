@@ -427,3 +427,36 @@ mod scene_tests{
         assert_eq!(s.finish().unwrap().fraction,1);
     }
 }
+
+// Verify the measured version-1 metadata against a contiguous authoring
+// manifest. Zero FBP/MaxSCL may mean unmeasured, but are not accepted as
+// a verified measurement here (except genuine measured black MaxSCL).
+// Caller supplies the same percentile list to each scene accumulator;
+// a match here is not a certification of the complete ST 2094 stream.
+pub(super) fn validate_scene_sequence(first:u64,end:u64,measured:&[SceneResult],authored:&[SceneResult])->bool{
+    if first>=end||measured.is_empty()||measured.len()!=authored.len(){return false;}
+    let mut next=first;
+    for (m,a) in measured.iter().zip(authored){
+        if m.first!=next||m.end<=m.first||m.end>end||
+            m.brightest_frame<m.first||m.brightest_frame>=m.end||
+            a.first!=m.first||a.end!=m.end||m.maxscl!=a.maxscl||m.average!=a.average||
+            m.percentiles!=a.percentiles||m.fraction!=a.fraction||
+            !(1..=1000).contains(&m.fraction)||m.maxscl.iter().any(|&v|v>100000)||
+            m.average>*m.maxscl.iter().max().unwrap_or(&0)||m.percentiles.iter().any(|&v|v>100000){
+            return false;
+        }
+        next=m.end;
+    }
+    next==end
+}
+#[cfg(test)]
+#[test]
+fn validate_scene_sequence_rejects_gaps_and_metadata_changes(){
+    let a=SceneResult{first:0,end:2,brightest_frame:1,maxscl:[100;3],average:50,fraction:500,..Default::default()};
+    let b=SceneResult{first:2,end:4,brightest_frame:2,..a};
+    assert!(validate_scene_sequence(0,4,&[a,b],&[a,b]));
+    assert!(!validate_scene_sequence(0,5,&[a,b],&[a,b]));
+    assert!(!validate_scene_sequence(0,4,&[a,SceneResult{first:3,..b}],&[a,b]));
+    assert!(!validate_scene_sequence(0,4,&[a,b],&[a,SceneResult{fraction:501,..b}]));
+    assert!(!validate_scene_sequence(0,4,&[a,b],&[a,SceneResult{percentiles:[1;9],..b}]));
+}
