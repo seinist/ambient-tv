@@ -48,6 +48,8 @@ struct svp_vk_mpv {
     int (*hdr_stats_track)(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,float,uint32_t);
     int (*hdr_read_track)(const AmbientSvpVkPair *,uint32_t,AmbientSvpHdrResult *,int32_t (*)[2],uint32_t);
     int (*hdr_read_affine)(const AmbientSvpVkPair *,uint32_t,float (*)[4],uint32_t);
+    int (*hdr_stats_affine)(AmbientSvpVkPair *,uint32_t,const AmbientSvpHdrWindow *,const AmbientSvpHdrTrack *,float,uint32_t);
+    int (*hdr_read_rectangles)(const AmbientSvpVkPair *,uint32_t,uint32_t (*)[4],uint32_t);
     int (*seal)(AmbientSvpVkPair *,VkFence);
     int (*release)(AmbientSvpVkPair *);
     int (*cancel)(AmbientSvpVkPair *);
@@ -406,7 +408,7 @@ static bool svp_vk_hdrplus_shift(AVHDRPlusColorTransformParams *p,const int32_t 
     return true;
 }
 /* Transform ellipse covariance with a bounded phase-weighted affine
- * correction. Keep the statistics rectangle unchanged on this ABI.
+ * correction. The optional affine statistics ABI supplies the bounding rectangle.
  * The authored ellipse is retained if quantization cannot represent it. */
 static void svp_vk_hdrplus_affine(AVHDRPlusColorTransformParams *p,const float g[4],float phase)
 {
@@ -431,7 +433,7 @@ static void svp_vk_hdrplus_affine(AVHDRPlusColorTransformParams *p,const float g
     p->semimajor_axis_internal_ellipse=(uint16_t)inner;
 }
 static bool svp_vk_hdrplus_measured(struct mp_image *img,const AmbientSvpHdrResult results[3],
-    const int32_t (*shifts)[2],const float (*gradients)[4],float phase,uint32_t count)
+    const int32_t (*shifts)[2],const float (*gradients)[4],const uint32_t (*rectangles)[4],float phase,uint32_t count)
 {
     for(int i=0;i<img->num_ff_side_data;i++){
         if(img->ff_side_data[i].type!=AV_FRAME_DATA_DYNAMIC_HDR_PLUS)continue;
@@ -443,6 +445,16 @@ static bool svp_vk_hdrplus_measured(struct mp_image *img,const AmbientSvpHdrResu
             const AmbientSvpHdrResult *r=&results[w];
             AVHDRPlusColorTransformParams *p=&m->params[w];
             if(w&&shifts&&!svp_vk_hdrplus_shift(p,shifts[w],img->w,img->h))return false;
+            if(w&&rectangles){
+                const uint32_t *box=rectangles[w];
+                if(img->w<2||img->h<2||box[0]+1>=box[2]||box[1]+1>=box[3]||
+                    box[2]>(uint32_t)img->w||box[3]>(uint32_t)img->h||
+                    (uint64_t)(box[2]-box[0])*(box[3]-box[1])!=r->pixels)return false;
+                p->window_upper_left_corner_x=(AVRational){box[0],img->w-1};
+                p->window_upper_left_corner_y=(AVRational){box[1],img->h-1};
+                p->window_lower_right_corner_x=(AVRational){box[2]-1,img->w-1};
+                p->window_lower_right_corner_y=(AVRational){box[3]-1,img->h-1};
+            }
             if(w&&gradients)svp_vk_hdrplus_affine(p,gradients[w],phase);
             if(!r->pixels||r->brightest>r->pixels||r->average>100000||p->num_distribution_maxrgb_percentiles>15)return false;
             for(unsigned c=0;c<3;c++){
@@ -601,6 +613,8 @@ static struct svp_vk_mpv *svp_vk_new(void *library,struct mp_image *img,double s
     s->hdr_stats_track=dlsym(library,"ambient_svp_vk_hdr_stats_track");
     s->hdr_read_track=dlsym(library,"ambient_svp_vk_hdr_read_track");
     s->hdr_read_affine=dlsym(library,"ambient_svp_vk_hdr_read_affine");
+    s->hdr_stats_affine=dlsym(library,"ambient_svp_vk_hdr_stats_affine");
+    s->hdr_read_rectangles=dlsym(library,"ambient_svp_vk_hdr_read_rectangles");
 #undef LOAD_API
     AVHWFramesContext *fc=(AVHWFramesContext *)img->hwctx->data;
     s->device_ref=av_buffer_ref(fc->device_ref);
@@ -752,7 +766,7 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
     bool dynamic=s->mode>0 && s->mode<4 && svp_vk_hdrplus_pair(a,b);
     if(dynamic && (!s->hdr_stats||!s->hdr_read))return false;
     uint32_t hdr_counts[SVP_VK_PHASES]={0};
-    bool tracked[SVP_VK_PHASES]={0};
+    bool tracked[SVP_VK_PHASES]={0},affine[SVP_VK_PHASES]={0};
     if (s->mode && (s->mode>=4 || a->params.color.transfer==PL_COLOR_TRC_PQ || a->params.color.transfer==PL_COLOR_TRC_HLG) &&
         !dynamic && !svp_vk_hdr_metadata_same(a,b)) return false;
     svp_vk_reap(s,false);
@@ -895,8 +909,9 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
             if(!svp_vk_hdrplus_windows(outputs[i],windows,&hdr_counts[i]))goto fail;
             if(hdr_counts[i]>1&&s->hdr_stats_track&&s->hdr_read_track){
                 AmbientSvpHdrTrack tracks[3];
+                affine[i]=s->hdr_stats_affine&&s->hdr_read_rectangles&&s->hdr_read_affine;
                 if(!svp_vk_hdrplus_tracks(a,b,outputs[i],tracks,hdr_counts[i])||
-                    s->hdr_stats_track(j->pair,i,windows,tracks,phases[i],hdr_counts[i]))goto fail;
+                    (affine[i]?s->hdr_stats_affine:s->hdr_stats_track)(j->pair,i,windows,tracks,phases[i],hdr_counts[i]))goto fail;
                 tracked[i]=true;
             }else if(s->hdr_stats(j->pair,i,windows,hdr_counts[i]))goto fail;
         }
@@ -942,7 +957,9 @@ static bool svp_vk_interpolate(struct svp_vk_mpv *s,struct mp_image *a,struct mp
             float gradients[3][4]={{0}};
             if(rc!=1)goto submitted_fail;
             if(tracked[i]&&s->hdr_read_affine&&s->hdr_read_affine(j->pair,i,gradients,hdr_counts[i])!=1)goto submitted_fail;
-            if(!svp_vk_hdrplus_measured(outputs[i],results,tracked[i]?shifts:NULL,gradients,phases[i],hdr_counts[i]))goto submitted_fail;
+            uint32_t rectangles[3][4]={{0}};
+            if(affine[i]&&s->hdr_read_rectangles(j->pair,i,rectangles,hdr_counts[i])!=1)goto submitted_fail;
+            if(!svp_vk_hdrplus_measured(outputs[i],results,tracked[i]?shifts:NULL,gradients,affine[i]?rectangles:NULL,phases[i],hdr_counts[i]))goto submitted_fail;
         }
     }
     return true;
