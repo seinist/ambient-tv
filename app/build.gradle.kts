@@ -165,6 +165,18 @@ val modulePackaging = providers.gradleProperty("MODULE_PACKAGING")
     .orElse(providers.environmentVariable("MODULE_PACKAGING")).orElse("full").get()
 require(modulePackaging in setOf("full", "modular-preview")) { "Unknown MODULE_PACKAGING: $modulePackaging" }
 val modularPreview = modulePackaging == "modular-preview"
+val libretroModuleMarker = rootProject.file("third_party/libretrodroid/.ambient-libretrodroid")
+val libretroModuleJava = rootProject.file("third_party/libretrodroid/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java")
+val libretroModuleBinding = if (libretroModuleMarker.isFile && libretroModuleJava.isFile &&
+    libretroModuleJava.readText().contains("ambient.libretrodroid.native.directory")) {
+    MessageDigest.getInstance("SHA-256").let { digest ->
+        digest.update(libretroModuleMarker.readBytes())
+        digest.update(0.toByte())
+        digest.update(libretroModuleJava.readBytes())
+        digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+    }
+} else ""
+val libretroBundled = !modularPreview || libretroModuleBinding.isBlank()
 // An older custom AAR or Maven fallback must remain bundled until its Java
 // load sites support the same absolute path as the system module host.
 val vlcModuleBinding = if (vulkanVlcAar.isFile) ZipFile(vulkanVlcAar).use { aar ->
@@ -443,6 +455,8 @@ android {
         buildConfigField("String", "SVPFLOW_REF", quotedBuildConfigString(externalVersion("SVPFLOW_REF")))
         buildConfigField("String", "FFMPEG_VERSION", quotedBuildConfigString(externalVersion("FFMPEG_REF")))
         buildConfigField("String", "FFMPEG_REF", quotedBuildConfigString(externalVersion("FFMPEG_COMMIT")))
+        buildConfigField("boolean", "LIBRETRODROID_BUNDLED", libretroBundled.toString())
+        buildConfigField("String", "LIBRETRODROID_MODULE_BINDING_SHA256", quotedBuildConfigString(libretroModuleBinding))
         buildConfigField("String", "LIBRETRODROID_REF", quotedBuildConfigString(externalVersion("LIBRETRODROID_COMMIT")))
         buildConfigField("String", "RCHEEVOS_VERSION", quotedBuildConfigString(externalVersion("LIBRETRODROID_RCHEEVOS_VERSION")))
         buildConfigField("String", "RCHEEVOS_REF", quotedBuildConfigString(externalVersion("LIBRETRODROID_RCHEEVOS_COMMIT")))
@@ -544,6 +558,7 @@ android {
                 "**/libmpv.so", "**/libambientmpv.so", "**/libj2v8.so", "**/libambientsvp.so",
             )
             // An earlier build may have left the Spotify core in jniLibs: never ship it when disabled.
+            if (!libretroBundled) excludes += "**/liblibretrodroid.so"
             if (modularPreview && vlcModuleSupported) excludes += setOf("**/libvlc.so", "**/libvlcjni.so")
             if (!spotifyEnabled || modularPreview) excludes += "**/libspotify_receiver_core.so"
             if (modularPreview) excludes += "**/libmonogram_mtproto.so"
