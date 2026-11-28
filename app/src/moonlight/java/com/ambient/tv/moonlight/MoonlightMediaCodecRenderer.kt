@@ -309,21 +309,29 @@ class MoonlightMediaCodecRenderer(
         while (running.get() && !closing) {
             try {
                 var index = decoder.dequeueOutputBuffer(info, 8_000)
-                if (index < 0) continue
+                if (index < 0) {
+                    if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) pacer.reset()
+                    continue
+                }
                 var pts = info.presentationTimeUs
                 var size = info.size
                 // Keep the newest ready picture if the decoder has accumulated a backlog.
                 // Never add an extra frame of waiting just to pace an otherwise empty queue.
-                val deadline = System.nanoTime() + 1_000_000L
+                var now = System.nanoTime()
+                val deadline = now + 1_000_000L
                 for (i in 0 until 16) {
-                    if (!pacer.shouldDrain(pts, System.nanoTime()) || System.nanoTime() >= deadline) break
+                    if (now >= deadline || !pacer.shouldDrain(pts, now)) break
                     val newer = decoder.dequeueOutputBuffer(next, 0)
-                    if (newer < 0) break
+                    if (newer < 0) {
+                        if (newer == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) pacer.reset()
+                        break
+                    }
                     decoder.releaseOutputBuffer(index, false)
                     dropped.incrementAndGet()
                     index = newer
                     pts = next.presentationTimeUs
                     size = next.size
+                    now = System.nanoTime()
                 }
                 val render = size > 0 && running.get() && !closing
                 // A real monotonic timestamp lets Surface drop superseded frames in the
